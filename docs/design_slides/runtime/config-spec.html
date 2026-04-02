@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OAR Runtime 配置规范 · 深度讲解</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#6366f1',
+            'primary-dark': '#4f46e5',
+            'bg-dark': '#0d1117',
+            'bg-card': '#161b22',
+            'bg-elevated': '#21262d',
+            'border-dark': '#30363d',
+            'text-muted': '#8b949e'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* 进度条填充动画 */
+    .bar-fill {
+      width: 0%;
+      transition: width 0.3s ease-out;
+    }
+    
+    /* 阅读进度条 */
+    .read-progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #6366f1, #818cf8);
+      z-index: 100;
+    }
+    
+    /* 淡入动画 */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    }
+    
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    
+    /* TOC 链接样式 */
+    .toc-link {
+      transition: all 0.2s ease;
+      border-left: 2px solid transparent;
+      padding-left: 12px;
+    }
+    
+    .toc-link:hover {
+      border-left-color: #6366f1;
+      color: #6366f1;
+    }
+    
+    .toc-link.active {
+      border-left-color: #6366f1;
+      color: #6366f1;
+      background: rgba(99, 102, 241, 0.1);
+    }
+    
+    /* 章节锚点 */
+    .section-anchor {
+      scroll-margin-top: 80px;
+    }
+    
+    /* 代码块样式 */
+    pre {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+    }
+    
+    code {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 14px;
+    }
+    
+    /* 表格样式增强 */
+    table {
+      border-collapse: collapse;
+    }
+    
+    th, td {
+      border: 1px solid #30363d;
+    }
+  </style>
+</head>
+<body class="bg-bg-dark text-gray-200 font-sans antialiased">
+  <!-- 顶部阅读进度条 -->
+  <div class="read-progress">
+    <div class="bar-fill h-full"></div>
+  </div>
+
+  <!-- 粘性 Header -->
+  <header class="sticky top-3 z-50 bg-bg-card/90 backdrop-blur-md border border-border-dark rounded-lg mx-4 mt-4 px-6 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+        <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+      </div>
+      <span class="font-semibold text-lg">OAR Runtime 配置规范</span>
+    </div>
+    <div class="flex items-center gap-4 text-sm text-text-muted">
+      <span>v0.1.0</span>
+      <span>•</span>
+      <span id="progress-text">0% 已阅读</span>
+    </div>
+  </header>
+
+  <!-- Hero 区域 -->
+  <section class="fade-in px-4 pt-16 pb-12 max-w-6xl mx-auto text-center">
+    <div class="mb-6">
+      <span class="inline-block px-3 py-1 bg-primary/20 text-primary rounded-full text-sm font-medium">配置规范</span>
+    </div>
+    <h1 class="text-5xl font-bold mb-4 tracking-tight">
+      <span class="text-primary">config.json</span>
+      <span class="text-gray-300">深度解析</span>
+    </h1>
+    <p class="text-xl text-text-muted max-w-2xl mx-auto mb-8">
+      Agent 迧行时配置文件的权威 Schema，定义实例身份、进程启动、会话参数与权限策略
+    </p>
+    
+    <!-- 数字统计 -->
+    <div class="flex justify-center gap-8 mt-8">
+      <div class="bg-bg-card border border-border-dark rounded-xl px-6 py-4">
+        <div class="text-3xl font-bold text-primary">6</div>
+        <div class="text-sm text-text-muted">核心模块</div>
+      </div>
+      <div class="bg-bg-card border border-border-dark rounded-xl px-6 py-4">
+        <div class="text-3xl font-bold text-primary">15+</div>
+        <div class="text-sm text-text-muted">配置字段</div>
+      </div>
+      <div class="bg-bg-card border border-border-dark rounded-xl px-6 py-4">
+        <div class="text-3xl font-bold text-primary">3</div>
+        <div class="text-sm text-text-muted">权限策略</div>
+      </div>
+      <div class="bg-bg-card border border-border-dark rounded-xl px-6 py-4">
+        <div class="text-3xl font-bold text-primary">ACP</div>
+        <div class="text-sm text-text-muted">协议对齐</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 主内容区域：左侧 TOC + 右侧内容 -->
+  <div class="max-w-6xl mx-auto px-4 pb-20">
+    <div class="flex gap-8">
+      <!-- 左侧 TOC -->
+      <aside class="w-64 shrink-0">
+        <nav class="sticky top-20 bg-bg-card border border-border-dark rounded-lg p-4">
+          <h3 class="text-sm font-semibold text-text-muted mb-4 uppercase tracking-wide">章节导航</h3>
+          <ul class="space-y-2 text-sm">
+            <li><a href="#section-version" class="toc-link block py-1.5 text-gray-300">§1 规范版本</a></li>
+            <li><a href="#section-metadata" class="toc-link block py-1.5 text-gray-300">§2 元数据</a></li>
+            <li><a href="#section-agentroot" class="toc-link block py-1.5 text-gray-300">§3 AgentRoot</a></li>
+            <li><a href="#section-acpagent" class="toc-link block py-1.5 text-gray-300">§4 ACP Agent</a></li>
+            <li><a href="#section-permissions" class="toc-link block py-1.5 text-gray-300">§5 Permissions</a></li>
+            <li><a href="#section-examples" class="toc-link block py-1.5 text-gray-300">§6 完整示例</a></li>
+          </ul>
+        </nav>
+      </aside>
+
+      <!-- 右侧内容 -->
+      <main class="flex-1 min-w-0">
+        
+        <!-- §1 规范版本 -->
+        <section id="section-version" class="section-anchor fade-in mb-12">
+          <div class="bg-bg-card border border-border-dark rounded-xl p-6">
+            <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+              <span class="text-primary">§1</span>
+              <span>规范版本</span>
+            </h2>
+            <p class="text-text-muted mb-6">
+              规范版本字段定义了配置文件所遵循的 OAR Runtime Specification 版本，确保消费方能够正确解析和验证配置。
+            </p>
+
+            <!-- 字段表格 -->
+            <div class="overflow-x-auto mb-6">
+              <table class="w-full text-sm">
+                <thead class="bg-bg-elevated">
+                  <tr>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">字段</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">类型</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">约束</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary">oarVersion</td>
+                    <td class="px-4 py-3 text-text-muted">string</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-4 py-3">必须符合 SemVer v2.0.0 格式</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 特性列表 -->
+            <div class="bg-bg-elevated rounded-lg p-4 mb-6">
+              <h4 class="font-semibold mb-3 flex items-center gap-2">
+                <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                版本控制特性
+              </h4>
+              <ul class="space-y-2 text-sm text-text-muted">
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>遵循 SemVer 语义化版本控制，主版本内保持兼容</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>消费方必须拒绝未知的主版本号，防止解析错误</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>向前兼容：新版本可读取旧版本配置</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>向后兼容：旧版本可读取新版本配置（主版本相同）</span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- 代码示例 -->
+            <div>
+              <h4 class="font-semibold mb-3 text-sm flex items-center gap-2">
+                <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                </svg>
+                示例代码
+              </h4>
+              <pre class="text-gray-300"><code>{
+  "oarVersion": "0.1.0"
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- §2 元数据 -->
+        <section id="section-metadata" class="section-anchor fade-in mb-12">
+          <div class="bg-bg-card border border-border-dark rounded-xl p-6">
+            <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+              <span class="text-primary">§2</span>
+              <span>元数据</span>
+            </h2>
+            <p class="text-text-muted mb-6">
+              元数据字段描述 agent 实例的身份信息，包括实例名称和可选的注解。这是实例级别的标识，而非类型定义。
+            </p>
+
+            <!-- 字段表格 -->
+            <div class="overflow-x-auto mb-6">
+              <table class="w-full text-sm">
+                <thead class="bg-bg-elevated">
+                  <tr>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">字段</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">类型</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">约束</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary">metadata</td>
+                    <td class="px-4 py-3 text-text-muted">object</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-4 py-3">Agent 实例身份信息容器</td>
+                  </tr>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary pl-8">name</td>
+                    <td class="px-4 py-3 text-text-muted">string</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-4 py-3">实例名称，如 "auth-refactor-agent"</td>
+                  </tr>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary pl-8">annotations</td>
+                    <td class="px-4 py-3 text-text-muted">map[string]string</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">OPTIONAL</span></td>
+                    <td class="px-4 py-3">任意元数据，键使用反向域名表示法</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 关键概念 -->
+            <div class="bg-bg-elevated rounded-lg p-4 mb-6">
+              <h4 class="font-semibold mb-3 flex items-center gap-2">
+                <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                设计理念
+              </h4>
+              <ul class="space-y-2 text-sm text-text-muted">
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span><strong class="text-gray-300">实例 vs 类型</strong>：name 是实例名（如 "auth-refactor-agent"），而非 agent 类型名（如 "claude"）</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span><strong class="text-gray-300">OCI 一致性</strong>：与 OCI config.json 设计一致，描述具体容器实例而非镜像</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span><strong class="text-gray-300">注解规范</strong>：键使用反向域名表示法（如 <code class="text-primary">org.openagents.task</code>）</span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- 代码示例 -->
+            <div>
+              <h4 class="font-semibold mb-3 text-sm flex items-center gap-2">
+                <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                </svg>
+                示例代码
+              </h4>
+              <pre class="text-gray-300"><code>{
+  "metadata": {
+    "name": "auth-refactor-agent",
+    "annotations": {
+      "org.openagents.task": "backend-refactor",
+      "org.openagents.owner": "zoumo"
+    }
+  }
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- §3 AgentRoot -->
+        <section id="section-agentroot" class="section-anchor fade-in mb-12">
+          <div class="bg-bg-card border border-border-dark rounded-xl p-6">
+            <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+              <span class="text-primary">§3</span>
+              <span>AgentRoot</span>
+            </h2>
+            <p class="text-text-muted mb-6">
+              AgentRoot 指定 agent 的工作目录根路径，类比 OCI 的 root 字段。关键设计：路径相对于 bundle 目录，而非绝对路径。
+            </p>
+
+            <!-- 字段表格 -->
+            <div class="overflow-x-auto mb-6">
+              <table class="w-full text-sm">
+                <thead class="bg-bg-elevated">
+                  <tr>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">字段</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">类型</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">约束</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary">agentRoot</td>
+                    <td class="px-4 py-3 text-text-muted">object</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-4 py-3">Agent 工作目录配置</td>
+                  </tr>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary pl-8">path</td>
+                    <td class="px-4 py-3 text-text-muted">string</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-4 py-3">相对于 bundle 的路径，通常为 "workspace"</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- OCI 对比表格 -->
+            <div class="bg-bg-elevated rounded-lg p-4 mb-6">
+              <h4 class="font-semibold mb-3 flex items-center gap-2">
+                <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+                与 OCI root 的对比
+              </h4>
+              <table class="w-full text-sm mt-3">
+                <thead>
+                  <tr class="border-b border-border-dark">
+                    <th class="px-3 py-2 text-left text-gray-400">OCI</th>
+                    <th class="px-3 py-2 text-left text-gray-400">OAR</th>
+                  </tr>
+                </thead>
+                <tbody class="text-text-muted">
+                  <tr class="border-b border-border-dark/50">
+                    <td class="px-3 py-2">root.path — rootfs 相对路径</td>
+                    <td class="px-3 py-2">agentRoot.path — workspace 链接相对路径</td>
+                  </tr>
+                  <tr class="border-b border-border-dark/50">
+                    <td class="px-3 py-2">containerd 通过 snapshotter 准备 rootfs</td>
+                    <td class="px-3 py-2">agentd Workspace Manager 准备 workspace 并 symlink</td>
+                  </tr>
+                  <tr class="border-b border-border-dark/50">
+                    <td class="px-3 py-2">runc 解析路径作为容器 /</td>
+                    <td class="px-3 py-2">agent-shim 解析路径作为 agent cwd</td>
+                  </tr>
+                  <tr>
+                    <td class="px-3 py-2">rootfs 每容器隔离</td>
+                    <td class="px-3 py-2">workspace 在 Room 中共享</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 解析流程 -->
+            <div class="bg-bg-elevated rounded-lg p-4 mb-6">
+              <h4 class="font-semibold mb-3 flex items-center gap-2">
+                <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                agent-shim 解析流程
+              </h4>
+              <ul class="space-y-2 text-sm text-text-muted">
+                <li class="flex items-start gap-2">
+                  <span class="bg-primary/20 text-primary rounded px-1.5 py-0.5 text-xs font-mono">1</span>
+                  <span>Join(bundle目录, agentRoot.path) → 得到绝对路径</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="bg-primary/20 text-primary rounded px-1.5 py-0.5 text-xs font-mono">2</span>
+                  <span>EvalSymlinks → 获取 canonical 路径</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="bg-primary/20 text-primary rounded px-1.5 py-0.5 text-xs font-mono">3</span>
+                  <span>用作 cmd.Dir 和 ACP session/new cwd</span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- 代码示例 -->
+            <div>
+              <h4 class="font-semibold mb-3 text-sm flex items-center gap-2">
+                <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                </svg>
+                Bundle 目录结构
+              </h4>
+              <pre class="text-gray-300"><code>/var/lib/agentd/bundles/session-abc123/
+├── config.json                ← agentd writes
+└── workspace -> /var/lib/agentd/workspaces/ws-def456/   ← agentd symlinks</code></pre>
+              <p class="text-sm text-text-muted mt-3">
+                agent-shim 解析 <code class="text-primary">workspace</code> → <code class="text-primary">/var/lib/agentd/workspaces/ws-def456/</code>
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <!-- §4 ACP Agent -->
+        <section id="section-acpagent" class="section-anchor fade-in mb-12">
+          <div class="bg-bg-card border border-border-dark rounded-xl p-6">
+            <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+              <span class="text-primary">§4</span>
+              <span>ACP Agent</span>
+            </h2>
+            <p class="text-text-muted mb-6">
+              ACP Agent 是配置的核心部分，包含三个关键组件：systemPrompt（角色定义）、process（进程启动）、session（会话参数）。字段名显式包含 "acp"，表明仅支持 ACP 协议。
+            </p>
+
+            <!-- 顶层字段表格 -->
+            <div class="overflow-x-auto mb-6">
+              <table class="w-full text-sm">
+                <thead class="bg-bg-elevated">
+                  <tr>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">字段</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">类型</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">约束</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary">acpAgent</td>
+                    <td class="px-4 py-3 text-text-muted">object</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-4 py-3">ACP agent 运行时配置</td>
+                  </tr>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary pl-8">systemPrompt</td>
+                    <td class="px-4 py-3 text-text-muted">string</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">OPTIONAL</span></td>
+                    <td class="px-4 py-3">Agent 角色定义和能力约束</td>
+                  </tr>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary pl-8">process</td>
+                    <td class="px-4 py-3 text-text-muted">object</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-4 py-3">进程启动配置</td>
+                  </tr>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary pl-8">session</td>
+                    <td class="px-4 py-3 text-text-muted">object</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">OPTIONAL</span></td>
+                    <td class="px-4 py-3">ACP session/new 参数</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- SystemPrompt 子节 -->
+            <div class="bg-bg-elevated rounded-lg p-4 mb-6">
+              <h4 class="font-semibold mb-3 flex items-center gap-2 text-primary">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9 9 0 01-9-9c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                </svg>
+                SystemPrompt
+              </h4>
+              <p class="text-sm text-text-muted mb-3">
+                Agent 的核心身份属性，定义角色和能力约束。在 Room 场景中，agent 先启动就绪，等待编排器通过 ARI session/prompt 发送任务。
+              </p>
+              <ul class="space-y-2 text-sm text-text-muted">
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>来源：<code class="text-primary">runtimeClass 配置 + 编排器请求</code></span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>传递时机：ACP session/new</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>层级：与 process、session 平级</span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Process 子节 -->
+            <div class="bg-bg-elevated rounded-lg p-4 mb-6">
+              <h4 class="font-semibold mb-3 flex items-center gap-2 text-primary">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+                </svg>
+                Process
+              </h4>
+              <p class="text-sm text-text-muted mb-3">
+                指定如何启动 ACP agent 进程。运行时使用这些字段进行 fork/exec。
+              </p>
+              
+              <table class="w-full text-sm mt-3 mb-4">
+                <thead class="bg-bg-card">
+                  <tr>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">字段</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">类型</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">约束</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="hover:bg-bg-card/50">
+                    <td class="px-3 py-2 font-mono text-primary">command</td>
+                    <td class="px-3 py-2 text-text-muted">string</td>
+                    <td class="px-3 py-2"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-3 py-2">可执行文件，类似 OCI process.args[0]</td>
+                  </tr>
+                  <tr class="hover:bg-bg-card/50">
+                    <td class="px-3 py-2 font-mono text-primary">args</td>
+                    <td class="px-3 py-2 text-text-muted">[]string</td>
+                    <td class="px-3 py-2"><span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">OPTIONAL</span></td>
+                    <td class="px-3 py-2">命令行参数</td>
+                  </tr>
+                  <tr class="hover:bg-bg-card/50">
+                    <td class="px-3 py-2 font-mono text-primary">env</td>
+                    <td class="px-3 py-2 text-text-muted">[]string</td>
+                    <td class="px-3 py-2"><span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">OPTIONAL</span></td>
+                    <td class="px-3 py-2">环境变量覆盖，格式 KEY=VALUE</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <h5 class="font-semibold mb-2 text-sm text-gray-300">环境变量合并策略</h5>
+              <ul class="space-y-2 text-sm text-text-muted">
+                <li class="flex items-start gap-2">
+                  <span class="bg-primary/20 text-primary rounded px-1.5 py-0.5 text-xs font-mono">1</span>
+                  <span>agentd 合并 runtimeClass 配置（如 ANTHROPIC_API_KEY）+ 编排器请求（如 GITHUB_TOKEN）</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="bg-primary/20 text-primary rounded px-1.5 py-0.5 text-xs font-mono">2</span>
+                  <span>运行时以父进程环境为基础，config.json 变量覆盖其上</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="bg-primary/20 text-primary rounded px-1.5 py-0.5 text-xs font-mono">3</span>
+                  <span>确保 agent 拥有完整系统环境（PATH、HOME 等），config.json 优先级更高</span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- Session 子节 -->
+            <div class="bg-bg-elevated rounded-lg p-4 mb-6">
+              <h4 class="font-semibold mb-3 flex items-center gap-2 text-primary">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.586-4.586a2 2 0 00-2.828-2.828L12 7.171l-4.586-4.586a2 2 0 00-2.828 2.828L9 10m6 0l-4.586 4.586a2 2 0 002.828 2.828L12 12.828l4.586 4.586a2 2 0 002.828-2.828L15 10m-6 0H3m12 0h6"/>
+                </svg>
+                Session
+              </h4>
+              <p class="text-sm text-text-muted mb-3">
+                指定 ACP session/new 请求参数。完成 initialize 握手后，运行时发送 session/new 创建会话。
+              </p>
+
+              <table class="w-full text-sm mt-3 mb-4">
+                <thead class="bg-bg-card">
+                  <tr>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">字段</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">类型</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">约束</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="hover:bg-bg-card/50">
+                    <td class="px-3 py-2 font-mono text-primary">mcpServers</td>
+                    <td class="px-3 py-2 text-text-muted">[]McpServer</td>
+                    <td class="px-3 py-2"><span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">OPTIONAL</span></td>
+                    <td class="px-3 py-2">MCP 服务列表，默认 []</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <h5 class="font-semibold mb-2 text-sm text-gray-300">McpServer 结构</h5>
+              <table class="w-full text-sm">
+                <thead class="bg-bg-card">
+                  <tr>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">字段</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">类型</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">约束</th>
+                    <th class="px-3 py-2 text-left font-semibold text-gray-300">说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="hover:bg-bg-card/50">
+                    <td class="px-3 py-2 font-mono text-primary">type</td>
+                    <td class="px-3 py-2 text-text-muted">string</td>
+                    <td class="px-3 py-2"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-3 py-2">传输类型："http" 或 "sse"</td>
+                  </tr>
+                  <tr class="hover:bg-bg-card/50">
+                    <td class="px-3 py-2 font-mono text-primary">url</td>
+                    <td class="px-3 py-2 text-text-muted">string</td>
+                    <td class="px-3 py-2"><span class="px-2 py-0.5 bg-red-500/20 text-red-400 rounded text-xs">REQUIRED</span></td>
+                    <td class="px-3 py-2">MCP 服务 URL</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 代码示例 -->
+            <div>
+              <h4 class="font-semibold mb-3 text-sm flex items-center gap-2">
+                <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                </svg>
+                Process 示例
+              </h4>
+              <pre class="text-gray-300"><code>{
+  "acpAgent": {
+    "process": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/claude-code-acp"],
+      "env": [
+        "ANTHROPIC_API_KEY=sk-ant-xxx",
+        "GITHUB_TOKEN=ghp_xxx"
+      ]
+    }
+  }
+}</code></pre>
+            </div>
+
+            <div class="mt-6">
+              <h4 class="font-semibold mb-3 text-sm flex items-center gap-2">
+                <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                </svg>
+                Session 示例
+              </h4>
+              <pre class="text-gray-300"><code>{
+  "acpAgent": {
+    "session": {
+      "mcpServers": [
+        {
+          "type": "http",
+          "url": "http://localhost:3000/mcp"
+        }
+      ]
+    }
+  }
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- §5 Permissions -->
+        <section id="section-permissions" class="section-anchor fade-in mb-12">
+          <div class="bg-bg-card border border-border-dark rounded-xl p-6">
+            <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+              <span class="text-primary">§5</span>
+              <span>Permissions</span>
+            </h2>
+            <p class="text-text-muted mb-6">
+              Permissions 字段指定 agent-shim 处理 fs/* 和 terminal/* 请求时的权限策略，控制 agent 对文件系统和终端的访问权限。
+            </p>
+
+            <!-- 字段表格 -->
+            <div class="overflow-x-auto mb-6">
+              <table class="w-full text-sm">
+                <thead class="bg-bg-elevated">
+                  <tr>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">字段</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">类型</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">约束</th>
+                    <th class="px-4 py-3 text-left font-semibold text-gray-300">说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="hover:bg-bg-elevated/50">
+                    <td class="px-4 py-3 font-mono text-primary">permissions</td>
+                    <td class="px-4 py-3 text-text-muted">string</td>
+                    <td class="px-4 py-3"><span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs">OPTIONAL</span></td>
+                    <td class="px-4 py-3">权限策略，默认 "approve-all"</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 策略表格 -->
+            <div class="bg-bg-elevated rounded-lg p-4 mb-6">
+              <h4 class="font-semibold mb-3 flex items-center gap-2">
+                <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-14V4a2 2 0 00-2-2H8a2 2 0 00-2 2v1m8 0V4a2 2 0 00-2-2H8a2 2 0 00-2 2v1"/>
+                </svg>
+                权限策略取值
+              </h4>
+              <table class="w-full text-sm mt-3">
+                <thead class="bg-bg-card">
+                  <tr>
+                    <th class="px-4 py-2 text-left font-semibold text-gray-300">值</th>
+                    <th class="px-4 py-2 text-left font-semibold text-gray-300">行为</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr class="hover:bg-bg-card/50">
+                    <td class="px-4 py-2 font-mono text-primary">"approve-all"</td>
+                    <td class="px-4 py-2 text-text-muted">所有 fs/terminal 操作自动批准</td>
+                  </tr>
+                  <tr class="hover:bg-bg-card/50">
+                    <td class="px-4 py-2 font-mono text-primary">"approve-reads"</td>
+                    <td class="px-4 py-2 text-text-muted">只读操作批准，写操作返回 deny</td>
+                  </tr>
+                  <tr class="hover:bg-bg-card/50">
+                    <td class="px-4 py-2 font-mono text-primary">"deny-all"</td>
+                    <td class="px-4 py-2 text-text-muted">所有操作返回 deny</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 特性列表 -->
+            <div class="bg-bg-elevated rounded-lg p-4 mb-6">
+              <h4 class="font-semibold mb-3 flex items-center gap-2">
+                <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                关键特性
+              </h4>
+              <ul class="space-y-2 text-sm text-text-muted">
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>策略在 session 创建时确定，运行时不可更改</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>影响 fs/* 和 terminal/*两类请求</span>
+                </li>
+                <li class="flex items-start gap-2">
+                  <span class="text-primary mt-1">•</span>
+                  <span>默认值 "approve-all" 允许完全访问</span>
+                </li>
+              </ul>
+            </div>
+
+            <!-- 代码示例 -->
+            <div>
+              <h4 class="font-semibold mb-3 text-sm flex items-center gap-2">
+                <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                </svg>
+                示例代码
+              </h4>
+              <pre class="text-gray-300"><code>{
+  "permissions": "approve-all"
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- §6 完整示例 -->
+        <section id="section-examples" class="section-anchor fade-in mb-12">
+          <div class="bg-bg-card border border-border-dark rounded-xl p-6">
+            <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+              <span class="text-primary">§6</span>
+              <span>完整示例</span>
+            </h2>
+            <p class="text-text-muted mb-6">
+              三种典型场景的完整配置：带角色设定的 Agent、空闲 Agent（Room 成员）、最小配置。
+            </p>
+
+            <!-- 示例1：带角色设定的 Agent -->
+            <div class="mb-8">
+              <h4 class="font-semibold mb-3 text-lg flex items-center gap-2">
+                <span class="bg-primary/20 text-primary rounded px-2 py-0.5 text-sm">示例 1</span>
+                <span>带角色设定的 Agent</span>
+              </h4>
+              <p class="text-sm text-text-muted mb-3">
+                runtimeClass "claude" 解析后的完整配置，启动后等待编排器通过 ARI session/prompt 发送任务。
+              </p>
+              <pre class="text-gray-300"><code>{
+  "oarVersion": "0.1.0",
+
+  "metadata": {
+    "name": "auth-refactor",
+    "annotations": {
+      "org.openagents.task": "PROJ-1234"
+    }
+  },
+
+  "agentRoot": {
+    "path": "workspace"
+  },
+
+  "acpAgent": {
+    "systemPrompt": "你是专注于安全和认证系统的高级后端工程师。请遵循项目的编码规范。",
+    "process": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/claude-code-acp"],
+      "env": [
+        "ANTHROPIC_API_KEY=sk-ant-xxx",
+        "GITHUB_TOKEN=ghp_xxx"
+      ]
+    },
+    "session": {
+      "mcpServers": [
+        {
+          "type": "http",
+          "url": "http://localhost:3000/mcp"
+        }
+      ]
+    }
+  },
+
+  "permissions": "approve-all"
+}</code></pre>
+            </div>
+
+            <!-- 示例2：空闲 Agent -->
+            <div class="mb-8">
+              <h4 class="font-semibold mb-3 text-lg flex items-center gap-2">
+                <span class="bg-primary/20 text-primary rounded px-2 py-0.5 text-sm">示例 2</span>
+                <span>空闲 Agent（Room 成员）</span>
+              </h4>
+              <p class="text-sm text-text-muted mb-3">
+                runtimeClass "gemini" 解析后，启动后等待 Room 中其他 agent 的审查请求。
+              </p>
+              <pre class="text-gray-300"><code>{
+  "oarVersion": "0.1.0",
+
+  "metadata": {
+    "name": "code-reviewer"
+  },
+
+  "agentRoot": {
+    "path": "workspace"
+  },
+
+  "acpAgent": {
+    "systemPrompt": "你是代码审查专家，负责检查代码变更的正确性、安全性和风格。",
+    "process": {
+      "command": "gemini"
+    }
+  }
+}</code></pre>
+            </div>
+
+            <!-- 示例3：最小配置 -->
+            <div>
+              <h4 class="font-semibold mb-3 text-lg flex items-center gap-2">
+                <span class="bg-primary/20 text-primary rounded px-2 py-0.5 text-sm">示例 3</span>
+                <span>最小配置</span>
+              </h4>
+              <p class="text-sm text-text-muted mb-3">
+                仅包含必需字段的最简配置。
+              </p>
+              <pre class="text-gray-300"><code>{
+  "oarVersion": "0.1.0",
+  "metadata": { "name": "quick-task" },
+  "agentRoot": { "path": "workspace" },
+  "acpAgent": {
+    "process": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/claude-code-acp"]
+    }
+  }
+}</code></pre>
+            </div>
+          </div>
+        </section>
+
+        <!-- 可扩展性说明 -->
+        <section class="section-anchor fade-in mb-12">
+          <div class="bg-bg-card border border-border-dark rounded-xl p-6">
+            <h2 class="text-2xl font-bold mb-4 flex items-center gap-2">
+              <span class="text-primary">⊕</span>
+              <span>可扩展性</span>
+            </h2>
+            <p class="text-text-muted mb-6">
+              本规范保持精简，已预留未来扩展点：
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="bg-bg-elevated rounded-lg p-4">
+                <h4 class="font-semibold mb-2 text-primary font-mono text-sm">acpAgent.process.user</h4>
+                <p class="text-sm text-text-muted">以特定用户身份运行 agent</p>
+              </div>
+              <div class="bg-bg-elevated rounded-lg p-4">
+                <h4 class="font-semibold mb-2 text-primary font-mono text-sm">acpAgent.session.*</h4>
+                <p class="text-sm text-text-muted">随 ACP 协议 session/new 演进扩展</p>
+              </div>
+              <div class="bg-bg-elevated rounded-lg p-4">
+                <h4 class="font-semibold mb-2 text-primary font-mono text-sm">hooks</h4>
+                <p class="text-sm text-text-muted">基础设施级准备需求（如 GPU 分配）</p>
+              </div>
+              <div class="bg-bg-elevated rounded-lg p-4">
+                <h4 class="font-semibold mb-2 text-primary font-mono text-sm">resources</h4>
+                <p class="text-sm text-text-muted">资源限制</p>
+              </div>
+              <div class="bg-bg-elevated rounded-lg p-4">
+                <h4 class="font-semibold mb-2 text-primary font-mono text-sm">isolation</h4>
+                <p class="text-sm text-text-muted">沙箱支持</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
+  </div>
+
+  <!-- JavaScript -->
+  <script>
+    // 阅读进度追踪
+    const progressBar = document.querySelector('.bar-fill');
+    const progressText = document.getElementById('progress-text');
+    
+    function updateProgress() {
+      const scrollTop = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const progress = Math.min(100, Math.max(0, (scrollTop / docHeight) * 100));
+      
+      progressBar.style.width = progress + '%';
+      progressText.textContent = Math.round(progress) + '% 已阅读';
+    }
+    
+    // 淡入动画
+    const fadeElements = document.querySelectorAll('.fade-in');
+    
+    function checkFadeIn() {
+      fadeElements.forEach(el => {
+        const rect = el.getBoundingClientRect();
+        const windowHeight = window.innerHeight;
+        
+        if (rect.top < windowHeight * 0.85) {
+          el.classList.add('visible');
+        }
+      });
+    }
+    
+    // TOC 高亮
+    const tocLinks = document.querySelectorAll('.toc-link');
+    const sections = document.querySelectorAll('.section-anchor');
+    
+    function updateTocHighlight() {
+      let currentSection = null;
+      
+      sections.forEach(section => {
+        const rect = section.getBoundingClientRect();
+        if (rect.top <= 100) {
+          currentSection = section.id;
+        }
+      });
+      
+      tocLinks.forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === '#' + currentSection) {
+          link.classList.add('active');
+        }
+      });
+    }
+    
+    // 事件监听
+    window.addEventListener('scroll', () => {
+      updateProgress();
+      checkFadeIn();
+      updateTocHighlight();
+    }, { passive: true });
+    
+    // 初始化
+    checkFadeIn();
+    updateProgress();
+    updateTocHighlight();
+    
+    // 平滑滚动
+    tocLinks.forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const targetId = link.getAttribute('href').slice(1);
+        const target = document.getElementById(targetId);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    });
+  </script>
+</body>
+</html>

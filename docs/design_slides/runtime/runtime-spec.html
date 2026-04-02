@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OAR Runtime 规范 - 深度讲解</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#0ea5e9',
+            dark: '#0d1117',
+            darker: '#080c12',
+            card: '#161b22',
+            border: '#30363d',
+            muted: '#8b949e',
+            accent: '#58a6ff'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* fade-in animation */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    }
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    
+    /* progress bar fill */
+    .bar-fill {
+      transition: width 0.3s ease-out;
+    }
+    
+    /* read progress indicator */
+    .read-progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #0ea5e9, #58a6ff);
+      z-index: 9999;
+      box-shadow: 0 0 10px rgba(14, 165, 233, 0.5);
+    }
+    
+    /* TOC link styles */
+    .toc-link {
+      transition: all 0.2s ease;
+      border-left: 2px solid transparent;
+      padding-left: 12px;
+    }
+    .toc-link:hover {
+      border-left-color: #0ea5e9;
+      color: #0ea5e9;
+    }
+    .toc-link.active {
+      border-left-color: #0ea5e9;
+      color: #0ea5e9;
+      font-weight: 600;
+    }
+    
+    /* section anchor for navigation */
+    .section-anchor {
+      scroll-margin-top: 80px;
+    }
+    
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0d1117;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #30363d;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #0ea5e9;
+    }
+    
+    /* Code block styling */
+    pre {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+    }
+    code {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 14px;
+    }
+    
+    /* Table styling */
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #30363d;
+      padding: 12px 16px;
+      text-align: left;
+    }
+    th {
+      background: #161b22;
+      color: #0ea5e9;
+      font-weight: 600;
+    }
+    tr:hover td {
+      background: rgba(14, 165, 233, 0.05);
+    }
+  </style>
+</head>
+<body class="bg-dark text-gray-200 font-sans antialiased">
+  <!-- Top Progress Bar -->
+  <div class="read-progress bar-fill" id="readProgress" style="width: 0%"></div>
+  
+  <!-- Sticky Header -->
+  <header class="sticky top-0 z-50 bg-darker/95 backdrop-blur-sm border-b border-border">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+          <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"/>
+          </svg>
+        </div>
+        <span class="font-semibold text-lg">OAR Runtime 规范</span>
+      </div>
+      <div class="flex items-center gap-4 text-sm text-muted">
+        <span id="readingProgress">阅读进度: 0%</span>
+        <a href="#" class="hover:text-primary transition-colors">返回目录</a>
+      </div>
+    </div>
+  </header>
+  
+  <!-- Hero Section -->
+  <section class="py-16 px-6 bg-gradient-to-b from-darker to-dark">
+    <div class="max-w-4xl mx-auto text-center fade-in">
+      <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm mb-6">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+        </svg>
+        设计规范文档
+      </div>
+      
+      <h1 class="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+        OAR Runtime Specification
+      </h1>
+      
+      <p class="text-xl text-muted mb-8 max-w-2xl mx-auto">
+        定义 Agent 的状态模型、Bundle 格式、生命周期状态机、操作语义以及文件系统布局约定——实现无关的运行时规范
+      </p>
+      
+      <!-- Stats -->
+      <div class="flex justify-center gap-8 mb-8">
+        <div class="text-center">
+          <div class="text-3xl font-bold text-primary">6</div>
+          <div class="text-sm text-muted">核心章节</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-primary">4</div>
+          <div class="text-sm text-muted">状态类型</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-primary">11</div>
+          <div class="text-sm text-muted">事件类型</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-primary">5</div>
+          <div class="text-sm text-muted">核心操作</div>
+        </div>
+      </div>
+      
+      <div class="flex justify-center gap-4 text-sm">
+        <span class="px-3 py-1 rounded bg-card border border-border">状态机</span>
+        <span class="px-3 py-1 rounded bg-card border border-border">ACP 协议</span>
+        <span class="px-3 py-1 rounded bg-card border border-border">OCI 兼容</span>
+        <span class="px-3 py-1 rounded bg-card border border-border">JSON-RPC</span>
+      </div>
+    </div>
+  </section>
+  
+  <!-- Main Content: TOC + Content -->
+  <main class="max-w-7xl mx-auto px-6 py-12">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+      <!-- Left TOC -->
+      <aside class="lg:col-span-3 hidden lg:block">
+        <nav class="sticky top-24 space-y-2">
+          <div class="text-xs uppercase tracking-wider text-muted mb-4 px-3">章节导航</div>
+          <a href="#state" class="toc-link block text-sm py-2 text-muted">§1 State 模型</a>
+          <a href="#bundle" class="toc-link block text-sm py-2 text-muted">§2 Bundle 格式</a>
+          <a href="#lifecycle" class="toc-link block text-sm py-2 text-muted">§3 生命周期</a>
+          <a href="#operations" class="toc-link block text-sm py-2 text-muted">§4 操作语义</a>
+          <a href="#events" class="toc-link block text-sm py-2 text-muted">§5 事件流</a>
+          <a href="#process-types" class="toc-link block text-sm py-2 text-muted">§6 进程分类</a>
+          
+          <div class="mt-8 p-4 rounded-lg bg-card border border-border">
+            <div class="text-xs text-muted mb-2">文档版本</div>
+            <div class="text-sm font-mono text-primary">oarVersion: 0.1.0</div>
+          </div>
+        </nav>
+      </aside>
+      
+      <!-- Right Content -->
+      <article class="lg:col-span-9 space-y-12">
+        <!-- Section 1: State -->
+        <section id="state" class="section-anchor fade-in">
+          <h2 class="text-2xl font-bold mb-6 flex items-center gap-3">
+            <span class="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center text-primary font-mono">§1</span>
+            <span class="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">State 模型</span>
+          </h2>
+          
+          <p class="text-muted leading-relaxed mb-6">
+            Agent 的状态（state）是运行时对 agent 实例的完整描述。状态存储在易失性位置（如 <code class="text-primary">/run/</code>），在主机重启后丢失。持久化元数据由 agentd 负责。
+          </p>
+          
+          <div class="bg-card rounded-xl border border-border p-6 mb-6">
+            <h3 class="text-lg font-semibold mb-4 text-primary">状态属性定义</h3>
+            <div class="space-y-4">
+              <div class="flex items-start gap-3">
+                <span class="w-2 h-2 rounded-full bg-primary mt-2"></span>
+                <div>
+                  <code class="text-accent font-mono">oarVersion</code>
+                  <span class="text-muted ml-2">(string, REQUIRED)</span>
+                  <p class="text-sm text-muted mt-1">OAR Runtime Specification 的版本号</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3">
+                <span class="w-2 h-2 rounded-full bg-primary mt-2"></span>
+                <div>
+                  <code class="text-accent font-mono">id</code>
+                  <span class="text-muted ml-2">(string, REQUIRED)</span>
+                  <p class="text-sm text-muted mt-1">Agent 的唯一标识符，必须在主机上全局唯一</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3">
+                <span class="w-2 h-2 rounded-full bg-primary mt-2"></span>
+                <div>
+                  <code class="text-accent font-mono">status</code>
+                  <span class="text-muted ml-2">(string, REQUIRED)</span>
+                  <p class="text-sm text-muted mt-1">运行时状态：<code class="text-primary">creating</code> | <code class="text-primary">created</code> | <code class="text-primary">running</code> | <code class="text-primary">stopped</code></p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3">
+                <span class="w-2 h-2 rounded-full bg-primary mt-2"></span>
+                <div>
+                  <code class="text-accent font-mono">pid</code>
+                  <span class="text-muted ml-2">(int, REQUIRED when created/running)</span>
+                  <p class="text-sm text-muted mt-1">Agent 进程在主机 OS 中的进程 ID</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3">
+                <span class="w-2 h-2 rounded-full bg-primary mt-2"></span>
+                <div>
+                  <code class="text-accent font-mono">bundle</code>
+                  <span class="text-muted ml-2">(string, REQUIRED)</span>
+                  <p class="text-sm text-muted mt-1">Agent bundle 目录的绝对路径（config.json 所在位置）</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-3">
+                <span class="w-2 h-2 rounded-full bg-primary mt-2"></span>
+                <div>
+                  <code class="text-accent font-mono">annotations</code>
+                  <span class="text-muted ml-2">(map, OPTIONAL)</span>
+                  <p class="text-sm text-muted mt-1">与 agent 关联的注解列表</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <h3 class="text-lg font-semibold mb-4">状态示例</h3>
+          <pre class="mb-6"><code class="text-gray-300">{
+  "oarVersion": "0.1.0",
+  "id": "session-abc123",
+  "status": "created",
+  "pid": 12345,
+  "bundle": "/var/lib/agentd/bundles/session-abc123",
+  "annotations": {
+    "org.openagents.task": "PROJ-1234"
+  }
+}</code></pre>
+          
+          <h3 class="text-lg font-semibold mb-4">与 OCI State 的对比</h3>
+          <div class="overflow-x-auto">
+            <table class="mb-6">
+              <thead>
+                <tr>
+                  <th>OCI state.json</th>
+                  <th>OAR state.json</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="text-accent">ociVersion</code></td><td><code class="text-primary">oarVersion</code></td><td>相同</td></tr>
+                <tr><td><code class="text-accent">id</code></td><td><code class="text-primary">id</code></td><td>相同</td></tr>
+                <tr><td><code class="text-accent">status</code></td><td><code class="text-primary">status</code></td><td>相同模式</td></tr>
+                <tr><td><code class="text-accent">pid</code></td><td><code class="text-primary">pid</code></td><td>相同</td></tr>
+                <tr><td><code class="text-accent">bundle</code></td><td><code class="text-primary">bundle</code></td><td>相同概念</td></tr>
+                <tr><td><code class="text-accent">annotations</code></td><td><code class="text-primary">annotations</code></td><td>相同</td></tr>
+                <tr><td><code class="text-muted">namespace_paths</code></td><td>—</td><td>无内核 namespace</td></tr>
+                <tr><td><code class="text-muted">cgroup_paths</code></td><td>—</td><td>无 cgroups</td></tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <div class="p-4 rounded-lg bg-primary/5 border border-primary/20">
+            <div class="flex items-center gap-2 text-primary font-semibold mb-2">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              设计要点
+            </div>
+            <p class="text-sm text-muted">
+              <code class="text-primary">bundle</code> 字段指向 bundle 目录（config.json 所在位置），而非 state 目录。这镜像了 OCI state 中 bundle 指向 bundle 而非 <code class="text-accent">/run/runc/&lt;id&gt;/</code> 的设计。
+            </p>
+          </div>
+        </section>
+        
+        <!-- Section 2: Bundle -->
+        <section id="bundle" class="section-anchor fade-in">
+          <h2 class="text-2xl font-bold mb-6 flex items-center gap-3">
+            <span class="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center text-primary font-mono">§2</span>
+            <span class="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">Bundle 格式</span>
+          </h2>
+          
+          <p class="text-muted leading-relaxed mb-6">
+            <strong class="text-gray-200">Bundle</strong> 是一个目录，包含创建 agent 所需的全部信息。运行时从 bundle 目录读取配置。Bundle 的设计与 OCI 的 bundle 概念完全对应。
+          </p>
+          
+          <h3 class="text-lg font-semibold mb-4">文件系统布局</h3>
+          <pre class="mb-6"><code class="text-gray-300">/var/lib/agentd/bundles/&lt;agent-id&gt;/   ← bundle dir (bundle field in state.json)
+├── config.json
+└── workspace -> /var/lib/agentd/workspaces/ws-abc/
+
+/run/agentd/shim/&lt;agent-id&gt;/          ← state dir (ephemeral)
+├── state.json
+├── agent-shim.sock
+└── events.jsonl</code></pre>
+          
+          <div class="bg-card rounded-xl border border-border p-6 mb-6">
+            <h3 class="text-lg font-semibold mb-4 text-primary">Bundle 必需内容</h3>
+            <div class="space-y-4">
+              <div class="p-4 rounded-lg bg-darker border border-border">
+                <code class="text-accent font-mono text-lg">config.json</code>
+                <span class="text-red-400 ml-2 text-sm">REQUIRED</span>
+                <p class="text-muted mt-2">Agent 配置文件，定义 acpAgent、agentRoot、permissions 等</p>
+              </div>
+              <div class="p-4 rounded-lg bg-darker border border-border">
+                <code class="text-accent font-mono text-lg">workspace</code>
+                <span class="text-yellow-400 ml-2 text-sm">symlink (agentd 创建)</span>
+                <p class="text-muted mt-2">符号链接，指向 Workspace Manager 准备的工作区目录</p>
+              </div>
+            </div>
+          </div>
+          
+          <h3 class="text-lg font-semibold mb-4">agentRoot 与 OCI root 的类比</h3>
+          <div class="grid md:grid-cols-2 gap-4 mb-6">
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <div class="text-sm font-semibold text-accent mb-2">OCI root.path</div>
+              <p class="text-sm text-muted">bundle 内的相对路径，指向容器的 rootfs。containerd 通过 snapshotter 准备 rootfs。</p>
+            </div>
+            <div class="p-4 rounded-lg bg-card border border-primary/30">
+              <div class="text-sm font-semibold text-primary mb-2">OAR agentRoot.path</div>
+              <p class="text-sm text-muted">bundle 内的相对路径，指向 workspace。agentd 通过 Workspace Manager 准备 workspace。</p>
+            </div>
+          </div>
+          
+          <div class="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 mb-6">
+            <div class="flex items-center gap-2 text-yellow-400 font-semibold mb-2">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              关键差异
+            </div>
+            <p class="text-sm text-muted">
+              OCI rootfs 是<strong class="text-gray-200">隔离的</strong>（每个容器独立）。OAR workspace 是<strong class="text-gray-200">共享的</strong>——Room 中的多个 agent 各有自己的 bundle，但 <code class="text-primary">agentRoot.path</code> 符号链接都指向同一个底层 workspace 目录。
+            </p>
+          </div>
+          
+          <h3 class="text-lg font-semibold mb-4">Bundle 生命周期</h3>
+          <div class="space-y-3 mb-6">
+            <div class="flex items-center gap-4">
+              <span class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-mono text-sm">1</span>
+              <span class="text-muted">Workspace Manager 准备 workspace 目录（git clone / emptyDir / local）</span>
+            </div>
+            <div class="flex items-center gap-4">
+              <span class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-mono text-sm">2</span>
+              <span class="text-muted">agentd 创建 bundle 目录</span>
+            </div>
+            <div class="flex items-center gap-4">
+              <span class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-mono text-sm">3</span>
+              <span class="text-muted">agentd 写入 <code class="text-primary">config.json</code>，设置 <code class="text-accent">agentRoot.path = "workspace"</code></span>
+            </div>
+            <div class="flex items-center gap-4">
+              <span class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-mono text-sm">4</span>
+              <span class="text-muted">agentd 创建符号链接：<code class="text-primary">bundle/workspace → &lt;workspace-dir&gt;</code></span>
+            </div>
+            <div class="flex items-center gap-4">
+              <span class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-mono text-sm">5</span>
+              <span class="text-muted">agentd 调用 runtime 的 <code class="text-primary">create</code> 操作</span>
+            </div>
+            <div class="flex items-center gap-4">
+              <span class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-mono text-sm">6</span>
+              <span class="text-muted">runtime 读取 config.json，解析 agentRoot.path，启动 agent</span>
+            </div>
+          </div>
+          
+          <h3 class="text-lg font-semibold mb-4">config.json 结构</h3>
+          <pre class="mb-6"><code class="text-gray-300">{
+  "oarVersion": "0.1.0",
+  "metadata": { "name": "session-abc123" },
+  "agentRoot": { "path": "workspace" },
+  "acpAgent": {
+    "systemPrompt": "你是后端工程师",
+    "process": {
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/claude-code-acp"],
+      "env": ["ANTHROPIC_API_KEY=sk-ant-xxx"]
+    },
+    "session": {
+      "mcpServers": [
+        { "type": "http", "url": "http://localhost:3000/mcp" }
+      ]
+    }
+  },
+  "permissions": "approve-all"
+}</code></pre>
+          
+          <div class="p-4 rounded-lg bg-primary/5 border border-primary/20">
+            <div class="text-sm text-muted">
+              <span class="text-primary font-semibold">字段解析：</span>
+              <code class="text-accent">agentRoot.path</code> → 相对路径，运行时解析为绝对路径
+              <span class="mx-2">|</span>
+              <code class="text-accent">acpAgent.process</code> → fork/exec agent 进程
+              <span class="mx-2">|</span>
+              <code class="text-accent">permissions</code> → fs/terminal 权限策略
+            </div>
+          </div>
+        </section>
+        
+        <!-- Section 3: Lifecycle -->
+        <section id="lifecycle" class="section-anchor fade-in">
+          <h2 class="text-2xl font-bold mb-6 flex items-center gap-3">
+            <span class="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center text-primary font-mono">§3</span>
+            <span class="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">生命周期</span>
+          </h2>
+          
+          <p class="text-muted leading-relaxed mb-6">
+            生命周期描述 agent 从创建到终止的事件时间线。与 OCI 不同，OAR 的 <code class="text-primary">create</code> 操作<strong class="text-gray-200">同时启动进程并完成 ACP 初始化</strong>。
+          </p>
+          
+          <h3 class="text-lg font-semibold mb-4">生命周期步骤</h3>
+          <div class="space-y-4 mb-6">
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <div class="flex items-center gap-3 mb-2">
+                <span class="w-6 h-6 rounded bg-primary/20 text-primary font-mono text-xs flex items-center justify-center">2</span>
+                <span class="font-semibold">创建运行环境</span>
+              </div>
+              <p class="text-sm text-muted pl-9">根据 config.json 配置创建 agent 运行环境。失败时必须生成错误。</p>
+            </div>
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <div class="flex items-center gap-3 mb-2">
+                <span class="w-6 h-6 rounded bg-primary/20 text-primary font-mono text-xs flex items-center justify-center">3</span>
+                <span class="font-semibold">启动进程</span>
+              </div>
+              <p class="text-sm text-muted pl-9">通过 <code class="text-accent">acpAgent.process</code>（command, args, env）使用 fork/exec 启动 agent 进程。</p>
+            </div>
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <div class="flex items-center gap-3 mb-2">
+                <span class="w-6 h-6 rounded bg-primary/20 text-primary font-mono text-xs flex items-center justify-center">4</span>
+                <span class="font-semibold">ACP initialize 握手</span>
+              </div>
+              <p class="text-sm text-muted pl-9">通过 stdio JSON-RPC 完成 ACP <code class="text-accent">initialize</code> 握手。失败时杀死进程，跳至步骤 8。</p>
+            </div>
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <div class="flex items-center gap-3 mb-2">
+                <span class="w-6 h-6 rounded bg-primary/20 text-primary font-mono text-xs flex items-center justify-center">5</span>
+                <span class="font-semibold">ACP session/new 创建会话</span>
+              </div>
+              <p class="text-sm text-muted pl-9">发送 ACP <code class="text-accent">session/new</code>，参数包括 systemPrompt、cwd（解析后的 agentRoot.path）、mcpServers。</p>
+            </div>
+            <div class="p-4 rounded-lg bg-green-500/10 border border-green-500/30">
+              <div class="flex items-center gap-3 mb-2">
+                <span class="w-6 h-6 rounded bg-green-500/20 text-green-400 font-mono text-xs flex items-center justify-center">6</span>
+                <span class="font-semibold text-green-400">进入 created 状态</span>
+              </div>
+              <p class="text-sm text-muted pl-9">进程运行、ACP 会话建立、agent 就绪等待接收 prompt。</p>
+            </div>
+          </div>
+          
+          <h3 class="text-lg font-semibold mb-4">状态转换图</h3>
+          <pre class="mb-6 text-sm"><code class="text-gray-300">         create
+           │
+           ▼
+      ┌──────────┐
+      │ creating  │
+      └────┬──────┘
+           │ process started + ACP initialized + session established
+           ▼
+      ┌──────────┐          session/prompt           ┌──────────┐
+      │ created   │ ──────────────────────────────► │ running   │
+      │ (idle)    │ ◄────────────────────────────── │(prompting)│
+      └────┬──────┘          prompt completed        └────┬──────┘
+           │                                              │
+           │ kill / exit / error                          │ kill / exit / error
+           ▼                                              ▼
+      ┌──────────┐                                   ┌──────────┐
+      │ stopped   │                                   │ stopped   │
+      └────┬──────┘                                   └────┬──────┘
+           │ delete                                        │ delete
+           ▼                                              ▼
+       (removed)                                      (removed)</code></pre>
+          
+          <div class="grid md:grid-cols-2 gap-4 mb-6">
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <h4 class="text-sm font-semibold text-accent mb-3">OCI 模式</h4>
+              <p class="text-sm text-muted"><code class="text-accent">create</code> 设置环境<br><strong class="text-gray-200">但不运行用户程序</strong><br>用户程序在 <code class="text-accent">start</code> 时启动</p>
+            </div>
+            <div class="p-4 rounded-lg bg-primary/5 border border-primary/30">
+              <h4 class="text-sm font-semibold text-primary mb-3">OAR 模式</h4>
+              <p class="text-sm text-muted"><code class="text-primary">create</code> 启动进程<br><strong class="text-gray-200">并完成 ACP 初始化</strong><br>ACP 是运行时的核心协议</p>
+            </div>
+          </div>
+          
+          <div class="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+            <div class="flex items-center gap-2 text-yellow-400 font-semibold mb-2">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              设计决策
+            </div>
+            <p class="text-sm text-muted">
+              如果 ACP 握手失败，agent 实例不被视为成功创建。<code class="text-primary">start</code> 操作当前是 no-op，保留供未来使用，并保持与 OCI create/start 分离的 API 兼容性。
+            </p>
+          </div>
+        </section>
+        
+        <!-- Section 4: Operations -->
+        <section id="operations" class="section-anchor fade-in">
+          <h2 class="text-2xl font-bold mb-6 flex items-center gap-3">
+            <span class="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center text-primary font-mono">§4</span>
+            <span class="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">操作语义</span>
+          </h2>
+          
+          <p class="text-muted leading-relaxed mb-6">
+            运行时必须支持以下操作。这些操作定义的是语义接口，而非命令行 API。
+          </p>
+          
+          <div class="space-y-6">
+            <!-- Query State -->
+            <div class="bg-card rounded-xl border border-border p-6">
+              <div class="flex items-center gap-3 mb-4">
+                <code class="text-primary font-mono text-lg">state &lt;agent-id&gt;</code>
+                <span class="px-2 py-1 rounded bg-blue-500/20 text-blue-400 text-xs">查询</span>
+              </div>
+              <p class="text-muted mb-4">返回指定 agent 的完整状态（如 State 节所定义）。</p>
+              <div class="text-sm text-muted">
+                <span class="text-red-400">⚠</span> 如果 agent ID 不存在，必须生成错误。
+              </div>
+            </div>
+            
+            <!-- Create -->
+            <div class="bg-card rounded-xl border border-primary/30 p-6">
+              <div class="flex items-center gap-3 mb-4">
+                <code class="text-primary font-mono text-lg">create &lt;agent-id&gt; &lt;path-to-bundle&gt;</code>
+                <span class="px-2 py-1 rounded bg-green-500/20 text-green-400 text-xs">核心</span>
+              </div>
+              <p class="text-muted mb-4">创建新 agent 实例。这是生命周期中最关键的操作。</p>
+              <div class="space-y-2 text-sm">
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-primary"></span>
+                  <span class="text-muted">读取 <code class="text-accent">config.json</code></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-primary"></span>
+                  <span class="text-muted">解析 agentRoot：<code class="text-accent">filepath.Join + EvalSymlinks</code></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-primary"></span>
+                  <span class="text-muted">启动进程（fork/exec，<code class="text-accent">cmd.Dir</code> 设为解析路径）</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-primary"></span>
+                  <span class="text-muted">完成 ACP <code class="text-accent">initialize</code> 握手</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-primary"></span>
+                  <span class="text-muted">发送 ACP <code class="text-accent">session/new</code></span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-primary"></span>
+                  <span class="text-muted">写入 <code class="text-accent">state.json</code></span>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Start -->
+            <div class="bg-card rounded-xl border border-border p-6">
+              <div class="flex items-center gap-3 mb-4">
+                <code class="text-primary font-mono text-lg">start &lt;agent-id&gt;</code>
+                <span class="px-2 py-1 rounded bg-muted/20 text-muted text-xs">保留</span>
+              </div>
+              <p class="text-muted mb-4">当前为 no-op。Agent 在 create 时已启动并完成 ACP 初始化。</p>
+              <div class="text-sm text-muted">
+                <span class="text-yellow-400">💡</span> 保留供未来使用，保持与 OCI API 兼容性。
+              </div>
+            </div>
+            
+            <!-- Kill -->
+            <div class="bg-card rounded-xl border border-border p-6">
+              <div class="flex items-center gap-3 mb-4">
+                <code class="text-primary font-mono text-lg">kill &lt;agent-id&gt; &lt;signal&gt;</code>
+                <span class="px-2 py-1 rounded bg-red-500/20 text-red-400 text-xs">终止</span>
+              </div>
+              <p class="text-muted mb-4">向 agent 进程发送信号。默认信号为 SIGTERM。</p>
+              <div class="text-sm text-muted">
+                <span class="text-yellow-400">💡</span> 如果进程在宽限期内未退出，调用方（agentd）负责发送 SIGKILL。
+              </div>
+            </div>
+            
+            <!-- Delete -->
+            <div class="bg-card rounded-xl border border-border p-6">
+              <div class="flex items-center gap-3 mb-4">
+                <code class="text-primary font-mono text-lg">delete &lt;agent-id&gt;</code>
+                <span class="px-2 py-1 rounded bg-red-500/20 text-red-400 text-xs">清理</span>
+              </div>
+              <p class="text-muted mb-4">删除 agent，清理 create 步骤创建的资源（如 state 目录）。</p>
+              <div class="text-sm text-muted">
+                <span class="text-red-400">⚠</span> Agent 必须处于 <code class="text-accent">stopped</code> 状态才能删除。删除后 ID 可被后续 agent 使用。
+              </div>
+            </div>
+          </div>
+          
+          <h3 class="text-lg font-semibold mt-8 mb-4">权限策略</h3>
+          <div class="overflow-x-auto">
+            <table class="mb-6">
+              <thead>
+                <tr>
+                  <th>策略</th>
+                  <th>行为</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="text-primary">approve-all</code></td><td>所有操作自动批准</td></tr>
+                <tr><td><code class="text-primary">approve-reads</code></td><td>只读操作批准，写操作返回 deny</td></tr>
+                <tr><td><code class="text-primary">deny-all</code></td><td>所有操作返回 deny</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        
+        <!-- Section 5: Events -->
+        <section id="events" class="section-anchor fade-in">
+          <h2 class="text-2xl font-bold mb-6 flex items-center gap-3">
+            <span class="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center text-primary font-mono">§5</span>
+            <span class="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">事件流</span>
+          </h2>
+          
+          <p class="text-muted leading-relaxed mb-6">
+            运行时必须产出结构化的 <strong class="text-gray-200">typed event stream</strong>，供上层消费。事件持久化到 state dir 下的 <code class="text-primary">events.jsonl</code>，支持 agentd 重连后回放。
+          </p>
+          
+          <h3 class="text-lg font-semibold mb-4">事件类型定义</h3>
+          <div class="overflow-x-auto">
+            <table class="mb-6">
+              <thead>
+                <tr>
+                  <th>事件类型</th>
+                  <th>ACP 来源</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="text-primary">ThinkingEvent</code></td><td><code class="text-accent">thought_message_chunk</code></td><td>Agent 推理/思考过程</td></tr>
+                <tr><td><code class="text-primary">TextEvent</code></td><td><code class="text-accent">agent_message_chunk</code></td><td>Agent 回复文本片段</td></tr>
+                <tr><td><code class="text-primary">ToolCallEvent</code></td><td><code class="text-accent">tool_call</code></td><td>工具调用开始</td></tr>
+                <tr><td><code class="text-primary">ToolResultEvent</code></td><td><code class="text-accent">tool_call_update</code></td><td>工具调用完成/失败</td></tr>
+                <tr><td><code class="text-primary">FileWriteEvent</code></td><td><code class="text-accent">fs/write_text_file</code></td><td>文件写入操作及结果</td></tr>
+                <tr><td><code class="text-primary">FileReadEvent</code></td><td><code class="text-accent">fs/read_text_file</code></td><td>文件读取操作及结果</td></tr>
+                <tr><td><code class="text-primary">CommandEvent</code></td><td><code class="text-accent">terminal/*</code></td><td>Shell 命令执行及输出</td></tr>
+                <tr><td><code class="text-primary">PlanEvent</code></td><td><code class="text-accent">plan / plan_update</code></td><td>执行计划及状态更新</td></tr>
+                <tr><td><code class="text-primary">TurnStartEvent</code></td><td>prompt 开始</td><td>标记一个 turn 的开始</td></tr>
+                <tr><td><code class="text-primary">TurnEndEvent</code></td><td><code class="text-accent">prompt_response</code></td><td>标记一个 turn 的结束</td></tr>
+                <tr><td><code class="text-red-400">ErrorEvent</code></td><td>ACP 错误/进程异常</td><td>错误信息</td></tr>
+              </tbody>
+            </table>
+          </div>
+          
+          <div class="p-4 rounded-lg bg-primary/5 border border-primary/20 mb-6">
+            <div class="flex items-center gap-2 text-primary font-semibold mb-2">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.574a14.7 14.7 0 012.727 2.727M9 12h6m-6 4h6m2-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2h10"/>
+              </svg>
+              持久化要求
+            </div>
+            <p class="text-sm text-muted">
+              Runtime MUST 将 typed events 追加写入 state dir 下的 <code class="text-primary">events.jsonl</code>。这确保 agentd 重连后可以完整回放事件历史，恢复上层状态。
+            </p>
+          </div>
+          
+          <h3 class="text-lg font-semibold mb-4">事件流架构</h3>
+          <pre class="mb-6"><code class="text-gray-300">ACP Agent → ACP Events → Runtime (typed) → events.jsonl → agentd
+                │                              │
+                │                              ├─ ThinkingEvent
+                │                              ├─ TextEvent
+                │                              ├─ ToolCallEvent / ToolResultEvent
+                │                              ├─ FileWriteEvent / FileReadEvent
+                │                              ├─ CommandEvent
+                │                              ├─ PlanEvent
+                │                              ├─ TurnStartEvent / TurnEndEvent
+                │                              └─ ErrorEvent</code></pre>
+        </section>
+        
+        <!-- Section 6: Process Types -->
+        <section id="process-types" class="section-anchor fade-in">
+          <h2 class="text-2xl font-bold mb-6 flex items-center gap-3">
+            <span class="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center text-primary font-mono">§6</span>
+            <span class="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">进程分类</span>
+          </h2>
+          
+          <p class="text-muted leading-relaxed mb-6">
+            运行时启动 agent 进程后，从自身角度看所有 agent 都通过 ACP over stdio 通信。是否经过 wrapper（协议翻译层）对运行时是<strong class="text-gray-200">透明的</strong>。
+          </p>
+          
+          <h3 class="text-lg font-semibold mb-4">进程架构</h3>
+          <pre class="mb-6"><code class="text-gray-300"># 原生 ACP agent — 直接对接
+runtime → ACP stdio → gemini（原生 ACP）
+
+# ACP wrapper — 协议翻译后对接（对 runtime 透明）
+runtime → ACP stdio → claude-acp → Claude Code 原生协议
+runtime → ACP stdio → pi-acp     → pi RPC → GSD
+runtime → ACP stdio → codex-acp  → Codex 原生协议</code></pre>
+          
+          <div class="grid md:grid-cols-2 gap-4 mb-6">
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <h4 class="text-sm font-semibold text-accent mb-3">原生 ACP Agent</h4>
+              <p class="text-sm text-muted">直接实现 ACP 协议，无需 wrapper。如 Gemini CLI。</p>
+              <div class="mt-3 flex items-center gap-2">
+                <span class="px-2 py-1 rounded bg-green-500/20 text-green-400 text-xs">零开销</span>
+                <span class="px-2 py-1 rounded bg-primary/20 text-primary text-xs">直接通信</span>
+              </div>
+            </div>
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <h4 class="text-sm font-semibold text-accent mb-3">ACP Wrapper</h4>
+              <p class="text-sm text-muted">翻译原生协议到 ACP。如 claude-acp、pi-acp、codex-acp。</p>
+              <div class="mt-3 flex items-center gap-2">
+                <span class="px-2 py-1 rounded bg-yellow-500/20 text-yellow-400 text-xs">协议翻译</span>
+                <span class="px-2 py-1 rounded bg-muted/20 text-muted text-xs">透明代理</span>
+              </div>
+            </div>
+          </div>
+          
+          <div class="p-4 rounded-lg bg-primary/5 border border-primary/20 mb-6">
+            <div class="flex items-center gap-2 text-primary font-semibold mb-2">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+              透明性原则
+            </div>
+            <p class="text-sm text-muted">
+              Wrapper 是否存在是 <code class="text-primary">runtimeClass</code> 配置的细节，运行时不感知。所有 agent 从运行时角度看都是相同的 ACP over stdio 接口。
+            </p>
+          </div>
+          
+          <h3 class="text-lg font-semibold mb-4">Socket 路径约定</h3>
+          <pre class="mb-6"><code class="text-gray-300">/run/agentd/shim/&lt;session-id&gt;/agent-shim.sock</code></pre>
+          
+          <div class="p-4 rounded-lg bg-card border border-border">
+            <p class="text-sm text-muted">
+              Socket 与 <code class="text-accent">state.json</code>、<code class="text-accent">events.jsonl</code> 同在 state dir 下。
+              agentd 重启后扫描 <code class="text-primary">/run/agentd/shim/*/agent-shim.sock</code> 即可重连所有存活的 runtime，无需额外记录 socket 路径。
+            </p>
+          </div>
+        </section>
+        
+        <!-- Summary -->
+        <section class="fade-in border-t border-border pt-8">
+          <h2 class="text-xl font-semibold mb-6 text-primary">总结</h2>
+          <div class="grid md:grid-cols-3 gap-4">
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <h3 class="text-sm font-semibold text-accent mb-2">OCI 兼容设计</h3>
+              <p class="text-xs text-muted">State、Bundle、操作语义与 OCI runtime 规范高度对齐，便于集成现有工具链。</p>
+            </div>
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <h3 class="text-sm font-semibold text-accent mb-2">ACP 核心协议</h3>
+              <p class="text-xs text-muted">Agent Communication Protocol 是运行时的核心，create 时即完成握手和会话建立。</p>
+            </div>
+            <div class="p-4 rounded-lg bg-card border border-border">
+              <h3 class="text-sm font-semibold text-accent mb-2">事件驱动架构</h3>
+              <p class="text-xs text-muted">Typed event stream 持久化，支持重连回放，构建可靠的 agentd-runtime 通信。</p>
+            </div>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+  
+  <!-- JavaScript -->
+  <script>
+    // Reading progress
+    function updateReadingProgress() {
+      const scrollTop = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const progress = Math.min(100, Math.max(0, (scrollTop / docHeight) * 100));
+      
+      document.getElementById('readProgress').style.width = progress + '%';
+      document.getElementById('readingProgress').textContent = '阅读进度: ' + Math.round(progress) + '%';
+    }
+    
+    // TOC active state
+    function updateTOCActive() {
+      const sections = document.querySelectorAll('.section-anchor');
+      const tocLinks = document.querySelectorAll('.toc-link');
+      
+      let activeSection = null;
+      
+      sections.forEach(section => {
+        const rect = section.getBoundingClientRect();
+        if (rect.top <= 100 && rect.bottom >= 100) {
+          activeSection = section.id;
+        }
+      });
+      
+      tocLinks.forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === '#' + activeSection) {
+          link.classList.add('active');
+        }
+      });
+    }
+    
+    // Fade-in animation on scroll
+    function handleFadeIn() {
+      const fadeElements = document.querySelectorAll('.fade-in');
+      
+      fadeElements.forEach(el => {
+        const rect = el.getBoundingClientRect();
+        const isVisible = rect.top < window.innerHeight - 50;
+        
+        if (isVisible) {
+          el.classList.add('visible');
+        }
+      });
+    }
+    
+    // Smooth scroll for TOC links
+    document.querySelectorAll('.toc-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const targetId = link.getAttribute('href').substring(1);
+        const targetElement = document.getElementById(targetId);
+        
+        if (targetElement) {
+          targetElement.scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    });
+    
+    // Event listeners
+    window.addEventListener('scroll', () => {
+      updateReadingProgress();
+      updateTOCActive();
+      handleFadeIn();
+    });
+    
+    // Initial calls
+    updateReadingProgress();
+    updateTOCActive();
+    handleFadeIn();
+  </script>
+</body>
+</html>

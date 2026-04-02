@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARI — Agent Runtime Interface 深度讲解</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#f59e0b',
+            dark: '#0d1117',
+            darker: '#0a0c10',
+            card: '#161b22',
+            border: '#30363d',
+            text: '#c9d1d9',
+            muted: '#8b949e'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* 阅读进度条 */
+    .read-progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #f59e0b, #fbbf24);
+      z-index: 1000;
+      transition: width 0.1s ease-out;
+    }
+
+    /* 粘性header进度条填充 */
+    .bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #f59e0b, #fbbf24);
+      transition: width 0.15s ease-out;
+    }
+
+    /* TOC链接样式 */
+    .toc-link {
+      transition: all 0.2s ease;
+      border-left: 2px solid transparent;
+    }
+    .toc-link:hover {
+      color: #f59e0b;
+      border-left-color: #f59e0b;
+      background: rgba(245, 158, 11, 0.1);
+    }
+    .toc-link.active {
+      color: #f59e0b;
+      border-left-color: #f59e0b;
+      background: rgba(245, 158, 11, 0.15);
+    }
+
+    /* Section锚点样式 */
+    .section-anchor {
+      scroll-margin-top: 80px;
+    }
+
+    /* 淡入动画 */
+    .fade-in {
+      opacity: 0;
+      transform: translateY(20px);
+      transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    }
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* 代码块样式 */
+    pre {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    code {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .json-key { color: #79c0ff; }
+    .json-string { color: #a5d6ff; }
+    .json-number { color: #f59e0b; }
+    .json-comment { color: #8b949e; }
+
+    /* 表格样式 */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid #30363d;
+    }
+    th {
+      background: #161b22;
+      color: #f59e0b;
+      font-weight: 600;
+    }
+    tr:hover td {
+      background: rgba(245, 158, 11, 0.05);
+    }
+
+    /* 滚动条 */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0d1117;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #30363d;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #484f58;
+    }
+  </style>
+</head>
+<body class="bg-dark text-text min-h-screen">
+  <!-- 阅读进度条 -->
+  <div class="read-progress" id="readProgress"></div>
+
+  <!-- 粘性Header -->
+  <header class="sticky top-0 bg-darker/95 backdrop-blur-sm border-b border-border z-50">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+          <span class="text-primary font-bold text-sm">ARI</span>
+        </div>
+        <span class="text-muted text-sm">Agent Runtime Interface</span>
+      </div>
+      <!-- Header进度条 -->
+      <div class="flex items-center gap-4">
+        <div class="w-32 h-1 bg-border rounded-full overflow-hidden">
+          <div class="bar-fill" id="headerProgress" style="width: 0%"></div>
+        </div>
+        <span class="text-muted text-xs" id="progressText">0%</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero区域 -->
+  <section class="py-16 px-6 bg-gradient-to-b from-darker to-dark">
+    <div class="max-w-7xl mx-auto text-center">
+      <h1 class="text-5xl font-bold text-white mb-4 fade-in">
+        ARI — Agent Runtime Interface
+      </h1>
+      <p class="text-xl text-muted mb-8 fade-in">
+        定义 orchestrator 与 agentd 之间的通信接口<br>
+        类似 CRI之于容器运行时，ARI 是 Agent 运行时的标准协议
+      </p>
+      <!-- 数字统计 -->
+      <div class="flex justify-center gap-12 fade-in">
+        <div class="text-center">
+          <div class="text-4xl font-bold text-primary mb-1">19</div>
+          <div class="text-sm text-muted">RPC 方法</div>
+        </div>
+        <div class="text-center">
+          <div class="text-4xl font-bold text-primary mb-1">5</div>
+          <div class="text-sm text-muted">服务分类</div>
+        </div>
+        <div class="text-center">
+          <div class="text-4xl font-bold text-primary mb-1">2</div>
+          <div class="text-sm text-muted">事件类型</div>
+        </div>
+        <div class="text-center">
+          <div class="text-4xl font-bold text-primary mb-1">JSON-RPC</div>
+          <div class="text-sm text-muted">传输协议</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 主内容区：左TOC + 右内容 -->
+  <main class="max-w-7xl mx-auto px-6 py-8 flex gap-8">
+    <!-- 左侧TOC -->
+    <aside class="w-56 shrink-0 sticky top-24 self-start">
+      <nav class="bg-card rounded-lg border border-border p-4">
+        <h3 class="text-xs text-muted uppercase tracking-wider mb-4 px-3">目录导航</h3>
+        <ul class="space-y-1" id="tocList">
+          <li><a href="#section-1" class="toc-link block py-2 px-3 text-sm rounded">§1 架构设计</a></li>
+          <li><a href="#section-2" class="toc-link block py-2 px-3 text-sm rounded">§2 传输协议</a></li>
+          <li><a href="#section-3" class="toc-link block py-2 px-3 text-sm rounded">§3 Workspace 方法</a></li>
+          <li><a href="#section-4" class="toc-link block py-2 px-3 text-sm rounded">§4 Session 方法</a></li>
+          <li><a href="#section-5" class="toc-link block py-2 px-3 text-sm rounded">§5 Room 方法</a></li>
+          <li><a href="#section-6" class="toc-link block py-2 px-3 text-sm rounded">§6 Agent 与 Daemon</a></li>
+          <li><a href="#section-7" class="toc-link block py-2 px-3 text-sm rounded">§7 事件系统</a></li>
+          <li><a href="#section-8" class="toc-link block py-2 px-3 text-sm rounded">§8 方法汇总</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <!-- 右侧内容 -->
+    <article class="flex-1 min-w-0 space-y-16">
+      
+      <!-- §1 架构设计 -->
+      <section id="section-1" class="section-anchor fade-in">
+        <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+          <span class="text-primary">§1</span> 架构设计
+        </h2>
+        
+        <div class="bg-card rounded-lg border border-border p-6 mb-6">
+          <h3 class="text-lg font-semibold text-white mb-4">什么是 ARI？</h3>
+          <p class="text-muted leading-relaxed">
+            <strong class="text-primary">ARI (Agent Runtime Interface)</strong> 是 orchestrator 和 agentd 之间的接口协议。
+            它定义了如何创建 session、管理 workspace、与运行中的 agent 交互以及管理 room。
+          </p>
+          <p class="text-muted leading-relaxed mt-3">
+            ARI 的设计参照了 Kubernetes 的 <strong class="text-white">CRI (Container Runtime Interface)</strong>，
+            后者是 kubelet 和 containerd 之间的 gRPC 接口。CRI 定义了编排器如何请求容器操作，而不耦合到任何特定的运行时实现。
+            ARI 服务于相同目的——为 Agent 运行时提供标准化的操作接口。
+          </p>
+        </div>
+
+        <h3 class="text-lg font-semibold text-white mb-4">CRI → ARI 映射</h3>
+        <p class="text-muted mb-4">以下是 CRI 服务与 ARI 方法的对应关系：</p>
+        <div class="overflow-x-auto mb-8">
+          <table>
+            <thead>
+              <tr>
+                <th>CRI Service</th>
+                <th>ARI 对应</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td><code class="text-blue-400">RuntimeService.RunPodSandbox</code></td><td><code class="text-primary">room/*</code></td><td>创建协同调度组</td></tr>
+              <tr><td><code class="text-blue-400">RuntimeService.CreateContainer</code></td><td><code class="text-primary">session/new</code></td><td>创建工作负载实例</td></tr>
+              <tr><td><code class="text-blue-400">RuntimeService.StartContainer</code></td><td><span class="text-muted">（隐含在 session/new 中）</span></td><td>推迟分离</td></tr>
+              <tr><td><code class="text-blue-400">RuntimeService.StopContainer</code></td><td><code class="text-primary">session/stop</code></td><td>停止工作负载</td></tr>
+              <tr><td><code class="text-blue-400">RuntimeService.RemoveContainer</code></td><td><code class="text-primary">session/remove</code></td><td>清理元数据</td></tr>
+              <tr><td><code class="text-blue-400">RuntimeService.ListContainers</code></td><td><code class="text-primary">session/list</code></td><td>查询工作负载</td></tr>
+              <tr><td><code class="text-blue-400">RuntimeService.ContainerStatus</code></td><td><code class="text-primary">session/status</code></td><td>查询工作负载状态</td></tr>
+              <tr><td><code class="text-blue-400">RuntimeService.ExecSync</code></td><td><code class="text-primary">session/prompt</code></td><td>在 session 中执行工作</td></tr>
+              <tr><td><code class="text-blue-400">ImageService.PullImage</code></td><td><code class="text-primary">workspace/prepare</code></td><td>准备工作环境</td></tr>
+              <tr><td><code class="text-blue-400">ImageService.RemoveImage</code></td><td><code class="text-primary">workspace/cleanup</code></td><td>移除工作环境</td></tr>
+              <tr><td><code class="text-blue-400">ImageService.ListImages</code></td><td><code class="text-primary">workspace/list</code></td><td>查询可用环境</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid grid-cols-2 gap-6">
+          <div class="bg-card rounded-lg border border-border p-6">
+            <h3 class="text-lg font-semibold text-white mb-4">CRI 有但 ARI 不需要</h3>
+            <ul class="space-y-3 text-muted">
+              <li class="flex items-start gap-2">
+                <span class="text-primary">•</span>
+                <span><code class="text-blue-400">ContainerStats</code> / <code class="text-blue-400">PodSandboxStats</code> — Agent 不需要资源监控</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-primary">•</span>
+                <span><code class="text-blue-400">UpdateContainerResources</code> — 不需要运行时资源限制</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-primary">•</span>
+                <span><code class="text-blue-400">PortForward</code> — 没有 network namespace 可以转发</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-primary">•</span>
+                <span><code class="text-blue-400">Attach</code> — ARI 有自己的 attach 语义用于交互式 session</span>
+              </li>
+            </ul>
+          </div>
+          <div class="bg-card rounded-lg border border-border p-6">
+            <h3 class="text-lg font-semibold text-white mb-4">ARI 有但 CRI 没有</h3>
+            <ul class="space-y-3 text-muted">
+              <li class="flex items-start gap-2">
+                <span class="text-primary">•</span>
+                <span><code class="text-primary">session/prompt</code> — Agent 处理 prompt，这是核心的 agent 交互模型</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-primary">•</span>
+                <span><code class="text-primary">session/cancel</code> — 取消进行中的 agent 工作（遵循 ACP 语义）</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-primary">•</span>
+                <span><code class="text-primary">session/attach</code> / <code class="text-primary">session/detach</code> — 交互式观察 agent 工作</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-primary">•</span>
+                <span><code class="text-primary">room/send</code> / <code class="text-primary">room/broadcast</code> — Room 内的 agent 间通信</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- §2 传输协议 -->
+      <section id="section-2" class="section-anchor fade-in">
+        <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+          <span class="text-primary">§2</span> 传输协议
+        </h2>
+
+        <div class="bg-gradient-to-r from-primary/10 to-transparent rounded-lg border border-primary/30 p-6 mb-6">
+          <div class="flex items-center gap-4 mb-4">
+            <div class="w-12 h-12 rounded-lg bg-primary/20 flex items-center justify-center">
+              <span class="text-2xl">📡</span>
+            </div>
+            <div>
+              <h3 class="text-lg font-semibold text-white">JSON-RPC 2.0 over Unix Socket</h3>
+              <p class="text-muted text-sm">路径: <code class="text-primary">/run/agentd/agentd.sock</code>（可配置）</p>
+            </div>
+          </div>
+        </div>
+
+        <h3 class="text-lg font-semibold text-white mb-4">为什么使用 JSON-RPC over Unix Socket？</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+          <div class="bg-card rounded-lg border border-border p-5">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-primary font-bold">1</span>
+              <span class="text-white font-medium">仅本地通信</span>
+            </div>
+            <p class="text-muted text-sm">不需要 TCP，Unix socket 专为本地进程间通信优化</p>
+          </div>
+          <div class="bg-card rounded-lg border border-border p-5">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-primary font-bold">2</span>
+              <span class="text-white font-medium">内置访问控制</span>
+            </div>
+            <p class="text-muted text-sm">Unix socket 权限（0600）提供访问控制，不需要额外的 token 认证</p>
+          </div>
+          <div class="bg-card rounded-lg border border-border p-5">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-primary font-bold">3</span>
+              <span class="text-white font-medium">双向 Notification</span>
+            </div>
+            <p class="text-muted text-sm">JSON-RPC 2.0 支持双向 notification，用于流式事件推送</p>
+          </div>
+          <div class="bg-card rounded-lg border border-border p-5">
+            <div class="flex items-center gap-2 mb-3">
+              <span class="text-primary font-bold">4</span>
+              <span class="text-white font-medium">SSH 隧道远程访问</span>
+            </div>
+            <p class="text-muted text-sm">远程访问通过 SSH 隧道实现，零代码改动</p>
+          </div>
+        </div>
+
+        <h3 class="text-lg font-semibold text-white mb-4">为什么不用 gRPC？（CRI 使用 gRPC）</h3>
+        <div class="bg-card rounded-lg border border-border p-6">
+          <p class="text-muted leading-relaxed mb-4">
+            CRI 选择 gRPC 是因为 protobuf schema 强制校验和代码生成。
+            ARI 使用 JSON-RPC 是因为更简单，并且下游协议 <strong class="text-primary">ACP</strong> 也是 JSON-RPC。
+          </p>
+          <div class="bg-dark rounded-lg p-4 border border-border">
+            <p class="text-primary font-medium mb-2">跨层保持相同的 wire format 减少了翻译开销</p>
+            <pre class="text-muted text-sm mt-2">ARI (orchestrator → agentd)  ──JSON-RPC──→  agentd
+ACP (agentd → agent-shim)    ──JSON-RPC──→  agent
+                                        ↑
+                            同协议，零翻译损耗</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- §3 Workspace 方法 -->
+      <section id="section-3" class="section-anchor fade-in">
+        <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+          <span class="text-primary">§3</span> Workspace 方法
+        </h2>
+
+        <div class="bg-card rounded-lg border border-border p-6 mb-6">
+          <p class="text-muted">
+            Workspace 方法管理 agent 的工作环境。对标 CRI 的 <strong class="text-white">ImageService</strong>。
+            包含 3 个方法：prepare、list、cleanup。
+          </p>
+        </div>
+
+        <!-- workspace/prepare -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold text-primary mb-4">
+            <code>workspace/prepare</code>
+          </h3>
+          <p class="text-muted mb-4">从 Workspace Spec 准备一个 workspace。在 workspace 准备就绪后返回。</p>
+          <pre><code><span class="json-comment">// 请求</span>
+{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">1</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"workspace/prepare"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"spec"</span>: {
+      <span class="json-key">"oarVersion"</span>: <span class="json-string">"0.1.0"</span>,
+      <span class="json-key">"metadata"</span>: { <span class="json-key">"name"</span>: <span class="json-string">"my-project"</span> },
+      <span class="json-key">"source"</span>: { <span class="json-key">"type"</span>: <span class="json-string">"local"</span>, <span class="json-key">"path"</span>: <span class="json-string">"/home/user/project"</span> }
+    }
+  }
+}
+
+<span class="json-comment">// 响应</span>
+{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">1</span>,
+  <span class="json-key">"result"</span>: {
+    <span class="json-key">"workspaceId"</span>: <span class="json-string">"ws-abc123"</span>,
+    <span class="json-key">"path"</span>: <span class="json-string">"/home/user/project"</span>,
+    <span class="json-key">"status"</span>: <span class="json-string">"ready"</span>
+  }
+}</code></pre>
+        </div>
+
+        <!-- workspace/list -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold text-primary mb-4">
+            <code>workspace/list</code>
+          </h3>
+          <p class="text-muted mb-4">列出所有 workspace 及其状态。</p>
+          <pre><code><span class="json-comment">// 请求</span>
+{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">2</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"workspace/list"</span>,
+  <span class="json-key">"params"</span>: {}
+}
+
+<span class="json-comment">// 响应</span>
+{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">2</span>,
+  <span class="json-key">"result"</span>: {
+    <span class="json-key">"workspaces"</span>: [
+      {
+        <span class="json-key">"workspaceId"</span>: <span class="json-string">"ws-abc123"</span>,
+        <span class="json-key">"name"</span>: <span class="json-string">"my-project"</span>,
+        <span class="json-key">"path"</span>: <span class="json-string">"/home/user/project"</span>,
+        <span class="json-key">"status"</span>: <span class="json-string">"ready"</span>,
+        <span class="json-key">"refs"</span>: [<span class="json-string">"session-001"</span>, <span class="json-string">"session-002"</span>]
+      }
+    ]
+  }
+}</code></pre>
+        </div>
+
+        <!-- workspace/cleanup -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold text-primary mb-4">
+            <code>workspace/cleanup</code>
+          </h3>
+          <p class="text-muted mb-4">移除 workspace。如果仍有 session 引用此 workspace 则失败。</p>
+          <pre><code>{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">3</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"workspace/cleanup"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"workspaceId"</span>: <span class="json-string">"ws-abc123"</span>
+  }
+}</code></pre>
+        </div>
+      </section>
+
+      <!-- §4 Session 方法 -->
+      <section id="section-4" class="section-anchor fade-in">
+        <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+          <span class="text-primary">§4</span> Session 方法
+        </h2>
+
+        <div class="bg-card rounded-lg border border-border p-6 mb-6">
+          <p class="text-muted">
+            Session 方法管理 agent session。核心方法通过 <strong class="text-white">shim RPC</strong> 转发给 agent；
+            ARI 特有的方法处理管理操作。共 9 个方法。
+          </p>
+        </div>
+
+        <!-- session/new -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold text-primary mb-4">
+            <code>session/new</code> — 创建并启动 agent
+          </h3>
+          <p class="text-muted mb-4">创建新 session 并启动 agent 进程。这是最核心的方法。</p>
+          
+          <div class="overflow-x-auto mb-4">
+            <table class="text-sm">
+              <thead>
+                <tr>
+                  <th>参数</th>
+                  <th>类型</th>
+                  <th>必填</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td><code class="text-primary">runtimeClass</code></td><td>string</td><td class="text-green-400">是</td><td>Agent 类型名称</td></tr>
+                <tr><td><code class="text-primary">workspaceId</code></td><td>string</td><td class="text-green-400">是</td><td>使用的 workspace</td></tr>
+                <tr><td><code class="text-primary">systemPrompt</code></td><td>string</td><td class="text-muted">否</td><td>Agent 的系统提示</td></tr>
+                <tr><td><code class="text-primary">prompt</code></td><td>string</td><td class="text-muted">否</td><td>初始 prompt</td></tr>
+                <tr><td><code class="text-primary">env</code></td><td>[]string</td><td class="text-muted">否</td><td>额外环境变量</td></tr>
+                <tr><td><code class="text-primary">mcpServers</code></td><td>[]McpServer</td><td class="text-muted">否</td><td>Agent 可用的 MCP 服务</td></tr>
+                <tr><td><code class="text-primary">labels</code></td><td>map</td><td class="text-muted">否</td><td>任意标签</td></tr>
+                <tr><td><code class="text-primary">room</code></td><td>string</td><td class="text-muted">否</td><td>Room 名称</td></tr>
+                <tr><td><code class="text-primary">roomAgent</code></td><td>string</td><td class="text-muted">否</td><td>Room 内的 agent 名称</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <pre><code><span class="json-comment">// 请求</span>
+{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">10</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"session/new"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"runtimeClass"</span>: <span class="json-string">"claude"</span>,
+    <span class="json-key">"workspaceId"</span>: <span class="json-string">"ws-abc123"</span>,
+    <span class="json-key">"systemPrompt"</span>: <span class="json-string">"你是一个编码 agent。"</span>,
+    <span class="json-key">"prompt"</span>: <span class="json-string">"重构 auth 模块，使用 JWT token。"</span>,
+    <span class="json-key">"env"</span>: [<span class="json-string">"GITHUB_TOKEN=${GITHUB_TOKEN}"</span>],
+    <span class="json-key">"mcpServers"</span>: [
+      { <span class="json-key">"type"</span>: <span class="json-string">"http"</span>, <span class="json-key">"url"</span>: <span class="json-string">"http://localhost:3000/mcp"</span> }
+    ],
+    <span class="json-key">"labels"</span>: { <span class="json-key">"task"</span>: <span class="json-string">"auth-refactor"</span> },
+    <span class="json-key">"room"</span>: <span class="json-string">"backend-refactor"</span>,
+    <span class="json-key">"roomAgent"</span>: <span class="json-string">"architect"</span>
+  }
+}
+
+<span class="json-comment">// 响应</span>
+{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">10</span>,
+  <span class="json-key">"result"</span>: {
+    <span class="json-key">"sessionId"</span>: <span class="json-string">"session-abc123"</span>
+  }
+}</code></pre>
+
+          <div class="bg-dark rounded-lg border border-border p-4 mt-4">
+            <h4 class="text-primary font-medium mb-2">内部流程</h4>
+            <ol class="text-muted text-sm space-y-1">
+              <li>1. 查找 runtimeClass 配置（command、args、env）</li>
+              <li>2. 生成 OAR config.json（合并参数到 acpAgent 配置）</li>
+              <li>3. 写入 config.json 到 bundle 目录</li>
+              <li>4. fork/exec <code class="text-primary">agent-shim --bundle &lt;dir&gt;</code></li>
+              <li>5. 返回 session ID</li>
+            </ol>
+          </div>
+        </div>
+
+        <!-- session/prompt -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold text-primary mb-4">
+            <code>session/prompt</code> — 发送 prompt
+          </h3>
+          <p class="text-muted mb-4">向运行中的 session 发送 prompt。agentd 通过 shim RPC 转发给 agent。</p>
+          <pre><code>{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">11</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"session/prompt"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"sessionId"</span>: <span class="json-string">"session-abc123"</span>,
+    <span class="json-key">"prompt"</span>: <span class="json-string">"将 auth 模块重构为使用 JWT token。"</span>
+  }
+}</code></pre>
+          <p class="text-muted text-sm mt-2">响应是 ACP prompt 响应。流式事件作为 JSON-RPC notification 送达。</p>
+        </div>
+
+        <!-- session/cancel -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold text-primary mb-4">
+            <code>session/cancel</code> — 取消当前 turn
+          </h3>
+          <pre><code>{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"session/cancel"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"sessionId"</span>: <span class="json-string">"session-abc123"</span>
+  }
+}</code></pre>
+          <p class="text-muted text-sm mt-2">注意：这是 notification（没有 id 字段）。</p>
+        </div>
+
+        <!-- session/attach -->
+        <div class="mb-8">
+          <h3 class="text-lg font-semibold text-primary mb-4">
+            <code>session/attach</code> / <code>session/detach</code>
+          </h3>
+          <div class="bg-gradient-to-r from-primary/5 to-transparent rounded-lg border border-border p-6 mb-4">
+            <p class="text-white font-medium mb-2">Attach 不是 ACP 接管</p>
+            <p class="text-muted text-sm">
+              agentd 始终是 agent 的唯一 ACP client，持有 agent stdio。
+              Attach 连接只传递 ARI 子集消息。多个连接可以同时 attach（fan-out）。
+            </p>
+          </div>
+
+          <div class="overflow-x-auto mb-4">
+            <table class="text-sm">
+              <thead>
+                <tr>
+                  <th>方向</th>
+                  <th>方法</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td class="text-muted">agentd → client</td><td><code class="text-primary">session/update</code></td><td>agent 流式输出</td></tr>
+                <tr><td class="text-muted">agentd → client</td><td><code class="text-primary">session/stateChange</code></td><td>状态变更通知</td></tr>
+                <tr><td class="text-muted">client → agentd</td><td><code class="text-primary">session/prompt</code></td><td>注入 prompt</td></tr>
+                <tr><td class="text-muted">client → agentd</td><td><code class="text-primary">session/cancel</code></td><td>取消当前 turn</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <pre><code><span class="json-comment">// Attach</span>
+{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">16</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"session/attach"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"sessionId"</span>: <span class="json-string">"session-abc123"</span>
+  }
+}
+
+<span class="json-comment">// Detach（或直接断开连接，效果相同）</span>
+{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"id"</span>: <span class="json-number">17</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"session/detach"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"sessionId"</span>: <span class="json-string">"session-abc123"</span>
+  }
+}</code></pre>
+        </div>
+
+        <!-- 其他session方法简要 -->
+        <div class="bg-card rounded-lg border border-border p-6">
+          <h3 class="text-lg font-semibold text-white mb-4">其他 Session 方法</h3>
+          <div class="grid grid-cols-2 gap-4 text-sm">
+            <div class="bg-dark rounded-lg p-4">
+              <code class="text-primary">session/stop</code>
+              <p class="text-muted mt-1">停止 session，杀死 agent 进程</p>
+            </div>
+            <div class="bg-dark rounded-lg p-4">
+              <code class="text-primary">session/remove</code>
+              <p class="text-muted mt-1">移除 session 元数据（必须已停止）</p>
+            </div>
+            <div class="bg-dark rounded-lg p-4">
+              <code class="text-primary">session/list</code>
+              <p class="text-muted mt-1">列出 session（支持 filter）</p>
+            </div>
+            <div class="bg-dark rounded-lg p-4">
+              <code class="text-primary">session/status</code>
+              <p class="text-muted mt-1">获取 session 详细状态</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- §5 Room 方法 -->
+      <section id="section-5" class="section-anchor fade-in">
+        <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+          <span class="text-primary">§5</span> Room 方法
+        </h2>
+
+        <div class="bg-card rounded-lg border border-border p-6 mb-6">
+          <p class="text-muted">
+            Room 方法管理 agent 组。对标 CRI 的 <strong class="text-white">PodSandbox</strong> 操作。
+            Room 是协同调度组，支持 agent 间通信。
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div class="bg-card rounded-lg border border-border p-6">
+            <h3 class="text-lg font-semibold text-primary mb-3">
+              <code>room/create</code>
+            </h3>
+            <pre class="text-xs"><code>{
+  <span class="json-key">"method"</span>: <span class="json-string">"room/create"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"name"</span>: <span class="json-string">"backend-refactor"</span>,
+    <span class="json-key">"labels"</span>: { <span class="json-key">"project"</span>: <span class="json-string">"auth"</span> },
+    <span class="json-key">"communication"</span>: { <span class="json-key">"mode"</span>: <span class="json-string">"mesh"</span> }
+  }
+}</code></pre>
+          </div>
+          <div class="bg-card rounded-lg border border-border p-6">
+            <h3 class="text-lg font-semibold text-primary mb-3">
+              <code>room/status</code>
+            </h3>
+            <pre class="text-xs"><code>{
+  <span class="json-key">"result"</span>: {
+    <span class="json-key">"name"</span>: <span class="json-string">"backend-refactor"</span>,
+    <span class="json-key">"members"</span>: [
+      { <span class="json-key">"agentName"</span>: <span class="json-string">"architect"</span>, 
+        <span class="json-key">"state"</span>: <span class="json-string">"running"</span> },
+      { <span class="json-key">"agentName"</span>: <span class="json-string">"coder"</span>, 
+        <span class="json-key">"state"</span>: <span class="json-string">"paused"</span> }
+    ]
+  }
+}</code></pre>
+          </div>
+          <div class="bg-card rounded-lg border border-border p-6">
+            <h3 class="text-lg font-semibold text-primary mb-3">
+              <code>room/delete</code>
+            </h3>
+            <pre class="text-xs"><code>{
+  <span class="json-key">"method"</span>: <span class="json-string">"room/delete"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"name"</span>: <span class="json-string">"backend-refactor"</span>
+  }
+}</code></pre>
+            <p class="text-muted text-xs mt-2">删除前所有成员必须已停止</p>
+          </div>
+        </div>
+
+        <div class="bg-dark rounded-lg border border-border p-6">
+          <h3 class="text-white font-medium mb-3">Room 成员状态示例</h3>
+          <pre><code>{
+  <span class="json-key">"members"</span>: [
+    { <span class="json-key">"agentName"</span>: <span class="json-string">"architect"</span>, <span class="json-key">"sessionId"</span>: <span class="json-string">"session-abc"</span>, <span class="json-key">"state"</span>: <span class="json-string">"running"</span> },
+    { <span class="json-key">"agentName"</span>: <span class="json-string">"coder"</span>, <span class="json-key">"sessionId"</span>: <span class="json-string">"session-def"</span>, <span class="json-key">"state"</span>: <span class="json-string">"paused:warm"</span> },
+    { <span class="json-key">"agentName"</span>: <span class="json-string">"reviewer"</span>, <span class="json-key">"sessionId"</span>: <span class="json-string">"session-ghi"</span>, <span class="json-key">"state"</span>: <span class="json-string">"running"</span> }
+  ],
+  <span class="json-key">"communication"</span>: { <span class="json-key">"mode"</span>: <span class="json-string">"mesh"</span> }
+}</code></pre>
+        </div>
+      </section>
+
+      <!-- §6 Agent 与 Daemon -->
+      <section id="section-6" class="section-anchor fade-in">
+        <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+          <span class="text-primary">§6</span> Agent 与 Daemon 方法
+        </h2>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- agent/list -->
+          <div class="bg-card rounded-lg border border-border p-6">
+            <h3 class="text-lg font-semibold text-primary mb-4">
+              <code>agent/list</code>
+            </h3>
+            <p class="text-muted mb-4">列出已注册的 agent 类型（从 Runtime Spec 注册表加载）。</p>
+            <pre><code>{
+  <span class="json-key">"result"</span>: {
+    <span class="json-key">"agents"</span>: [
+      {
+        <span class="json-key">"name"</span>: <span class="json-string">"claude"</span>,
+        <span class="json-key">"annotations"</span>: {
+          <span class="json-key">"org.openagents.vendor"</span>: <span class="json-string">"anthropic"</span>
+        },
+        <span class="json-key">"protocol"</span>: { <span class="json-key">"type"</span>: <span class="json-string">"acp"</span>, <span class="json-key">"transport"</span>: <span class="json-string">"stdio"</span> }
+      },
+      {
+        <span class="json-key">"name"</span>: <span class="json-string">"gemini"</span>,
+        <span class="json-key">"annotations"</span>: {
+          <span class="json-key">"org.openagents.vendor"</span>: <span class="json-string">"google"</span>
+        },
+        <span class="json-key">"protocol"</span>: { <span class="json-key">"type"</span>: <span class="json-string">"acp"</span>, <span class="json-key">"transport"</span>: <span class="json-string">"stdio"</span> }
+      }
+    ]
+  }
+}</code></pre>
+          </div>
+
+          <!-- daemon/status -->
+          <div class="bg-card rounded-lg border border-border p-6">
+            <h3 class="text-lg font-semibold text-primary mb-4">
+              <code>daemon/status</code>
+            </h3>
+            <p class="text-muted mb-4">获取 Daemon 健康状态和运行统计。</p>
+            <pre><code>{
+  <span class="json-key">"result"</span>: {
+    <span class="json-key">"version"</span>: <span class="json-string">"0.1.0"</span>,
+    <span class="json-key">"uptime"</span>: <span class="json-number">3600</span>,
+    <span class="json-key">"sessions"</span>: {
+      <span class="json-key">"total"</span>: <span class="json-number">5</span>,
+      <span class="json-key">"running"</span>: <span class="json-number">2</span>,
+      <span class="json-key">"paused"</span>: <span class="json-number">2</span>,
+      <span class="json-key">"stopped"</span>: <span class="json-number">1</span>
+    },
+    <span class="json-key">"workspaces"</span>: { <span class="json-key">"total"</span>: <span class="json-number">3</span>, <span class="json-key">"ready"</span>: <span class="json-number">3</span> },
+    <span class="json-key">"rooms"</span>: { <span class="json-key">"total"</span>: <span class="json-number">1</span> }
+  }
+}</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- §7 事件系统 -->
+      <section id="section-7" class="section-anchor fade-in">
+        <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+          <span class="text-primary">§7</span> 事件系统
+        </h2>
+
+        <div class="bg-card rounded-lg border border-border p-6 mb-6">
+          <p class="text-muted">
+            事件是 agentd 向已连接客户端的<strong class="text-white">推送通知</strong>。
+            使用 JSON-RPC 2.0 notification（没有 <code class="text-primary">id</code> 字段）。
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- session/update -->
+          <div class="bg-card rounded-lg border border-border p-6">
+            <h3 class="text-lg font-semibold text-primary mb-4">
+              <code>session/update</code>
+            </h3>
+            <p class="text-muted mb-4">agent-shim typed event 推送。在 session/prompt 执行期间<strong class="text-white">流式推送</strong>。</p>
+            <pre><code>{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"session/update"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"sessionId"</span>: <span class="json-string">"session-abc123"</span>,
+    <span class="json-key">"type"</span>: <span class="json-string">"text"</span>,
+    <span class="json-key">"content"</span>: <span class="json-string">"我将从分析 auth 模块开始..."</span>
+  }
+}</code></pre>
+            <div class="mt-4 flex gap-2">
+              <span class="px-2 py-1 bg-dark rounded text-xs text-muted">type: text</span>
+              <span class="px-2 py-1 bg-dark rounded text-xs text-muted">type: thinking</span>
+              <span class="px-2 py-1 bg-dark rounded text-xs text-muted">type: tool_call</span>
+            </div>
+          </div>
+
+          <!-- session/stateChange -->
+          <div class="bg-card rounded-lg border border-border p-6">
+            <h3 class="text-lg font-semibold text-primary mb-4">
+              <code>session/stateChange</code>
+            </h3>
+            <p class="text-muted mb-4">Session 状态转换通知。</p>
+            <pre><code>{
+  <span class="json-key">"jsonrpc"</span>: <span class="json-string">"2.0"</span>,
+  <span class="json-key">"method"</span>: <span class="json-string">"session/stateChange"</span>,
+  <span class="json-key">"params"</span>: {
+    <span class="json-key">"sessionId"</span>: <span class="json-string">"session-abc123"</span>,
+    <span class="json-key">"from"</span>: <span class="json-string">"running"</span>,
+    <span class="json-key">"to"</span>: <span class="json-string">"paused:warm"</span>,
+    <span class="json-key">"reason"</span>: <span class="json-string">"turn_completed"</span>
+  }
+}</code></pre>
+          </div>
+        </div>
+
+        <div class="bg-dark rounded-lg border border-border p-6 mt-6">
+          <h3 class="text-white font-medium mb-3">Session 状态流转</h3>
+          <div class="flex items-center gap-2 text-sm">
+            <span class="px-3 py-1 bg-primary/20 rounded text-primary">running</span>
+            <span class="text-muted">→</span>
+            <span class="px-3 py-1 bg-border rounded text-muted">paused:warm</span>
+            <span class="text-muted">→</span>
+            <span class="px-3 py-1 bg-border rounded text-muted">paused:cool</span>
+            <span class="text-muted">→</span>
+            <span class="px-3 py-1 bg-border rounded text-muted">stopped</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- §8 方法汇总 -->
+      <section id="section-8" class="section-anchor fade-in">
+        <h2 class="text-2xl font-bold text-white mb-6 flex items-center gap-2">
+          <span class="text-primary">§8</span> 方法汇总
+        </h2>
+
+        <div class="bg-card rounded-lg border border-border overflow-hidden">
+          <table class="text-sm">
+            <thead>
+              <tr>
+                <th>方法</th>
+                <th>方向</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="bg-primary/5"><td colspan="3" class="text-primary font-medium">Workspace 方法</td></tr>
+              <tr><td><code class="text-primary">workspace/prepare</code></td><td class="text-muted">请求</td><td>从 spec 准备 workspace</td></tr>
+              <tr><td><code class="text-primary">workspace/list</code></td><td class="text-muted">请求</td><td>列出 workspace</td></tr>
+              <tr><td><code class="text-primary">workspace/cleanup</code></td><td class="text-muted">请求</td><td>移除 workspace</td></tr>
+              
+              <tr class="bg-primary/5"><td colspan="3" class="text-primary font-medium">Session 方法</td></tr>
+              <tr><td><code class="text-primary">session/new</code></td><td class="text-muted">请求</td><td>创建 session + 启动 agent</td></tr>
+              <tr><td><code class="text-primary">session/prompt</code></td><td class="text-muted">请求</td><td>发送 prompt（通过 shim RPC 转发）</td></tr>
+              <tr><td><code class="text-primary">session/cancel</code></td><td class="text-yellow-400">通知</td><td>取消当前 turn</td></tr>
+              <tr><td><code class="text-primary">session/stop</code></td><td class="text-muted">请求</td><td>停止 session + 杀死 agent</td></tr>
+              <tr><td><code class="text-primary">session/remove</code></td><td class="text-muted">请求</td><td>移除 session 元数据</td></tr>
+              <tr><td><code class="text-primary">session/list</code></td><td class="text-muted">请求</td><td>列出 session</td></tr>
+              <tr><td><code class="text-primary">session/status</code></td><td class="text-muted">请求</td><td>获取 session 详情</td></tr>
+              <tr><td><code class="text-primary">session/attach</code></td><td class="text-muted">请求</td><td>Attach 到 session</td></tr>
+              <tr><td><code class="text-primary">session/detach</code></td><td class="text-muted">请求</td><td>从 session detach</td></tr>
+              
+              <tr class="bg-primary/5"><td colspan="3" class="text-primary font-medium">Room 方法</td></tr>
+              <tr><td><code class="text-primary">room/create</code></td><td class="text-muted">请求</td><td>创建 room</td></tr>
+              <tr><td><code class="text-primary">room/status</code></td><td class="text-muted">请求</td><td>获取 room 状态</td></tr>
+              <tr><td><code class="text-primary">room/delete</code></td><td class="text-muted">请求</td><td>删除 room</td></tr>
+              
+              <tr class="bg-primary/5"><td colspan="3" class="text-primary font-medium">Agent & Daemon 方法</td></tr>
+              <tr><td><code class="text-primary">agent/list</code></td><td class="text-muted">请求</td><td>列出已注册的 agent 类型</td></tr>
+              <tr><td><code class="text-primary">daemon/status</code></td><td class="text-muted">请求</td><td>Daemon 健康状态</td></tr>
+              
+              <tr class="bg-yellow-500/10"><td colspan="3" class="text-yellow-400 font-medium">事件（Notification）</td></tr>
+              <tr><td><code class="text-primary">session/update</code></td><td class="text-yellow-400">推送</td><td>typed event 流</td></tr>
+              <tr><td><code class="text-primary">session/stateChange</code></td><td class="text-yellow-400">推送</td><td>状态转换</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="mt-8 text-center text-muted text-sm">
+          <p>共 <span class="text-primary font-bold">19</span> 个 RPC 方法 + <span class="text-yellow-400 font-bold">2</span> 个事件类型</p>
+        </div>
+      </section>
+
+    </article>
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-darker border-t border-border py-8 px-6 mt-16">
+    <div class="max-w-7xl mx-auto text-center text-muted text-sm">
+      <p>ARI — Agent Runtime Interface Specification</p>
+      <p class="mt-2">Protocol Version: 0.1.0 | Transport: JSON-RPC 2.0 over Unix Socket</p>
+    </div>
+  </footer>
+
+  <script>
+    // 阅读进度条
+    const readProgress = document.getElementById('readProgress');
+    const headerProgress = document.getElementById('headerProgress');
+    const progressText = document.getElementById('progressText');
+    
+    function updateProgress() {
+      const scrollTop = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const progress = Math.min(100, Math.max(0, (scrollTop / docHeight) * 100));
+      
+      readProgress.style.width = progress + '%';
+      headerProgress.style.width = progress + '%';
+      progressText.textContent = Math.round(progress) + '%';
+    }
+    
+    window.addEventListener('scroll', updateProgress);
+    updateProgress();
+
+    // TOC 高亮
+    const tocLinks = document.querySelectorAll('.toc-link');
+    const sections = document.querySelectorAll('.section-anchor');
+    
+    function updateTocHighlight() {
+      let currentSection = null;
+      
+      sections.forEach(section => {
+        const rect = section.getBoundingClientRect();
+        if (rect.top <= 100) {
+          currentSection = section.id;
+        }
+      });
+      
+      tocLinks.forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === '#' + currentSection) {
+          link.classList.add('active');
+        }
+      });
+    }
+    
+    window.addEventListener('scroll', updateTocHighlight);
+    updateTocHighlight();
+
+    // 淡入动画
+    const fadeElements = document.querySelectorAll('.fade-in');
+    
+    function checkFadeIn() {
+      fadeElements.forEach(el => {
+        const rect = el.getBoundingClientRect();
+        if (rect.top < window.innerHeight - 50) {
+          el.classList.add('visible');
+        }
+      });
+    }
+    
+    window.addEventListener('scroll', checkFadeIn);
+    checkFadeIn(); // 初始检查
+
+    // TOC 点击平滑滚动
+    tocLinks.forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const targetId = link.getAttribute('href').slice(1);
+        const targetSection = document.getElementById(targetId);
+        if (targetSection) {
+          targetSection.scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    });
+  </script>
+</body>
+</html>

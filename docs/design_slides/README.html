@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Open Agent Runtime (OAR) — 设计规范 v2</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#3b82f6',
+            dark: '#0d1117',
+            darker: '#010409',
+            card: '#161b22',
+            border: '#30363d',
+            muted: '#8b949e',
+            text: '#c9d1d9',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* 自定义CSS - 仅限 fade-in / bar-fill / read-progress / toc-link / section-anchor */
+    
+    .fade-in {
+      opacity: 0;
+      transform: translateY(30px);
+      transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    }
+    
+    .fade-in.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    
+    .bar-fill {
+      animation: barFill 1.5s ease-out forwards;
+    }
+    
+    @keyframes barFill {
+      from { width: 0%; }
+    }
+    
+    .read-progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      z-index: 1000;
+      transition: width 0.1s linear;
+    }
+    
+    .toc-link {
+      color: #8b949e;
+      transition: color 0.2s, padding-left 0.2s;
+      display: block;
+      padding-left: 0;
+    }
+    
+    .toc-link:hover {
+      color: #3b82f6;
+    }
+    
+    .toc-link.active {
+      color: #3b82f6;
+      padding-left: 8px;
+      font-weight: 600;
+    }
+    
+    .section-anchor {
+      scroll-margin-top: 100px;
+    }
+    
+    /* 滚动条样式 */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0d1117;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #30363d;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #484f58;
+    }
+  </style>
+</head>
+<body class="bg-dark text-text min-h-screen">
+  <!-- 顶部进度条 -->
+  <div class="read-progress" id="readProgress" style="width: 0%;"></div>
+
+  <!-- 粘性 Header -->
+  <header class="sticky top-0 bg-darker/95 backdrop-blur-sm border-b border-border z-50">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+          <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+          </svg>
+        </div>
+        <span class="font-semibold text-lg">OAR 设计规范</span>
+        <span class="text-muted text-sm">v2</span>
+      </div>
+      <div class="text-muted text-sm flex items-center gap-2">
+        <span id="progressText">0%</span>
+        <span>已阅读</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="section-anchor fade-in py-20 px-6">
+    <div class="max-w-4xl mx-auto text-center">
+      <h1 class="text-5xl font-bold mb-4 text-white">
+        Open Agent Runtime
+        <span class="text-primary">OAR</span>
+      </h1>
+      <p class="text-xl text-muted mb-12">
+        用于管理 AI 编码 Agent 的标准化架构与组件
+      </p>
+      
+      <!-- 数字统计卡片 -->
+      <div class="grid grid-cols-3 gap-6 max-w-2xl mx-auto">
+        <div class="bg-card rounded-xl p-6 border border-border">
+          <div class="text-3xl font-bold text-primary mb-2">6</div>
+          <div class="text-muted text-sm">核心组件</div>
+        </div>
+        <div class="bg-card rounded-xl p-6 border border-border">
+          <div class="text-3xl font-bold text-primary mb-2">5</div>
+          <div class="text-muted text-sm">设计原则</div>
+        </div>
+        <div class="bg-card rounded-xl p-6 border border-border">
+          <div class="text-3xl font-bold text-primary mb-2">3</div>
+          <div class="text-muted text-sm">架构层级</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 主内容区域：左 TOC + 右内容 -->
+  <main class="max-w-7xl mx-auto px-6 py-12 flex gap-8">
+    <!-- 左侧 TOC -->
+    <aside class="w-64 shrink-0 hidden lg:block">
+      <nav class="sticky top-24 space-y-2">
+        <h3 class="text-sm font-semibold text-muted mb-4 uppercase tracking-wider">目录导航</h3>
+        <a href="#section-what" class="toc-link py-1" data-section="section-what">§ 什么是 OAR</a>
+        <a href="#section-why" class="toc-link py-1" data-section="section-why">§ 为什么对标 OCI</a>
+        <a href="#section-principles" class="toc-link py-1" data-section="section-principles">§ 设计原则</a>
+        <a href="#section-architecture" class="toc-link py-1" data-section="section-architecture">§ 架构概览</a>
+        <a href="#section-runtime" class="toc-link py-1" data-section="section-runtime">§ Runtime 层</a>
+        <a href="#section-workspace" class="toc-link py-1" data-section="section-workspace">§ Workspace 层</a>
+        <a href="#section-agentd" class="toc-link py-1" data-section="section-agentd">§ agentd 层</a>
+        <a href="#section-orchestrator" class="toc-link py-1" data-section="section-orchestrator">§ Orchestrator 层</a>
+      </nav>
+    </aside>
+
+    <!-- 右侧内容 -->
+    <article class="flex-1 min-w-0 space-y-16">
+      
+      <!-- § 什么是 OAR -->
+      <section id="section-what" class="section-anchor fade-in">
+        <h2 class="text-3xl font-bold mb-6 text-white">
+          <span class="text-primary">§</span> 什么是 OAR
+        </h2>
+        
+        <!-- 高亮块 -->
+        <div class="bg-primary/10 border border-primary/30 rounded-xl p-6 mb-8">
+          <p class="text-lg leading-relaxed">
+            <strong class="text-primary">OAR（Open Agent Runtime）</strong>是一套用于管理 AI 编码 Agent 的标准和组件。
+            它直接借鉴了 <strong class="text-primary">OCI（Open Container Initiative）</strong>生态的架构思想，
+            将相同的关注点分离原则应用到 Agent 领域。
+          </p>
+        </div>
+
+        <!-- OCI 对比映射 -->
+        <div class="bg-card rounded-xl border border-border overflow-hidden">
+          <div class="grid grid-cols-2 gap-px bg-border">
+            <div class="bg-card p-4 text-center font-semibold text-primary">OCI（容器世界）</div>
+            <div class="bg-card p-4 text-center font-semibold text-primary">OAR（Agent 世界）</div>
+          </div>
+          <div class="divide-y divide-border">
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">Open Container Initiative</div>
+              <div class="bg-card p-3 pl-4 text-white">→ Open Agent Runtime</div>
+            </div>
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">OCI Runtime Spec</div>
+              <div class="bg-card p-3 pl-4 text-white">→ OAR Runtime Spec</div>
+            </div>
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">OCI Image Spec</div>
+              <div class="bg-card p-3 pl-4 text-white">→ OAR Workspace Spec</div>
+            </div>
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">runc + containerd-shim</div>
+              <div class="bg-card p-3 pl-4 text-white">→ agent-shim（合并）</div>
+            </div>
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">containerd</div>
+              <div class="bg-card p-3 pl-4 text-white">→ agentd</div>
+            </div>
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">CRI (Container Runtime Interface)</div>
+              <div class="bg-card p-3 pl-4 text-white">→ ARI (Agent Runtime Interface)</div>
+            </div>
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">Pod</div>
+              <div class="bg-card p-3 pl-4 text-white">→ Room</div>
+            </div>
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">Container</div>
+              <div class="bg-card p-3 pl-4 text-white">→ Session</div>
+            </div>
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">Image / rootfs</div>
+              <div class="bg-card p-3 pl-4 text-white">→ Workspace</div>
+            </div>
+            <div class="grid grid-cols-2 gap-px bg-border">
+              <div class="bg-card p-3 pl-4">crictl</div>
+              <div class="bg-card p-3 pl-4 text-white">→ agent-shim-cli</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- § 为什么对标 OCI -->
+      <section id="section-why" class="section-anchor fade-in">
+        <h2 class="text-3xl font-bold mb-6 text-white">
+          <span class="text-primary">§</span> 为什么对标 OCI
+        </h2>
+        
+        <p class="text-muted mb-8 leading-relaxed">
+          容器生态解决了一个在结构上完全同构的问题：如何标准化地描述、准备和执行隔离的工作负载。
+          Agent 面临着同样的分层关切：
+        </p>
+
+        <!-- 对比表格 -->
+        <div class="bg-card rounded-xl border border-border overflow-hidden">
+          <table class="w-full">
+            <thead>
+              <tr class="border-b border-border">
+                <th class="px-4 py-3 text-left text-primary font-semibold">关切</th>
+                <th class="px-4 py-3 text-left text-primary font-semibold">容器方案</th>
+                <th class="px-4 py-3 text-left text-primary font-semibold">Agent 方案</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              <tr>
+                <td class="px-4 py-3 text-muted">"运行什么"</td>
+                <td class="px-4 py-3">OCI Runtime Spec (config.json)</td>
+                <td class="px-4 py-3 text-white">OAR Runtime Spec (config.json)</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 text-muted">"准备什么环境"</td>
+                <td class="px-4 py-3">OCI Image Spec (layers → rootfs)</td>
+                <td class="px-4 py-3 text-white">OAR Workspace Spec (source + hooks → workdir)</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 text-muted">"底层执行"</td>
+                <td class="px-4 py-3">runc + containerd-shim</td>
+                <td class="px-4 py-3 text-white">agent-shim（合并）</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 text-muted">"高层管理"</td>
+                <td class="px-4 py-3">containerd</td>
+                <td class="px-4 py-3 text-white">agentd</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 text-muted">"管理接口"</td>
+                <td class="px-4 py-3">CRI (kubelet → containerd)</td>
+                <td class="px-4 py-3 text-white">ARI (orchestrator → agentd)</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-3 text-muted">"协同调度"</td>
+                <td class="px-4 py-3">Pod（共享 namespace）</td>
+                <td class="px-4 py-3 text-white">Room（共享 workspace、消息总线）</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 关键洞察块 -->
+        <div class="mt-8 bg-gradient-to-r from-primary/20 to-primary/5 rounded-xl p-6 border-l-4 border-primary">
+          <p class="text-white font-medium">
+            💡 关键洞察：通过遵循这套经过验证的分层架构，每个组件都有清晰、有界的职责。
+            <span class="text-primary">规范是契约；组件是可替换的实现。</span>
+          </p>
+        </div>
+      </section>
+
+      <!-- § 设计原则 -->
+      <section id="section-principles" class="section-anchor fade-in">
+        <h2 class="text-3xl font-bold mb-6 text-white">
+          <span class="text-primary">§</span> 设计原则
+        </h2>
+
+        <div class="space-y-4">
+          <!-- 原则 1 -->
+          <div class="bg-card rounded-xl border border-border p-6 hover:border-primary/50 transition-colors">
+            <div class="flex items-start gap-4">
+              <div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center text-white font-bold shrink-0">1</div>
+              <div>
+                <h3 class="text-lg font-semibold text-white mb-2">规范先于实现</h3>
+                <p class="text-muted">先定义接口和格式，组件随后跟进。Spec 是契约，实现是可替换的。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 原则 2 -->
+          <div class="bg-card rounded-xl border border-border p-6 hover:border-primary/50 transition-colors">
+            <div class="flex items-start gap-4">
+              <div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center text-white font-bold shrink-0">2</div>
+              <div>
+                <h3 class="text-lg font-semibold text-white mb-2">不背容器包袱</h3>
+                <p class="text-muted">借鉴 OCI 的架构，不搬运内核隔离。不涉及 namespace、cgroups、seccomp、pivot_root。</p>
+                <p class="text-primary mt-2 font-medium">Agent 是进程，不是沙箱。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 原则 3 -->
+          <div class="bg-card rounded-xl border border-border p-6 hover:border-primary/50 transition-colors">
+            <div class="flex items-start gap-4">
+              <div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center text-white font-bold shrink-0">3</div>
+              <div>
+                <h3 class="text-lg font-semibold text-white mb-2">面向 Agent 的原生关切</h3>
+                <p class="text-muted">聚焦 Agent 真正需要的：workspace 准备、协议通信（ACP）、技能/知识注入、Agent 间通信。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 原则 4 -->
+          <div class="bg-card rounded-xl border border-border p-6 hover:border-primary/50 transition-colors">
+            <div class="flex items-start gap-4">
+              <div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center text-white font-bold shrink-0">4</div>
+              <div>
+                <h3 class="text-lg font-semibold text-white mb-2">分层分离</h3>
+                <p class="text-muted">每层只做一件事：</p>
+                <ul class="mt-2 space-y-1 text-muted">
+                  <li class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-primary"></span>
+                    <span class="text-white">agent-shim</span> 运行进程并持有 ACP
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-primary"></span>
+                    <span class="text-white">agentd</span> 管理生命周期
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-primary"></span>
+                    <span class="text-white">Orchestrator</span> 决策运行什么
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-primary"></span>
+                    <span class="text-white">Spec</span> 是各层之间的粘合剂
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- 原则 5 -->
+          <div class="bg-card rounded-xl border border-border p-6 hover:border-primary/50 transition-colors">
+            <div class="flex items-start gap-4">
+              <div class="w-10 h-10 rounded-lg bg-primary flex items-center justify-center text-white font-bold shrink-0">5</div>
+              <div>
+                <h3 class="text-lg font-semibold text-white mb-2">简单优先</h3>
+                <p class="text-muted">为当前需求设计。扩展点存在但保持空白，直到真实需求出现。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- § 架构概览 -->
+      <section id="section-architecture" class="section-anchor fade-in">
+        <h2 class="text-3xl font-bold mb-6 text-white">
+          <span class="text-primary">§</span> 架构概览
+        </h2>
+
+        <!-- 架构图 -->
+        <div class="bg-card rounded-xl border border-border p-8 font-mono text-sm overflow-x-auto">
+          <pre class="text-muted leading-relaxed">
+┌────────────────────────────────────────────────────────────┐
+│                       <span class="text-primary font-bold">Orchestrator</span>                          │
+│                                                             │
+│   消费: Room Spec, Workspace Spec, Runtime Spec             │
+│   决策: 运行哪些 agent、准备什么 workspace                    │
+│   调用: <span class="text-white">ARI</span>                                                 │
+└──────────────────────────┬─────────────────────────────────┘
+                           │ <span class="text-white">ARI（JSON-RPC over Unix Socket）</span>
+                           ▼
+┌────────────────────────────────────────────────────────────┐
+│                        <span class="text-primary font-bold">agentd</span>                               │
+│                                                             │
+│   ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
+│   │   <span class="text-white">Session</span>     │  │  <span class="text-white">Workspace</span>   │  │     <span class="text-white">Room</span>       │  │
+│   │   <span class="text-muted">Manager</span>     │  │  <span class="text-muted">Manager</span>     │  │   <span class="text-muted">Manager</span>      │  │
+│   └──────┬───────┘  └──────────────┘  └────────────────┘  │
+│          │                                                  │
+└──────────────────────────────────────────────────────────────┘
+             │            │            │
+             │ <span class="text-muted">RPC over Unix socket</span>    │
+             ▼            ▼            ▼
+        ┌─────────┐  ┌─────────┐  ┌─────────┐
+        │<span class="text-primary font-bold">agent-shim</span> │  │<span class="text-primary font-bold">agent-shim</span> │  │<span class="text-primary font-bold">agent-shim</span> │  ← <span class="text-muted">独立进程，持有 agent stdio</span>
+        └────┬────┘  └────┬────┘  └────┬────┘
+             │            │            │
+             │ <span class="text-white">ACP over stdio</span>          │
+             ▼            ▼            ▼
+          <span class="text-white">Agent A</span>      <span class="text-white">Agent B</span>      <span class="text-white">Agent C</span>
+          </pre>
+        </div>
+
+        <!-- 层级说明 -->
+        <div class="mt-8 grid grid-cols-3 gap-4">
+          <div class="bg-card rounded-xl border border-border p-4">
+            <div class="text-primary font-semibold mb-2">Layer 1</div>
+            <div class="text-white font-medium">agent-shim</div>
+            <div class="text-muted text-sm mt-1">单 agent 进程管理</div>
+          </div>
+          <div class="bg-card rounded-xl border border-border p-4">
+            <div class="text-primary font-semibold mb-2">Layer 2</div>
+            <div class="text-white font-medium">agentd</div>
+            <div class="text-muted text-sm mt-1">多 session 管理</div>
+          </div>
+          <div class="bg-card rounded-xl border border-border p-4">
+            <div class="text-primary font-semibold mb-2">Layer 3</div>
+            <div class="text-white font-medium">Orchestrator</div>
+            <div class="text-muted text-sm mt-1">多 agent 协同调度</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- § Runtime 层 -->
+      <section id="section-runtime" class="section-anchor fade-in">
+        <h2 class="text-3xl font-bold mb-6 text-white">
+          <span class="text-primary">§</span> Runtime 层
+        </h2>
+        
+        <div class="bg-primary/10 border border-primary/30 rounded-xl p-4 mb-6">
+          <p class="text-lg">
+            <span class="text-primary font-semibold">对标：</span>
+            runc + containerd-shim
+          </p>
+        </div>
+
+        <p class="text-muted mb-6">
+          Runtime 层负责单个 agent 进程的执行与生命周期管理。
+        </p>
+
+        <!-- 文档列表 -->
+        <div class="space-y-3">
+          <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+            <div class="w-2 h-2 rounded-full bg-primary shrink-0"></div>
+            <div class="flex-1">
+              <div class="font-medium text-white">runtime-spec.md</div>
+              <div class="text-muted text-sm">OAR Runtime Spec — state、bundle、lifecycle、operations、typed events</div>
+            </div>
+            <span class="text-xs bg-primary/20 text-primary px-2 py-1 rounded">规范</span>
+          </div>
+          
+          <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+            <div class="w-2 h-2 rounded-full bg-primary shrink-0"></div>
+            <div class="flex-1">
+              <div class="font-medium text-white">config-spec.md</div>
+              <div class="text-muted text-sm">Config Spec — config.json schema（对标 OCI config.md）</div>
+            </div>
+            <span class="text-xs bg-primary/20 text-primary px-2 py-1 rounded">规范</span>
+          </div>
+          
+          <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+            <div class="w-2 h-2 rounded-full bg-primary shrink-0"></div>
+            <div class="flex-1">
+              <div class="font-medium text-white">shim-rpc-spec.md</div>
+              <div class="text-muted text-sm">Shim RPC Spec — JSON-RPC 2.0 方法、事件类型、错误码</div>
+            </div>
+            <span class="text-xs bg-primary/20 text-primary px-2 py-1 rounded">规范</span>
+          </div>
+          
+          <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+            <div class="w-2 h-2 rounded-full bg-muted shrink-0"></div>
+            <div class="flex-1">
+              <div class="font-medium text-white">agent-shim.md</div>
+              <div class="text-muted text-sm">agent-shim — 定位、进程模型、双重角色、ACP 翻译</div>
+            </div>
+            <span class="text-xs bg-muted/20 text-muted px-2 py-1 rounded">组件</span>
+          </div>
+          
+          <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+            <div class="w-2 h-2 rounded-full bg-muted shrink-0"></div>
+            <div class="flex-1">
+              <div class="font-medium text-white">design.md</div>
+              <div class="text-muted text-sm">设计思路 — OCI 对标分析、架构决策、config.json 生成流程</div>
+            </div>
+            <span class="text-xs bg-muted/20 text-muted px-2 py-1 rounded">设计</span>
+          </div>
+          
+          <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+            <div class="w-2 h-2 rounded-full bg-muted shrink-0"></div>
+            <div class="flex-1">
+              <div class="font-medium text-white">why-no-runa.md</div>
+              <div class="text-muted text-sm">为什么 OAR 没有 runa — agent 场景下独立运行时 CLI 不成立的原因</div>
+            </div>
+            <span class="text-xs bg-muted/20 text-muted px-2 py-1 rounded">设计</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- § Workspace 层 -->
+      <section id="section-workspace" class="section-anchor fade-in">
+        <h2 class="text-3xl font-bold mb-6 text-white">
+          <span class="text-primary">§</span> Workspace 层
+        </h2>
+        
+        <div class="bg-primary/10 border border-primary/30 rounded-xl p-4 mb-6">
+          <p class="text-lg">
+            <span class="text-primary font-semibold">对标：</span>
+            OCI Image Spec
+          </p>
+        </div>
+
+        <p class="text-muted mb-6">
+          Workspace Spec 定义如何准备 agent 的工作环境。
+        </p>
+
+        <!-- 单文档卡片 -->
+        <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+          <div class="w-2 h-2 rounded-full bg-primary shrink-0"></div>
+          <div class="flex-1">
+            <div class="font-medium text-white">workspace-spec.md</div>
+            <div class="text-muted text-sm">OAR Workspace Spec — 如何准备 agent 的工作环境</div>
+          </div>
+          <span class="text-xs bg-primary/20 text-primary px-2 py-1 rounded">规范</span>
+        </div>
+
+        <!-- 特性列表 -->
+        <div class="mt-6 bg-card rounded-xl border border-border p-6">
+          <h4 class="font-semibold text-white mb-4">Workspace 核心概念</h4>
+          <ul class="space-y-3">
+            <li class="flex items-center gap-3">
+              <svg class="w-5 h-5 text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+              </svg>
+              <span class="text-muted"><span class="text-white font-medium">source</span> — 源代码来源</span>
+            </li>
+            <li class="flex items-center gap-3">
+              <svg class="w-5 h-5 text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+              </svg>
+              <span class="text-muted"><span class="text-white font-medium">hooks</span> — 准备钩子（克隆、安装、配置）</span>
+            </li>
+            <li class="flex items-center gap-3">
+              <svg class="w-5 h-5 text-primary shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+              </svg>
+              <span class="text-muted"><span class="text-white font-medium">workdir</span> — 最终工作目录</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- § agentd 层 -->
+      <section id="section-agentd" class="section-anchor fade-in">
+        <h2 class="text-3xl font-bold mb-6 text-white">
+          <span class="text-primary">§</span> agentd 层
+        </h2>
+        
+        <div class="bg-primary/10 border border-primary/30 rounded-xl p-4 mb-6">
+          <p class="text-lg">
+            <span class="text-primary font-semibold">对标：</span>
+            containerd + CRI
+          </p>
+        </div>
+
+        <p class="text-muted mb-6">
+          agentd 是 agent 运行时守护进程，管理多 session 的生命周期。
+        </p>
+
+        <!-- 文档列表 -->
+        <div class="space-y-3">
+          <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+            <div class="w-2 h-2 rounded-full bg-primary shrink-0"></div>
+            <div class="flex-1">
+              <div class="font-medium text-white">ari-spec.md</div>
+              <div class="text-muted text-sm">ARI — Agent Runtime Interface（对标 CRI）</div>
+            </div>
+            <span class="text-xs bg-primary/20 text-primary px-2 py-1 rounded">规范</span>
+          </div>
+          
+          <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+            <div class="w-2 h-2 rounded-full bg-muted shrink-0"></div>
+            <div class="flex-1">
+              <div class="font-medium text-white">agentd.md</div>
+              <div class="text-muted text-sm">agentd — agent 运行时守护进程（对标 containerd）</div>
+            </div>
+            <span class="text-xs bg-muted/20 text-muted px-2 py-1 rounded">组件</span>
+          </div>
+        </div>
+
+        <!-- 核心职责 -->
+        <div class="mt-6 grid grid-cols-3 gap-4">
+          <div class="bg-card rounded-xl border border-border p-4 text-center">
+            <div class="text-2xl font-bold text-primary mb-1">Session</div>
+            <div class="text-muted text-sm">单次运行实例</div>
+          </div>
+          <div class="bg-card rounded-xl border border-border p-4 text-center">
+            <div class="text-2xl font-bold text-primary mb-1">Workspace</div>
+            <div class="text-muted text-sm">工作环境管理</div>
+          </div>
+          <div class="bg-card rounded-xl border border-border p-4 text-center">
+            <div class="text-2xl font-bold text-primary mb-1">Room</div>
+            <div class="text-muted text-sm">协同调度组</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- § Orchestrator 层 -->
+      <section id="section-orchestrator" class="section-anchor fade-in">
+        <h2 class="text-3xl font-bold mb-6 text-white">
+          <span class="text-primary">§</span> Orchestrator 层
+        </h2>
+        
+        <div class="bg-primary/10 border border-primary/30 rounded-xl p-4 mb-6">
+          <p class="text-lg">
+            <span class="text-primary font-semibold">对标：</span>
+            kubelet + Pod
+          </p>
+        </div>
+
+        <p class="text-muted mb-6">
+          Orchestrator 负责多 agent 的协同调度与编排。
+        </p>
+
+        <!-- 文档卡片 -->
+        <div class="bg-card rounded-lg border border-border p-4 hover:border-primary/50 transition-colors flex items-center gap-4">
+          <div class="w-2 h-2 rounded-full bg-primary shrink-0"></div>
+          <div class="flex-1">
+            <div class="font-medium text-white">room-spec.md</div>
+            <div class="text-muted text-sm">Room Spec — 协同调度的 agent 组（对标 Pod Spec）</div>
+          </div>
+          <span class="text-xs bg-primary/20 text-primary px-2 py-1 rounded">规范</span>
+        </div>
+
+        <!-- Room 特性 -->
+        <div class="mt-6 bg-gradient-to-r from-primary/20 to-primary/5 rounded-xl p-6 border-l-4 border-primary">
+          <h4 class="font-semibold text-white mb-3">Room 概念</h4>
+          <p class="text-muted mb-4">
+            Room 是协同调度的 agent 组，类似于 Kubernetes 中的 Pod。
+          </p>
+          <div class="flex gap-6">
+            <div class="flex items-center gap-2">
+              <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+              </svg>
+              <span class="text-white">共享 Workspace</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <svg class="w-5 h-5 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path>
+              </svg>
+              <span class="text-white">共享消息总线</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </article>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-border py-12 px-6 mt-16">
+    <div class="max-w-7xl mx-auto text-center text-muted">
+      <p class="mb-2">Open Agent Runtime (OAR) — 设计规范 v2</p>
+      <p class="text-sm">规范是契约；组件是可替换的实现。</p>
+    </div>
+  </footer>
+
+  <!-- JavaScript -->
+  <script>
+    // IntersectionObserver 淡入效果
+    const fadeElements = document.querySelectorAll('.fade-in');
+    const fadeObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+    
+    fadeElements.forEach(el => fadeObserver.observe(el));
+
+    // TOC 高亮
+    const tocLinks = document.querySelectorAll('.toc-link');
+    const sections = document.querySelectorAll('.section-anchor');
+    
+    const tocObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        const id = entry.target.id;
+        const tocLink = document.querySelector(`.toc-link[data-section="${id}"]`);
+        
+        if (entry.isIntersecting) {
+          tocLinks.forEach(link => link.classList.remove('active'));
+          if (tocLink) tocLink.classList.add('active');
+        }
+      });
+    }, { threshold: 0.3, rootMargin: '-100px 0px -50% 0px' });
+    
+    sections.forEach(section => tocObserver.observe(section));
+
+    // 阅读进度
+    const readProgress = document.getElementById('readProgress');
+    const progressText = document.getElementById('progressText');
+    
+    function updateProgress() {
+      const scrollTop = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const progress = Math.min(100, Math.max(0, (scrollTop / docHeight) * 100));
+      
+      readProgress.style.width = progress + '%';
+      progressText.textContent = Math.round(progress) + '%';
+    }
+    
+    window.addEventListener('scroll', updateProgress, { passive: true });
+    updateProgress();
+  </script>
+</body>
+</html>

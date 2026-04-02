@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shim RPC 规范深度讲解</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#a855f7',
+            dark: '#0d1117',
+            'dark-lighter': '#161b22',
+            'dark-border': '#30363d'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @keyframes fade-in {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .fade-in {
+      animation: fade-in 0.6s ease-out forwards;
+      opacity: 0;
+    }
+    .bar-fill {
+      transition: width 0.3s ease;
+    }
+    .read-progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #a855f7, #c084fc);
+      z-index: 1000;
+    }
+    .toc-link {
+      transition: all 0.2s ease;
+    }
+    .toc-link:hover {
+      color: #a855f7;
+      padding-left: 0.5rem;
+    }
+    .toc-link.active {
+      color: #a855f7;
+      border-left: 2px solid #a855f7;
+      padding-left: 0.5rem;
+    }
+    .section-anchor {
+      scroll-margin-top: 100px;
+    }
+    pre {
+      background: #161b22 !important;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1rem;
+      overflow-x: auto;
+    }
+    code {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.875rem;
+    }
+    .inline-code {
+      background: #161b22;
+      padding: 0.125rem 0.375rem;
+      border-radius: 4px;
+      font-size: 0.875em;
+      color: #a855f7;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+    th, td {
+      border: 1px solid #30363d;
+      padding: 0.75rem 1rem;
+      text-align: left;
+    }
+    th {
+      background: #161b22;
+      color: #a855f7;
+      font-weight: 600;
+    }
+    td {
+      background: #0d1117;
+    }
+  </style>
+</head>
+<body class="bg-dark text-gray-200 font-sans">
+  <!-- 顶部进度条 -->
+  <div class="read-progress bar-fill" id="progressBar" style="width: 0%"></div>
+
+  <!-- 粘性 Header -->
+  <header class="sticky top-0 bg-dark-lighter border-b border-dark-border backdrop-blur-sm bg-opacity-90 z-50">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+          </svg>
+        </div>
+        <span class="text-lg font-semibold text-white">Shim RPC 规范</span>
+      </div>
+      <div class="text-sm text-gray-400">OAR Runtime · 深度讲解</div>
+    </div>
+  </header>
+
+  <!-- Hero 区域 -->
+  <section class="py-16 px-6 text-center fade-in">
+    <div class="max-w-4xl mx-auto">
+      <h1 class="text-5xl font-bold text-white mb-4">
+        Shim RPC 规范
+      </h1>
+      <p class="text-xl text-gray-400 mb-8">
+        agent-shim 对上暴露的管理接口——agentd 通过它控制和观测单个 agent session
+      </p>
+      <div class="flex justify-center gap-8 text-center">
+        <div class="bg-dark-lighter border border-dark-border rounded-lg p-6">
+          <div class="text-3xl font-bold text-primary">6</div>
+          <div class="text-sm text-gray-400 mt-1">RPC 方法</div>
+        </div>
+        <div class="bg-dark-lighter border border-dark-border rounded-lg p-6">
+          <div class="text-3xl font-bold text-primary">12</div>
+          <div class="text-sm text-gray-400 mt-1">事件类型</div>
+        </div>
+        <div class="bg-dark-lighter border border-dark-border rounded-lg p-6">
+          <div class="text-3xl font-bold text-primary">3</div>
+          <div class="text-sm text-gray-400 mt-1">错误码</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 主内容区域：左 TOC + 右内容 -->
+  <div class="max-w-7xl mx-auto px-6 py-8 flex gap-8">
+    <!-- 左侧 TOC -->
+    <nav class="w-64 shrink-0 sticky top-24 h-fit">
+      <div class="bg-dark-lighter border border-dark-border rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-400 mb-4 uppercase tracking-wider">目录导航</h3>
+        <ul class="space-y-2 text-sm">
+          <li>
+            <a href="#overview" class="toc-link block text-gray-300 py-1 pl-2">概述</a>
+          </li>
+          <li>
+            <a href="#principles" class="toc-link block text-gray-300 py-1 pl-2">§ 设计原则</a>
+          </li>
+          <li>
+            <a href="#methods" class="toc-link block text-gray-300 py-1 pl-2">§ 方法详解</a>
+            <ul class="ml-4 mt-2 space-y-1 text-xs text-gray-500">
+              <li><a href="#prompt" class="toc-link block py-1">Prompt</a></li>
+              <li><a href="#cancel" class="toc-link block py-1">Cancel</a></li>
+              <li><a href="#subscribe" class="toc-link block py-1">Subscribe</a></li>
+              <li><a href="#getstate" class="toc-link block py-1">GetState</a></li>
+              <li><a href="#gethistory" class="toc-link block py-1">GetHistory</a></li>
+              <li><a href="#shutdown" class="toc-link block py-1">Shutdown</a></li>
+            </ul>
+          </li>
+          <li>
+            <a href="#events" class="toc-link block text-gray-300 py-1 pl-2">§ 事件类型</a>
+          </li>
+          <li>
+            <a href="#errors" class="toc-link block text-gray-300 py-1 pl-2">§ 错误码</a>
+          </li>
+        </ul>
+      </div>
+    </nav>
+
+    <!-- 右侧内容 -->
+    <main class="flex-1 min-w-0">
+      <!-- 概述 -->
+      <section id="overview" class="section-anchor fade-in mb-12">
+        <h2 class="text-3xl font-bold text-white mb-6">概述</h2>
+        <div class="space-y-6 text-gray-300 leading-relaxed">
+          <p>
+            <span class="inline-code">Shim RPC</span> 是 <span class="inline-code">agent-shim</span> 对上暴露的管理接口——<span class="inline-code">agentd</span> 通过它控制和观测单个 agent session。
+          </p>
+          
+          <div class="bg-dark-lighter border border-dark-border rounded-lg p-6">
+            <h3 class="text-lg font-semibold text-primary mb-4">与 containerd-shim 的对比</h3>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <div class="text-sm text-gray-400 mb-2">containerd-shim</div>
+                <div class="text-gray-200">使用 <span class="inline-code">ttrpc</span>（protobuf over Unix socket）</div>
+              </div>
+              <div>
+                <div class="text-sm text-gray-400 mb-2">agent-shim</div>
+                <div class="text-gray-200">使用 <span class="inline-code">JSON-RPC 2.0</span> over Unix socket</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-dark-lighter border border-primary rounded-lg p-6">
+            <h3 class="text-lg font-semibold text-primary mb-3">协议规范</h3>
+            <p class="mb-4"><strong class="text-white">协议：</strong> JSON-RPC 2.0 over Unix socket（流式传输）</p>
+            <p><strong class="text-white">Socket 路径约定：</strong></p>
+            <pre class="mt-2"><code class="text-primary">/run/agentd/shim/&lt;session-id&gt;/agent-shim.sock</code></pre>
+            <p class="text-sm text-gray-400 mt-4">
+              Socket 与 <span class="inline-code">state.json</span>、<span class="inline-code">events.jsonl</span> 同在一个 state dir 下，
+              agentd 无需额外记录 socket 路径——知道 session-id 就能算出来。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 设计原则 -->
+      <section id="principles" class="section-anchor fade-in mb-12">
+        <h2 class="text-3xl font-bold text-white mb-6">§ 设计原则</h2>
+        <div class="space-y-6">
+          <div class="bg-dark-lighter border border-dark-border rounded-lg p-6 fade-in" style="animation-delay: 0.1s">
+            <div class="flex items-start gap-4">
+              <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold shrink-0">1</div>
+              <div>
+                <h3 class="text-lg font-semibold text-white mb-2">Shim RPC 是 agentd 唯一的 agent 管理接口</h3>
+                <p class="text-gray-300 leading-relaxed">
+                  agentd 不直接接触 agent 进程，不持有 stdio，不理解 ACP。所有交互通过 shim RPC 中转。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-dark-lighter border border-dark-border rounded-lg p-6 fade-in" style="animation-delay: 0.2s">
+            <div class="flex items-start gap-4">
+              <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold shrink-0">2</div>
+              <div>
+                <h3 class="text-lg font-semibold text-white mb-2">ACP 不穿透</h3>
+                <p class="text-gray-300 leading-relaxed">
+                  agent-shim 内部使用 ACP 与 agent 通信，但 shim RPC 暴露的是翻译后的 typed events 和高层命令，消费方无需感知 ACP。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-dark-lighter border border-dark-border rounded-lg p-6 fade-in" style="animation-delay: 0.3s">
+            <div class="flex items-start gap-4">
+              <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold shrink-0">3</div>
+              <div>
+                <h3 class="text-lg font-semibold text-white mb-2">重连友好</h3>
+                <p class="text-gray-300 leading-relaxed">
+                  agentd 重启后通过扫描 socket 文件重新连接，调用 <span class="inline-code">GetState</span> 恢复元数据，调用 <span class="inline-code">Subscribe</span> 重新订阅事件流。
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 方法详解 -->
+      <section id="methods" class="section-anchor fade-in mb-12">
+        <h2 class="text-3xl font-bold text-white mb-6">§ 方法详解</h2>
+        <p class="text-gray-400 mb-8">agent-shim 提供六个 RPC 方法，覆盖 agent 生命周期管理的各个方面。</p>
+
+        <!-- Prompt -->
+        <div id="prompt" class="section-anchor fade-in mb-10" style="animation-delay: 0.1s">
+          <h3 class="text-2xl font-semibold text-primary mb-4">Prompt</h3>
+          <p class="text-gray-300 mb-4">向 agent 发送 prompt，阻塞直到 agent turn 完成。</p>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Request</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "Prompt",
+  "params": {
+    "text": "string — user-supplied prompt text"
+  }
+}</code></pre>
+            </div>
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Response</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "stopReason": "string — mirrors agent stop reason"
+  }
+}</code></pre>
+            </div>
+          </div>
+          
+          <div class="mt-4 bg-red-900/20 border border-red-500/30 rounded-lg p-4">
+            <div class="text-sm text-red-400">
+              <strong>Error codes:</strong> <span class="inline-code">-32603</span> (Internal Error) — agent 进程异常或 ACP 通信失败
+            </div>
+          </div>
+        </div>
+
+        <!-- Cancel -->
+        <div id="cancel" class="section-anchor fade-in mb-10" style="animation-delay: 0.2s">
+          <h3 class="text-2xl font-semibold text-primary mb-4">Cancel</h3>
+          <p class="text-gray-300 mb-4">取消当前 agent turn。agent-shim 将此转发为 ACP <span class="inline-code">session/cancel</span>。</p>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Request</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "Cancel",
+  "params": null
+}</code></pre>
+            </div>
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Response</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": null
+}</code></pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- Subscribe -->
+        <div id="subscribe" class="section-anchor fade-in mb-10" style="animation-delay: 0.3s">
+          <h3 class="text-2xl font-semibold text-primary mb-4">Subscribe</h3>
+          <p class="text-gray-300 mb-4">
+            订阅 typed event stream。方法立即返回空 result；
+            事件作为 <span class="inline-code">$/event</span> notification 异步送达，直到客户端断开连接。
+          </p>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Request</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "Subscribe",
+  "params": null
+}</code></pre>
+            </div>
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Response</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": null
+}</code></pre>
+            </div>
+          </div>
+          
+          <div class="mt-4 bg-primary/10 border border-primary/30 rounded-lg p-4">
+            <p class="text-sm text-gray-300">
+              订阅建立后，事件通过 notification 送达（见下方 <a href="#events" class="text-primary underline">事件类型</a> 部分）。
+            </p>
+          </div>
+        </div>
+
+        <!-- GetState -->
+        <div id="getstate" class="section-anchor fade-in mb-10" style="animation-delay: 0.4s">
+          <h3 class="text-2xl font-semibold text-primary mb-4">GetState</h3>
+          <p class="text-gray-300 mb-4">查询 agent 进程的当前状态。</p>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Request</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "GetState",
+  "params": null
+}</code></pre>
+            </div>
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Response</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "result": {
+    "oarVersion": "string",
+    "id": "string — session ID",
+    "status": "creating|created|running|stopped",
+    "pid": 12345,
+    "bundle": "string — bundle directory path",
+    "annotations": {}
+  }
+}</code></pre>
+            </div>
+          </div>
+          
+          <div class="mt-4 bg-dark-lighter border border-dark-border rounded-lg p-4">
+            <p class="text-sm text-gray-300">
+              <span class="inline-code">status</span> 值对应 <a href="runtime.md" class="text-primary underline">Runtime Spec</a> 定义的生命周期状态。
+            </p>
+          </div>
+        </div>
+
+        <!-- GetHistory -->
+        <div id="gethistory" class="section-anchor fade-in mb-10" style="animation-delay: 0.5s">
+          <h3 class="text-2xl font-semibold text-primary mb-4">GetHistory</h3>
+          <p class="text-gray-300 mb-4">
+            读取 event log，从指定偏移开始返回所有条目。
+            用于 agentd 重连后补全在断开期间错过的事件。
+          </p>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Request</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "GetHistory",
+  "params": {
+    "fromSeq": 0
+  }
+}</code></pre>
+            </div>
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Response</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "result": {
+    "entries": [
+      {
+        "seq": 1,
+        "timestamp": "2025-01-15T10:30:00Z",
+        "type": "text",
+        "payload": { "text": "..." }
+      }
+    ]
+  }
+}</code></pre>
+            </div>
+          </div>
+          
+          <div class="mt-4 bg-dark-lighter border border-dark-border rounded-lg p-4">
+            <p class="text-sm text-gray-300">
+              <span class="inline-code">fromSeq</span> 为 0 时返回完整历史。参数可省略，默认 <span class="inline-code">fromSeq=0</span>。
+            </p>
+          </div>
+        </div>
+
+        <!-- Shutdown -->
+        <div id="shutdown" class="section-anchor fade-in mb-10" style="animation-delay: 0.6s">
+          <h3 class="text-2xl font-semibold text-primary mb-4">Shutdown</h3>
+          <p class="text-gray-300 mb-4">
+            优雅关闭 agent 进程和 shim RPC server。
+            agent-shim 先回复确认，然后执行 SIGTERM → 等待 → SIGKILL 序列。
+          </p>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Request</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "Shutdown",
+  "params": null
+}</code></pre>
+            </div>
+            <div>
+              <div class="text-sm text-gray-400 mb-2 font-semibold">Response</div>
+              <pre><code>{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "result": null
+}</code></pre>
+            </div>
+          </div>
+          
+          <div class="mt-4 bg-green-900/20 border border-green-500/30 rounded-lg p-4">
+            <p class="text-sm text-green-400">
+              响应在 agent 进程终止之前发送——调用方收到响应即可释放连接。
+            </p>
+          </div>
+        </div>
+
+        <!-- 方法速查表 -->
+        <div class="bg-dark-lighter border border-dark-border rounded-lg p-6 fade-in" style="animation-delay: 0.7s">
+          <h3 class="text-lg font-semibold text-white mb-4">方法速查表</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>方法</th>
+                <th>方向</th>
+                <th>阻塞</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-primary font-semibold">Prompt</td>
+                <td>请求/响应</td>
+                <td>是（等 turn 完成）</td>
+                <td>发送 prompt</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">Cancel</td>
+                <td>请求/响应</td>
+                <td>否</td>
+                <td>取消当前 turn</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">Subscribe</td>
+                <td>请求/响应 + 异步 notification</td>
+                <td>否（立即回复，事件异步）</td>
+                <td>订阅事件流</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">GetState</td>
+                <td>请求/响应</td>
+                <td>否</td>
+                <td>查询进程状态</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">GetHistory</td>
+                <td>请求/响应</td>
+                <td>否</td>
+                <td>读取历史事件</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">Shutdown</td>
+                <td>请求/响应</td>
+                <td>否（回复先于进程退出）</td>
+                <td>关闭 agent 和 shim</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 事件类型 -->
+      <section id="events" class="section-anchor fade-in mb-12">
+        <h2 class="text-3xl font-bold text-white mb-6">§ 事件类型</h2>
+        
+        <div class="bg-dark-lighter border border-dark-border rounded-lg p-6 mb-6 fade-in" style="animation-delay: 0.1s">
+          <h3 class="text-lg font-semibold text-white mb-4">事件格式（JSON-RPC Notification）</h3>
+          <p class="text-gray-300 mb-4">
+            Subscribe 建立后，agent-shim 通过 <span class="inline-code">$/event</span> notification 推送 typed events。
+            Notification 没有 <span class="inline-code">id</span> 字段，不需要回复。
+          </p>
+          <pre><code>{
+  "jsonrpc": "2.0",
+  "method": "$/event",
+  "params": {
+    "type": "string — event type discriminator",
+    "payload": {}
+  }
+}</code></pre>
+        </div>
+
+        <div class="bg-dark-lighter border border-dark-border rounded-lg p-6 mb-6 fade-in" style="animation-delay: 0.2s">
+          <h3 class="text-lg font-semibold text-white mb-4">事件类型列表</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>type</th>
+                <th>payload 字段</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-primary font-semibold">text</td>
+                <td><code>text: string</code></td>
+                <td>agent 输出的文本片段（流式）</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">thinking</td>
+                <td><code>text: string</code></td>
+                <td>agent 思考/推理片段（流式）</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">user_message</td>
+                <td><code>text: string</code></td>
+                <td>用户 prompt 的回显片段</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">tool_call</td>
+                <td><code>id, kind, title: string</code></td>
+                <td>agent 调用了一个 tool</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">tool_result</td>
+                <td><code>id, status: string</code></td>
+                <td>tool 调用结果</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">file_write</td>
+                <td><code>path: string, allowed: bool</code></td>
+                <td>文件写入事件</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">file_read</td>
+                <td><code>path: string, allowed: bool</code></td>
+                <td>文件读取事件</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">command</td>
+                <td><code>command: string, allowed: bool</code></td>
+                <td>shell 命令执行事件</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">plan</td>
+                <td><code>entries: PlanEntry[]</code></td>
+                <td>agent 更新了执行计划</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">turn_start</td>
+                <td><em>(empty)</em></td>
+                <td>agent turn 开始</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">turn_end</td>
+                <td><code>stopReason: string</code></td>
+                <td>agent turn 结束</td>
+              </tr>
+              <tr>
+                <td class="text-primary font-semibold">error</td>
+                <td><code>msg: string</code></td>
+                <td>未知或畸形事件</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="bg-primary/10 border border-primary rounded-lg p-6 fade-in" style="animation-delay: 0.3s">
+          <h3 class="text-lg font-semibold text-primary mb-4">事件与 ACP 的关系</h3>
+          <p class="text-gray-300 mb-4">
+            这些事件是 agent-shim 从 ACP 协议翻译而来的，<strong class="text-white">不是</strong> raw ACP notification 的透传。
+            agentd 作为消费者只需理解上述事件类型，不需要感知 ACP 协议细节。
+          </p>
+          <pre class="mb-4"><code class="text-gray-300">agentd ↔ agent-shim:  typed events ($/event)   ← 本规范定义
+agent-shim ↔ agent:   ACP over stdio            ← agent-shim 内部实现细节</code></pre>
+          <p class="text-gray-300">
+            如果未来某个 agent 使用 gRPC 而非 ACP，只需编写新的 shim 实现，上层 typed event 接口不变。
+          </p>
+        </div>
+      </section>
+
+      <!-- 错误码 -->
+      <section id="errors" class="section-anchor fade-in mb-12">
+        <h2 class="text-3xl font-bold text-white mb-6">§ 错误码</h2>
+        <p class="text-gray-400 mb-6">遵循 JSON-RPC 2.0 标准错误码：</p>
+        
+        <div class="bg-dark-lighter border border-dark-border rounded-lg p-6 fade-in" style="animation-delay: 0.1s">
+          <table>
+            <thead>
+              <tr>
+                <th>码</th>
+                <th>含义</th>
+                <th>场景</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="text-red-400 font-mono font-bold">-32601</td>
+                <td>Method not found</td>
+                <td>未知方法名</td>
+              </tr>
+              <tr>
+                <td class="text-red-400 font-mono font-bold">-32602</td>
+                <td>Invalid params</td>
+                <td>参数缺失或格式错误</td>
+              </tr>
+              <tr>
+                <td class="text-red-400 font-mono font-bold">-32603</td>
+                <td>Internal error</td>
+                <td>agent 进程异常、ACP 通信失败</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 总结 -->
+      <section class="bg-primary/10 border border-primary rounded-lg p-8 text-center fade-in mb-12">
+        <h2 class="text-2xl font-bold text-white mb-4">核心要点总结</h2>
+        <div class="grid grid-cols-3 gap-6 text-left max-w-3xl mx-auto">
+          <div>
+            <div class="text-primary font-semibold mb-2">接口设计</div>
+            <p class="text-sm text-gray-300">agentd 的唯一管理接口，ACP 不穿透，重连友好</p>
+          </div>
+          <div>
+            <div class="text-primary font-semibold mb-2">方法覆盖</div>
+            <p class="text-sm text-gray-300">Prompt、Cancel、Subscribe、GetState、GetHistory、Shutdown</p>
+          </div>
+          <div>
+            <div class="text-primary font-semibold mb-2">事件翻译</div>
+            <p class="text-sm text-gray-300">12 种 typed events，从 ACP 翻译而来，消费方无需感知底层协议</p>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- JavaScript -->
+  <script>
+    // 阅读进度条
+    function updateProgressBar() {
+      const scrollTop = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      const progress = (scrollTop / docHeight) * 100;
+      document.getElementById('progressBar').style.width = progress + '%';
+    }
+
+    // TOC 高亮
+    function updateTocHighlight() {
+      const sections = document.querySelectorAll('.section-anchor');
+      const tocLinks = document.querySelectorAll('.toc-link');
+      
+      let currentSection = '';
+      sections.forEach(section => {
+        const rect = section.getBoundingClientRect();
+        if (rect.top <= 150) {
+          currentSection = section.id;
+        }
+      });
+
+      tocLinks.forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === '#' + currentSection) {
+          link.classList.add('active');
+        }
+      });
+    }
+
+    // Fade-in 动画观察器
+    function setupFadeInObserver() {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.style.animationPlayState = 'running';
+          }
+        });
+      }, { threshold: 0.1 });
+
+      document.querySelectorAll('.fade-in').forEach(el => {
+        el.style.animationPlayState = 'paused';
+        observer.observe(el);
+      });
+    }
+
+    // 平滑滚动
+    document.querySelectorAll('.toc-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const targetId = link.getAttribute('href').slice(1);
+        const target = document.getElementById(targetId);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    });
+
+    // 初始化
+    window.addEventListener('scroll', () => {
+      updateProgressBar();
+      updateTocHighlight();
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+      setupFadeInObserver();
+      updateProgressBar();
+      updateTocHighlight();
+    });
+  </script>
+</body>
+</html>
