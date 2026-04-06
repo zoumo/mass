@@ -96,18 +96,6 @@ func (m *Manager) Create(ctx context.Context) error {
 	}
 	m.cmd = cmd
 
-	// (e) Background goroutine: wait for process exit and write stopped state.
-	go func() {
-		_ = cmd.Wait()
-		_ = spec.WriteState(m.stateDir, spec.State{
-			OarVersion:  m.cfg.OarVersion,
-			ID:          m.cfg.Metadata.Name,
-			Status:      spec.StatusStopped,
-			Bundle:      m.bundleDir,
-			Annotations: m.cfg.Metadata.Annotations,
-		})
-	}()
-
 	// (f) Build acpClient with Manager reference.
 	client := &acpClient{mgr: m}
 
@@ -180,6 +168,20 @@ func (m *Manager) Create(ctx context.Context) error {
 		handshakeErr = err
 		return fmt.Errorf("runtime: write created state: %w", err)
 	}
+
+	// (k) Background goroutine: wait for process exit and write stopped state.
+	// This is started AFTER the handshake completes to avoid interfering with
+	// pipe reads during the handshake (per Go's exec.Wait documentation).
+	go func() {
+		_ = cmd.Wait()
+		_ = spec.WriteState(m.stateDir, spec.State{
+			OarVersion:  m.cfg.OarVersion,
+			ID:          m.cfg.Metadata.Name,
+			Status:      spec.StatusStopped,
+			Bundle:      m.bundleDir,
+			Annotations: m.cfg.Metadata.Annotations,
+		})
+	}()
 
 	return nil
 }

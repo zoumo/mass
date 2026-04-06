@@ -1,0 +1,39 @@
+// Command agentdctl is a CLI for managing the agentd daemon.
+// It provides commands for session management, workspace management,
+// and daemon health checks.
+package main
+
+import (
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+// socketPath is the path to the ARI Unix socket.
+// Set by the root command's persistent --socket flag.
+var socketPath string
+
+// rootCmd is the base command for agentdctl.
+var rootCmd = &cobra.Command{
+	Use:   "agentdctl",
+	Short: "CLI for agentd daemon management",
+}
+
+func init() {
+	rootCmd.PersistentFlags().StringVar(&socketPath, "socket", "/var/run/agentd/ari.sock", "ARI socket path")
+}
+
+func main() {
+	// Add session commands (defined in session.go)
+	rootCmd.AddCommand(sessionCmd)
+
+	// Add workspace commands (defined in workspace.go)
+	rootCmd.AddCommand(workspaceCmd)
+
+	// Add daemon commands (defined in daemon.go)
+	rootCmd.AddCommand(daemonCmd)
+
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}

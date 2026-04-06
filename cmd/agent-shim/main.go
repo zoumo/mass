@@ -111,13 +111,18 @@ func run(cmd *cobra.Command, args []string) error {
 	srv := rpc.New(mgr, trans, socketPath, logPath)
 
 	// 12. Accept connections in the background.
+	// When Serve() returns (due to Shutdown RPC or error), cancel the context
+	// to trigger graceful shutdown of the main goroutine.
 	go func() {
 		if err := srv.Serve(); err != nil {
 			log.Printf("agent-shim: rpc server error: %v", err)
 		}
+		// Cancel context to signal main goroutine to exit.
+		// This handles the case where Shutdown is called via RPC.
+		cancel()
 	}()
 
-	// 13. Block until SIGTERM or SIGINT.
+	// 13. Block until SIGTERM/SIGINT or RPC server shutdown.
 	<-ctx.Done()
 
 	// 14. Graceful shutdown: kill agent and close listener.

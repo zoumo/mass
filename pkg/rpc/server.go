@@ -57,6 +57,7 @@ type GetStateResult struct {
 	PID         int               `json:"pid,omitempty"`
 	Bundle      string            `json:"bundle"`
 	Annotations map[string]string `json:"annotations,omitempty"`
+	ExitCode    *int              `json:"exitCode,omitempty"`
 }
 
 // EventNotification is the JSON body sent as a "$/event" notification.
@@ -284,6 +285,7 @@ func (h *connHandler) handleGetState(ctx context.Context, conn *jsonrpc2.Conn, r
 		PID:         st.PID,
 		Bundle:      st.Bundle,
 		Annotations: st.Annotations,
+		ExitCode:    st.ExitCode,
 	})
 }
 

@@ -63,4 +63,8 @@ type State struct {
 	// LastTurn records the outcome of the most recent agent turn.
 	// Nil before the first turn completes.
 	LastTurn *LastTurn `json:"lastTurn,omitempty"`
+
+	// ExitCode is the OS exit code of the agent process.
+	// Nil while the process is running; populated after exit.
+	ExitCode *int `json:"exitCode,omitempty"`
 }

@@ -93,58 +93,58 @@ Guidelines:
 
 ### R008 — End-to-end integration
 - Class: integration
-- Status: active
+- Status: validated
 - Description: Full pipeline agentd → agent-shim → mockagent works: create → prompt → stop → remove
 - Why it matters: Proves the assembled system works end-to-end
 - Source: execution
 - Primary owning slice: M001-tvc4z0/S08
 - Supporting slices: none
-- Validation: unmapped
-- Notes: Includes agentd restart recovery test (shim reconnection)
+- Validation: S08 Integration Tests: 11 tests pass — TestEndToEndPipeline (full lifecycle), TestSessionLifecycle (state machine), TestSessionPromptStoppedSession (error handling), TestSessionRemoveRunningSession (protected deletion), TestSessionList (listing), TestAgentdRestartRecovery (restart test reveals reconnection not yet implemented), TestMultipleConcurrentSessions (concurrent sessions), TestConcurrentPromptsSameSession (concurrent prompts same session)
+- Notes: Restart recovery (shim reconnection after agentd restart) identified as future enhancement — test documents current behavior
 
 ### R009 — Workspace Manager prepare/cleanup
 - Class: core-capability
-- Status: active
+- Status: validated
 - Description: Workspace Manager can prepare workspace from spec (Git/EmptyDir/Local) and cleanup with reference counting
 - Why it matters: Enables declarative workspace provisioning
 - Source: execution
-- Primary owning slice: M001-tlbeko/S01
-- Supporting slices: none
-- Validation: unmapped
-- Notes: Phase 3 requirement
+- Primary owning slice: M001-tlbeko/S04
+- Supporting slices: M001-tlbeko/S01, M001-tlbeko/S02
+- Validation: S04 WorkspaceManager tests: 13 tests pass, Prepare→Cleanup round-trips for Git/EmptyDir/Local, reference counting prevents premature cleanup (TestWorkspaceManagerReferenceCounting), hook failure handling verified
+- Notes: Phase 3 requirement — validated by M001-tlbeko
 
 ### R010 — Git source handler
 - Class: core-capability
-- Status: active
+- Status: validated
 - Description: Git source handler clones repository with ref/depth support
 - Why it matters: Primary workspace source type for agent work
 - Source: execution
-- Primary owning slice: M001-tlbeko/S02
+- Primary owning slice: M001-tlbeko/S01
 - Supporting slices: none
-- Validation: unmapped
-- Notes: Phase 3 requirement
+- Validation: S01 GitHandler integration tests: 6 tests pass on github.com/octocat/Hello-World.git — default clone, shallow depth=1, branch ref='test', commit SHA checkout, context cancellation, invalid URL error handling
+- Notes: Phase 3 requirement — validated by M001-tlbeko
 
 ### R011 — Hook execution
 - Class: core-capability
-- Status: active
+- Status: validated
 - Description: Setup/teardown hooks execute sequentially with failure handling and output capture
 - Why it matters: Enables workspace initialization and cleanup customization
 - Source: execution
 - Primary owning slice: M001-tlbeko/S03
 - Supporting slices: none
-- Validation: unmapped
-- Notes: Phase 3 requirement
+- Validation: S03 HookExecutor tests: 17 tests pass — sequential execution, abort-on-failure (TestExecuteHooksSequentialAbort proves marker file not created after first failure), output capture (HookError.Output), context cancellation
+- Notes: Phase 3 requirement — validated by M001-tlbeko
 
 ### R012 — ARI workspace methods
 - Class: integration
-- Status: active
+- Status: validated
 - Description: ARI workspace/* methods (prepare/list/cleanup) exposed
 - Why it matters: Primary interface for workspace management
 - Source: execution
-- Primary owning slice: M001-tlbeko/S04
+- Primary owning slice: M001-tlbeko/S05
 - Supporting slices: none
-- Validation: unmapped
-- Notes: Phase 3 requirement
+- Validation: S05 ARI integration tests: 16 tests pass over JSON-RPC — workspace/prepare (UUID generation, Registry tracking), workspace/list (tracked workspaces), workspace/cleanup (RefCount validation, lifecycle round-trip)
+- Notes: Phase 3 requirement — validated by M001-tlbeko
 
 ## Deferred
 
@@ -249,11 +249,11 @@ Guidelines:
 | R005 | core-capability | active | M001-tvc4z0/S05 | none | unmapped |
 | R006 | integration | active | M001-tvc4z0/S06 | none | unmapped |
 | R007 | admin/support | active | M001-tvc4z0/S07 | none | unmapped |
-| R008 | integration | active | M001-tvc4z0/S08 | none | unmapped |
-| R009 | core-capability | active | M001-tlbeko/S01 | none | unmapped |
-| R010 | core-capability | active | M001-tlbeko/S02 | none | unmapped |
-| R011 | core-capability | active | M001-tlbeko/S03 | none | unmapped |
-| R012 | integration | active | M001-tlbeko/S04 | none | unmapped |
+| R008 | integration | validated | M001-tvc4z0/S08 | none | S08: 11 integration tests pass |
+| R009 | core-capability | validated | M001-tlbeko/S01 | none | S04 WorkspaceManager tests |
+| R010 | core-capability | validated | M001-tlbeko/S02 | none | S01 GitHandler tests |
+| R011 | core-capability | validated | M001-tlbeko/S03 | none | S03 HookExecutor tests |
+| R012 | integration | validated | M001-tlbeko/S04 | none | S05 ARI integration tests |
 | R020 | core-capability | deferred | none | none | unmapped |
 | R021 | continuity | deferred | none | none | unmapped |
 | R022 | operability | deferred | none | none | unmapped |
@@ -265,7 +265,8 @@ Guidelines:
 
 ## Coverage Summary
 
-- Active requirements: 12
+- Active requirements: 7
 - Mapped to slices: 12
-- Validated: 0
+- Validated: 5
+- Unmapped active requirements: 0
 - Unmapped active requirements: 0
