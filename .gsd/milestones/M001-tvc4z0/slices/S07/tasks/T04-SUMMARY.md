@@ -2,29 +2,6 @@
 id: T04
 parent: S07
 milestone: M001-tvc4z0
-provides: []
-requires: []
-affects: []
-key_files: ["cmd/agentdctl/daemon.go", "cmd/agentdctl/main.go"]
-key_decisions: ["Used session/list RPC call for daemon health check (simple and reliable ping)", "Reports running on success, not running on any error (connection, RPC, parse)", "Created separate daemon.go file following session.go/workspace.go pattern"]
-patterns_established: []
-drill_down_paths: []
-observability_surfaces: []
-duration: ""
-verification_result: "Verified go build ./cmd/agentdctl passes. All CLI commands properly structured: root shows daemon/session/workspace, daemon has status subcommand with --socket global flag. Negative tests pass: socket missing reports "not running", invalid socket path reports "not running", daemon not running reports "not running" with error. Session and workspace commands still properly wired from prior tasks."
-completed_at: 2026-04-06T16:28:31.598Z
-blocker_discovered: false
----
-
-# T04: Created daemon status command for agentdctl CLI to check daemon health via session/list RPC
-
-> Created daemon status command for agentdctl CLI to check daemon health via session/list RPC
-
-## What Happened
----
-id: T04
-parent: S07
-milestone: M001-tvc4z0
 key_files:
   - cmd/agentdctl/daemon.go
   - cmd/agentdctl/main.go
@@ -32,9 +9,9 @@ key_decisions:
   - Used session/list RPC call for daemon health check (simple and reliable ping)
   - Reports running on success, not running on any error (connection, RPC, parse)
   - Created separate daemon.go file following session.go/workspace.go pattern
-duration: ""
+duration: 
 verification_result: passed
-completed_at: 2026-04-06T16:28:31.599Z
+completed_at: 2026-04-06T16:28:31.598Z
 blocker_discovered: false
 ---
 
@@ -64,7 +41,6 @@ Verified go build ./cmd/agentdctl passes. All CLI commands properly structured: 
 | 8 | `./agentdctl session --help` | 0 | ✅ pass | 100ms |
 | 9 | `./agentdctl workspace --help` | 0 | ✅ pass | 100ms |
 
-
 ## Deviations
 
 None
@@ -77,10 +53,3 @@ None
 
 - `cmd/agentdctl/daemon.go`
 - `cmd/agentdctl/main.go`
-
-
-## Deviations
-None
-
-## Known Issues
-None

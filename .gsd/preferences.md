@@ -1,10 +1,10 @@
 ---
 version: 1
-mode: team
+mode: solo
 skill_discovery: auto
 skill_staleness_days: 0
 uat_dispatch: false
-unique_milestone_ids: true
+unique_milestone_ids: false
 notifications:
   enabled: true
   on_complete: true

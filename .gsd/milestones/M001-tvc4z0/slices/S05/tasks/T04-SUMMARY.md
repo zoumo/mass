@@ -2,36 +2,13 @@
 id: T04
 parent: S05
 milestone: M001-tvc4z0
-provides: []
-requires: []
-affects: []
-key_files: ["pkg/runtime/runtime.go"]
-key_decisions: ["Move cmd.Wait() to after ACP handshake completes to avoid interfering with pipe reads (per Go exec.Wait documentation)"]
-patterns_established: []
-drill_down_paths: []
-observability_surfaces: []
-duration: ""
-verification_result: "ShimClient tests pass (11/11). ProcessManager test fails with "socket not ready after 5s" due to RPC socket not being created. Manual shim execution shows handshake completes successfully."
-completed_at: 2026-04-06T14:35:22.461Z
-blocker_discovered: true
----
-
-# T04: Fixed ACP handshake hang by moving cmd.Wait() after handshake completes; RPC socket creation issue remains
-
-> Fixed ACP handshake hang by moving cmd.Wait() after handshake completes; RPC socket creation issue remains
-
-## What Happened
----
-id: T04
-parent: S05
-milestone: M001-tvc4z0
 key_files:
   - pkg/runtime/runtime.go
 key_decisions:
   - Move cmd.Wait() to after ACP handshake completes to avoid interfering with pipe reads (per Go exec.Wait documentation)
-duration: ""
+duration: 
 verification_result: mixed
-completed_at: 2026-04-06T14:35:22.462Z
+completed_at: 2026-04-06T14:35:22.461Z
 blocker_discovered: true
 ---
 
@@ -55,7 +32,6 @@ ShimClient tests pass (11/11). ProcessManager test fails with "socket not ready 
 | 2 | `go test ./pkg/agentd/... -run ShimClient -v` | 0 | ✅ pass | 1400ms |
 | 3 | `go test ./pkg/agentd/... -run TestProcessManagerStart -v` | 1 | ❌ fail | 5100ms |
 
-
 ## Deviations
 
 Task scope expanded beyond just fixing the ACP hang - discovered a new issue with RPC socket creation that needs further investigation.
@@ -67,10 +43,3 @@ RPC Socket Not Created: After the ACP handshake completes successfully, the shim
 ## Files Created/Modified
 
 - `pkg/runtime/runtime.go`
-
-
-## Deviations
-Task scope expanded beyond just fixing the ACP hang - discovered a new issue with RPC socket creation that needs further investigation.
-
-## Known Issues
-RPC Socket Not Created: After the ACP handshake completes successfully, the shim's RPC server does not create the Unix socket. The Serve() function is called in a goroutine, but the socket never appears. This causes TestProcessManagerStart to fail with 'socket not ready after 5s'. This is a separate issue from the original ACP handshake hang and requires additional investigation.

@@ -2,38 +2,15 @@
 id: T03
 parent: S05
 milestone: M001-tvc4z0
-provides: []
-requires: []
-affects: []
-key_files: ["pkg/agentd/process.go"]
-key_decisions: ["Stop method calls Shutdown RPC first, then waits for process exit with 10s timeout before killing", "State and Connect methods return errors if session is not in running state", "GetProcess and ListProcesses helper methods added for process introspection"]
-patterns_established: []
-drill_down_paths: []
-observability_surfaces: []
-duration: ""
-verification_result: "Code compiles and ShimClient tests pass (11/11). ProcessManager integration test fails - shim starts but socket never created, status=stopped without PID indicating ACP handshake failure."
-completed_at: 2026-04-03T04:49:15.147Z
-blocker_discovered: false
----
-
-# T03: Implemented Stop/State/Connect methods on ProcessManager; TestProcessManagerStart failing due to shim handshake issue
-
-> Implemented Stop/State/Connect methods on ProcessManager; TestProcessManagerStart failing due to shim handshake issue
-
-## What Happened
----
-id: T03
-parent: S05
-milestone: M001-tvc4z0
 key_files:
   - pkg/agentd/process.go
 key_decisions:
   - Stop method calls Shutdown RPC first, then waits for process exit with 10s timeout before killing
   - State and Connect methods return errors if session is not in running state
   - GetProcess and ListProcesses helper methods added for process introspection
-duration: ""
+duration: 
 verification_result: mixed
-completed_at: 2026-04-03T04:49:15.148Z
+completed_at: 2026-04-03T04:49:15.147Z
 blocker_discovered: false
 ---
 
@@ -57,7 +34,6 @@ Code compiles and ShimClient tests pass (11/11). ProcessManager integration test
 | 2 | `go test ./pkg/agentd/... -run ShimClient -v` | 0 | ✅ pass | 1300ms |
 | 3 | `go test ./pkg/agentd/... -run TestProcessManagerStart -v` | 1 | ❌ fail | 5000ms |
 
-
 ## Deviations
 
 Did not complete comprehensive integration tests due to blocking TestProcessManagerStart failure
@@ -69,10 +45,3 @@ TestProcessManagerStart failing: shim starts but ACP handshake fails, resulting 
 ## Files Created/Modified
 
 - `pkg/agentd/process.go`
-
-
-## Deviations
-Did not complete comprehensive integration tests due to blocking TestProcessManagerStart failure
-
-## Known Issues
-TestProcessManagerStart failing: shim starts but ACP handshake fails, resulting in status=stopped without PID. Manual tests work correctly. Root cause unclear - needs further investigation into test environment differences.

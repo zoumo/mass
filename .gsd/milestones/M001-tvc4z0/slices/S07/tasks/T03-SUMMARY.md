@@ -2,38 +2,15 @@
 id: T03
 parent: S07
 milestone: M001-tvc4z0
-provides: []
-requires: []
-affects: []
-key_files: ["cmd/agentdctl/workspace.go", "cmd/agentdctl/main.go"]
-key_decisions: ["Validated type-specific required flags BEFORE connecting to client (avoids confusing socket errors)", "Reused helper functions from session.go (getClient, outputJSON, handleError)"]
-patterns_established: []
-drill_down_paths: []
-observability_surfaces: []
-duration: ""
-verification_result: "Verified go build ./cmd/agentdctl passes. All 3 workspace subcommands registered under workspace command. Required flags validated by cobra (--name). Type-specific validation works (--url required for git, --path required for local, invalid type rejected). Positional args validated by cobra (workspace-id for cleanup). Connection error handling works with nonexistent socket. All Must-Haves met: workspace prepare with flags, workspace list, workspace cleanup with positional arg, build passes."
-completed_at: 2026-04-06T16:25:35.880Z
-blocker_discovered: false
----
-
-# T03: Implemented 3 workspace subcommands for agentdctl CLI with cobra
-
-> Implemented 3 workspace subcommands for agentdctl CLI with cobra
-
-## What Happened
----
-id: T03
-parent: S07
-milestone: M001-tvc4z0
 key_files:
   - cmd/agentdctl/workspace.go
   - cmd/agentdctl/main.go
 key_decisions:
   - Validated type-specific required flags BEFORE connecting to client (avoids confusing socket errors)
   - Reused helper functions from session.go (getClient, outputJSON, handleError)
-duration: ""
+duration: 
 verification_result: passed
-completed_at: 2026-04-06T16:25:35.882Z
+completed_at: 2026-04-06T16:25:35.880Z
 blocker_discovered: false
 ---
 
@@ -64,7 +41,6 @@ Verified go build ./cmd/agentdctl passes. All 3 workspace subcommands registered
 | 9 | `./agentdctl workspace prepare --name test --type invalid` | 1 | ✅ pass | 500ms |
 | 10 | `./agentdctl workspace cleanup` | 1 | ✅ pass | 500ms |
 
-
 ## Deviations
 
 Minor implementation improvement: Moved type-specific flag validation BEFORE getClient() call (plan had validation after connection). This avoids confusing socket connection errors when the real issue is missing required flags for the specific source type.
@@ -77,10 +53,3 @@ None.
 
 - `cmd/agentdctl/workspace.go`
 - `cmd/agentdctl/main.go`
-
-
-## Deviations
-Minor implementation improvement: Moved type-specific flag validation BEFORE getClient() call (plan had validation after connection). This avoids confusing socket connection errors when the real issue is missing required flags for the specific source type.
-
-## Known Issues
-None.

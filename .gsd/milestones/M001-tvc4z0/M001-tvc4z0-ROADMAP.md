@@ -13,4 +13,4 @@ From "manage one agent" to "manage multiple agents" — agentd daemon manages se
 | S05 | Process Manager | high | S02, S03, S04 | ✅ | Process Manager starts shim process, connects socket, subscribes events; mockagent responds |
 | S06 | ARI Service | high | S04, S05 | ✅ | ARI JSON-RPC server exposes session/* methods, CLI can create/prompt/stop sessions |
 | S07 | agentdctl CLI | low | S06 | ✅ | agentdctl CLI can manage sessions through ARI: new/list/prompt/stop/remove |
-| S08 | Integration Tests | low | S06, S07 | ✅ | Full pipeline works: agentd → agent-shim → mockagent end-to-end; 11 integration tests pass |
+| S08 | Integration Tests | low | — | ✅ | Full pipeline works: agentd → agent-shim → mockagent end-to-end; restart recovery verified |

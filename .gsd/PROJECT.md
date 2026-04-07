@@ -2,56 +2,40 @@
 
 ## What This Is
 
-Open Agent Runtime (OAR) — a layered agent runtime architecture inspired by containerd/runc. Manages agent processes through a shim layer (agent-shim), a high-level daemon (agentd), and an orchestrator layer for multi-agent coordination.
+Open Agent Runtime (OAR) is a layered runtime for headless coding agents. It manages agent processes through `agent-shim`, a higher-level daemon in `agentd`, and a future orchestrator layer for multi-agent coordination.
 
 ## Core Value
 
-Enable reliable, observable, headless agent execution with proper lifecycle management — from single agent sessions to multi-agent rooms with shared workspaces and inter-agent communication.
+The one thing that must keep working is reliable, observable ACP-based agent execution with truthful lifecycle state. If scope has to shrink, the runtime still needs to launch real ACP agents, manage them cleanly, and tell the truth about their state and recovery behavior.
 
 ## Current State
 
-**Implemented (Phase 1 — agent-shim layer):**
-- `pkg/spec` — OAR Runtime Spec types, config parsing, state management
-- `pkg/runtime` — Manager: agent process lifecycle, ACP handshake, permissions
-- `pkg/events` — Typed event stream, EventLog (JSONL), ACP→Event translator
-- `pkg/rpc` — JSON-RPC 2.0 server over Unix socket (shim RPC)
-- `cmd/agent-shim` — CLI entry point with full startup flow
-- `cmd/agent-shim-cli` — Interactive management client
+Implemented today:
+- `agent-shim` can start an ACP agent process, perform the ACP handshake, and expose a shim RPC surface
+- `agentd` can manage sessions, runtime classes, workspaces, metadata, and ARI session/workspace methods
+- workspace preparation exists for Git / EmptyDir / Local sources, with hooks and reference tracking
+- integration tests already prove the assembled path `agentd -> agent-shim -> mockagent`
+- real bundle examples exist under `bin/bundles/claude-code` and `bin/bundles/gsd-pi`
 
-**Implemented (Phase 3 — Workspace Manager):**
-- `pkg/workspace` — WorkspaceSpec types, source handlers (Git/EmptyDir/Local), hook execution, WorkspaceManager with Prepare/Cleanup
-- `pkg/ari` — ARI JSON-RPC server with workspace/* methods (prepare/list/cleanup), Registry for workspace tracking
-
-**Implemented (Phase 2 — agentd Core):**
-- `cmd/agentd` — High-level daemon with config parsing, signal handling, ARI server
-- `pkg/meta` — SQLite metadata store with WAL mode, embedded schema, sessions/workspaces/rooms tables
-- `pkg/agentd` — RuntimeClassRegistry (env substitution), SessionManager (state machine), ProcessManager (shim lifecycle)
-- `pkg/ari` — Full ARI JSON-RPC server with session/* methods (new/prompt/stop/remove/list/status/attach), workspace/* methods
-- `cmd/agentdctl` — CLI for ARI operations (7 session commands, 3 workspace commands, daemon status)
-- `pkg/ari/client.go` — Simplified JSON-RPC client for CLI/management tools
-
-**Not yet implemented:**
-- Integration tests (M001-tvc4z0 S08) — Full pipeline agentd → agent-shim → mockagent end-to-end
-- `Orchestrator` — Room lifecycle, multi-agent coordination
+Current gap:
+- the design contract has drifted across `docs/design/*`
+- shim-rpc still carries an older naming/event model
+- recovery, state truthfulness, and Room semantics are not yet cleanly converged
+- the old `M001-terminal` direction is no longer part of the near-term plan
 
 ## Architecture / Key Patterns
 
-Layered architecture (containerd-inspired):
-```
-orchestrator (room lifecycle, multi-agent coordination)
-    ↓ ARI protocol
-agentd (session/workspace/process/room management)
-    ↓ shim RPC
-agent-shim (single agent process management)
-    ↓ ACP protocol
-agent (claude-code, gemini-cli, gsd, etc.)
-```
+Layered architecture:
+- orchestrator / room intent (future)
+- ARI in `agentd`
+- shim RPC in `agent-shim`
+- ACP toward real agent CLIs (`gsd-pi`, `claude-code`, later `codex`)
 
-Key patterns:
-- Session = metadata, Process = execution (containerd Container/Task separation)
-- RuntimeClass registry (K8s RuntimeClass pattern for agent type resolution)
-- Typed events (ACP is implementation detail, typed events are core protocol)
-- Unix socket RPC (agentd ↔ shim, orchestrator ↔ agentd)
+Established patterns:
+- session metadata is separate from runtime execution
+- workspaces are declarative inputs with managed/unmanaged ownership differences
+- typed events are the internal runtime surface, but that surface is now being re-evaluated against ACP rather than treated as permanently independent
+- SQLite metadata with WAL mode is the current persistence model; backend replacement is deferred unless convergence work reveals a concrete reason to change
 
 ## Capability Contract
 
@@ -59,5 +43,8 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 
 ## Milestone Sequence
 
-- [ ] M001-tvc4z0: Phase 2 — agentd Core — Session + Process management, ARI service (S01-S07 complete, S08 pending)
-- [x] M001-tlbeko: Phase 3 — Workspace Manager — Workspace spec, source handlers, hooks, ARI methods (COMPLETED 2026-04-03)
+- [x] M001-tvc4z0: agentd Core — Session + Process management, ARI service, integration tests
+- [x] M001-tlbeko: Workspace Manager — Workspace spec, source handlers, hooks, workspace ARI methods
+- [ ] M002: Contract Convergence and ACP Runtime Truthfulness — 收口设计契约、shim-rpc clean break、恢复语义与真实 CLI 证明
+- [ ] M003: Recovery and Safety Hardening — harden restart, state rebuild, cleanup safety, and stronger cross-client confidence
+- [ ] M004: Realized Room Runtime — land implementable Room ownership, routing, and delivery semantics on a stable base

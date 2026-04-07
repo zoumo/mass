@@ -2,29 +2,6 @@
 id: T03
 parent: S02
 milestone: M001-tvc4z0
-provides: []
-requires: []
-affects: []
-key_files: ["cmd/agentd/main.go", "pkg/meta/integration_test.go"]
-key_decisions: ["Store initialization is optional - daemon starts without error when metaDB config field is empty", "Parent directory for MetaDB path created automatically using os.MkdirAll with 0755 permissions", "Short socket paths required for macOS sun_path limit (104 chars) - use separate short temp directory for socket"]
-patterns_established: []
-drill_down_paths: []
-observability_surfaces: []
-duration: ""
-verification_result: "Ran build and integration tests: go build -o bin/agentd ./cmd/agentd && go test ./pkg/meta/... -v -run TestIntegration -tags integration. Both integration tests passed: TestIntegrationStoreInitWithAgentd (1.95s) verified Store lifecycle (init, database creation, SIGTERM shutdown, Store close), TestIntegrationStoreNotConfigured (1.87s) verified daemon starts without Store when metaDB empty. Verified daemon launchability (R001): agentd binary builds and starts successfully."
-completed_at: 2026-04-03T02:06:44.691Z
-blocker_discovered: false
----
-
-# T03: Wired Store initialization into agentd daemon startup and shutdown lifecycle with integration tests verifying daemon behavior with and without Store configured.
-
-> Wired Store initialization into agentd daemon startup and shutdown lifecycle with integration tests verifying daemon behavior with and without Store configured.
-
-## What Happened
----
-id: T03
-parent: S02
-milestone: M001-tvc4z0
 key_files:
   - cmd/agentd/main.go
   - pkg/meta/integration_test.go
@@ -32,9 +9,9 @@ key_decisions:
   - Store initialization is optional - daemon starts without error when metaDB config field is empty
   - Parent directory for MetaDB path created automatically using os.MkdirAll with 0755 permissions
   - Short socket paths required for macOS sun_path limit (104 chars) - use separate short temp directory for socket
-duration: ""
+duration: 
 verification_result: passed
-completed_at: 2026-04-03T02:06:44.692Z
+completed_at: 2026-04-03T02:06:44.691Z
 blocker_discovered: false
 ---
 
@@ -57,7 +34,6 @@ Ran build and integration tests: go build -o bin/agentd ./cmd/agentd && go test 
 | 1 | `go build -o bin/agentd ./cmd/agentd` | 0 | ✅ pass | 500ms |
 | 2 | `go test ./pkg/meta/... -v -run TestIntegration -tags integration` | 0 | ✅ pass | 4900ms |
 
-
 ## Deviations
 
 Socket path length issue discovered during testing. macOS sun_path limit is 104 characters (including null terminator). Integration tests initially failed with "bind: invalid argument" because socket paths from t.TempDir() exceeded this limit. Fixed by creating separate short temp directory for socket using os.MkdirTemp("", "agentd-sock-"), following the pattern established in pkg/ari/server_test.go.
@@ -70,10 +46,3 @@ None.
 
 - `cmd/agentd/main.go`
 - `pkg/meta/integration_test.go`
-
-
-## Deviations
-Socket path length issue discovered during testing. macOS sun_path limit is 104 characters (including null terminator). Integration tests initially failed with "bind: invalid argument" because socket paths from t.TempDir() exceeded this limit. Fixed by creating separate short temp directory for socket using os.MkdirTemp("", "agentd-sock-"), following the pattern established in pkg/ari/server_test.go.
-
-## Known Issues
-None.

@@ -2,29 +2,6 @@
 id: T01
 parent: S03
 milestone: M001-tvc4z0
-provides: []
-requires: []
-affects: []
-key_files: ["pkg/agentd/config.go", "pkg/agentd/runtimeclass.go", "pkg/agentd/runtimeclass_test.go"]
-key_decisions: ["Capabilities defaults applied at registry creation (Streaming=true, SessionLoad=false, ConcurrentSessions=1)", "Env substitution uses os.Expand with os.Getenv for ${VAR} resolution"]
-patterns_established: []
-drill_down_paths: []
-observability_surfaces: []
-duration: ""
-verification_result: "All 6 unit tests pass (TestNewRuntimeClassRegistryValidConfig, TestGetFoundAndNotFound, TestEnvSubstitution, TestCommandRequired, TestCapabilitiesDefaults, TestList). Build compiles cleanly. Go vet reports no static analysis issues."
-completed_at: 2026-04-03T02:47:29.862Z
-blocker_discovered: false
----
-
-# T01: Created RuntimeClass registry with env substitution, validation, and thread-safe Get/List methods
-
-> Created RuntimeClass registry with env substitution, validation, and thread-safe Get/List methods
-
-## What Happened
----
-id: T01
-parent: S03
-milestone: M001-tvc4z0
 key_files:
   - pkg/agentd/config.go
   - pkg/agentd/runtimeclass.go
@@ -32,9 +9,9 @@ key_files:
 key_decisions:
   - Capabilities defaults applied at registry creation (Streaming=true, SessionLoad=false, ConcurrentSessions=1)
   - Env substitution uses os.Expand with os.Getenv for ${VAR} resolution
-duration: ""
+duration: 
 verification_result: passed
-completed_at: 2026-04-03T02:47:29.863Z
+completed_at: 2026-04-03T02:47:29.862Z
 blocker_discovered: false
 ---
 
@@ -58,7 +35,6 @@ All 6 unit tests pass (TestNewRuntimeClassRegistryValidConfig, TestGetFoundAndNo
 | 2 | `go build ./pkg/agentd/...` | 0 | ✅ pass | 100ms |
 | 3 | `go vet ./pkg/agentd/...` | 0 | ✅ pass | 100ms |
 
-
 ## Deviations
 
 None - implementation matches plan exactly.
@@ -72,10 +48,3 @@ None
 - `pkg/agentd/config.go`
 - `pkg/agentd/runtimeclass.go`
 - `pkg/agentd/runtimeclass_test.go`
-
-
-## Deviations
-None - implementation matches plan exactly.
-
-## Known Issues
-None

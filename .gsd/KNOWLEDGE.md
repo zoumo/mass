@@ -176,3 +176,37 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** Error code choice matters for client debugging. CodeInvalidParams tells client "your input was wrong, fix it". CodeInternalError tells client "server had a problem, retry or report". Check if the error is due to client-provided state (InvalidParams) vs system failure (InternalError).
 - **Reference:** pkg/ari/server.go handleSessionPrompt error handling
 - **When:** M001-tvc4z0/S06
+
+## K025 — macOS Unix socket path length limitation
+
+- **Pattern:** macOS has a 104-character limit for Unix domain socket paths (SUN_PATH_MAX including null terminator). Tests that use long t.TempDir() paths can exceed this limit and fail silently or with cryptic errors.
+- **Gotcha:** Integration tests initially used t.TempDir() for socket paths, which on macOS can exceed 100+ characters. The Listen() call would fail with "address too long" or similar errors.
+- **Implementation:** Use short socket paths like `/tmp/oar-{pid}-{counter}.sock` for integration tests. The testSocketCounter ensures unique paths per test, and cleanup removes files from /tmp.
+- **Lesson:** Unix socket path length varies by platform. macOS limit is 104 chars, Linux is 108 chars. Always use short paths for integration tests, especially on macOS. Never use t.TempDir() directly for socket paths.
+- **Reference:** tests/integration/session_test.go setupAgentdTest helper
+- **When:** M001-tvc4z0/S08/T02
+
+## K026 — ARI client serialization for concurrent access
+
+- **Pattern:** The ARI client's mutex only protects ID generation, not the entire request/response cycle. Concurrent client.Call() operations can interleave and cause protocol issues.
+- **Gotcha:** TestMultipleConcurrentSessions initially sent concurrent prompts without serialization. The goroutines would interleave JSON-RPC requests, causing connection errors or malformed responses.
+- **Implementation:** Wrap client.Call() with sync.Mutex for concurrent test scenarios: `clientMu.Lock(); err := client.Call(...); clientMu.Unlock()`. This serializes the full request/response cycle.
+- **Lesson:** JSON-RPC clients are often not thread-safe for concurrent calls. The ID mutex is insufficient — the entire message exchange needs serialization. Either create separate clients per goroutine or serialize calls with a mutex.
+- **Reference:** tests/integration/concurrent_test.go TestMultipleConcurrentSessions
+- **When:** M001-tvc4z0/S08/T04
+
+## K027 — Integration test cleanup with pkill for orphaned processes
+
+- **Pattern:** Integration tests that fork subprocesses (agentd, agent-shim, mockagent) need robust cleanup to handle test failures that leave orphan processes. The cleanup function should use pkill to terminate any leftover processes matching the binary names.
+- **Implementation:** In test cleanup: `exec.Command("pkill", "-f", "agent-shim").Run(); exec.Command("pkill", "-f", "mockagent").Run()`. This ensures clean state for subsequent tests even if a test panicked or failed mid-execution.
+- **Lesson:** Integration tests that spawn processes need aggressive cleanup. Process isolation (t.TempDir) alone isn't sufficient — test failures can leave processes running. pkill in cleanup ensures subsequent tests start clean. Ignore pkill errors (process might not exist).
+- **Reference:** tests/integration/session_test.go cleanup function
+- **When:** M001-tvc4z0/S08/T02
+
+## K028 — Shim process must run independently of request context
+
+- **Pattern:** Long-running daemon processes that should outlive the request that started them must NOT use exec.CommandContext. Use exec.Command instead and manage lifecycle explicitly.
+- **Gotcha:** ProcessManager.forkShim was using `exec.CommandContext(ctx, shimBinary, args...)` which tied the shim process to the request context. When the caller cancelled the context after Start() returned (normal pattern for request-scoped operations), Go killed the shim process immediately. This caused "signal: killed" errors and all prompt operations to fail.
+- **Lesson:** The context in exec.CommandContext is for cancellation propagation, not just timeout. When context is cancelled, Go sends SIGKILL to the process. For daemon-style processes that should survive beyond the initiating request, use exec.Command and manage lifecycle via explicit Stop/Shutdown methods.
+- **Reference:** pkg/agentd/process.go forkShim function
+- **When:** M001-tvc4z0/S06/T02

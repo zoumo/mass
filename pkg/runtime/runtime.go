@@ -20,15 +20,16 @@ import (
 
 // Manager manages the lifecycle of a single ACP agent process.
 type Manager struct {
-	cfg      spec.Config
-	bundleDir string
-	stateDir string
+	cfg        spec.Config
+	bundleDir  string
+	stateDir   string
 
-	mu        sync.Mutex
-	cmd       *exec.Cmd
-	conn      *acp.ClientSideConnection
-	sessionID acp.SessionId
-	events    chan acp.SessionNotification
+	mu          sync.Mutex
+	cmd         *exec.Cmd
+	conn        *acp.ClientSideConnection
+	sessionID   acp.SessionId
+	events      chan acp.SessionNotification
+	terminalMgr *TerminalManager // manages terminal operations
 }
 
 // New creates a new Manager. It does not start the agent process.
@@ -96,8 +97,12 @@ func (m *Manager) Create(ctx context.Context) error {
 	}
 	m.cmd = cmd
 
-	// (f) Build acpClient with Manager reference.
-	client := &acpClient{mgr: m}
+	// (e) Initialize TerminalManager for terminal operations.
+	// Uses the resolved workDir (agentRoot) and merged environment.
+	m.terminalMgr = NewTerminalManager(workDir, cmd.Env, m.cfg.Permissions)
+
+	// (f) Build acpClient with Manager reference and TerminalManager.
+	client := &acpClient{mgr: m, terminalMgr: m.terminalMgr}
 
 	// (g) Create client-side ACP connection.
 	// stdinPipe is the writer to the agent's stdin (our peerInput).

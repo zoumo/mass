@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/coder/acp-go-sdk"
@@ -178,38 +177,34 @@ func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
 	require.NoError(t, err, "approve-all should return no error")
 }
 
-// ── Terminal stubs ────────────────────────────────────────────────────────────
+// ── Terminal operations ─────────────────────────────────────────────────────
 
-func TestAcpClient_TerminalStubs(t *testing.T) {
+func TestAcpClient_TerminalNotInitialized(t *testing.T) {
 	mgr := newTestManager(spec.ApproveAll)
 	defer cleanupManager(mgr)
+	// Note: terminalMgr is nil since newTestManager doesn't initialize it
 	client := &acpClient{mgr: mgr}
 	ctx := context.Background()
 
 	_, err := client.CreateTerminal(ctx, acp.CreateTerminalRequest{})
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "terminal not supported"),
-		"CreateTerminal: expected 'terminal not supported', got %q", err.Error())
+	assert.Contains(t, err.Error(), "terminal manager not initialized")
 
 	_, err = client.KillTerminalCommand(ctx, acp.KillTerminalCommandRequest{})
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "terminal not supported"),
-		"KillTerminalCommand: expected 'terminal not supported', got %q", err.Error())
+	assert.Contains(t, err.Error(), "terminal manager not initialized")
 
 	_, err = client.TerminalOutput(ctx, acp.TerminalOutputRequest{})
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "terminal not supported"),
-		"TerminalOutput: expected 'terminal not supported', got %q", err.Error())
+	assert.Contains(t, err.Error(), "terminal manager not initialized")
 
 	_, err = client.ReleaseTerminal(ctx, acp.ReleaseTerminalRequest{})
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "terminal not supported"),
-		"ReleaseTerminal: expected 'terminal not supported', got %q", err.Error())
+	assert.Contains(t, err.Error(), "terminal manager not initialized")
 
 	_, err = client.WaitForTerminalExit(ctx, acp.WaitForTerminalExitRequest{})
 	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "terminal not supported"),
-		"WaitForTerminalExit: expected 'terminal not supported', got %q", err.Error())
+	assert.Contains(t, err.Error(), "terminal manager not initialized")
 }
 
 // ── convertMcpServers ─────────────────────────────────────────────────────────

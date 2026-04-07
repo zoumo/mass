@@ -2,29 +2,6 @@
 id: T01
 parent: S05
 milestone: M001-tvc4z0
-provides: []
-requires: []
-affects: []
-key_files: ["pkg/agentd/shim_client.go", "pkg/agentd/shim_client_test.go"]
-key_decisions: ["Use jsonrpc2.AsyncHandler for event handling to process notifications in separate goroutines, avoiding blocking the main RPC connection", "Event delivery order not guaranteed due to async handler; tests verify presence of expected events rather than strict ordering", "Use shorter socket paths (/tmp) for tests to avoid macOS Unix socket path length limits (~107 chars)"]
-patterns_established: []
-drill_down_paths: []
-observability_surfaces: []
-duration: ""
-verification_result: "go test ./pkg/agentd/... -run ShimClient -v passes all 11 tests covering: Dial, DialFail, Prompt, Cancel, Subscribe, GetState, Shutdown, Close, DisconnectNotify, MultipleMethods, ConcurrentCalls. TestParseEvent passes 7 sub-tests for event type parsing."
-completed_at: 2026-04-03T03:48:57.406Z
-blocker_discovered: false
----
-
-# T01: Created ShimClient with Prompt, Cancel, Subscribe, GetState, Shutdown RPC methods and "$/event" notification handling with 11 passing unit tests
-
-> Created ShimClient with Prompt, Cancel, Subscribe, GetState, Shutdown RPC methods and "$/event" notification handling with 11 passing unit tests
-
-## What Happened
----
-id: T01
-parent: S05
-milestone: M001-tvc4z0
 key_files:
   - pkg/agentd/shim_client.go
   - pkg/agentd/shim_client_test.go
@@ -32,9 +9,9 @@ key_decisions:
   - Use jsonrpc2.AsyncHandler for event handling to process notifications in separate goroutines, avoiding blocking the main RPC connection
   - Event delivery order not guaranteed due to async handler; tests verify presence of expected events rather than strict ordering
   - Use shorter socket paths (/tmp) for tests to avoid macOS Unix socket path length limits (~107 chars)
-duration: ""
+duration: 
 verification_result: passed
-completed_at: 2026-04-03T03:48:57.407Z
+completed_at: 2026-04-03T03:48:57.406Z
 blocker_discovered: false
 ---
 
@@ -62,7 +39,6 @@ go test ./pkg/agentd/... -run ShimClient -v passes all 11 tests covering: Dial, 
 | 2 | `go test ./pkg/agentd/... -run TestParseEvent -v` | 0 | ✅ pass | 750ms |
 | 3 | `go test ./pkg/agentd/... -v` | 0 | ✅ pass | 641ms |
 
-
 ## Deviations
 
 None. Implementation matches task plan exactly.
@@ -75,10 +51,3 @@ None.
 
 - `pkg/agentd/shim_client.go`
 - `pkg/agentd/shim_client_test.go`
-
-
-## Deviations
-None. Implementation matches task plan exactly.
-
-## Known Issues
-None.
