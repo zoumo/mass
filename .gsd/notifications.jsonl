@@ -12,3 +12,8 @@
 {"id":"944a09a8-700b-478d-a0a8-2ea96cb1bfc8","ts":"2026-04-07T15:14:01.819Z","severity":"info","message":"Resume: applied 9 fix(es) to state.","source":"notify","read":false}
 {"id":"a1d5cb06-8a50-4434-a436-63447e9dad46","ts":"2026-04-07T15:14:01.910Z","severity":"info","message":"Recovered 38 tool calls from paused session. Resuming with context.","source":"notify","read":false}
 {"id":"b32e3fa0-d07c-4e37-b5d9-49ab3f960173","ts":"2026-04-07T15:14:02.401Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}
+{"id":"af1eb86f-1315-4fd6-ab22-4de7549d7be7","ts":"2026-04-07T15:23:22.588Z","severity":"info","message":"Committed: chore: Extended sessions table with v2 recovery columns and wired Proce…","source":"notify","read":false}
+{"id":"25e241d0-55ad-40d3-972a-7a5164e4b1ee","ts":"2026-04-07T15:23:22.617Z","severity":"warning","message":"[safety] file-change: pkg/meta/store_test.go — Modified but not in task plan's expected output","source":"workflow-logger","read":false}
+{"id":"c3ae1fa9-b686-4c5b-9365-3c5bf598a405","ts":"2026-04-07T15:23:22.617Z","severity":"warning","message":"Safety: 1 unexpected file change(s) outside task plan","source":"notify","read":false}
+{"id":"f64b37b4-1fd1-4c92-8c1f-fb72bc39aedf","ts":"2026-04-07T15:23:30.901Z","severity":"info","message":"Verification gate: 1/1 checks passed","source":"notify","read":false}
+{"id":"9d3f47cd-a5ed-40db-862f-2a8018ae8a14","ts":"2026-04-07T15:23:31.167Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}

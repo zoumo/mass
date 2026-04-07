@@ -17,7 +17,7 @@ Steps:
   - Estimate: 1.5h
   - Files: pkg/meta/schema.sql, pkg/meta/models.go, pkg/meta/session.go, pkg/meta/session_test.go, pkg/meta/store.go, pkg/agentd/process.go
   - Verify: go test ./pkg/meta -count=1 -run 'TestSessionBootstrapConfig|TestSchemaMigration|TestSessionCRUD' -v && go test ./pkg/agentd -count=1 -v
-- [ ] **T02: RecoverSessions startup pass with event resume and daemon wiring** — Add a RecoverSessions method to ProcessManager that runs at daemon startup, reconnects to live shims via persisted socket paths, reconciles state, and resumes event subscriptions using the runtime/status → runtime/history → session/subscribe sequence. Wire it into cmd/agentd/main.go. Fix the shutdown timeout bug.
+- [x] **T02: Added RecoverSessions startup pass that reconnects to live shims, replays history, resumes subscriptions, and marks dead shims stopped; wired into daemon startup and fixed shutdown timeout bug** — Add a RecoverSessions method to ProcessManager that runs at daemon startup, reconnects to live shims via persisted socket paths, reconciles state, and resumes event subscriptions using the runtime/status → runtime/history → session/subscribe sequence. Wire it into cmd/agentd/main.go. Fix the shutdown timeout bug.
 
 Recovery sequence per session (from shim-rpc-spec):
 1. List all sessions in non-terminal state from meta store

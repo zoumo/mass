@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/open-agent-d/open-agent-d/pkg/agentd"
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
@@ -78,6 +79,17 @@ func main() {
 	processes := agentd.NewProcessManager(runtimeClasses, sessions, store, cfg)
 	log.Printf("agentd: process manager initialized")
 
+	// Run session recovery pass: reconnect to shims that survived a daemon restart.
+	{
+		recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := processes.RecoverSessions(recoverCtx); err != nil {
+			log.Printf("agentd: session recovery failed (non-fatal): %v", err)
+		} else {
+			log.Printf("agentd: session recovery complete")
+		}
+		recoverCancel()
+	}
+
 	// Create ARI Server with all dependencies.
 	srv := ari.New(manager, registry, sessions, processes, runtimeClasses, cfg, store, cfg.Socket, cfg.WorkspaceRoot)
 	log.Printf("agentd: ARI server created")
@@ -107,7 +119,7 @@ func main() {
 	log.Printf("agentd: received signal %v, shutting down", sig)
 
 	// Graceful shutdown with timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 30)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {

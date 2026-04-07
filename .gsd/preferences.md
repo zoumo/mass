@@ -102,13 +102,33 @@ post_unit_hooks:
       - {要点}
       - Key files: {路径}
 
-      ## 任务 3: CLAUDE.md
-      检查根目录 CLAUDE.md 是否有 "# Project Knowledge (auto-maintained by GSD)" 段落。
-      没有则追加，有则更新时间戳。追加内容：
-      # Project Knowledge (auto-maintained by GSD)
+      ## 任务 3: AGENTS.md
+      检查根目录 AGENTS.md 是否存在。
+      如果不存在则创建，如果已存在则全量重写。
+
+      AGENTS.md 的内容：
+
+      # Agent Guide
+      > Auto-generated from GSD. Do not edit directly.
       > Last synced: {当前日期} after {milestoneId}
-      Architecture, decisions, conventions, and changelog are in docs/.
-      Read them before making changes.
+
+      Before making any changes to this project, read the following documents:
+
+      ## Architecture
+      System design, component map, data flow, and tech stack.
+      → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
+      ## Decisions
+      Architecture decision log with rationale for key choices.
+      → [docs/DECISIONS.md](docs/DECISIONS.md)
+
+      ## Conventions
+      Coding rules and established patterns. All new code must follow these.
+      → [docs/CONVENTIONS.md](docs/CONVENTIONS.md)
+
+      ## Changelog
+      Milestone-level change history and what was built.
+      → [docs/CHANGELOG.md](docs/CHANGELOG.md)
 
       不要修改 .gsd/ 下的任何文件。
     artifact: "MILESTONE-DOCS-SYNCED.md"
