@@ -17,12 +17,13 @@ Implemented today:
 - integration tests already prove the assembled path `agentd -> agent-shim -> mockagent`
 - real bundle examples exist under `bin/bundles/claude-code` and `bin/bundles/gsd-pi`
 - M002/S01 converged the design contract across `docs/design/*`: bootstrap semantics, Room ownership, workspace host-impact boundaries, and the clean-break shim target now have one documented authority map
+- M002/S02 landed the clean-break shim RPC surface (`session/*` + `runtime/*`) with focused tests proving replayable history and status hooks
+- M002/S03 landed durable recovery: schema v2 with bootstrap_config/socket/PID persistence, RecoverSessions startup pass, fail-closed dead-shim marking, and event-continuity-preserving reconnection
 - the repo now has a mechanical design-proof surface: `scripts/verify-m002-s01-contract.sh` plus `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1`
+- integration test `TestAgentdRestartRecovery` proves R035 (event continuity) and R036 (config persistence) end-to-end across daemon restart
 
 Current gap:
-- the runtime implementation still needs to adopt the converged clean-break shim surface (`session/*` + `runtime/*`)
-- durable restart/reconnect truth, replay reconstruction, and fail-closed recovery semantics are still design-complete but not implementation-complete
-- real CLI integration proof against the converged contract still needs to be run in later M002 slices
+- real CLI integration proof against the converged contract still needs to be run (M002/S04)
 - the old `M001-terminal` direction is no longer part of the near-term plan
 
 ## Architecture / Key Patterns
@@ -42,6 +43,10 @@ Established patterns:
 - shim protocol authority is split intentionally: `runtime-spec.md` owns socket/state-dir layout, `shim-rpc-spec.md` owns method/notification/replay semantics, and `agent-shim.md` is descriptive only
 - SQLite metadata with WAL mode remains the current persistence model; backend replacement is deferred unless concrete limits appear
 - documentation convergence in this area is guarded by a two-part proof surface: the contract verifier script plus checked-in example bundle validation
+- recovery follows status→history→subscribe sequence per shim-rpc-spec; dead shims are fail-closed (marked stopped, not degraded)
+- recovered shims are watched via DisconnectNotify channel since the daemon has no exec.Cmd handle for shims it didn't fork
+- bootstrap config persistence is non-fatal; session continues even if DB persist fails after shim fork+connect
+- schema migrations use ALTER TABLE + isBenignSchemaError for idempotent upgrades without a migration framework
 
 ## Capability Contract
 
@@ -51,6 +56,6 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 
 - [x] M001-tvc4z0: agentd Core — Session + Process management, ARI service, integration tests
 - [x] M001-tlbeko: Workspace Manager — Workspace spec, source handlers, hooks, workspace ARI methods
-- [ ] M002: Contract Convergence and ACP Runtime Truthfulness — S01 converged the design contract; S02–S04 remain to land shim clean break, truthful recovery, and real CLI verification
+- [ ] M002: Contract Convergence and ACP Runtime Truthfulness — S01 converged design, S02 landed clean-break shim, S03 landed recovery+persistence; S04 remains for real CLI verification
 - [ ] M003: Recovery and Safety Hardening — harden restart, state rebuild, cleanup safety, and stronger cross-client confidence
 - [ ] M004: Realized Room Runtime — land implementable Room ownership, routing, and delivery semantics on a stable base

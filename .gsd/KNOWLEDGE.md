@@ -226,3 +226,27 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** Treat the shell verifier and example bundle test as one proof surface. Running only one of them leaves half the contract unchecked.
 - **Reference:** scripts/verify-m002-s01-contract.sh; pkg/spec/example_bundles_test.go
 - **When:** M002/S01/T01
+
+## K031 — Recovered shims need DisconnectNotify, not Cmd.Wait
+
+- **Pattern:** When agentd reconnects to a shim it did not fork (recovery after restart), the process has no `exec.Cmd` handle. Use the JSONRPC `DisconnectNotify()` channel to detect when the shim goes away instead of `Cmd.Wait()`.
+- **Gotcha:** Calling `Cmd.Wait()` on a nil Cmd panics. The `watchProcess` goroutine used for freshly-forked shims assumes a Cmd handle exists. Recovered shims need a separate `watchRecoveredProcess` goroutine.
+- **Lesson:** When designing process lifecycle watchers, always account for the "adopted process" case where you reconnected to something you didn't spawn.
+- **Reference:** pkg/agentd/recovery.go watchRecoveredProcess
+- **When:** M002/S03/T02
+
+## K032 — mockagent binary lives at internal/testutil/mockagent, not cmd/mockagent
+
+- **Pattern:** The mock agent used by integration tests is built from `./internal/testutil/mockagent` and placed at `bin/mockagent`. It is NOT under `cmd/`.
+- **Gotcha:** Writing `go build ./cmd/mockagent` fails with "directory not found". The correct command is `go build -o bin/mockagent ./internal/testutil/mockagent`.
+- **Lesson:** Integration test binaries are test utilities, not production commands, so they live under `internal/testutil/` rather than `cmd/`.
+- **Reference:** internal/testutil/mockagent/main.go; tests/integration/restart_test.go line 143
+- **When:** M002/S03/T03
+
+## K033 — Schema migration with isBenignSchemaError for idempotent ALTER TABLE
+
+- **Pattern:** The SQLite schema migration uses `ALTER TABLE ... ADD COLUMN` statements that fail with "duplicate column name" on re-run. The `isBenignSchemaError` function treats these errors as benign, making migrations idempotent.
+- **Gotcha:** Standard SQLite doesn't support `IF NOT EXISTS` for `ALTER TABLE ADD COLUMN`. You must attempt the ALTER and catch the duplicate-column error.
+- **Lesson:** For SQLite schema migrations without a proper migration framework, the "attempt and ignore benign error" pattern is the simplest idempotent approach. Extend the benign-error checker as new error patterns emerge.
+- **Reference:** pkg/meta/schema.sql; pkg/meta/store.go isBenignSchemaError
+- **When:** M002/S03/T01

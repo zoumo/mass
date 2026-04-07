@@ -70,28 +70,6 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: mapped
 - Notes: No backward-compatibility burden is required for obsolete names or event shapes.
 
-### R035 — Runtime event recovery must offer a single resume path that closes the current gap between history replay and live subscription.
-- Class: continuity
-- Status: active
-- Description: Runtime event recovery must offer a single resume path that closes the current gap between history replay and live subscription.
-- Why it matters: Agentd restart and reconnect logic cannot be trusted if events can be silently missed.
-- Source: user
-- Primary owning slice: M002-q9r6sg/S03
-- Supporting slices: M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02
-- Validation: mapped
-- Notes: Recovery hardening ownership moved to M002-q9r6sg for atomic resume and damaged-tail tolerance beyond the M002 baseline.
-
-### R036 — The runtime must preserve enough session configuration and identity to rebuild truthful state after restart or reconnect.
-- Class: continuity
-- Status: active
-- Description: The runtime must preserve enough session configuration and identity to rebuild truthful state after restart or reconnect.
-- Why it matters: A session that restarts without durable config becomes metadata theater instead of real recovery.
-- Source: inferred
-- Primary owning slice: M002-q9r6sg/S02
-- Supporting slices: M002-ssi4mk/S03, M002-q9r6sg/S01
-- Validation: mapped
-- Notes: Truthful restart/state rebuild now completes in M002-q9r6sg through live reconnect and explicit recovery posture.
-
 ### R037 — Workspace identity, reuse rules, cleanup boundaries, and shared access expectations must be explicit in both design and implementation direction.
 - Class: core-capability
 - Status: active
@@ -292,6 +270,28 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close.
 - Notes: S03 still owns durable persistence of bootstrap/recovery state, but the design meaning is now singular and validated.
 
+### R035 — Runtime event recovery must offer a single resume path that closes the current gap between history replay and live subscription.
+- Class: continuity
+- Status: validated
+- Description: Runtime event recovery must offer a single resume path that closes the current gap between history replay and live subscription.
+- Why it matters: Agentd restart and reconnect logic cannot be trusted if events can be silently missed.
+- Source: user
+- Primary owning slice: M002-q9r6sg/S03
+- Supporting slices: M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02
+- Validation: TestAgentdRestartRecovery proves status→history→subscribe resume path closes event gap: 8 events with contiguous seq [0-7] across daemon restart, zero gaps.
+- Notes: Recovery hardening ownership moved to M002-q9r6sg for atomic resume and damaged-tail tolerance beyond the M002 baseline.
+
+### R036 — The runtime must preserve enough session configuration and identity to rebuild truthful state after restart or reconnect.
+- Class: continuity
+- Status: validated
+- Description: The runtime must preserve enough session configuration and identity to rebuild truthful state after restart or reconnect.
+- Why it matters: A session that restarts without durable config becomes metadata theater instead of real recovery.
+- Source: inferred
+- Primary owning slice: M002-q9r6sg/S02
+- Supporting slices: M002-ssi4mk/S03, M002-q9r6sg/S01
+- Validation: TestAgentdRestartRecovery proves bootstrap_config, socket_path, state_dir, PID persist in schema v2. RecoverSessions rebuilds truthful state: live shim reconnected, dead shim marked stopped.
+- Notes: Truthful restart/state rebuild now completes in M002-q9r6sg through live reconnect and explicit recovery posture.
+
 ### R038 — Local workspace attachment, hook execution, environment injection, and shared workspace access must have explicit boundary rules now, not only in a later readiness phase.
 - Class: compliance/security
 - Status: validated
@@ -470,8 +470,8 @@ This file is the explicit capability and coverage contract for the project.
 | R032 | core-capability | validated | M002-ssi4mk/S01 | none | M002/S01 final verifier passed: `bash scripts/verify-m002-s01-contract.sh`; bundle proof passed: `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1`. The design set now defines one non-conflicting contract across Room, Session, Runtime, Workspace, and shim recovery semantics. |
 | R033 | integration | validated | M002-ssi4mk/S01 | M002-ssi4mk/S02 | T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close. |
 | R034 | integration | active | M002-ssi4mk/S02 | none | mapped |
-| R035 | continuity | active | M002-q9r6sg/S03 | M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02 | mapped |
-| R036 | continuity | active | M002-q9r6sg/S02 | M002-ssi4mk/S03, M002-q9r6sg/S01 | mapped |
+| R035 | continuity | validated | M002-q9r6sg/S03 | M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02 | TestAgentdRestartRecovery proves status→history→subscribe resume path closes event gap: 8 events with contiguous seq [0-7] across daemon restart, zero gaps. |
+| R036 | continuity | validated | M002-q9r6sg/S02 | M002-ssi4mk/S03, M002-q9r6sg/S01 | TestAgentdRestartRecovery proves bootstrap_config, socket_path, state_dir, PID persist in schema v2. RecoverSessions rebuilds truthful state: live shim reconnected, dead shim marked stopped. |
 | R037 | core-capability | active | M002-q9r6sg/S04 | M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S03 | mapped |
 | R038 | compliance/security | validated | M002-q9r6sg/S01 | M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S04 | T03 documented explicit host-impact rules for local workspace attachment, hooks, env precedence, and shared workspace reuse across the authoritative design docs. Final slice verifier passed with these boundary rules in place. |
 | R039 | integration | active | M002-ssi4mk/S04 | none | mapped |
@@ -485,7 +485,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 12
-- Mapped to slices: 12
-- Validated: 15 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R038)
+- Active requirements: 10
+- Mapped to slices: 10
+- Validated: 17 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R035, R036, R038)
 - Unmapped active requirements: 0
