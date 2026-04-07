@@ -3,6 +3,7 @@ package meta
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -377,6 +378,165 @@ func TestSessionDeleteNonExistent(t *testing.T) {
 	err := store.DeleteSession(ctx, uuid.New().String())
 	if err == nil {
 		t.Error("DeleteSession should fail for non-existent session")
+	}
+}
+
+func TestSessionBootstrapConfig(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Create prerequisite workspace.
+	workspace := &Workspace{
+		ID:     uuid.New().String(),
+		Name:   "test-workspace",
+		Path:   "/tmp/test-workspace",
+		Status: WorkspaceStatusActive,
+	}
+	if err := store.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatalf("CreateWorkspace failed: %v", err)
+	}
+
+	// Create session without bootstrap config.
+	session := &Session{
+		ID:           uuid.New().String(),
+		RuntimeClass: "default",
+		WorkspaceID:  workspace.ID,
+		State:        SessionStateCreated,
+	}
+	if err := store.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession failed: %v", err)
+	}
+
+	// Verify newly created session has no bootstrap config.
+	retrieved, err := store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+	if len(retrieved.BootstrapConfig) != 0 {
+		t.Errorf("Expected empty bootstrap config on new session, got %s", string(retrieved.BootstrapConfig))
+	}
+	if retrieved.ShimPID != 0 {
+		t.Errorf("Expected ShimPID=0 on new session, got %d", retrieved.ShimPID)
+	}
+
+	// Update bootstrap config.
+	bootstrapCfg := json.RawMessage(`{"oarVersion":"0.1.0","metadata":{"name":"test"}}`)
+	socketPath := "/tmp/agentd-shim/test-session/shim.sock"
+	stateDir := "/tmp/agentd-shim/test-session"
+	pid := 12345
+
+	if err := store.UpdateSessionBootstrap(ctx, session.ID, bootstrapCfg, socketPath, stateDir, pid); err != nil {
+		t.Fatalf("UpdateSessionBootstrap failed: %v", err)
+	}
+
+	// Read back and verify.
+	updated, err := store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("GetSession after bootstrap update failed: %v", err)
+	}
+
+	if string(updated.BootstrapConfig) != string(bootstrapCfg) {
+		t.Errorf("BootstrapConfig mismatch:\n  got:  %s\n  want: %s", string(updated.BootstrapConfig), string(bootstrapCfg))
+	}
+	if updated.ShimSocketPath != socketPath {
+		t.Errorf("ShimSocketPath mismatch: got %s, want %s", updated.ShimSocketPath, socketPath)
+	}
+	if updated.ShimStateDir != stateDir {
+		t.Errorf("ShimStateDir mismatch: got %s, want %s", updated.ShimStateDir, stateDir)
+	}
+	if updated.ShimPID != pid {
+		t.Errorf("ShimPID mismatch: got %d, want %d", updated.ShimPID, pid)
+	}
+
+	// Verify bootstrap config survives ListSessions.
+	sessions, err := store.ListSessions(ctx, &SessionFilter{State: SessionStateCreated})
+	if err != nil {
+		t.Fatalf("ListSessions failed: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("Expected 1 session, got %d", len(sessions))
+	}
+	if string(sessions[0].BootstrapConfig) != string(bootstrapCfg) {
+		t.Errorf("ListSessions BootstrapConfig mismatch:\n  got:  %s\n  want: %s",
+			string(sessions[0].BootstrapConfig), string(bootstrapCfg))
+	}
+	if sessions[0].ShimPID != pid {
+		t.Errorf("ListSessions ShimPID mismatch: got %d, want %d", sessions[0].ShimPID, pid)
+	}
+}
+
+func TestSessionBootstrapConfigNonExistent(t *testing.T) {
+	store := newTestStore(t)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Try to update bootstrap config for non-existent session.
+	err := store.UpdateSessionBootstrap(ctx, uuid.New().String(), json.RawMessage(`{}`), "/tmp/sock", "/tmp/dir", 999)
+	if err == nil {
+		t.Error("UpdateSessionBootstrap should fail for non-existent session")
+	}
+}
+
+func TestSchemaMigrationIdempotency(t *testing.T) {
+	// Verify that initSchema can be run twice on the same database without errors.
+	// The v2 ALTER TABLE statements produce "duplicate column name" errors on re-run,
+	// which isBenignSchemaError handles.
+
+	store := newTestStore(t)
+	defer store.Close()
+
+	// initSchema already ran once during NewStore. Run it again.
+	if err := store.initSchema(); err != nil {
+		t.Fatalf("Second initSchema call should succeed (idempotent), got: %v", err)
+	}
+
+	// Verify schema version table has both v1 and v2.
+	ctx := context.Background()
+	var maxVersion int
+	err := store.db.QueryRowContext(ctx,
+		"SELECT MAX(version) FROM schema_version",
+	).Scan(&maxVersion)
+	if err != nil {
+		t.Fatalf("Query schema_version failed: %v", err)
+	}
+	if maxVersion != 2 {
+		t.Errorf("Expected schema version 2, got %d", maxVersion)
+	}
+
+	// Verify the new columns exist by inserting a session with bootstrap config.
+	workspace := &Workspace{
+		ID:     uuid.New().String(),
+		Name:   "migration-test-ws",
+		Path:   "/tmp/migration-test",
+		Status: WorkspaceStatusActive,
+	}
+	if err := store.CreateWorkspace(ctx, workspace); err != nil {
+		t.Fatalf("CreateWorkspace failed: %v", err)
+	}
+
+	session := &Session{
+		ID:              uuid.New().String(),
+		RuntimeClass:    "default",
+		WorkspaceID:     workspace.ID,
+		State:           SessionStateRunning,
+		BootstrapConfig: json.RawMessage(`{"test":"idempotent"}`),
+		ShimSocketPath:  "/tmp/test.sock",
+		ShimStateDir:    "/tmp/test-state",
+		ShimPID:         42,
+	}
+	if err := store.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession with bootstrap columns failed after double-init: %v", err)
+	}
+
+	retrieved, err := store.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("GetSession failed: %v", err)
+	}
+	if string(retrieved.BootstrapConfig) != `{"test":"idempotent"}` {
+		t.Errorf("BootstrapConfig mismatch: got %s", string(retrieved.BootstrapConfig))
 	}
 }
 

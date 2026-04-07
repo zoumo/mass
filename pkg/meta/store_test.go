@@ -77,7 +77,7 @@ func TestNewStore(t *testing.T) {
 	).Scan(&version)
 
 	require.NoError(t, err, "QueryRowContext for schema_version should succeed")
-	assert.Equal(t, 1, version, "Schema version should be 1")
+	assert.Equal(t, 2, version, "Schema version should be 2")
 
 	// Verify WAL mode is enabled.
 	var journalMode string

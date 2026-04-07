@@ -110,3 +110,15 @@ CREATE TRIGGER IF NOT EXISTS trg_rooms_updated
 
 -- Insert schema version record
 INSERT OR IGNORE INTO schema_version (version) VALUES (1);
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- Schema v2: Session recovery columns
+-- These ALTER TABLE statements are idempotent — isBenignSchemaError handles
+-- "duplicate column name" errors on re-run.
+-- ────────────────────────────────────────────────────────────────────────────
+ALTER TABLE sessions ADD COLUMN bootstrap_config TEXT DEFAULT '{}';
+ALTER TABLE sessions ADD COLUMN shim_socket_path TEXT DEFAULT '';
+ALTER TABLE sessions ADD COLUMN shim_state_dir TEXT DEFAULT '';
+ALTER TABLE sessions ADD COLUMN shim_pid INTEGER DEFAULT 0;
+
+INSERT OR IGNORE INTO schema_version (version) VALUES (2);

@@ -4,6 +4,7 @@ package meta
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -49,8 +50,10 @@ func (s *Store) CreateSession(ctx context.Context, session *Session) error {
 	}
 
 	query := `
-		INSERT INTO sessions (id, runtime_class, workspace_id, room, room_agent, labels, state, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sessions (id, runtime_class, workspace_id, room, room_agent, labels, state,
+			bootstrap_config, shim_socket_path, shim_state_dir, shim_pid,
+			created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	// Use NULL for room if empty (optional room association).
@@ -61,6 +64,12 @@ func (s *Store) CreateSession(ctx context.Context, session *Session) error {
 		roomValue = session.Room
 	}
 
+	// Default bootstrap config to empty JSON object if not set.
+	bootstrapConfig := session.BootstrapConfig
+	if len(bootstrapConfig) == 0 {
+		bootstrapConfig = emptyJSON
+	}
+
 	_, err := s.db.ExecContext(ctx, query,
 		session.ID,
 		session.RuntimeClass,
@@ -69,6 +78,10 @@ func (s *Store) CreateSession(ctx context.Context, session *Session) error {
 		session.RoomAgent,
 		labelsToJSON(session.Labels),
 		session.State,
+		string(bootstrapConfig),
+		session.ShimSocketPath,
+		session.ShimStateDir,
+		session.ShimPID,
 		session.CreatedAt,
 		session.UpdatedAt,
 	)
@@ -94,7 +107,9 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 	}
 
 	query := `
-		SELECT id, runtime_class, workspace_id, room, room_agent, labels, state, created_at, updated_at
+		SELECT id, runtime_class, workspace_id, room, room_agent, labels, state,
+			bootstrap_config, shim_socket_path, shim_state_dir, shim_pid,
+			created_at, updated_at
 		FROM sessions
 		WHERE id = ?
 	`
@@ -102,6 +117,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 	session := &Session{}
 	var labelsBytes []byte
 	var room sql.NullString
+	var bootstrapConfig string
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
 		&session.ID,
@@ -111,6 +127,10 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 		&session.RoomAgent,
 		&labelsBytes,
 		&session.State,
+		&bootstrapConfig,
+		&session.ShimSocketPath,
+		&session.ShimStateDir,
+		&session.ShimPID,
 		&session.CreatedAt,
 		&session.UpdatedAt,
 	)
@@ -131,6 +151,11 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 
 	session.Labels = labelsFromJSON(labelsBytes)
 
+	// Parse bootstrap config JSON.
+	if bootstrapConfig != "" && bootstrapConfig != "{}" {
+		session.BootstrapConfig = json.RawMessage(bootstrapConfig)
+	}
+
 	return session, nil
 }
 
@@ -138,7 +163,9 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 // If filter is nil, returns all sessions.
 func (s *Store) ListSessions(ctx context.Context, filter *SessionFilter) ([]*Session, error) {
 	query := `
-		SELECT id, runtime_class, workspace_id, room, room_agent, labels, state, created_at, updated_at
+		SELECT id, runtime_class, workspace_id, room, room_agent, labels, state,
+			bootstrap_config, shim_socket_path, shim_state_dir, shim_pid,
+			created_at, updated_at
 		FROM sessions
 	`
 
@@ -185,6 +212,7 @@ func (s *Store) ListSessions(ctx context.Context, filter *SessionFilter) ([]*Ses
 		session := &Session{}
 		var labelsBytes []byte
 		var room sql.NullString
+		var bootstrapConfig string
 
 		err := rows.Scan(
 			&session.ID,
@@ -194,6 +222,10 @@ func (s *Store) ListSessions(ctx context.Context, filter *SessionFilter) ([]*Ses
 			&session.RoomAgent,
 			&labelsBytes,
 			&session.State,
+			&bootstrapConfig,
+			&session.ShimSocketPath,
+			&session.ShimStateDir,
+			&session.ShimPID,
 			&session.CreatedAt,
 			&session.UpdatedAt,
 		)
@@ -207,6 +239,11 @@ func (s *Store) ListSessions(ctx context.Context, filter *SessionFilter) ([]*Ses
 			session.Room = ""
 		}
 		session.Labels = labelsFromJSON(labelsBytes)
+
+		// Parse bootstrap config JSON.
+		if bootstrapConfig != "" && bootstrapConfig != "{}" {
+			session.BootstrapConfig = json.RawMessage(bootstrapConfig)
+		}
 
 		sessions = append(sessions, session)
 	}
@@ -299,6 +336,52 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	}
 
 	s.Logger.Debug("session deleted", "id", id)
+
+	return nil
+}
+
+// UpdateSessionBootstrap updates the recovery-related fields of a session:
+// bootstrap config JSON, shim socket path, shim state dir, and shim PID.
+// These fields are written after a successful shim fork+connect so that
+// a recovery pass can find and reconnect to the running shim.
+// Returns an error if the session doesn't exist.
+func (s *Store) UpdateSessionBootstrap(ctx context.Context, id string, bootstrapConfig json.RawMessage, socketPath, stateDir string, pid int) error {
+	if id == "" {
+		return fmt.Errorf("meta: session ID is required")
+	}
+
+	// Default bootstrap config to empty JSON object if nil.
+	cfgStr := "{}"
+	if len(bootstrapConfig) > 0 {
+		cfgStr = string(bootstrapConfig)
+	}
+
+	query := `
+		UPDATE sessions
+		SET bootstrap_config = ?, shim_socket_path = ?, shim_state_dir = ?, shim_pid = ?
+		WHERE id = ?
+	`
+
+	result, err := s.db.ExecContext(ctx, query, cfgStr, socketPath, stateDir, pid, id)
+	if err != nil {
+		return fmt.Errorf("meta: failed to update session bootstrap %s: %w", id, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("meta: failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("meta: session %s does not exist", id)
+	}
+
+	s.Logger.Debug("session bootstrap updated",
+		"id", id,
+		"socket_path", socketPath,
+		"state_dir", stateDir,
+		"pid", pid,
+	)
 
 	return nil
 }

@@ -7,6 +7,9 @@ import (
 	"time"
 )
 
+// emptyJSON is the default empty JSON object used for bootstrap_config.
+var emptyJSON = json.RawMessage("{}")
+
 // SessionState defines the possible states of a session.
 type SessionState string
 
@@ -82,6 +85,23 @@ type Session struct {
 
 	// State is the current session state.
 	State SessionState `json:"state"`
+
+	// BootstrapConfig is the JSON-serialized config used to start this session.
+	// Stored as a JSON blob so the schema stays stable as config fields evolve.
+	// Empty/nil means no bootstrap config recorded yet.
+	BootstrapConfig json.RawMessage `json:"bootstrapConfig,omitempty"`
+
+	// ShimSocketPath is the Unix socket path for the shim's RPC endpoint.
+	// Used during recovery to reconnect to a still-alive shim.
+	ShimSocketPath string `json:"shimSocketPath,omitempty"`
+
+	// ShimStateDir is the absolute path to the shim's state directory.
+	// Contains the event log and other shim-local state.
+	ShimStateDir string `json:"shimStateDir,omitempty"`
+
+	// ShimPID is the OS process ID of the shim process.
+	// Used during recovery to check if the shim is still alive.
+	ShimPID int `json:"shimPid,omitempty"`
 
 	// CreatedAt is the timestamp when the session was created.
 	CreatedAt time.Time `json:"createdAt"`

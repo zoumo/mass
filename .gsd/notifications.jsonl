@@ -1,0 +1,14 @@
+{"id":"d3653f07-2596-43fe-b49d-dabcd96d8d77","ts":"2026-04-07T15:01:54.773Z","severity":"info","message":"Using existing global GSD skill preferences at /Users/jim/.gsd/preferences.md","source":"notify","read":true}
+{"id":"1b419515-bf09-4ed8-af7d-4f3c8498fab1","ts":"2026-04-07T15:01:54.776Z","severity":"info","message":"GSD preferences (global) — pick a category to configure.","source":"notify","read":true}
+{"id":"6668504c-f0eb-4d8c-81cb-53b228244cb9","ts":"2026-04-07T15:02:06.251Z","severity":"info","message":"Saved global preferences to /Users/jim/.gsd/preferences.md","source":"notify","read":true}
+{"id":"8d10b92e-2d30-4420-a5f1-887d5b2068f4","ts":"2026-04-07T15:02:10.808Z","severity":"info","message":"Auto-mode started. Will loop through 6 milestones.","source":"notify","read":true}
+{"id":"b467a810-ff80-4ecf-8d9d-ddaa960cc6b6","ts":"2026-04-07T15:02:10.811Z","severity":"warning","message":"Pre-flight: 9 milestones queued.\n  ⚠ M004: has CONTEXT-DRAFT.md (will pause for discussion)","source":"notify","read":true}
+{"id":"209e889a-febc-4d1f-a339-e3827103d199","ts":"2026-04-07T15:08:34.199Z","severity":"warning","message":"[safety] content: Slice plan missing 'Files Likely Touched' section","source":"workflow-logger","read":false}
+{"id":"0ac0032e-9bc7-46c7-9ab9-91ff358cc10e","ts":"2026-04-07T15:08:34.199Z","severity":"warning","message":"Content validation: Slice plan missing 'Files Likely Touched' section","source":"notify","read":false}
+{"id":"7df9d388-4aaf-4a36-a50e-fba861e95e4f","ts":"2026-04-07T15:08:34.209Z","severity":"error","message":"Pre-execution checks failed: 17 blocking issues found","source":"notify","read":false}
+{"id":"8f055421-5889-4894-b685-3e50bc9ad833","ts":"2026-04-07T15:08:34.213Z","severity":"info","message":"Auto-mode paused (Escape). Type to interact, or /gsd auto to resume.","source":"notify","read":false}
+{"id":"68424dca-70ad-4673-9749-191a50ad61e5","ts":"2026-04-07T15:14:00.565Z","severity":"info","message":"Auto-mode resumed.","source":"notify","read":false}
+{"id":"891fff0a-aadc-44ee-8b4a-d16a1bf7c13d","ts":"2026-04-07T15:14:00.639Z","severity":"warning","message":"[worktree] .git file read failed: EISDIR: illegal operation on a directory, read","source":"workflow-logger","read":false}
+{"id":"944a09a8-700b-478d-a0a8-2ea96cb1bfc8","ts":"2026-04-07T15:14:01.819Z","severity":"info","message":"Resume: applied 9 fix(es) to state.","source":"notify","read":false}
+{"id":"a1d5cb06-8a50-4434-a436-63447e9dad46","ts":"2026-04-07T15:14:01.910Z","severity":"info","message":"Recovered 38 tool calls from paused session. Resuming with context.","source":"notify","read":false}
+{"id":"b32e3fa0-d07c-4e37-b5d9-49ab3f960173","ts":"2026-04-07T15:14:02.401Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}

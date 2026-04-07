@@ -12,7 +12,7 @@
   - Estimate: 1h 15m
   - Files: pkg/agentd/shim_client.go, pkg/agentd/shim_client_test.go, pkg/agentd/process.go, pkg/agentd/process_test.go, cmd/agent-shim-cli/main.go
   - Verify: go test ./pkg/agentd -count=1
-- [ ] **T03: Keep ARI session flows stable on the renamed shim protocol and prove the slice gate** — Adapt ARI to the renamed shim client surface, preserve the existing session/* contract for callers, and close the slice with focused tests plus a no-legacy-source-path check rather than pulling S03 restart scope forward.
+- [x] **T03: Keep ARI session flows stable on the renamed shim protocol and prove the slice gate** — Adapt ARI to the renamed shim client surface, preserve the existing session/* contract for callers, and close the slice with focused tests plus a no-legacy-source-path check rather than pulling S03 restart scope forward.
   - Estimate: 1h
   - Files: pkg/ari/server.go, pkg/ari/types.go, pkg/ari/server_test.go
   - Verify: bash scripts/verify-m002-s01-contract.sh && go test ./pkg/ari -count=1 && go test ./pkg/runtime -run 'TestRuntimeSuite' -count=1 && ! rg -n --glob '!**/*_test.go' '"Prompt"|"Cancel"|"Subscribe"|"GetState"|"GetHistory"|"Shutdown"|"\$/event"' pkg/rpc pkg/agentd pkg/ari cmd/agent-shim-cli

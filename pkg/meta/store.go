@@ -185,7 +185,8 @@ func splitStatements(sqlText string) []string {
 }
 
 // isBenignSchemaError checks if a schema error can be safely ignored.
-// This handles cases like "table already exists" from CREATE IF NOT EXISTS.
+// This handles cases like "table already exists" from CREATE IF NOT EXISTS,
+// and "duplicate column name" from idempotent ALTER TABLE ADD COLUMN migrations.
 func isBenignSchemaError(err error) bool {
 	// SQLite returns specific error messages for benign cases.
 	errMsg := err.Error()
@@ -197,6 +198,11 @@ func isBenignSchemaError(err error) bool {
 
 	// "trigger already exists" is benign when using CREATE TRIGGER IF NOT EXISTS.
 	if strings.Contains(errMsg, "trigger") && strings.Contains(errMsg, "already exists") {
+		return true
+	}
+
+	// "duplicate column name" is benign for idempotent ALTER TABLE ADD COLUMN migrations.
+	if strings.Contains(errMsg, "duplicate column name") {
 		return true
 	}
 

@@ -194,6 +194,19 @@ func (m *ProcessManager) Start(ctx context.Context, sessionID string) (*ShimProc
 	}
 	shimProc.Client = client
 
+	// 7b. Persist bootstrap config for recovery.
+	// Marshal the generated config as the bootstrap config blob.
+	bootstrapJSON, err := json.Marshal(cfg)
+	if err != nil {
+		m.logger.Error("failed to marshal bootstrap config", "session_id", sessionID, "error", err)
+		// Non-fatal: session can still run, just won't have recovery data.
+	} else {
+		if err := m.store.UpdateSessionBootstrap(ctx, sessionID, bootstrapJSON, socketPath, stateDir, shimProc.PID); err != nil {
+			m.logger.Error("failed to persist bootstrap config", "session_id", sessionID, "error", err)
+			// Non-fatal: session can still run, recovery won't have the data.
+		}
+	}
+
 	// 8. Subscribe to events (no afterSeq — this is a fresh start).
 	if _, err := client.Subscribe(ctx, nil); err != nil {
 		// Close client, kill shim, clean up.
