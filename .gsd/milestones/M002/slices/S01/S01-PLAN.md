@@ -12,7 +12,7 @@
   - Estimate: 1h
   - Files: docs/design/runtime/runtime-spec.md, docs/design/runtime/config-spec.md, docs/design/runtime/design.md, docs/design/contract-convergence.md
   - Verify: rg -n "resolved cwd|ACP sessionId|session/new|systemPrompt|State Mapping" docs/design/runtime/runtime-spec.md docs/design/runtime/config-spec.md docs/design/runtime/design.md docs/design/contract-convergence.md
-- [ ] **T03: Align Room ownership and security-boundary docs** — Resolve the desired-vs-realized Room split and make the host-impact boundaries explicit across orchestrator, agentd, ARI, and workspace docs, including local path attachment, hooks, env precedence, shared workspace reuse, and the intended ACP capability posture.
+- [x] **T03: Aligned Room ownership docs around a desired-vs-realized split and made workspace host-impact boundaries explicit.** — Resolve the desired-vs-realized Room split and make the host-impact boundaries explicit across orchestrator, agentd, ARI, and workspace docs, including local path attachment, hooks, env precedence, shared workspace reuse, and the intended ACP capability posture.
   - Estimate: 1h
   - Files: docs/design/orchestrator/room-spec.md, docs/design/agentd/agentd.md, docs/design/agentd/ari-spec.md, docs/design/workspace/workspace-spec.md, docs/design/contract-convergence.md
   - Verify: rg -n "Desired vs Realized|session/new|session/prompt|local workspace|hook|env|shared workspace|capability" docs/design/orchestrator/room-spec.md docs/design/agentd/agentd.md docs/design/agentd/ari-spec.md docs/design/workspace/workspace-spec.md docs/design/contract-convergence.md

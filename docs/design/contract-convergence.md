@@ -1,70 +1,103 @@
 # Contract Convergence
 
-This document is the slice-level authority map for the design set. It does not replace the normative specs; it names which document owns each contract and records the invariants that must stay aligned while the rewrite lands.
+This file is the slice-level authority map for the design set. It names which document owns each contract and records the invariants that must stay aligned while the rewrite lands.
 
 ## Authority Map
 
-| Contract topic | Primary authority | Supporting docs | Current convergence note |
+| Contract topic | Primary authority | Supporting docs | Converged note |
 |---|---|---|---|
-| Bundle schema and bootstrap inputs | `docs/design/runtime/config-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/design.md`, `docs/design/agentd/ari-spec.md` | `oarVersion`, `agentRoot.path`, `acpAgent.*`, and permission policy must tell one startup story. |
-| Runtime lifecycle and state model | `docs/design/runtime/runtime-spec.md` | `docs/design/runtime/design.md`, `docs/design/agentd/agentd.md`, `docs/design/agentd/ari-spec.md` | OAR session identity, ACP session identity, and runtime/process/session states must stay explicitly separated. |
-| Shim control surface | `docs/design/runtime/shim-rpc-spec.md` | `docs/design/runtime/agent-shim.md`, `docs/design/agentd/agentd.md` | Shim RPC is the runtime control boundary; ACP stays behind the shim boundary. |
-| Workspace preparation and ownership | `docs/design/workspace/workspace-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/orchestrator/room-spec.md` | Workspace preparation, hook execution, and cleanup semantics must match agentd and Room sharing rules. |
-| Room intent and realized membership | `docs/design/orchestrator/room-spec.md` | `docs/design/agentd/ari-spec.md`, `docs/design/agentd/agentd.md` | Orchestrator owns desired room intent; agentd owns realized runtime membership and routing state. |
-| External control API | `docs/design/agentd/ari-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/shim-rpc-spec.md` | ARI describes what callers ask agentd to do; it must not redefine runtime or shim semantics independently. |
+| Bundle schema and bootstrap inputs | `docs/design/runtime/config-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/design.md`, `docs/design/agentd/ari-spec.md` | `session/new` is configuration-only bootstrap; `session/prompt` is the work-entry path. |
+| Runtime lifecycle and state model | `docs/design/runtime/runtime-spec.md` | `docs/design/runtime/design.md`, `docs/design/agentd/agentd.md`, `docs/design/agentd/ari-spec.md` | OAR `sessionId`, ACP `sessionId`, runtime process state, and session lifecycle remain explicitly distinct. |
+| Workspace preparation and host-impact rules | `docs/design/workspace/workspace-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/agentd/ari-spec.md`, `docs/design/orchestrator/room-spec.md` | local workspace, hook execution, env precedence, and shared workspace semantics must tell one safety story. |
+| Room desired intent | `docs/design/orchestrator/room-spec.md` | `docs/design/agentd/ari-spec.md`, `docs/design/agentd/agentd.md` | The Room Spec is orchestrator-owned desired state. |
+| Room realized runtime projection | `docs/design/agentd/ari-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/orchestrator/room-spec.md` | `room/*` is the runtime projection for realized membership and routing metadata, not desired orchestration policy. |
+| Public control API and boundary to ACP | `docs/design/agentd/ari-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/runtime/agent-shim.md`, `docs/design/runtime/shim-rpc-spec.md` | ARI exposes a curated runtime control surface; ACP stays behind the shim boundary. |
+
+## Desired vs Realized Room Model
+
+The design set now uses one Room model:
+
+- **Desired Room**: owned by the orchestrator and described by `docs/design/orchestrator/room-spec.md`.
+  It says which members should exist, which workspace intent they should share, and which communication topology is intended.
+- **Realized Room**: owned by agentd as runtime state and described by `docs/design/agentd/ari-spec.md` / `docs/design/agentd/agentd.md`.
+  It records which sessions were actually created, which `workspaceId` they currently share, and which runtime communication metadata is active.
+
+This removes the old contradiction where one doc claimed “agentd only sees sessions” while another treated `room/*` as runtime-managed truth.
 
 ## Bootstrap Contract
 
-The converged bootstrap story for this milestone is:
+The converged bootstrap story is:
 
-1. `workspace/prepare` produces a workspace identity plus a host path under workspace-manager rules.
-2. `session/new` is configuration-only. It selects runtime class, workspace, labels, room metadata, and session bootstrap inputs. It does not represent user work execution.
-3. agentd materializes the bundle by writing `config.json` and wiring `agentRoot.path` to the prepared workspace.
-4. The runtime resolves `agentRoot.path` to the canonical host `cwd` used for process startup and ACP session bootstrap.
-5. After creation completes, externally supplied work enters through `session/prompt`.
+1. `workspace/prepare` produces a `workspaceId` and canonical host path.
+2. `room/create`, when used, registers only the **realized runtime projection** of an already-decided Room.
+3. `session/new` selects runtime class, workspace, room membership metadata, `systemPrompt`, env overrides, MCP servers, labels, and permission posture.
+4. agentd materializes the bundle and the runtime resolves `agentRoot.path` into the canonical `cwd` used for process startup and ACP `session/new`.
+5. after bootstrap reaches idle / created state, actual work enters through `session/prompt`.
 
-Invariants that later tasks will refine:
+Invariant wording:
 
-- `agentRoot.path` is the bundle-relative input; resolved `cwd` is the runtime-derived output.
-- `systemPrompt` belongs to session bootstrap semantics, not to a user work turn.
-- Runtime-class process settings, request env overrides, MCP server wiring, and permission policy must merge in one documented order.
-
-## State Mapping
-
-The design set must maintain one explicit mapping across these layers:
-
-| Layer | Identity | State owned here | Notes |
-|---|---|---|---|
-| Orchestrator | Room name, desired agent name | Desired room membership and completion logic | Orchestrator decides what should exist. |
-| agentd / ARI | OAR `sessionId`, `workspaceId`, realized room membership | Session lifecycle, workspace refs, persisted metadata | agentd is the authority for realized runtime objects. |
-| Runtime / shim | Runtime process identity and `status` (`creating`/`created`/`running`/`stopped`) | Process state, typed event history, runtime-local failure details | Runtime does not redefine orchestration ownership. |
-| ACP peer session | ACP `sessionId` | Agent-protocol session state | Separate protocol identity; never implied to equal OAR session ID. |
-
-Durable gaps that S03 must close explicitly:
-
-- the persisted OAR `sessionId` ↔ ACP `sessionId` mapping
-- the resolved `cwd` derived from `agentRoot.path`
-- bundle path and shim socket path needed for reconnect and inspection
-- the resolved bootstrap snapshot (`systemPrompt`, env overrides, `mcpServers`, permissions)
-- last known runtime/process transition metadata for recovery and diagnostics
+- `session/new` is configuration-only.
+- `session/prompt` carries work.
+- OAR `sessionId` is not ACP `sessionId`.
+- `systemPrompt` is bootstrap configuration, not a hidden work turn.
 
 ## Security Boundaries
 
-The design docs must describe the following boundaries consistently:
+The design set now names these boundaries explicitly:
 
-- **Local workspace attachment**: local paths are host paths, must be validated and canonicalized before use, and remain outside agentd-managed deletion.
-- **Hook execution**: workspace hooks are host commands executed by agentd with workspace-side effects and observable failure reporting.
-- **Environment injection**: runtime-class env, request env overrides, and inherited host environment need one precedence story without leaking secrets into docs or verification output.
-- **Shared workspace access**: Room members may share one workspace path; the contract must say who owns isolation expectations and cleanup safety.
-- **ACP capability posture**: ACP remains the inner protocol. The public contract must say which capabilities are exposed through shim/ARI boundaries versus left as implementation detail.
+- **local workspace**: a host path attachment that must be validated and canonicalized before use and must remain outside agentd-managed deletion.
+- **hook execution**: host commands executed by agentd around workspace lifecycle, with observable failure reporting and host-side effects.
+- **env precedence**: inherited daemon/host environment → runtime-class env → `session/new` env overrides. Workspace hooks are outside this chain.
+- **shared workspace**: multiple sessions may intentionally share one realized `workspaceId`; this implies shared visibility and shared write risk, not per-session filesystem isolation.
+- **capability posture**: ACP remains the inner protocol. ARI exposes only the curated control surface; raw ACP client duties stay behind the shim boundary and are governed by permission policy.
+
+## State Mapping
+
+| Layer | Identity | State owned here | Notes |
+|---|---|---|---|
+| Orchestrator | Room name, desired agent names | desired Room membership and completion logic | decides what should exist |
+| agentd / ARI | OAR `sessionId`, `workspaceId`, realized `room` / `roomAgent` | session lifecycle, realized room membership, workspace refs | decides what is currently realized |
+| Runtime / shim | process identity, runtime status | process truth, typed events, runtime-local failure details | does not own orchestration intent |
+| ACP peer session | ACP `sessionId` | agent-protocol session state | separate protocol identity |
+
+## Follow-on gaps reserved for S03 / later hardening
+
+### R036 — truthful restart and rebuild gaps
+
+Later work still needs durable storage or restart-safe reconstruction for:
+
+- OAR `sessionId` ↔ ACP `sessionId` mapping;
+- resolved `cwd` derived from `agentRoot.path`;
+- realized Room projection snapshots and shared-workspace attachment snapshots;
+- resolved bootstrap env / permissions / MCP server inputs;
+- bundle path and shim socket path needed for reconnect and inspection.
+
+### R044 — replay, cleanup, and cross-client hardening gaps
+
+Later work still needs explicit hardening for:
+
+- restart-safe replay and attach consistency;
+- cleanup safety when shared workspace members disconnect or fail mid-lifecycle;
+- richer cross-client and cross-member routing guarantees;
+- stronger observability around hook side effects, env resolution, and room/workspace recovery decisions.
 
 ## Shim Target Contract
 
-The clean target for the runtime/shim design set is:
+The clean target for the shim-facing design set remains:
 
-- one normative shim control surface that matches the runtime lifecycle actually being specified
-- one event model for subscribers, with no legacy surface kept as if it were current contract
-- one recovery story for socket discovery, reconnect, and state inspection
-- one statement of where ACP is translated, hidden, or passed through
+- one normative shim control surface that matches the runtime lifecycle being specified;
+- one event model for subscribers, with no legacy PascalCase / `$/event` surface carried as if it were current contract;
+- one recovery story for socket discovery, reconnect, and state inspection;
+- one statement of where ACP is translated, hidden, or passed through.
 
-Later tasks in this slice will replace contradictory legacy wording in the runtime and shim docs. Until that rewrite lands, this file is the cross-doc checklist future verification should enforce.
+T04 is the task that rewrites the shim docs to that target. Until then, this file treats the remaining shim mismatch as explicit follow-on scope rather than an implied contradiction.
+
+## Current slice proof target
+
+For M002/S01, the docs are converged when they all say the same thing about:
+
+- desired vs realized Room ownership;
+- `session/new` vs `session/prompt` semantics;
+- local workspace and hook host impact;
+- env precedence and shared workspace implications;
+- the capability/security boundary between ARI and ACP.
