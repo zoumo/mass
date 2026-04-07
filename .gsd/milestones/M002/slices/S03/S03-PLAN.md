@@ -41,7 +41,7 @@ Steps:
   - Estimate: 2h
   - Files: pkg/agentd/recovery.go, pkg/agentd/recovery_test.go, cmd/agentd/main.go
   - Verify: go test ./pkg/agentd -count=1 -run 'TestRecoverSessions' -v && go build ./cmd/agentd && rg '30 \* time.Second' cmd/agentd/main.go
-- [ ] **T03: Integration test proving restart recovery and event continuity** — Extend the existing tests/integration/restart_test.go to prove that agentd restart recovers sessions with event continuity. The current test is aspirational — it only checks session existence after restart. This task makes it prove real recovery: session config survives, shim reconnects, events have no seq gaps, and dead shims result in stopped sessions.
+- [x] **T03: Rewrote TestAgentdRestartRecovery to prove bootstrap config persistence, live shim reconnection, dead-shim fail-closed marking, and event sequence continuity across daemon restart** — Extend the existing tests/integration/restart_test.go to prove that agentd restart recovers sessions with event continuity. The current test is aspirational — it only checks session existence after restart. This task makes it prove real recovery: session config survives, shim reconnects, events have no seq gaps, and dead shims result in stopped sessions.
 
 The test must prove R035 (single resume path closes event gap) and R036 (enough config persisted to rebuild truthful state after restart).
 

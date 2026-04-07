@@ -1,3 +1,3 @@
 # 开发指南
 
-- build go binary to bin
+- build go binary to ./bin

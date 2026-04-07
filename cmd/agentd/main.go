@@ -81,7 +81,7 @@ func main() {
 
 	// Run session recovery pass: reconnect to shims that survived a daemon restart.
 	{
-		recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 30 * time.Second)
 		if err := processes.RecoverSessions(recoverCtx); err != nil {
 			log.Printf("agentd: session recovery failed (non-fatal): %v", err)
 		} else {
@@ -119,7 +119,7 @@ func main() {
 	log.Printf("agentd: received signal %v, shutting down", sig)
 
 	// Graceful shutdown with timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30 * time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {

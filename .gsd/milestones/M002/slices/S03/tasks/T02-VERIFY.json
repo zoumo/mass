@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "taskId": "T02",
+  "unitId": "M002/S03/T02",
+  "timestamp": 1775576090727,
+  "passed": false,
+  "discoverySource": "task-plan",
+  "checks": [
+    {
+      "command": "go test ./pkg/agentd -count=1 -run 'TestRecoverSessions' -v",
+      "exitCode": 0,
+      "durationMs": 5202,
+      "verdict": "pass"
+    },
+    {
+      "command": "go build ./cmd/agentd",
+      "exitCode": 0,
+      "durationMs": 1695,
+      "verdict": "pass"
+    },
+    {
+      "command": "rg '30 \\* time.Second' cmd/agentd/main.go",
+      "exitCode": 1,
+      "durationMs": 51,
+      "verdict": "fail"
+    }
+  ],
+  "retryAttempt": 1,
+  "maxRetries": 2
+}

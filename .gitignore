@@ -1,7 +1,11 @@
 # Binaries
-acp-shim
 /bin/
 /dist/
+
+agentd
+agentdctl
+agent-shim-cli
+
 
 # Background shell runtime
 .bg-shell/
@@ -58,3 +62,5 @@ tmp/
 
 # ── GSD baseline (auto-generated) ──
 .gsd-id
+
+
