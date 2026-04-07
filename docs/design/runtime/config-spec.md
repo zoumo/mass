@@ -113,14 +113,14 @@ that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
 ### System Prompt
 
 * **`acpAgent.systemPrompt`** (string, OPTIONAL) 是 agent 的角色定义和能力约束。
-  在 ACP `session/new` 完成后，作为第一个 prompt 发送给 agent，让 agent 在接收任务
-  之前先建立角色身份。这是当前对 ACP v0.6.3 `NewSessionRequest` 不含 `systemPrompt`
-  字段的实现方案：由 agent-shim 在 `Create` 阶段内部完成，对上层调用者透明。
-  在 Room 场景中，所有 agent 先启动就绪，
-  然后编排器通过 ARI `session/prompt` 发送任务。
+  它属于 session bootstrap 配置，而不是外部工作 turn。
+  Runtime 在 `Create` 阶段必须先落实这份 bootstrap 语义，再对外暴露可接收
+  `session/prompt` 的 `created` 状态。
 
-  > **实现说明**：systemPrompt seed prompt 在 `Create` 内部静默发送，其事件不推送
-  > 给订阅者，turn 结果也不写入 `LastTurn`，调用者看到的是一个干净的初始状态。
+  当前 ACP v0.6.3 的 `NewSessionRequest` 还没有 `systemPrompt` 字段，
+  因此 runtime 需要在内部把该字段翻译为 ACP 兼容的 bootstrap 流程。
+  这个兼容步骤属于创建期的内部 session 建立，不改变上层看到的
+  “`session/new` 负责配置、`session/prompt` 负责工作” 合约。
 
   这是 agent 的核心身份属性，与 `process`（如何启动）和 `session`（会话资源）平级。
 
@@ -162,18 +162,19 @@ that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
 
 ### Session
 
-* **`acpAgent.session`** (object, OPTIONAL) 指定 ACP `session/new` 的请求参数。
+* **`acpAgent.session`** (object, OPTIONAL) 指定 ACP bootstrap 所需的会话参数。
   在启动进程并完成 ACP `initialize` 握手后，
-  运行时使用这些参数发送 `session/new` 来创建 ACP 会话。
+  runtime 使用这些字段建立 ACP session，并在同一 bootstrap 过程中落实
+  `acpAgent.systemPrompt` 语义。
 
   字段定义与 [ACP 协议规范][acp] 的 `NewSessionRequest` 对齐：
 
   * **`mcpServers`** (array of McpServer, OPTIONAL) 是 agent 可用的 MCP 服务列表。
     对应 ACP `session/new` 的 `mcpServers` 参数。默认为 `[]`。
 
-  注意：`systemPrompt` 由运行时在 `session/new` 完成后作为第一个 prompt 静默发送，
-  对上层调用者透明（当前 ACP v0.6.3 `NewSessionRequest` 不含此字段）。
-  `cwd` 参数由运行时通过解析 `agentRoot.path`（相对于 bundle 目录）得到，均不在此处指定。
+  注意：resolved `cwd` 由 runtime 通过解析 `agentRoot.path`（相对于 bundle 目录）得到，
+  `systemPrompt` 作为 bootstrap 配置与这里的字段一起生效，但不要求在 config.json 中
+  伪装成独立的外部工作 turn。
 
   如果 ACP 协议未来添加新的 `session/new` 参数，将直接在此处扩展。
   这确保 OAR Runtime Spec 与 ACP 协议保持对齐。

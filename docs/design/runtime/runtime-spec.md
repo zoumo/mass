@@ -14,8 +14,9 @@ The state of an agent includes the following properties:
 
 * **`oarVersion`** (string, REQUIRED) is the version of the OAR Runtime Specification
   with which the state complies.
-* **`id`** (string, REQUIRED) is the agent's ID.
-  This MUST be unique across all agents on this host.
+* **`id`** (string, REQUIRED) is the OAR runtime object's ID.
+  In agentd deployments this is the OAR `sessionId`, and it MUST be unique across all agents on this host.
+  It is distinct from any ACP `sessionId` created inside the agent protocol session.
 * **`status`** (string, REQUIRED) is the runtime state of the agent.
   The value MAY be one of:
 
@@ -165,15 +166,16 @@ to when it ceases to exist.
 4. The runtime MUST complete the ACP `initialize` handshake via stdio JSON-RPC.
    If the handshake fails, the runtime MUST [generate an error](#errors),
    kill the process, and continue the lifecycle at step 8.
-5. If `acpAgent.session` is present, the runtime MUST send ACP `session/new`
-   with cwd from the resolved `agentRoot.path` and mcpServers from `acpAgent.session.mcpServers`.
-   If `acpAgent.systemPrompt` is non-empty, the runtime MUST then send it as the first
-   ACP prompt (before returning `created` state). This seed prompt is sent silently:
-   its events are not delivered to subscribers and its outcome is not written to `LastTurn`.
+5. If `acpAgent.session` is present, the runtime MUST establish ACP bootstrap configuration
+   using the resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt` values.
+   For ACP v0.6.3, `session/new` carries the resolved `cwd` plus
+   `acpAgent.session.mcpServers`; any compatibility exchange required to realize
+   `systemPrompt` happens inside `create` before the runtime returns `created`.
+   This bootstrap work is internal session establishment, not an external user turn.
    If session creation fails, the runtime MUST [generate an error](#errors),
    kill the process, and continue the lifecycle at step 8.
 6. The agent is now in `created` state — process is running,
-   ACP session is established, and the agent is ready to receive prompts.
+   ACP bootstrap is complete, and the agent is ready to receive prompts.
 7. The agent process exits.
    This MAY happen due to error, the runtime's [`kill`](#kill) operation being invoked,
    or the process terminating on its own.
@@ -212,6 +214,24 @@ The `start` operation is currently a no-op, reserved for future use.
        (removed)                                      (removed)
 ```
 
+## State Mapping and Identity Authority
+
+The design set uses the following cross-layer mapping. `status` in this document is the
+runtime-owned state, not the agentd session state, and not the ACP peer's session identifier.
+
+| OAR runtime `status` | agentd session state | Process status | ACP `sessionId` authority | Notes |
+|---|---|---|---|---|
+| `creating` | `created` while bootstrap is still in progress | process may be absent or starting | none yet, or not yet durable | agentd has allocated the OAR `sessionId`, but ACP bootstrap is not complete. |
+| `created` | `created` | running | ACP peer may now return its own `sessionId`; it is subordinate protocol state | Runtime bootstrap is complete and the session is idle/ready. |
+| `running` | `running` | running | same ACP `sessionId` established during bootstrap | External work is flowing through `session/prompt`. |
+| `stopped` | `stopped` or a pause/cleanup transition in agentd | stopped or exited | last known ACP `sessionId` is historical only | Process has exited; runtime state is terminal until delete. |
+
+Identity authority stays split:
+
+- OAR `sessionId` is allocated and owned by agentd/ARI and names the runtime object.
+- ACP `sessionId` is allocated by the ACP peer during bootstrap and only identifies the inner protocol session.
+- Implementations MUST NOT imply that the two identifiers are equal, interchangeable, or durably mirrored unless later persistence work explicitly records that mapping.
+
 ## Errors
 
 In cases where a specified operation generates an error, this specification does not
@@ -249,7 +269,7 @@ This operation MUST create a new agent by:
 2. Resolving the agent root: `filepath.Join(bundleDir, agentRoot.path)` + `EvalSymlinks` → canonical absolute path
 3. Starting the agent process using `acpAgent.process` (fork/exec, with `cmd.Dir` set to the resolved path)
 4. Completing ACP `initialize` handshake (stdio JSON-RPC)
-5. Sending ACP `session/new` with parameters from `acpAgent.systemPrompt`, resolved path (as `cwd`), and `acpAgent.session` (if present)
+5. Establishing ACP bootstrap configuration from the resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt`
 6. Writing state.json
 
 Any changes made to the [`config.json`](config-spec.md) file after this operation
@@ -318,7 +338,7 @@ The runtime reads `config.json` from the bundle directory. Fields:
 
 * `agentRoot.path` → 相对路径，runtime 在 create 时解析为绝对路径（EvalSymlinks），用作 cmd.Dir 和 ACP session/new cwd
 * `acpAgent.process` → fork/exec agent 进程
-* `acpAgent.systemPrompt` + `acpAgent.session` → ACP `session/new` 参数
+* `acpAgent.systemPrompt` + `acpAgent.session` → ACP bootstrap 配置；`session/new` 承载 resolved cwd 与 session 字段，兼容性转换必须在对外暴露 `created` 前完成
 * `permissions` → fs/terminal 权限策略
 
 详见 [config.md](config-spec.md)。

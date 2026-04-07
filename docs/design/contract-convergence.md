@@ -37,14 +37,16 @@ The design set must maintain one explicit mapping across these layers:
 |---|---|---|---|
 | Orchestrator | Room name, desired agent name | Desired room membership and completion logic | Orchestrator decides what should exist. |
 | agentd / ARI | OAR `sessionId`, `workspaceId`, realized room membership | Session lifecycle, workspace refs, persisted metadata | agentd is the authority for realized runtime objects. |
-| Runtime / shim | Runtime process identity and shim connection | Process state, typed event history, runtime-local failure details | Runtime does not redefine orchestration ownership. |
+| Runtime / shim | Runtime process identity and `status` (`creating`/`created`/`running`/`stopped`) | Process state, typed event history, runtime-local failure details | Runtime does not redefine orchestration ownership. |
 | ACP peer session | ACP `sessionId` | Agent-protocol session state | Separate protocol identity; never implied to equal OAR session ID. |
 
-Open convergence work for later slice tasks:
+Durable gaps that S03 must close explicitly:
 
-- the canonical OAR session ↔ ACP session mapping language
-- the exact runtime/session/process state table
-- the persistence and recovery fields that remain implementation-lag items
+- the persisted OAR `sessionId` ↔ ACP `sessionId` mapping
+- the resolved `cwd` derived from `agentRoot.path`
+- bundle path and shim socket path needed for reconnect and inspection
+- the resolved bootstrap snapshot (`systemPrompt`, env overrides, `mcpServers`, permissions)
+- last known runtime/process transition metadata for recovery and diagnostics
 
 ## Security Boundaries
 

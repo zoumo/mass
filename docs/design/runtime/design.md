@@ -25,11 +25,12 @@ User writes Pod Spec (runtimeClassName: kata, image: nginx)
 OAR config.json follows the same pattern:
 
 ```
-orchestrator sends request (runtimeClass: claude, systemPrompt: "...")
+orchestrator sends bootstrap request (runtimeClass: claude, systemPrompt: "...")
   → agentd resolves runtimeClass → finds handler config (command, args, env)
   → agentd merges runtimeClass config + request params
-  → agentd generates config.json (concrete agent launch params)
-  → agent-shim reads config.json, starts agent process
+  → agentd generates config.json (concrete bootstrap + process launch params)
+  → agent-shim reads config.json, starts agent process, completes bootstrap
+  → later ARI `session/prompt` delivers work
 ```
 
 **Core principle**: Runtime Spec is a **concrete, resolved** runtime description.
@@ -44,39 +45,74 @@ ACP (Agent Communication Protocol) is the only agent communication protocol stan
 This means:
 
 - agent-shim communicates with agent processes via ACP protocol (stdio JSON-RPC)
-- Fields in `acpAgent.session` directly map to ACP `session/new` parameters
+- `acpAgent.session` maps to the ACP `session/new` fields that are part of bootstrap configuration
+- `acpAgent.systemPrompt` is also bootstrap configuration, even when ACP compatibility requires the runtime to translate it internally
 - If non-ACP protocol agents need support in the future, new top-level fields would be required
 
-## Two-Layer Concerns
+## Bootstrap Phases
 
 OCI config.json puts all information in the `process` field.
-OAR Runtime Spec splits information into two layers,
-corresponding to two phases when agent-shim consumes config.json:
+OAR Runtime Spec splits information into bootstrap phases,
+corresponding to how agent-shim consumes config.json during `create`:
 
 ```
-Layer 1 — acpAgent.process: how to start the process
+Phase 1 — acpAgent.process: start the process
   command: "npx"                                 ← fork/exec executable
   args: ["-y", "@anthropic-ai/claude-code-acp"]  ← command-line arguments
   env: ["ANTHROPIC_API_KEY=xxx"]                 ← process environment variables
 
-Layer 2 — acpAgent.systemPrompt + acpAgent.session: ACP session/new parameters
-  systemPrompt: "You are a backend engineer"     ← agent role constraints (acpAgent level)
-  mcpServers: [...]                              ← available MCP services (acpAgent.session)
+Phase 2 — agentRoot.path: resolve the canonical working directory
+  agentRoot.path: "workspace"                    ← bundle-relative path
+  resolved cwd: "/var/lib/agentd/workspaces/ws-abc" ← runtime-derived host path
+
+Phase 3 — acpAgent.systemPrompt + acpAgent.session: establish ACP bootstrap configuration
+  systemPrompt: "You are a backend engineer"     ← agent role constraints
+  mcpServers: [...]                              ← available MCP services
 ```
 
-Note: `agentRoot` (top-level field) is consumed at **both** layers:
-- Layer 1: agent-shim resolves `agentRoot.path` → canonical absolute path, sets `cmd.Dir`
-- Layer 2: agent-shim passes the resolved path as `cwd` in ACP `session/new`
+`agentRoot.path` is configuration input. Resolved `cwd` is runtime output.
+The runtime derives it by joining the bundle directory with `agentRoot.path`
+and calling `EvalSymlinks`; callers do not supply an absolute `cwd` field.
 
-Corresponding to agent-shim's execution flow:
-1. Read `acpAgent.process` + `agentRoot` → resolve workspace path, start process (fork/exec, cmd.Dir = resolved path)
-2. Read `acpAgent.systemPrompt`, resolved path, `acpAgent.session` → send ACP `session/new`
+Corresponding execution flow:
+1. Read `acpAgent.process` + `agentRoot.path` → resolve workspace path and start the process (`cmd.Dir = resolved cwd`)
+2. Complete ACP `initialize`
+3. Establish ACP bootstrap configuration from resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt`
+4. Expose `created` only after bootstrap is complete
 
-**Why no task/prompt**: Runtime Spec only describes how to create and initialize an agent,
-not what task to assign it. In Room scenarios, all agents must start and become ready
-before the orchestrator sends tasks via ARI `session/prompt`.
-Even for standalone sessions, prompts are sent via ARI `session/prompt`,
-maintaining the separation of creation (create) and execution (prompt).
+**Why no task/prompt in config.json**: Runtime Spec only describes how to create and initialize an agent,
+not what task to assign it. `session/new` establishes OAR session configuration.
+Later work enters through ARI `session/prompt` after the runtime reaches `created`.
+This keeps creation (bootstrap) separate from execution (user work turn).
+
+## Bootstrap Contract
+
+One startup story is normative across the runtime docs:
+
+1. ARI `session/new` allocates the OAR `sessionId` and supplies bootstrap configuration.
+2. agentd resolves runtimeClass, workspace, env, permission policy, and bundle contents.
+3. agent-shim reads `config.json`, resolves `agentRoot.path` to the canonical host `cwd`, and starts the process.
+4. agent-shim completes ACP bootstrap using resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt`.
+5. Only after bootstrap succeeds does the runtime expose `created`.
+6. External work later arrives through ARI `session/prompt`.
+
+## State Mapping
+
+The contract needs an explicit authority table so the design set stops collapsing OAR identity,
+process state, and ACP identity into one concept.
+
+| Concern | Authority | Identifier / State | Notes |
+|---|---|---|---|
+| OAR runtime object | agentd + runtime | OAR `sessionId`; runtime `status` = `creating`/`created`/`running`/`stopped` | Names the runtime instance exposed through ARI and runtime state.json. |
+| agentd session lifecycle | agentd | `created` / `running` / `paused:warm` / `paused:cold` / `stopped` | Higher-level orchestration state around the runtime process. |
+| Host process | runtime / shim | PID + process status | Operational signal for whether the agent process is alive. |
+| ACP peer session | ACP peer + shim | ACP `sessionId` | Inner protocol identity, distinct from OAR `sessionId`. |
+
+The important split is:
+
+- OAR `sessionId` is the durable outer identity allocated before runtime bootstrap starts.
+- ACP `sessionId` appears only after ACP bootstrap succeeds.
+- The mapping may be recorded by implementation, but the design must never imply the two IDs are the same authority.
 
 ## Comparison with OCI
 
@@ -225,9 +261,25 @@ This corresponds exactly to how containerd generates OCI config.json:
 
 | Step | containerd | agentd |
 |------|-----------|--------|
-| 1. Receive request | CRI CreateContainer (image + runtimeClassName) | ARI session/new (runtimeClass + systemPrompt) |
+| 1. Receive request | CRI CreateContainer (image + runtimeClassName) | ARI `session/new` (runtimeClass + bootstrap config) |
 | 2. Resolve type | runtimeClassName → handler config | runtimeClass → handler config |
 | 3. Extract runtime info | image config → process.args, env | runtimeClass config → acpAgent.process |
-| 4. Merge user config | Pod Spec overrides → env, mounts | orchestrator request → systemPrompt, env, mcpServers |
+| 4. Merge user config | Pod Spec overrides → env, mounts | request overrides → systemPrompt, env, mcpServers |
 | 5. Generate config | Write config.json to bundle directory | Write config.json to bundle directory |
 | 6. Invoke runtime | runc create --bundle \<path\> | agent-shim --bundle \<path\> |
+| 7. Deliver work | exec / attach after create | ARI `session/prompt` after runtime reaches `created` |
+
+## Durable State Gaps for S03
+
+This design work makes the remaining persistence gaps explicit instead of implying they are already solved.
+S03 needs durable storage and recovery semantics for at least the following fields:
+
+| Field / Mapping | Why it matters |
+|---|---|
+| OAR `sessionId` ↔ ACP `sessionId` mapping | Recovery and diagnostics need to know which inner ACP session belongs to which outer OAR session. |
+| Resolved `cwd` | The runtime derives it from `agentRoot.path`, but recovery/debugging often needs the final canonical host path. |
+| Bundle path and shim socket path | Reconnect and inspection flows need durable pointers to the runtime artifacts that agentd created. |
+| Bootstrap config snapshot (`systemPrompt`, env overrides, `mcpServers`, permissions) | Restart/recovery logic needs the resolved configuration that actually shaped the running agent. |
+| Last known runtime/process state transition metadata | Operators need timestamps, exit details, and failure phase data to understand why a session stopped or failed bootstrap. |
+
+Until S03 lands, the docs should describe these as implementation gaps, not as already-persisted guarantees.
