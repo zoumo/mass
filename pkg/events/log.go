@@ -1,38 +1,21 @@
 package events
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
-	"time"
 )
 
-// LogEntry is a single line in the events.jsonl log file.
-// Every event emitted by the Translator is appended here so callers
-// can reconstruct the full event history after reconnecting.
-type LogEntry struct {
-	// Seq is a monotonically increasing sequence number (0-based) within
-	// this agent session. Used as the offset for GetHistory.
-	Seq int `json:"seq"`
-
-	// Timestamp is the RFC 3339 wall-clock time when the event was recorded.
-	Timestamp string `json:"ts"`
-
-	// Type is the event discriminator, matching EventNotification.Type.
-	Type string `json:"type"`
-
-	// Payload is the event-specific data as a raw JSON object.
-	Payload any `json:"payload"`
-}
-
-// EventLog appends LogEntry records to a JSONL file (one JSON object per line).
+// EventLog appends replayable notification envelopes to a JSONL file.
 // It is safe for concurrent use.
 type EventLog struct {
-	mu   sync.Mutex
-	f    *os.File
-	enc  *json.Encoder
-	seq  int
+	mu      sync.Mutex
+	f       *os.File
+	enc     *json.Encoder
+	nextSeq int
 }
 
 // OpenEventLog opens (or creates) the JSONL log file at path.
@@ -43,32 +26,48 @@ func OpenEventLog(path string) (*EventLog, error) {
 	if err != nil {
 		return nil, fmt.Errorf("events: open log %s: %w", path, err)
 	}
-	// Count existing lines to initialise seq correctly so offsets are
-	// stable across restarts that append to the same file.
-	seq, err := countLines(path)
+
+	nextSeq, err := countLines(path)
 	if err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("events: count lines in %s: %w", path, err)
 	}
-	return &EventLog{f: f, enc: json.NewEncoder(f), seq: seq}, nil
+
+	return &EventLog{f: f, enc: json.NewEncoder(f), nextSeq: nextSeq}, nil
 }
 
-// Append writes entry to the log. Type and Payload are provided by the caller;
-// Seq and Timestamp are assigned automatically.
-func (l *EventLog) Append(evType string, payload any) error {
+// Append writes env to the log.
+func (l *EventLog) Append(env Envelope) error {
+	seq, err := env.Seq()
+	if err != nil {
+		return fmt.Errorf("events: invalid envelope: %w", err)
+	}
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	entry := LogEntry{
-		Seq:       l.seq,
-		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
-		Type:      evType,
-		Payload:   payload,
+
+	if seq != l.nextSeq {
+		return fmt.Errorf("events: append expected seq %d, got %d", l.nextSeq, seq)
 	}
-	if err := l.enc.Encode(entry); err != nil {
+	if err := l.enc.Encode(env); err != nil {
 		return fmt.Errorf("events: write log entry: %w", err)
 	}
-	l.seq++
+	l.nextSeq++
 	return nil
+}
+
+// NextSeq returns the next sequence number that will be assigned.
+func (l *EventLog) NextSeq() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.nextSeq
+}
+
+// LastSeq returns the last assigned sequence number, or -1 when the log is empty.
+func (l *EventLog) LastSeq() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.nextSeq - 1
 }
 
 // Close flushes and closes the underlying file.
@@ -78,9 +77,9 @@ func (l *EventLog) Close() error {
 	return l.f.Close()
 }
 
-// ReadEventLog reads all LogEntry records from path starting at fromSeq.
+// ReadEventLog reads all Envelope records from path starting at fromSeq.
 // Returns an empty slice (not an error) if the file does not exist yet.
-func ReadEventLog(path string, fromSeq int) ([]LogEntry, error) {
+func ReadEventLog(path string, fromSeq int) ([]Envelope, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -90,23 +89,26 @@ func ReadEventLog(path string, fromSeq int) ([]LogEntry, error) {
 	}
 	defer f.Close()
 
-	var entries []LogEntry
+	var entries []Envelope
 	dec := json.NewDecoder(f)
 	for dec.More() {
-		var e LogEntry
+		var e Envelope
 		if err := dec.Decode(&e); err != nil {
 			return nil, fmt.Errorf("events: decode log entry: %w", err)
 		}
-		if e.Seq >= fromSeq {
+		seq, err := e.Seq()
+		if err != nil {
+			return nil, fmt.Errorf("events: decode log entry: %w", err)
+		}
+		if seq >= fromSeq {
 			entries = append(entries, e)
 		}
 	}
 	return entries, nil
 }
 
-// countLines counts the number of non-empty lines in path by opening it for
-// reading. Used to initialise the sequence counter when appending to an
-// existing log.
+// countLines counts non-empty lines in path without decoding them. This keeps
+// the live append path usable even when older history rows are corrupt.
 func countLines(path string) (int, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -117,17 +119,18 @@ func countLines(path string) (int, error) {
 	}
 	defer f.Close()
 
-	entries, err := func() (int, error) {
-		dec := json.NewDecoder(f)
-		n := 0
-		for dec.More() {
-			var raw json.RawMessage
-			if err := dec.Decode(&raw); err != nil {
-				return n, err
-			}
-			n++
+	scanner := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
+	count := 0
+	for scanner.Scan() {
+		if strings.TrimSpace(scanner.Text()) == "" {
+			continue
 		}
-		return n, nil
-	}()
-	return entries, err
+		count++
+	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }

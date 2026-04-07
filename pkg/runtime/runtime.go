@@ -18,18 +18,31 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
+// StateChange describes an externally visible runtime lifecycle transition.
+type StateChange struct {
+	SessionID      string
+	PreviousStatus spec.Status
+	Status         spec.Status
+	PID            int
+	Reason         string
+}
+
+// StateChangeHook is invoked after a lifecycle transition has been persisted.
+type StateChangeHook func(StateChange)
+
 // Manager manages the lifecycle of a single ACP agent process.
 type Manager struct {
-	cfg        spec.Config
-	bundleDir  string
-	stateDir   string
+	cfg       spec.Config
+	bundleDir string
+	stateDir  string
 
-	mu          sync.Mutex
-	cmd         *exec.Cmd
-	conn        *acp.ClientSideConnection
-	sessionID   acp.SessionId
-	events      chan acp.SessionNotification
-	terminalMgr *TerminalManager // manages terminal operations
+	mu              sync.Mutex
+	cmd             *exec.Cmd
+	conn            *acp.ClientSideConnection
+	sessionID       acp.SessionId
+	events          chan acp.SessionNotification
+	terminalMgr     *TerminalManager
+	stateChangeHook StateChangeHook
 }
 
 // New creates a new Manager. It does not start the agent process.
@@ -42,43 +55,38 @@ func New(cfg spec.Config, bundleDir, stateDir string) *Manager {
 	}
 }
 
+// SetStateChangeHook registers a best-effort observer for persisted lifecycle transitions.
+func (m *Manager) SetStateChangeHook(hook StateChangeHook) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stateChangeHook = hook
+}
+
 // Create starts the agent process and performs the ACP handshake.
 // It writes state.json at each lifecycle transition:
 //   - creating: before fork/exec
 //   - created: after successful handshake
 //   - stopped: if the process exits unexpectedly (written by background goroutine)
 func (m *Manager) Create(ctx context.Context) error {
-	// (a) Resolve the agent root: join bundle dir with agentRoot.path, follow symlinks.
-	// The resolved path is used as cmd.Dir and as the ACP session/new cwd parameter,
-	// so the agent process sees a canonical absolute path from os.Getwd().
 	workDir, err := spec.ResolveAgentRoot(m.bundleDir, m.cfg)
 	if err != nil {
 		return fmt.Errorf("runtime: %w", err)
 	}
 
-	// (b) Write creating state.
-	if err := spec.WriteState(m.stateDir, spec.State{
+	if err := m.writeState(spec.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
 		Status:      spec.StatusCreating,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
-	}); err != nil {
+	}, "bootstrap-started"); err != nil {
 		return fmt.Errorf("runtime: write creating state: %w", err)
 	}
 
-	// (c) Build exec.Cmd.
 	proc := m.cfg.AcpAgent.Process
 	//nolint:gosec // command comes from trusted config
 	cmd := exec.CommandContext(ctx, proc.Command, proc.Args...)
-	// Merge environment: start with the parent process env, then apply
-	// config overrides on top. This ensures the child always has a sane
-	// baseline (PATH, HOME, etc.) while allowing config.json to inject or
-	// override specific variables (e.g. ANTHROPIC_API_KEY, PI_ACP_PI_COMMAND).
 	cmd.Env = mergeEnv(os.Environ(), proc.Env)
-	// Set the working directory to the resolved agent root so the agent process
-	// starts in the right directory. Using the canonical path (symlinks resolved)
-	// ensures os.Getwd() in the child returns the same path we pass to ACP session/new.
 	cmd.Dir = workDir
 	cmd.Stderr = os.Stderr
 
@@ -91,26 +99,16 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: stdout pipe: %w", err)
 	}
 
-	// (d) Start the process.
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("runtime: start agent: %w", err)
 	}
 	m.cmd = cmd
-
-	// (e) Initialize TerminalManager for terminal operations.
-	// Uses the resolved workDir (agentRoot) and merged environment.
 	m.terminalMgr = NewTerminalManager(workDir, cmd.Env, m.cfg.Permissions)
 
-	// (f) Build acpClient with Manager reference and TerminalManager.
 	client := &acpClient{mgr: m, terminalMgr: m.terminalMgr}
-
-	// (g) Create client-side ACP connection.
-	// stdinPipe is the writer to the agent's stdin (our peerInput).
-	// stdoutPipe is the reader from the agent's stdout (our peerOutput).
 	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutPipe)
 	m.conn = conn
 
-	// On any error below, kill the process.
 	var handshakeErr error
 	defer func() {
 		if handshakeErr != nil {
@@ -118,7 +116,6 @@ func (m *Manager) Create(ctx context.Context) error {
 		}
 	}()
 
-	// (h) ACP Initialize handshake.
 	_, handshakeErr = conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{
@@ -132,7 +129,6 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: acp initialize: %w", handshakeErr)
 	}
 
-	// (i) ACP session/new.
 	sessionResp, err := conn.NewSession(ctx, acp.NewSessionRequest{
 		Cwd:        workDir,
 		McpServers: convertMcpServers(m.cfg.AcpAgent.Session.McpServers),
@@ -143,13 +139,6 @@ func (m *Manager) Create(ctx context.Context) error {
 	}
 	m.sessionID = sessionResp.SessionId
 
-	// (i2) If a systemPrompt is configured, send it as the first prompt so the
-	// agent can establish its role/identity before any task prompt arrives.
-	// This is the current workaround for ACP v0.6.3 NewSessionRequest not
-	// supporting a systemPrompt field natively.
-	// The prompt is sent silently during Create; its events are intentionally
-	// discarded (no subscribers yet) and its turn outcome is not persisted to
-	// LastTurn so callers see a clean slate on the first real task prompt.
 	if m.cfg.AcpAgent.SystemPrompt != "" {
 		_, err = conn.Prompt(ctx, acp.PromptRequest{
 			SessionId: m.sessionID,
@@ -161,31 +150,27 @@ func (m *Manager) Create(ctx context.Context) error {
 		}
 	}
 
-	// (j) Write created state.
-	if err := spec.WriteState(m.stateDir, spec.State{
+	if err := m.writeState(spec.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
 		Status:      spec.StatusCreated,
 		PID:         cmd.Process.Pid,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
-	}); err != nil {
+	}, "bootstrap-complete"); err != nil {
 		handshakeErr = err
 		return fmt.Errorf("runtime: write created state: %w", err)
 	}
 
-	// (k) Background goroutine: wait for process exit and write stopped state.
-	// This is started AFTER the handshake completes to avoid interfering with
-	// pipe reads during the handshake (per Go's exec.Wait documentation).
 	go func() {
 		_ = cmd.Wait()
-		_ = spec.WriteState(m.stateDir, spec.State{
+		_ = m.writeState(spec.State{
 			OarVersion:  m.cfg.OarVersion,
 			ID:          m.cfg.Metadata.Name,
 			Status:      spec.StatusStopped,
 			Bundle:      m.bundleDir,
 			Annotations: m.cfg.Metadata.Annotations,
-		})
+		}, "process-exited")
 	}()
 
 	return nil
@@ -203,7 +188,6 @@ func (m *Manager) Kill(ctx context.Context) error {
 	}
 
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		// Process may have already exited; try SIGKILL.
 		_ = cmd.Process.Kill()
 	}
 
@@ -218,13 +202,13 @@ func (m *Manager) Kill(ctx context.Context) error {
 		}
 	}
 
-	return spec.WriteState(m.stateDir, spec.State{
+	return m.writeState(spec.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
 		Status:      spec.StatusStopped,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
-	})
+	}, "runtime-stop")
 }
 
 // Delete removes the agent state directory. The agent must be stopped first.
@@ -258,11 +242,9 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		return acp.PromptResponse{}, fmt.Errorf("runtime: agent not started")
 	}
 
-	// Write running state before forwarding the prompt, as specified in the
-	// OAR Runtime Spec lifecycle (created → running while prompt is processing).
 	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
 		st.Status = spec.StatusRunning
-		_ = spec.WriteState(m.stateDir, st)
+		_ = m.writeState(st, "prompt-started")
 	}
 
 	resp, err := conn.Prompt(ctx, acp.PromptRequest{
@@ -270,18 +252,20 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		Prompt:    prompt,
 	})
 
-	// Persist last turn outcome regardless of success or failure.
 	lt := &spec.LastTurn{CompletedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if err != nil {
 		lt.Error = err.Error()
 	} else {
 		lt.StopReason = string(resp.StopReason)
 	}
-	// Best-effort: read current state, patch LastTurn, restore to created, write back.
 	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
-		st.Status = spec.StatusCreated // transition back: running → created
+		st.Status = spec.StatusCreated
 		st.LastTurn = lt
-		_ = spec.WriteState(m.stateDir, st)
+		reason := "prompt-completed"
+		if err != nil {
+			reason = "prompt-failed"
+		}
+		_ = m.writeState(st, reason)
 	}
 
 	if err != nil {
@@ -301,9 +285,7 @@ func (m *Manager) Cancel(ctx context.Context) error {
 		return fmt.Errorf("runtime: agent not started")
 	}
 
-	if err := conn.Cancel(ctx, acp.CancelNotification{
-		SessionId: sessionID,
-	}); err != nil {
+	if err := conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID}); err != nil {
 		return fmt.Errorf("runtime: cancel: %w", err)
 	}
 	return nil
@@ -325,7 +307,34 @@ func (m *Manager) done() <-chan struct{} {
 	if conn != nil {
 		return conn.Done()
 	}
-	return make(chan struct{}) // never closes
+	return make(chan struct{})
+}
+
+func (m *Manager) writeState(state spec.State, reason string) error {
+	previous, prevErr := spec.ReadState(m.stateDir)
+	if err := spec.WriteState(m.stateDir, state); err != nil {
+		return err
+	}
+	if prevErr == nil && previous.Status != state.Status {
+		m.emitStateChange(previous, state, reason)
+	}
+	return nil
+}
+
+func (m *Manager) emitStateChange(previous, current spec.State, reason string) {
+	m.mu.Lock()
+	hook := m.stateChangeHook
+	m.mu.Unlock()
+	if hook == nil {
+		return
+	}
+	hook(StateChange{
+		SessionID:      current.ID,
+		PreviousStatus: previous.Status,
+		Status:         current.Status,
+		PID:            current.PID,
+		Reason:         reason,
+	})
 }
 
 // convertMcpServers maps spec.McpServer slice to acp.McpServer slice.
@@ -335,19 +344,9 @@ func convertMcpServers(servers []spec.McpServer) []acp.McpServer {
 	for _, s := range servers {
 		switch s.Type {
 		case "sse":
-			result = append(result, acp.McpServer{
-				Sse: &acp.McpServerSse{
-					Url:  s.URL,
-					Type: s.Type,
-				},
-			})
-		default: // "http" and anything else
-			result = append(result, acp.McpServer{
-				Http: &acp.McpServerHttp{
-					Url:  s.URL,
-					Type: s.Type,
-				},
-			})
+			result = append(result, acp.McpServer{Sse: &acp.McpServerSse{Url: s.URL, Type: s.Type}})
+		default:
+			result = append(result, acp.McpServer{Http: &acp.McpServerHttp{Url: s.URL, Type: s.Type}})
 		}
 	}
 	return result

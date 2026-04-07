@@ -19,6 +19,13 @@ import (
 	"log/slog"
 )
 
+
+
+// EventHandler is called for each event received from the shim via
+// session/update notifications. Handlers must be registered before calling
+// Subscribe.
+type EventHandler func(ctx context.Context, ev events.Event)
+
 // ────────────────────────────────────────────────────────────────────────────
 // ProcessManager - manages shim process lifecycle
 // ────────────────────────────────────────────────────────────────────────────
@@ -154,30 +161,46 @@ func (m *ProcessManager) Start(ctx context.Context, sessionID string) (*ShimProc
 	}
 
 	// 7. Connect ShimClient.
-	client, err := DialWithHandler(ctx, socketPath, func(ctx context.Context, ev events.Event) {
-		// Dispatch events to the ShimProcess.Events channel.
-		// Non-blocking send to avoid blocking the RPC handler.
+	client, err := DialWithHandler(ctx, socketPath, func(ctx context.Context, method string, params json.RawMessage) {
+		// Dispatch session/update events to the ShimProcess.Events channel.
+		// Non-blocking send to avoid blocking the RPC notification path.
+		if method != events.MethodSessionUpdate {
+			return
+		}
+		p, err := ParseSessionUpdate(params)
+		if err != nil {
+			m.logger.Warn("malformed session/update notification dropped",
+				"session_id", sessionID, "error", err)
+			return
+		}
+		ev, ok := p.Event.Payload.(events.Event)
+		if !ok {
+			m.logger.Warn("session/update payload is not an events.Event — dropped",
+				"session_id", sessionID, "type", p.Event.Type)
+			return
+		}
 		select {
 		case shimProc.Events <- ev:
 		default:
-			m.logger.Warn("event channel full, dropping event", "session_id", sessionID)
+			m.logger.Warn("event channel full, dropping event",
+				"session_id", sessionID, "seq", p.Seq)
 		}
 	})
 	if err != nil {
 		// Kill shim process and clean up.
 		_ = m.killShim(shimProc)
 		_ = os.RemoveAll(bundlePath)
-		return nil, fmt.Errorf("process: connect shim client: %w", err)
+		return nil, fmt.Errorf("process: connect shim client: session=%s: %w", sessionID, err)
 	}
 	shimProc.Client = client
 
-	// 8. Subscribe to events.
-	if err := client.Subscribe(ctx); err != nil {
+	// 8. Subscribe to events (no afterSeq — this is a fresh start).
+	if _, err := client.Subscribe(ctx, nil); err != nil {
 		// Close client, kill shim, clean up.
 		_ = client.Close()
 		_ = m.killShim(shimProc)
 		_ = os.RemoveAll(bundlePath)
-		return nil, fmt.Errorf("process: subscribe events: %w", err)
+		return nil, fmt.Errorf("process: subscribe events: session=%s: %w", sessionID, err)
 	}
 
 	// 9. Transition session state to "running".
@@ -505,11 +528,11 @@ func (m *ProcessManager) Stop(ctx context.Context, sessionID string) error {
 		return nil
 	}
 
-	// Call Shutdown RPC to request graceful shutdown.
+	// Call runtime/stop RPC to request graceful shutdown.
 	if shimProc.Client != nil {
-		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		if err := shimProc.Client.Shutdown(shutdownCtx); err != nil {
-			m.logger.Warn("shutdown RPC failed, will kill process", "session_id", sessionID, "error", err)
+		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if err := shimProc.Client.Stop(stopCtx); err != nil {
+			m.logger.Warn("runtime/stop RPC failed, will kill process", "session_id", sessionID, "error", err)
 		}
 		cancel()
 	}
@@ -538,9 +561,10 @@ func (m *ProcessManager) Stop(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// State returns the current state of the shim process for the given session.
-// It calls ShimClient.GetState RPC to get the shim's internal state.
-// Returns error if the session is not running.
+// State returns the current runtime state of the shim process for the given
+// session. It calls runtime/status RPC and extracts the state field plus
+// recovery metadata. Returns an error if the session is not running or the
+// response is malformed.
 func (m *ProcessManager) State(ctx context.Context, sessionID string) (spec.State, error) {
 	m.mu.RLock()
 	shimProc, exists := m.processes[sessionID]
@@ -554,12 +578,31 @@ func (m *ProcessManager) State(ctx context.Context, sessionID string) (spec.Stat
 		return spec.State{}, fmt.Errorf("process: session %s has no client connection", sessionID)
 	}
 
-	state, err := shimProc.Client.GetState(ctx)
+	status, err := shimProc.Client.Status(ctx)
 	if err != nil {
-		return spec.State{}, fmt.Errorf("process: get state for session %s: %w", sessionID, err)
+		return spec.State{}, fmt.Errorf("process: runtime/status for session %s: %w", sessionID, err)
 	}
 
-	return state, nil
+	return status.State, nil
+}
+
+// RuntimeStatus returns the full runtime/status result including recovery
+// metadata (lastSeq) for the given session. Use this instead of State when
+// the caller needs recovery information for replay or reconnect decisions.
+func (m *ProcessManager) RuntimeStatus(ctx context.Context, sessionID string) (RuntimeStatusResult, error) {
+	m.mu.RLock()
+	shimProc, exists := m.processes[sessionID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return RuntimeStatusResult{}, fmt.Errorf("process: session %s is not running", sessionID)
+	}
+
+	if shimProc.Client == nil {
+		return RuntimeStatusResult{}, fmt.Errorf("process: session %s has no client connection", sessionID)
+	}
+
+	return shimProc.Client.Status(ctx)
 }
 
 // Connect returns the ShimClient for direct RPC access to the shim process.

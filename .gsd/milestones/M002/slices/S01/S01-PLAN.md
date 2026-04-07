@@ -16,7 +16,7 @@
   - Estimate: 1h
   - Files: docs/design/orchestrator/room-spec.md, docs/design/agentd/agentd.md, docs/design/agentd/ari-spec.md, docs/design/workspace/workspace-spec.md, docs/design/contract-convergence.md
   - Verify: rg -n "Desired vs Realized|session/new|session/prompt|local workspace|hook|env|shared workspace|capability" docs/design/orchestrator/room-spec.md docs/design/agentd/agentd.md docs/design/agentd/ari-spec.md docs/design/workspace/workspace-spec.md docs/design/contract-convergence.md
-- [ ] **T04: Rewrite shim protocol docs to the clean-break target and close the loop** — Finish the slice by replacing the legacy PascalCase/`$/event` shim story with the clean-break `session/*` + `runtime/*` target, reconciling recovery/discovery wording, and leaving the final contract verifier green.
+- [x] **T04: Rewrite shim protocol docs to the clean-break target and close the loop** — Finish the slice by replacing the legacy PascalCase/`$/event` shim story with the clean-break `session/*` + `runtime/*` target, reconciling recovery/discovery wording, and leaving the final contract verifier green.
   - Estimate: 45m
   - Files: docs/design/runtime/shim-rpc-spec.md, docs/design/runtime/agent-shim.md, docs/design/README.md, docs/design/contract-convergence.md
   - Verify: bash scripts/verify-m002-s01-contract.sh && go test ./pkg/spec -run TestExampleBundlesAreValid -count=1

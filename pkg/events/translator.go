@@ -2,31 +2,42 @@ package events
 
 import (
 	"sync"
+	"time"
 
 	acp "github.com/coder/acp-go-sdk"
 )
 
-// Translator drains a channel of acp.SessionNotification, translates each
-// notification into a typed Event, and fans the result out to all registered
-// subscriber channels. If log is non-nil, every event is also appended to the
-// JSONL event log for durable history.
+// Translator drains ACP session notifications, translates each notification
+// into the stable shim envelope surface, and fans the result out to all
+// registered subscriber channels. If log is non-nil, every envelope is also
+// appended to the JSONL event log for durable history.
 type Translator struct {
-	in     <-chan acp.SessionNotification
-	log    *EventLog
-	mu     sync.Mutex
-	subs   map[int]chan Event
-	nextID int
-	done   chan struct{}
+	sessionID string
+	in        <-chan acp.SessionNotification
+	log       *EventLog
+
+	mu      sync.Mutex
+	subs    map[int]chan Envelope
+	nextID  int
+	nextSeq int
+	done    chan struct{}
+	once    sync.Once
 }
 
 // NewTranslator creates a Translator that reads from in.
 // Pass a non-nil EventLog to enable durable event logging.
-func NewTranslator(in <-chan acp.SessionNotification, log *EventLog) *Translator {
+func NewTranslator(sessionID string, in <-chan acp.SessionNotification, log *EventLog) *Translator {
+	nextSeq := 0
+	if log != nil {
+		nextSeq = log.NextSeq()
+	}
 	return &Translator{
-		in:   in,
-		log:  log,
-		subs: make(map[int]chan Event),
-		done: make(chan struct{}),
+		sessionID: sessionID,
+		in:        in,
+		log:       log,
+		subs:      make(map[int]chan Envelope),
+		nextSeq:   nextSeq,
+		done:      make(chan struct{}),
 	}
 }
 
@@ -37,25 +48,29 @@ func (t *Translator) Start() {
 
 // Stop signals the background goroutine to exit and drains/closes all subscriber channels.
 func (t *Translator) Stop() {
-	close(t.done)
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for id, ch := range t.subs {
-		close(ch)
-		delete(t.subs, id)
-	}
+	t.once.Do(func() {
+		close(t.done)
+		t.mu.Lock()
+		defer t.mu.Unlock()
+		for id, ch := range t.subs {
+			close(ch)
+			delete(t.subs, id)
+		}
+	})
 }
 
-// Subscribe returns a buffered channel (cap 64) that will receive translated
-// Events, along with a subscription ID for later Unsubscribe calls.
-func (t *Translator) Subscribe() (<-chan Event, int) {
+// Subscribe returns a buffered channel that will receive translated envelopes,
+// along with a subscription ID and the next sequence number that could be
+// assigned after the subscription is established.
+func (t *Translator) Subscribe() (<-chan Envelope, int, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	id := t.nextID
 	t.nextID++
-	ch := make(chan Event, 64)
+	ch := make(chan Envelope, 64)
 	t.subs[id] = ch
-	return ch, id
+	return ch, id, t.nextSeq
 }
 
 // Unsubscribe removes a subscriber and closes its channel.
@@ -68,16 +83,31 @@ func (t *Translator) Unsubscribe(id int) {
 	}
 }
 
-// NotifyTurnStart broadcasts a TurnStartEvent to all subscribers.
-func (t *Translator) NotifyTurnStart() {
-	t.broadcast(TurnStartEvent{})
+// LastSeq returns the last assigned sequence number, or -1 when no envelope
+// has been emitted yet.
+func (t *Translator) LastSeq() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.nextSeq - 1
 }
 
-// NotifyTurnEnd broadcasts a TurnEndEvent with the given stop reason.
-func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
-	t.broadcast(TurnEndEvent{StopReason: string(reason)})
+// NotifyTurnStart broadcasts a session/update turn_start envelope.
+func (t *Translator) NotifyTurnStart() {
+	t.broadcastSessionEvent(TurnStartEvent{})
 }
-// run is the background fan-out goroutine.
+
+// NotifyTurnEnd broadcasts a session/update turn_end envelope.
+func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
+	t.broadcastSessionEvent(TurnEndEvent{StopReason: string(reason)})
+}
+
+// NotifyStateChange broadcasts a runtime/stateChange envelope.
+func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, reason string) {
+	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
+		return NewRuntimeStateChangeEnvelope(t.sessionID, seq, at, previousStatus, status, pid, reason)
+	})
+}
+
 func (t *Translator) run() {
 	for {
 		select {
@@ -91,26 +121,44 @@ func (t *Translator) run() {
 			if ev == nil {
 				continue
 			}
-			t.broadcast(ev)
+			t.broadcastSessionEvent(ev)
 		}
 	}
 }
 
-// broadcast sends ev to all current subscribers using non-blocking sends,
-// and appends it to the event log if one is configured.
-func (t *Translator) broadcast(ev Event) {
+func (t *Translator) broadcastSessionEvent(ev Event) {
+	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
+		return NewSessionUpdateEnvelope(t.sessionID, seq, at, ev)
+	})
+}
+
+func (t *Translator) broadcastEnvelope(build func(seq int, at time.Time) Envelope) {
+	var (
+		env  Envelope
+		log  *EventLog
+		subs []chan Envelope
+	)
+
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	env = build(t.nextSeq, time.Now().UTC())
+	t.nextSeq++
+	log = t.log
+	subs = make([]chan Envelope, 0, len(t.subs))
 	for _, ch := range t.subs {
-		select {
-		case ch <- ev:
-		default:
-			// slow subscriber — drop rather than block fan-out
-		}
+		subs = append(subs, ch)
 	}
-	if t.log != nil {
-		// Log write is best-effort; a failure here must not block the event stream.
-		_ = t.log.Append(logTypeName(ev), ev)
+	t.mu.Unlock()
+
+	if log != nil {
+		// Log writes are best-effort; a history failure must not block live fan-out.
+		_ = log.Append(env)
+	}
+	for _, ch := range subs {
+		select {
+		case ch <- env:
+		default:
+			// Slow subscriber — drop rather than block fan-out.
+		}
 	}
 }
 
@@ -125,61 +173,19 @@ func translate(n acp.SessionNotification) Event {
 	case u.AgentThoughtChunk != nil:
 		return ThinkingEvent{Text: safeBlockText(u.AgentThoughtChunk.Content)}
 	case u.UserMessageChunk != nil:
-		// Agent echoes the incoming user prompt back as a UserMessageChunk.
 		return UserMessageEvent{Text: safeBlockText(u.UserMessageChunk.Content)}
 	case u.ToolCall != nil:
 		tc := u.ToolCall
-		return ToolCallEvent{
-			ID:    string(tc.ToolCallId),
-			Kind:  string(tc.Kind),
-			Title: tc.Title,
-		}
+		return ToolCallEvent{ID: string(tc.ToolCallId), Kind: string(tc.Kind), Title: tc.Title}
 	case u.ToolCallUpdate != nil:
 		tcu := u.ToolCallUpdate
-		return ToolResultEvent{
-			ID:     string(tcu.ToolCallId),
-			Status: safeStatus(tcu.Status),
-		}
+		return ToolResultEvent{ID: string(tcu.ToolCallId), Status: safeStatus(tcu.Status)}
 	case u.Plan != nil:
 		return PlanEvent{Entries: u.Plan.Entries}
 	case u.AvailableCommandsUpdate != nil, u.CurrentModeUpdate != nil:
-		// Known variants with no current representation — silently ignored.
 		return nil
 	default:
 		return ErrorEvent{Msg: "unknown session update variant"}
-	}
-}
-
-// logTypeName returns the string discriminator for ev, used as the "type"
-// field in LogEntry. Mirrors the mapping in pkg/rpc/server.go:eventTypeName.
-func logTypeName(ev Event) string {
-	switch ev.(type) {
-	case TextEvent:
-		return "text"
-	case ThinkingEvent:
-		return "thinking"
-	case UserMessageEvent:
-		return "user_message"
-	case ToolCallEvent:
-		return "tool_call"
-	case ToolResultEvent:
-		return "tool_result"
-	case FileWriteEvent:
-		return "file_write"
-	case FileReadEvent:
-		return "file_read"
-	case CommandEvent:
-		return "command"
-	case PlanEvent:
-		return "plan"
-	case TurnStartEvent:
-		return "turn_start"
-	case TurnEndEvent:
-		return "turn_end"
-	case ErrorEvent:
-		return "error"
-	default:
-		return "unknown"
 	}
 }
 

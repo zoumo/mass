@@ -59,35 +59,13 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: unmapped
 - Notes: Phase 1.1 — ACP WaitForTerminalExitRequest/Response implementation
 
-### R032 — `docs/design/*` must define one non-conflicting contract for Room, Session, Runtime, Workspace, and recovery semantics.
-- Class: core-capability
-- Status: active
-- Description: `docs/design/*` must define one non-conflicting contract for Room, Session, Runtime, Workspace, and recovery semantics.
-- Why it matters: Further implementation work is unsafe while the design contract still contradicts itself.
-- Source: user
-- Primary owning slice: M002/S01
-- Supporting slices: none
-- Validation: mapped
-- Notes: This is the core “设计契约收口” requirement for the next milestone.
-
-### R033 — `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap behavior must have one authoritative meaning.
-- Class: integration
-- Status: active
-- Description: `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap behavior must have one authoritative meaning.
-- Why it matters: Startup ambiguity makes state rebuild, client compatibility, and recovery behavior untrustworthy.
-- Source: user
-- Primary owning slice: M002/S01
-- Supporting slices: M002/S02
-- Validation: mapped
-- Notes: Includes the decision surface around whether bootstrap prompt semantics remain in ARI or move fully to later prompting.
-
 ### R034 — The shim surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
 - Class: integration
 - Status: active
 - Description: The shim surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
 - Why it matters: The current split naming and event model adds protocol drift exactly where ACP compatibility matters most.
 - Source: user
-- Primary owning slice: M002/S02
+- Primary owning slice: M002-ssi4mk/S02
 - Supporting slices: none
 - Validation: mapped
 - Notes: No backward-compatibility burden is required for obsolete names or event shapes.
@@ -98,10 +76,10 @@ This file is the explicit capability and coverage contract for the project.
 - Description: Runtime event recovery must offer a single resume path that closes the current gap between history replay and live subscription.
 - Why it matters: Agentd restart and reconnect logic cannot be trusted if events can be silently missed.
 - Source: user
-- Primary owning slice: M003/S03
-- Supporting slices: M002/S02, M002/S03, M003/S02
+- Primary owning slice: M002-q9r6sg/S03
+- Supporting slices: M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02
 - Validation: mapped
-- Notes: Recovery hardening ownership moved to M003 for atomic resume and damaged-tail tolerance beyond the M002 baseline.
+- Notes: Recovery hardening ownership moved to M002-q9r6sg for atomic resume and damaged-tail tolerance beyond the M002 baseline.
 
 ### R036 — The runtime must preserve enough session configuration and identity to rebuild truthful state after restart or reconnect.
 - Class: continuity
@@ -109,10 +87,10 @@ This file is the explicit capability and coverage contract for the project.
 - Description: The runtime must preserve enough session configuration and identity to rebuild truthful state after restart or reconnect.
 - Why it matters: A session that restarts without durable config becomes metadata theater instead of real recovery.
 - Source: inferred
-- Primary owning slice: M003/S02
-- Supporting slices: M002/S03, M003/S01
+- Primary owning slice: M002-q9r6sg/S02
+- Supporting slices: M002-ssi4mk/S03, M002-q9r6sg/S01
 - Validation: mapped
-- Notes: Truthful restart/state rebuild now completes in M003 through live reconnect and explicit recovery posture.
+- Notes: Truthful restart/state rebuild now completes in M002-q9r6sg through live reconnect and explicit recovery posture.
 
 ### R037 — Workspace identity, reuse rules, cleanup boundaries, and shared access expectations must be explicit in both design and implementation direction.
 - Class: core-capability
@@ -120,21 +98,10 @@ This file is the explicit capability and coverage contract for the project.
 - Description: Workspace identity, reuse rules, cleanup boundaries, and shared access expectations must be explicit in both design and implementation direction.
 - Why it matters: Shared or reused workspaces become unsafe quickly if hooks, cleanup, or path identity are ambiguous.
 - Source: user
-- Primary owning slice: M003/S04
-- Supporting slices: M002/S03, M003/S02, M003/S03
+- Primary owning slice: M002-q9r6sg/S04
+- Supporting slices: M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S03
 - Validation: mapped
 - Notes: Workspace safety moves from design intent to restart-safe enforced cleanup semantics in this milestone.
-
-### R038 — Local workspace attachment, hook execution, environment injection, and shared workspace access must have explicit boundary rules now, not only in a later readiness phase.
-- Class: compliance/security
-- Status: active
-- Description: Local workspace attachment, hook execution, environment injection, and shared workspace access must have explicit boundary rules now, not only in a later readiness phase.
-- Why it matters: These are already-open runtime entry points with real host impact.
-- Source: research
-- Primary owning slice: M003/S01
-- Supporting slices: M002/S03, M003/S02, M003/S04
-- Validation: mapped
-- Notes: Security hardening for this milestone is fail-closed runtime behavior under uncertain recovery, not only documented boundaries.
 
 ### R039 — The converged contract must be exercised with the real bundle surfaces for `gsd-pi` and `claude-code`, not only mock agents.
 - Class: integration
@@ -142,7 +109,7 @@ This file is the explicit capability and coverage contract for the project.
 - Description: The converged contract must be exercised with the real bundle surfaces for `gsd-pi` and `claude-code`, not only mock agents.
 - Why it matters: The project’s ACP claims are only useful if they survive contact with real clients.
 - Source: user
-- Primary owning slice: M002/S04
+- Primary owning slice: M002-ssi4mk/S04
 - Supporting slices: none
 - Validation: mapped
 - Notes: Existing bundle references under `bin/bundles/*` are the starting point for this proof.
@@ -153,7 +120,7 @@ This file is the explicit capability and coverage contract for the project.
 - Description: The project must eventually support a realized Room runtime with explicit ownership, routing, and delivery semantics rather than leaving Room as conflicting partial intent.
 - Why it matters: Multi-agent coordination is a central differentiator for OAR, but it must land on a stable contract.
 - Source: user
-- Primary owning slice: M004 (provisional)
+- Primary owning slice: M003-c761yf (provisional)
 - Supporting slices: none
 - Validation: mapped
 - Notes: This supersedes vague Room ambition with a concrete future capability target.
@@ -164,8 +131,8 @@ This file is the explicit capability and coverage contract for the project.
 - Description: Additional restart, replay, cleanup, and cross-client hardening that does not fit the primary convergence milestone remains planned follow-on work.
 - Why it matters: M002 should converge the contract first, not absorb all remaining hardening work.
 - Source: inferred
-- Primary owning slice: M003/S02
-- Supporting slices: M003/S01, M003/S03, M003/S04
+- Primary owning slice: M002-q9r6sg/S02
+- Supporting slices: M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04
 - Validation: mapped
 - Notes: This follow-on hardening milestone is now active and owns the restart/replay/cleanup safety work previously seeded as deferred.
 
@@ -303,6 +270,39 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: S05 ARI integration tests: 16 tests pass over JSON-RPC — workspace/prepare (UUID generation, Registry tracking), workspace/list (tracked workspaces), workspace/cleanup (RefCount validation, lifecycle round-trip)
 - Notes: Phase 3 requirement — validated by M001-tlbeko
 
+### R032 — `docs/design/*` must define one non-conflicting contract for Room, Session, Runtime, Workspace, and recovery semantics.
+- Class: core-capability
+- Status: validated
+- Description: `docs/design/*` must define one non-conflicting contract for Room, Session, Runtime, Workspace, and recovery semantics.
+- Why it matters: Further implementation work is unsafe while the design contract still contradicts itself.
+- Source: user
+- Primary owning slice: M002-ssi4mk/S01
+- Supporting slices: none
+- Validation: M002/S01 final verifier passed: `bash scripts/verify-m002-s01-contract.sh`; bundle proof passed: `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1`. The design set now defines one non-conflicting contract across Room, Session, Runtime, Workspace, and shim recovery semantics.
+- Notes: Validated by the converged authority map and clean-break shim contract established in S01.
+
+### R033 — `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap behavior must have one authoritative meaning.
+- Class: integration
+- Status: validated
+- Description: `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap behavior must have one authoritative meaning.
+- Why it matters: Startup ambiguity makes state rebuild, client compatibility, and recovery behavior untrustworthy.
+- Source: user
+- Primary owning slice: M002-ssi4mk/S01
+- Supporting slices: M002-ssi4mk/S02
+- Validation: T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close.
+- Notes: S03 still owns durable persistence of bootstrap/recovery state, but the design meaning is now singular and validated.
+
+### R038 — Local workspace attachment, hook execution, environment injection, and shared workspace access must have explicit boundary rules now, not only in a later readiness phase.
+- Class: compliance/security
+- Status: validated
+- Description: Local workspace attachment, hook execution, environment injection, and shared workspace access must have explicit boundary rules now, not only in a later readiness phase.
+- Why it matters: These are already-open runtime entry points with real host impact.
+- Source: research
+- Primary owning slice: M002-q9r6sg/S01
+- Supporting slices: M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S04
+- Validation: T03 documented explicit host-impact rules for local workspace attachment, hooks, env precedence, and shared workspace reuse across the authoritative design docs. Final slice verifier passed with these boundary rules in place.
+- Notes: This validates the design boundary contract; runtime enforcement and recovery hardening continue in later slices.
+
 ## Deferred
 
 ### R021 — Implement session/load support for warm resume
@@ -369,7 +369,7 @@ This file is the explicit capability and coverage contract for the project.
 - Primary owning slice: none
 - Supporting slices: none
 - Validation: deferred by user
-- Notes: Deferred by user during M003 planning. Codex end-to-end validation is removed from this milestone and will return in a later roadmap decision.
+- Notes: Deferred by user during M002-q9r6sg planning. Codex end-to-end validation is removed from this milestone and will return in a later roadmap decision.
 
 ### R042 — The project may later evaluate BoltDB or another backend, or abstract the metadata store, but this is not part of M002.
 - Class: constraint
@@ -467,25 +467,25 @@ This file is the explicit capability and coverage contract for the project.
 | R029 | core-capability | active | M001-terminal/S05 | none | unmapped |
 | R030 | anti-feature | out-of-scope | none | none | n/a |
 | R031 | anti-feature | out-of-scope | none | none | n/a |
-| R032 | core-capability | active | M002/S01 | none | mapped |
-| R033 | integration | active | M002/S01 | M002/S02 | mapped |
-| R034 | integration | active | M002/S02 | none | mapped |
-| R035 | continuity | active | M003/S03 | M002/S02, M002/S03, M003/S02 | mapped |
-| R036 | continuity | active | M003/S02 | M002/S03, M003/S01 | mapped |
-| R037 | core-capability | active | M003/S04 | M002/S03, M003/S02, M003/S03 | mapped |
-| R038 | compliance/security | active | M003/S01 | M002/S03, M003/S02, M003/S04 | mapped |
-| R039 | integration | active | M002/S04 | none | mapped |
+| R032 | core-capability | validated | M002-ssi4mk/S01 | none | M002/S01 final verifier passed: `bash scripts/verify-m002-s01-contract.sh`; bundle proof passed: `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1`. The design set now defines one non-conflicting contract across Room, Session, Runtime, Workspace, and shim recovery semantics. |
+| R033 | integration | validated | M002-ssi4mk/S01 | M002-ssi4mk/S02 | T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close. |
+| R034 | integration | active | M002-ssi4mk/S02 | none | mapped |
+| R035 | continuity | active | M002-q9r6sg/S03 | M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02 | mapped |
+| R036 | continuity | active | M002-q9r6sg/S02 | M002-ssi4mk/S03, M002-q9r6sg/S01 | mapped |
+| R037 | core-capability | active | M002-q9r6sg/S04 | M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S03 | mapped |
+| R038 | compliance/security | validated | M002-q9r6sg/S01 | M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S04 | T03 documented explicit host-impact rules for local workspace attachment, hooks, env precedence, and shared workspace reuse across the authoritative design docs. Final slice verifier passed with these boundary rules in place. |
+| R039 | integration | active | M002-ssi4mk/S04 | none | mapped |
 | R040 | integration | deferred | none | none | deferred by user |
-| R041 | differentiator | active | M004 (provisional) | none | mapped |
+| R041 | differentiator | active | M003-c761yf (provisional) | none | mapped |
 | R042 | constraint | deferred | none | none | unmapped |
 | R043 | constraint | deferred | none | none | unmapped |
-| R044 | quality-attribute | active | M003/S02 | M003/S01, M003/S03, M003/S04 | mapped |
+| R044 | quality-attribute | active | M002-q9r6sg/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | mapped |
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
 
 ## Coverage Summary
 
-- Active requirements: 15
-- Mapped to slices: 15
-- Validated: 12 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012)
+- Active requirements: 12
+- Mapped to slices: 12
+- Validated: 15 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R038)
 - Unmapped active requirements: 0

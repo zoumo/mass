@@ -210,3 +210,19 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** The context in exec.CommandContext is for cancellation propagation, not just timeout. When context is cancelled, Go sends SIGKILL to the process. For daemon-style processes that should survive beyond the initiating request, use exec.Command and manage lifecycle via explicit Stop/Shutdown methods.
 - **Reference:** pkg/agentd/process.go forkShim function
 - **When:** M001-tvc4z0/S06/T02
+
+## K029 — Shim protocol authority is split on purpose
+
+- **Pattern:** `docs/design/runtime/shim-rpc-spec.md` is the sole normative owner of shim method names, notification names, and replay/reconnect semantics. `docs/design/runtime/runtime-spec.md` owns socket path and state-dir layout. `docs/design/runtime/agent-shim.md` is descriptive only.
+- **Gotcha:** Letting `agent-shim.md` or implementation-lag notes restate current protocol details reintroduces dual-source contract drift, especially around the retired PascalCase / `$/event` surface.
+- **Lesson:** When changing shim-facing docs or implementation, check `docs/design/contract-convergence.md` first, update the single authority doc for the concept you are touching, and keep other docs referential rather than parallel.
+- **Reference:** docs/design/contract-convergence.md; docs/design/runtime/shim-rpc-spec.md; docs/design/runtime/runtime-spec.md; docs/design/runtime/agent-shim.md
+- **When:** M002/S01/T04
+
+## K030 — Contract convergence has a two-part proof surface
+
+- **Pattern:** After editing the M002 design-contract surfaces, always run both `bash scripts/verify-m002-s01-contract.sh` and `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1`.
+- **Gotcha:** The shell verifier catches cross-doc authority drift and retired wording, but it does not catch broken checked-in example bundles. The bundle test catches fixture/spec drift, but it does not detect contradictory authority wording.
+- **Lesson:** Treat the shell verifier and example bundle test as one proof surface. Running only one of them leaves half the contract unchecked.
+- **Reference:** scripts/verify-m002-s01-contract.sh; pkg/spec/example_bundles_test.go
+- **When:** M002/S01/T01

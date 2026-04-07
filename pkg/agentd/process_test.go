@@ -176,18 +176,20 @@ func TestProcessManagerStart(t *testing.T) {
 		t.Fatal("expected ShimClient to be connected, got nil")
 	}
 
-	// Verify shim state via GetState RPC.
-	state, err := shimProc.Client.GetState(ctx)
+	// Verify shim state via runtime/status RPC.
+	statusResult, err := shimProc.Client.Status(ctx)
 	if err != nil {
-		t.Fatalf("GetState RPC: %v", err)
+		t.Fatalf("runtime/status RPC: %v", err)
 	}
-	t.Logf("Shim state: ID=%s, Status=%s, PID=%d, Bundle=%s", state.ID, state.Status, state.PID, state.Bundle)
+	state := statusResult.State
+	t.Logf("Shim state: ID=%s, Status=%s, PID=%d, Bundle=%s, recovery.lastSeq=%d",
+		state.ID, state.Status, state.PID, state.Bundle, statusResult.Recovery.LastSeq)
 
 	if state.Status != spec.StatusCreated && state.Status != spec.StatusRunning {
 		t.Errorf("expected shim status 'created' or 'running', got '%s'", state.Status)
 	}
 
-	// Send a Prompt to trigger events.
+	// Send a Prompt to trigger events (session/prompt).
 	promptResult, err := shimProc.Client.Prompt(ctx, "hello mockagent")
 	if err != nil {
 		t.Fatalf("Prompt RPC: %v", err)
@@ -234,12 +236,12 @@ done:
 		t.Logf("Received %d events total", eventCount)
 	}
 
-	// Clean up: shutdown the shim.
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
+	// Clean up: stop the shim (runtime/stop).
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stopCancel()
 
-	if err := shimProc.Client.Shutdown(shutdownCtx); err != nil {
-		t.Logf("Shutdown RPC (non-fatal): %v", err)
+	if err := shimProc.Client.Stop(stopCtx); err != nil {
+		t.Logf("runtime/stop RPC (non-fatal): %v", err)
 	}
 
 	// Wait for shim process to exit.

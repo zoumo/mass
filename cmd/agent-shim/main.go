@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// flags
 var (
 	flagBundle      string
 	flagPermissions string
@@ -45,56 +44,39 @@ discover all running shims by scanning /run/agentd/shim/*/agent-shim.sock.`,
 	cmd.Flags().StringVar(&flagStateDir, "state-dir", "/run/agentd/shim", "base directory for ephemeral state files")
 
 	_ = cmd.MarkFlagRequired("bundle")
-
 	return cmd
 }
 
 func run(cmd *cobra.Command, args []string) error {
-	// 1. Parse config.json from the bundle directory.
 	cfg, err := spec.ParseConfig(flagBundle)
 	if err != nil {
 		return err
 	}
-
-	// 2. Validate the parsed config.
 	if err := spec.ValidateConfig(cfg); err != nil {
 		return err
 	}
-
-	// 3. Apply --permissions only if the user explicitly supplied it.
 	if cmd.Flag("permissions").Changed {
 		cfg.Permissions = spec.PermissionPolicy(flagPermissions)
 	}
 
-	// 4. Resolve agent session ID (flag overrides metadata.name).
 	id := flagID
 	if id == "" {
 		id = cfg.Metadata.Name
 	}
 
-	// 5. Derive the state directory and socket path for this session.
-	// Both live under <state-dir>/<id>/ so agentd can discover all running
-	// shims by scanning /run/agentd/shim/*/agent-shim.sock after a restart.
 	stateDir := spec.StateDir(flagStateDir, id)
 	socketPath := spec.ShimSocketPath(stateDir)
-
-	// 6. Create the runtime Manager (does not start the agent yet).
-	// bundleDir and stateDir are kept separate: bundleDir holds config.json and
-	// agentRoot (prepared by agentd), stateDir holds ephemeral runtime state
-	// (state.json, events.jsonl, agent-shim.sock).
 	mgr := runtime.New(cfg, flagBundle, stateDir)
 
-	// 7. Install signal context so SIGTERM/SIGINT triggers graceful shutdown.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer cancel()
 
-	// 8. Start the agent process and complete the ACP handshake.
+	// Keep the bootstrap boundary unchanged: Create finishes before the external
+	// notification pipeline is visible or durable.
 	if err := mgr.Create(ctx); err != nil {
 		return err
 	}
 
-	// 9. Open the durable event log (stateDir/events.jsonl).
-	// All events are appended here so callers can replay history after reconnect.
 	logPath := spec.EventLogPath(stateDir)
 	evLog, err := events.OpenEventLog(logPath)
 	if err != nil {
@@ -102,32 +84,23 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	defer evLog.Close()
 
-	// 10. Start the event translator (drains mgr.Events() and fans out to subscribers).
-	trans := events.NewTranslator(mgr.Events(), evLog)
+	trans := events.NewTranslator(id, mgr.Events(), evLog)
+	mgr.SetStateChangeHook(func(change runtime.StateChange) {
+		trans.NotifyStateChange(change.PreviousStatus.String(), change.Status.String(), change.PID, change.Reason)
+	})
 	trans.Start()
 	defer trans.Stop()
 
-	// 11. Create the JSON-RPC server.
 	srv := rpc.New(mgr, trans, socketPath, logPath)
-
-	// 12. Accept connections in the background.
-	// When Serve() returns (due to Shutdown RPC or error), cancel the context
-	// to trigger graceful shutdown of the main goroutine.
 	go func() {
 		if err := srv.Serve(); err != nil {
 			log.Printf("agent-shim: rpc server error: %v", err)
 		}
-		// Cancel context to signal main goroutine to exit.
-		// This handles the case where Shutdown is called via RPC.
 		cancel()
 	}()
 
-	// 13. Block until SIGTERM/SIGINT or RPC server shutdown.
 	<-ctx.Done()
-
-	// 14. Graceful shutdown: kill agent and close listener.
-	shutdownCtx := context.Background()
-	return srv.Shutdown(shutdownCtx)
+	return srv.Shutdown(context.Background())
 }
 
 func main() {

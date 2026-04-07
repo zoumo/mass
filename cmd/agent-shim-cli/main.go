@@ -1,10 +1,22 @@
 // Command agent-shim-cli is a minimal interactive CLI for talking to a running
 // agent-shim over its Unix socket JSON-RPC interface.
 //
+// It uses the clean-break shim surface:
+//
+//	session/prompt    — send a prompt and stream the response
+//	session/cancel    — cancel the current turn
+//	session/subscribe — register for live notifications
+//	runtime/status    — print current state and recovery metadata
+//	runtime/history   — print replayable event history
+//	runtime/stop      — gracefully shut down the agent
+//
 // Usage:
 //
-//	agent-shim-cli --socket /tmp/gsd-test.sock
-//	agent-shim-cli --socket /tmp/gsd-test.sock --prompt "hello"
+//	agent-shim-cli --socket /path/to/shim.sock state
+//	agent-shim-cli --socket /path/to/shim.sock history
+//	agent-shim-cli --socket /path/to/shim.sock prompt --prompt "hello"
+//	agent-shim-cli --socket /path/to/shim.sock chat
+//	agent-shim-cli --socket /path/to/shim.sock stop
 package main
 
 import (
@@ -56,8 +68,8 @@ type client struct {
 	pending   map[int]chan rpcResponse
 	pendingMu sync.Mutex
 
-	// events receives $/event notifications
-	events chan rpcResponse
+	// notifs receives session/update and runtime/stateChange notifications
+	notifs chan rpcResponse
 }
 
 func dial(socketPath string) (*client, error) {
@@ -70,7 +82,7 @@ func dial(socketPath string) (*client, error) {
 		scanner: bufio.NewScanner(conn),
 		enc:     json.NewEncoder(conn),
 		pending: make(map[int]chan rpcResponse),
-		events:  make(chan rpcResponse, 64),
+		notifs:  make(chan rpcResponse, 64),
 	}
 	go c.readLoop()
 	return c, nil
@@ -86,7 +98,7 @@ func (c *client) readLoop() {
 		// Notification (no ID, has Method)
 		if msg.ID == nil && msg.Method != "" {
 			select {
-			case c.events <- msg:
+			case c.notifs <- msg:
 			default:
 			}
 			continue
@@ -101,8 +113,8 @@ func (c *client) readLoop() {
 			}
 		}
 	}
-	// Scanner stopped (connection closed). Signal event consumers.
-	close(c.events)
+	// Scanner stopped (connection closed). Signal notification consumers.
+	close(c.notifs)
 }
 
 func (c *client) call(method string, params any) (json.RawMessage, error) {
@@ -133,16 +145,19 @@ func (c *client) call(method string, params any) (json.RawMessage, error) {
 	return resp.Result, nil
 }
 
-func (c *client) notify(method string, params any) error {
-	req := rpcRequest{JSONRPC: "2.0", Method: method, Params: params}
-	return c.enc.Encode(req)
+func (c *client) close() { _ = c.conn.Close() }
+
+// ── Notification printing ──────────────────────────────────────────────────
+
+// sessionUpdateParams mirrors events.SessionUpdateParams for printing.
+type sessionUpdateParams struct {
+	SessionID string          `json:"sessionId"`
+	Seq       int             `json:"seq"`
+	Timestamp string          `json:"timestamp"`
+	Event     sessionEvent    `json:"event"`
 }
 
-func (c *client) close() { c.conn.Close() }
-
-// ── Event printing ─────────────────────────────────────────────────────────
-
-type eventNotification struct {
+type sessionEvent struct {
 	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
@@ -151,29 +166,59 @@ type textPayload struct {
 	Text string `json:"text"`
 }
 
-func printEvent(raw json.RawMessage) {
-	var n eventNotification
-	if err := json.Unmarshal(raw, &n); err != nil {
-		fmt.Fprintf(os.Stderr, "[event parse error: %v]\n", err)
-		return
+// runtimeStateChangeParams mirrors events.RuntimeStateChangeParams for printing.
+type runtimeStateChangeParams struct {
+	SessionID      string `json:"sessionId"`
+	Seq            int    `json:"seq"`
+	Timestamp      string `json:"timestamp"`
+	PreviousStatus string `json:"previousStatus"`
+	Status         string `json:"status"`
+	PID            int    `json:"pid,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+func printNotification(msg rpcResponse) {
+	switch msg.Method {
+	case "session/update":
+		var p sessionUpdateParams
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			fmt.Fprintf(os.Stderr, "[session/update parse error: %v]\n", err)
+			return
+		}
+		printSessionEvent(p.Seq, p.Event)
+
+	case "runtime/stateChange":
+		var p runtimeStateChangeParams
+		if err := json.Unmarshal(msg.Params, &p); err != nil {
+			fmt.Fprintf(os.Stderr, "[runtime/stateChange parse error: %v]\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "\033[2m[stateChange seq=%d] %s → %s pid=%d reason=%q\033[0m\n",
+			p.Seq, p.PreviousStatus, p.Status, p.PID, p.Reason)
+
+	default:
+		fmt.Fprintf(os.Stderr, "[unknown notification: %s] %s\n", msg.Method, string(msg.Params))
 	}
-	switch n.Type {
+}
+
+func printSessionEvent(seq int, ev sessionEvent) {
+	switch ev.Type {
 	case "text":
 		var p textPayload
-		_ = json.Unmarshal(n.Payload, &p)
+		_ = json.Unmarshal(ev.Payload, &p)
 		fmt.Print(p.Text)
 	case "thinking":
 		var p textPayload
-		_ = json.Unmarshal(n.Payload, &p)
-		fmt.Fprintf(os.Stderr, "\033[2m[thinking] %s\033[0m\n", p.Text)
+		_ = json.Unmarshal(ev.Payload, &p)
+		fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", seq, p.Text)
 	case "tool_call":
-		fmt.Fprintf(os.Stderr, "\033[33m[tool_call] %s\033[0m\n", string(n.Payload))
+		fmt.Fprintf(os.Stderr, "\033[33m[tool_call seq=%d] %s\033[0m\n", seq, string(ev.Payload))
 	case "tool_result":
-		fmt.Fprintf(os.Stderr, "\033[2m[tool_result] %s\033[0m\n", string(n.Payload))
+		fmt.Fprintf(os.Stderr, "\033[2m[tool_result seq=%d] %s\033[0m\n", seq, string(ev.Payload))
 	case "turn_end":
 		fmt.Println()
 	default:
-		fmt.Fprintf(os.Stderr, "[%s] %s\n", n.Type, string(n.Payload))
+		fmt.Fprintf(os.Stderr, "[%s seq=%d] %s\n", ev.Type, seq, string(ev.Payload))
 	}
 }
 
@@ -185,22 +230,22 @@ func main() {
 
 	root := &cobra.Command{
 		Use:   "agent-shim-cli",
-		Short: "Interactive client for agent-shim",
+		Short: "Interactive client for agent-shim (clean-break session/runtime surface)",
 	}
 	root.PersistentFlags().StringVar(&socketPath, "socket", "", "Unix socket path (required)")
 	_ = root.MarkPersistentFlagRequired("socket")
 
-	// state sub-command
+	// state sub-command — calls runtime/status
 	root.AddCommand(&cobra.Command{
 		Use:   "state",
-		Short: "Print agent state",
+		Short: "Print agent state and recovery metadata (runtime/status)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := dial(socketPath)
 			if err != nil {
 				return err
 			}
 			defer c.close()
-			result, err := c.call("GetState", nil)
+			result, err := c.call("runtime/status", nil)
 			if err != nil {
 				return err
 			}
@@ -212,10 +257,39 @@ func main() {
 		},
 	})
 
-	// prompt sub-command
+	// history sub-command — calls runtime/history
+	var fromSeq int
+	historyCmd := &cobra.Command{
+		Use:   "history",
+		Short: "Print replayable event history (runtime/history)",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			c, err := dial(socketPath)
+			if err != nil {
+				return err
+			}
+			defer c.close()
+			params := map[string]any{}
+			if cmd.Flags().Changed("from-seq") {
+				params["fromSeq"] = fromSeq
+			}
+			result, err := c.call("runtime/history", params)
+			if err != nil {
+				return err
+			}
+			var pretty any
+			_ = json.Unmarshal(result, &pretty)
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return enc.Encode(pretty)
+		},
+	}
+	historyCmd.Flags().IntVar(&fromSeq, "from-seq", 0, "Return history from this sequence number")
+	root.AddCommand(historyCmd)
+
+	// prompt sub-command — session/subscribe then session/prompt
 	promptCmd := &cobra.Command{
 		Use:   "prompt",
-		Short: "Send a prompt and stream the response",
+		Short: "Send a prompt and stream the response (session/prompt)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if promptText == "" {
 				return fmt.Errorf("--prompt is required")
@@ -235,19 +309,19 @@ func main() {
 		},
 	})
 
-	// shutdown sub-command
+	// stop sub-command — runtime/stop
 	root.AddCommand(&cobra.Command{
-		Use:   "shutdown",
-		Short: "Gracefully shut down the agent",
+		Use:   "stop",
+		Short: "Gracefully shut down the agent (runtime/stop)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := dial(socketPath)
 			if err != nil {
 				return err
 			}
 			defer c.close()
-			_, err = c.call("Shutdown", nil)
+			_, err = c.call("runtime/stop", nil)
 			if err == nil {
-				fmt.Println("shutdown sent")
+				fmt.Println("stop sent")
 			}
 			return err
 		},
@@ -264,30 +338,35 @@ func runPrompt(socketPath, text string) error {
 		return err
 	}
 
-	// Subscribe first so we don't miss early events.
-	if _, err := c.call("Subscribe", nil); err != nil {
+	// Subscribe first (no afterSeq — fresh connection) so we don't miss early events.
+	subResult, err := c.call("session/subscribe", nil)
+	if err != nil {
 		c.close()
-		return fmt.Errorf("subscribe: %w", err)
+		return fmt.Errorf("session/subscribe: %w", err)
 	}
+	var sub struct {
+		NextSeq int `json:"nextSeq"`
+	}
+	_ = json.Unmarshal(subResult, &sub)
 
-	// Drain events in background; exits when c.events is closed.
+	// Drain notifications in background; exits when c.notifs is closed.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for ev := range c.events {
-			printEvent(ev.Params)
+		for msg := range c.notifs {
+			printNotification(msg)
 		}
 	}()
 
 	// Send prompt (blocks until agent turn completes).
-	result, err := c.call("Prompt", map[string]string{"text": text})
-	// Close connection now — readLoop will exit and close c.events,
-	// which unblocks the events goroutine above.
+	result, err := c.call("session/prompt", map[string]string{"prompt": text})
+	// Close connection now — readLoop will exit and close c.notifs,
+	// which unblocks the notifications goroutine above.
 	c.close()
 	<-done
 
 	if err != nil {
-		return fmt.Errorf("prompt: %w", err)
+		return fmt.Errorf("session/prompt: %w", err)
 	}
 
 	var pr struct {
@@ -308,24 +387,24 @@ func runChat(socketPath string) error {
 	defer c.close()
 
 	// Subscribe once for the whole session
-	if _, err := c.call("Subscribe", nil); err != nil {
-		return fmt.Errorf("subscribe: %w", err)
+	if _, err := c.call("session/subscribe", nil); err != nil {
+		return fmt.Errorf("session/subscribe: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Stream events in background
+	// Stream notifications in background
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case ev, ok := <-c.events:
+			case msg, ok := <-c.notifs:
 				if !ok {
 					return
 				}
-				printEvent(ev.Params)
+				printNotification(msg)
 			}
 		}
 	}()
@@ -345,7 +424,7 @@ func runChat(socketPath string) error {
 			break
 		}
 
-		result, err := c.call("Prompt", map[string]string{"text": line})
+		result, err := c.call("session/prompt", map[string]string{"prompt": line})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			continue
