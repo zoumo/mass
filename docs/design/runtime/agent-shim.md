@@ -2,205 +2,178 @@
 
 ## 定位
 
-agent-shim 是 OAR 架构中的中间层，对标 containerd-shim。
-它是 [OAR Runtime Specification](runtime-spec.md) 的**参考实现**。
+agent-shim 是 OAR Runtime 的参考实现边界：
+它读取 bundle、启动 agent 进程、持有 stdio、完成 ACP bootstrap，
+并对外暴露 shim RPC。
 
-每个 agent session 对应一个独立的 agent-shim 进程。
-agent-shim 持有 agent 的 stdio，是 agent 进程唯一的 ACP client，
-同时对外暴露 JSON-RPC server 供 agentd 管理。
+它对标 containerd-shim，但在 OAR 里同时吸收了独立 `runc` 不再成立后留下的职责。
+相关原因见 [why-no-runa.md](why-no-runa.md)。
 
-```
+每个 OAR session 对应一个独立的 agent-shim 进程。
+
+```text
 agentd（可重启）
-   │  JSON-RPC over Unix socket（shim RPC）
+   │  shim RPC: session/* + runtime/*
    ▼
-agent-shim 进程（每个 session 一个，独立存活）
-   │  ACP JSON-RPC over stdio
+agent-shim（每个 session 一个，独立存活）
+   │  ACP over stdio
    ▼
 agent 进程（claude-acp / pi-acp / gemini / ...）
 ```
 
-在 OCI 体系里，运行时规范面向 runc（独立的运行时 CLI）。
-OAR 没有独立的 runa 组件——相关原因见 [why-no-runa.md](why-no-runa.md)。
-runtime spec 由 agent-shim 直接实现。
+## 与规范文档的分工
+
+- [runtime-spec.md](runtime-spec.md) 定义 runtime 状态、bundle、state dir 与 socket 路径；
+- [shim-rpc-spec.md](shim-rpc-spec.md) 定义对上的规范 surface、notification 名、回放 / 恢复语义；
+- 本文档只解释 **agent-shim 这个组件为什么存在、拥有哪些职责、边界在哪里**。
+
+也就是说：
+
+- socket 路径约定不是本文档的 authority；
+- 方法名与 notification 名不是本文档的 authority；
+- 本文档不再重复维护另一套 shim 协议说法。
 
 ## 架构参照
 
 | containerd 生态 | OAR 生态 | 说明 |
 |----------------|----------|------|
 | containerd | agentd | 高层守护进程，可重启 |
-| containerd-shim | agent-shim | 中间层，独立进程，生命周期和工作负载绑定 |
-| runc | — | agent 不需要内核隔离，职责内化到 agent-shim |
+| containerd-shim | agent-shim | 中间层，独立进程，生命周期与单个 workload 绑定 |
+| runc | — | agent 不需要内核隔离，fork/exec 责任吸收到 agent-shim |
 | 容器进程 | agent 进程 | 工作负载 |
-| ttrpc over Unix socket | JSON-RPC over Unix socket | shim RPC 协议 |
+| ttrpc over Unix socket | JSON-RPC 2.0 over Unix socket | shim 控制协议 |
 
-**agent-shim = runc 的 fork/exec 职责 + containerd-shim 的 stdio 持有 + ACP 协议**
+**agent-shim = fork/exec + stdio 持有 + ACP client + runtime truth exporter**
 
 ## 进程模型
 
-每个 session 启动时，agentd fork/exec 一个 agent-shim 进程：
+agentd 为每个 session fork/exec 一个 agent-shim：
 
-```
+```text
 agentd fork/exec agent-shim --bundle <bundle-dir> --socket <socket-path>
-
-agent-shim 内部：
-  1. 读取 bundle/config.json
-  2. fork/exec agent 进程（acpAgent.process.command + args + env）
-  3. 持有 agent 的 stdin/stdout
-  4. 发送 ACP initialize 握手
-  5. 发送 ACP session/new（acpAgent.session）
-  6. 在 <socket-path> 创建 JSON-RPC server
-  7. 等待 agentd 连接并开始管理
 ```
 
-## agent-shim 的双重角色
+agent-shim 内部的职责序列是：
 
-agent-shim 同时承担两个角色，朝向不同方向：
+1. 读取 bundle/config.json；
+2. 解析并解析（resolve）`agentRoot.path`，得到 canonical `cwd`；
+3. fork/exec agent 进程（`acpAgent.process.command + args + env`）；
+4. 持有 agent 的 stdin/stdout，并作为唯一 ACP client 完成 `initialize`；
+5. 建立 ACP bootstrap（resolved `cwd`、`acpAgent.session`、`acpAgent.systemPrompt` 的兼容实现）；
+6. 写入 runtime state 与事件日志；
+7. 在 shim socket 上提供对外控制与恢复能力；
+8. 持续监督 agent 进程，必要时执行 stop / cleanup 流程。
 
-```
-agentd
-  │
-  │  【角色 2：RPC Server】
-  │  接受 agentd 的连接
-  │  暴露管理接口
-  │
-agent-shim
-  │
-  │  【角色 1：ACP Client】
-  │  持有 agent stdio
-  │  处理 ACP 协议
-  │
-agent 进程
-```
+## 双重角色
 
 ### 角色 1：ACP Client（朝下）
 
 agent-shim 是 agent 进程唯一的 ACP client，负责：
 
-- 完成 ACP `initialize` 握手
-- 发送 `session/new` 建立会话
-- 转发 `session/prompt` 给 agent
-- 接收 `session/update` 流式推送
-- 响应 agent 发起的 `fs/*` / `terminal/*` 请求（按权限策略）
-- 在需要时发送 `session/load`（恢复历史会话）
-- 管理 agent 进程的生命周期（监控退出、SIGTERM/SIGKILL）
+- 完成 ACP `initialize` 握手；
+- 用 resolved `cwd` 和 `acpAgent.session` 建立 bootstrap session；
+- 将 `acpAgent.systemPrompt` 落实为创建期 bootstrap 语义，而不是外部工作 turn；
+- 转发工作 turn；
+- 处理 agent 发起的 `fs/*` / `terminal/*` 请求（按 permission posture）；
+- 在需要时执行 `session/load` 或等价恢复步骤；
+- 监控 agent 退出并记录 runtime-local failure 细节。
 
-### 角色 2：RPC Server（朝上）
+### 角色 2：Runtime Session Server（朝上）
 
-agent-shim 暴露 JSON-RPC server，供 agentd 调用。
-完整方法定义、事件类型和错误码见 [Shim RPC Spec](shim-rpc-spec.md)。
+agent-shim 对上暴露的是 **runtime/session 语义**，不是 raw ACP。
+规范 surface 由 [shim-rpc-spec.md](shim-rpc-spec.md) 定义：
 
-```
-方法                说明
-────────────────────────────────────────────────────────
-Prompt(content)     向 agent 发送 prompt
-Cancel()            取消当前 turn（转发 ACP session/cancel）
-Subscribe()         订阅 typed event stream
-GetState()          查询 agent 进程状态
-GetHistory(fromSeq) 读取历史事件（重连补全）
-Shutdown()          优雅关闭（SIGTERM → 等待 → SIGKILL）
+```text
+session/prompt       发送一个工作 turn
+session/cancel       取消当前 turn
+session/subscribe    恢复 / 建立 live notification 流
+runtime/status       查询 runtime truth 与恢复边界
+runtime/history      回放历史 notification
+runtime/stop         优雅停止 runtime
 ```
 
-agentd 重启后，通过扫描 `/run/agentd/shim/*/agent-shim.sock` 重新连接，
-调用 `GetState()` 恢复 session 元数据，调用 `Subscribe()` 重新订阅事件流。
+对上暴露的 live notification 也是 shim 自己的 surface：
 
-## ACP 是实现细节，Typed Events 是核心协议
+- `session/update`
+- `runtime/stateChange`
 
-### 关键洞察
+这层 API 让 agentd 只关心：
 
-agent-shim 对上暴露的 **不是** raw ACP notifications，而是 **typed events**——
-经过 agent-shim 翻译、结构化的事件流。ACP 协议被封装在 agent-shim 内部，
-agentd 和上层消费者完全不需要理解 ACP。
+- 这个 runtime 现在是什么状态；
+- 当前 turn 的输入 / 输出和副作用；
+- 断线后如何补历史并恢复 live 流；
+- 何时需要停止或清理。
 
-```
-agentd ↔ agent-shim:  typed event stream  ← 系统的核心协议
-agent-shim ↔ agent:   ACP over stdio      ← 实现细节，封装在 shim 内部
+## 权威边界
+
+agent-shim 处在 OAR runtime design set 的 authority split 中间：
+
+| 关切 | authority | agent-shim 的角色 |
+|------|-----------|-------------------|
+| OAR `sessionId`、workspace、room membership | agentd / ARI | 读取外部分配结果，不重新定义 |
+| process truth、runtime status、runtime-local failure | runtime / shim | 直接拥有并对上暴露 |
+| ACP `sessionId` 与 ACP 协议细节 | ACP peer + shim | 内部维护，不让上层越过 shim 边界 |
+| desired orchestration intent | orchestrator | 不拥有 |
+
+因此，agent-shim 负责的是 **runtime-local truth**，不是 orchestrator policy。
+
+## ACP 是实现细节，typed notifications 才是契约
+
+agent-shim 的核心价值不是“把 ACP 暴露给 agentd”，而是“把 ACP 封装掉”。
+
+```text
+agentd ↔ agent-shim:  session/* + runtime/* + typed notifications
+agent-shim ↔ agent:   ACP over stdio
 ```
 
 这意味着：
-- **agentd 不感知 ACP**。它消费的是 typed events，发送的是 Prompt/Cancel 等高层命令
-- **替换 ACP 不影响上层**。如果未来某个 agent 用 gRPC 而不是 ACP，只需要写一个新的 shim 实现
-- **事件语义由 shim 定义**，不被底层协议绑定
 
-### ACP → Typed Event 翻译示例
+- agentd 不需要理解 ACP 事件名、握手细节或客户端职责；
+- shim 把底层协议翻译成上层能消费的 `session/update` / `runtime/stateChange`；
+- 若未来某个 agent 不走 ACP，只要 shim 继续维持相同的对上 surface，
+  上层 contract 仍然成立。
 
-```
-ACP 层（shim 内部）                  Typed Event（shim 对外）
-─────────────────────────────────    ─────────────────────────────────
-session/update:                      ThinkingEvent {
-  event: thought_message_chunk         text: "让我先看看项目结构..."
-  content: [{text: "让我先看看..."}]   }
+## 恢复与爆炸半径隔离
 
-agent → fs/read_text_file            FileReadEvent {
-  path: "src/main.rs"                   path: "src/main.rs"
-  shim 读取文件，返回内容                 status: "success"
-  （agentd 完全不参与）                   size: 1234
-                                       }
+独立 shim 进程的价值仍然是爆炸半径隔离：
 
-session/update:                      ToolCallEvent {
-  event: tool_call                     id: "tc-1"
-  kind: "execute"                      kind: "execute"
-  title: "Run cargo test"             title: "Run cargo test"
-                                       }
-```
-
-### 设计原则
-
-1. **agentd 是 typed event 的消费者**，不是 ACP 消息的路由器
-2. **agent-shim 是 ACP 协议的唯一理解者**，翻译为上层友好的事件
-3. **fs/terminal 操作对 agentd 是只读的**——shim 自行处理，上报结果事件
-4. **事件类型为程序消费优化**，不是 ACP 消息的 1:1 映射
-
-## 爆炸半径隔离
-
-agent-shim 独立进程的核心价值是爆炸半径隔离：
-
-```
+```text
 agentd 重启
     │
-    ├── agent-shim 1（session-abc）→ 不受影响，继续跑
-    ├── agent-shim 2（session-def）→ 不受影响，继续跑
-    └── agent-shim 3（session-ghi）→ 不受影响，继续跑
-
-agentd 重启完成后：
-    扫描 /run/agentd/shim/*/agent-shim.sock
-    → 重新连接每个 shim
-    → GetState() 恢复元数据
-    → Subscribe() 重新订阅事件流
-    → 恢复正常管理
+    ├── agent-shim 1（session-abc）→ 继续存活
+    ├── agent-shim 2（session-def）→ 继续存活
+    └── agent-shim 3（session-ghi）→ 继续存活
 ```
 
-## 实现路径
+agentd 恢复后，不需要重新理解 ACP，只需要：
 
-### 短期：agentd 直接持有 stdio
+1. 发现 shim socket；
+2. 连接；
+3. `runtime/status` 获取当前 runtime truth 与 `lastSeq`；
+4. `runtime/history` 补齐断线期间错过的 notification；
+5. `session/subscribe` 恢复 live 流。
 
-agentd 直接 fork/exec agent 进程并持有 stdio，作为 ACP client。
-不引入独立 shim 进程。
+**重要**：socket 路径、state dir 布局、`events.jsonl` 的存在本身，由 runtime-spec authority 定义；
+恢复方法名与顺序，由 shim-rpc-spec authority 定义；
+本文档只是解释为什么 agent-shim 必须提供这类能力。
 
-代价：agentd 重启会杀死所有 agent。爆炸半径不隔离。
+## 为什么需要独立 shim
 
-适用于：早期开发和验证阶段，简化实现。
+独立 shim 解决的是 agent 场景下几个无法回避的问题：
 
-### 中期：agent-shim 独立进程
+1. **stdio 必须被长期持有** —— ACP over stdio 决定了 agent 不能在 client 退出后继续“自己活着”；
+2. **process truth 需要独立于 agentd 生存** —— agentd 重启不应直接杀掉所有 session；
+3. **协议兼容性需要集中处理** —— ACP bootstrap、权限处理、协议翻译不能散落在 agentd 各处；
+4. **恢复面需要稳定边界** —— socket、state、history、typed notification 都要由一个长期存在的进程维护。
 
-引入 agent-shim 作为独立进程，实现本文档描述的完整架构。
-agentd 和 agent-shim 通过 JSON-RPC over Unix socket 通信。
+## 当前实现滞后（非规范）
 
-### 长期：agent-shim 作为标准组件
+当前仓库里的实现仍使用 legacy PascalCase / `$/event` shim surface。
+这表示 **代码尚未对齐 clean-break contract**，不是设计上仍然接受两套协议。
 
-agent-shim 作为 OAR 生态的标准组件发布，
-支持原生 ACP agent 和 ACP wrapper 两种形态。
+设计上的结论已经固定：
 
-## 命名
-
-`agent-shim` 命名对标 containerd-shim，明确架构定位。
-
-名字强调的是**架构角色**（agentd 和 agent 进程之间的中间层），而非内部实现细节。
-agent-shim 内部使用 ACP 协议与 agent 进程通信，但对外暴露的是自己的 shim RPC
-（JSON-RPC 2.0 + typed event stream），消费方无需感知 ACP。
-
-| 组件 | 命名 | 对标 |
-|------|------|------|
-| 高层守护进程 | agentd | containerd |
-| 中间层 | agent-shim | containerd-shim |
-| 工作负载 | agent 进程 | 容器进程 |
-��器进程 |
+- 规范 surface 是 `session/*` + `runtime/*`；
+- recovery story 通过 `runtime/status` / `runtime/history` / `session/subscribe` 闭合；
+- ACP 继续留在 shim 内部；
+- 任何旧名字都只代表 implementation lag。

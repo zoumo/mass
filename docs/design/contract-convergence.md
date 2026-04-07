@@ -11,7 +11,8 @@ This file is the slice-level authority map for the design set. It names which do
 | Workspace preparation and host-impact rules | `docs/design/workspace/workspace-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/agentd/ari-spec.md`, `docs/design/orchestrator/room-spec.md` | local workspace, hook execution, env precedence, and shared workspace semantics must tell one safety story. |
 | Room desired intent | `docs/design/orchestrator/room-spec.md` | `docs/design/agentd/ari-spec.md`, `docs/design/agentd/agentd.md` | The Room Spec is orchestrator-owned desired state. |
 | Room realized runtime projection | `docs/design/agentd/ari-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/orchestrator/room-spec.md` | `room/*` is the runtime projection for realized membership and routing metadata, not desired orchestration policy. |
-| Public control API and boundary to ACP | `docs/design/agentd/ari-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/runtime/agent-shim.md`, `docs/design/runtime/shim-rpc-spec.md` | ARI exposes a curated runtime control surface; ACP stays behind the shim boundary. |
+| Public control API at the orchestrator boundary | `docs/design/agentd/ari-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/runtime/agent-shim.md` | ARI exposes the curated host-facing control surface; it does not expose raw ACP or raw shim internals. |
+| Shim control, replay, and reconnect contract | `docs/design/runtime/shim-rpc-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/agent-shim.md`, `docs/design/agentd/agentd.md` | The clean-break shim surface is `session/*` + `runtime/*`; runtime-spec owns state-dir / socket layout, shim-rpc-spec owns recovery method semantics. |
 
 ## Desired vs Realized Room Model
 
@@ -57,7 +58,7 @@ The design set now names these boundaries explicitly:
 |---|---|---|---|
 | Orchestrator | Room name, desired agent names | desired Room membership and completion logic | decides what should exist |
 | agentd / ARI | OAR `sessionId`, `workspaceId`, realized `room` / `roomAgent` | session lifecycle, realized room membership, workspace refs | decides what is currently realized |
-| Runtime / shim | process identity, runtime status | process truth, typed events, runtime-local failure details | does not own orchestration intent |
+| Runtime / shim | process identity, runtime status | process truth, typed notifications, runtime-local failure details | does not own orchestration intent |
 | ACP peer session | ACP `sessionId` | agent-protocol session state | separate protocol identity |
 
 ## Follow-on gaps reserved for S03 / later hardening
@@ -83,14 +84,13 @@ Later work still needs explicit hardening for:
 
 ## Shim Target Contract
 
-The clean target for the shim-facing design set remains:
+The shim-facing design set is now converged on the following target:
 
-- one normative shim control surface that matches the runtime lifecycle being specified;
-- one event model for subscribers, with no legacy PascalCase / `$/event` surface carried as if it were current contract;
-- one recovery story for socket discovery, reconnect, and state inspection;
-- one statement of where ACP is translated, hidden, or passed through.
-
-T04 is the task that rewrites the shim docs to that target. Until then, this file treats the remaining shim mismatch as explicit follow-on scope rather than an implied contradiction.
+- the normative shim method surface is `session/prompt`, `session/cancel`, `session/subscribe`, `runtime/status`, `runtime/history`, and `runtime/stop`;
+- the normative live notification surface is `session/update` plus `runtime/stateChange`;
+- socket path and state-dir layout are owned by `runtime-spec.md`, while replay / reconnect semantics are owned by `shim-rpc-spec.md`;
+- `agent-shim.md` is descriptive only: it explains component responsibilities and the ACP boundary, but it does not redefine method names or recovery rules;
+- any remaining references to legacy PascalCase methods or `$/event` in implementation code or planning docs are implementation lag, not dual-source contract.
 
 ## Current slice proof target
 
@@ -100,4 +100,5 @@ For M002/S01, the docs are converged when they all say the same thing about:
 - `session/new` vs `session/prompt` semantics;
 - local workspace and hook host impact;
 - env precedence and shared workspace implications;
-- the capability/security boundary between ARI and ACP.
+- the capability/security boundary between ARI and ACP;
+- the clean-break shim surface and its replay / reconnect story.
