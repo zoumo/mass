@@ -79,8 +79,8 @@ func main() {
 	agents := agentd.NewAgentManager(store)
 	log.Printf("agentd: agent manager initialized")
 
-	// Create ProcessManager from registry/sessions/store/cfg.
-	processes := agentd.NewProcessManager(runtimeClasses, sessions, store, cfg)
+	// Create ProcessManager from registry/sessions/agents/store/cfg.
+	processes := agentd.NewProcessManager(runtimeClasses, sessions, agents, store, cfg)
 	log.Printf("agentd: process manager initialized")
 
 	// Run session recovery pass: reconnect to shims that survived a daemon restart.

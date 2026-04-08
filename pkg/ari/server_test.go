@@ -85,7 +85,7 @@ func newTestHarness(t *testing.T) *testHarness {
 		Socket:        socketPath,
 		WorkspaceRoot: baseDir,
 	}
-	processes := agentd.NewProcessManager(runtimeClasses, sessions, store, cfg)
+	processes := agentd.NewProcessManager(runtimeClasses, sessions, agents, store, cfg)
 
 	// Create Server with all dependencies.
 	server := ari.New(manager, registry, sessions, agents, processes, runtimeClasses, cfg, store, socketPath, baseDir)
@@ -202,7 +202,7 @@ func newSessionTestHarness(t *testing.T) *testHarness {
 			MaxSessions: 10,
 		},
 	}
-	processes := agentd.NewProcessManager(runtimeRegistry, sessions, store, cfg)
+	processes := agentd.NewProcessManager(runtimeRegistry, sessions, agents, store, cfg)
 
 	// Create Server with all dependencies.
 	server := ari.New(manager, registry, sessions, agents, processes, runtimeRegistry, cfg, store, socketPath, baseDir)

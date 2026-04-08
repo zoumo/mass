@@ -116,3 +116,18 @@
 {"id":"41230597-3875-4020-9a34-3cb8e1d36872","ts":"2026-04-08T21:21:33.942Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
 {"id":"a574f1b9-d105-42fc-83a1-fb80de0b33d5","ts":"2026-04-08T21:30:53.171Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
 {"id":"160e1ba4-2ceb-42f5-a3cb-046b0b68aee9","ts":"2026-04-08T21:30:53.174Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"d5b62dcd-a5b5-42ef-a1c7-bffb1f76368f","ts":"2026-04-08T21:30:54.841Z","severity":"info","message":"Pre-dispatch: pre-dispatch: created gsd snapshot after 32m of uncommitted changes","source":"notify","read":false}
+{"id":"80a1ed02-a441-4028-9906-b35692c52137","ts":"2026-04-08T21:36:35.999Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"59156f26-35ca-46d1-850a-caf0c1c48f17","ts":"2026-04-08T21:36:36.002Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"3c2212c3-a3f0-4cad-8016-c4ef4b83161e","ts":"2026-04-08T21:36:38.189Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}
+{"id":"1c3223e2-c92b-4664-98e6-b2ecac26de08","ts":"2026-04-08T21:48:01.348Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"f8bd87b9-7f2f-4717-ae01-b2ff9decb8e6","ts":"2026-04-08T21:48:01.352Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"efc19140-142f-4fc2-8341-446fb8087f8f","ts":"2026-04-08T21:48:03.019Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}
+{"id":"00fdb048-6dd4-47c9-9487-3fae6e9f46c6","ts":"2026-04-08T21:54:54.445Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"d005a593-8b9d-4629-9687-a1f88ec62a29","ts":"2026-04-08T21:54:54.447Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"dc4672e4-6b11-471f-8f30-d5c582749319","ts":"2026-04-08T21:54:55.883Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}
+{"id":"85184f94-0ce8-4b26-a399-26d6c776b58c","ts":"2026-04-08T22:02:11.226Z","severity":"warning","message":"Server error (transient): 500 status code (no body). Auto-resuming in 30s...","source":"notify","read":false}
+{"id":"290accf0-3c74-4b03-93f4-90335d95f488","ts":"2026-04-08T22:02:11.709Z","severity":"info","message":"Auto-mode paused (Escape). Type to interact, or /gsd auto to resume.","source":"notify","read":false}
+{"id":"2f6a6c6c-bd40-434a-99b2-1e4db7f6eb05","ts":"2026-04-08T22:02:26.300Z","severity":"info","message":"Resuming paused session for M005.","source":"notify","read":false}
+{"id":"c08de97e-f1c3-4520-b877-4c1b71a9736b","ts":"2026-04-08T22:02:26.307Z","severity":"info","message":"Auto-mode resumed.","source":"notify","read":false}
+{"id":"848bc16b-1906-49d9-92df-a06a878e5e12","ts":"2026-04-08T22:02:27.155Z","severity":"warning","message":"[worktree] .git file read failed: EISDIR: illegal operation on a directory, read","source":"workflow-logger","read":false}

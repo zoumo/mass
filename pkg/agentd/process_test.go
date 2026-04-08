@@ -92,7 +92,8 @@ func TestProcessManagerStart(t *testing.T) {
 	}
 
 	// Create ProcessManager.
-	procMgr := NewProcessManager(registry, sessionMgr, store, cfg)
+	agentMgr := NewAgentManager(store)
+	procMgr := NewProcessManager(registry, sessionMgr, agentMgr, store, cfg)
 
 	// Create a workspace.
 	workspaceID := uuid.New().String()

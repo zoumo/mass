@@ -15,8 +15,9 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
-// TestEndToEndPipeline tests the complete agentd → agent-shim → mockagent lifecycle.
-// This is the primary integration test proving all components work together.
+// TestEndToEndPipeline tests the complete agentd → agent-shim → mockagent lifecycle
+// using the agent/* ARI surface.
+// Pipeline: workspace/prepare → room/create → agent/create → agent/prompt → agent/stop → agent/delete → room/delete → workspace/cleanup
 func TestEndToEndPipeline(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -133,27 +134,40 @@ runtimeClasses:
 	}
 	t.Logf("workspace prepared: id=%s path=%s", prepareResult.WorkspaceId, prepareResult.Path)
 
-	// Step 2: session/new
-	t.Log("Step 2: session/new")
-	sessionNewParams := map[string]interface{}{
-		"workspaceId":  prepareResult.WorkspaceId,
-		"runtimeClass": "mockagent",
+	// Step 2: room/create
+	t.Log("Step 2: room/create")
+	var roomResult ari.RoomCreateResult
+	if err := client.Call("room/create", map[string]interface{}{"name": "e2e-room"}, &roomResult); err != nil {
+		t.Fatalf("room/create failed: %v", err)
 	}
-	var sessionNewResult ari.SessionNewResult
-	if err := client.Call("session/new", sessionNewParams, &sessionNewResult); err != nil {
-		t.Fatalf("session/new failed: %v", err)
-	}
-	t.Logf("session created: id=%s state=%s", sessionNewResult.SessionId, sessionNewResult.State)
+	t.Logf("room created: name=%s", roomResult.Name)
 
-	// Step 3: session/prompt (auto-starts shim)
-	t.Log("Step 3: session/prompt (auto-start)")
-	promptParams := map[string]interface{}{
-		"sessionId": sessionNewResult.SessionId,
-		"text":      "hello from integration test",
+	// Step 3: agent/create → wait for state=created
+	t.Log("Step 3: agent/create → wait for state=created")
+	var agentCreateResult ari.AgentCreateResult
+	if err := client.Call("agent/create", map[string]interface{}{
+		"workspaceId":  prepareResult.WorkspaceId,
+		"room":         "e2e-room",
+		"name":         "e2e-agent",
+		"runtimeClass": "mockagent",
+	}, &agentCreateResult); err != nil {
+		t.Fatalf("agent/create failed: %v", err)
 	}
-	var promptResult ari.SessionPromptResult
-	if err := client.Call("session/prompt", promptParams, &promptResult); err != nil {
-		t.Fatalf("session/prompt failed: %v", err)
+	agentId := agentCreateResult.AgentId
+	t.Logf("agent created: id=%s state=%s", agentId, agentCreateResult.State)
+
+	// Wait for agent to reach state=created
+	agentStatus := waitForAgentState(t, client, agentId, "created", 15*time.Second)
+	t.Logf("agent state=created confirmed ✓ (state=%s)", agentStatus.Agent.State)
+
+	// Step 4: agent/prompt (auto-starts shim)
+	t.Log("Step 4: agent/prompt (auto-start)")
+	var promptResult ari.AgentPromptResult
+	if err := client.Call("agent/prompt", map[string]interface{}{
+		"agentId": agentId,
+		"prompt":  "hello from e2e integration test",
+	}, &promptResult); err != nil {
+		t.Fatalf("agent/prompt failed: %v", err)
 	}
 	t.Logf("prompt completed: stopReason=%s", promptResult.StopReason)
 
@@ -162,41 +176,35 @@ runtimeClasses:
 		t.Errorf("expected stopReason=end_turn, got %s", promptResult.StopReason)
 	}
 
-	// Step 4: session/status (verify running)
-	t.Log("Step 4: session/status")
-	statusParams := map[string]interface{}{
-		"sessionId": sessionNewResult.SessionId,
-	}
-	var statusResult ari.SessionStatusResult
-	if err := client.Call("session/status", statusParams, &statusResult); err != nil {
-		t.Fatalf("session/status failed: %v", err)
-	}
-	t.Logf("session status: state=%s", statusResult.Session.State)
+	// Step 5: verify agent is running
+	t.Log("Step 5: verify agent state=running")
+	_ = waitForAgentState(t, client, agentId, "running", 10*time.Second)
+	t.Log("agent state=running ✓")
 
-	// Step 5: session/stop
-	t.Log("Step 5: session/stop")
-	stopParams := map[string]interface{}{
-		"sessionId": sessionNewResult.SessionId,
+	// Step 6: agent/stop
+	t.Log("Step 6: agent/stop")
+	if err := client.Call("agent/stop", map[string]interface{}{"agentId": agentId}, nil); err != nil {
+		t.Fatalf("agent/stop failed: %v", err)
 	}
-	var stopResult interface{}
-	if err := client.Call("session/stop", stopParams, &stopResult); err != nil {
-		t.Fatalf("session/stop failed: %v", err)
-	}
-	t.Log("session stopped")
+	_ = waitForAgentState(t, client, agentId, "stopped", 10*time.Second)
+	t.Log("agent stopped ✓")
 
-	// Step 6: session/remove
-	t.Log("Step 6: session/remove")
-	removeParams := map[string]interface{}{
-		"sessionId": sessionNewResult.SessionId,
+	// Step 7: agent/delete
+	t.Log("Step 7: agent/delete")
+	if err := client.Call("agent/delete", map[string]interface{}{"agentId": agentId}, nil); err != nil {
+		t.Fatalf("agent/delete failed: %v", err)
 	}
-	var removeResult interface{}
-	if err := client.Call("session/remove", removeParams, &removeResult); err != nil {
-		t.Fatalf("session/remove failed: %v", err)
-	}
-	t.Log("session removed")
+	t.Log("agent deleted ✓")
 
-	// Step 7: workspace/cleanup
-	t.Log("Step 7: workspace/cleanup")
+	// Step 8: room/delete
+	t.Log("Step 8: room/delete")
+	if err := client.Call("room/delete", map[string]interface{}{"name": "e2e-room"}, nil); err != nil {
+		t.Logf("room/delete: %v (ignored)", err)
+	}
+	t.Log("room deleted ✓")
+
+	// Step 9: workspace/cleanup
+	t.Log("Step 9: workspace/cleanup")
 	cleanupParams := map[string]interface{}{
 		"workspaceId": prepareResult.WorkspaceId,
 	}
@@ -204,9 +212,9 @@ runtimeClasses:
 	if err := client.Call("workspace/cleanup", cleanupParams, &cleanupResult); err != nil {
 		t.Fatalf("workspace/cleanup failed: %v", err)
 	}
-	t.Log("workspace cleaned up")
+	t.Log("workspace cleaned up ✓")
 
-	t.Log("End-to-end pipeline test completed successfully!")
+	t.Log("End-to-end pipeline test completed successfully! ✓")
 }
 
 // waitForSocket waits for a Unix socket to be ready.

@@ -41,6 +41,7 @@ type EventHandler func(ctx context.Context, ev events.Event)
 type ProcessManager struct {
 	registry    *RuntimeClassRegistry
 	sessions    *SessionManager
+	agents      *AgentManager
 	store       *meta.Store
 	config      Config
 
@@ -91,11 +92,12 @@ type ShimProcess struct {
 }
 
 // NewProcessManager creates a new ProcessManager.
-func NewProcessManager(registry *RuntimeClassRegistry, sessions *SessionManager, store *meta.Store, cfg Config) *ProcessManager {
+func NewProcessManager(registry *RuntimeClassRegistry, sessions *SessionManager, agents *AgentManager, store *meta.Store, cfg Config) *ProcessManager {
 	logger := slog.Default().With("component", "agentd.process")
 	return &ProcessManager{
 		registry:    registry,
 		sessions:    sessions,
+		agents:      agents,
 		store:       store,
 		config:      cfg,
 		processes:   make(map[string]*ShimProcess),

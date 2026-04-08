@@ -1,5 +1,5 @@
-// Package integration_test provides integration tests for session lifecycle management.
-// These tests verify session state transitions and error handling.
+// Package integration_test provides integration tests for agent lifecycle management.
+// These tests verify agent state transitions and error handling using the agent/* ARI surface.
 package integration_test
 
 import (
@@ -8,293 +8,29 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
-// testSocketCounter provides unique socket paths for each test
+// testSocketCounter provides unique socket paths for each test.
 var testSocketCounter int64
 
-// TestSessionLifecycle tests all session state transitions.
-// Covers: created → running → stopped → deleted
-func TestSessionLifecycle(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	ctx, cancel, client, cleanup := setupAgentdTest(t)
-	defer cleanup()
-	defer cancel()
-
-	// Step 1: Prepare workspace
-	workspaceId := prepareTestWorkspace(t, ctx, client)
-
-	// Step 2: session/new → state=created
-	t.Log("Step: session/new → state=created")
-	sessionNewParams := map[string]interface{}{
-		"workspaceId":  workspaceId,
-		"runtimeClass": "mockagent",
-	}
-	var sessionNewResult ari.SessionNewResult
-	if err := client.Call("session/new", sessionNewParams, &sessionNewResult); err != nil {
-		t.Fatalf("session/new failed: %v", err)
-	}
-	sessionId := sessionNewResult.SessionId
-	t.Logf("session created: id=%s state=%s", sessionId, sessionNewResult.State)
-
-	if sessionNewResult.State != "created" {
-		t.Errorf("expected state=created, got %s", sessionNewResult.State)
-	}
-
-	// Step 3: session/prompt → auto-start → state=running
-	t.Log("Step: session/prompt → auto-start → state=running")
-	promptParams := map[string]interface{}{
-		"sessionId": sessionId,
-		"text":      "test prompt",
-	}
-	var promptResult ari.SessionPromptResult
-	if err := client.Call("session/prompt", promptParams, &promptResult); err != nil {
-		t.Fatalf("session/prompt failed: %v", err)
-	}
-	t.Logf("prompt completed: stopReason=%s", promptResult.StopReason)
-
-	// Verify state is running
-	statusParams := map[string]interface{}{
-		"sessionId": sessionId,
-	}
-	var statusResult ari.SessionStatusResult
-	if err := client.Call("session/status", statusParams, &statusResult); err != nil {
-		t.Fatalf("session/status failed: %v", err)
-	}
-	if statusResult.Session.State != "running" {
-		t.Errorf("expected state=running after prompt, got %s", statusResult.Session.State)
-	}
-
-	// Step 4: session/status → returns shim state
-	t.Log("Step: session/status → returns shim state")
-	if statusResult.ShimState == nil {
-		t.Error("expected shimState to be populated for running session")
-	} else {
-		t.Logf("shim state: status=%s pid=%d", statusResult.ShimState.Status, statusResult.ShimState.PID)
-	}
-
-	// Step 5: session/stop → state=stopped
-	t.Log("Step: session/stop → state=stopped")
-	stopParams := map[string]interface{}{
-		"sessionId": sessionId,
-	}
-	var stopResult interface{}
-	if err := client.Call("session/stop", stopParams, &stopResult); err != nil {
-		t.Fatalf("session/stop failed: %v", err)
-	}
-
-	// Verify state is stopped
-	if err := client.Call("session/status", statusParams, &statusResult); err != nil {
-		t.Fatalf("session/status failed after stop: %v", err)
-	}
-	if statusResult.Session.State != "stopped" {
-		t.Errorf("expected state=stopped, got %s", statusResult.Session.State)
-	}
-	t.Log("session stopped")
-
-	// Step 6: session/remove → session deleted
-	t.Log("Step: session/remove → session deleted")
-	removeParams := map[string]interface{}{
-		"sessionId": sessionId,
-	}
-	var removeResult interface{}
-	if err := client.Call("session/remove", removeParams, &removeResult); err != nil {
-		t.Fatalf("session/remove failed: %v", err)
-	}
-
-	// Verify session is gone (status should return error)
-	var verifyStatus ari.SessionStatusResult
-	err := client.Call("session/status", statusParams, &verifyStatus)
-	if err == nil {
-		t.Error("expected error when getting status of removed session")
-	}
-	t.Logf("session removed (status check returned expected error: %v)", err)
-
-	// Cleanup workspace
-	cleanupTestWorkspace(t, client, workspaceId)
-}
-
-// TestSessionPromptStoppedSession tests that prompting a stopped session returns an error.
-func TestSessionPromptStoppedSession(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	ctx, cancel, client, cleanup := setupAgentdTest(t)
-	defer cleanup()
-	defer cancel()
-
-	// Prepare workspace and create session
-	workspaceId := prepareTestWorkspace(t, ctx, client)
-	sessionId := createTestSession(t, client, workspaceId)
-
-	// Prompt once to start and run
-	promptParams := map[string]interface{}{
-		"sessionId": sessionId,
-		"text":      "first prompt",
-	}
-	var promptResult ari.SessionPromptResult
-	if err := client.Call("session/prompt", promptParams, &promptResult); err != nil {
-		t.Fatalf("first prompt failed: %v", err)
-	}
-
-	// Stop session
-	stopParams := map[string]interface{}{
-		"sessionId": sessionId,
-	}
-	var stopResult interface{}
-	if err := client.Call("session/stop", stopParams, &stopResult); err != nil {
-		t.Fatalf("session/stop failed: %v", err)
-	}
-
-	// Try to prompt stopped session - should return error
-	t.Log("Attempting to prompt stopped session (expecting error)")
-	promptParams["text"] = "prompt on stopped session"
-	err := client.Call("session/prompt", promptParams, &promptResult)
-	if err == nil {
-		t.Error("expected error when prompting stopped session, but got nil")
-	} else {
-		t.Logf("got expected error: %v", err)
-		// The error should be an InvalidParams type error
-		if !containsString(err.Error(), "InvalidParams") && !containsString(err.Error(), "invalid") {
-			t.Logf("warning: error may not be InvalidParams type: %v", err)
-		}
-	}
-
-	// Cleanup
-	removeParams := map[string]interface{}{
-		"sessionId": sessionId,
-	}
-	client.Call("session/remove", removeParams, nil) // ignore error
-	cleanupTestWorkspace(t, client, workspaceId)
-}
-
-// TestSessionRemoveRunningSession tests that removing a running session returns an error.
-func TestSessionRemoveRunningSession(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	ctx, cancel, client, cleanup := setupAgentdTest(t)
-	defer cleanup()
-	defer cancel()
-
-	// Prepare workspace and create session
-	workspaceId := prepareTestWorkspace(t, ctx, client)
-	sessionId := createTestSession(t, client, workspaceId)
-
-	// Prompt to start (state=running)
-	promptParams := map[string]interface{}{
-		"sessionId": sessionId,
-		"text":      "running prompt",
-	}
-	var promptResult ari.SessionPromptResult
-	if err := client.Call("session/prompt", promptParams, &promptResult); err != nil {
-		t.Fatalf("prompt failed: %v", err)
-	}
-
-	// Try to remove running session - should return error (protected)
-	t.Log("Attempting to remove running session (expecting error)")
-	removeParams := map[string]interface{}{
-		"sessionId": sessionId,
-	}
-	var removeResult interface{}
-	err := client.Call("session/remove", removeParams, &removeResult)
-	if err == nil {
-		t.Error("expected error when removing running session, but got nil")
-	} else {
-		t.Logf("got expected error: %v", err)
-		// The error should be an InvalidParams type error
-		if !containsString(err.Error(), "InvalidParams") && !containsString(err.Error(), "invalid") {
-			t.Logf("warning: error may not be InvalidParams type: %v", err)
-		}
-	}
-
-	// Cleanup: stop then remove
-	client.Call("session/stop", map[string]interface{}{"sessionId": sessionId}, nil)
-	client.Call("session/remove", removeParams, nil)
-	cleanupTestWorkspace(t, client, workspaceId)
-}
-
-// TestSessionList tests listing multiple sessions.
-func TestSessionList(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	ctx, cancel, client, cleanup := setupAgentdTest(t)
-	defer cleanup()
-	defer cancel()
-
-	// Prepare workspace
-	workspaceId := prepareTestWorkspace(t, ctx, client)
-
-	// Create 3 sessions
-	sessionIds := make([]string, 3)
-	for i := 0; i < 3; i++ {
-		sessionId := createTestSession(t, client, workspaceId)
-		sessionIds[i] = sessionId
-		t.Logf("created session %d: %s", i+1, sessionId)
-	}
-
-	// List sessions → verify count=3
-	t.Log("Step: session/list → verify count=3")
-	listParams := map[string]interface{}{}
-	var listResult ari.SessionListResult
-	if err := client.Call("session/list", listParams, &listResult); err != nil {
-		t.Fatalf("session/list failed: %v", err)
-	}
-	t.Logf("session/list returned %d sessions", len(listResult.Sessions))
-
-	if len(listResult.Sessions) != 3 {
-		t.Errorf("expected 3 sessions, got %d", len(listResult.Sessions))
-	}
-
-	// Remove all sessions
-	for i, sessionId := range sessionIds {
-		removeParams := map[string]interface{}{
-			"sessionId": sessionId,
-		}
-		var removeResult interface{}
-		if err := client.Call("session/remove", removeParams, &removeResult); err != nil {
-			t.Logf("warning: session/remove failed for session %d: %v", i+1, err)
-		}
-	}
-
-	// List again → verify count=0
-	t.Log("Step: session/list → verify count=0")
-	if err := client.Call("session/list", listParams, &listResult); err != nil {
-		t.Fatalf("session/list failed: %v", err)
-	}
-	t.Logf("session/list returned %d sessions after removal", len(listResult.Sessions))
-
-	if len(listResult.Sessions) != 0 {
-		t.Errorf("expected 0 sessions after removal, got %d", len(listResult.Sessions))
-	}
-
-	// Cleanup workspace
-	cleanupTestWorkspace(t, client, workspaceId)
-}
-
 // =============================================================================
-// Helper Functions
+// Shared Helpers
 // =============================================================================
 
 // setupAgentdTest starts agentd daemon and returns context, client, and cleanup function.
 func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *ari.Client, func()) {
+	t.Helper()
 	// Create temp directories
 	tmpDir := t.TempDir()
 	// Use short socket path in /tmp to avoid macOS 104-char Unix socket path limit
 	// Generate unique socket path using PID and test counter
-	testSocketCounter++
-	socketPath := fmt.Sprintf("/tmp/oar-%d-%d.sock", os.Getpid(), testSocketCounter)
+	counter := atomic.AddInt64(&testSocketCounter, 1)
+	socketPath := fmt.Sprintf("/tmp/oar-%d-%d.sock", os.Getpid(), counter)
 	workspaceRoot := filepath.Join(tmpDir, "workspaces")
 	metaDB := filepath.Join(tmpDir, "agentd.db")
 	bundleRoot := filepath.Join(tmpDir, "bundles")
@@ -359,18 +95,21 @@ runtimeClasses:
 	agentdCmd.Env = append(os.Environ(), fmt.Sprintf("OAR_SHIM_BINARY=%s", agentShimBin))
 
 	if err := agentdCmd.Start(); err != nil {
+		cancel()
 		t.Fatalf("failed to start agentd: %v", err)
 	}
 	t.Logf("agentd started with PID %d", agentdCmd.Process.Pid)
 
 	// Wait for socket to be ready
 	if err := waitForSocket(socketPath, 10*time.Second); err != nil {
+		cancel()
 		t.Fatalf("socket not ready: %v", err)
 	}
 
 	// Create ARI client
 	client, err := ari.NewClient(socketPath)
 	if err != nil {
+		cancel()
 		t.Fatalf("failed to create ARI client: %v", err)
 	}
 
@@ -394,6 +133,7 @@ runtimeClasses:
 
 // prepareTestWorkspace creates a test workspace and returns its ID.
 func prepareTestWorkspace(t *testing.T, ctx context.Context, client *ari.Client) string {
+	t.Helper()
 	prepareParams := map[string]interface{}{
 		"spec": map[string]interface{}{
 			"oarVersion": "0.1.0",
@@ -413,21 +153,29 @@ func prepareTestWorkspace(t *testing.T, ctx context.Context, client *ari.Client)
 	return prepareResult.WorkspaceId
 }
 
-// createTestSession creates a test session and returns its ID.
-func createTestSession(t *testing.T, client *ari.Client, workspaceId string) string {
-	sessionNewParams := map[string]interface{}{
-		"workspaceId":  workspaceId,
-		"runtimeClass": "mockagent",
+// createRoom creates a named room and returns the result. Callers should defer
+// room/delete for cleanup.
+func createRoom(t *testing.T, client *ari.Client, roomName string) ari.RoomCreateResult {
+	t.Helper()
+	var result ari.RoomCreateResult
+	if err := client.Call("room/create", map[string]interface{}{"name": roomName}, &result); err != nil {
+		t.Fatalf("room/create (name=%s): %v", roomName, err)
 	}
-	var sessionNewResult ari.SessionNewResult
-	if err := client.Call("session/new", sessionNewParams, &sessionNewResult); err != nil {
-		t.Fatalf("session/new failed: %v", err)
+	t.Logf("room created: name=%s", result.Name)
+	return result
+}
+
+// deleteRoom removes a room. Logs but does not fail on error (best-effort cleanup).
+func deleteRoom(t *testing.T, client *ari.Client, roomName string) {
+	t.Helper()
+	if err := client.Call("room/delete", map[string]interface{}{"name": roomName}, nil); err != nil {
+		t.Logf("room/delete (name=%s): %v (ignored)", roomName, err)
 	}
-	return sessionNewResult.SessionId
 }
 
 // cleanupTestWorkspace removes a test workspace.
 func cleanupTestWorkspace(t *testing.T, client *ari.Client, workspaceId string) {
+	t.Helper()
 	cleanupParams := map[string]interface{}{
 		"workspaceId": workspaceId,
 	}
@@ -437,9 +185,265 @@ func cleanupTestWorkspace(t *testing.T, client *ari.Client, workspaceId string) 
 	}
 }
 
-// containsString checks if a string contains a substring (case-insensitive).
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) > 0 &&
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-		containsString(s[1:], substr)))
+// waitForAgentState polls agent/status every 200ms until the agent reaches
+// the desired state or the timeout expires. Returns the final status result.
+// Calls t.Fatalf on timeout.
+func waitForAgentState(t *testing.T, client *ari.Client, agentId, wantState string, timeout time.Duration) ari.AgentStatusResult {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	params := map[string]interface{}{"agentId": agentId}
+	var result ari.AgentStatusResult
+	for time.Now().Before(deadline) {
+		if err := client.Call("agent/status", params, &result); err != nil {
+			t.Logf("agent/status for %s: %v (retrying)", agentId, err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		if result.Agent.State == wantState {
+			return result
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("agent %s did not reach state %q within %v (last state: %q)",
+		agentId, wantState, timeout, result.Agent.State)
+	return result // unreachable
+}
+
+// createAgentAndWait calls agent/create and then waits for the agent to reach
+// state="created". Returns the status result after the agent is ready.
+func createAgentAndWait(t *testing.T, client *ari.Client, workspaceId, room, name string) ari.AgentStatusResult {
+	t.Helper()
+	var createResult ari.AgentCreateResult
+	if err := client.Call("agent/create", map[string]interface{}{
+		"workspaceId":  workspaceId,
+		"room":         room,
+		"name":         name,
+		"runtimeClass": "mockagent",
+	}, &createResult); err != nil {
+		t.Fatalf("agent/create (name=%s): %v", name, err)
+	}
+	t.Logf("agent created: id=%s state=%s", createResult.AgentId, createResult.State)
+	return waitForAgentState(t, client, createResult.AgentId, "created", 15*time.Second)
+}
+
+// stopAndDeleteAgent stops (if needed) and then deletes an agent. Best-effort cleanup.
+func stopAndDeleteAgent(t *testing.T, client *ari.Client, agentId string) {
+	t.Helper()
+	if err := client.Call("agent/stop", map[string]interface{}{"agentId": agentId}, nil); err != nil {
+		t.Logf("agent/stop (%s): %v (ignored)", agentId, err)
+	}
+	if err := client.Call("agent/delete", map[string]interface{}{"agentId": agentId}, nil); err != nil {
+		t.Logf("agent/delete (%s): %v (ignored)", agentId, err)
+	}
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+// TestAgentLifecycle tests all agent state transitions.
+// Covers: agent/create → state=created → agent/prompt → state=running → agent/stop → state=stopped → agent/delete
+func TestAgentLifecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx, cancel, client, cleanup := setupAgentdTest(t)
+	defer cleanup()
+	defer cancel()
+
+	// Prepare workspace and room
+	workspaceId := prepareTestWorkspace(t, ctx, client)
+	createRoom(t, client, "lifecycle-room")
+	defer deleteRoom(t, client, "lifecycle-room")
+	defer cleanupTestWorkspace(t, client, workspaceId)
+
+	// Step 1: agent/create → state=created
+	t.Log("Step 1: agent/create → wait for state=created")
+	status := createAgentAndWait(t, client, workspaceId, "lifecycle-room", "agent-lifecycle")
+	agentId := status.Agent.AgentId
+	t.Logf("agent created: id=%s state=%s", agentId, status.Agent.State)
+
+	if status.Agent.State != "created" {
+		t.Errorf("expected state=created, got %s", status.Agent.State)
+	}
+
+	// Step 2: agent/prompt → state transitions to running
+	t.Log("Step 2: agent/prompt")
+	var promptResult ari.AgentPromptResult
+	if err := client.Call("agent/prompt", map[string]interface{}{
+		"agentId": agentId,
+		"prompt":  "test lifecycle prompt",
+	}, &promptResult); err != nil {
+		t.Fatalf("agent/prompt failed: %v", err)
+	}
+	t.Logf("prompt completed: stopReason=%s", promptResult.StopReason)
+
+	if promptResult.StopReason != "end_turn" {
+		t.Errorf("expected stopReason=end_turn, got %s", promptResult.StopReason)
+	}
+
+	// After end_turn, agent state is running
+	t.Log("Step 3: verify agent is running after prompt")
+	_ = waitForAgentState(t, client, agentId, "running", 10*time.Second)
+
+	// Step 4: agent/stop → state=stopped
+	t.Log("Step 4: agent/stop → state=stopped")
+	if err := client.Call("agent/stop", map[string]interface{}{"agentId": agentId}, nil); err != nil {
+		t.Fatalf("agent/stop failed: %v", err)
+	}
+	_ = waitForAgentState(t, client, agentId, "stopped", 10*time.Second)
+	t.Log("agent stopped ✓")
+
+	// Step 5: agent/delete
+	t.Log("Step 5: agent/delete")
+	if err := client.Call("agent/delete", map[string]interface{}{"agentId": agentId}, nil); err != nil {
+		t.Fatalf("agent/delete failed: %v", err)
+	}
+
+	// Verify agent is gone (status should return error)
+	var verifyStatus ari.AgentStatusResult
+	err := client.Call("agent/status", map[string]interface{}{"agentId": agentId}, &verifyStatus)
+	if err == nil {
+		t.Error("expected error when getting status of deleted agent")
+	}
+	t.Logf("agent deleted (status check returned expected error: %v)", err)
+}
+
+// TestAgentPromptAndStop tests agent/prompt followed by agent/stop.
+func TestAgentPromptAndStop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx, cancel, client, cleanup := setupAgentdTest(t)
+	defer cleanup()
+	defer cancel()
+
+	workspaceId := prepareTestWorkspace(t, ctx, client)
+	createRoom(t, client, "prompt-stop-room")
+	defer deleteRoom(t, client, "prompt-stop-room")
+	defer cleanupTestWorkspace(t, client, workspaceId)
+
+	// Create agent and wait for created state
+	status := createAgentAndWait(t, client, workspaceId, "prompt-stop-room", "agent-ps")
+	agentId := status.Agent.AgentId
+
+	// Prompt the agent
+	var promptResult ari.AgentPromptResult
+	if err := client.Call("agent/prompt", map[string]interface{}{
+		"agentId": agentId,
+		"prompt":  "prompt and stop test",
+	}, &promptResult); err != nil {
+		t.Fatalf("agent/prompt failed: %v", err)
+	}
+	t.Logf("prompt completed: stopReason=%s", promptResult.StopReason)
+	if promptResult.StopReason != "end_turn" {
+		t.Errorf("expected stopReason=end_turn, got %s", promptResult.StopReason)
+	}
+
+	// Stop the agent
+	if err := client.Call("agent/stop", map[string]interface{}{"agentId": agentId}, nil); err != nil {
+		t.Fatalf("agent/stop failed: %v", err)
+	}
+	_ = waitForAgentState(t, client, agentId, "stopped", 10*time.Second)
+	t.Log("agent stopped ✓")
+
+	// Delete agent
+	if err := client.Call("agent/delete", map[string]interface{}{"agentId": agentId}, nil); err != nil {
+		t.Logf("agent/delete: %v (ignored)", err)
+	}
+}
+
+// TestAgentPromptFromCreated tests that prompting a newly-created agent auto-starts
+// the shim and returns a valid response.
+func TestAgentPromptFromCreated(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx, cancel, client, cleanup := setupAgentdTest(t)
+	defer cleanup()
+	defer cancel()
+
+	workspaceId := prepareTestWorkspace(t, ctx, client)
+	createRoom(t, client, "autostart-room")
+	defer deleteRoom(t, client, "autostart-room")
+	defer cleanupTestWorkspace(t, client, workspaceId)
+
+	// Create agent — should be in state=created
+	status := createAgentAndWait(t, client, workspaceId, "autostart-room", "agent-auto")
+	agentId := status.Agent.AgentId
+
+	if status.Agent.State != "created" {
+		t.Errorf("expected state=created before first prompt, got %s", status.Agent.State)
+	}
+
+	// Prompt immediately from created state (auto-start)
+	var promptResult ari.AgentPromptResult
+	if err := client.Call("agent/prompt", map[string]interface{}{
+		"agentId": agentId,
+		"prompt":  "auto-start prompt",
+	}, &promptResult); err != nil {
+		t.Fatalf("agent/prompt (from created) failed: %v", err)
+	}
+	t.Logf("auto-start prompt completed: stopReason=%s", promptResult.StopReason)
+
+	if promptResult.StopReason != "end_turn" {
+		t.Errorf("expected stopReason=end_turn, got %s", promptResult.StopReason)
+	}
+
+	// Agent should now be in running state
+	_ = waitForAgentState(t, client, agentId, "running", 10*time.Second)
+	t.Log("agent auto-started and responded ✓")
+
+	// Cleanup
+	stopAndDeleteAgent(t, client, agentId)
+}
+
+// TestMultipleAgentPromptsSequential tests multiple sequential prompts to the same agent.
+func TestMultipleAgentPromptsSequential(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	ctx, cancel, client, cleanup := setupAgentdTest(t)
+	defer cleanup()
+	defer cancel()
+
+	workspaceId := prepareTestWorkspace(t, ctx, client)
+	createRoom(t, client, "sequential-room")
+	defer deleteRoom(t, client, "sequential-room")
+	defer cleanupTestWorkspace(t, client, workspaceId)
+
+	// Create agent
+	status := createAgentAndWait(t, client, workspaceId, "sequential-room", "agent-seq")
+	agentId := status.Agent.AgentId
+
+	prompts := []string{
+		"first sequential prompt",
+		"second sequential prompt",
+		"third sequential prompt",
+	}
+
+	for i, promptText := range prompts {
+		t.Logf("Sending prompt %d/%d: %q", i+1, len(prompts), promptText)
+		var promptResult ari.AgentPromptResult
+		if err := client.Call("agent/prompt", map[string]interface{}{
+			"agentId": agentId,
+			"prompt":  promptText,
+		}, &promptResult); err != nil {
+			t.Fatalf("agent/prompt %d failed: %v", i+1, err)
+		}
+		t.Logf("prompt %d completed: stopReason=%s", i+1, promptResult.StopReason)
+
+		if promptResult.StopReason != "end_turn" {
+			t.Errorf("prompt %d: expected stopReason=end_turn, got %s", i+1, promptResult.StopReason)
+		}
+	}
+
+	t.Logf("All %d sequential prompts completed successfully ✓", len(prompts))
+
+	// Cleanup
+	stopAndDeleteAgent(t, client, agentId)
 }

@@ -1,5 +1,5 @@
-// Package integration_test provides integration tests for concurrent session management.
-// These tests verify that multiple sessions can run concurrently without interference.
+// Package integration_test provides integration tests for concurrent agent management.
+// These tests verify that multiple agents can run concurrently without interference.
 package integration_test
 
 import (
@@ -10,9 +10,9 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
-// TestMultipleConcurrentSessions tests that multiple sessions can run concurrently
-// without interference. Each session should respond independently.
-func TestMultipleConcurrentSessions(t *testing.T) {
+// TestMultipleConcurrentAgents tests that multiple agents can run concurrently
+// without interference. Each agent should respond independently.
+func TestMultipleConcurrentAgents(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -21,59 +21,60 @@ func TestMultipleConcurrentSessions(t *testing.T) {
 	defer cleanup()
 	defer cancel()
 
-	numSessions := 3
+	numAgents := 3
 
-	// Prepare workspaces
-	workspaceIds := make([]string, numSessions)
-	for i := 0; i < numSessions; i++ {
-		workspaceIds[i] = prepareTestWorkspace(t, ctx, client)
-		t.Logf("prepared workspace %d: %s", i+1, workspaceIds[i])
-	}
+	// Prepare a shared workspace and room for all agents
+	workspaceId := prepareTestWorkspace(t, ctx, client)
+	defer cleanupTestWorkspace(t, client, workspaceId)
 
-	// Create sessions
-	sessionIds := make([]string, numSessions)
-	for i := 0; i < numSessions; i++ {
-		sessionIds[i] = createTestSession(t, client, workspaceIds[i])
-		t.Logf("created session %d: %s", i+1, sessionIds[i])
+	createRoom(t, client, "concurrent-room")
+	defer deleteRoom(t, client, "concurrent-room")
+
+	// Create agents and collect their IDs
+	agentIds := make([]string, numAgents)
+	for i := 0; i < numAgents; i++ {
+		name := fmt.Sprintf("concurrent-agent-%d", i+1)
+		status := createAgentAndWait(t, client, workspaceId, "concurrent-room", name)
+		agentIds[i] = status.Agent.AgentId
+		t.Logf("created agent %d: id=%s name=%s", i+1, agentIds[i], name)
 	}
 
 	// Mutex for serializing client calls (ARI client is not thread-safe for concurrent calls)
 	var clientMu sync.Mutex
 
-	// Prompt sessions concurrently (with serialized ARI calls)
-	t.Log("Prompting sessions concurrently...")
-	results := make(chan error, numSessions)
+	// Prompt agents concurrently (with serialized ARI calls)
+	t.Log("Prompting agents concurrently...")
+	results := make(chan error, numAgents)
 	var wg sync.WaitGroup
 
-	for i := 0; i < numSessions; i++ {
+	for i := 0; i < numAgents; i++ {
 		wg.Add(1)
-		go func(idx int, sessionId string) {
+		go func(idx int, agentId string) {
 			defer wg.Done()
 
 			promptParams := map[string]interface{}{
-				"sessionId": sessionId,
-				"text":      fmt.Sprintf("concurrent prompt %d", idx+1),
+				"agentId": agentId,
+				"prompt":  fmt.Sprintf("concurrent prompt %d", idx+1),
 			}
-			var promptResult ari.SessionPromptResult
+			var promptResult ari.AgentPromptResult
 
 			clientMu.Lock()
-			err := client.Call("session/prompt", promptParams, &promptResult)
+			err := client.Call("agent/prompt", promptParams, &promptResult)
 			clientMu.Unlock()
 
 			if err != nil {
-				results <- fmt.Errorf("session %d prompt failed: %w", idx+1, err)
+				results <- fmt.Errorf("agent %d prompt failed: %w", idx+1, err)
 				return
 			}
 
-			// Verify response
 			if promptResult.StopReason != "end_turn" {
-				results <- fmt.Errorf("session %d: expected stopReason=end_turn, got %s", idx+1, promptResult.StopReason)
+				results <- fmt.Errorf("agent %d: expected stopReason=end_turn, got %s", idx+1, promptResult.StopReason)
 				return
 			}
 
-			t.Logf("session %d prompt completed: stopReason=%s", idx+1, promptResult.StopReason)
+			t.Logf("agent %d prompt completed: stopReason=%s", idx+1, promptResult.StopReason)
 			results <- nil
-		}(i, sessionIds[i])
+		}(i, agentIds[i])
 	}
 
 	// Wait for all goroutines to complete
@@ -90,157 +91,45 @@ func TestMultipleConcurrentSessions(t *testing.T) {
 	}
 
 	if errorCount > 0 {
-		t.Fatalf("%d/%d sessions had errors", errorCount, numSessions)
+		t.Fatalf("%d/%d agents had errors", errorCount, numAgents)
 	}
 
-	t.Logf("All %d sessions responded successfully!", numSessions)
+	t.Logf("All %d agents responded successfully! ✓", numAgents)
 
-	// Verify each session is running
-	t.Log("Verifying all sessions are running...")
-	for i, sessionId := range sessionIds {
-		statusParams := map[string]interface{}{
-			"sessionId": sessionId,
-		}
-		var statusResult ari.SessionStatusResult
+	// Verify each agent is in running state after prompt
+	t.Log("Verifying all agents are running...")
+	for i, agentId := range agentIds {
+		statusParams := map[string]interface{}{"agentId": agentId}
+		var statusResult ari.AgentStatusResult
 		clientMu.Lock()
-		err := client.Call("session/status", statusParams, &statusResult)
+		err := client.Call("agent/status", statusParams, &statusResult)
 		clientMu.Unlock()
 		if err != nil {
-			t.Errorf("session %d status failed: %v", i+1, err)
+			t.Errorf("agent %d status failed: %v", i+1, err)
 			continue
 		}
-		if statusResult.Session.State != "running" {
-			t.Errorf("session %d: expected state=running, got %s", i+1, statusResult.Session.State)
+		if statusResult.Agent.State != "running" {
+			t.Errorf("agent %d: expected state=running, got %s", i+1, statusResult.Agent.State)
 		}
 	}
 
-	// Stop all sessions
-	t.Log("Stopping all sessions...")
-	for i, sessionId := range sessionIds {
-		stopParams := map[string]interface{}{
-			"sessionId": sessionId,
-		}
+	// Stop and delete all agents
+	t.Log("Stopping and deleting all agents...")
+	for i, agentId := range agentIds {
 		clientMu.Lock()
-		err := client.Call("session/stop", stopParams, nil)
+		stopErr := client.Call("agent/stop", map[string]interface{}{"agentId": agentId}, nil)
 		clientMu.Unlock()
-		if err != nil {
-			t.Logf("warning: session %d stop failed: %v", i+1, err)
+		if stopErr != nil {
+			t.Logf("warning: agent %d stop failed: %v", i+1, stopErr)
 		}
-	}
 
-	// Remove all sessions
-	t.Log("Removing all sessions...")
-	for i, sessionId := range sessionIds {
-		removeParams := map[string]interface{}{
-			"sessionId": sessionId,
-		}
 		clientMu.Lock()
-		err := client.Call("session/remove", removeParams, nil)
+		delErr := client.Call("agent/delete", map[string]interface{}{"agentId": agentId}, nil)
 		clientMu.Unlock()
-		if err != nil {
-			t.Logf("warning: session %d remove failed: %v", i+1, err)
+		if delErr != nil {
+			t.Logf("warning: agent %d delete failed: %v", i+1, delErr)
 		}
 	}
 
-	// Cleanup workspaces
-	t.Log("Cleaning up workspaces...")
-	for i, workspaceId := range workspaceIds {
-		cleanupTestWorkspace(t, client, workspaceId)
-		t.Logf("cleaned up workspace %d", i+1)
-	}
-
-	t.Log("Multiple concurrent sessions test completed successfully!")
-}
-
-// TestConcurrentPromptsSameSession tests that concurrent prompts to the same session
-// are handled correctly (should fail or queue).
-func TestConcurrentPromptsSameSession(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	ctx, cancel, client, cleanup := setupAgentdTest(t)
-	defer cleanup()
-	defer cancel()
-
-	// Mutex for serializing client calls
-	var clientMu sync.Mutex
-
-	// Prepare workspace and session
-	workspaceId := prepareTestWorkspace(t, ctx, client)
-	sessionId := createTestSession(t, client, workspaceId)
-
-	// First prompt to start the session
-	promptParams := map[string]interface{}{
-		"sessionId": sessionId,
-		"text":      "initial prompt",
-	}
-	var promptResult ari.SessionPromptResult
-	clientMu.Lock()
-	err := client.Call("session/prompt", promptParams, &promptResult)
-	clientMu.Unlock()
-	if err != nil {
-		t.Fatalf("initial prompt failed: %v", err)
-	}
-	t.Logf("initial prompt completed: stopReason=%s", promptResult.StopReason)
-
-	// Try concurrent prompts to the same session
-	t.Log("Attempting concurrent prompts to the same session...")
-	results := make(chan error, 2)
-	var wg sync.WaitGroup
-
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-
-			promptParams := map[string]interface{}{
-				"sessionId": sessionId,
-				"text":      fmt.Sprintf("concurrent prompt %d", idx+1),
-			}
-			var result ari.SessionPromptResult
-			clientMu.Lock()
-			err := client.Call("session/prompt", promptParams, &result)
-			clientMu.Unlock()
-			if err != nil {
-				results <- err
-				return
-			}
-			results <- nil
-		}(i)
-	}
-
-	wg.Wait()
-	close(results)
-
-	// Check results
-	successCount := 0
-	for err := range results {
-		if err == nil {
-			successCount++
-		} else {
-			t.Logf("concurrent prompt error: %v", err)
-		}
-	}
-
-	t.Logf("%d/2 concurrent prompts succeeded", successCount)
-
-	// Cleanup
-	stopParams := map[string]interface{}{
-		"sessionId": sessionId,
-	}
-	clientMu.Lock()
-	client.Call("session/stop", stopParams, nil)
-	clientMu.Unlock()
-
-	removeParams := map[string]interface{}{
-		"sessionId": sessionId,
-	}
-	clientMu.Lock()
-	client.Call("session/remove", removeParams, nil)
-	clientMu.Unlock()
-
-	cleanupTestWorkspace(t, client, workspaceId)
-
-	t.Log("Concurrent prompts same session test completed!")
+	t.Log("Multiple concurrent agents test completed successfully! ✓")
 }

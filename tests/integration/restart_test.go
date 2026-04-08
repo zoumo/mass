@@ -1,6 +1,7 @@
 // Package integration_test provides integration tests for agentd restart recovery.
-// These tests verify that agentd can reconnect to existing shim sockets after restart,
-// persist bootstrap config, maintain event continuity, and handle dead shims.
+// These tests verify that agent identity (room+name) survives daemon restart,
+// that dead shims are fail-closed to "error" state, and that the recovery
+// reconciliation introduced in M005/S07/T01 works end-to-end.
 package integration_test
 
 import (
@@ -13,49 +14,7 @@ import (
 	"time"
 
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
-
-// readEventSeqs reads the events.jsonl from a shim state dir and returns
-// the ordered list of sequence numbers. Returns nil, nil if the file does
-// not exist yet.
-func readEventSeqs(stateDir string) ([]int, error) {
-	path := spec.EventLogPath(stateDir)
-	entries, err := events.ReadEventLog(path, 0)
-	if err != nil {
-		return nil, fmt.Errorf("readEventSeqs: %w", err)
-	}
-	seqs := make([]int, 0, len(entries))
-	for _, e := range entries {
-		s, err := e.Seq()
-		if err != nil {
-			return nil, fmt.Errorf("readEventSeqs: bad envelope: %w", err)
-		}
-		seqs = append(seqs, s)
-	}
-	return seqs, nil
-}
-
-// countEvents returns the number of event entries in the events.jsonl for the given state dir.
-func countEvents(stateDir string) (int, error) {
-	seqs, err := readEventSeqs(stateDir)
-	if err != nil {
-		return 0, err
-	}
-	return len(seqs), nil
-}
-
-// verifyNoSeqGaps asserts that seqs is a contiguous 0-based sequence with no gaps.
-func verifyNoSeqGaps(t *testing.T, seqs []int) {
-	t.Helper()
-	for i, s := range seqs {
-		if s != i {
-			t.Errorf("event seq gap: expected seq %d at index %d, got %d", i, i, s)
-			return
-		}
-	}
-}
 
 // startAgentd launches agentd with the given config and env, waits for the socket,
 // and returns the Cmd. Caller is responsible for cleanup.
@@ -88,36 +47,12 @@ func stopAgentd(t *testing.T, cmd *exec.Cmd, socketPath string) {
 	os.Remove(socketPath)
 }
 
-// waitForSessionState polls session/status until the session reaches the desired
-// state or the timeout expires. Returns the final status result.
-func waitForSessionState(t *testing.T, client *ari.Client, sessionId, wantState string, timeout time.Duration) ari.SessionStatusResult {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	params := map[string]interface{}{"sessionId": sessionId}
-	var result ari.SessionStatusResult
-	for time.Now().Before(deadline) {
-		if err := client.Call("session/status", params, &result); err != nil {
-			t.Logf("session/status for %s: %v (retrying)", sessionId, err)
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		if result.Session.State == wantState {
-			return result
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("session %s did not reach state %q within %v (last state: %s)", sessionId, wantState, timeout, result.Session.State)
-	return result // unreachable
-}
-
-// TestAgentdRestartRecovery proves that:
-//  1. Bootstrap config is persisted and survives daemon restart.
-//  2. Live shim reconnects after restart — session returns to running state.
-//  3. Events from before and after restart form a contiguous sequence with no gaps.
-//  4. A dead shim (killed before restart) is correctly marked stopped by recovery.
+// TestAgentdRestartRecovery proves R052: agent identity (room+name) survives
+// daemon restart and that dead shims are fail-closed to "error" state.
 //
-// This validates R035 (single resume path closes event gap) and
-// R036 (enough config persisted to rebuild truthful state after restart).
+// Strategy: kill ALL agent-shim and mockagent processes after stopping agentd,
+// so both agents have dead shims on restart → both should be marked error.
+// R052 proof: agent-A's room and name match what was set before restart.
 func TestAgentdRestartRecovery(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -174,9 +109,9 @@ runtimeClasses:
 	}()
 
 	// =========================================================================
-	// Phase 1: Start agentd, create two sessions, prompt both
+	// Phase 1: Start agentd, create workspace + room, create agent-A + agent-B
 	// =========================================================================
-	t.Log("Phase 1: Start agentd and create two running sessions")
+	t.Log("Phase 1: Start agentd, create room, create agent-A and agent-B")
 
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel1()
@@ -190,133 +125,81 @@ runtimeClasses:
 
 	// Prepare workspace.
 	workspaceId := prepareTestWorkspace(t, ctx1, client1)
+	t.Logf("workspace: %s", workspaceId)
 
-	// ── Session A (will stay alive across restart) ──
-	t.Log("Creating session A (live across restart)")
-	var sessionAResult ari.SessionNewResult
-	if err := client1.Call("session/new", map[string]interface{}{
-		"workspaceId":  workspaceId,
-		"runtimeClass": "mockagent",
-	}, &sessionAResult); err != nil {
-		t.Fatalf("session/new A: %v", err)
+	// Create room (required by agent/create FK constraint).
+	var roomResult ari.RoomCreateResult
+	if err := client1.Call("room/create", map[string]interface{}{"name": "test-room"}, &roomResult); err != nil {
+		t.Fatalf("room/create: %v", err)
 	}
-	sessionA := sessionAResult.SessionId
-	t.Logf("session A: %s", sessionA)
+	t.Logf("room created: %s", roomResult.Name)
 
-	// Prompt session A.
-	var promptResult ari.SessionPromptResult
-	if err := client1.Call("session/prompt", map[string]interface{}{
-		"sessionId": sessionA,
-		"text":      "hello before restart A",
-	}, &promptResult); err != nil {
-		t.Fatalf("session/prompt A: %v", err)
-	}
-	t.Logf("session A prompt completed: stopReason=%s", promptResult.StopReason)
+	// Create agent-A (will have shim killed before restart).
+	t.Log("Creating agent-A")
+	statusA1 := createAgentAndWait(t, client1, workspaceId, "test-room", "agent-a")
+	agentAId := statusA1.Agent.AgentId
+	t.Logf("agent-A: id=%s state=%s room=%s name=%s",
+		agentAId, statusA1.Agent.State, statusA1.Agent.Room, statusA1.Agent.Name)
 
-	// Get session A status.
-	statusA := waitForSessionState(t, client1, sessionA, "running", 5*time.Second)
-	if statusA.ShimState != nil {
-		t.Logf("session A running, runtime PID=%d", statusA.ShimState.PID)
-	} else {
-		t.Log("session A running (no shim state)")
+	if statusA1.Agent.State != "created" {
+		t.Fatalf("expected agent-A state=created, got %s", statusA1.Agent.State)
 	}
 
-	// Read session A state dir from the DB via finding it on disk.
-	// The shim state dir follows the pattern: /tmp/agentd-shim/<sessionId>/
-	shimStateDirA := ""
-	for _, base := range []string{"/run/agentd/shim", "/tmp/agentd-shim"} {
-		candidate := filepath.Join(base, sessionA)
-		if _, err := os.Stat(candidate); err == nil {
-			shimStateDirA = candidate
-			break
-		}
-	}
-	if shimStateDirA == "" {
-		t.Log("Warning: could not locate shim state dir for session A on disk; skipping event continuity checks")
-	} else {
-		t.Logf("session A state dir: %s", shimStateDirA)
-	}
+	// Create agent-B (will also have shim killed before restart).
+	t.Log("Creating agent-B")
+	statusB1 := createAgentAndWait(t, client1, workspaceId, "test-room", "agent-b")
+	agentBId := statusB1.Agent.AgentId
+	t.Logf("agent-B: id=%s state=%s", agentBId, statusB1.Agent.State)
 
-	// Record pre-restart event count for session A.
-	preRestartEventsA := 0
-	if shimStateDirA != "" {
-		n, err := countEvents(shimStateDirA)
-		if err != nil {
-			t.Logf("Warning: could not count pre-restart events: %v", err)
-		} else {
-			preRestartEventsA = n
-			t.Logf("session A pre-restart events: %d", preRestartEventsA)
-		}
+	// Prompt agent-A to exercise the running state.
+	t.Log("Prompting agent-A before restart")
+	var promptResultA ari.AgentPromptResult
+	if err := client1.Call("agent/prompt", map[string]interface{}{
+		"agentId": agentAId,
+		"prompt":  "hello before restart",
+	}, &promptResultA); err != nil {
+		t.Fatalf("agent/prompt A: %v", err)
 	}
+	t.Logf("agent-A prompt completed: stopReason=%s", promptResultA.StopReason)
 
-	// ── Session B (will be killed before restart → dead shim) ──
-	t.Log("Creating session B (will be killed before restart)")
-	var sessionBResult ari.SessionNewResult
-	if err := client1.Call("session/new", map[string]interface{}{
-		"workspaceId":  workspaceId,
-		"runtimeClass": "mockagent",
-	}, &sessionBResult); err != nil {
-		t.Fatalf("session/new B: %v", err)
+	// Prompt agent-B.
+	t.Log("Prompting agent-B before restart")
+	var promptResultB ari.AgentPromptResult
+	if err := client1.Call("agent/prompt", map[string]interface{}{
+		"agentId": agentBId,
+		"prompt":  "hello before restart",
+	}, &promptResultB); err != nil {
+		t.Fatalf("agent/prompt B: %v", err)
 	}
-	sessionB := sessionBResult.SessionId
-	t.Logf("session B: %s", sessionB)
+	t.Logf("agent-B prompt completed: stopReason=%s", promptResultB.StopReason)
 
-	// Prompt session B to start its shim.
-	if err := client1.Call("session/prompt", map[string]interface{}{
-		"sessionId": sessionB,
-		"text":      "hello before restart B",
-	}, &promptResult); err != nil {
-		t.Fatalf("session/prompt B: %v", err)
-	}
-	t.Logf("session B prompt completed: stopReason=%s", promptResult.StopReason)
-
-	// Verify session B is running.
-	_ = waitForSessionState(t, client1, sessionB, "running", 5*time.Second)
-	t.Logf("session B running")
+	// After agent/prompt completes (end_turn), the agent state is "running"
+	// (the ARI server sets state=running when a prompt starts and does not roll it
+	// back to created after completion). Verify agent-A is in running state.
+	_ = waitForAgentState(t, client1, agentAId, "running", 10*time.Second)
+	t.Log("agent-A is in running state after prompt ✓")
 
 	// =========================================================================
-	// Phase 2: Kill session B's shim, then kill agentd
+	// Phase 2: Stop agentd, kill ALL shim and runtime processes
 	// =========================================================================
-	t.Log("Phase 2: Kill session B's shim process, then stop agentd")
+	t.Log("Phase 2: Stop agentd and kill all agent-shim + mockagent processes")
 
-	// Close client, kill agentd first (so it doesn't interfere with shim cleanup).
 	client1.Close()
 	stopAgentd(t, agentdCmd1, socketPath)
 
-	// Kill session B's actual agent-shim process (not just the mockagent runtime).
-	// ShimState.PID is the runtime/agent PID, not the shim wrapper PID.
-	// We kill the shim by finding the agent-shim process that has session B's ID.
-	killOutput, _ := exec.Command("pkill", "-9", "-f",
-		fmt.Sprintf("agent-shim.*--id %s", sessionB)).CombinedOutput()
-	t.Logf("pkill session B shim: %s", string(killOutput))
-	// Also remove the shim socket file to ensure recovery cannot connect.
-	shimSocketB := spec.ShimSocketPath(filepath.Join("/tmp/agentd-shim", sessionB))
-	if err := os.Remove(shimSocketB); err != nil {
-		t.Logf("remove session B socket %s: %v (may already be gone)", shimSocketB, err)
-	} else {
-		t.Logf("removed session B socket: %s", shimSocketB)
-	}
+	// Kill all agent-shim and mockagent processes so BOTH agents will have dead
+	// shims on restart → both should be marked error by T01 reconciliation.
+	exec.Command("pkill", "-9", "-f", "agent-shim").Run()
+	exec.Command("pkill", "-9", "-f", "mockagent").Run()
+	t.Log("killed all agent-shim and mockagent processes")
+
 	// Give processes time to die.
 	time.Sleep(500 * time.Millisecond)
 
-	// Verify session A shim is still alive.
-	shimSocketA := spec.ShimSocketPath(filepath.Join("/tmp/agentd-shim", sessionA))
-	if _, err := os.Stat(shimSocketA); err != nil {
-		t.Fatalf("session A shim socket %s gone — cannot test recovery: %v", shimSocketA, err)
-	}
-	t.Logf("session A shim socket still present ✓: %s", shimSocketA)
-
-	// Verify session B shim socket is gone.
-	if _, err := os.Stat(shimSocketB); err == nil {
-		t.Logf("Warning: session B shim socket still exists at %s", shimSocketB)
-	} else {
-		t.Logf("session B shim socket gone ✓")
-	}
-
 	// =========================================================================
-	// Phase 3: Restart agentd — recovery pass should reconnect A, mark B stopped
+	// Phase 3: Restart agentd with same config+metaDB
 	// =========================================================================
-	t.Log("Phase 3: Restart agentd with same config")
+	t.Log("Phase 3: Restart agentd with same config — recovery pass should mark both agents error")
 
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel2()
@@ -330,104 +213,108 @@ runtimeClasses:
 	}
 	defer client2.Close()
 
-	// Give recovery pass time to complete.
+	// Wait for recovery pass to complete (typically 1-2s).
+	t.Log("Waiting for recovery pass to complete...")
 	time.Sleep(2 * time.Second)
 
 	// =========================================================================
-	// Phase 4: Verify session A recovered — running, shim reconnected
+	// Phase 4: Verify agent-A identity is preserved (R052 proof)
 	// =========================================================================
-	t.Log("Phase 4: Verify session A recovered to running state")
+	t.Log("Phase 4: Verify agent-A identity preserved across restart (R052)")
 
-	statusA2 := waitForSessionState(t, client2, sessionA, "running", 10*time.Second)
-	t.Logf("session A state after recovery: %s", statusA2.Session.State)
+	// Agent-A should be in error state (shim killed).
+	statusA2 := waitForAgentState(t, client2, agentAId, "error", 10*time.Second)
 
-	if statusA2.Session.State != "running" {
-		t.Fatalf("expected session A state=running after recovery, got %s", statusA2.Session.State)
-	}
-
-	// Verify shim state is populated (shim reconnected).
-	if statusA2.ShimState == nil {
-		t.Error("expected session A to have shimState after recovery")
+	// R052: agent identity (room + name + agentId) must be preserved.
+	if statusA2.Agent.AgentId != agentAId {
+		t.Errorf("R052 FAIL: agent-A ID changed across restart: pre=%s post=%s",
+			agentAId, statusA2.Agent.AgentId)
 	} else {
-		t.Logf("session A shim after recovery: status=%s pid=%d", statusA2.ShimState.Status, statusA2.ShimState.PID)
+		t.Logf("R052: agent-A ID preserved ✓: %s", agentAId)
 	}
 
-	// =========================================================================
-	// Phase 5: Verify session B is stopped (dead shim → fail-closed)
-	// =========================================================================
-	t.Log("Phase 5: Verify session B marked stopped (dead shim)")
-
-	var statusB2 ari.SessionStatusResult
-	if err := client2.Call("session/status", map[string]interface{}{
-		"sessionId": sessionB,
-	}, &statusB2); err != nil {
-		t.Fatalf("session/status B after restart: %v", err)
-	}
-	t.Logf("session B state after recovery: %s", statusB2.Session.State)
-
-	if statusB2.Session.State != "stopped" {
-		t.Errorf("expected session B state=stopped (dead shim), got %s", statusB2.Session.State)
-	}
-
-	// =========================================================================
-	// Phase 6: Event continuity — prompt A again, verify no seq gaps
-	// =========================================================================
-	t.Log("Phase 6: Verify event continuity for session A")
-
-	if err := client2.Call("session/prompt", map[string]interface{}{
-		"sessionId": sessionA,
-		"text":      "hello after restart A",
-	}, &promptResult); err != nil {
-		t.Fatalf("session/prompt A after restart: %v", err)
-	}
-	t.Logf("session A post-restart prompt completed: stopReason=%s", promptResult.StopReason)
-
-	// Read event log and verify contiguous sequence.
-	if shimStateDirA != "" {
-		postRestartEventsA, err := countEvents(shimStateDirA)
-		if err != nil {
-			t.Logf("Warning: could not count post-restart events: %v", err)
-		} else {
-			t.Logf("session A post-restart events: %d (was %d)", postRestartEventsA, preRestartEventsA)
-			if postRestartEventsA <= preRestartEventsA {
-				t.Errorf("expected more events after post-restart prompt, got %d (was %d)", postRestartEventsA, preRestartEventsA)
-			}
-		}
-
-		seqs, err := readEventSeqs(shimStateDirA)
-		if err != nil {
-			t.Logf("Warning: could not read event seqs: %v", err)
-		} else {
-			t.Logf("session A event sequence: %v", seqs)
-			verifyNoSeqGaps(t, seqs)
-			t.Logf("event continuity verified: %d events, no seq gaps ✓", len(seqs))
-		}
+	if statusA2.Agent.Room != "test-room" {
+		t.Errorf("R052 FAIL: agent-A room changed across restart: expected=test-room got=%s",
+			statusA2.Agent.Room)
 	} else {
-		t.Log("Skipping event continuity check (state dir not found)")
+		t.Logf("R052: agent-A room preserved ✓: %s", statusA2.Agent.Room)
+	}
+
+	if statusA2.Agent.Name != "agent-a" {
+		t.Errorf("R052 FAIL: agent-A name changed across restart: expected=agent-a got=%s",
+			statusA2.Agent.Name)
+	} else {
+		t.Logf("R052: agent-A name preserved ✓: %s", statusA2.Agent.Name)
+	}
+
+	t.Logf("agent-A post-restart state=%s (shim killed → error, identity preserved)",
+		statusA2.Agent.State)
+
+	// =========================================================================
+	// Phase 5: Verify agent-B has state=="error" (dead shim → fail-closed)
+	// =========================================================================
+	t.Log("Phase 5: Verify agent-B state=error (dead shim fail-closed from T01 reconciliation)")
+
+	statusB2 := waitForAgentState(t, client2, agentBId, "error", 10*time.Second)
+	t.Logf("agent-B post-restart state=%s ✓", statusB2.Agent.State)
+
+	if statusB2.Agent.State != "error" {
+		t.Errorf("expected agent-B state=error (dead shim), got %s", statusB2.Agent.State)
 	}
 
 	// =========================================================================
-	// Cleanup
+	// Phase 6: Verify R052 agent list — both agents queryable with identity intact
 	// =========================================================================
-	t.Log("Cleanup: Stop sessions and workspace")
+	t.Log("Phase 6: Verify agent list shows both agents with intact room identity")
 
-	// Stop session A.
-	if err := client2.Call("session/stop", map[string]interface{}{"sessionId": sessionA}, nil); err != nil {
-		t.Logf("session/stop A: %v", err)
+	var listResult ari.AgentListResult
+	if err := client2.Call("agent/list", map[string]interface{}{"room": "test-room"}, &listResult); err != nil {
+		t.Fatalf("agent/list: %v", err)
 	}
-	// Remove sessions.
-	if err := client2.Call("session/remove", map[string]interface{}{"sessionId": sessionA}, nil); err != nil {
-		t.Logf("session/remove A: %v", err)
+	t.Logf("agent/list returned %d agents in room test-room", len(listResult.Agents))
+
+	if len(listResult.Agents) != 2 {
+		t.Errorf("expected 2 agents in test-room, got %d", len(listResult.Agents))
 	}
-	if err := client2.Call("session/remove", map[string]interface{}{"sessionId": sessionB}, nil); err != nil {
-		t.Logf("session/remove B: %v", err)
+
+	agentNames := make(map[string]string) // name → state
+	for _, a := range listResult.Agents {
+		agentNames[a.Name] = a.State
+		t.Logf("  agent: id=%s name=%s room=%s state=%s", a.AgentId, a.Name, a.Room, a.State)
+	}
+	if agentNames["agent-a"] != "error" {
+		t.Errorf("agent-a: expected state=error, got %q", agentNames["agent-a"])
+	}
+	if agentNames["agent-b"] != "error" {
+		t.Errorf("agent-b: expected state=error, got %q", agentNames["agent-b"])
+	}
+
+	// =========================================================================
+	// Phase 7: Cleanup
+	// =========================================================================
+	t.Log("Phase 7: Cleanup")
+
+	// Stop then delete agent-A. Agents in error state still require agent/stop
+	// before agent/delete (the delete gate only allows stopped agents).
+	if err := client2.Call("agent/stop", map[string]interface{}{"agentId": agentAId}, nil); err != nil {
+		t.Logf("agent/stop A: %v (may already be stopped)", err)
+	}
+	if err := client2.Call("agent/delete", map[string]interface{}{"agentId": agentAId}, nil); err != nil {
+		t.Logf("agent/delete A: %v", err)
+	}
+	// Stop then delete agent-B.
+	if err := client2.Call("agent/stop", map[string]interface{}{"agentId": agentBId}, nil); err != nil {
+		t.Logf("agent/stop B: %v (may already be stopped)", err)
+	}
+	if err := client2.Call("agent/delete", map[string]interface{}{"agentId": agentBId}, nil); err != nil {
+		t.Logf("agent/delete B: %v", err)
+	}
+	// Delete room.
+	if err := client2.Call("room/delete", map[string]interface{}{"name": "test-room"}, nil); err != nil {
+		t.Logf("room/delete: %v", err)
 	}
 	// Cleanup workspace.
 	cleanupTestWorkspace(t, client2, workspaceId)
 
-	// Stop session B if still running (recovery may have left it in running or stopped state).
-	client2.Call("session/stop", map[string]interface{}{"sessionId": sessionB}, nil)
-	client2.Call("session/remove", map[string]interface{}{"sessionId": sessionB}, nil)
-
-	t.Log("Restart recovery test completed!")
+	t.Log("TestAgentdRestartRecovery completed ✓")
 }

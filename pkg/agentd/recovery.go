@@ -56,19 +56,17 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 		}
 	}
 
-	if len(candidates) == 0 {
-		m.logger.Info("recovery: no non-terminal sessions to recover")
-		m.SetRecoveryPhase(RecoveryPhaseComplete)
-		return nil
-	}
-
 	m.logger.Info("recovery: found candidate sessions", "count", len(candidates))
 
 	recovered := 0
 	failed := 0
 
+	// recoveredAgentIDs tracks agent IDs whose sessions were successfully
+	// recovered. Used by the creating-cleanup pass below.
+	recoveredAgentIDs := make(map[string]bool)
+
 	for _, session := range candidates {
-		err := m.recoverSession(ctx, session)
+		shimStatus, err := m.recoverSession(ctx, session)
 		if err != nil {
 			failed++
 			m.logger.Warn("recovery: session failed, marking stopped",
@@ -80,6 +78,15 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 				m.logger.Error("recovery: failed to mark session stopped",
 					"session_id", session.ID,
 					"error", tErr)
+			}
+			// Reconcile agent state to error if linked.
+			if session.AgentID != "" {
+				if aErr := m.agents.UpdateState(ctx, session.AgentID, meta.AgentStateError,
+					"session lost: shim not recovered after daemon restart"); aErr != nil {
+					m.logger.Warn("recovery: failed to mark agent error",
+						"agent_id", session.AgentID,
+						"error", aErr)
+				}
 			}
 		} else {
 			recovered++
@@ -93,6 +100,40 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			m.logger.Info("recovery: session recovered",
 				"session_id", session.ID,
 				"socket_path", session.ShimSocketPath)
+			// Reconcile agent state to running if linked and shim is running.
+			if session.AgentID != "" {
+				recoveredAgentIDs[session.AgentID] = true
+				if shimStatus == spec.StatusRunning {
+					if aErr := m.agents.UpdateState(ctx, session.AgentID, meta.AgentStateRunning, ""); aErr != nil {
+						m.logger.Warn("recovery: failed to reconcile agent state to running",
+							"agent_id", session.AgentID,
+							"error", aErr)
+					} else {
+						m.logger.Info("recovery: reconciled agent state to running",
+							"agent_id", session.AgentID)
+					}
+				}
+			}
+		}
+	}
+
+	// Creating-cleanup pass: agents that were still bootstrapping when the
+	// daemon restarted will never complete — mark them as error.
+	if creatingAgents, err := m.store.ListAgents(ctx, &meta.AgentFilter{State: meta.AgentStateCreating}); err != nil {
+		m.logger.Warn("recovery: failed to list creating agents for cleanup", "error", err)
+	} else {
+		for _, agent := range creatingAgents {
+			if recoveredAgentIDs[agent.ID] {
+				continue // bootstrap completed — session was recovered
+			}
+			m.logger.Warn("recovery: agent stuck in creating, marking error",
+				"agent_id", agent.ID)
+			if aErr := m.agents.UpdateState(ctx, agent.ID, meta.AgentStateError,
+				"agent bootstrap lost: daemon restarted during creating phase"); aErr != nil {
+				m.logger.Warn("recovery: failed to mark creating agent as error",
+					"agent_id", agent.ID,
+					"error", aErr)
+			}
 		}
 	}
 
@@ -108,9 +149,10 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 }
 
 // recoverSession attempts to reconnect to a single shim process.
-func (m *ProcessManager) recoverSession(ctx context.Context, session *meta.Session) error {
+// Returns the shim's reported spec.Status on success (spec.StatusStopped on failure).
+func (m *ProcessManager) recoverSession(ctx context.Context, session *meta.Session) (spec.Status, error) {
 	if session.ShimSocketPath == "" {
-		return fmt.Errorf("no socket path persisted for session %s", session.ID)
+		return spec.StatusStopped, fmt.Errorf("no socket path persisted for session %s", session.ID)
 	}
 
 	sessionID := session.ID
@@ -154,7 +196,7 @@ func (m *ProcessManager) recoverSession(ctx context.Context, session *meta.Sessi
 		}
 	})
 	if err != nil {
-		return fmt.Errorf("connect to shim socket %s: %w", session.ShimSocketPath, err)
+		return spec.StatusStopped, fmt.Errorf("connect to shim socket %s: %w", session.ShimSocketPath, err)
 	}
 	shimProc.Client = client
 
@@ -162,7 +204,7 @@ func (m *ProcessManager) recoverSession(ctx context.Context, session *meta.Sessi
 	status, err := client.Status(ctx)
 	if err != nil {
 		_ = client.Close()
-		return fmt.Errorf("runtime/status: %w", err)
+		return spec.StatusStopped, fmt.Errorf("runtime/status: %w", err)
 	}
 	logger.Info("recovery: shim status",
 		"status", status.State.Status,
@@ -177,7 +219,7 @@ func (m *ProcessManager) recoverSession(ctx context.Context, session *meta.Sessi
 	case status.State.Status == spec.StatusStopped:
 		// Shim reports stopped — fail-closed: don't proceed with recovery.
 		_ = client.Close()
-		return fmt.Errorf("shim reports stopped for session %s", sessionID)
+		return spec.StatusStopped, fmt.Errorf("shim reports stopped for session %s", sessionID)
 
 	case status.State.Status == spec.StatusRunning && session.State == meta.SessionStateCreated:
 		// Shim is running but DB still says created — update DB to match shim truth.
@@ -217,7 +259,7 @@ func (m *ProcessManager) recoverSession(ctx context.Context, session *meta.Sessi
 	subResult, err := client.Subscribe(ctx, nil, &fromSeq)
 	if err != nil {
 		_ = client.Close()
-		return fmt.Errorf("session/subscribe fromSeq=%d: %w", fromSeq, err)
+		return spec.StatusStopped, fmt.Errorf("session/subscribe fromSeq=%d: %w", fromSeq, err)
 	}
 	logger.Info("recovery: atomic subscribe with backfill",
 		"backfill_entries", len(subResult.Entries),
@@ -232,7 +274,7 @@ func (m *ProcessManager) recoverSession(ctx context.Context, session *meta.Sessi
 	// For recovered sessions without a Cmd, we watch via DisconnectNotify.
 	go m.watchRecoveredProcess(shimProc)
 
-	return nil
+	return status.State.Status, nil
 }
 
 // watchRecoveredProcess watches a recovered shim that we didn't fork.

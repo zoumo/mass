@@ -25,6 +25,7 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *meta.Store) {
 	t.Cleanup(func() { store.Close() })
 
 	sessions := NewSessionManager(store)
+	agents := NewAgentManager(store)
 
 	cfg := Config{
 		Socket:        filepath.Join(tmpDir, "agentd.sock"),
@@ -34,7 +35,7 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *meta.Store) {
 	registry, err := NewRuntimeClassRegistry(nil)
 	require.NoError(t, err)
 
-	pm := NewProcessManager(registry, sessions, store, cfg)
+	pm := NewProcessManager(registry, sessions, agents, store, cfg)
 	return pm, store
 }
 
@@ -411,4 +412,154 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout waiting for recovered process cleanup")
 	}
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Agent state reconciliation tests
+// ────────────────────────────────────────────────────────────────────────────
+
+// createTestAgentForRecovery creates a room and an agent record for recovery tests.
+// Returns the agent ID.
+func createTestAgentForRecovery(t *testing.T, ctx context.Context, store *meta.Store, state meta.AgentState) string {
+	t.Helper()
+	roomName := "test-room-" + uuid.New().String()
+	require.NoError(t, store.CreateRoom(ctx, &meta.Room{
+		Name:              roomName,
+		CommunicationMode: meta.CommunicationModeMesh,
+	}))
+
+	ws := createTestWorkspace(t, ctx, store)
+	agentID := uuid.New().String()
+	require.NoError(t, store.CreateAgent(ctx, &meta.Agent{
+		ID:           agentID,
+		Room:         roomName,
+		Name:         "agent-" + agentID[:8],
+		RuntimeClass: "default",
+		WorkspaceID:  ws.ID,
+		State:        state,
+	}))
+	return agentID
+}
+
+// TestRecoverSessions_AgentStateErrorOnDeadShim verifies that when a session's
+// shim is unreachable and the session is stopped, the linked agent is
+// transitioned to AgentStateError.
+func TestRecoverSessions_AgentStateErrorOnDeadShim(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Create workspace + agent.
+	ws := createTestWorkspace(t, ctx, store)
+	agentID := createTestAgentForRecovery(t, ctx, store, meta.AgentStateRunning)
+
+	// Create a "running" session linked to the agent, pointing at a dead socket.
+	deadSocket := "/tmp/dead-" + uuid.New().String() + ".sock"
+	sessionID := uuid.New().String()
+	require.NoError(t, store.CreateSession(ctx, &meta.Session{
+		ID:             sessionID,
+		RuntimeClass:   "default",
+		WorkspaceID:    ws.ID,
+		State:          meta.SessionStateRunning,
+		ShimSocketPath: deadSocket,
+		ShimStateDir:   "/tmp/shim-state-" + sessionID,
+		ShimPID:        99999,
+		AgentID:        agentID,
+	}))
+
+	// Run recovery — shim unreachable, session → stopped, agent → error.
+	require.NoError(t, pm.RecoverSessions(ctx))
+
+	// Session should be stopped.
+	session, err := store.GetSession(ctx, sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, meta.SessionStateStopped, session.State, "session should be stopped")
+
+	// Agent should be in error state.
+	agent, err := store.GetAgent(ctx, agentID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	assert.Equal(t, meta.AgentStateError, agent.State,
+		"agent linked to dead-shim session should be in error state")
+	assert.Contains(t, agent.ErrorMessage, "session lost")
+}
+
+// TestRecoverSessions_AgentStateRunningOnLiveShim verifies that when a session's
+// shim is alive and reporting running, the linked agent is reconciled to
+// AgentStateRunning.
+func TestRecoverSessions_AgentStateRunningOnLiveShim(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Start a live mock shim reporting running.
+	srv, socketPath := newMockShimServer(t)
+	srv.mu.Lock()
+	srv.statusResult = RuntimeStatusResult{
+		State:    spec.State{Status: spec.StatusRunning, ID: "live-agent-session"},
+		Recovery: RuntimeStatusRecovery{LastSeq: 2},
+	}
+	srv.mu.Unlock()
+
+	// Create workspace + agent (starts in "creating" to test reconciliation).
+	ws := createTestWorkspace(t, ctx, store)
+	agentID := createTestAgentForRecovery(t, ctx, store, meta.AgentStateCreating)
+
+	// Create a "running" session linked to the agent.
+	sessionID := uuid.New().String()
+	require.NoError(t, store.CreateSession(ctx, &meta.Session{
+		ID:             sessionID,
+		RuntimeClass:   "default",
+		WorkspaceID:    ws.ID,
+		State:          meta.SessionStateRunning,
+		ShimSocketPath: socketPath,
+		ShimStateDir:   "/tmp/shim-state-" + sessionID,
+		ShimPID:        99999,
+		AgentID:        agentID,
+	}))
+
+	// Run recovery — shim alive, session recovered, agent → running.
+	require.NoError(t, pm.RecoverSessions(ctx))
+
+	// Session should be in the processes map.
+	shimProc := pm.GetProcess(sessionID)
+	require.NotNil(t, shimProc, "live session should be recovered")
+
+	// Agent should be running.
+	agent, err := store.GetAgent(ctx, agentID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	assert.Equal(t, meta.AgentStateRunning, agent.State,
+		"agent linked to live shim should be in running state")
+
+	// Cleanup.
+	srv.close()
+	select {
+	case <-shimProc.Done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for recovered process cleanup")
+	}
+}
+
+// TestRecoverSessions_CreatingAgentMarkedError verifies that an agent stuck in
+// AgentStateCreating (with no live session) is transitioned to AgentStateError
+// by the creating-cleanup pass.
+func TestRecoverSessions_CreatingAgentMarkedError(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Create an agent in "creating" state with no session row at all.
+	agentID := createTestAgentForRecovery(t, ctx, store, meta.AgentStateCreating)
+
+	// Run recovery — no sessions, creating-cleanup fires.
+	require.NoError(t, pm.RecoverSessions(ctx))
+
+	// Agent should be in error state.
+	agent, err := store.GetAgent(ctx, agentID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	assert.Equal(t, meta.AgentStateError, agent.State,
+		"agent stuck in creating should be marked error after daemon restart")
+	assert.Contains(t, agent.ErrorMessage, "daemon restarted during creating phase")
 }
