@@ -80,15 +80,6 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: M005/S03
 - Validation: Integration test: create returns creating → poll status → transitions to created or error
 
-### R049 — Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
-- Class: core-capability
-- Status: active
-- Description: Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
-- Why it matters: paused:warm/paused:cold are implementation details of future checkpoint/recovery, not natural states for current user-facing agent model.
-- Source: docs/plan/agent-runtime-alignment-plan.md
-- Primary owning slice: M005/S02
-- Validation: State transition table unit tests; no paused:* constants in agent state type
-
 ### R051 — room-mcp-server rewritten with modelcontextprotocol/go-sdk. Environment variables switch from OAR_SESSION_ID to OAR_AGENT_NAME/OAR_AGENT_ID/OAR_ROOM_NAME.
 - Class: integration
 - Status: active
@@ -351,6 +342,15 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: M005/S01, M005/S02
 - Validation: S01 rewrote ari-spec.md so all external ARI methods use agent/* (agent/create, agent/prompt, agent/cancel, agent/stop, agent/delete, agent/restart, agent/list, agent/status, agent/attach, agent/detach). No session/* methods appear in normative JSON examples. Agent identity documented as room+name unique key throughout agentd.md and ari-spec.md. Verification: `grep -c 'agent/create|agent/prompt...' ari-spec.md | xargs test 6 -le` passes (count=25). Note: code-level validation (no session/* in ARI dispatch) deferred to S03.
 
+### R049 — Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
+- Class: core-capability
+- Status: validated
+- Description: Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
+- Why it matters: paused:warm/paused:cold are implementation details of future checkpoint/recovery, not natural states for current user-facing agent model.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S02
+- Validation: State transition unit tests in pkg/agentd/session_test.go cover all 5 states and explicitly reject paused:warm/paused:cold transitions. rg confirms zero remaining references to PausedWarm/PausedCold/paused:warm/paused:cold in production Go source. All 102 tests in pkg/meta/... and pkg/agentd/... pass (exit=0).
+
 ### R050 — Event envelopes carry turnId, streamSeq, and phase for turn-aware ordering. Global seq retained as log sequence. Chat/replay orders by (turnId, streamSeq).
 - Class: core-capability
 - Status: validated
@@ -542,14 +542,14 @@ This file is the explicit capability and coverage contract for the project.
 | R046 | anti-feature | out-of-scope | none | none | n/a |
 | R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | S01 rewrote ari-spec.md so all external ARI methods use agent/* (agent/create, agent/prompt, agent/cancel, agent/stop, agent/delete, agent/restart, agent/list, agent/status, agent/attach, agent/detach). No session/* methods appear in normative JSON examples. Agent identity documented as room+name unique key throughout agentd.md and ari-spec.md. Verification: `grep -c 'agent/create|agent/prompt...' ari-spec.md | xargs test 6 -le` passes (count=25). Note: code-level validation (no session/* in ARI dispatch) deferred to S03. |
 | R048 | core-capability | active | M005/S04 | M005/S03 | Integration test: create returns creating → poll status → transitions to created or error |
-| R049 | core-capability | active | M005/S02 | none | State transition table unit tests; no paused:* constants in agent state type |
+| R049 | core-capability | validated | M005/S02 | none | State transition unit tests in pkg/agentd/session_test.go cover all 5 states and explicitly reject paused:warm/paused:cold transitions. rg confirms zero remaining references to PausedWarm/PausedCold/paused:warm/paused:cold in production Go source. All 102 tests in pkg/meta/... and pkg/agentd/... pass (exit=0). |
 | R050 | core-capability | validated | M005/S05 | M005/S01 | S01/T02 added Turn-Aware Event Ordering section to shim-rpc-spec.md documenting turnId, streamSeq, and phase fields on session/update envelope, with ordering rules and replay semantics. Verification: grep checks for turnId, streamSeq, phase in shim-rpc-spec.md all pass. Note: unit test proof (turnId assigned on turn_start, replay ordering) deferred to S05 implementation. |
 | R051 | integration | active | M005/S06 | none | Existing multi-agent integration tests pass with SDK-based server; env vars use agent identity |
 | R052 | continuity | active | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery equivalent: agent survives restart with same room+name, correct state |
 
 ## Coverage Summary
 
-- Active requirements: 10
-- Mapped to slices: 10
-- Validated: 23 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041, R047, R050)
+- Active requirements: 9
+- Mapped to slices: 9
+- Validated: 24 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041, R047, R049, R050)
 - Unmapped active requirements: 0

@@ -415,3 +415,19 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** Keep translation at the boundary that faces the changing consumer (orchestrator). Inner layers (shim→agentd) remain stable and can be evolved independently. This is the "translate at the perimeter" pattern (D065).
 - **Reference:** docs/design/agentd/ari-spec.md, agent/update and agent/stateChange (D065)
 - **When:** M005/S01
+
+## K024 — SQLite ALTER TABLE with FK columns: use DEFAULT NULL, not DEFAULT ''
+
+- **Pattern:** When adding a new FK column to an existing SQLite table via `ALTER TABLE ... ADD COLUMN`, use `DEFAULT NULL` (or omit DEFAULT entirely) rather than `DEFAULT ''`. An empty string (`''`) fails the FK constraint check at insert time, while NULL bypasses FK constraint checks and represents "not set" correctly.
+- **Gotcha:** `agent_id TEXT DEFAULT '' REFERENCES agents(id)` will cause every existing row to fail FK validation on the next `PRAGMA foreign_keys` check because `''` is not a valid agents.id. `DEFAULT NULL` correctly represents "this session has no agent yet."
+- **Lesson:** FK nullable columns that default to "not linked" should always use NULL, not empty string. This aligns with SQL semantics where NULL means "unknown/absent relationship" and FK constraints do not fire on NULL.
+- **Reference:** pkg/meta/schema.sql v4 sessions.agent_id (D064, T02 deviation note)
+- **When:** M005/S02
+
+## K025 — Converging a state machine: split removal across two tasks at build-green boundaries
+
+- **Pattern:** When removing deprecated state constants (paused:warm/paused:cold) that are referenced across multiple files, do it in two tasks: Task N adds a TODO comment and the replacement constants; Task N+1 removes the old constants after updating all call sites. Never remove a constant in the same commit where you add its replacement if callers span package boundaries.
+- **Gotcha:** If you remove paused:* in the same task as you add AgentState/SessionStateCreating/SessionStateError, the build breaks mid-task because pkg/agentd still references the constants from pkg/meta. The two-task split ensures the build is always green at every task boundary.
+- **Lesson:** Cross-package constant removal is a two-phase operation: (1) add replacement + mark for deletion, (2) remove after fixing all consumers. Build-green at task boundaries is the invariant to preserve.
+- **Reference:** T01 adds TODO(T02) comment; T02 removes constants (D069)
+- **When:** M005/S02

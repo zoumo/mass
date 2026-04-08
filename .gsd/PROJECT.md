@@ -30,7 +30,9 @@ Transform agentd's external object model from session-centric to agent-centric. 
 **S01 ✅ — Design Contract — Agent Model Convergence** (complete)
 All 7 authority documents rewritten to agent-first model. agent/* replaces session/* in external ARI surface. Agent Manager (external lifecycle) added to agentd. 5-state machine (creating/created/running/stopped/error) established. Async agent/create semantics documented. Turn-aware event ordering (turnId/streamSeq/phase) specified in shim-rpc-spec.md. scripts/verify-m005-s01-contract.sh exits 0. Bundle spec smoke test passes.
 
-**S02 — Schema & State Machine — agents Table and State Convergence** (pending, depends S01)
+**S02 ✅ — Schema & State Machine — agents Table and State Convergence** (complete)
+`agents` table (schema v3) added with room+name UNIQUE key, FK guards on rooms/workspaces, 3 indexes, and updated_at trigger. `meta.Agent` struct and `meta.AgentState` type with 5 constants (creating/created/running/stopped/error) exported. Full CRUD on Store: CreateAgent, GetAgent, GetAgentByRoomName, ListAgents, UpdateAgent, DeleteAgent. `sessions.agent_id` FK column added (schema v4, DEFAULT NULL). `meta.Session.AgentID` field and `SessionFilter.AgentID` filter added. `SessionStateCreating` and `SessionStateError` added; `SessionStatePausedWarm`/`SessionStatePausedCold` fully removed. `SessionManager.validTransitions` converged to 5-state model; paused:* explicitly rejected in tests. 102 pkg/meta + pkg/agentd tests pass.
+
 **S03 — ARI Agent Surface — Method Migration** (pending, depends S02)
 **S04 — Agent Lifecycle — Async Create, Stop/Delete Separation, Restart** (pending, depends S03)
 **S05 — Event Ordering — Turn-Aware Envelope Enhancement** (pending, depends S01)
@@ -64,13 +66,18 @@ All 7 authority documents rewritten to agent-first model. agent/* replaces sessi
 - 47 ARI integration tests covering session lifecycle, workspace management, room lifecycle, routing, and multi-agent integration
 - **[M005/S01] Agent-first design contract** — all 7 authority docs rewritten; agent/* is external ARI surface; session is internal; agent identity = room+name; 5-state machine; async create; turn-aware event ordering spec
 - **[M005/S01] scripts/verify-m005-s01-contract.sh** — runnable gate confirming all 7 authority docs remain contradiction-free
+- **[M005/S02] `agents` table (schema v3)** — room+name UNIQUE key, FK guards, 3 indexes, updated_at trigger
+- **[M005/S02] `meta.Agent` / `meta.AgentState`** — 5-state type + full CRUD on Store; `sessions.agent_id` FK (schema v4)
+- **[M005/S02] Converged 5-state SessionManager** — creating/created/running/stopped/error; paused:* fully removed and explicitly tested as rejected; 102 tests pass
 
 ### Current Gaps
 
-- **[M005 in progress]** External ARI still uses session/* in code — S02/S03 migrate schema and handlers
-- **[M005 in progress]** agents table not yet created — S02 adds it with room+name unique key
+- **[M005 in progress]** External ARI still uses session/* in code — S03 migrates handlers to agent/*
 - **[M005 in progress]** agent/create async semantics not yet implemented — S04
 - **[M005 in progress]** turnId/streamSeq/phase not yet emitted by shim — S05
+- pkg/ari/types.go and pkg/ari/server.go retain comment-only paused:* prose — cleaned up in S03
+- pkg/agentd/recovery.go only filters stopped as terminal; error should also be terminal — addressed in S07
+- AgentManager using meta.AgentState directly is deferred to S03
 - Only point-to-point routing — broadcast/star/isolated mode enforcement deferred
 - Per-session prompt mutex needed for busy-target detection when broadcast is implemented
 - Attribution is text-prefix only — no structured metadata for programmatic parsing
@@ -95,6 +102,8 @@ Established patterns:
 - **5-state agent machine:** creating→created→running→stopped; error reachable from creating/created/running; paused:* retired
 - **Async create:** agent/create returns immediately with creating state; caller polls agent/status until created or error
 - **Boundary translation:** rename events at the agentd→orchestrator perimeter (agent/update, agent/stateChange), not inside the shim
+- **Agent CRUD pattern:** agent.go follows session.go exactly — new store entities scaffold from this template; DefaultNull for nullable FK columns
+- **Two-task constant removal:** cross-package state constant removal is a two-phase operation (add TODO + replacement, then remove after fixing all consumers)
 - `session/new` is configuration/bootstrap only; work enters through later `session/prompt` (M002) / `agent/prompt` (M005+)
 - `agentRoot.path` is the bundle input; resolved `cwd` is derived at runtime
 - OAR `sessionId` and ACP `sessionId` are separate identities
