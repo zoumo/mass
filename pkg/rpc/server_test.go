@@ -236,15 +236,34 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "end_turn", promptResult.StopReason)
 
-		live := notifH.collect(4, 10*time.Second)
-		require.Len(t, live, 4)
+		live := notifH.collect(6, 10*time.Second)
+		require.Len(t, live, 6)
 		sortEnvelopesBySeq(live)
 
 		seq0, err := live[0].Seq()
 		require.NoError(t, err)
 		require.Equal(t, 0, seq0)
-		require.Equal(t, events.MethodRuntimeStateChange, live[0].Method)
-		require.Equal(t, events.MethodRuntimeStateChange, live[3].Method)
+		// live[0]=turn_start, live[1]=stateChange(created→running),
+		// live[2]=text(write:ok), live[3]=text(mock response),
+		// live[4]=stateChange(running→created), live[5]=turn_end
+		require.Equal(t, events.MethodSessionUpdate, live[0].Method)
+		require.Equal(t, events.MethodRuntimeStateChange, live[1].Method)
+		require.Equal(t, events.MethodRuntimeStateChange, live[4].Method)
+
+		// Assert turn_start (live[0]) has TurnId and StreamSeq=0
+		ts := live[0].Params.(events.SessionUpdateParams)
+		require.NotEmpty(t, ts.TurnId)
+		require.NotNil(t, ts.StreamSeq)
+		require.Equal(t, 0, *ts.StreamSeq)
+		// Assert all session/update events in turn share the same TurnId
+		for _, idx := range []int{0, 2, 3, 5} {
+			p := live[idx].Params.(events.SessionUpdateParams)
+			require.Equal(t, ts.TurnId, p.TurnId, "live[%d] TurnId mismatch", idx)
+		}
+		// Assert turn_end (live[5]) has StreamSeq=3
+		te := live[5].Params.(events.SessionUpdateParams)
+		require.NotNil(t, te.StreamSeq)
+		require.Equal(t, 3, *te.StreamSeq)
 
 		var history rpc.RuntimeHistoryResult
 		err = client.Call(ctx, "runtime/history", rpc.RuntimeHistoryParams{FromSeq: intPtr(0)}, &history)
@@ -255,7 +274,7 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		err = client.Call(ctx, "runtime/status", nil, &status)
 		require.NoError(t, err)
 		require.Equal(t, spec.StatusCreated, status.State.Status)
-		require.Equal(t, 3, status.Recovery.LastSeq)
+		require.Equal(t, 5, status.Recovery.LastSeq)
 	})
 
 	t.Run("subscribe with fromSeq returns backfill", func(t *testing.T) {
@@ -268,7 +287,7 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		fromSeq := 0
 		err := backfillClient.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{FromSeq: &fromSeq}, &subResult)
 		require.NoError(t, err)
-		require.Len(t, subResult.Entries, 4, "expected 4 backfill entries from first prompt")
+		require.Len(t, subResult.Entries, 6, "expected 6 backfill entries from first prompt")
 		sortEnvelopesBySeq(subResult.Entries)
 		for i, env := range subResult.Entries {
 			seq, seqErr := env.Seq()
@@ -282,12 +301,12 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "end_turn", promptResult.StopReason)
 
-		live := backfillNotifs.collect(4, 10*time.Second)
-		require.Len(t, live, 4, "expected 4 live events from second prompt")
+		live := backfillNotifs.collect(6, 10*time.Second)
+		require.Len(t, live, 6, "expected 6 live events from second prompt")
 		for _, env := range live {
 			seq, seqErr := env.Seq()
 			require.NoError(t, seqErr)
-			require.GreaterOrEqual(t, seq, 4, "live events should have seq >= 4")
+			require.GreaterOrEqual(t, seq, 6, "live events should have seq >= 6")
 		}
 	})
 
@@ -318,8 +337,8 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "end_turn", promptResult.StopReason)
 
-		live := secondaryNotifs.collect(4, 10*time.Second)
-		require.Len(t, live, 4)
+		live := secondaryNotifs.collect(6, 10*time.Second)
+		require.Len(t, live, 6)
 		for _, env := range live {
 			seq, seqErr := env.Seq()
 			require.NoError(t, seqErr)

@@ -42,7 +42,11 @@ All 7 authority documents rewritten to agent-first model. agent/* replaces sessi
 - **T03:** `OAR_AGENT_ID` and `OAR_AGENT_NAME` added to `generateConfig` mcpServers env block. `OAR_SESSION_ID`/`OAR_ROOM_AGENT` retained as deprecated aliases (S06 removes them). Purely additive — no existing tests updated.
 - All verification: `go test ./pkg/ari/... -count=1` (13s), `go test ./pkg/agentd/... -count=1`, `go build ./...` — all exit 0.
 
-**S05 — Event Ordering — Turn-Aware Envelope Enhancement** (pending, depends S01)
+**S05 ✅ — Event Ordering — Turn-Aware Envelope Enhancement** (complete)
+- **T01:** `TurnId string`, `StreamSeq *int` (pointer — preserves 0 through omitempty), `Phase string` added to `SessionUpdateParams`. `currentTurnId`/`currentStreamSeq` added to `Translator` struct — always accessed under `mu`. `NotifyTurnStart` assigns new UUID and resets `currentStreamSeq=0` atomically inside `broadcastEnvelope` callback. `NotifyTurnEnd` builds params using current TurnId before clearing it — turn_end event carries the identifier. `broadcastSessionEvent` injects TurnId/StreamSeq for mid-turn ACP events. `runtime/stateChange` intentionally excluded from turn fields. 7 new/updated unit tests: `TestNotifyTurnStartAndEnd`, `TestTurnAwareEnvelope_TurnIdAssigned`, `TestTurnAwareEnvelope_StreamSeqMonotonic`, `TestTurnAwareEnvelope_MultipleTurns`, `TestTurnAwareEnvelope_StateChangeExcludesTurnFields`, `TestTurnAwareEnvelope_RoundTrip`, `TestTurnAwareEnvelope_ReplayOrdering` — all pass.
+- **T02:** `handlePrompt` calls `NotifyTurnStart()` before `mgr.Prompt` and `NotifyTurnEnd(stopReason)` always after (even on error). All 3 CleanBreakSurface subtests updated from `collect(4)` to `collect(6)` — actual event count is 6 (WriteTextFile emits no ACP notification). Turn field assertions added: turn_start at live[1] has TurnId+StreamSeq=0; all session/update events share same TurnId; turn_end at live[4] has StreamSeq=3; recovery lastSeq=5. All 20 RPC tests pass; all 8 packages pass.
+- R050 validated.
+
 **S06 — Room & MCP Agent Alignment** (pending, depends S03)
 **S07 — Recovery & Integration Proof** (pending, depends S04, S05, S06)
 
@@ -82,12 +86,17 @@ All 7 authority documents rewritten to agent-first model. agent/* replaces sessi
 - **[M005/S04] Real async `agent/restart`** — replaces MethodNotFound stub; old session deleted in goroutine; new session UUID allocated; functional after restart (verified by TestARIAgentRestartAsync)
 - **[M005/S04] `OAR_AGENT_ID` / `OAR_AGENT_NAME`** in generateConfig mcpServers env block; `OAR_SESSION_ID`/`OAR_ROOM_AGENT` deprecated aliases retained until S06
 - **[M005/S04] `AgentInfo.ErrorMessage`** — bootstrap failure reason surfaced via agent/status response
+- **[M005/S05] `SessionUpdateParams.TurnId/StreamSeq/*int/Phase`** — turn-aware fields on session/update envelope; StreamSeq is *int to preserve zero through omitempty
+- **[M005/S05] Translator atomic turn tracking** — `currentTurnId`/`currentStreamSeq` mutated inside broadcastEnvelope callback under mu.Lock; turn state mutation and seq allocation are a single critical section
+- **[M005/S05] `handlePrompt` turn wrapping** — NotifyTurnStart before mgr.Prompt, NotifyTurnEnd always after (even on error)
+- **[M005/S05] 7 turn-aware unit tests** — prove TurnId propagation, streamSeq monotonicity, multi-turn isolation, stateChange exclusion, JSON round-trip, replay ordering invariants
+- **[M005/S05] RPC integration tests updated to 6-event model** — turn_start + mid-turn events + turn_end per prompt; turn field assertions in all 3 CleanBreakSurface subtests
 
 ### Current Gaps
 
-- **[M005 in progress]** turnId/streamSeq/phase not yet emitted by shim — S05
 - **[M005 in progress]** room-mcp-server still uses session/* surface and OAR_SESSION_ID/OAR_ROOM_AGENT — S06
 - **[M005 in progress]** OAR_SESSION_ID / OAR_ROOM_AGENT deprecated aliases still injected — S06 removes them
+- Phase field added to struct/JSON but not populated by any current code path — reserved for future phase annotation
 - pkg/agentd/recovery.go only filters stopped as terminal; error should also be terminal — addressed in S07
 - agent/detach is a placeholder returning nil — full implementation pending
 - Only point-to-point routing — broadcast/star/isolated mode enforcement deferred
@@ -117,6 +126,8 @@ Established patterns:
 - **pollAgentUntilReady helper:** `pollAgentUntilReady(t, conn, agentId, maxWait, interval)` — centralized test helper for all async-agent readiness polling
 - **Background goroutine request-context independence:** goroutines launched after conn.Reply must use `context.Background()` — the request context is dead after Reply
 - **agents.UpdateState has no transition validation:** any from→to works; validation is a future policy layer
+- **Turn-aware envelope pattern:** `TurnId`/`StreamSeq`/`Phase` injected atomically inside `broadcastEnvelope` callback under `mu.Lock`; `StreamSeq` is `*int` not `int` (omitempty drops 0); `NotifyTurnEnd` clears `currentTurnId` after building params (turn_end carries the ID); `handlePrompt` always fires `NotifyTurnEnd` regardless of error
+- **Drain-after-send test pattern:** for ordered event stream tests with mid-turn ACP events, send one notification → collect one envelope → assert → repeat (not bulk-enqueue), to avoid race with `NotifyTurnEnd` clearing turn state
 - **Boundary translation:** rename events at the agentd→orchestrator perimeter (agent/update, agent/stateChange), not inside the shim
 - **Agent CRUD pattern:** agent.go follows session.go exactly — new store entities scaffold from this template; DEFAULT NULL for nullable FK columns
 - **Two-task constant removal:** cross-package state constant removal is a two-phase operation (add TODO + replacement, then remove after fixing all consumers)

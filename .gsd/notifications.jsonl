@@ -95,3 +95,13 @@
 {"id":"41f4062b-9e09-42d2-818e-c23f4736cd0b","ts":"2026-04-08T20:17:42.713Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}
 {"id":"3884464b-17bf-40be-bde1-c2d6884acda4","ts":"2026-04-08T20:24:04.650Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
 {"id":"93318338-b895-44a2-bc93-1fef1f482565","ts":"2026-04-08T20:24:04.652Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"881e7a85-4c6f-445c-8b30-1bbb4eb073a7","ts":"2026-04-08T20:24:06.247Z","severity":"info","message":"Pre-dispatch: pre-dispatch: created gsd snapshot after 34m of uncommitted changes","source":"notify","read":false}
+{"id":"fa2fd5af-b532-4de2-94b7-56d0c67ac474","ts":"2026-04-08T20:24:06.273Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}
+{"id":"aa907228-94ed-41de-840b-17f8bf9936a8","ts":"2026-04-08T20:30:33.805Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"15da6407-1577-4cf5-9f64-680722b7b5d7","ts":"2026-04-08T20:30:33.808Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"7c017175-99fe-45c7-aaa9-576a7d5c6944","ts":"2026-04-08T20:37:14.096Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"eefab7b5-0305-4513-8082-2bbaede23794","ts":"2026-04-08T20:37:14.099Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"5b5040e4-4210-4167-90b9-cdb65e85273c","ts":"2026-04-08T20:53:49.198Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"b84cb160-9751-49b7-8af9-814408845162","ts":"2026-04-08T20:53:49.200Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"3b082ce5-519d-43c2-8e1e-0c2525221773","ts":"2026-04-08T20:58:50.141Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"e2161117-b82f-4025-8fec-0bb19cb0c58a","ts":"2026-04-08T20:58:50.144Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}

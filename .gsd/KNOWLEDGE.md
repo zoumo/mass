@@ -479,3 +479,27 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** Background goroutines spawned after an RPC reply must not inherit the request context. Always derive a new context from `context.Background()` with an explicit timeout that bounds the worst-case bootstrap time. Log outcome with structured fields (agentId, sessionId) at both Info (success) and Error (failure) levels.
 - **Reference:** handleAgentCreate and handleAgentRestart in pkg/ari/server.go, M005/S04/T01/T02
 - **When:** M005/S04
+
+## K032 — omitempty drops int(0); use *int to distinguish "present and zero" from "absent"
+
+- **Pattern:** Any JSON field where the value `0` is semantically meaningful and must survive `omitempty` serialization must use a pointer type (`*int`, `*int64`, etc.).
+- **Gotcha:** `StreamSeq int \`json:"streamSeq,omitempty"\`` drops the value `0` (turn_start's stream-sequence number), making turn_start indistinguishable from a non-turn event. This is a silent correctness bug — the field simply disappears from JSON output with no error.
+- **Lesson:** Use `*int` for streamSeq (and any zero-meaningful int field with omitempty). A `*int` pointing to `0` is non-nil and serialized; a `nil` pointer is omitted. The caller must take the address of a local variable: `ss := 0; params.StreamSeq = &ss`.
+- **Reference:** SessionUpdateParams.StreamSeq in pkg/events/envelope.go (D077), M005/S05/T01
+- **When:** M005/S05
+
+## K033 — Tests needing mid-turn ACP events must drain between send and NotifyTurnEnd
+
+- **Pattern:** When testing turn-aware ordering with mid-turn ACP events (fed via the `in` channel), drain the subscriber output after each event before calling `NotifyTurnEnd`. Do NOT bulk-enqueue all events and then call `NotifyTurnEnd`.
+- **Gotcha:** If you enqueue multiple ACP notifications and call `NotifyTurnEnd` before the Translator goroutine processes them, the ACP events arrive after turn state is cleared (`currentTurnId=""`). They then carry no TurnId — breaking the ordering invariants the test is trying to prove.
+- **Lesson:** Use `drain-after-send`: send one ACP notification → collect one envelope → assert → repeat. Then call `NotifyTurnEnd`. The Translator's `broadcastSessionEvent` checks `currentTurnId` at call time; the turn must still be active when the event is processed.
+- **Reference:** TestTurnAwareEnvelope_ReplayOrdering rewrite in pkg/events/translator_test.go, M005/S05/T01
+- **When:** M005/S05
+
+## K034 — ACP acpClient.WriteTextFile does not emit a SessionNotification
+
+- **Pattern:** `acpClient.WriteTextFile` (used in mock agents) writes directly to the OS filesystem without emitting any ACP `SessionNotification`. No `file_write` event appears in the Translator's subscriber stream.
+- **Gotcha:** RPC integration tests that count events per prompt will be off by one if they assume WriteTextFile produces a session/update event. The plan assumed 7 events; actual is 6.
+- **Lesson:** When predicting event counts for test assertions, audit each mock operation for whether it calls `client.SendNotification` (or equivalent). Direct OS operations like file writes are invisible to the event stream unless explicitly wrapped in a notification call.
+- **Reference:** T02 deviation in pkg/rpc/server_test.go (D079), M005/S05/T02
+- **When:** M005/S05

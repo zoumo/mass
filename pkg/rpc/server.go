@@ -166,7 +166,14 @@ func (h *connHandler) handlePrompt(ctx context.Context, conn *jsonrpc2.Conn, req
 		return
 	}
 
+	h.srv.trans.NotifyTurnStart()
 	resp, err := h.srv.mgr.Prompt(ctx, []acp.ContentBlock{acp.TextBlock(p.Prompt)})
+	stopReason := "error"
+	if err == nil {
+		stopReason = string(resp.StopReason)
+	}
+	h.srv.trans.NotifyTurnEnd(acp.StopReason(stopReason))
+
 	if err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
 		return
