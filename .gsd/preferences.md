@@ -5,6 +5,8 @@ skill_discovery: auto
 skill_staleness_days: 0
 uat_dispatch: false
 unique_milestone_ids: false
+parallel:
+  enabled: true
 notifications:
   enabled: true
   on_complete: true

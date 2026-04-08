@@ -70,6 +70,64 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: mapped
 - Notes: M003 delivered: fail-closed recovery posture (S01), shim-vs-DB reconciliation (S02), atomic event resume and damaged-tail tolerance (S03), DB-backed workspace cleanup safety (S04). Remaining follow-on: real CLI restart recovery tests, cross-client hardening.
 
+### R047 — agentd exposes agent/* ARI methods as external surface; session/* is internal only. Agent identified by room+name unique key.
+- Class: core-capability
+- Status: active
+- Description: agentd exposes agent/* ARI methods as external surface; session/* is internal only. Agent identified by room+name unique key.
+- Why it matters: Users operate on agents, not sessions. The external model must match the user's mental model to reduce cognitive load and API confusion.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S03
+- Supporting slices: M005/S01, M005/S02
+- Validation: grep gate: no session/* in ARI dispatch; all agent/* methods functional
+
+### R048 — agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
+- Class: core-capability
+- Status: active
+- Description: agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
+- Why it matters: ACP bootstrap can take 10-30 seconds. Synchronous blocking on create is unacceptable for orchestrator responsiveness.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S04
+- Supporting slices: M005/S03
+- Validation: Integration test: create returns creating → poll status → transitions to created or error
+
+### R049 — Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
+- Class: core-capability
+- Status: active
+- Description: Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
+- Why it matters: paused:warm/paused:cold are implementation details of future checkpoint/recovery, not natural states for current user-facing agent model.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S02
+- Validation: State transition table unit tests; no paused:* constants in agent state type
+
+### R050 — Event envelopes carry turnId, streamSeq, and phase for turn-aware ordering. Global seq retained as log sequence. Chat/replay orders by (turnId, streamSeq).
+- Class: core-capability
+- Status: active
+- Description: Event envelopes carry turnId, streamSeq, and phase for turn-aware ordering. Global seq retained as log sequence. Chat/replay orders by (turnId, streamSeq).
+- Why it matters: Current event ordering is receive-order, not causal-order. Events appear scrambled in chat/replay because seq only reflects when agentd received them, not their logical position in a turn.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S05
+- Supporting slices: M005/S01
+- Validation: Unit tests prove turnId assigned on turn_start, streamSeq increments within turn, replay ordering produces causal order
+
+### R051 — room-mcp-server rewritten with modelcontextprotocol/go-sdk. Environment variables switch from OAR_SESSION_ID to OAR_AGENT_NAME/OAR_AGENT_ID/OAR_ROOM_NAME.
+- Class: integration
+- Status: active
+- Description: room-mcp-server rewritten with modelcontextprotocol/go-sdk. Environment variables switch from OAR_SESSION_ID to OAR_AGENT_NAME/OAR_AGENT_ID/OAR_ROOM_NAME.
+- Why it matters: Current hand-rolled MCP server (497 lines) couples protocol and business logic. SDK migration separates concerns and aligns env vars with agent identity model.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S06
+- Validation: Existing multi-agent integration tests pass with SDK-based server; env vars use agent identity
+
+### R052 — Recovery operates externally by agent identity (room+name), internally by session/shim handle. Agent identity survives daemon restart.
+- Class: continuity
+- Status: active
+- Description: Recovery operates externally by agent identity (room+name), internally by session/shim handle. Agent identity survives daemon restart.
+- Why it matters: Recovery must use stable identity. Session UUIDs are internal handles; agent room+name is the stable external key that orchestrators and operators reference.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S07
+- Supporting slices: M005/S02, M005/S04
+- Validation: TestAgentdRestartRecovery equivalent: agent survives restart with same room+name, correct state
+
 ## Validated
 
 ### R001 — agentd daemon can start, parse config.yaml, and listen on ARI Unix socket
@@ -482,10 +540,16 @@ This file is the explicit capability and coverage contract for the project.
 | R044 | quality-attribute | active | M002-q9r6sg/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | mapped |
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
+| R047 | core-capability | active | M005/S03 | M005/S01, M005/S02 | grep gate: no session/* in ARI dispatch; all agent/* methods functional |
+| R048 | core-capability | active | M005/S04 | M005/S03 | Integration test: create returns creating → poll status → transitions to created or error |
+| R049 | core-capability | active | M005/S02 | none | State transition table unit tests; no paused:* constants in agent state type |
+| R050 | core-capability | active | M005/S05 | M005/S01 | Unit tests prove turnId assigned on turn_start, streamSeq increments within turn, replay ordering produces causal order |
+| R051 | integration | active | M005/S06 | none | Existing multi-agent integration tests pass with SDK-based server; env vars use agent identity |
+| R052 | continuity | active | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery equivalent: agent survives restart with same room+name, correct state |
 
 ## Coverage Summary
 
-- Active requirements: 6
-- Mapped to slices: 6
+- Active requirements: 12
+- Mapped to slices: 12
 - Validated: 21 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041)
 - Unmapped active requirements: 0
