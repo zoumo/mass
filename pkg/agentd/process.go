@@ -267,6 +267,10 @@ func (m *ProcessManager) generateConfig(session *meta.Session, rc *RuntimeClass)
 	// Build MCP servers list. Inject room MCP server for room sessions.
 	var mcpServers []spec.McpServer
 	if session.Room != "" {
+		// Compute state dir the same way createBundle does, so room-mcp-server
+		// can write its log file next to events.jsonl and state.json.
+		stateDir := spec.StateDir("/tmp/agentd-shim", session.ID)
+
 		mcpServers = append(mcpServers, spec.McpServer{
 			Type:    "stdio",
 			Name:    "room-tools",
@@ -277,6 +281,7 @@ func (m *ProcessManager) generateConfig(session *meta.Session, rc *RuntimeClass)
 				{Name: "OAR_ROOM_NAME", Value: session.Room},
 				{Name: "OAR_SESSION_ID", Value: session.ID},
 				{Name: "OAR_ROOM_AGENT", Value: session.RoomAgent},
+				{Name: "OAR_STATE_DIR", Value: stateDir},
 			},
 		})
 	}
@@ -448,7 +453,7 @@ func (m *ProcessManager) forkShim(ctx context.Context, session *meta.Session, rc
 		SessionID: session.ID,
 		PID:       cmd.Process.Pid,
 		Cmd:       cmd,
-		Events:    make(chan events.Event, 100), // buffered for async delivery
+		Events:    make(chan events.Event, 1024), // buffered for async delivery
 		Done:      make(chan struct{}),
 	}, nil
 }

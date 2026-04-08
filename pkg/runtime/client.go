@@ -74,14 +74,34 @@ func (c *acpClient) WriteTextFile(_ context.Context, params acp.WriteTextFileReq
 }
 
 // RequestPermission respects the permission policy.
-func (c *acpClient) RequestPermission(_ context.Context, _ acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
+// For approve-all, selects the first option from the request (auto-approve).
+// The response must include a valid Outcome with Selected + OptionId;
+// an empty Outcome is treated as denial by ACP agents.
+func (c *acpClient) RequestPermission(_ context.Context, req acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 	switch c.mgr.cfg.Permissions {
 	case spec.DenyAll:
 		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: deny-all policy blocks all operations")
 	case spec.ApproveReads:
 		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: approve-reads policy blocks write operations")
-	default: // approve-all
-		return acp.RequestPermissionResponse{}, nil
+	default: // approve-all — select the first available option
+		if len(req.Options) == 0 {
+			// No options to select — return selected with empty optionId.
+			return acp.RequestPermissionResponse{
+				Outcome: acp.RequestPermissionOutcome{
+					Selected: &acp.RequestPermissionOutcomeSelected{
+						Outcome: "selected",
+					},
+				},
+			}, nil
+		}
+		return acp.RequestPermissionResponse{
+			Outcome: acp.RequestPermissionOutcome{
+				Selected: &acp.RequestPermissionOutcomeSelected{
+					OptionId: req.Options[0].OptionId,
+					Outcome:  "selected",
+				},
+			},
+		}, nil
 	}
 }
 

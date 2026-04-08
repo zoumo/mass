@@ -102,10 +102,12 @@ type McpServer struct {
 	Command string `json:"command,omitempty"`
 
 	// Args are the command-line arguments for the stdio MCP server.
-	Args []string `json:"args,omitempty"`
+	// Not omitempty — ACP agents require an explicit empty array, not null/absent.
+	Args []string `json:"args"`
 
 	// Env is the environment variables for the stdio MCP server.
-	Env []EnvVar `json:"env,omitempty"`
+	// Not omitempty — ACP agents require an explicit empty array, not null/absent.
+	Env []EnvVar `json:"env"`
 }
 
 // EnvVar is a name-value pair representing an environment variable.

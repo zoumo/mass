@@ -40,6 +40,8 @@ type CapabilitiesConfig struct {
 
 	// ConcurrentSessions is the max concurrent sessions per runtime class (default: 1).
 	ConcurrentSessions int `yaml:"concurrentSessions"`
+
+
 }
 
 // RuntimeClassConfig defines a specific runtime class configuration.

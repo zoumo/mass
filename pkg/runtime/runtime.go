@@ -6,7 +6,9 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -129,10 +131,16 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: acp initialize: %w", handshakeErr)
 	}
 
-	sessionResp, err := conn.NewSession(ctx, acp.NewSessionRequest{
+	mcpServers := convertMcpServers(m.cfg.AcpAgent.Session.McpServers)
+	newSessionReq := acp.NewSessionRequest{
 		Cwd:        workDir,
-		McpServers: convertMcpServers(m.cfg.AcpAgent.Session.McpServers),
-	})
+		McpServers: mcpServers,
+	}
+	if debugJSON, err := json.MarshalIndent(newSessionReq, "", "  "); err == nil {
+		log.Printf("runtime: acp session/new request:\n%s", string(debugJSON))
+	}
+
+	sessionResp, err := conn.NewSession(ctx, newSessionReq)
 	if err != nil {
 		handshakeErr = err
 		return fmt.Errorf("runtime: acp session/new: %w", err)
@@ -348,10 +356,15 @@ func convertMcpServers(servers []spec.McpServer) []acp.McpServer {
 			for i, e := range s.Env {
 				env[i] = acp.EnvVariable{Name: e.Name, Value: e.Value}
 			}
+			// Ensure non-nil slices — ACP agents reject null; they need [].
+			args := s.Args
+			if args == nil {
+				args = []string{}
+			}
 			result = append(result, acp.McpServer{Stdio: &acp.McpServerStdio{
 				Name:    s.Name,
 				Command: s.Command,
-				Args:    s.Args,
+				Args:    args,
 				Env:     env,
 			}})
 		case "sse":

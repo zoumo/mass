@@ -281,6 +281,8 @@ func handleToolCall(ctx context.Context, cfg config, req *mcpRequest) *mcpRespon
 		}
 	}
 
+	log.Printf("tools/call: %s args=%s", params.Name, string(params.Arguments))
+
 	switch params.Name {
 	case "room_send":
 		return handleRoomSend(ctx, cfg, req.ID, params.Arguments)
@@ -419,9 +421,22 @@ func rawID(raw *json.RawMessage) interface{} {
 // ────────────────────────────────────────────────────────────────────────────
 
 func main() {
-	// Redirect log output to stderr so it doesn't corrupt the MCP stdout stream.
-	log.SetOutput(os.Stderr)
 	log.SetPrefix("room-mcp-server: ")
+
+	// Write logs to a file in the shim state directory if available,
+	// otherwise fall back to stderr. Stdout is reserved for MCP JSON-RPC.
+	if stateDir := os.Getenv("OAR_STATE_DIR"); stateDir != "" {
+		logPath := fmt.Sprintf("%s/room-mcp-server.log", stateDir)
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err == nil {
+			log.SetOutput(f)
+		} else {
+			log.SetOutput(os.Stderr)
+			log.Printf("failed to open log file %s: %v, falling back to stderr", logPath, err)
+		}
+	} else {
+		log.SetOutput(os.Stderr)
+	}
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -436,11 +451,15 @@ func main() {
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	encoder := json.NewEncoder(os.Stdout)
 
+	log.Printf("entering request loop, reading from stdin")
+
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue
 		}
+
+		log.Printf("recv: %s", string(line))
 
 		var req mcpRequest
 		if err := json.Unmarshal(line, &req); err != nil {
@@ -455,11 +474,16 @@ func main() {
 			continue
 		}
 
+		log.Printf("method: %s id=%v", req.Method, req.ID)
+
 		resp := handleRequest(ctx, cfg, &req)
 		if resp == nil {
 			// Notification — no response needed.
 			continue
 		}
+
+		respBytes, _ := json.Marshal(resp)
+		log.Printf("send: %s", string(respBytes))
 
 		if err := encoder.Encode(resp); err != nil {
 			log.Printf("failed to write response: %v", err)
@@ -469,4 +493,5 @@ func main() {
 	if err := scanner.Err(); err != nil {
 		log.Fatalf("stdin read error: %v", err)
 	}
+	log.Printf("stdin closed, exiting")
 }

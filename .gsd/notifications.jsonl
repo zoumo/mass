@@ -201,3 +201,6 @@
 {"id":"1872b03a-164f-450c-ac05-caad5291add1","ts":"2026-04-08T08:08:15.923Z","severity":"warning","message":"[worktree] .git file read failed: EISDIR: illegal operation on a directory, read","source":"workflow-logger","read":false}
 {"id":"b7fbb37e-553d-42eb-9663-d8dd94d0832d","ts":"2026-04-08T08:08:17.072Z","severity":"info","message":"Resume: applied 2 fix(es) to state.","source":"notify","read":false}
 {"id":"6b83eaee-8d02-4d64-91a8-3bcaae31942a","ts":"2026-04-08T08:08:17.178Z","severity":"info","message":"Recovered 12 tool calls from paused session. Resuming with context.","source":"notify","read":false}
+{"id":"36e8f6c3-c968-4ffa-b1bd-2719bf38a37e","ts":"2026-04-08T08:12:51.494Z","severity":"info","message":"Committed: chore: auto-commit after complete-milestone","source":"notify","read":false}
+{"id":"475c8d75-0f25-46d2-995e-c61ce0f5b2b9","ts":"2026-04-08T08:12:53.220Z","severity":"info","message":"Auto-mode stopped — All milestones complete. Session: $160.92 · 285.62M tokens · 168 units","source":"notify","read":false}
+{"id":"885da062-a811-4515-bf2e-905f62f2504c","ts":"2026-04-08T08:12:53.221Z","severity":"warning","message":"[state] DB unavailable — using filesystem state derivation (degraded mode)","source":"workflow-logger","read":false}

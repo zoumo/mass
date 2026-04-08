@@ -101,18 +101,19 @@ EOF
 
 ```bash
 # Terminal 1 — 启动 daemon
-export OAR_SHIM_BINARY=/Users/jim/code/zoumo/open-agent-runtime/bin/agent-shim
-./bin/agentd --config /tmp/oar-room-validation/config.yaml
+export OAR_SHIM_BINARY=$(pwd)/bin/agent-shim
+./bin/agentd --config bin/room-validating/config.yaml
 ```
 
 ### Step 2: 准备 Workspace
 
 ```bash
 # Terminal 2 — 操作终端
-export ARI_SOCKET=/tmp/oar-room-validation/agentd.sock
+# 设置 socket 路径变量（后续所有命令都用这个）
+SOCK=$(pwd)/bin/room-validating/agentd.sock
 
 # 准备共享 workspace（用 local 模式指向项目目录）
-./bin/agentdctl workspace prepare --spec '{
+./bin/agentdctl --socket $SOCK workspace prepare --spec '{
   "oarVersion": "0.1.0",
   "metadata": {"name": "oar-project"},
   "source": {"type": "local", "path": "/Users/jim/code/zoumo/open-agent-runtime"}
@@ -124,27 +125,27 @@ export ARI_SOCKET=/tmp/oar-room-validation/agentd.sock
 
 ```bash
 # 创建 review Room
-./bin/agentdctl room create --name "code-review" --communication mesh
-
-# 或者用 JSON-RPC 直接调（如果 agentdctl 还没有 room 子命令）：
-# 见下方 "直接 JSON-RPC 操作" 章节
+./bin/agentdctl --socket $SOCK room create --name "code-review" --mode mesh
 ```
 
 ### Step 4: 创建三个成员 Session
+
+> **注意：** `session/new` 只创建 DB 记录（state=created），不会创建 bundle 或启动进程。
+> Bundle 创建 + ACP 进程启动在首次 `session prompt` 时自动触发（auto-start）。
 
 ```bash
 WS_ID="<Step 2 返回的 workspaceId>"
 
 # Codex — 深度 review agent
-./bin/agentdctl session new \
+./bin/agentdctl --socket $SOCK session new \
   --runtime-class codex \
   --workspace-id "$WS_ID" \
   --room code-review \
   --room-agent reviewer
-# 记下 sessionId → $CODEX_SID
+# 记下返回 JSON 中的 sessionId → $CODEX_SID
 
 # Claude Code — 复查 agent
-./bin/agentdctl session new \
+./bin/agentdctl --socket $SOCK session new \
   --runtime-class claude-code \
   --workspace-id "$WS_ID" \
   --room code-review \
@@ -152,7 +153,7 @@ WS_ID="<Step 2 返回的 workspaceId>"
 # 记下 sessionId → $CLAUDE_SID
 
 # GSD — 修复 agent
-./bin/agentdctl session new \
+./bin/agentdctl --socket $SOCK session new \
   --runtime-class gsd-pi \
   --workspace-id "$WS_ID" \
   --room code-review \
@@ -163,8 +164,9 @@ WS_ID="<Step 2 返回的 workspaceId>"
 ### Step 5: 检查 Room 状态
 
 ```bash
-./bin/agentdctl room status --name "code-review"
+./bin/agentdctl --socket $SOCK room status --name "code-review"
 # 应该看到三个 member: reviewer(codex), checker(claude-code), fixer(gsd-pi)
+# 所有 state=created（还没 prompt 过，进程未启动）
 ```
 
 ### Step 6: 执行 Review 流程
@@ -184,7 +186,8 @@ WS_ID="<Step 2 返回的 workspaceId>"
 
 ```bash
 # 这个命令会阻塞直到 codex 完成 review 并返回结果
-./bin/agentdctl session prompt --session-id "$CODEX_SID" --text '
+# 首次 prompt 会触发 auto-start：创建 bundle → 启动 shim → 连接 → 发送 prompt
+./bin/agentdctl --socket $SOCK session prompt "$CODEX_SID" --text '
 对 pkg/ari/server.go 做深度 code review。关注以下方面：
 1. 错误处理是否完整
 2. 并发安全问题
@@ -208,7 +211,7 @@ WS_ID="<Step 2 返回的 workspaceId>"
 
 ```bash
 # 通过 room/send 把 codex 的输出发给 claude
-./bin/agentdctl room send \
+./bin/agentdctl --socket $SOCK room send \
   --room "code-review" \
   --from "reviewer" \
   --to "checker" \
@@ -220,7 +223,7 @@ WS_ID="<Step 2 返回的 workspaceId>"
 ```bash
 # 如果消息通过 room_send 自动到达，claude 会自动收到 prompt
 # 如果需要手动触发：
-./bin/agentdctl session prompt --session-id "$CLAUDE_SID" --text '
+./bin/agentdctl --socket $SOCK session prompt "$CLAUDE_SID" --text '
 你收到了 codex reviewer 的 code review 结果。请：
 1. 验证每个发现是否属实（检查实际代码）
 2. 标注是否同意 P0/P1/P2 评级
@@ -236,7 +239,7 @@ WS_ID="<Step 2 返回的 workspaceId>"
 
 ```bash
 # 同上 — 消息可能自动到达或需要手动中继
-./bin/agentdctl session prompt --session-id "$GSD_SID" --text '
+./bin/agentdctl --socket $SOCK session prompt "$GSD_SID" --text '
 你收到了经过复查确认的 code review 修复清单。请：
 1. 按 P0 → P1 → P2 顺序逐个修复
 2. 每个修复后运行相关测试确认不破坏现有功能
@@ -248,23 +251,23 @@ WS_ID="<Step 2 返回的 workspaceId>"
 
 ```bash
 # 查看各 session 状态
-./bin/agentdctl session list
+./bin/agentdctl --socket $SOCK session list
 
 # 停止所有 session
-./bin/agentdctl session stop --session-id "$CODEX_SID"
-./bin/agentdctl session stop --session-id "$CLAUDE_SID"
-./bin/agentdctl session stop --session-id "$GSD_SID"
+./bin/agentdctl --socket $SOCK session stop "$CODEX_SID"
+./bin/agentdctl --socket $SOCK session stop "$CLAUDE_SID"
+./bin/agentdctl --socket $SOCK session stop "$GSD_SID"
 
 # 删除 session
-./bin/agentdctl session remove --session-id "$CODEX_SID"
-./bin/agentdctl session remove --session-id "$CLAUDE_SID"
-./bin/agentdctl session remove --session-id "$GSD_SID"
+./bin/agentdctl --socket $SOCK session remove "$CODEX_SID"
+./bin/agentdctl --socket $SOCK session remove "$CLAUDE_SID"
+./bin/agentdctl --socket $SOCK session remove "$GSD_SID"
 
 # 删除 Room（member session 必须先 stop/remove）
-./bin/agentdctl room delete --name "code-review"
+./bin/agentdctl --socket $SOCK room delete --name "code-review"
 
 # 清理 workspace
-./bin/agentdctl workspace cleanup --workspace-id "$WS_ID"
+./bin/agentdctl --socket $SOCK workspace cleanup --workspace-id "$WS_ID"
 ```
 
 ---

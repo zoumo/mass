@@ -18,6 +18,8 @@ type Capabilities struct {
 
 	// ConcurrentSessions is the max concurrent sessions per runtime class.
 	ConcurrentSessions int
+
+
 }
 
 // RuntimeClass represents a resolved runtime class configuration.
