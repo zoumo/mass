@@ -35,10 +35,12 @@ type SessionPromptResult struct {
 
 type SessionSubscribeParams struct {
 	AfterSeq *int `json:"afterSeq,omitempty"`
+	FromSeq  *int `json:"fromSeq,omitempty"`
 }
 
 type SessionSubscribeResult struct {
-	NextSeq int `json:"nextSeq"`
+	NextSeq int                `json:"nextSeq"`
+	Entries []events.Envelope  `json:"entries,omitempty"`
 }
 
 type RuntimeHistoryParams struct {
@@ -192,7 +194,43 @@ func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, 
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, "afterSeq must be >= 0")
 		return
 	}
+	if p.FromSeq != nil && *p.FromSeq < 0 {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, "fromSeq must be >= 0")
+		return
+	}
 
+	// Atomic path: when fromSeq is present, use SubscribeFromSeq to read
+	// history and register the subscription under a single lock hold.
+	if p.FromSeq != nil {
+		entries, ch, subID, nextSeq, err := h.srv.trans.SubscribeFromSeq(h.srv.logPath, *p.FromSeq)
+		if err != nil {
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
+			return
+		}
+
+		_ = conn.Reply(ctx, req.ID, SessionSubscribeResult{NextSeq: nextSeq, Entries: entries})
+
+		go func() {
+			defer h.srv.trans.Unsubscribe(subID)
+			disconnect := conn.DisconnectNotify()
+			for {
+				select {
+				case <-disconnect:
+					return
+				case env, ok := <-ch:
+					if !ok {
+						return
+					}
+					if err := conn.Notify(ctx, env.Method, env.Params); err != nil {
+						return
+					}
+				}
+			}
+		}()
+		return
+	}
+
+	// Legacy path: subscribe without backfill.
 	ch, subID, nextSeq := h.srv.trans.Subscribe()
 	floor := nextSeq - 1
 	if p.AfterSeq != nil {

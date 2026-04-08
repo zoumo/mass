@@ -3,8 +3,12 @@
 package ari
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"sync"
 
+	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
@@ -104,9 +108,9 @@ func (r *Registry) Remove(id string) {
 // Thread-safe via mutex lock.
 func (r *Registry) Acquire(id string, sessionID string) {
 	r.mu.Lock()
-	if meta := r.workspaces[id]; meta != nil {
-		meta.RefCount++
-		meta.Refs = append(meta.Refs, sessionID)
+	if m := r.workspaces[id]; m != nil {
+		m.RefCount++
+		m.Refs = append(m.Refs, sessionID)
 	}
 	r.mu.Unlock()
 }
@@ -118,18 +122,74 @@ func (r *Registry) Acquire(id string, sessionID string) {
 func (r *Registry) Release(id string, sessionID string) int {
 	r.mu.Lock()
 	count := 0
-	if meta := r.workspaces[id]; meta != nil && meta.RefCount > 0 {
-		meta.RefCount--
-		count = meta.RefCount
+	if m := r.workspaces[id]; m != nil && m.RefCount > 0 {
+		m.RefCount--
+		count = m.RefCount
 		// Remove sessionID from Refs list.
-		newRefs := make([]string, 0, len(meta.Refs))
-		for _, ref := range meta.Refs {
+		newRefs := make([]string, 0, len(m.Refs))
+		for _, ref := range m.Refs {
 			if ref != sessionID {
 				newRefs = append(newRefs, ref)
 			}
 		}
-		meta.Refs = newRefs
+		m.Refs = newRefs
 	}
 	r.mu.Unlock()
 	return count
+}
+
+// RebuildFromDB loads all active workspaces from the metadata store and
+// repopulates the registry. For each workspace it deserializes the stored
+// Source JSON back into a workspace.Source, sets the correct RefCount, and
+// populates the Refs list from workspace_refs rows.
+// This is called once during daemon startup after recovery completes so that
+// workspace/list and workspace/cleanup work across daemon restarts.
+func (r *Registry) RebuildFromDB(store *meta.Store) error {
+	ctx := context.Background()
+
+	workspaces, err := store.ListWorkspaces(ctx, &meta.WorkspaceFilter{
+		Status: meta.WorkspaceStatusActive,
+	})
+	if err != nil {
+		return fmt.Errorf("ari: rebuild registry: list workspaces: %w", err)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, ws := range workspaces {
+		// Deserialize Source JSON into workspace.Source.
+		var src workspace.Source
+		if ws.Source != nil && len(ws.Source) > 0 && string(ws.Source) != "{}" {
+			if err := json.Unmarshal(ws.Source, &src); err != nil {
+				return fmt.Errorf("ari: rebuild registry: unmarshal source for workspace %s: %w", ws.ID, err)
+			}
+		}
+
+		// Query session IDs referencing this workspace.
+		refs, err := store.ListWorkspaceRefs(ctx, ws.ID)
+		if err != nil {
+			return fmt.Errorf("ari: rebuild registry: list refs for workspace %s: %w", ws.ID, err)
+		}
+		if refs == nil {
+			refs = []string{}
+		}
+
+		spec := workspace.WorkspaceSpec{
+			Metadata: workspace.WorkspaceMetadata{Name: ws.Name},
+			Source:   src,
+		}
+
+		r.workspaces[ws.ID] = &WorkspaceMeta{
+			Id:       ws.ID,
+			Name:     ws.Name,
+			Path:     ws.Path,
+			Spec:     spec,
+			Status:   "ready",
+			RefCount: ws.RefCount,
+			Refs:     refs,
+		}
+	}
+
+	return nil
 }

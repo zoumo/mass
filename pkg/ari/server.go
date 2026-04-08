@@ -204,6 +204,16 @@ func (h *connHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *json
 	case "session/detach":
 		h.handleSessionDetach(ctx, conn, req)
 
+	// Room methods
+	case "room/create":
+		h.handleRoomCreate(ctx, conn, req)
+	case "room/status":
+		h.handleRoomStatus(ctx, conn, req)
+	case "room/send":
+		h.handleRoomSend(ctx, conn, req)
+	case "room/delete":
+		h.handleRoomDelete(ctx, conn, req)
+
 	default:
 		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
@@ -261,10 +271,17 @@ func (h *connHandler) handleWorkspacePrepare(ctx context.Context, conn *jsonrpc2
 
 	// Persist to database for foreign key constraint support.
 	if h.srv.store != nil {
+		// Serialize the Source spec so DB captures the full workspace origin.
+		sourceJSON, marshalErr := json.Marshal(p.Spec.Source)
+		if marshalErr != nil {
+			log.Printf("ari: failed to marshal workspace %s source: %v", workspaceId, marshalErr)
+			sourceJSON = json.RawMessage("{}")
+		}
 		workspace := &meta.Workspace{
 			ID:       workspaceId,
 			Name:     p.Spec.Metadata.Name,
 			Path:     workspacePath,
+			Source:   sourceJSON,
 			Status:   meta.WorkspaceStatusActive,
 			RefCount: 0,
 		}
@@ -331,6 +348,11 @@ func (h *connHandler) handleWorkspaceList(ctx context.Context, conn *jsonrpc2.Co
 //   - Cleanup failure: returns InternalError with WorkspaceError Phase
 //   - Cleanup timeout: returns InternalError
 func (h *connHandler) handleWorkspaceCleanup(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	// Block cleanup during active recovery phase (fail-closed posture).
+	if h.recoveryGuard(ctx, conn, req) {
+		return
+	}
+
 	var p WorkspaceCleanupParams
 	if err := unmarshalParams(req, &p); err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
@@ -345,8 +367,21 @@ func (h *connHandler) handleWorkspaceCleanup(ctx context.Context, conn *jsonrpc2
 		return
 	}
 
-	// Check RefCount > 0.
-	if meta.RefCount > 0 {
+	// Gate on DB ref_count (persisted truth that survives restarts) rather
+	// than the volatile in-memory registry RefCount.
+	if h.srv.store != nil {
+		dbWs, err := h.srv.store.GetWorkspace(ctx, p.WorkspaceId)
+		if err != nil {
+			log.Printf("ari: failed to query DB ref_count for workspace %s, falling back to registry: %v", p.WorkspaceId, err)
+		} else if dbWs != nil && dbWs.RefCount > 0 {
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
+				fmt.Sprintf("workspace %q has %d active references", p.WorkspaceId, dbWs.RefCount))
+			return
+		}
+	}
+
+	// Fallback: if store is nil, check the in-memory registry RefCount.
+	if h.srv.store == nil && meta.RefCount > 0 {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
 			fmt.Sprintf("workspace %q has %d active references", p.WorkspaceId, meta.RefCount))
 		return
@@ -403,6 +438,28 @@ func (h *connHandler) handleSessionNew(ctx context.Context, conn *jsonrpc2.Conn,
 		return
 	}
 
+	// Validate room existence when room is specified (D051).
+	if p.Room != "" {
+		if p.RoomAgent == "" {
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+				"roomAgent is required when room is specified")
+			return
+		}
+		if h.srv.store != nil {
+			room, err := h.srv.store.GetRoom(ctx, p.Room)
+			if err != nil {
+				replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
+					fmt.Sprintf("failed to check room: %s", err.Error()))
+				return
+			}
+			if room == nil {
+				replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+					fmt.Sprintf("room %q does not exist; call room/create first", p.Room))
+				return
+			}
+		}
+	}
+
 	// Generate UUID for sessionId.
 	sessionId := uuid.New().String()
 
@@ -428,6 +485,15 @@ func (h *connHandler) handleSessionNew(ctx context.Context, conn *jsonrpc2.Conn,
 		return
 	}
 
+	// Record session→workspace reference in DB and in-memory registry.
+	if h.srv.store != nil {
+		if err := h.srv.store.AcquireWorkspace(ctx, p.WorkspaceId, sessionId); err != nil {
+			// Log the error but don't fail the RPC — mirrors handleWorkspacePrepare pattern.
+			log.Printf("ari: failed to acquire workspace %s for session %s: %v", p.WorkspaceId, sessionId, err)
+		}
+	}
+	h.srv.registry.Acquire(p.WorkspaceId, sessionId)
+
 	// Return result.
 	_ = conn.Reply(ctx, req.ID, SessionNewResult{
 		SessionId: sessionId,
@@ -435,14 +501,63 @@ func (h *connHandler) handleSessionNew(ctx context.Context, conn *jsonrpc2.Conn,
 	})
 }
 
+// deliverPrompt encapsulates the core prompt delivery logic: auto-start if
+// created, connect to shim, send prompt, return stop reason. Both
+// handleSessionPrompt and handleRoomSend call this helper.
+func (h *connHandler) deliverPrompt(ctx context.Context, sessionID, text string) (string, error) {
+	// Get session from sessions.Get.
+	session, err := h.srv.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("get session failed: %w", err)
+	}
+	if session == nil {
+		return "", fmt.Errorf("session %q not found", sessionID)
+	}
+
+	// If state=="created", call processes.Start (auto-start).
+	if session.State == meta.SessionStateCreated {
+		log.Printf("ari: deliverPrompt auto-starting session %s", sessionID)
+
+		startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err := h.srv.processes.Start(startCtx, sessionID)
+		cancel()
+
+		if err != nil {
+			return "", fmt.Errorf("start session failed: %w", err)
+		}
+	}
+
+	// Call processes.Connect to get ShimClient.
+	connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	client, err := h.srv.processes.Connect(connectCtx, sessionID)
+	cancel()
+
+	if err != nil {
+		if strings.Contains(err.Error(), "not running") {
+			return "", fmt.Errorf("session %q not running: %w", sessionID, err)
+		}
+		return "", fmt.Errorf("connect to session failed: %w", err)
+	}
+
+	// Call client.Prompt with 120s timeout.
+	promptCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	result, err := client.Prompt(promptCtx, text)
+	cancel()
+
+	if err != nil {
+		return "", fmt.Errorf("prompt failed: %w", err)
+	}
+
+	log.Printf("ari: deliverPrompt completed for session %s, stopReason=%s", sessionID, result.StopReason)
+	return result.StopReason, nil
+}
+
 // handleSessionPrompt sends a prompt to an agent session.
 // Workflow:
 //  1. Unmarshal SessionPromptParams
-//  2. Get session from sessions.Get
-//  3. If state=="created", call processes.Start (auto-start)
-//  4. Call processes.Connect to get ShimClient
-//  5. Call client.Prompt
-//  6. Return SessionPromptResult
+//  2. Validate session exists
+//  3. Call deliverPrompt helper (auto-start, connect, prompt)
+//  4. Return SessionPromptResult
 //
 // Error handling:
 //   - Invalid params (session not found): returns InvalidParams
@@ -457,70 +572,25 @@ func (h *connHandler) handleSessionPrompt(ctx context.Context, conn *jsonrpc2.Co
 		return
 	}
 
-	// Get session from sessions.Get.
-	session, err := h.srv.sessions.Get(ctx, p.SessionId)
-	if err != nil {
-		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
-			fmt.Sprintf("get session failed: %s", err.Error()))
-		return
-	}
-	if session == nil {
-		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
-			fmt.Sprintf("session %q not found", p.SessionId))
+	// Fail-closed: refuse operational actions while daemon is recovering.
+	if h.recoveryGuard(ctx, conn, req) {
 		return
 	}
 
-	// If state=="created", call processes.Start (auto-start).
-	if session.State == meta.SessionStateCreated {
-		log.Printf("ari: session/prompt auto-starting session %s", p.SessionId)
-
-		// Use a timeout context for start operation (10s per failure modes).
-		startCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_, err := h.srv.processes.Start(startCtx, p.SessionId)
-		cancel()
-
-		if err != nil {
-			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
-				fmt.Sprintf("start session failed: %s", err.Error()))
-			return
-		}
-	}
-
-	// Call processes.Connect to get ShimClient.
-	// Use a timeout context for connect (part of start flow).
-	connectCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	client, err := h.srv.processes.Connect(connectCtx, p.SessionId)
-	cancel()
-
+	stopReason, err := h.deliverPrompt(ctx, p.SessionId, p.Text)
 	if err != nil {
-		// Check if error is because session is not running (InvalidParams)
-		// vs some other error (InternalError).
-		if strings.Contains(err.Error(), "not running") {
-			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
-				fmt.Sprintf("session %q not running: %s", p.SessionId, err.Error()))
+		errMsg := err.Error()
+		// Map session-lookup and state errors to InvalidParams; everything else to InternalError.
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "not running") || strings.Contains(errMsg, "get session failed") {
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, errMsg)
 		} else {
-			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
-				fmt.Sprintf("connect to session failed: %s", err.Error()))
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, errMsg)
 		}
 		return
 	}
 
-	// Call client.Prompt with 30s timeout.
-	promptCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	result, err := client.Prompt(promptCtx, p.Text)
-	cancel()
-
-	if err != nil {
-		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
-			fmt.Sprintf("prompt failed: %s", err.Error()))
-		return
-	}
-
-	log.Printf("ari: session/prompt completed for session %s, stopReason=%s", p.SessionId, result.StopReason)
-
-	// Return result.
 	_ = conn.Reply(ctx, req.ID, SessionPromptResult{
-		StopReason: result.StopReason,
+		StopReason: stopReason,
 	})
 }
 
@@ -539,6 +609,11 @@ func (h *connHandler) handleSessionCancel(ctx context.Context, conn *jsonrpc2.Co
 	var p SessionCancelParams
 	if err := unmarshalParams(req, &p); err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+
+	// Fail-closed: refuse operational actions while daemon is recovering.
+	if h.recoveryGuard(ctx, conn, req) {
 		return
 	}
 
@@ -748,10 +823,22 @@ func (h *connHandler) handleSessionStatus(ctx context.Context, conn *jsonrpc2.Co
 		}
 	}
 
+	// Surface per-session recovery metadata when available.
+	var recoveryInfo *SessionRecoveryInfo
+	if shimProc := h.srv.processes.GetProcess(p.SessionId); shimProc != nil && shimProc.Recovery != nil {
+		ri := shimProc.Recovery
+		recoveryInfo = &SessionRecoveryInfo{
+			Recovered:   ri.Recovered,
+			RecoveredAt: ri.RecoveredAt,
+			Outcome:     string(ri.Outcome),
+		}
+	}
+
 	// Return result.
 	_ = conn.Reply(ctx, req.ID, SessionStatusResult{
 		Session:   sessionInfo,
 		ShimState: shimState,
+		Recovery:  recoveryInfo,
 	})
 }
 
@@ -806,8 +893,315 @@ func (h *connHandler) handleSessionDetach(ctx context.Context, conn *jsonrpc2.Co
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Room handlers
+// ────────────────────────────────────────────────────────────────────────────
+
+// handleRoomCreate creates a new room.
+// Workflow:
+//  1. Unmarshal RoomCreateParams
+//  2. Validate name non-empty
+//  3. Map communication mode string to CommunicationMode constant (default "mesh")
+//  4. Call store.CreateRoom
+//  5. Return RoomCreateResult
+//
+// Error handling:
+//   - Invalid params (missing name, invalid mode): returns InvalidParams
+//   - Room already exists: returns InvalidParams
+//   - Store failure: returns InternalError
+func (h *connHandler) handleRoomCreate(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var p RoomCreateParams
+	if err := unmarshalParams(req, &p); err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+
+	if p.Name == "" {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, "room name is required")
+		return
+	}
+
+	// Resolve communication mode — default to mesh.
+	mode := meta.CommunicationModeMesh
+	if p.Communication != nil && p.Communication.Mode != "" {
+		switch p.Communication.Mode {
+		case "mesh":
+			mode = meta.CommunicationModeMesh
+		case "star":
+			mode = meta.CommunicationModeStar
+		case "isolated":
+			mode = meta.CommunicationModeIsolated
+		default:
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+				fmt.Sprintf("invalid communication mode %q; must be mesh, star, or isolated", p.Communication.Mode))
+			return
+		}
+	}
+
+	room := &meta.Room{
+		Name:              p.Name,
+		Labels:            p.Labels,
+		CommunicationMode: mode,
+	}
+
+	if err := h.srv.store.CreateRoom(ctx, room); err != nil {
+		// Room already exists surfaces as an application error, not internal.
+		if strings.Contains(err.Error(), "already exists") {
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+		} else {
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
+		}
+		return
+	}
+
+	log.Printf("ari: room/create created room %s (mode=%s)", room.Name, room.CommunicationMode)
+
+	_ = conn.Reply(ctx, req.ID, RoomCreateResult{
+		Name:              room.Name,
+		CommunicationMode: string(room.CommunicationMode),
+		CreatedAt:         room.CreatedAt.Format(time.RFC3339),
+	})
+}
+
+// handleRoomStatus returns room metadata and realized member list.
+// Workflow:
+//  1. Unmarshal RoomStatusParams
+//  2. Call store.GetRoom
+//  3. Call store.ListSessions with Room filter to get members
+//  4. Build RoomMember list from matching sessions
+//  5. Return RoomStatusResult
+//
+// Error handling:
+//   - Invalid params (missing name): returns InvalidParams
+//   - Room not found: returns InvalidParams
+//   - Store failure: returns InternalError
+func (h *connHandler) handleRoomStatus(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var p RoomStatusParams
+	if err := unmarshalParams(req, &p); err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+
+	if p.Name == "" {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, "room name is required")
+		return
+	}
+
+	room, err := h.srv.store.GetRoom(ctx, p.Name)
+	if err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
+		return
+	}
+	if room == nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("room %q not found", p.Name))
+		return
+	}
+
+	// List sessions in this room.
+	sessions, err := h.srv.store.ListSessions(ctx, &meta.SessionFilter{Room: p.Name})
+	if err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
+			fmt.Sprintf("failed to list room members: %s", err.Error()))
+		return
+	}
+
+	members := make([]RoomMember, 0, len(sessions))
+	for _, s := range sessions {
+		members = append(members, RoomMember{
+			AgentName: s.RoomAgent,
+			SessionId: s.ID,
+			State:     string(s.State),
+		})
+	}
+
+	_ = conn.Reply(ctx, req.ID, RoomStatusResult{
+		Name:              room.Name,
+		Labels:            room.Labels,
+		CommunicationMode: string(room.CommunicationMode),
+		Members:           members,
+		CreatedAt:         room.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:         room.UpdatedAt.Format(time.RFC3339),
+	})
+}
+
+// handleRoomSend routes a message from one agent to another within a room.
+// Workflow:
+//  1. Unmarshal RoomSendParams
+//  2. Validate required fields (room, targetAgent, message)
+//  3. Call store.GetRoom — return InvalidParams if room not found
+//  4. Call store.ListSessions with Room filter — find session where RoomAgent == targetAgent
+//  5. If no matching session: return InvalidParams "target agent X not found in room Y"
+//  6. If target session state is "stopped": return InvalidParams "target agent X is stopped"
+//  7. Format attributed message: [room:<roomName> from:<senderAgent>] <message>
+//  8. Call deliverPrompt (auto-start, connect, prompt)
+//  9. Return RoomSendResult{Delivered: true, StopReason: result.StopReason}
+//
+// Error handling:
+//   - Invalid params (missing fields, room/agent not found): returns InvalidParams
+//   - Prompt failure: returns InternalError "prompt failed: <err>"
+//   - Store failure: returns InternalError
+func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var p RoomSendParams
+	if err := unmarshalParams(req, &p); err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+
+	// Validate required fields.
+	if p.Room == "" {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, "room is required")
+		return
+	}
+	if p.TargetAgent == "" {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, "targetAgent is required")
+		return
+	}
+	if p.Message == "" {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, "message is required")
+		return
+	}
+
+	// Verify room exists.
+	room, err := h.srv.store.GetRoom(ctx, p.Room)
+	if err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
+		return
+	}
+	if room == nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("room %q not found", p.Room))
+		return
+	}
+
+	// Find target session by RoomAgent within the room.
+	sessions, err := h.srv.store.ListSessions(ctx, &meta.SessionFilter{Room: p.Room})
+	if err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
+			fmt.Sprintf("failed to list room members: %s", err.Error()))
+		return
+	}
+
+	var targetSessionID string
+	var targetState meta.SessionState
+	for _, s := range sessions {
+		if s.RoomAgent == p.TargetAgent {
+			targetSessionID = s.ID
+			targetState = s.State
+			break
+		}
+	}
+
+	if targetSessionID == "" {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("target agent %q not found in room %q", p.TargetAgent, p.Room))
+		return
+	}
+
+	if targetState == meta.SessionStateStopped {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("target agent %q is stopped", p.TargetAgent))
+		return
+	}
+
+	// Format attributed message.
+	attributedMsg := fmt.Sprintf("[room:%s from:%s] %s", p.Room, p.SenderAgent, p.Message)
+
+	log.Printf("ari: room/send delivering message from %s to %s in room %s (session %s)",
+		p.SenderAgent, p.TargetAgent, p.Room, targetSessionID)
+
+	// Deliver prompt to target session.
+	stopReason, err := h.deliverPrompt(ctx, targetSessionID, attributedMsg)
+	if err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
+			fmt.Sprintf("prompt failed: %s", err.Error()))
+		return
+	}
+
+	_ = conn.Reply(ctx, req.ID, RoomSendResult{
+		Delivered:  true,
+		StopReason: stopReason,
+	})
+}
+
+// handleRoomDelete deletes a room.
+// Refuses deletion when non-stopped sessions are associated with the room.
+// Workflow:
+//  1. Unmarshal RoomDeleteParams
+//  2. Call store.ListSessions with Room filter
+//  3. Check no non-stopped sessions exist
+//  4. Call store.DeleteRoom
+//  5. Return nil result
+//
+// Error handling:
+//   - Invalid params (missing name): returns InvalidParams
+//   - Active members: returns InvalidParams
+//   - Room not found: returns InvalidParams
+//   - Store failure: returns InternalError
+func (h *connHandler) handleRoomDelete(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var p RoomDeleteParams
+	if err := unmarshalParams(req, &p); err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+
+	if p.Name == "" {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, "room name is required")
+		return
+	}
+
+	// Check for non-stopped sessions in this room.
+	sessions, err := h.srv.store.ListSessions(ctx, &meta.SessionFilter{Room: p.Name})
+	if err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
+			fmt.Sprintf("failed to check room members: %s", err.Error()))
+		return
+	}
+
+	var active []string
+	for _, s := range sessions {
+		if s.State != meta.SessionStateStopped {
+			active = append(active, s.ID)
+		}
+	}
+	if len(active) > 0 {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("room %q has %d active member(s); stop sessions before deleting", p.Name, len(active)))
+		return
+	}
+
+	if err := h.srv.store.DeleteRoom(ctx, p.Name); err != nil {
+		if strings.Contains(err.Error(), "does not exist") {
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+		} else {
+			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
+		}
+		return
+	}
+
+	log.Printf("ari: room/delete deleted room %s", p.Name)
+
+	_ = conn.Reply(ctx, req.ID, nil)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────────────────────────────────────────
+
+// recoveryGuard checks whether the daemon is actively recovering sessions.
+// If so, it replies with a CodeRecoveryBlocked JSON-RPC error and returns
+// true. Callers should return early when the guard fires. Read-only methods
+// (session/status, session/list, session/attach, session/detach) and
+// safety-critical methods (session/stop) MUST NOT call this guard.
+func (h *connHandler) recoveryGuard(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) bool {
+	if h.srv.processes.IsRecovering() {
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+			Code:    CodeRecoveryBlocked,
+			Message: "daemon is recovering sessions, operational actions are blocked",
+		})
+		return true
+	}
+	return false
+}
 
 // unmarshalParams decodes req.Params into dst.
 func unmarshalParams(req *jsonrpc2.Request, dst any) error {

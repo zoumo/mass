@@ -343,6 +343,17 @@ func convertMcpServers(servers []spec.McpServer) []acp.McpServer {
 	result := make([]acp.McpServer, 0, len(servers))
 	for _, s := range servers {
 		switch s.Type {
+		case "stdio":
+			env := make([]acp.EnvVariable, len(s.Env))
+			for i, e := range s.Env {
+				env[i] = acp.EnvVariable{Name: e.Name, Value: e.Value}
+			}
+			result = append(result, acp.McpServer{Stdio: &acp.McpServerStdio{
+				Name:    s.Name,
+				Command: s.Command,
+				Args:    s.Args,
+				Env:     env,
+			}})
 		case "sse":
 			result = append(result, acp.McpServer{Sse: &acp.McpServerSse{Url: s.URL, Type: s.Type}})
 		default:

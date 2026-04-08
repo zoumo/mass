@@ -258,15 +258,54 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		require.Equal(t, 3, status.Recovery.LastSeq)
 	})
 
+	t.Run("subscribe with fromSeq returns backfill", func(t *testing.T) {
+		// Open a second client. Call session/subscribe with fromSeq=0.
+		// We already generated 4 events from the first prompt above.
+		backfillNotifs := newNotifHandler()
+		backfillClient := h.dial(t, backfillNotifs)
+
+		var subResult rpc.SessionSubscribeResult
+		fromSeq := 0
+		err := backfillClient.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{FromSeq: &fromSeq}, &subResult)
+		require.NoError(t, err)
+		require.Len(t, subResult.Entries, 4, "expected 4 backfill entries from first prompt")
+		sortEnvelopesBySeq(subResult.Entries)
+		for i, env := range subResult.Entries {
+			seq, seqErr := env.Seq()
+			require.NoError(t, seqErr)
+			require.Equal(t, i, seq, "backfill entry %d has wrong seq", i)
+		}
+
+		// Trigger a second prompt and assert live events arrive.
+		var promptResult rpc.SessionPromptResult
+		err = client.Call(ctx, "session/prompt", rpc.SessionPromptParams{Prompt: "second"}, &promptResult)
+		require.NoError(t, err)
+		require.Equal(t, "end_turn", promptResult.StopReason)
+
+		live := backfillNotifs.collect(4, 10*time.Second)
+		require.Len(t, live, 4, "expected 4 live events from second prompt")
+		for _, env := range live {
+			seq, seqErr := env.Seq()
+			require.NoError(t, seqErr)
+			require.GreaterOrEqual(t, seq, 4, "live events should have seq >= 4")
+		}
+	})
+
 	t.Run("subscribe afterSeq filters prior history", func(t *testing.T) {
+		// Get the current nextSeq from status so the afterSeq floor is correct
+		// even if earlier subtests generated additional events.
+		var curStatus rpc.RuntimeStatusResult
+		err := client.Call(ctx, "runtime/status", nil, &curStatus)
+		require.NoError(t, err)
+		afterSeq := curStatus.Recovery.LastSeq
+
 		secondaryNotifs := newNotifHandler()
 		secondaryClient := h.dial(t, secondaryNotifs)
 
 		var subResult rpc.SessionSubscribeResult
-		afterSeq := 3
-		err := secondaryClient.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{AfterSeq: &afterSeq}, &subResult)
+		err = secondaryClient.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{AfterSeq: &afterSeq}, &subResult)
 		require.NoError(t, err)
-		require.Equal(t, 4, subResult.NextSeq)
+		require.Equal(t, afterSeq+1, subResult.NextSeq)
 
 		select {
 		case env := <-secondaryNotifs.ch:
@@ -325,6 +364,14 @@ func TestRPCServer_RejectsLegacyAndInvalidParams(t *testing.T) {
 		var result rpc.SessionSubscribeResult
 		neg := -1
 		err := client.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{AfterSeq: &neg}, &result)
+		require.Error(t, err)
+		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
+	})
+
+	t.Run("subscribe negative fromSeq", func(t *testing.T) {
+		var result rpc.SessionSubscribeResult
+		neg := -1
+		err := client.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{FromSeq: &neg}, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})

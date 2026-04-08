@@ -351,6 +351,36 @@ func (s *Store) ReleaseWorkspace(ctx context.Context, workspaceID string, sessio
 	return workspace.RefCount, nil
 }
 
+// ListWorkspaceRefs returns the session IDs that reference a workspace.
+// Used during registry rebuild to populate the Refs debugging list.
+func (s *Store) ListWorkspaceRefs(ctx context.Context, workspaceID string) ([]string, error) {
+	if workspaceID == "" {
+		return nil, fmt.Errorf("meta: workspace ID is required")
+	}
+
+	query := `SELECT session_id FROM workspace_refs WHERE workspace_id = ? ORDER BY created_at`
+
+	rows, err := s.db.QueryContext(ctx, query, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("meta: failed to list workspace refs for %s: %w", workspaceID, err)
+	}
+	defer rows.Close()
+
+	var sessionIDs []string
+	for rows.Next() {
+		var sid string
+		if err := rows.Scan(&sid); err != nil {
+			return nil, fmt.Errorf("meta: failed to scan workspace ref row: %w", err)
+		}
+		sessionIDs = append(sessionIDs, sid)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("meta: failed to iterate workspace ref rows: %w", err)
+	}
+
+	return sessionIDs, nil
+}
+
 // isUniqueViolation checks if an error is a unique constraint violation.
 func isUniqueViolation(err error) bool {
 	errMsg := err.Error()

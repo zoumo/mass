@@ -73,6 +73,34 @@ func (t *Translator) Subscribe() (<-chan Envelope, int, int) {
 	return ch, id, t.nextSeq
 }
 
+// SubscribeFromSeq atomically reads history from logPath starting at fromSeq
+// and registers a live subscription, all under the Translator's mutex.
+// This eliminates the event gap between separate History and Subscribe calls.
+//
+// Returns (backfill entries, subscription channel, subscription ID, nextSeq, error).
+//
+// Intended for recovery/startup only — holds the mutex during file I/O.
+// Do not use in hot paths where event broadcasting latency matters.
+func (t *Translator) SubscribeFromSeq(logPath string, fromSeq int) ([]Envelope, <-chan Envelope, int, int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	entries, err := ReadEventLog(logPath, fromSeq)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
+	if entries == nil {
+		entries = []Envelope{}
+	}
+
+	id := t.nextID
+	t.nextID++
+	ch := make(chan Envelope, 64)
+	t.subs[id] = ch
+
+	return entries, ch, id, t.nextSeq, nil
+}
+
 // Unsubscribe removes a subscriber and closes its channel.
 func (t *Translator) Unsubscribe(id int) {
 	t.mu.Lock()

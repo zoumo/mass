@@ -247,3 +247,166 @@ func TestRecoverSessions_NoSocketPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, meta.SessionStateStopped, session.State)
 }
+
+// TestRecoverSessions_ShimReportsStopped verifies that when a shim reports
+// stopped (but DB still says running), the session is fail-closed: marked
+// stopped in DB, not placed in the processes map, and NOT subscribed.
+func TestRecoverSessions_ShimReportsStopped(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Start a mock shim that reports stopped.
+	srv, socketPath := newMockShimServer(t)
+	srv.mu.Lock()
+	srv.statusResult = RuntimeStatusResult{
+		State: spec.State{
+			OarVersion: "0.1.0",
+			ID:         "stopped-session",
+			Status:     spec.StatusStopped,
+			Bundle:     "/tmp/test-bundle",
+		},
+		Recovery: RuntimeStatusRecovery{LastSeq: 0},
+	}
+	srv.mu.Unlock()
+
+	// Create workspace and a "running" session pointing at the mock socket.
+	ws := createTestWorkspace(t, ctx, store)
+	sessionID := createRecoveryTestSession(t, ctx, store, ws.ID, meta.SessionStateRunning, socketPath)
+
+	// Run recovery.
+	err := pm.RecoverSessions(ctx)
+	require.NoError(t, err, "RecoverSessions should not return error for individual failures")
+
+	// Session should be marked stopped in DB (fail-closed).
+	session, err := store.GetSession(ctx, sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, meta.SessionStateStopped, session.State,
+		"shim-reports-stopped session should be marked stopped in DB")
+
+	// Session should NOT be in the processes map.
+	assert.Nil(t, pm.GetProcess(sessionID),
+		"shim-reports-stopped session should not be in processes map")
+
+	// Mock shim should NOT have been subscribed.
+	srv.mu.Lock()
+	subscribed := srv.subscribed
+	srv.mu.Unlock()
+	assert.False(t, subscribed,
+		"shim should not have been subscribed when it reports stopped")
+}
+
+// TestRecoverSessions_ReconcileCreatedToRunning verifies that when the DB
+// says "created" but the shim reports "running", the reconciliation logic
+// transitions the DB to running and the session is fully recovered.
+func TestRecoverSessions_ReconcileCreatedToRunning(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Start a mock shim that reports running.
+	srv, socketPath := newMockShimServer(t)
+	srv.mu.Lock()
+	srv.statusResult = RuntimeStatusResult{
+		State: spec.State{
+			OarVersion: "0.1.0",
+			ID:         "reconciled-session",
+			Status:     spec.StatusRunning,
+			Bundle:     "/tmp/test-bundle",
+		},
+		Recovery: RuntimeStatusRecovery{LastSeq: 3},
+	}
+	srv.mu.Unlock()
+
+	// Create workspace and a "created" session pointing at the mock socket.
+	ws := createTestWorkspace(t, ctx, store)
+	sessionID := createRecoveryTestSession(t, ctx, store, ws.ID, meta.SessionStateCreated, socketPath)
+
+	// Run recovery.
+	err := pm.RecoverSessions(ctx)
+	require.NoError(t, err)
+
+	// Session state in DB should now be "running" (reconciled from created).
+	session, err := store.GetSession(ctx, sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, meta.SessionStateRunning, session.State,
+		"session should be transitioned from created to running")
+
+	// Session should be in the processes map (fully recovered).
+	shimProc := pm.GetProcess(sessionID)
+	require.NotNil(t, shimProc, "reconciled session should be in processes map")
+	assert.Equal(t, sessionID, shimProc.SessionID)
+	assert.NotNil(t, shimProc.Client, "client should be connected")
+
+	// Mock shim should have been subscribed.
+	srv.mu.Lock()
+	subscribed := srv.subscribed
+	srv.mu.Unlock()
+	assert.True(t, subscribed, "shim should have been subscribed after reconciliation")
+
+	// Cleanup.
+	srv.close()
+	select {
+	case <-shimProc.Done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for recovered process cleanup")
+	}
+}
+
+// TestRecoverSessions_ShimMismatchLogsWarning verifies that when the shim
+// reports a different status than the DB (but not the stopped or created→running
+// cases), recovery proceeds: the session is placed in the processes map and
+// subscribed, but the DB state is NOT changed.
+func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Start a mock shim that reports running.
+	srv, socketPath := newMockShimServer(t)
+	srv.mu.Lock()
+	srv.statusResult = RuntimeStatusResult{
+		State: spec.State{
+			OarVersion: "0.1.0",
+			ID:         "mismatched-session",
+			Status:     spec.StatusRunning,
+			Bundle:     "/tmp/test-bundle",
+		},
+		Recovery: RuntimeStatusRecovery{LastSeq: 1},
+	}
+	srv.mu.Unlock()
+
+	// Create workspace and a "paused:warm" session pointing at the mock socket.
+	ws := createTestWorkspace(t, ctx, store)
+	sessionID := createRecoveryTestSession(t, ctx, store, ws.ID, meta.SessionStatePausedWarm, socketPath)
+
+	// Run recovery.
+	err := pm.RecoverSessions(ctx)
+	require.NoError(t, err)
+
+	// Session should be in the processes map (recovery proceeded despite mismatch).
+	shimProc := pm.GetProcess(sessionID)
+	require.NotNil(t, shimProc, "mismatched session should still be recovered")
+	assert.Equal(t, sessionID, shimProc.SessionID)
+
+	// DB state should remain "paused:warm" — the default branch logs but
+	// does not update the DB state.
+	session, err := store.GetSession(ctx, sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, meta.SessionStatePausedWarm, session.State,
+		"DB state should remain paused:warm (mismatch only logged, not reconciled)")
+
+	// Mock shim should have been subscribed (recovery completed).
+	srv.mu.Lock()
+	subscribed := srv.subscribed
+	srv.mu.Unlock()
+	assert.True(t, subscribed, "shim should have been subscribed despite mismatch")
+
+	// Cleanup.
+	srv.close()
+	select {
+	case <-shimProc.Done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for recovered process cleanup")
+	}
+}

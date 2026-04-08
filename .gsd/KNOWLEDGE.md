@@ -250,3 +250,152 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** For SQLite schema migrations without a proper migration framework, the "attempt and ignore benign error" pattern is the simplest idempotent approach. Extend the benign-error checker as new error patterns emerge.
 - **Reference:** pkg/meta/schema.sql; pkg/meta/store.go isBenignSchemaError
 - **When:** M002/S03/T01
+
+## K034 — Design-first convergence de-risks multi-package protocol migrations
+
+- **Pattern:** Settling the authority map and design contract (S01) before implementing the protocol migration (S02) made the migration surprisingly clean — S02/T03 required zero ARI changes because the design boundaries were already correct.
+- **Lesson:** For protocol-breaking changes across multiple packages, invest in a design convergence slice first. The one-time cost of resolving contradictions in docs pays back as implementation confidence — the implementer knows which document to follow and never has to guess.
+- **Reference:** M002/S01 → M002/S02 dependency chain
+- **When:** M002
+
+## K035 — Real CLI integration tests need graceful degradation, not strict prerequisites
+
+- **Pattern:** `TestRealCLI_GsdPi` and `TestRealCLI_ClaudeCode` skip gracefully when ANTHROPIC_API_KEY or CLI binaries are missing, rather than failing CI. The tests structurally prove the lifecycle works by exercising the setup, connect, and teardown paths even when they skip.
+- **Gotcha:** Making API keys a hard requirement would break CI for every contributor who doesn't have credentials. Making tests completely absent would lose the structural proof that the contract supports real agents.
+- **Lesson:** Integration tests with external dependencies should use `t.Skip()` with clear skip messages, not conditional compilation or test tags. This keeps them visible in test output and easy to run locally with credentials.
+- **Reference:** tests/integration/real_cli_test.go
+- **When:** M002/S04
+
+## K036 — Duplicate decisions accumulate when planning slices with overlapping scope
+
+- **Pattern:** M002 accumulated duplicate decisions (D028/D030/D032 are identical recovery config decisions; D029/D031/D033 are identical recovery posture decisions) because each slice planning pass independently recorded the same architectural choices.
+- **Lesson:** Before recording a new decision, grep existing decisions for the same choice/scope. If the decision already exists, reference it instead of creating a new one. Decision duplication makes the decisions file harder to audit and gives false impression of distinct choices.
+- **Reference:** .gsd/DECISIONS.md D028-D033
+- **When:** M002/S03
+
+## K037 — Fail-closed recovery gates must have bounded duration
+
+- **Pattern:** When gating operational actions (prompt, cancel) during daemon recovery, the recovery phase MUST transition to Complete on every exit path — including systemic errors like metadata DB failures. Otherwise the daemon enters a permanent recovery-blocked state where no operational action can ever succeed.
+- **Gotcha:** If `RecoverSessions` encounters an error before processing any sessions (e.g. `ListSessions` fails) and returns without setting phase to Complete, the `recoveryGuard` blocks all prompt/cancel calls indefinitely. This is worse than the problem it was meant to solve.
+- **Lesson:** Fail-closed posture is a time-bounded safety mechanism, not a permanent trap. Use `defer m.SetRecoveryPhase(RecoveryPhaseComplete)` or ensure every exit path explicitly transitions. Test the systemic failure case, not just the happy path.
+- **Reference:** pkg/agentd/recovery.go RecoverSessions; pkg/agentd/recovery_posture_test.go TestRecoverSessions_Phase*
+- **When:** M003/S01/T03
+
+## K038 — Atomic fields for cross-goroutine state that guards request handlers
+
+- **Pattern:** Use `atomic.Int32` for daemon-level state flags that are checked on every incoming request (like recovery phase). This avoids acquiring the process map RWMutex on every handler invocation just to check a single flag.
+- **Gotcha:** Putting recovery phase under the process map lock would create unnecessary contention — every prompt/cancel/status call would compete with session creation/deletion for the same lock.
+- **Lesson:** Separate the concurrency domain of "phase gating" (high-frequency reads from every handler) from "process map operations" (lower-frequency reads/writes). Atomic fields are ideal for single-value flags read by many goroutines.
+- **Reference:** pkg/agentd/process.go recoveryPhase field; pkg/agentd/recovery_posture.go RecoveryPhase type
+- **When:** M003/S01/T01
+
+## K038 — Shim-vs-DB state reconciliation uses string comparison, not shared enums
+
+- **Pattern:** The shim reports status using `spec.Status` (creating/created/running/stopped) while the DB stores `meta.SessionState` (created/running/paused:warm/paused:cold/stopped). These are different types with overlapping but non-identical value sets.
+- **Gotcha:** You cannot use `==` between the two types directly. The reconciliation in `recoverSession` converts both to strings for comparison, with explicit switch cases for the actionable states (stopped → fail-close, running+created → transition).
+- **Lesson:** When comparing state across system boundaries (shim process vs DB), prefer an explicit switch on the authoritative side (shim) and handle each case individually, rather than trying to build a mapping table. The "other mismatch" catch-all is important for states like paused:warm that exist only on one side.
+- **Reference:** pkg/agentd/recovery.go reconciliation block between Status() and History() calls
+- **When:** M003/S02/T01
+
+## K039 — TOCTOU races in Unix socket cleanup are eliminated by unconditional Remove
+
+- **Pattern:** When starting a Unix domain socket listener, stale socket files from a previous daemon run must be cleaned up. The naive `os.Stat → os.Remove → net.Listen` sequence has a TOCTOU race.
+- **Gotcha:** Between Stat confirming the file exists and Remove executing, another process could create/remove the socket, causing either spurious errors or missed cleanup.
+- **Lesson:** Replace `if exists { remove }` with unconditional `os.Remove` that ignores `os.ErrNotExist`. This is atomic from the caller's perspective — it succeeds whether or not the file exists, with no window for races.
+- **Reference:** cmd/agentd/main.go socket cleanup before Serve()
+- **When:** M003/S02/T01
+
+## K040 — Damaged-tail detection must re-classify after append
+
+- **Pattern:** ReadEventLog's damaged-tail tolerance classifies corrupt lines at the end of a JSONL file as non-fatal. But after a new valid entry is appended past the corrupt line, the same corrupt line becomes mid-file corruption (valid data follows it).
+- **Gotcha:** T01's plan expected ReadEventLog to return all valid entries after appending past a damaged tail. The correct behavior is to error — the corrupt line is now mid-file, not tail. Test was adapted accordingly.
+- **Lesson:** Damaged-tail is a file-position-relative concept, not a property of the corrupt line itself. Any algorithm that classifies corruption must re-evaluate after the file changes. Don't hardcode "this line is damaged-tail" — always check what follows.
+- **Reference:** pkg/events/log.go ReadEventLog, pkg/events/log_test.go TestEventLog_AppendAfterDamagedTail
+- **When:** M003/S03/T01
+
+## K041 — File I/O under mutex is acceptable for recovery-only paths
+
+- **Pattern:** Translator.SubscribeFromSeq holds t.mu while performing ReadEventLog (file I/O). This is intentional — it eliminates the History→Subscribe gap by making log-read and subscription-registration atomic with respect to event broadcasting.
+- **Gotcha:** This would be a performance problem in hot paths (mutex blocks all event broadcasts during file reads). It's safe only because SubscribeFromSeq is called during recovery/startup, not during normal operation.
+- **Lesson:** Document the intended call-site constraint in godoc when accepting a lock-scope tradeoff. The method signature alone doesn't communicate "recovery only, not hot path." Future callers who use it in a broadcast loop will create latency issues.
+- **Reference:** pkg/events/translator.go SubscribeFromSeq godoc
+- **When:** M003/S03/T02
+
+## K042 — DB cascade deletes eliminate the need for explicit ReleaseWorkspace in session removal
+
+- **Pattern:** `meta.DeleteSession` already cascades `workspace_refs` rows via a DB trigger, which decrements `ref_count` automatically. Adding an explicit `store.ReleaseWorkspace` call in `handleSessionRemove` would cause a double-release, potentially driving ref_count negative.
+- **Gotcha:** When wiring new DB operations into existing handlers, always check whether the existing delete path already has cascade side-effects. The workspace_refs trigger was not obvious from reading `handleSessionRemove` alone — you have to trace through `meta.DeleteSession` → SQL triggers.
+- **Lesson:** Before adding a release/decrement call, verify the existing delete path doesn't already handle it via DB triggers. Double-release bugs are subtle — ref_count going to -1 doesn't error but silently breaks the "ref_count > 0 means active" invariant.
+- **Reference:** pkg/ari/server.go handleSessionRemove, pkg/meta/session.go DeleteSession
+- **When:** M003/S04/T01
+
+## K043 — Rebuilding in-memory state from DB requires careful key mapping between subsystems
+
+- **Pattern:** The ARI Registry keys workspaces by workspace ID, but the WorkspaceManager keys refcounts by workspace path (targetDir). When rebuilding from DB, you need to know which key each subsystem uses and map correctly from the DB record.
+- **Gotcha:** If you accidentally use workspace ID as the WorkspaceManager refcount key, Release calls (which use the path) will never find the refcount entry, silently allowing premature cleanup.
+- **Lesson:** When multiple subsystems maintain parallel state about the same resource, document the key each one uses. DB records typically have all the fields needed to populate both, but the caller must map correctly.
+- **Reference:** pkg/ari/registry.go RebuildFromDB (uses ws.ID), pkg/workspace/manager.go InitRefCounts (uses ws.Path)
+- **When:** M003/S04/T02
+## K014 — Two-level state gating pattern for recovery
+
+- **Pattern:** Use an atomic daemon-wide phase (single int32 compare) for fast guards in RPC handlers, combined with per-entity metadata structs for detailed inspection on demand. The guard is a single atomic read in the hot path; metadata is only assembled when a specific status/inspect call is made.
+- **Gotcha:** If you only use per-entity metadata for gating, you must iterate all entities on every guarded call. If you only use the daemon-wide phase, you can't tell callers which specific entity is recovering.
+- **Lesson:** Separate the "should I block?" question (atomic phase) from the "what's the recovery detail?" question (per-entity metadata). They have different performance profiles and different consumers.
+- **Reference:** pkg/agentd/recovery_posture.go (RecoveryPhase), pkg/agentd/process.go (RecoveryInfo on ShimProcess)
+- **When:** M003/S01
+
+## K015 — Always exit blocking states on every code path
+
+- **Pattern:** When setting a daemon into a blocking/gating state (e.g. "recovering"), ensure every exit path — including systemic errors, panics via defer, and early returns — transitions out of the blocking state.
+- **Gotcha:** If RecoverSessions encounters a ListSessions DB error and returns early without setting phase to Complete, the daemon is permanently blocked — no operational actions can ever succeed.
+- **Lesson:** Use `defer` to set the exit state, or verify every return path manually. A fail-closed posture must be time-bounded, not a permanent trap.
+- **Reference:** pkg/agentd/recovery.go RecoverSessions (D041)
+- **When:** M003/S01
+
+## K016 — Shim truth wins over DB truth in recovery
+
+- **Pattern:** During daemon recovery, the running shim process is ground truth for liveness. If the shim reports "running" but the DB says "created", update the DB to match the shim. If the DB state machine rejects the transition, log and proceed — the shim is still alive and reachable.
+- **Gotcha:** Failing recovery because the DB state machine rejects an edge-case transition would leave a live, reachable shim permanently disconnected.
+- **Lesson:** In recovery, the process that's actually running is more trustworthy than a record that may have been written during a previous daemon's crash window. Reconcile toward liveness, not toward historical DB state.
+- **Reference:** pkg/agentd/recovery.go recoverSession reconciliation switch (D042)
+- **When:** M003/S02
+
+## K017 — Two-pass line classification for damaged-tail tolerance
+
+- **Pattern:** When reading JSONL files that may have been partially written during a crash, collect all lines first, then walk forward classifying each as valid or corrupt. A corrupt line followed by any valid line is mid-file corruption (error); corrupt lines only at the file tail are damaged-tail (skip and return partial results).
+- **Gotcha:** Single-pass approaches can't distinguish tail damage from mid-file corruption without lookahead. Appending a valid entry past a corrupt line correctly reclassifies the corruption as mid-file.
+- **Lesson:** The two-pass approach is simpler, correct, and the file is already fully read by the scanner. Don't try to get clever with single-pass heuristics.
+- **Reference:** pkg/events/log.go ReadEventLog (D046)
+- **When:** M003/S03
+
+## K018 — DB-as-truth for destructive operations after restart
+
+- **Pattern:** When in-memory state doesn't survive daemon restarts, gate destructive operations (like workspace cleanup) on persisted DB state, not volatile in-memory counters. After restart, in-memory RefCount is 0, which would incorrectly allow cleanup of workspaces with active sessions.
+- **Gotcha:** If you rely on in-memory ref_count for cleanup gating and the daemon restarts, all workspaces appear to have zero references and cleanup succeeds unsafely.
+- **Lesson:** Any state used to gate destructive operations must survive restarts. DB ref_count persists; in-memory RefCount doesn't.
+- **Reference:** pkg/ari/server.go handleWorkspaceCleanup (D049), pkg/ari/registry.go RebuildFromDB (D050)
+- **When:** M003/S04
+
+## K019 — Extract shared helpers before the second consumer exists
+
+- **Pattern:** When building a new code path (room/send) that needs the same logic as an existing one (session/prompt), extract the shared helper (deliverPrompt) immediately rather than duplicating. The extraction is cheap during implementation and prevents divergent behavior.
+- **Gotcha:** If you duplicate the auto-start→connect→prompt flow into room/send and later fix a bug in session/prompt, you must remember to fix room/send too. The duplication creates a silent correctness risk.
+- **Lesson:** The cost of extraction during initial implementation is negligible. The cost of maintaining duplicated delivery paths grows with every fix and feature addition to either consumer.
+- **Reference:** pkg/ari/server.go deliverPrompt helper (D058)
+- **When:** M004/S02
+
+## K020 — Hand-rolled protocol surfaces for tiny tool counts
+
+- **Pattern:** When the protocol surface is tiny (e.g., 3 MCP methods, 2 tools), hand-rolling the implementation (~300 lines) is simpler than adding an SDK dependency. The hand-rolled code is self-contained, debuggable, and has no transitive dependency risk.
+- **Gotcha:** This only works when the surface is genuinely small. If the tool count grows beyond 3-4, the boilerplate for schema generation, parameter validation, and error formatting justifies an SDK.
+- **Lesson:** Set a clear threshold (e.g., "revisit if >3 tools") and document it in the decision record so future contributors know when to switch.
+- **Reference:** cmd/room-mcp-server/main.go (D055)
+- **When:** M004/S02
+
+## K021 — Teardown guard tests catch composition bugs
+
+- **Pattern:** After building happy-path integration tests, add adversarial-ordering tests that attempt operations in the wrong order (e.g., delete room before stopping sessions, remove session before stopping it). These catch composition bugs where individual guards work in isolation but fail when combined.
+- **Gotcha:** Happy-path tests always execute operations in the "right" order, so they never exercise the error paths that users will inevitably trigger.
+- **Lesson:** Teardown guards are only proven by tests that violate them. TestARIRoomTeardownGuards found that the interaction between active-member guards and session delete protection worked correctly — but only because it tested the wrong ordering explicitly.
+- **Reference:** pkg/ari/server_test.go TestARIRoomTeardownGuards (S03/T02)
+- **When:** M004/S03

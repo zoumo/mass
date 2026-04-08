@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -79,6 +80,11 @@ func (l *EventLog) Close() error {
 
 // ReadEventLog reads all Envelope records from path starting at fromSeq.
 // Returns an empty slice (not an error) if the file does not exist yet.
+//
+// Damaged-tail tolerance: if the last non-empty line(s) in the file fail to
+// unmarshal as JSON, they are treated as a partial write from a crash —
+// the successfully decoded entries are returned without error.  Mid-file
+// corruption (corrupt lines followed by valid lines) still returns an error.
 func ReadEventLog(path string, fromSeq int) ([]Envelope, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -89,21 +95,59 @@ func ReadEventLog(path string, fromSeq int) ([]Envelope, error) {
 	}
 	defer f.Close()
 
-	var entries []Envelope
-	dec := json.NewDecoder(f)
-	for dec.More() {
+	scanner := bufio.NewScanner(f)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 1024*1024) // 1 MB max line, matching countLines
+
+	// First pass: collect all non-empty lines.
+	type lineRecord struct {
+		raw   string
+		valid bool
+		env   Envelope
+	}
+	var lines []lineRecord
+	for scanner.Scan() {
+		text := strings.TrimSpace(scanner.Text())
+		if text == "" {
+			continue
+		}
 		var e Envelope
-		if err := dec.Decode(&e); err != nil {
-			return nil, fmt.Errorf("events: decode log entry: %w", err)
-		}
-		seq, err := e.Seq()
-		if err != nil {
-			return nil, fmt.Errorf("events: decode log entry: %w", err)
-		}
-		if seq >= fromSeq {
-			entries = append(entries, e)
+		if err := json.Unmarshal([]byte(text), &e); err != nil {
+			lines = append(lines, lineRecord{raw: text, valid: false})
+		} else {
+			lines = append(lines, lineRecord{raw: text, valid: true, env: e})
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("events: scan log %s: %w", path, err)
+	}
+
+	// Walk through collected lines. If a corrupt line is followed by any
+	// valid line later, that is mid-file corruption — return an error.
+	// If corrupt lines only appear at the tail, skip them (damaged tail).
+	var entries []Envelope
+	for i, lr := range lines {
+		if lr.valid {
+			seq, err := lr.env.Seq()
+			if err != nil {
+				return nil, fmt.Errorf("events: decode log entry: %w", err)
+			}
+			if seq >= fromSeq {
+				entries = append(entries, lr.env)
+			}
+			continue
+		}
+		// Corrupt line — check if any valid line follows.
+		for j := i + 1; j < len(lines); j++ {
+			if lines[j].valid {
+				return nil, fmt.Errorf("events: decode log entry: mid-file corruption at line %d", i+1)
+			}
+		}
+		// No valid lines follow — damaged tail. Log and break.
+		log.Printf("events: skipping %d damaged tail line(s) in %s", len(lines)-i, path)
+		break
+	}
+
 	return entries, nil
 }
 

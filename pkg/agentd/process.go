@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/open-agent-d/open-agent-d/pkg/events"
@@ -46,6 +47,11 @@ type ProcessManager struct {
 	mu       sync.RWMutex
 	processes map[string]*ShimProcess // sessionID -> ShimProcess
 
+	// recoveryPhase tracks the daemon-level recovery lifecycle as an atomic
+	// int32 so it can be read cheaply without acquiring mu. Guards in ARI
+	// handlers check this on every operational request.
+	recoveryPhase atomic.Int32
+
 	logger *slog.Logger
 }
 
@@ -78,6 +84,10 @@ type ShimProcess struct {
 
 	// Done is closed when the shim process exits.
 	Done chan struct{}
+
+	// Recovery holds per-session recovery metadata. Nil for sessions that
+	// were started normally (not recovered after a daemon restart).
+	Recovery *RecoveryInfo
 }
 
 // NewProcessManager creates a new ProcessManager.
@@ -208,7 +218,7 @@ func (m *ProcessManager) Start(ctx context.Context, sessionID string) (*ShimProc
 	}
 
 	// 8. Subscribe to events (no afterSeq — this is a fresh start).
-	if _, err := client.Subscribe(ctx, nil); err != nil {
+	if _, err := client.Subscribe(ctx, nil, nil); err != nil {
 		// Close client, kill shim, clean up.
 		_ = client.Close()
 		_ = m.killShim(shimProc)
@@ -254,6 +264,23 @@ func (m *ProcessManager) generateConfig(session *meta.Session, rc *RuntimeClass)
 	}
 	annotations["runtimeClass"] = rc.Name
 
+	// Build MCP servers list. Inject room MCP server for room sessions.
+	var mcpServers []spec.McpServer
+	if session.Room != "" {
+		mcpServers = append(mcpServers, spec.McpServer{
+			Type:    "stdio",
+			Name:    "room-tools",
+			Command: resolveRoomMCPBinary(),
+			Args:    []string{},
+			Env: []spec.EnvVar{
+				{Name: "OAR_AGENTD_SOCKET", Value: m.config.Socket},
+				{Name: "OAR_ROOM_NAME", Value: session.Room},
+				{Name: "OAR_SESSION_ID", Value: session.ID},
+				{Name: "OAR_ROOM_AGENT", Value: session.RoomAgent},
+			},
+		})
+	}
+
 	return spec.Config{
 		OarVersion: "0.1.0",
 		Metadata: spec.Metadata{
@@ -269,9 +296,30 @@ func (m *ProcessManager) generateConfig(session *meta.Session, rc *RuntimeClass)
 				Args:    rc.Args,
 				Env:     env,
 			},
+			Session: spec.AcpSession{
+				McpServers: mcpServers,
+			},
 		},
 		Permissions: spec.ApproveAll,
 	}
+}
+
+// resolveRoomMCPBinary finds the room-mcp-server binary using the same
+// priority pattern as the shim binary resolver:
+//  1. OAR_ROOM_MCP_BINARY env var (test override)
+//  2. ./bin/room-mcp-server relative to cwd (development)
+//  3. PATH lookup (production)
+func resolveRoomMCPBinary() string {
+	if envPath := os.Getenv("OAR_ROOM_MCP_BINARY"); envPath != "" {
+		return envPath
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		builtPath := filepath.Join(cwd, "bin", "room-mcp-server")
+		if _, err := os.Stat(builtPath); err == nil {
+			return builtPath
+		}
+	}
+	return "room-mcp-server" // PATH lookup
 }
 
 // createBundle creates the bundle directory and writes config.json.
@@ -406,13 +454,10 @@ func (m *ProcessManager) forkShim(ctx context.Context, session *meta.Session, rc
 }
 
 // waitForSocket waits for the shim's RPC socket to appear.
-// Polls with a timeout (default 10 seconds).
+// Polls with a 20s timeout — real CLI runtimes (gsd-pi, claude-code) need
+// npm resolution + ACP handshake which can take 10-20s.
 func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string) error {
-	timeout := 10 * time.Second
-	if m.config.Socket != "" {
-		// Test mode: use shorter timeout.
-		timeout = 5 * time.Second
-	}
+	timeout := 20 * time.Second
 
 	deadline := time.Now().Add(timeout)
 	for {
@@ -655,4 +700,43 @@ func (m *ProcessManager) ListProcesses() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Recovery posture — daemon-level phase tracking
+// ────────────────────────────────────────────────────────────────────────────
+
+// SetRecoveryPhase atomically sets the daemon-level recovery phase.
+// Called by RecoverSessions at the start (RecoveryPhaseRecovering) and end
+// (RecoveryPhaseComplete) of the recovery pass.
+func (m *ProcessManager) SetRecoveryPhase(phase RecoveryPhase) {
+	m.recoveryPhase.Store(int32(phase))
+	m.logger.Info("recovery phase changed", "phase", phase.String())
+}
+
+// GetRecoveryPhase atomically reads the current daemon-level recovery phase.
+func (m *ProcessManager) GetRecoveryPhase() RecoveryPhase {
+	return RecoveryPhase(m.recoveryPhase.Load())
+}
+
+// IsRecovering returns true when the daemon is actively recovering sessions.
+// ARI handlers use this to implement the fail-closed posture: operational
+// actions (prompt, cancel) are refused while recovery is in progress.
+func (m *ProcessManager) IsRecovering() bool {
+	return m.GetRecoveryPhase() == RecoveryPhaseRecovering
+}
+
+// SetSessionRecoveryInfo sets the recovery metadata on a running session's
+// ShimProcess. Returns false if the session is not in the processes map.
+func (m *ProcessManager) SetSessionRecoveryInfo(sessionID string, info *RecoveryInfo) bool {
+	m.mu.RLock()
+	shimProc, exists := m.processes[sessionID]
+	m.mu.RUnlock()
+
+	if !exists {
+		return false
+	}
+
+	shimProc.Recovery = info
+	return true
 }

@@ -21,7 +21,7 @@ func (s *Store) CreateRoom(ctx context.Context, room *Room) error {
 		return fmt.Errorf("meta: room name is required")
 	}
 	if room.CommunicationMode == "" {
-		room.CommunicationMode = CommunicationModeBroadcast
+		room.CommunicationMode = CommunicationModeMesh
 	}
 	if room.CreatedAt.IsZero() {
 		room.CreatedAt = time.Now()

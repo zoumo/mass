@@ -3,7 +3,22 @@
 package ari
 
 import (
+	"time"
+
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
+)
+
+// ────────────────────────────────────────────────────────────────────────────
+// Custom JSON-RPC Error Codes
+// ────────────────────────────────────────────────────────────────────────────
+
+const (
+	// CodeRecoveryBlocked is the JSON-RPC error code returned when an
+	// operational action (session/prompt, session/cancel) is refused because
+	// the daemon is actively recovering sessions. Clients should retry once
+	// recovery completes (poll session/status or session/list to observe
+	// the daemon leaving the recovering phase).
+	CodeRecoveryBlocked int64 = -32001
 )
 
 // WorkspacePrepareParams is the request params for workspace/prepare method.
@@ -202,6 +217,26 @@ type SessionStatusResult struct {
 	// ShimState is the runtime state of the shim process.
 	// Only populated if the session is running (state="running").
 	ShimState *ShimStateInfo `json:"shimState,omitempty"`
+
+	// Recovery holds per-session recovery metadata. Only populated when the
+	// session was recovered after a daemon restart. Nil for sessions that
+	// were started normally.
+	Recovery *SessionRecoveryInfo `json:"recovery,omitempty"`
+}
+
+// SessionRecoveryInfo describes the result of a recovery attempt for a
+// session. Surfaced through session/status so operators can distinguish
+// healthy sessions from recovered ones.
+type SessionRecoveryInfo struct {
+	// Recovered indicates whether the session was successfully recovered.
+	Recovered bool `json:"recovered"`
+
+	// RecoveredAt is the wall-clock time when recovery completed.
+	// Nil if recovery has not completed yet.
+	RecoveredAt *time.Time `json:"recoveredAt,omitempty"`
+
+	// Outcome is the recovery result: "recovered", "failed", or "pending".
+	Outcome string `json:"outcome"`
 }
 
 // ShimStateInfo describes the runtime state of a shim process.
@@ -241,4 +276,118 @@ type SessionAttachResult struct {
 type SessionDetachParams struct {
 	// SessionId is the unique identifier of the session to detach (required).
 	SessionId string `json:"sessionId"`
+}
+
+// =============================================================================
+// Room Types
+// =============================================================================
+
+// RoomCreateParams is the request params for room/create method.
+// It contains the specification for creating a new room.
+type RoomCreateParams struct {
+	// Name is the unique room name (required).
+	Name string `json:"name"`
+
+	// Labels are optional key-value metadata for the room.
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// Communication holds optional communication settings.
+	Communication *RoomCommunication `json:"communication,omitempty"`
+}
+
+// RoomCommunication describes the communication mode for a room.
+type RoomCommunication struct {
+	// Mode is the communication mode: "mesh", "star", or "isolated".
+	// Defaults to "mesh" if empty.
+	Mode string `json:"mode,omitempty"`
+}
+
+// RoomCreateResult is the response result for room/create method.
+// It contains the newly created room metadata.
+type RoomCreateResult struct {
+	// Name is the room name.
+	Name string `json:"name"`
+
+	// CommunicationMode is the resolved communication mode.
+	CommunicationMode string `json:"communicationMode"`
+
+	// CreatedAt is the RFC 3339 timestamp when the room was created.
+	CreatedAt string `json:"createdAt"`
+}
+
+// RoomStatusParams is the request params for room/status method.
+// It identifies the room to query status for.
+type RoomStatusParams struct {
+	// Name is the room name (required).
+	Name string `json:"name"`
+}
+
+// RoomStatusResult is the response result for room/status method.
+// It contains the room metadata and realized member list.
+type RoomStatusResult struct {
+	// Name is the room name.
+	Name string `json:"name"`
+
+	// Labels are the room's key-value metadata.
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// CommunicationMode is the room's communication mode.
+	CommunicationMode string `json:"communicationMode"`
+
+	// Members is the list of sessions currently associated with the room.
+	Members []RoomMember `json:"members"`
+
+	// CreatedAt is the RFC 3339 timestamp when the room was created.
+	CreatedAt string `json:"createdAt"`
+
+	// UpdatedAt is the RFC 3339 timestamp when the room was last updated.
+	UpdatedAt string `json:"updatedAt"`
+}
+
+// RoomMember describes a session that is part of a room.
+type RoomMember struct {
+	// AgentName is the agent name/ID within the room.
+	AgentName string `json:"agentName"`
+
+	// SessionId is the unique session identifier.
+	SessionId string `json:"sessionId"`
+
+	// State is the current session state.
+	State string `json:"state"`
+}
+
+// RoomSendParams is the request params for room/send method.
+// It routes a message from one agent to another within a room.
+type RoomSendParams struct {
+	// Room is the room name (required).
+	Room string `json:"room"`
+
+	// TargetAgent is the agent name to deliver the message to (required).
+	TargetAgent string `json:"targetAgent"`
+
+	// Message is the text to send (required).
+	Message string `json:"message"`
+
+	// SenderAgent is the name of the agent sending the message (optional, for attribution).
+	SenderAgent string `json:"senderAgent,omitempty"`
+
+	// SenderId is the session ID of the sender (optional, for tracing).
+	SenderId string `json:"senderId,omitempty"`
+}
+
+// RoomSendResult is the response result for room/send method.
+// It indicates whether the message was delivered.
+type RoomSendResult struct {
+	// Delivered is true when the prompt was successfully delivered.
+	Delivered bool `json:"delivered"`
+
+	// StopReason is the reason the target agent stopped processing.
+	StopReason string `json:"stopReason,omitempty"`
+}
+
+// RoomDeleteParams is the request params for room/delete method.
+// It identifies the room to delete.
+type RoomDeleteParams struct {
+	// Name is the room name (required).
+	Name string `json:"name"`
 }

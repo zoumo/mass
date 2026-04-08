@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"sync"
+
+	"github.com/open-agent-d/open-agent-d/pkg/meta"
 )
 
 // WorkspaceManager orchestrates workspace lifecycle operations.
@@ -194,6 +196,32 @@ func (m *WorkspaceManager) Cleanup(ctx context.Context, workspaceID string, spec
 				Message:     "failed to delete managed workspace directory",
 				Err:         err,
 			}
+		}
+	}
+
+	return nil
+}
+
+// InitRefCounts loads all active workspaces from the metadata store and
+// initialises the in-memory refCount map from their DB ref_count values.
+// This is called once during daemon startup after recovery so that
+// workspace cleanup decisions use the persisted reference counts.
+func (m *WorkspaceManager) InitRefCounts(store *meta.Store) error {
+	ctx := context.Background()
+
+	workspaces, err := store.ListWorkspaces(ctx, &meta.WorkspaceFilter{
+		Status: meta.WorkspaceStatusActive,
+	})
+	if err != nil {
+		return fmt.Errorf("workspace: init refcounts: list workspaces: %w", err)
+	}
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	for _, ws := range workspaces {
+		if ws.RefCount > 0 {
+			m.refCount[ws.Path] = ws.RefCount
 		}
 	}
 

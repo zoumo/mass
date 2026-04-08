@@ -1,6 +1,8 @@
 package events
 
 import (
+	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -273,6 +275,77 @@ func TestEventTypes(t *testing.T) {
 	for _, tc := range cases {
 		assert.Equal(t, tc.want, tc.ev.eventType(), "wrong eventType for %T", tc.ev)
 	}
+}
+
+func TestSubscribeFromSeq_BackfillAndLive(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.jsonl")
+
+	// Write 5 entries (seq 0-4) to the log file.
+	log1, err := OpenEventLog(logPath)
+	require.NoError(t, err)
+	for i := 0; i < 5; i++ {
+		require.NoError(t, log1.Append(NewSessionUpdateEnvelope("s1", i, time.Now().UTC(), TextEvent{Text: fmt.Sprintf("msg-%d", i)})))
+	}
+	require.NoError(t, log1.Close())
+
+	// Create a fresh Translator with an EventLog opened on the same path.
+	log2, err := OpenEventLog(logPath)
+	require.NoError(t, err)
+	defer log2.Close()
+
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("s1", in, log2)
+	tr.Start()
+	defer tr.Stop()
+
+	// SubscribeFromSeq(logPath, 2) should return 3 backfill entries (seq 2,3,4).
+	entries, ch, _, nextSeq, err := tr.SubscribeFromSeq(logPath, 2)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+	for i, env := range entries {
+		seq, serr := env.Seq()
+		require.NoError(t, serr)
+		assert.Equal(t, i+2, seq, "backfill entry %d has wrong seq", i)
+	}
+
+	// nextSeq should be 5 (next after the 5 already written).
+	assert.Equal(t, 5, nextSeq)
+
+	// Broadcast a new event via the Translator — it will get seq 5.
+	in <- makeNotif(func(u *acp.SessionUpdate) {
+		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "live"}},
+		}
+	})
+
+	// The subscription channel should receive the new event (seq 5).
+	liveEnv := drainEnvelope(t, ch)
+	liveSeq, err := liveEnv.Seq()
+	require.NoError(t, err)
+	assert.Equal(t, 5, liveSeq, "live event should have seq 5, no gap after backfill end at seq 4")
+}
+
+func TestSubscribeFromSeq_EmptyLog(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "nonexistent.jsonl")
+
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("s1", in, nil)
+	tr.Start()
+	defer tr.Stop()
+
+	entries, ch, _, nextSeq, err := tr.SubscribeFromSeq(logPath, 0)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "backfill should be empty for non-existent log")
+	assert.Equal(t, 0, nextSeq)
+
+	// Verify subscription works — broadcast an event.
+	tr.NotifyTurnStart()
+	liveEnv := drainEnvelope(t, ch)
+	liveSeq, err := liveEnv.Seq()
+	require.NoError(t, err)
+	assert.Equal(t, 0, liveSeq)
 }
 
 func TestSafeBlockText_NilText(t *testing.T) {

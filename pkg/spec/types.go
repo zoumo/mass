@@ -88,11 +88,33 @@ type AcpSession struct {
 
 // McpServer is a single MCP service endpoint.
 type McpServer struct {
-	// Type is the transport type. Valid values: "http", "sse".
+	// Type is the transport type. Valid values: "http", "sse", "stdio".
 	Type string `json:"type"`
 
-	// URL is the MCP service URL.
-	URL string `json:"url"`
+	// Name is the human-readable name identifying this MCP server.
+	// Used for stdio transport; optional for http/sse.
+	Name string `json:"name,omitempty"`
+
+	// URL is the MCP service URL. Used for http/sse transports.
+	URL string `json:"url,omitempty"`
+
+	// Command is the MCP server executable path. Used for stdio transport.
+	Command string `json:"command,omitempty"`
+
+	// Args are the command-line arguments for the stdio MCP server.
+	Args []string `json:"args,omitempty"`
+
+	// Env is the environment variables for the stdio MCP server.
+	Env []EnvVar `json:"env,omitempty"`
+}
+
+// EnvVar is a name-value pair representing an environment variable.
+type EnvVar struct {
+	// Name is the environment variable name.
+	Name string `json:"name"`
+
+	// Value is the environment variable value.
+	Value string `json:"value"`
 }
 
 // PermissionPolicy controls how agent-shim handles agent-initiated fs/* and

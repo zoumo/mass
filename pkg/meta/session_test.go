@@ -131,7 +131,7 @@ func TestSessionWithRoom(t *testing.T) {
 
 	room := &Room{
 		Name:             "test-room",
-		CommunicationMode: CommunicationModeBroadcast,
+		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {
 		t.Fatalf("CreateRoom failed: %v", err)
@@ -207,7 +207,7 @@ func TestListSessionsFiltering(t *testing.T) {
 	// Create prerequisite room.
 	room := &Room{
 		Name:             "room-with-sessions",
-		CommunicationMode: CommunicationModeBroadcast,
+		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {
 		t.Fatalf("CreateRoom failed: %v", err)

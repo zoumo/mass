@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "milestoneId": "M002",
+  "sliceId": "S04",
+  "timestamp": 1775579101739,
+  "status": "fail",
+  "durationMs": 2,
+  "checks": [
+    {
+      "category": "file",
+      "target": "tests/integration/real_cli_test.go",
+      "passed": false,
+      "message": "Task T01 references 'tests/integration/real_cli_test.go' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`pkg/ari/server.go` — contains the 10s start timeout in handleSessionPrompt (line ~478)",
+      "passed": false,
+      "message": "Task T01 references '`pkg/ari/server.go` — contains the 10s start timeout in handleSessionPrompt (line ~478)' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`pkg/agentd/process.go` — contains the 5s/10s waitForSocket timeout (line ~411-416)",
+      "passed": false,
+      "message": "Task T01 references '`pkg/agentd/process.go` — contains the 5s/10s waitForSocket timeout (line ~411-416)' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`tests/integration/session_test.go` — reuse setupAgentdTest pattern, testSocketCounter, prepareTestWorkspace, createTestSession helpers",
+      "passed": false,
+      "message": "Task T01 references '`tests/integration/session_test.go` — reuse setupAgentdTest pattern, testSocketCounter, prepareTestWorkspace, createTestSession helpers' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`tests/integration/e2e_test.go` — reuse waitForSocket helper function",
+      "passed": false,
+      "message": "Task T01 references '`tests/integration/e2e_test.go` — reuse waitForSocket helper function' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`tests/integration/restart_test.go` — reuse waitForSessionState helper function",
+      "passed": false,
+      "message": "Task T01 references '`tests/integration/restart_test.go` — reuse waitForSessionState helper function' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`bin/bundles/gsd-pi/config.json` — reference for gsd-pi runtime class env vars",
+      "passed": false,
+      "message": "Task T01 references '`bin/bundles/gsd-pi/config.json` — reference for gsd-pi runtime class env vars' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`bin/bundles/claude-code/config.json` — reference for claude-code runtime class args and env",
+      "passed": false,
+      "message": "Task T01 references '`bin/bundles/claude-code/config.json` — reference for claude-code runtime class args and env' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "tests/integration/real_cli_test.go",
+      "passed": false,
+      "message": "Task T02 references 'tests/integration/real_cli_test.go' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`tests/integration/real_cli_test.go` — the real CLI test file from T01",
+      "passed": false,
+      "message": "Task T02 references '`tests/integration/real_cli_test.go` — the real CLI test file from T01' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`pkg/ari/server.go` — modified timeout from T01",
+      "passed": false,
+      "message": "Task T02 references '`pkg/ari/server.go` — modified timeout from T01' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    },
+    {
+      "category": "file",
+      "target": "`pkg/agentd/process.go` — modified timeout from T01",
+      "passed": false,
+      "message": "Task T02 references '`pkg/agentd/process.go` — modified timeout from T01' which doesn't exist and isn't created by prior tasks",
+      "blocking": true
+    }
+  ]
+}

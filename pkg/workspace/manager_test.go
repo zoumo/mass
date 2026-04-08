@@ -4,12 +4,15 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/open-agent-d/open-agent-d/pkg/meta"
 )
 
 // TestWorkspaceErrorStructure verifies WorkspaceError has all required fields.
@@ -1063,5 +1066,90 @@ func TestWorkspaceManagerMultipleSessions(t *testing.T) {
 	m.mutex.Unlock()
 	if count != 0 {
 		t.Errorf("refCount after session 2 Cleanup = %d, want 0", count)
+	}
+}
+
+// TestWorkspaceManagerInitRefCounts verifies InitRefCounts loads refcounts
+// from the metadata store into the WorkspaceManager's in-memory refCount map.
+func TestWorkspaceManagerInitRefCounts(t *testing.T) {
+	// Create an in-memory meta store.
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	store, err := meta.NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// Seed: workspace with ref_count=2.
+	src := Source{Type: SourceTypeEmptyDir}
+	srcJSON, _ := json.Marshal(src)
+
+	ws := &meta.Workspace{
+		ID:     "ws-init-001",
+		Name:   "refcount-test",
+		Path:   "/var/workspaces/ws-init-001",
+		Source: srcJSON,
+		Status: meta.WorkspaceStatusActive,
+	}
+	if err := store.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+
+	// Create 2 sessions and acquire workspace for each.
+	sess1 := &meta.Session{ID: "sess-x1", RuntimeClass: "default", WorkspaceID: "ws-init-001", State: meta.SessionStateRunning}
+	sess2 := &meta.Session{ID: "sess-x2", RuntimeClass: "default", WorkspaceID: "ws-init-001", State: meta.SessionStateRunning}
+	if err := store.CreateSession(ctx, sess1); err != nil {
+		t.Fatalf("CreateSession sess-x1: %v", err)
+	}
+	if err := store.CreateSession(ctx, sess2); err != nil {
+		t.Fatalf("CreateSession sess-x2: %v", err)
+	}
+	if err := store.AcquireWorkspace(ctx, "ws-init-001", "sess-x1"); err != nil {
+		t.Fatalf("AcquireWorkspace sess-x1: %v", err)
+	}
+	if err := store.AcquireWorkspace(ctx, "ws-init-001", "sess-x2"); err != nil {
+		t.Fatalf("AcquireWorkspace sess-x2: %v", err)
+	}
+
+	// Also seed a workspace with ref_count=0 (should NOT appear in refCount map).
+	ws0 := &meta.Workspace{
+		ID:     "ws-init-002",
+		Name:   "zero-ref",
+		Path:   "/var/workspaces/ws-init-002",
+		Source: srcJSON,
+		Status: meta.WorkspaceStatusActive,
+	}
+	if err := store.CreateWorkspace(ctx, ws0); err != nil {
+		t.Fatalf("CreateWorkspace ws-init-002: %v", err)
+	}
+
+	// Create a fresh WorkspaceManager and init refcounts.
+	m := NewWorkspaceManager()
+	if err := m.InitRefCounts(store); err != nil {
+		t.Fatalf("InitRefCounts failed: %v", err)
+	}
+
+	// Verify refcount for ws-init-001 is 2.
+	m.mutex.Lock()
+	count := m.refCount["/var/workspaces/ws-init-001"]
+	m.mutex.Unlock()
+	if count != 2 {
+		t.Errorf("refCount[ws-init-001 path] = %d, want 2", count)
+	}
+
+	// Verify Release decrements: 2 → 1.
+	afterRelease := m.Release("/var/workspaces/ws-init-001")
+	if afterRelease != 1 {
+		t.Errorf("Release returned %d, want 1 (proving refcount was initialized to 2)", afterRelease)
+	}
+
+	// Verify ws-init-002 with ref_count=0 is NOT in the map.
+	m.mutex.Lock()
+	count0 := m.refCount["/var/workspaces/ws-init-002"]
+	m.mutex.Unlock()
+	if count0 != 0 {
+		t.Errorf("refCount for zero-ref workspace should be 0, got %d", count0)
 	}
 }

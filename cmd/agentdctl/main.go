@@ -30,6 +30,9 @@ func main() {
 	// Add workspace commands (defined in workspace.go)
 	rootCmd.AddCommand(workspaceCmd)
 
+	// Add room commands (defined in room.go)
+	rootCmd.AddCommand(roomCmd)
+
 	// Add daemon commands (defined in daemon.go)
 	rootCmd.AddCommand(daemonCmd)
 

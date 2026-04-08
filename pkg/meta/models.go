@@ -48,14 +48,14 @@ const (
 type CommunicationMode string
 
 const (
-	// CommunicationModeBroadcast indicates broadcast mode (all agents see all messages).
-	CommunicationModeBroadcast CommunicationMode = "broadcast"
+	// CommunicationModeMesh indicates mesh mode (all agents see all messages).
+	CommunicationModeMesh CommunicationMode = "mesh"
 
-	// CommunicationModeDirect indicates direct mode (agents communicate directly).
-	CommunicationModeDirect CommunicationMode = "direct"
+	// CommunicationModeStar indicates star mode (agents communicate through a central coordinator).
+	CommunicationModeStar CommunicationMode = "star"
 
-	// CommunicationModeHub indicates hub mode (central coordinator).
-	CommunicationModeHub CommunicationMode = "hub"
+	// CommunicationModeIsolated indicates isolated mode (agents have no inter-agent communication).
+	CommunicationModeIsolated CommunicationMode = "isolated"
 )
 
 // Session represents an agent runtime session record.

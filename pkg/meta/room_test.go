@@ -19,7 +19,7 @@ func TestRoomCRUD(t *testing.T) {
 	room := &Room{
 		Name:             "test-room",
 		Labels:           map[string]string{"env": "test", "team": "dev"},
-		CommunicationMode: CommunicationModeBroadcast,
+		CommunicationMode: CommunicationModeMesh,
 	}
 
 	if err := store.CreateRoom(ctx, room); err != nil {
@@ -72,9 +72,9 @@ func TestRoomCommunicationModes(t *testing.T) {
 
 	// Test different communication modes.
 	modes := []CommunicationMode{
-		CommunicationModeBroadcast,
-		CommunicationModeDirect,
-		CommunicationModeHub,
+		CommunicationModeMesh,
+		CommunicationModeStar,
+		CommunicationModeIsolated,
 	}
 
 	for i, mode := range modes {
@@ -105,7 +105,7 @@ func TestRoomDuplicateName(t *testing.T) {
 
 	room := &Room{
 		Name:             "duplicate-test",
-		CommunicationMode: CommunicationModeBroadcast,
+		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {
 		t.Fatalf("CreateRoom failed: %v", err)
@@ -114,7 +114,7 @@ func TestRoomDuplicateName(t *testing.T) {
 	// Try to create room with same name.
 	duplicate := &Room{
 		Name:             "duplicate-test",
-		CommunicationMode: CommunicationModeDirect,
+		CommunicationMode: CommunicationModeStar,
 	}
 	err := store.CreateRoom(ctx, duplicate)
 	if err == nil {
@@ -133,10 +133,10 @@ func TestListRoomsFiltering(t *testing.T) {
 
 	// Create rooms with different communication modes.
 	rooms := []*Room{
-		{Name: "broadcast-room", CommunicationMode: CommunicationModeBroadcast},
-		{Name: "direct-room", CommunicationMode: CommunicationModeDirect},
-		{Name: "hub-room", CommunicationMode: CommunicationModeHub},
-		{Name: "another-broadcast", CommunicationMode: CommunicationModeBroadcast},
+		{Name: "mesh-room", CommunicationMode: CommunicationModeMesh},
+		{Name: "star-room", CommunicationMode: CommunicationModeStar},
+		{Name: "isolated-room", CommunicationMode: CommunicationModeIsolated},
+		{Name: "another-mesh", CommunicationMode: CommunicationModeMesh},
 	}
 
 	for _, r := range rooms {
@@ -146,20 +146,20 @@ func TestListRoomsFiltering(t *testing.T) {
 	}
 
 	// Test filter by communication mode.
-	broadcastOnly, err := store.ListRooms(ctx, &RoomFilter{CommunicationMode: CommunicationModeBroadcast})
+	meshOnly, err := store.ListRooms(ctx, &RoomFilter{CommunicationMode: CommunicationModeMesh})
 	if err != nil {
 		t.Fatalf("ListRooms by mode failed: %v", err)
 	}
-	if len(broadcastOnly) != 2 {
-		t.Errorf("Expected 2 broadcast rooms, got %d", len(broadcastOnly))
+	if len(meshOnly) != 2 {
+		t.Errorf("Expected 2 mesh rooms, got %d", len(meshOnly))
 	}
 
-	directOnly, err := store.ListRooms(ctx, &RoomFilter{CommunicationMode: CommunicationModeDirect})
+	starOnly, err := store.ListRooms(ctx, &RoomFilter{CommunicationMode: CommunicationModeStar})
 	if err != nil {
 		t.Fatalf("ListRooms direct mode failed: %v", err)
 	}
-	if len(directOnly) != 1 {
-		t.Errorf("Expected 1 direct room, got %d", len(directOnly))
+	if len(starOnly) != 1 {
+		t.Errorf("Expected 1 star room, got %d", len(starOnly))
 	}
 
 	// Test no filter (all rooms).
@@ -192,7 +192,7 @@ func TestRoomDeleteWithSessions(t *testing.T) {
 	// Create room.
 	room := &Room{
 		Name:             "room-to-delete",
-		CommunicationMode: CommunicationModeBroadcast,
+		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {
 		t.Fatalf("CreateRoom failed: %v", err)
@@ -257,7 +257,7 @@ func TestRoomTransactionRollback(t *testing.T) {
 		INSERT INTO rooms (name, labels, communication_mode, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?)
 	`
-	_, err = tx.ExecContext(ctx, query, roomName, "{}", CommunicationModeBroadcast, time.Now(), time.Now())
+	_, err = tx.ExecContext(ctx, query, roomName, "{}", CommunicationModeMesh, time.Now(), time.Now())
 	if err != nil {
 		t.Fatalf("Insert in transaction failed: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestRoomEmptyLabels(t *testing.T) {
 	// Create room with no labels.
 	room := &Room{
 		Name:             "no-labels-room",
-		CommunicationMode: CommunicationModeBroadcast,
+		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {
 		t.Fatalf("CreateRoom failed: %v", err)

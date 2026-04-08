@@ -4,7 +4,7 @@
 **Demo:** After this: TBD
 
 ## Tasks
-- [ ] **T01: Increase startup timeouts and write real CLI integration tests** — ## Description
+- [x] **T01: Increased prompt timeout to 120s and created real CLI integration tests for gsd-pi and claude-code with graceful skip conditions** — ## Description
 
 The ARI server's `handleSessionPrompt` auto-start uses a 10s context timeout, and `ProcessManager.waitForSocket` uses 5s in test mode (detected via `m.config.Socket != ""`). Real CLIs like gsd-pi (bunx pi-acp) need npm resolution + ACP handshake which can take 10-20s. This task increases those timeouts to safe values and writes the real CLI integration test file proving R039.
 
@@ -53,7 +53,7 @@ The ARI server's `handleSessionPrompt` auto-start uses a 10s context timeout, an
   - Estimate: 45m
   - Files: pkg/ari/server.go, pkg/agentd/process.go, tests/integration/real_cli_test.go
   - Verify: go build -o bin/agentd ./cmd/agentd && go build -o bin/agent-shim ./cmd/agent-shim && go test ./tests/integration -run TestRealCLI -count=1 -v -timeout 180s
-- [ ] **T02: Full regression verification and R039 validation gate** — ## Description
+- [x] **T02: All integration tests, unit tests, and real CLI tests pass — no regressions from timeout changes, R039 validated** — ## Description
 
 Run the complete test suite to verify that the timeout changes from T01 don't break any existing tests, and that the real CLI tests pass (or skip gracefully). This is the slice's verification gate that proves R039.
 

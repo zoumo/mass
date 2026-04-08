@@ -117,11 +117,13 @@ func (c *ShimClient) Cancel(ctx context.Context) error {
 // SessionSubscribeParams is the JSON body for the "session/subscribe" method.
 type SessionSubscribeParams struct {
 	AfterSeq *int `json:"afterSeq,omitempty"`
+	FromSeq  *int `json:"fromSeq,omitempty"`
 }
 
 // SessionSubscribeResult is returned by "session/subscribe".
 type SessionSubscribeResult struct {
-	NextSeq int `json:"nextSeq"`
+	NextSeq int               `json:"nextSeq"`
+	Entries []events.Envelope `json:"entries,omitempty"`
 }
 
 // Subscribe registers for live session/update and runtime/stateChange
@@ -130,8 +132,13 @@ type SessionSubscribeResult struct {
 //
 // afterSeq, if non-nil, filters out notifications with seq <= afterSeq so
 // clients that have replayed history can resume from the right point.
-func (c *ShimClient) Subscribe(ctx context.Context, afterSeq *int) (SessionSubscribeResult, error) {
-	params := SessionSubscribeParams{AfterSeq: afterSeq}
+//
+// fromSeq, if non-nil, requests atomic backfill: the server reads the event
+// log from fromSeq under the same lock that registers the subscription,
+// returning backfill entries in the result alongside the live subscription.
+// This eliminates the gap between a separate History + Subscribe call pair.
+func (c *ShimClient) Subscribe(ctx context.Context, afterSeq *int, fromSeq *int) (SessionSubscribeResult, error) {
+	params := SessionSubscribeParams{AfterSeq: afterSeq, FromSeq: fromSeq}
 	var result SessionSubscribeResult
 	if err := c.call(ctx, "session/subscribe", params, &result); err != nil {
 		return SessionSubscribeResult{}, fmt.Errorf("shim_client: session/subscribe: session=%s: %w", c.socketPath, err)

@@ -6,12 +6,14 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/meta"
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // RecoverSessions runs at daemon startup and attempts to reconnect to shim
@@ -22,21 +24,28 @@ import (
 //  2. Tries DialWithHandler to connect to the shim socket.
 //  3. On connect failure → marks the session stopped (fail-closed per D012/D029).
 //  4. Calls runtime/status to get state + recovery.lastSeq.
-//  5. Calls runtime/history(fromSeq=0) to replay missed events (logged only).
-//  6. Calls session/subscribe(afterSeq=lastSeq) to resume live notifications.
-//  7. Builds a ShimProcess struct and registers it in the processes map.
-//  8. Starts a watchProcess goroutine for the recovered session.
+//  5. Calls session/subscribe(fromSeq=0) — atomic backfill + live subscription
+//     under a single lock hold, eliminating the History→Subscribe event gap.
+//  6. Builds a ShimProcess struct and registers it in the processes map.
+//  7. Starts a watchProcess goroutine for the recovered session.
 //
 // Returns nil on success (even if individual sessions fail to recover).
 // Returns error only for systemic failures (e.g. cannot query the DB).
 func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 	m.logger.Info("starting session recovery pass")
 
+	// Signal that recovery is in progress — ARI guards block operational
+	// actions (prompt, cancel) while this phase is active.
+	m.SetRecoveryPhase(RecoveryPhaseRecovering)
+
 	// List all non-terminal sessions. Terminal state is "stopped".
 	// We retrieve all sessions and filter out stopped ones since the store's
 	// SessionFilter only supports filtering TO a single state, not excluding one.
 	allSessions, err := m.store.ListSessions(ctx, nil)
 	if err != nil {
+		// Mark recovery complete even on systemic failure so the daemon
+		// doesn't stay permanently in recovering phase.
+		m.SetRecoveryPhase(RecoveryPhaseComplete)
 		return fmt.Errorf("recovery: list sessions: %w", err)
 	}
 
@@ -49,6 +58,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 
 	if len(candidates) == 0 {
 		m.logger.Info("recovery: no non-terminal sessions to recover")
+		m.SetRecoveryPhase(RecoveryPhaseComplete)
 		return nil
 	}
 
@@ -73,11 +83,21 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			}
 		} else {
 			recovered++
+			// Store per-session recovery metadata on the registered ShimProcess.
+			now := time.Now()
+			m.SetSessionRecoveryInfo(session.ID, &RecoveryInfo{
+				Recovered:   true,
+				RecoveredAt: &now,
+				Outcome:     RecoveryOutcomeRecovered,
+			})
 			m.logger.Info("recovery: session recovered",
 				"session_id", session.ID,
 				"socket_path", session.ShimSocketPath)
 		}
 	}
+
+	// Recovery pass finished — unblock operational actions.
+	m.SetRecoveryPhase(RecoveryPhaseComplete)
 
 	m.logger.Info("recovery pass complete",
 		"recovered", recovered,
@@ -152,23 +172,56 @@ func (m *ProcessManager) recoverSession(ctx context.Context, session *meta.Sessi
 			"pid", status.State.PID,
 		))
 
-	// Step 6: Call runtime/history(fromSeq=0) to replay any missed events.
-	fromSeq := 0
-	history, err := client.History(ctx, &fromSeq)
-	if err != nil {
+	// Reconcile shim-reported status against DB session state.
+	switch {
+	case status.State.Status == spec.StatusStopped:
+		// Shim reports stopped — fail-closed: don't proceed with recovery.
 		_ = client.Close()
-		return fmt.Errorf("runtime/history: %w", err)
-	}
-	logger.Info("recovery: replayed history",
-		"entries", len(history.Entries))
+		return fmt.Errorf("shim reports stopped for session %s", sessionID)
 
-	// Step 7: Call session/subscribe(afterSeq=lastSeq) to resume live notifications.
-	lastSeq := status.Recovery.LastSeq
-	_, err = client.Subscribe(ctx, &lastSeq)
+	case status.State.Status == spec.StatusRunning && session.State == meta.SessionStateCreated:
+		// Shim is running but DB still says created — update DB to match shim truth.
+		if err := m.sessions.Transition(ctx, sessionID, meta.SessionStateRunning); err != nil {
+			var invalidErr *ErrInvalidTransition
+			if errors.As(err, &invalidErr) {
+				logger.Warn("recovery: could not transition session to running (invalid transition, proceeding)",
+					"session_id", sessionID,
+					"db_state", session.State,
+					"shim_status", status.State.Status,
+					"error", err)
+			} else {
+				logger.Warn("recovery: failed to transition session to running (proceeding)",
+					"session_id", sessionID,
+					"error", err)
+			}
+		} else {
+			logger.Info("recovery: reconciled session state created→running to match shim",
+				"session_id", sessionID)
+		}
+
+	default:
+		// For any other mismatch, log and proceed — the shim is alive.
+		shimStatus := string(status.State.Status)
+		dbState := string(session.State)
+		if shimStatus != dbState {
+			logger.Warn("recovery: shim status differs from DB state (proceeding)",
+				"session_id", sessionID,
+				"shim_status", shimStatus,
+				"db_state", dbState)
+		}
+	}
+
+	// Step 6: Atomic subscribe with backfill — replaces the old separate
+	// History + Subscribe calls to eliminate the event gap between them.
+	fromSeq := 0
+	subResult, err := client.Subscribe(ctx, nil, &fromSeq)
 	if err != nil {
 		_ = client.Close()
-		return fmt.Errorf("session/subscribe afterSeq=%d: %w", lastSeq, err)
+		return fmt.Errorf("session/subscribe fromSeq=%d: %w", fromSeq, err)
 	}
+	logger.Info("recovery: atomic subscribe with backfill",
+		"backfill_entries", len(subResult.Entries),
+		"next_seq", subResult.NextSeq)
 
 	// Step 8: Register in processes map.
 	m.mu.Lock()

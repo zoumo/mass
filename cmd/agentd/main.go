@@ -90,16 +90,25 @@ func main() {
 		recoverCancel()
 	}
 
+	// Rebuild registry from DB after recovery.
+	if err := registry.RebuildFromDB(store); err != nil {
+		log.Printf("agentd: registry rebuild failed (non-fatal): %v", err)
+	} else {
+		log.Printf("agentd: registry rebuilt from database")
+	}
+	// Initialize workspace manager refcounts from DB.
+	if err := manager.InitRefCounts(store); err != nil {
+		log.Printf("agentd: workspace refcount init failed (non-fatal): %v", err)
+	}
+
 	// Create ARI Server with all dependencies.
 	srv := ari.New(manager, registry, sessions, processes, runtimeClasses, cfg, store, cfg.Socket, cfg.WorkspaceRoot)
 	log.Printf("agentd: ARI server created")
 
 	// Remove existing socket file if present (unclean shutdown recovery).
-	if _, err := os.Stat(cfg.Socket); err == nil {
-		log.Printf("agentd: removing existing socket file %s", cfg.Socket)
-		if err := os.Remove(cfg.Socket); err != nil {
-			log.Fatalf("agentd: failed to remove existing socket: %v", err)
-		}
+	// Use unconditional Remove instead of Stat→Remove to eliminate TOCTOU race.
+	if err := os.Remove(cfg.Socket); err != nil && !os.IsNotExist(err) {
+		log.Fatalf("agentd: failed to remove existing socket: %v", err)
 	}
 
 	// Start server in goroutine.

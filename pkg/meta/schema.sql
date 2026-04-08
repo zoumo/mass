@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 CREATE TABLE IF NOT EXISTS rooms (
     name TEXT PRIMARY KEY,
     labels TEXT DEFAULT '{}',  -- JSON map of labels
-    communication_mode TEXT NOT NULL DEFAULT 'broadcast',
+    communication_mode TEXT NOT NULL DEFAULT 'mesh',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

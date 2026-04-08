@@ -59,50 +59,6 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: unmapped
 - Notes: Phase 1.1 — ACP WaitForTerminalExitRequest/Response implementation
 
-### R034 — The shim surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
-- Class: integration
-- Status: active
-- Description: The shim surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
-- Why it matters: The current split naming and event model adds protocol drift exactly where ACP compatibility matters most.
-- Source: user
-- Primary owning slice: M002-ssi4mk/S02
-- Supporting slices: none
-- Validation: mapped
-- Notes: No backward-compatibility burden is required for obsolete names or event shapes.
-
-### R037 — Workspace identity, reuse rules, cleanup boundaries, and shared access expectations must be explicit in both design and implementation direction.
-- Class: core-capability
-- Status: active
-- Description: Workspace identity, reuse rules, cleanup boundaries, and shared access expectations must be explicit in both design and implementation direction.
-- Why it matters: Shared or reused workspaces become unsafe quickly if hooks, cleanup, or path identity are ambiguous.
-- Source: user
-- Primary owning slice: M002-q9r6sg/S04
-- Supporting slices: M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S03
-- Validation: mapped
-- Notes: Workspace safety moves from design intent to restart-safe enforced cleanup semantics in this milestone.
-
-### R039 — The converged contract must be exercised with the real bundle surfaces for `gsd-pi` and `claude-code`, not only mock agents.
-- Class: integration
-- Status: active
-- Description: The converged contract must be exercised with the real bundle surfaces for `gsd-pi` and `claude-code`, not only mock agents.
-- Why it matters: The project’s ACP claims are only useful if they survive contact with real clients.
-- Source: user
-- Primary owning slice: M002-ssi4mk/S04
-- Supporting slices: none
-- Validation: mapped
-- Notes: Existing bundle references under `bin/bundles/*` are the starting point for this proof.
-
-### R041 — The project must eventually support a realized Room runtime with explicit ownership, routing, and delivery semantics rather than leaving Room as conflicting partial intent.
-- Class: differentiator
-- Status: active
-- Description: The project must eventually support a realized Room runtime with explicit ownership, routing, and delivery semantics rather than leaving Room as conflicting partial intent.
-- Why it matters: Multi-agent coordination is a central differentiator for OAR, but it must land on a stable contract.
-- Source: user
-- Primary owning slice: M003-c761yf (provisional)
-- Supporting slices: none
-- Validation: mapped
-- Notes: This supersedes vague Room ambition with a concrete future capability target.
-
 ### R044 — Additional restart, replay, cleanup, and cross-client hardening that does not fit the primary convergence milestone remains planned follow-on work.
 - Class: quality-attribute
 - Status: active
@@ -112,7 +68,7 @@ This file is the explicit capability and coverage contract for the project.
 - Primary owning slice: M002-q9r6sg/S02
 - Supporting slices: M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04
 - Validation: mapped
-- Notes: This follow-on hardening milestone is now active and owns the restart/replay/cleanup safety work previously seeded as deferred.
+- Notes: M003 delivered: fail-closed recovery posture (S01), shim-vs-DB reconciliation (S02), atomic event resume and damaged-tail tolerance (S03), DB-backed workspace cleanup safety (S04). Remaining follow-on: real CLI restart recovery tests, cross-client hardening.
 
 ## Validated
 
@@ -270,6 +226,17 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close.
 - Notes: S03 still owns durable persistence of bootstrap/recovery state, but the design meaning is now singular and validated.
 
+### R034 — The shim surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
+- Class: integration
+- Status: validated
+- Description: The shim surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
+- Why it matters: The current split naming and event model adds protocol drift exactly where ACP compatibility matters most.
+- Source: user
+- Primary owning slice: M002-ssi4mk/S02
+- Supporting slices: none
+- Validation: S02 replaced all legacy PascalCase shim methods and `$/event` notifications with the clean-break `session/*` + `runtime/*` surface. No-legacy-name grep gate passes: `! rg '"Prompt"|"Cancel"|"Subscribe"|"GetState"|"GetHistory"|"Shutdown"|"$/event"'` in non-test sources across pkg/rpc, pkg/agentd, pkg/ari, cmd/agent-shim-cli returns zero matches. Full test suite passes. D027 records the validation decision.
+- Notes: No backward-compatibility burden is required for obsolete names or event shapes.
+
 ### R035 — Runtime event recovery must offer a single resume path that closes the current gap between history replay and live subscription.
 - Class: continuity
 - Status: validated
@@ -278,8 +245,8 @@ This file is the explicit capability and coverage contract for the project.
 - Source: user
 - Primary owning slice: M002-q9r6sg/S03
 - Supporting slices: M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02
-- Validation: TestAgentdRestartRecovery proves status→history→subscribe resume path closes event gap: 8 events with contiguous seq [0-7] across daemon restart, zero gaps.
-- Notes: Recovery hardening ownership moved to M002-q9r6sg for atomic resume and damaged-tail tolerance beyond the M002 baseline.
+- Validation: M003/S03 upgraded the resume path: Translator.SubscribeFromSeq reads log + registers subscription under a single mutex hold, eliminating the History→Subscribe gap structurally. RecoverSession now uses atomic Subscribe(fromSeq=0) instead of separate History+Subscribe calls. Proven by TestSubscribeFromSeq_BackfillAndLive (contiguous seq, no gap), TestShimClientSubscribeFromSeq, and full recovery test suite.
+- Notes: Recovery hardening ownership moved to M002-q9r6sg for atomic resume and damaged-tail tolerance beyond the M002 baseline. M003/S03 completed the structural fix.
 
 ### R036 — The runtime must preserve enough session configuration and identity to rebuild truthful state after restart or reconnect.
 - Class: continuity
@@ -292,6 +259,17 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: TestAgentdRestartRecovery proves bootstrap_config, socket_path, state_dir, PID persist in schema v2. RecoverSessions rebuilds truthful state: live shim reconnected, dead shim marked stopped.
 - Notes: Truthful restart/state rebuild now completes in M002-q9r6sg through live reconnect and explicit recovery posture.
 
+### R037 — Workspace identity, reuse rules, cleanup boundaries, and shared access expectations must be explicit in both design and implementation direction.
+- Class: core-capability
+- Status: validated
+- Description: Workspace identity, reuse rules, cleanup boundaries, and shared access expectations must be explicit in both design and implementation direction.
+- Why it matters: Shared or reused workspaces become unsafe quickly if hooks, cleanup, or path identity are ambiguous.
+- Source: user
+- Primary owning slice: M002-q9r6sg/S04
+- Supporting slices: M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S03
+- Validation: S04 implemented DB-backed ref_count as cleanup gate (store.GetWorkspace ref_count check in handleWorkspaceCleanup), recovery-phase guard blocking cleanup during recovery, Registry.RebuildFromDB for workspace identity persistence across restarts, and WorkspaceManager.InitRefCounts for refcount consistency. 7 integration tests prove: ref_count increments on session/new (TestARISessionNewAcquiresWorkspaceRef), decrements on session/remove (TestARISessionRemoveReleasesWorkspaceRef), Source spec persisted (TestARIWorkspacePrepareSourcePersisted), cleanup blocked by DB refs (TestARIWorkspaceCleanupBlockedByDBRefCount), cleanup blocked during recovery (TestARIWorkspaceCleanupBlockedDuringRecovery), registry rebuild from DB (TestRegistryRebuildFromDB), and manager refcount init (TestWorkspaceManagerInitRefCounts).
+- Notes: Workspace safety moves from design intent to restart-safe enforced cleanup semantics in M003. Registry rebuild does not verify on-disk workspace path existence (stale workspace detection).
+
 ### R038 — Local workspace attachment, hook execution, environment injection, and shared workspace access must have explicit boundary rules now, not only in a later readiness phase.
 - Class: compliance/security
 - Status: validated
@@ -302,6 +280,28 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S04
 - Validation: T03 documented explicit host-impact rules for local workspace attachment, hooks, env precedence, and shared workspace reuse across the authoritative design docs. Final slice verifier passed with these boundary rules in place.
 - Notes: This validates the design boundary contract; runtime enforcement and recovery hardening continue in later slices.
+
+### R039 — The converged contract must be exercised with the real bundle surfaces for `gsd-pi` and `claude-code`, not only mock agents.
+- Class: integration
+- Status: validated
+- Description: The converged contract must be exercised with the real bundle surfaces for `gsd-pi` and `claude-code`, not only mock agents.
+- Why it matters: The project’s ACP claims are only useful if they survive contact with real clients.
+- Source: user
+- Primary owning slice: M002-ssi4mk/S04
+- Supporting slices: none
+- Validation: S04 created TestRealCLI_GsdPi and TestRealCLI_ClaudeCode exercising full ARI session lifecycle with real runtime class configs. Tests skip gracefully when ANTHROPIC_API_KEY is absent. Timeout infrastructure (start=30s, prompt=120s, waitForSocket=20s) tuned for real CLI startup. The setupAgentdTestWithRuntimeClass helper proves the converged contract supports arbitrary runtime classes beyond mockagent.
+- Notes: Existing bundle references under `bin/bundles/*` are the starting point for this proof.
+
+### R041 — The project must eventually support a realized Room runtime with explicit ownership, routing, and delivery semantics rather than leaving Room as conflicting partial intent.
+- Class: differentiator
+- Status: validated
+- Description: The project must eventually support a realized Room runtime with explicit ownership, routing, and delivery semantics rather than leaving Room as conflicting partial intent.
+- Why it matters: Multi-agent coordination is a central differentiator for OAR, but it must land on a stable contract.
+- Source: user
+- Primary owning slice: M003-c761yf (provisional)
+- Supporting slices: none
+- Validation: Fully realized in M004: room/create, room/status, room/delete ARI handlers (ownership); room/send with target resolution and sender attribution (routing); deliverPrompt helper with auto-start semantics (delivery). Proven by TestARIMultiAgentRoundTrip — 3-agent bidirectional messaging end-to-end.
+- Notes: This supersedes vague Room ambition with a concrete future capability target.
 
 ## Deferred
 
@@ -469,14 +469,14 @@ This file is the explicit capability and coverage contract for the project.
 | R031 | anti-feature | out-of-scope | none | none | n/a |
 | R032 | core-capability | validated | M002-ssi4mk/S01 | none | M002/S01 final verifier passed: `bash scripts/verify-m002-s01-contract.sh`; bundle proof passed: `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1`. The design set now defines one non-conflicting contract across Room, Session, Runtime, Workspace, and shim recovery semantics. |
 | R033 | integration | validated | M002-ssi4mk/S01 | M002-ssi4mk/S02 | T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close. |
-| R034 | integration | active | M002-ssi4mk/S02 | none | mapped |
-| R035 | continuity | validated | M002-q9r6sg/S03 | M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02 | TestAgentdRestartRecovery proves status→history→subscribe resume path closes event gap: 8 events with contiguous seq [0-7] across daemon restart, zero gaps. |
+| R034 | integration | validated | M002-ssi4mk/S02 | none | S02 replaced all legacy PascalCase shim methods and `$/event` notifications with the clean-break `session/*` + `runtime/*` surface. No-legacy-name grep gate passes: `! rg '"Prompt"|"Cancel"|"Subscribe"|"GetState"|"GetHistory"|"Shutdown"|"$/event"'` in non-test sources across pkg/rpc, pkg/agentd, pkg/ari, cmd/agent-shim-cli returns zero matches. Full test suite passes. D027 records the validation decision. |
+| R035 | continuity | validated | M002-q9r6sg/S03 | M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02 | M003/S03 upgraded the resume path: Translator.SubscribeFromSeq reads log + registers subscription under a single mutex hold, eliminating the History→Subscribe gap structurally. RecoverSession now uses atomic Subscribe(fromSeq=0) instead of separate History+Subscribe calls. Proven by TestSubscribeFromSeq_BackfillAndLive (contiguous seq, no gap), TestShimClientSubscribeFromSeq, and full recovery test suite. |
 | R036 | continuity | validated | M002-q9r6sg/S02 | M002-ssi4mk/S03, M002-q9r6sg/S01 | TestAgentdRestartRecovery proves bootstrap_config, socket_path, state_dir, PID persist in schema v2. RecoverSessions rebuilds truthful state: live shim reconnected, dead shim marked stopped. |
-| R037 | core-capability | active | M002-q9r6sg/S04 | M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S03 | mapped |
+| R037 | core-capability | validated | M002-q9r6sg/S04 | M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S03 | S04 implemented DB-backed ref_count as cleanup gate (store.GetWorkspace ref_count check in handleWorkspaceCleanup), recovery-phase guard blocking cleanup during recovery, Registry.RebuildFromDB for workspace identity persistence across restarts, and WorkspaceManager.InitRefCounts for refcount consistency. 7 integration tests prove: ref_count increments on session/new (TestARISessionNewAcquiresWorkspaceRef), decrements on session/remove (TestARISessionRemoveReleasesWorkspaceRef), Source spec persisted (TestARIWorkspacePrepareSourcePersisted), cleanup blocked by DB refs (TestARIWorkspaceCleanupBlockedByDBRefCount), cleanup blocked during recovery (TestARIWorkspaceCleanupBlockedDuringRecovery), registry rebuild from DB (TestRegistryRebuildFromDB), and manager refcount init (TestWorkspaceManagerInitRefCounts). |
 | R038 | compliance/security | validated | M002-q9r6sg/S01 | M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S04 | T03 documented explicit host-impact rules for local workspace attachment, hooks, env precedence, and shared workspace reuse across the authoritative design docs. Final slice verifier passed with these boundary rules in place. |
-| R039 | integration | active | M002-ssi4mk/S04 | none | mapped |
+| R039 | integration | validated | M002-ssi4mk/S04 | none | S04 created TestRealCLI_GsdPi and TestRealCLI_ClaudeCode exercising full ARI session lifecycle with real runtime class configs. Tests skip gracefully when ANTHROPIC_API_KEY is absent. Timeout infrastructure (start=30s, prompt=120s, waitForSocket=20s) tuned for real CLI startup. The setupAgentdTestWithRuntimeClass helper proves the converged contract supports arbitrary runtime classes beyond mockagent. |
 | R040 | integration | deferred | none | none | deferred by user |
-| R041 | differentiator | active | M003-c761yf (provisional) | none | mapped |
+| R041 | differentiator | validated | M003-c761yf (provisional) | none | Fully realized in M004: room/create, room/status, room/delete ARI handlers (ownership); room/send with target resolution and sender attribution (routing); deliverPrompt helper with auto-start semantics (delivery). Proven by TestARIMultiAgentRoundTrip — 3-agent bidirectional messaging end-to-end. |
 | R042 | constraint | deferred | none | none | unmapped |
 | R043 | constraint | deferred | none | none | unmapped |
 | R044 | quality-attribute | active | M002-q9r6sg/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | mapped |
@@ -485,7 +485,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 10
-- Mapped to slices: 10
-- Validated: 17 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R035, R036, R038)
+- Active requirements: 6
+- Mapped to slices: 6
+- Validated: 21 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041)
 - Unmapped active requirements: 0

@@ -270,6 +270,106 @@ done:
 	t.Logf("Test complete: session %s lifecycle: created → running → stopped", sessionID)
 }
 
+// ── generateConfig ────────────────────────────────────────────────────────────
+
+func TestGenerateConfigWithRoomMCPInjection(t *testing.T) {
+	// Minimal ProcessManager with socket config set.
+	pm := &ProcessManager{
+		config: Config{
+			Socket: "/tmp/test-agentd.sock",
+		},
+	}
+	rc := &RuntimeClass{
+		Name:    "mockagent",
+		Command: "/usr/bin/mockagent",
+		Args:    []string{},
+		Env:     map[string]string{},
+	}
+
+	t.Run("session with Room injects room MCP server", func(t *testing.T) {
+		session := &meta.Session{
+			ID:        "sess-123",
+			Room:      "design-room",
+			RoomAgent: "agent-alice",
+		}
+
+		cfg := pm.generateConfig(session, rc)
+
+		servers := cfg.AcpAgent.Session.McpServers
+		if len(servers) != 1 {
+			t.Fatalf("expected 1 MCP server, got %d", len(servers))
+		}
+		srv := servers[0]
+		if srv.Type != "stdio" {
+			t.Errorf("expected Type=stdio, got %q", srv.Type)
+		}
+		if srv.Name != "room-tools" {
+			t.Errorf("expected Name=room-tools, got %q", srv.Name)
+		}
+		// Command is resolved via resolveRoomMCPBinary — in test env it falls
+		// back to "room-mcp-server" (PATH lookup) since no binary exists.
+		if srv.Command == "" {
+			t.Error("expected non-empty Command")
+		}
+
+		// Verify env vars.
+		envMap := make(map[string]string)
+		for _, e := range srv.Env {
+			envMap[e.Name] = e.Value
+		}
+		if envMap["OAR_AGENTD_SOCKET"] != "/tmp/test-agentd.sock" {
+			t.Errorf("OAR_AGENTD_SOCKET = %q, want /tmp/test-agentd.sock", envMap["OAR_AGENTD_SOCKET"])
+		}
+		if envMap["OAR_ROOM_NAME"] != "design-room" {
+			t.Errorf("OAR_ROOM_NAME = %q, want design-room", envMap["OAR_ROOM_NAME"])
+		}
+		if envMap["OAR_SESSION_ID"] != "sess-123" {
+			t.Errorf("OAR_SESSION_ID = %q, want sess-123", envMap["OAR_SESSION_ID"])
+		}
+		if envMap["OAR_ROOM_AGENT"] != "agent-alice" {
+			t.Errorf("OAR_ROOM_AGENT = %q, want agent-alice", envMap["OAR_ROOM_AGENT"])
+		}
+	})
+
+	t.Run("session without Room has empty McpServers", func(t *testing.T) {
+		session := &meta.Session{
+			ID: "sess-456",
+		}
+
+		cfg := pm.generateConfig(session, rc)
+
+		if len(cfg.AcpAgent.Session.McpServers) != 0 {
+			t.Errorf("expected 0 MCP servers for non-room session, got %d", len(cfg.AcpAgent.Session.McpServers))
+		}
+	})
+
+	t.Run("session with Room but empty RoomAgent still injects", func(t *testing.T) {
+		session := &meta.Session{
+			ID:        "sess-789",
+			Room:      "chat-room",
+			RoomAgent: "", // empty is valid
+		}
+
+		cfg := pm.generateConfig(session, rc)
+
+		servers := cfg.AcpAgent.Session.McpServers
+		if len(servers) != 1 {
+			t.Fatalf("expected 1 MCP server, got %d", len(servers))
+		}
+		// Verify OAR_ROOM_AGENT is present with empty value.
+		envMap := make(map[string]string)
+		for _, e := range servers[0].Env {
+			envMap[e.Name] = e.Value
+		}
+		if _, exists := envMap["OAR_ROOM_AGENT"]; !exists {
+			t.Error("OAR_ROOM_AGENT env var should exist even when RoomAgent is empty")
+		}
+		if envMap["OAR_ROOM_AGENT"] != "" {
+			t.Errorf("OAR_ROOM_AGENT = %q, want empty string", envMap["OAR_ROOM_AGENT"])
+		}
+	})
+}
+
 // findShimBinary finds the agent-shim binary for testing.
 // Returns the path or skips the test if not found.
 func findShimBinary(t *testing.T) string {

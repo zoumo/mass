@@ -231,6 +231,31 @@ func TestConvertMcpServers_HTTPBranch(t *testing.T) {
 	assert.Nil(t, result[0].Sse, "expected Sse field to be nil for type=http")
 }
 
+func TestConvertMcpServers_StdioBranch(t *testing.T) {
+	servers := []spec.McpServer{
+		{
+			Type:    "stdio",
+			Name:    "room-tools",
+			Command: "/usr/bin/room-mcp-server",
+			Args:    []string{"--verbose"},
+			Env:     []spec.EnvVar{{Name: "FOO", Value: "bar"}, {Name: "BAZ", Value: "qux"}},
+		},
+	}
+	result := convertMcpServers(servers)
+	require.Len(t, result, 1)
+	require.NotNil(t, result[0].Stdio, "expected Stdio field to be populated for type=stdio")
+	assert.Equal(t, "room-tools", result[0].Stdio.Name)
+	assert.Equal(t, "/usr/bin/room-mcp-server", result[0].Stdio.Command)
+	assert.Equal(t, []string{"--verbose"}, result[0].Stdio.Args)
+	require.Len(t, result[0].Stdio.Env, 2)
+	assert.Equal(t, "FOO", result[0].Stdio.Env[0].Name)
+	assert.Equal(t, "bar", result[0].Stdio.Env[0].Value)
+	assert.Equal(t, "BAZ", result[0].Stdio.Env[1].Name)
+	assert.Equal(t, "qux", result[0].Stdio.Env[1].Value)
+	assert.Nil(t, result[0].Http, "expected Http field to be nil for type=stdio")
+	assert.Nil(t, result[0].Sse, "expected Sse field to be nil for type=stdio")
+}
+
 func TestConvertMcpServers_Empty(t *testing.T) {
 	result := convertMcpServers(nil)
 	assert.Empty(t, result, "nil input should produce empty slice")

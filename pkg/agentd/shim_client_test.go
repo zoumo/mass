@@ -156,13 +156,28 @@ func (h *mockShimHandler) handleCancel(ctx context.Context, conn *jsonrpc2.Conn,
 }
 
 func (h *mockShimHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	// Parse params to check for fromSeq.
+	var params SessionSubscribeParams
+	if req.Params != nil {
+		_ = json.Unmarshal(*req.Params, &params)
+	}
+
 	h.srv.mu.Lock()
 	h.srv.subscribed = true
 	notifs := make([]shimNotif, len(h.srv.liveNotifications))
 	copy(notifs, h.srv.liveNotifications)
+
+	// When fromSeq is present, return backfill entries from historyEntries.
+	var result SessionSubscribeResult
+	if params.FromSeq != nil {
+		// Return all history entries (mock always stores them in order).
+		result.Entries = make([]events.Envelope, len(h.srv.historyEntries))
+		copy(result.Entries, h.srv.historyEntries)
+		result.NextSeq = len(result.Entries)
+	}
 	h.srv.mu.Unlock()
 
-	_ = conn.Reply(ctx, req.ID, SessionSubscribeResult{NextSeq: 0})
+	_ = conn.Reply(ctx, req.ID, result)
 
 	// Emit queued notifications.
 	go func() {
@@ -295,7 +310,7 @@ func TestShimClientSubscribeNoAfterSeq(t *testing.T) {
 	require.NoError(t, err)
 	defer c.Close()
 
-	result, err := c.Subscribe(context.Background(), nil)
+	result, err := c.Subscribe(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.NextSeq)
 
@@ -314,9 +329,49 @@ func TestShimClientSubscribeWithAfterSeq(t *testing.T) {
 	defer c.Close()
 
 	afterSeq := 3
-	result, err := c.Subscribe(context.Background(), &afterSeq)
+	result, err := c.Subscribe(context.Background(), &afterSeq, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.NextSeq)
+}
+
+// TestShimClientSubscribeFromSeq verifies the atomic backfill path: when
+// fromSeq is provided, the subscribe response includes backfill entries
+// from the mock's historyEntries and the subscription is active.
+func TestShimClientSubscribeFromSeq(t *testing.T) {
+	srv, socketPath := newMockShimServer(t)
+	defer srv.close()
+
+	// Pre-populate mock with 3 history entries.
+	srv.mu.Lock()
+	srv.historyEntries = []events.Envelope{
+		events.NewSessionUpdateEnvelope("test-session", 0, time.Now(), events.TextEvent{Text: "msg-0"}),
+		events.NewSessionUpdateEnvelope("test-session", 1, time.Now(), events.TextEvent{Text: "msg-1"}),
+		events.NewSessionUpdateEnvelope("test-session", 2, time.Now(), events.TextEvent{Text: "msg-2"}),
+	}
+	srv.mu.Unlock()
+
+	c, err := Dial(context.Background(), socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	fromSeq := 0
+	result, err := c.Subscribe(context.Background(), nil, &fromSeq)
+	require.NoError(t, err)
+
+	// Verify backfill entries returned.
+	require.Len(t, result.Entries, 3, "should return all 3 backfill entries")
+	for i, entry := range result.Entries {
+		seq, seqErr := entry.Seq()
+		require.NoError(t, seqErr)
+		assert.Equal(t, i, seq, "entry %d should have seq=%d", i, i)
+	}
+	assert.Equal(t, 3, result.NextSeq, "nextSeq should be count of entries")
+
+	// Verify subscription was registered.
+	srv.mu.Lock()
+	subscribed := srv.subscribed
+	srv.mu.Unlock()
+	assert.True(t, subscribed, "shim should have been subscribed")
 }
 
 // TestShimClientSubscribeReceivesSessionUpdate verifies that session/update
@@ -359,7 +414,7 @@ func TestShimClientSubscribeReceivesSessionUpdate(t *testing.T) {
 	require.NoError(t, err)
 	defer c.Close()
 
-	_, err = c.Subscribe(context.Background(), nil)
+	_, err = c.Subscribe(context.Background(), nil, nil)
 	require.NoError(t, err)
 
 	// Wait for notifications to arrive.
@@ -406,7 +461,7 @@ func TestShimClientSubscribeDropsUnknownMethods(t *testing.T) {
 	require.NoError(t, err)
 	defer c.Close()
 
-	_, err = c.Subscribe(context.Background(), nil)
+	_, err = c.Subscribe(context.Background(), nil, nil)
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
@@ -598,7 +653,7 @@ func TestShimClientMultipleMethods(t *testing.T) {
 	assert.Equal(t, "end_turn", result.StopReason)
 
 	// Subscribe
-	subResult, err := c.Subscribe(context.Background(), nil)
+	subResult, err := c.Subscribe(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 0, subResult.NextSeq)
 
@@ -658,11 +713,11 @@ func TestShimClientRepeatedSubscribe(t *testing.T) {
 	defer c.Close()
 
 	// Repeated Subscribe calls on the same connection are valid.
-	_, err = c.Subscribe(context.Background(), nil)
+	_, err = c.Subscribe(context.Background(), nil, nil)
 	require.NoError(t, err)
 
 	after := 3
-	_, err = c.Subscribe(context.Background(), &after)
+	_, err = c.Subscribe(context.Background(), &after, nil)
 	require.NoError(t, err)
 }
 
