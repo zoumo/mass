@@ -523,6 +523,9 @@ type AgentInfo struct {
 	// Values: "creating", "created", "running", "stopped", "error".
 	State string `json:"state"`
 
+	// ErrorMessage is the error message when state is "error".
+	ErrorMessage string `json:"errorMessage,omitempty"`
+
 	// Labels are arbitrary key-value metadata for the agent.
 	Labels map[string]string `json:"labels,omitempty"`
 

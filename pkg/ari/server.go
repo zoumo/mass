@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -913,6 +914,7 @@ func agentInfoFromMeta(a *meta.Agent) AgentInfo {
 		RuntimeClass: a.RuntimeClass,
 		WorkspaceId:  a.WorkspaceID,
 		State:        string(a.State),
+		ErrorMessage: a.ErrorMessage,
 		Labels:       a.Labels,
 		CreatedAt:    a.CreatedAt,
 		UpdatedAt:    a.UpdatedAt,
@@ -931,16 +933,20 @@ func (h *connHandler) linkedSessionForAgent(ctx context.Context, agentID string)
 	return sessions[0], nil
 }
 
-// handleAgentCreate creates a new agent in the "created" state.
+// handleAgentCreate creates a new agent in "creating" state and returns immediately.
 // Workflow:
 //  1. Unmarshal AgentCreateParams
 //  2. Validate room exists; validate workspace exists
-//  3. Generate agentId (UUID) and sessionId (UUID)
-//  4. Create meta.Agent via agents.Create
-//  5. Create meta.Session linked to agentId via sessions.Create
-//  6. AcquireWorkspace using sessionId (FK to sessions)
-//  7. Acquire in-memory registry ref using sessionId
-//  8. Return AgentCreateResult
+//  3. Generate agentId (UUID)
+//  4. Create meta.Agent via agents.Create (state: "creating")
+//  5. Reply immediately with state:"creating"
+//  6. Launch background goroutine (90s timeout, context.Background()) that:
+//     a. Generates sessionId
+//     b. Creates meta.Session linked to agentId
+//     c. AcquireWorkspace using sessionId (FK to sessions)
+//     d. Acquire in-memory registry ref using sessionId
+//     e. Calls processes.Start
+//     f. On success: UpdateState to "created"; on failure: UpdateState to "error"
 func (h *connHandler) handleAgentCreate(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	var p AgentCreateParams
 	if err := unmarshalParams(req, &p); err != nil {
@@ -991,11 +997,10 @@ func (h *connHandler) handleAgentCreate(ctx context.Context, conn *jsonrpc2.Conn
 		return
 	}
 
-	// Generate IDs.
+	// Generate agent ID only; session ID is generated inside the goroutine.
 	agentId := uuid.New().String()
-	sessionId := uuid.New().String()
 
-	// Create agent.
+	// Create agent in "creating" state.
 	agent := &meta.Agent{
 		ID:           agentId,
 		Room:         p.Room,
@@ -1005,7 +1010,7 @@ func (h *connHandler) handleAgentCreate(ctx context.Context, conn *jsonrpc2.Conn
 		WorkspaceID:  p.WorkspaceId,
 		SystemPrompt: p.SystemPrompt,
 		Labels:       p.Labels,
-		State:        meta.AgentStateCreated,
+		State:        meta.AgentStateCreating,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
@@ -1019,39 +1024,77 @@ func (h *connHandler) handleAgentCreate(ctx context.Context, conn *jsonrpc2.Conn
 		return
 	}
 
-	// Create linked session.
-	session := &meta.Session{
-		ID:           sessionId,
-		AgentID:      agentId,
-		WorkspaceID:  p.WorkspaceId,
-		RuntimeClass: p.RuntimeClass,
-		Room:         p.Room,
-		RoomAgent:    p.Name,
-		Labels:       p.Labels,
-		State:        meta.SessionStateCreated,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-	}
-	if err := h.srv.sessions.Create(ctx, session); err != nil {
-		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
-			fmt.Sprintf("create session failed: %s", err.Error()))
-		return
-	}
+	log.Printf("ari: agent/create registered agent %s (room=%s name=%s) — bootstrapping in background",
+		agentId, p.Room, p.Name)
 
-	// Acquire workspace ref (FK uses sessionId, not agentId).
-	if err := h.srv.store.AcquireWorkspace(ctx, p.WorkspaceId, sessionId); err != nil {
-		log.Printf("ari: failed to acquire workspace %s for session %s (agent %s): %v",
-			p.WorkspaceId, sessionId, agentId, err)
-	}
-	h.srv.registry.Acquire(p.WorkspaceId, sessionId)
-
-	log.Printf("ari: agent/create created agent %s (room=%s name=%s session=%s)",
-		agentId, p.Room, p.Name, sessionId)
-
+	// Reply immediately with state "creating" before launching the background bootstrap.
 	_ = conn.Reply(ctx, req.ID, AgentCreateResult{
 		AgentId: agentId,
-		State:   string(meta.AgentStateCreated),
+		State:   string(meta.AgentStateCreating),
 	})
+
+	// Bootstrap the agent session in a background goroutine.
+	// Captures p (params) and agentId by value; uses context.Background() because
+	// the request ctx is dead after conn.Reply returns.
+	pCopy := p
+	go func() {
+		bgCtx, bgCancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer bgCancel()
+
+		sessionId := uuid.New().String()
+
+		// Create linked session (SessionStateCreated required by ProcessManager.Start).
+		session := &meta.Session{
+			ID:           sessionId,
+			AgentID:      agentId,
+			WorkspaceID:  pCopy.WorkspaceId,
+			RuntimeClass: pCopy.RuntimeClass,
+			Room:         pCopy.Room,
+			RoomAgent:    pCopy.Name,
+			Labels:       pCopy.Labels,
+			State:        meta.SessionStateCreated,
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+		}
+		if err := h.srv.sessions.Create(bgCtx, session); err != nil {
+			slog.Error("ari: agent bootstrap: failed to create session",
+				"agentId", agentId, "error", err)
+			_ = h.srv.agents.UpdateState(bgCtx, agentId, meta.AgentStateError, err.Error())
+			return
+		}
+
+		// Acquire workspace ref (FK uses sessionId).
+		if err := h.srv.store.AcquireWorkspace(bgCtx, pCopy.WorkspaceId, sessionId); err != nil {
+			slog.Error("ari: agent bootstrap: failed to acquire workspace",
+				"agentId", agentId, "sessionId", sessionId, "error", err)
+			// Clean up session row before marking error.
+			_ = h.srv.sessions.Delete(bgCtx, sessionId)
+			_ = h.srv.agents.UpdateState(bgCtx, agentId, meta.AgentStateError, err.Error())
+			return
+		}
+		h.srv.registry.Acquire(pCopy.WorkspaceId, sessionId)
+
+		// Start the process.
+		if _, err := h.srv.processes.Start(bgCtx, sessionId); err != nil {
+			slog.Error("ari: agent bootstrap: failed to start process",
+				"agentId", agentId, "sessionId", sessionId, "error", err)
+			// Release acquired refs before marking error.
+			h.srv.registry.Release(pCopy.WorkspaceId, sessionId)
+			_ = h.srv.sessions.Delete(bgCtx, sessionId)
+			_ = h.srv.agents.UpdateState(bgCtx, agentId, meta.AgentStateError, err.Error())
+			return
+		}
+
+		// Transition agent to "created" — session is running and ready for prompts.
+		if err := h.srv.agents.UpdateState(bgCtx, agentId, meta.AgentStateCreated, ""); err != nil {
+			slog.Error("ari: agent bootstrap: failed to update agent state to created",
+				"agentId", agentId, "sessionId", sessionId, "error", err)
+			return
+		}
+
+		slog.Info("ari: agent bootstrap complete",
+			"agentId", agentId, "sessionId", sessionId)
+	}()
 }
 
 // handleAgentPrompt sends a prompt to an agent.
@@ -1083,6 +1126,13 @@ func (h *connHandler) handleAgentPrompt(ctx context.Context, conn *jsonrpc2.Conn
 	if agent == nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
 			fmt.Sprintf("agent %q not found", p.AgentId))
+		return
+	}
+
+	// Guard: reject prompts while the agent is still being provisioned.
+	if agent.State == meta.AgentStateCreating {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			"agent is still being provisioned; poll agent/status until state is 'created'")
 		return
 	}
 
@@ -1695,9 +1745,29 @@ func (h *connHandler) handleRoomDelete(ctx context.Context, conn *jsonrpc2.Conn,
 		return
 	}
 
-	// Delete all stopped agents in this room first (agents.room FK is RESTRICT).
-	// This is safe because we confirmed all sessions are stopped above.
+	// Also check for agents in non-stopped states (covers the async "creating" window
+	// when a session may not yet exist in the DB but bootstrap is in progress).
 	agents, err := h.srv.agents.List(ctx, &meta.AgentFilter{Room: p.Name})
+	if err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
+			fmt.Sprintf("failed to list room agents: %s", err.Error()))
+		return
+	}
+	var activeAgents []string
+	for _, a := range agents {
+		if a.State != meta.AgentStateStopped {
+			activeAgents = append(activeAgents, a.ID)
+		}
+	}
+	if len(activeAgents) > 0 {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("room %q has %d active member(s); stop agents before deleting", p.Name, len(activeAgents)))
+		return
+	}
+
+	// Delete all stopped/error agents in this room first (agents.room FK is RESTRICT).
+	// This is safe because we confirmed all agents are in stopped or error state above.
+	agents, err = h.srv.agents.List(ctx, &meta.AgentFilter{Room: p.Name})
 	if err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
 			fmt.Sprintf("failed to list room agents: %s", err.Error()))

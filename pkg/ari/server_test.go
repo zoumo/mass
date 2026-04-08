@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1021,13 +1022,16 @@ func TestARIAgentLifecycle(t *testing.T) {
 	require.NotEmpty(t, workspaceId, "workspaceId should be non-empty")
 	roomCreate(ctx, t, client, "lifecycle-room", "mesh", nil)
 
-	// Step 2: Create agent via agent/create.
+	// Step 2: Create agent via agent/create — returns "creating" immediately.
 	createResult := agentCreate(ctx, t, client, "lifecycle-room", "lifecycle-agent", "mockagent", workspaceId)
 	agentId := createResult.AgentId
 	require.NotEmpty(t, agentId, "agentId should be non-empty")
-	require.Equal(t, "created", createResult.State, "initial state should be 'created'")
 
-	// Step 3: Prompt agent via agent/prompt (auto-starts linked session).
+	// Wait for background bootstrap to complete.
+	statusAfterCreate := pollAgentUntilReady(ctx, t, client, agentId)
+	require.Equal(t, "created", statusAfterCreate.Agent.State, "agent should be 'created' after bootstrap")
+
+	// Step 3: Prompt agent via agent/prompt (session already bootstrapped).
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: agentId,
@@ -1081,9 +1085,12 @@ func TestARIAgentPromptAutoStart(t *testing.T) {
 	roomCreate(ctx, t, client, "auto-start-room", "mesh", nil)
 
 	createResult := agentCreate(ctx, t, client, "auto-start-room", "auto-start-agent", "mockagent", workspaceId)
-	require.Equal(t, "created", createResult.State, "initial state should be 'created'")
 
-	// Call agent/prompt WITHOUT prior start — this verifies auto-start behavior.
+	// Wait for bootstrap to complete — session must exist before prompt.
+	statusAfterCreate := pollAgentUntilReady(ctx, t, client, createResult.AgentId)
+	require.Equal(t, "created", statusAfterCreate.Agent.State, "agent should be 'created' after bootstrap")
+
+	// Call agent/prompt — session is "created" (not yet started), so auto-start kicks in.
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
@@ -1111,7 +1118,10 @@ func TestARIAgentPromptOnStopped(t *testing.T) {
 
 	createResult := agentCreate(ctx, t, client, "prompt-stopped-room", "prompt-stopped-agent", "mockagent", workspaceId)
 
-	// Prompt to start the agent.
+	// Wait for bootstrap before sending the first prompt.
+	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
+
+	// Prompt to start the agent (auto-starts session).
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
@@ -1155,7 +1165,10 @@ func TestARISessionRemoveProtected(t *testing.T) {
 
 	createResult := agentCreate(ctx, t, client, "remove-protected-room", "protected-agent", "mockagent", workspaceId)
 
-	// Prompt to start agent (state=running).
+	// Wait for bootstrap before sending prompt.
+	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
+
+	// Prompt to start agent (auto-starts session → state=running).
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
@@ -1210,7 +1223,8 @@ func TestARISessionList(t *testing.T) {
 	for _, a := range listResult.Agents {
 		agentIds[a.AgentId] = true
 		require.Equal(t, "list-room", a.Room, "room should match")
-		require.Equal(t, "created", a.State, "state should be 'created'")
+		// State is "creating" or "error" (no real runtime in newTestHarness).
+		require.Contains(t, []string{"creating", "error"}, a.State, "state should be creating or error")
 	}
 	require.True(t, agentIds[result1.AgentId], "agent #1 should be in list")
 	require.True(t, agentIds[result2.AgentId], "agent #2 should be in list")
@@ -1320,7 +1334,10 @@ func TestARISessionStatusStopped(t *testing.T) {
 
 	createResult := agentCreate(ctx, t, client, "status-stopped-room", "status-stopped-agent", "mockagent", workspaceId)
 
-	// Prompt to start agent.
+	// Wait for bootstrap before prompting.
+	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
+
+	// Prompt to start agent (auto-starts session).
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
@@ -1490,10 +1507,15 @@ func TestARIRecoveryGuard_AllowsStopDuringRecovery(t *testing.T) {
 // TestARISessionNewAcquiresWorkspaceRef verifies that agent/create records a
 // workspace_ref in the DB (incrementing ref_count). Two agents on the same
 // workspace should yield ref_count == 2.
+// NOTE: With async bootstrap, ref_count is incremented inside the goroutine.
+// We poll until bootstrap completes (success or error) then verify.
+// newTestHarness has no real runtime, so agents end up in "error" state
+// and their sessions are deleted (ref_count drops back to 0) on failure.
+// We use newSessionTestHarness with mockagent to test the success path.
 func TestARISessionNewAcquiresWorkspaceRef(t *testing.T) {
-	h := newTestHarness(t)
+	h := newSessionTestHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	client := h.dial(t, &nullHandler{})
@@ -1502,32 +1524,38 @@ func TestARISessionNewAcquiresWorkspaceRef(t *testing.T) {
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "ref-acquire-test")
 	roomCreate(ctx, t, client, "ref-acquire-room", "mesh", nil)
 
-	// Create first agent.
-	result1 := agentCreate(ctx, t, client, "ref-acquire-room", "ref-agent-1", "default", workspaceId)
+	// Create first agent and wait for bootstrap to complete.
+	result1 := agentCreate(ctx, t, client, "ref-acquire-room", "ref-agent-1", "mockagent", workspaceId)
 	require.NotEmpty(t, result1.AgentId)
+	pollAgentUntilReady(ctx, t, client, result1.AgentId)
 
 	// Assert DB ref_count == 1.
 	ws, err := h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err, "GetWorkspace should succeed")
 	require.NotNil(t, ws, "workspace should exist in DB")
-	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after first agent")
+	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after first agent bootstrap")
 
-	// Create second agent on the same workspace.
-	result2 := agentCreate(ctx, t, client, "ref-acquire-room", "ref-agent-2", "default", workspaceId)
+	// Create second agent on the same workspace and wait for bootstrap.
+	result2 := agentCreate(ctx, t, client, "ref-acquire-room", "ref-agent-2", "mockagent", workspaceId)
 	require.NotEmpty(t, result2.AgentId)
+	pollAgentUntilReady(ctx, t, client, result2.AgentId)
 
 	// Assert DB ref_count == 2.
 	ws, err = h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err, "GetWorkspace should succeed")
-	require.Equal(t, 2, ws.RefCount, "ref_count should be 2 after second agent")
+	require.Equal(t, 2, ws.RefCount, "ref_count should be 2 after second agent bootstrap")
+
+	// Cleanup: stop both agents.
+	agentStop(ctx, t, client, result1.AgentId)
+	agentStop(ctx, t, client, result2.AgentId)
 }
 
 // TestARISessionRemoveReleasesWorkspaceRef verifies that deleting an agent
 // decrements the workspace ref_count in the DB.
 func TestARISessionRemoveReleasesWorkspaceRef(t *testing.T) {
-	h := newTestHarness(t)
+	h := newSessionTestHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	client := h.dial(t, &nullHandler{})
@@ -1536,13 +1564,14 @@ func TestARISessionRemoveReleasesWorkspaceRef(t *testing.T) {
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "ref-release-test")
 	roomCreate(ctx, t, client, "ref-release-room", "mesh", nil)
 
-	// Create agent.
-	result := agentCreate(ctx, t, client, "ref-release-room", "ref-release-agent", "default", workspaceId)
+	// Create agent and wait for bootstrap to complete.
+	result := agentCreate(ctx, t, client, "ref-release-room", "ref-release-agent", "mockagent", workspaceId)
+	pollAgentUntilReady(ctx, t, client, result.AgentId)
 
-	// Assert ref_count == 1.
+	// Assert ref_count == 1 after bootstrap.
 	ws, err := h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err)
-	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after agent create")
+	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after agent bootstrap")
 
 	// Stop then delete the agent.
 	agentStop(ctx, t, client, result.AgentId)
@@ -1600,9 +1629,9 @@ func TestARIWorkspacePrepareSourcePersisted(t *testing.T) {
 // RefCount). With an active agent, cleanup is rejected; after agent
 // delete the ref_count drops to 0 and cleanup succeeds.
 func TestARIWorkspaceCleanupBlockedByDBRefCount(t *testing.T) {
-	h := newTestHarness(t)
+	h := newSessionTestHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	client := h.dial(t, &nullHandler{})
@@ -1611,15 +1640,16 @@ func TestARIWorkspaceCleanupBlockedByDBRefCount(t *testing.T) {
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "cleanup-db-refcount-test")
 	roomCreate(ctx, t, client, "cleanup-refcount-room", "mesh", nil)
 
-	// Create an agent — this acquires a DB workspace_ref (ref_count → 1).
-	result := agentCreate(ctx, t, client, "cleanup-refcount-room", "cleanup-ref-agent", "default", workspaceId)
+	// Create an agent and wait for bootstrap — this acquires a DB workspace_ref (ref_count → 1).
+	result := agentCreate(ctx, t, client, "cleanup-refcount-room", "cleanup-ref-agent", "mockagent", workspaceId)
 	require.NotEmpty(t, result.AgentId)
+	pollAgentUntilReady(ctx, t, client, result.AgentId)
 
 	// Verify DB ref_count == 1.
 	ws, err := h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err)
 	require.NotNil(t, ws)
-	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after agent create")
+	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after agent bootstrap")
 
 	// Attempt workspace/cleanup — should fail because DB ref_count > 0.
 	var cleanupResult interface{}
@@ -1729,9 +1759,9 @@ func roomDelete(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn, name str
 // room/create → agent/create (2 members) → room/status → agent/stop → room/delete → room/status (not found)
 // This is the primary end-to-end test proving the slice demo claim.
 func TestARIRoomLifecycle(t *testing.T) {
-	h := newTestHarness(t)
+	h := newSessionTestHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
 	client := h.dial(t, &nullHandler{})
@@ -1745,18 +1775,22 @@ func TestARIRoomLifecycle(t *testing.T) {
 	// Step 2: Prepare a workspace for agents.
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "room-lifecycle-ws")
 
-	// Step 3: Create 2 agents in the room with different names.
-	agentResultA := agentCreate(ctx, t, client, "test-room", "agent-a", "default", workspaceId)
+	// Step 3: Create 2 agents in the room with different names (async bootstrap).
+	agentResultA := agentCreate(ctx, t, client, "test-room", "agent-a", "mockagent", workspaceId)
 	require.NotEmpty(t, agentResultA.AgentId)
 
-	agentResultB := agentCreate(ctx, t, client, "test-room", "agent-b", "default", workspaceId)
+	agentResultB := agentCreate(ctx, t, client, "test-room", "agent-b", "mockagent", workspaceId)
 	require.NotEmpty(t, agentResultB.AgentId)
+
+	// Wait for both agents to finish bootstrapping (session is created in goroutine).
+	pollAgentUntilReady(ctx, t, client, agentResultA.AgentId)
+	pollAgentUntilReady(ctx, t, client, agentResultB.AgentId)
 
 	// Step 4: Call room/status → verify 2 members with correct agentName/state.
 	status := roomStatus(ctx, t, client, "test-room")
 	require.Equal(t, "test-room", status.Name, "room name should match")
 	require.Equal(t, "mesh", status.CommunicationMode, "communication mode should match")
-	require.Len(t, status.Members, 2, "room should have 2 members")
+	require.Len(t, status.Members, 2, "room should have 2 members after bootstrap")
 
 	// Build a map for easier assertion (order is not guaranteed).
 	memberMap := make(map[string]ari.RoomMember)
@@ -1765,8 +1799,9 @@ func TestARIRoomLifecycle(t *testing.T) {
 	}
 	require.Contains(t, memberMap, "agent-a", "agent-a should be a member")
 	require.Contains(t, memberMap, "agent-b", "agent-b should be a member")
-	require.Equal(t, "created", memberMap["agent-a"].State, "agent-a state should be created")
-	require.Equal(t, "created", memberMap["agent-b"].State, "agent-b state should be created")
+	// room/status returns session state. After bootstrap, session is "running".
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-a"].State, "agent-a session state should be created or running")
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-b"].State, "agent-b session state should be created or running")
 
 	// Step 5: Verify room labels survived round-trip.
 	require.Equal(t, map[string]string{"env": "test"}, status.Labels, "room labels should match")
@@ -1819,11 +1854,11 @@ func TestARIRoomDeleteWithActiveMembers(t *testing.T) {
 	// Create room.
 	roomCreate(ctx, t, client, "active-room", "star", nil)
 
-	// Prepare workspace and create an agent in the room (state=created → non-stopped).
+	// Prepare workspace and create an agent in the room (state=creating → active/non-stopped).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "active-room-ws")
 	agentResult := agentCreate(ctx, t, client, "active-room", "agent-x", "default", workspaceId)
 
-	// Attempt to delete the room — should fail because session is in "created" state (non-stopped).
+	// Attempt to delete the room — should fail because agent is in "creating" state (active).
 	var deleteResult interface{}
 	err := client.Call(ctx, "room/delete", ari.RoomDeleteParams{Name: "active-room"}, &deleteResult)
 	require.Error(t, err, "room/delete should fail with active members")
@@ -1939,9 +1974,13 @@ func TestARIRoomSendBasic(t *testing.T) {
 	// Step 2: Prepare workspace.
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "room-send-ws")
 
-	// Step 3: Create 2 agents in the room.
+	// Step 3: Create 2 agents in the room (async bootstrap).
 	agentResultA := agentCreate(ctx, t, client, "send-room", "agent-a", "mockagent", workspaceId)
 	agentResultB := agentCreate(ctx, t, client, "send-room", "agent-b", "mockagent", workspaceId)
+
+	// Wait for bootstrap — session must exist before room/send can route.
+	pollAgentUntilReady(ctx, t, client, agentResultA.AgentId)
+	pollAgentUntilReady(ctx, t, client, agentResultB.AgentId)
 
 	// Step 4: Send message from agent-a to agent-b via room/send.
 	result := roomSend(ctx, t, client, "send-room", "agent-b", "hello from a", "agent-a", agentResultA.AgentId)
@@ -1999,9 +2038,14 @@ func TestARIRoomSendErrors(t *testing.T) {
 		requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "not found in room")
 	})
 
-	// Subtest 3: Target agent stopped — create agent+session pair via agent/create then agent/stop.
+	// Subtest 3: Target agent stopped — create agent, stop it, then room/send should fail.
+	// Note: with async bootstrap and no real runtime, the session may not exist when
+	// room/send runs (agent is in error/stopped state). We accept "is stopped" or
+	// "not found in room" as valid error messages — both indicate the target is unavailable.
 	t.Run("target agent stopped", func(t *testing.T) {
 		stoppedAgentResult := agentCreate(ctx, t, client, "error-room", "agent-stopped", "default", wsID)
+		// Wait for bootstrap to settle (error or creating), then stop.
+		time.Sleep(100 * time.Millisecond)
 		agentStop(ctx, t, client, stoppedAgentResult.AgentId)
 
 		var result ari.RoomSendResult
@@ -2010,8 +2054,14 @@ func TestARIRoomSendErrors(t *testing.T) {
 			TargetAgent: "agent-stopped",
 			Message:     "hello",
 		}, &result)
-		require.Error(t, err, "room/send should fail for stopped agent")
-		requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "is stopped")
+		require.Error(t, err, "room/send should fail for stopped/unavailable agent")
+		var rpcErr *jsonrpc2.Error
+		require.ErrorAs(t, err, &rpcErr)
+		require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code))
+		// Accept "is stopped" (session exists and is stopped) or "not found in room"
+		// (no session created — bootstrap failed before session was persisted).
+		require.True(t, strings.Contains(rpcErr.Message, "is stopped") || strings.Contains(rpcErr.Message, "not found in room"),
+			"expected 'is stopped' or 'not found in room', got: %s", rpcErr.Message)
 	})
 
 	// Subtest 4: Missing required fields.
@@ -2074,12 +2124,15 @@ func TestARIRoomSendDelivery(t *testing.T) {
 	// Step 2: Prepare workspace.
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "routing-test-ws")
 
-	// Step 3: Create agent-a and agent-b.
+	// Step 3: Create agent-a and agent-b (async bootstrap).
 	agentResultA := agentCreate(ctx, t, client, "routing-test", "agent-a", "mockagent", workspaceId)
-	require.Equal(t, "created", agentResultA.State, "agent-a initial state should be 'created'")
-
 	agentResultB := agentCreate(ctx, t, client, "routing-test", "agent-b", "mockagent", workspaceId)
-	require.Equal(t, "created", agentResultB.State, "agent-b initial state should be 'created'")
+
+	// Wait for both agents to finish bootstrapping before sending messages.
+	statusA := pollAgentUntilReady(ctx, t, client, agentResultA.AgentId)
+	require.Equal(t, "created", statusA.Agent.State, "agent-a should be 'created' after bootstrap")
+	statusB := pollAgentUntilReady(ctx, t, client, agentResultB.AgentId)
+	require.Equal(t, "created", statusB.Agent.State, "agent-b should be 'created' after bootstrap")
 
 	// Step 4: Send message from agent-a to agent-b via room/send.
 	result := roomSend(ctx, t, client, "routing-test", "agent-b", "hello from architect", "agent-a", agentResultA.AgentId)
@@ -2126,6 +2179,10 @@ func TestARIRoomSendToStoppedTarget(t *testing.T) {
 	// Step 3: Create agent-a (sender) and agent-b (target).
 	agentResultA := agentCreate(ctx, t, client, "stopped-target-room", "agent-a", "mockagent", workspaceId)
 	agentResultB := agentCreate(ctx, t, client, "stopped-target-room", "agent-b", "mockagent", workspaceId)
+
+	// Wait for both agents to finish bootstrapping.
+	pollAgentUntilReady(ctx, t, client, agentResultA.AgentId)
+	pollAgentUntilReady(ctx, t, client, agentResultB.AgentId)
 
 	// Step 4: Start agent-b by sending a prompt (auto-start linked session).
 	var promptResult ari.AgentPromptResult
@@ -2183,15 +2240,15 @@ func TestARIMultiAgentRoundTrip(t *testing.T) {
 	// ── Step 2: Prepare shared workspace ────────────────────────────────────
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "multi-agent-ws")
 
-	// ── Step 3: Create 3 agents (agent-a, agent-b, agent-c) ──────────────
+	// ── Step 3: Create 3 agents (async bootstrap) ────────────────────────
 	resultA := agentCreate(ctx, t, client, "multi-agent-room", "agent-a", "mockagent", workspaceId)
-	require.Equal(t, "created", resultA.State, "agent-a initial state should be 'created'")
-
 	resultB := agentCreate(ctx, t, client, "multi-agent-room", "agent-b", "mockagent", workspaceId)
-	require.Equal(t, "created", resultB.State, "agent-b initial state should be 'created'")
-
 	resultC := agentCreate(ctx, t, client, "multi-agent-room", "agent-c", "mockagent", workspaceId)
-	require.Equal(t, "created", resultC.State, "agent-c initial state should be 'created'")
+
+	// Wait for all three agents to finish bootstrapping before sending messages.
+	pollAgentUntilReady(ctx, t, client, resultA.AgentId)
+	pollAgentUntilReady(ctx, t, client, resultB.AgentId)
+	pollAgentUntilReady(ctx, t, client, resultC.AgentId)
 
 	// ── Step 4: Verify room has 3 members, all in "created" state ──────────
 	status := roomStatus(ctx, t, client, "multi-agent-room")
@@ -2201,9 +2258,11 @@ func TestARIMultiAgentRoundTrip(t *testing.T) {
 	for _, m := range status.Members {
 		memberMap[m.AgentName] = m
 	}
-	require.Equal(t, "created", memberMap["agent-a"].State, "agent-a should be 'created'")
-	require.Equal(t, "created", memberMap["agent-b"].State, "agent-b should be 'created'")
-	require.Equal(t, "created", memberMap["agent-c"].State, "agent-c should be 'created'")
+	// room/status returns session state, not agent state. After bootstrap,
+	// session is "running" (started by processManager). Agent state is "created".
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-a"].State, "agent-a session should be created or running after bootstrap")
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-b"].State, "agent-b session should be created or running after bootstrap")
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-c"].State, "agent-c session should be created or running after bootstrap")
 
 	// ── Step 5: A→B message — verify delivery ──────────────────────────────
 	resultAB := roomSend(ctx, t, client, "multi-agent-room", "agent-b", "hello from a", "agent-a", resultA.AgentId)
@@ -2266,9 +2325,13 @@ func TestARIRoomTeardownGuards(t *testing.T) {
 	roomCreate(ctx, t, client, "teardown-guard-room", "mesh", nil)
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "teardown-guard-ws")
 
-	// Create 2 agents.
+	// Create 2 agents (async bootstrap).
 	resultA := agentCreate(ctx, t, client, "teardown-guard-room", "agent-a", "mockagent", workspaceId)
 	resultB := agentCreate(ctx, t, client, "teardown-guard-room", "agent-b", "mockagent", workspaceId)
+
+	// Wait for both agents to finish bootstrapping before sending messages.
+	pollAgentUntilReady(ctx, t, client, resultA.AgentId)
+	pollAgentUntilReady(ctx, t, client, resultB.AgentId)
 
 	// Send A→B to auto-start agent-b to "running".
 	result := roomSend(ctx, t, client, "teardown-guard-room", "agent-b", "hello from a", "agent-a", resultA.AgentId)
@@ -2314,7 +2377,9 @@ func TestARIRoomTeardownGuards(t *testing.T) {
 // ────────────────────────────────────────────────────────────────────────────
 
 // agentCreate is a test helper that calls agent/create via JSON-RPC.
-// Returns the AgentCreateResult. Fails the test on error.
+// Returns the AgentCreateResult with state "creating" (async bootstrap).
+// Callers that need the agent ready before sending prompts should call
+// pollAgentUntilReady to wait for state "created" or "error".
 func agentCreate(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn, room, name, runtimeClass, workspaceId string) ari.AgentCreateResult {
 	t.Helper()
 	var result ari.AgentCreateResult
@@ -2325,7 +2390,28 @@ func agentCreate(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn, room, n
 		WorkspaceId:  workspaceId,
 	}, &result)
 	require.NoError(t, err, "agent/create should succeed for agent %q in room %q", name, room)
+	require.Equal(t, "creating", result.State, "agent/create should return state 'creating' immediately")
 	return result
+}
+
+// pollAgentUntilReady polls agent/status until state is no longer "creating"
+// (i.e., state becomes "created" or "error"). Returns the final AgentStatusResult.
+// Times out after maxWait; fails the test if timeout is reached or a poll fails.
+func pollAgentUntilReady(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn, agentId string) ari.AgentStatusResult {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var statusResult ari.AgentStatusResult
+		err := conn.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: agentId}, &statusResult)
+		require.NoError(t, err, "agent/status poll should succeed for agent %q", agentId)
+		if statusResult.Agent.State != "creating" {
+			return statusResult
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pollAgentUntilReady: agent %q still in 'creating' state after 30s", agentId)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // agentStop is a test helper that calls agent/stop via JSON-RPC.
@@ -2349,12 +2435,13 @@ func TestARIAgentCreateAndList(t *testing.T) {
 	roomCreate(ctx, t, client, "list-agent-room", "mesh", nil)
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "list-agent-ws")
 
-	// Create agent.
+	// Create agent — returns "creating" immediately (async bootstrap).
 	result := agentCreate(ctx, t, client, "list-agent-room", "lister-agent", "default", workspaceId)
 	require.NotEmpty(t, result.AgentId, "agentId should be non-empty")
-	require.Equal(t, "created", result.State, "initial state should be 'created'")
+	require.Equal(t, "creating", result.State, "initial state should be 'creating' (async)")
 
-	// agent/list should return the created agent.
+	// agent/list should return the created agent (may be in creating or error state
+	// since newTestHarness has no real runtime to bootstrap the session).
 	var listResult ari.AgentListResult
 	err := client.Call(ctx, "agent/list", ari.AgentListParams{}, &listResult)
 	require.NoError(t, err, "agent/list should succeed")
@@ -2362,7 +2449,6 @@ func TestARIAgentCreateAndList(t *testing.T) {
 	require.Equal(t, result.AgentId, listResult.Agents[0].AgentId, "agentId should match")
 	require.Equal(t, "lister-agent", listResult.Agents[0].Name, "name should match")
 	require.Equal(t, "list-agent-room", listResult.Agents[0].Room, "room should match")
-	require.Equal(t, "created", listResult.Agents[0].State, "state should be 'created'")
 }
 
 // TestARIAgentCreateDuplicateName verifies that creating two agents with the same
@@ -2443,7 +2529,9 @@ func TestARIAgentStatus(t *testing.T) {
 	err := client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: createResult.AgentId}, &statusResult)
 	require.NoError(t, err, "agent/status should succeed")
 	require.Equal(t, createResult.AgentId, statusResult.Agent.AgentId, "agentId should match")
-	require.Equal(t, "created", statusResult.Agent.State, "state should be 'created'")
+	// Agent is in "creating" state immediately after create (no real runtime in newTestHarness).
+	require.Contains(t, []string{"creating", "error"}, statusResult.Agent.State,
+		"state should be 'creating' or 'error' (no real runtime in this harness)")
 	require.Equal(t, "status-agent-room", statusResult.Agent.Room, "room should match")
 	require.Nil(t, statusResult.ShimState, "shimState should be nil for non-running agent")
 }
@@ -2561,6 +2649,60 @@ func TestARIAgentRestartStub(t *testing.T) {
 		"error message should mention 'not implemented'")
 }
 
+// TestARIAgentCreateAsync verifies that agent/create returns "creating" immediately
+// and the agent transitions to "created" after background bootstrap completes.
+func TestARIAgentCreateAsync(t *testing.T) {
+	h := newSessionTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "async-create-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "async-create-ws")
+
+	// agent/create should return "creating" immediately.
+	createResult := agentCreate(ctx, t, client, "async-create-room", "async-agent", "mockagent", workspaceId)
+	require.Equal(t, "creating", createResult.State, "agent/create must return 'creating' immediately")
+
+	// Poll until state transitions out of "creating".
+	statusResult := pollAgentUntilReady(ctx, t, client, createResult.AgentId)
+	require.Equal(t, "created", statusResult.Agent.State, "agent should reach 'created' after bootstrap")
+
+	// ShimState should be present because bootstrap called processes.Start successfully.
+	require.NotNil(t, statusResult.ShimState, "shimState should be present after successful bootstrap")
+
+	// Cleanup.
+	agentStop(ctx, t, client, createResult.AgentId)
+	var deleteResult interface{}
+	err := client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: createResult.AgentId}, &deleteResult)
+	require.NoError(t, err, "agent/delete should succeed after stop")
+}
+
+// TestARIAgentCreateAsyncErrorState verifies that agent/create with an invalid
+// runtimeClass returns "creating" immediately, then the agent transitions to "error".
+func TestARIAgentCreateAsyncErrorState(t *testing.T) {
+	h := newSessionTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "async-err-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "async-err-ws")
+
+	// agent/create with nonexistent runtimeClass — should return "creating" immediately.
+	createResult := agentCreate(ctx, t, client, "async-err-room", "error-agent", "nonexistent-class", workspaceId)
+	require.Equal(t, "creating", createResult.State, "agent/create must return 'creating' immediately")
+
+	// Poll until state transitions out of "creating".
+	statusResult := pollAgentUntilReady(ctx, t, client, createResult.AgentId)
+	require.Equal(t, "error", statusResult.Agent.State, "agent should reach 'error' when runtimeClass is invalid")
+	require.NotEmpty(t, statusResult.Agent.ErrorMessage, "error message should be non-empty")
+}
+
 // TestARIAgentPrompt verifies agent/create → agent/prompt with a real shim.
 func TestARIAgentPrompt(t *testing.T) {
 	h := newSessionTestHarness(t)
@@ -2574,6 +2716,9 @@ func TestARIAgentPrompt(t *testing.T) {
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "prompt-agent-ws")
 
 	createResult := agentCreate(ctx, t, client, "prompt-agent-room", "prompt-agent", "mockagent", workspaceId)
+
+	// Wait for bootstrap to complete before sending prompt.
+	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
 
 	// Send a prompt.
 	var promptResult ari.AgentPromptResult
@@ -2601,6 +2746,9 @@ func TestARIAgentAttach(t *testing.T) {
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "attach-agent-ws")
 
 	createResult := agentCreate(ctx, t, client, "attach-agent-room", "attach-agent", "mockagent", workspaceId)
+
+	// Wait for bootstrap to complete before prompting.
+	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
 
 	// Auto-start the agent via a prompt.
 	var promptResult ari.AgentPromptResult

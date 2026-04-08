@@ -72,3 +72,10 @@
 {"id":"fa90a204-fb95-4e5a-a870-00c2eb68e42d","ts":"2026-04-08T19:05:46.980Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
 {"id":"d4f17019-1efa-473c-a01a-9568e234fb41","ts":"2026-04-08T19:13:05.051Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
 {"id":"f2422edb-854e-4244-a50e-0c48d3e12faa","ts":"2026-04-08T19:13:05.053Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"25671a33-16d2-44fa-9645-12895dbd969e","ts":"2026-04-08T19:13:06.951Z","severity":"info","message":"Pre-dispatch: pre-dispatch: created gsd snapshot after 31m of uncommitted changes","source":"notify","read":false}
+{"id":"200893b8-5eaf-485e-ba91-54cedca06420","ts":"2026-04-08T19:17:30.822Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"37d52785-aa48-496d-a6e0-79a4aca6ca66","ts":"2026-04-08T19:17:30.827Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"46f41fd7-f12d-4651-bba7-1f6fa939407e","ts":"2026-04-08T19:17:33.315Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}
+{"id":"d29fa35b-e696-4c14-accf-935cae4f8d00","ts":"2026-04-08T19:47:34.066Z","severity":"warning","message":"Timeout recovery: steering execute-task M005/S04/T01 to finish durable output (attempt 1, session 1/1).","source":"notify","read":false}
+{"id":"4b610405-7a09-4bf4-a85c-c69c72fdd191","ts":"2026-04-08T19:49:10.572Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"c36ad11f-518f-4ea8-bf46-b9684b431a86","ts":"2026-04-08T19:49:10.574Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
