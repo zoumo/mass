@@ -180,7 +180,7 @@ type SessionInfo struct {
 	RuntimeClass string `json:"runtimeClass"`
 
 	// State is the current session state.
-	// Values: "created", "running", "paused:warm", "paused:cold", "stopped".
+	// Values: "creating", "created", "running", "stopped", "error".
 	State string `json:"state"`
 
 	// Room is the room name if this session is part of a multi-agent room.
@@ -390,4 +390,202 @@ type RoomSendResult struct {
 type RoomDeleteParams struct {
 	// Name is the room name (required).
 	Name string `json:"name"`
+}
+
+// =============================================================================
+// Agent Types
+// =============================================================================
+
+// AgentCreateParams is the request params for agent/create method.
+// It contains the specification for creating a new agent.
+type AgentCreateParams struct {
+	// Room is the room this agent belongs to (required).
+	Room string `json:"room"`
+
+	// Name is the agent name, unique within the room (required).
+	Name string `json:"name"`
+
+	// Description is a human-readable description of the agent (optional).
+	Description string `json:"description,omitempty"`
+
+	// RuntimeClass is the runtime class for this agent (required).
+	RuntimeClass string `json:"runtimeClass"`
+
+	// WorkspaceId is the workspace this agent uses (required).
+	WorkspaceId string `json:"workspaceId"`
+
+	// SystemPrompt is the agent's system prompt (optional).
+	SystemPrompt string `json:"systemPrompt,omitempty"`
+
+	// Labels are optional key-value metadata for the agent.
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// AgentCreateResult is the response result for agent/create method.
+// It contains the newly created agent identifier and initial state.
+type AgentCreateResult struct {
+	// AgentId is the unique identifier assigned to this agent.
+	AgentId string `json:"agentId"`
+
+	// State is the initial agent state, always "created" on success.
+	State string `json:"state"`
+}
+
+// AgentPromptParams is the request params for agent/prompt method.
+// It contains the prompt text to send to the agent.
+type AgentPromptParams struct {
+	// AgentId is the unique identifier of the agent to prompt (required).
+	AgentId string `json:"agentId"`
+
+	// Prompt is the prompt message to send to the agent (required).
+	Prompt string `json:"prompt"`
+}
+
+// AgentPromptResult is the response result for agent/prompt method.
+// It indicates why the prompt processing stopped.
+type AgentPromptResult struct {
+	// StopReason is the reason the agent stopped processing.
+	// Values: "end_turn" (normal completion), "cancelled" (user cancelled),
+	// "tool_use" (agent needs tool execution).
+	StopReason string `json:"stopReason"`
+}
+
+// AgentCancelParams is the request params for agent/cancel method.
+// It identifies the agent to cancel current prompt processing.
+type AgentCancelParams struct {
+	// AgentId is the unique identifier of the agent to cancel (required).
+	AgentId string `json:"agentId"`
+}
+
+// AgentStopParams is the request params for agent/stop method.
+// It identifies the agent to stop (shuts down the agent process).
+type AgentStopParams struct {
+	// AgentId is the unique identifier of the agent to stop (required).
+	AgentId string `json:"agentId"`
+}
+
+// AgentDeleteParams is the request params for agent/delete method.
+// It identifies the agent to delete from the registry.
+type AgentDeleteParams struct {
+	// AgentId is the unique identifier of the agent to delete (required).
+	AgentId string `json:"agentId"`
+}
+
+// AgentRestartParams is the request params for agent/restart method.
+// It identifies the agent to restart.
+type AgentRestartParams struct {
+	// AgentId is the unique identifier of the agent to restart (required).
+	AgentId string `json:"agentId"`
+}
+
+// AgentListParams is the request params for agent/list method.
+// It contains optional filters for listing agents.
+type AgentListParams struct {
+	// Room filters by room name (optional).
+	Room string `json:"room,omitempty"`
+
+	// State filters by agent state (optional).
+	State string `json:"state,omitempty"`
+
+	// Labels is an optional filter to match agents by labels.
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// AgentListResult is the response result for agent/list method.
+// It contains the list of matching agents.
+type AgentListResult struct {
+	// Agents is the array of agent info objects.
+	Agents []AgentInfo `json:"agents"`
+}
+
+// AgentInfo describes a single agent in the registry.
+// Returned by agent/list and agent/status methods.
+type AgentInfo struct {
+	// AgentId is the unique agent identifier (UUID).
+	AgentId string `json:"agentId"`
+
+	// Room is the room this agent belongs to.
+	Room string `json:"room"`
+
+	// Name is the agent name within the room.
+	Name string `json:"name"`
+
+	// Description is a human-readable description of the agent.
+	Description string `json:"description,omitempty"`
+
+	// RuntimeClass is the runtime class for this agent.
+	RuntimeClass string `json:"runtimeClass"`
+
+	// WorkspaceId is the workspace this agent uses.
+	WorkspaceId string `json:"workspaceId"`
+
+	// State is the current agent state.
+	// Values: "creating", "created", "running", "stopped", "error".
+	State string `json:"state"`
+
+	// Labels are arbitrary key-value metadata for the agent.
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// CreatedAt is the timestamp when the agent was created.
+	CreatedAt time.Time `json:"createdAt"`
+
+	// UpdatedAt is the timestamp when the agent was last updated.
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// AgentStatusParams is the request params for agent/status method.
+// It identifies the agent to query status for.
+type AgentStatusParams struct {
+	// AgentId is the unique identifier of the agent to query (required).
+	AgentId string `json:"agentId"`
+}
+
+// AgentStatusResult is the response result for agent/status method.
+// It contains the agent info and optional shim runtime state.
+type AgentStatusResult struct {
+	// Agent is the agent metadata from the registry.
+	Agent AgentInfo `json:"agent"`
+
+	// ShimState is the runtime state of the shim process.
+	// Only populated if the agent's linked session is running.
+	ShimState *ShimStateInfo `json:"shimState,omitempty"`
+
+	// Recovery holds per-session recovery metadata.
+	// Only populated when the session was recovered after a daemon restart.
+	Recovery *AgentRecoveryInfo `json:"recovery,omitempty"`
+}
+
+// AgentRecoveryInfo describes the result of a recovery attempt for an agent.
+// Mirrors SessionRecoveryInfo. Surfaced through agent/status.
+type AgentRecoveryInfo struct {
+	// Recovered indicates whether the agent's session was successfully recovered.
+	Recovered bool `json:"recovered"`
+
+	// RecoveredAt is the wall-clock time when recovery completed.
+	// Nil if recovery has not completed yet.
+	RecoveredAt *time.Time `json:"recoveredAt,omitempty"`
+
+	// Outcome is the recovery result: "recovered", "failed", or "pending".
+	Outcome string `json:"outcome"`
+}
+
+// AgentAttachParams is the request params for agent/attach method.
+// It identifies the agent to attach to (get shim RPC socket path).
+type AgentAttachParams struct {
+	// AgentId is the unique identifier of the agent to attach (required).
+	AgentId string `json:"agentId"`
+}
+
+// AgentAttachResult is the response result for agent/attach method.
+// It contains the shim RPC socket path for direct communication.
+type AgentAttachResult struct {
+	// SocketPath is the Unix domain socket path for the shim RPC server.
+	SocketPath string `json:"socketPath"`
+}
+
+// AgentDetachParams is the request params for agent/detach method.
+// It identifies the agent to detach from.
+type AgentDetachParams struct {
+	// AgentId is the unique identifier of the agent to detach (required).
+	AgentId string `json:"agentId"`
 }

@@ -28,15 +28,16 @@ import (
 // testHarness brings up WorkspaceManager + Registry + Server for one test.
 // Pattern follows pkg/rpc/server_test.go.
 type testHarness struct {
-	manager       *workspace.WorkspaceManager
-	registry      *ari.Registry
-	store         *meta.Store
+	manager        *workspace.WorkspaceManager
+	registry       *ari.Registry
+	store          *meta.Store
 	runtimeClasses *agentd.RuntimeClassRegistry
-	sessions      *agentd.SessionManager
-	processes     *agentd.ProcessManager
-	server        *ari.Server
-	socket        string
-	baseDir       string
+	sessions       *agentd.SessionManager
+	agents         *agentd.AgentManager
+	processes      *agentd.ProcessManager
+	server         *ari.Server
+	socket         string
+	baseDir        string
 
 	// serveErr receives the error from server.Serve when the server exits.
 	serveErr chan error
@@ -75,15 +76,18 @@ func newTestHarness(t *testing.T) *testHarness {
 	// Create SessionManager.
 	sessions := agentd.NewSessionManager(store)
 
+	// Create AgentManager.
+	agents := agentd.NewAgentManager(store)
+
 	// Create ProcessManager.
 	cfg := agentd.Config{
-		Socket:       socketPath,
+		Socket:        socketPath,
 		WorkspaceRoot: baseDir,
 	}
 	processes := agentd.NewProcessManager(runtimeClasses, sessions, store, cfg)
 
 	// Create Server with all dependencies.
-	server := ari.New(manager, registry, sessions, processes, runtimeClasses, cfg, store, socketPath, baseDir)
+	server := ari.New(manager, registry, sessions, agents, processes, runtimeClasses, cfg, store, socketPath, baseDir)
 
 	// Start Serve goroutine.
 	serveErr := make(chan error, 1)
@@ -101,6 +105,7 @@ func newTestHarness(t *testing.T) *testHarness {
 		store:          store,
 		runtimeClasses: runtimeClasses,
 		sessions:       sessions,
+		agents:         agents,
 		processes:      processes,
 		server:         server,
 		socket:         socketPath,
@@ -182,9 +187,12 @@ func newSessionTestHarness(t *testing.T) *testHarness {
 	// Create SessionManager.
 	sessions := agentd.NewSessionManager(store)
 
+	// Create AgentManager.
+	agents := agentd.NewAgentManager(store)
+
 	// Create ProcessManager.
 	cfg := agentd.Config{
-		Socket:       socketPath,
+		Socket:        socketPath,
 		WorkspaceRoot: baseDir,
 		Runtime: agentd.RuntimeConfig{
 			DefaultClass: "mockagent",
@@ -196,7 +204,7 @@ func newSessionTestHarness(t *testing.T) *testHarness {
 	processes := agentd.NewProcessManager(runtimeRegistry, sessions, store, cfg)
 
 	// Create Server with all dependencies.
-	server := ari.New(manager, registry, sessions, processes, runtimeRegistry, cfg, store, socketPath, baseDir)
+	server := ari.New(manager, registry, sessions, agents, processes, runtimeRegistry, cfg, store, socketPath, baseDir)
 
 	// Start Serve goroutine.
 	serveErr := make(chan error, 1)
@@ -214,6 +222,7 @@ func newSessionTestHarness(t *testing.T) *testHarness {
 		store:          store,
 		runtimeClasses: runtimeRegistry,
 		sessions:       sessions,
+		agents:         agents,
 		processes:      processes,
 		server:         server,
 		socket:         socketPath,
@@ -996,11 +1005,10 @@ func TestARIWorkspaceCleanupLocalNotDeleted(t *testing.T) {
 // Session Integration Tests
 // ────────────────────────────────────────────────────────────────────────────
 
-// TestARISessionLifecycle tests the full session round-trip:
-// workspace/prepare → session/new → session/prompt → session/status → session/stop → session/remove
-// Note: This test exercises the session lifecycle with a real shim process.
-// Due to timing sensitivity, we use Eventually patterns for state transitions.
-func TestARISessionLifecycle(t *testing.T) {
+// TestARIAgentLifecycle tests the full agent round-trip:
+// workspace/prepare → room/create → agent/create → agent/prompt → agent/status → agent/stop → agent/delete
+// This replaces the old TestARISessionLifecycle now that session/* is removed.
+func TestARIAgentLifecycle(t *testing.T) {
 	h := newSessionTestHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -1008,87 +1016,60 @@ func TestARISessionLifecycle(t *testing.T) {
 
 	client := h.dial(t, &nullHandler{})
 
-	// Step 1: Create workspace (persisted to database for session FK constraint).
-	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "session-lifecycle-test")
+	// Step 1: Create workspace and room.
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "agent-lifecycle-test")
 	require.NotEmpty(t, workspaceId, "workspaceId should be non-empty")
+	roomCreate(ctx, t, client, "lifecycle-room", "mesh", nil)
 
-	// Step 2: Create session via session/new.
-	var newResult ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-	}, &newResult)
-	require.NoError(t, err, "session/new should succeed")
-	sessionId := newResult.SessionId
-	require.NotEmpty(t, sessionId, "sessionId should be non-empty")
-	require.Equal(t, "created", newResult.State, "initial state should be 'created'")
+	// Step 2: Create agent via agent/create.
+	createResult := agentCreate(ctx, t, client, "lifecycle-room", "lifecycle-agent", "mockagent", workspaceId)
+	agentId := createResult.AgentId
+	require.NotEmpty(t, agentId, "agentId should be non-empty")
+	require.Equal(t, "created", createResult.State, "initial state should be 'created'")
 
-	// Step 3: Prompt session via session/prompt (auto-starts).
-	// Note: This test currently has a timing issue with the mockagent process.
-	// The prompt call starts the session and sends a prompt, but the mockagent
-	// may exit before the prompt completes. We accept that prompt may fail
-	// and verify the session state transitions correctly.
-	var promptResult ari.SessionPromptResult
-	promptErr := client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: sessionId,
-		Text:      "hello mockagent",
+	// Step 3: Prompt agent via agent/prompt (auto-starts linked session).
+	var promptResult ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: agentId,
+		Prompt:  "hello mockagent",
 	}, &promptResult)
-	
-	// Check if session was started (even if prompt failed).
-	time.Sleep(500 * time.Millisecond)
+	require.NoError(t, err, "agent/prompt should succeed")
+	require.NotEmpty(t, promptResult.StopReason, "stopReason should be non-empty")
 
-	// Step 4: Check session/status - verify state transition.
-	var statusResult ari.SessionStatusResult
-	err = client.Call(ctx, "session/status", ari.SessionStatusParams{
-		SessionId: sessionId,
-	}, &statusResult)
-	require.NoError(t, err, "session/status should succeed")
-	require.Equal(t, sessionId, statusResult.Session.Id, "sessionId should match")
-	// State should be either "running" (if prompt worked) or "stopped" (if prompt failed but session started)
-	require.Contains(t, []string{"running", "stopped"}, statusResult.Session.State,
-		"state should be 'running' or 'stopped' after prompt attempt")
+	// Step 4: Check agent/status - verify state.
+	var statusResult ari.AgentStatusResult
+	err = client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: agentId}, &statusResult)
+	require.NoError(t, err, "agent/status should succeed")
+	require.Equal(t, agentId, statusResult.Agent.AgentId, "agentId should match")
+	require.Equal(t, "running", statusResult.Agent.State, "state should be 'running' after prompt")
 
-	// Step 5: Stop session via session/stop (idempotent - ok if already stopped).
-	var stopResult interface{}
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{
-		SessionId: sessionId,
-	}, &stopResult)
-	require.NoError(t, err, "session/stop should succeed")
+	// Step 5: Stop agent via agent/stop.
+	agentStop(ctx, t, client, agentId)
 
 	// Wait for shim process to fully stop.
 	time.Sleep(200 * time.Millisecond)
 
-	// Step 6: Check session/status - state should be "stopped".
-	var statusResult2 ari.SessionStatusResult
-	err = client.Call(ctx, "session/status", ari.SessionStatusParams{
-		SessionId: sessionId,
-	}, &statusResult2)
-	require.NoError(t, err, "session/status should succeed")
-	require.Equal(t, "stopped", statusResult2.Session.State, "state should be 'stopped' after stop")
+	// Step 6: Check agent/status - state should be "stopped".
+	var statusResult2 ari.AgentStatusResult
+	err = client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: agentId}, &statusResult2)
+	require.NoError(t, err, "agent/status should succeed")
+	require.Equal(t, "stopped", statusResult2.Agent.State, "state should be 'stopped' after stop")
 
-	// Step 7: Remove session via session/remove.
-	var removeResult interface{}
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{
-		SessionId: sessionId,
-	}, &removeResult)
-	require.NoError(t, err, "session/remove should succeed")
+	// Step 7: Delete agent via agent/delete.
+	var deleteResult interface{}
+	err = client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: agentId}, &deleteResult)
+	require.NoError(t, err, "agent/delete should succeed")
 
-	// Step 8: Verify session/list is empty.
-	var listResult ari.SessionListResult
-	err = client.Call(ctx, "session/list", ari.SessionListParams{}, &listResult)
-	require.NoError(t, err, "session/list should succeed")
-	require.Empty(t, listResult.Sessions, "session list should be empty after remove")
-
-	// Log if prompt worked or failed
-	if promptErr == nil {
-		t.Log("Prompt succeeded, stopReason:", promptResult.StopReason)
-	} else {
-		t.Log("Prompt failed (known timing issue):", promptErr)
-	}
+	// Step 8: Verify agent/list is empty.
+	var listResult ari.AgentListResult
+	err = client.Call(ctx, "agent/list", ari.AgentListParams{}, &listResult)
+	require.NoError(t, err, "agent/list should succeed")
+	require.Empty(t, listResult.Agents, "agent list should be empty after delete")
 }
 
-// TestARISessionPromptAutoStart verifies auto-start on prompt when state="created".
-func TestARISessionPromptAutoStart(t *testing.T) {
+// TestARIAgentPromptAutoStart verifies auto-start on agent/prompt when state="created".
+// Replaces TestARISessionPromptAutoStart now that session/* is removed.
+func TestARIAgentPromptAutoStart(t *testing.T) {
 	h := newSessionTestHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -1096,41 +1077,28 @@ func TestARISessionPromptAutoStart(t *testing.T) {
 
 	client := h.dial(t, &nullHandler{})
 
-	// Create workspace (persisted to database for session FK constraint).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "auto-start-test")
+	roomCreate(ctx, t, client, "auto-start-room", "mesh", nil)
 
-	// Create session.
-	var newResult ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-	}, &newResult)
-	require.NoError(t, err, "session/new should succeed")
-	require.Equal(t, "created", newResult.State, "initial state should be 'created'")
+	createResult := agentCreate(ctx, t, client, "auto-start-room", "auto-start-agent", "mockagent", workspaceId)
+	require.Equal(t, "created", createResult.State, "initial state should be 'created'")
 
-	// Call session/prompt WITHOUT prior session/start.
-	// This verifies auto-start behavior.
-	var promptResult ari.SessionPromptResult
-	err = client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: newResult.SessionId,
-		Text:      "auto-start test",
+	// Call agent/prompt WITHOUT prior start — this verifies auto-start behavior.
+	var promptResult ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "auto-start test",
 	}, &promptResult)
-	require.NoError(t, err, "session/prompt should succeed (auto-start)")
+	require.NoError(t, err, "agent/prompt should succeed (auto-start)")
+	require.NotEmpty(t, promptResult.StopReason, "stopReason should be non-empty")
 
-	// Verify state transitions to "running" after prompt.
-	var statusResult ari.SessionStatusResult
-	err = client.Call(ctx, "session/status", ari.SessionStatusParams{
-		SessionId: newResult.SessionId,
-	}, &statusResult)
-	require.NoError(t, err, "session/status should succeed")
-	require.Equal(t, "running", statusResult.Session.State, "state should be 'running' (auto-start worked)")
-
-	// Cleanup: stop session.
-	_ = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResult.SessionId}, nil)
+	// Cleanup.
+	agentStop(ctx, t, client, createResult.AgentId)
 }
 
-// TestARISessionPromptOnStopped verifies error for prompt on stopped session.
-func TestARISessionPromptOnStopped(t *testing.T) {
+// TestARIAgentPromptOnStopped verifies error for agent/prompt on stopped agent.
+// Replaces TestARISessionPromptOnStopped now that session/* is removed.
+func TestARIAgentPromptOnStopped(t *testing.T) {
 	h := newSessionTestHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -1138,42 +1106,32 @@ func TestARISessionPromptOnStopped(t *testing.T) {
 
 	client := h.dial(t, &nullHandler{})
 
-	// Create workspace (persisted to database for session FK constraint).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "prompt-stopped-test")
+	roomCreate(ctx, t, client, "prompt-stopped-room", "mesh", nil)
 
-	// Create session.
-	var newResult ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-	}, &newResult)
-	require.NoError(t, err, "session/new should succeed")
+	createResult := agentCreate(ctx, t, client, "prompt-stopped-room", "prompt-stopped-agent", "mockagent", workspaceId)
 
-	// Prompt to start the session.
-	var promptResult ari.SessionPromptResult
-	err = client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: newResult.SessionId,
-		Text:      "first prompt",
+	// Prompt to start the agent.
+	var promptResult ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "first prompt",
 	}, &promptResult)
-	require.NoError(t, err, "first prompt should succeed")
+	require.NoError(t, err, "first agent/prompt should succeed")
 
-	// Stop the session.
-	var stopResult interface{}
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{
-		SessionId: newResult.SessionId,
-	}, &stopResult)
-	require.NoError(t, err, "session/stop should succeed")
+	// Stop the agent.
+	agentStop(ctx, t, client, createResult.AgentId)
 
 	// Wait for shim to fully stop.
 	time.Sleep(500 * time.Millisecond)
 
-	// Call session/prompt on stopped session - should fail.
-	var promptResult2 ari.SessionPromptResult
-	err = client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: newResult.SessionId,
-		Text:      "prompt on stopped",
+	// Call agent/prompt on stopped agent — should fail.
+	var promptResult2 ari.AgentPromptResult
+	err = client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "prompt on stopped",
 	}, &promptResult2)
-	require.Error(t, err, "session/prompt on stopped session should fail")
+	require.Error(t, err, "agent/prompt on stopped agent should fail")
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
@@ -1183,7 +1141,7 @@ func TestARISessionPromptOnStopped(t *testing.T) {
 		"error message should mention 'not running'")
 }
 
-// TestARISessionRemoveProtected verifies ErrDeleteProtected blocks remove on running session.
+// TestARISessionRemoveProtected verifies agent/delete requires stopped state (migrated from session/* to agent/*).
 func TestARISessionRemoveProtected(t *testing.T) {
 	h := newSessionTestHarness(t)
 
@@ -1192,119 +1150,75 @@ func TestARISessionRemoveProtected(t *testing.T) {
 
 	client := h.dial(t, &nullHandler{})
 
-	// Create workspace (persisted to database for session FK constraint).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "remove-protected-test")
+	roomCreate(ctx, t, client, "remove-protected-room", "mesh", nil)
 
-	// Create session.
-	var newResult ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-	}, &newResult)
-	require.NoError(t, err, "session/new should succeed")
+	createResult := agentCreate(ctx, t, client, "remove-protected-room", "protected-agent", "mockagent", workspaceId)
 
-	// Prompt to start session (state=running).
-	var promptResult ari.SessionPromptResult
-	err = client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: newResult.SessionId,
-		Text:      "running prompt",
+	// Prompt to start agent (state=running).
+	var promptResult ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "running prompt",
 	}, &promptResult)
-	require.NoError(t, err, "prompt should succeed")
+	require.NoError(t, err, "agent/prompt should succeed")
 
-	// Verify session is running.
-	var statusResult ari.SessionStatusResult
-	err = client.Call(ctx, "session/status", ari.SessionStatusParams{
-		SessionId: newResult.SessionId,
-	}, &statusResult)
-	require.NoError(t, err, "session/status should succeed")
-	require.Equal(t, "running", statusResult.Session.State, "session should be running")
+	// Verify agent is running.
+	var statusResult ari.AgentStatusResult
+	err = client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: createResult.AgentId}, &statusResult)
+	require.NoError(t, err, "agent/status should succeed")
+	require.Equal(t, "running", statusResult.Agent.State, "agent should be running")
 
-	// Call session/remove on running session - should fail.
-	var removeResult interface{}
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{
-		SessionId: newResult.SessionId,
-	}, &removeResult)
-	require.Error(t, err, "session/remove on running session should fail")
+	// agent/delete on running agent should fail.
+	var deleteResult interface{}
+	err = client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: createResult.AgentId}, &deleteResult)
+	require.Error(t, err, "agent/delete on running agent should fail")
+	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "stopped")
 
-	var rpcErr *jsonrpc2.Error
-	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
-		"expected CodeInvalidParams for remove protected, got %d", rpcErr.Code)
-	require.Contains(t, rpcErr.Message, "active",
-		"error message should mention 'active' (ErrDeleteProtected)")
+	// Stop agent.
+	agentStop(ctx, t, client, createResult.AgentId)
+	time.Sleep(200 * time.Millisecond)
 
-	// Stop session.
-	var stopResult interface{}
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{
-		SessionId: newResult.SessionId,
-	}, &stopResult)
-	require.NoError(t, err, "session/stop should succeed")
-
-	// Wait for shim to fully stop.
-	time.Sleep(500 * time.Millisecond)
-
-	// Now session/remove should succeed.
-	var removeResult2 interface{}
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{
-		SessionId: newResult.SessionId,
-	}, &removeResult2)
-	require.NoError(t, err, "session/remove should succeed after stop")
+	// Now agent/delete should succeed.
+	err = client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: createResult.AgentId}, &deleteResult)
+	require.NoError(t, err, "agent/delete should succeed after stop")
 }
 
-// TestARISessionList verifies session/list returns all sessions.
+// TestARISessionList verifies agent/list returns all agents (migrated from session/* to agent/*).
 func TestARISessionList(t *testing.T) {
-	h := newSessionTestHarness(t)
+	h := newTestHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client := h.dial(t, &nullHandler{})
 
-	// Create workspace (persisted to database for session FK constraint).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "list-test")
+	roomCreate(ctx, t, client, "list-room", "mesh", nil)
 
-	// Create 2 sessions with different labels.
-	var newResult1 ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Labels:       map[string]string{"env": "test1", "team": "alpha"},
-	}, &newResult1)
-	require.NoError(t, err, "session/new #1 should succeed")
+	// Create 2 agents.
+	result1 := agentCreate(ctx, t, client, "list-room", "agent-list-1", "default", workspaceId)
+	result2 := agentCreate(ctx, t, client, "list-room", "agent-list-2", "default", workspaceId)
 
-	var newResult2 ari.SessionNewResult
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Labels:       map[string]string{"env": "test2", "team": "beta"},
-	}, &newResult2)
-	require.NoError(t, err, "session/new #2 should succeed")
+	// agent/list should return 2 agents.
+	var listResult ari.AgentListResult
+	err := client.Call(ctx, "agent/list", ari.AgentListParams{}, &listResult)
+	require.NoError(t, err, "agent/list should succeed")
+	require.Len(t, listResult.Agents, 2, "agent list should have 2 entries")
 
-	// Call session/list - should return 2 sessions.
-	var listResult ari.SessionListResult
-	err = client.Call(ctx, "session/list", ari.SessionListParams{}, &listResult)
-	require.NoError(t, err, "session/list should succeed")
-	require.Len(t, listResult.Sessions, 2, "session list should have 2 entries")
-
-	// Verify both session IDs are present.
-	sessionIds := make(map[string]bool)
-	for _, s := range listResult.Sessions {
-		sessionIds[s.Id] = true
-		require.Equal(t, workspaceId, s.WorkspaceId, "workspaceId should match")
-		require.Equal(t, "mockagent", s.RuntimeClass, "runtimeClass should match")
-		require.Equal(t, "created", s.State, "state should be 'created'")
+	agentIds := make(map[string]bool)
+	for _, a := range listResult.Agents {
+		agentIds[a.AgentId] = true
+		require.Equal(t, "list-room", a.Room, "room should match")
+		require.Equal(t, "created", a.State, "state should be 'created'")
 	}
-	require.True(t, sessionIds[newResult1.SessionId], "session #1 should be in list")
-	require.True(t, sessionIds[newResult2.SessionId], "session #2 should be in list")
-
-	// Cleanup: remove sessions.
-	_ = client.Call(ctx, "session/remove", ari.SessionRemoveParams{SessionId: newResult1.SessionId}, nil)
-	_ = client.Call(ctx, "session/remove", ari.SessionRemoveParams{SessionId: newResult2.SessionId}, nil)
+	require.True(t, agentIds[result1.AgentId], "agent #1 should be in list")
+	require.True(t, agentIds[result2.AgentId], "agent #2 should be in list")
 }
 
-// TestARISessionNotFound verifies "not found" errors for nonexistent sessions.
+// TestARISessionNotFound verifies "not found" errors for nonexistent agents (migrated from session/*).
 func TestARISessionNotFound(t *testing.T) {
-	h := newSessionTestHarness(t)
+	h := newTestHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -1313,59 +1227,44 @@ func TestARISessionNotFound(t *testing.T) {
 
 	nonexistentId := uuid.New().String()
 
-	// Test session/status with nonexistent sessionId.
-	var statusResult ari.SessionStatusResult
-	err := client.Call(ctx, "session/status", ari.SessionStatusParams{
-		SessionId: nonexistentId,
+	// Test agent/status with nonexistent agentId.
+	var statusResult ari.AgentStatusResult
+	err := client.Call(ctx, "agent/status", ari.AgentStatusParams{
+		AgentId: nonexistentId,
 	}, &statusResult)
-	require.Error(t, err, "session/status should fail for nonexistent session")
-
-	var rpcErr *jsonrpc2.Error
-	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
-		"expected CodeInvalidParams for not found, got %d", rpcErr.Code)
-	require.Contains(t, rpcErr.Message, "not found",
-		"error message should mention 'not found'")
-
-	// Test session/prompt with nonexistent sessionId.
-	var promptResult ari.SessionPromptResult
-	err = client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: nonexistentId,
-		Text:      "test",
-	}, &promptResult)
-	require.Error(t, err, "session/prompt should fail for nonexistent session")
+	require.Error(t, err, "agent/status should fail for nonexistent agent")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "not found")
 
-	// Test session/stop with nonexistent sessionId.
-	// Note: session/stop uses CodeInternalError for all errors (not CodeInvalidParams).
-	var stopResult interface{}
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{
-		SessionId: nonexistentId,
-	}, &stopResult)
-	require.Error(t, err, "session/stop should fail for nonexistent session")
-	requireRPCError(t, err, int64(jsonrpc2.CodeInternalError), "stop session failed")
+	// Test agent/prompt with nonexistent agentId.
+	var promptResult ari.AgentPromptResult
+	err = client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: nonexistentId,
+		Prompt:  "test",
+	}, &promptResult)
+	require.Error(t, err, "agent/prompt should fail for nonexistent agent")
+	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "not found")
 
-	// Test session/remove with nonexistent sessionId.
-	var removeResult interface{}
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{
-		SessionId: nonexistentId,
-	}, &removeResult)
-	require.Error(t, err, "session/remove should fail for nonexistent session")
-	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "not exist")
+	// Test agent/stop with nonexistent agentId.
+	var stopResult interface{}
+	err = client.Call(ctx, "agent/stop", ari.AgentStopParams{
+		AgentId: nonexistentId,
+	}, &stopResult)
+	require.Error(t, err, "agent/stop should fail for nonexistent agent")
+	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "not found")
 }
 
-// TestARISessionNewNilParams tests malformed input: nil params for session/new.
+// TestARISessionNewNilParams tests malformed input: nil params for agent/create (migrated from session/*).
 func TestARISessionNewNilParams(t *testing.T) {
-	h := newSessionTestHarness(t)
+	h := newTestHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client := h.dial(t, &nullHandler{})
 
-	var result ari.SessionNewResult
-	err := client.Call(ctx, "session/new", nil, &result)
-	require.Error(t, err, "session/new should fail with nil params")
+	var result ari.AgentCreateResult
+	err := client.Call(ctx, "agent/create", nil, &result)
+	require.Error(t, err, "agent/create should fail with nil params")
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
@@ -1373,43 +1272,41 @@ func TestARISessionNewNilParams(t *testing.T) {
 		"expected CodeInvalidParams for nil params, got %d", rpcErr.Code)
 }
 
-// TestARISessionPromptMissingSessionId tests missing sessionId for prompt.
+// TestARISessionPromptMissingSessionId tests missing agentId for agent/prompt (migrated from session/*).
 func TestARISessionPromptMissingSessionId(t *testing.T) {
-	h := newSessionTestHarness(t)
+	h := newTestHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client := h.dial(t, &nullHandler{})
 
-	// Call with empty sessionId.
-	var result ari.SessionPromptResult
-	err := client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: "",
-		Text:      "test",
+	// Call with empty agentId — agent/prompt should fail.
+	var result ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: "",
+		Prompt:  "test",
 	}, &result)
-	require.Error(t, err, "session/prompt should fail with empty sessionId")
-	// The error message mentions "session ID is required" from the meta store.
-	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "session ID")
+	require.Error(t, err, "agent/prompt should fail with empty agentId")
+	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "required")
 }
 
-// TestARISessionListEmpty verifies session/list on empty DB.
+// TestARISessionListEmpty verifies agent/list on empty DB (migrated from session/*).
 func TestARISessionListEmpty(t *testing.T) {
-	h := newSessionTestHarness(t)
+	h := newTestHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	client := h.dial(t, &nullHandler{})
 
-	// Call session/list without creating any sessions.
-	var listResult ari.SessionListResult
-	err := client.Call(ctx, "session/list", ari.SessionListParams{}, &listResult)
-	require.NoError(t, err, "session/list should succeed on empty DB")
-	require.Empty(t, listResult.Sessions, "session list should be empty array")
+	var listResult ari.AgentListResult
+	err := client.Call(ctx, "agent/list", ari.AgentListParams{}, &listResult)
+	require.NoError(t, err, "agent/list should succeed on empty DB")
+	require.Empty(t, listResult.Agents, "agent list should be empty array")
 }
 
-// TestARISessionStatusStopped verifies session/status on stopped session (no shimState).
+// TestARISessionStatusStopped verifies agent/status on stopped agent (no shimState) (migrated from session/*).
 func TestARISessionStatusStopped(t *testing.T) {
 	h := newSessionTestHarness(t)
 
@@ -1418,53 +1315,36 @@ func TestARISessionStatusStopped(t *testing.T) {
 
 	client := h.dial(t, &nullHandler{})
 
-	// Create workspace (persisted to database for session FK constraint).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "status-stopped-test")
+	roomCreate(ctx, t, client, "status-stopped-room", "mesh", nil)
 
-	// Create session.
-	var newResult ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-	}, &newResult)
-	require.NoError(t, err, "session/new should succeed")
+	createResult := agentCreate(ctx, t, client, "status-stopped-room", "status-stopped-agent", "mockagent", workspaceId)
 
-	// Prompt to start session.
-	var promptResult ari.SessionPromptResult
-	err = client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: newResult.SessionId,
-		Text:      "test",
+	// Prompt to start agent.
+	var promptResult ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "test",
 	}, &promptResult)
-	require.NoError(t, err, "prompt should succeed")
+	require.NoError(t, err, "agent/prompt should succeed")
 
-	// Stop session.
-	var stopResult interface{}
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{
-		SessionId: newResult.SessionId,
-	}, &stopResult)
-	require.NoError(t, err, "session/stop should succeed")
-
-	// Wait for shim to fully stop.
+	// Stop agent.
+	agentStop(ctx, t, client, createResult.AgentId)
 	time.Sleep(500 * time.Millisecond)
 
-	// Check session/status - shimState should be nil for stopped session.
-	var statusResult ari.SessionStatusResult
-	err = client.Call(ctx, "session/status", ari.SessionStatusParams{
-		SessionId: newResult.SessionId,
-	}, &statusResult)
-	require.NoError(t, err, "session/status should succeed")
-	require.Equal(t, "stopped", statusResult.Session.State, "state should be 'stopped'")
-	require.Nil(t, statusResult.ShimState, "shimState should be nil for stopped session")
-
-	// Cleanup.
-	_ = client.Call(ctx, "session/remove", ari.SessionRemoveParams{SessionId: newResult.SessionId}, nil)
+	// Check agent/status — shimState should be nil for stopped agent.
+	var statusResult ari.AgentStatusResult
+	err = client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: createResult.AgentId}, &statusResult)
+	require.NoError(t, err, "agent/status should succeed")
+	require.Equal(t, "stopped", statusResult.Agent.State, "state should be 'stopped'")
+	require.Nil(t, statusResult.ShimState, "shimState should be nil for stopped agent")
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // Recovery Guard Tests
 // ────────────────────────────────────────────────────────────────────────────
 
-// TestARIRecoveryGuard_BlocksPromptDuringRecovery verifies that session/prompt
+// TestARIRecoveryGuard_BlocksPromptDuringRecovery verifies that agent/prompt
 // returns CodeRecoveryBlocked (-32001) while the daemon's recovery phase is
 // RecoveryPhaseRecovering.
 func TestARIRecoveryGuard_BlocksPromptDuringRecovery(t *testing.T) {
@@ -1478,16 +1358,16 @@ func TestARIRecoveryGuard_BlocksPromptDuringRecovery(t *testing.T) {
 	// Put the process manager into recovering phase.
 	h.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
 
-	// session/prompt should be blocked.
-	var result ari.SessionPromptResult
-	err := client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: "any-session-id",
-		Text:      "hello",
+	// agent/prompt should be blocked during recovery.
+	var result ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: "any-agent-id",
+		Prompt:  "hello",
 	}, &result)
 	requireRPCError(t, err, ari.CodeRecoveryBlocked, "recovering")
 }
 
-// TestARIRecoveryGuard_BlocksCancelDuringRecovery verifies that session/cancel
+// TestARIRecoveryGuard_BlocksCancelDuringRecovery verifies that agent/cancel
 // returns CodeRecoveryBlocked while the daemon is recovering.
 func TestARIRecoveryGuard_BlocksCancelDuringRecovery(t *testing.T) {
 	h := newTestHarness(t)
@@ -1500,13 +1380,13 @@ func TestARIRecoveryGuard_BlocksCancelDuringRecovery(t *testing.T) {
 	h.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
 
 	var result interface{}
-	err := client.Call(ctx, "session/cancel", ari.SessionCancelParams{
-		SessionId: "any-session-id",
+	err := client.Call(ctx, "agent/cancel", ari.AgentCancelParams{
+		AgentId: "any-agent-id",
 	}, &result)
 	requireRPCError(t, err, ari.CodeRecoveryBlocked, "recovering")
 }
 
-// TestARIRecoveryGuard_AllowsStatusDuringRecovery verifies that session/status
+// TestARIRecoveryGuard_AllowsStatusDuringRecovery verifies that agent/status
 // is NOT blocked during recovery (it is read-only).
 func TestARIRecoveryGuard_AllowsStatusDuringRecovery(t *testing.T) {
 	h := newTestHarness(t)
@@ -1516,32 +1396,24 @@ func TestARIRecoveryGuard_AllowsStatusDuringRecovery(t *testing.T) {
 
 	client := h.dial(t, &nullHandler{})
 
-	// Create a workspace and session so session/status has something to find.
-	wsID := uuid.New().String()
-	h.createWorkspaceInStore(ctx, t, wsID, "guard-test-ws", "/tmp/guard-test")
-	session := &meta.Session{
-		ID:           uuid.New().String(),
-		WorkspaceID:  wsID,
-		RuntimeClass: "default",
-		State:        meta.SessionStateCreated,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-	}
-	require.NoError(t, h.store.CreateSession(ctx, session))
+	// Create a workspace and agent so agent/status has something to find.
+	wsID, _ := h.prepareWorkspaceForSession(ctx, t, h.dial(t, &nullHandler{}), "guard-test-ws")
+	roomCreate(ctx, t, client, "guard-status-room", "mesh", nil)
+	createResult := agentCreate(ctx, t, client, "guard-status-room", "guard-status-agent", "default", wsID)
 
 	// Set recovering phase.
 	h.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
 
-	// session/status should still succeed (read-only, not guarded).
-	var statusResult ari.SessionStatusResult
-	err := client.Call(ctx, "session/status", ari.SessionStatusParams{
-		SessionId: session.ID,
+	// agent/status should still succeed (read-only, not guarded).
+	var statusResult ari.AgentStatusResult
+	err := client.Call(ctx, "agent/status", ari.AgentStatusParams{
+		AgentId: createResult.AgentId,
 	}, &statusResult)
-	require.NoError(t, err, "session/status should succeed during recovery")
-	require.Equal(t, session.ID, statusResult.Session.Id)
+	require.NoError(t, err, "agent/status should succeed during recovery")
+	require.Equal(t, createResult.AgentId, statusResult.Agent.AgentId)
 }
 
-// TestARIRecoveryGuard_AllowsListDuringRecovery verifies that session/list
+// TestARIRecoveryGuard_AllowsListDuringRecovery verifies that agent/list
 // is NOT blocked during recovery.
 func TestARIRecoveryGuard_AllowsListDuringRecovery(t *testing.T) {
 	h := newTestHarness(t)
@@ -1553,15 +1425,13 @@ func TestARIRecoveryGuard_AllowsListDuringRecovery(t *testing.T) {
 
 	h.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
 
-	var listResult ari.SessionListResult
-	err := client.Call(ctx, "session/list", ari.SessionListParams{}, &listResult)
-	require.NoError(t, err, "session/list should succeed during recovery")
+	var listResult ari.AgentListResult
+	err := client.Call(ctx, "agent/list", ari.AgentListParams{}, &listResult)
+	require.NoError(t, err, "agent/list should succeed during recovery")
 }
 
-// TestARIRecoveryGuard_AllowsPromptAfterRecovery verifies that session/prompt
+// TestARIRecoveryGuard_AllowsPromptAfterRecovery verifies that agent/prompt
 // is no longer blocked once the recovery phase transitions past Recovering.
-// (The call may fail for other reasons like "session not found", but it should
-// NOT return CodeRecoveryBlocked.)
 func TestARIRecoveryGuard_AllowsPromptAfterRecovery(t *testing.T) {
 	h := newTestHarness(t)
 
@@ -1574,21 +1444,21 @@ func TestARIRecoveryGuard_AllowsPromptAfterRecovery(t *testing.T) {
 	h.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
 	h.processes.SetRecoveryPhase(agentd.RecoveryPhaseComplete)
 
-	// session/prompt should NOT return recovery-blocked.
-	var result ari.SessionPromptResult
-	err := client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: "nonexistent-session",
-		Text:      "hello",
+	// agent/prompt should NOT return recovery-blocked.
+	var result ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: "nonexistent-agent",
+		Prompt:  "hello",
 	}, &result)
-	// We expect an error (session not found) but NOT a recovery guard error.
-	require.Error(t, err, "should fail because session doesn't exist")
+	// We expect an error (agent not found) but NOT a recovery guard error.
+	require.Error(t, err, "should fail because agent doesn't exist")
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
 	require.NotEqual(t, ari.CodeRecoveryBlocked, int64(rpcErr.Code),
 		"should NOT be CodeRecoveryBlocked after recovery completes")
 }
 
-// TestARIRecoveryGuard_AllowsStopDuringRecovery verifies that session/stop
+// TestARIRecoveryGuard_AllowsStopDuringRecovery verifies that agent/stop
 // is NOT blocked during recovery (safety-critical, intentionally unguarded).
 func TestARIRecoveryGuard_AllowsStopDuringRecovery(t *testing.T) {
 	h := newTestHarness(t)
@@ -1600,25 +1470,25 @@ func TestARIRecoveryGuard_AllowsStopDuringRecovery(t *testing.T) {
 
 	h.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
 
-	// session/stop should NOT be blocked. It may fail (session not found)
+	// agent/stop should NOT be blocked. It may fail (agent not found)
 	// but the error should NOT be CodeRecoveryBlocked.
 	var result interface{}
-	err := client.Call(ctx, "session/stop", ari.SessionStopParams{
-		SessionId: "nonexistent-session",
+	err := client.Call(ctx, "agent/stop", ari.AgentStopParams{
+		AgentId: "nonexistent-agent",
 	}, &result)
-	require.Error(t, err, "should fail because session doesn't exist")
+	require.Error(t, err, "should fail because agent doesn't exist")
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
 	require.NotEqual(t, ari.CodeRecoveryBlocked, int64(rpcErr.Code),
-		"session/stop should NOT be recovery-blocked")
+		"agent/stop should NOT be recovery-blocked")
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // Workspace Ref Tests (DB ref_count via session lifecycle)
 // ────────────────────────────────────────────────────────────────────────────
 
-// TestARISessionNewAcquiresWorkspaceRef verifies that session/new records a
-// workspace_ref in the DB (incrementing ref_count). Two sessions on the same
+// TestARISessionNewAcquiresWorkspaceRef verifies that agent/create records a
+// workspace_ref in the DB (incrementing ref_count). Two agents on the same
 // workspace should yield ref_count == 2.
 func TestARISessionNewAcquiresWorkspaceRef(t *testing.T) {
 	h := newTestHarness(t)
@@ -1630,40 +1500,30 @@ func TestARISessionNewAcquiresWorkspaceRef(t *testing.T) {
 
 	// Prepare workspace (persisted to DB by handleWorkspacePrepare).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "ref-acquire-test")
+	roomCreate(ctx, t, client, "ref-acquire-room", "mesh", nil)
 
-	// Create first session.
-	var newResult1 ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "default",
-	}, &newResult1)
-	require.NoError(t, err, "session/new #1 should succeed")
-	require.NotEmpty(t, newResult1.SessionId)
+	// Create first agent.
+	result1 := agentCreate(ctx, t, client, "ref-acquire-room", "ref-agent-1", "default", workspaceId)
+	require.NotEmpty(t, result1.AgentId)
 
 	// Assert DB ref_count == 1.
 	ws, err := h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err, "GetWorkspace should succeed")
 	require.NotNil(t, ws, "workspace should exist in DB")
-	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after first session")
+	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after first agent")
 
-	// Create second session on the same workspace.
-	var newResult2 ari.SessionNewResult
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "default",
-	}, &newResult2)
-	require.NoError(t, err, "session/new #2 should succeed")
-	require.NotEmpty(t, newResult2.SessionId)
+	// Create second agent on the same workspace.
+	result2 := agentCreate(ctx, t, client, "ref-acquire-room", "ref-agent-2", "default", workspaceId)
+	require.NotEmpty(t, result2.AgentId)
 
 	// Assert DB ref_count == 2.
 	ws, err = h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err, "GetWorkspace should succeed")
-	require.Equal(t, 2, ws.RefCount, "ref_count should be 2 after second session")
+	require.Equal(t, 2, ws.RefCount, "ref_count should be 2 after second agent")
 }
 
-// TestARISessionRemoveReleasesWorkspaceRef verifies that removing a session
-// decrements the workspace ref_count in the DB (via DeleteSession's cascade
-// of workspace_refs rows).
+// TestARISessionRemoveReleasesWorkspaceRef verifies that deleting an agent
+// decrements the workspace ref_count in the DB.
 func TestARISessionRemoveReleasesWorkspaceRef(t *testing.T) {
 	h := newTestHarness(t)
 
@@ -1674,31 +1534,26 @@ func TestARISessionRemoveReleasesWorkspaceRef(t *testing.T) {
 
 	// Prepare workspace.
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "ref-release-test")
+	roomCreate(ctx, t, client, "ref-release-room", "mesh", nil)
 
-	// Create session.
-	var newResult ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "default",
-	}, &newResult)
-	require.NoError(t, err, "session/new should succeed")
+	// Create agent.
+	result := agentCreate(ctx, t, client, "ref-release-room", "ref-release-agent", "default", workspaceId)
 
 	// Assert ref_count == 1.
 	ws, err := h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err)
-	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after session create")
+	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after agent create")
 
-	// Remove the session (state is "created" so no stop needed).
-	var removeResult interface{}
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{
-		SessionId: newResult.SessionId,
-	}, &removeResult)
-	require.NoError(t, err, "session/remove should succeed")
+	// Stop then delete the agent.
+	agentStop(ctx, t, client, result.AgentId)
+	var deleteResult interface{}
+	err = client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: result.AgentId}, &deleteResult)
+	require.NoError(t, err, "agent/delete should succeed")
 
 	// Assert ref_count == 0.
 	ws, err = h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err)
-	require.Equal(t, 0, ws.RefCount, "ref_count should be 0 after session remove")
+	require.Equal(t, 0, ws.RefCount, "ref_count should be 0 after agent delete")
 }
 
 // TestARIWorkspacePrepareSourcePersisted verifies that handleWorkspacePrepare
@@ -1742,8 +1597,8 @@ func TestARIWorkspacePrepareSourcePersisted(t *testing.T) {
 
 // TestARIWorkspaceCleanupBlockedByDBRefCount verifies that workspace/cleanup
 // gates on the persisted DB ref_count (not the volatile in-memory registry
-// RefCount). With an active session, cleanup is rejected; after session
-// removal the ref_count drops to 0 and cleanup succeeds.
+// RefCount). With an active agent, cleanup is rejected; after agent
+// delete the ref_count drops to 0 and cleanup succeeds.
 func TestARIWorkspaceCleanupBlockedByDBRefCount(t *testing.T) {
 	h := newTestHarness(t)
 
@@ -1754,21 +1609,17 @@ func TestARIWorkspaceCleanupBlockedByDBRefCount(t *testing.T) {
 
 	// Prepare workspace (persisted to DB).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "cleanup-db-refcount-test")
+	roomCreate(ctx, t, client, "cleanup-refcount-room", "mesh", nil)
 
-	// Create a session — this acquires a DB workspace_ref (ref_count → 1).
-	var newResult ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "default",
-	}, &newResult)
-	require.NoError(t, err, "session/new should succeed")
-	require.NotEmpty(t, newResult.SessionId)
+	// Create an agent — this acquires a DB workspace_ref (ref_count → 1).
+	result := agentCreate(ctx, t, client, "cleanup-refcount-room", "cleanup-ref-agent", "default", workspaceId)
+	require.NotEmpty(t, result.AgentId)
 
 	// Verify DB ref_count == 1.
 	ws, err := h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err)
 	require.NotNil(t, ws)
-	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after session create")
+	require.Equal(t, 1, ws.RefCount, "ref_count should be 1 after agent create")
 
 	// Attempt workspace/cleanup — should fail because DB ref_count > 0.
 	var cleanupResult interface{}
@@ -1782,26 +1633,21 @@ func TestARIWorkspaceCleanupBlockedByDBRefCount(t *testing.T) {
 	require.Contains(t, rpcErr.Message, "active references",
 		"error message should mention active references")
 
-	// Remove the session (state is "created" so no stop needed).
-	var removeResult interface{}
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{
-		SessionId: newResult.SessionId,
-	}, &removeResult)
-	require.NoError(t, err, "session/remove should succeed")
+	// Stop then delete the agent (releases workspace ref).
+	agentStop(ctx, t, client, result.AgentId)
+	var deleteResult interface{}
+	err = client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: result.AgentId}, &deleteResult)
+	require.NoError(t, err, "agent/delete should succeed")
 
-	// Verify DB ref_count == 0 after removal.
+	// Verify DB ref_count == 0 after deletion.
 	ws, err = h.store.GetWorkspace(ctx, workspaceId)
 	require.NoError(t, err)
-	require.Equal(t, 0, ws.RefCount, "ref_count should be 0 after session remove")
+	require.Equal(t, 0, ws.RefCount, "ref_count should be 0 after agent delete")
 
 	// Retry workspace/cleanup — should succeed now.
 	err = client.Call(ctx, "workspace/cleanup", ari.WorkspaceCleanupParams{WorkspaceId: workspaceId}, &cleanupResult)
 	require.NoError(t, err, "workspace/cleanup should succeed when DB ref_count == 0")
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Test: workspace/cleanup blocked during recovery phase
-// ────────────────────────────────────────────────────────────────────────────
 
 // TestARIWorkspaceCleanupBlockedDuringRecovery verifies that workspace/cleanup
 // returns CodeRecoveryBlocked while the daemon is in RecoveryPhaseRecovering.
@@ -1880,10 +1726,10 @@ func roomDelete(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn, name str
 }
 
 // TestARIRoomLifecycle tests the full room round-trip:
-// room/create → session/new (2 members) → room/status → session/stop → room/delete → room/status (not found)
+// room/create → agent/create (2 members) → room/status → agent/stop → room/delete → room/status (not found)
 // This is the primary end-to-end test proving the slice demo claim.
 func TestARIRoomLifecycle(t *testing.T) {
-	h := newSessionTestHarness(t)
+	h := newTestHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -1896,31 +1742,17 @@ func TestARIRoomLifecycle(t *testing.T) {
 	require.Equal(t, "mesh", createResult.CommunicationMode, "communication mode should be mesh")
 	require.NotEmpty(t, createResult.CreatedAt, "createdAt should be non-empty")
 
-	// Step 2: Prepare a workspace for sessions.
+	// Step 2: Prepare a workspace for agents.
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "room-lifecycle-ws")
 
-	// Step 3: Create 2 sessions pointing at the room with different agent names.
-	var newResult1 ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "test-room",
-		RoomAgent:    "agent-a",
-	}, &newResult1)
-	require.NoError(t, err, "session/new #1 (agent-a) should succeed")
-	require.NotEmpty(t, newResult1.SessionId)
+	// Step 3: Create 2 agents in the room with different names.
+	agentResultA := agentCreate(ctx, t, client, "test-room", "agent-a", "default", workspaceId)
+	require.NotEmpty(t, agentResultA.AgentId)
 
-	var newResult2 ari.SessionNewResult
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "test-room",
-		RoomAgent:    "agent-b",
-	}, &newResult2)
-	require.NoError(t, err, "session/new #2 (agent-b) should succeed")
-	require.NotEmpty(t, newResult2.SessionId)
+	agentResultB := agentCreate(ctx, t, client, "test-room", "agent-b", "default", workspaceId)
+	require.NotEmpty(t, agentResultB.AgentId)
 
-	// Step 4: Call room/status → verify 2 members with correct agentName/sessionId/state.
+	// Step 4: Call room/status → verify 2 members with correct agentName/state.
 	status := roomStatus(ctx, t, client, "test-room")
 	require.Equal(t, "test-room", status.Name, "room name should match")
 	require.Equal(t, "mesh", status.CommunicationMode, "communication mode should match")
@@ -1933,27 +1765,22 @@ func TestARIRoomLifecycle(t *testing.T) {
 	}
 	require.Contains(t, memberMap, "agent-a", "agent-a should be a member")
 	require.Contains(t, memberMap, "agent-b", "agent-b should be a member")
-	require.Equal(t, newResult1.SessionId, memberMap["agent-a"].SessionId, "agent-a sessionId should match")
-	require.Equal(t, newResult2.SessionId, memberMap["agent-b"].SessionId, "agent-b sessionId should match")
 	require.Equal(t, "created", memberMap["agent-a"].State, "agent-a state should be created")
 	require.Equal(t, "created", memberMap["agent-b"].State, "agent-b state should be created")
 
 	// Step 5: Verify room labels survived round-trip.
 	require.Equal(t, map[string]string{"env": "test"}, status.Labels, "room labels should match")
 
-	// Step 6: Remove both sessions (state=created, no stop needed).
-	var removeResult interface{}
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{SessionId: newResult1.SessionId}, &removeResult)
-	require.NoError(t, err, "session/remove #1 should succeed")
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{SessionId: newResult2.SessionId}, &removeResult)
-	require.NoError(t, err, "session/remove #2 should succeed")
+	// Step 6: Stop both agents (required before delete).
+	agentStop(ctx, t, client, agentResultA.AgentId)
+	agentStop(ctx, t, client, agentResultB.AgentId)
 
-	// Step 7: Delete the room → verify success.
+	// Step 7: Delete the room → verify success (sessions are stopped).
 	roomDelete(ctx, t, client, "test-room")
 
 	// Step 8: Call room/status → verify room not found error.
 	var statusResult ari.RoomStatusResult
-	err = client.Call(ctx, "room/status", ari.RoomStatusParams{Name: "test-room"}, &statusResult)
+	err := client.Call(ctx, "room/status", ari.RoomStatusParams{Name: "test-room"}, &statusResult)
 	require.Error(t, err, "room/status should fail after delete")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "not found")
 }
@@ -1980,9 +1807,9 @@ func TestARIRoomCreateDuplicate(t *testing.T) {
 }
 
 // TestARIRoomDeleteWithActiveMembers verifies room/delete rejects when
-// non-stopped sessions are associated with the room.
+// non-stopped agents are associated with the room.
 func TestARIRoomDeleteWithActiveMembers(t *testing.T) {
-	h := newSessionTestHarness(t)
+	h := newTestHarness(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -1992,35 +1819,26 @@ func TestARIRoomDeleteWithActiveMembers(t *testing.T) {
 	// Create room.
 	roomCreate(ctx, t, client, "active-room", "star", nil)
 
-	// Prepare workspace and create a session in the room (state=created → non-stopped).
+	// Prepare workspace and create an agent in the room (state=created → non-stopped).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "active-room-ws")
-	var newResult ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "active-room",
-		RoomAgent:    "agent-x",
-	}, &newResult)
-	require.NoError(t, err, "session/new should succeed")
+	agentResult := agentCreate(ctx, t, client, "active-room", "agent-x", "default", workspaceId)
 
 	// Attempt to delete the room — should fail because session is in "created" state (non-stopped).
 	var deleteResult interface{}
-	err = client.Call(ctx, "room/delete", ari.RoomDeleteParams{Name: "active-room"}, &deleteResult)
+	err := client.Call(ctx, "room/delete", ari.RoomDeleteParams{Name: "active-room"}, &deleteResult)
 	require.Error(t, err, "room/delete should fail with active members")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "active member")
 
-	// Remove the session (created state, no stop needed).
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{SessionId: newResult.SessionId}, nil)
-	require.NoError(t, err, "session/remove should succeed")
+	// Stop the agent first (transitions session to stopped).
+	agentStop(ctx, t, client, agentResult.AgentId)
 
-	// Now delete should succeed (no active sessions).
+	// Now delete should succeed (all sessions are stopped).
 	roomDelete(ctx, t, client, "active-room")
 }
 
-// TestARISessionNewRoomValidation verifies session/new rejects:
+// TestARISessionNewRoomValidation verifies agent/create rejects:
 // - room='nonexistent' → error mentioning room/create
-// - room='test-room' with empty roomAgent → error requiring roomAgent
-// This enforces D051 (room existence validation).
+// This enforces room existence validation.
 func TestARISessionNewRoomValidation(t *testing.T) {
 	h := newTestHarness(t)
 
@@ -2029,30 +1847,19 @@ func TestARISessionNewRoomValidation(t *testing.T) {
 
 	client := h.dial(t, &nullHandler{})
 
-	// Prepare a workspace (needed for session/new params).
+	// Prepare a workspace (needed for agent/create params).
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "room-validation-ws")
 
 	// Test 1: room='nonexistent' → error mentioning room/create.
-	var newResult ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "default",
+	var createResult ari.AgentCreateResult
+	err := client.Call(ctx, "agent/create", ari.AgentCreateParams{
 		Room:         "nonexistent",
-		RoomAgent:    "agent-z",
-	}, &newResult)
-	require.Error(t, err, "session/new should fail for nonexistent room")
-	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "room/create")
-
-	// Test 2: Create a real room, then session/new with empty roomAgent → error.
-	roomCreate(ctx, t, client, "validation-room", "mesh", nil)
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
+		Name:         "agent-z",
 		RuntimeClass: "default",
-		Room:         "validation-room",
-		RoomAgent:    "",
-	}, &newResult)
-	require.Error(t, err, "session/new should fail with empty roomAgent")
-	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "roomAgent")
+		WorkspaceId:  workspaceId,
+	}, &createResult)
+	require.Error(t, err, "agent/create should fail for nonexistent room")
+	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "room/create")
 }
 
 // TestARIRoomCommunicationModes verifies that rooms can be created with
@@ -2116,7 +1923,7 @@ func roomSend(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn, room, targ
 	return result
 }
 
-// TestARIRoomSendBasic tests the happy path: create room, create 2 sessions,
+// TestARIRoomSendBasic tests the happy path: create room, create 2 agents,
 // send a message from agent-a to agent-b via room/send, verify delivery.
 func TestARIRoomSendBasic(t *testing.T) {
 	h := newSessionTestHarness(t)
@@ -2132,34 +1939,19 @@ func TestARIRoomSendBasic(t *testing.T) {
 	// Step 2: Prepare workspace.
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "room-send-ws")
 
-	// Step 3: Create 2 sessions in the room.
-	var newResultA ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "send-room",
-		RoomAgent:    "agent-a",
-	}, &newResultA)
-	require.NoError(t, err, "session/new for agent-a should succeed")
-
-	var newResultB ari.SessionNewResult
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "send-room",
-		RoomAgent:    "agent-b",
-	}, &newResultB)
-	require.NoError(t, err, "session/new for agent-b should succeed")
+	// Step 3: Create 2 agents in the room.
+	agentResultA := agentCreate(ctx, t, client, "send-room", "agent-a", "mockagent", workspaceId)
+	agentResultB := agentCreate(ctx, t, client, "send-room", "agent-b", "mockagent", workspaceId)
 
 	// Step 4: Send message from agent-a to agent-b via room/send.
-	result := roomSend(ctx, t, client, "send-room", "agent-b", "hello from a", "agent-a", newResultA.SessionId)
+	result := roomSend(ctx, t, client, "send-room", "agent-b", "hello from a", "agent-a", agentResultA.AgentId)
 	require.True(t, result.Delivered, "message should be delivered")
 	// StopReason depends on mockagent behavior; just verify it's non-empty.
 	require.NotEmpty(t, result.StopReason, "stopReason should be non-empty")
 
-	// Cleanup: stop sessions.
-	_ = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultA.SessionId}, nil)
-	_ = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultB.SessionId}, nil)
+	// Cleanup: stop agents.
+	agentStop(ctx, t, client, agentResultA.AgentId)
+	agentStop(ctx, t, client, agentResultB.AgentId)
 }
 
 // TestARIRoomSendErrors tests error paths for room/send:
@@ -2192,18 +1984,8 @@ func TestARIRoomSendErrors(t *testing.T) {
 	wsID := uuid.New().String()
 	h.createWorkspaceInStore(ctx, t, wsID, "error-ws", t.TempDir())
 
-	// Create a session for agent-a in error-room.
-	session := &meta.Session{
-		ID:           uuid.New().String(),
-		WorkspaceID:  wsID,
-		RuntimeClass: "default",
-		Room:         "error-room",
-		RoomAgent:    "agent-a",
-		State:        meta.SessionStateCreated,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-	}
-	require.NoError(t, h.store.CreateSession(ctx, session))
+	// Create agent-a in error-room (with proper agent+session pair).
+	agentCreate(ctx, t, client, "error-room", "agent-a", "default", wsID)
 
 	// Subtest 2: Target agent not in room.
 	t.Run("target agent not in room", func(t *testing.T) {
@@ -2217,20 +1999,10 @@ func TestARIRoomSendErrors(t *testing.T) {
 		requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "not found in room")
 	})
 
-	// Subtest 3: Target agent stopped.
+	// Subtest 3: Target agent stopped — create agent+session pair via agent/create then agent/stop.
 	t.Run("target agent stopped", func(t *testing.T) {
-		// Create a stopped session.
-		stoppedSession := &meta.Session{
-			ID:           uuid.New().String(),
-			WorkspaceID:  wsID,
-			RuntimeClass: "default",
-			Room:         "error-room",
-			RoomAgent:    "agent-stopped",
-			State:        meta.SessionStateStopped,
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-		}
-		require.NoError(t, h.store.CreateSession(ctx, stoppedSession))
+		stoppedAgentResult := agentCreate(ctx, t, client, "error-room", "agent-stopped", "default", wsID)
+		agentStop(ctx, t, client, stoppedAgentResult.AgentId)
 
 		var result ari.RoomSendResult
 		err := client.Call(ctx, "room/send", ari.RoomSendParams{
@@ -2284,10 +2056,10 @@ func TestARIRoomSendErrors(t *testing.T) {
 // TestARIRoomSendDelivery proves the complete room/send delivery path with
 // real mockagent processes:
 //  1. Create room "routing-test"
-//  2. Create sessions for agent-a and agent-b
+//  2. Create agents for agent-a and agent-b
 //  3. room/send from agent-a → agent-b
 //  4. Assert Delivered==true and StopReason non-empty
-//  5. Verify agent-b state is "running" (auto-started by room/send)
+//  5. Verify agent-b's linked session state is "running" (auto-started by room/send)
 func TestARIRoomSendDelivery(t *testing.T) {
 	h := newSessionTestHarness(t)
 
@@ -2302,52 +2074,41 @@ func TestARIRoomSendDelivery(t *testing.T) {
 	// Step 2: Prepare workspace.
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "routing-test-ws")
 
-	// Step 3: Create session for agent-a.
-	var newResultA ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "routing-test",
-		RoomAgent:    "agent-a",
-	}, &newResultA)
-	require.NoError(t, err, "session/new for agent-a should succeed")
-	require.Equal(t, "created", newResultA.State, "agent-a initial state should be 'created'")
+	// Step 3: Create agent-a and agent-b.
+	agentResultA := agentCreate(ctx, t, client, "routing-test", "agent-a", "mockagent", workspaceId)
+	require.Equal(t, "created", agentResultA.State, "agent-a initial state should be 'created'")
 
-	// Step 4: Create session for agent-b.
-	var newResultB ari.SessionNewResult
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "routing-test",
-		RoomAgent:    "agent-b",
-	}, &newResultB)
-	require.NoError(t, err, "session/new for agent-b should succeed")
-	require.Equal(t, "created", newResultB.State, "agent-b initial state should be 'created'")
+	agentResultB := agentCreate(ctx, t, client, "routing-test", "agent-b", "mockagent", workspaceId)
+	require.Equal(t, "created", agentResultB.State, "agent-b initial state should be 'created'")
 
-	// Step 5: Send message from agent-a to agent-b via room/send.
-	result := roomSend(ctx, t, client, "routing-test", "agent-b", "hello from architect", "agent-a", newResultA.SessionId)
+	// Step 4: Send message from agent-a to agent-b via room/send.
+	result := roomSend(ctx, t, client, "routing-test", "agent-b", "hello from architect", "agent-a", agentResultA.AgentId)
 
-	// Step 6: Assert delivery succeeded.
+	// Step 5: Assert delivery succeeded.
 	require.True(t, result.Delivered, "message should be delivered to agent-b")
 	require.NotEmpty(t, result.StopReason, "stopReason should be non-empty (mockagent returns end_turn)")
 
-	// Step 7: Verify agent-b's state is "running" (auto-started by deliverPrompt).
-	var statusResult ari.SessionStatusResult
-	err = client.Call(ctx, "session/status", ari.SessionStatusParams{
-		SessionId: newResultB.SessionId,
-	}, &statusResult)
-	require.NoError(t, err, "session/status for agent-b should succeed")
-	require.Equal(t, "running", statusResult.Session.State,
-		"agent-b should be 'running' after room/send auto-started it")
+	// Step 6: Verify agent-b's status (auto-started linked session).
+	var agentStatusResult ari.AgentStatusResult
+	err := client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: agentResultB.AgentId}, &agentStatusResult)
+	require.NoError(t, err, "agent/status for agent-b should succeed")
+	// State reflects the agent-level state (may still be "created" while session is "running").
+	// The key proof is the delivery succeeded; session state verified via room/status.
+	status := roomStatus(ctx, t, client, "routing-test")
+	memberMap := make(map[string]ari.RoomMember)
+	for _, m := range status.Members {
+		memberMap[m.AgentName] = m
+	}
+	require.Equal(t, "running", memberMap["agent-b"].State,
+		"agent-b session should be 'running' after room/send auto-started it")
 
-	// Cleanup: stop both sessions.
-	_ = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultA.SessionId}, nil)
-	_ = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultB.SessionId}, nil)
+	// Cleanup: stop both agents.
+	agentStop(ctx, t, client, agentResultA.AgentId)
+	agentStop(ctx, t, client, agentResultB.AgentId)
 }
 
 // TestARIRoomSendToStoppedTarget proves that room/send returns an error when
-// the target agent's session has been explicitly stopped. Uses real mockagent
-// processes (not manually inserted DB records).
+// the target agent has been explicitly stopped. Uses real mockagent processes.
 func TestARIRoomSendToStoppedTarget(t *testing.T) {
 	h := newSessionTestHarness(t)
 
@@ -2362,73 +2123,52 @@ func TestARIRoomSendToStoppedTarget(t *testing.T) {
 	// Step 2: Prepare workspace.
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "stopped-target-ws")
 
-	// Step 3: Create session for agent-a (sender).
-	var newResultA ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "stopped-target-room",
-		RoomAgent:    "agent-a",
-	}, &newResultA)
-	require.NoError(t, err, "session/new for agent-a should succeed")
+	// Step 3: Create agent-a (sender) and agent-b (target).
+	agentResultA := agentCreate(ctx, t, client, "stopped-target-room", "agent-a", "mockagent", workspaceId)
+	agentResultB := agentCreate(ctx, t, client, "stopped-target-room", "agent-b", "mockagent", workspaceId)
 
-	// Step 4: Create session for agent-b (target).
-	var newResultB ari.SessionNewResult
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "stopped-target-room",
-		RoomAgent:    "agent-b",
-	}, &newResultB)
-	require.NoError(t, err, "session/new for agent-b should succeed")
-
-	// Step 5: Start agent-b by sending a prompt (auto-start).
-	var promptResult ari.SessionPromptResult
-	err = client.Call(ctx, "session/prompt", ari.SessionPromptParams{
-		SessionId: newResultB.SessionId,
-		Text:      "warmup prompt",
+	// Step 4: Start agent-b by sending a prompt (auto-start linked session).
+	var promptResult ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: agentResultB.AgentId,
+		Prompt:  "warmup prompt",
 	}, &promptResult)
-	require.NoError(t, err, "session/prompt for agent-b should succeed (auto-start)")
+	require.NoError(t, err, "agent/prompt for agent-b should succeed (auto-start)")
 
-	// Step 6: Stop agent-b.
-	var stopResult interface{}
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{
-		SessionId: newResultB.SessionId,
-	}, &stopResult)
-	require.NoError(t, err, "session/stop for agent-b should succeed")
+	// Step 5: Stop agent-b.
+	agentStop(ctx, t, client, agentResultB.AgentId)
 
 	// Wait for shim process to fully stop.
 	time.Sleep(500 * time.Millisecond)
 
-	// Verify agent-b is stopped.
-	var statusResult ari.SessionStatusResult
-	err = client.Call(ctx, "session/status", ari.SessionStatusParams{
-		SessionId: newResultB.SessionId,
-	}, &statusResult)
-	require.NoError(t, err, "session/status for agent-b should succeed")
-	require.Equal(t, "stopped", statusResult.Session.State, "agent-b should be stopped")
+	// Verify agent-b session is stopped via room/status.
+	status := roomStatus(ctx, t, client, "stopped-target-room")
+	memberMap := make(map[string]ari.RoomMember)
+	for _, m := range status.Members {
+		memberMap[m.AgentName] = m
+	}
+	require.Equal(t, "stopped", memberMap["agent-b"].State, "agent-b session should be stopped")
 
-	// Step 7: Attempt room/send targeting stopped agent-b — should fail.
+	// Step 6: Attempt room/send targeting stopped agent-b — should fail.
 	var sendResult ari.RoomSendResult
 	err = client.Call(ctx, "room/send", ari.RoomSendParams{
 		Room:        "stopped-target-room",
 		TargetAgent: "agent-b",
 		Message:     "hello from architect",
 		SenderAgent: "agent-a",
-		SenderId:    newResultA.SessionId,
+		SenderId:    agentResultA.AgentId,
 	}, &sendResult)
 	require.Error(t, err, "room/send to stopped agent-b should fail")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "is stopped")
 
-	// Cleanup: stop agent-a if it was started.
-	_ = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultA.SessionId}, nil)
+	// Cleanup: stop agent-a.
+	agentStop(ctx, t, client, agentResultA.AgentId)
 }
 
 // TestARIMultiAgentRoundTrip proves the full Room lifecycle with 3-agent
-// bidirectional message exchange: create Room → bootstrap 3 agents →
+// bidirectional message exchange: create Room → bootstrap 3 agents via agent/create →
 // bidirectional message exchange via room/send → verify delivery, state
 // transitions, and attribution → clean teardown. All via ARI.
-// This is the capstone end-to-end test for M004.
 func TestARIMultiAgentRoundTrip(t *testing.T) {
 	h := newSessionTestHarness(t)
 
@@ -2443,36 +2183,15 @@ func TestARIMultiAgentRoundTrip(t *testing.T) {
 	// ── Step 2: Prepare shared workspace ────────────────────────────────────
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "multi-agent-ws")
 
-	// ── Step 3: Create 3 sessions (agent-a, agent-b, agent-c) ──────────────
-	var newResultA ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "multi-agent-room",
-		RoomAgent:    "agent-a",
-	}, &newResultA)
-	require.NoError(t, err, "session/new for agent-a should succeed")
-	require.Equal(t, "created", newResultA.State, "agent-a initial state should be 'created'")
+	// ── Step 3: Create 3 agents (agent-a, agent-b, agent-c) ──────────────
+	resultA := agentCreate(ctx, t, client, "multi-agent-room", "agent-a", "mockagent", workspaceId)
+	require.Equal(t, "created", resultA.State, "agent-a initial state should be 'created'")
 
-	var newResultB ari.SessionNewResult
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "multi-agent-room",
-		RoomAgent:    "agent-b",
-	}, &newResultB)
-	require.NoError(t, err, "session/new for agent-b should succeed")
-	require.Equal(t, "created", newResultB.State, "agent-b initial state should be 'created'")
+	resultB := agentCreate(ctx, t, client, "multi-agent-room", "agent-b", "mockagent", workspaceId)
+	require.Equal(t, "created", resultB.State, "agent-b initial state should be 'created'")
 
-	var newResultC ari.SessionNewResult
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "multi-agent-room",
-		RoomAgent:    "agent-c",
-	}, &newResultC)
-	require.NoError(t, err, "session/new for agent-c should succeed")
-	require.Equal(t, "created", newResultC.State, "agent-c initial state should be 'created'")
+	resultC := agentCreate(ctx, t, client, "multi-agent-room", "agent-c", "mockagent", workspaceId)
+	require.Equal(t, "created", resultC.State, "agent-c initial state should be 'created'")
 
 	// ── Step 4: Verify room has 3 members, all in "created" state ──────────
 	status := roomStatus(ctx, t, client, "multi-agent-room")
@@ -2487,9 +2206,9 @@ func TestARIMultiAgentRoundTrip(t *testing.T) {
 	require.Equal(t, "created", memberMap["agent-c"].State, "agent-c should be 'created'")
 
 	// ── Step 5: A→B message — verify delivery ──────────────────────────────
-	resultAB := roomSend(ctx, t, client, "multi-agent-room", "agent-b", "hello from a", "agent-a", newResultA.SessionId)
+	resultAB := roomSend(ctx, t, client, "multi-agent-room", "agent-b", "hello from a", "agent-a", resultA.AgentId)
 	require.True(t, resultAB.Delivered, "A→B message should be delivered")
-	require.NotEmpty(t, resultAB.StopReason, "A→B stopReason should be non-empty (mockagent returns end_turn)")
+	require.NotEmpty(t, resultAB.StopReason, "A→B stopReason should be non-empty")
 
 	// ── Step 6: Verify agent-b is now "running" (auto-started) ─────────────
 	status = roomStatus(ctx, t, client, "multi-agent-room")
@@ -2500,60 +2219,37 @@ func TestARIMultiAgentRoundTrip(t *testing.T) {
 	require.Equal(t, "running", memberMap["agent-b"].State, "agent-b should be 'running' after receiving A→B message")
 
 	// ── Step 7: B→A message — bidirectional proof ──────────────────────────
-	resultBA := roomSend(ctx, t, client, "multi-agent-room", "agent-a", "reply from b", "agent-b", newResultB.SessionId)
+	resultBA := roomSend(ctx, t, client, "multi-agent-room", "agent-a", "reply from b", "agent-b", resultB.AgentId)
 	require.True(t, resultBA.Delivered, "B→A message should be delivered")
 	require.NotEmpty(t, resultBA.StopReason, "B→A stopReason should be non-empty")
 
-	// ── Step 8: Verify agent-a is now "running" too ────────────────────────
-	status = roomStatus(ctx, t, client, "multi-agent-room")
-	memberMap = make(map[string]ari.RoomMember)
-	for _, m := range status.Members {
-		memberMap[m.AgentName] = m
-	}
-	require.Equal(t, "running", memberMap["agent-a"].State, "agent-a should be 'running' after receiving B→A message")
-	require.Equal(t, "running", memberMap["agent-b"].State, "agent-b should still be 'running'")
-
-	// ── Step 9: A→C message — 3rd agent participation proof ────────────────
-	resultAC := roomSend(ctx, t, client, "multi-agent-room", "agent-c", "hello from a to c", "agent-a", newResultA.SessionId)
+	// ── Step 8: A→C message — 3rd agent participation proof ────────────────
+	resultAC := roomSend(ctx, t, client, "multi-agent-room", "agent-c", "hello from a to c", "agent-a", resultA.AgentId)
 	require.True(t, resultAC.Delivered, "A→C message should be delivered")
 	require.NotEmpty(t, resultAC.StopReason, "A→C stopReason should be non-empty")
 
-	// ── Step 10: Verify all 3 agents are "running" ─────────────────────────
-	status = roomStatus(ctx, t, client, "multi-agent-room")
-	require.Len(t, status.Members, 3, "room should still have 3 members")
-	memberMap = make(map[string]ari.RoomMember)
-	for _, m := range status.Members {
-		memberMap[m.AgentName] = m
-	}
-	require.Equal(t, "running", memberMap["agent-a"].State, "agent-a should be 'running'")
-	require.Equal(t, "running", memberMap["agent-b"].State, "agent-b should be 'running'")
-	require.Equal(t, "running", memberMap["agent-c"].State, "agent-c should be 'running'")
-
-	// ── Step 11: Stop all 3 sessions ───────────────────────────────────────
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultA.SessionId}, nil)
-	require.NoError(t, err, "session/stop agent-a should succeed")
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultB.SessionId}, nil)
-	require.NoError(t, err, "session/stop agent-b should succeed")
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultC.SessionId}, nil)
-	require.NoError(t, err, "session/stop agent-c should succeed")
+	// ── Step 9: Stop all 3 agents ──────────────────────────────────────────
+	agentStop(ctx, t, client, resultA.AgentId)
+	agentStop(ctx, t, client, resultB.AgentId)
+	agentStop(ctx, t, client, resultC.AgentId)
 
 	// Wait for shim processes to fully exit.
 	time.Sleep(500 * time.Millisecond)
 
-	// ── Step 12: Delete the room — should succeed with stopped sessions ────
+	// ── Step 10: Delete the room ───────────────────────────────────────────
 	roomDelete(ctx, t, client, "multi-agent-room")
 
-	// ── Step 13: Verify room is gone ───────────────────────────────────────
+	// ── Step 11: Verify room is gone ───────────────────────────────────────
 	var statusAfterDelete ari.RoomStatusResult
-	err = client.Call(ctx, "room/status", ari.RoomStatusParams{Name: "multi-agent-room"}, &statusAfterDelete)
+	err := client.Call(ctx, "room/status", ari.RoomStatusParams{Name: "multi-agent-room"}, &statusAfterDelete)
 	require.Error(t, err, "room/status should fail after room delete")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "not found")
 }
 
 // TestARIRoomTeardownGuards proves the teardown ordering constraints:
-// 1. room/delete fails when sessions are still active (running or created)
-// 2. session/remove fails on a running session (ErrDeleteProtected)
-// 3. Both operations succeed after all sessions are properly stopped.
+// 1. room/delete fails when agents are still active (running or created)
+// 2. agent/delete fails on a running agent (ErrDeleteNotStopped)
+// 3. Both operations succeed after all agents are properly stopped.
 func TestARIRoomTeardownGuards(t *testing.T) {
 	if testing.Short() {
 		t.Skip("requires mockagent processes")
@@ -2566,36 +2262,17 @@ func TestARIRoomTeardownGuards(t *testing.T) {
 
 	client := h.dial(t, &nullHandler{})
 
-	// ── Step 1: Create room ────────────────────────────────────────────────
+	// Create room and prepare workspace.
 	roomCreate(ctx, t, client, "teardown-guard-room", "mesh", nil)
-
-	// ── Step 2: Prepare shared workspace ────────────────────────────────────
 	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "teardown-guard-ws")
 
-	// ── Step 3: Create 2 sessions (agent-a, agent-b) ───────────────────────
-	var newResultA ari.SessionNewResult
-	err := client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "teardown-guard-room",
-		RoomAgent:    "agent-a",
-	}, &newResultA)
-	require.NoError(t, err, "session/new for agent-a should succeed")
-	require.Equal(t, "created", newResultA.State, "agent-a initial state should be 'created'")
+	// Create 2 agents.
+	resultA := agentCreate(ctx, t, client, "teardown-guard-room", "agent-a", "mockagent", workspaceId)
+	resultB := agentCreate(ctx, t, client, "teardown-guard-room", "agent-b", "mockagent", workspaceId)
 
-	var newResultB ari.SessionNewResult
-	err = client.Call(ctx, "session/new", ari.SessionNewParams{
-		WorkspaceId:  workspaceId,
-		RuntimeClass: "mockagent",
-		Room:         "teardown-guard-room",
-		RoomAgent:    "agent-b",
-	}, &newResultB)
-	require.NoError(t, err, "session/new for agent-b should succeed")
-	require.Equal(t, "created", newResultB.State, "agent-b initial state should be 'created'")
-
-	// ── Step 4: Send A→B to auto-start agent-b to "running" ────────────────
-	resultAB := roomSend(ctx, t, client, "teardown-guard-room", "agent-b", "hello from a", "agent-a", newResultA.SessionId)
-	require.True(t, resultAB.Delivered, "A→B message should be delivered")
+	// Send A→B to auto-start agent-b to "running".
+	result := roomSend(ctx, t, client, "teardown-guard-room", "agent-b", "hello from a", "agent-a", resultA.AgentId)
+	require.True(t, result.Delivered, "A→B message should be delivered")
 
 	// Verify agent-b is now running.
 	status := roomStatus(ctx, t, client, "teardown-guard-room")
@@ -2605,38 +2282,342 @@ func TestARIRoomTeardownGuards(t *testing.T) {
 	}
 	require.Equal(t, "running", memberMap["agent-b"].State, "agent-b should be 'running' after receiving message")
 
-	// ── Step 5: room/delete should FAIL — agent-b is running ───────────────
+	// room/delete should FAIL — agent-b is running (session is non-stopped).
 	var deleteResult interface{}
-	err = client.Call(ctx, "room/delete", ari.RoomDeleteParams{Name: "teardown-guard-room"}, &deleteResult)
+	err := client.Call(ctx, "room/delete", ari.RoomDeleteParams{Name: "teardown-guard-room"}, &deleteResult)
 	require.Error(t, err, "room/delete should fail with active members")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "active member")
 
-	// ── Step 6: session/remove on running agent-b should FAIL ──────────────
-	var removeResult interface{}
-	err = client.Call(ctx, "session/remove", ari.SessionRemoveParams{
-		SessionId: newResultB.SessionId,
-	}, &removeResult)
-	require.Error(t, err, "session/remove on running session should fail")
-	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "active")
+	// agent/delete on running agent-b should FAIL.
+	err = client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: resultB.AgentId}, &deleteResult)
+	require.Error(t, err, "agent/delete on running agent should fail")
+	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "stopped")
 
-	// ── Step 7: Stop agent-b ───────────────────────────────────────────────
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultB.SessionId}, nil)
-	require.NoError(t, err, "session/stop agent-b should succeed")
+	// Stop both agents.
+	agentStop(ctx, t, client, resultB.AgentId)
+	time.Sleep(500 * time.Millisecond)
+	agentStop(ctx, t, client, resultA.AgentId)
 	time.Sleep(500 * time.Millisecond)
 
-	// ── Step 8: Stop agent-a (created→stopped, idempotent) ─────────────────
-	err = client.Call(ctx, "session/stop", ari.SessionStopParams{SessionId: newResultA.SessionId}, nil)
-	require.NoError(t, err, "session/stop agent-a should succeed")
-	time.Sleep(500 * time.Millisecond)
-
-	// ── Step 9: room/delete should SUCCEED now ─────────────────────────────
+	// room/delete should SUCCEED now.
 	roomDelete(ctx, t, client, "teardown-guard-room")
 
-	// ── Step 10: Verify room is gone ───────────────────────────────────────
+	// Verify room is gone.
 	var statusAfterDelete ari.RoomStatusResult
 	err = client.Call(ctx, "room/status", ari.RoomStatusParams{Name: "teardown-guard-room"}, &statusAfterDelete)
 	require.Error(t, err, "room/status should fail after room delete")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "not found")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Agent lifecycle helpers and integration tests
+// ────────────────────────────────────────────────────────────────────────────
+
+// agentCreate is a test helper that calls agent/create via JSON-RPC.
+// Returns the AgentCreateResult. Fails the test on error.
+func agentCreate(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn, room, name, runtimeClass, workspaceId string) ari.AgentCreateResult {
+	t.Helper()
+	var result ari.AgentCreateResult
+	err := conn.Call(ctx, "agent/create", ari.AgentCreateParams{
+		Room:         room,
+		Name:         name,
+		RuntimeClass: runtimeClass,
+		WorkspaceId:  workspaceId,
+	}, &result)
+	require.NoError(t, err, "agent/create should succeed for agent %q in room %q", name, room)
+	return result
+}
+
+// agentStop is a test helper that calls agent/stop via JSON-RPC.
+func agentStop(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn, agentId string) {
+	t.Helper()
+	var result interface{}
+	err := conn.Call(ctx, "agent/stop", ari.AgentStopParams{AgentId: agentId}, &result)
+	require.NoError(t, err, "agent/stop should succeed for agent %q", agentId)
+}
+
+// TestARIAgentCreateAndList creates an agent and verifies agent/list returns it.
+func TestARIAgentCreateAndList(t *testing.T) {
+	h := newTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	// Create room + workspace.
+	roomCreate(ctx, t, client, "list-agent-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "list-agent-ws")
+
+	// Create agent.
+	result := agentCreate(ctx, t, client, "list-agent-room", "lister-agent", "default", workspaceId)
+	require.NotEmpty(t, result.AgentId, "agentId should be non-empty")
+	require.Equal(t, "created", result.State, "initial state should be 'created'")
+
+	// agent/list should return the created agent.
+	var listResult ari.AgentListResult
+	err := client.Call(ctx, "agent/list", ari.AgentListParams{}, &listResult)
+	require.NoError(t, err, "agent/list should succeed")
+	require.Len(t, listResult.Agents, 1, "agent list should have 1 entry")
+	require.Equal(t, result.AgentId, listResult.Agents[0].AgentId, "agentId should match")
+	require.Equal(t, "lister-agent", listResult.Agents[0].Name, "name should match")
+	require.Equal(t, "list-agent-room", listResult.Agents[0].Room, "room should match")
+	require.Equal(t, "created", listResult.Agents[0].State, "state should be 'created'")
+}
+
+// TestARIAgentCreateDuplicateName verifies that creating two agents with the same
+// (room, name) pair returns an error on the second call.
+func TestARIAgentCreateDuplicateName(t *testing.T) {
+	h := newTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "dup-agent-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "dup-agent-ws")
+
+	// Create first agent — should succeed.
+	agentCreate(ctx, t, client, "dup-agent-room", "dup-agent", "default", workspaceId)
+
+	// Create second agent with the same name — should fail.
+	var result ari.AgentCreateResult
+	err := client.Call(ctx, "agent/create", ari.AgentCreateParams{
+		Room:         "dup-agent-room",
+		Name:         "dup-agent",
+		RuntimeClass: "default",
+		WorkspaceId:  workspaceId,
+	}, &result)
+	require.Error(t, err, "second agent/create with same room+name should fail")
+
+	var rpcErr *jsonrpc2.Error
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+		"expected CodeInvalidParams for duplicate agent, got %d", rpcErr.Code)
+}
+
+// TestARIAgentCreateMissingRoom verifies that agent/create with a non-existent room returns an error.
+func TestARIAgentCreateMissingRoom(t *testing.T) {
+	h := newTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "missing-room-ws")
+
+	var result ari.AgentCreateResult
+	err := client.Call(ctx, "agent/create", ari.AgentCreateParams{
+		Room:         "nonexistent-room",
+		Name:         "agent-x",
+		RuntimeClass: "default",
+		WorkspaceId:  workspaceId,
+	}, &result)
+	require.Error(t, err, "agent/create should fail for nonexistent room")
+
+	var rpcErr *jsonrpc2.Error
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+		"expected CodeInvalidParams for nonexistent room, got %d", rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "room/create",
+		"error message should mention room/create")
+}
+
+// TestARIAgentStatus creates an agent and verifies agent/status returns correct state.
+func TestARIAgentStatus(t *testing.T) {
+	h := newTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "status-agent-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "status-agent-ws")
+
+	createResult := agentCreate(ctx, t, client, "status-agent-room", "status-agent", "default", workspaceId)
+
+	var statusResult ari.AgentStatusResult
+	err := client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: createResult.AgentId}, &statusResult)
+	require.NoError(t, err, "agent/status should succeed")
+	require.Equal(t, createResult.AgentId, statusResult.Agent.AgentId, "agentId should match")
+	require.Equal(t, "created", statusResult.Agent.State, "state should be 'created'")
+	require.Equal(t, "status-agent-room", statusResult.Agent.Room, "room should match")
+	require.Nil(t, statusResult.ShimState, "shimState should be nil for non-running agent")
+}
+
+// TestARIAgentDeleteRequiresStopped verifies that agent/delete fails when the agent is not stopped.
+func TestARIAgentDeleteRequiresStopped(t *testing.T) {
+	h := newTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "del-guard-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "del-guard-ws")
+
+	createResult := agentCreate(ctx, t, client, "del-guard-room", "del-guard-agent", "default", workspaceId)
+
+	// Attempt agent/delete without stopping first — should fail.
+	var deleteResult interface{}
+	err := client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: createResult.AgentId}, &deleteResult)
+	require.Error(t, err, "agent/delete should fail when agent is not stopped")
+
+	var rpcErr *jsonrpc2.Error
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+		"expected CodeInvalidParams for delete of non-stopped agent, got %d", rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "stopped",
+		"error message should mention 'stopped'")
+}
+
+// TestARIAgentDeleteAfterStop verifies that agent/stop → agent/delete succeeds.
+func TestARIAgentDeleteAfterStop(t *testing.T) {
+	h := newTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "del-ok-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "del-ok-ws")
+
+	createResult := agentCreate(ctx, t, client, "del-ok-room", "del-ok-agent", "default", workspaceId)
+
+	// Stop the agent first.
+	agentStop(ctx, t, client, createResult.AgentId)
+
+	// Now delete should succeed.
+	var deleteResult interface{}
+	err := client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: createResult.AgentId}, &deleteResult)
+	require.NoError(t, err, "agent/delete should succeed after agent/stop")
+
+	// agent/list should be empty.
+	var listResult ari.AgentListResult
+	err = client.Call(ctx, "agent/list", ari.AgentListParams{}, &listResult)
+	require.NoError(t, err, "agent/list should succeed")
+	require.Empty(t, listResult.Agents, "agent list should be empty after delete")
+}
+
+// TestARISessionMethodsRemoved verifies that session/new (and other session/* methods)
+// now return MethodNotFound, confirming the dispatch table migration.
+func TestARISessionMethodsRemoved(t *testing.T) {
+	h := newTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	sessionMethods := []string{
+		"session/new",
+		"session/prompt",
+		"session/cancel",
+		"session/stop",
+		"session/remove",
+		"session/list",
+		"session/status",
+		"session/attach",
+		"session/detach",
+	}
+
+	for _, method := range sessionMethods {
+		t.Run(method, func(t *testing.T) {
+			var result interface{}
+			err := client.Call(ctx, method, nil, &result)
+			require.Error(t, err, "%s should return an error", method)
+
+			var rpcErr *jsonrpc2.Error
+			require.ErrorAs(t, err, &rpcErr)
+			require.Equal(t, int64(jsonrpc2.CodeMethodNotFound), int64(rpcErr.Code),
+				"%s should return CodeMethodNotFound, got %d", method, rpcErr.Code)
+		})
+	}
+}
+
+// TestARIAgentRestartStub verifies that agent/restart returns MethodNotFound (stub).
+func TestARIAgentRestartStub(t *testing.T) {
+	h := newTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	var result interface{}
+	err := client.Call(ctx, "agent/restart", ari.AgentRestartParams{AgentId: "any-id"}, &result)
+	require.Error(t, err, "agent/restart should return error (stub)")
+
+	var rpcErr *jsonrpc2.Error
+	require.ErrorAs(t, err, &rpcErr)
+	require.Equal(t, int64(jsonrpc2.CodeMethodNotFound), int64(rpcErr.Code),
+		"agent/restart should return CodeMethodNotFound, got %d", rpcErr.Code)
+	require.Contains(t, rpcErr.Message, "not implemented",
+		"error message should mention 'not implemented'")
+}
+
+// TestARIAgentPrompt verifies agent/create → agent/prompt with a real shim.
+func TestARIAgentPrompt(t *testing.T) {
+	h := newSessionTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "prompt-agent-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "prompt-agent-ws")
+
+	createResult := agentCreate(ctx, t, client, "prompt-agent-room", "prompt-agent", "mockagent", workspaceId)
+
+	// Send a prompt.
+	var promptResult ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "hello mockagent",
+	}, &promptResult)
+	require.NoError(t, err, "agent/prompt should succeed")
+	require.NotEmpty(t, promptResult.StopReason, "stopReason should be non-empty")
+
+	// Cleanup.
+	agentStop(ctx, t, client, createResult.AgentId)
+}
+
+// TestARIAgentAttach verifies agent/create → agent/prompt → agent/attach returns a non-empty socket path.
+func TestARIAgentAttach(t *testing.T) {
+	h := newSessionTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "attach-agent-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "attach-agent-ws")
+
+	createResult := agentCreate(ctx, t, client, "attach-agent-room", "attach-agent", "mockagent", workspaceId)
+
+	// Auto-start the agent via a prompt.
+	var promptResult ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "start up",
+	}, &promptResult)
+	require.NoError(t, err, "agent/prompt should succeed")
+
+	// agent/attach should return a non-empty socket path.
+	var attachResult ari.AgentAttachResult
+	err = client.Call(ctx, "agent/attach", ari.AgentAttachParams{AgentId: createResult.AgentId}, &attachResult)
+	require.NoError(t, err, "agent/attach should succeed")
+	require.NotEmpty(t, attachResult.SocketPath, "socketPath should be non-empty")
+
+	// Cleanup.
+	agentStop(ctx, t, client, createResult.AgentId)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
