@@ -5,6 +5,7 @@
 agentd
 agentdctl
 agent-shim-cli
+room-mcp-server
 
 
 # Background shell runtime
