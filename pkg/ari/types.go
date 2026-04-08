@@ -344,16 +344,19 @@ type RoomStatusResult struct {
 	UpdatedAt string `json:"updatedAt"`
 }
 
-// RoomMember describes a session that is part of a room.
+// RoomMember describes an agent that is part of a room.
 type RoomMember struct {
 	// AgentName is the agent name/ID within the room.
 	AgentName string `json:"agentName"`
 
-	// SessionId is the unique session identifier.
-	SessionId string `json:"sessionId"`
+	// Description is a human-readable description of the agent.
+	Description string `json:"description,omitempty"`
 
-	// State is the current session state.
-	State string `json:"state"`
+	// RuntimeClass is the runtime class for this agent.
+	RuntimeClass string `json:"runtimeClass"`
+
+	// AgentState is the current agent state.
+	AgentState string `json:"agentState"`
 }
 
 // RoomSendParams is the request params for room/send method.

@@ -1,11 +1,10 @@
-// Command room-mcp-server is a minimal MCP server over stdio that exposes
-// room_send and room_status tools. It reads JSON-RPC 2.0 from stdin and
-// writes responses to stdout. Outbound ARI calls are made to agentd via a
-// Unix domain socket specified by OAR_AGENTD_SOCKET.
+// Command room-mcp-server is an MCP server over stdio that exposes room_send
+// and room_status tools. It uses the modelcontextprotocol/go-sdk for the MCP
+// protocol layer. Outbound ARI calls are made to agentd via a Unix domain
+// socket specified by OAR_AGENTD_SOCKET.
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,81 +13,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sourcegraph/jsonrpc2"
 )
-
-// ────────────────────────────────────────────────────────────────────────────
-// MCP JSON-RPC types (minimal subset)
-// ────────────────────────────────────────────────────────────────────────────
-
-// mcpRequest is a JSON-RPC 2.0 request/notification coming from the MCP client.
-type mcpRequest struct {
-	JSONRPC string           `json:"jsonrpc"`
-	ID      *json.RawMessage `json:"id,omitempty"` // nil for notifications
-	Method  string           `json:"method"`
-	Params  json.RawMessage  `json:"params,omitempty"`
-}
-
-// mcpResponse is a JSON-RPC 2.0 response sent back to the MCP client.
-type mcpResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id"`
-	Result  interface{} `json:"result,omitempty"`
-	Error   *mcpError   `json:"error,omitempty"`
-}
-
-// mcpError is the error object in a JSON-RPC 2.0 error response.
-type mcpError struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// MCP protocol payloads
-// ────────────────────────────────────────────────────────────────────────────
-
-type mcpInitializeResult struct {
-	ProtocolVersion string              `json:"protocolVersion"`
-	Capabilities    mcpCapabilities     `json:"capabilities"`
-	ServerInfo      mcpServerInfo       `json:"serverInfo"`
-}
-
-type mcpCapabilities struct {
-	Tools *mcpToolsCapability `json:"tools,omitempty"`
-}
-
-type mcpToolsCapability struct{}
-
-type mcpServerInfo struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
-}
-
-type mcpTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
-}
-
-type mcpToolsListResult struct {
-	Tools []mcpTool `json:"tools"`
-}
-
-type mcpToolCallParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
-}
-
-type mcpTextContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type mcpToolResult struct {
-	Content []mcpTextContent `json:"content"`
-	IsError bool             `json:"isError,omitempty"`
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // ARI types (matching pkg/ari/types.go)
@@ -113,14 +40,14 @@ type ariRoomStatusParams struct {
 
 type ariRoomStatusResult struct {
 	Name              string          `json:"name"`
-	CommunicationMode string         `json:"communicationMode"`
+	CommunicationMode string          `json:"communicationMode"`
 	Members           []ariRoomMember `json:"members"`
 }
 
 type ariRoomMember struct {
-	AgentName string `json:"agentName"`
-	SessionId string `json:"sessionId"`
-	State     string `json:"state"`
+	AgentName    string `json:"agentName"`
+	RuntimeClass string `json:"runtimeClass"`
+	AgentState   string `json:"agentState"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -128,18 +55,18 @@ type ariRoomMember struct {
 // ────────────────────────────────────────────────────────────────────────────
 
 type config struct {
-	agentdSocket string
-	roomName     string
-	sessionID    string
-	roomAgent    string
+	agentdSocket string // OAR_AGENTD_SOCKET
+	roomName     string // OAR_ROOM_NAME
+	agentID      string // OAR_AGENT_ID (was sessionID/OAR_SESSION_ID)
+	agentName    string // OAR_AGENT_NAME (was roomAgent/OAR_ROOM_AGENT)
 }
 
 func loadConfig() (config, error) {
 	c := config{
 		agentdSocket: os.Getenv("OAR_AGENTD_SOCKET"),
 		roomName:     os.Getenv("OAR_ROOM_NAME"),
-		sessionID:    os.Getenv("OAR_SESSION_ID"),
-		roomAgent:    os.Getenv("OAR_ROOM_AGENT"),
+		agentID:      os.Getenv("OAR_AGENT_ID"),
+		agentName:    os.Getenv("OAR_AGENT_NAME"),
 	}
 	if c.agentdSocket == "" {
 		return c, fmt.Errorf("OAR_AGENTD_SOCKET is required")
@@ -147,10 +74,10 @@ func loadConfig() (config, error) {
 	if c.roomName == "" {
 		return c, fmt.Errorf("OAR_ROOM_NAME is required")
 	}
-	if c.sessionID == "" {
-		return c, fmt.Errorf("OAR_SESSION_ID is required")
+	if c.agentID == "" {
+		return c, fmt.Errorf("OAR_AGENT_ID is required")
 	}
-	// OAR_ROOM_AGENT may be empty (per T01 decision)
+	// OAR_AGENT_NAME may be empty (agent name within room is optional)
 	return c, nil
 }
 
@@ -204,220 +131,91 @@ var roomStatusSchema = json.RawMessage(`{
   "required": []
 }`)
 
-var toolsList = []mcpTool{
-	{
-		Name:        "room_send",
-		Description: "Send a message to another agent in the current room",
-		InputSchema: roomSendSchema,
-	},
-	{
-		Name:        "room_status",
-		Description: "Get the current room membership and status",
-		InputSchema: roomStatusSchema,
-	},
-}
-
 // ────────────────────────────────────────────────────────────────────────────
-// MCP request handler
+// Tool handlers (SDK ToolHandler signature)
 // ────────────────────────────────────────────────────────────────────────────
 
-// handleRequest processes a single MCP JSON-RPC request and returns a
-// response (or nil for notifications that need no response).
-func handleRequest(ctx context.Context, cfg config, req *mcpRequest) *mcpResponse {
-	switch req.Method {
-
-	// ── MCP lifecycle ──────────────────────────────────────────────────
-	case "initialize":
-		return &mcpResponse{
-			JSONRPC: "2.0",
-			ID:      rawID(req.ID),
-			Result: mcpInitializeResult{
-				ProtocolVersion: "2024-11-05",
-				Capabilities:    mcpCapabilities{Tools: &mcpToolsCapability{}},
-				ServerInfo:      mcpServerInfo{Name: "room-mcp-server", Version: "0.1.0"},
-			},
+// roomSendHandler returns an mcp.ToolHandler for the room_send tool.
+func roomSendHandler(cfg config) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var input struct {
+			TargetAgent string `json:"targetAgent"`
+			Message     string `json:"message"`
 		}
-
-	case "notifications/initialized":
-		// No-op notification; no response required.
-		return nil
-
-	// ── Tool discovery ─────────────────────────────────────────────────
-	case "tools/list":
-		return &mcpResponse{
-			JSONRPC: "2.0",
-			ID:      rawID(req.ID),
-			Result:  mcpToolsListResult{Tools: toolsList},
-		}
-
-	// ── Tool execution ─────────────────────────────────────────────────
-	case "tools/call":
-		return handleToolCall(ctx, cfg, req)
-
-	default:
-		// Unknown method — return method not found error.
-		return &mcpResponse{
-			JSONRPC: "2.0",
-			ID:      rawID(req.ID),
-			Error: &mcpError{
-				Code:    -32601,
-				Message: fmt.Sprintf("unknown method %q", req.Method),
-			},
-		}
-	}
-}
-
-// handleToolCall dispatches tools/call to the appropriate tool handler.
-func handleToolCall(ctx context.Context, cfg config, req *mcpRequest) *mcpResponse {
-	var params mcpToolCallParams
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return &mcpResponse{
-			JSONRPC: "2.0",
-			ID:      rawID(req.ID),
-			Error: &mcpError{
-				Code:    -32602,
-				Message: fmt.Sprintf("invalid params: %v", err),
-			},
-		}
-	}
-
-	log.Printf("tools/call: %s args=%s", params.Name, string(params.Arguments))
-
-	switch params.Name {
-	case "room_send":
-		return handleRoomSend(ctx, cfg, req.ID, params.Arguments)
-	case "room_status":
-		return handleRoomStatus(ctx, cfg, req.ID)
-	default:
-		return &mcpResponse{
-			JSONRPC: "2.0",
-			ID:      rawID(req.ID),
-			Result: mcpToolResult{
-				Content: []mcpTextContent{{Type: "text", Text: fmt.Sprintf("unknown tool %q", params.Name)}},
+		if err := json.Unmarshal(req.Params.Arguments, &input); err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("invalid arguments: %v", err)}},
 				IsError: true,
-			},
+			}, nil
 		}
-	}
-}
-
-// handleRoomSend calls the agentd room/send ARI method and returns the result.
-func handleRoomSend(ctx context.Context, cfg config, id *json.RawMessage, args json.RawMessage) *mcpResponse {
-	var input struct {
-		TargetAgent string `json:"targetAgent"`
-		Message     string `json:"message"`
-	}
-	if err := json.Unmarshal(args, &input); err != nil {
-		return &mcpResponse{
-			JSONRPC: "2.0",
-			ID:      rawID(id),
-			Result: mcpToolResult{
-				Content: []mcpTextContent{{Type: "text", Text: fmt.Sprintf("invalid arguments: %v", err)}},
+		if input.TargetAgent == "" || input.Message == "" {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "targetAgent and message are required"}},
 				IsError: true,
-			},
+			}, nil
 		}
-	}
-	if input.TargetAgent == "" || input.Message == "" {
-		return &mcpResponse{
-			JSONRPC: "2.0",
-			ID:      rawID(id),
-			Result: mcpToolResult{
-				Content: []mcpTextContent{{Type: "text", Text: "targetAgent and message are required"}},
+
+		log.Printf("room_send: target=%s", input.TargetAgent)
+
+		ariParams := ariRoomSendParams{
+			Room:        cfg.roomName,
+			TargetAgent: input.TargetAgent,
+			Message:     input.Message,
+			SenderAgent: cfg.agentName,
+			SenderId:    cfg.agentID,
+		}
+
+		var result ariRoomSendResult
+		if err := callARI(ctx, cfg.agentdSocket, "room/send", ariParams, &result); err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("room/send failed: %v", err)}},
 				IsError: true,
-			},
+			}, nil
 		}
-	}
 
-	ariParams := ariRoomSendParams{
-		Room:        cfg.roomName,
-		TargetAgent: input.TargetAgent,
-		Message:     input.Message,
-		SenderAgent: cfg.roomAgent,
-		SenderId:    cfg.sessionID,
-	}
-
-	var result ariRoomSendResult
-	if err := callARI(ctx, cfg.agentdSocket, "room/send", ariParams, &result); err != nil {
-		return &mcpResponse{
-			JSONRPC: "2.0",
-			ID:      rawID(id),
-			Result: mcpToolResult{
-				Content: []mcpTextContent{{Type: "text", Text: fmt.Sprintf("room/send failed: %v", err)}},
-				IsError: true,
-			},
+		var text string
+		if result.Delivered {
+			text = fmt.Sprintf("Message delivered to %s (stopReason: %s)", input.TargetAgent, result.StopReason)
+		} else {
+			text = fmt.Sprintf("Message delivery failed to %s", input.TargetAgent)
 		}
-	}
 
-	text := fmt.Sprintf("Message delivered to %s (stopReason: %s)", input.TargetAgent, result.StopReason)
-	if !result.Delivered {
-		text = fmt.Sprintf("Message delivery failed to %s", input.TargetAgent)
-	}
-
-	return &mcpResponse{
-		JSONRPC: "2.0",
-		ID:      rawID(id),
-		Result: mcpToolResult{
-			Content: []mcpTextContent{{Type: "text", Text: text}},
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
 			IsError: !result.Delivered,
-		},
+		}, nil
 	}
 }
 
-// handleRoomStatus calls the agentd room/status ARI method and formats the result.
-func handleRoomStatus(ctx context.Context, cfg config, id *json.RawMessage) *mcpResponse {
-	ariParams := ariRoomStatusParams{Name: cfg.roomName}
-	var result ariRoomStatusResult
-	if err := callARI(ctx, cfg.agentdSocket, "room/status", ariParams, &result); err != nil {
-		return &mcpResponse{
-			JSONRPC: "2.0",
-			ID:      rawID(id),
-			Result: mcpToolResult{
-				Content: []mcpTextContent{{Type: "text", Text: fmt.Sprintf("room/status failed: %v", err)}},
+// roomStatusHandler returns an mcp.ToolHandler for the room_status tool.
+func roomStatusHandler(cfg config) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		log.Printf("room_status: room=%s", cfg.roomName)
+
+		ariParams := ariRoomStatusParams{Name: cfg.roomName}
+		var result ariRoomStatusResult
+		if err := callARI(ctx, cfg.agentdSocket, "room/status", ariParams, &result); err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("room/status failed: %v", err)}},
 				IsError: true,
-			},
+			}, nil
 		}
-	}
 
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Room: %s (mode: %s)\n", result.Name, result.CommunicationMode))
-	sb.WriteString(fmt.Sprintf("Members (%d):\n", len(result.Members)))
-	for _, m := range result.Members {
-		sb.WriteString(fmt.Sprintf("  - %s (session: %s, state: %s)\n", m.AgentName, m.SessionId, m.State))
-	}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Room: %s (mode: %s)\n", result.Name, result.CommunicationMode))
+		sb.WriteString(fmt.Sprintf("Members (%d):\n", len(result.Members)))
+		for _, m := range result.Members {
+			sb.WriteString(fmt.Sprintf("  - %s [%s] state: %s\n", m.AgentName, m.RuntimeClass, m.AgentState))
+		}
 
-	return &mcpResponse{
-		JSONRPC: "2.0",
-		ID:      rawID(id),
-		Result: mcpToolResult{
-			Content: []mcpTextContent{{Type: "text", Text: sb.String()}},
-		},
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: sb.String()}},
+		}, nil
 	}
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ────────────────────────────────────────────────────────────────────────────
-
-// rawID extracts the ID value from a raw JSON message for use in responses.
-// Returns nil for notifications (no ID).
-func rawID(raw *json.RawMessage) interface{} {
-	if raw == nil {
-		return nil
-	}
-	// Try to unmarshal as int first, then string, fallback to raw.
-	var n int64
-	if err := json.Unmarshal(*raw, &n); err == nil {
-		return n
-	}
-	var s string
-	if err := json.Unmarshal(*raw, &s); err == nil {
-		return s
-	}
-	// Fallback: return raw bytes as json.RawMessage for re-encoding.
-	return raw
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Main loop
+// Main
 // ────────────────────────────────────────────────────────────────────────────
 
 func main() {
@@ -443,55 +241,24 @@ func main() {
 		log.Fatalf("configuration error: %v", err)
 	}
 
-	log.Printf("starting (room=%s, agent=%s, session=%s)", cfg.roomName, cfg.roomAgent, cfg.sessionID)
+	log.Printf("starting (room=%s, agentName=%s, agentID=%s)", cfg.roomName, cfg.agentName, cfg.agentID)
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "room-mcp-server", Version: "0.1.0"}, nil)
+
+	server.AddTool(&mcp.Tool{
+		Name:        "room_send",
+		Description: "Send a message to another agent in the current room",
+		InputSchema: roomSendSchema,
+	}, roomSendHandler(cfg))
+
+	server.AddTool(&mcp.Tool{
+		Name:        "room_status",
+		Description: "Get the current room membership and status",
+		InputSchema: roomStatusSchema,
+	}, roomStatusHandler(cfg))
 
 	ctx := context.Background()
-	scanner := bufio.NewScanner(os.Stdin)
-	// Increase scanner buffer for large JSON-RPC messages.
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-	encoder := json.NewEncoder(os.Stdout)
-
-	log.Printf("entering request loop, reading from stdin")
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
-		log.Printf("recv: %s", string(line))
-
-		var req mcpRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			log.Printf("invalid JSON-RPC message: %v", err)
-			// Write a parse error response.
-			resp := mcpResponse{
-				JSONRPC: "2.0",
-				ID:      nil,
-				Error:   &mcpError{Code: -32700, Message: "parse error"},
-			}
-			_ = encoder.Encode(resp)
-			continue
-		}
-
-		log.Printf("method: %s id=%v", req.Method, req.ID)
-
-		resp := handleRequest(ctx, cfg, &req)
-		if resp == nil {
-			// Notification — no response needed.
-			continue
-		}
-
-		respBytes, _ := json.Marshal(resp)
-		log.Printf("send: %s", string(respBytes))
-
-		if err := encoder.Encode(resp); err != nil {
-			log.Printf("failed to write response: %v", err)
-		}
+	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
+		log.Printf("server exited: %v", err)
 	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("stdin read error: %v", err)
-	}
-	log.Printf("stdin closed, exiting")
 }

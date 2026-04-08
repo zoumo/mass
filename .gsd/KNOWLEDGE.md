@@ -503,3 +503,19 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** When predicting event counts for test assertions, audit each mock operation for whether it calls `client.SendNotification` (or equivalent). Direct OS operations like file writes are invisible to the event stream unless explicitly wrapped in a notification call.
 - **Reference:** T02 deviation in pkg/rpc/server_test.go (D079), M005/S05/T02
 - **When:** M005/S05
+
+## K035 — go get must precede go mod tidy when adding a new dependency via SDK import
+
+- **Pattern:** When adding a new import (e.g. `github.com/modelcontextprotocol/go-sdk/mcp`) to a Go file and then running `go mod tidy`, tidy will **strip** the entry from go.mod if it hasn't been compiled yet — tidy finds no importers and removes it.
+- **Gotcha:** Running `go mod tidy` before `go build` (or before the import is in a compilable file) silently removes the `require` entry you just added, leaving the build broken.
+- **Lesson:** Always run `go get github.com/org/repo@vX.Y.Z` first (which adds the entry to go.mod and go.sum), then add the import to the source file, then compile. Only run `go mod tidy` after the dependency is imported and compiling cleanly.
+- **Reference:** T02 key_decisions, M005/S06/T02
+- **When:** M005/S06
+
+## K036 — process.go uses session.AgentID (not session.ID) for OAR_AGENT_ID injection
+
+- **Pattern:** In `pkg/agentd/process.go`, the env var `OAR_AGENT_ID` is populated from `session.AgentID`, not `session.ID`. The test fixture must set `AgentID: "sess-123"` (or whatever value the assertion checks) on the Session struct, not just `ID`.
+- **Gotcha:** If the test fixture only sets `session.ID` and checks `envMap["OAR_AGENT_ID"] == session.ID`, the assertion will fail silently — envMap will have the empty string from the unset AgentID field.
+- **Lesson:** When writing tests for env var injection in process.go, always audit which Session field feeds which env var. Session.ID → OAR_SESSION_ID (deprecated, now removed). Session.AgentID → OAR_AGENT_ID. Session.RoomAgent → OAR_AGENT_NAME.
+- **Reference:** T02 key_decisions, M005/S06/T02
+- **When:** M005/S06

@@ -289,6 +289,7 @@ func TestGenerateConfigWithRoomMCPInjection(t *testing.T) {
 	t.Run("session with Room injects room MCP server", func(t *testing.T) {
 		session := &meta.Session{
 			ID:        "sess-123",
+			AgentID:   "sess-123",
 			Room:      "design-room",
 			RoomAgent: "agent-alice",
 		}
@@ -323,11 +324,19 @@ func TestGenerateConfigWithRoomMCPInjection(t *testing.T) {
 		if envMap["OAR_ROOM_NAME"] != "design-room" {
 			t.Errorf("OAR_ROOM_NAME = %q, want design-room", envMap["OAR_ROOM_NAME"])
 		}
-		if envMap["OAR_SESSION_ID"] != "sess-123" {
-			t.Errorf("OAR_SESSION_ID = %q, want sess-123", envMap["OAR_SESSION_ID"])
+		// Deprecated vars must be absent.
+		if _, exists := envMap["OAR_SESSION_ID"]; exists {
+			t.Errorf("OAR_SESSION_ID should not be present (deprecated)")
 		}
-		if envMap["OAR_ROOM_AGENT"] != "agent-alice" {
-			t.Errorf("OAR_ROOM_AGENT = %q, want agent-alice", envMap["OAR_ROOM_AGENT"])
+		if _, exists := envMap["OAR_ROOM_AGENT"]; exists {
+			t.Errorf("OAR_ROOM_AGENT should not be present (deprecated)")
+		}
+		// New canonical vars must be present.
+		if envMap["OAR_AGENT_ID"] != "sess-123" {
+			t.Errorf("OAR_AGENT_ID = %q, want sess-123", envMap["OAR_AGENT_ID"])
+		}
+		if envMap["OAR_AGENT_NAME"] != "agent-alice" {
+			t.Errorf("OAR_AGENT_NAME = %q, want agent-alice", envMap["OAR_AGENT_NAME"])
 		}
 	})
 
@@ -356,16 +365,19 @@ func TestGenerateConfigWithRoomMCPInjection(t *testing.T) {
 		if len(servers) != 1 {
 			t.Fatalf("expected 1 MCP server, got %d", len(servers))
 		}
-		// Verify OAR_ROOM_AGENT is present with empty value.
+		// Verify OAR_AGENT_NAME is present with empty value; deprecated OAR_ROOM_AGENT absent.
 		envMap := make(map[string]string)
 		for _, e := range servers[0].Env {
 			envMap[e.Name] = e.Value
 		}
-		if _, exists := envMap["OAR_ROOM_AGENT"]; !exists {
-			t.Error("OAR_ROOM_AGENT env var should exist even when RoomAgent is empty")
+		if _, exists := envMap["OAR_ROOM_AGENT"]; exists {
+			t.Error("OAR_ROOM_AGENT should not be present (deprecated)")
 		}
-		if envMap["OAR_ROOM_AGENT"] != "" {
-			t.Errorf("OAR_ROOM_AGENT = %q, want empty string", envMap["OAR_ROOM_AGENT"])
+		if _, exists := envMap["OAR_AGENT_NAME"]; !exists {
+			t.Error("OAR_AGENT_NAME env var should exist even when RoomAgent is empty")
+		}
+		if envMap["OAR_AGENT_NAME"] != "" {
+			t.Errorf("OAR_AGENT_NAME = %q, want empty string", envMap["OAR_AGENT_NAME"])
 		}
 	})
 }

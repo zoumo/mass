@@ -1799,9 +1799,9 @@ func TestARIRoomLifecycle(t *testing.T) {
 	}
 	require.Contains(t, memberMap, "agent-a", "agent-a should be a member")
 	require.Contains(t, memberMap, "agent-b", "agent-b should be a member")
-	// room/status returns session state. After bootstrap, session is "running".
-	require.Contains(t, []string{"created", "running"}, memberMap["agent-a"].State, "agent-a session state should be created or running")
-	require.Contains(t, []string{"created", "running"}, memberMap["agent-b"].State, "agent-b session state should be created or running")
+	// room/status returns agent state. After bootstrap, agent is "created" or "running".
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-a"].AgentState, "agent-a agent state should be created or running")
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-b"].AgentState, "agent-b agent state should be created or running")
 
 	// Step 5: Verify room labels survived round-trip.
 	require.Equal(t, map[string]string{"env": "test"}, status.Labels, "room labels should match")
@@ -2109,7 +2109,7 @@ func TestARIRoomSendErrors(t *testing.T) {
 //  2. Create agents for agent-a and agent-b
 //  3. room/send from agent-a → agent-b
 //  4. Assert Delivered==true and StopReason non-empty
-//  5. Verify agent-b's linked session state is "running" (auto-started by room/send)
+//  5. Verify agent-b's agent state is "running" (updated by room/send after delivery)
 func TestARIRoomSendDelivery(t *testing.T) {
 	h := newSessionTestHarness(t)
 
@@ -2145,15 +2145,15 @@ func TestARIRoomSendDelivery(t *testing.T) {
 	var agentStatusResult ari.AgentStatusResult
 	err := client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: agentResultB.AgentId}, &agentStatusResult)
 	require.NoError(t, err, "agent/status for agent-b should succeed")
-	// State reflects the agent-level state (may still be "created" while session is "running").
-	// The key proof is the delivery succeeded; session state verified via room/status.
+	// room/send updates agent state to "running" after successful delivery.
+	// Verify agent state via room/status.
 	status := roomStatus(ctx, t, client, "routing-test")
 	memberMap := make(map[string]ari.RoomMember)
 	for _, m := range status.Members {
 		memberMap[m.AgentName] = m
 	}
-	require.Equal(t, "running", memberMap["agent-b"].State,
-		"agent-b session should be 'running' after room/send auto-started it")
+	require.Equal(t, "running", memberMap["agent-b"].AgentState,
+		"agent-b agent state should be 'running' after room/send delivered message")
 
 	// Cleanup: stop both agents.
 	agentStop(ctx, t, client, agentResultA.AgentId)
@@ -2198,13 +2198,13 @@ func TestARIRoomSendToStoppedTarget(t *testing.T) {
 	// Wait for shim process to fully stop.
 	time.Sleep(500 * time.Millisecond)
 
-	// Verify agent-b session is stopped via room/status.
+	// Verify agent-b is stopped via room/status.
 	status := roomStatus(ctx, t, client, "stopped-target-room")
 	memberMap := make(map[string]ari.RoomMember)
 	for _, m := range status.Members {
 		memberMap[m.AgentName] = m
 	}
-	require.Equal(t, "stopped", memberMap["agent-b"].State, "agent-b session should be stopped")
+	require.Equal(t, "stopped", memberMap["agent-b"].AgentState, "agent-b agent state should be stopped")
 
 	// Step 6: Attempt room/send targeting stopped agent-b — should fail.
 	var sendResult ari.RoomSendResult
@@ -2258,24 +2258,23 @@ func TestARIMultiAgentRoundTrip(t *testing.T) {
 	for _, m := range status.Members {
 		memberMap[m.AgentName] = m
 	}
-	// room/status returns session state, not agent state. After bootstrap,
-	// session is "running" (started by processManager). Agent state is "created".
-	require.Contains(t, []string{"created", "running"}, memberMap["agent-a"].State, "agent-a session should be created or running after bootstrap")
-	require.Contains(t, []string{"created", "running"}, memberMap["agent-b"].State, "agent-b session should be created or running after bootstrap")
-	require.Contains(t, []string{"created", "running"}, memberMap["agent-c"].State, "agent-c session should be created or running after bootstrap")
+	// room/status returns agent state. After bootstrap, agents are "created" or "running".
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-a"].AgentState, "agent-a agent state should be created or running after bootstrap")
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-b"].AgentState, "agent-b agent state should be created or running after bootstrap")
+	require.Contains(t, []string{"created", "running"}, memberMap["agent-c"].AgentState, "agent-c agent state should be created or running after bootstrap")
 
 	// ── Step 5: A→B message — verify delivery ──────────────────────────────
 	resultAB := roomSend(ctx, t, client, "multi-agent-room", "agent-b", "hello from a", "agent-a", resultA.AgentId)
 	require.True(t, resultAB.Delivered, "A→B message should be delivered")
 	require.NotEmpty(t, resultAB.StopReason, "A→B stopReason should be non-empty")
 
-	// ── Step 6: Verify agent-b is now "running" (auto-started) ─────────────
+	// ── Step 6: Verify agent-b is now "running" (state updated by room/send) ──
 	status = roomStatus(ctx, t, client, "multi-agent-room")
 	memberMap = make(map[string]ari.RoomMember)
 	for _, m := range status.Members {
 		memberMap[m.AgentName] = m
 	}
-	require.Equal(t, "running", memberMap["agent-b"].State, "agent-b should be 'running' after receiving A→B message")
+	require.Equal(t, "running", memberMap["agent-b"].AgentState, "agent-b should be 'running' after receiving A→B message")
 
 	// ── Step 7: B→A message — bidirectional proof ──────────────────────────
 	resultBA := roomSend(ctx, t, client, "multi-agent-room", "agent-a", "reply from b", "agent-b", resultB.AgentId)
@@ -2343,7 +2342,7 @@ func TestARIRoomTeardownGuards(t *testing.T) {
 	for _, m := range status.Members {
 		memberMap[m.AgentName] = m
 	}
-	require.Equal(t, "running", memberMap["agent-b"].State, "agent-b should be 'running' after receiving message")
+	require.Equal(t, "running", memberMap["agent-b"].AgentState, "agent-b should be 'running' after receiving message")
 
 	// room/delete should FAIL — agent-b is running (session is non-stopped).
 	var deleteResult interface{}

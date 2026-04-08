@@ -1680,8 +1680,8 @@ func (h *connHandler) handleRoomCreate(ctx context.Context, conn *jsonrpc2.Conn,
 // Workflow:
 //  1. Unmarshal RoomStatusParams
 //  2. Call store.GetRoom
-//  3. Call store.ListSessions with Room filter to get members
-//  4. Build RoomMember list from matching sessions
+//  3. Call agents.List with Room filter to get members
+//  4. Build RoomMember list from matching agents
 //  5. Return RoomStatusResult
 //
 // Error handling:
@@ -1711,20 +1711,21 @@ func (h *connHandler) handleRoomStatus(ctx context.Context, conn *jsonrpc2.Conn,
 		return
 	}
 
-	// List sessions in this room.
-	sessions, err := h.srv.store.ListSessions(ctx, &meta.SessionFilter{Room: p.Name})
+	// List agents in this room.
+	roomAgents, err := h.srv.agents.List(ctx, &meta.AgentFilter{Room: p.Name})
 	if err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
 			fmt.Sprintf("failed to list room members: %s", err.Error()))
 		return
 	}
 
-	members := make([]RoomMember, 0, len(sessions))
-	for _, s := range sessions {
+	members := make([]RoomMember, 0, len(roomAgents))
+	for _, a := range roomAgents {
 		members = append(members, RoomMember{
-			AgentName: s.RoomAgent,
-			SessionId: s.ID,
-			State:     string(s.State),
+			AgentName:    a.Name,
+			Description:  a.Description,
+			RuntimeClass: a.RuntimeClass,
+			AgentState:   string(a.State),
 		})
 	}
 
@@ -1743,12 +1744,14 @@ func (h *connHandler) handleRoomStatus(ctx context.Context, conn *jsonrpc2.Conn,
 //  1. Unmarshal RoomSendParams
 //  2. Validate required fields (room, targetAgent, message)
 //  3. Call store.GetRoom — return InvalidParams if room not found
-//  4. Call store.ListSessions with Room filter — find session where RoomAgent == targetAgent
-//  5. If no matching session: return InvalidParams "target agent X not found in room Y"
-//  6. If target session state is "stopped": return InvalidParams "target agent X is stopped"
-//  7. Format attributed message: [room:<roomName> from:<senderAgent>] <message>
-//  8. Call deliverPrompt (auto-start, connect, prompt)
-//  9. Return RoomSendResult{Delivered: true, StopReason: result.StopReason}
+//  4. Call store.GetAgentByRoomName — return InvalidParams if agent not found
+//  5. Guard: agent.State == stopped or creating → return InvalidParams
+//  6. Call store.ListSessions(AgentID) — find linked session ID for deliverPrompt
+//  7. If no linked session: return InvalidParams "target agent X not found in room Y"
+//  8. Format attributed message: [room:<roomName> from:<senderAgent>] <message>
+//  9. Call deliverPrompt (auto-start, connect, prompt)
+// 10. Call agents.UpdateState → "running" on successful delivery
+// 11. Return RoomSendResult{Delivered: true, StopReason: result.StopReason}
 //
 // Error handling:
 //   - Invalid params (missing fields, room/agent not found): returns InvalidParams
@@ -1800,7 +1803,19 @@ func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		return
 	}
 
-	// Find the linked session for this agent.
+	// Guard: reject delivery if agent is stopped or still being created.
+	if agent.State == meta.AgentStateStopped {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("target agent %q is stopped", p.TargetAgent))
+		return
+	}
+	if agent.State == meta.AgentStateCreating {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("target agent %q is still being created", p.TargetAgent))
+		return
+	}
+
+	// Find the linked session ID for deliverPrompt.
 	linkedSessions, err := h.srv.store.ListSessions(ctx, &meta.SessionFilter{AgentID: agent.ID})
 	if err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
@@ -1809,22 +1824,14 @@ func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, r
 	}
 
 	var targetSessionID string
-	var targetState meta.SessionState
 	for _, s := range linkedSessions {
 		targetSessionID = s.ID
-		targetState = s.State
 		break
 	}
 
 	if targetSessionID == "" {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
 			fmt.Sprintf("target agent %q not found in room %q", p.TargetAgent, p.Room))
-		return
-	}
-
-	if targetState == meta.SessionStateStopped {
-		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
-			fmt.Sprintf("target agent %q is stopped", p.TargetAgent))
 		return
 	}
 
@@ -1840,6 +1847,11 @@ func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
 			fmt.Sprintf("prompt failed: %s", err.Error()))
 		return
+	}
+
+	// Update agent state to "running" after successful delivery.
+	if updateErr := h.srv.agents.UpdateState(ctx, agent.ID, meta.AgentStateRunning, ""); updateErr != nil {
+		log.Printf("ari: room/send: failed to update agent state: %v", updateErr)
 	}
 
 	_ = conn.Reply(ctx, req.ID, RoomSendResult{
