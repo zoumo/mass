@@ -279,8 +279,10 @@ func (m *ProcessManager) generateConfig(session *meta.Session, rc *RuntimeClass)
 			Env: []spec.EnvVar{
 				{Name: "OAR_AGENTD_SOCKET", Value: m.config.Socket},
 				{Name: "OAR_ROOM_NAME", Value: session.Room},
-				{Name: "OAR_SESSION_ID", Value: session.ID},
-				{Name: "OAR_ROOM_AGENT", Value: session.RoomAgent},
+				{Name: "OAR_AGENT_ID", Value: session.AgentID},      // agent-level identity (M005)
+				{Name: "OAR_AGENT_NAME", Value: session.RoomAgent},  // agent name within room (M005)
+				{Name: "OAR_SESSION_ID", Value: session.ID},         // deprecated: alias for OAR_AGENT_ID; remove in S06
+				{Name: "OAR_ROOM_AGENT", Value: session.RoomAgent},  // deprecated: alias for OAR_AGENT_NAME; remove in S06
 				{Name: "OAR_STATE_DIR", Value: stateDir},
 			},
 		})

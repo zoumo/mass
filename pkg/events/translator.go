@@ -5,6 +5,7 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
+	"github.com/google/uuid"
 )
 
 // Translator drains ACP session notifications, translates each notification
@@ -16,12 +17,14 @@ type Translator struct {
 	in        <-chan acp.SessionNotification
 	log       *EventLog
 
-	mu      sync.Mutex
-	subs    map[int]chan Envelope
-	nextID  int
-	nextSeq int
-	done    chan struct{}
-	once    sync.Once
+	mu               sync.Mutex
+	subs             map[int]chan Envelope
+	nextID           int
+	nextSeq          int
+	done             chan struct{}
+	once             sync.Once
+	currentTurnId    string
+	currentStreamSeq int
 }
 
 // NewTranslator creates a Translator that reads from in.
@@ -120,13 +123,50 @@ func (t *Translator) LastSeq() int {
 }
 
 // NotifyTurnStart broadcasts a session/update turn_start envelope.
+// The new turnId and initial streamSeq are assigned atomically inside the
+// broadcastEnvelope callback, which runs under mu.Lock.
 func (t *Translator) NotifyTurnStart() {
-	t.broadcastSessionEvent(TurnStartEvent{})
+	newTurnId := uuid.New().String()
+	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
+		// Runs under mu.Lock — safe to mutate turn state here.
+		t.currentTurnId = newTurnId
+		t.currentStreamSeq = 0
+		ss := t.currentStreamSeq // = 0
+		t.currentStreamSeq++
+		params := SessionUpdateParams{
+			SequenceMeta: SequenceMeta{
+				SessionID: t.sessionID, Seq: seq,
+				Timestamp: at.UTC().Format(time.RFC3339Nano),
+			},
+			TurnId:    t.currentTurnId,
+			StreamSeq: &ss,
+			Event:     newTypedEvent(TurnStartEvent{}),
+		}
+		return Envelope{Method: MethodSessionUpdate, Params: params}
+	})
 }
 
 // NotifyTurnEnd broadcasts a session/update turn_end envelope.
+// The current turnId is included in the event and cleared AFTER use so the
+// turn_end event itself carries the identifier. All state mutations run inside
+// the broadcastEnvelope callback under mu.Lock.
 func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
-	t.broadcastSessionEvent(TurnEndEvent{StopReason: string(reason)})
+	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
+		// Runs under mu.Lock.
+		ss := t.currentStreamSeq
+		t.currentStreamSeq++
+		params := SessionUpdateParams{
+			SequenceMeta: SequenceMeta{
+				SessionID: t.sessionID, Seq: seq,
+				Timestamp: at.UTC().Format(time.RFC3339Nano),
+			},
+			TurnId:    t.currentTurnId,
+			StreamSeq: &ss,
+			Event:     newTypedEvent(TurnEndEvent{StopReason: string(reason)}),
+		}
+		t.currentTurnId = "" // Clear AFTER using — turn_end event carries the turnId
+		return Envelope{Method: MethodSessionUpdate, Params: params}
+	})
 }
 
 // NotifyStateChange broadcasts a runtime/stateChange envelope.
@@ -156,7 +196,16 @@ func (t *Translator) run() {
 
 func (t *Translator) broadcastSessionEvent(ev Event) {
 	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
-		return NewSessionUpdateEnvelope(t.sessionID, seq, at, ev)
+		env := NewSessionUpdateEnvelope(t.sessionID, seq, at, ev)
+		if t.currentTurnId != "" {
+			params := env.Params.(SessionUpdateParams)
+			params.TurnId = t.currentTurnId
+			ss := t.currentStreamSeq
+			params.StreamSeq = &ss
+			t.currentStreamSeq++
+			env.Params = params
+		}
+		return env
 	})
 }
 

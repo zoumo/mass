@@ -1312,12 +1312,161 @@ func (h *connHandler) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn
 	_ = conn.Reply(ctx, req.ID, nil)
 }
 
-// handleAgentRestart is a stub — restart is not implemented until S04.
+// handleAgentRestart stops the current session and re-bootstraps the agent.
+// Workflow:
+//  1. Unmarshal AgentRestartParams
+//  2. Get agent — validate exists (404 on nil)
+//  3. Validate state is stopped or error — CodeInvalidParams otherwise
+//  4. Find linked session via linkedSessionForAgent (may be nil)
+//  5. Generate new sessionId
+//  6. Transition agent to "creating" synchronously (blocks concurrent prompts)
+//  7. Reply immediately: AgentRestartResult{AgentId, State:"creating"}
+//  8. Launch background goroutine (context.Background(), 90s timeout):
+//     a. Delete old session + release registry ref (if old session exists)
+//     b. Get agent (fresh copy for WorkspaceID etc.)
+//     c. Create new session linked to agentId
+//     d. AcquireWorkspace + registry.Acquire
+//     e. processes.Start
+//     f. On success: UpdateState → "created"
+//     g. On failure: UpdateState → "error" + cleanup new session
 func (h *connHandler) handleAgentRestart(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
-		Code:    jsonrpc2.CodeMethodNotFound,
-		Message: "not implemented: agent/restart (see S04)",
+	var p AgentRestartParams
+	if err := unmarshalParams(req, &p); err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+	if p.AgentId == "" {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, "agentId is required")
+		return
+	}
+
+	// Get agent — validate exists.
+	agent, err := h.srv.agents.Get(ctx, p.AgentId)
+	if err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
+			fmt.Sprintf("get agent failed: %s", err.Error()))
+		return
+	}
+	if agent == nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("agent %q not found", p.AgentId))
+		return
+	}
+
+	// Only stopped or error agents may be restarted.
+	if agent.State != meta.AgentStateStopped && agent.State != meta.AgentStateError {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("agent %q is in state %q; only stopped or error agents may be restarted", p.AgentId, agent.State))
+		return
+	}
+
+	// Find the linked session BEFORE transitioning state.
+	// oldSession may be nil (e.g. agent is in error state before session was created).
+	oldSession, err := h.linkedSessionForAgent(ctx, p.AgentId)
+	if err != nil {
+		log.Printf("ari: agent/restart warning: failed to find linked session for agent %s: %v", p.AgentId, err)
+	}
+
+	// Generate the new session ID before Reply so we don't need it in the goroutine prologue.
+	newSessionId := uuid.New().String()
+
+	// Transition agent to "creating" synchronously — blocks any concurrent prompt calls.
+	if err := h.srv.agents.UpdateState(ctx, p.AgentId, meta.AgentStateCreating, ""); err != nil {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
+			fmt.Sprintf("failed to transition agent to creating: %s", err.Error()))
+		return
+	}
+
+	log.Printf("ari: agent/restart: agent %s transitioning to creating (newSession=%s)", p.AgentId, newSessionId)
+
+	// Reply immediately with state "creating".
+	_ = conn.Reply(ctx, req.ID, AgentRestartResult{
+		AgentId: p.AgentId,
+		State:   string(meta.AgentStateCreating),
 	})
+
+	// Re-bootstrap in background. Captures local variables by value.
+	agentId := p.AgentId
+	go func() {
+		bgCtx, bgCancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer bgCancel()
+
+		// Step a: tear down old session if it exists.
+		if oldSession != nil {
+			if err := h.srv.sessions.Delete(bgCtx, oldSession.ID); err != nil {
+				slog.Error("ari: agent restart: failed to delete old session",
+					"agentId", agentId, "oldSessionId", oldSession.ID, "error", err)
+				// Non-fatal: proceed — orphaned session rows are recoverable.
+			}
+			h.srv.registry.Release(oldSession.WorkspaceID, oldSession.ID)
+		}
+
+		// Step b: re-fetch agent for a fresh copy of WorkspaceID, Room, Name, etc.
+		freshAgent, err := h.srv.agents.Get(bgCtx, agentId)
+		if err != nil || freshAgent == nil {
+			slog.Error("ari: agent restart: failed to get fresh agent",
+				"agentId", agentId, "error", err)
+			_ = h.srv.agents.UpdateState(bgCtx, agentId, meta.AgentStateError,
+				"restart: failed to get agent after state transition")
+			return
+		}
+
+		// Step c: create new session.
+		session := &meta.Session{
+			ID:           newSessionId,
+			AgentID:      agentId,
+			WorkspaceID:  freshAgent.WorkspaceID,
+			RuntimeClass: freshAgent.RuntimeClass,
+			Room:         freshAgent.Room,
+			RoomAgent:    freshAgent.Name,
+			Labels:       freshAgent.Labels,
+			State:        meta.SessionStateCreated,
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
+		}
+		if err := h.srv.sessions.Create(bgCtx, session); err != nil {
+			slog.Error("ari: agent restart: failed to create new session",
+				"agentId", agentId, "newSessionId", newSessionId, "error", err)
+			_ = h.srv.agents.UpdateState(bgCtx, agentId, meta.AgentStateError, err.Error())
+			return
+		}
+
+		// Step d: acquire workspace ref and in-memory registry ref.
+		if err := h.srv.store.AcquireWorkspace(bgCtx, freshAgent.WorkspaceID, newSessionId); err != nil {
+			slog.Error("ari: agent restart: failed to acquire workspace",
+				"agentId", agentId, "newSessionId", newSessionId, "error", err)
+			_ = h.srv.sessions.Delete(bgCtx, newSessionId)
+			_ = h.srv.agents.UpdateState(bgCtx, agentId, meta.AgentStateError, err.Error())
+			return
+		}
+		h.srv.registry.Acquire(freshAgent.WorkspaceID, newSessionId)
+
+		// Step e: start the process.
+		if _, err := h.srv.processes.Start(bgCtx, newSessionId); err != nil {
+			slog.Error("ari: agent restart: failed to start process",
+				"agentId", agentId, "newSessionId", newSessionId, "error", err)
+			h.srv.registry.Release(freshAgent.WorkspaceID, newSessionId)
+			_ = h.srv.sessions.Delete(bgCtx, newSessionId)
+			_ = h.srv.agents.UpdateState(bgCtx, agentId, meta.AgentStateError, err.Error())
+			return
+		}
+
+		// Step f: transition to "created".
+		if err := h.srv.agents.UpdateState(bgCtx, agentId, meta.AgentStateCreated, ""); err != nil {
+			slog.Error("ari: agent restart: failed to update agent state to created",
+				"agentId", agentId, "newSessionId", newSessionId, "error", err)
+			return
+		}
+
+		oldSessionId := ""
+		if oldSession != nil {
+			oldSessionId = oldSession.ID
+		}
+		slog.Info("ari: agent restart complete",
+			"agentId", agentId,
+			"oldSessionId", oldSessionId,
+			"newSessionId", newSessionId)
+	}()
 }
 
 // handleAgentList returns all agents matching optional filters.

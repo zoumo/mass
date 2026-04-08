@@ -455,3 +455,27 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** Plan file deletion in two phases: (1) extract shared code to a new file (helpers.go), verify build passes, (2) delete the old file. This is the same two-phase pattern as cross-package constant removal (K025).
 - **Reference:** cmd/agentdctl/helpers.go creation in T03, M005/S03/T03
 - **When:** M005/S03
+
+## K029 — Async-create window requires room/delete guard on agent state, not just session count
+
+- **Pattern:** When `agent/create` is async (agent exists in `creating` state before its session row is created), `room/delete` must check agent state rather than merely checking for linked sessions.
+- **Gotcha:** After async create returns, there is a brief window where the agent is `creating` but no session row exists yet (the goroutine hasn't run). A `room/delete` check that only queries sessions would find zero sessions and succeed, leaving the background goroutine to start a session for a deleted room — a resource leak with no owner.
+- **Lesson:** Any delete handler for a parent object (room, workspace) must enumerate direct child agents by state, not just by session existence. Blocking on non-stopped agents (including `creating`) closes the async race entirely.
+- **Reference:** handleRoomDelete in pkg/ari/server.go (D074), M005/S04/T01
+- **When:** M005/S04
+
+## K030 — agents.UpdateState has no transition guard; stopped→creating and error→creating work freely
+
+- **Pattern:** `pkg/agentd/agent.go` AgentManager.UpdateState does not validate state transitions (unlike SessionManager which has a `validTransitions` map). Any from→to pair succeeds.
+- **Gotcha:** If you assumed a validTransitions guard existed (as the task plan did), you might add unnecessary transition entries. No changes to agent.go were needed.
+- **Lesson:** Before adding state-machine transition entries to an object manager, check whether it actually validates transitions. The agent manager is transition-free by design for now — validation is deferred to a future policy layer.
+- **Reference:** T02 key_decisions, M005/S04/T02
+- **When:** M005/S04
+
+## K031 — 90-second goroutine timeout is the only lifecycle bound for async bootstrap; set it explicitly
+
+- **Pattern:** Both `handleAgentCreate` and `handleAgentRestart` background goroutines use `context.WithTimeout(context.Background(), 90*time.Second)` as their execution bound.
+- **Gotcha:** The original request context is dead after `conn.Reply` — using it in the goroutine causes silent context-cancelled failures. `context.Background()` plus an explicit timeout is the correct pattern.
+- **Lesson:** Background goroutines spawned after an RPC reply must not inherit the request context. Always derive a new context from `context.Background()` with an explicit timeout that bounds the worst-case bootstrap time. Log outcome with structured fields (agentId, sessionId) at both Info (success) and Error (failure) levels.
+- **Reference:** handleAgentCreate and handleAgentRestart in pkg/ari/server.go, M005/S04/T01/T02
+- **When:** M005/S04

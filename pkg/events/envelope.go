@@ -69,7 +69,10 @@ func (e *TypedEvent) UnmarshalJSON(data []byte) error {
 // SessionUpdateParams is the params object for session/update notifications.
 type SessionUpdateParams struct {
 	SequenceMeta
-	Event TypedEvent `json:"event"`
+	TurnId    string `json:"turnId,omitempty"`
+	StreamSeq *int   `json:"streamSeq,omitempty"`
+	Phase     string `json:"phase,omitempty"`
+	Event     TypedEvent `json:"event"`
 }
 
 func (SessionUpdateParams) envelopeMethod() string { return MethodSessionUpdate }

@@ -36,7 +36,12 @@ All 7 authority documents rewritten to agent-first model. agent/* replaces sessi
 **S03 ✅ — ARI Agent Surface — Method Migration** (complete)
 10 `agent/*` handler methods replace all 9 `session/*` dispatch cases. `AgentManager` introduced in `pkg/agentd/agent.go` with Create/Get/GetByRoomName/List/UpdateState/Delete and domain error types. All Agent* request/response types added to `pkg/ari/types.go`. `room/send` rewritten to resolve target via agents table (store.GetAgentByRoomName). `agentdctl` CLI migrated from `session/*` to `agent/*` subcommands; `session.go` deleted; shared helpers extracted to `helpers.go`; daemon health check uses `agent/list`. 9 pkg/agentd + 64 pkg/ari tests pass. `go build ./...` clean.
 
-**S04 — Agent Lifecycle — Async Create, Stop/Delete Separation, Restart** (pending, depends S03)
+**S04 ✅ — Agent Lifecycle — Async Create, Stop/Delete Separation, Restart** (complete)
+- **T01:** `handleAgentCreate` refactored to async pattern: creates agent in `creating` state, replies immediately, background goroutine (90s timeout) creates session + starts shim + transitions to `created`/`error`. `handleAgentPrompt` guards on `creating` state (CodeInvalidParams). `handleRoomDelete` guards on non-stopped agents (not just sessions) to close async-create race window. `AgentInfo.ErrorMessage` added to surface bootstrap errors. 20+ tests updated with `pollAgentUntilReady` helper. `TestARIAgentCreateAsync` and `TestARIAgentCreateAsyncErrorState` added — both pass.
+- **T02:** Real async `handleAgentRestart` replaces MethodNotFound stub: validates stopped/error, pre-fetches session, transitions to creating synchronously, replies immediately, goroutine deletes old session + creates new session + starts process. `TestARIAgentRestartAsync` replaces stub test — full lifecycle exercised. `agentdctl restart` subcommand added with async polling guidance.
+- **T03:** `OAR_AGENT_ID` and `OAR_AGENT_NAME` added to `generateConfig` mcpServers env block. `OAR_SESSION_ID`/`OAR_ROOM_AGENT` retained as deprecated aliases (S06 removes them). Purely additive — no existing tests updated.
+- All verification: `go test ./pkg/ari/... -count=1` (13s), `go test ./pkg/agentd/... -count=1`, `go build ./...` — all exit 0.
+
 **S05 — Event Ordering — Turn-Aware Envelope Enhancement** (pending, depends S01)
 **S06 — Room & MCP Agent Alignment** (pending, depends S03)
 **S07 — Recovery & Integration Proof** (pending, depends S04, S05, S06)
@@ -59,29 +64,30 @@ All 7 authority documents rewritten to agent-first model. agent/* replaces sessi
 - Room membership realized from session queries — room/status shows agentName/sessionId/state per member
 - Communication vocabulary: mesh/star/isolated (converged from legacy broadcast/direct/hub per D054)
 - Room-existence validation in agent/create: fail-fast with actionable error suggesting room/create
-- Active-member guard: room/delete checks for non-stopped sessions before allowing deletion
+- Active-member guard: room/delete checks for non-stopped agents before allowing deletion
 - **room/send ARI handler** — point-to-point message routing: resolves targetAgent→agent→session via agents table, formats attributed messages `[room:X from:Y]`, delivers via shared `deliverPrompt` helper
 - **deliverPrompt helper** — shared auto-start→connect→prompt flow used by both agent/prompt and room/send
 - **room-mcp-server binary** — MCP stdio server exposing room_send and room_status tools, injected into room sessions at bootstrap via generateConfig
 - **stdio MCP transport** — spec.McpServer extended with Name/Command/Args/Env fields; convertMcpServers handles stdio→acp mapping
 - **End-to-end multi-agent proof** — 3-agent bidirectional messaging, state transitions, teardown ordering guards, clean room lifecycle — all via ARI JSON-RPC
-- 64 ARI integration tests covering agent lifecycle, workspace management, room lifecycle, routing, and multi-agent integration
 - **[M005/S01] Agent-first design contract** — all 7 authority docs rewritten; agent/* is external ARI surface; session is internal; agent identity = room+name; 5-state machine; async create; turn-aware event ordering spec
 - **[M005/S01] scripts/verify-m005-s01-contract.sh** — runnable gate confirming all 7 authority docs remain contradiction-free
 - **[M005/S02] `agents` table (schema v3)** — room+name UNIQUE key, FK guards, 3 indexes, updated_at trigger
 - **[M005/S02] `meta.Agent` / `meta.AgentState`** — 5-state type + full CRUD on Store; `sessions.agent_id` FK (schema v4)
 - **[M005/S02] Converged 5-state SessionManager** — creating/created/running/stopped/error; paused:* fully removed and explicitly tested as rejected; 102 tests pass
 - **[M005/S03] `AgentManager`** — `pkg/agentd/agent.go` wrapping `meta.Store`; domain error types ErrAgentNotFound/ErrDeleteNotStopped/ErrAgentAlreadyExists; 9 unit tests
-- **[M005/S03] 10 `agent/*` ARI handlers** — agent/create, agent/prompt, agent/cancel, agent/stop, agent/delete, agent/restart (stub), agent/list, agent/status, agent/attach, agent/detach; session/* dispatch fully removed
-- **[M005/S03] `agentdctl agent` CLI** — 8 subcommands (create/list/status/prompt/stop/delete/attach/cancel); session.go deleted; helpers.go extracted
+- **[M005/S03] 10 `agent/*` ARI handlers** — agent/create, agent/prompt, agent/cancel, agent/stop, agent/delete, agent/restart (was stub, now real), agent/list, agent/status, agent/attach, agent/detach; session/* dispatch fully removed
+- **[M005/S03] `agentdctl agent` CLI** — 9 subcommands (create/list/status/prompt/stop/delete/restart/attach/cancel); session.go deleted; helpers.go extracted
+- **[M005/S04] Async `agent/create`** — returns `creating` immediately; background goroutine bootstraps session + shim + transitions to `created`/`error`; `agent/prompt` guard blocks on `creating` state; `handleRoomDelete` guards on non-stopped agents
+- **[M005/S04] Real async `agent/restart`** — replaces MethodNotFound stub; old session deleted in goroutine; new session UUID allocated; functional after restart (verified by TestARIAgentRestartAsync)
+- **[M005/S04] `OAR_AGENT_ID` / `OAR_AGENT_NAME`** in generateConfig mcpServers env block; `OAR_SESSION_ID`/`OAR_ROOM_AGENT` deprecated aliases retained until S06
+- **[M005/S04] `AgentInfo.ErrorMessage`** — bootstrap failure reason surfaced via agent/status response
 
 ### Current Gaps
 
-- **[M005 in progress]** agent/create is still synchronous (returns created immediately) — async creating→created background bootstrap is S04
-- **[M005 in progress]** agent/restart returns MethodNotFound stub — real implementation is S04
-- **[M005 in progress]** agent/stop updates DB state but does not yet stop the shim process — S04
 - **[M005 in progress]** turnId/streamSeq/phase not yet emitted by shim — S05
-- **[M005 in progress]** room-mcp-server still uses session/* surface — S06
+- **[M005 in progress]** room-mcp-server still uses session/* surface and OAR_SESSION_ID/OAR_ROOM_AGENT — S06
+- **[M005 in progress]** OAR_SESSION_ID / OAR_ROOM_AGENT deprecated aliases still injected — S06 removes them
 - pkg/agentd/recovery.go only filters stopped as terminal; error should also be terminal — addressed in S07
 - agent/detach is a placeholder returning nil — full implementation pending
 - Only point-to-point routing — broadcast/star/isolated mode enforcement deferred
@@ -106,16 +112,18 @@ Layered architecture:
 Established patterns:
 - **Agent-first external model:** agent/* is the external ARI surface; session is internal runtime realization; agent identity = room+name
 - **5-state agent machine:** creating→created→running→stopped; error reachable from creating/created/running; paused:* retired
-- **Async create (S04):** agent/create will return immediately with creating state; caller polls agent/status until created or error
+- **Async create/restart pattern:** handler creates agent record in `creating`, replies immediately, background goroutine (context.Background() + 90s timeout) bootstraps session + shim + transitions to `created`/`error`; caller polls `agent/status`
+- **Creating-state guard pair:** `handleAgentPrompt` returns CodeInvalidParams on `creating`; `handleRoomDelete` blocks on non-stopped agents — together they close all concurrency windows around async bootstrap
+- **pollAgentUntilReady helper:** `pollAgentUntilReady(t, conn, agentId, maxWait, interval)` — centralized test helper for all async-agent readiness polling
+- **Background goroutine request-context independence:** goroutines launched after conn.Reply must use `context.Background()` — the request context is dead after Reply
+- **agents.UpdateState has no transition validation:** any from→to works; validation is a future policy layer
 - **Boundary translation:** rename events at the agentd→orchestrator perimeter (agent/update, agent/stateChange), not inside the shim
 - **Agent CRUD pattern:** agent.go follows session.go exactly — new store entities scaffold from this template; DEFAULT NULL for nullable FK columns
 - **Two-task constant removal:** cross-package state constant removal is a two-phase operation (add TODO + replacement, then remove after fixing all consumers)
 - **Pre-flight sibling lookup before FK-cascading parent delete:** when schema uses ON DELETE SET NULL, look up FK dependents before deleting the parent, not after (D072)
 - **RESTRICT FK cleanup loop:** handlers that delete parent rows must enumerate and delete RESTRICT-constrained children first (D073)
 - **CLI helper extraction as prerequisite for file deletion:** extract shared functions to helpers.go before deleting the file that provides them (K028)
-- `agent/create` sets initial state = created (S03 synchronous); agent/prompt auto-starts and updates state to running
 - `deliverPrompt(ctx, sessionID, text)` as canonical prompt delivery helper — all delivery paths share this
-- `session/new` is retired from external surface; agent/create is the new external entry point
 - `agentRoot.path` is the bundle input; resolved `cwd` is derived at runtime
 - OAR `sessionId` and ACP `sessionId` are separate identities
 - Fail-closed recovery: shim truth wins over DB state; uncertain sessions are blocked, not guessed
@@ -123,8 +131,6 @@ Established patterns:
 - Always transition out of blocking states on every exit path (no permanent traps)
 - DB-as-truth for cleanup gating: volatile in-memory state not trusted for destructive operations
 - Room ARI handler pattern: validate params → call store → build result with realized member list
-- Active-member guard: room/delete checks for non-stopped sessions before allowing deletion
-- Room-existence validation in agent/create: fail-fast with actionable error suggesting room/create
 - Room MCP injection: generateConfig checks session.Room and injects stdio MCP server with env vars for agentd connection
 - Attributed message format: `[room:<name> from:<sender>] <message>`
 - Binary resolution 3-tier pattern: env var → ./bin relative → PATH lookup (used for both shim and room-mcp-server)

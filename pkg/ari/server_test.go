@@ -2628,25 +2628,76 @@ func TestARISessionMethodsRemoved(t *testing.T) {
 	}
 }
 
-// TestARIAgentRestartStub verifies that agent/restart returns MethodNotFound (stub).
-func TestARIAgentRestartStub(t *testing.T) {
-	h := newTestHarness(t)
+// TestARIAgentRestartAsync verifies the full agent restart lifecycle with a real shim:
+//  1. Create agent → poll until "created"
+//  2. Send first prompt → verify response
+//  3. agent/stop → assert "stopped"
+//  4. agent/restart → assert result.State == "creating"
+//  5. Poll until state != "creating" → assert "created"
+//  6. Send second prompt → verify restart completed successfully
+//  7. agent/stop + agent/delete cleanup
+func TestARIAgentRestartAsync(t *testing.T) {
+	h := newSessionTestHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	client := h.dial(t, &nullHandler{})
 
-	var result interface{}
-	err := client.Call(ctx, "agent/restart", ari.AgentRestartParams{AgentId: "any-id"}, &result)
-	require.Error(t, err, "agent/restart should return error (stub)")
+	roomCreate(ctx, t, client, "restart-agent-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "restart-agent-ws")
 
-	var rpcErr *jsonrpc2.Error
-	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeMethodNotFound), int64(rpcErr.Code),
-		"agent/restart should return CodeMethodNotFound, got %d", rpcErr.Code)
-	require.Contains(t, rpcErr.Message, "not implemented",
-		"error message should mention 'not implemented'")
+	// Create agent — returns "creating" immediately.
+	createResult := agentCreate(ctx, t, client, "restart-agent-room", "restart-agent", "mockagent", workspaceId)
+
+	// Wait for bootstrap to complete.
+	statusAfterCreate := pollAgentUntilReady(ctx, t, client, createResult.AgentId)
+	require.Equal(t, "created", statusAfterCreate.Agent.State,
+		"agent should reach 'created' after initial bootstrap")
+
+	// Send first prompt to confirm the agent is responsive.
+	var promptResult1 ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "hello before restart",
+	}, &promptResult1)
+	require.NoError(t, err, "first agent/prompt should succeed")
+	require.NotEmpty(t, promptResult1.StopReason, "first prompt stopReason should be non-empty")
+
+	// Stop the agent.
+	agentStop(ctx, t, client, createResult.AgentId)
+	var statusAfterStop ari.AgentStatusResult
+	err = client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: createResult.AgentId}, &statusAfterStop)
+	require.NoError(t, err, "agent/status after stop should succeed")
+	require.Equal(t, "stopped", statusAfterStop.Agent.State, "agent should be 'stopped' after agent/stop")
+
+	// Restart the agent — should return "creating" immediately.
+	var restartResult ari.AgentRestartResult
+	err = client.Call(ctx, "agent/restart", ari.AgentRestartParams{AgentId: createResult.AgentId}, &restartResult)
+	require.NoError(t, err, "agent/restart should succeed for a stopped agent")
+	require.Equal(t, createResult.AgentId, restartResult.AgentId, "restart result agentId should match")
+	require.Equal(t, "creating", restartResult.State, "agent/restart must return state 'creating' immediately")
+
+	// Poll until state transitions out of "creating".
+	statusAfterRestart := pollAgentUntilReady(ctx, t, client, createResult.AgentId)
+	require.Equal(t, "created", statusAfterRestart.Agent.State,
+		"agent should reach 'created' after restart bootstrap completes")
+	require.NotNil(t, statusAfterRestart.ShimState, "shimState should be present after restart")
+
+	// Send second prompt to verify the restarted agent is fully functional.
+	var promptResult2 ari.AgentPromptResult
+	err = client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "hello after restart",
+	}, &promptResult2)
+	require.NoError(t, err, "second agent/prompt should succeed after restart")
+	require.NotEmpty(t, promptResult2.StopReason, "second prompt stopReason should be non-empty")
+
+	// Cleanup.
+	agentStop(ctx, t, client, createResult.AgentId)
+	var deleteResult interface{}
+	err = client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: createResult.AgentId}, &deleteResult)
+	require.NoError(t, err, "agent/delete should succeed after final stop")
 }
 
 // TestARIAgentCreateAsync verifies that agent/create returns "creating" immediately

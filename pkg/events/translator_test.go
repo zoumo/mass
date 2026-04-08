@@ -1,6 +1,7 @@
 package events
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -218,6 +219,14 @@ func TestNotifyTurnStartAndEnd(t *testing.T) {
 	assert.Equal(t, 1, second.Seq)
 	assert.Equal(t, TurnStartEvent{}, first.Event.Payload)
 	assert.Equal(t, TurnEndEvent{StopReason: "end_turn"}, second.Event.Payload)
+
+	// Turn field assertions.
+	assert.NotEmpty(t, first.TurnId, "turn_start must carry a non-empty TurnId")
+	assert.Equal(t, first.TurnId, second.TurnId, "turn_end must carry the same TurnId as turn_start")
+	require.NotNil(t, first.StreamSeq, "turn_start must carry StreamSeq")
+	assert.Equal(t, 0, *first.StreamSeq, "turn_start StreamSeq must be 0")
+	require.NotNil(t, second.StreamSeq, "turn_end must carry StreamSeq")
+	assert.Equal(t, 1, *second.StreamSeq, "turn_end StreamSeq must be 1")
 }
 
 func TestNotifyStateChange(t *testing.T) {
@@ -350,4 +359,271 @@ func TestSubscribeFromSeq_EmptyLog(t *testing.T) {
 
 func TestSafeBlockText_NilText(t *testing.T) {
 	assert.Equal(t, "", safeBlockText(acp.ContentBlock{}))
+}
+
+// sendTextNotif sends a single text ACP notification into the in channel and
+// returns the envelope drained from ch.
+func sendAndDrain(t *testing.T, in chan<- acp.SessionNotification, ch <-chan Envelope, text string) Envelope {
+	t.Helper()
+	in <- makeNotif(func(u *acp.SessionUpdate) {
+		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: text}},
+		}
+	})
+	return drainEnvelope(t, ch)
+}
+
+// ptrInt returns a pointer to an int literal — useful in table-driven assertions.
+func ptrInt(v int) *int { return &v }
+
+// TestTurnAwareEnvelope_TurnIdAssigned verifies that all session/update events
+// emitted between NotifyTurnStart and NotifyTurnEnd carry the same non-empty
+// TurnId, and that an event emitted after NotifyTurnEnd carries no TurnId.
+func TestTurnAwareEnvelope_TurnIdAssigned(t *testing.T) {
+	in := make(chan acp.SessionNotification, 4)
+	tr := NewTranslator("session-1", in, nil)
+	ch, _, _ := tr.Subscribe()
+	tr.Start()
+	defer tr.Stop()
+
+	tr.NotifyTurnStart()
+	tsEnv := drainEnvelope(t, ch)
+
+	txt1Env := sendAndDrain(t, in, ch, "hello")
+	txt2Env := sendAndDrain(t, in, ch, "world")
+
+	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	teEnv := drainEnvelope(t, ch)
+
+	tsParams := tsEnv.Params.(SessionUpdateParams)
+	txt1Params := txt1Env.Params.(SessionUpdateParams)
+	txt2Params := txt2Env.Params.(SessionUpdateParams)
+	teParams := teEnv.Params.(SessionUpdateParams)
+
+	require.NotEmpty(t, tsParams.TurnId)
+	assert.Equal(t, tsParams.TurnId, txt1Params.TurnId, "text event 1 must carry TurnId")
+	assert.Equal(t, tsParams.TurnId, txt2Params.TurnId, "text event 2 must carry TurnId")
+	assert.Equal(t, tsParams.TurnId, teParams.TurnId, "turn_end must carry same TurnId")
+
+	// Event after turn_end should have no TurnId.
+	tr.NotifyStateChange("running", "created", 0, "done")
+	scEnv := drainEnvelope(t, ch)
+	assert.Equal(t, MethodRuntimeStateChange, scEnv.Method)
+	// RuntimeStateChangeParams has no TurnId — correct type is sufficient proof.
+	_, ok := scEnv.Params.(RuntimeStateChangeParams)
+	assert.True(t, ok, "post-turn stateChange should be RuntimeStateChangeParams, not SessionUpdateParams")
+}
+
+// TestTurnAwareEnvelope_StreamSeqMonotonic verifies that streamSeq increments
+// 0→1→2→3 across turn_start, text, text, turn_end within a single turn.
+func TestTurnAwareEnvelope_StreamSeqMonotonic(t *testing.T) {
+	in := make(chan acp.SessionNotification, 4)
+	tr := NewTranslator("session-1", in, nil)
+	ch, _, _ := tr.Subscribe()
+	tr.Start()
+	defer tr.Stop()
+
+	tr.NotifyTurnStart()
+	tsParams := drainEnvelope(t, ch).Params.(SessionUpdateParams)
+
+	txt1Params := sendAndDrain(t, in, ch, "a").Params.(SessionUpdateParams)
+	txt2Params := sendAndDrain(t, in, ch, "b").Params.(SessionUpdateParams)
+
+	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	teParams := drainEnvelope(t, ch).Params.(SessionUpdateParams)
+
+	require.NotNil(t, tsParams.StreamSeq)
+	require.NotNil(t, txt1Params.StreamSeq)
+	require.NotNil(t, txt2Params.StreamSeq)
+	require.NotNil(t, teParams.StreamSeq)
+
+	assert.Equal(t, 0, *tsParams.StreamSeq, "turn_start streamSeq must be 0")
+	assert.Equal(t, 1, *txt1Params.StreamSeq, "first text streamSeq must be 1")
+	assert.Equal(t, 2, *txt2Params.StreamSeq, "second text streamSeq must be 2")
+	assert.Equal(t, 3, *teParams.StreamSeq, "turn_end streamSeq must be 3")
+}
+
+// TestTurnAwareEnvelope_MultipleTurns verifies that a second turn gets a fresh
+// TurnId and that streamSeq resets to 0 at the second turn_start.
+func TestTurnAwareEnvelope_MultipleTurns(t *testing.T) {
+	in := make(chan acp.SessionNotification, 4)
+	tr := NewTranslator("session-1", in, nil)
+	ch, _, _ := tr.Subscribe()
+	tr.Start()
+	defer tr.Stop()
+
+	// Turn 1.
+	tr.NotifyTurnStart()
+	ts1 := drainEnvelope(t, ch).Params.(SessionUpdateParams)
+	sendAndDrain(t, in, ch, "turn1-event") // consume
+	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	drainEnvelope(t, ch) // consume turn_end
+
+	// Turn 2.
+	tr.NotifyTurnStart()
+	ts2 := drainEnvelope(t, ch).Params.(SessionUpdateParams)
+	sendAndDrain(t, in, ch, "turn2-event")
+	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	te2 := drainEnvelope(t, ch).Params.(SessionUpdateParams)
+
+	require.NotEmpty(t, ts1.TurnId)
+	require.NotEmpty(t, ts2.TurnId)
+	assert.NotEqual(t, ts1.TurnId, ts2.TurnId, "second turn must have a different TurnId")
+
+	require.NotNil(t, ts2.StreamSeq)
+	assert.Equal(t, 0, *ts2.StreamSeq, "second turn_start streamSeq must reset to 0")
+
+	require.NotNil(t, te2.StreamSeq)
+	assert.Equal(t, 2, *te2.StreamSeq, "second turn_end streamSeq must be 2 (start=0, text=1, end=2)")
+}
+
+// TestTurnAwareEnvelope_StateChangeExcludesTurnFields verifies that a
+// runtime/stateChange envelope emitted during a turn is not a SessionUpdateParams
+// (and therefore has no TurnId/StreamSeq), while its global seq still increments.
+func TestTurnAwareEnvelope_StateChangeExcludesTurnFields(t *testing.T) {
+	in := make(chan acp.SessionNotification)
+	tr := NewTranslator("session-1", in, nil)
+	ch, _, _ := tr.Subscribe()
+	tr.Start()
+	defer tr.Stop()
+
+	tr.NotifyTurnStart()
+	tsEnv := drainEnvelope(t, ch)
+
+	tr.NotifyStateChange("created", "running", 0, "")
+	scEnv := drainEnvelope(t, ch)
+
+	assert.Equal(t, MethodRuntimeStateChange, scEnv.Method)
+	_, ok := scEnv.Params.(RuntimeStateChangeParams)
+	assert.True(t, ok, "stateChange params must be RuntimeStateChangeParams")
+
+	// Seq must have incremented correctly.
+	tsSeq, _ := tsEnv.Seq()
+	scSeq, _ := scEnv.Seq()
+	assert.Equal(t, tsSeq+1, scSeq, "stateChange seq must follow turn_start seq")
+}
+
+// TestTurnAwareEnvelope_RoundTrip verifies that TurnId, StreamSeq, and Phase
+// survive a JSON marshal/unmarshal round-trip on SessionUpdateParams.
+func TestTurnAwareEnvelope_RoundTrip(t *testing.T) {
+	ss := 2
+	original := SessionUpdateParams{
+		SequenceMeta: SequenceMeta{SessionID: "s1", Seq: 5, Timestamp: "2024-01-01T00:00:00Z"},
+		TurnId:       "test-turn",
+		StreamSeq:    &ss,
+		Phase:        "thinking",
+		Event:        newTypedEvent(TextEvent{Text: "hello"}),
+	}
+	env := Envelope{Method: MethodSessionUpdate, Params: original}
+
+	data, err := env.MarshalJSON()
+	require.NoError(t, err)
+
+	var decoded Envelope
+	require.NoError(t, decoded.UnmarshalJSON(data))
+
+	params, ok := decoded.Params.(SessionUpdateParams)
+	require.True(t, ok)
+
+	assert.Equal(t, "test-turn", params.TurnId)
+	require.NotNil(t, params.StreamSeq)
+	assert.Equal(t, 2, *params.StreamSeq)
+	assert.Equal(t, "thinking", params.Phase)
+	assert.Equal(t, TextEvent{Text: "hello"}, params.Event.Payload)
+
+	// Also verify omitempty works: a params with no turn fields must not have those keys.
+	bare := SessionUpdateParams{
+		SequenceMeta: SequenceMeta{SessionID: "s2", Seq: 0, Timestamp: "2024-01-01T00:00:00Z"},
+		Event:        newTypedEvent(TextEvent{Text: "no turn"}),
+	}
+	bareData, err := json.Marshal(bare)
+	require.NoError(t, err)
+	assert.NotContains(t, string(bareData), "turnId", "omitempty should suppress empty turnId")
+	assert.NotContains(t, string(bareData), "streamSeq", "omitempty should suppress nil streamSeq")
+	assert.NotContains(t, string(bareData), "phase", "omitempty should suppress empty phase")
+}
+
+// TestTurnAwareEnvelope_ReplayOrdering verifies replay ordering invariants:
+//  1. All events in turn 1 share a common turnId.
+//  2. All events in turn 2 share a different common turnId.
+//  3. streamSeq is 0,1,2,... within each turn.
+//  4. Global seq is strictly monotonic across both turns.
+func TestTurnAwareEnvelope_ReplayOrdering(t *testing.T) {
+	in := make(chan acp.SessionNotification, 8)
+	tr := NewTranslator("session-1", in, nil)
+	ch, _, _ := tr.Subscribe()
+	tr.Start()
+	defer tr.Stop()
+
+	// Turn 1: turn_start + 2 text events + turn_end = 4 events.
+	// Each event is drained immediately after being sent so the translator
+	// goroutine processes it while the turn is still active (before NotifyTurnEnd
+	// clears currentTurnId).
+	tr.NotifyTurnStart()
+	ts1Env := drainEnvelope(t, ch)
+	in <- makeNotif(func(u *acp.SessionUpdate) {
+		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "t1-a"}},
+		}
+	})
+	t1aEnv := drainEnvelope(t, ch)
+	in <- makeNotif(func(u *acp.SessionUpdate) {
+		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "t1-b"}},
+		}
+	})
+	t1bEnv := drainEnvelope(t, ch)
+	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	te1Env := drainEnvelope(t, ch)
+	turn1 := []Envelope{ts1Env, t1aEnv, t1bEnv, te1Env}
+
+	// Turn 2: turn_start + 1 text event + turn_end = 3 events.
+	tr.NotifyTurnStart()
+	ts2Env := drainEnvelope(t, ch)
+	in <- makeNotif(func(u *acp.SessionUpdate) {
+		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "t2-a"}},
+		}
+	})
+	t2aEnv := drainEnvelope(t, ch)
+	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	te2Env := drainEnvelope(t, ch)
+	turn2 := []Envelope{ts2Env, t2aEnv, te2Env}
+
+	// (1) All turn 1 events share a common TurnId.
+	tid1 := turn1[0].Params.(SessionUpdateParams).TurnId
+	require.NotEmpty(t, tid1)
+	for i, env := range turn1 {
+		p := env.Params.(SessionUpdateParams)
+		assert.Equal(t, tid1, p.TurnId, "turn1[%d] TurnId mismatch", i)
+	}
+
+	// (2) All turn 2 events share a different common TurnId.
+	tid2 := turn2[0].Params.(SessionUpdateParams).TurnId
+	require.NotEmpty(t, tid2)
+	assert.NotEqual(t, tid1, tid2, "turn 2 must have a different TurnId than turn 1")
+	for i, env := range turn2 {
+		p := env.Params.(SessionUpdateParams)
+		assert.Equal(t, tid2, p.TurnId, "turn2[%d] TurnId mismatch", i)
+	}
+
+	// (3) streamSeq is 0,1,2,3 in turn 1 and 0,1,2 in turn 2.
+	for i, env := range turn1 {
+		p := env.Params.(SessionUpdateParams)
+		require.NotNil(t, p.StreamSeq, "turn1[%d] StreamSeq must not be nil", i)
+		assert.Equal(t, i, *p.StreamSeq, "turn1[%d] streamSeq mismatch", i)
+	}
+	for i, env := range turn2 {
+		p := env.Params.(SessionUpdateParams)
+		require.NotNil(t, p.StreamSeq, "turn2[%d] StreamSeq must not be nil", i)
+		assert.Equal(t, i, *p.StreamSeq, "turn2[%d] streamSeq mismatch", i)
+	}
+
+	// (4) Global seq is strictly monotonic across both turns.
+	all := append(turn1, turn2...)
+	for i := 1; i < len(all); i++ {
+		prevSeq, _ := all[i-1].Seq()
+		curSeq, _ := all[i].Seq()
+		assert.Equal(t, prevSeq+1, curSeq, "global seq must be monotonic at position %d", i)
+	}
 }

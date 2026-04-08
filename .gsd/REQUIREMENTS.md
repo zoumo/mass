@@ -70,16 +70,6 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: mapped
 - Notes: M003 delivered: fail-closed recovery posture (S01), shim-vs-DB reconciliation (S02), atomic event resume and damaged-tail tolerance (S03), DB-backed workspace cleanup safety (S04). Remaining follow-on: real CLI restart recovery tests, cross-client hardening.
 
-### R048 — agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
-- Class: core-capability
-- Status: active
-- Description: agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
-- Why it matters: ACP bootstrap can take 10-30 seconds. Synchronous blocking on create is unacceptable for orchestrator responsiveness.
-- Source: docs/plan/agent-runtime-alignment-plan.md
-- Primary owning slice: M005/S04
-- Supporting slices: M005/S03
-- Validation: Integration test: create returns creating → poll status → transitions to created or error
-
 ### R051 — room-mcp-server rewritten with modelcontextprotocol/go-sdk. Environment variables switch from OAR_SESSION_ID to OAR_AGENT_NAME/OAR_AGENT_ID/OAR_ROOM_NAME.
 - Class: integration
 - Status: active
@@ -342,6 +332,16 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: M005/S01, M005/S02
 - Validation: S03 implemented all 10 agent/* handler methods in pkg/ari/server.go (grep -c 'agent/' returns 10). All 9 session/* dispatch cases removed (grep -q 'session/new' returns exit 1). 64 pkg/ari tests pass. agentdctl CLI migrated to agent/* subcommands; session/* not present in root help. Full pipeline: agent/create→agent/prompt→agent/stop→agent/delete verified by TestARIAgentLifecycle.
 
+### R048 — agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
+- Class: core-capability
+- Status: validated
+- Description: agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
+- Why it matters: ACP bootstrap can take 10-30 seconds. Synchronous blocking on create is unacceptable for orchestrator responsiveness.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S04
+- Supporting slices: M005/S03
+- Validation: TestARIAgentCreateAsync: create returns creating → poll status → transitions to created. TestARIAgentCreateAsyncErrorState: create returns creating → poll status → transitions to error with non-empty ErrorMessage. Both integration tests use real mockagent shim. Full suite (go test ./pkg/ari/... -count=1) passes.
+
 ### R049 — Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
 - Class: core-capability
 - Status: validated
@@ -541,7 +541,7 @@ This file is the explicit capability and coverage contract for the project.
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
 | R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | S03 implemented all 10 agent/* handler methods in pkg/ari/server.go (grep -c 'agent/' returns 10). All 9 session/* dispatch cases removed (grep -q 'session/new' returns exit 1). 64 pkg/ari tests pass. agentdctl CLI migrated to agent/* subcommands; session/* not present in root help. Full pipeline: agent/create→agent/prompt→agent/stop→agent/delete verified by TestARIAgentLifecycle. |
-| R048 | core-capability | active | M005/S04 | M005/S03 | Integration test: create returns creating → poll status → transitions to created or error |
+| R048 | core-capability | validated | M005/S04 | M005/S03 | TestARIAgentCreateAsync: create returns creating → poll status → transitions to created. TestARIAgentCreateAsyncErrorState: create returns creating → poll status → transitions to error with non-empty ErrorMessage. Both integration tests use real mockagent shim. Full suite (go test ./pkg/ari/... -count=1) passes. |
 | R049 | core-capability | validated | M005/S02 | none | State transition unit tests in pkg/agentd/session_test.go cover all 5 states and explicitly reject paused:warm/paused:cold transitions. rg confirms zero remaining references to PausedWarm/PausedCold/paused:warm/paused:cold in production Go source. All 102 tests in pkg/meta/... and pkg/agentd/... pass (exit=0). |
 | R050 | core-capability | validated | M005/S05 | M005/S01 | S01/T02 added Turn-Aware Event Ordering section to shim-rpc-spec.md documenting turnId, streamSeq, and phase fields on session/update envelope, with ordering rules and replay semantics. Verification: grep checks for turnId, streamSeq, phase in shim-rpc-spec.md all pass. Note: unit test proof (turnId assigned on turn_start, replay ordering) deferred to S05 implementation. |
 | R051 | integration | active | M005/S06 | none | Existing multi-agent integration tests pass with SDK-based server; env vars use agent identity |
@@ -549,7 +549,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 9
-- Mapped to slices: 9
-- Validated: 24 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041, R047, R049, R050)
+- Active requirements: 8
+- Mapped to slices: 8
+- Validated: 25 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041, R047, R048, R049, R050)
 - Unmapped active requirements: 0

@@ -478,6 +478,18 @@ type AgentRestartParams struct {
 	AgentId string `json:"agentId"`
 }
 
+// AgentRestartResult is the response for agent/restart.
+// The agent transitions to "creating" immediately; poll agent/status
+// until state is "created" (or "error") to confirm bootstrap completion.
+type AgentRestartResult struct {
+	// AgentId is the unique identifier of the restarted agent.
+	AgentId string `json:"agentId"`
+
+	// State is the agent state immediately after restart is initiated.
+	// Always "creating" on a successful restart request.
+	State string `json:"state"`
+}
+
 // AgentListParams is the request params for agent/list method.
 // It contains optional filters for listing agents.
 type AgentListParams struct {
