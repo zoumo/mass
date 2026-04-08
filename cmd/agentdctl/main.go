@@ -24,8 +24,8 @@ func init() {
 }
 
 func main() {
-	// Add session commands (defined in session.go)
-	rootCmd.AddCommand(sessionCmd)
+	// Add agent commands (defined in agent.go)
+	rootCmd.AddCommand(agentCmd)
 
 	// Add workspace commands (defined in workspace.go)
 	rootCmd.AddCommand(workspaceCmd)

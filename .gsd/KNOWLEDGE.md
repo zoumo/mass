@@ -431,3 +431,27 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** Cross-package constant removal is a two-phase operation: (1) add replacement + mark for deletion, (2) remove after fixing all consumers. Build-green at task boundaries is the invariant to preserve.
 - **Reference:** T01 adds TODO(T02) comment; T02 removes constants (D069)
 - **When:** M005/S02
+
+## K026 — ON DELETE SET NULL FK breaks same-transaction sibling lookup: always pre-fetch before delete
+
+- **Pattern:** When deleting an object (agent) that has a sibling with a nullable FK pointing to it (`sessions.agent_id REFERENCES agents(id) ON DELETE SET NULL`), look up the sibling *before* the delete, not after.
+- **Gotcha:** Calling `agents.Delete(agentId)` first NULLs out `sessions.agent_id` immediately. Any subsequent `store.ListSessions(AgentID: agentId)` returns empty — the session is orphaned from the perspective of agentId-based lookup even though it still exists.
+- **Lesson:** The correct order is: (1) pre-fetch sibling IDs, (2) delete the parent, (3) use the pre-fetched IDs to clean up siblings. Never rely on FK reverse-lookup after a parent delete with SET NULL semantics.
+- **Reference:** handleAgentDelete in pkg/ari/server.go (D072), M005/S03/T02
+- **When:** M005/S03
+
+## K027 — RESTRICT FK requires manual child cleanup before parent delete; schema default is not CASCADE
+
+- **Pattern:** When a child table uses `REFERENCES parent(id) ON DELETE RESTRICT` (or the implicit default), deleting the parent fails with a FK violation unless all child rows are removed first.
+- **Gotcha:** agents.room → rooms(name) uses RESTRICT. A `room/delete` operation that skips agent cleanup will fail at the DB layer. Unlike CASCADE (which auto-removes children), RESTRICT requires the caller to enumerate and delete children explicitly.
+- **Lesson:** Review FK action (CASCADE vs RESTRICT vs SET NULL) when writing delete handlers. RESTRICT is the safest schema default — it surfaces missing cleanup logic as an error instead of silently orphaning or cascading. The handler must implement the cleanup loop.
+- **Reference:** handleRoomDelete in pkg/ari/server.go (D073), M005/S03/T02
+- **When:** M005/S03
+
+## K028 — CLI helper extraction is a prerequisite for deleting a command file that shares utilities
+
+- **Pattern:** When deleting a CLI source file (e.g. session.go) that mixes command logic with shared helper functions (getClient, outputJSON, parseLabels), extract helpers to a separate file first before deleting.
+- **Gotcha:** If you delete session.go without moving helpers first, all other commands (room.go, workspace.go, daemon.go) that import those helpers break immediately. The build reveals the missing symbols only after deletion.
+- **Lesson:** Plan file deletion in two phases: (1) extract shared code to a new file (helpers.go), verify build passes, (2) delete the old file. This is the same two-phase pattern as cross-package constant removal (K025).
+- **Reference:** cmd/agentdctl/helpers.go creation in T03, M005/S03/T03
+- **When:** M005/S03

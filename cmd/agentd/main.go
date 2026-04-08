@@ -75,6 +75,10 @@ func main() {
 	sessions := agentd.NewSessionManager(store)
 	log.Printf("agentd: session manager initialized")
 
+	// Create AgentManager from store.
+	agents := agentd.NewAgentManager(store)
+	log.Printf("agentd: agent manager initialized")
+
 	// Create ProcessManager from registry/sessions/store/cfg.
 	processes := agentd.NewProcessManager(runtimeClasses, sessions, store, cfg)
 	log.Printf("agentd: process manager initialized")
@@ -102,7 +106,7 @@ func main() {
 	}
 
 	// Create ARI Server with all dependencies.
-	srv := ari.New(manager, registry, sessions, processes, runtimeClasses, cfg, store, cfg.Socket, cfg.WorkspaceRoot)
+	srv := ari.New(manager, registry, sessions, agents, processes, runtimeClasses, cfg, store, cfg.Socket, cfg.WorkspaceRoot)
 	log.Printf("agentd: ARI server created")
 
 	// Remove existing socket file if present (unclean shutdown recovery).

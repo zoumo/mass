@@ -64,3 +64,11 @@
 {"id":"058848c1-dedf-4e96-8c66-f5616142f1f0","ts":"2026-04-08T18:34:48.152Z","severity":"warning","message":"Timeout recovery: steering execute-task M005/S03/T02 to finish durable output (attempt 1, session 1/1).","source":"notify","read":false}
 {"id":"01a4708a-3047-4571-a926-86a1350d1aef","ts":"2026-04-08T18:41:22.260Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
 {"id":"99799cd8-8d61-4841-bb9f-56d4bc8ce064","ts":"2026-04-08T18:41:22.262Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"e06f6d48-1552-4a4e-ae86-f90350e9c26f","ts":"2026-04-08T18:41:23.996Z","severity":"info","message":"Pre-dispatch: pre-dispatch: created gsd snapshot after 62m of uncommitted changes","source":"notify","read":false}
+{"id":"6e361c8d-80a4-4209-bfd3-48a8ca8727bc","ts":"2026-04-08T18:41:24.025Z","severity":"info","message":"Pre-dispatch hook: convention-patrol","source":"notify","read":false}
+{"id":"a8bc29b1-1efd-4a96-8126-d3fadaab2166","ts":"2026-04-08T18:47:28.614Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"8780b632-550e-46d7-aa79-1d6e13d55832","ts":"2026-04-08T18:47:28.617Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"917709dc-cf50-479b-b456-4444a0406252","ts":"2026-04-08T19:05:46.977Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"fa90a204-fb95-4e5a-a870-00c2eb68e42d","ts":"2026-04-08T19:05:46.980Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}
+{"id":"d4f17019-1efa-473c-a01a-9568e234fb41","ts":"2026-04-08T19:13:05.051Z","severity":"info","message":"Auto-mode started. Will loop until milestone complete.","source":"notify","read":false}
+{"id":"f2422edb-854e-4244-a50e-0c48d3e12faa","ts":"2026-04-08T19:13:05.053Z","severity":"info","message":"Pre-flight: 7 milestones queued. All have full context.","source":"notify","read":false}

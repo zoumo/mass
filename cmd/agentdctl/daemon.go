@@ -27,7 +27,7 @@ func init() {
 	daemonCmd.AddCommand(daemonStatusCmd)
 }
 
-// runDaemonStatus checks daemon health by calling session/list.
+// runDaemonStatus checks daemon health by calling agent/list.
 // If the call succeeds, the daemon is running; if it fails, the daemon is not running.
 func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	client, err := getClient()
@@ -39,10 +39,10 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	// Call session/list to verify daemon is responsive
-	params := ari.SessionListParams{}
-	var result ari.SessionListResult
-	if err := client.Call("session/list", params, &result); err != nil {
+	// Call agent/list to verify daemon is responsive
+	params := ari.AgentListParams{}
+	var result ari.AgentListResult
+	if err := client.Call("agent/list", params, &result); err != nil {
 		// RPC error means daemon is not healthy
 		fmt.Println("daemon: not running")
 		fmt.Fprintf(cmd.ErrOrStderr(), "Error: %v\n", err)
