@@ -36,37 +36,37 @@ func (e *ErrDeleteProtected) Error() string {
 
 // validTransitions defines the allowed state machine transitions.
 // Key: current state, Value: set of valid next states.
+// Mirrors the 5-state agent model: creating, created, running, stopped, error.
 var validTransitions = map[meta.SessionState][]meta.SessionState{
-	// created can transition to running (start) or stopped (cancel before start)
+	// creating -> created (bootstrap ok) or error (bootstrap fail)
+	meta.SessionStateCreating: {
+		meta.SessionStateCreated,
+		meta.SessionStateError,
+	},
+	// created -> running (prompt) or stopped (agent/stop while idle)
 	meta.SessionStateCreated: {
 		meta.SessionStateRunning,
 		meta.SessionStateStopped,
 	},
-	// running can transition to paused:warm (pause) or stopped (stop)
+	// running -> created (turn done), stopped (agent/stop), error (runtime failure)
 	meta.SessionStateRunning: {
-		meta.SessionStatePausedWarm,
+		meta.SessionStateCreated,
 		meta.SessionStateStopped,
+		meta.SessionStateError,
 	},
-	// paused:warm can transition to running (resume), paused:cold (checkpoint), or stopped
-	meta.SessionStatePausedWarm: {
-		meta.SessionStateRunning,
-		meta.SessionStatePausedCold,
-		meta.SessionStateStopped,
+	// stopped -> creating (agent/restart)
+	meta.SessionStateStopped: {
+		meta.SessionStateCreating,
 	},
-	// paused:cold can transition to running (restore) or stopped
-	meta.SessionStatePausedCold: {
-		meta.SessionStateRunning,
-		meta.SessionStateStopped,
-	},
-	// stopped is terminal - no valid transitions
-	meta.SessionStateStopped: {},
+	// error is terminal — no valid transitions
+	meta.SessionStateError: {},
 }
 
 // deleteProtectedStates defines states where deletion is blocked.
 // Sessions in these states are considered "active" and cannot be deleted.
 var deleteProtectedStates = map[meta.SessionState]bool{
-	meta.SessionStateRunning:    true,
-	meta.SessionStatePausedWarm: true,
+	meta.SessionStateCreating: true,
+	meta.SessionStateRunning:  true,
 }
 
 // SessionManager manages session lifecycle with state machine validation.
@@ -89,18 +89,18 @@ func NewSessionManager(store *meta.Store) *SessionManager {
 	}
 }
 
-// Create creates a new session in the "created" state.
+// Create creates a new session in the "creating" state.
 // The session must have a valid workspace_id and runtime_class.
 // Returns the created session or an error.
 func (m *SessionManager) Create(ctx context.Context, session *meta.Session) error {
-	// Ensure initial state is "created" if not specified.
+	// Ensure initial state is "creating" if not specified.
 	if session.State == "" {
-		session.State = meta.SessionStateCreated
+		session.State = meta.SessionStateCreating
 	}
 
 	// Validate initial state is allowed for new sessions.
-	if session.State != meta.SessionStateCreated {
-		return fmt.Errorf("agentd: new session must start in 'created' state, got %s", session.State)
+	if session.State != meta.SessionStateCreating && session.State != meta.SessionStateCreated {
+		return fmt.Errorf("agentd: new session must start in 'creating' or 'created' state, got %s", session.State)
 	}
 
 	m.logger.Info("creating session",
@@ -196,8 +196,8 @@ func (m *SessionManager) Update(ctx context.Context, id string, newState meta.Se
 }
 
 // Delete deletes a session by ID.
-// Returns ErrDeleteProtected if the session is in an active state (running or paused:warm).
-// Sessions in created, paused:cold, or stopped states can be deleted.
+// Returns ErrDeleteProtected if the session is in an active state (running or creating).
+// Sessions in created, stopped, or error states can be deleted.
 func (m *SessionManager) Delete(ctx context.Context, id string) error {
 	// Get current session to validate deletion.
 	current, err := m.store.GetSession(ctx, id)

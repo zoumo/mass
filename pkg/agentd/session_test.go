@@ -58,7 +58,7 @@ func TestSessionManagerCRUDRoundTrip(t *testing.T) {
 
 	workspace := createTestWorkspace(t, ctx, sm.store)
 
-	// Test Create - session starts in "created" state.
+	// Test Create - session starts in "creating" state by default.
 	session := &meta.Session{
 		ID:           uuid.New().String(),
 		RuntimeClass: "default",
@@ -68,31 +68,31 @@ func TestSessionManagerCRUDRoundTrip(t *testing.T) {
 
 	err := sm.Create(ctx, session)
 	require.NoError(t, err, "Create should succeed")
-	assert.Equal(t, meta.SessionStateCreated, session.State, "Session should start in 'created' state")
+	assert.Equal(t, meta.SessionStateCreating, session.State, "Session should start in 'creating' state")
 
 	// Test Get.
 	retrieved, err := sm.Get(ctx, session.ID)
 	require.NoError(t, err, "Get should succeed")
 	require.NotNil(t, retrieved, "Get should return session")
 	assert.Equal(t, session.ID, retrieved.ID, "ID should match")
-	assert.Equal(t, meta.SessionStateCreated, retrieved.State, "State should be 'created'")
+	assert.Equal(t, meta.SessionStateCreating, retrieved.State, "State should be 'creating'")
 	assert.Equal(t, "test", retrieved.Labels["env"], "Labels should match")
 
-	// Test Update - valid transition: created -> running.
-	err = sm.Update(ctx, session.ID, meta.SessionStateRunning, nil)
-	require.NoError(t, err, "Update (created -> running) should succeed")
+	// Test Update - valid transition: creating -> created.
+	err = sm.Update(ctx, session.ID, meta.SessionStateCreated, nil)
+	require.NoError(t, err, "Update (creating -> created) should succeed")
 
 	retrieved, err = sm.Get(ctx, session.ID)
 	require.NoError(t, err, "Get after update should succeed")
-	assert.Equal(t, meta.SessionStateRunning, retrieved.State, "State should be 'running'")
+	assert.Equal(t, meta.SessionStateCreated, retrieved.State, "State should be 'created'")
 
-	// Test Update with labels.
-	err = sm.Update(ctx, session.ID, meta.SessionStatePausedWarm, map[string]string{"env": "prod"})
+	// Test Update: created -> running.
+	err = sm.Update(ctx, session.ID, meta.SessionStateRunning, map[string]string{"env": "prod"})
 	require.NoError(t, err, "Update with labels should succeed")
 
 	retrieved, err = sm.Get(ctx, session.ID)
 	require.NoError(t, err, "Get after label update should succeed")
-	assert.Equal(t, meta.SessionStatePausedWarm, retrieved.State, "State should be 'paused:warm'")
+	assert.Equal(t, meta.SessionStateRunning, retrieved.State, "State should be 'running'")
 	assert.Equal(t, "prod", retrieved.Labels["env"], "Labels should be updated")
 
 	// Transition to stopped so we can delete.
@@ -118,7 +118,7 @@ func TestSessionManagerList(t *testing.T) {
 
 	workspace := createTestWorkspace(t, ctx, sm.store)
 
-	// Create multiple sessions in different states.
+	// Create multiple sessions and advance them to different states.
 	sessionIDs := []string{
 		uuid.New().String(),
 		uuid.New().String(),
@@ -134,11 +134,15 @@ func TestSessionManagerList(t *testing.T) {
 		require.NoError(t, sm.Create(ctx, session), "Create should succeed")
 	}
 
-	// Transition one to running.
-	require.NoError(t, sm.Update(ctx, sessionIDs[0], meta.SessionStateRunning, nil), "Transition to running should succeed")
+	// All start in creating. Transition first to created->running.
+	require.NoError(t, sm.Update(ctx, sessionIDs[0], meta.SessionStateCreated, nil))
+	require.NoError(t, sm.Update(ctx, sessionIDs[0], meta.SessionStateRunning, nil))
 
-	// Transition another to stopped.
-	require.NoError(t, sm.Update(ctx, sessionIDs[1], meta.SessionStateStopped, nil), "Transition to stopped should succeed")
+	// Transition second to created->stopped.
+	require.NoError(t, sm.Update(ctx, sessionIDs[1], meta.SessionStateCreated, nil))
+	require.NoError(t, sm.Update(ctx, sessionIDs[1], meta.SessionStateStopped, nil))
+
+	// Third stays in creating.
 
 	// Test List all.
 	all, err := sm.List(ctx, nil)
@@ -146,9 +150,9 @@ func TestSessionManagerList(t *testing.T) {
 	assert.Len(t, all, 3, "Should have 3 sessions")
 
 	// Test List by state.
-	createdSessions, err := sm.List(ctx, &meta.SessionFilter{State: meta.SessionStateCreated})
-	require.NoError(t, err, "List by state should succeed")
-	assert.Len(t, createdSessions, 1, "Should have 1 created session")
+	creatingSessions, err := sm.List(ctx, &meta.SessionFilter{State: meta.SessionStateCreating})
+	require.NoError(t, err, "List by creating state should succeed")
+	assert.Len(t, creatingSessions, 1, "Should have 1 creating session")
 
 	runningSessions, err := sm.List(ctx, &meta.SessionFilter{State: meta.SessionStateRunning})
 	require.NoError(t, err, "List by running state should succeed")
@@ -159,7 +163,7 @@ func TestSessionManagerList(t *testing.T) {
 	assert.Len(t, stoppedSessions, 1, "Should have 1 stopped session")
 }
 
-// TestSessionManagerValidTransitions tests all valid state transitions.
+// TestSessionManagerValidTransitions tests all valid state transitions in the 5-state model.
 func TestSessionManagerValidTransitions(t *testing.T) {
 	t.Parallel()
 
@@ -174,29 +178,27 @@ func TestSessionManagerValidTransitions(t *testing.T) {
 		from meta.SessionState
 		to   meta.SessionState
 	}{
-		// created -> running
+		// creating -> created (bootstrap ok)
+		{"creating_to_created", meta.SessionStateCreating, meta.SessionStateCreated},
+		// creating -> error (bootstrap fail)
+		{"creating_to_error", meta.SessionStateCreating, meta.SessionStateError},
+		// created -> running (start prompt)
 		{"created_to_running", meta.SessionStateCreated, meta.SessionStateRunning},
-		// created -> stopped
+		// created -> stopped (agent/stop while idle)
 		{"created_to_stopped", meta.SessionStateCreated, meta.SessionStateStopped},
-		// running -> paused:warm
-		{"running_to_paused_warm", meta.SessionStateRunning, meta.SessionStatePausedWarm},
-		// running -> stopped
+		// running -> created (turn done)
+		{"running_to_created", meta.SessionStateRunning, meta.SessionStateCreated},
+		// running -> stopped (agent/stop)
 		{"running_to_stopped", meta.SessionStateRunning, meta.SessionStateStopped},
-		// paused:warm -> running
-		{"paused_warm_to_running", meta.SessionStatePausedWarm, meta.SessionStateRunning},
-		// paused:warm -> paused:cold
-		{"paused_warm_to_paused_cold", meta.SessionStatePausedWarm, meta.SessionStatePausedCold},
-		// paused:warm -> stopped
-		{"paused_warm_to_stopped", meta.SessionStatePausedWarm, meta.SessionStateStopped},
-		// paused:cold -> running
-		{"paused_cold_to_running", meta.SessionStatePausedCold, meta.SessionStateRunning},
-		// paused:cold -> stopped
-		{"paused_cold_to_stopped", meta.SessionStatePausedCold, meta.SessionStateStopped},
+		// running -> error (runtime failure)
+		{"running_to_error", meta.SessionStateRunning, meta.SessionStateError},
+		// stopped -> creating (agent/restart)
+		{"stopped_to_creating", meta.SessionStateStopped, meta.SessionStateCreating},
 	}
 
 	for _, tc := range validTransitions {
 		t.Run(tc.name, func(t *testing.T) {
-			// Create a session in the "from" state.
+			// Create a session — starts in "creating" state.
 			sessionID := uuid.New().String()
 
 			session := &meta.Session{
@@ -206,24 +208,20 @@ func TestSessionManagerValidTransitions(t *testing.T) {
 			}
 			require.NoError(t, sm.Create(ctx, session), "Create should succeed")
 
-			// Transition to the "from" state if needed.
-			if tc.from != meta.SessionStateCreated {
-				// We need to navigate to the "from" state via valid transitions.
-				// Let's use a helper path based on the from state.
-				switch tc.from {
-				case meta.SessionStateRunning:
-					require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-				case meta.SessionStatePausedWarm:
-					require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-					require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStatePausedWarm, nil), "Transition to paused:warm should succeed")
-				case meta.SessionStatePausedCold:
-					require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-					require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStatePausedWarm, nil), "Transition to paused:warm should succeed")
-					require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStatePausedCold, nil), "Transition to paused:cold should succeed")
-				case meta.SessionStateStopped:
-					require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-					require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateStopped, nil), "Transition to stopped should succeed")
-				}
+			// Navigate to the "from" state via valid transitions.
+			switch tc.from {
+			case meta.SessionStateCreating:
+				// Already in creating state.
+			case meta.SessionStateCreated:
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateCreated, nil))
+			case meta.SessionStateRunning:
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateCreated, nil))
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil))
+			case meta.SessionStateStopped:
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateCreated, nil))
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateStopped, nil))
+			case meta.SessionStateError:
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateError, nil))
 			}
 
 			// Verify current state.
@@ -258,21 +256,28 @@ func TestSessionManagerInvalidTransitions(t *testing.T) {
 		from meta.SessionState
 		to   meta.SessionState
 	}{
-		// Cannot transition backwards
-		{"running_to_created", meta.SessionStateRunning, meta.SessionStateCreated},
-		{"paused_warm_to_created", meta.SessionStatePausedWarm, meta.SessionStateCreated},
+		// creating: cannot go to running, stopped
+		{"creating_to_running", meta.SessionStateCreating, meta.SessionStateRunning},
+		{"creating_to_stopped", meta.SessionStateCreating, meta.SessionStateStopped},
+		// created: cannot go to creating or error
+		{"created_to_creating", meta.SessionStateCreated, meta.SessionStateCreating},
+		{"created_to_error", meta.SessionStateCreated, meta.SessionStateError},
+		// running: cannot go to creating
+		{"running_to_creating", meta.SessionStateRunning, meta.SessionStateCreating},
+		// stopped: cannot go to created, running, error
 		{"stopped_to_created", meta.SessionStateStopped, meta.SessionStateCreated},
 		{"stopped_to_running", meta.SessionStateStopped, meta.SessionStateRunning},
-		// Cannot skip states
-		{"created_to_paused_warm", meta.SessionStateCreated, meta.SessionStatePausedWarm},
-		{"created_to_paused_cold", meta.SessionStateCreated, meta.SessionStatePausedCold},
-		{"running_to_paused_cold", meta.SessionStateRunning, meta.SessionStatePausedCold},
-		// Cannot transition from terminal state
-		{"stopped_to_paused_warm", meta.SessionStateStopped, meta.SessionStatePausedWarm},
-		{"stopped_to_paused_cold", meta.SessionStateStopped, meta.SessionStatePausedCold},
-		// Invalid cross-state jumps
-		{"paused_cold_to_paused_warm", meta.SessionStatePausedCold, meta.SessionStatePausedWarm},
-		{"paused_cold_to_created", meta.SessionStatePausedCold, meta.SessionStateCreated},
+		{"stopped_to_error", meta.SessionStateStopped, meta.SessionStateError},
+		// error is terminal — no transitions allowed
+		{"error_to_creating", meta.SessionStateError, meta.SessionStateCreating},
+		{"error_to_created", meta.SessionStateError, meta.SessionStateCreated},
+		{"error_to_running", meta.SessionStateError, meta.SessionStateRunning},
+		{"error_to_stopped", meta.SessionStateError, meta.SessionStateStopped},
+		// Verify paused:warm and paused:cold are rejected as targets
+		{"creating_to_paused_warm", meta.SessionStateCreating, "paused:warm"},
+		{"creating_to_paused_cold", meta.SessionStateCreating, "paused:cold"},
+		{"created_to_paused_warm", meta.SessionStateCreated, "paused:warm"},
+		{"running_to_paused_warm", meta.SessionStateRunning, "paused:warm"},
 	}
 
 	for _, tc := range invalidTransitions {
@@ -288,20 +293,18 @@ func TestSessionManagerInvalidTransitions(t *testing.T) {
 
 			// Navigate to the "from" state via valid transitions.
 			switch tc.from {
+			case meta.SessionStateCreating:
+				// Already in creating state.
 			case meta.SessionStateCreated:
-				// Already in created state, do nothing.
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateCreated, nil))
 			case meta.SessionStateRunning:
-				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-			case meta.SessionStatePausedWarm:
-				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStatePausedWarm, nil), "Transition to paused:warm should succeed")
-			case meta.SessionStatePausedCold:
-				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStatePausedWarm, nil), "Transition to paused:warm should succeed")
-				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStatePausedCold, nil), "Transition to paused:cold should succeed")
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateCreated, nil))
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil))
 			case meta.SessionStateStopped:
-				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateStopped, nil), "Transition to stopped should succeed")
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateCreated, nil))
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateStopped, nil))
+			case meta.SessionStateError:
+				require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateError, nil))
 			}
 
 			// Verify current state.
@@ -315,15 +318,13 @@ func TestSessionManagerInvalidTransitions(t *testing.T) {
 
 			// Verify it's ErrInvalidTransition.
 			invalidErr, ok := err.(*ErrInvalidTransition)
-			require.True(t, ok, "Error should be ErrInvalidTransition")
+			require.True(t, ok, "Error should be ErrInvalidTransition, got %T: %v", err, err)
 			assert.Equal(t, sessionID, invalidErr.SessionID, "Error should have correct session ID")
 			assert.Equal(t, tc.from, invalidErr.FromState, "Error should have correct from state")
 			assert.Equal(t, tc.to, invalidErr.ToState, "Error should have correct to state")
-			// For terminal states (stopped), ValidTransitions is legitimately empty.
-			// For non-terminal states, ValidTransitions should list valid options.
-			if tc.from != meta.SessionStateStopped {
-				assert.NotEmpty(t, invalidErr.ValidTransitions, "Error should list valid transitions for non-terminal states")
-			} else {
+
+			// For terminal states (error), ValidTransitions is empty.
+			if tc.from == meta.SessionStateError {
 				assert.Empty(t, invalidErr.ValidTransitions, "Terminal state should have no valid transitions")
 			}
 
@@ -344,6 +345,25 @@ func TestSessionManagerDeleteProtection(t *testing.T) {
 
 	workspace := createTestWorkspace(t, ctx, sm.store)
 
+	// Test delete protection for creating session.
+	t.Run("creating_session", func(t *testing.T) {
+		sessionID := uuid.New().String()
+		session := &meta.Session{
+			ID:           sessionID,
+			RuntimeClass: "default",
+			WorkspaceID:  workspace.ID,
+		}
+		require.NoError(t, sm.Create(ctx, session), "Create should succeed")
+
+		err := sm.Delete(ctx, sessionID)
+		require.Error(t, err, "Delete should fail for creating session")
+
+		deleteErr, ok := err.(*ErrDeleteProtected)
+		require.True(t, ok, "Error should be ErrDeleteProtected")
+		assert.Equal(t, sessionID, deleteErr.SessionID)
+		assert.Equal(t, meta.SessionStateCreating, deleteErr.State)
+	})
+
 	// Test delete protection for running session.
 	t.Run("running_session", func(t *testing.T) {
 		sessionID := uuid.New().String()
@@ -353,40 +373,21 @@ func TestSessionManagerDeleteProtection(t *testing.T) {
 			WorkspaceID:  workspace.ID,
 		}
 		require.NoError(t, sm.Create(ctx, session), "Create should succeed")
-		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
+		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateCreated, nil))
+		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil))
 
 		err := sm.Delete(ctx, sessionID)
 		require.Error(t, err, "Delete should fail for running session")
 
 		deleteErr, ok := err.(*ErrDeleteProtected)
 		require.True(t, ok, "Error should be ErrDeleteProtected")
-		assert.Equal(t, sessionID, deleteErr.SessionID, "Error should have correct session ID")
-		assert.Equal(t, meta.SessionStateRunning, deleteErr.State, "Error should show running state")
+		assert.Equal(t, sessionID, deleteErr.SessionID)
+		assert.Equal(t, meta.SessionStateRunning, deleteErr.State)
 
 		// Verify session still exists.
 		stillExists, err := sm.Get(ctx, sessionID)
 		require.NoError(t, err, "Get should succeed")
 		assert.NotNil(t, stillExists, "Session should still exist")
-	})
-
-	// Test delete protection for paused:warm session.
-	t.Run("paused_warm_session", func(t *testing.T) {
-		sessionID := uuid.New().String()
-		session := &meta.Session{
-			ID:           sessionID,
-			RuntimeClass: "default",
-			WorkspaceID:  workspace.ID,
-		}
-		require.NoError(t, sm.Create(ctx, session), "Create should succeed")
-		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStatePausedWarm, nil), "Transition to paused:warm should succeed")
-
-		err := sm.Delete(ctx, sessionID)
-		require.Error(t, err, "Delete should fail for paused:warm session")
-
-		deleteErr, ok := err.(*ErrDeleteProtected)
-		require.True(t, ok, "Error should be ErrDeleteProtected")
-		assert.Equal(t, meta.SessionStatePausedWarm, deleteErr.State, "Error should show paused:warm state")
 	})
 
 	// Test delete allowed for created session.
@@ -398,30 +399,10 @@ func TestSessionManagerDeleteProtection(t *testing.T) {
 			WorkspaceID:  workspace.ID,
 		}
 		require.NoError(t, sm.Create(ctx, session), "Create should succeed")
+		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateCreated, nil))
 
 		err := sm.Delete(ctx, sessionID)
 		require.NoError(t, err, "Delete should succeed for created session")
-
-		deleted, err := sm.Get(ctx, sessionID)
-		require.NoError(t, err, "Get should succeed")
-		assert.Nil(t, deleted, "Session should be deleted")
-	})
-
-	// Test delete allowed for paused:cold session.
-	t.Run("paused_cold_session", func(t *testing.T) {
-		sessionID := uuid.New().String()
-		session := &meta.Session{
-			ID:           sessionID,
-			RuntimeClass: "default",
-			WorkspaceID:  workspace.ID,
-		}
-		require.NoError(t, sm.Create(ctx, session), "Create should succeed")
-		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStatePausedWarm, nil), "Transition to paused:warm should succeed")
-		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStatePausedCold, nil), "Transition to paused:cold should succeed")
-
-		err := sm.Delete(ctx, sessionID)
-		require.NoError(t, err, "Delete should succeed for paused:cold session")
 
 		deleted, err := sm.Get(ctx, sessionID)
 		require.NoError(t, err, "Get should succeed")
@@ -437,8 +418,8 @@ func TestSessionManagerDeleteProtection(t *testing.T) {
 			WorkspaceID:  workspace.ID,
 		}
 		require.NoError(t, sm.Create(ctx, session), "Create should succeed")
-		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateRunning, nil), "Transition to running should succeed")
-		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateStopped, nil), "Transition to stopped should succeed")
+		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateCreated, nil))
+		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateStopped, nil))
 
 		err := sm.Delete(ctx, sessionID)
 		require.NoError(t, err, "Delete should succeed for stopped session")
@@ -447,9 +428,28 @@ func TestSessionManagerDeleteProtection(t *testing.T) {
 		require.NoError(t, err, "Get should succeed")
 		assert.Nil(t, deleted, "Session should be deleted")
 	})
+
+	// Test delete allowed for error session.
+	t.Run("error_session", func(t *testing.T) {
+		sessionID := uuid.New().String()
+		session := &meta.Session{
+			ID:           sessionID,
+			RuntimeClass: "default",
+			WorkspaceID:  workspace.ID,
+		}
+		require.NoError(t, sm.Create(ctx, session), "Create should succeed")
+		require.NoError(t, sm.Update(ctx, sessionID, meta.SessionStateError, nil))
+
+		err := sm.Delete(ctx, sessionID)
+		require.NoError(t, err, "Delete should succeed for error session")
+
+		deleted, err := sm.Get(ctx, sessionID)
+		require.NoError(t, err, "Get should succeed")
+		assert.Nil(t, deleted, "Session should be deleted")
+	})
 }
 
-// TestSessionManagerCreateInvalidInitialState tests that new sessions must start in created state.
+// TestSessionManagerCreateInvalidInitialState tests that new sessions must start in creating or created state.
 func TestSessionManagerCreateInvalidInitialState(t *testing.T) {
 	t.Parallel()
 
@@ -468,7 +468,28 @@ func TestSessionManagerCreateInvalidInitialState(t *testing.T) {
 
 	err := sm.Create(ctx, session)
 	require.Error(t, err, "Create should fail with invalid initial state")
-	assert.Contains(t, err.Error(), "must start in 'created' state", "Error should mention created state requirement")
+	assert.Contains(t, err.Error(), "must start in 'creating' or 'created' state")
+}
+
+// TestSessionManagerCreateWithCreatedState tests that sessions can also start in "created" state.
+func TestSessionManagerCreateWithCreatedState(t *testing.T) {
+	t.Parallel()
+
+	sm := newTestSessionManager(t)
+	ctx := context.Background()
+
+	workspace := createTestWorkspace(t, ctx, sm.store)
+
+	session := &meta.Session{
+		ID:           uuid.New().String(),
+		RuntimeClass: "default",
+		WorkspaceID:  workspace.ID,
+		State:        meta.SessionStateCreated,
+	}
+
+	err := sm.Create(ctx, session)
+	require.NoError(t, err, "Create with 'created' state should succeed")
+	assert.Equal(t, meta.SessionStateCreated, session.State)
 }
 
 // TestSessionManagerGetNonExistent tests Get for non-existent session.
@@ -524,8 +545,12 @@ func TestSessionManagerTransitionMethod(t *testing.T) {
 	}
 	require.NoError(t, sm.Create(ctx, session), "Create should succeed")
 
-	// Use Transition method (same as Update but only changes state).
-	err := sm.Transition(ctx, sessionID, meta.SessionStateRunning)
+	// Use Transition method: creating -> created.
+	err := sm.Transition(ctx, sessionID, meta.SessionStateCreated)
+	require.NoError(t, err, "Transition to created should succeed")
+
+	// created -> running.
+	err = sm.Transition(ctx, sessionID, meta.SessionStateRunning)
 	require.NoError(t, err, "Transition to running should succeed")
 
 	current, err := sm.Get(ctx, sessionID)
@@ -533,7 +558,7 @@ func TestSessionManagerTransitionMethod(t *testing.T) {
 	assert.Equal(t, meta.SessionStateRunning, current.State, "State should be running after Transition")
 
 	// Test invalid transition via Transition method.
-	err = sm.Transition(ctx, sessionID, meta.SessionStateCreated)
+	err = sm.Transition(ctx, sessionID, meta.SessionStateCreating)
 	require.Error(t, err, "Invalid transition via Transition method should fail")
 }
 
@@ -541,20 +566,19 @@ func TestSessionManagerTransitionMethod(t *testing.T) {
 func TestIsValidTransition(t *testing.T) {
 	t.Parallel()
 
-	// Test all valid transitions.
+	// Test all valid transitions in 5-state model.
 	validCases := []struct {
 		from meta.SessionState
 		to   meta.SessionState
 	}{
+		{meta.SessionStateCreating, meta.SessionStateCreated},
+		{meta.SessionStateCreating, meta.SessionStateError},
 		{meta.SessionStateCreated, meta.SessionStateRunning},
 		{meta.SessionStateCreated, meta.SessionStateStopped},
-		{meta.SessionStateRunning, meta.SessionStatePausedWarm},
+		{meta.SessionStateRunning, meta.SessionStateCreated},
 		{meta.SessionStateRunning, meta.SessionStateStopped},
-		{meta.SessionStatePausedWarm, meta.SessionStateRunning},
-		{meta.SessionStatePausedWarm, meta.SessionStatePausedCold},
-		{meta.SessionStatePausedWarm, meta.SessionStateStopped},
-		{meta.SessionStatePausedCold, meta.SessionStateRunning},
-		{meta.SessionStatePausedCold, meta.SessionStateStopped},
+		{meta.SessionStateRunning, meta.SessionStateError},
+		{meta.SessionStateStopped, meta.SessionStateCreating},
 	}
 
 	for _, tc := range validCases {
@@ -563,17 +587,28 @@ func TestIsValidTransition(t *testing.T) {
 		})
 	}
 
-	// Test some invalid transitions.
+	// Test invalid transitions including paused:* rejection.
 	invalidCases := []struct {
 		from meta.SessionState
 		to   meta.SessionState
 	}{
-		{meta.SessionStateRunning, meta.SessionStateCreated},
-		{meta.SessionStateStopped, meta.SessionStateRunning},
-		{meta.SessionStateStopped, meta.SessionStatePausedWarm},
-		{meta.SessionStateCreated, meta.SessionStatePausedWarm},
-		{meta.SessionStateRunning, meta.SessionStatePausedCold},
-		{meta.SessionStatePausedCold, meta.SessionStatePausedWarm},
+		// Standard invalid
+		{meta.SessionStateCreating, meta.SessionStateRunning},
+		{meta.SessionStateCreating, meta.SessionStateStopped},
+		{meta.SessionStateCreated, meta.SessionStateCreating},
+		{meta.SessionStateCreated, meta.SessionStateError},
+		{meta.SessionStateRunning, meta.SessionStateCreating},
+		{meta.SessionStateError, meta.SessionStateCreating},
+		{meta.SessionStateError, meta.SessionStateCreated},
+		{meta.SessionStateError, meta.SessionStateRunning},
+		{meta.SessionStateError, meta.SessionStateStopped},
+		// paused:* are no longer valid states — rejected as unknown
+		{meta.SessionStateRunning, "paused:warm"},
+		{meta.SessionStateRunning, "paused:cold"},
+		{meta.SessionStateCreated, "paused:warm"},
+		// paused:* as source states — unknown, no transitions defined
+		{"paused:warm", meta.SessionStateRunning},
+		{"paused:cold", meta.SessionStateRunning},
 	}
 
 	for _, tc := range invalidCases {

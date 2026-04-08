@@ -376,9 +376,11 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 	}
 	srv.mu.Unlock()
 
-	// Create workspace and a "paused:warm" session pointing at the mock socket.
+	// Create workspace and a "creating" session pointing at the mock socket.
+	// The DB says "creating" but the runtime says "running" — this is a state mismatch
+	// that falls into the default branch (logged but not reconciled).
 	ws := createTestWorkspace(t, ctx, store)
-	sessionID := createRecoveryTestSession(t, ctx, store, ws.ID, meta.SessionStatePausedWarm, socketPath)
+	sessionID := createRecoveryTestSession(t, ctx, store, ws.ID, meta.SessionStateCreating, socketPath)
 
 	// Run recovery.
 	err := pm.RecoverSessions(ctx)
@@ -389,12 +391,12 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 	require.NotNil(t, shimProc, "mismatched session should still be recovered")
 	assert.Equal(t, sessionID, shimProc.SessionID)
 
-	// DB state should remain "paused:warm" — the default branch logs but
+	// DB state should remain "creating" — the default branch logs but
 	// does not update the DB state.
 	session, err := store.GetSession(ctx, sessionID)
 	require.NoError(t, err)
-	assert.Equal(t, meta.SessionStatePausedWarm, session.State,
-		"DB state should remain paused:warm (mismatch only logged, not reconciled)")
+	assert.Equal(t, meta.SessionStateCreating, session.State,
+		"DB state should remain creating (mismatch only logged, not reconciled)")
 
 	// Mock shim should have been subscribed (recovery completed).
 	srv.mu.Lock()

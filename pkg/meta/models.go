@@ -7,6 +7,67 @@ import (
 	"time"
 )
 
+// AgentState defines the possible states of an agent.
+type AgentState string
+
+const (
+	// AgentStateCreating indicates the agent is being provisioned.
+	AgentStateCreating AgentState = "creating"
+
+	// AgentStateCreated indicates the agent has been provisioned but not yet started.
+	AgentStateCreated AgentState = "created"
+
+	// AgentStateRunning indicates the agent is actively running.
+	AgentStateRunning AgentState = "running"
+
+	// AgentStateStopped indicates the agent has been stopped (terminal state).
+	AgentStateStopped AgentState = "stopped"
+
+	// AgentStateError indicates the agent encountered an unrecoverable error.
+	AgentStateError AgentState = "error"
+)
+
+// Agent represents an agent definition record.
+// An agent is a named, room-scoped entity that can be instantiated as sessions.
+type Agent struct {
+	// ID is the unique agent identifier (UUID).
+	ID string `json:"id"`
+
+	// Room is the room this agent belongs to.
+	Room string `json:"room"`
+
+	// Name is the agent name, unique within the room.
+	Name string `json:"name"`
+
+	// RuntimeClass is the runtime class for this agent (e.g., "default", "cuda").
+	RuntimeClass string `json:"runtimeClass"`
+
+	// WorkspaceID is the workspace this agent uses.
+	WorkspaceID string `json:"workspaceId"`
+
+	// Description is a human-readable description of the agent.
+	Description string `json:"description,omitempty"`
+
+	// SystemPrompt is the agent's system prompt.
+	SystemPrompt string `json:"systemPrompt,omitempty"`
+
+	// Labels are arbitrary key-value metadata for the agent.
+	// Stored as JSON in the database.
+	Labels map[string]string `json:"labels,omitempty"`
+
+	// State is the current agent state.
+	State AgentState `json:"state"`
+
+	// ErrorMessage is the error message if state is AgentStateError.
+	ErrorMessage string `json:"errorMessage,omitempty"`
+
+	// CreatedAt is the timestamp when the agent was created.
+	CreatedAt time.Time `json:"createdAt"`
+
+	// UpdatedAt is the timestamp when the agent was last updated.
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
 // emptyJSON is the default empty JSON object used for bootstrap_config.
 var emptyJSON = json.RawMessage("{}")
 
@@ -14,20 +75,20 @@ var emptyJSON = json.RawMessage("{}")
 type SessionState string
 
 const (
+	// SessionStateCreating indicates a session that is being provisioned.
+	SessionStateCreating SessionState = "creating"
+
 	// SessionStateCreated indicates a newly created session that has not started.
 	SessionStateCreated SessionState = "created"
 
 	// SessionStateRunning indicates an actively running session.
 	SessionStateRunning SessionState = "running"
 
-	// SessionStatePausedWarm indicates a paused session with warm state (can quickly resume).
-	SessionStatePausedWarm SessionState = "paused:warm"
-
-	// SessionStatePausedCold indicates a paused session with cold state (state persisted to storage).
-	SessionStatePausedCold SessionState = "paused:cold"
-
-	// SessionStateStopped indicates a stopped session (terminal state).
+	// SessionStateStopped indicates a stopped session.
 	SessionStateStopped SessionState = "stopped"
+
+	// SessionStateError indicates a session that encountered an unrecoverable error (terminal).
+	SessionStateError SessionState = "error"
 )
 
 // WorkspaceStatus defines the possible statuses of a workspace.
@@ -78,6 +139,10 @@ type Session struct {
 	// RoomAgent is the agent name/ID within the room.
 	// Empty string means no room agent association.
 	RoomAgent string `json:"roomAgent,omitempty"`
+
+	// AgentID is the optional reference to the parent agent.
+	// Empty string means no agent association (legacy sessions).
+	AgentID string `json:"agentId,omitempty"`
 
 	// Labels are arbitrary key-value metadata for the session.
 	// Stored as JSON in the database.

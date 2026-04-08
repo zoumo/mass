@@ -24,6 +24,9 @@ type SessionFilter struct {
 	// true: only sessions with a room, false: only sessions without a room.
 	// nil: all sessions regardless of room association.
 	HasRoom *bool
+
+	// AgentID filters by agent ID. Empty means all agents (including none).
+	AgentID string
 }
 
 // CreateSession creates a new session record.
@@ -50,10 +53,10 @@ func (s *Store) CreateSession(ctx context.Context, session *Session) error {
 	}
 
 	query := `
-		INSERT INTO sessions (id, runtime_class, workspace_id, room, room_agent, labels, state,
+		INSERT INTO sessions (id, runtime_class, workspace_id, room, room_agent, agent_id, labels, state,
 			bootstrap_config, shim_socket_path, shim_state_dir, shim_pid,
 			created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	// Use NULL for room if empty (optional room association).
@@ -62,6 +65,13 @@ func (s *Store) CreateSession(ctx context.Context, session *Session) error {
 	var roomValue any
 	if session.Room != "" {
 		roomValue = session.Room
+	}
+
+	// Use NULL for agent_id if empty (optional agent association).
+	// The FK constraint on agent_id references agents(id) ON DELETE SET NULL.
+	var agentIDValue any
+	if session.AgentID != "" {
+		agentIDValue = session.AgentID
 	}
 
 	// Default bootstrap config to empty JSON object if not set.
@@ -76,6 +86,7 @@ func (s *Store) CreateSession(ctx context.Context, session *Session) error {
 		session.WorkspaceID,
 		roomValue,
 		session.RoomAgent,
+		agentIDValue,
 		labelsToJSON(session.Labels),
 		session.State,
 		string(bootstrapConfig),
@@ -107,7 +118,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 	}
 
 	query := `
-		SELECT id, runtime_class, workspace_id, room, room_agent, labels, state,
+		SELECT id, runtime_class, workspace_id, room, room_agent, agent_id, labels, state,
 			bootstrap_config, shim_socket_path, shim_state_dir, shim_pid,
 			created_at, updated_at
 		FROM sessions
@@ -117,6 +128,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 	session := &Session{}
 	var labelsBytes []byte
 	var room sql.NullString
+	var agentID sql.NullString
 	var bootstrapConfig string
 
 	err := s.db.QueryRowContext(ctx, query, id).Scan(
@@ -125,6 +137,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 		&session.WorkspaceID,
 		&room,
 		&session.RoomAgent,
+		&agentID,
 		&labelsBytes,
 		&session.State,
 		&bootstrapConfig,
@@ -149,6 +162,13 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 		session.Room = ""
 	}
 
+	// Set agent_id from nullable value.
+	if agentID.Valid {
+		session.AgentID = agentID.String
+	} else {
+		session.AgentID = ""
+	}
+
 	session.Labels = labelsFromJSON(labelsBytes)
 
 	// Parse bootstrap config JSON.
@@ -163,7 +183,7 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 // If filter is nil, returns all sessions.
 func (s *Store) ListSessions(ctx context.Context, filter *SessionFilter) ([]*Session, error) {
 	query := `
-		SELECT id, runtime_class, workspace_id, room, room_agent, labels, state,
+		SELECT id, runtime_class, workspace_id, room, room_agent, agent_id, labels, state,
 			bootstrap_config, shim_socket_path, shim_state_dir, shim_pid,
 			created_at, updated_at
 		FROM sessions
@@ -192,6 +212,10 @@ func (s *Store) ListSessions(ctx context.Context, filter *SessionFilter) ([]*Ses
 				conditions = append(conditions, "room IS NULL")
 			}
 		}
+		if filter.AgentID != "" {
+			conditions = append(conditions, "agent_id = ?")
+			args = append(args, filter.AgentID)
+		}
 	}
 
 	if len(conditions) > 0 {
@@ -212,6 +236,7 @@ func (s *Store) ListSessions(ctx context.Context, filter *SessionFilter) ([]*Ses
 		session := &Session{}
 		var labelsBytes []byte
 		var room sql.NullString
+		var agentID sql.NullString
 		var bootstrapConfig string
 
 		err := rows.Scan(
@@ -220,6 +245,7 @@ func (s *Store) ListSessions(ctx context.Context, filter *SessionFilter) ([]*Ses
 			&session.WorkspaceID,
 			&room,
 			&session.RoomAgent,
+			&agentID,
 			&labelsBytes,
 			&session.State,
 			&bootstrapConfig,
@@ -237,6 +263,11 @@ func (s *Store) ListSessions(ctx context.Context, filter *SessionFilter) ([]*Ses
 			session.Room = room.String
 		} else {
 			session.Room = ""
+		}
+		if agentID.Valid {
+			session.AgentID = agentID.String
+		} else {
+			session.AgentID = ""
 		}
 		session.Labels = labelsFromJSON(labelsBytes)
 

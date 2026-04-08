@@ -240,7 +240,7 @@ func TestListSessionsFiltering(t *testing.T) {
 			ID:           uuid.New().String(),
 			RuntimeClass: "default",
 			WorkspaceID:  workspace.ID,
-			State:        SessionStatePausedWarm,
+			State:        SessionStateCreating,
 			Room:         room.Name,
 		},
 	}
@@ -502,8 +502,8 @@ func TestSchemaMigrationIdempotency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Query schema_version failed: %v", err)
 	}
-	if maxVersion != 2 {
-		t.Errorf("Expected schema version 2, got %d", maxVersion)
+	if maxVersion != 4 {
+		t.Errorf("Expected schema version 4, got %d", maxVersion)
 	}
 
 	// Verify the new columns exist by inserting a session with bootstrap config.

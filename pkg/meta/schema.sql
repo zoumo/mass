@@ -122,3 +122,43 @@ ALTER TABLE sessions ADD COLUMN shim_state_dir TEXT DEFAULT '';
 ALTER TABLE sessions ADD COLUMN shim_pid INTEGER DEFAULT 0;
 
 INSERT OR IGNORE INTO schema_version (version) VALUES (2);
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- Schema v3: agents table
+-- ────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    room TEXT NOT NULL,
+    name TEXT NOT NULL,
+    runtime_class TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    system_prompt TEXT DEFAULT '',
+    labels TEXT DEFAULT '{}',
+    state TEXT NOT NULL DEFAULT 'creating',
+    error_message TEXT DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(room, name),
+    FOREIGN KEY (room) REFERENCES rooms(name) ON DELETE RESTRICT,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE RESTRICT
+);
+CREATE INDEX IF NOT EXISTS idx_agents_room ON agents(room);
+CREATE INDEX IF NOT EXISTS idx_agents_state ON agents(state);
+CREATE INDEX IF NOT EXISTS idx_agents_room_name ON agents(room, name);
+CREATE TRIGGER IF NOT EXISTS trg_agents_updated
+    AFTER UPDATE ON agents
+    FOR EACH ROW WHEN OLD.updated_at = NEW.updated_at
+    BEGIN
+        UPDATE agents SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+    END;
+INSERT OR IGNORE INTO schema_version (version) VALUES (3);
+
+-- ────────────────────────────────────────────────────────────────────────────
+-- Schema v4: sessions.agent_id FK
+-- Links sessions to the agents table so each session can reference its
+-- parent agent. NULL means no agent association (legacy sessions).
+-- ────────────────────────────────────────────────────────────────────────────
+ALTER TABLE sessions ADD COLUMN agent_id TEXT DEFAULT NULL REFERENCES agents(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_agent_id ON sessions(agent_id);
+INSERT OR IGNORE INTO schema_version (version) VALUES (4);
