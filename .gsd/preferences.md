@@ -7,6 +7,7 @@ uat_dispatch: false
 unique_milestone_ids: false
 parallel:
   enabled: true
+  max_workers: 3
 notifications:
   enabled: true
   on_complete: true
@@ -28,9 +29,9 @@ git:
   merge_strategy: squash
   isolation: branch
 phases:
-  skip_research: false
-  skip_reassess: false
-  skip_slice_research: false
+  skip_research: true
+  skip_reassess: true
+  skip_slice_research: true
   reassess_after_slice: false
 post_unit_hooks:
   - name: sync-project-docs
