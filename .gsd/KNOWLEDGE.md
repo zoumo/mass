@@ -399,3 +399,19 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** Teardown guards are only proven by tests that violate them. TestARIRoomTeardownGuards found that the interaction between active-member guards and session delete protection worked correctly — but only because it tested the wrong ordering explicitly.
 - **Reference:** pkg/ari/server_test.go TestARIRoomTeardownGuards (S03/T02)
 - **When:** M004/S03
+
+## K022 — Contract verifier scripts: scope forbidden patterns to JSON method strings, not prose
+
+- **Pattern:** When a design doc legitimately references deprecated method names in explanatory prose (e.g., "the shim continues to use session/*"), a naive grep-based forbidden-pattern check will false-fail. Scope forbidden patterns to JSON method-string format (`"method": "session/new"`) rather than bare strings.
+- **Gotcha:** agentd.md and ari-spec.md explicitly describe the shim-internal boundary using the old session/* names — exactly what the forbidden-pattern check needs to *not* flag. Broad patterns fire on the very explanation text that makes the doc correct.
+- **Lesson:** Write forbidden patterns to match the form that would be harmful in production code or normative examples (JSON key-value), not the form that appears in explanatory prose. The M005/S01 verifier uses extended-regex `"method":\s*"session/` to achieve this.
+- **Reference:** scripts/verify-m005-s01-contract.sh (D068), modeled on verify-m002-s01-contract.sh
+- **When:** M005/S01
+
+## K023 — agent/event boundaries: translate at the perimeter, not in the shim
+
+- **Pattern:** When renaming an external protocol surface (session/* → agent/*), do the translation at the outermost perimeter (agentd→orchestrator boundary), not in intermediate layers. The shim retains its existing surface; agentd translates event names as they cross the ARI surface.
+- **Gotcha:** If you rename session/* inside the shim to match the new external surface, you create a version-skew window where shim and agentd use different names for the same events during deployment. You also break other consumers of the shim surface.
+- **Lesson:** Keep translation at the boundary that faces the changing consumer (orchestrator). Inner layers (shim→agentd) remain stable and can be evolved independently. This is the "translate at the perimeter" pattern (D065).
+- **Reference:** docs/design/agentd/ari-spec.md, agent/update and agent/stateChange (D065)
+- **When:** M005/S01

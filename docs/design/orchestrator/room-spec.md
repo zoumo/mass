@@ -9,14 +9,14 @@ agentd does **not** own Room intent, completion policy, or business-level orches
 | Layer | Owns | Does not own |
 |---|---|---|
 | Orchestrator / Room Spec | Desired membership, desired shared-workspace intent, desired communication policy, completion logic | Runtime process truth, prompt delivery state |
-| agentd / ARI | Realized room registration, realized member-to-session mapping, realized shared-workspace attachment, runtime routing state | Whether the Room should exist in the first place, when business work is complete |
+| agentd / ARI | Realized room registration, realized member-to-agent mapping, realized shared-workspace attachment, runtime routing state | Whether the Room should exist in the first place, when business work is complete |
 | Runtime / shim | Per-session process state and ACP bootstrap state | Room intent or orchestration policy |
 
 This split is the contract for M002/S01:
 
 - the Room Spec remains the source of truth for **what should exist**;
 - ARI `room/*` reflects or registers **what has been realized at runtime**;
-- member work still enters through per-session `session/prompt`, not through Room creation.
+- member work still enters through per-agent `agent/prompt`, not through Room creation.
 
 ## Top-Level Shape
 
@@ -80,7 +80,7 @@ A Room may intentionally project multiple members onto one prepared workspace. T
 - no per-agent filesystem isolation is implied by the Room Spec;
 - the orchestrator owns whether that sharing is acceptable for the task.
 
-The runtime projection may therefore contain several sessions pointing at the same `workspaceId`.
+The runtime projection may therefore contain several agents pointing at the same `workspaceId`.
 
 ## `spec.agents`
 
@@ -90,15 +90,18 @@ The runtime projection may therefore contain several sessions pointing at the sa
     "agents": [
       {
         "name": "architect",
+        "description": "Designs the module structure and delegates implementation tasks.",
         "runtimeClass": "claude",
         "systemPrompt": "You are the lead architect for this refactor."
       },
       {
         "name": "coder",
+        "description": "Implements the changes delegated by the architect.",
         "runtimeClass": "codex"
       },
       {
         "name": "reviewer",
+        "description": "Reviews changes for correctness and security.",
         "runtimeClass": "gemini",
         "systemPrompt": "Review changes for correctness and security."
       }
@@ -109,9 +112,10 @@ The runtime projection may therefore contain several sessions pointing at the sa
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `name` | string | yes | Desired agent name inside the Room. Must be unique within the Room. |
-| `runtimeClass` | string | yes | Runtime class name later supplied to ARI `session/new`. |
-| `systemPrompt` | string | no | Bootstrap configuration for that member session. Not a work turn. |
+| `name` | string | yes | Desired agent name inside the Room. Must be unique within the Room. Together with the Room name, forms the stable external identity supplied to `agent/create`. |
+| `description` | string | no | Human-readable purpose of this member. Forwarded to `agent/create` as the `description` field. |
+| `runtimeClass` | string | yes | Runtime class name supplied to ARI `agent/create`. |
+| `systemPrompt` | string | no | Bootstrap configuration for that member agent. Not a work turn. |
 
 ## `spec.communication`
 
@@ -146,27 +150,30 @@ The Room Spec is not consumed directly by agentd. The orchestrator projects it i
 Typical flow:
 
 1. Read the Room Spec.
-2. Call `workspace/prepare` for `spec.workspace`.
+2. Call `workspace/prepare` for `spec.workspace` to obtain a `workspaceId`.
 3. Call `room/create` to register the **realized runtime projection** of the Room (name, labels, communication mode) in agentd.
-4. For each desired member, call `session/new` with:
+4. For each desired member, call `agent/create` with:
+   - `room` = `metadata.name`
+   - `name` = `spec.agents[i].name`
+   - `description` = `spec.agents[i].description`
    - `runtimeClass`
    - `workspaceId`
-   - `room` = `metadata.name`
-   - `roomAgent` = `spec.agents[i].name`
    - `systemPrompt`
    - any labels / MCP / permission bootstrap fields
-5. After the session reaches bootstrap-complete / idle state, deliver actual work through `session/prompt`.
-6. Use `room/status` or `session/list` to inspect realized runtime membership.
-7. Stop/remove sessions, then delete the realized runtime room and clean up the workspace when references reach zero.
+5. Poll `agent/status` for each agent until state transitions to `created` or `error`.
+6. After agents reach `created` state, deliver actual work through `agent/prompt`.
+7. Use `room/status` or `agent/list` to inspect realized runtime membership.
+8. Call `agent/stop` then `agent/delete` for each member, then `room/delete`, then `workspace/cleanup`.
 
-## `session/new` vs `session/prompt`
+## `agent/create` vs `agent/prompt`
 
 The desired-state Room contract depends on one bootstrap story across the design set:
 
-- `session/new` is **configuration-only** bootstrap.
-  It selects runtime class, workspace attachment, room membership metadata, bootstrap `systemPrompt`, env overrides, MCP servers, and permission posture.
-- `session/prompt` is the **work-entry path**.
-  Whether the work comes from an external caller or another Room member, the runtime turn still enters through the target session’s prompt path.
+- `agent/create` is **async configuration-only bootstrap**.
+  It selects runtime class, workspace attachment, room membership, bootstrap `systemPrompt`, env overrides, MCP servers, and permission posture.
+  The call returns immediately with `state: "creating"`; callers must poll `agent/status` until the state reaches `created` or `error`.
+- `agent/prompt` is the **work-entry path**.
+  Whether the work comes from an external caller or another Room member, the runtime turn enters through the target agent's prompt path.
 
 Room creation never implies that business work has already been delivered.
 
@@ -176,9 +183,18 @@ Once projected into agentd, the runtime may track:
 
 - realized Room name and labels;
 - communication mode;
-- realized member list (`roomAgent` → `sessionId`);
+- realized member list (`agentName` → `agentState`);
 - shared workspace attachment for those members;
 - runtime routing metadata used for future Room delivery features.
+
+The `room/status` response for members includes:
+
+| Field | Meaning |
+|---|---|
+| `agentName` | Member name (stable external identity within the Room) |
+| `description` | Human-readable purpose of this member |
+| `runtimeClass` | Runtime class used at bootstrap |
+| `agentState` | Current agent lifecycle state (`creating`, `created`, `running`, `stopped`, `error`) |
 
 That realized runtime record is **not** the same thing as orchestrator intent:
 
@@ -188,12 +204,12 @@ That realized runtime record is **not** the same thing as orchestrator intent:
 
 ## Security and Trust Boundaries
 
-A Room amplifies host impact because it can intentionally place several sessions on one workspace. The contract is therefore explicit:
+A Room amplifies host impact because it can intentionally place several agents on one workspace. The contract is therefore explicit:
 
 - local workspace paths remain host paths and must be validated/canonicalized by workspace rules before attachment;
 - shared workspace means shared write access unless a later runtime feature adds stronger isolation;
 - hook execution remains a workspace concern and may perform host-side effects before any member receives a prompt;
-- env injection is bootstrap configuration for each session, not a Room-level secret-distribution channel;
+- env injection is bootstrap configuration for each agent, not a Room-level secret-distribution channel;
 - ACP stays behind the shim boundary; Room intent does not expose raw ACP capabilities directly.
 
 ## Follow-On Scope
@@ -222,15 +238,18 @@ This spec defines the desired-state contract only. Rich realized-room delivery b
     "agents": [
       {
         "name": "architect",
+        "description": "Designs the module structure and delegates implementation tasks.",
         "runtimeClass": "claude",
         "systemPrompt": "Break the refactor into work items and delegate implementation."
       },
       {
         "name": "coder",
+        "description": "Implements the changes delegated by the architect.",
         "runtimeClass": "codex"
       },
       {
         "name": "reviewer",
+        "description": "Reviews changes for correctness, security, and style.",
         "runtimeClass": "gemini",
         "systemPrompt": "Review changes for correctness, security, and style."
       }
@@ -240,3 +259,4 @@ This spec defines the desired-state contract only. Rich realized-room delivery b
     }
   }
 }
+```

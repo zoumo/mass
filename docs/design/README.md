@@ -16,7 +16,7 @@ runc + containerd-shim          →    agent-shim（合并，无独立 runa）
 containerd                      →    agentd
 CRI (Container Runtime Interface) →  ARI (Agent Runtime Interface)
 Pod                             →    Room
-Container                       →    Session
+Container                       →    Agent（外部对象）/ Session（内部运行时实例）
 Image / rootfs                  →    Workspace
 crictl                          →    agent-shim-cli
 ```
@@ -31,8 +31,8 @@ Agent 面临着同样的分层关切：
 | "运行什么" | OCI Runtime Spec (config.json) | OAR Runtime Spec (config.json) |
 | "准备什么环境" | OCI Image Spec (layers → rootfs) | OAR Workspace Spec (source + hooks → workdir) |
 | "底层执行 + 协议适配" | runc + containerd-shim | agent-shim（合并，无独立 runa） |
-| "高层管理" | containerd (images, snapshots, tasks) | agentd (workspaces, sessions, rooms) |
-| "管理接口" | CRI (kubelet → containerd) | ARI (orchestrator → agentd) |
+| "高层管理" | containerd (images, snapshots, tasks) | agentd（Agent Manager 管理外部 agent 生命周期；Session Manager 为内部实现） |
+| "管理接口" | CRI (kubelet → containerd) | ARI (orchestrator → agentd)，外部对象为 agent |
 | "协同调度组" | Pod（共享 network/IPC namespace） | Room（共享 workspace、消息总线） |
 
 通过遵循这套经过验证的分层架构，每个组件都有清晰、有界的职责。
@@ -65,10 +65,11 @@ Agent 面临着同样的分层关切：
 │                        agentd                               │
 │                                                             │
 │   ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│   │   Session     │  │  Workspace   │  │     Room       │  │
-│   │   Manager     │  │  Manager     │  │   Manager      │  │
-│   └──────┬───────┘  └──────────────┘  └────────────────┘  │
-│          │                                                  │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │  Agent Manager (external API object: agent/*)       │   │
+│   └──────┬──────────────────────────────────────────────┘   │
+│          │ [internal: Session Manager + Workspace Manager +  │
+│          │  Room Manager]                                     │
 └──────────────────────────────────────────────────────────────┘
              │            │            │
              │ shim RPC over Unix socket │
@@ -125,12 +126,14 @@ Agent 面临着同样的分层关切：
 |------|------|------|
 | [workspace/workspace-spec.md](./workspace/workspace-spec.md) | 规范 | OAR Workspace Spec — 如何准备 agent 的工作环境（对标 OCI Image Spec） |
 
-### agentd/ — Layer 2: 多 session 管理（对标 containerd + CRI）
+### agentd/ — Layer 2: 多 agent 管理（对标 containerd + CRI）
+
+Agent 是外部 API 对象（orchestrator 通过 ARI `agent/*` 方法管理）；Session 是 agentd 内部的运行时实例，不暴露给外部调用方。
 
 | 文档 | 类型 | 内容 |
 |------|------|------|
-| [agentd/ari-spec.md](./agentd/ari-spec.md) | 规范 | ARI — Agent Runtime Interface（对标 CRI） |
-| [agentd/agentd.md](./agentd/agentd.md) | 组件 | agentd — agent 运行时守护进程（对标 containerd） |
+| [agentd/ari-spec.md](./agentd/ari-spec.md) | 规范 | ARI — Agent Runtime Interface（对标 CRI）；外部对象为 agent，使用 `agent/*` 方法 |
+| [agentd/agentd.md](./agentd/agentd.md) | 组件 | agentd — agent 运行时守护进程（对标 containerd）；包含 Agent Manager（外部）和 Session Manager（内部） |
 
 ### orchestrator/ — Layer 3: 多 agent 协同调度（对标 kubelet + Pod）
 

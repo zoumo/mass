@@ -70,16 +70,6 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: mapped
 - Notes: M003 delivered: fail-closed recovery posture (S01), shim-vs-DB reconciliation (S02), atomic event resume and damaged-tail tolerance (S03), DB-backed workspace cleanup safety (S04). Remaining follow-on: real CLI restart recovery tests, cross-client hardening.
 
-### R047 — agentd exposes agent/* ARI methods as external surface; session/* is internal only. Agent identified by room+name unique key.
-- Class: core-capability
-- Status: active
-- Description: agentd exposes agent/* ARI methods as external surface; session/* is internal only. Agent identified by room+name unique key.
-- Why it matters: Users operate on agents, not sessions. The external model must match the user's mental model to reduce cognitive load and API confusion.
-- Source: docs/plan/agent-runtime-alignment-plan.md
-- Primary owning slice: M005/S03
-- Supporting slices: M005/S01, M005/S02
-- Validation: grep gate: no session/* in ARI dispatch; all agent/* methods functional
-
 ### R048 — agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
 - Class: core-capability
 - Status: active
@@ -98,16 +88,6 @@ This file is the explicit capability and coverage contract for the project.
 - Source: docs/plan/agent-runtime-alignment-plan.md
 - Primary owning slice: M005/S02
 - Validation: State transition table unit tests; no paused:* constants in agent state type
-
-### R050 — Event envelopes carry turnId, streamSeq, and phase for turn-aware ordering. Global seq retained as log sequence. Chat/replay orders by (turnId, streamSeq).
-- Class: core-capability
-- Status: active
-- Description: Event envelopes carry turnId, streamSeq, and phase for turn-aware ordering. Global seq retained as log sequence. Chat/replay orders by (turnId, streamSeq).
-- Why it matters: Current event ordering is receive-order, not causal-order. Events appear scrambled in chat/replay because seq only reflects when agentd received them, not their logical position in a turn.
-- Source: docs/plan/agent-runtime-alignment-plan.md
-- Primary owning slice: M005/S05
-- Supporting slices: M005/S01
-- Validation: Unit tests prove turnId assigned on turn_start, streamSeq increments within turn, replay ordering produces causal order
 
 ### R051 — room-mcp-server rewritten with modelcontextprotocol/go-sdk. Environment variables switch from OAR_SESSION_ID to OAR_AGENT_NAME/OAR_AGENT_ID/OAR_ROOM_NAME.
 - Class: integration
@@ -361,6 +341,26 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: Fully realized in M004: room/create, room/status, room/delete ARI handlers (ownership); room/send with target resolution and sender attribution (routing); deliverPrompt helper with auto-start semantics (delivery). Proven by TestARIMultiAgentRoundTrip — 3-agent bidirectional messaging end-to-end.
 - Notes: This supersedes vague Room ambition with a concrete future capability target.
 
+### R047 — agentd exposes agent/* ARI methods as external surface; session/* is internal only. Agent identified by room+name unique key.
+- Class: core-capability
+- Status: validated
+- Description: agentd exposes agent/* ARI methods as external surface; session/* is internal only. Agent identified by room+name unique key.
+- Why it matters: Users operate on agents, not sessions. The external model must match the user's mental model to reduce cognitive load and API confusion.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S03
+- Supporting slices: M005/S01, M005/S02
+- Validation: S01 rewrote ari-spec.md so all external ARI methods use agent/* (agent/create, agent/prompt, agent/cancel, agent/stop, agent/delete, agent/restart, agent/list, agent/status, agent/attach, agent/detach). No session/* methods appear in normative JSON examples. Agent identity documented as room+name unique key throughout agentd.md and ari-spec.md. Verification: `grep -c 'agent/create|agent/prompt...' ari-spec.md | xargs test 6 -le` passes (count=25). Note: code-level validation (no session/* in ARI dispatch) deferred to S03.
+
+### R050 — Event envelopes carry turnId, streamSeq, and phase for turn-aware ordering. Global seq retained as log sequence. Chat/replay orders by (turnId, streamSeq).
+- Class: core-capability
+- Status: validated
+- Description: Event envelopes carry turnId, streamSeq, and phase for turn-aware ordering. Global seq retained as log sequence. Chat/replay orders by (turnId, streamSeq).
+- Why it matters: Current event ordering is receive-order, not causal-order. Events appear scrambled in chat/replay because seq only reflects when agentd received them, not their logical position in a turn.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S05
+- Supporting slices: M005/S01
+- Validation: S01/T02 added Turn-Aware Event Ordering section to shim-rpc-spec.md documenting turnId, streamSeq, and phase fields on session/update envelope, with ordering rules and replay semantics. Verification: grep checks for turnId, streamSeq, phase in shim-rpc-spec.md all pass. Note: unit test proof (turnId assigned on turn_start, replay ordering) deferred to S05 implementation.
+
 ## Deferred
 
 ### R021 — Implement session/load support for warm resume
@@ -540,16 +540,16 @@ This file is the explicit capability and coverage contract for the project.
 | R044 | quality-attribute | active | M002-q9r6sg/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | mapped |
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
-| R047 | core-capability | active | M005/S03 | M005/S01, M005/S02 | grep gate: no session/* in ARI dispatch; all agent/* methods functional |
+| R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | S01 rewrote ari-spec.md so all external ARI methods use agent/* (agent/create, agent/prompt, agent/cancel, agent/stop, agent/delete, agent/restart, agent/list, agent/status, agent/attach, agent/detach). No session/* methods appear in normative JSON examples. Agent identity documented as room+name unique key throughout agentd.md and ari-spec.md. Verification: `grep -c 'agent/create|agent/prompt...' ari-spec.md | xargs test 6 -le` passes (count=25). Note: code-level validation (no session/* in ARI dispatch) deferred to S03. |
 | R048 | core-capability | active | M005/S04 | M005/S03 | Integration test: create returns creating → poll status → transitions to created or error |
 | R049 | core-capability | active | M005/S02 | none | State transition table unit tests; no paused:* constants in agent state type |
-| R050 | core-capability | active | M005/S05 | M005/S01 | Unit tests prove turnId assigned on turn_start, streamSeq increments within turn, replay ordering produces causal order |
+| R050 | core-capability | validated | M005/S05 | M005/S01 | S01/T02 added Turn-Aware Event Ordering section to shim-rpc-spec.md documenting turnId, streamSeq, and phase fields on session/update envelope, with ordering rules and replay semantics. Verification: grep checks for turnId, streamSeq, phase in shim-rpc-spec.md all pass. Note: unit test proof (turnId assigned on turn_start, replay ordering) deferred to S05 implementation. |
 | R051 | integration | active | M005/S06 | none | Existing multi-agent integration tests pass with SDK-based server; env vars use agent identity |
 | R052 | continuity | active | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery equivalent: agent survives restart with same room+name, correct state |
 
 ## Coverage Summary
 
-- Active requirements: 12
-- Mapped to slices: 12
-- Validated: 21 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041)
+- Active requirements: 10
+- Mapped to slices: 10
+- Validated: 23 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041, R047, R050)
 - Unmapped active requirements: 0

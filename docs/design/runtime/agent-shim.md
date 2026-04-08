@@ -21,6 +21,15 @@ agent-shim（每个 session 一个，独立存活）
 agent 进程（claude-acp / pi-acp / gemini / ...）
 ```
 
+## M005 稳定性声明
+
+**agent-shim 在 M005 中保持现有 RPC 边界。**
+shim 继续提供 `session/*` + `runtime/*` RPC surface、bundle/state 分离和单 session 单 shim 进程设计，所有这些在 M005 期间均不变更。
+
+M005 重构的主体是 agentd（外部 ARI 从 `session/*` 迁移到 `agent/*`，Agent Manager 引入，agent 状态机对齐）。
+**agent-shim 在 M005 的唯一增强是事件排序**：在 `session/update` envelope 中增加 `turnId`、`streamSeq`、`phase` 三个字段，用于支持 turn 级精确回放。
+详见 [shim-rpc-spec.md](shim-rpc-spec.md) 中的"Turn-Aware Event Ordering"章节。
+
 ## 与规范文档的分工
 
 - [runtime-spec.md](runtime-spec.md) 定义 runtime 状态、bundle、state dir 与 socket 路径；
