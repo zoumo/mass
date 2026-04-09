@@ -1,22 +1,19 @@
-# Binaries
+# ── Binaries ──
 /bin/
 /dist/
-
 agentd
 agentdctl
 agent-shim-cli
 room-mcp-server
 
-
-# Background shell runtime
-.bg-shell/
-
-# Test coverage
+# ── Build artifacts ──
+*.test
 coverage.out
 coverage.html
+coverage/
 
-# Build artifacts
-*.test
+# ── Generated slides ──
+docs/design_slides/
 
 # ── GSD runtime state (auto-generated) ──
 .gsd/auto.lock
@@ -25,16 +22,32 @@ coverage.html
 .gsd/state-manifest.json
 .gsd/STATE.md
 .gsd/metrics.json
-.gsd/activity/
-.gsd/runtime/
-.gsd/worktrees/
-.gsd/milestones/**/continue.md
-.gsd/milestones/**/*-CONTINUE.md
+.gsd/hook-state.json
+.gsd/notifications.jsonl
 .gsd/gsd.db*
-.gsd/journal
 .gsd/doctor-history.jsonl
 .gsd/event-log.jsonl
+.gsd/activity/
+.gsd/journal/
+.gsd/runtime/
+.gsd/worktrees/
 .gsd/reports/
+.gsd/milestones/**/continue.md
+.gsd/milestones/**/*-CONTINUE.md
+.gsd/milestones/**/gsd.db*
+.gsd/milestones/**/*-META.json
+.gsd/milestones/**/*-VERIFY.json
+.gsd/milestones/**/*-PRE-EXEC-VERIFY.json
+.gsd/milestones/**/anchors/
+.gsd-id
+
+# ── Tool output ──
+graphify-out/
+.graphify_python
+.playwright-mcp/
+.bg-shell/
+
+# ── OS / Editor ──
 .DS_Store
 Thumbs.db
 *.swp
@@ -43,9 +56,13 @@ Thumbs.db
 .idea/
 .vscode/
 *.code-workspace
+
+# ── Environment ──
 .env
 .env.*
 !.env.example
+
+# ── Dependencies / Runtime ──
 node_modules/
 .next/
 dist/
@@ -57,11 +74,5 @@ venv/
 target/
 vendor/
 *.log
-coverage/
 .cache/
 tmp/
-
-# ── GSD baseline (auto-generated) ──
-.gsd-id
-
-
