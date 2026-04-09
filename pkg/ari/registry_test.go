@@ -11,11 +11,9 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
-// TestRegistryRebuildFromDB verifies that RebuildFromDB loads workspaces
-// from the metadata store into the registry with correct RefCount, Refs,
-// and deserialized Source specs.
+// TestRegistryRebuildFromDB verifies that RebuildFromDB loads ready workspaces
+// from the metadata store into the registry with correct fields.
 func TestRegistryRebuildFromDB(t *testing.T) {
-	// Create an in-memory store.
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	store, err := meta.NewStore(dbPath)
 	if err != nil {
@@ -25,138 +23,143 @@ func TestRegistryRebuildFromDB(t *testing.T) {
 
 	ctx := context.Background()
 
-	// --- Seed DB with two workspaces ---
-
-	// Workspace 1: git source, 2 refs.
-	src1 := workspace.Source{
+	// Workspace 1: git source, phase=ready.
+	src1JSON, _ := json.Marshal(workspace.Source{
 		Type: workspace.SourceTypeGit,
 		Git:  workspace.GitSource{URL: "https://github.com/example/repo.git", Ref: "main", Depth: 1},
-	}
-	src1JSON, _ := json.Marshal(src1)
-
-	ws1 := &meta.Workspace{
-		ID:     "ws-001",
-		Name:   "git-workspace",
-		Path:   "/var/workspaces/ws-001",
-		Source: src1JSON,
-		Status: meta.WorkspaceStatusActive,
-	}
-	if err := store.CreateWorkspace(ctx, ws1); err != nil {
-		t.Fatalf("CreateWorkspace ws-001: %v", err)
+	})
+	if err := store.CreateWorkspace(ctx, &meta.Workspace{
+		Metadata: meta.ObjectMeta{Name: "git-workspace"},
+		Spec:     meta.WorkspaceSpec{Source: src1JSON},
+		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady, Path: "/var/workspaces/git-workspace"},
+	}); err != nil {
+		t.Fatalf("CreateWorkspace git-workspace: %v", err)
 	}
 
-	// Create sessions that reference ws-001.
-	sess1 := &meta.Session{ID: "sess-aaa", RuntimeClass: "default", WorkspaceID: "ws-001", State: meta.SessionStateRunning}
-	sess2 := &meta.Session{ID: "sess-bbb", RuntimeClass: "default", WorkspaceID: "ws-001", State: meta.SessionStateRunning}
-	if err := store.CreateSession(ctx, sess1); err != nil {
-		t.Fatalf("CreateSession sess-aaa: %v", err)
-	}
-	if err := store.CreateSession(ctx, sess2); err != nil {
-		t.Fatalf("CreateSession sess-bbb: %v", err)
-	}
-	if err := store.AcquireWorkspace(ctx, "ws-001", "sess-aaa"); err != nil {
-		t.Fatalf("AcquireWorkspace sess-aaa: %v", err)
-	}
-	if err := store.AcquireWorkspace(ctx, "ws-001", "sess-bbb"); err != nil {
-		t.Fatalf("AcquireWorkspace sess-bbb: %v", err)
+	// Workspace 2: emptyDir source, phase=ready.
+	src2JSON, _ := json.Marshal(workspace.Source{Type: workspace.SourceTypeEmptyDir})
+	if err := store.CreateWorkspace(ctx, &meta.Workspace{
+		Metadata: meta.ObjectMeta{Name: "empty-workspace"},
+		Spec:     meta.WorkspaceSpec{Source: src2JSON},
+		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady, Path: "/var/workspaces/empty-workspace"},
+	}); err != nil {
+		t.Fatalf("CreateWorkspace empty-workspace: %v", err)
 	}
 
-	// Workspace 2: emptyDir source, 0 refs.
-	src2 := workspace.Source{Type: workspace.SourceTypeEmptyDir}
-	src2JSON, _ := json.Marshal(src2)
-
-	ws2 := &meta.Workspace{
-		ID:     "ws-002",
-		Name:   "empty-workspace",
-		Path:   "/var/workspaces/ws-002",
-		Source: src2JSON,
-		Status: meta.WorkspaceStatusActive,
-	}
-	if err := store.CreateWorkspace(ctx, ws2); err != nil {
-		t.Fatalf("CreateWorkspace ws-002: %v", err)
+	// Workspace 3: phase=pending — should NOT appear after rebuild.
+	if err := store.CreateWorkspace(ctx, &meta.Workspace{
+		Metadata: meta.ObjectMeta{Name: "pending-workspace"},
+		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhasePending},
+	}); err != nil {
+		t.Fatalf("CreateWorkspace pending-workspace: %v", err)
 	}
 
-	// Workspace 3: inactive — should NOT appear after rebuild.
-	ws3 := &meta.Workspace{
-		ID:     "ws-003",
-		Name:   "inactive-workspace",
-		Path:   "/var/workspaces/ws-003",
-		Source: json.RawMessage(`{"type":"local","path":"/tmp/local"}`),
-		Status: meta.WorkspaceStatusInactive,
-	}
-	if err := store.CreateWorkspace(ctx, ws3); err != nil {
-		t.Fatalf("CreateWorkspace ws-003: %v", err)
-	}
-
-	// --- Rebuild registry ---
+	// Rebuild registry.
 	registry := NewRegistry()
 	if err := registry.RebuildFromDB(store); err != nil {
 		t.Fatalf("RebuildFromDB failed: %v", err)
 	}
 
-	// --- Verify results ---
+	// Verify results.
 	list := registry.List()
 	if len(list) != 2 {
 		t.Fatalf("expected 2 workspaces in registry, got %d", len(list))
 	}
 
 	// Check workspace 1.
-	m1 := registry.Get("ws-001")
+	m1 := registry.Get("git-workspace")
 	if m1 == nil {
-		t.Fatal("ws-001 not found in registry")
+		t.Fatal("git-workspace not found in registry")
 	}
 	if m1.Name != "git-workspace" {
-		t.Errorf("ws-001 Name: got %q, want %q", m1.Name, "git-workspace")
+		t.Errorf("Name: got %q, want git-workspace", m1.Name)
 	}
-	if m1.Path != "/var/workspaces/ws-001" {
-		t.Errorf("ws-001 Path: got %q, want %q", m1.Path, "/var/workspaces/ws-001")
-	}
-	if m1.RefCount != 2 {
-		t.Errorf("ws-001 RefCount: got %d, want 2", m1.RefCount)
-	}
-	if len(m1.Refs) != 2 {
-		t.Errorf("ws-001 Refs: got %d entries, want 2", len(m1.Refs))
+	if m1.Path != "/var/workspaces/git-workspace" {
+		t.Errorf("Path: got %q, want /var/workspaces/git-workspace", m1.Path)
 	}
 	if m1.Status != "ready" {
-		t.Errorf("ws-001 Status: got %q, want %q", m1.Status, "ready")
+		t.Errorf("Status: got %q, want ready", m1.Status)
 	}
-	// Verify Source was deserialized correctly.
+	if m1.RefCount != 0 {
+		t.Errorf("RefCount: got %d, want 0 (not tracked in DB)", m1.RefCount)
+	}
+	if len(m1.Refs) != 0 {
+		t.Errorf("Refs: got %d entries, want 0", len(m1.Refs))
+	}
 	if m1.Spec.Source.Type != workspace.SourceTypeGit {
-		t.Errorf("ws-001 Source.Type: got %q, want %q", m1.Spec.Source.Type, workspace.SourceTypeGit)
+		t.Errorf("Source.Type: got %q, want git", m1.Spec.Source.Type)
 	}
 	if m1.Spec.Source.Git.URL != "https://github.com/example/repo.git" {
-		t.Errorf("ws-001 Source.Git.URL: got %q, want %q", m1.Spec.Source.Git.URL, "https://github.com/example/repo.git")
-	}
-	if m1.Spec.Source.Git.Ref != "main" {
-		t.Errorf("ws-001 Source.Git.Ref: got %q, want %q", m1.Spec.Source.Git.Ref, "main")
-	}
-	if m1.Spec.Source.Git.Depth != 1 {
-		t.Errorf("ws-001 Source.Git.Depth: got %d, want 1", m1.Spec.Source.Git.Depth)
+		t.Errorf("Source.Git.URL: got %q, want example URL", m1.Spec.Source.Git.URL)
 	}
 	if m1.Spec.Metadata.Name != "git-workspace" {
-		t.Errorf("ws-001 Spec.Metadata.Name: got %q, want %q", m1.Spec.Metadata.Name, "git-workspace")
+		t.Errorf("Spec.Metadata.Name: got %q, want git-workspace", m1.Spec.Metadata.Name)
 	}
 
 	// Check workspace 2.
-	m2 := registry.Get("ws-002")
+	m2 := registry.Get("empty-workspace")
 	if m2 == nil {
-		t.Fatal("ws-002 not found in registry")
-	}
-	if m2.Name != "empty-workspace" {
-		t.Errorf("ws-002 Name: got %q, want %q", m2.Name, "empty-workspace")
-	}
-	if m2.RefCount != 0 {
-		t.Errorf("ws-002 RefCount: got %d, want 0", m2.RefCount)
-	}
-	if len(m2.Refs) != 0 {
-		t.Errorf("ws-002 Refs: got %d entries, want 0", len(m2.Refs))
+		t.Fatal("empty-workspace not found in registry")
 	}
 	if m2.Spec.Source.Type != workspace.SourceTypeEmptyDir {
-		t.Errorf("ws-002 Source.Type: got %q, want %q", m2.Spec.Source.Type, workspace.SourceTypeEmptyDir)
+		t.Errorf("empty-workspace Source.Type: got %q, want emptyDir", m2.Spec.Source.Type)
 	}
 
-	// Check workspace 3 is NOT in registry (inactive).
-	if m3 := registry.Get("ws-003"); m3 != nil {
-		t.Error("ws-003 (inactive) should NOT be in registry after RebuildFromDB")
+	// Pending workspace must NOT be in registry.
+	if m3 := registry.Get("pending-workspace"); m3 != nil {
+		t.Error("pending-workspace should NOT be in registry after RebuildFromDB")
+	}
+}
+
+// TestRegistryAddGetRemove verifies in-memory Add/Get/Remove.
+func TestRegistryAddGetRemove(t *testing.T) {
+	r := NewRegistry()
+	spec := workspace.WorkspaceSpec{Metadata: workspace.WorkspaceMetadata{Name: "my-ws"}}
+	r.Add("my-ws", "my-ws", "/tmp/my-ws", spec)
+
+	m := r.Get("my-ws")
+	if m == nil {
+		t.Fatal("expected to find my-ws in registry")
+	}
+	if m.Name != "my-ws" {
+		t.Errorf("Name: got %q, want my-ws", m.Name)
+	}
+	if m.Path != "/tmp/my-ws" {
+		t.Errorf("Path: got %q, want /tmp/my-ws", m.Path)
+	}
+	if m.Status != "ready" {
+		t.Errorf("Status: got %q, want ready", m.Status)
+	}
+
+	r.Remove("my-ws")
+	if got := r.Get("my-ws"); got != nil {
+		t.Error("expected nil after Remove")
+	}
+}
+
+// TestRegistryAcquireRelease verifies reference counting.
+func TestRegistryAcquireRelease(t *testing.T) {
+	r := NewRegistry()
+	r.Add("ws1", "ws1", "/tmp/ws1", workspace.WorkspaceSpec{})
+
+	r.Acquire("ws1", "workspace1/agent-a")
+	r.Acquire("ws1", "workspace1/agent-b")
+
+	m := r.Get("ws1")
+	if m == nil {
+		t.Fatal("ws1 not found")
+	}
+	if m.RefCount != 2 {
+		t.Errorf("RefCount: got %d, want 2", m.RefCount)
+	}
+	if len(m.Refs) != 2 {
+		t.Errorf("Refs: got %d, want 2", len(m.Refs))
+	}
+
+	if count := r.Release("ws1", "workspace1/agent-a"); count != 1 {
+		t.Errorf("Release: got %d, want 1", count)
+	}
+	if count := r.Release("ws1", "workspace1/agent-b"); count != 0 {
+		t.Errorf("Release: got %d, want 0", count)
 	}
 }

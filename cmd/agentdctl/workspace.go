@@ -1,8 +1,8 @@
 // Package main provides workspace management commands for the agentdctl CLI.
-// Workspace commands allow preparing, listing, and cleaning up workspaces.
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -17,11 +17,11 @@ var workspaceCmd = &cobra.Command{
 	Short: "Workspace management commands",
 }
 
-// workspacePrepareCmd prepares a workspace from the specified source.
-var workspacePrepareCmd = &cobra.Command{
-	Use:   "prepare",
-	Short: "Prepare a workspace",
-	RunE:  runWorkspacePrepare,
+// workspaceCreateCmd creates a workspace from the specified source.
+var workspaceCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a workspace",
+	RunE:  runWorkspaceCreate,
 }
 
 // workspaceListCmd lists all workspaces in the registry.
@@ -31,60 +31,53 @@ var workspaceListCmd = &cobra.Command{
 	RunE:  runWorkspaceList,
 }
 
-// workspaceCleanupCmd cleans up a workspace.
-var workspaceCleanupCmd = &cobra.Command{
-	Use:   "cleanup <workspace-id>",
-	Short: "Clean up a workspace",
+// workspaceDeleteCmd deletes a workspace.
+var workspaceDeleteCmd = &cobra.Command{
+	Use:   "delete <name>",
+	Short: "Delete a workspace",
 	Args:  cobra.ExactArgs(1),
-	RunE:  runWorkspaceCleanup,
+	RunE:  runWorkspaceDelete,
 }
 
-// Flags for workspace prepare command.
+// Flags for workspace create command.
 var (
-	wsPrepareName string
-	wsPrepareType string // git, emptyDir, local
-
-	// Git source flags
-	wsPrepareGitURL   string
-	wsPrepareGitRef   string
-	wsPrepareGitDepth int
-
-	// Local source flags
-	wsPrepareLocalPath string
+	wsCreateName      string
+	wsCreateType      string // git, emptyDir, local
+	wsCreateGitURL    string
+	wsCreateGitRef    string
+	wsCreateGitDepth  int
+	wsCreateLocalPath string
 )
 
 func init() {
-	// Add flags to workspacePrepareCmd
-	workspacePrepareCmd.Flags().StringVar(&wsPrepareName, "name", "", "Workspace name (required)")
-	workspacePrepareCmd.Flags().StringVar(&wsPrepareType, "type", "emptyDir", "Source type: git, emptyDir, or local")
-	workspacePrepareCmd.Flags().StringVar(&wsPrepareGitURL, "url", "", "Git repository URL (required for git type)")
-	workspacePrepareCmd.Flags().StringVar(&wsPrepareGitRef, "ref", "", "Git reference (branch, tag, or commit)")
-	workspacePrepareCmd.Flags().IntVar(&wsPrepareGitDepth, "depth", 0, "Git shallow clone depth (0 = full clone)")
-	workspacePrepareCmd.Flags().StringVar(&wsPrepareLocalPath, "path", "", "Local directory path (required for local type)")
-	_ = workspacePrepareCmd.MarkFlagRequired("name")
+	workspaceCreateCmd.Flags().StringVar(&wsCreateName, "name", "", "Workspace name (required)")
+	workspaceCreateCmd.Flags().StringVar(&wsCreateType, "type", "emptyDir", "Source type: git, emptyDir, or local")
+	workspaceCreateCmd.Flags().StringVar(&wsCreateGitURL, "url", "", "Git repository URL (required for git type)")
+	workspaceCreateCmd.Flags().StringVar(&wsCreateGitRef, "ref", "", "Git reference (branch, tag, or commit)")
+	workspaceCreateCmd.Flags().IntVar(&wsCreateGitDepth, "depth", 0, "Git shallow clone depth (0 = full clone)")
+	workspaceCreateCmd.Flags().StringVar(&wsCreateLocalPath, "path", "", "Local directory path (required for local type)")
+	_ = workspaceCreateCmd.MarkFlagRequired("name")
 
-	// Add subcommands to workspaceCmd
-	workspaceCmd.AddCommand(workspacePrepareCmd)
+	workspaceCmd.AddCommand(workspaceCreateCmd)
 	workspaceCmd.AddCommand(workspaceListCmd)
-	workspaceCmd.AddCommand(workspaceCleanupCmd)
+	workspaceCmd.AddCommand(workspaceDeleteCmd)
 }
 
-// runWorkspacePrepare prepares a workspace via the ARI workspace/prepare method.
-func runWorkspacePrepare(cmd *cobra.Command, args []string) error {
-	// Validate type-specific required flags BEFORE connecting to client
-	switch wsPrepareType {
+// runWorkspaceCreate creates a workspace via the ARI workspace/create method.
+func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
+	switch wsCreateType {
 	case "git":
-		if wsPrepareGitURL == "" {
+		if wsCreateGitURL == "" {
 			return fmt.Errorf("--url is required for git source type")
 		}
 	case "emptyDir":
-		// No additional flags required
+		// No additional flags required.
 	case "local":
-		if wsPrepareLocalPath == "" {
+		if wsCreateLocalPath == "" {
 			return fmt.Errorf("--path is required for local source type")
 		}
 	default:
-		return fmt.Errorf("unknown source type %q (valid: git, emptyDir, local)", wsPrepareType)
+		return fmt.Errorf("unknown source type %q (valid: git, emptyDir, local)", wsCreateType)
 	}
 
 	client, err := getClient()
@@ -93,44 +86,32 @@ func runWorkspacePrepare(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	// Build the WorkspaceSpec from flags
-	spec := workspace.WorkspaceSpec{
-		OarVersion: "0.1.0",
-		Metadata: workspace.WorkspaceMetadata{
-			Name: wsPrepareName,
-		},
-	}
-
-	// Set source based on type
-	switch wsPrepareType {
+	// Build Source from flags.
+	var src workspace.Source
+	switch wsCreateType {
 	case "git":
-		spec.Source = workspace.Source{
+		src = workspace.Source{
 			Type: workspace.SourceTypeGit,
-			Git: workspace.GitSource{
-				URL:   wsPrepareGitURL,
-				Ref:   wsPrepareGitRef,
-				Depth: wsPrepareGitDepth,
-			},
+			Git:  workspace.GitSource{URL: wsCreateGitURL, Ref: wsCreateGitRef, Depth: wsCreateGitDepth},
 		}
 	case "emptyDir":
-		spec.Source = workspace.Source{
-			Type: workspace.SourceTypeEmptyDir,
-		}
+		src = workspace.Source{Type: workspace.SourceTypeEmptyDir}
 	case "local":
-		spec.Source = workspace.Source{
-			Type: workspace.SourceTypeLocal,
-			Local: workspace.LocalSource{
-				Path: wsPrepareLocalPath,
-			},
-		}
+		src = workspace.Source{Type: workspace.SourceTypeLocal, Local: workspace.LocalSource{Path: wsCreateLocalPath}}
 	}
 
-	params := ari.WorkspacePrepareParams{
-		Spec: spec,
+	srcJSON, err := json.Marshal(src)
+	if err != nil {
+		return fmt.Errorf("marshal source: %w", err)
 	}
 
-	var result ari.WorkspacePrepareResult
-	if err := client.Call("workspace/prepare", params, &result); err != nil {
+	params := ari.WorkspaceCreateParams{
+		Name:   wsCreateName,
+		Source: srcJSON,
+	}
+
+	var result ari.WorkspaceCreateResult
+	if err := client.Call("workspace/create", params, &result); err != nil {
 		handleError(err)
 		return nil
 	}
@@ -158,9 +139,9 @@ func runWorkspaceList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// runWorkspaceCleanup cleans up a workspace via the ARI workspace/cleanup method.
-func runWorkspaceCleanup(cmd *cobra.Command, args []string) error {
-	workspaceId := args[0]
+// runWorkspaceDelete deletes a workspace via the ARI workspace/delete method.
+func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
+	name := args[0]
 
 	client, err := getClient()
 	if err != nil {
@@ -168,12 +149,12 @@ func runWorkspaceCleanup(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.WorkspaceCleanupParams{WorkspaceId: workspaceId}
-	if err := client.Call("workspace/cleanup", params, nil); err != nil {
+	params := ari.WorkspaceDeleteParams{Name: name}
+	if err := client.Call("workspace/delete", params, nil); err != nil {
 		handleError(err)
 		return nil
 	}
 
-	fmt.Printf("Workspace %s cleaned up\n", workspaceId)
+	fmt.Printf("Workspace %s deleted\n", name)
 	return nil
 }

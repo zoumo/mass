@@ -10,7 +10,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-M007 in progress — platform terminal state refactor: bbolt storage, unified spec.Status, (workspace,name) identity, shim write authority, Room/Session elimination.
+M007 in progress — platform terminal state refactor. **S01 complete.** Storage + model foundation is done: bbolt replaces SQLite, spec.Status is the sole state enum, Agent identity is (workspace, name), Session/Room/AgentState/SessionState concepts are fully deleted, `go build ./...` is green. Next: S02 (shim write authority + RestartPolicy).
 
 ### Completed Milestones
 
@@ -26,35 +26,33 @@ M007 in progress — platform terminal state refactor: bbolt storage, unified sp
 ### What's Implemented
 
 - `agent-shim` starts ACP agent processes, performs the ACP handshake, exposes `session/*` + `runtime/*` shim RPC surface
-- `agentd` manages agents (external, room+name identity) and sessions (internal runtime instances), async lifecycle, fail-closed recovery
-- **Agent-centric ARI surface**: `agent/create`, `agent/prompt`, `agent/cancel`, `agent/stop`, `agent/delete`, `agent/restart`, `agent/list`, `agent/status`, `agent/attach`, `agent/detach`
+- `agentd` manages agents with **(workspace, name)** identity (no UUID), async lifecycle, fail-closed recovery
+- **bbolt metadata store**: v1/workspaces/{name} + v1/agents/{workspace}/{name} bucket layout; full CRUD for Agent + Workspace; 37 unit tests
+- **spec.Status as sole state enum**: creating/idle/running/stopped/error; meta.AgentState and meta.SessionState deleted; pkg/runtime writes "idle" to state.json
+- **Agent-centric ARI surface**: pkg/ari/types.go with new Workspace/Agent types; server.go is a compilable stub (full handler rewrite in S03)
 - **Turn-aware event ordering**: TurnId/StreamSeq/Phase on session/update envelopes
-- **Room runtime**: mesh/star/isolated modes, room/send, room-mcp-server (SDK-based)
 - **Workspace preparation** for Git/EmptyDir/Local sources with hooks and reference tracking
-- **CLI tooling** (`agentdctl`) with agent/workspace/daemon subcommands
-- **Fully clean golangci-lint v2 posture**: 0 issues across all 11 linter categories (as of M006)
+- **CLI tooling** (`agentdctl`) with agent/workspace/daemon subcommands using (workspace,name) identity and `parseAgentKey()` helper
+- **Fully clean golangci-lint v2 posture**: 0 issues across all 11 linter categories (as of M006; M007/S05 will re-validate)
+
+### M007 Slice Status
+
+| Slice | Title | Status |
+|-------|-------|--------|
+| S01 | Storage + Model Foundation | ✅ complete |
+| S02 | agentd Core Adaptation | ⬜ next |
+| S03 | ARI Surface Rewrite | ⬜ |
+| S04 | CLI + workspace-mcp-server + Design Docs | ⬜ |
+| S05 | Integration Tests + Final Verification | ⬜ |
 
 ### Lint Status (post-M006)
 
-`golangci-lint run ./...` → **0 issues** — all 11 linter categories clean.
-
-| Linter | M006 start | Final |
-|--------|-----------|-------|
-| gci | 28 | ✅ 0 |
-| gofumpt | 28 | ✅ 0 |
-| unconvert | 22 | ✅ 0 |
-| copyloopvar | 1 | ✅ 0 |
-| ineffassign | 1 | ✅ 0 |
-| misspell | ~9 | ✅ 0 |
-| unparam | ~8 | ✅ 0 |
-| unused | 12 | ✅ 0 |
-| errorlint | 17 | ✅ 0 |
-| gocritic | 45 | ✅ 0 |
-| testifylint | 31 | ✅ 0 |
+`golangci-lint run ./...` → **0 issues** pre-M007. M007/S05 will re-validate after all structural changes land.
 
 ### Known Pre-existing Issues
 
-- Integration test failures in `tests/integration/` (5 tests related to prompt acceptance) pre-date M006; resolved as part of M007/S05 (tests rewritten for new (workspace,name) identity).
+- `TestProcessManagerStart` in `pkg/agentd` fails when `bin/agent-shim` socket doesn't start (requires live mock agent); confirmed pre-existing since before M007/S01.
+- Integration tests in `tests/integration/` pre-date M006; will be rewritten for new (workspace,name) identity in M007/S05.
 
 ## Milestone Sequence
 
@@ -66,3 +64,8 @@ M007 in progress — platform terminal state refactor: bbolt storage, unified sp
 - [x] M005: Agent model refactoring — session→agent migration, async lifecycle, agent-centric ARI surface
 - [x] M006: Fix golangci-lint v2 issues — 202→0 issues across 11 linter categories
 - [ ] M007: Platform terminal state refactor — bbolt storage, unified spec.Status, (workspace,name) identity, shim write authority, Room/Session elimination
+  - [x] S01: Storage + Model Foundation — bbolt store, new Agent+Workspace models, spec.StatusIdle, green build
+  - [ ] S02: agentd Core Adaptation — shim write authority, RestartPolicy, tryReload/alwaysNew
+  - [ ] S03: ARI Surface Rewrite — workspace/create→agent/create→agent/prompt lifecycle
+  - [ ] S04: CLI + workspace-mcp-server + Design Docs
+  - [ ] S05: Integration Tests + Final Verification

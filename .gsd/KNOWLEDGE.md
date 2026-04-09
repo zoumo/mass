@@ -629,3 +629,24 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Gotcha:** This manifests as files outside the intended fix scope (e.g. running `--fix` for unconvert also rewrites error assertions in pkg/workspace/git.go). After any `--fix` run, immediately run `go build ./...` to detect missing imports, then add them manually.
 - **Reference:** M006/S02/T01 — 5 files affected: pkg/ari/server.go, pkg/workspace/git.go, pkg/workspace/hook_test.go, pkg/agentd/session_test.go, pkg/runtime/terminal.go.
 - **When:** M006/S02, M006/milestone-close
+
+## K050 — bbolt nested bucket: sub-bucket cursor must be opened with CreateBucketIfNotExists in Update tx before View reads
+
+- **Pattern:** bbolt `v1/agents/{workspace}` sub-buckets are created per-workspace in `CreateAgent`. A `View` tx calling `bucket.Bucket(workspace)` returns nil if the workspace sub-bucket doesn't exist yet (e.g. ListAgents on an empty store). Always guard `bucket.Bucket(workspace)` with a nil check before iterating.
+- **Lesson:** In `ListAgents` when no filter.Workspace is set, a cursor over the top-level agents bucket returns bucket-type keys. Calling `Cursor().Next()` on a sub-bucket value panics. Use `bucket.ForEachBucket()` (bbolt v1.3.7+) or iterate with Cursor and check `bucket.Bucket(k) != nil`.
+- **Reference:** M007/S01/T01 — pkg/meta/agent.go ListAgents implementation.
+- **When:** M007/S01
+
+## K051 — pkg/ari/server.go should be replaced with a compilable stub when a full rewrite is deferred to a later slice
+
+- **Pattern:** When a large handler file (1663 lines) becomes structurally incompatible with a new model, adapting it mechanically creates noise and is immediately discarded. Replace it with a minimal stub (Serve/Shutdown return nil, struct fields matching the new constructor) so `go build ./...` is green, and note `// TODO(S0N): full handler implementation`.
+- **Lesson:** A stub buys compilation health for downstream slices at near-zero cost. The old implementation was preserved in git history for reference. server_test.go should also be replaced with a single smoke test that doesn't import deleted types.
+- **Reference:** M007/S01/T04 — pkg/ari/server.go replaced with 60-line stub. Full rewrite in S03.
+- **When:** M007/S01
+
+## K052 — recovery.go: agents in "creating" state at daemon restart should be marked StatusError, not StatusStopped
+
+- **Pattern:** An agent caught in `StatusCreating` at daemon restart means the shim fork never completed. The correct recovery posture is to mark it `StatusError` with message "daemon restarted during creating phase" — NOT stopped. Stopped implies a normal lifecycle termination.
+- **Lesson:** StatusStopped means "ran and completed". StatusError means "something went wrong and it is not recoverable without operator intervention". An agent that never bootstrapped is in the error category.
+- **Reference:** M007/S01/T03 — pkg/agentd/recovery.go creating-cleanup pass.
+- **When:** M007/S01

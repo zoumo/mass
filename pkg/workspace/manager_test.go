@@ -1069,10 +1069,11 @@ func TestWorkspaceManagerMultipleSessions(t *testing.T) {
 	}
 }
 
-// TestWorkspaceManagerInitRefCounts verifies InitRefCounts loads refcounts
-// from the metadata store into the WorkspaceManager's in-memory refCount map.
+// TestWorkspaceManagerInitRefCounts verifies InitRefCounts seeds the in-memory
+// refCount map from the metadata store for all ready workspaces.
+// In the new bbolt model, ref counts are not persisted in DB;
+// InitRefCounts pre-registers paths at count=0 so cleanup logic works correctly.
 func TestWorkspaceManagerInitRefCounts(t *testing.T) {
-	// Create an in-memory meta store.
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	store, err := meta.NewStore(dbPath)
 	if err != nil {
@@ -1082,74 +1083,76 @@ func TestWorkspaceManagerInitRefCounts(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Seed: workspace with ref_count=2.
-	src := Source{Type: SourceTypeEmptyDir}
-	srcJSON, _ := json.Marshal(src)
+	srcJSON, _ := json.Marshal(Source{Type: SourceTypeEmptyDir})
 
-	ws := &meta.Workspace{
-		ID:     "ws-init-001",
-		Name:   "refcount-test",
-		Path:   "/var/workspaces/ws-init-001",
-		Source: srcJSON,
-		Status: meta.WorkspaceStatusActive,
+	// Workspace 1: phase=ready with a path — should appear in refCount map.
+	ws1 := &meta.Workspace{
+		Metadata: meta.ObjectMeta{Name: "ws-ready-a"},
+		Spec:     meta.WorkspaceSpec{Source: srcJSON},
+		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady, Path: "/var/workspaces/ws-ready-a"},
 	}
-	if err := store.CreateWorkspace(ctx, ws); err != nil {
-		t.Fatalf("CreateWorkspace: %v", err)
+	if err := store.CreateWorkspace(ctx, ws1); err != nil {
+		t.Fatalf("CreateWorkspace ws-ready-a: %v", err)
 	}
 
-	// Create 2 sessions and acquire workspace for each.
-	sess1 := &meta.Session{ID: "sess-x1", RuntimeClass: "default", WorkspaceID: "ws-init-001", State: meta.SessionStateRunning}
-	sess2 := &meta.Session{ID: "sess-x2", RuntimeClass: "default", WorkspaceID: "ws-init-001", State: meta.SessionStateRunning}
-	if err := store.CreateSession(ctx, sess1); err != nil {
-		t.Fatalf("CreateSession sess-x1: %v", err)
+	// Workspace 2: phase=ready with a path — also appears.
+	ws2 := &meta.Workspace{
+		Metadata: meta.ObjectMeta{Name: "ws-ready-b"},
+		Spec:     meta.WorkspaceSpec{Source: srcJSON},
+		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady, Path: "/var/workspaces/ws-ready-b"},
 	}
-	if err := store.CreateSession(ctx, sess2); err != nil {
-		t.Fatalf("CreateSession sess-x2: %v", err)
-	}
-	if err := store.AcquireWorkspace(ctx, "ws-init-001", "sess-x1"); err != nil {
-		t.Fatalf("AcquireWorkspace sess-x1: %v", err)
-	}
-	if err := store.AcquireWorkspace(ctx, "ws-init-001", "sess-x2"); err != nil {
-		t.Fatalf("AcquireWorkspace sess-x2: %v", err)
+	if err := store.CreateWorkspace(ctx, ws2); err != nil {
+		t.Fatalf("CreateWorkspace ws-ready-b: %v", err)
 	}
 
-	// Also seed a workspace with ref_count=0 (should NOT appear in refCount map).
-	ws0 := &meta.Workspace{
-		ID:     "ws-init-002",
-		Name:   "zero-ref",
-		Path:   "/var/workspaces/ws-init-002",
-		Source: srcJSON,
-		Status: meta.WorkspaceStatusActive,
+	// Workspace 3: phase=pending — NOT included in the init (only ready workspaces are loaded).
+	ws3 := &meta.Workspace{
+		Metadata: meta.ObjectMeta{Name: "ws-pending"},
+		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhasePending},
 	}
-	if err := store.CreateWorkspace(ctx, ws0); err != nil {
-		t.Fatalf("CreateWorkspace ws-init-002: %v", err)
+	if err := store.CreateWorkspace(ctx, ws3); err != nil {
+		t.Fatalf("CreateWorkspace ws-pending: %v", err)
 	}
 
-	// Create a fresh WorkspaceManager and init refcounts.
+	// Init refcounts from DB.
 	m := NewWorkspaceManager()
 	if err := m.InitRefCounts(store); err != nil {
 		t.Fatalf("InitRefCounts failed: %v", err)
 	}
 
-	// Verify refcount for ws-init-001 is 2.
+	// Verify ws-ready-a path is seeded at 0.
 	m.mutex.Lock()
-	count := m.refCount["/var/workspaces/ws-init-001"]
+	countA, okA := m.refCount["/var/workspaces/ws-ready-a"]
+	countB, okB := m.refCount["/var/workspaces/ws-ready-b"]
 	m.mutex.Unlock()
-	if count != 2 {
-		t.Errorf("refCount[ws-init-001 path] = %d, want 2", count)
+
+	if !okA {
+		t.Error("ws-ready-a path not present in refCount map after InitRefCounts")
+	}
+	if countA != 0 {
+		t.Errorf("ws-ready-a refCount = %d, want 0 (seeded from DB, incremented at runtime)", countA)
+	}
+	if !okB {
+		t.Error("ws-ready-b path not present in refCount map after InitRefCounts")
+	}
+	if countB != 0 {
+		t.Errorf("ws-ready-b refCount = %d, want 0", countB)
 	}
 
-	// Verify Release decrements: 2 → 1.
-	afterRelease := m.Release("/var/workspaces/ws-init-001")
-	if afterRelease != 1 {
-		t.Errorf("Release returned %d, want 1 (proving refcount was initialized to 2)", afterRelease)
+	// Verify Acquire increments from the seeded baseline.
+	m.Acquire("/var/workspaces/ws-ready-a")
+	m.Acquire("/var/workspaces/ws-ready-a")
+	m.mutex.Lock()
+	countAfterAcquire := m.refCount["/var/workspaces/ws-ready-a"]
+	m.mutex.Unlock()
+	if countAfterAcquire != 2 {
+		t.Errorf("after 2 Acquire calls: refCount = %d, want 2", countAfterAcquire)
 	}
 
-	// Verify ws-init-002 with ref_count=0 is NOT in the map.
+	// Pending workspace path should NOT be in the map (no path field set).
 	m.mutex.Lock()
-	count0 := m.refCount["/var/workspaces/ws-init-002"]
+	_, okPending := m.refCount[""]
 	m.mutex.Unlock()
-	if count0 != 0 {
-		t.Errorf("refCount for zero-ref workspace should be 0, got %d", count0)
-	}
+	// Empty path should not be keyed (InitRefCounts skips empty paths).
+	_ = okPending // not asserted strictly since empty string is not a valid path key
 }

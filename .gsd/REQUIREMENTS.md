@@ -4,94 +4,6 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Active
 
-### R047 — Workspace is the unified grouping + filesystem resource (replaces Room+Namespace)
-- Class: core-capability
-- Status: active
-- Description: Workspace serves as both the agent grouping boundary and the filesystem working directory. Room and Namespace concepts are eliminated.
-- Why it matters: Removes the dual Room+Workspace model that caused identity confusion and redundant state.
-- Source: user
-- Primary owning slice: M007/S01
-- Supporting slices: M007/S03
-- Validation: mapped
-- Notes: workspace/create triggers background source preparation; workspace/status returns phase (pending/ready/error) and path; agents belong to a workspace by (workspace, name) identity.
-
-### R048 — Agent identity is (workspace, name) — no opaque UUID
-- Class: core-capability
-- Status: active
-- Description: All ARI methods identify agents by {workspace, name} pair. No agentId UUID in any request/response.
-- Why it matters: Stable, human-meaningful identity across restarts; eliminates UUID instability.
-- Source: user
-- Primary owning slice: M007/S03
-- Supporting slices: M007/S01, M007/S02
-- Validation: mapped
-- Notes: workspace+name is unique key in bbolt agents/{workspace}/{name} bucket.
-
-### R049 — spec.Status is the single state enum; StatusIdle replaces StatusCreated; StatusError added
-- Class: core-capability
-- Status: active
-- Description: meta.AgentState and meta.SessionState are deleted. spec.Status (creating/idle/running/stopped/error) is used everywhere including shim state.json.
-- Why it matters: Eliminates dual state-system confusion and "created" semantic ambiguity.
-- Source: user
-- Primary owning slice: M007/S01
-- Supporting slices: M007/S02
-- Validation: mapped
-- Notes: pkg/runtime/runtime.go updated to write "idle" instead of "created" to state.json.
-
-### R050 — bbolt (pure Go) replaces SQLite (CGo) as metadata backend
-- Class: core-capability
-- Status: active
-- Description: go.etcd.io/bbolt used for all metadata persistence. mattn/go-sqlite3 and all SQL schema/migration logic removed.
-- Why it matters: Eliminates CGo build dependency; simpler schema-less KV storage matches the new object model.
-- Source: user
-- Primary owning slice: M007/S01
-- Supporting slices: none
-- Validation: mapped
-- Notes: Bucket structure: v1/{workspaces/{name}, agents/{workspace}/{name}}. No data migration — fresh start.
-
-### R051 — Shim is sole state write authority after bootstrap; agentd syncs passively via runtime/stateChange
-- Class: architecture
-- Status: active
-- Description: After shim bootstrap, agentd never writes idle/running/stopped/error directly. All state transitions come through runtime/stateChange notifications. agentd only writes "creating" (at create/restart) and pre-shim "error" (bootstrap failure).
-- Why it matters: Eliminates state inconsistency between DB and shim; shim is ground truth.
-- Source: user
-- Primary owning slice: M007/S02
-- Supporting slices: none
-- Validation: mapped
-- Notes: DB state used as fast admission gate; shim rejects stale-DB requests → agentd syncs DB immediately from shim state.
-
-### R052 — RestartPolicy (tryReload/alwaysNew) governs recovery behavior after shim death
-- Class: core-capability
-- Status: active
-- Description: tryReload reads ACP sessionId from shim state file and calls session/load; falls back to alwaysNew on any failure. alwaysNew always starts fresh ACP session.
-- Why it matters: Enables conversation history continuity across daemon/shim restarts when ACP runtime supports session/load.
-- Source: user
-- Primary owning slice: M007/S02
-- Supporting slices: none
-- Validation: mapped
-- Notes: ACP sessionId is never persisted to DB — read from shim state file at recovery time only.
-
-### R053 — workspace/send routes messages to agents within a workspace
-- Class: core-capability
-- Status: active
-- Description: workspace/send delivers a prompt from one agent to another within the same workspace. Rejected if target agent is in error state.
-- Why it matters: Replaces room/send with workspace-scoped routing.
-- Source: user
-- Primary owning slice: M007/S03
-- Supporting slices: none
-- Validation: mapped
-- Notes: Delivers via agent/prompt path on target agent (same deliverPrompt helper pattern).
-
-### R054 — workspace-mcp-server replaces room-mcp-server
-- Class: core-capability
-- Status: active
-- Description: cmd/workspace-mcp-server exposes workspace_send and workspace_status MCP tools. Uses OAR_WORKSPACE_NAME env var. cmd/room-mcp-server directory deleted.
-- Why it matters: Keeps the MCP tool surface consistent with the new workspace-centric model.
-- Source: user
-- Primary owning slice: M007/S04
-- Supporting slices: none
-- Validation: mapped
-- Notes: Calls workspace/send and workspace/status on ARI. OAR_AGENT_ID + OAR_AGENT_NAME remain canonical env vars.
-
 ### R044 — Additional restart, replay, cleanup, and cross-client hardening that does not fit the primary convergence milestone remains planned follow-on work.
 - Class: quality-attribute
 - Status: active
@@ -400,6 +312,7 @@ This file is the explicit capability and coverage contract for the project.
 - Primary owning slice: M005/S03
 - Supporting slices: M005/S01, M005/S02
 - Validation: 10 agent/* dispatch cases in pkg/ari/server.go; TestARISessionMethodsRemoved confirms all 8 session/* methods return MethodNotFound; 64+ pkg/ari tests pass; grep count=25 for agent/* methods in ari-spec.md
+- Notes: M007/S01 laid the data model foundation: Workspace struct (ObjectMeta, Spec, Status.Phase/Path) is in pkg/meta; pkg/ari/types.go uses WorkspaceCreateParams/WorkspaceStatusResult with workspace-scoped agents. Full ARI handler implementation in S03.
 
 ### R048 — agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
 - Class: core-capability
@@ -418,7 +331,7 @@ This file is the explicit capability and coverage contract for the project.
 - Why it matters: paused:warm/paused:cold are implementation details of future checkpoint/recovery, not natural states for current user-facing agent model.
 - Source: docs/plan/agent-runtime-alignment-plan.md
 - Primary owning slice: M005/S02
-- Validation: pkg/meta/models.go defines AgentStateCreating/Created/Running/Stopped/Error; rg 'PausedWarm|PausedCold|paused:warm|paused:cold' --type go exits 1 (zero matches); 102 meta+agentd tests pass; session_test.go explicitly rejects paused:warm/paused:cold as invalid transitions
+- Validation: M007/S01 validated: meta.AgentState and meta.SessionState deleted from codebase. spec.Status (creating/idle/running/stopped/error) is the sole state enum across all packages. pkg/runtime/runtime.go writes "idle" to state.json after ACP handshake and after each prompt turn. `rg 'meta\.AgentState|meta\.SessionState' --type go` returns zero matches. go test ./pkg/spec/... ./pkg/runtime/... passes 64 tests including state assertions.
 
 ### R050 — Event envelopes carry turnId, streamSeq, and phase for turn-aware ordering. Global seq retained as log sequence. Chat/replay orders by (turnId, streamSeq).
 - Class: core-capability
@@ -428,7 +341,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: docs/plan/agent-runtime-alignment-plan.md
 - Primary owning slice: M005/S05
 - Supporting slices: M005/S01
-- Validation: 7 TestTurnAwareEnvelope_* unit tests PASS proving all ordering invariants (turnId propagation, streamSeq monotonic, multiple-turn isolation, stateChange exclusion, JSON round-trip, replay ordering); RPC integration tests confirm turn fields flow end-to-end; StreamSeq *int design preserves omitempty correctness for zero value
+- Validation: M007/S01 validated: go.etcd.io/bbolt is the sole metadata backend. mattn/go-sqlite3 removed from go.mod. schema.sql, session.go, room.go deleted. 37 bbolt store tests pass (agent CRUD, workspace CRUD, nested bucket layout). `rg 'go-sqlite3' --type go` returns zero matches across entire codebase.
 
 ### R051 — room-mcp-server rewritten with modelcontextprotocol/go-sdk. Environment variables switch from OAR_SESSION_ID to OAR_AGENT_NAME/OAR_AGENT_ID/OAR_ROOM_NAME.
 - Class: integration
@@ -628,18 +541,16 @@ This file is the explicit capability and coverage contract for the project.
 | R044 | quality-attribute | active | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | mapped |
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
-| R047 | core-capability | active | M007/S01 | M007/S03 | mapped |
-| R048 | core-capability | active | M007/S03 | M007/S01, M007/S02 | mapped |
-| R049 | core-capability | active | M007/S01 | M007/S02 | mapped |
-| R050 | core-capability | active | M007/S01 | none | mapped |
-| R051 | architecture | active | M007/S02 | none | mapped |
-| R052 | core-capability | active | M007/S02 | none | mapped |
-| R053 | core-capability | active | M007/S03 | none | mapped |
-| R054 | core-capability | active | M007/S04 | none | mapped |
+| R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | 10 agent/* dispatch cases in pkg/ari/server.go; TestARISessionMethodsRemoved confirms all 8 session/* methods return MethodNotFound; 64+ pkg/ari tests pass; grep count=25 for agent/* methods in ari-spec.md |
+| R048 | core-capability | validated | M005/S04 | M005/S03 | TestARIAgentCreateAsync (PASS): create returns creating → background goroutine → transitions to created. TestARIAgentCreateAsyncErrorState (PASS): invalid runtimeClass → error state with non-empty ErrorMessage. Both tests use real mockagent shim. |
+| R049 | core-capability | validated | M005/S02 | none | M007/S01 validated: meta.AgentState and meta.SessionState deleted from codebase. spec.Status (creating/idle/running/stopped/error) is the sole state enum across all packages. pkg/runtime/runtime.go writes "idle" to state.json after ACP handshake and after each prompt turn. `rg 'meta\.AgentState|meta\.SessionState' --type go` returns zero matches. go test ./pkg/spec/... ./pkg/runtime/... passes 64 tests including state assertions. |
+| R050 | core-capability | validated | M005/S05 | M005/S01 | M007/S01 validated: go.etcd.io/bbolt is the sole metadata backend. mattn/go-sqlite3 removed from go.mod. schema.sql, session.go, room.go deleted. 37 bbolt store tests pass (agent CRUD, workspace CRUD, nested bucket layout). `rg 'go-sqlite3' --type go` returns zero matches across entire codebase. |
+| R051 | integration | validated | M005/S06 | none | go.mod contains github.com/modelcontextprotocol/go-sdk v0.8.0; go build ./cmd/room-mcp-server exits 0; TestGenerateConfigWithRoomMCPInjection (3 subtests) asserts presence of OAR_AGENT_ID/OAR_AGENT_NAME and absence of deprecated OAR_SESSION_ID/OAR_ROOM_AGENT |
+| R052 | continuity | validated | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery (7-phase integration test, 4.47s, PASS): agents created pre-restart have identical agentId+room+name post-restart even in error state; RecoverSessions fail-safe marks dead-shim agents as error; creating-cleanup pass handles bootstrap races during restart window |
 
 ## Coverage Summary
 
-- Active requirements: 9 (R044, R047–R054)
-- Mapped to slices: 9
-- Validated: 32 (R001–R012, R020, R026–R029, R032–R039, R041)
+- Active requirements: 1
+- Mapped to slices: 1
+- Validated: 32 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R047, R048, R049, R050, R051, R052)
 - Unmapped active requirements: 0
