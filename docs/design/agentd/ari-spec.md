@@ -89,11 +89,6 @@ All agents must belong to a room. `room` and `name` together form the stable ext
     "runtimeClass": "claude",
     "workspaceId": "ws-abc123",
     "systemPrompt": "You are a coding agent.",
-    "env": ["GITHUB_TOKEN=${GITHUB_TOKEN}"],
-    "mcpServers": [
-      { "type": "http", "url": "http://localhost:3000/mcp" }
-    ],
-    "permissions": "approve-reads",
     "labels": {
       "task": "auth-refactor"
     }
@@ -120,20 +115,7 @@ All agents must belong to a room. `room` and `name` together form the stable ext
 | `runtimeClass` | string | yes | Selects the registered runtime-class configuration |
 | `workspaceId` | string | yes | Attaches the agent to a realized workspace |
 | `systemPrompt` | string | no | Bootstrap configuration for ACP session creation |
-| `env` | []string | no | Per-agent env overrides applied at bootstrap |
-| `mcpServers` | []McpServer | no | Bootstrap MCP server configuration |
-| `permissions` | string | no | Permission posture exposed to the runtime/shim boundary |
 | `labels` | map | no | Arbitrary metadata |
-
-### Environment Precedence
-
-The env contract is:
-
-1. inherited daemon/host environment,
-2. runtime-class env,
-3. `agent/create` env overrides.
-
-Workspace hooks are outside this precedence chain; they are host commands, not agent bootstrap fields.
 
 ### Internal Meaning of `agent/create`
 
@@ -163,9 +145,14 @@ Every externally supplied turn enters here:
 - later user turns;
 - future Room-routed work delivered to another member agent.
 
+Requests to `agent/prompt` are rejected when the agent is in `creating`, `stopped`, or `error`.
+If a runtime failure happens during the turn, the agent transitions to `error` rather than back to `created`.
+
 ### `agent/cancel`
 
 Cancel the active turn for an agent.
+
+Requests to `agent/cancel` are rejected when the agent is in `error`.
 
 ```json
 {
@@ -197,8 +184,8 @@ The agent remains in `stopped` state until `agent/delete` or `agent/restart`.
 
 ### `agent/delete`
 
-Remove a stopped agent record and release its workspace reference.
-Requires the agent to be in `stopped` state.
+Remove a non-operational agent record and release its workspace reference.
+Requires the agent to be in `stopped` or `error` state.
 
 ```json
 {
@@ -211,11 +198,11 @@ Requires the agent to be in `stopped` state.
 }
 ```
 
-Returns an error if the agent is not `stopped`. The caller must call `agent/stop` first.
+Returns an error if the agent is still active. Healthy agents must be stopped first; agents already in `error` may be deleted directly.
 
 ### `agent/restart`
 
-Re-bootstrap a stopped agent from existing state.
+Re-bootstrap a stopped or errored agent from existing state.
 Transitions the agent back to `creating` and starts background bootstrap.
 Caller polls `agent/status` until `created` or `error`.
 
@@ -375,7 +362,7 @@ Internal `sessionId` is not surfaced.
 
 ### `room/delete`
 
-Remove the realized runtime room record after member agents are stopped or detached according to runtime rules.
+Remove the realized runtime room record after member agents are stopped, errored, or detached according to runtime rules.
 Deleting the runtime projection does not delete the orchestrator's desired-state Room object.
 
 ## Shared Workspace Semantics

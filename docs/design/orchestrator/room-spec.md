@@ -159,7 +159,7 @@ Typical flow:
    - `runtimeClass`
    - `workspaceId`
    - `systemPrompt`
-   - any labels / MCP / permission bootstrap fields
+   - any labels
 5. Poll `agent/status` for each agent until state transitions to `created` or `error`.
 6. After agents reach `created` state, deliver actual work through `agent/prompt`.
 7. Use `room/status` or `agent/list` to inspect realized runtime membership.
@@ -170,10 +170,11 @@ Typical flow:
 The desired-state Room contract depends on one bootstrap story across the design set:
 
 - `agent/create` is **async configuration-only bootstrap**.
-  It selects runtime class, workspace attachment, room membership, bootstrap `systemPrompt`, env overrides, MCP servers, and permission posture.
+  It selects runtime class, workspace attachment, room membership, bootstrap `systemPrompt`, and labels.
   The call returns immediately with `state: "creating"`; callers must poll `agent/status` until the state reaches `created` or `error`.
 - `agent/prompt` is the **work-entry path**.
   Whether the work comes from an external caller or another Room member, the runtime turn enters through the target agent's prompt path.
+  Members in `error` are not routable; callers must `agent/restart` or `agent/delete` them first.
 
 Room creation never implies that business work has already been delivered.
 

@@ -44,7 +44,7 @@ An agent is the durable, externally-visible runtime object that records:
 - identity: `room` + `name` (unique key — all agents belong to a room);
 - selected `runtimeClass`;
 - attached `workspaceId`;
-- `description` and bootstrap inputs (`systemPrompt`, `env`, `mcpServers`, `permissions`, `labels`);
+- `description` and bootstrap inputs (`systemPrompt`, `labels`);
 - external lifecycle state (`creating`, `created`, `running`, `stopped`, `error`).
 
 Agent identity (`room` + `name`) is stable across restarts.
@@ -116,7 +116,7 @@ creating ──┐
 | `created` | Bootstrap complete; agent is idle, ready for a prompt |
 | `running` | Agent is processing an active prompt turn |
 | `stopped` | Agent process is stopped; state is preserved |
-| `error` | Bootstrap or runtime failure; agent is not operational |
+| `error` | Bootstrap or runtime failure; agent is not operational and must be restarted or deleted before more work is routed to it |
 
 Transition rules:
 
@@ -127,6 +127,7 @@ Transition rules:
 - `running → stopped`: `agent/stop` received while running;
 - `created → stopped`: `agent/stop` received while idle;
 - `running → error`: runtime failure during a turn;
+- `error → creating`: `agent/restart` triggers re-bootstrap from existing state;
 - `stopped → creating`: `agent/restart` triggers re-bootstrap from existing state.
 
 The states `paused:warm` and `paused:cold` do not exist in this state machine.
@@ -174,34 +175,45 @@ Bootstrap errors surface as:
 | Operation | Effect | Requires |
 |---|---|---|
 | `agent/stop` | Stops the runtime process; preserves agent metadata and state | Agent in `created` or `running` state |
-| `agent/delete` | Removes agent record and releases resources | Agent must be in `stopped` state |
+| `agent/delete` | Removes agent record and releases resources | Agent must be in `stopped` or `error` state |
 
 `agent/stop` does not delete.
-`agent/delete` requires a prior `agent/stop`.
+`agent/delete` requires a prior `agent/stop` only for healthy agents.
+Agents already in `error` may be deleted directly because they are already non-operational.
 
 Workspace references are released by `agent/delete`, not `agent/stop`.
 
 ## Restart
 
-`agent/restart` re-bootstraps an agent from `stopped` state:
+`agent/restart` re-bootstraps an agent from `stopped` or `error` state:
 
-1. Validates agent is `stopped`.
+1. Validates agent is `stopped` or `error`.
 2. Transitions agent to `creating`.
 3. Triggers background re-bootstrap using existing agent metadata.
 4. Caller polls `agent/status` until `created` or `error`.
+
+## Error State Contract
+
+`error` is a retained-failure state:
+
+- the agent record still exists;
+- the current runtime instance is no longer trustworthy;
+- callers must not route new business work to the agent until it is restarted;
+- the primary operator actions are `agent/status`, `agent/restart`, or `agent/delete`.
+
+Operational consequences:
+
+- `agent/prompt` is rejected for `error` agents;
+- `agent/cancel` is rejected for `error` agents;
+- `room/send` is rejected when the target agent is in `error`;
+- `room/delete` treats `error` members as non-active and allows teardown.
 
 Restart preserves `room`, `name`, `workspaceId`, and bootstrap configuration.
 It does not create a new agent identity.
 
 ## Environment and Capability Posture
 
-agentd must describe one env precedence order across the design set:
-
-1. inherited daemon/host environment forms the base;
-2. `runtimeClass.env` overlays the base;
-3. `agent/create` env overrides overlay last.
-
-The resolved env snapshot is runtime bootstrap state and is a follow-on persistence concern under R036.
+agentd runtime bootstrap may still depend on daemon/host environment and `runtimeClass.env`, but those are runtime configuration concerns rather than part of the external `agent/create` contract.
 
 Capability posture is also explicit:
 
@@ -268,13 +280,11 @@ External callers never see raw `sessionId`.
 The design set still leaves several durable-state gaps for later work:
 
 - restart-safe replay, reconnect, cleanup, and cross-client hardening;
-- persisted resolved bootstrap env / permissions / MCP inputs (R036);
 - cross-client delivery and routing hardening for richer realized Room behavior.
 
 ## Security Boundary Summary
 
 - local path attachment is host-impacting and must be canonicalized before registration;
 - hooks execute as host commands and can have host-side effects before any agent prompt runs;
-- env layering is explicit and must not be treated as an implicit secret fan-out channel;
 - shared workspace means shared host-path impact;
 - ACP capability exposure is intentionally narrower at the ARI boundary than at the shim boundary.
