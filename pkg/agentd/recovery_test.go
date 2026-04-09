@@ -541,6 +541,63 @@ func TestRecoverSessions_AgentStateRunningOnLiveShim(t *testing.T) {
 	}
 }
 
+// TestRecoverSessions_AgentStateCreatedOnIdleShim verifies that when a session's
+// shim is alive but idle (created), a linked agent stuck in "creating" is
+// reconciled to AgentStateCreated rather than remaining unusable.
+func TestRecoverSessions_AgentStateCreatedOnIdleShim(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Start a live mock shim reporting created/idle.
+	srv, socketPath := newMockShimServer(t)
+	srv.mu.Lock()
+	srv.statusResult = RuntimeStatusResult{
+		State:    spec.State{Status: spec.StatusCreated, ID: "idle-agent-session"},
+		Recovery: RuntimeStatusRecovery{LastSeq: 1},
+	}
+	srv.mu.Unlock()
+
+	// Create workspace + agent (starts in "creating" to test reconciliation).
+	ws := createTestWorkspace(t, ctx, store)
+	agentID := createTestAgentForRecovery(t, ctx, store, meta.AgentStateCreating)
+
+	// Create a session linked to the agent. The shim is healthy but idle.
+	sessionID := uuid.New().String()
+	require.NoError(t, store.CreateSession(ctx, &meta.Session{
+		ID:             sessionID,
+		RuntimeClass:   "default",
+		WorkspaceID:    ws.ID,
+		State:          meta.SessionStateCreated,
+		ShimSocketPath: socketPath,
+		ShimStateDir:   "/tmp/shim-state-" + sessionID,
+		ShimPID:        99999,
+		AgentID:        agentID,
+	}))
+
+	// Run recovery — shim alive, session recovered, agent -> created.
+	require.NoError(t, pm.RecoverSessions(ctx))
+
+	// Session should be in the processes map.
+	shimProc := pm.GetProcess(sessionID)
+	require.NotNil(t, shimProc, "idle session should be recovered")
+
+	// Agent should be promoted out of creating into created.
+	agent, err := store.GetAgent(ctx, agentID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+	assert.Equal(t, meta.AgentStateCreated, agent.State,
+		"agent linked to idle shim should be reconciled to created")
+
+	// Cleanup.
+	srv.close()
+	select {
+	case <-shimProc.Done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for recovered process cleanup")
+	}
+}
+
 // TestRecoverSessions_CreatingAgentMarkedError verifies that an agent stuck in
 // AgentStateCreating (with no live session) is transitioned to AgentStateError
 // by the creating-cleanup pass.

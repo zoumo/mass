@@ -38,8 +38,8 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 	// actions (prompt, cancel) while this phase is active.
 	m.SetRecoveryPhase(RecoveryPhaseRecovering)
 
-	// List all non-terminal sessions. Terminal state is "stopped".
-	// We retrieve all sessions and filter out stopped ones since the store's
+	// List all non-terminal sessions. Terminal states are "stopped" and "error".
+	// We retrieve all sessions and filter out terminal ones since the store's
 	// SessionFilter only supports filtering TO a single state, not excluding one.
 	allSessions, err := m.store.ListSessions(ctx, nil)
 	if err != nil {
@@ -51,7 +51,9 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 
 	var candidates []*meta.Session
 	for _, s := range allSessions {
-		if s.State != meta.SessionStateStopped {
+		// Skip terminal states: stopped sessions have no shim to recover,
+		// and error sessions require explicit restart per the agent lifecycle model.
+		if s.State != meta.SessionStateStopped && s.State != meta.SessionStateError {
 			candidates = append(candidates, s)
 		}
 	}
@@ -100,7 +102,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			m.logger.Info("recovery: session recovered",
 				"session_id", session.ID,
 				"socket_path", session.ShimSocketPath)
-			// Reconcile agent state to running if linked and shim is running.
+			// Reconcile agent state based on shim-reported status.
 			if session.AgentID != "" {
 				recoveredAgentIDs[session.AgentID] = true
 				if shimStatus == spec.StatusRunning {
@@ -110,6 +112,18 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 							"error", aErr)
 					} else {
 						m.logger.Info("recovery: reconciled agent state to running",
+							"agent_id", session.AgentID)
+					}
+				} else if shimStatus == spec.StatusCreated {
+					// Shim is idle — agent bootstrap completed before the daemon
+					// restarted. Advance from creating to created so the agent
+					// is ready to accept prompts.
+					if aErr := m.agents.UpdateState(ctx, session.AgentID, meta.AgentStateCreated, ""); aErr != nil {
+						m.logger.Warn("recovery: failed to reconcile agent state to created",
+							"agent_id", session.AgentID,
+							"error", aErr)
+					} else {
+						m.logger.Info("recovery: reconciled agent state to created",
 							"agent_id", session.AgentID)
 					}
 				}
