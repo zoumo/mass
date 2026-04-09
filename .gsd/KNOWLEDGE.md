@@ -601,3 +601,31 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Fix:** Capture the exit code before calling `os.Exit`: `code := m.Run(); os.RemoveAll(tmpDir); os.Exit(code)`
 - **Reference:** M006/S06/T01 — pkg/rpc/server_test.go:47 and pkg/runtime/runtime_test.go:46.
 - **When:** M006/S06
+
+## K046 — testifylint require-error: only the top-level guard changes, not downstream asserts
+
+- **Pattern:** testifylint `require-error` flags `assert.Error`/`assert.NoError` that act as a top-level guard — if the check fails, continuing the test is misleading or can panic. Only that guard line changes to `require.*`; any subsequent `assert.Nil`/`assert.Contains` on the same variable are intentionally left as `assert`.
+- **Lesson:** When applying require-error fixes, look at what comes after the flagged line. Lines that depend on the error result staying non-nil (e.g. `err.Error()`, dereferences) should stay as `assert` — the `require` above will stop the test before they can panic.
+- **Reference:** M006/S07/T01 — pkg/agentd/shim_client_test.go:233, :606, :633.
+- **When:** M006/S07
+
+## K047 — golangci-lint 0-issues goal requires fixing all findings, including pre-existing collateral
+
+- **Pattern:** Running lint after targeted edits may surface a pre-existing issue in an unrelated file. When the slice goal is "0 issues", every finding blocks the goal — even ones outside the task plan scope.
+- **Lesson:** Always run `golangci-lint run ./...` on a clean branch before starting edits to establish actual baseline. If a collateral issue appears post-edit, fix it immediately rather than deferring — deferring means the slice goal stays unmet.
+- **Reference:** M006/S07/T01 — pkg/runtime/terminal.go had trailing blank lines + collapsed gci import section separator that appeared in the first post-edit lint run.
+- **When:** M006/S07
+
+## K048 — golangci-lint v2 category fix order: formatters first, then manual
+
+- **Pattern:** When facing a large backlog of lint findings across multiple categories, always fix auto-fixable formatter linters (gci, gofumpt) first with `golangci-lint fmt ./...`. This establishes a stable import-ordering baseline that prevents subsequent manual edits from re-introducing format violations.
+- **Lesson:** S01 (formatters) → S02 (auto-fix) → S03–S07 (manual) is the optimal ordering. Mixing formatter and manual edits in the same pass risks conflicting changes.
+- **Reference:** M006 overall structure — 56 formatter issues cleared in S01 before any manual work began.
+- **When:** M006/milestone-close
+
+## K049 — golangci-lint v2 `--fix` side-effects: gocritic rewrites without import additions
+
+- **Pattern:** Running `golangci-lint run --fix ./...` activates multiple linters simultaneously. The gocritic linter's auto-rewriter changes `err.(*T)` to `errors.As(err, &target)` but does NOT add the `"errors"` import to the file — resulting in compilation errors.
+- **Gotcha:** This manifests as files outside the intended fix scope (e.g. running `--fix` for unconvert also rewrites error assertions in pkg/workspace/git.go). After any `--fix` run, immediately run `go build ./...` to detect missing imports, then add them manually.
+- **Reference:** M006/S02/T01 — 5 files affected: pkg/ari/server.go, pkg/workspace/git.go, pkg/workspace/hook_test.go, pkg/agentd/session_test.go, pkg/runtime/terminal.go.
+- **When:** M006/S02, M006/milestone-close

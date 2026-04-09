@@ -10,39 +10,18 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-### Active Milestone: M006 — Fix golangci-lint v2 issues
-
-| Slice | Title | Status |
-|-------|-------|--------|
-| S01 | Auto-fix: gci + gofumpt formatting (56 issues) | ✅ complete |
-| S02 | Auto-fix: unconvert + copyloopvar + ineffassign (24 issues) | ✅ complete |
-| S03 | Manual: misspell + unparam (17 issues) | ✅ complete |
-| S04 | Manual: unused dead code (12 issues) | ✅ complete |
-| S05 | Manual: errorlint — type assertions on errors (17 issues) | ✅ complete |
-| S06 | Manual: gocritic (45 issues) | ✅ complete |
-| S07 | Manual: testifylint (31 issues) | ⬜ next |
-
-**Current lint posture:** gci, gofumpt, unconvert, copyloopvar, ineffassign, misspell, unparam, unused, errorlint, and gocritic are all clean (zero findings). S07 (testifylint — 5 remaining findings) is the final slice.
-
-### Lint Status (M006)
-
-| Linter | Findings at M006 start | Current |
-|--------|----------------------|---------|
-| gci | 28 | ✅ 0 |
-| gofumpt | 28 | ✅ 0 |
-| unconvert | 22 | ✅ 0 |
-| copyloopvar | 1 | ✅ 0 |
-| ineffassign | 1 | ✅ 0 |
-| misspell | ~9 | ✅ 0 |
-| unparam | ~8 | ✅ 0 |
-| unused | 12 | ✅ 0 |
-| errorlint | 17 | ✅ 0 |
-| gocritic | 45 | ✅ 0 |
-| testifylint | 31 | ⬜ 5 remain (S07) |
+M007 in progress — platform terminal state refactor: bbolt storage, unified spec.Status, (workspace,name) identity, shim write authority, Room/Session elimination.
 
 ### Completed Milestones
 
-**M001–M005** — Core runtime, contract convergence, recovery hardening, room runtime, agent model refactoring. All complete. See git history for details.
+| Milestone | Title | Summary |
+|-----------|-------|---------|
+| M001 | Core runtime foundation | agent-shim, agentd, ARI socket, workspace, metadata store, ACP handshake |
+| M002 | Contract convergence | ARI client/server contract alignment, JSON-RPC lifecycle |
+| M003 | Recovery hardening | Fail-closed recovery, shim-vs-DB reconciliation, atomic event resume, workspace cleanup |
+| M004 | Room runtime | mesh/star/isolated room modes, room/send, room-mcp-server |
+| M005 | Agent model refactoring | session→agent migration, async lifecycle, agent-centric ARI surface |
+| M006 | Fix golangci-lint v2 issues | 202 → 0 issues across 11 linter categories; clean lint posture established |
 
 ### What's Implemented
 
@@ -53,3 +32,37 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **Room runtime**: mesh/star/isolated modes, room/send, room-mcp-server (SDK-based)
 - **Workspace preparation** for Git/EmptyDir/Local sources with hooks and reference tracking
 - **CLI tooling** (`agentdctl`) with agent/workspace/daemon subcommands
+- **Fully clean golangci-lint v2 posture**: 0 issues across all 11 linter categories (as of M006)
+
+### Lint Status (post-M006)
+
+`golangci-lint run ./...` → **0 issues** — all 11 linter categories clean.
+
+| Linter | M006 start | Final |
+|--------|-----------|-------|
+| gci | 28 | ✅ 0 |
+| gofumpt | 28 | ✅ 0 |
+| unconvert | 22 | ✅ 0 |
+| copyloopvar | 1 | ✅ 0 |
+| ineffassign | 1 | ✅ 0 |
+| misspell | ~9 | ✅ 0 |
+| unparam | ~8 | ✅ 0 |
+| unused | 12 | ✅ 0 |
+| errorlint | 17 | ✅ 0 |
+| gocritic | 45 | ✅ 0 |
+| testifylint | 31 | ✅ 0 |
+
+### Known Pre-existing Issues
+
+- Integration test failures in `tests/integration/` (5 tests related to prompt acceptance) pre-date M006; resolved as part of M007/S05 (tests rewritten for new (workspace,name) identity).
+
+## Milestone Sequence
+
+- [x] M001-tvc4z0: Core runtime foundation — agent-shim, agentd, ARI socket, workspace, metadata store, ACP handshake
+- [x] M001-tlbeko: Workspace phase — Git/EmptyDir/Local sources, setup/teardown hooks, workspace ARI methods
+- [x] M002: Contract convergence — ARI client/server contract alignment, JSON-RPC lifecycle
+- [x] M003: Recovery hardening — fail-closed recovery, shim-vs-DB reconciliation, atomic event resume
+- [x] M004: Room runtime — mesh/star/isolated room modes, room/send, room-mcp-server
+- [x] M005: Agent model refactoring — session→agent migration, async lifecycle, agent-centric ARI surface
+- [x] M006: Fix golangci-lint v2 issues — 202→0 issues across 11 linter categories
+- [ ] M007: Platform terminal state refactor — bbolt storage, unified spec.Status, (workspace,name) identity, shim write authority, Room/Session elimination

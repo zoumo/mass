@@ -20,8 +20,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
+	go.etcd.io/bbolt v1.4.3 // indirect
+	golang.org/x/sys v0.29.0 // indirect
 )
-
-// Local fork: fix stdio McpServer MarshalJSON missing "type" field.
-// Remove this replace once upstream merges the fix.
-replace github.com/coder/acp-go-sdk => ../acp-go-sdk

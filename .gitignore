@@ -1,10 +1,6 @@
 # ── Binaries ──
 /bin/
 /dist/
-agentd
-agentdctl
-agent-shim-cli
-room-mcp-server
 
 # ── Scripts (auto-generated) ──
 scripts/verify-*
