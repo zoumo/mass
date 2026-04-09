@@ -559,3 +559,11 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Also noted:** `golangci-lint run --fix` does not auto-fix `unconvert` or `ineffassign` findings — those require manual edits despite the linters being listed as fixable in some versions.
 - **Reference:** M006/S02/T01 — affected pkg/ari/server.go, pkg/workspace/git.go, pkg/workspace/hook_test.go, pkg/agentd/session_test.go, pkg/runtime/terminal.go
 - **When:** M006/S02
+
+## K041 — golangci-lint unparam: one unused parameter reported per function per pass
+
+- **Pattern:** The `unparam` linter reports only **one** unused parameter per function per linter run. If a function has two unused parameters, the second is hidden until the first is removed and the linter is re-run.
+- **Gotcha:** A task plan targeting a single `unparam` finding may actually require two (or more) removals. Always re-run `golangci-lint run ./... 2>&1 | grep unparam` after each fix to confirm no additional parameters surfaced.
+- **Example:** `forkShim(ctx context.Context, session *meta.Session, rc *RuntimeClass, ...)` — `ctx` was reported; after removing it, `rc` appeared. Both were unused because `RuntimeClass` was consumed upstream by `generateConfig`/`createBundle`, not inside `forkShim`.
+- **Reference:** M006/S03/T01 — pkg/agentd/process.go forkShim
+- **When:** M006/S03

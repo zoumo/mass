@@ -373,9 +373,6 @@ func sendAndDrain(t *testing.T, in chan<- acp.SessionNotification, ch <-chan Env
 	return drainEnvelope(t, ch)
 }
 
-// ptrInt returns a pointer to an int literal — useful in table-driven assertions.
-func ptrInt(v int) *int { return &v }
-
 // TestTurnAwareEnvelope_TurnIdAssigned verifies that all session/update events
 // emitted between NotifyTurnStart and NotifyTurnEnd carry the same non-empty
 // TurnId, and that an event emitted after NotifyTurnEnd carries no TurnId.

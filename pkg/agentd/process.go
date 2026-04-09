@@ -150,7 +150,7 @@ func (m *ProcessManager) Start(ctx context.Context, sessionID string) (*ShimProc
 	}
 
 	// 5. Fork agent-shim process.
-	shimProc, err := m.forkShim(ctx, session, runtimeClass, bundlePath, stateDir)
+	shimProc, err := m.forkShim(session, bundlePath, stateDir)
 	if err != nil {
 		// Clean up bundle directory on fork failure.
 		_ = os.RemoveAll(bundlePath)
@@ -395,7 +395,7 @@ func (m *ProcessManager) createBundle(session *meta.Session, cfg spec.Config) (s
 // Using CommandContext would kill the shim when the request context is canceled
 // (which happens immediately after Start returns in session/prompt auto-start).
 // The shim process lifecycle is managed by ProcessManager.Stop and watchProcess.
-func (m *ProcessManager) forkShim(ctx context.Context, session *meta.Session, rc *RuntimeClass, bundlePath, stateDir string) (*ShimProcess, error) {
+func (m *ProcessManager) forkShim(session *meta.Session, bundlePath, stateDir string) (*ShimProcess, error) {
 	// Find the agent-shim binary.
 	// Priority:
 	//  1. OAR_SHIM_BINARY env var (test override)

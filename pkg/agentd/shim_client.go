@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"sync"
 
 	"github.com/sourcegraph/jsonrpc2"
 
@@ -32,7 +31,6 @@ import (
 // typed methods for the six RPC operations in the clean-break surface.
 type ShimClient struct {
 	conn       *jsonrpc2.Conn
-	mu         sync.Mutex
 	socketPath string
 }
 
