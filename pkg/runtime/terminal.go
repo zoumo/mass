@@ -373,5 +373,3 @@ func (tw *truncatingWriter) Write(p []byte) (n int, err error) {
 
 	return n, nil
 }
-
-

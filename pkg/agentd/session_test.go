@@ -233,7 +233,7 @@ func TestSessionManagerValidTransitions(t *testing.T) {
 
 			// Test the valid transition.
 			err = sm.Transition(ctx, sessionID, tc.to)
-			assert.NoError(t, err, "Valid transition %s -> %s should succeed", tc.from, tc.to)
+			require.NoError(t, err, "Valid transition %s -> %s should succeed", tc.from, tc.to)
 
 			// Verify final state.
 			final, err := sm.Get(ctx, sessionID)

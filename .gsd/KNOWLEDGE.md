@@ -585,3 +585,19 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** When a slice's issue count comes from a pre-planning scan that predates earlier milestone work, the executor should confirm current state before any edits. Clean no-op is a valid outcome — document it clearly.
 - **Reference:** M006/S05/T01 — zero errorlint findings confirmed; `go build ./...` exit 0; `go test ./pkg/...` all 8 packages pass. No edits made.
 - **When:** M006/S05
+
+## K044 — gocritic `filepathJoin`: os.TempDir() beats literal "/tmp" splits
+
+- **Pattern:** `filepath.Join("/tmp/foo", x)` triggers gocritic's `filepathJoin` check. The natural fix of splitting into three args — `filepath.Join("/tmp", "foo", x)` — still triggers the lint because gocritic treats the leading `/` in `"/tmp"` as a path separator within a `filepath.Join` argument.
+- **Gotcha:** The three-arg split approach is insufficient for any arg that begins with `/`. The only reliable fix is `filepath.Join(os.TempDir(), "foo", x)` which uses a non-literal, non-separator-containing base.
+- **Lesson:** When applying `filepathJoin` fixes, replace literal `/tmp` (and any other absolute-path literals) with `os.TempDir()` rather than splitting the string.
+- **Reference:** M006/S06/T01 — pkg/agentd/process_test.go:131 and pkg/agentd/shim_client_test.go:51.
+- **When:** M006/S06
+
+## K045 — gocritic `exitAfterDefer`: TestMain deferred cleanup is silently skipped
+
+- **Pattern:** `defer os.RemoveAll(tmpDir)` followed by `os.Exit(m.Run())` in a `TestMain` function looks correct but the defer is never called — `os.Exit` does not run deferred functions.
+- **Gotcha:** `go test` does not warn about this; the cleanup simply never happens. The gocritic `exitAfterDefer` check catches it.
+- **Fix:** Capture the exit code before calling `os.Exit`: `code := m.Run(); os.RemoveAll(tmpDir); os.Exit(code)`
+- **Reference:** M006/S06/T01 — pkg/rpc/server_test.go:47 and pkg/runtime/runtime_test.go:46.
+- **When:** M006/S06

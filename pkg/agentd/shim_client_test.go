@@ -230,7 +230,7 @@ func TestShimClientDial(t *testing.T) {
 
 func TestShimClientDialFail(t *testing.T) {
 	c, err := Dial(context.Background(), "/nonexistent/socket.sock")
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Nil(t, c)
 	assert.Contains(t, err.Error(), "dial")
 }
@@ -603,7 +603,7 @@ func TestParseSessionUpdate(t *testing.T) {
 
 func TestParseSessionUpdateMalformed(t *testing.T) {
 	_, err := ParseSessionUpdate(json.RawMessage(`{not valid json`))
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse session/update")
 }
 
@@ -630,7 +630,7 @@ func TestParseRuntimeStateChange(t *testing.T) {
 
 func TestParseRuntimeStateChangeMalformed(t *testing.T) {
 	_, err := ParseRuntimeStateChange(json.RawMessage(`[1, 2]`))
-	assert.Error(t, err)
+	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parse runtime/stateChange")
 }
 
