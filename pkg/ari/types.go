@@ -430,7 +430,7 @@ type AgentCreateResult struct {
 	// AgentId is the unique identifier assigned to this agent.
 	AgentId string `json:"agentId"`
 
-	// State is the initial agent state, always "created" on success.
+	// State is the initial agent state, "creating" on a successful async create request.
 	State string `json:"state"`
 }
 

@@ -1135,6 +1135,16 @@ func (h *connHandler) handleAgentPrompt(ctx context.Context, conn *jsonrpc2.Conn
 			"agent is still being provisioned; poll agent/status until state is 'created'")
 		return
 	}
+	if agent.State == meta.AgentStateError {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			"agent is in error state; restart or delete it before sending a prompt")
+		return
+	}
+	if agent.State == meta.AgentStateStopped {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			"agent is stopped; restart it before sending a prompt")
+		return
+	}
 
 	// Find linked session.
 	session, err := h.linkedSessionForAgent(ctx, p.AgentId)
@@ -1149,8 +1159,17 @@ func (h *connHandler) handleAgentPrompt(ctx context.Context, conn *jsonrpc2.Conn
 		return
 	}
 
+	// Transition agent to "running" BEFORE the turn starts.
+	if updateErr := h.srv.agents.UpdateState(ctx, p.AgentId, meta.AgentStateRunning, ""); updateErr != nil {
+		log.Printf("ari: agent/prompt: warning: failed to update agent %s state to running: %v", p.AgentId, updateErr)
+	}
+
 	stopReason, err := h.deliverPrompt(ctx, session.ID, p.Prompt)
+
 	if err != nil {
+		if updateErr := h.srv.agents.UpdateState(ctx, p.AgentId, meta.AgentStateError, err.Error()); updateErr != nil {
+			log.Printf("ari: agent/prompt: warning: failed to update agent %s state to error: %v", p.AgentId, updateErr)
+		}
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "not running") || strings.Contains(errMsg, "get session failed") {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, errMsg)
@@ -1160,9 +1179,9 @@ func (h *connHandler) handleAgentPrompt(ctx context.Context, conn *jsonrpc2.Conn
 		return
 	}
 
-	// Update agent state to "running" after successful prompt delivery.
-	if updateErr := h.srv.agents.UpdateState(ctx, p.AgentId, meta.AgentStateRunning, ""); updateErr != nil {
-		log.Printf("ari: agent/prompt: warning: failed to update agent %s state to running: %v", p.AgentId, updateErr)
+	// Transition agent back to "created" (idle) after a successful turn.
+	if updateErr := h.srv.agents.UpdateState(ctx, p.AgentId, meta.AgentStateCreated, ""); updateErr != nil {
+		log.Printf("ari: agent/prompt: warning: failed to update agent %s state to created: %v", p.AgentId, updateErr)
 	}
 
 	_ = conn.Reply(ctx, req.ID, AgentPromptResult{StopReason: stopReason})
@@ -1200,6 +1219,11 @@ func (h *connHandler) handleAgentCancel(ctx context.Context, conn *jsonrpc2.Conn
 	if err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
 			fmt.Sprintf("failed to find linked session: %s", err.Error()))
+		return
+	}
+	if agent.State == meta.AgentStateError {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("agent %q is in error state; restart or delete it before cancelling", p.AgentId))
 		return
 	}
 	if session == nil {
@@ -1266,10 +1290,42 @@ func (h *connHandler) handleAgentStop(ctx context.Context, conn *jsonrpc2.Conn, 
 	_ = conn.Reply(ctx, req.ID, nil)
 }
 
+// deleteAgentWithCleanup performs full agent deletion including linked session
+// and workspace registry cleanup. Used by both handleAgentDelete and handleRoomDelete.
+//
+// Workflow:
+//  1. Find linked session BEFORE deleting agent (ON DELETE SET NULL on sessions.agent_id)
+//  2. Call agents.Delete (enforces stopped precondition)
+//  3. Delete linked session via sessions.Delete
+//  4. Release in-memory registry ref
+func (h *connHandler) deleteAgentWithCleanup(ctx context.Context, agentID string) error {
+	// Find the linked session BEFORE deleting the agent, because agents.Delete
+	// triggers ON DELETE SET NULL on sessions.agent_id, making the session
+	// unfindable afterwards via AgentID filter.
+	session, err := h.linkedSessionForAgent(ctx, agentID)
+	if err != nil {
+		log.Printf("ari: deleteAgentWithCleanup warning: failed to find linked session for agent %s: %v", agentID, err)
+	}
+
+	// agents.Delete enforces stopped precondition and not-found check.
+	if err := h.srv.agents.Delete(ctx, agentID); err != nil {
+		return err
+	}
+
+	// Delete the linked session (releases workspace_refs FK chain via store.DeleteSession).
+	if session != nil {
+		if err := h.srv.sessions.Delete(ctx, session.ID); err != nil {
+			log.Printf("ari: deleteAgentWithCleanup warning: failed to delete session %s for agent %s: %v",
+				session.ID, agentID, err)
+		}
+		// Release in-memory registry ref.
+		h.srv.registry.Release(session.WorkspaceID, session.ID)
+	}
+
+	return nil
+}
+
 // handleAgentDelete deletes an agent (must be stopped first).
-// Workflow: find linked session first (before agents.Delete NULLs agent_id FK) →
-// delete via agents.Delete (enforces stopped) → delete linked session →
-// release in-memory registry ref.
 func (h *connHandler) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	var p AgentDeleteParams
 	if err := unmarshalParams(req, &p); err != nil {
@@ -1277,16 +1333,7 @@ func (h *connHandler) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn
 		return
 	}
 
-	// Find the linked session BEFORE deleting the agent, because agents.Delete
-	// triggers ON DELETE SET NULL on sessions.agent_id, making the session
-	// unfindable afterwards via AgentID filter.
-	session, err := h.linkedSessionForAgent(ctx, p.AgentId)
-	if err != nil {
-		log.Printf("ari: agent/delete warning: failed to find linked session for agent %s: %v", p.AgentId, err)
-	}
-
-	// agents.Delete enforces stopped precondition and not-found check.
-	if err := h.srv.agents.Delete(ctx, p.AgentId); err != nil {
+	if err := h.deleteAgentWithCleanup(ctx, p.AgentId); err != nil {
 		switch err.(type) {
 		case *agentd.ErrAgentNotFound:
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
@@ -1296,16 +1343,6 @@ func (h *connHandler) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
 		}
 		return
-	}
-
-	// Delete the linked session (releases workspace_refs FK chain via store.DeleteSession).
-	if session != nil {
-		if err := h.srv.sessions.Delete(ctx, session.ID); err != nil {
-			log.Printf("ari: agent/delete warning: failed to delete session %s for agent %s: %v",
-				session.ID, p.AgentId, err)
-		}
-		// Release in-memory registry ref.
-		h.srv.registry.Release(session.WorkspaceID, session.ID)
 	}
 
 	log.Printf("ari: agent/delete completed for agent %s", p.AgentId)
@@ -1803,7 +1840,7 @@ func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		return
 	}
 
-	// Guard: reject delivery if agent is stopped or still being created.
+	// Guard: reject delivery if agent is stopped, in error, or still being created.
 	if agent.State == meta.AgentStateStopped {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
 			fmt.Sprintf("target agent %q is stopped", p.TargetAgent))
@@ -1812,6 +1849,11 @@ func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, r
 	if agent.State == meta.AgentStateCreating {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
 			fmt.Sprintf("target agent %q is still being created", p.TargetAgent))
+		return
+	}
+	if agent.State == meta.AgentStateError {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("target agent %q is in error state; restart or delete it first", p.TargetAgent))
 		return
 	}
 
@@ -1841,17 +1883,26 @@ func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, r
 	log.Printf("ari: room/send delivering message from %s to %s in room %s (session %s)",
 		p.SenderAgent, p.TargetAgent, p.Room, targetSessionID)
 
+	// Transition agent to "running" BEFORE the turn starts.
+	if updateErr := h.srv.agents.UpdateState(ctx, agent.ID, meta.AgentStateRunning, ""); updateErr != nil {
+		log.Printf("ari: room/send: failed to update agent %s state to running: %v", agent.ID, updateErr)
+	}
+
 	// Deliver prompt to target session.
 	stopReason, err := h.deliverPrompt(ctx, targetSessionID, attributedMsg)
+
 	if err != nil {
+		if updateErr := h.srv.agents.UpdateState(ctx, agent.ID, meta.AgentStateError, err.Error()); updateErr != nil {
+			log.Printf("ari: room/send: failed to update agent %s state to error: %v", agent.ID, updateErr)
+		}
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
 			fmt.Sprintf("prompt failed: %s", err.Error()))
 		return
 	}
 
-	// Update agent state to "running" after successful delivery.
-	if updateErr := h.srv.agents.UpdateState(ctx, agent.ID, meta.AgentStateRunning, ""); updateErr != nil {
-		log.Printf("ari: room/send: failed to update agent state: %v", updateErr)
+	// Transition agent back to "created" (idle) after a successful turn.
+	if updateErr := h.srv.agents.UpdateState(ctx, agent.ID, meta.AgentStateCreated, ""); updateErr != nil {
+		log.Printf("ari: room/send: failed to update agent %s state to created: %v", agent.ID, updateErr)
 	}
 
 	_ = conn.Reply(ctx, req.ID, RoomSendResult{
@@ -1914,19 +1965,19 @@ func (h *connHandler) handleRoomDelete(ctx context.Context, conn *jsonrpc2.Conn,
 			fmt.Sprintf("failed to list room agents: %s", err.Error()))
 		return
 	}
-	var activeAgents []string
+		var activeAgents []string
 	for _, a := range agents {
-		if a.State != meta.AgentStateStopped {
+		if a.State != meta.AgentStateStopped && a.State != meta.AgentStateError {
 			activeAgents = append(activeAgents, a.ID)
 		}
 	}
 	if len(activeAgents) > 0 {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
-			fmt.Sprintf("room %q has %d active member(s); stop agents before deleting", p.Name, len(activeAgents)))
+			fmt.Sprintf("room %q has %d active member(s); stop or fail active agents before deleting", p.Name, len(activeAgents)))
 		return
 	}
 
-	// Delete all stopped/error agents in this room first (agents.room FK is RESTRICT).
+	// Delete all stopped/error agents in this room with full cleanup (session + workspace refs).
 	// This is safe because we confirmed all agents are in stopped or error state above.
 	agents, err = h.srv.agents.List(ctx, &meta.AgentFilter{Room: p.Name})
 	if err != nil {
@@ -1935,7 +1986,7 @@ func (h *connHandler) handleRoomDelete(ctx context.Context, conn *jsonrpc2.Conn,
 		return
 	}
 	for _, a := range agents {
-		if err := h.srv.agents.Delete(ctx, a.ID); err != nil {
+		if err := h.deleteAgentWithCleanup(ctx, a.ID); err != nil {
 			log.Printf("ari: room/delete warning: failed to delete agent %s in room %s: %v", a.ID, p.Name, err)
 		}
 	}
