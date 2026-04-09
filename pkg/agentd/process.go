@@ -719,6 +719,14 @@ func (m *ProcessManager) IsRecovering() bool {
 	return m.GetRecoveryPhase() == RecoveryPhaseRecovering
 }
 
+// InjectProcess inserts a pre-built ShimProcess into the processes map under
+// the given key. Used in tests to inject a mock shim without calling Start().
+func (m *ProcessManager) InjectProcess(key string, proc *ShimProcess) {
+	m.mu.Lock()
+	m.processes[key] = proc
+	m.mu.Unlock()
+}
+
 // SetAgentRecoveryInfo sets the recovery metadata on a running agent's
 // ShimProcess. Returns false if the agent is not in the processes map.
 func (m *ProcessManager) SetAgentRecoveryInfo(key string, info *RecoveryInfo) bool {

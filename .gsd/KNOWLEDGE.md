@@ -664,3 +664,24 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** The correct order is: Status check → reconcile DB → Subscribe (atomic backfill + live sub) → tryReload (if applicable). Placing tryReload before Subscribe risks losing the stateChange notification that follows it.
 - **Reference:** M007/S02/T02 — pkg/agentd/recovery.go recoverAgent().
 - **When:** M007/S02
+
+## K055 — workspace/list returns only registry-tracked (ready) workspaces, not all DB phases
+
+- **Pattern:** The ARI `workspace/list` handler calls `Registry.List()` — not `store.ListWorkspaces()`. This means only workspaces in `ready` phase are returned. Workspaces in `pending` or `error` phase are NOT returned by `workspace/list`.
+- **Lesson:** If you need workspaces in all phases, use `workspace/status` with the known name (falls back to DB) or query the store directly. `workspace/list` is intentionally filtered to "ready and usable" workspaces only. This matches the plan spec but is not obvious from the method name.
+- **Reference:** M007/S03/T01 — pkg/ari/server.go handleWorkspaceList.
+- **When:** M007/S03
+
+## K056 — InjectProcess is the test injection point for workspace/send and agent/prompt tests requiring a live shim
+
+- **Pattern:** `ProcessManager.InjectProcess(key string, proc *ShimProcess)` locks `mu` and inserts the ShimProcess directly into the processes map, bypassing `Start()`. Use the `agentKey(workspace, name)` helper to compute the key. The injected `*ShimProcess` needs a valid `SocketPath` — point it at an in-process Unix socket served by a miniShimServer.
+- **Lesson:** This is the correct test injection surface for any handler that calls `processes.Connect()`. Without InjectProcess, workspace/send and agent/prompt tests require a real shim binary. With it, tests can verify the full JSON-RPC dispatch path in-process.
+- **Reference:** M007/S03/T02 — pkg/agentd/process.go InjectProcess; pkg/ari/server_test.go TestWorkspaceSendDelivered.
+- **When:** M007/S03
+
+## K057 — agent/create background goroutine will log "runtime class not found: default" in test environments
+
+- **Pattern:** `handleAgentCreate` returns `{state:"creating"}` synchronously and then fires a background goroutine that calls `processes.Start()`. In test environments without a real RuntimeClassRegistry populated with "default", Start() immediately returns an error and logs a WARN. The test correctly checks only the synchronous reply state — the background failure is expected and harmless.
+- **Lesson:** Do NOT suppress the background goroutine error or make the Start() call synchronous to silence test logs. The async pattern is the contract. If you need to observe the error path, either seed the RuntimeClassRegistry or use `require.Eventually` to poll agent/status for the error state.
+- **Reference:** M007/S03/T02 — pkg/ari/server_test.go TestAgentCreateReturnsCreating.
+- **When:** M007/S03
