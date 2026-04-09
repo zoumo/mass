@@ -2,19 +2,6 @@
 
 This file is the explicit capability and coverage contract for the project.
 
-## Active
-
-### R044 — Additional restart, replay, cleanup, and cross-client hardening that does not fit the primary convergence milestone remains planned follow-on work.
-- Class: quality-attribute
-- Status: active
-- Description: Additional restart, replay, cleanup, and cross-client hardening that does not fit the primary convergence milestone remains planned follow-on work.
-- Why it matters: M002 should converge the contract first, not absorb all remaining hardening work.
-- Source: inferred
-- Primary owning slice: M007/S02
-- Supporting slices: M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04
-- Validation: mapped
-- Notes: Covered by M007: RestartPolicy+tryReload (S02), shim state authority (S02), CLI hardening (S04), integration test completeness (S05). Cross-client hardening (Codex) remains deferred per D014.
-
 ## Validated
 
 ### R001 — agentd daemon can start, parse config.yaml, and listen on ARI Unix socket
@@ -303,6 +290,17 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: Fully realized in M004: room/create, room/status, room/delete ARI handlers (ownership); room/send with target resolution and sender attribution (routing); deliverPrompt helper with auto-start semantics (delivery). Proven by TestARIMultiAgentRoundTrip — 3-agent bidirectional messaging end-to-end.
 - Notes: This supersedes vague Room ambition with a concrete future capability target.
 
+### R044 — Additional restart, replay, cleanup, and cross-client hardening that does not fit the primary convergence milestone remains planned follow-on work.
+- Class: quality-attribute
+- Status: validated
+- Description: Additional restart, replay, cleanup, and cross-client hardening that does not fit the primary convergence milestone remains planned follow-on work.
+- Why it matters: M002 should converge the contract first, not absorb all remaining hardening work.
+- Source: inferred
+- Primary owning slice: M007/S02
+- Supporting slices: M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04
+- Validation: S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real shim binary.
+- Notes: Covered by M007: RestartPolicy+tryReload (S02), shim state authority (S02), CLI hardening (S04), integration test completeness (S05). Cross-client hardening (Codex) remains deferred per D014.
+
 ### R047 — agentd exposes agent/* ARI methods as external surface; session/* is internal only. Agent identified by room+name unique key.
 - Class: core-capability
 - Status: validated
@@ -323,6 +321,7 @@ This file is the explicit capability and coverage contract for the project.
 - Primary owning slice: M005/S04
 - Supporting slices: M005/S03
 - Validation: TestARIAgentCreateAsync (PASS): create returns creating → background goroutine → transitions to created. TestARIAgentCreateAsyncErrorState (PASS): invalid runtimeClass → error state with non-empty ErrorMessage. Both tests use real mockagent shim.
+- Notes: M007/S01 established the foundation: Agent bbolt key = agents/{workspace}/{name}, AgentManager API uses (workspace,name), pkg/ari/types.go uses Workspace+Name fields in all agent params. Full ARI handler implementation in S03.
 
 ### R049 — Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
 - Class: core-capability
@@ -538,7 +537,7 @@ This file is the explicit capability and coverage contract for the project.
 | R041 | differentiator | validated | M003-c761yf (provisional) | none | Fully realized in M004: room/create, room/status, room/delete ARI handlers (ownership); room/send with target resolution and sender attribution (routing); deliverPrompt helper with auto-start semantics (delivery). Proven by TestARIMultiAgentRoundTrip — 3-agent bidirectional messaging end-to-end. |
 | R042 | constraint | deferred | none | none | unmapped |
 | R043 | constraint | deferred | none | none | unmapped |
-| R044 | quality-attribute | active | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | mapped |
+| R044 | quality-attribute | validated | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real shim binary. |
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
 | R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | 10 agent/* dispatch cases in pkg/ari/server.go; TestARISessionMethodsRemoved confirms all 8 session/* methods return MethodNotFound; 64+ pkg/ari tests pass; grep count=25 for agent/* methods in ari-spec.md |
@@ -550,7 +549,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 1
-- Mapped to slices: 1
-- Validated: 32 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R047, R048, R049, R050, R051, R052)
+- Active requirements: 0
+- Mapped to slices: 0
+- Validated: 33 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052)
 - Unmapped active requirements: 0

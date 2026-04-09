@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -459,4 +460,228 @@ func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
 	agent, err := store.GetAgent(ctx, "default", "error-agent")
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusError, agent.Status.State)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// RestartPolicy: tryReload / alwaysNew tests
+// ────────────────────────────────────────────────────────────────────────────
+
+// TestRecovery_TryReload_AttemptsSessionLoad verifies that an agent with
+// RestartPolicy=tryReload calls session/load on the shim with the sessionId
+// read from the persisted state.json.
+func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	srv, socketPath := newMockShimServer(t)
+
+	// Write state.json with a known session ID.
+	stateDir := t.TempDir()
+	const knownSessionID = "reload-session-abc123"
+	require.NoError(t, spec.WriteState(stateDir, spec.State{
+		OarVersion: "0.1.0",
+		ID:         knownSessionID,
+		Status:     spec.StatusIdle,
+		Bundle:     "/tmp/test-bundle",
+	}))
+
+	agent := &meta.Agent{
+		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-agent"},
+		Spec: meta.AgentSpec{
+			RuntimeClass:  "default",
+			RestartPolicy: meta.RestartPolicyTryReload,
+		},
+		Status: meta.AgentStatus{
+			State:          spec.StatusIdle,
+			ShimSocketPath: socketPath,
+			ShimStateDir:   stateDir,
+			ShimPID:        99999,
+		},
+	}
+	require.NoError(t, store.CreateAgent(ctx, agent))
+	key := agentKey("default", "tryreload-agent")
+
+	require.NoError(t, pm.RecoverSessions(ctx))
+
+	// Verify session/load was called on the shim with the correct sessionId.
+	srv.mu.Lock()
+	loadCalled := srv.loadCalled
+	loadCalledWith := srv.loadCalledWith
+	srv.mu.Unlock()
+
+	assert.True(t, loadCalled, "session/load should have been called for tryReload policy")
+	assert.Equal(t, knownSessionID, loadCalledWith, "session/load should carry the persisted sessionId")
+
+	// Agent must be in the processes map.
+	assert.NotNil(t, pm.GetProcess(key), "agent should be recovered")
+
+	// Cleanup.
+	shimProc := pm.GetProcess(key)
+	srv.close()
+	if shimProc != nil {
+		select {
+		case <-shimProc.Done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for process cleanup")
+		}
+	}
+}
+
+// TestRecovery_TryReload_FallsBackOnLoadFailure verifies that when the shim
+// returns an error for session/load, recoverAgent still succeeds and the agent
+// is placed in the processes map (graceful fallback).
+func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	srv, socketPath := newMockShimServer(t)
+
+	// Inject error for session/load.
+	srv.mu.Lock()
+	srv.loadSessionErr = fmt.Errorf("runtime does not support session/load")
+	srv.mu.Unlock()
+
+	stateDir := t.TempDir()
+	require.NoError(t, spec.WriteState(stateDir, spec.State{
+		OarVersion: "0.1.0",
+		ID:         "some-session",
+		Status:     spec.StatusIdle,
+		Bundle:     "/tmp/test-bundle",
+	}))
+
+	agent := &meta.Agent{
+		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-fallback"},
+		Spec: meta.AgentSpec{
+			RuntimeClass:  "default",
+			RestartPolicy: meta.RestartPolicyTryReload,
+		},
+		Status: meta.AgentStatus{
+			State:          spec.StatusIdle,
+			ShimSocketPath: socketPath,
+			ShimStateDir:   stateDir,
+			ShimPID:        99999,
+		},
+	}
+	require.NoError(t, store.CreateAgent(ctx, agent))
+	key := agentKey("default", "tryreload-fallback")
+
+	// RecoverSessions must succeed even though session/load returned an error.
+	require.NoError(t, pm.RecoverSessions(ctx))
+
+	// Agent must still be in the processes map.
+	shimProc := pm.GetProcess(key)
+	assert.NotNil(t, shimProc, "agent should be recovered even if session/load fails")
+
+	// Cleanup.
+	srv.close()
+	if shimProc != nil {
+		select {
+		case <-shimProc.Done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for process cleanup")
+		}
+	}
+}
+
+// TestRecovery_TryReload_FallsBackOnMissingStateFile verifies that when
+// ShimStateDir points to a nonexistent path, recoverAgent proceeds without
+// panicking and the agent is placed in the processes map.
+func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	srv, socketPath := newMockShimServer(t)
+
+	agent := &meta.Agent{
+		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-nostate"},
+		Spec: meta.AgentSpec{
+			RuntimeClass:  "default",
+			RestartPolicy: meta.RestartPolicyTryReload,
+		},
+		Status: meta.AgentStatus{
+			State:          spec.StatusIdle,
+			ShimSocketPath: socketPath,
+			ShimStateDir:   "/tmp/nonexistent-state-dir-tryreload-test",
+			ShimPID:        99999,
+		},
+	}
+	require.NoError(t, store.CreateAgent(ctx, agent))
+	key := agentKey("default", "tryreload-nostate")
+
+	// Must not panic; must succeed.
+	require.NoError(t, pm.RecoverSessions(ctx))
+
+	// Agent should be in processes map.
+	shimProc := pm.GetProcess(key)
+	assert.NotNil(t, shimProc, "agent should be recovered even if state file is missing")
+
+	// Cleanup.
+	srv.close()
+	if shimProc != nil {
+		select {
+		case <-shimProc.Done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for process cleanup")
+		}
+	}
+}
+
+// TestRecovery_AlwaysNew_SkipsSessionLoad verifies that an agent with
+// RestartPolicy="" (default/alwaysNew) does NOT call session/load on the shim.
+func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
+	pm, store := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	srv, socketPath := newMockShimServer(t)
+
+	// Write a state.json so there's something to load — should be ignored.
+	stateDir := t.TempDir()
+	require.NoError(t, spec.WriteState(stateDir, spec.State{
+		OarVersion: "0.1.0",
+		ID:         "existing-session",
+		Status:     spec.StatusIdle,
+		Bundle:     "/tmp/test-bundle",
+	}))
+
+	agent := &meta.Agent{
+		Metadata: meta.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
+		Spec: meta.AgentSpec{
+			RuntimeClass:  "default",
+			RestartPolicy: "", // empty = alwaysNew (default)
+		},
+		Status: meta.AgentStatus{
+			State:          spec.StatusIdle,
+			ShimSocketPath: socketPath,
+			ShimStateDir:   stateDir,
+			ShimPID:        99999,
+		},
+	}
+	require.NoError(t, store.CreateAgent(ctx, agent))
+	key := agentKey("default", "alwaysnew-agent")
+
+	require.NoError(t, pm.RecoverSessions(ctx))
+
+	// session/load must NOT have been called.
+	srv.mu.Lock()
+	loadCalled := srv.loadCalled
+	srv.mu.Unlock()
+	assert.False(t, loadCalled, "session/load should not be called for alwaysNew/empty policy")
+
+	// Agent should still be recovered.
+	shimProc := pm.GetProcess(key)
+	assert.NotNil(t, shimProc, "agent should be recovered with alwaysNew policy")
+
+	// Cleanup.
+	srv.close()
+	if shimProc != nil {
+		select {
+		case <-shimProc.Done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for process cleanup")
+		}
+	}
 }

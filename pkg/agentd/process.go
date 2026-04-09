@@ -107,6 +107,64 @@ func NewProcessManager(registry *RuntimeClassRegistry, agents *AgentManager, sto
 	}
 }
 
+// buildNotifHandler returns a NotificationHandler that:
+//   - routes session/update events to shimProc.Events (async, non-blocking), and
+//   - handles runtime/stateChange notifications by updating DB agent state (D088).
+//
+// This is the single authoritative handler used by both Start() and recoverAgent().
+// All DB state transitions after bootstrap must flow through here, never via a
+// direct UpdateStatus call in the caller.
+func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *ShimProcess) NotificationHandler {
+	key := agentKey(workspace, name)
+	logger := m.logger.With("agent_key", key)
+	return func(ctx context.Context, method string, params json.RawMessage) {
+		switch method {
+		case events.MethodSessionUpdate:
+			p, err := ParseSessionUpdate(params)
+			if err != nil {
+				logger.Warn("malformed session/update notification dropped", "error", err)
+				return
+			}
+			ev, ok := p.Event.Payload.(events.Event)
+			if !ok {
+				logger.Warn("session/update payload is not an events.Event — dropped",
+					"type", p.Event.Type)
+				return
+			}
+			select {
+			case shimProc.Events <- ev:
+			default:
+				logger.Warn("event channel full, dropping event", "seq", p.Seq)
+			}
+
+		case events.MethodRuntimeStateChange:
+			p, err := ParseRuntimeStateChange(params)
+			if err != nil {
+				logger.Warn("stateChange: malformed notification dropped", "error", err)
+				return
+			}
+			prevStatus := p.PreviousStatus
+			newStatus := p.Status
+			logger.Info("stateChange: updating DB state",
+				"agent_key", key,
+				"prev", prevStatus,
+				"new", newStatus)
+			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentStatus{
+				State:          spec.Status(newStatus),
+				ShimSocketPath: shimProc.SocketPath,
+				ShimStateDir:   shimProc.StateDir,
+				ShimPID:        shimProc.PID,
+			}); err != nil {
+				logger.Warn("stateChange: failed to update DB state",
+					"agent_key", key,
+					"error", err)
+			}
+		}
+	}
+}
+
 // Start creates and starts a shim process for the given agent.
 // The full workflow:
 //  1. Get Agent from AgentManager
@@ -115,9 +173,12 @@ func NewProcessManager(registry *RuntimeClassRegistry, agents *AgentManager, sto
 //  4. Create bundle directory with workspace symlink
 //  5. Fork agent-shim process
 //  6. Wait for socket to appear
-//  7. Connect ShimClient
+//  7. Connect ShimClient with the unified notification handler (D088)
 //  8. Subscribe to events
-//  9. Transition agent status to "running"
+//
+// After Subscribe, the shim emits runtime/stateChange creating→idle once the
+// ACP handshake completes; the notification handler updates DB state
+// asynchronously per D088 — callers must not assume StatusRunning immediately.
 //
 // Returns ShimProcess on success, or error on failure.
 // On failure, any partial state (bundle dir, process) is cleaned up.
@@ -175,32 +236,9 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		return nil, fmt.Errorf("process: wait for socket: %w", err)
 	}
 
-	// 7. Connect ShimClient.
-	client, err := DialWithHandler(ctx, socketPath, func(ctx context.Context, method string, params json.RawMessage) {
-		// Dispatch session/update events to the ShimProcess.Events channel.
-		// Non-blocking send to avoid blocking the RPC notification path.
-		if method != events.MethodSessionUpdate {
-			return
-		}
-		p, err := ParseSessionUpdate(params)
-		if err != nil {
-			m.logger.Warn("malformed session/update notification dropped",
-				"agent_key", key, "error", err)
-			return
-		}
-		ev, ok := p.Event.Payload.(events.Event)
-		if !ok {
-			m.logger.Warn("session/update payload is not an events.Event — dropped",
-				"agent_key", key, "type", p.Event.Type)
-			return
-		}
-		select {
-		case shimProc.Events <- ev:
-		default:
-			m.logger.Warn("event channel full, dropping event",
-				"agent_key", key, "seq", p.Seq)
-		}
-	})
+	// 7. Connect ShimClient with the unified notification handler.
+	// Routes session/update → shimProc.Events and runtime/stateChange → DB (D088).
+	client, err := DialWithHandler(ctx, socketPath, m.buildNotifHandler(workspace, name, shimProc))
 	if err != nil {
 		// Kill shim process and clean up.
 		_ = m.killShim(shimProc)
@@ -234,20 +272,6 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		_ = m.killShim(shimProc)
 		_ = os.RemoveAll(bundlePath)
 		return nil, fmt.Errorf("process: subscribe events: agent=%s: %w", key, err)
-	}
-
-	// 9. Transition agent status to "running".
-	if err := m.agents.UpdateStatus(ctx, workspace, name, meta.AgentStatus{
-		State:          spec.StatusRunning,
-		ShimSocketPath: socketPath,
-		ShimStateDir:   stateDir,
-		ShimPID:        shimProc.PID,
-	}); err != nil {
-		// Close client, kill shim, clean up.
-		_ = client.Close()
-		_ = m.killShim(shimProc)
-		_ = os.RemoveAll(bundlePath)
-		return nil, fmt.Errorf("process: transition agent status: %w", err)
 	}
 
 	// Store the ShimProcess.

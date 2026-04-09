@@ -650,3 +650,17 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** StatusStopped means "ran and completed". StatusError means "something went wrong and it is not recoverable without operator intervention". An agent that never bootstrapped is in the error category.
 - **Reference:** M007/S01/T03 — pkg/agentd/recovery.go creating-cleanup pass.
 - **When:** M007/S01
+
+## K053 — buildNotifHandler: extract shared notification handler to avoid duplicate Start()/recoverAgent() closures
+
+- **Pattern:** Both `Start()` and `recoverAgent()` in `process.go` need identical notification dispatch logic (session/update → shimProc.Events, runtime/stateChange → DB state update). Instead of duplicating the closure inline, extract a `buildNotifHandler(workspace, name string, shimProc *ShimProcess) func(method string, params json.RawMessage)` method on ProcessManager.
+- **Lesson:** The extracted method is package-internal (lowercase receiver call), making it testable directly without going through the full Start() pipeline. Tests can build the handler standalone and inject notifications directly via mockShimServer.
+- **Reference:** M007/S02/T01 — pkg/agentd/process.go buildNotifHandler.
+- **When:** M007/S02
+
+## K054 — tryReload block must come AFTER atomic Subscribe, not before
+
+- **Pattern:** In `recoverAgent()`, the `session/load` call for tryReload is placed AFTER the atomic Subscribe call (which establishes the live stateChange notification subscription). The ordering matters: session/load signals the shim to restore conversation context, and the shim may emit a stateChange notification immediately in response. If Subscribe hasn't fired yet, that notification is missed.
+- **Lesson:** The correct order is: Status check → reconcile DB → Subscribe (atomic backfill + live sub) → tryReload (if applicable). Placing tryReload before Subscribe risks losing the stateChange notification that follows it.
+- **Reference:** M007/S02/T02 — pkg/agentd/recovery.go recoverAgent().
+- **When:** M007/S02

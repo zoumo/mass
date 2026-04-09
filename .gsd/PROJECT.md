@@ -10,7 +10,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-M007 in progress — platform terminal state refactor. **S01 complete.** Storage + model foundation is done: bbolt replaces SQLite, spec.Status is the sole state enum, Agent identity is (workspace, name), Session/Room/AgentState/SessionState concepts are fully deleted, `go build ./...` is green. Next: S02 (shim write authority + RestartPolicy).
+M007 in progress — platform terminal state refactor. **S01 and S02 complete.** Storage + model foundation done (S01); shim write authority boundary enforced and RestartPolicy tryReload/alwaysNew implemented (S02). Next: S03 (ARI Surface Rewrite — workspace/create → agent/create → agent/prompt lifecycle over Unix socket).
 
 ### Completed Milestones
 
@@ -29,6 +29,8 @@ M007 in progress — platform terminal state refactor. **S01 complete.** Storage
 - `agentd` manages agents with **(workspace, name)** identity (no UUID), async lifecycle, fail-closed recovery
 - **bbolt metadata store**: v1/workspaces/{name} + v1/agents/{workspace}/{name} bucket layout; full CRUD for Agent + Workspace; 37 unit tests
 - **spec.Status as sole state enum**: creating/idle/running/stopped/error; meta.AgentState and meta.SessionState deleted; pkg/runtime writes "idle" to state.json
+- **D088 shim write authority boundary**: post-bootstrap state transitions flow exclusively through `runtime/stateChange` notifications; direct `UpdateStatus(StatusRunning)` removed from `Start()`; `buildNotifHandler` shared method handles both `session/update` and `runtime/stateChange`
+- **D089 RestartPolicy tryReload/alwaysNew**: `tryReload` reads ACP sessionId from state.json and calls `session/load` on the shim, falling back silently on any failure; `alwaysNew` (default) skips session/load entirely; constants in `pkg/meta/models.go`
 - **Agent-centric ARI surface**: pkg/ari/types.go with new Workspace/Agent types; server.go is a compilable stub (full handler rewrite in S03)
 - **Turn-aware event ordering**: TurnId/StreamSeq/Phase on session/update envelopes
 - **Workspace preparation** for Git/EmptyDir/Local sources with hooks and reference tracking
@@ -40,8 +42,8 @@ M007 in progress — platform terminal state refactor. **S01 complete.** Storage
 | Slice | Title | Status |
 |-------|-------|--------|
 | S01 | Storage + Model Foundation | ✅ complete |
-| S02 | agentd Core Adaptation | ⬜ next |
-| S03 | ARI Surface Rewrite | ⬜ |
+| S02 | agentd Core Adaptation | ✅ complete |
+| S03 | ARI Surface Rewrite | ⬜ next |
 | S04 | CLI + workspace-mcp-server + Design Docs | ⬜ |
 | S05 | Integration Tests + Final Verification | ⬜ |
 
@@ -54,6 +56,10 @@ M007 in progress — platform terminal state refactor. **S01 complete.** Storage
 - `TestProcessManagerStart` in `pkg/agentd` fails when `bin/agent-shim` socket doesn't start (requires live mock agent); confirmed pre-existing since before M007/S01.
 - Integration tests in `tests/integration/` pre-date M006; will be rewritten for new (workspace,name) identity in M007/S05.
 
+### Important S03 Note
+
+`Start()` no longer writes `StatusRunning` synchronously. The ARI `agent/create` handler in S03 must **poll DB for StatusIdle** after calling `Start()`, not assume synchronous state assignment.
+
 ## Milestone Sequence
 
 - [x] M001-tvc4z0: Core runtime foundation — agent-shim, agentd, ARI socket, workspace, metadata store, ACP handshake
@@ -65,7 +71,7 @@ M007 in progress — platform terminal state refactor. **S01 complete.** Storage
 - [x] M006: Fix golangci-lint v2 issues — 202→0 issues across 11 linter categories
 - [ ] M007: Platform terminal state refactor — bbolt storage, unified spec.Status, (workspace,name) identity, shim write authority, Room/Session elimination
   - [x] S01: Storage + Model Foundation — bbolt store, new Agent+Workspace models, spec.StatusIdle, green build
-  - [ ] S02: agentd Core Adaptation — shim write authority, RestartPolicy, tryReload/alwaysNew
-  - [ ] S03: ARI Surface Rewrite — workspace/create→agent/create→agent/prompt lifecycle
+  - [x] S02: agentd Core Adaptation — shim write authority (D088), RestartPolicy tryReload/alwaysNew (D089), 10 unit tests
+  - [ ] S03: ARI Surface Rewrite — workspace/create→agent/create→agent/prompt lifecycle (depends S02 ✅)
   - [ ] S04: CLI + workspace-mcp-server + Design Docs
   - [ ] S05: Integration Tests + Final Verification

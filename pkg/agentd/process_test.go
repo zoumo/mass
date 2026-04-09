@@ -140,13 +140,21 @@ func TestProcessManagerStart(t *testing.T) {
 		t.Fatalf("ProcessManager.Start: %v", err)
 	}
 
-	// Verify agent status is "running".
-	updatedAgent, err := agentMgr.Get(ctx, agentWorkspace, agentName)
-	if err != nil {
-		t.Fatalf("Get agent after Start: %v", err)
+	// Verify agent status transitions to idle/running via runtime/stateChange
+	// notification (D088 — direct StatusRunning write removed from Start).
+	// Poll until the shim emits its first stateChange notification.
+	var updatedAgent *meta.Agent
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		updatedAgent, err = agentMgr.Get(ctx, agentWorkspace, agentName)
+		if err != nil {
+			t.Fatalf("Get agent after Start: %v", err)
+		}
+		if updatedAgent.Status.State != spec.StatusCreating {
+			break
+		}
 	}
-	if updatedAgent.Status.State != spec.StatusRunning {
-		t.Errorf("expected agent state 'running', got '%s'", updatedAgent.Status.State)
+	if updatedAgent.Status.State != spec.StatusIdle && updatedAgent.Status.State != spec.StatusRunning {
+		t.Errorf("expected agent state 'idle' or 'running' after stateChange notification, got '%s'", updatedAgent.Status.State)
 	}
 
 	// Verify PID > 0.

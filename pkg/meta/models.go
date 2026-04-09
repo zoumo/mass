@@ -33,13 +33,25 @@ type ObjectMeta struct {
 // Agent
 // ────────────────────────────────────────────────────────────────────────────
 
+const (
+	// RestartPolicyTryReload attempts ACP session/load to restore conversation
+	// history from the prior session when the agent is recovered after a
+	// daemon restart.
+	RestartPolicyTryReload = "tryReload"
+
+	// RestartPolicyAlwaysNew (default) always starts a fresh ACP session on
+	// recovery, discarding prior conversation history.
+	RestartPolicyAlwaysNew = "alwaysNew"
+)
+
 // AgentSpec describes the desired configuration of an agent.
 type AgentSpec struct {
 	// RuntimeClass is the runtime class for this agent (e.g., "default", "cuda").
 	RuntimeClass string `json:"runtimeClass"`
 
-	// RestartPolicy controls whether the agent is restarted after stopping.
-	// Values: "never" (default), "on-failure", "always".
+	// RestartPolicy controls session continuation on agent restart.
+	// Values: "tryReload" — attempt ACP session/load to restore conversation history;
+	//         "alwaysNew" (default) — always start a fresh ACP session.
 	RestartPolicy string `json:"restartPolicy,omitempty"`
 
 	// Description is a human-readable description of the agent.

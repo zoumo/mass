@@ -20,6 +20,7 @@ import (
 // Methods exposed:
 //   session/prompt    — send a prompt and wait for the turn to complete
 //   session/cancel    — cancel the current agent turn
+//   session/load      — restore a prior ACP session (tryReload restart policy)
 //   session/subscribe — register for live session/update and runtime/stateChange notifications
 //   runtime/status    — get current runtime state plus recovery.lastSeq metadata
 //   runtime/history   — get replayable event history from a given sequence number
@@ -109,6 +110,21 @@ func (c *ShimClient) Prompt(ctx context.Context, text string) (SessionPromptResu
 func (c *ShimClient) Cancel(ctx context.Context) error {
 	if err := c.call(ctx, "session/cancel", nil, nil); err != nil {
 		return fmt.Errorf("shim_client: session/cancel: session=%s: %w", c.socketPath, err)
+	}
+	return nil
+}
+
+// SessionLoadParams is the JSON body for the "session/load" RPC method.
+type SessionLoadParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// Load sends session/load to the shim with the given ACP sessionId.
+// Returns nil on success; returns error if the shim rejects the call (e.g.
+// runtime does not support session/load) so the caller can fall back.
+func (c *ShimClient) Load(ctx context.Context, sessionID string) error {
+	if err := c.call(ctx, "session/load", SessionLoadParams{SessionID: sessionID}, nil); err != nil {
+		return fmt.Errorf("shim_client: session/load: session=%s: %w", c.socketPath, err)
 	}
 	return nil
 }

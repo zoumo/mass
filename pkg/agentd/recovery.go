@@ -5,7 +5,6 @@ package agentd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -198,28 +197,9 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *meta.Agent) (s
 		// Cmd is nil for recovered agents — we didn't fork the process.
 	}
 
-	// Connect to the shim socket.
-	client, err := DialWithHandler(ctx, agent.Status.ShimSocketPath, func(ctx context.Context, method string, params json.RawMessage) {
-		if method != events.MethodSessionUpdate {
-			return
-		}
-		p, err := ParseSessionUpdate(params)
-		if err != nil {
-			logger.Warn("malformed session/update notification dropped", "error", err)
-			return
-		}
-		ev, ok := p.Event.Payload.(events.Event)
-		if !ok {
-			logger.Warn("session/update payload is not an events.Event — dropped",
-				"type", p.Event.Type)
-			return
-		}
-		select {
-		case shimProc.Events <- ev:
-		default:
-			logger.Warn("event channel full, dropping event", "seq", p.Seq)
-		}
-	})
+	// Connect to the shim socket with the unified notification handler.
+	// Routes session/update → shimProc.Events and runtime/stateChange → DB (D088).
+	client, err := DialWithHandler(ctx, agent.Status.ShimSocketPath, m.buildNotifHandler(ws, name, shimProc))
 	if err != nil {
 		return spec.StatusStopped, fmt.Errorf("connect to shim socket %s: %w", agent.Status.ShimSocketPath, err)
 	}
@@ -282,6 +262,25 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *meta.Agent) (s
 		"backfill_entries", len(subResult.Entries),
 		"next_seq", subResult.NextSeq)
 
+	// Apply RestartPolicy: tryReload attempts ACP session/load to restore
+	// conversation history. alwaysNew (default) starts fresh.
+	if agent.Spec.RestartPolicy == meta.RestartPolicyTryReload {
+		sessionID, readErr := m.readStateSessionID(agent.Status.ShimStateDir)
+		if readErr != nil {
+			logger.Info("tryReload: could not read sessionId from state file, skipping",
+				"error", readErr)
+		} else if sessionID != "" {
+			if loadErr := client.Load(ctx, sessionID); loadErr != nil {
+				logger.Info("tryReload: session/load failed, continuing",
+					"session_id", sessionID, "error", loadErr)
+			} else {
+				logger.Info("tryReload: session/load succeeded", "session_id", sessionID)
+			}
+		} else {
+			logger.Info("tryReload: no sessionId in state file, skipping")
+		}
+	}
+
 	// Register in processes map.
 	m.mu.Lock()
 	m.processes[key] = shimProc
@@ -291,6 +290,20 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *meta.Agent) (s
 	go m.watchRecoveredProcess(ws, name, shimProc)
 
 	return status.State.Status, nil
+}
+
+// readStateSessionID reads the ACP session ID from the state.json in stateDir.
+// Returns ("", error) if the file is missing or unreadable, ("", nil) if the
+// file exists but ID is empty (e.g. shim wrote state before ACP handshake).
+func (m *ProcessManager) readStateSessionID(stateDir string) (string, error) {
+	if stateDir == "" {
+		return "", fmt.Errorf("no state dir")
+	}
+	state, err := spec.ReadState(stateDir)
+	if err != nil {
+		return "", err
+	}
+	return state.ID, nil
 }
 
 // watchRecoveredProcess watches a recovered shim that we didn't fork.

@@ -37,6 +37,11 @@ type mockShimServer struct {
 	historyEntries    []events.Envelope
 	subscribed        bool
 	liveNotifications []shimNotif // queued to emit after subscribe
+
+	// session/load tracking
+	loadCalled     bool
+	loadCalledWith string
+	loadSessionErr error // nil = success; non-nil = return RPC error
 }
 
 type shimNotif struct {
@@ -129,6 +134,8 @@ func (h *mockShimHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *
 		h.handlePrompt(ctx, conn, req)
 	case "session/cancel":
 		h.handleCancel(ctx, conn, req)
+	case "session/load":
+		h.handleLoad(ctx, conn, req)
 	case "session/subscribe":
 		h.handleSubscribe(ctx, conn, req)
 	case "runtime/status":
@@ -153,6 +160,28 @@ func (h *mockShimHandler) handlePrompt(ctx context.Context, conn *jsonrpc2.Conn,
 }
 
 func (h *mockShimHandler) handleCancel(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	_ = conn.Reply(ctx, req.ID, nil)
+}
+
+func (h *mockShimHandler) handleLoad(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var params SessionLoadParams
+	if req.Params != nil {
+		_ = json.Unmarshal(*req.Params, &params)
+	}
+
+	h.srv.mu.Lock()
+	h.srv.loadCalled = true
+	h.srv.loadCalledWith = params.SessionID
+	sessionErr := h.srv.loadSessionErr
+	h.srv.mu.Unlock()
+
+	if sessionErr != nil {
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+			Code:    jsonrpc2.CodeInternalError,
+			Message: sessionErr.Error(),
+		})
+		return
+	}
 	_ = conn.Reply(ctx, req.ID, nil)
 }
 
@@ -736,4 +765,50 @@ func TestShimClientDialAfterServerClose(t *testing.T) {
 	_, err := Dial(context.Background(), socketPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "shim_client:")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// session/load tests
+// ────────────────────────────────────────────────────────────────────────────
+
+// TestShimClient_Load_Success verifies that Load sends session/load with the
+// correct sessionId and returns nil on success.
+func TestShimClient_Load_Success(t *testing.T) {
+	srv, socketPath := newMockShimServer(t)
+	defer srv.close()
+
+	c, err := Dial(context.Background(), socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	const wantSessionID = "reload-session-abc123"
+	err = c.Load(context.Background(), wantSessionID)
+	require.NoError(t, err)
+
+	srv.mu.Lock()
+	called := srv.loadCalled
+	calledWith := srv.loadCalledWith
+	srv.mu.Unlock()
+
+	assert.True(t, called, "shim should have received session/load")
+	assert.Equal(t, wantSessionID, calledWith, "session/load should carry the correct sessionId")
+}
+
+// TestShimClient_Load_RpcError verifies that Load propagates RPC errors from
+// the shim so the caller can fall back (e.g. tryReload policy).
+func TestShimClient_Load_RpcError(t *testing.T) {
+	srv, socketPath := newMockShimServer(t)
+	defer srv.close()
+
+	srv.mu.Lock()
+	srv.loadSessionErr = fmt.Errorf("runtime does not support session/load")
+	srv.mu.Unlock()
+
+	c, err := Dial(context.Background(), socketPath)
+	require.NoError(t, err)
+	defer c.Close()
+
+	err = c.Load(context.Background(), "any-session-id")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session/load")
 }
