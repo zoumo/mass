@@ -379,13 +379,12 @@ type RoomSendParams struct {
 }
 
 // RoomSendResult is the response result for room/send method.
-// It indicates whether the message was delivered.
+// It indicates whether the message was accepted for async delivery.
 type RoomSendResult struct {
-	// Delivered is true when the prompt was successfully delivered.
+	// Delivered is true when the prompt was successfully dispatched to the target agent.
+	// The target agent processes the message asynchronously; this field reflects
+	// dispatch success, not turn completion.
 	Delivered bool `json:"delivered"`
-
-	// StopReason is the reason the target agent stopped processing.
-	StopReason string `json:"stopReason,omitempty"`
 }
 
 // RoomDeleteParams is the request params for room/delete method.
@@ -445,12 +444,13 @@ type AgentPromptParams struct {
 }
 
 // AgentPromptResult is the response result for agent/prompt method.
-// It indicates why the prompt processing stopped.
+// The prompt is dispatched asynchronously; the result confirms acceptance.
 type AgentPromptResult struct {
-	// StopReason is the reason the agent stopped processing.
-	// Values: "end_turn" (normal completion), "cancelled" (user cancelled),
-	// "tool_use" (agent needs tool execution).
-	StopReason string `json:"stopReason"`
+	// Accepted is true when the prompt was successfully dispatched.
+	// The agent processes the prompt in the background; poll agent/status
+	// until state transitions from "running" to "created" (or "error")
+	// to detect turn completion.
+	Accepted bool `json:"accepted"`
 }
 
 // AgentCancelParams is the request params for agent/cancel method.

@@ -560,6 +560,67 @@ func (h *connHandler) deliverPrompt(ctx context.Context, sessionID, text string)
 	return result.StopReason, nil
 }
 
+// deliverPromptAsync dispatches a prompt to the shim and returns immediately.
+// State transitions (running -> created/error) happen in a background goroutine.
+// The caller must have already set the agent state to "running" before calling this.
+// A 120 s hard timeout ensures stuck goroutines eventually resolve.
+func (h *connHandler) deliverPromptAsync(agentID, sessionID, text string) error {
+	// Perform session existence check and auto-start synchronously so that
+	// dispatch errors (session not found, connect failure) are surfaced to the
+	// caller before we return.
+	checkCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+	defer cancel()
+
+	session, err := h.srv.sessions.Get(checkCtx, sessionID)
+	if err != nil {
+		return fmt.Errorf("get session failed: %w", err)
+	}
+	if session == nil {
+		return fmt.Errorf("session %q not found", sessionID)
+	}
+
+	if session.State == meta.SessionStateCreated {
+		startCtx, startCancel := context.WithTimeout(checkCtx, 30*time.Second)
+		_, err := h.srv.processes.Start(startCtx, sessionID)
+		startCancel()
+		if err != nil {
+			return fmt.Errorf("start session failed: %w", err)
+		}
+	}
+
+	connectCtx, connectCancel := context.WithTimeout(checkCtx, 5*time.Second)
+	client, err := h.srv.processes.Connect(connectCtx, sessionID)
+	connectCancel()
+	if err != nil {
+		if strings.Contains(err.Error(), "not running") {
+			return fmt.Errorf("session %q not running: %w", sessionID, err)
+		}
+		return fmt.Errorf("connect to session failed: %w", err)
+	}
+
+	// Launch the actual prompt call in a background goroutine.
+	go func() {
+		promptCtx, promptCancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer promptCancel()
+
+		_, err := client.Prompt(promptCtx, text)
+		if err != nil {
+			log.Printf("ari: deliverPromptAsync: agent %s session %s turn failed: %v", agentID, sessionID, err)
+			if updateErr := h.srv.agents.UpdateState(context.Background(), agentID, meta.AgentStateError, err.Error()); updateErr != nil {
+				log.Printf("ari: deliverPromptAsync: failed to set agent %s to error: %v", agentID, updateErr)
+			}
+			return
+		}
+
+		log.Printf("ari: deliverPromptAsync: agent %s session %s turn completed", agentID, sessionID)
+		if updateErr := h.srv.agents.UpdateState(context.Background(), agentID, meta.AgentStateCreated, ""); updateErr != nil {
+			log.Printf("ari: deliverPromptAsync: failed to set agent %s to created: %v", agentID, updateErr)
+		}
+	}()
+
+	return nil
+}
+
 // handleSessionPrompt sends a prompt to an agent session.
 // Workflow:
 //  1. Unmarshal SessionPromptParams
@@ -1097,8 +1158,19 @@ func (h *connHandler) handleAgentCreate(ctx context.Context, conn *jsonrpc2.Conn
 	}()
 }
 
-// handleAgentPrompt sends a prompt to an agent.
-// Finds the linked session, then delegates to deliverPrompt.
+// handleAgentPrompt dispatches a prompt to an agent asynchronously.
+//
+// The prompt is fired in a background goroutine; the RPC returns immediately
+// with {accepted: true} once the dispatch is confirmed. The agent state
+// machine follows the actor model:
+//
+//   created/idle  →  running  (on successful dispatch)
+//   running       →  created  (background goroutine, turn completed)
+//   running       →  error    (background goroutine, turn failed / timed out)
+//
+// Callers MUST poll agent/status to detect turn completion. The agent-shim
+// does not support prompt queuing: if the agent is already running, the call
+// is rejected with CodeInvalidParams. The caller must issue agent/cancel first.
 func (h *connHandler) handleAgentPrompt(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	var p AgentPromptParams
 	if err := unmarshalParams(req, &p); err != nil {
@@ -1146,6 +1218,14 @@ func (h *connHandler) handleAgentPrompt(ctx context.Context, conn *jsonrpc2.Conn
 		return
 	}
 
+	// Reject concurrent prompts — the shim has no prompt queuing.
+	// Caller must issue agent/cancel to interrupt the current turn first.
+	if agent.State == meta.AgentStateRunning {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			"agent is already processing a prompt; cancel it first via agent/cancel")
+		return
+	}
+
 	// Find linked session.
 	session, err := h.linkedSessionForAgent(ctx, p.AgentId)
 	if err != nil {
@@ -1159,14 +1239,14 @@ func (h *connHandler) handleAgentPrompt(ctx context.Context, conn *jsonrpc2.Conn
 		return
 	}
 
-	// Transition agent to "running" BEFORE the turn starts.
+	// Transition agent to "running" BEFORE dispatch.
 	if updateErr := h.srv.agents.UpdateState(ctx, p.AgentId, meta.AgentStateRunning, ""); updateErr != nil {
 		log.Printf("ari: agent/prompt: warning: failed to update agent %s state to running: %v", p.AgentId, updateErr)
 	}
 
-	stopReason, err := h.deliverPrompt(ctx, session.ID, p.Prompt)
-
-	if err != nil {
+	// Dispatch prompt asynchronously. If dispatch itself fails (session not
+	// reachable), revert agent state to error and surface the error to the caller.
+	if err := h.deliverPromptAsync(p.AgentId, session.ID, p.Prompt); err != nil {
 		if updateErr := h.srv.agents.UpdateState(ctx, p.AgentId, meta.AgentStateError, err.Error()); updateErr != nil {
 			log.Printf("ari: agent/prompt: warning: failed to update agent %s state to error: %v", p.AgentId, updateErr)
 		}
@@ -1179,12 +1259,9 @@ func (h *connHandler) handleAgentPrompt(ctx context.Context, conn *jsonrpc2.Conn
 		return
 	}
 
-	// Transition agent back to "created" (idle) after a successful turn.
-	if updateErr := h.srv.agents.UpdateState(ctx, p.AgentId, meta.AgentStateCreated, ""); updateErr != nil {
-		log.Printf("ari: agent/prompt: warning: failed to update agent %s state to created: %v", p.AgentId, updateErr)
-	}
-
-	_ = conn.Reply(ctx, req.ID, AgentPromptResult{StopReason: stopReason})
+	// Prompt accepted — return immediately. Background goroutine handles
+	// running -> created/error transition when the turn completes.
+	_ = conn.Reply(ctx, req.ID, AgentPromptResult{Accepted: true})
 }
 
 // handleAgentCancel cancels the current agent turn.
@@ -1776,23 +1853,30 @@ func (h *connHandler) handleRoomStatus(ctx context.Context, conn *jsonrpc2.Conn,
 	})
 }
 
-// handleRoomSend routes a message from one agent to another within a room.
+// handleRoomSend routes a message from one agent to another within a room (async).
+//
+// The message is dispatched to the target agent's session asynchronously; the
+// RPC returns {delivered: true} immediately once the dispatch is confirmed. The
+// target agent processes the message in the background (actor model).
+//
 // Workflow:
 //  1. Unmarshal RoomSendParams
 //  2. Validate required fields (room, targetAgent, message)
 //  3. Call store.GetRoom — return InvalidParams if room not found
 //  4. Call store.GetAgentByRoomName — return InvalidParams if agent not found
-//  5. Guard: agent.State == stopped or creating → return InvalidParams
-//  6. Call store.ListSessions(AgentID) — find linked session ID for deliverPrompt
-//  7. If no linked session: return InvalidParams "target agent X not found in room Y"
+//  5. Guard: agent.State == stopped/creating/error/running → return InvalidParams
+//  6. Call store.ListSessions(AgentID) — find linked session ID
+//  7. If no linked session: return InvalidParams
 //  8. Format attributed message: [room:<roomName> from:<senderAgent>] <message>
-//  9. Call deliverPrompt (auto-start, connect, prompt)
-// 10. Call agents.UpdateState → "running" on successful delivery
-// 11. Return RoomSendResult{Delivered: true, StopReason: result.StopReason}
+//  9. Transition agent to "running"
+// 10. Call deliverPromptAsync (fire-and-forget dispatch)
+// 11. If dispatch fails: revert agent to error, return InternalError
+// 12. Return RoomSendResult{Delivered: true} immediately
 //
 // Error handling:
 //   - Invalid params (missing fields, room/agent not found): returns InvalidParams
-//   - Prompt failure: returns InternalError "prompt failed: <err>"
+//   - Target agent already running: returns InvalidParams (shim has no prompt queue)
+//   - Dispatch failure: returns InternalError "prompt failed: <err>"
 //   - Store failure: returns InternalError
 func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	var p RoomSendParams
@@ -1857,7 +1941,15 @@ func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		return
 	}
 
-	// Find the linked session ID for deliverPrompt.
+	// Reject concurrent prompts — the shim has no prompt queuing.
+	// The sending agent should retry after the target's current turn completes.
+	if agent.State == meta.AgentStateRunning {
+		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("target agent %q is busy processing another prompt; cancel its current turn or try again later", p.TargetAgent))
+		return
+	}
+
+	// Find the linked session ID.
 	linkedSessions, err := h.srv.store.ListSessions(ctx, &meta.SessionFilter{AgentID: agent.ID})
 	if err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
@@ -1880,18 +1972,16 @@ func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, r
 	// Format attributed message.
 	attributedMsg := fmt.Sprintf("[room:%s from:%s] %s", p.Room, p.SenderAgent, p.Message)
 
-	log.Printf("ari: room/send delivering message from %s to %s in room %s (session %s)",
+	log.Printf("ari: room/send dispatching message from %s to %s in room %s (session %s)",
 		p.SenderAgent, p.TargetAgent, p.Room, targetSessionID)
 
-	// Transition agent to "running" BEFORE the turn starts.
+	// Transition agent to "running" BEFORE dispatch.
 	if updateErr := h.srv.agents.UpdateState(ctx, agent.ID, meta.AgentStateRunning, ""); updateErr != nil {
 		log.Printf("ari: room/send: failed to update agent %s state to running: %v", agent.ID, updateErr)
 	}
 
-	// Deliver prompt to target session.
-	stopReason, err := h.deliverPrompt(ctx, targetSessionID, attributedMsg)
-
-	if err != nil {
+	// Dispatch asynchronously. If dispatch fails, revert to error.
+	if err := h.deliverPromptAsync(agent.ID, targetSessionID, attributedMsg); err != nil {
 		if updateErr := h.srv.agents.UpdateState(ctx, agent.ID, meta.AgentStateError, err.Error()); updateErr != nil {
 			log.Printf("ari: room/send: failed to update agent %s state to error: %v", agent.ID, updateErr)
 		}
@@ -1900,15 +1990,9 @@ func (h *connHandler) handleRoomSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		return
 	}
 
-	// Transition agent back to "created" (idle) after a successful turn.
-	if updateErr := h.srv.agents.UpdateState(ctx, agent.ID, meta.AgentStateCreated, ""); updateErr != nil {
-		log.Printf("ari: room/send: failed to update agent %s state to created: %v", agent.ID, updateErr)
-	}
-
-	_ = conn.Reply(ctx, req.ID, RoomSendResult{
-		Delivered:  true,
-		StopReason: stopReason,
-	})
+	// Dispatch accepted — return immediately. Background goroutine handles
+	// running -> created/error transition when the target's turn completes.
+	_ = conn.Reply(ctx, req.ID, RoomSendResult{Delivered: true})
 }
 
 // handleRoomDelete deletes a room.

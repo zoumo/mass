@@ -30,8 +30,7 @@ type ariRoomSendParams struct {
 }
 
 type ariRoomSendResult struct {
-	Delivered  bool   `json:"delivered"`
-	StopReason string `json:"stopReason,omitempty"`
+	Delivered bool `json:"delivered"`
 }
 
 type ariRoomStatusParams struct {
@@ -167,15 +166,22 @@ func roomSendHandler(cfg config) mcp.ToolHandler {
 
 		var result ariRoomSendResult
 		if err := callARI(ctx, cfg.agentdSocket, "room/send", ariParams, &result); err != nil {
+			errMsg := err.Error()
+			var text string
+			if strings.Contains(errMsg, "is busy") || strings.Contains(errMsg, "cancel its current turn") {
+				text = fmt.Sprintf("Target agent %s is busy processing another prompt. Cancel its current turn or try again later.", input.TargetAgent)
+			} else {
+				text = fmt.Sprintf("room/send failed: %v", err)
+			}
 			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("room/send failed: %v", err)}},
+				Content: []mcp.Content{&mcp.TextContent{Text: text}},
 				IsError: true,
 			}, nil
 		}
 
 		var text string
 		if result.Delivered {
-			text = fmt.Sprintf("Message delivered to %s (stopReason: %s)", input.TargetAgent, result.StopReason)
+			text = fmt.Sprintf("Message delivered to %s. The target agent will process it asynchronously.", input.TargetAgent)
 		} else {
 			text = fmt.Sprintf("Message delivery failed to %s", input.TargetAgent)
 		}

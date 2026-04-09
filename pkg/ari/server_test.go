@@ -1032,13 +1032,17 @@ func TestARIAgentLifecycle(t *testing.T) {
 	require.Equal(t, "created", statusAfterCreate.Agent.State, "agent should be 'created' after bootstrap")
 
 	// Step 3: Prompt agent via agent/prompt (session already bootstrapped).
+	// agent/prompt is async — it returns immediately with Accepted=true.
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: agentId,
 		Prompt:  "hello mockagent",
 	}, &promptResult)
 	require.NoError(t, err, "agent/prompt should succeed")
-	require.NotEmpty(t, promptResult.StopReason, "stopReason should be non-empty")
+	require.True(t, promptResult.Accepted, "prompt should be accepted")
+
+	// Wait for the async turn to complete (running -> created).
+	pollAgentUntilIdle(ctx, t, client, agentId)
 
 	// Step 4: Check agent/status - verify state.
 	var statusResult ari.AgentStatusResult
@@ -1091,13 +1095,17 @@ func TestARIAgentPromptAutoStart(t *testing.T) {
 	require.Equal(t, "created", statusAfterCreate.Agent.State, "agent should be 'created' after bootstrap")
 
 	// Call agent/prompt — session is "created" (not yet started), so auto-start kicks in.
+	// agent/prompt is async: returns immediately with Accepted=true.
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
 		Prompt:  "auto-start test",
 	}, &promptResult)
 	require.NoError(t, err, "agent/prompt should succeed (auto-start)")
-	require.NotEmpty(t, promptResult.StopReason, "stopReason should be non-empty")
+	require.True(t, promptResult.Accepted, "prompt should be accepted for auto-start")
+
+	// Wait for the async turn to complete.
+	pollAgentUntilIdle(ctx, t, client, createResult.AgentId)
 
 	// Cleanup.
 	agentStop(ctx, t, client, createResult.AgentId)
@@ -1122,12 +1130,17 @@ func TestARIAgentPromptOnStopped(t *testing.T) {
 	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
 
 	// Prompt to start the agent (auto-starts session).
+	// Async: returns immediately, wait for turn completion before stopping.
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
 		Prompt:  "first prompt",
 	}, &promptResult)
 	require.NoError(t, err, "first agent/prompt should succeed")
+	require.True(t, promptResult.Accepted, "first prompt should be accepted")
+
+	// Wait for the async turn to complete before stopping.
+	pollAgentUntilIdle(ctx, t, client, createResult.AgentId)
 
 	// Stop the agent.
 	agentStop(ctx, t, client, createResult.AgentId)
@@ -1175,6 +1188,87 @@ func TestARIAgentPromptOnError(t *testing.T) {
 	}, &promptResult)
 	require.Error(t, err, "agent/prompt on errored agent should fail")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "error state")
+}
+
+// TestARIAgentPromptRejectWhenRunning verifies that a second agent/prompt is
+// rejected with CodeInvalidParams while the agent is already running.
+// The agent-shim has no prompt queuing; callers must agent/cancel first.
+func TestARIAgentPromptRejectWhenRunning(t *testing.T) {
+	h := newSessionTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "prompt-running-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "prompt-running-ws")
+
+	createResult := agentCreate(ctx, t, client, "prompt-running-room", "prompt-running-agent", "mockagent", workspaceId)
+	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
+
+	// Dispatch the first prompt — agent transitions to "running" immediately.
+	var firstResult ari.AgentPromptResult
+	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "first prompt",
+	}, &firstResult)
+	require.NoError(t, err, "first agent/prompt should be accepted")
+	require.True(t, firstResult.Accepted, "first prompt should be accepted")
+
+	// Immediately attempt a second prompt while agent is running.
+	// This MUST be rejected — the shim cannot queue prompts.
+	var secondResult ari.AgentPromptResult
+	err = client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
+		AgentId: createResult.AgentId,
+		Prompt:  "second prompt should be rejected",
+	}, &secondResult)
+	require.Error(t, err, "second agent/prompt while running should be rejected")
+	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "cancel")
+
+	// Wait for the first turn to complete, then cleanup.
+	pollAgentUntilIdle(ctx, t, client, createResult.AgentId)
+	agentStop(ctx, t, client, createResult.AgentId)
+}
+
+// TestARIRoomSendRejectWhenRunning verifies that room/send to a "running" target
+// agent is rejected with CodeInvalidParams (no prompt queuing in shim).
+func TestARIRoomSendRejectWhenRunning(t *testing.T) {
+	h := newSessionTestHarness(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	client := h.dial(t, &nullHandler{})
+
+	roomCreate(ctx, t, client, "room-send-running-room", "mesh", nil)
+	workspaceId, _ := h.prepareWorkspaceForSession(ctx, t, client, "room-send-running-ws")
+
+	resultA := agentCreate(ctx, t, client, "room-send-running-room", "agent-a", "mockagent", workspaceId)
+	resultB := agentCreate(ctx, t, client, "room-send-running-room", "agent-b", "mockagent", workspaceId)
+
+	pollAgentUntilReady(ctx, t, client, resultA.AgentId)
+	pollAgentUntilReady(ctx, t, client, resultB.AgentId)
+
+	// Dispatch first message to agent-b — it will be "running" after dispatch.
+	first := roomSend(ctx, t, client, "room-send-running-room", "agent-b", "first message", "agent-a", resultA.AgentId)
+	require.True(t, first.Delivered, "first room/send should be dispatched")
+
+	// Immediately try to send a second message while agent-b is running.
+	var second ari.RoomSendResult
+	err := client.Call(ctx, "room/send", ari.RoomSendParams{
+		Room:        "room-send-running-room",
+		TargetAgent: "agent-b",
+		Message:     "second message should be rejected",
+		SenderAgent: "agent-a",
+	}, &second)
+	require.Error(t, err, "second room/send while target is running should be rejected")
+	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "busy")
+
+	// Wait for agent-b to finish its first turn, then cleanup.
+	pollAgentUntilIdle(ctx, t, client, resultB.AgentId)
+	agentStop(ctx, t, client, resultA.AgentId)
+	agentStop(ctx, t, client, resultB.AgentId)
 }
 
 // TestARIAgentPromptStartFailureTransitionsError verifies that a prompt-time
@@ -1230,21 +1324,25 @@ func TestARISessionRemoveProtected(t *testing.T) {
 	// Wait for bootstrap before sending prompt.
 	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
 
-	// Prompt to start agent (auto-starts session → state=running).
+	// Prompt to start agent (async dispatch — returns immediately).
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
 		Prompt:  "running prompt",
 	}, &promptResult)
 	require.NoError(t, err, "agent/prompt should succeed")
+	require.True(t, promptResult.Accepted, "prompt should be accepted")
 
-	// Verify agent is running.
+	// Wait for turn to complete (running → created).
+	pollAgentUntilIdle(ctx, t, client, createResult.AgentId)
+
+	// Verify agent is idle after turn.
 	var statusResult ari.AgentStatusResult
 	err = client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: createResult.AgentId}, &statusResult)
 	require.NoError(t, err, "agent/status should succeed")
 	require.Equal(t, "created", statusResult.Agent.State, "agent should be created (idle) after prompt")
 
-	// agent/delete on running agent should fail.
+	// agent/delete on non-stopped agent should fail.
 	var deleteResult interface{}
 	err = client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: createResult.AgentId}, &deleteResult)
 	require.Error(t, err, "agent/delete on running agent should fail")
@@ -1399,13 +1497,17 @@ func TestARISessionStatusStopped(t *testing.T) {
 	// Wait for bootstrap before prompting.
 	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
 
-	// Prompt to start agent (auto-starts session).
+	// Prompt to start agent (async dispatch).
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
 		Prompt:  "test",
 	}, &promptResult)
 	require.NoError(t, err, "agent/prompt should succeed")
+	require.True(t, promptResult.Accepted, "prompt should be accepted")
+
+	// Wait for turn to complete before stopping.
+	pollAgentUntilIdle(ctx, t, client, createResult.AgentId)
 
 	// Stop agent.
 	agentStop(ctx, t, client, createResult.AgentId)
@@ -2045,11 +2147,12 @@ func TestARIRoomSendBasic(t *testing.T) {
 	pollAgentUntilReady(ctx, t, client, agentResultA.AgentId)
 	pollAgentUntilReady(ctx, t, client, agentResultB.AgentId)
 
-	// Step 4: Send message from agent-a to agent-b via room/send.
+	// Step 4: Send message from agent-a to agent-b via room/send (async dispatch).
 	result := roomSend(ctx, t, client, "send-room", "agent-b", "hello from a", "agent-a", agentResultA.AgentId)
 	require.True(t, result.Delivered, "message should be delivered")
-	// StopReason depends on mockagent behavior; just verify it's non-empty.
-	require.NotEmpty(t, result.StopReason, "stopReason should be non-empty")
+
+	// Wait for agent-b's turn to complete asynchronously.
+	pollAgentUntilIdle(ctx, t, client, agentResultB.AgentId)
 
 	// Cleanup: stop agents.
 	agentStop(ctx, t, client, agentResultA.AgentId)
@@ -2186,9 +2289,9 @@ func TestARIRoomSendErrors(t *testing.T) {
 // real mockagent processes:
 //  1. Create room "routing-test"
 //  2. Create agents for agent-a and agent-b
-//  3. room/send from agent-a → agent-b
-//  4. Assert Delivered==true and StopReason non-empty
-//  5. Verify agent-b's agent state is "running" (updated by room/send after delivery)
+//  3. room/send from agent-a → agent-b (async dispatch)
+//  4. Assert Delivered==true, poll until agent-b is idle
+//  5. Verify agent-b's agent state is "created" after turn completes
 func TestARIRoomSendDelivery(t *testing.T) {
 	h := newSessionTestHarness(t)
 
@@ -2213,26 +2316,26 @@ func TestARIRoomSendDelivery(t *testing.T) {
 	statusB := pollAgentUntilReady(ctx, t, client, agentResultB.AgentId)
 	require.Equal(t, "created", statusB.Agent.State, "agent-b should be 'created' after bootstrap")
 
-	// Step 4: Send message from agent-a to agent-b via room/send.
+	// Step 4: Send message from agent-a to agent-b via room/send (async dispatch).
 	result := roomSend(ctx, t, client, "routing-test", "agent-b", "hello from architect", "agent-a", agentResultA.AgentId)
 
-	// Step 5: Assert delivery succeeded.
-	require.True(t, result.Delivered, "message should be delivered to agent-b")
-	require.NotEmpty(t, result.StopReason, "stopReason should be non-empty (mockagent returns end_turn)")
+	// Step 5: Assert dispatch succeeded.
+	require.True(t, result.Delivered, "message should be dispatched to agent-b")
 
-	// Step 6: Verify agent-b's status (auto-started linked session).
+	// Step 6: Poll until agent-b completes its turn (running → created).
+	pollAgentUntilIdle(ctx, t, client, agentResultB.AgentId)
+
+	// Step 7: Verify agent-b's status via room/status.
 	var agentStatusResult ari.AgentStatusResult
 	err := client.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: agentResultB.AgentId}, &agentStatusResult)
 	require.NoError(t, err, "agent/status for agent-b should succeed")
-	// room/send updates agent state to "running" after successful delivery.
-	// Verify agent state via room/status.
 	status := roomStatus(ctx, t, client, "routing-test")
 	memberMap := make(map[string]ari.RoomMember)
 	for _, m := range status.Members {
 		memberMap[m.AgentName] = m
 	}
 	require.Equal(t, "created", memberMap["agent-b"].AgentState,
-		"agent-b agent state should be 'created' (idle) after room/send delivered message")
+		"agent-b agent state should be 'created' (idle) after turn completes")
 
 	// Cleanup: stop both agents.
 	agentStop(ctx, t, client, agentResultA.AgentId)
@@ -2387,28 +2490,30 @@ func TestARIMultiAgentRoundTrip(t *testing.T) {
 	require.Contains(t, []string{"created", "running"}, memberMap["agent-b"].AgentState, "agent-b agent state should be created or running after bootstrap")
 	require.Contains(t, []string{"created", "running"}, memberMap["agent-c"].AgentState, "agent-c agent state should be created or running after bootstrap")
 
-	// ── Step 5: A→B message — verify delivery ──────────────────────────────
+	// ── Step 5: A→B message — async dispatch ──────────────────────────────
 	resultAB := roomSend(ctx, t, client, "multi-agent-room", "agent-b", "hello from a", "agent-a", resultA.AgentId)
-	require.True(t, resultAB.Delivered, "A→B message should be delivered")
-	require.NotEmpty(t, resultAB.StopReason, "A→B stopReason should be non-empty")
+	require.True(t, resultAB.Delivered, "A→B message should be dispatched")
 
-	// ── Step 6: Verify agent-b is now "running" (state updated by room/send) ──
+	// Poll until agent-b finishes its turn.
+	pollAgentUntilIdle(ctx, t, client, resultB.AgentId)
+
+	// ── Step 6: Verify agent-b is idle after turn ──────────────────────────
 	status = roomStatus(ctx, t, client, "multi-agent-room")
 	memberMap = make(map[string]ari.RoomMember)
 	for _, m := range status.Members {
 		memberMap[m.AgentName] = m
 	}
-	require.Equal(t, "created", memberMap["agent-b"].AgentState, "agent-b should be 'created' (idle) after receiving A→B message")
+	require.Equal(t, "created", memberMap["agent-b"].AgentState, "agent-b should be 'created' (idle) after A→B turn completes")
 
 	// ── Step 7: B→A message — bidirectional proof ──────────────────────────
 	resultBA := roomSend(ctx, t, client, "multi-agent-room", "agent-a", "reply from b", "agent-b", resultB.AgentId)
-	require.True(t, resultBA.Delivered, "B→A message should be delivered")
-	require.NotEmpty(t, resultBA.StopReason, "B→A stopReason should be non-empty")
+	require.True(t, resultBA.Delivered, "B→A message should be dispatched")
+	pollAgentUntilIdle(ctx, t, client, resultA.AgentId)
 
 	// ── Step 8: A→C message — 3rd agent participation proof ────────────────
 	resultAC := roomSend(ctx, t, client, "multi-agent-room", "agent-c", "hello from a to c", "agent-a", resultA.AgentId)
-	require.True(t, resultAC.Delivered, "A→C message should be delivered")
-	require.NotEmpty(t, resultAC.StopReason, "A→C stopReason should be non-empty")
+	require.True(t, resultAC.Delivered, "A→C message should be dispatched")
+	pollAgentUntilIdle(ctx, t, client, resultC.AgentId)
 
 	// ── Step 9: Stop all 3 agents ──────────────────────────────────────────
 	agentStop(ctx, t, client, resultA.AgentId)
@@ -2456,27 +2561,30 @@ func TestARIRoomTeardownGuards(t *testing.T) {
 	pollAgentUntilReady(ctx, t, client, resultA.AgentId)
 	pollAgentUntilReady(ctx, t, client, resultB.AgentId)
 
-	// Send A→B to auto-start agent-b to "running".
+	// Send A→B — async dispatch, agent-b will be "running" during the turn.
 	result := roomSend(ctx, t, client, "teardown-guard-room", "agent-b", "hello from a", "agent-a", resultA.AgentId)
-	require.True(t, result.Delivered, "A→B message should be delivered")
+	require.True(t, result.Delivered, "A→B message should be dispatched")
 
-	// Verify agent-b is now running.
+	// Wait for agent-b to complete its turn before verifying idle state.
+	pollAgentUntilIdle(ctx, t, client, resultB.AgentId)
+
+	// Verify agent-b is now idle.
 	status := roomStatus(ctx, t, client, "teardown-guard-room")
 	memberMap := make(map[string]ari.RoomMember)
 	for _, m := range status.Members {
 		memberMap[m.AgentName] = m
 	}
-	require.Equal(t, "created", memberMap["agent-b"].AgentState, "agent-b should be 'created' (idle) after receiving message")
+	require.Equal(t, "created", memberMap["agent-b"].AgentState, "agent-b should be 'created' (idle) after turn completes")
 
-	// room/delete should FAIL — agent-b is running (session is non-stopped).
+	// room/delete should FAIL — agent-b is still active (session is non-stopped).
 	var deleteResult interface{}
 	err := client.Call(ctx, "room/delete", ari.RoomDeleteParams{Name: "teardown-guard-room"}, &deleteResult)
 	require.Error(t, err, "room/delete should fail with active members")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "active member")
 
-	// agent/delete on running agent-b should FAIL.
+	// agent/delete on non-stopped agent-b should FAIL.
 	err = client.Call(ctx, "agent/delete", ari.AgentDeleteParams{AgentId: resultB.AgentId}, &deleteResult)
-	require.Error(t, err, "agent/delete on running agent should fail")
+	require.Error(t, err, "agent/delete on non-stopped agent should fail")
 	requireRPCError(t, err, int64(jsonrpc2.CodeInvalidParams), "stopped")
 
 	// Stop both agents.
@@ -2534,6 +2642,26 @@ func pollAgentUntilReady(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn,
 			t.Fatalf("pollAgentUntilReady: agent %q still in 'creating' state after 30s", agentId)
 		}
 		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// pollAgentUntilIdle polls agent/status until state is no longer "running"
+// (i.e., the async turn has completed with "created" or "error").
+// Times out after 30s; fails the test if the agent stays "running" too long.
+func pollAgentUntilIdle(ctx context.Context, t *testing.T, conn *jsonrpc2.Conn, agentId string) ari.AgentStatusResult {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		var statusResult ari.AgentStatusResult
+		err := conn.Call(ctx, "agent/status", ari.AgentStatusParams{AgentId: agentId}, &statusResult)
+		require.NoError(t, err, "agent/status poll should succeed for agent %q", agentId)
+		if statusResult.Agent.State != "running" {
+			return statusResult
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pollAgentUntilIdle: agent %q still in 'running' state after 30s", agentId)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
@@ -2803,14 +2931,15 @@ func TestARIAgentRestartAsync(t *testing.T) {
 	require.Equal(t, "created", statusAfterCreate.Agent.State,
 		"agent should reach 'created' after initial bootstrap")
 
-	// Send first prompt to confirm the agent is responsive.
+	// Send first prompt to confirm the agent is responsive (async dispatch).
 	var promptResult1 ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
 		Prompt:  "hello before restart",
 	}, &promptResult1)
 	require.NoError(t, err, "first agent/prompt should succeed")
-	require.NotEmpty(t, promptResult1.StopReason, "first prompt stopReason should be non-empty")
+	require.True(t, promptResult1.Accepted, "first prompt should be accepted")
+	pollAgentUntilIdle(ctx, t, client, createResult.AgentId)
 
 	// Stop the agent.
 	agentStop(ctx, t, client, createResult.AgentId)
@@ -2832,14 +2961,15 @@ func TestARIAgentRestartAsync(t *testing.T) {
 		"agent should reach 'created' after restart bootstrap completes")
 	require.NotNil(t, statusAfterRestart.ShimState, "shimState should be present after restart")
 
-	// Send second prompt to verify the restarted agent is fully functional.
+	// Send second prompt to verify the restarted agent is fully functional (async dispatch).
 	var promptResult2 ari.AgentPromptResult
 	err = client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
 		Prompt:  "hello after restart",
 	}, &promptResult2)
 	require.NoError(t, err, "second agent/prompt should succeed after restart")
-	require.NotEmpty(t, promptResult2.StopReason, "second prompt stopReason should be non-empty")
+	require.True(t, promptResult2.Accepted, "second prompt should be accepted after restart")
+	pollAgentUntilIdle(ctx, t, client, createResult.AgentId)
 
 	// Cleanup.
 	agentStop(ctx, t, client, createResult.AgentId)
@@ -2946,14 +3076,15 @@ func TestARIAgentPrompt(t *testing.T) {
 	// Wait for bootstrap to complete before sending prompt.
 	pollAgentUntilReady(ctx, t, client, createResult.AgentId)
 
-	// Send a prompt.
+	// Send a prompt (async dispatch).
 	var promptResult ari.AgentPromptResult
 	err := client.Call(ctx, "agent/prompt", ari.AgentPromptParams{
 		AgentId: createResult.AgentId,
 		Prompt:  "hello mockagent",
 	}, &promptResult)
 	require.NoError(t, err, "agent/prompt should succeed")
-	require.NotEmpty(t, promptResult.StopReason, "stopReason should be non-empty")
+	require.True(t, promptResult.Accepted, "prompt should be accepted")
+	pollAgentUntilIdle(ctx, t, client, createResult.AgentId)
 
 	// Cleanup.
 	agentStop(ctx, t, client, createResult.AgentId)
