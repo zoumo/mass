@@ -278,13 +278,13 @@ func (h *testHarness) dial(t *testing.T, handler jsonrpc2.Handler) *jsonrpc2.Con
 // Most tests should use prepareWorkspaceForSession which handles database persistence automatically.
 func (h *testHarness) createWorkspaceInStore(ctx context.Context, t *testing.T, workspaceID, name, path string) {
 	t.Helper()
-	workspace := &meta.Workspace{
+	ws := &meta.Workspace{
 		ID:     workspaceID,
 		Name:   name,
 		Path:   path,
 		Status: meta.WorkspaceStatusActive,
 	}
-	err := h.store.CreateWorkspace(ctx, workspace)
+	err := h.store.CreateWorkspace(ctx, ws)
 	require.NoError(t, err, "failed to create workspace in store")
 }
 
@@ -429,9 +429,9 @@ func TestARIWorkspacePrepareEmptyDir(t *testing.T) {
 	require.DirExists(t, result.Path, "workspace directory should exist")
 
 	// Verify the workspace is in the registry.
-	meta := h.registry.Get(result.WorkspaceId)
-	require.NotNil(t, meta, "workspace should be registered")
-	require.Equal(t, result.Path, meta.Path, "registry path should match result")
+	wsMeta := h.registry.Get(result.WorkspaceId)
+	require.NotNil(t, wsMeta, "workspace should be registered")
+	require.Equal(t, result.Path, wsMeta.Path, "registry path should match result")
 }
 
 // ────────────────────────────────────────────────────────────────────────────

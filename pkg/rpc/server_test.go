@@ -29,8 +29,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("failed to create temp dir: " + err.Error())
 	}
-	defer os.RemoveAll(tmpDir)
-
 	_, filename, _, _ := goruntime.Caller(0)
 	repoRoot := filepath.Join(filepath.Dir(filename), "..", "..")
 
@@ -44,7 +42,9 @@ func TestMain(m *testing.M) {
 	}
 
 	mockAgentBin = binPath
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(tmpDir)
+	os.Exit(code)
 }
 
 func testConfig(name string) spec.Config {

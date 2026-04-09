@@ -19,12 +19,12 @@ Making the codebase fully golangci-lint v2 clean. 202 issues across 11 linter ca
 | S01 | Auto-fix: gci + gofumpt formatting (56 issues) | ✅ complete |
 | S02 | Auto-fix: unconvert + copyloopvar + ineffassign (24 issues) | ✅ complete |
 | S03 | Manual: misspell + unparam (17 issues) | ✅ complete |
-| S04 | Manual: unused dead code (12 issues) | ⬜ next |
-| S05 | Manual: errorlint — type assertions on errors (17 issues) | ⬜ |
-| S06 | Manual: gocritic (45 issues) | ⬜ |
+| S04 | Manual: unused dead code (12 issues) | ✅ complete |
+| S05 | Manual: errorlint — type assertions on errors (17 issues) | ✅ complete |
+| S06 | Manual: gocritic (45 issues) | ⬜ next |
 | S07 | Manual: testifylint (31 issues) | ⬜ |
 
-**Current lint posture:** gci, gofumpt, unconvert, copyloopvar, ineffassign, misspell, and unparam are all clean (zero findings). S04 (unused dead code, 12 findings) is the next slice.
+**Current lint posture:** gci, gofumpt, unconvert, copyloopvar, ineffassign, misspell, unparam, unused, and errorlint are all clean (zero findings). S06 (gocritic — 45 findings) is the next slice.
 
 ### Completed Milestones
 
@@ -85,7 +85,7 @@ workspace/*  — prepare, list, cleanup
 | ineffassign | 1 | ✅ 0 |
 | misspell | ~9 | ✅ 0 |
 | unparam | ~8 | ✅ 0 |
-| unused | 12 | ⬜ (S04 next) |
-| errorlint | 17 | ⬜ |
-| gocritic | 45 | ⬜ |
+| unused | 12 | ✅ 0 |
+| errorlint | 17 | ✅ 0 |
+| gocritic | 45 | ⬜ (S06 next) |
 | testifylint | 31 | ⬜ |

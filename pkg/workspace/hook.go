@@ -30,8 +30,7 @@ type HookError struct {
 // Follows GitError pattern: joins parts with ': ' separator.
 func (e *HookError) Error() string {
 	var parts []string
-	parts = append(parts, fmt.Sprintf("workspace: hook %s failed", e.Phase))
-	parts = append(parts, fmt.Sprintf("hookIndex=%d", e.HookIndex))
+	parts = append(parts, fmt.Sprintf("workspace: hook %s failed", e.Phase), fmt.Sprintf("hookIndex=%d", e.HookIndex))
 	if e.Command != "" {
 		parts = append(parts, fmt.Sprintf("command=%s", e.Command))
 	}

@@ -288,7 +288,7 @@ func (h *connHandler) handleWorkspacePrepare(ctx context.Context, conn *jsonrpc2
 			log.Printf("ari: failed to marshal workspace %s source: %v", workspaceId, marshalErr)
 			sourceJSON = json.RawMessage("{}")
 		}
-		workspace := &meta.Workspace{
+		ws := &meta.Workspace{
 			ID:       workspaceId,
 			Name:     p.Spec.Metadata.Name,
 			Path:     workspacePath,
@@ -296,7 +296,7 @@ func (h *connHandler) handleWorkspacePrepare(ctx context.Context, conn *jsonrpc2
 			Status:   meta.WorkspaceStatusActive,
 			RefCount: 0,
 		}
-		if err := h.srv.store.CreateWorkspace(ctx, workspace); err != nil {
+		if err := h.srv.store.CreateWorkspace(ctx, ws); err != nil {
 			// Log the error but don't fail - registry is the source of truth for workspace/* methods.
 			log.Printf("ari: failed to persist workspace %s to database: %v", workspaceId, err)
 		}
@@ -371,8 +371,8 @@ func (h *connHandler) handleWorkspaceCleanup(ctx context.Context, conn *jsonrpc2
 	}
 
 	// Get workspace from registry.
-	meta := h.srv.registry.Get(p.WorkspaceId)
-	if meta == nil {
+	wsMeta := h.srv.registry.Get(p.WorkspaceId)
+	if wsMeta == nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
 			fmt.Sprintf("workspace %q not found", p.WorkspaceId))
 		return
@@ -392,14 +392,14 @@ func (h *connHandler) handleWorkspaceCleanup(ctx context.Context, conn *jsonrpc2
 	}
 
 	// Fallback: if store is nil, check the in-memory registry RefCount.
-	if h.srv.store == nil && meta.RefCount > 0 {
+	if h.srv.store == nil && wsMeta.RefCount > 0 {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
-			fmt.Sprintf("workspace %q has %d active references", p.WorkspaceId, meta.RefCount))
+			fmt.Sprintf("workspace %q has %d active references", p.WorkspaceId, wsMeta.RefCount))
 		return
 	}
 
 	// Call manager.Cleanup.
-	err := h.srv.manager.Cleanup(ctx, meta.Path, meta.Spec)
+	err := h.srv.manager.Cleanup(ctx, wsMeta.Path, wsMeta.Spec)
 	if err != nil {
 		// Check if error is a WorkspaceError to extract Phase.
 		wsErr := &workspace.WorkspaceError{}

@@ -592,10 +592,8 @@ func TestExecuteHooksSingleHook(t *testing.T) {
 				if hookErr.HookIndex != 0 {
 					t.Errorf("HookIndex should be 0 for single hook, got %d", hookErr.HookIndex)
 				}
-			} else {
-				if err != nil {
-					t.Errorf("expected nil, got: %v", err)
-				}
+			} else if err != nil {
+				t.Errorf("expected nil, got: %v", err)
 			}
 		})
 	}

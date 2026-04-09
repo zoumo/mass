@@ -567,3 +567,21 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Example:** `forkShim(ctx context.Context, session *meta.Session, rc *RuntimeClass, ...)` — `ctx` was reported; after removing it, `rc` appeared. Both were unused because `RuntimeClass` was consumed upstream by `generateConfig`/`createBundle`, not inside `forkShim`.
 - **Reference:** M006/S03/T01 — pkg/agentd/process.go forkShim
 - **When:** M006/S03
+
+## K042 — golangci-lint `unused` dead-code: earlier slices may pre-apply changes
+
+- **Pattern:** A slice plan targeting dead-code removal may find its target symbols already absent when the task runs. This can happen when earlier sibling slices (e.g. S02/S03) removed code that happened to be the same dead code, or when a prior refactoring (e.g. M005 session→agent migration) deleted the dead paths as a side effect.
+- **Gotcha:** Never assume code to remove is still present — always verify with grep/wc/git-diff before editing, then confirm with `golangci-lint run ./... 2>&1 | grep <linter>` as the authoritative check. A zero-exit grep means no findings.
+- **Lesson:** Executor should run the lint check first, report the actual state, and document clearly that no edits were needed (clean no-op). Do NOT force-apply deletions that are already absent — doing so would be a no-op at best, or silently corrupt the file at worst if offsets shifted.
+- **Reference:** M006/S04/T01 — all 12 unused symbols (mu mutex field, 10 session handler methods, ptrInt) were already absent; confirmed via grep + golangci-lint, zero edits made.
+- **When:** M006/S04
+
+## K043 — golangci-lint `errorlint`: codebase already clean; std-error-handling exclusion covers sql.ErrNoRows comparisons
+
+- **Pattern:** The `errorlint` linter reports type assertions on errors (e.g. `err.(MyType)` instead of `errors.As`) and direct comparisons (e.g. `err == io.EOF` instead of `errors.Is`). The M006/S05 slice was planned to fix 17 such issues.
+- **Finding:** When T01 ran, `golangci-lint run ./... 2>&1 | grep errorlint` produced zero output (grep exit 1 = no findings). The codebase was already clean.
+- **Why:** Two reasons: (1) The M005 session→agent migration already refactored error handling throughout the codebase, applying `errors.Is`/`errors.As` patterns. (2) The `.golangci.yaml` config includes the `std-error-handling` exclusion preset, which covers legitimate comparisons like `err == sql.ErrNoRows` in pkg/meta/*.go.
+- **Gotcha:** This is the second consecutive slice (after S04/unused) where the planned findings were already absent. Always run the lint check first before making any edits — the "17 issues" count may have been from a pre-migration snapshot.
+- **Lesson:** When a slice's issue count comes from a pre-planning scan that predates earlier milestone work, the executor should confirm current state before any edits. Clean no-op is a valid outcome — document it clearly.
+- **Reference:** M006/S05/T01 — zero errorlint findings confirmed; `go build ./...` exit 0; `go test ./pkg/...` all 8 packages pass. No edits made.
+- **When:** M006/S05

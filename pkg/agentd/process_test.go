@@ -128,7 +128,7 @@ func TestProcessManagerStart(t *testing.T) {
 	shimProc, err := procMgr.Start(ctx, sessionID)
 	if err != nil {
 		// Print state directory content for debugging.
-		stateDirPath := filepath.Join("/tmp/agentd-shim", sessionID)
+		stateDirPath := filepath.Join(os.TempDir(), "agentd-shim", sessionID)
 		t.Logf("State directory %s contents:", stateDirPath)
 		if entries, err := os.ReadDir(stateDirPath); err == nil {
 			for _, entry := range entries {

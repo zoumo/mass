@@ -77,9 +77,9 @@ func (r *Registry) Add(id, name, path string, spec workspace.WorkspaceSpec) {
 // Thread-safe via mutex read lock.
 func (r *Registry) Get(id string) *WorkspaceMeta {
 	r.mu.RLock()
-	meta := r.workspaces[id]
+	wsMeta := r.workspaces[id]
 	r.mu.RUnlock()
-	return meta
+	return wsMeta
 }
 
 // List returns all registered workspace metadata.
@@ -88,8 +88,8 @@ func (r *Registry) Get(id string) *WorkspaceMeta {
 func (r *Registry) List() []WorkspaceMeta {
 	r.mu.RLock()
 	list := make([]WorkspaceMeta, 0, len(r.workspaces))
-	for _, meta := range r.workspaces {
-		list = append(list, *meta)
+	for _, wsMeta := range r.workspaces {
+		list = append(list, *wsMeta)
 	}
 	r.mu.RUnlock()
 	return list

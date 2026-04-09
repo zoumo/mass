@@ -617,7 +617,9 @@ func TestTurnAwareEnvelope_ReplayOrdering(t *testing.T) {
 	}
 
 	// (4) Global seq is strictly monotonic across both turns.
-	all := append(turn1, turn2...)
+	all := make([]Envelope, 0, len(turn1)+len(turn2))
+	all = append(all, turn1...)
+	all = append(all, turn2...)
 	for i := 1; i < len(all); i++ {
 		prevSeq, _ := all[i-1].Seq()
 		curSeq, _ := all[i].Seq()

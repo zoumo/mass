@@ -26,8 +26,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("failed to create temp dir for mock agent binary: " + err.Error())
 	}
-	defer os.RemoveAll(tmpDir)
-
 	// Determine repo root: tests run from pkg/runtime/, so go up two levels.
 	_, filename, _, _ := runtime.Caller(0)
 	repoRoot := filepath.Join(filepath.Dir(filename), "..", "..")
@@ -43,7 +41,9 @@ func TestMain(m *testing.M) {
 	}
 
 	mockAgentBin = binPath
-	os.Exit(m.Run())
+	code := m.Run()
+	os.RemoveAll(tmpDir)
+	os.Exit(code)
 }
 
 // RuntimeSuite exercises Manager.Create, Kill, Delete, and GetState.

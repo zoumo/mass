@@ -48,7 +48,7 @@ type shimNotif struct {
 func newMockShimServer(t *testing.T) (*mockShimServer, string) {
 	t.Helper()
 	// Short path to avoid macOS's 104-char Unix socket path limit.
-	socketPath := filepath.Join("/tmp", fmt.Sprintf("shim-mock-%d.sock", time.Now().UnixNano()))
+	socketPath := filepath.Join(os.TempDir(), fmt.Sprintf("shim-mock-%d.sock", time.Now().UnixNano()))
 	_ = os.Remove(socketPath)
 
 	ln, err := net.Listen("unix", socketPath)
