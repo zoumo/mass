@@ -70,16 +70,6 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: mapped
 - Notes: M003 delivered: fail-closed recovery posture (S01), shim-vs-DB reconciliation (S02), atomic event resume and damaged-tail tolerance (S03), DB-backed workspace cleanup safety (S04). Remaining follow-on: real CLI restart recovery tests, cross-client hardening.
 
-### R052 — Recovery operates externally by agent identity (room+name), internally by session/shim handle. Agent identity survives daemon restart.
-- Class: continuity
-- Status: active
-- Description: Recovery operates externally by agent identity (room+name), internally by session/shim handle. Agent identity survives daemon restart.
-- Why it matters: Recovery must use stable identity. Session UUIDs are internal handles; agent room+name is the stable external key that orchestrators and operators reference.
-- Source: docs/plan/agent-runtime-alignment-plan.md
-- Primary owning slice: M005/S07
-- Supporting slices: M005/S02, M005/S04
-- Validation: TestAgentdRestartRecovery equivalent: agent survives restart with same room+name, correct state
-
 ## Validated
 
 ### R001 — agentd daemon can start, parse config.yaml, and listen on ARI Unix socket
@@ -321,7 +311,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: docs/plan/agent-runtime-alignment-plan.md
 - Primary owning slice: M005/S03
 - Supporting slices: M005/S01, M005/S02
-- Validation: S03 implemented all 10 agent/* handler methods in pkg/ari/server.go (grep -c 'agent/' returns 10). All 9 session/* dispatch cases removed (grep -q 'session/new' returns exit 1). 64 pkg/ari tests pass. agentdctl CLI migrated to agent/* subcommands; session/* not present in root help. Full pipeline: agent/create→agent/prompt→agent/stop→agent/delete verified by TestARIAgentLifecycle.
+- Validation: 10 agent/* dispatch cases in pkg/ari/server.go; TestARISessionMethodsRemoved confirms all 8 session/* methods return MethodNotFound; 64+ pkg/ari tests pass; grep count=25 for agent/* methods in ari-spec.md
 
 ### R048 — agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
 - Class: core-capability
@@ -360,6 +350,16 @@ This file is the explicit capability and coverage contract for the project.
 - Source: docs/plan/agent-runtime-alignment-plan.md
 - Primary owning slice: M005/S06
 - Validation: room-mcp-server fully rewritten with modelcontextprotocol/go-sdk v0.8.0 (StdioTransport + server.AddTool). OAR_SESSION_ID and OAR_ROOM_AGENT removed from process.go env injections. Config now reads OAR_AGENT_ID/OAR_AGENT_NAME. go build ./cmd/room-mcp-server passes; TestGenerateConfigWithRoomMCPInjection (3 subtests) passes; go test ./pkg/agentd/... passes (M005/S06/T02).
+
+### R052 — Recovery operates externally by agent identity (room+name), internally by session/shim handle. Agent identity survives daemon restart.
+- Class: continuity
+- Status: validated
+- Description: Recovery operates externally by agent identity (room+name), internally by session/shim handle. Agent identity survives daemon restart.
+- Why it matters: Recovery must use stable identity. Session UUIDs are internal handles; agent room+name is the stable external key that orchestrators and operators reference.
+- Source: docs/plan/agent-runtime-alignment-plan.md
+- Primary owning slice: M005/S07
+- Supporting slices: M005/S02, M005/S04
+- Validation: TestAgentdRestartRecovery (7-phase integration test): agent-A and agent-B created with room+name identity. After daemon restart with all shims killed, both agents are in error state but their agentId, room, and name are identical to pre-restart values. agent/list returns both agents with intact room identity. Test passes in 4.47s.
 
 ## Deferred
 
@@ -540,16 +540,16 @@ This file is the explicit capability and coverage contract for the project.
 | R044 | quality-attribute | active | M002-q9r6sg/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | mapped |
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
-| R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | S03 implemented all 10 agent/* handler methods in pkg/ari/server.go (grep -c 'agent/' returns 10). All 9 session/* dispatch cases removed (grep -q 'session/new' returns exit 1). 64 pkg/ari tests pass. agentdctl CLI migrated to agent/* subcommands; session/* not present in root help. Full pipeline: agent/create→agent/prompt→agent/stop→agent/delete verified by TestARIAgentLifecycle. |
+| R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | 10 agent/* dispatch cases in pkg/ari/server.go; TestARISessionMethodsRemoved confirms all 8 session/* methods return MethodNotFound; 64+ pkg/ari tests pass; grep count=25 for agent/* methods in ari-spec.md |
 | R048 | core-capability | validated | M005/S04 | M005/S03 | TestARIAgentCreateAsync: create returns creating → poll status → transitions to created. TestARIAgentCreateAsyncErrorState: create returns creating → poll status → transitions to error with non-empty ErrorMessage. Both integration tests use real mockagent shim. Full suite (go test ./pkg/ari/... -count=1) passes. |
 | R049 | core-capability | validated | M005/S02 | none | State transition unit tests in pkg/agentd/session_test.go cover all 5 states and explicitly reject paused:warm/paused:cold transitions. rg confirms zero remaining references to PausedWarm/PausedCold/paused:warm/paused:cold in production Go source. All 102 tests in pkg/meta/... and pkg/agentd/... pass (exit=0). |
 | R050 | core-capability | validated | M005/S05 | M005/S01 | S05/T01 added TurnId/StreamSeq/*int/Phase to SessionUpdateParams; Translator mutates turn state atomically under mu.Lock inside broadcastEnvelope callbacks. 7 new TestTurnAwareEnvelope_* tests prove: TurnId assigned on turn_start and propagated to all mid-turn events, streamSeq monotonic within turn and reset to 0 on new turn, turn_end carries TurnId before clearing, stateChange events excluded from turn fields, JSON round-trip correct, replay ordering invariants hold across two turns. S05/T02 wires NotifyTurnStart/NotifyTurnEnd into handlePrompt; RPC integration tests updated to 6-event model with turn field assertions. All 8 packages pass: go test ./pkg/... -count=1. |
 | R051 | integration | validated | M005/S06 | none | room-mcp-server fully rewritten with modelcontextprotocol/go-sdk v0.8.0 (StdioTransport + server.AddTool). OAR_SESSION_ID and OAR_ROOM_AGENT removed from process.go env injections. Config now reads OAR_AGENT_ID/OAR_AGENT_NAME. go build ./cmd/room-mcp-server passes; TestGenerateConfigWithRoomMCPInjection (3 subtests) passes; go test ./pkg/agentd/... passes (M005/S06/T02). |
-| R052 | continuity | active | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery equivalent: agent survives restart with same room+name, correct state |
+| R052 | continuity | validated | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery (7-phase integration test): agent-A and agent-B created with room+name identity. After daemon restart with all shims killed, both agents are in error state but their agentId, room, and name are identical to pre-restart values. agent/list returns both agents with intact room identity. Test passes in 4.47s. |
 
 ## Coverage Summary
 
-- Active requirements: 7
-- Mapped to slices: 7
-- Validated: 26 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041, R047, R048, R049, R050, R051)
+- Active requirements: 6
+- Mapped to slices: 6
+- Validated: 27 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R032, R033, R034, R035, R036, R037, R038, R039, R041, R047, R048, R049, R050, R051, R052)
 - Unmapped active requirements: 0

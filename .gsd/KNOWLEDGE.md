@@ -519,3 +519,27 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** When writing tests for env var injection in process.go, always audit which Session field feeds which env var. Session.ID → OAR_SESSION_ID (deprecated, now removed). Session.AgentID → OAR_AGENT_ID. Session.RoomAgent → OAR_AGENT_NAME.
 - **Reference:** T02 key_decisions, M005/S06/T02
 - **When:** M005/S06
+
+## K037 — RecoverSessions early-return on empty candidate list bypasses creating-cleanup
+
+- **Pattern:** The `creating-cleanup` pass in `RecoverSessions` (which marks bootstrapping agents as error after daemon restart) must run even when there are zero sessions in the DB.
+- **Gotcha:** The original `RecoverSessions` had an early-return `if len(candidates) == 0 { return nil }` guard. This silently skipped the creating-cleanup pass whenever there were no sessions to recover — leaving agents stuck in `creating` state after a restart during bootstrap.
+- **Lesson:** When adding a post-loop cleanup pass, audit all early-return guards before the loop. If the cleanup pass must always run (regardless of loop iteration count), move the guard or restructure so the cleanup path is unconditional.
+- **Reference:** T01 deviation in pkg/agentd/recovery.go, M005/S07/T01
+- **When:** M005/S07
+
+## K038 — agent/prompt JSON field is 'prompt', not 'text'; post-prompt agent state is 'running'
+
+- **Pattern:** `AgentPromptParams.Prompt` field in `pkg/ari/types.go` is JSON-tagged `"prompt"`, not `"text"`. After a successful `agent/prompt` round-trip (end_turn), agent state transitions to `running`, not back to `created`.
+- **Gotcha:** The task plan (and the original Go struct design) assumed the field was `"text"` and that the agent would return to `created` after a prompt. Both assumptions were wrong. Using `"text"` silently drops the prompt parameter (agent gets empty input). Waiting for `created` after a prompt times out.
+- **Lesson:** Before writing integration test helper code that calls ARI methods, always check `pkg/ari/types.go` for the exact JSON field names. For agent state assertions post-prompt, use `running` not `created`. `created` only appears at the end of bootstrap.
+- **Reference:** T02 key_decisions, tests/integration/restart_test.go, M005/S07/T02
+- **When:** M005/S07
+
+## K039 — Agents in error state require agent/stop before agent/delete
+
+- **Pattern:** `agent/delete` requires the agent to be in `stopped` (or `error` states that have been transitioned to stopped). An agent in `error` state after recovery cannot be deleted directly — `agent/stop` must be called first to transition it to `stopped`.
+- **Gotcha:** After daemon restart, recovered agents are in `error` state. Cleanup code that calls `agent/delete` directly (without `agent/stop` first) will get a `delete blocked: agent is not stopped` error.
+- **Lesson:** In integration test cleanup (and orchestrator logic), always call `agent/stop` before `agent/delete` for any agent that is not already in `stopped` state. A safe pattern: `stopAndDeleteAgent(t, client, agentId)` which calls stop then delete unconditionally.
+- **Reference:** T02 key_decisions, tests/integration/session_test.go stopAndDeleteAgent helper, M005/S07/T02
+- **When:** M005/S07
