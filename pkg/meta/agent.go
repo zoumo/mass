@@ -68,7 +68,6 @@ func (s *Store) CreateAgent(ctx context.Context, agent *Agent) error {
 		agent.CreatedAt,
 		agent.UpdatedAt,
 	)
-
 	if err != nil {
 		if isFKViolation(err) {
 			return fmt.Errorf("meta: foreign key constraint failed for agent %s: %w", agent.ID, err)
@@ -327,5 +326,3 @@ func (s *Store) DeleteAgent(ctx context.Context, id string) error {
 
 	return nil
 }
-
-

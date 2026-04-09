@@ -231,7 +231,7 @@ func main() {
 	// otherwise fall back to stderr. Stdout is reserved for MCP JSON-RPC.
 	if stateDir := os.Getenv("OAR_STATE_DIR"); stateDir != "" {
 		logPath := fmt.Sprintf("%s/room-mcp-server.log", stateDir)
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err == nil {
 			log.SetOutput(f)
 		} else {

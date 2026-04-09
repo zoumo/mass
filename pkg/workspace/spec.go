@@ -185,10 +185,10 @@ func (s Source) MarshalJSON() ([]byte, error) {
 	case SourceTypeGit:
 		// Create an intermediate struct that includes type + git fields.
 		type gitSourceJSON struct {
-			Type   SourceType `json:"type"`
-			URL    string     `json:"url"`
-			Ref    string     `json:"ref,omitempty"`
-			Depth  int        `json:"depth,omitempty"`
+			Type  SourceType `json:"type"`
+			URL   string     `json:"url"`
+			Ref   string     `json:"ref,omitempty"`
+			Depth int        `json:"depth,omitempty"`
 		}
 		return json.Marshal(gitSourceJSON{
 			Type:  s.Type,

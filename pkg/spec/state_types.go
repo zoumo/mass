@@ -27,7 +27,7 @@ func (s Status) String() string {
 // Written when a turn ends (success or error) so callers can check
 // the result without needing a live event stream subscription.
 type LastTurn struct {
-	// StopReason is the ACP stop reason (e.g. "end_turn", "cancelled").
+	// StopReason is the ACP stop reason (e.g. "end_turn", "canceled").
 	// Empty if the turn ended with an error.
 	StopReason string `json:"stopReason,omitempty"`
 

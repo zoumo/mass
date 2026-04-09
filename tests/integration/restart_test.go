@@ -68,7 +68,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	os.Remove(socketPath)
 	for _, d := range []string{workspaceRoot, bundleRoot} {
-		if err := os.MkdirAll(d, 0755); err != nil {
+		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
@@ -97,7 +97,7 @@ runtimeClasses:
       PATH: /usr/bin:/bin
 `, socketPath, workspaceRoot, metaDB, bundleRoot, mockagentBin)
 
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 

@@ -184,7 +184,7 @@ func TestLocalHandlerIntegration(t *testing.T) {
 		nestedDir := filepath.Join(tmpRoot, "nested", "deep", "path")
 
 		// Create nested directory.
-		if err := os.MkdirAll(nestedDir, 0755); err != nil {
+		if err := os.MkdirAll(nestedDir, 0o755); err != nil {
 			t.Fatalf("failed to create nested directory: %v", err)
 		}
 
@@ -211,13 +211,13 @@ func TestLocalHandlerIntegration(t *testing.T) {
 			Local: LocalSource{Path: localDir},
 		}
 
-		// Create a cancelled context.
+		// Create a canceled context.
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
 		_, err := h.Prepare(ctx, source, "/tmp/target")
 		if err == nil {
-			t.Fatal("expected error from cancelled context, got nil")
+			t.Fatal("expected error from canceled context, got nil")
 		}
 
 		// Should return context cancellation error.
@@ -236,12 +236,12 @@ func TestLocalHandlerIntegration(t *testing.T) {
 		restrictedDir := filepath.Join(tmpRoot, "restricted")
 
 		// Create directory with no read permissions.
-		if err := os.Mkdir(restrictedDir, 0000); err != nil {
+		if err := os.Mkdir(restrictedDir, 0o000); err != nil {
 			t.Fatalf("failed to create restricted directory: %v", err)
 		}
 
 		// Restore permissions after test so cleanup can work.
-		defer os.Chmod(restrictedDir, 0755)
+		defer os.Chmod(restrictedDir, 0o755)
 
 		source := Source{
 			Type:  SourceTypeLocal,

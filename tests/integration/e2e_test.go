@@ -31,10 +31,10 @@ func TestEndToEndPipeline(t *testing.T) {
 	bundleRoot := filepath.Join(tmpDir, "bundles")
 
 	// Create directories
-	if err := os.MkdirAll(workspaceRoot, 0755); err != nil {
+	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		t.Fatalf("failed to create workspace root: %v", err)
 	}
-	if err := os.MkdirAll(bundleRoot, 0755); err != nil {
+	if err := os.MkdirAll(bundleRoot, 0o755); err != nil {
 		t.Fatalf("failed to create bundle root: %v", err)
 	}
 
@@ -74,7 +74,7 @@ runtimeClasses:
       PATH: /usr/bin:/bin
 `, socketPath, workspaceRoot, metaDB, bundleRoot, mockagentBin)
 
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
 		t.Fatalf("failed to write config: %v", err)
 	}
 

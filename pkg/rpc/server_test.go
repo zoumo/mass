@@ -13,12 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sourcegraph/jsonrpc2"
+	"github.com/stretchr/testify/require"
+
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/rpc"
 	pkgruntime "github.com/open-agent-d/open-agent-d/pkg/runtime"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
-	"github.com/sourcegraph/jsonrpc2"
-	"github.com/stretchr/testify/require"
 )
 
 var mockAgentBin string
@@ -361,7 +362,7 @@ func TestRPCServer_RejectsLegacyAndInvalidParams(t *testing.T) {
 			require.Error(t, err)
 			var rpcErr *jsonrpc2.Error
 			require.ErrorAs(t, err, &rpcErr)
-			require.Equal(t, int64(jsonrpc2.CodeMethodNotFound), int64(rpcErr.Code))
+			require.Equal(t, int64(jsonrpc2.CodeMethodNotFound), rpcErr.Code)
 		})
 	}
 
@@ -436,7 +437,7 @@ func assertRPCCode(t *testing.T, err error, code int64) {
 	t.Helper()
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, code, int64(rpcErr.Code))
+	require.Equal(t, code, rpcErr.Code)
 }
 
 func sortEnvelopesBySeq(entries []events.Envelope) {

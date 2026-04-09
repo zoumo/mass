@@ -17,8 +17,8 @@ func TestRoomCRUD(t *testing.T) {
 
 	// Test CreateRoom.
 	room := &Room{
-		Name:             "test-room",
-		Labels:           map[string]string{"env": "test", "team": "dev"},
+		Name:              "test-room",
+		Labels:            map[string]string{"env": "test", "team": "dev"},
 		CommunicationMode: CommunicationModeMesh,
 	}
 
@@ -79,7 +79,7 @@ func TestRoomCommunicationModes(t *testing.T) {
 
 	for i, mode := range modes {
 		room := &Room{
-			Name:             "room-" + string(mode),
+			Name:              "room-" + string(mode),
 			CommunicationMode: mode,
 		}
 
@@ -104,7 +104,7 @@ func TestRoomDuplicateName(t *testing.T) {
 	ctx := context.Background()
 
 	room := &Room{
-		Name:             "duplicate-test",
+		Name:              "duplicate-test",
 		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {
@@ -113,7 +113,7 @@ func TestRoomDuplicateName(t *testing.T) {
 
 	// Try to create room with same name.
 	duplicate := &Room{
-		Name:             "duplicate-test",
+		Name:              "duplicate-test",
 		CommunicationMode: CommunicationModeStar,
 	}
 	err := store.CreateRoom(ctx, duplicate)
@@ -191,7 +191,7 @@ func TestRoomDeleteWithSessions(t *testing.T) {
 
 	// Create room.
 	room := &Room{
-		Name:             "room-to-delete",
+		Name:              "room-to-delete",
 		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {
@@ -317,7 +317,7 @@ func TestRoomEmptyLabels(t *testing.T) {
 
 	// Create room with no labels.
 	room := &Room{
-		Name:             "no-labels-room",
+		Name:              "no-labels-room",
 		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {

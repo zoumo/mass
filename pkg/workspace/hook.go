@@ -90,7 +90,7 @@ func NewHookExecutor() *HookExecutor {
 //   - First failure aborts execution and returns HookError with HookIndex
 //   - Context cancellation is checked before constructing HookError
 //   - Defensive workspaceDir existence check before loop
-func (h *HookExecutor) ExecuteHooks(ctx context.Context, hooks []Hook, workspaceDir string, phase string) error {
+func (h *HookExecutor) ExecuteHooks(ctx context.Context, hooks []Hook, workspaceDir, phase string) error {
 	// Defensive check: workspaceDir must exist before running hooks.
 	if _, err := os.Stat(workspaceDir); err != nil {
 		return fmt.Errorf("workspace: hook %s cannot execute: workspaceDir %q does not exist: %w", phase, workspaceDir, err)

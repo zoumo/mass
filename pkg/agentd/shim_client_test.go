@@ -11,18 +11,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/open-agent-d/open-agent-d/pkg/events"
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
 // Mock shim server — speaks the clean-break session/* + runtime/* surface
 // ────────────────────────────────────────────────────────────────────────────
 
-// mockShimServer is a minimal JSON-RPC server that mimics agent-shim behaviour
+// mockShimServer is a minimal JSON-RPC server that mimics agent-shim behavior
 // on the clean-break protocol surface.
 type mockShimServer struct {
 	listener net.Listener
@@ -30,11 +31,11 @@ type mockShimServer struct {
 	done     chan struct{}
 	once     sync.Once
 
-	mu              sync.Mutex
-	statusResult    RuntimeStatusResult
-	promptResult    SessionPromptResult
-	historyEntries  []events.Envelope
-	subscribed      bool
+	mu                sync.Mutex
+	statusResult      RuntimeStatusResult
+	promptResult      SessionPromptResult
+	historyEntries    []events.Envelope
+	subscribed        bool
 	liveNotifications []shimNotif // queued to emit after subscribe
 }
 
@@ -403,12 +404,18 @@ func TestShimClientSubscribeReceivesSessionUpdate(t *testing.T) {
 	})
 
 	// Track received notifications.
-	var received []struct{ method string; params json.RawMessage }
+	var received []struct {
+		method string
+		params json.RawMessage
+	}
 	var mu sync.Mutex
 
 	c, err := DialWithHandler(context.Background(), socketPath, func(ctx context.Context, method string, params json.RawMessage) {
 		mu.Lock()
-		received = append(received, struct{ method string; params json.RawMessage }{method, params})
+		received = append(received, struct {
+			method string
+			params json.RawMessage
+		}{method, params})
 		mu.Unlock()
 	})
 	require.NoError(t, err)
@@ -677,7 +684,7 @@ func TestShimClientUnknownMethod(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	assert.Equal(t, int64(jsonrpc2.CodeMethodNotFound), int64(rpcErr.Code))
+	assert.Equal(t, int64(jsonrpc2.CodeMethodNotFound), rpcErr.Code)
 }
 
 func TestShimClientConcurrentCalls(t *testing.T) {

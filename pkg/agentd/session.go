@@ -12,9 +12,9 @@ import (
 
 // ErrInvalidTransition is returned when a session state transition is not allowed.
 type ErrInvalidTransition struct {
-	SessionID  string
-	FromState  meta.SessionState
-	ToState    meta.SessionState
+	SessionID        string
+	FromState        meta.SessionState
+	ToState          meta.SessionState
 	ValidTransitions []meta.SessionState
 }
 

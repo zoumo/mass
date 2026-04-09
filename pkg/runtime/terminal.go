@@ -5,14 +5,15 @@ package runtime
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
@@ -30,23 +31,23 @@ const (
 
 // Terminal tracks a single terminal process and its output.
 type Terminal struct {
-	ID             string
-	State          TerminalState
-	Cmd            *exec.Cmd
-	Output         *bytes.Buffer
-	OutputLimit    int
-	Truncated      bool
-	ExitCode       *int
-	Signal         *string
-	done           chan struct{}
-	mu             sync.Mutex
+	ID          string
+	State       TerminalState
+	Cmd         *exec.Cmd
+	Output      *bytes.Buffer
+	OutputLimit int
+	Truncated   bool
+	ExitCode    *int
+	Signal      *string
+	done        chan struct{}
+	mu          sync.Mutex
 }
 
 // TerminalManager manages multiple terminal processes for a session.
 type TerminalManager struct {
 	terminals map[string]*Terminal
 	mu        sync.RWMutex
-	workDir   string // resolved agent root directory
+	workDir   string   // resolved agent root directory
 	env       []string // merged environment
 	policy    spec.PermissionPolicy
 }
@@ -113,21 +114,16 @@ func (m *TerminalManager) Create(ctx context.Context, command string, args []str
 	// Create output buffer with limit
 	output := bytes.NewBuffer(make([]byte, 0, min(limit, 4096)))
 
-	// Capture stdout and stderr into the same buffer
-	// Use a MultiWriter to combine both streams
-	var outputWriter io.Writer = output
-
 	// Create a limited writer that truncates from beginning when limit exceeded
 	limitedWriter := &truncatingWriter{
-		buffer:  output,
-		limit:   limit,
+		buffer:    output,
+		limit:     limit,
 		truncated: false,
 	}
-	outputWriter = limitedWriter
 
 	// Pipe stdout and stderr to the output writer
-	cmd.Stdout = outputWriter
-	cmd.Stderr = outputWriter
+	cmd.Stdout = limitedWriter
+	cmd.Stderr = limitedWriter
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -170,7 +166,8 @@ func (m *TerminalManager) waitForExit(terminal *Terminal, tw *truncatingWriter) 
 
 	if err != nil {
 		// Process exited with error - extract exit code/signal
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		exitErr := &exec.ExitError{}
+		if errors.As(err, &exitErr) {
 			if status, ok := exitErr.ProcessState.Sys().(syscall.WaitStatus); ok {
 				if status.Exited() {
 					exitCode := status.ExitStatus()

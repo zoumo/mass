@@ -358,7 +358,7 @@ func TestSubscribeFromSeq_EmptyLog(t *testing.T) {
 }
 
 func TestSafeBlockText_NilText(t *testing.T) {
-	assert.Equal(t, "", safeBlockText(acp.ContentBlock{}))
+	assert.Empty(t, safeBlockText(acp.ContentBlock{}))
 }
 
 // sendTextNotif sends a single text ACP notification into the in channel and

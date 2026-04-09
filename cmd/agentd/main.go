@@ -37,7 +37,7 @@ func main() {
 	if cfg.MetaDB != "" {
 		// Create parent directory for MetaDB path if it doesn't exist.
 		metaDBDir := filepath.Dir(cfg.MetaDB)
-		if err := os.MkdirAll(metaDBDir, 0755); err != nil {
+		if err := os.MkdirAll(metaDBDir, 0o755); err != nil {
 			log.Fatalf("agentd: failed to create metadata database directory %s: %v", metaDBDir, err)
 		}
 
@@ -85,7 +85,7 @@ func main() {
 
 	// Run session recovery pass: reconnect to shims that survived a daemon restart.
 	{
-		recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 30 * time.Second)
+		recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := processes.RecoverSessions(recoverCtx); err != nil {
 			log.Printf("agentd: session recovery failed (non-fatal): %v", err)
 		} else {
@@ -132,7 +132,7 @@ func main() {
 	log.Printf("agentd: received signal %v, shutting down", sig)
 
 	// Graceful shutdown with timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 30 * time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {

@@ -4,8 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 type StateSuite struct {

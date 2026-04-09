@@ -96,7 +96,6 @@ func (s *Store) CreateSession(ctx context.Context, session *Session) error {
 		session.CreatedAt,
 		session.UpdatedAt,
 	)
-
 	if err != nil {
 		// Check for foreign key constraint violation.
 		if isFKViolation(err) {

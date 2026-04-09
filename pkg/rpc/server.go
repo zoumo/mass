@@ -19,10 +19,11 @@ import (
 	"sync"
 
 	acp "github.com/coder/acp-go-sdk"
+	"github.com/sourcegraph/jsonrpc2"
+
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/runtime"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 type SessionPromptParams struct {
@@ -39,8 +40,8 @@ type SessionSubscribeParams struct {
 }
 
 type SessionSubscribeResult struct {
-	NextSeq int                `json:"nextSeq"`
-	Entries []events.Envelope  `json:"entries,omitempty"`
+	NextSeq int               `json:"nextSeq"`
+	Entries []events.Envelope `json:"entries,omitempty"`
 }
 
 type RuntimeHistoryParams struct {

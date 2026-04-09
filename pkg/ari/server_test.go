@@ -14,12 +14,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sourcegraph/jsonrpc2"
+	"github.com/stretchr/testify/require"
+
 	"github.com/open-agent-d/open-agent-d/pkg/agentd"
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
 	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
-	"github.com/sourcegraph/jsonrpc2"
-	"github.com/stretchr/testify/require"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -490,7 +491,7 @@ func TestARIWorkspacePrepareLocal(t *testing.T) {
 	// Create a real local directory.
 	localDir := t.TempDir()
 	testFile := filepath.Join(localDir, "test.txt")
-	require.NoError(t, os.WriteFile(testFile, []byte("test content"), 0644))
+	require.NoError(t, os.WriteFile(testFile, []byte("test content"), 0o644))
 
 	spec := workspace.WorkspaceSpec{
 		OarVersion: "0.1.0",
@@ -662,7 +663,7 @@ func TestARIWorkspaceCleanupWithRefs(t *testing.T) {
 	// Verify JSON-RPC error code is InternalError.
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInternalError), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInternalError), rpcErr.Code,
 		"expected CodeInternalError for refs > 0, got %d", rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "active references",
 		"error message should mention active references")
@@ -698,7 +699,7 @@ func TestARIWorkspaceCleanupNonexistent(t *testing.T) {
 	// Verify JSON-RPC error code is InvalidParams.
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 		"expected CodeInvalidParams for nonexistent workspace, got %d", rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "not found",
 		"error message should mention not found")
@@ -782,7 +783,7 @@ func TestARIWorkspacePrepareInvalidSpec(t *testing.T) {
 
 			var rpcErr *jsonrpc2.Error
 			require.ErrorAs(t, err, &rpcErr)
-			require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+			require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 				"expected CodeInvalidParams for invalid spec, got %d", rpcErr.Code)
 			require.Contains(t, rpcErr.Message, tt.wantErr,
 				"error message should contain %q", tt.wantErr)
@@ -809,7 +810,7 @@ func TestARIWorkspacePrepareNilParams(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 		"expected CodeInvalidParams for nil params, got %d", rpcErr.Code)
 }
 
@@ -846,7 +847,7 @@ func TestARIWorkspacePrepareHookFailure(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 		"expected CodeInvalidParams for hook failure, got %d", rpcErr.Code)
 
 	// Verify error message contains "prepare-hooks" phase.
@@ -873,7 +874,7 @@ func TestARIWorkspaceCleanupNotFound(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 		"expected CodeInvalidParams for nonexistent workspace, got %d", rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "not found",
 		"error message should mention workspace not found")
@@ -897,7 +898,7 @@ func TestARIUnknownMethod(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeMethodNotFound), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeMethodNotFound), rpcErr.Code,
 		"expected CodeMethodNotFound for unknown method, got %d", rpcErr.Code)
 }
 
@@ -969,7 +970,7 @@ func TestARIWorkspaceCleanupLocalNotDeleted(t *testing.T) {
 	// Create a real local directory with a test file.
 	localDir := t.TempDir()
 	testFile := filepath.Join(localDir, "test.txt")
-	require.NoError(t, os.WriteFile(testFile, []byte("test content"), 0644))
+	require.NoError(t, os.WriteFile(testFile, []byte("test content"), 0o644))
 
 	// Prepare local workspace.
 	spec := workspace.WorkspaceSpec{
@@ -1158,7 +1159,7 @@ func TestARIAgentPromptOnStopped(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 		"expected CodeInvalidParams for prompt on stopped, got %d", rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "stopped",
 		"error message should mention 'stopped'")
@@ -1442,7 +1443,7 @@ func TestARISessionNewNilParams(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 		"expected CodeInvalidParams for nil params, got %d", rpcErr.Code)
 }
 
@@ -1635,7 +1636,7 @@ func TestARIRecoveryGuard_AllowsPromptAfterRecovery(t *testing.T) {
 	require.Error(t, err, "should fail because agent doesn't exist")
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.NotEqual(t, ari.CodeRecoveryBlocked, int64(rpcErr.Code),
+	require.NotEqual(t, ari.CodeRecoveryBlocked, rpcErr.Code,
 		"should NOT be CodeRecoveryBlocked after recovery completes")
 }
 
@@ -1660,7 +1661,7 @@ func TestARIRecoveryGuard_AllowsStopDuringRecovery(t *testing.T) {
 	require.Error(t, err, "should fail because agent doesn't exist")
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.NotEqual(t, ari.CodeRecoveryBlocked, int64(rpcErr.Code),
+	require.NotEqual(t, ari.CodeRecoveryBlocked, rpcErr.Code,
 		"agent/stop should NOT be recovery-blocked")
 }
 
@@ -1822,7 +1823,7 @@ func TestARIWorkspaceCleanupBlockedByDBRefCount(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInternalError), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInternalError), rpcErr.Code,
 		"expected CodeInternalError for refs > 0")
 	require.Contains(t, rpcErr.Message, "active references",
 		"error message should mention active references")
@@ -1876,7 +1877,7 @@ func requireRPCError(t *testing.T, err error, expectedCode int64, containsMsg st
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr, "error should be jsonrpc2.Error")
-	require.Equal(t, expectedCode, int64(rpcErr.Code),
+	require.Equal(t, expectedCode, rpcErr.Code,
 		"expected JSON-RPC code %d, got %d", expectedCode, rpcErr.Code)
 	require.Contains(t, rpcErr.Message, containsMsg,
 		"error message should contain %q, got %q", containsMsg, rpcErr.Message)
@@ -2223,7 +2224,7 @@ func TestARIRoomSendErrors(t *testing.T) {
 		require.Error(t, err, "room/send should fail for stopped/unavailable agent")
 		var rpcErr *jsonrpc2.Error
 		require.ErrorAs(t, err, &rpcErr)
-		require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code))
+		require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code)
 		// Accept "is stopped" (session exists and is stopped) or "not found in room"
 		// (no session created — bootstrap failed before session was persisted).
 		require.True(t, strings.Contains(rpcErr.Message, "is stopped") || strings.Contains(rpcErr.Message, "not found in room"),
@@ -2730,7 +2731,7 @@ func TestARIAgentCreateDuplicateName(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 		"expected CodeInvalidParams for duplicate agent, got %d", rpcErr.Code)
 }
 
@@ -2756,7 +2757,7 @@ func TestARIAgentCreateMissingRoom(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 		"expected CodeInvalidParams for nonexistent room, got %d", rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "room/create",
 		"error message should mention room/create")
@@ -2809,7 +2810,7 @@ func TestARIAgentDeleteRequiresStopped(t *testing.T) {
 
 	var rpcErr *jsonrpc2.Error
 	require.ErrorAs(t, err, &rpcErr)
-	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), int64(rpcErr.Code),
+	require.Equal(t, int64(jsonrpc2.CodeInvalidParams), rpcErr.Code,
 		"expected CodeInvalidParams for delete of active agent, got %d", rpcErr.Code)
 	require.Contains(t, rpcErr.Message, "stopped",
 		"error message should mention 'stopped'")
@@ -2898,7 +2899,7 @@ func TestARISessionMethodsRemoved(t *testing.T) {
 
 			var rpcErr *jsonrpc2.Error
 			require.ErrorAs(t, err, &rpcErr)
-			require.Equal(t, int64(jsonrpc2.CodeMethodNotFound), int64(rpcErr.Code),
+			require.Equal(t, int64(jsonrpc2.CodeMethodNotFound), rpcErr.Code,
 				"%s should return CodeMethodNotFound, got %d", method, rpcErr.Code)
 		})
 	}

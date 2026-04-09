@@ -6,8 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // validConfig returns a Config that passes all validation rules.

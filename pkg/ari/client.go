@@ -60,7 +60,7 @@ func NewClient(socketPath string) (*Client, error) {
 // This is a blocking call that waits for the server response.
 // Returns an error if the request fails, the response is malformed,
 // or the server returns an RPC error.
-func (c *Client) Call(method string, params any, result any) error {
+func (c *Client) Call(method string, params, result any) error {
 	c.mu.Lock()
 	id := c.nextID
 	c.nextID++

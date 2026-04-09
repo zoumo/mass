@@ -87,7 +87,7 @@ func TestEmptyDirHandlerIntegration(t *testing.T) {
 		}
 
 		// Verify permissions (0755 = rwxr-xr-x).
-		expectedPerm := os.FileMode(0755)
+		expectedPerm := os.FileMode(0o755)
 		if info.Mode().Perm() != expectedPerm {
 			t.Errorf("expected permissions %04o, got %04o", expectedPerm, info.Mode().Perm())
 		}
@@ -131,7 +131,7 @@ func TestEmptyDirHandlerIntegration(t *testing.T) {
 		targetDir := filepath.Join(parentDir, "existing")
 
 		// Pre-create the directory.
-		if err := os.MkdirAll(targetDir, 0755); err != nil {
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
 			t.Fatalf("failed to pre-create directory: %v", err)
 		}
 
@@ -160,13 +160,13 @@ func TestEmptyDirHandlerIntegration(t *testing.T) {
 			EmptyDir: EmptyDirSource{},
 		}
 
-		// Create a cancelled context.
+		// Create a canceled context.
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
 		_, err := h.Prepare(ctx, source, targetDir)
 		if err == nil {
-			t.Fatal("expected error from cancelled context, got nil")
+			t.Fatal("expected error from canceled context, got nil")
 		}
 
 		// Should return context cancellation error.

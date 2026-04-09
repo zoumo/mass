@@ -5,8 +5,9 @@ package main
 import (
 	"fmt"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
 	"github.com/spf13/cobra"
+
+	"github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
 // daemonCmd is the root command for daemon management operations.

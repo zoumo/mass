@@ -151,10 +151,10 @@ func (c *client) close() { _ = c.conn.Close() }
 
 // sessionUpdateParams mirrors events.SessionUpdateParams for printing.
 type sessionUpdateParams struct {
-	SessionID string          `json:"sessionId"`
-	Seq       int             `json:"seq"`
-	Timestamp string          `json:"timestamp"`
-	Event     sessionEvent    `json:"event"`
+	SessionID string       `json:"sessionId"`
+	Seq       int          `json:"seq"`
+	Timestamp string       `json:"timestamp"`
+	Event     sessionEvent `json:"event"`
 }
 
 type sessionEvent struct {

@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
 	"github.com/spf13/cobra"
+
+	"github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
 // agentCmd is the root command for agent management operations.
@@ -93,12 +94,12 @@ until state is "created" (or "error") before sending prompts.`,
 
 // Flags for agent create command.
 var (
-	agentCreateRoom          string
-	agentCreateName          string
-	agentCreateWorkspaceId   string
-	agentCreateRuntimeClass  string
-	agentCreateDescription   string
-	agentCreateSystemPrompt  string
+	agentCreateRoom         string
+	agentCreateName         string
+	agentCreateWorkspaceId  string
+	agentCreateRuntimeClass string
+	agentCreateDescription  string
+	agentCreateSystemPrompt string
 )
 
 // Flags for agent list command.
@@ -241,21 +242,21 @@ func runAgentPrompt(cmd *cobra.Command, args []string) error {
 
 	outputJSON(result)
 
-		if agentPromptWait && result.Accepted {
-			fmt.Println("Waiting for agent to finish processing...")
-			for {
-				time.Sleep(500 * time.Millisecond)
-				var statusResult ari.AgentStatusResult
-				if err := client.Call("agent/status", ari.AgentStatusParams{AgentId: agentId}, &statusResult); err != nil {
-					fmt.Printf("agent/status error: %v\n", err)
+	if agentPromptWait && result.Accepted {
+		fmt.Println("Waiting for agent to finish processing...")
+		for {
+			time.Sleep(500 * time.Millisecond)
+			var statusResult ari.AgentStatusResult
+			if err := client.Call("agent/status", ari.AgentStatusParams{AgentId: agentId}, &statusResult); err != nil {
+				fmt.Printf("agent/status error: %v\n", err)
 				break
 			}
-				if statusResult.Agent.State != "running" {
-					fmt.Printf("Agent state: %s\n", statusResult.Agent.State)
-					break
-				}
+			if statusResult.Agent.State != "running" {
+				fmt.Printf("Agent state: %s\n", statusResult.Agent.State)
+				break
 			}
 		}
+	}
 
 	return nil
 }

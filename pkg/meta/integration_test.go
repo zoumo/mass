@@ -40,8 +40,8 @@ func TestIntegrationStoreInitWithAgentd(t *testing.T) {
 	// Cleanup socket directory separately.
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 
-	require.NoError(t, os.MkdirAll(workspaceRoot, 0755), "failed to create workspace root")
-	require.NoError(t, os.MkdirAll(metaDBDir, 0755), "failed to create metadata dir")
+	require.NoError(t, os.MkdirAll(workspaceRoot, 0o755), "failed to create workspace root")
+	require.NoError(t, os.MkdirAll(metaDBDir, 0o755), "failed to create metadata dir")
 	metaDBPath := filepath.Join(metaDBDir, "meta.db")
 
 	// Create minimal config file.
@@ -59,7 +59,7 @@ sessionPolicy:
   autoCleanup: true
 `, socketPath, workspaceRoot, metaDBPath)
 
-	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644), "failed to write config file")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "failed to write config file")
 
 	// Build agentd binary from module root (relative to pkg/meta).
 	// Integration tests run from pkg/meta directory, so use ../../cmd/agentd.
@@ -158,7 +158,7 @@ func TestIntegrationStoreNotConfigured(t *testing.T) {
 	// Cleanup socket directory separately.
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 
-	require.NoError(t, os.MkdirAll(workspaceRoot, 0755), "failed to create workspace root")
+	require.NoError(t, os.MkdirAll(workspaceRoot, 0o755), "failed to create workspace root")
 
 	// Create config WITHOUT metaDB field.
 	configPath := filepath.Join(tmpDir, "config.yaml")
@@ -174,7 +174,7 @@ sessionPolicy:
   autoCleanup: true
 `, socketPath, workspaceRoot)
 
-	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0644), "failed to write config file")
+	require.NoError(t, os.WriteFile(configPath, []byte(configContent), 0o644), "failed to write config file")
 
 	// Build agentd binary from module root (relative to pkg/meta).
 	// Integration tests run from pkg/meta directory, so use ../../cmd/agentd.

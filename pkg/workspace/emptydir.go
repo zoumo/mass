@@ -36,7 +36,7 @@ func (h *EmptyDirHandler) Prepare(ctx context.Context, source Source, targetDir 
 	}
 
 	// Create the directory with standard permissions (0755: rwxr-xr-x).
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return "", fmt.Errorf("workspace: failed to create empty directory %q: %w", targetDir, err)
 	}
 

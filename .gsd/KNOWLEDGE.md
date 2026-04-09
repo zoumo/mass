@@ -543,3 +543,19 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** In integration test cleanup (and orchestrator logic), always call `agent/stop` before `agent/delete` for any agent that is not already in `stopped` state. A safe pattern: `stopAndDeleteAgent(t, client, agentId)` which calls stop then delete unconditionally.
 - **Reference:** T02 key_decisions, tests/integration/session_test.go stopAndDeleteAgent helper, M005/S07/T02
 - **When:** M005/S07
+
+## K040 — golangci-lint v2: use `golangci-lint fmt ./...` for all gci/gofumpt auto-fixes
+
+- **Pattern:** In golangci-lint v2, the correct command to auto-fix all gci (import ordering) and gofumpt (whitespace/formatting) violations is `golangci-lint fmt ./...` — a single idempotent pass that rewrites files in-place.
+- **Gotcha:** Running individual tools (`gci write` or `gofumpt -w`) separately can produce subtly different results than what golangci-lint enforces (the linter reads `.golangci.yml` settings that the standalone tools may not). Using `golangci-lint fmt` guarantees the formatter applies exactly the same rules the linter checks against.
+- **Lesson:** For any CI pipeline that enforces gci/gofumpt via golangci-lint v2, the developer fix command is `golangci-lint fmt ./...` (not `gci write ./... && gofumpt -w .`). Verify with `golangci-lint run ./... 2>&1 | grep -E '\(gci\)|\(gofumpt\)'` — a grep exit code of 1 (no matches) means clean.
+- **Reference:** M006/S01/T01 — 67 files fixed in 4.4s, zero remaining findings
+- **When:** M006/S01
+
+## K-golangci-gocritic-missing-import — golangci-lint --fix (gocritic) adds errors.As but omits the "errors" import
+
+- **Pattern:** When `golangci-lint run --fix` rewrites type assertions (`err.(*T)`) to `errors.As(err, &target)` via the gocritic linter, it modifies the function body but does NOT add the `"errors"` package to the import block. The resulting file fails to compile.
+- **Gotcha:** The same issue can occur for any new standard-library import the gocritic rewrite introduces. After running `--fix`, always run `go build ./...` to catch missing imports, then add them manually.
+- **Also noted:** `golangci-lint run --fix` does not auto-fix `unconvert` or `ineffassign` findings — those require manual edits despite the linters being listed as fixable in some versions.
+- **Reference:** M006/S02/T01 — affected pkg/ari/server.go, pkg/workspace/git.go, pkg/workspace/hook_test.go, pkg/agentd/session_test.go, pkg/runtime/terminal.go
+- **When:** M006/S02

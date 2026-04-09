@@ -5,6 +5,7 @@ package ari
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -16,10 +17,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sourcegraph/jsonrpc2"
+
 	"github.com/open-agent-d/open-agent-d/pkg/agentd"
 	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -111,7 +113,7 @@ func New(manager *workspace.WorkspaceManager, registry *Registry, sessions *agen
 // the server is shut down. It is safe to call from a goroutine.
 func (s *Server) Serve() error {
 	// Ensure baseDir exists.
-	if err := os.MkdirAll(s.baseDir, 0755); err != nil {
+	if err := os.MkdirAll(s.baseDir, 0o755); err != nil {
 		return fmt.Errorf("ari: create baseDir %s: %w", s.baseDir, err)
 	}
 
@@ -264,7 +266,8 @@ func (h *connHandler) handleWorkspacePrepare(ctx context.Context, conn *jsonrpc2
 	workspacePath, err := h.srv.manager.Prepare(ctx, p.Spec, targetDir)
 	if err != nil {
 		// Check if error is a WorkspaceError to extract Phase.
-		if wsErr, ok := err.(*workspace.WorkspaceError); ok {
+		wsErr := &workspace.WorkspaceError{}
+		if errors.As(err, &wsErr) {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
 				fmt.Sprintf("%s failed: %s", wsErr.Phase, wsErr.Message))
 			return
@@ -399,7 +402,8 @@ func (h *connHandler) handleWorkspaceCleanup(ctx context.Context, conn *jsonrpc2
 	err := h.srv.manager.Cleanup(ctx, meta.Path, meta.Spec)
 	if err != nil {
 		// Check if error is a WorkspaceError to extract Phase.
-		if wsErr, ok := err.(*workspace.WorkspaceError); ok {
+		wsErr := &workspace.WorkspaceError{}
+		if errors.As(err, &wsErr) {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
 				fmt.Sprintf("%s failed: %s", wsErr.Phase, wsErr.Message))
 			return
@@ -473,15 +477,15 @@ func (h *connHandler) handleSessionNew(ctx context.Context, conn *jsonrpc2.Conn,
 
 	// Create new meta.Session with State="created".
 	session := &meta.Session{
-		ID:          sessionId,
-		WorkspaceID: p.WorkspaceId,
+		ID:           sessionId,
+		WorkspaceID:  p.WorkspaceId,
 		RuntimeClass: p.RuntimeClass,
-		Room:        p.Room,
-		RoomAgent:   p.RoomAgent,
-		Labels:      p.Labels,
-		State:       meta.SessionStateCreated,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		Room:         p.Room,
+		RoomAgent:    p.RoomAgent,
+		Labels:       p.Labels,
+		State:        meta.SessionStateCreated,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	}
 
 	log.Printf("ari: session/new creating session %s for workspace %s", sessionId, p.WorkspaceId)
@@ -763,7 +767,8 @@ func (h *connHandler) handleSessionRemove(ctx context.Context, conn *jsonrpc2.Co
 	err := h.srv.sessions.Delete(ctx, p.SessionId)
 	if err != nil {
 		// Check if error is ErrDeleteProtected (running/paused:warm session).
-		if _, ok := err.(*agentd.ErrDeleteProtected); ok {
+		errDeleteProtected := &agentd.ErrDeleteProtected{}
+		if errors.As(err, &errDeleteProtected) {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
 			return
 		}
@@ -818,15 +823,15 @@ func (h *connHandler) handleSessionList(ctx context.Context, conn *jsonrpc2.Conn
 	sessionInfos := make([]SessionInfo, 0, len(sessions))
 	for _, s := range sessions {
 		sessionInfos = append(sessionInfos, SessionInfo{
-			Id:          s.ID,
-			WorkspaceId: s.WorkspaceID,
+			Id:           s.ID,
+			WorkspaceId:  s.WorkspaceID,
 			RuntimeClass: s.RuntimeClass,
-			State:       string(s.State),
-			Room:        s.Room,
-			RoomAgent:   s.RoomAgent,
-			Labels:      s.Labels,
-			CreatedAt:   s.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:   s.UpdatedAt.Format(time.RFC3339),
+			State:        string(s.State),
+			Room:         s.Room,
+			RoomAgent:    s.RoomAgent,
+			Labels:       s.Labels,
+			CreatedAt:    s.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:    s.UpdatedAt.Format(time.RFC3339),
 		})
 	}
 
@@ -867,15 +872,15 @@ func (h *connHandler) handleSessionStatus(ctx context.Context, conn *jsonrpc2.Co
 
 	// Build SessionInfo.
 	sessionInfo := SessionInfo{
-		Id:          session.ID,
-		WorkspaceId: session.WorkspaceID,
+		Id:           session.ID,
+		WorkspaceId:  session.WorkspaceID,
 		RuntimeClass: session.RuntimeClass,
-		State:       string(session.State),
-		Room:        session.Room,
-		RoomAgent:   session.RoomAgent,
-		Labels:      session.Labels,
-		CreatedAt:   session.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:   session.UpdatedAt.Format(time.RFC3339),
+		State:        string(session.State),
+		Room:         session.Room,
+		RoomAgent:    session.RoomAgent,
+		Labels:       session.Labels,
+		CreatedAt:    session.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:    session.UpdatedAt.Format(time.RFC3339),
 	}
 
 	// If state=="running", call processes.State for shim state.
@@ -1076,7 +1081,8 @@ func (h *connHandler) handleAgentCreate(ctx context.Context, conn *jsonrpc2.Conn
 		UpdatedAt:    time.Now(),
 	}
 	if err := h.srv.agents.Create(ctx, agent); err != nil {
-		if _, ok := err.(*agentd.ErrAgentAlreadyExists); ok {
+		errAgentAlreadyExists := &agentd.ErrAgentAlreadyExists{}
+		if errors.As(err, &errAgentAlreadyExists) {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
 		} else {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
@@ -1164,9 +1170,9 @@ func (h *connHandler) handleAgentCreate(ctx context.Context, conn *jsonrpc2.Conn
 // with {accepted: true} once the dispatch is confirmed. The agent state
 // machine follows the actor model:
 //
-//   created/idle  →  running  (on successful dispatch)
-//   running       →  created  (background goroutine, turn completed)
-//   running       →  error    (background goroutine, turn failed / timed out)
+//	created/idle  →  running  (on successful dispatch)
+//	running       →  created  (background goroutine, turn completed)
+//	running       →  error    (background goroutine, turn failed / timed out)
 //
 // Callers MUST poll agent/status to detect turn completion. The agent-shim
 // does not support prompt queuing: if the agent is already running, the call
@@ -1300,7 +1306,7 @@ func (h *connHandler) handleAgentCancel(ctx context.Context, conn *jsonrpc2.Conn
 	}
 	if agent.State == meta.AgentStateError {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams,
-			fmt.Sprintf("agent %q is in error state; restart or delete it before cancelling", p.AgentId))
+			fmt.Sprintf("agent %q is in error state; restart or delete it before canceling", p.AgentId))
 		return
 	}
 	if session == nil {
@@ -1354,7 +1360,8 @@ func (h *connHandler) handleAgentStop(ctx context.Context, conn *jsonrpc2.Conn, 
 
 	// Update agent state to stopped.
 	if err := h.srv.agents.UpdateState(ctx, p.AgentId, meta.AgentStateStopped, ""); err != nil {
-		if _, ok := err.(*agentd.ErrAgentNotFound); ok {
+		errAgentNotFound := &agentd.ErrAgentNotFound{}
+		if errors.As(err, &errAgentNotFound) {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
 		} else {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError,
@@ -1411,13 +1418,17 @@ func (h *connHandler) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn
 	}
 
 	if err := h.deleteAgentWithCleanup(ctx, p.AgentId); err != nil {
-		switch err.(type) {
-		case *agentd.ErrAgentNotFound:
-			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
-		case *agentd.ErrDeleteNotStopped:
-			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
-		default:
-			replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
+		{
+			var errCase0 *agentd.ErrAgentNotFound
+			var errCase1 *agentd.ErrDeleteNotStopped
+			switch {
+			case errors.As(err, &errCase0):
+				replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+			case errors.As(err, &errCase1):
+				replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
+			default:
+				replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
+			}
 		}
 		return
 	}
@@ -1869,6 +1880,7 @@ func (h *connHandler) handleRoomStatus(ctx context.Context, conn *jsonrpc2.Conn,
 //  7. If no linked session: return InvalidParams
 //  8. Format attributed message: [room:<roomName> from:<senderAgent>] <message>
 //  9. Transition agent to "running"
+//
 // 10. Call deliverPromptAsync (fire-and-forget dispatch)
 // 11. If dispatch fails: revert agent to error, return InternalError
 // 12. Return RoomSendResult{Delivered: true} immediately
@@ -2049,7 +2061,7 @@ func (h *connHandler) handleRoomDelete(ctx context.Context, conn *jsonrpc2.Conn,
 			fmt.Sprintf("failed to list room agents: %s", err.Error()))
 		return
 	}
-		var activeAgents []string
+	var activeAgents []string
 	for _, a := range agents {
 		if a.State != meta.AgentStateStopped && a.State != meta.AgentStateError {
 			activeAgents = append(activeAgents, a.ID)

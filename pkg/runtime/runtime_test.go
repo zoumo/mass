@@ -12,10 +12,11 @@ import (
 	"time"
 
 	"github.com/coder/acp-go-sdk"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
-	pkgruntime "github.com/open-agent-d/open-agent-d/pkg/runtime"
-	"github.com/stretchr/testify/suite"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	pkgruntime "github.com/open-agent-d/open-agent-d/pkg/runtime"
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 var mockAgentBin string
@@ -95,20 +96,20 @@ func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	require.NoError(s.T(), mgr.Create(ctx))
+	s.Require().NoError(mgr.Create(ctx))
 
 	state, err := mgr.GetState()
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
 	s.Equal(spec.StatusCreated, state.Status)
-	s.Greater(state.PID, 0)
+	s.Positive(state.PID)
 
 	// Kill process externally and verify state transitions to stopped.
 	proc, err := os.FindProcess(state.PID)
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
 	_ = proc.Signal(syscall.SIGKILL)
 
 	// Wait for background goroutine to write stopped state.
-	require.Eventually(s.T(), func() bool {
+	s.Require().Eventually(func() bool {
 		st, err := mgr.GetState()
 		return err == nil && st.Status == spec.StatusStopped
 	}, 10*time.Second, 100*time.Millisecond, "expected status=stopped after SIGKILL")
@@ -120,22 +121,22 @@ func (s *RuntimeSuite) TestKill_TransitionsToStopped() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	require.NoError(s.T(), mgr.Create(ctx))
-	require.NoError(s.T(), mgr.Kill(ctx))
+	s.Require().NoError(mgr.Create(ctx))
+	s.Require().NoError(mgr.Kill(ctx))
 
 	state, err := mgr.GetState()
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
 	s.Equal(spec.StatusStopped, state.Status)
 }
 
 func (s *RuntimeSuite) TestDelete_RemovesStateDir() {
 	bundleDir, err := os.MkdirTemp("", "oad-bundle-")
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
 	cfg := newTestConfig("test-delete")
-	require.NoError(s.T(), os.MkdirAll(filepath.Join(bundleDir, cfg.AgentRoot.Path), 0o755))
+	s.Require().NoError(os.MkdirAll(filepath.Join(bundleDir, cfg.AgentRoot.Path), 0o755))
 
 	stateDir, err := os.MkdirTemp("", "oad-state-")
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
 	// Note: do NOT register cleanup for stateDir — we're testing that Delete() removes it.
 	s.T().Cleanup(func() { os.RemoveAll(bundleDir) })
 
@@ -144,9 +145,9 @@ func (s *RuntimeSuite) TestDelete_RemovesStateDir() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	require.NoError(s.T(), mgr.Create(ctx))
-	require.NoError(s.T(), mgr.Kill(ctx))
-	require.NoError(s.T(), mgr.Delete())
+	s.Require().NoError(mgr.Create(ctx))
+	s.Require().NoError(mgr.Kill(ctx))
+	s.Require().NoError(mgr.Delete())
 
 	_, err = os.Stat(stateDir)
 	s.True(os.IsNotExist(err), "expected stateDir to be removed after Delete()")
@@ -158,12 +159,12 @@ func (s *RuntimeSuite) TestPrompt_ReceivesSessionUpdates() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	require.NoError(s.T(), mgr.Create(ctx))
+	s.Require().NoError(mgr.Create(ctx))
 
 	resp, err := mgr.Prompt(ctx, []acp.ContentBlock{
 		{Text: &acp.ContentBlockText{Text: "hello"}},
 	})
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
 	s.Equal(acp.StopReasonEndTurn, resp.StopReason)
 
 	// Drain events emitted during the turn (mock agent sends 2).
@@ -183,7 +184,7 @@ drain:
 		}
 	}
 
-	require.Len(s.T(), notifications, 2)
+	s.Require().Len(notifications, 2)
 	// Notifications may arrive in any order (ACP fire-and-forget); scan all entries.
 	var foundWriteOk, foundMockResponse bool
 	for _, n := range notifications {
@@ -201,7 +202,7 @@ drain:
 	s.True(foundWriteOk, "expected a notification containing 'write:ok'")
 	s.True(foundMockResponse, "expected a notification with text 'mock response'")
 
-	require.NoError(s.T(), mgr.Kill(ctx))
+	s.Require().NoError(mgr.Kill(ctx))
 }
 
 func (s *RuntimeSuite) TestPrompt_DenyAll_BlocksWrite() {
@@ -212,12 +213,12 @@ func (s *RuntimeSuite) TestPrompt_DenyAll_BlocksWrite() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	require.NoError(s.T(), mgr.Create(ctx))
+	s.Require().NoError(mgr.Create(ctx))
 
 	resp, err := mgr.Prompt(ctx, []acp.ContentBlock{
 		{Text: &acp.ContentBlockText{Text: "hello"}},
 	})
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
 	s.Equal(acp.StopReasonEndTurn, resp.StopReason)
 
 	events := mgr.Events()
@@ -236,7 +237,7 @@ drain:
 		}
 	}
 
-	require.Len(s.T(), notifications, 2)
+	s.Require().Len(notifications, 2)
 	// At least one notification must carry write:denied prefix (order not guaranteed).
 	hasWriteDenied := false
 	for _, n := range notifications {
@@ -248,7 +249,7 @@ drain:
 	}
 	s.True(hasWriteDenied, "expected a write:denied notification under deny-all policy")
 
-	require.NoError(s.T(), mgr.Kill(ctx))
+	s.Require().NoError(mgr.Kill(ctx))
 }
 
 func (s *RuntimeSuite) TestCancel_SendsCancelToAgent() {
@@ -257,13 +258,13 @@ func (s *RuntimeSuite) TestCancel_SendsCancelToAgent() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	require.NoError(s.T(), mgr.Create(ctx))
+	s.Require().NoError(mgr.Create(ctx))
 
 	// Cancel must not error on a live session.
 	err := mgr.Cancel(ctx)
-	require.NoError(s.T(), err)
+	s.Require().NoError(err)
 
-	require.NoError(s.T(), mgr.Kill(ctx))
+	s.Require().NoError(mgr.Kill(ctx))
 }
 
 func (s *RuntimeSuite) TestCreate_FailsWithBadCommand() {

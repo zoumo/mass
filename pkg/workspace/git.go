@@ -5,6 +5,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -200,7 +201,8 @@ func getExitCode(err error) int {
 	if err == nil {
 		return 0
 	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	exitErr := &exec.ExitError{}
+	if errors.As(err, &exitErr) {
 		if exitErr.ExitCode() != 0 {
 			return exitErr.ExitCode()
 		}

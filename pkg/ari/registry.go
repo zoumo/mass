@@ -61,13 +61,13 @@ func NewRegistry() *Registry {
 func (r *Registry) Add(id, name, path string, spec workspace.WorkspaceSpec) {
 	r.mu.Lock()
 	r.workspaces[id] = &WorkspaceMeta{
-		Id:        id,
-		Name:      name,
-		Path:      path,
-		Spec:      spec,
-		Status:    "ready",
-		RefCount:  0,
-		Refs:      []string{},
+		Id:       id,
+		Name:     name,
+		Path:     path,
+		Spec:     spec,
+		Status:   "ready",
+		RefCount: 0,
+		Refs:     []string{},
 	}
 	r.mu.Unlock()
 }
@@ -106,7 +106,7 @@ func (r *Registry) Remove(id string) {
 // Acquire increments the reference count for a workspace.
 // Adds the session ID to the Refs list for debugging.
 // Thread-safe via mutex lock.
-func (r *Registry) Acquire(id string, sessionID string) {
+func (r *Registry) Acquire(id, sessionID string) {
 	r.mu.Lock()
 	if m := r.workspaces[id]; m != nil {
 		m.RefCount++
@@ -119,7 +119,7 @@ func (r *Registry) Acquire(id string, sessionID string) {
 // Removes the session ID from the Refs list.
 // Returns the reference count after decrement.
 // Thread-safe via mutex lock.
-func (r *Registry) Release(id string, sessionID string) int {
+func (r *Registry) Release(id, sessionID string) int {
 	r.mu.Lock()
 	count := 0
 	if m := r.workspaces[id]; m != nil && m.RefCount > 0 {

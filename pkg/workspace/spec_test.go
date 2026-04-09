@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
 // validWorkspaceSpec returns a WorkspaceSpec that passes all validation rules.
@@ -135,8 +136,8 @@ func (s *SpecSuite) TestMarshalGitSource() {
 		Source: workspace.Source{
 			Type: workspace.SourceTypeGit,
 			Git: workspace.GitSource{
-				URL:  "https://github.com/org/repo.git",
-				Ref:  "main",
+				URL:   "https://github.com/org/repo.git",
+				Ref:   "main",
 				Depth: 1,
 			},
 		},

@@ -6,8 +6,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/stretchr/testify/require"
+
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 func TestExampleBundlesAreValid(t *testing.T) {
@@ -29,7 +30,6 @@ func TestExampleBundlesAreValid(t *testing.T) {
 
 	sort.Strings(bundleDirs)
 	for _, bundleDir := range bundleDirs {
-		bundleDir := bundleDir
 		t.Run(filepath.Base(bundleDir), func(t *testing.T) {
 			cfg, err := spec.ParseConfig(bundleDir)
 			require.NoError(t, err)

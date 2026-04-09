@@ -130,7 +130,7 @@ func TestSessionWithRoom(t *testing.T) {
 	}
 
 	room := &Room{
-		Name:             "test-room",
+		Name:              "test-room",
 		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {
@@ -206,7 +206,7 @@ func TestListSessionsFiltering(t *testing.T) {
 
 	// Create prerequisite room.
 	room := &Room{
-		Name:             "room-with-sessions",
+		Name:              "room-with-sessions",
 		CommunicationMode: CommunicationModeMesh,
 	}
 	if err := store.CreateRoom(ctx, room); err != nil {

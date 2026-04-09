@@ -7,9 +7,11 @@ import (
 	"path/filepath"
 )
 
-const stateFile = "state.json"
-const eventLogFile = "events.jsonl"
-const shimSocketFile = "agent-shim.sock"
+const (
+	stateFile      = "state.json"
+	eventLogFile   = "events.jsonl"
+	shimSocketFile = "agent-shim.sock"
+)
 
 // StateDir returns the directory used to persist state for the agent identified
 // by id: baseDir/id/.

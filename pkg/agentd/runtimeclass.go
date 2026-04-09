@@ -18,8 +18,6 @@ type Capabilities struct {
 
 	// ConcurrentSessions is the max concurrent sessions per runtime class.
 	ConcurrentSessions int
-
-
 }
 
 // RuntimeClass represents a resolved runtime class configuration.
@@ -43,7 +41,7 @@ type RuntimeClass struct {
 // RuntimeClassRegistry resolves runtime class names to launch configurations.
 // Thread-safe via RWMutex for concurrent Get/List operations.
 type RuntimeClassRegistry struct {
-	mu     sync.RWMutex
+	mu      sync.RWMutex
 	classes map[string]*RuntimeClass
 }
 
@@ -85,10 +83,10 @@ func NewRuntimeClassRegistry(configs map[string]RuntimeClassConfig) (*RuntimeCla
 		}
 
 		classes[name] = &RuntimeClass{
-			Name:     name,
-			Command:  cfg.Command,
-			Args:     cfg.Args,
-			Env:      env,
+			Name:    name,
+			Command: cfg.Command,
+			Args:    cfg.Args,
+			Env:     env,
 			Capabilities: Capabilities{
 				Streaming:          streaming,
 				SessionLoad:        sessionLoad,

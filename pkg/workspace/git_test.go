@@ -131,9 +131,9 @@ func TestGitHandlerGitNotFound(t *testing.T) {
 // TestGitErrorStructure verifies GitError fields and Error() method.
 func TestGitErrorStructure(t *testing.T) {
 	tests := []struct {
-		name     string
-		gitErr   *GitError
-		wantIn   []string // strings that should appear in Error()
+		name      string
+		gitErr    *GitError
+		wantIn    []string // strings that should appear in Error()
 		wantNotIn []string // strings that should NOT appear in Error()
 	}{
 		{
@@ -176,7 +176,7 @@ func TestGitErrorStructure(t *testing.T) {
 				Phase:   "clone",
 				Message: "failed",
 			},
-			wantIn: []string{"clone", "failed"},
+			wantIn:    []string{"clone", "failed"},
 			wantNotIn: []string{"url=", "ref=", "exit="},
 		},
 	}
@@ -234,16 +234,16 @@ func TestIsCommitSHA(t *testing.T) {
 		ref  string
 		want bool
 	}{
-		{"", false},                     // empty
-		{"main", false},                 // short branch name
-		{"feature/foo", false},          // branch name with slash
-		{"v1.0.0", false},               // tag
-		{"abc123", false},               // short hex (6 chars)
-		{"abc123def456789abc123def456789abc123def", false},  // 39 chars (one short)
-		{"abc123def456789abc123def456789abc123def4", true},  // 40 chars, valid hex
-		{"ABC123DEF456789ABC123DEF456789ABC123DEF4", true},  // 40 chars, uppercase
-		{"0123456789abcdef0123456789abcdef01234567", true}, // 40 chars, all hex
-		{"0123456789abcdef0123456789abcdef0123456g", false}, // 40 chars with 'g' (not hex)
+		{"", false},            // empty
+		{"main", false},        // short branch name
+		{"feature/foo", false}, // branch name with slash
+		{"v1.0.0", false},      // tag
+		{"abc123", false},      // short hex (6 chars)
+		{"abc123def456789abc123def456789abc123def", false},    // 39 chars (one short)
+		{"abc123def456789abc123def456789abc123def4", true},    // 40 chars, valid hex
+		{"ABC123DEF456789ABC123DEF456789ABC123DEF4", true},    // 40 chars, uppercase
+		{"0123456789abcdef0123456789abcdef01234567", true},    // 40 chars, all hex
+		{"0123456789abcdef0123456789abcdef0123456g", false},   // 40 chars with 'g' (not hex)
 		{"ghijklmnopqrstuvwxyzghijklmnopqrstuvwxyzgh", false}, // 40 chars, non-hex
 	}
 
@@ -394,7 +394,7 @@ func TestGitHandlerIntegration(t *testing.T) {
 
 		source := Source{
 			Type: SourceTypeGit,
-			Git:  GitSource{
+			Git: GitSource{
 				URL:   testRepoURL,
 				Depth: 1,
 			},
@@ -433,7 +433,7 @@ func TestGitHandlerIntegration(t *testing.T) {
 		// Hello-World repo has a "test" branch.
 		source := Source{
 			Type: SourceTypeGit,
-			Git:  GitSource{
+			Git: GitSource{
 				URL: testRepoURL,
 				Ref: "test",
 			},
@@ -491,7 +491,7 @@ func TestGitHandlerIntegration(t *testing.T) {
 
 		source := Source{
 			Type: SourceTypeGit,
-			Git:  GitSource{
+			Git: GitSource{
 				URL: testRepoURL,
 				Ref: commitSHA,
 			},
@@ -538,7 +538,7 @@ func TestGitHandlerIntegration(t *testing.T) {
 
 		_, err := h.Prepare(ctx, source, repoDir)
 		if err == nil {
-			t.Fatal("expected error from cancelled context, got nil")
+			t.Fatal("expected error from canceled context, got nil")
 		}
 
 		// Should return context cancellation error.

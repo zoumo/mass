@@ -9,9 +9,10 @@ import (
 	"net"
 	"sync"
 
+	"github.com/sourcegraph/jsonrpc2"
+
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ type SessionPromptResult struct {
 }
 
 // Prompt sends a text prompt to the agent and waits for the turn to complete.
-// Returns the stop reason (e.g., "end_turn", "cancelled", "tool_use").
+// Returns the stop reason (e.g., "end_turn", "canceled", "tool_use").
 func (c *ShimClient) Prompt(ctx context.Context, text string) (SessionPromptResult, error) {
 	var result SessionPromptResult
 	if err := c.call(ctx, "session/prompt", SessionPromptParams{Prompt: text}, &result); err != nil {
@@ -137,7 +138,7 @@ type SessionSubscribeResult struct {
 // log from fromSeq under the same lock that registers the subscription,
 // returning backfill entries in the result alongside the live subscription.
 // This eliminates the gap between a separate History + Subscribe call pair.
-func (c *ShimClient) Subscribe(ctx context.Context, afterSeq *int, fromSeq *int) (SessionSubscribeResult, error) {
+func (c *ShimClient) Subscribe(ctx context.Context, afterSeq, fromSeq *int) (SessionSubscribeResult, error) {
 	params := SessionSubscribeParams{AfterSeq: afterSeq, FromSeq: fromSeq}
 	var result SessionSubscribeResult
 	if err := c.call(ctx, "session/subscribe", params, &result); err != nil {
@@ -252,7 +253,7 @@ func (h *clientHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *js
 		return
 	}
 
-	// Only forward recognised notification methods to the handler.
+	// Only forward recognized notification methods to the handler.
 	switch req.Method {
 	case events.MethodSessionUpdate, events.MethodRuntimeStateChange:
 		// Valid clean-break notification.
@@ -265,7 +266,7 @@ func (h *clientHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *js
 		return
 	}
 
-	h.notifHandler(ctx, req.Method, json.RawMessage(*req.Params))
+	h.notifHandler(ctx, req.Method, *req.Params)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

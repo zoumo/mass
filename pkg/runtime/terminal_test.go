@@ -10,9 +10,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/coder/acp-go-sdk"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // newTestTerminalManager creates a TerminalManager for testing.

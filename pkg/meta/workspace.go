@@ -64,7 +64,6 @@ func (s *Store) CreateWorkspace(ctx context.Context, workspace *Workspace) error
 		workspace.CreatedAt,
 		workspace.UpdatedAt,
 	)
-
 	if err != nil {
 		// Check for unique constraint violation.
 		if isUniqueViolation(err) {
@@ -269,7 +268,7 @@ func (s *Store) DeleteWorkspace(ctx context.Context, id string) (int, error) {
 // AcquireWorkspace acquires a workspace for a session.
 // This creates a workspace_ref entry, which triggers ref_count increment.
 // Returns an error if the workspace doesn't exist or is not active.
-func (s *Store) AcquireWorkspace(ctx context.Context, workspaceID string, sessionID string) error {
+func (s *Store) AcquireWorkspace(ctx context.Context, workspaceID, sessionID string) error {
 	if workspaceID == "" {
 		return fmt.Errorf("meta: workspace ID is required")
 	}
@@ -314,7 +313,7 @@ func (s *Store) AcquireWorkspace(ctx context.Context, workspaceID string, sessio
 // Returns the new ref_count after release, or an error if:
 // - The workspace doesn't exist
 // - The session didn't have this workspace acquired
-func (s *Store) ReleaseWorkspace(ctx context.Context, workspaceID string, sessionID string) (int, error) {
+func (s *Store) ReleaseWorkspace(ctx context.Context, workspaceID, sessionID string) (int, error) {
 	if workspaceID == "" {
 		return 0, fmt.Errorf("meta: workspace ID is required")
 	}

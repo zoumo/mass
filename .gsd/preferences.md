@@ -29,9 +29,9 @@ git:
   merge_strategy: squash
   isolation: branch
 phases:
-  skip_research: false
+  skip_research: true
   skip_reassess: true
-  skip_slice_research: false
+  skip_slice_research: true
   reassess_after_slice: false
 post_unit_hooks:
   - name: sync-project-docs

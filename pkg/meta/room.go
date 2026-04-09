@@ -42,7 +42,6 @@ func (s *Store) CreateRoom(ctx context.Context, room *Room) error {
 		room.CreatedAt,
 		room.UpdatedAt,
 	)
-
 	if err != nil {
 		// Check for unique constraint violation.
 		if isUniqueViolation(err) {

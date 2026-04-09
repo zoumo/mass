@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -17,10 +18,7 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
-	"log/slog"
 )
-
-
 
 // EventHandler is called for each event received from the shim via
 // session/update notifications. Handlers must be registered before calling
@@ -39,13 +37,13 @@ type EventHandler func(ctx context.Context, ev events.Event)
 //   - Shim process fork/exec
 //   - ShimClient connection and event subscription
 type ProcessManager struct {
-	registry    *RuntimeClassRegistry
-	sessions    *SessionManager
-	agents      *AgentManager
-	store       *meta.Store
-	config      Config
+	registry *RuntimeClassRegistry
+	sessions *SessionManager
+	agents   *AgentManager
+	store    *meta.Store
+	config   Config
 
-	mu       sync.RWMutex
+	mu        sync.RWMutex
 	processes map[string]*ShimProcess // sessionID -> ShimProcess
 
 	// recoveryPhase tracks the daemon-level recovery lifecycle as an atomic
@@ -95,13 +93,13 @@ type ShimProcess struct {
 func NewProcessManager(registry *RuntimeClassRegistry, sessions *SessionManager, agents *AgentManager, store *meta.Store, cfg Config) *ProcessManager {
 	logger := slog.Default().With("component", "agentd.process")
 	return &ProcessManager{
-		registry:    registry,
-		sessions:    sessions,
-		agents:      agents,
-		store:       store,
-		config:      cfg,
-		processes:   make(map[string]*ShimProcess),
-		logger:      logger,
+		registry:  registry,
+		sessions:  sessions,
+		agents:    agents,
+		store:     store,
+		config:    cfg,
+		processes: make(map[string]*ShimProcess),
+		logger:    logger,
 	}
 }
 
@@ -152,7 +150,7 @@ func (m *ProcessManager) Start(ctx context.Context, sessionID string) (*ShimProc
 	}
 
 	// 5. Fork agent-shim process.
- shimProc, err := m.forkShim(ctx, session, runtimeClass, bundlePath, stateDir)
+	shimProc, err := m.forkShim(ctx, session, runtimeClass, bundlePath, stateDir)
 	if err != nil {
 		// Clean up bundle directory on fork failure.
 		_ = os.RemoveAll(bundlePath)
@@ -394,7 +392,7 @@ func (m *ProcessManager) createBundle(session *meta.Session, cfg spec.Config) (s
 // forkShim forks the agent-shim process.
 // Note: We intentionally do NOT use exec.CommandContext here because the shim
 // process should run independently of the request context that initiated Start.
-// Using CommandContext would kill the shim when the request context is cancelled
+// Using CommandContext would kill the shim when the request context is canceled
 // (which happens immediately after Start returns in session/prompt auto-start).
 // The shim process lifecycle is managed by ProcessManager.Stop and watchProcess.
 func (m *ProcessManager) forkShim(ctx context.Context, session *meta.Session, rc *RuntimeClass, bundlePath, stateDir string) (*ShimProcess, error) {
@@ -484,7 +482,7 @@ func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string) e
 			return fmt.Errorf("socket %s not ready after %v", socketPath, timeout)
 		}
 
-		// Check if context cancelled.
+		// Check if context canceled.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

@@ -3,6 +3,7 @@
 package workspace
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -53,13 +54,13 @@ func TestHookErrorStructure(t *testing.T) {
 	if hookErr.ExitCode != 1 {
 		t.Errorf("ExitCode field: expected 1, got %d", hookErr.ExitCode)
 	}
-	if string(hookErr.Output) != string(output) {
+	if !bytes.Equal(hookErr.Output, output) {
 		t.Errorf("Output field: expected '%s', got '%s'", string(output), string(hookErr.Output))
 	}
 	if hookErr.Message != "make install failed" {
 		t.Errorf("Message field: expected 'make install failed', got '%s'", hookErr.Message)
 	}
-	if hookErr.Err != underlyingErr {
+	if !errors.Is(hookErr.Err, underlyingErr) {
 		t.Errorf("Err field: expected underlyingErr, got %v", hookErr.Err)
 	}
 }
@@ -442,7 +443,7 @@ func TestExecuteHooksContextCancel(t *testing.T) {
 	duration := time.Since(start)
 
 	// Verify returns context.Canceled without 5s delay.
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("ExecuteHooks with canceled context should return context.Canceled, got: %v", err)
 	}
 
@@ -474,7 +475,7 @@ func TestExecuteHooksContextCancelDuringExecution(t *testing.T) {
 	}
 
 	// Should be context.DeadlineExceeded or context.Canceled.
-	if err != context.DeadlineExceeded && err != context.Canceled {
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
 		t.Errorf("Expected context error, got: %v", err)
 	}
 
@@ -529,7 +530,7 @@ func TestExecuteHooksLastHookFails(t *testing.T) {
 
 	hooks := []Hook{
 		{Command: "touch", Args: []string{markerFile}}, // Succeeds.
-		{Command: "false"},                            // Fails.
+		{Command: "false"}, // Fails.
 	}
 
 	err := executor.ExecuteHooks(ctx, hooks, tmpDir, "setup")

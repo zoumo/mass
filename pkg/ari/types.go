@@ -127,7 +127,7 @@ type SessionPromptParams struct {
 // It indicates why the prompt processing stopped.
 type SessionPromptResult struct {
 	// StopReason is the reason the agent stopped processing.
-	// Values: "end_turn" (normal completion), "cancelled" (user cancelled),
+	// Values: "end_turn" (normal completion), "canceled" (user canceled),
 	// "tool_use" (agent needs tool execution).
 	StopReason string `json:"stopReason"`
 }

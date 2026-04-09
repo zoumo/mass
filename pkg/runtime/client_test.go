@@ -7,9 +7,10 @@ import (
 	"testing"
 
 	"github.com/coder/acp-go-sdk"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // newTestManager builds a Manager with no agent process — just enough to

@@ -8,11 +8,12 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/spf13/cobra"
+
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/rpc"
 	"github.com/open-agent-d/open-agent-d/pkg/runtime"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
-	"github.com/spf13/cobra"
 )
 
 var (

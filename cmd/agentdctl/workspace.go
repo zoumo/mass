@@ -5,9 +5,10 @@ package main
 import (
 	"fmt"
 
+	"github.com/spf13/cobra"
+
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
-	"github.com/spf13/cobra"
 )
 
 // workspaceCmd is the root command for workspace management operations.

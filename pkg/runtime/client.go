@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/coder/acp-go-sdk"
+
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
@@ -28,7 +29,7 @@ func writeFile(path, content string) error {
 // forwards SessionNotifications into Manager.events.
 // Terminal operations are delegated to TerminalManager.
 type acpClient struct {
-	mgr *Manager
+	mgr         *Manager
 	terminalMgr *TerminalManager
 }
 
@@ -63,7 +64,7 @@ func (c *acpClient) ReadTextFile(_ context.Context, params acp.ReadTextFileReque
 // denied for approve-reads and deny-all.
 func (c *acpClient) WriteTextFile(_ context.Context, params acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
 	switch c.mgr.cfg.Permissions {
-	case spec.ApproveAll, "": // empty string defaults to approve-all behaviour
+	case spec.ApproveAll, "": // empty string defaults to approve-all behavior
 		if err := writeFile(params.Path, params.Content); err != nil {
 			return acp.WriteTextFileResponse{}, fmt.Errorf("WriteTextFile %s: %w", params.Path, err)
 		}
@@ -159,8 +160,8 @@ func (c *acpClient) TerminalOutput(_ context.Context, params acp.TerminalOutputR
 	}
 
 	return acp.TerminalOutputResponse{
-		Output:    output,
-		Truncated: truncated,
+		Output:     output,
+		Truncated:  truncated,
 		ExitStatus: exitStatus,
 	}, nil
 }

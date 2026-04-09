@@ -11,12 +11,12 @@ import (
 // It contains context about the operation phase, workspace identity, source type,
 // managed status, and underlying error for targeted diagnostics.
 type WorkspaceError struct {
-	Phase       string    // "prepare-source", "prepare-hooks", "cleanup-hooks", "cleanup-delete"
-	WorkspaceID string    // Target directory path (workspace identifier)
+	Phase       string     // "prepare-source", "prepare-hooks", "cleanup-hooks", "cleanup-delete"
+	WorkspaceID string     // Target directory path (workspace identifier)
 	SourceType  SourceType // Source type being processed (git, emptyDir, local)
-	Managed     bool      // Whether workspace is managed by agentd (true for git/emptyDir)
-	Message     string    // Human-readable error summary
-	Err         error     // Underlying error (GitError, HookError, etc.)
+	Managed     bool       // Whether workspace is managed by agentd (true for git/emptyDir)
+	Message     string     // Human-readable error summary
+	Err         error      // Underlying error (GitError, HookError, etc.)
 }
 
 // Error implements the error interface.

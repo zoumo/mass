@@ -4,12 +4,14 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/open-agent-d/open-agent-d/pkg/meta"
 )
 
 // newTestMetaStore creates an in-memory SQLite store for testing.
@@ -317,7 +319,8 @@ func TestSessionManagerInvalidTransitions(t *testing.T) {
 			require.Error(t, err, "Invalid transition %s -> %s should fail", tc.from, tc.to)
 
 			// Verify it's ErrInvalidTransition.
-			invalidErr, ok := err.(*ErrInvalidTransition)
+			invalidErr := &ErrInvalidTransition{}
+			ok := errors.As(err, &invalidErr)
 			require.True(t, ok, "Error should be ErrInvalidTransition, got %T: %v", err, err)
 			assert.Equal(t, sessionID, invalidErr.SessionID, "Error should have correct session ID")
 			assert.Equal(t, tc.from, invalidErr.FromState, "Error should have correct from state")
@@ -358,7 +361,8 @@ func TestSessionManagerDeleteProtection(t *testing.T) {
 		err := sm.Delete(ctx, sessionID)
 		require.Error(t, err, "Delete should fail for creating session")
 
-		deleteErr, ok := err.(*ErrDeleteProtected)
+		deleteErr := &ErrDeleteProtected{}
+		ok := errors.As(err, &deleteErr)
 		require.True(t, ok, "Error should be ErrDeleteProtected")
 		assert.Equal(t, sessionID, deleteErr.SessionID)
 		assert.Equal(t, meta.SessionStateCreating, deleteErr.State)
@@ -379,7 +383,8 @@ func TestSessionManagerDeleteProtection(t *testing.T) {
 		err := sm.Delete(ctx, sessionID)
 		require.Error(t, err, "Delete should fail for running session")
 
-		deleteErr, ok := err.(*ErrDeleteProtected)
+		deleteErr := &ErrDeleteProtected{}
+		ok := errors.As(err, &deleteErr)
 		require.True(t, ok, "Error should be ErrDeleteProtected")
 		assert.Equal(t, sessionID, deleteErr.SessionID)
 		assert.Equal(t, meta.SessionStateRunning, deleteErr.State)

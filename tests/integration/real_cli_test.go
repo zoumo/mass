@@ -18,7 +18,7 @@ import (
 // setupAgentdTestWithRuntimeClass creates a temporary agentd instance with a
 // custom runtime class configuration. It reuses the pattern from setupAgentdTest
 // in session_test.go but accepts an arbitrary runtime class name and config.
-func setupAgentdTestWithRuntimeClass(t *testing.T, runtimeClassName string, runtimeClassYAML string) (context.Context, context.CancelFunc, *ari.Client, func()) {
+func setupAgentdTestWithRuntimeClass(t *testing.T, runtimeClassName, runtimeClassYAML string) (context.Context, context.CancelFunc, *ari.Client, func()) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -32,7 +32,7 @@ func setupAgentdTestWithRuntimeClass(t *testing.T, runtimeClassName string, runt
 	os.Remove(socketPath)
 
 	for _, dir := range []string{workspaceRoot, bundleRoot} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("failed to create directory %s: %v", dir, err)
 		}
 	}
@@ -63,7 +63,7 @@ runtimeClasses:
 %s
 `, socketPath, workspaceRoot, metaDB, bundleRoot, runtimeClassName, runtimeClassYAML)
 
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
 		t.Fatalf("failed to write config: %v", err)
 	}
 	t.Logf("config written to %s", configPath)

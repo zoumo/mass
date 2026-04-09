@@ -203,7 +203,7 @@ func (m *WorkspaceManager) Cleanup(ctx context.Context, workspaceID string, spec
 }
 
 // InitRefCounts loads all active workspaces from the metadata store and
-// initialises the in-memory refCount map from their DB ref_count values.
+// initializes the in-memory refCount map from their DB ref_count values.
 // This is called once during daemon startup after recovery so that
 // workspace cleanup decisions use the persisted reference counts.
 func (m *WorkspaceManager) InitRefCounts(store *meta.Store) error {

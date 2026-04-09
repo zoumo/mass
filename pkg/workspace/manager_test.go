@@ -43,7 +43,7 @@ func TestWorkspaceErrorStructure(t *testing.T) {
 	if we.Message != "source preparation failed" {
 		t.Errorf("Message: got %q, want %q", we.Message, "source preparation failed")
 	}
-	if we.Err != underlyingErr {
+	if !errors.Is(we.Err, underlyingErr) {
 		t.Errorf("Err: got %v, want %v", we.Err, underlyingErr)
 	}
 }
@@ -133,7 +133,7 @@ func TestWorkspaceErrorUnwrap(t *testing.T) {
 
 	// Unwrap should return underlying error.
 	unwrapped := we.Unwrap()
-	if unwrapped != underlyingErr {
+	if !errors.Is(unwrapped, underlyingErr) {
 		t.Errorf("Unwrap(): got %v, want %v", unwrapped, underlyingErr)
 	}
 
@@ -144,7 +144,7 @@ func TestWorkspaceErrorUnwrap(t *testing.T) {
 
 	// errors.Unwrap chain should reach the original error.
 	chain := errors.Unwrap(we)
-	if chain != underlyingErr {
+	if !errors.Is(chain, underlyingErr) {
 		t.Errorf("errors.Unwrap(we): got %v, want %v", chain, underlyingErr)
 	}
 }
@@ -477,7 +477,7 @@ func TestWorkspaceManagerPrepareHookFailureCleanup(t *testing.T) {
 
 		// Create a file in the local directory to verify it persists.
 		testFile := filepath.Join(localDir, "test.txt")
-		if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+		if err := os.WriteFile(testFile, []byte("test"), 0o644); err != nil {
 			t.Fatalf("failed to create test file: %v", err)
 		}
 
@@ -781,7 +781,7 @@ func TestWorkspaceManagerLifecycleLocal(t *testing.T) {
 
 	// Create a file to verify it persists.
 	testFile := filepath.Join(localDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test content"), 0644); err != nil {
+	if err := os.WriteFile(testFile, []byte("test content"), 0o644); err != nil {
 		t.Fatalf("failed to create test file: %v", err)
 	}
 
