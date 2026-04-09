@@ -3,9 +3,10 @@ package meta_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
-	"github.com/stretchr/testify/require"
 )
 
 // makeAgent returns a minimal valid Agent for test use.

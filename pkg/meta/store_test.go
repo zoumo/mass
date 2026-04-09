@@ -5,8 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/stretchr/testify/require"
+
+	"github.com/open-agent-d/open-agent-d/pkg/meta"
 )
 
 // tempStore creates a Store backed by a temporary file.

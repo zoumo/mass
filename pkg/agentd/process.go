@@ -254,10 +254,10 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		// Non-fatal: agent can still run, just won't have recovery data.
 	} else {
 		if err := m.store.UpdateAgentStatus(ctx, workspace, name, meta.AgentStatus{
-			State:          spec.StatusCreating, // keep creating until we transition below
-			ShimSocketPath: socketPath,
-			ShimStateDir:   stateDir,
-			ShimPID:        shimProc.PID,
+			State:           spec.StatusCreating, // keep creating until we transition below
+			ShimSocketPath:  socketPath,
+			ShimStateDir:    stateDir,
+			ShimPID:         shimProc.PID,
 			BootstrapConfig: bootstrapJSON,
 		}); err != nil {
 			m.logger.Error("failed to persist bootstrap config", "agent_key", key, "error", err)
@@ -272,6 +272,32 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		_ = m.killShim(shimProc)
 		_ = os.RemoveAll(bundlePath)
 		return nil, fmt.Errorf("process: subscribe events: agent=%s: %w", key, err)
+	}
+
+	// 8b. Bootstrap state from shim's current runtime status.
+	// The shim's Create() may have already transitioned creating→idle before
+	// the Subscribe call, causing the stateChange notification to be missed
+	// (SetStateChangeHook in the shim is registered after Create() returns,
+	// so the hook is nil during the initial transition). Reading runtime/status
+	// here ensures the DB reflects the actual state even when the notification
+	// was dropped.
+	if statusResult, statusErr := client.Status(ctx); statusErr == nil {
+		if statusResult.State.Status != spec.StatusCreating {
+			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentStatus{
+				State:          statusResult.State.Status,
+				ShimSocketPath: socketPath,
+				ShimStateDir:   stateDir,
+				ShimPID:        shimProc.PID,
+			}); err != nil {
+				m.logger.Warn("bootstrap state sync failed",
+					"agent_key", key, "state", statusResult.State.Status, "error", err)
+			} else {
+				m.logger.Info("bootstrap state synced from shim",
+					"agent_key", key, "state", statusResult.State.Status)
+			}
+		}
 	}
 
 	// Store the ShimProcess.
@@ -415,12 +441,19 @@ func (m *ProcessManager) forkShim(agent *meta.Agent, bundlePath, stateDir string
 		return nil, fmt.Errorf("mkdir state dir %s: %w", stateDir, err)
 	}
 
+	// Remove any stale socket file from a previous run so the new shim can bind.
+	_ = os.Remove(spec.ShimSocketPath(stateDir))
+
 	key := agentKey(agent.Metadata.Workspace, agent.Metadata.Name)
 
 	// Build command arguments.
+	// Pass filepath.Base(stateDir) as --id so the shim computes the same
+	// stateDir as agentd expects. stateDir uses workspace-name (hyphenated),
+	// while agentKey uses workspace/name (slash); mismatching them causes the
+	// socket path to diverge and waitForSocket to time out.
 	args := []string{
 		"--bundle", bundlePath,
-		"--id", key,
+		"--id", filepath.Base(stateDir),
 		"--state-dir", filepath.Dir(stateDir), // parent dir, shim adds /<id>
 		"--permissions", "approve-all",
 	}

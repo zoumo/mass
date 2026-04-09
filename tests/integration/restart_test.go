@@ -1,7 +1,7 @@
 // Package integration_test provides integration tests for agentd restart recovery.
-// These tests verify that agent identity (room+name) survives daemon restart,
-// that dead shims are fail-closed to "error" state, and that the recovery
-// reconciliation introduced in M005/S07/T01 works end-to-end.
+// These tests verify that agent identity (workspace+name) survives daemon restart,
+// that dead shims are fail-closed to a terminal state (stopped per D012/D029), and
+// that the recovery reconciliation works end-to-end.
 package integration_test
 
 import (
@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,12 +48,11 @@ func stopAgentd(t *testing.T, cmd *exec.Cmd, socketPath string) {
 	os.Remove(socketPath)
 }
 
-// TestAgentdRestartRecovery proves R052: agent identity (room+name) survives
+// TestAgentdRestartRecovery proves that agent identity (workspace+name) survives
 // daemon restart and that dead shims are fail-closed to "error" state.
 //
 // Strategy: kill ALL agent-shim and mockagent processes after stopping agentd,
 // so both agents have dead shims on restart → both should be marked error.
-// R052 proof: agent-A's room and name match what was set before restart.
 func TestAgentdRestartRecovery(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -60,8 +60,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// ── Setup ──────────────────────────────────────────────────────────────
 	tmpDir := t.TempDir()
-	testSocketCounter++
-	socketPath := fmt.Sprintf("/tmp/oar-%d-%d.sock", os.Getpid(), testSocketCounter)
+	counter := atomic.AddInt64(&testSocketCounter, 1)
+	socketPath := fmt.Sprintf("/tmp/oar-%d-%d.sock", os.Getpid(), counter)
 	workspaceRoot := filepath.Join(tmpDir, "workspaces")
 	metaDB := filepath.Join(tmpDir, "agentd.db")
 	bundleRoot := filepath.Join(tmpDir, "bundles")
@@ -109,9 +109,9 @@ runtimeClasses:
 	}()
 
 	// =========================================================================
-	// Phase 1: Start agentd, create workspace + room, create agent-A + agent-B
+	// Phase 1: Start agentd, create workspace, create agent-A and agent-B
 	// =========================================================================
-	t.Log("Phase 1: Start agentd, create room, create agent-A and agent-B")
+	t.Log("Phase 1: Start agentd, create workspace, create agent-A and agent-B")
 
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel1()
@@ -123,40 +123,33 @@ runtimeClasses:
 		t.Fatalf("ARI client: %v", err)
 	}
 
-	// Prepare workspace.
-	workspaceId := prepareTestWorkspace(t, ctx1, client1)
-	t.Logf("workspace: %s", workspaceId)
-
-	// Create room (required by agent/create FK constraint).
-	var roomResult ari.RoomCreateResult
-	if err := client1.Call("room/create", map[string]interface{}{"name": "test-room"}, &roomResult); err != nil {
-		t.Fatalf("room/create: %v", err)
-	}
-	t.Logf("room created: %s", roomResult.Name)
+	const wsName = "test-ws"
+	createTestWorkspace(t, client1, wsName)
+	t.Logf("workspace ready: %s", wsName)
 
 	// Create agent-A (will have shim killed before restart).
 	t.Log("Creating agent-A")
-	statusA1 := createAgentAndWait(t, client1, workspaceId, "test-room", "agent-a")
-	agentAId := statusA1.Agent.AgentId
-	t.Logf("agent-A: id=%s state=%s room=%s name=%s",
-		agentAId, statusA1.Agent.State, statusA1.Agent.Room, statusA1.Agent.Name)
+	statusA1 := createAgentAndWait(t, client1, wsName, "agent-a", "mockagent")
+	t.Logf("agent-A: workspace=%s name=%s state=%s",
+		statusA1.Agent.Workspace, statusA1.Agent.Name, statusA1.Agent.State)
 
-	if statusA1.Agent.State != "created" {
-		t.Fatalf("expected agent-A state=created, got %s", statusA1.Agent.State)
+	if statusA1.Agent.State != "idle" {
+		t.Fatalf("expected agent-A state=idle, got %s", statusA1.Agent.State)
 	}
 
 	// Create agent-B (will also have shim killed before restart).
 	t.Log("Creating agent-B")
-	statusB1 := createAgentAndWait(t, client1, workspaceId, "test-room", "agent-b")
-	agentBId := statusB1.Agent.AgentId
-	t.Logf("agent-B: id=%s state=%s", agentBId, statusB1.Agent.State)
+	statusB1 := createAgentAndWait(t, client1, wsName, "agent-b", "mockagent")
+	t.Logf("agent-B: workspace=%s name=%s state=%s",
+		statusB1.Agent.Workspace, statusB1.Agent.Name, statusB1.Agent.State)
 
 	// Prompt agent-A to exercise the running state (async dispatch).
 	t.Log("Prompting agent-A before restart")
 	var promptResultA ari.AgentPromptResult
 	if err := client1.Call("agent/prompt", map[string]interface{}{
-		"agentId": agentAId,
-		"prompt":  "hello before restart",
+		"workspace": wsName,
+		"name":      "agent-a",
+		"prompt":    "hello before restart",
 	}, &promptResultA); err != nil {
 		t.Fatalf("agent/prompt A: %v", err)
 	}
@@ -166,17 +159,18 @@ runtimeClasses:
 	t.Log("Prompting agent-B before restart")
 	var promptResultB ari.AgentPromptResult
 	if err := client1.Call("agent/prompt", map[string]interface{}{
-		"agentId": agentBId,
-		"prompt":  "hello before restart",
+		"workspace": wsName,
+		"name":      "agent-b",
+		"prompt":    "hello before restart",
 	}, &promptResultB); err != nil {
 		t.Fatalf("agent/prompt B: %v", err)
 	}
 	t.Logf("agent-B prompt accepted: %v", promptResultB.Accepted)
 
-	// agent/prompt is async: agent state transitions to "running" immediately
-	// after dispatch. Verify agent-A is in running state before killing agentd.
-	_ = waitForAgentState(t, client1, agentAId, "running", 10*time.Second)
-	t.Log("agent-A is in running state after prompt ✓")
+	// Verify agent-A is in running (or idle) state before killing agentd.
+	// The mockagent is instant so the turn may complete before we poll.
+	_ = waitForAgentStateOneOf(t, client1, wsName, "agent-a", []string{"running", "idle"}, 10*time.Second)
+	t.Log("agent-A is in running/idle state after prompt ✓")
 
 	// =========================================================================
 	// Phase 2: Stop agentd, kill ALL shim and runtime processes
@@ -187,7 +181,7 @@ runtimeClasses:
 	stopAgentd(t, agentdCmd1, socketPath)
 
 	// Kill all agent-shim and mockagent processes so BOTH agents will have dead
-	// shims on restart → both should be marked error by T01 reconciliation.
+	// shims on restart → both should be marked error by reconciliation.
 	exec.Command("pkill", "-9", "-f", "agent-shim").Run()
 	exec.Command("pkill", "-9", "-f", "mockagent").Run()
 	t.Log("killed all agent-shim and mockagent processes")
@@ -217,103 +211,94 @@ runtimeClasses:
 	time.Sleep(2 * time.Second)
 
 	// =========================================================================
-	// Phase 4: Verify agent-A identity is preserved (R052 proof)
+	// Phase 4: Verify agent-A identity is preserved across restart
 	// =========================================================================
-	t.Log("Phase 4: Verify agent-A identity preserved across restart (R052)")
+	t.Log("Phase 4: Verify agent-A identity preserved across restart")
 
-	// Agent-A should be in error state (shim killed).
-	statusA2 := waitForAgentState(t, client2, agentAId, "error", 10*time.Second)
+	// Agent-A should reach a terminal state after recovery — "stopped" per D012/D029
+	// (the recovery code fail-closes dead shims as stopped, not error).
+	terminalStates := []string{"stopped", "error"}
+	statusA2 := waitForAgentStateOneOf(t, client2, wsName, "agent-a", terminalStates, 10*time.Second)
 
-	// R052: agent identity (room + name + agentId) must be preserved.
-	if statusA2.Agent.AgentId != agentAId {
-		t.Errorf("R052 FAIL: agent-A ID changed across restart: pre=%s post=%s",
-			agentAId, statusA2.Agent.AgentId)
+	// Identity: workspace and name must be preserved.
+	if statusA2.Agent.Workspace != wsName {
+		t.Errorf("agent-A workspace changed across restart: expected=%s got=%s",
+			wsName, statusA2.Agent.Workspace)
 	} else {
-		t.Logf("R052: agent-A ID preserved ✓: %s", agentAId)
-	}
-
-	if statusA2.Agent.Room != "test-room" {
-		t.Errorf("R052 FAIL: agent-A room changed across restart: expected=test-room got=%s",
-			statusA2.Agent.Room)
-	} else {
-		t.Logf("R052: agent-A room preserved ✓: %s", statusA2.Agent.Room)
+		t.Logf("agent-A workspace preserved ✓: %s", statusA2.Agent.Workspace)
 	}
 
 	if statusA2.Agent.Name != "agent-a" {
-		t.Errorf("R052 FAIL: agent-A name changed across restart: expected=agent-a got=%s",
+		t.Errorf("agent-A name changed across restart: expected=agent-a got=%s",
 			statusA2.Agent.Name)
 	} else {
-		t.Logf("R052: agent-A name preserved ✓: %s", statusA2.Agent.Name)
+		t.Logf("agent-A name preserved ✓: %s", statusA2.Agent.Name)
 	}
 
-	t.Logf("agent-A post-restart state=%s (shim killed → error, identity preserved)",
+	t.Logf("agent-A post-restart state=%s (shim killed → fail-closed, identity preserved)",
 		statusA2.Agent.State)
 
 	// =========================================================================
-	// Phase 5: Verify agent-B has state=="error" (dead shim → fail-closed)
+	// Phase 5: Verify agent-B is in a terminal state (dead shim → fail-closed)
 	// =========================================================================
-	t.Log("Phase 5: Verify agent-B state=error (dead shim fail-closed from T01 reconciliation)")
+	t.Log("Phase 5: Verify agent-B is in terminal state (dead shim fail-closed)")
 
-	statusB2 := waitForAgentState(t, client2, agentBId, "error", 10*time.Second)
+	statusB2 := waitForAgentStateOneOf(t, client2, wsName, "agent-b", terminalStates, 10*time.Second)
 	t.Logf("agent-B post-restart state=%s ✓", statusB2.Agent.State)
 
-	if statusB2.Agent.State != "error" {
-		t.Errorf("expected agent-B state=error (dead shim), got %s", statusB2.Agent.State)
-	}
-
 	// =========================================================================
-	// Phase 6: Verify R052 agent list — both agents queryable with identity intact
+	// Phase 6: Verify agent list — both agents queryable with identity intact
 	// =========================================================================
-	t.Log("Phase 6: Verify agent list shows both agents with intact room identity")
+	t.Log("Phase 6: Verify agent list shows both agents in workspace")
 
 	var listResult ari.AgentListResult
-	if err := client2.Call("agent/list", map[string]interface{}{"room": "test-room"}, &listResult); err != nil {
+	if err := client2.Call("agent/list", map[string]interface{}{"workspace": wsName}, &listResult); err != nil {
 		t.Fatalf("agent/list: %v", err)
 	}
-	t.Logf("agent/list returned %d agents in room test-room", len(listResult.Agents))
+	t.Logf("agent/list returned %d agents in workspace %s", len(listResult.Agents), wsName)
 
 	if len(listResult.Agents) != 2 {
-		t.Errorf("expected 2 agents in test-room, got %d", len(listResult.Agents))
+		t.Errorf("expected 2 agents in workspace %s, got %d", wsName, len(listResult.Agents))
 	}
 
-	agentNames := make(map[string]string) // name → state
+	agentStates := make(map[string]string) // name → state
 	for _, a := range listResult.Agents {
-		agentNames[a.Name] = a.State
-		t.Logf("  agent: id=%s name=%s room=%s state=%s", a.AgentId, a.Name, a.Room, a.State)
+		agentStates[a.Name] = a.State
+		t.Logf("  agent: workspace=%s name=%s state=%s", a.Workspace, a.Name, a.State)
 	}
-	if agentNames["agent-a"] != "error" {
-		t.Errorf("agent-a: expected state=error, got %q", agentNames["agent-a"])
-	}
-	if agentNames["agent-b"] != "error" {
-		t.Errorf("agent-b: expected state=error, got %q", agentNames["agent-b"])
+	// Recovery marks dead shims as stopped (D012/D029); accept stopped or error.
+	for _, aName := range []string{"agent-a", "agent-b"} {
+		st := agentStates[aName]
+		if st != "stopped" && st != "error" {
+			t.Errorf("%s: expected state=stopped or error after recovery, got %q", aName, st)
+		}
 	}
 
 	// =========================================================================
-	// Phase 7: Cleanup
+	// Phase 7: Cleanup — stop then delete each agent; delete workspace
 	// =========================================================================
 	t.Log("Phase 7: Cleanup")
 
-	// Stop then delete agent-A. Agents in error state still require agent/stop
-	// before agent/delete (the delete gate only allows stopped agents).
-	if err := client2.Call("agent/stop", map[string]interface{}{"agentId": agentAId}, nil); err != nil {
-		t.Logf("agent/stop A: %v (may already be stopped)", err)
+	// Agents in terminal state (stopped/error): call agent/stop (idempotent) then delete
+	for _, agentName := range []string{"agent-a", "agent-b"} {
+		if err := client2.Call("agent/stop", map[string]interface{}{
+			"workspace": wsName,
+			"name":      agentName,
+		}, nil); err != nil {
+			t.Logf("agent/stop %s: %v (may already be stopped)", agentName, err)
+		}
+		if err := client2.Call("agent/delete", map[string]interface{}{
+			"workspace": wsName,
+			"name":      agentName,
+		}, nil); err != nil {
+			t.Logf("agent/delete %s: %v (ignored)", agentName, err)
+		}
 	}
-	if err := client2.Call("agent/delete", map[string]interface{}{"agentId": agentAId}, nil); err != nil {
-		t.Logf("agent/delete A: %v", err)
+
+	// Delete workspace after all agents are removed.
+	if err := client2.Call("workspace/delete", map[string]interface{}{"name": wsName}, nil); err != nil {
+		t.Logf("workspace/delete: %v (ignored)", err)
 	}
-	// Stop then delete agent-B.
-	if err := client2.Call("agent/stop", map[string]interface{}{"agentId": agentBId}, nil); err != nil {
-		t.Logf("agent/stop B: %v (may already be stopped)", err)
-	}
-	if err := client2.Call("agent/delete", map[string]interface{}{"agentId": agentBId}, nil); err != nil {
-		t.Logf("agent/delete B: %v", err)
-	}
-	// Delete room.
-	if err := client2.Call("room/delete", map[string]interface{}{"name": "test-room"}, nil); err != nil {
-		t.Logf("room/delete: %v", err)
-	}
-	// Cleanup workspace.
-	cleanupTestWorkspace(t, client2, workspaceId)
 
 	t.Log("TestAgentdRestartRecovery completed ✓")
 }

@@ -3,8 +3,9 @@ package meta_test
 import (
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/stretchr/testify/require"
+
+	"github.com/open-agent-d/open-agent-d/pkg/meta"
 )
 
 // makeWorkspace returns a minimal valid Workspace for test use.

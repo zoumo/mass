@@ -6,78 +6,77 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
 // TestMultipleConcurrentAgents tests that multiple agents can run concurrently
 // without interference. Each agent should respond independently.
+// Note: ari.Client is NOT thread-safe — a sync.Mutex serializes all client calls.
 func TestMultipleConcurrentAgents(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	ctx, cancel, client, cleanup := setupAgentdTest(t)
+	_, cancel, client, cleanup := setupAgentdTest(t)
 	defer cleanup()
 	defer cancel()
 
-	numAgents := 3
+	const wsName = "concurrent-ws"
+	const numAgents = 3
 
-	// Prepare a shared workspace and room for all agents
-	workspaceId := prepareTestWorkspace(t, ctx, client)
-	defer cleanupTestWorkspace(t, client, workspaceId)
+	// Create shared workspace
+	createTestWorkspace(t, client, wsName)
+	defer deleteTestWorkspace(t, client, wsName)
 
-	createRoom(t, client, "concurrent-room")
-	defer deleteRoom(t, client, "concurrent-room")
-
-	// Create agents and collect their IDs
-	agentIds := make([]string, numAgents)
+	// Create agents and collect their names; all belong to the same workspace
+	agentNames := make([]string, numAgents)
 	for i := 0; i < numAgents; i++ {
 		name := fmt.Sprintf("concurrent-agent-%d", i+1)
-		status := createAgentAndWait(t, client, workspaceId, "concurrent-room", name)
-		agentIds[i] = status.Agent.AgentId
-		t.Logf("created agent %d: id=%s name=%s", i+1, agentIds[i], name)
+		agentNames[i] = name
+		_ = createAgentAndWait(t, client, wsName, name, "mockagent")
+		t.Logf("created agent %d: workspace=%s name=%s", i+1, wsName, name)
 	}
 
-	// Mutex for serializing client calls (ARI client is not thread-safe for concurrent calls)
+	// Mutex for serializing client calls (ari.Client is not thread-safe)
 	var clientMu sync.Mutex
 
-	// Prompt agents concurrently (with serialized ARI calls)
+	// Prompt agents concurrently (serialized ARI calls via mutex)
 	t.Log("Prompting agents concurrently...")
 	results := make(chan error, numAgents)
 	var wg sync.WaitGroup
 
 	for i := 0; i < numAgents; i++ {
 		wg.Add(1)
-		go func(idx int, agentId string) {
+		go func(idx int, agentName string) {
 			defer wg.Done()
 
-			promptParams := map[string]interface{}{
-				"agentId": agentId,
-				"prompt":  fmt.Sprintf("concurrent prompt %d", idx+1),
-			}
 			var promptResult ari.AgentPromptResult
-
 			clientMu.Lock()
-			err := client.Call("agent/prompt", promptParams, &promptResult)
+			err := client.Call("agent/prompt", map[string]interface{}{
+				"workspace": wsName,
+				"name":      agentName,
+				"prompt":    fmt.Sprintf("concurrent prompt %d", idx+1),
+			}, &promptResult)
 			clientMu.Unlock()
 
 			if err != nil {
-				results <- fmt.Errorf("agent %d prompt failed: %w", idx+1, err)
+				results <- fmt.Errorf("agent %d (%s) prompt failed: %w", idx+1, agentName, err)
 				return
 			}
 
 			if !promptResult.Accepted {
-				results <- fmt.Errorf("agent %d: expected prompt to be accepted", idx+1)
+				results <- fmt.Errorf("agent %d (%s): expected prompt to be accepted", idx+1, agentName)
 				return
 			}
 
-			t.Logf("agent %d prompt accepted", idx+1)
+			t.Logf("agent %d (%s) prompt accepted", idx+1, agentName)
 			results <- nil
-		}(i, agentIds[i])
+		}(i, agentNames[i])
 	}
 
-	// Wait for all goroutines to complete
+	// Wait for all goroutines to finish
 	wg.Wait()
 	close(results)
 
@@ -89,45 +88,73 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 			errorCount++
 		}
 	}
-
 	if errorCount > 0 {
-		t.Fatalf("%d/%d agents had errors", errorCount, numAgents)
+		t.Fatalf("%d/%d agents had prompt errors", errorCount, numAgents)
 	}
 
-	t.Logf("All %d agents responded successfully! ✓", numAgents)
+	t.Logf("All %d agents accepted prompts successfully ✓", numAgents)
 
-	// Verify each agent is in running state after prompt
+	// Verify each agent is in running state after prompt dispatch
 	t.Log("Verifying all agents are running...")
-	for i, agentId := range agentIds {
-		statusParams := map[string]interface{}{"agentId": agentId}
+	for i, name := range agentNames {
 		var statusResult ari.AgentStatusResult
 		clientMu.Lock()
-		err := client.Call("agent/status", statusParams, &statusResult)
+		err := client.Call("agent/status", map[string]interface{}{
+			"workspace": wsName,
+			"name":      name,
+		}, &statusResult)
 		clientMu.Unlock()
 		if err != nil {
-			t.Errorf("agent %d status failed: %v", i+1, err)
+			t.Errorf("agent %d (%s) status failed: %v", i+1, name, err)
 			continue
 		}
-		if statusResult.Agent.State != "running" {
-			t.Errorf("agent %d: expected state=running, got %s", i+1, statusResult.Agent.State)
+		// Accept running or idle — the mockagent completes turns instantly so
+		// the turn may already be done by the time we poll status.
+		if statusResult.Agent.State != "running" && statusResult.Agent.State != "idle" {
+			t.Errorf("agent %d (%s): expected state=running or idle, got %s", i+1, name, statusResult.Agent.State)
 		}
 	}
 
-	// Stop and delete all agents
+	// Stop and delete all agents; wait for stopped before delete
 	t.Log("Stopping and deleting all agents...")
-	for i, agentId := range agentIds {
+	for i, name := range agentNames {
 		clientMu.Lock()
-		stopErr := client.Call("agent/stop", map[string]interface{}{"agentId": agentId}, nil)
+		stopErr := client.Call("agent/stop", map[string]interface{}{
+			"workspace": wsName,
+			"name":      name,
+		}, nil)
 		clientMu.Unlock()
 		if stopErr != nil {
-			t.Logf("warning: agent %d stop failed: %v", i+1, stopErr)
+			t.Logf("warning: agent %d (%s) stop failed: %v", i+1, name, stopErr)
+		}
+
+		// Poll for stopped/error state before deleting (serialized)
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			var st ari.AgentStatusResult
+			clientMu.Lock()
+			err := client.Call("agent/status", map[string]interface{}{
+				"workspace": wsName,
+				"name":      name,
+			}, &st)
+			clientMu.Unlock()
+			if err != nil {
+				break
+			}
+			if st.Agent.State == "stopped" || st.Agent.State == "error" {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
 
 		clientMu.Lock()
-		delErr := client.Call("agent/delete", map[string]interface{}{"agentId": agentId}, nil)
+		delErr := client.Call("agent/delete", map[string]interface{}{
+			"workspace": wsName,
+			"name":      name,
+		}, nil)
 		clientMu.Unlock()
 		if delErr != nil {
-			t.Logf("warning: agent %d delete failed: %v", i+1, delErr)
+			t.Logf("warning: agent %d (%s) delete failed: %v", i+1, name, delErr)
 		}
 	}
 

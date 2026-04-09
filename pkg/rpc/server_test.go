@@ -227,7 +227,7 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		var status rpc.RuntimeStatusResult
 		err = client.Call(ctx, "runtime/status", nil, &status)
 		require.NoError(t, err)
-		require.Equal(t, spec.StatusCreated, status.State.Status)
+		require.Equal(t, spec.StatusIdle, status.State.Status)
 		require.Equal(t, -1, status.Recovery.LastSeq)
 	})
 
@@ -274,7 +274,7 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		var status rpc.RuntimeStatusResult
 		err = client.Call(ctx, "runtime/status", nil, &status)
 		require.NoError(t, err)
-		require.Equal(t, spec.StatusCreated, status.State.Status)
+		require.Equal(t, spec.StatusIdle, status.State.Status)
 		require.Equal(t, 5, status.Recovery.LastSeq)
 	})
 

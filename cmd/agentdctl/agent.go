@@ -81,11 +81,11 @@ var agentRestartCmd = &cobra.Command{
 
 // Flags for agent create command.
 var (
-	agentCreateWorkspace    string
-	agentCreateName         string
-	agentCreateRuntimeClass string
+	agentCreateWorkspace     string
+	agentCreateName          string
+	agentCreateRuntimeClass  string
 	agentCreateRestartPolicy string
-	agentCreateSystemPrompt string
+	agentCreateSystemPrompt  string
 )
 
 // Flags for agent list command.

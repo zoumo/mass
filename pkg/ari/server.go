@@ -13,11 +13,12 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sourcegraph/jsonrpc2"
+
 	"github.com/open-agent-d/open-agent-d/pkg/agentd"
 	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
-	"github.com/sourcegraph/jsonrpc2"
 )
 
 // Server is a JSON-RPC 2.0 server that exposes workspace/* and agent/* methods
@@ -292,7 +293,7 @@ func (s *Server) handleWorkspaceCreate(ctx context.Context, conn *jsonrpc2.Conn,
 
 	wsSpec := workspace.WorkspaceSpec{
 		OarVersion: "0.1.0",
-		Metadata: workspace.WorkspaceMetadata{Name: params.Name},
+		Metadata:   workspace.WorkspaceMetadata{Name: params.Name},
 		Source:     src,
 	}
 	targetDir := filepath.Join(s.baseDir, "workspaces", params.Name)

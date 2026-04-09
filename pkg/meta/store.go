@@ -34,7 +34,7 @@ type Store struct {
 	Path string
 }
 
-// NewStore opens (or creates) a bbolt database at path and initialises the
+// NewStore opens (or creates) a bbolt database at path and initializes the
 // bucket hierarchy. It returns an error if the file cannot be opened within
 // the 5-second lock timeout.
 func NewStore(path string) (*Store, error) {
@@ -57,8 +57,8 @@ func NewStore(path string) (*Store, error) {
 
 	if err := s.initBuckets(); err != nil {
 		_ = db.Close()
-		logger.Error("failed to initialise buckets", "error", err)
-		return nil, fmt.Errorf("meta: failed to initialise buckets: %w", err)
+		logger.Error("failed to initialize buckets", "error", err)
+		return nil, fmt.Errorf("meta: failed to initialize buckets: %w", err)
 	}
 
 	logger.Info("metadata store opened")

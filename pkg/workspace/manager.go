@@ -220,7 +220,7 @@ func (m *WorkspaceManager) InitRefCounts(store *meta.Store) error {
 	defer m.mutex.Unlock()
 
 	for _, ws := range workspaces {
-		// New meta model has no RefCount field; initialise each ready workspace
+		// New meta model has no RefCount field; initialize each ready workspace
 		// to refcount 0 so the path is tracked. Actual increments happen via
 		// IncrRefCount / DecrRefCount at runtime.
 		if ws.Status.Path != "" {

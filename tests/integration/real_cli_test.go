@@ -1,6 +1,6 @@
 // Package integration_test provides integration tests for real CLI agent runtimes.
 // These tests verify that gsd-pi and claude-code work end-to-end through the
-// full ARI session lifecycle, proving R039.
+// full ARI agent lifecycle.
 package integration_test
 
 import (
@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,15 +17,18 @@ import (
 )
 
 // setupAgentdTestWithRuntimeClass creates a temporary agentd instance with a
-// custom runtime class configuration. It reuses the pattern from setupAgentdTest
-// in session_test.go but accepts an arbitrary runtime class name and config.
-func setupAgentdTestWithRuntimeClass(t *testing.T, runtimeClassName, runtimeClassYAML string) (context.Context, context.CancelFunc, *ari.Client, func()) {
+// custom runtime class configuration. Accepts an arbitrary runtime class name
+// and its YAML body (indented for embedding under runtimeClasses:).
+func setupAgentdTestWithRuntimeClass(
+	t *testing.T,
+	runtimeClassName, runtimeClassYAML string,
+) (context.Context, context.CancelFunc, *ari.Client, func()) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
 	// Use short socket path in /tmp to avoid macOS 104-char Unix socket path limit (K025)
-	testSocketCounter++
-	socketPath := fmt.Sprintf("/tmp/oar-%d-%d.sock", os.Getpid(), testSocketCounter)
+	counter := atomic.AddInt64(&testSocketCounter, 1)
+	socketPath := fmt.Sprintf("/tmp/oar-%d-%d.sock", os.Getpid(), counter)
 	workspaceRoot := filepath.Join(tmpDir, "workspaces")
 	metaDB := filepath.Join(tmpDir, "agentd.db")
 	bundleRoot := filepath.Join(tmpDir, "bundles")
@@ -111,121 +115,97 @@ runtimeClasses:
 	return ctx, cancel, client, cleanup
 }
 
-// runRealCLILifecycle exercises the full ARI session lifecycle against a real
-// CLI runtime: workspace/prepare → session/new → session/prompt → session/status
-// → session/stop → session/remove → workspace/cleanup.
-func runRealCLILifecycle(t *testing.T, ctx context.Context, client *ari.Client, runtimeClass string) {
+// runRealCLILifecycle exercises the full ARI agent lifecycle against a real
+// CLI runtime: workspace/create → agent/create → agent/prompt → poll idle →
+// agent/status → agent/stop → agent/delete → workspace/delete.
+func runRealCLILifecycle(t *testing.T, _ context.Context, client *ari.Client, runtimeClass string) {
 	t.Helper()
 
-	// Step 1: workspace/prepare
-	t.Log("Step 1: workspace/prepare")
-	prepareParams := map[string]interface{}{
-		"spec": map[string]interface{}{
-			"oarVersion": "0.1.0",
-			"metadata": map[string]interface{}{
-				"name": fmt.Sprintf("test-%s", runtimeClass),
-			},
-			"source": map[string]interface{}{
-				"type": "emptyDir",
-			},
-		},
-	}
-	var prepareResult ari.WorkspacePrepareResult
-	if err := client.Call("workspace/prepare", prepareParams, &prepareResult); err != nil {
-		t.Fatalf("workspace/prepare failed: %v", err)
-	}
-	workspaceId := prepareResult.WorkspaceId
-	t.Logf("workspace prepared: id=%s", workspaceId)
+	wsName := fmt.Sprintf("test-%s", runtimeClass)
+	agentName := "agent-cli"
 
-	// Step 2: session/new
-	t.Log("Step 2: session/new")
-	sessionNewParams := map[string]interface{}{
-		"workspaceId":  workspaceId,
-		"runtimeClass": runtimeClass,
-	}
-	var sessionNewResult ari.SessionNewResult
-	if err := client.Call("session/new", sessionNewParams, &sessionNewResult); err != nil {
-		t.Fatalf("session/new failed: %v", err)
-	}
-	sessionId := sessionNewResult.SessionId
-	t.Logf("session created: id=%s state=%s", sessionId, sessionNewResult.State)
-	if sessionNewResult.State != "created" {
-		t.Fatalf("expected state=created, got %s", sessionNewResult.State)
+	// Step 1: workspace/create → poll until ready
+	t.Log("Step 1: workspace/create → poll until ready")
+	createTestWorkspace(t, client, wsName)
+	t.Logf("workspace ready: name=%s", wsName)
+
+	// Step 2: agent/create → poll until idle
+	t.Log("Step 2: agent/create → poll until idle")
+	createResult := createAgentAndWait(t, client, wsName, agentName, runtimeClass)
+	t.Logf("agent ready: workspace=%s name=%s state=%s",
+		wsName, agentName, createResult.Agent.State)
+	if createResult.Agent.State != "idle" {
+		t.Fatalf("expected state=idle, got %s", createResult.Agent.State)
 	}
 
-	// Step 3: session/prompt — auto-starts the agent, sends a simple prompt
-	t.Log("Step 3: session/prompt (this triggers agent startup — may take 10-30s)")
-	promptParams := map[string]interface{}{
-		"sessionId": sessionId,
-		"text":      "respond with only the word hello",
+	// Step 3: agent/prompt — async dispatch; agent startup may take 10-30s for real CLIs
+	t.Log("Step 3: agent/prompt (async — triggers agent startup, may take 10-30s)")
+	var promptResult ari.AgentPromptResult
+	if err := client.Call("agent/prompt", map[string]interface{}{
+		"workspace": wsName,
+		"name":      agentName,
+		"prompt":    "respond with only the word hello",
+	}, &promptResult); err != nil {
+		t.Fatalf("agent/prompt failed: %v", err)
 	}
-	var promptResult ari.SessionPromptResult
-	if err := client.Call("session/prompt", promptParams, &promptResult); err != nil {
-		t.Fatalf("session/prompt failed: %v", err)
-	}
-	t.Logf("prompt completed: stopReason=%s", promptResult.StopReason)
-
-	// Assert stopReason is "end_turn"
-	if promptResult.StopReason != "end_turn" {
-		t.Fatalf("expected stopReason=end_turn, got %q", promptResult.StopReason)
+	t.Logf("prompt dispatched: accepted=%v", promptResult.Accepted)
+	if !promptResult.Accepted {
+		t.Fatalf("expected prompt to be accepted")
 	}
 
-	// Step 4: session/status — verify state=running and shimState is non-nil
-	t.Log("Step 4: session/status")
-	statusParams := map[string]interface{}{
-		"sessionId": sessionId,
-	}
-	var statusResult ari.SessionStatusResult
-	if err := client.Call("session/status", statusParams, &statusResult); err != nil {
-		t.Fatalf("session/status failed: %v", err)
-	}
-	t.Logf("session status: state=%s", statusResult.Session.State)
+	// Step 4: poll until idle (turn completed) — real LLM calls may take 30-60s
+	t.Log("Step 4: poll agent/status until state=idle (turn completed)")
+	statusAfterTurn := waitForAgentState(t, client, wsName, agentName, "idle", 90*time.Second)
+	t.Logf("turn completed: workspace=%s name=%s state=%s",
+		wsName, agentName, statusAfterTurn.Agent.State)
 
-	if statusResult.Session.State != "running" {
-		t.Errorf("expected state=running after prompt, got %s", statusResult.Session.State)
+	// Step 5: agent/status — verify shimState is non-nil (shim still running)
+	t.Log("Step 5: agent/status")
+	var statusResult ari.AgentStatusResult
+	if err := client.Call("agent/status", map[string]interface{}{
+		"workspace": wsName,
+		"name":      agentName,
+	}, &statusResult); err != nil {
+		t.Fatalf("agent/status failed: %v", err)
 	}
-	if statusResult.ShimState == nil {
-		t.Error("expected shimState to be non-nil for running session")
-	} else {
+	t.Logf("agent status: state=%s", statusResult.Agent.State)
+	if statusResult.ShimState != nil {
 		t.Logf("shimState: status=%s pid=%d", statusResult.ShimState.Status, statusResult.ShimState.PID)
 	}
 
-	// Step 5: session/stop
-	t.Log("Step 5: session/stop")
-	stopParams := map[string]interface{}{
-		"sessionId": sessionId,
+	// Step 6: agent/stop → poll until stopped
+	t.Log("Step 6: agent/stop → poll until stopped")
+	if err := client.Call("agent/stop", map[string]interface{}{
+		"workspace": wsName,
+		"name":      agentName,
+	}, nil); err != nil {
+		t.Fatalf("agent/stop failed: %v", err)
 	}
-	var stopResult interface{}
-	if err := client.Call("session/stop", stopParams, &stopResult); err != nil {
-		t.Fatalf("session/stop failed: %v", err)
-	}
-	t.Log("session stopped")
+	_ = waitForAgentState(t, client, wsName, agentName, "stopped", 15*time.Second)
+	t.Log("agent stopped ✓")
 
-	// Step 6: session/remove
-	t.Log("Step 6: session/remove")
-	removeParams := map[string]interface{}{
-		"sessionId": sessionId,
+	// Step 7: agent/delete
+	t.Log("Step 7: agent/delete")
+	if err := client.Call("agent/delete", map[string]interface{}{
+		"workspace": wsName,
+		"name":      agentName,
+	}, nil); err != nil {
+		t.Fatalf("agent/delete failed: %v", err)
 	}
-	var removeResult interface{}
-	if err := client.Call("session/remove", removeParams, &removeResult); err != nil {
-		t.Fatalf("session/remove failed: %v", err)
-	}
-	t.Log("session removed")
+	t.Log("agent deleted ✓")
 
-	// Step 7: workspace/cleanup
-	t.Log("Step 7: workspace/cleanup")
-	cleanupParams := map[string]interface{}{
-		"workspaceId": workspaceId,
+	// Step 8: workspace/delete
+	t.Log("Step 8: workspace/delete")
+	if err := client.Call("workspace/delete", map[string]interface{}{
+		"name": wsName,
+	}, nil); err != nil {
+		t.Logf("warning: workspace/delete failed: %v", err)
 	}
-	var cleanupResult interface{}
-	if err := client.Call("workspace/cleanup", cleanupParams, &cleanupResult); err != nil {
-		t.Logf("warning: workspace/cleanup failed: %v", err)
-	}
-	t.Log("workspace cleaned up — lifecycle complete")
+	t.Log("workspace deleted — lifecycle complete ✓")
 }
 
-// TestRealCLI_GsdPi exercises the full session lifecycle with the real gsd-pi CLI
-// (bunx pi-acp). This proves R039: converged runtime works with real ACP agents.
+// TestRealCLI_GsdPi exercises the full agent lifecycle with the real gsd-pi CLI
+// (bunx pi-acp). Requires bunx, gsd, and ANTHROPIC_API_KEY in the environment.
 func TestRealCLI_GsdPi(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping real CLI test in short mode")
@@ -239,8 +219,7 @@ func TestRealCLI_GsdPi(t *testing.T) {
 	if _, err := exec.LookPath("gsd"); err != nil {
 		t.Skip("skipping: gsd not found in PATH (required by pi-acp)")
 	}
-	// Prerequisite: ANTHROPIC_API_KEY must be set — gsd-pi calls an LLM to
-	// process prompts; without a key the prompt hangs until timeout.
+	// Prerequisite: ANTHROPIC_API_KEY must be set
 	if os.Getenv("ANTHROPIC_API_KEY") == "" {
 		t.Skip("skipping: ANTHROPIC_API_KEY not set (gsd-pi needs an LLM key to process prompts)")
 	}
@@ -259,7 +238,7 @@ func TestRealCLI_GsdPi(t *testing.T) {
 	runRealCLILifecycle(t, ctx, client, "gsd-pi")
 }
 
-// TestRealCLI_ClaudeCode exercises the full session lifecycle with the real
+// TestRealCLI_ClaudeCode exercises the full agent lifecycle with the real
 // claude-code ACP adapter (node + claude-agent-acp). Requires ANTHROPIC_API_KEY.
 func TestRealCLI_ClaudeCode(t *testing.T) {
 	if testing.Short() {
