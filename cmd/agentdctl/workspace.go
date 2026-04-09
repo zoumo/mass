@@ -39,6 +39,13 @@ var workspaceDeleteCmd = &cobra.Command{
 	RunE:  runWorkspaceDelete,
 }
 
+// workspaceSendCmd sends a message from one agent to another within a workspace.
+var workspaceSendCmd = &cobra.Command{
+	Use:   "send",
+	Short: "Send a message from one agent to another within a workspace",
+	RunE:  runWorkspaceSend,
+}
+
 // Flags for workspace create command.
 var (
 	wsCreateName      string
@@ -47,6 +54,14 @@ var (
 	wsCreateGitRef    string
 	wsCreateGitDepth  int
 	wsCreateLocalPath string
+)
+
+// Flags for workspace send command.
+var (
+	wsSendWorkspace string
+	wsSendFrom      string
+	wsSendTo        string
+	wsSendText      string
 )
 
 func init() {
@@ -58,9 +73,19 @@ func init() {
 	workspaceCreateCmd.Flags().StringVar(&wsCreateLocalPath, "path", "", "Local directory path (required for local type)")
 	_ = workspaceCreateCmd.MarkFlagRequired("name")
 
+	workspaceSendCmd.Flags().StringVar(&wsSendWorkspace, "workspace", "", "Workspace name (required)")
+	workspaceSendCmd.Flags().StringVar(&wsSendFrom, "from", "", "Sender agent name (required)")
+	workspaceSendCmd.Flags().StringVar(&wsSendTo, "to", "", "Target agent name (required)")
+	workspaceSendCmd.Flags().StringVar(&wsSendText, "text", "", "Message text (required)")
+	_ = workspaceSendCmd.MarkFlagRequired("workspace")
+	_ = workspaceSendCmd.MarkFlagRequired("from")
+	_ = workspaceSendCmd.MarkFlagRequired("to")
+	_ = workspaceSendCmd.MarkFlagRequired("text")
+
 	workspaceCmd.AddCommand(workspaceCreateCmd)
 	workspaceCmd.AddCommand(workspaceListCmd)
 	workspaceCmd.AddCommand(workspaceDeleteCmd)
+	workspaceCmd.AddCommand(workspaceSendCmd)
 }
 
 // runWorkspaceCreate creates a workspace via the ARI workspace/create method.
@@ -156,5 +181,30 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Workspace %s deleted\n", name)
+	return nil
+}
+
+// runWorkspaceSend sends a message from one agent to another within a workspace.
+func runWorkspaceSend(cmd *cobra.Command, args []string) error {
+	client, err := getClient()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	params := ari.WorkspaceSendParams{
+		Workspace: wsSendWorkspace,
+		From:      wsSendFrom,
+		To:        wsSendTo,
+		Message:   wsSendText,
+	}
+
+	var result ari.WorkspaceSendResult
+	if err := client.Call("workspace/send", params, &result); err != nil {
+		handleError(err)
+		return nil
+	}
+
+	fmt.Printf("Message delivered: %v\n", result.Delivered)
 	return nil
 }

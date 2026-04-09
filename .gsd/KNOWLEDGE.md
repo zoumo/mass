@@ -685,3 +685,17 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** Do NOT suppress the background goroutine error or make the Start() call synchronous to silence test logs. The async pattern is the contract. If you need to observe the error path, either seed the RuntimeClassRegistry or use `require.Eventually` to poll agent/status for the error state.
 - **Reference:** M007/S03/T02 — pkg/ari/server_test.go TestAgentCreateReturnsCreating.
 - **When:** M007/S03
+
+## K058 — workspace-mcp-server: define ARI structs locally, do not import pkg/ari
+
+- **Pattern:** `cmd/workspace-mcp-server/main.go` (and its predecessor `cmd/room-mcp-server/main.go`) defines its own minimal `ariWorkspaceSendParams`, `ariWorkspaceStatusParams`, and response structs inline rather than importing `pkg/ari`.
+- **Lesson:** The binary is intentionally self-contained. Importing pkg/ari would couple the binary to the internal package's evolution and risks circular imports if pkg/ari ever imports pkg/agentd. Keep it local. This also means changes to pkg/ari types do NOT automatically propagate to workspace-mcp-server — update both places when the ARI surface changes.
+- **Reference:** M007/S04/T01 — cmd/workspace-mcp-server/main.go.
+- **When:** M007/S04
+
+## K059 — doc verification grep: avoid pattern matches inside negation prose
+
+- **Pattern:** A design doc section that says "there is no agentId field" or "the Session Manager is removed" will match the exact pattern that `grep -n 'agentId|Session Manager'` checks for — causing false failures in the verification gate.
+- **Lesson:** When writing docs that explain removed concepts, use the affirmative: "identity is (workspace, name)" rather than "no agentId". The information is conveyed without tripping the grep gate. D100 documents this decision.
+- **Reference:** M007/S04/T02 — docs/design/agentd/ari-spec.md, agentd.md.
+- **When:** M007/S04

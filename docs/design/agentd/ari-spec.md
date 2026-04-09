@@ -7,38 +7,52 @@ It is a runtime API for **realized objects**. It does not replace the orchestrat
 
 | Concept | Desired-state authority | Realized-state authority |
 |---|---|---|
-| Room intent | `docs/design/orchestrator/room-spec.md` | `room/*` in ARI when the orchestrator registers or inspects the runtime projection |
 | Workspace intent | `docs/design/workspace/workspace-spec.md` | `workspace/*` in ARI |
 | Agent bootstrap contract | runtime/config design docs | `agent/create` in ARI |
 | Work execution | orchestrator policy | `agent/prompt` in ARI |
 
-ARI therefore exposes what callers ask agentd to realize and observe. It must not smuggle desired-state ownership into agentd.
+ARI exposes what callers ask agentd to realize and observe.
+It must not smuggle desired-state ownership into agentd.
 
 ## Transport
 
 - protocol: JSON-RPC 2.0 over Unix domain socket
 - default path: `/run/agentd/agentd.sock`
 
+## Identity
+
+Agents are identified by the pair `(workspace, name)`.
+All method parameters and results use `workspace` + `name` together as the stable key.
+There is no opaque UUID identity exposed to ARI callers.
+
 ## Workspace Methods
 
-### `workspace/prepare`
+### `workspace/create`
 
-Prepare a workspace from a Workspace Spec and return the realized runtime identity.
+Create a workspace record and begin async preparation.
+Returns immediately with `phase: "pending"`.
+Callers poll `workspace/status` until phase transitions to `"ready"` or `"error"`.
+
+**Params:**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `name` | string | yes | Unique workspace name |
+| `source` | object | no | Workspace source spec (git/emptyDir/local) |
+| `labels` | map | no | Arbitrary metadata |
+
+**Result:** `{name, phase}` where `phase` is always `"pending"` on success.
+
+**Example:**
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "workspace/prepare",
+  "method": "workspace/create",
   "params": {
-    "spec": {
-      "oarVersion": "0.1.0",
-      "metadata": { "name": "my-project" },
-      "source": {
-        "type": "local",
-        "path": "/home/user/project"
-      }
-    }
+    "name": "my-project",
+    "source": { "type": "local", "path": "/home/user/project" }
   }
 }
 ```
@@ -47,24 +61,85 @@ Prepare a workspace from a Workspace Spec and return the realized runtime identi
 {
   "jsonrpc": "2.0",
   "id": 1,
+  "result": { "name": "my-project", "phase": "pending" }
+}
+```
+
+Poll until ready:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "workspace/status",
+  "params": { "name": "my-project" }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
   "result": {
-    "workspaceId": "ws-abc123",
+    "name": "my-project",
+    "phase": "ready",
     "path": "/home/user/project",
-    "status": "ready"
+    "members": []
   }
 }
 ```
 
-The returned `path` is the realized canonical path. For a **local workspace**, cleanup later detaches but does not delete that host directory.
+### `workspace/status`
+
+Return current workspace phase and membership.
+
+**Params:** `{name}`
+
+**Result:** `{name, phase, path?, members[]}`
+
+- `phase`: `"pending"` | `"ready"` | `"error"`
+- `path`: absolute host path (only present when `phase` is `"ready"`)
+- `members`: array of `AgentInfo` objects for agents currently using this workspace
 
 ### `workspace/list`
 
-List realized workspaces and their current reference state.
+List all ready workspaces.
 
-### `workspace/cleanup`
+**Params:** `{}`
 
-Release and clean up a workspace when reference rules allow it.
-Managed workspaces may be deleted; local workspaces may not.
+**Result:** `{workspaces[]}` — array of `{name, phase, path}` objects.
+
+### `workspace/delete`
+
+Delete a workspace record and release its resources.
+Blocked if any agents are currently using the workspace.
+
+**Params:** `{name}`
+
+**Result:** `{}`
+
+**Error:** `-32001` (`CodeRecoveryBlocked`) when agents exist in the workspace.
+
+### `workspace/send`
+
+Route a message from one agent to another within a workspace.
+The target agent receives the message as a prompt via its running shim.
+This is a fire-and-forget delivery: `delivered: true` means the message was dispatched to the shim, not that a response was received.
+
+**Params:** `{workspace, from, to, message}`
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `workspace` | string | yes | Workspace name |
+| `from` | string | yes | Sender agent name |
+| `to` | string | yes | Recipient agent name |
+| `message` | string | yes | Message text to deliver |
+
+**Result:** `{delivered: true}`
+
+**Errors:**
+- `-32001` when daemon is recovering, target agent is in error state, or target shim is not running
+- `-32602` when target agent is not found
 
 ## Agent Methods
 
@@ -72,10 +147,23 @@ Managed workspaces may be deleted; local workspaces may not.
 
 `agent/create` is **async configuration-only bootstrap**.
 It creates the agent record and returns immediately with `state: "creating"`.
-Actual bootstrap (bundle creation, shim startup, ACP initialization) happens in the background.
-Callers poll `agent/status` until state transitions to `created` or `error`.
+Actual bootstrap (shim startup, ACP initialization) happens in the background.
+Callers poll `agent/status` until state transitions to `"idle"` or `"error"`.
 
-All agents must belong to a room. `room` and `name` together form the stable external identity for the agent.
+**Params:**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `workspace` | string | yes | Workspace this agent belongs to (must be ready) |
+| `name` | string | yes | Agent name, unique within the workspace |
+| `runtimeClass` | string | yes | Selects the registered runtime class |
+| `restartPolicy` | string | no | `"never"` \| `"on-failure"` \| `"always"` |
+| `systemPrompt` | string | no | Bootstrap system prompt for the agent session |
+| `labels` | map | no | Arbitrary metadata |
+
+**Result:** `{workspace, name, state: "creating"}`
+
+**Example:**
 
 ```json
 {
@@ -83,15 +171,10 @@ All agents must belong to a room. `room` and `name` together form the stable ext
   "id": 10,
   "method": "agent/create",
   "params": {
-    "room": "backend-refactor",
+    "workspace": "my-project",
     "name": "architect",
-    "description": "Designs the module structure.",
     "runtimeClass": "claude",
-    "workspaceId": "ws-abc123",
-    "systemPrompt": "You are a coding agent.",
-    "labels": {
-      "task": "auth-refactor"
-    }
+    "systemPrompt": "You are a coding agent."
   }
 }
 ```
@@ -100,70 +183,54 @@ All agents must belong to a room. `room` and `name` together form the stable ext
 {
   "jsonrpc": "2.0",
   "id": 10,
-  "result": {
-    "agentId": "agent-abc123",
-    "state": "creating"
-  }
+  "result": { "workspace": "my-project", "name": "architect", "state": "creating" }
 }
 ```
 
-| Field | Type | Required | Meaning |
-|---|---|---|---|
-| `room` | string | yes | Realized Room this agent belongs to (must already exist) |
-| `name` | string | yes | Member name inside that Room (unique within the room) |
-| `description` | string | no | Human-readable description of the agent's role |
-| `runtimeClass` | string | yes | Selects the registered runtime-class configuration |
-| `workspaceId` | string | yes | Attaches the agent to a realized workspace |
-| `systemPrompt` | string | no | Bootstrap configuration for ACP session creation |
-| `labels` | map | no | Arbitrary metadata |
-
-### Internal Meaning of `agent/create`
-
-`agent/create` may trigger background bootstrap side effects such as bundle creation, `cwd` resolution, process startup, and ACP `session/new` behind the shim boundary.
-The contract remains configuration-only because no task work is being delivered yet.
-The shim-internal protocol still uses `session/*` at the shim→agentd boundary; this is an internal detail not exposed through ARI.
-
-### `agent/prompt`
-
-`agent/prompt` is the work-entry path for a created agent.
+Poll until idle:
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 11,
-  "method": "agent/prompt",
-  "params": {
-    "agentId": "agent-abc123",
-    "prompt": "Refactor the auth module to use JWT tokens."
+  "method": "agent/status",
+  "params": { "workspace": "my-project", "name": "architect" }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "result": {
+    "agent": {
+      "workspace": "my-project",
+      "name": "architect",
+      "runtimeClass": "claude",
+      "state": "idle",
+      "createdAt": "2026-01-01T00:00:00Z"
+    }
   }
 }
 ```
 
-Every externally supplied turn enters here:
+### `agent/prompt`
 
-- the first work turn after `agent/create` completes bootstrap;
-- later user turns;
-- future Room-routed work delivered to another member agent.
+Deliver a prompt turn to an agent.
+Rejected when the agent is in `creating`, `stopped`, or `error` state.
+Only accepted when state is `idle`.
 
-Requests to `agent/prompt` are rejected when the agent is in `creating`, `stopped`, or `error`.
-If a runtime failure happens during the turn, the agent transitions to `error` rather than back to `created`.
+**Params:** `{workspace, name, prompt}`
+
+**Result:** `{accepted: true}`
 
 ### `agent/cancel`
 
 Cancel the active turn for an agent.
 
-Requests to `agent/cancel` are rejected when the agent is in `error`.
+**Params:** `{workspace, name}`
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 12,
-  "method": "agent/cancel",
-  "params": {
-    "agentId": "agent-abc123"
-  }
-}
-```
+**Result:** `{}`
 
 ### `agent/stop`
 
@@ -171,239 +238,159 @@ Stop the runtime process for an agent.
 Preserves agent metadata and state for inspection.
 The agent remains in `stopped` state until `agent/delete` or `agent/restart`.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 13,
-  "method": "agent/stop",
-  "params": {
-    "agentId": "agent-abc123"
-  }
-}
-```
+**Params:** `{workspace, name}`
+
+**Result:** `{}`
 
 ### `agent/delete`
 
-Remove a non-operational agent record and release its workspace reference.
+Remove an agent record and release its resources.
 Requires the agent to be in `stopped` or `error` state.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 14,
-  "method": "agent/delete",
-  "params": {
-    "agentId": "agent-abc123"
-  }
-}
-```
+**Params:** `{workspace, name}`
 
-Returns an error if the agent is still active. Healthy agents must be stopped first; agents already in `error` may be deleted directly.
+**Result:** `{}`
+
+**Errors:**
+- `-32001` (`CodeRecoveryBlocked`) when agent is not in stopped/error state
+- `-32602` when agent is not found
 
 ### `agent/restart`
 
 Re-bootstrap a stopped or errored agent from existing state.
 Transitions the agent back to `creating` and starts background bootstrap.
-Caller polls `agent/status` until `created` or `error`.
+Caller polls `agent/status` until `idle` or `error`.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 15,
-  "method": "agent/restart",
-  "params": {
-    "agentId": "agent-abc123"
-  }
-}
-```
+**Params:** `{workspace, name}`
+
+**Result:** `{workspace, name, state: "creating"}`
 
 ### `agent/list`
 
-List realized agent records with optional filters such as `runtimeClass`, `room`, `state`, and labels.
+List agent records with optional filters.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 16,
-  "method": "agent/list",
-  "params": {
-    "room": "backend-refactor",
-    "state": "running"
-  }
-}
-```
+**Params:** `{workspace?, state?, labels?}`
+
+**Result:** `{agents[]}` — array of `AgentInfo` objects.
+
+Filters:
+- `workspace`: restrict to a single workspace
+- `state`: restrict to agents in a given state
+- `labels`: restrict to agents matching all provided labels
 
 ### `agent/status`
 
-Return current realized agent state, process state, attached workspace, and realized Room membership.
+Return current agent state and optional shim runtime state.
 
+**Params:** `{workspace, name}`
+
+**Result:**
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": 17,
-  "method": "agent/status",
-  "params": {
-    "agentId": "agent-abc123"
-  }
-}
-```
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 17,
-  "result": {
-    "agentId": "agent-abc123",
-    "room": "backend-refactor",
+  "agent": {
+    "workspace": "my-project",
     "name": "architect",
-    "description": "Designs the module structure.",
     "runtimeClass": "claude",
-    "workspaceId": "ws-abc123",
-    "state": "running",
-    "labels": { "task": "auth-refactor" }
+    "state": "idle",
+    "labels": {},
+    "createdAt": "2026-01-01T00:00:00Z"
+  },
+  "shimState": {
+    "status": "running",
+    "pid": 12345,
+    "bundle": "/var/lib/agentd/bundles/my-project/architect"
   }
 }
 ```
 
-Agent state values: `creating`, `created`, `running`, `stopped`, `error`.
-The internal `sessionId` is not surfaced here. See agent state machine in `agentd.md`.
+`shimState` is omitted when the agent has no running shim process.
 
-### `agent/attach` / `agent/detach`
+Agent state values: `creating`, `idle`, `running`, `stopped`, `error`.
 
-Attach is an observation and prompt-injection surface for ARI clients.
-It is **not** ACP client takeover.
+### `agent/attach`
 
-ARI attach exposes a curated surface:
+Return the shim's Unix socket path so the caller can connect directly.
+Agent must be in `idle` or `running` state.
 
-- streamed `agent/update` notifications;
-- `agent/stateChange` notifications;
-- `agent/prompt` injection;
-- `agent/cancel`.
+**Params:** `{workspace, name}`
 
-Raw ACP client-side requests such as `fs/*` and `terminal/*` remain behind the shim boundary.
+**Result:** `{socketPath}` — absolute path to the shim's Unix domain socket.
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 18,
-  "method": "agent/attach",
-  "params": {
-    "agentId": "agent-abc123"
-  }
-}
+## AgentInfo Schema
+
+All methods that return agent data use the `AgentInfo` shape:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `workspace` | string | Workspace this agent belongs to |
+| `name` | string | Agent name within the workspace |
+| `runtimeClass` | string | Selected runtime class |
+| `state` | string | Current agent state |
+| `errorMessage` | string? | Error details when `state` is `"error"` |
+| `labels` | map? | Arbitrary metadata |
+| `createdAt` | string | RFC3339 creation timestamp |
+
+## Agent State Machine
+
+```
+creating ──┐
+           ├──> idle ──> running ──> stopped
+           |              │
+    error <─┴─────────────┘
 ```
 
-## Realized Room Methods
+| State | Meaning |
+|---|---|
+| `creating` | `agent/create` accepted; background bootstrap in progress |
+| `idle` | Bootstrap complete; agent is ready to accept a prompt |
+| `running` | Agent is processing an active prompt turn |
+| `stopped` | Agent process is stopped; state is preserved |
+| `error` | Bootstrap or runtime failure; agent must be restarted or deleted |
 
-### `room/create`
-
-Register the **realized runtime projection** of a Room that the orchestrator has already decided should exist.
-This method does not replace the desired-state Room Spec.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 20,
-  "method": "room/create",
-  "params": {
-    "name": "backend-refactor",
-    "labels": { "project": "auth-service" },
-    "communication": { "mode": "mesh" }
-  }
-}
-```
-
-`room/create` exists so agentd can track realized runtime metadata such as member mapping and communication mode. It does not define desired completion policy or business-level orchestration intent.
-
-### `room/status`
-
-Inspect realized runtime membership.
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 21,
-  "method": "room/status",
-  "params": {
-    "name": "backend-refactor"
-  }
-}
-```
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 21,
-  "result": {
-    "name": "backend-refactor",
-    "members": [
-      {
-        "agentName": "architect",
-        "description": "Designs the module structure.",
-        "runtimeClass": "claude",
-        "agentState": "running"
-      },
-      {
-        "agentName": "coder",
-        "description": "Implements the changes.",
-        "runtimeClass": "claude",
-        "agentState": "created"
-      }
-    ],
-    "workspaceId": "ws-abc123",
-    "communication": { "mode": "mesh" }
-  }
-}
-```
-
-`room/status` answers "what is realized now?", not "what should exist next?".
-Members show `agentName`, `description`, `runtimeClass`, and `agentState`.
-Internal `sessionId` is not surfaced.
-
-### `room/delete`
-
-Remove the realized runtime room record after member agents are stopped, errored, or detached according to runtime rules.
-Deleting the runtime projection does not delete the orchestrator's desired-state Room object.
-
-## Shared Workspace Semantics
-
-When multiple realized agents point at the same `workspaceId`, ARI is modeling a **shared workspace**.
-That implies shared visibility and shared write risk on one realized host path.
-ARI does not imply per-agent filesystem isolation.
-
-## Capability Posture
-
-The ARI contract intentionally exposes less than raw ACP:
-
-- exposed: workspace preparation, agent bootstrap, prompt delivery, cancellation, status, attach notifications, realized room inspection;
-- not exposed as direct public contract: raw ACP negotiation, raw `session/new` payload shapes, `fs/*`, `terminal/*`, or other client-side ACP duties;
-- governed by runtime permission posture: what the shim may approve or deny while acting as ACP client.
-
-This is the design-set authority for the phrase **capability** at the ARI boundary.
+Transition rules:
+- `creating → idle`: shim started successfully, ACP initialized
+- `creating → error`: shim start failed
+- `idle → running`: `agent/prompt` dispatched
+- `running → idle`: prompt turn completes (agent returns to idle)
+- `idle → stopped` / `running → stopped`: `agent/stop` received
+- `running → error`: runtime failure during a turn
+- `error → creating` / `stopped → creating`: `agent/restart` triggers re-bootstrap
 
 ## Events
 
 ### `agent/update`
 
 Typed runtime event stream for attached ARI clients.
-At the agentd→orchestrator boundary, runtime updates are surfaced as `agent/update`.
-Internally, agentd translates shim-level `session/update` events to `agent/update` before delivery.
+Streamed when a client is connected via `agent/attach`.
 
 ### `agent/stateChange`
 
-Agent lifecycle transition notification for attached ARI clients.
-At the agentd→orchestrator boundary, state transitions are surfaced as `agent/stateChange`.
-Internally, agentd translates shim-level `runtime/stateChange` events to `agent/stateChange` before delivery.
+Agent lifecycle transition notification.
+Streamed to clients attached via `agent/attach`.
 
-The shim→agentd boundary continues using `session/update` and `runtime/stateChange` (see `shim-rpc-spec.md`).
-This is an internal boundary that ARI callers do not see.
+## Error Codes
 
-## Follow-on Gaps
+| Code | Name | When |
+|---|---|---|
+| `-32001` | `CodeRecoveryBlocked` | Operation blocked: daemon recovering, workspace has agents, agent not in required state |
+| `-32602` | `CodeInvalidParams` | Resource not found (workspace or agent), or required parameter missing |
+| `-32603` | `CodeInternalError` | Internal server error |
+| `-32601` | `CodeMethodNotFound` | Unknown method name |
 
-Later work under R036 / R044 still needs to harden:
+## workspace-mcp-server
 
-- durable bootstrap snapshots for truthful restart;
-- durable agent ↔ internal session identity mapping;
-- replay / reconnect correctness;
-- restart-safe cleanup and shared-workspace safety;
-- cross-client delivery and routing hardening for richer realized Room behavior.
+The `workspace-mcp-server` binary exposes two MCP tools that wrap ARI calls:
+
+- `workspace_status` — calls `workspace/status`
+- `workspace_send` — calls `workspace/send`
+
+It connects to agentd's Unix socket (default `/run/agentd/agentd.sock`) and
+logs startup with `workspace=`, `agentName=`, and `agentID=` structured fields.
+
+## Capability Posture
+
+The ARI contract intentionally exposes less than raw ACP:
+
+- **exposed**: workspace management, agent bootstrap, prompt delivery, cancellation, status, attach (shim socket path), agent/workspace listing;
+- **not exposed as direct public contract**: raw ACP negotiation, `fs/*`, `terminal/*`, or other client-side ACP duties;
+- **governed by runtime permission posture**: what the shim may approve or deny while acting as ACP client.

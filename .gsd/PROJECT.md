@@ -10,7 +10,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-M007 in progress — platform terminal state refactor. **S01, S02, and S03 complete.** Storage + model foundation done (S01); shim write authority boundary enforced and RestartPolicy tryReload/alwaysNew implemented (S02); full ARI JSON-RPC surface (workspace/* + agent/*) implemented and handler-tested (S03). Next: S04 (CLI + workspace-mcp-server + Design Docs).
+M007 in progress — platform terminal state refactor. **S01, S02, S03, and S04 complete.** Storage + model foundation done (S01); shim write authority boundary enforced and RestartPolicy tryReload/alwaysNew implemented (S02); full ARI JSON-RPC surface (workspace/* + agent/*) implemented and handler-tested (S03); CLI + workspace-mcp-server + design docs updated to terminal-state model (S04). Next: S05 (Integration Tests + Final Verification).
 
 ### Completed Milestones
 
@@ -46,6 +46,9 @@ M007 in progress — platform terminal state refactor. **S01, S02, and S03 compl
 - **Turn-aware event ordering**: TurnId/StreamSeq/Phase on session/update envelopes
 - **Workspace preparation** for Git/EmptyDir/Local sources with hooks and reference tracking
 - **CLI tooling** (`agentdctl`) with agent/workspace/daemon subcommands using (workspace,name) identity and `parseAgentKey()` helper
+  - `agentdctl workspace send` subcommand added (--workspace, --from, --to, --text flags); stale `room` command removed
+- **workspace-mcp-server binary** (`cmd/workspace-mcp-server/main.go`): renamed from room-mcp-server; reads OAR_WORKSPACE_NAME; exposes workspace_send and workspace_status MCP tools; logs workspace=/agentName=/agentID= on startup; `go build ./cmd/workspace-mcp-server` clean
+- **Design docs updated**: `docs/design/agentd/ari-spec.md` fully rewritten for workspace/agent model; `docs/design/agentd/agentd.md` updated to remove Session Manager, use workspace+name identity, and match spec.Status state values
 - **Fully clean golangci-lint v2 posture**: 0 issues across all 11 linter categories (as of M006; M007/S05 will re-validate)
 
 ### M007 Slice Status
@@ -55,8 +58,8 @@ M007 in progress — platform terminal state refactor. **S01, S02, and S03 compl
 | S01 | Storage + Model Foundation | ✅ complete |
 | S02 | agentd Core Adaptation | ✅ complete |
 | S03 | ARI Surface Rewrite | ✅ complete |
-| S04 | CLI + workspace-mcp-server + Design Docs | ⬜ next |
-| S05 | Integration Tests + Final Verification | ⬜ |
+| S04 | CLI + workspace-mcp-server + Design Docs | ✅ complete |
+| S05 | Integration Tests + Final Verification | ⬜ next |
 
 ### Lint Status (post-M006)
 
@@ -80,5 +83,5 @@ M007 in progress — platform terminal state refactor. **S01, S02, and S03 compl
   - [x] S01: Storage + Model Foundation — bbolt store, new Agent+Workspace models, spec.StatusIdle, green build
   - [x] S02: agentd Core Adaptation — shim write authority (D088), RestartPolicy tryReload/alwaysNew (D089), 10 unit tests
   - [x] S03: ARI Surface Rewrite — 946-line server.go with all workspace/* + agent/* handlers; 27 tests pass; zero agentId fields
-  - [ ] S04: CLI + workspace-mcp-server + Design Docs (depends S03 ✅)
+  - [x] S04: CLI + workspace-mcp-server + Design Docs — workspace-mcp-server binary, workspace send subcommand, room cmd removed, design docs rewritten
   - [ ] S05: Integration Tests + Final Verification (depends S04)
