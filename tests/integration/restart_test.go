@@ -151,7 +151,7 @@ runtimeClasses:
 	agentBId := statusB1.Agent.AgentId
 	t.Logf("agent-B: id=%s state=%s", agentBId, statusB1.Agent.State)
 
-	// Prompt agent-A to exercise the running state.
+	// Prompt agent-A to exercise the running state (async dispatch).
 	t.Log("Prompting agent-A before restart")
 	var promptResultA ari.AgentPromptResult
 	if err := client1.Call("agent/prompt", map[string]interface{}{
@@ -160,9 +160,9 @@ runtimeClasses:
 	}, &promptResultA); err != nil {
 		t.Fatalf("agent/prompt A: %v", err)
 	}
-	t.Logf("agent-A prompt completed: stopReason=%s", promptResultA.StopReason)
+	t.Logf("agent-A prompt accepted: %v", promptResultA.Accepted)
 
-	// Prompt agent-B.
+	// Prompt agent-B (async dispatch).
 	t.Log("Prompting agent-B before restart")
 	var promptResultB ari.AgentPromptResult
 	if err := client1.Call("agent/prompt", map[string]interface{}{
@@ -171,11 +171,10 @@ runtimeClasses:
 	}, &promptResultB); err != nil {
 		t.Fatalf("agent/prompt B: %v", err)
 	}
-	t.Logf("agent-B prompt completed: stopReason=%s", promptResultB.StopReason)
+	t.Logf("agent-B prompt accepted: %v", promptResultB.Accepted)
 
-	// After agent/prompt completes (end_turn), the agent state is "running"
-	// (the ARI server sets state=running when a prompt starts and does not roll it
-	// back to created after completion). Verify agent-A is in running state.
+	// agent/prompt is async: agent state transitions to "running" immediately
+	// after dispatch. Verify agent-A is in running state before killing agentd.
 	_ = waitForAgentState(t, client1, agentAId, "running", 10*time.Second)
 	t.Log("agent-A is in running state after prompt ✓")
 

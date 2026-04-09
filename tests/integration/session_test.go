@@ -268,7 +268,7 @@ func TestAgentLifecycle(t *testing.T) {
 		t.Errorf("expected state=created, got %s", status.Agent.State)
 	}
 
-	// Step 2: agent/prompt → state transitions to running
+	// Step 2: agent/prompt → async dispatch, state transitions to running
 	t.Log("Step 2: agent/prompt")
 	var promptResult ari.AgentPromptResult
 	if err := client.Call("agent/prompt", map[string]interface{}{
@@ -277,13 +277,13 @@ func TestAgentLifecycle(t *testing.T) {
 	}, &promptResult); err != nil {
 		t.Fatalf("agent/prompt failed: %v", err)
 	}
-	t.Logf("prompt completed: stopReason=%s", promptResult.StopReason)
+	t.Logf("prompt accepted: %v", promptResult.Accepted)
 
-	if promptResult.StopReason != "end_turn" {
-		t.Errorf("expected stopReason=end_turn, got %s", promptResult.StopReason)
+	if !promptResult.Accepted {
+		t.Errorf("expected prompt to be accepted")
 	}
 
-	// After end_turn, agent state is running
+	// After async dispatch, agent state is running
 	t.Log("Step 3: verify agent is running after prompt")
 	_ = waitForAgentState(t, client, agentId, "running", 10*time.Second)
 
@@ -337,9 +337,9 @@ func TestAgentPromptAndStop(t *testing.T) {
 	}, &promptResult); err != nil {
 		t.Fatalf("agent/prompt failed: %v", err)
 	}
-	t.Logf("prompt completed: stopReason=%s", promptResult.StopReason)
-	if promptResult.StopReason != "end_turn" {
-		t.Errorf("expected stopReason=end_turn, got %s", promptResult.StopReason)
+	t.Logf("prompt accepted: %v", promptResult.Accepted)
+	if !promptResult.Accepted {
+		t.Errorf("expected prompt to be accepted")
 	}
 
 	// Stop the agent
@@ -387,13 +387,13 @@ func TestAgentPromptFromCreated(t *testing.T) {
 	}, &promptResult); err != nil {
 		t.Fatalf("agent/prompt (from created) failed: %v", err)
 	}
-	t.Logf("auto-start prompt completed: stopReason=%s", promptResult.StopReason)
+	t.Logf("auto-start prompt accepted: %v", promptResult.Accepted)
 
-	if promptResult.StopReason != "end_turn" {
-		t.Errorf("expected stopReason=end_turn, got %s", promptResult.StopReason)
+	if !promptResult.Accepted {
+		t.Errorf("expected prompt to be accepted")
 	}
 
-	// Agent should now be in running state
+	// Agent should now be in running state (async turn in progress)
 	_ = waitForAgentState(t, client, agentId, "running", 10*time.Second)
 	t.Log("agent auto-started and responded ✓")
 
@@ -435,11 +435,14 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 		}, &promptResult); err != nil {
 			t.Fatalf("agent/prompt %d failed: %v", i+1, err)
 		}
-		t.Logf("prompt %d completed: stopReason=%s", i+1, promptResult.StopReason)
+		t.Logf("prompt %d accepted: %v", i+1, promptResult.Accepted)
 
-		if promptResult.StopReason != "end_turn" {
-			t.Errorf("prompt %d: expected stopReason=end_turn, got %s", i+1, promptResult.StopReason)
+		if !promptResult.Accepted {
+			t.Errorf("prompt %d: expected prompt to be accepted", i+1)
 		}
+
+		// Wait for async turn to complete before sending the next prompt.
+		_ = waitForAgentState(t, client, agentId, "created", 15*time.Second)
 	}
 
 	t.Logf("All %d sequential prompts completed successfully ✓", len(prompts))

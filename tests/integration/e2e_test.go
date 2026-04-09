@@ -169,14 +169,14 @@ runtimeClasses:
 	}, &promptResult); err != nil {
 		t.Fatalf("agent/prompt failed: %v", err)
 	}
-	t.Logf("prompt completed: stopReason=%s", promptResult.StopReason)
+	t.Logf("prompt accepted: %v", promptResult.Accepted)
 
-	// Verify mockagent responded
-	if promptResult.StopReason != "end_turn" {
-		t.Errorf("expected stopReason=end_turn, got %s", promptResult.StopReason)
+	// Verify prompt was accepted
+	if !promptResult.Accepted {
+		t.Errorf("expected prompt to be accepted")
 	}
 
-	// Step 5: verify agent is running
+	// Step 5: verify agent is running (async turn in progress)
 	t.Log("Step 5: verify agent state=running")
 	_ = waitForAgentState(t, client, agentId, "running", 10*time.Second)
 	t.Log("agent state=running ✓")

@@ -67,12 +67,12 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 				return
 			}
 
-			if promptResult.StopReason != "end_turn" {
-				results <- fmt.Errorf("agent %d: expected stopReason=end_turn, got %s", idx+1, promptResult.StopReason)
+			if !promptResult.Accepted {
+				results <- fmt.Errorf("agent %d: expected prompt to be accepted", idx+1)
 				return
 			}
 
-			t.Logf("agent %d prompt completed: stopReason=%s", idx+1, promptResult.StopReason)
+			t.Logf("agent %d prompt accepted", idx+1)
 			results <- nil
 		}(i, agentIds[i])
 	}
