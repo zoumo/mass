@@ -162,7 +162,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	if err := m.writeState(spec.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
-		Status:      spec.StatusCreated,
+		Status:      spec.StatusIdle,
 		PID:         cmd.Process.Pid,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
@@ -268,7 +268,7 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		lt.StopReason = string(resp.StopReason)
 	}
 	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
-		st.Status = spec.StatusCreated
+		st.Status = spec.StatusIdle
 		st.LastTurn = lt
 		reason := "prompt-completed"
 		if err != nil {

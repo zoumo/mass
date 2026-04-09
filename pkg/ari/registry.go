@@ -15,7 +15,7 @@ import (
 // WorkspaceMeta tracks metadata for a prepared workspace.
 // It is stored in the Registry and used for workspace/list responses.
 type WorkspaceMeta struct {
-	// Id is the unique UUID assigned to this workspace.
+	// Id is the unique identifier assigned to this workspace (name in new model).
 	Id string
 
 	// Name is the workspace name from spec.Metadata.Name.
@@ -30,11 +30,11 @@ type WorkspaceMeta struct {
 	// Status is the current workspace state (e.g., "ready", "preparing", "error").
 	Status string
 
-	// RefCount is the number of active sessions referencing this workspace.
+	// RefCount is the number of active agents referencing this workspace.
 	// Cleanup fails if RefCount > 0.
 	RefCount int
 
-	// Refs is the list of session IDs referencing this workspace.
+	// Refs is the list of agent keys referencing this workspace.
 	// Used for debugging and workspace/list response.
 	Refs []string
 }
@@ -45,7 +45,7 @@ type Registry struct {
 	// mu protects the workspaces map.
 	mu sync.RWMutex
 
-	// workspaces maps workspaceId (UUID) to WorkspaceMeta.
+	// workspaces maps workspaceId (name) to WorkspaceMeta.
 	workspaces map[string]*WorkspaceMeta
 }
 
@@ -104,31 +104,31 @@ func (r *Registry) Remove(id string) {
 }
 
 // Acquire increments the reference count for a workspace.
-// Adds the session ID to the Refs list for debugging.
+// Adds the agentKey to the Refs list for debugging.
 // Thread-safe via mutex lock.
-func (r *Registry) Acquire(id, sessionID string) {
+func (r *Registry) Acquire(id, agentKey string) {
 	r.mu.Lock()
 	if m := r.workspaces[id]; m != nil {
 		m.RefCount++
-		m.Refs = append(m.Refs, sessionID)
+		m.Refs = append(m.Refs, agentKey)
 	}
 	r.mu.Unlock()
 }
 
 // Release decrements the reference count for a workspace.
-// Removes the session ID from the Refs list.
+// Removes the agentKey from the Refs list.
 // Returns the reference count after decrement.
 // Thread-safe via mutex lock.
-func (r *Registry) Release(id, sessionID string) int {
+func (r *Registry) Release(id, agentKey string) int {
 	r.mu.Lock()
 	count := 0
 	if m := r.workspaces[id]; m != nil && m.RefCount > 0 {
 		m.RefCount--
 		count = m.RefCount
-		// Remove sessionID from Refs list.
+		// Remove agentKey from Refs list.
 		newRefs := make([]string, 0, len(m.Refs))
 		for _, ref := range m.Refs {
-			if ref != sessionID {
+			if ref != agentKey {
 				newRefs = append(newRefs, ref)
 			}
 		}
@@ -138,17 +138,15 @@ func (r *Registry) Release(id, sessionID string) int {
 	return count
 }
 
-// RebuildFromDB loads all active workspaces from the metadata store and
-// repopulates the registry. For each workspace it deserializes the stored
-// Source JSON back into a workspace.Source, sets the correct RefCount, and
-// populates the Refs list from workspace_refs rows.
-// This is called once during daemon startup after recovery completes so that
-// workspace/list and workspace/cleanup work across daemon restarts.
+// RebuildFromDB loads all ready workspaces from the metadata store and
+// repopulates the registry. This is called once during daemon startup after
+// recovery completes so that workspace/list and workspace/cleanup work across
+// daemon restarts.
 func (r *Registry) RebuildFromDB(store *meta.Store) error {
 	ctx := context.Background()
 
 	workspaces, err := store.ListWorkspaces(ctx, &meta.WorkspaceFilter{
-		Status: meta.WorkspaceStatusActive,
+		Phase: meta.WorkspacePhaseReady,
 	})
 	if err != nil {
 		return fmt.Errorf("ari: rebuild registry: list workspaces: %w", err)
@@ -160,34 +158,30 @@ func (r *Registry) RebuildFromDB(store *meta.Store) error {
 	for _, ws := range workspaces {
 		// Deserialize Source JSON into workspace.Source.
 		var src workspace.Source
-		if ws.Source != nil && len(ws.Source) > 0 && string(ws.Source) != "{}" {
-			if err := json.Unmarshal(ws.Source, &src); err != nil {
-				return fmt.Errorf("ari: rebuild registry: unmarshal source for workspace %s: %w", ws.ID, err)
+		if ws.Spec.Source != nil && len(ws.Spec.Source) > 0 && string(ws.Spec.Source) != "{}" {
+			if err := json.Unmarshal(ws.Spec.Source, &src); err != nil {
+				return fmt.Errorf("ari: rebuild registry: unmarshal source for workspace %s: %w",
+					ws.Metadata.Name, err)
 			}
 		}
 
-		// Query session IDs referencing this workspace.
-		refs, err := store.ListWorkspaceRefs(ctx, ws.ID)
-		if err != nil {
-			return fmt.Errorf("ari: rebuild registry: list refs for workspace %s: %w", ws.ID, err)
-		}
-		if refs == nil {
-			refs = []string{}
-		}
+		name := ws.Metadata.Name
+		path := ws.Status.Path
 
 		spec := workspace.WorkspaceSpec{
-			Metadata: workspace.WorkspaceMetadata{Name: ws.Name},
+			Metadata: workspace.WorkspaceMetadata{Name: name},
 			Source:   src,
 		}
 
-		r.workspaces[ws.ID] = &WorkspaceMeta{
-			Id:       ws.ID,
-			Name:     ws.Name,
-			Path:     ws.Path,
+		// In the new model, refs are tracked in-memory only; start with empty refs.
+		r.workspaces[name] = &WorkspaceMeta{
+			Id:       name,
+			Name:     name,
+			Path:     path,
 			Spec:     spec,
 			Status:   "ready",
-			RefCount: ws.RefCount,
-			Refs:     refs,
+			RefCount: 0,
+			Refs:     []string{},
 		}
 	}
 

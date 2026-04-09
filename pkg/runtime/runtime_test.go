@@ -100,7 +100,7 @@ func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
 
 	state, err := mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(spec.StatusCreated, state.Status)
+	s.Equal(spec.StatusIdle, state.Status)
 	s.Positive(state.PID)
 
 	// Kill process externally and verify state transitions to stopped.

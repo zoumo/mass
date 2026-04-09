@@ -61,7 +61,7 @@ func newMockShimServer(t *testing.T) (*mockShimServer, string) {
 			State: spec.State{
 				OarVersion: "0.1.0",
 				ID:         "test-session",
-				Status:     spec.StatusCreated,
+				Status:     spec.StatusIdle,
 				Bundle:     "/tmp/test-bundle",
 			},
 			Recovery: RuntimeStatusRecovery{LastSeq: -1},
@@ -504,7 +504,7 @@ func TestShimClientStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "0.1.0", status.State.OarVersion)
 	assert.Equal(t, "test-session", status.State.ID)
-	assert.Equal(t, spec.StatusCreated, status.State.Status)
+	assert.Equal(t, spec.StatusIdle, status.State.Status)
 	assert.Equal(t, "/tmp/test-bundle", status.State.Bundle)
 	assert.Equal(t, -1, status.Recovery.LastSeq)
 }

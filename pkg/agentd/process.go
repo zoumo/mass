@@ -1,4 +1,4 @@
-// Package agentd implements the agent daemon that manages agent runtime sessions.
+// Package agentd implements the agent daemon that manages agent runtime lifecycle.
 // This file defines the ProcessManager for managing shim process lifecycle.
 package agentd
 
@@ -25,26 +25,31 @@ import (
 // Subscribe.
 type EventHandler func(ctx context.Context, ev events.Event)
 
+// agentKey returns the composite map key for an agent: workspace+"/"+name.
+// This matches the bbolt key path convention used by the meta store.
+func agentKey(workspace, name string) string {
+	return workspace + "/" + name
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // ProcessManager - manages shim process lifecycle
 // ────────────────────────────────────────────────────────────────────────────
 
 // ProcessManager manages the lifecycle of agent-shim processes.
 // It orchestrates:
-//   - Session creation and state transitions
+//   - Agent status transitions
 //   - Runtime class resolution
 //   - Bundle creation (config.json + workspace symlink)
 //   - Shim process fork/exec
 //   - ShimClient connection and event subscription
 type ProcessManager struct {
 	registry *RuntimeClassRegistry
-	sessions *SessionManager
 	agents   *AgentManager
 	store    *meta.Store
 	config   Config
 
 	mu        sync.RWMutex
-	processes map[string]*ShimProcess // sessionID -> ShimProcess
+	processes map[string]*ShimProcess // agentKey (workspace+"/"+name) -> ShimProcess
 
 	// recoveryPhase tracks the daemon-level recovery lifecycle as an atomic
 	// int32 so it can be read cheaply without acquiring mu. Guards in ARI
@@ -56,8 +61,8 @@ type ProcessManager struct {
 
 // ShimProcess tracks a running shim process and its RPC client.
 type ShimProcess struct {
-	// SessionID is the unique session identifier.
-	SessionID string
+	// AgentKey is the composite agent identifier: workspace+"/"+name.
+	AgentKey string
 
 	// PID is the OS process ID of the shim process.
 	PID int
@@ -84,17 +89,16 @@ type ShimProcess struct {
 	// Done is closed when the shim process exits.
 	Done chan struct{}
 
-	// Recovery holds per-session recovery metadata. Nil for sessions that
+	// Recovery holds per-agent recovery metadata. Nil for agents that
 	// were started normally (not recovered after a daemon restart).
 	Recovery *RecoveryInfo
 }
 
 // NewProcessManager creates a new ProcessManager.
-func NewProcessManager(registry *RuntimeClassRegistry, sessions *SessionManager, agents *AgentManager, store *meta.Store, cfg Config) *ProcessManager {
+func NewProcessManager(registry *RuntimeClassRegistry, agents *AgentManager, store *meta.Store, cfg Config) *ProcessManager {
 	logger := slog.Default().With("component", "agentd.process")
 	return &ProcessManager{
 		registry:  registry,
-		sessions:  sessions,
 		agents:    agents,
 		store:     store,
 		config:    cfg,
@@ -103,9 +107,9 @@ func NewProcessManager(registry *RuntimeClassRegistry, sessions *SessionManager,
 	}
 }
 
-// Start creates and starts a shim process for the given session.
+// Start creates and starts a shim process for the given agent.
 // The full workflow:
-//  1. Get Session from SessionManager
+//  1. Get Agent from AgentManager
 //  2. Resolve RuntimeClass from registry
 //  3. Generate config.json
 //  4. Create bundle directory with workspace symlink
@@ -113,44 +117,45 @@ func NewProcessManager(registry *RuntimeClassRegistry, sessions *SessionManager,
 //  6. Wait for socket to appear
 //  7. Connect ShimClient
 //  8. Subscribe to events
-//  9. Transition session state to "running"
+//  9. Transition agent status to "running"
 //
 // Returns ShimProcess on success, or error on failure.
 // On failure, any partial state (bundle dir, process) is cleaned up.
-func (m *ProcessManager) Start(ctx context.Context, sessionID string) (*ShimProcess, error) {
-	m.logger.Info("starting session", "session_id", sessionID)
+func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*ShimProcess, error) {
+	key := agentKey(workspace, name)
+	m.logger.Info("starting agent", "agent_key", key)
 
-	// 1. Get Session from SessionManager.
-	session, err := m.sessions.Get(ctx, sessionID)
+	// 1. Get Agent from AgentManager.
+	agent, err := m.agents.Get(ctx, workspace, name)
 	if err != nil {
-		return nil, fmt.Errorf("process: get session %s: %w", sessionID, err)
+		return nil, fmt.Errorf("process: get agent %s: %w", key, err)
 	}
-	if session == nil {
-		return nil, fmt.Errorf("process: session %s does not exist", sessionID)
+	if agent == nil {
+		return nil, fmt.Errorf("process: agent %s does not exist", key)
 	}
 
-	// Validate session state - must be "created" to start.
-	if session.State != meta.SessionStateCreated {
-		return nil, fmt.Errorf("process: session %s is in state %s (must be 'created' to start)", sessionID, session.State)
+	// Validate agent status - must be "creating" to start.
+	if agent.Status.State != spec.StatusCreating {
+		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.State)
 	}
 
 	// 2. Resolve RuntimeClass from registry.
-	runtimeClass, err := m.registry.Get(session.RuntimeClass)
+	runtimeClass, err := m.registry.Get(agent.Spec.RuntimeClass)
 	if err != nil {
-		return nil, fmt.Errorf("process: resolve runtime class %s: %w", session.RuntimeClass, err)
+		return nil, fmt.Errorf("process: resolve runtime class %s: %w", agent.Spec.RuntimeClass, err)
 	}
 
-	// 3. Generate config.json for this session.
-	cfg := m.generateConfig(session, runtimeClass)
+	// 3. Generate config.json for this agent.
+	cfg := m.generateConfig(agent, runtimeClass)
 
 	// 4. Create bundle directory with workspace symlink.
-	bundlePath, stateDir, socketPath, err := m.createBundle(session, cfg)
+	bundlePath, stateDir, socketPath, err := m.createBundle(agent, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("process: create bundle: %w", err)
 	}
 
 	// 5. Fork agent-shim process.
-	shimProc, err := m.forkShim(session, bundlePath, stateDir)
+	shimProc, err := m.forkShim(agent, bundlePath, stateDir)
 	if err != nil {
 		// Clean up bundle directory on fork failure.
 		_ = os.RemoveAll(bundlePath)
@@ -180,40 +185,45 @@ func (m *ProcessManager) Start(ctx context.Context, sessionID string) (*ShimProc
 		p, err := ParseSessionUpdate(params)
 		if err != nil {
 			m.logger.Warn("malformed session/update notification dropped",
-				"session_id", sessionID, "error", err)
+				"agent_key", key, "error", err)
 			return
 		}
 		ev, ok := p.Event.Payload.(events.Event)
 		if !ok {
 			m.logger.Warn("session/update payload is not an events.Event — dropped",
-				"session_id", sessionID, "type", p.Event.Type)
+				"agent_key", key, "type", p.Event.Type)
 			return
 		}
 		select {
 		case shimProc.Events <- ev:
 		default:
 			m.logger.Warn("event channel full, dropping event",
-				"session_id", sessionID, "seq", p.Seq)
+				"agent_key", key, "seq", p.Seq)
 		}
 	})
 	if err != nil {
 		// Kill shim process and clean up.
 		_ = m.killShim(shimProc)
 		_ = os.RemoveAll(bundlePath)
-		return nil, fmt.Errorf("process: connect shim client: session=%s: %w", sessionID, err)
+		return nil, fmt.Errorf("process: connect shim client: agent=%s: %w", key, err)
 	}
 	shimProc.Client = client
 
-	// 7b. Persist bootstrap config for recovery.
-	// Marshal the generated config as the bootstrap config blob.
+	// 7b. Persist bootstrap config + shim socket/state/pid for recovery.
 	bootstrapJSON, err := json.Marshal(cfg)
 	if err != nil {
-		m.logger.Error("failed to marshal bootstrap config", "session_id", sessionID, "error", err)
-		// Non-fatal: session can still run, just won't have recovery data.
+		m.logger.Error("failed to marshal bootstrap config", "agent_key", key, "error", err)
+		// Non-fatal: agent can still run, just won't have recovery data.
 	} else {
-		if err := m.store.UpdateSessionBootstrap(ctx, sessionID, bootstrapJSON, socketPath, stateDir, shimProc.PID); err != nil {
-			m.logger.Error("failed to persist bootstrap config", "session_id", sessionID, "error", err)
-			// Non-fatal: session can still run, recovery won't have the data.
+		if err := m.store.UpdateAgentStatus(ctx, workspace, name, meta.AgentStatus{
+			State:          spec.StatusCreating, // keep creating until we transition below
+			ShimSocketPath: socketPath,
+			ShimStateDir:   stateDir,
+			ShimPID:        shimProc.PID,
+			BootstrapConfig: bootstrapJSON,
+		}); err != nil {
+			m.logger.Error("failed to persist bootstrap config", "agent_key", key, "error", err)
+			// Non-fatal: agent can still run.
 		}
 	}
 
@@ -223,116 +233,81 @@ func (m *ProcessManager) Start(ctx context.Context, sessionID string) (*ShimProc
 		_ = client.Close()
 		_ = m.killShim(shimProc)
 		_ = os.RemoveAll(bundlePath)
-		return nil, fmt.Errorf("process: subscribe events: session=%s: %w", sessionID, err)
+		return nil, fmt.Errorf("process: subscribe events: agent=%s: %w", key, err)
 	}
 
-	// 9. Transition session state to "running".
-	if err := m.sessions.Transition(ctx, sessionID, meta.SessionStateRunning); err != nil {
+	// 9. Transition agent status to "running".
+	if err := m.agents.UpdateStatus(ctx, workspace, name, meta.AgentStatus{
+		State:          spec.StatusRunning,
+		ShimSocketPath: socketPath,
+		ShimStateDir:   stateDir,
+		ShimPID:        shimProc.PID,
+	}); err != nil {
 		// Close client, kill shim, clean up.
 		_ = client.Close()
 		_ = m.killShim(shimProc)
 		_ = os.RemoveAll(bundlePath)
-		return nil, fmt.Errorf("process: transition session state: %w", err)
+		return nil, fmt.Errorf("process: transition agent status: %w", err)
 	}
 
 	// Store the ShimProcess.
 	m.mu.Lock()
-	m.processes[sessionID] = shimProc
+	m.processes[key] = shimProc
 	m.mu.Unlock()
 
 	// Start a goroutine to wait for process exit and clean up.
-	go m.watchProcess(shimProc)
+	go m.watchProcess(workspace, name, shimProc)
 
-	m.logger.Info("session started", "session_id", sessionID, "pid", shimProc.PID)
+	m.logger.Info("agent started", "agent_key", key, "pid", shimProc.PID)
 
 	return shimProc, nil
 }
 
-// generateConfig creates the OAR Runtime config.json for this session.
-func (m *ProcessManager) generateConfig(session *meta.Session, rc *RuntimeClass) spec.Config {
+// generateConfig creates the OAR Runtime config.json for this agent.
+func (m *ProcessManager) generateConfig(agent *meta.Agent, rc *RuntimeClass) spec.Config {
 	// Build environment variables in KEY=VALUE format.
-	// Merge runtime class env with any session-specific env.
+	// Merge runtime class env with any agent-specific env.
 	env := make([]string, 0, len(rc.Env))
 	for key, value := range rc.Env {
 		env = append(env, fmt.Sprintf("%s=%s", key, value))
 	}
 
-	// Build annotations from session labels.
+	// Build annotations from agent labels.
 	annotations := make(map[string]string)
-	for k, v := range session.Labels {
+	for k, v := range agent.Metadata.Labels {
 		annotations[k] = v
 	}
 	annotations["runtimeClass"] = rc.Name
 
-	// Build MCP servers list. Inject room MCP server for room sessions.
-	var mcpServers []spec.McpServer
-	if session.Room != "" {
-		// Compute state dir the same way createBundle does, so room-mcp-server
-		// can write its log file next to events.jsonl and state.json.
-		stateDir := spec.StateDir("/tmp/agentd-shim", session.ID)
-
-		mcpServers = append(mcpServers, spec.McpServer{
-			Type:    "stdio",
-			Name:    "room-tools",
-			Command: resolveRoomMCPBinary(),
-			Args:    []string{},
-			Env: []spec.EnvVar{
-				{Name: "OAR_AGENTD_SOCKET", Value: m.config.Socket},
-				{Name: "OAR_ROOM_NAME", Value: session.Room},
-				{Name: "OAR_AGENT_ID", Value: session.AgentID},     // agent-level identity
-				{Name: "OAR_AGENT_NAME", Value: session.RoomAgent}, // agent name within room
-				{Name: "OAR_STATE_DIR", Value: stateDir},
-			},
-		})
-	}
-
 	return spec.Config{
 		OarVersion: "0.1.0",
 		Metadata: spec.Metadata{
-			Name:        session.ID,
+			Name:        agent.Metadata.Name,
 			Annotations: annotations,
 		},
 		AgentRoot: spec.AgentRoot{
 			Path: "workspace", // symlink to actual workspace
 		},
 		AcpAgent: spec.AcpAgent{
+			SystemPrompt: agent.Spec.SystemPrompt,
 			Process: spec.AcpProcess{
 				Command: rc.Command,
 				Args:    rc.Args,
 				Env:     env,
 			},
-			Session: spec.AcpSession{
-				McpServers: mcpServers,
-			},
+			Session: spec.AcpSession{},
 		},
 		Permissions: spec.ApproveAll,
 	}
 }
 
-// resolveRoomMCPBinary finds the room-mcp-server binary using the same
-// priority pattern as the shim binary resolver:
-//  1. OAR_ROOM_MCP_BINARY env var (test override)
-//  2. ./bin/room-mcp-server relative to cwd (development)
-//  3. PATH lookup (production)
-func resolveRoomMCPBinary() string {
-	if envPath := os.Getenv("OAR_ROOM_MCP_BINARY"); envPath != "" {
-		return envPath
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		builtPath := filepath.Join(cwd, "bin", "room-mcp-server")
-		if _, err := os.Stat(builtPath); err == nil {
-			return builtPath
-		}
-	}
-	return "room-mcp-server" // PATH lookup
-}
-
 // createBundle creates the bundle directory and writes config.json.
 // Also creates the workspace symlink (agentRoot.path -> actual workspace).
 // Returns bundlePath, stateDir, socketPath.
-func (m *ProcessManager) createBundle(session *meta.Session, cfg spec.Config) (string, string, string, error) {
-	// Bundle directory: <WorkspaceRoot>/<sessionID>
-	bundlePath := filepath.Join(m.config.WorkspaceRoot, session.ID)
+func (m *ProcessManager) createBundle(agent *meta.Agent, cfg spec.Config) (string, string, string, error) {
+	// Bundle directory: <WorkspaceRoot>/<workspace>/<name>
+	dirFragment := agent.Metadata.Workspace + "-" + agent.Metadata.Name
+	bundlePath := filepath.Join(m.config.WorkspaceRoot, dirFragment)
 
 	// Create bundle directory.
 	if err := os.MkdirAll(bundlePath, 0o755); err != nil {
@@ -351,34 +326,32 @@ func (m *ProcessManager) createBundle(session *meta.Session, cfg spec.Config) (s
 		return "", "", "", fmt.Errorf("write config.json: %w", err)
 	}
 
-	// Get workspace path from session.WorkspaceID.
-	// We need to look up the workspace to get its path.
-	workspace, err := m.store.GetWorkspace(context.Background(), session.WorkspaceID)
+	// Look up the workspace to get its filesystem path.
+	wsName := agent.Metadata.Workspace
+	workspace, err := m.store.GetWorkspace(context.Background(), wsName)
 	if err != nil {
 		_ = os.RemoveAll(bundlePath)
-		return "", "", "", fmt.Errorf("get workspace %s: %w", session.WorkspaceID, err)
+		return "", "", "", fmt.Errorf("get workspace %s: %w", wsName, err)
 	}
 	if workspace == nil {
 		_ = os.RemoveAll(bundlePath)
-		return "", "", "", fmt.Errorf("workspace %s does not exist", session.WorkspaceID)
+		return "", "", "", fmt.Errorf("workspace %s does not exist", wsName)
 	}
 
-	// Create workspace symlink: bundle/workspace -> workspace.Path.
+	// Create workspace symlink: bundle/workspace -> workspace.Status.Path
 	workspaceLink := filepath.Join(bundlePath, cfg.AgentRoot.Path)
 	// Remove any existing symlink/file first.
 	_ = os.Remove(workspaceLink)
-	if err := os.Symlink(workspace.Path, workspaceLink); err != nil {
+	if err := os.Symlink(workspace.Status.Path, workspaceLink); err != nil {
 		_ = os.RemoveAll(bundlePath)
-		return "", "", "", fmt.Errorf("symlink workspace %s -> %s: %w", workspaceLink, workspace.Path, err)
+		return "", "", "", fmt.Errorf("symlink workspace %s -> %s: %w", workspaceLink, workspace.Status.Path, err)
 	}
 
-	// State directory: /run/agentd/shim/<sessionID> (or similar)
-	// Use a temp directory for tests, production uses /run/agentd/shim.
-	stateDir := spec.StateDir("/run/agentd/shim", session.ID)
-	if m.config.Socket != "" {
-		// If Socket is set, derive state dir from socket path pattern.
-		// For testing, use /tmp for shorter paths (macOS has ~107 char limit for Unix sockets).
-		stateDir = spec.StateDir("/tmp/agentd-shim", session.ID)
+	// State directory.
+	// Use /tmp for shorter paths (macOS has ~107 char limit for Unix sockets).
+	stateDir := spec.StateDir("/tmp/agentd-shim", dirFragment)
+	if m.config.Socket == "" {
+		stateDir = spec.StateDir("/run/agentd/shim", dirFragment)
 	}
 
 	// Socket path.
@@ -392,10 +365,9 @@ func (m *ProcessManager) createBundle(session *meta.Session, cfg spec.Config) (s
 // forkShim forks the agent-shim process.
 // Note: We intentionally do NOT use exec.CommandContext here because the shim
 // process should run independently of the request context that initiated Start.
-// Using CommandContext would kill the shim when the request context is canceled
-// (which happens immediately after Start returns in session/prompt auto-start).
+// Using CommandContext would kill the shim when the request context is canceled.
 // The shim process lifecycle is managed by ProcessManager.Stop and watchProcess.
-func (m *ProcessManager) forkShim(session *meta.Session, bundlePath, stateDir string) (*ShimProcess, error) {
+func (m *ProcessManager) forkShim(agent *meta.Agent, bundlePath, stateDir string) (*ShimProcess, error) {
 	// Find the agent-shim binary.
 	// Priority:
 	//  1. OAR_SHIM_BINARY env var (test override)
@@ -419,10 +391,12 @@ func (m *ProcessManager) forkShim(session *meta.Session, bundlePath, stateDir st
 		return nil, fmt.Errorf("mkdir state dir %s: %w", stateDir, err)
 	}
 
+	key := agentKey(agent.Metadata.Workspace, agent.Metadata.Name)
+
 	// Build command arguments.
 	args := []string{
 		"--bundle", bundlePath,
-		"--id", session.ID,
+		"--id", key,
 		"--state-dir", filepath.Dir(stateDir), // parent dir, shim adds /<id>
 		"--permissions", "approve-all",
 	}
@@ -431,8 +405,6 @@ func (m *ProcessManager) forkShim(session *meta.Session, bundlePath, stateDir st
 	m.logger.Info("forking shim process", "shim_binary", shimBinary, "args", args, "state_dir", stateDir, "bundle_path", bundlePath)
 
 	// Create exec.Cmd WITHOUT tying to the request context.
-	// Using exec.Command (not CommandContext) ensures the shim process
-	// continues running after Start returns, independent of the request lifecycle.
 	cmd := exec.Command(shimBinary, args...)
 	// In test mode, pipe stderr to os.Stderr for debugging.
 	if m.config.Socket != "" {
@@ -447,14 +419,14 @@ func (m *ProcessManager) forkShim(session *meta.Session, bundlePath, stateDir st
 		return nil, fmt.Errorf("start shim process: %w", err)
 	}
 
-	m.logger.Debug("shim forked", "session_id", session.ID, "pid", cmd.Process.Pid)
+	m.logger.Debug("shim forked", "agent_key", key, "pid", cmd.Process.Pid)
 
 	return &ShimProcess{
-		SessionID: session.ID,
-		PID:       cmd.Process.Pid,
-		Cmd:       cmd,
-		Events:    make(chan events.Event, 1024), // buffered for async delivery
-		Done:      make(chan struct{}),
+		AgentKey: key,
+		PID:      cmd.Process.Pid,
+		Cmd:      cmd,
+		Events:   make(chan events.Event, 1024), // buffered for async delivery
+		Done:     make(chan struct{}),
 	}, nil
 }
 
@@ -469,7 +441,6 @@ func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string) e
 		// Check if socket exists.
 		if _, err := os.Stat(socketPath); err == nil {
 			// Socket exists, try to connect to verify it's ready.
-			// Use net.Dial for Unix sockets (os.OpenFile doesn't work on socket files).
 			conn, err := net.Dial("unix", socketPath)
 			if err == nil {
 				_ = conn.Close()
@@ -508,8 +479,7 @@ func (m *ProcessManager) killShim(shimProc *ShimProcess) error {
 		_ = shimProc.Cmd.Process.Kill()
 	}
 
-	// Wait for process to exit.
-	// Use a short timeout to avoid hanging.
+	// Wait for process to exit with a short timeout.
 	done := make(chan error, 1)
 	go func() {
 		done <- shimProc.Cmd.Wait()
@@ -521,7 +491,6 @@ func (m *ProcessManager) killShim(shimProc *ShimProcess) error {
 		_ = shimProc.Cmd.Process.Kill()
 		<-done // Drain the channel.
 	case err := <-done:
-		// Process exited.
 		return err
 	}
 
@@ -529,24 +498,25 @@ func (m *ProcessManager) killShim(shimProc *ShimProcess) error {
 }
 
 // watchProcess waits for the shim process to exit and cleans up.
-func (m *ProcessManager) watchProcess(shimProc *ShimProcess) {
+func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProcess) {
 	// Wait for process to exit.
 	err := shimProc.Cmd.Wait()
+	key := shimProc.AgentKey
 
-	m.logger.Info("shim process exited", "session_id", shimProc.SessionID, "error", err)
+	m.logger.Info("shim process exited", "agent_key", key, "error", err)
 
 	// Close the Events channel first.
 	close(shimProc.Events)
 
 	// Remove from processes map.
 	m.mu.Lock()
-	delete(m.processes, shimProc.SessionID)
+	delete(m.processes, key)
 	m.mu.Unlock()
 
-	// Transition session to "stopped" (best effort).
+	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.sessions.Transition(ctx, shimProc.SessionID, meta.SessionStateStopped)
+	_ = m.agents.UpdateStatus(ctx, workspace, name, meta.AgentStatus{State: spec.StatusStopped})
 
 	// Clean up bundle directory (best effort).
 	_ = os.RemoveAll(shimProc.BundlePath)
@@ -555,37 +525,38 @@ func (m *ProcessManager) watchProcess(shimProc *ShimProcess) {
 	close(shimProc.Done)
 }
 
-// Stop gracefully stops a running shim process for the given session.
+// Stop gracefully stops a running shim process for the given agent.
 // The workflow:
 //  1. Get ShimProcess from processes map
-//  2. Call ShimClient.Shutdown RPC to request graceful shutdown
+//  2. Call ShimClient.Stop RPC to request graceful shutdown
 //  3. Wait for process to exit (with timeout)
 //  4. If timeout, kill the process
 //  5. Remove bundle directory
-//  6. Transition session to "stopped"
+//  6. Transition agent to "stopped"
 //
-// Returns error if the session is not running or shutdown fails.
-func (m *ProcessManager) Stop(ctx context.Context, sessionID string) error {
-	m.logger.Info("stopping session", "session_id", sessionID)
+// Returns error if the agent is not running or shutdown fails.
+func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error {
+	key := agentKey(workspace, name)
+	m.logger.Info("stopping agent", "agent_key", key)
 
 	// Get ShimProcess from processes map.
 	m.mu.RLock()
-	shimProc, exists := m.processes[sessionID]
+	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		// Session is not running - check if it exists at all.
-		session, err := m.sessions.Get(ctx, sessionID)
+		// Agent is not running — check if it exists at all.
+		agent, err := m.agents.Get(ctx, workspace, name)
 		if err != nil {
-			return fmt.Errorf("process: get session %s: %w", sessionID, err)
+			return fmt.Errorf("process: get agent %s: %w", key, err)
 		}
-		if session == nil {
-			return fmt.Errorf("process: session %s does not exist", sessionID)
+		if agent == nil {
+			return fmt.Errorf("process: agent %s does not exist", key)
 		}
-		// Session exists but is not running - transition to stopped if needed.
-		if session.State != meta.SessionStateStopped {
-			if err := m.sessions.Transition(ctx, sessionID, meta.SessionStateStopped); err != nil {
-				return fmt.Errorf("process: transition session %s to stopped: %w", sessionID, err)
+		// Agent exists but is not running — transition to stopped if needed.
+		if agent.Status.State != spec.StatusStopped {
+			if err := m.agents.UpdateStatus(ctx, workspace, name, meta.AgentStatus{State: spec.StatusStopped}); err != nil {
+				return fmt.Errorf("process: transition agent %s to stopped: %w", key, err)
 			}
 		}
 		return nil
@@ -595,7 +566,7 @@ func (m *ProcessManager) Stop(ctx context.Context, sessionID string) error {
 	if shimProc.Client != nil {
 		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		if err := shimProc.Client.Stop(stopCtx); err != nil {
-			m.logger.Warn("runtime/stop RPC failed, will kill process", "session_id", sessionID, "error", err)
+			m.logger.Warn("runtime/stop RPC failed, will kill process", "agent_key", key, "error", err)
 		}
 		cancel()
 	}
@@ -603,13 +574,11 @@ func (m *ProcessManager) Stop(ctx context.Context, sessionID string) error {
 	// Wait for process to exit.
 	select {
 	case <-shimProc.Done:
-		// Process exited gracefully.
-		m.logger.Info("shim process exited gracefully", "session_id", sessionID)
+		m.logger.Info("shim process exited gracefully", "agent_key", key)
 	case <-time.After(10 * time.Second):
-		// Timeout - kill the process.
-		m.logger.Warn("shim process did not exit in time, killing", "session_id", sessionID)
+		m.logger.Warn("shim process did not exit in time, killing", "agent_key", key)
 		if err := m.killShim(shimProc); err != nil {
-			m.logger.Error("failed to kill shim process", "session_id", sessionID, "error", err)
+			m.logger.Error("failed to kill shim process", "agent_key", key, "error", err)
 		}
 		// Wait for watchProcess to clean up.
 		<-shimProc.Done
@@ -620,91 +589,90 @@ func (m *ProcessManager) Stop(ctx context.Context, sessionID string) error {
 		_ = os.RemoveAll(shimProc.BundlePath)
 	}
 
-	m.logger.Info("session stopped", "session_id", sessionID)
+	m.logger.Info("agent stopped", "agent_key", key)
 	return nil
 }
 
-// State returns the current runtime state of the shim process for the given
-// session. It calls runtime/status RPC and extracts the state field plus
-// recovery metadata. Returns an error if the session is not running or the
-// response is malformed.
-func (m *ProcessManager) State(ctx context.Context, sessionID string) (spec.State, error) {
+// State returns the current runtime state of the shim for the given agent.
+// Returns an error if the agent is not running or the response is malformed.
+func (m *ProcessManager) State(ctx context.Context, workspace, name string) (spec.State, error) {
+	key := agentKey(workspace, name)
 	m.mu.RLock()
-	shimProc, exists := m.processes[sessionID]
+	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		return spec.State{}, fmt.Errorf("process: session %s is not running", sessionID)
+		return spec.State{}, fmt.Errorf("process: agent %s is not running", key)
 	}
 
 	if shimProc.Client == nil {
-		return spec.State{}, fmt.Errorf("process: session %s has no client connection", sessionID)
+		return spec.State{}, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
 	status, err := shimProc.Client.Status(ctx)
 	if err != nil {
-		return spec.State{}, fmt.Errorf("process: runtime/status for session %s: %w", sessionID, err)
+		return spec.State{}, fmt.Errorf("process: runtime/status for agent %s: %w", key, err)
 	}
 
 	return status.State, nil
 }
 
 // RuntimeStatus returns the full runtime/status result including recovery
-// metadata (lastSeq) for the given session. Use this instead of State when
-// the caller needs recovery information for replay or reconnect decisions.
-func (m *ProcessManager) RuntimeStatus(ctx context.Context, sessionID string) (RuntimeStatusResult, error) {
+// metadata for the given agent.
+func (m *ProcessManager) RuntimeStatus(ctx context.Context, workspace, name string) (RuntimeStatusResult, error) {
+	key := agentKey(workspace, name)
 	m.mu.RLock()
-	shimProc, exists := m.processes[sessionID]
+	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		return RuntimeStatusResult{}, fmt.Errorf("process: session %s is not running", sessionID)
+		return RuntimeStatusResult{}, fmt.Errorf("process: agent %s is not running", key)
 	}
 
 	if shimProc.Client == nil {
-		return RuntimeStatusResult{}, fmt.Errorf("process: session %s has no client connection", sessionID)
+		return RuntimeStatusResult{}, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
 	return shimProc.Client.Status(ctx)
 }
 
 // Connect returns the ShimClient for direct RPC access to the shim process.
-// Returns error if the session is not running.
-func (m *ProcessManager) Connect(ctx context.Context, sessionID string) (*ShimClient, error) {
+// Returns error if the agent is not running.
+func (m *ProcessManager) Connect(ctx context.Context, workspace, name string) (*ShimClient, error) {
+	key := agentKey(workspace, name)
 	m.mu.RLock()
-	shimProc, exists := m.processes[sessionID]
+	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		return nil, fmt.Errorf("process: session %s is not running", sessionID)
+		return nil, fmt.Errorf("process: agent %s is not running", key)
 	}
 
 	if shimProc.Client == nil {
-		return nil, fmt.Errorf("process: session %s has no client connection", sessionID)
+		return nil, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
 	return shimProc.Client, nil
 }
 
-// GetProcess returns the ShimProcess for the given session.
-// This is useful for accessing process details like PID, events channel, etc.
-// Returns nil if the session is not running.
-func (m *ProcessManager) GetProcess(sessionID string) *ShimProcess {
+// GetProcess returns the ShimProcess for the given agent key (workspace+"/"+name).
+// Returns nil if the agent is not running.
+func (m *ProcessManager) GetProcess(agentKey string) *ShimProcess {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.processes[sessionID]
+	return m.processes[agentKey]
 }
 
-// ListProcesses returns a list of all running session IDs.
+// ListProcesses returns a list of all running agent keys (workspace+"/"+name).
 func (m *ProcessManager) ListProcesses() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	ids := make([]string, 0, len(m.processes))
-	for id := range m.processes {
-		ids = append(ids, id)
+	keys := make([]string, 0, len(m.processes))
+	for k := range m.processes {
+		keys = append(keys, k)
 	}
-	return ids
+	return keys
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -712,8 +680,6 @@ func (m *ProcessManager) ListProcesses() []string {
 // ────────────────────────────────────────────────────────────────────────────
 
 // SetRecoveryPhase atomically sets the daemon-level recovery phase.
-// Called by RecoverSessions at the start (RecoveryPhaseRecovering) and end
-// (RecoveryPhaseComplete) of the recovery pass.
 func (m *ProcessManager) SetRecoveryPhase(phase RecoveryPhase) {
 	m.recoveryPhase.Store(int32(phase))
 	m.logger.Info("recovery phase changed", "phase", phase.String())
@@ -724,18 +690,16 @@ func (m *ProcessManager) GetRecoveryPhase() RecoveryPhase {
 	return RecoveryPhase(m.recoveryPhase.Load())
 }
 
-// IsRecovering returns true when the daemon is actively recovering sessions.
-// ARI handlers use this to implement the fail-closed posture: operational
-// actions (prompt, cancel) are refused while recovery is in progress.
+// IsRecovering returns true when the daemon is actively recovering agents.
 func (m *ProcessManager) IsRecovering() bool {
 	return m.GetRecoveryPhase() == RecoveryPhaseRecovering
 }
 
-// SetSessionRecoveryInfo sets the recovery metadata on a running session's
-// ShimProcess. Returns false if the session is not in the processes map.
-func (m *ProcessManager) SetSessionRecoveryInfo(sessionID string, info *RecoveryInfo) bool {
+// SetAgentRecoveryInfo sets the recovery metadata on a running agent's
+// ShimProcess. Returns false if the agent is not in the processes map.
+func (m *ProcessManager) SetAgentRecoveryInfo(key string, info *RecoveryInfo) bool {
 	m.mu.RLock()
-	shimProc, exists := m.processes[sessionID]
+	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {

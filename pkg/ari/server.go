@@ -37,9 +37,6 @@ type Server struct {
 	// registry tracks workspace metadata.
 	registry *Registry
 
-	// sessions manages session lifecycle with state machine validation.
-	sessions *agentd.SessionManager
-
 	// agents manages agent lifecycle with domain error types.
 	agents *agentd.AgentManager
 
@@ -82,7 +79,6 @@ type Server struct {
 // Parameters:
 //   - manager: WorkspaceManager for workspace preparation
 //   - registry: Registry for workspace metadata tracking
-//   - sessions: SessionManager for session lifecycle management
 //   - agents: AgentManager for agent lifecycle management
 //   - processes: ProcessManager for shim process lifecycle
 //   - runtimeClasses: RuntimeClassRegistry for runtime class resolution
@@ -90,14 +86,13 @@ type Server struct {
 //   - store: metadata store for persisting workspaces and sessions
 //   - socketPath: Unix socket path for ARI server
 //   - baseDir: root directory for workspace creation
-func New(manager *workspace.WorkspaceManager, registry *Registry, sessions *agentd.SessionManager, agents *agentd.AgentManager, processes *agentd.ProcessManager, runtimeClasses *agentd.RuntimeClassRegistry, config agentd.Config, store *meta.Store, socketPath, baseDir string) *Server {
+func New(manager *workspace.WorkspaceManager, registry *Registry, agents *agentd.AgentManager, processes *agentd.ProcessManager, runtimeClasses *agentd.RuntimeClassRegistry, config agentd.Config, store *meta.Store, socketPath, baseDir string) *Server {
 	if baseDir == "" {
 		baseDir = filepath.Join(os.TempDir(), "agentd-workspaces")
 	}
 	return &Server{
 		manager:        manager,
 		registry:       registry,
-		sessions:       sessions,
 		agents:         agents,
 		processes:      processes,
 		runtimeClasses: runtimeClasses,

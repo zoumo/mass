@@ -7,15 +7,18 @@ const (
 	// StatusCreating means the agent is being created (ACP handshake not yet complete).
 	StatusCreating Status = "creating"
 
-	// StatusCreated means the agent process is running and the ACP session is
+	// StatusIdle means the agent process is running and the ACP session is
 	// established. The agent is idle, waiting for a prompt.
-	StatusCreated Status = "created"
+	StatusIdle Status = "idle"
 
 	// StatusRunning means the agent is processing a session/prompt.
 	StatusRunning Status = "running"
 
 	// StatusStopped means the agent process has exited.
 	StatusStopped Status = "stopped"
+
+	// StatusError means the agent encountered an unrecoverable error.
+	StatusError Status = "error"
 )
 
 // String implements fmt.Stringer.

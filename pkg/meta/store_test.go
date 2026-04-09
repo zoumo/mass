@@ -1,221 +1,90 @@
-// Package meta provides metadata storage for OAR session/workspace/room records.
-package meta
+package meta_test
 
 import (
-	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/stretchr/testify/require"
 )
 
-// newTestStore creates an in-memory SQLite store for testing.
-// The store is automatically closed when the test completes.
-func newTestStore(t *testing.T) *Store {
+// tempStore creates a Store backed by a temporary file.
+// The store is automatically closed and the file removed when the test ends.
+func tempStore(t *testing.T) *meta.Store {
 	t.Helper()
-
-	// Use :memory: for in-memory database (fast, isolated per test).
-	store, err := NewStore(":memory:")
-	require.NoError(t, err, "NewStore with :memory: should succeed")
-	require.NotNil(t, store, "Store should not be nil")
-
-	// Automatically close on test cleanup.
-	t.Cleanup(func() {
-		store.Close()
-	})
-
-	return store
-}
-
-// TestNewStore verifies that NewStore creates the database and schema correctly.
-// It tests:
-//   - Database file creation
-//   - Schema table creation (sessions, workspaces, rooms, workspace_refs, schema_version)
-//   - Connection parameters (WAL mode, foreign keys)
-//   - Close method works correctly
-func TestNewStore(t *testing.T) {
-	t.Parallel()
-
-	// Create a temporary directory for the test database.
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "meta.db")
-
-	// Create the store - this should create the database and schema.
-	store, err := NewStore(dbPath)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "meta.db")
+	s, err := meta.NewStore(path)
 	require.NoError(t, err, "NewStore should succeed")
-	require.NotNil(t, store, "Store should not be nil")
-
-	// Verify the database file was created.
-	assert.FileExists(t, dbPath, "Database file should exist")
-
-	// Verify expected tables exist by querying sqlite_master.
-	expectedTables := []string{
-		"schema_version",
-		"rooms",
-		"workspaces",
-		"sessions",
-		"workspace_refs",
-	}
-
-	ctx := context.Background()
-	for _, table := range expectedTables {
-		var exists bool
-		err := store.db.QueryRowContext(ctx,
-			"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=$1)",
-			table,
-		).Scan(&exists)
-
-		require.NoError(t, err, "QueryRowContext should succeed for table %s", table)
-		assert.True(t, exists, "Table %s should exist", table)
-	}
-
-	// Verify schema_version table has the expected version.
-	var version int
-	err = store.db.QueryRowContext(ctx,
-		"SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
-	).Scan(&version)
-
-	require.NoError(t, err, "QueryRowContext for schema_version should succeed")
-	assert.Equal(t, 4, version, "Schema version should be 4 (sessions.agent_id FK added in v4)")
-
-	// Verify WAL mode is enabled.
-	var journalMode string
-	err = store.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode)
-
-	require.NoError(t, err, "QueryRowContext for journal_mode should succeed")
-	assert.Equal(t, "wal", journalMode, "Journal mode should be WAL")
-
-	// Verify foreign keys are enabled.
-	var foreignKeys bool
-	err = store.db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys)
-
-	require.NoError(t, err, "QueryRowContext for foreign_keys should succeed")
-	assert.True(t, foreignKeys, "Foreign keys should be enabled")
-
-	// Verify indexes exist.
-	expectedIndexes := []string{
-		"idx_sessions_workspace_id",
-		"idx_sessions_room",
-		"idx_sessions_state",
-		"idx_workspaces_status",
-		"idx_workspaces_name",
-		"idx_workspace_refs_workspace_id",
-		"idx_workspace_refs_session_id",
-	}
-
-	for _, index := range expectedIndexes {
-		var exists bool
-		err := store.db.QueryRowContext(ctx,
-			"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name=$1)",
-			index,
-		).Scan(&exists)
-
-		require.NoError(t, err, "QueryRowContext should succeed for index %s", index)
-		assert.True(t, exists, "Index %s should exist", index)
-	}
-
-	// Verify triggers exist.
-	expectedTriggers := []string{
-		"trg_workspace_refs_insert",
-		"trg_workspace_refs_delete",
-		"trg_sessions_updated",
-		"trg_workspaces_updated",
-		"trg_rooms_updated",
-	}
-
-	for _, trigger := range expectedTriggers {
-		var exists bool
-		err := store.db.QueryRowContext(ctx,
-			"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=$1)",
-			trigger,
-		).Scan(&exists)
-
-		require.NoError(t, err, "QueryRowContext should succeed for trigger %s", trigger)
-		assert.True(t, exists, "Trigger %s should exist", trigger)
-	}
-
-	// Test BeginTx works.
-	tx, err := store.BeginTx(ctx, nil)
-	require.NoError(t, err, "BeginTx should succeed")
-	require.NotNil(t, tx, "Transaction should not be nil")
-
-	// Rollback the transaction.
-	err = tx.Rollback()
-	require.NoError(t, err, "Rollback should succeed")
-
-	// Close the store.
-	err = store.Close()
-	require.NoError(t, err, "Close should succeed")
-
-	// Verify we can create a new store from the same path (schema should still exist).
-	store2, err := NewStore(dbPath)
-	require.NoError(t, err, "NewStore on existing database should succeed")
-	require.NotNil(t, store2, "Second Store should not be nil")
-
-	// Verify tables still exist.
-	for _, table := range expectedTables {
-		var exists bool
-		err := store2.db.QueryRowContext(ctx,
-			"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=$1)",
-			table,
-		).Scan(&exists)
-
-		require.NoError(t, err, "QueryRowContext should succeed for table %s on reopen", table)
-		assert.True(t, exists, "Table %s should still exist on reopen", table)
-	}
-
-	// Close the second store.
-	err = store2.Close()
-	require.NoError(t, err, "Second Close should succeed")
+	t.Cleanup(func() { _ = s.Close() })
+	return s
 }
 
-// TestNewStoreInvalidPath verifies that NewStore fails gracefully with an invalid path.
-func TestNewStoreInvalidPath(t *testing.T) {
-	t.Parallel()
+// TestNewStore_OpenClose verifies that a store opens and closes without error.
+func TestNewStore_OpenClose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "meta.db")
 
-	// Try to create a store in a non-existent directory.
-	invalidPath := "/nonexistent/directory/meta.db"
-	store, err := NewStore(invalidPath)
+	s, err := meta.NewStore(path)
+	require.NoError(t, err)
+	require.NotNil(t, s)
 
-	require.Error(t, err, "NewStore with invalid path should fail")
-	require.Nil(t, store, "Store should be nil on error")
-	require.Contains(t, err.Error(), "failed to", "Error should mention failure")
+	// File should exist after Open.
+	_, statErr := os.Stat(path)
+	require.NoError(t, statErr, "database file should exist")
+
+	require.NoError(t, s.Close())
 }
 
-// TestNewStoreEmptyPath verifies that NewStore handles empty path gracefully.
-func TestNewStoreEmptyPath(t *testing.T) {
-	t.Parallel()
+// TestNewStore_ReopenExisting verifies that re-opening an existing database works.
+func TestNewStore_ReopenExisting(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "meta.db")
 
-	store, err := NewStore("")
-	// SQLite allows empty path (creates in-memory database), so this might succeed.
-	// We'll just verify no panic occurs.
-	_ = err // Error or success is acceptable for empty path.
-	_ = store
-	if store != nil {
-		store.Close()
-	}
+	s1, err := meta.NewStore(path)
+	require.NoError(t, err)
+	require.NoError(t, s1.Close())
+
+	// Re-open the same file.
+	s2, err := meta.NewStore(path)
+	require.NoError(t, err)
+	require.NoError(t, s2.Close())
 }
 
-// TestDBMethod verifies that DB() returns the underlying database connection.
-func TestDBMethod(t *testing.T) {
-	t.Parallel()
+// TestNewStore_BucketsCreated verifies that the bucket hierarchy is created
+// by exercising workspace and agent CRUD which would fail without buckets.
+func TestNewStore_BucketsCreated(t *testing.T) {
+	s := tempStore(t)
 
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "meta.db")
+	// ListWorkspaces and ListAgents returning empty results proves that the
+	// bucket hierarchy was created successfully.
+	wss, err := s.ListWorkspaces(t.Context(), nil)
+	require.NoError(t, err)
+	require.Empty(t, wss)
 
-	store, err := NewStore(dbPath)
-	require.NoError(t, err, "NewStore should succeed")
+	agents, err := s.ListAgents(t.Context(), nil)
+	require.NoError(t, err)
+	require.Empty(t, agents)
+}
 
-	db := store.DB()
-	require.NotNil(t, db, "DB() should return non-nil database connection")
+// TestNewStore_PathAttribute verifies that the Path field is set correctly.
+func TestNewStore_PathAttribute(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "meta.db")
 
-	// Verify we can use the returned DB directly.
-	ctx := context.Background()
-	var result int
-	err = db.QueryRowContext(ctx, "SELECT 1").Scan(&result)
-	require.NoError(t, err, "QueryRowContext on returned DB should succeed")
-	assert.Equal(t, 1, result, "SELECT 1 should return 1")
+	s, err := meta.NewStore(path)
+	require.NoError(t, err)
+	defer s.Close()
 
-	store.Close()
+	require.Equal(t, path, s.Path)
+}
+
+// TestNewStore_InvalidPath verifies that opening a database under a non-existent
+// parent directory returns an error (bbolt cannot create parent dirs).
+func TestNewStore_InvalidPath(t *testing.T) {
+	path := "/nonexistent-dir/should-fail/meta.db"
+	s, err := meta.NewStore(path)
+	require.Error(t, err)
+	require.Nil(t, s)
 }

@@ -1,293 +1,217 @@
-// Package meta provides metadata storage for OAR session/workspace/room records.
-package meta
+package meta_test
 
 import (
-	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/open-agent-d/open-agent-d/pkg/meta"
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/stretchr/testify/require"
 )
 
-// testRoom creates a room for test use.
-func createTestRoom(t *testing.T, store *Store, name string) {
-	t.Helper()
-	ctx := context.Background()
-	err := store.CreateRoom(ctx, &Room{Name: name, CommunicationMode: CommunicationModeMesh})
-	require.NoError(t, err, "CreateRoom(%s) should succeed", name)
-}
-
-// createTestWorkspace creates a workspace for test use and returns its ID.
-func createTestWorkspace(t *testing.T, store *Store, id, name string) {
-	t.Helper()
-	ctx := context.Background()
-	err := store.CreateWorkspace(ctx, &Workspace{
-		ID:     id,
-		Name:   name,
-		Path:   "/tmp/" + name,
-		Source: []byte(`{"type":"emptyDir"}`),
-		Status: WorkspaceStatusActive,
-	})
-	require.NoError(t, err, "CreateWorkspace(%s) should succeed", name)
-}
-
-// makeAgent returns a minimal valid Agent for tests.
-func makeAgent(id, room, name, wsID string) *Agent {
-	return &Agent{
-		ID:           id,
-		Room:         room,
-		Name:         name,
-		RuntimeClass: "default",
-		WorkspaceID:  wsID,
-		State:        AgentStateCreating,
+// makeAgent returns a minimal valid Agent for test use.
+func makeAgent(workspace, name string) *meta.Agent {
+	return &meta.Agent{
+		Metadata: meta.ObjectMeta{
+			Workspace: workspace,
+			Name:      name,
+		},
+		Spec: meta.AgentSpec{
+			RuntimeClass: "default",
+		},
+		Status: meta.AgentStatus{
+			State: spec.StatusIdle,
+		},
 	}
 }
 
-// TestAgentCRUDRoundTrip verifies create, get, update state, and delete.
-func TestAgentCRUDRoundTrip(t *testing.T) {
-	t.Parallel()
-	store := newTestStore(t)
-	ctx := context.Background()
+// ── Create ────────────────────────────────────────────────────────────────────
 
-	createTestRoom(t, store, "room1")
-	createTestWorkspace(t, store, "ws1", "workspace1")
+func TestCreateAgent(t *testing.T) {
+	s := tempStore(t)
+	agent := makeAgent("ws", "agent1")
+	require.NoError(t, s.CreateAgent(t.Context(), agent))
 
-	agent := makeAgent("agent-1", "room1", "alpha", "ws1")
-	agent.Description = "test agent"
-	agent.SystemPrompt = "you are a test"
-	agent.Labels = map[string]string{"env": "test"}
-
-	// Create
-	err := store.CreateAgent(ctx, agent)
-	require.NoError(t, err, "CreateAgent should succeed")
-
-	// Get
-	got, err := store.GetAgent(ctx, "agent-1")
-	require.NoError(t, err, "GetAgent should succeed")
-	require.NotNil(t, got, "GetAgent should return an agent")
-	assert.Equal(t, "agent-1", got.ID)
-	assert.Equal(t, "room1", got.Room)
-	assert.Equal(t, "alpha", got.Name)
-	assert.Equal(t, "default", got.RuntimeClass)
-	assert.Equal(t, "ws1", got.WorkspaceID)
-	assert.Equal(t, AgentStateCreating, got.State)
-	assert.Equal(t, "test agent", got.Description)
-	assert.Equal(t, "you are a test", got.SystemPrompt)
-	assert.Equal(t, map[string]string{"env": "test"}, got.Labels)
-
-	// Update state
-	err = store.UpdateAgent(ctx, "agent-1", AgentStateRunning, "", nil)
-	require.NoError(t, err, "UpdateAgent should succeed")
-
-	updated, err := store.GetAgent(ctx, "agent-1")
+	got, err := s.GetAgent(t.Context(), "ws", "agent1")
 	require.NoError(t, err)
-	assert.Equal(t, AgentStateRunning, updated.State)
-
-	// Update to error with message
-	err = store.UpdateAgent(ctx, "agent-1", AgentStateError, "something went wrong", nil)
-	require.NoError(t, err, "UpdateAgent to error should succeed")
-
-	errAgent, err := store.GetAgent(ctx, "agent-1")
-	require.NoError(t, err)
-	assert.Equal(t, AgentStateError, errAgent.State)
-	assert.Equal(t, "something went wrong", errAgent.ErrorMessage)
-
-	// Delete
-	err = store.DeleteAgent(ctx, "agent-1")
-	require.NoError(t, err, "DeleteAgent should succeed")
-
-	deleted, err := store.GetAgent(ctx, "agent-1")
-	require.NoError(t, err)
-	assert.Nil(t, deleted, "GetAgent after delete should return nil")
-}
-
-// TestAgentGetByRoomName verifies lookup by (room, name) unique pair.
-func TestAgentGetByRoomName(t *testing.T) {
-	t.Parallel()
-	store := newTestStore(t)
-	ctx := context.Background()
-
-	createTestRoom(t, store, "roomA")
-	createTestWorkspace(t, store, "wsA", "workspaceA")
-
-	agent := makeAgent("agent-rn-1", "roomA", "beta", "wsA")
-	require.NoError(t, store.CreateAgent(ctx, agent))
-
-	// Look up by room+name
-	got, err := store.GetAgentByRoomName(ctx, "roomA", "beta")
-	require.NoError(t, err, "GetAgentByRoomName should succeed")
 	require.NotNil(t, got)
-	assert.Equal(t, "agent-rn-1", got.ID)
-	assert.Equal(t, "roomA", got.Room)
-	assert.Equal(t, "beta", got.Name)
+	require.Equal(t, "agent1", got.Metadata.Name)
+	require.Equal(t, "ws", got.Metadata.Workspace)
+}
 
-	// Non-existent combination returns nil
-	missing, err := store.GetAgentByRoomName(ctx, "roomA", "nonexistent")
+func TestCreateAgent_DuplicateRejected(t *testing.T) {
+	s := tempStore(t)
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws", "agent-dup")))
+
+	err := s.CreateAgent(t.Context(), makeAgent("ws", "agent-dup"))
+	require.Error(t, err, "duplicate (workspace, name) should be rejected")
+}
+
+func TestCreateAgent_MissingWorkspace(t *testing.T) {
+	s := tempStore(t)
+	err := s.CreateAgent(t.Context(), &meta.Agent{
+		Metadata: meta.ObjectMeta{Name: "agent1"},
+		Spec:     meta.AgentSpec{RuntimeClass: "default"},
+	})
+	require.Error(t, err)
+}
+
+func TestCreateAgent_MissingName(t *testing.T) {
+	s := tempStore(t)
+	err := s.CreateAgent(t.Context(), &meta.Agent{
+		Metadata: meta.ObjectMeta{Workspace: "ws"},
+		Spec:     meta.AgentSpec{RuntimeClass: "default"},
+	})
+	require.Error(t, err)
+}
+
+func TestCreateAgent_MissingRuntimeClass(t *testing.T) {
+	s := tempStore(t)
+	err := s.CreateAgent(t.Context(), &meta.Agent{
+		Metadata: meta.ObjectMeta{Workspace: "ws", Name: "agent1"},
+	})
+	require.Error(t, err)
+}
+
+// ── Get ───────────────────────────────────────────────────────────────────────
+
+func TestGetAgent_NotFound(t *testing.T) {
+	s := tempStore(t)
+	got, err := s.GetAgent(t.Context(), "ws", "ghost")
 	require.NoError(t, err)
-	assert.Nil(t, missing)
+	require.Nil(t, got)
 }
 
-// TestAgentUniqueRoomName verifies that two agents with the same room+name are rejected.
-func TestAgentUniqueRoomName(t *testing.T) {
-	t.Parallel()
-	store := newTestStore(t)
-	ctx := context.Background()
-
-	createTestRoom(t, store, "roomU")
-	createTestWorkspace(t, store, "wsU", "workspaceU")
-
-	agent1 := makeAgent("agent-u-1", "roomU", "gamma", "wsU")
-	require.NoError(t, store.CreateAgent(ctx, agent1))
-
-	agent2 := makeAgent("agent-u-2", "roomU", "gamma", "wsU")
-	err := store.CreateAgent(ctx, agent2)
-	require.Error(t, err, "Duplicate room+name should fail")
-	assert.Contains(t, err.Error(), "already exists")
+func TestGetAgent_NoWorkspaceBucket(t *testing.T) {
+	s := tempStore(t)
+	// workspace "nobody" has no agents sub-bucket yet.
+	got, err := s.GetAgent(t.Context(), "nobody", "agent1")
+	require.NoError(t, err)
+	require.Nil(t, got)
 }
 
-// TestAgentFKConstraintRoom verifies that creating an agent with a non-existent room fails.
-func TestAgentFKConstraintRoom(t *testing.T) {
-	t.Parallel()
-	store := newTestStore(t)
-	ctx := context.Background()
+func TestGetAgent_ByWorkspaceName(t *testing.T) {
+	s := tempStore(t)
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("myws", "myagent")))
 
-	createTestWorkspace(t, store, "wsFKR", "workspaceFKR")
-
-	agent := makeAgent("agent-fkr-1", "nonexistent-room", "delta", "wsFKR")
-	err := store.CreateAgent(ctx, agent)
-	require.Error(t, err, "Agent with non-existent room should fail")
-	assert.Contains(t, err.Error(), "foreign key constraint")
+	got, err := s.GetAgent(t.Context(), "myws", "myagent")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, "myagent", got.Metadata.Name)
+	require.Equal(t, "myws", got.Metadata.Workspace)
 }
 
-// TestAgentFKConstraintWorkspace verifies that creating an agent with a non-existent workspace fails.
-func TestAgentFKConstraintWorkspace(t *testing.T) {
-	t.Parallel()
-	store := newTestStore(t)
-	ctx := context.Background()
+// ── List ──────────────────────────────────────────────────────────────────────
 
-	createTestRoom(t, store, "roomFKW")
+func TestListAgents_AllWorkspaces(t *testing.T) {
+	s := tempStore(t)
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws1", "a1")))
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws1", "a2")))
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws2", "a3")))
 
-	agent := makeAgent("agent-fkw-1", "roomFKW", "epsilon", "nonexistent-ws")
-	err := store.CreateAgent(ctx, agent)
-	require.Error(t, err, "Agent with non-existent workspace should fail")
-	assert.Contains(t, err.Error(), "foreign key constraint")
+	all, err := s.ListAgents(t.Context(), nil)
+	require.NoError(t, err)
+	require.Len(t, all, 3)
 }
 
-// TestListAgentsFiltering verifies filtering by state and by room.
-func TestListAgentsFiltering(t *testing.T) {
-	t.Parallel()
-	store := newTestStore(t)
-	ctx := context.Background()
+func TestListAgents_FilterByWorkspace(t *testing.T) {
+	s := tempStore(t)
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws1", "a1")))
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws2", "a2")))
 
-	createTestRoom(t, store, "roomL1")
-	createTestRoom(t, store, "roomL2")
-	createTestWorkspace(t, store, "wsL", "workspaceL")
+	ws1agents, err := s.ListAgents(t.Context(), &meta.AgentFilter{Workspace: "ws1"})
+	require.NoError(t, err)
+	require.Len(t, ws1agents, 1)
+	require.Equal(t, "a1", ws1agents[0].Metadata.Name)
+}
 
-	// Create agents in different rooms and states
-	agents := []*Agent{
-		{ID: "agent-l-1", Room: "roomL1", Name: "zeta", RuntimeClass: "default", WorkspaceID: "wsL", State: AgentStateCreating},
-		{ID: "agent-l-2", Room: "roomL1", Name: "eta", RuntimeClass: "default", WorkspaceID: "wsL", State: AgentStateRunning},
-		{ID: "agent-l-3", Room: "roomL2", Name: "theta", RuntimeClass: "default", WorkspaceID: "wsL", State: AgentStateRunning},
-		{ID: "agent-l-4", Room: "roomL2", Name: "iota", RuntimeClass: "default", WorkspaceID: "wsL", State: AgentStateStopped},
+func TestListAgents_FilterByState(t *testing.T) {
+	s := tempStore(t)
+
+	agentRunning := makeAgent("ws", "runner")
+	agentRunning.Status.State = spec.StatusRunning
+	require.NoError(t, s.CreateAgent(t.Context(), agentRunning))
+
+	agentIdle := makeAgent("ws", "idler")
+	agentIdle.Status.State = spec.StatusIdle
+	require.NoError(t, s.CreateAgent(t.Context(), agentIdle))
+
+	running, err := s.ListAgents(t.Context(), &meta.AgentFilter{State: spec.StatusRunning})
+	require.NoError(t, err)
+	require.Len(t, running, 1)
+	require.Equal(t, "runner", running[0].Metadata.Name)
+}
+
+func TestListAgents_Empty(t *testing.T) {
+	s := tempStore(t)
+	all, err := s.ListAgents(t.Context(), nil)
+	require.NoError(t, err)
+	require.Empty(t, all)
+}
+
+func TestListAgents_FilterByWorkspace_NoMatch(t *testing.T) {
+	s := tempStore(t)
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws1", "a1")))
+
+	result, err := s.ListAgents(t.Context(), &meta.AgentFilter{Workspace: "nobody"})
+	require.NoError(t, err)
+	require.Empty(t, result)
+}
+
+// ── UpdateAgentStatus ────────────────────────────────────────────────────────
+
+func TestUpdateAgentStatus(t *testing.T) {
+	s := tempStore(t)
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws", "a")))
+
+	newStatus := meta.AgentStatus{
+		State:          spec.StatusRunning,
+		ShimSocketPath: "/tmp/shim.sock",
+		ShimPID:        12345,
 	}
-	for _, a := range agents {
-		require.NoError(t, store.CreateAgent(ctx, a))
-	}
+	require.NoError(t, s.UpdateAgentStatus(t.Context(), "ws", "a", newStatus))
 
-	// List all
-	all, err := store.ListAgents(ctx, nil)
+	got, err := s.GetAgent(t.Context(), "ws", "a")
 	require.NoError(t, err)
-	assert.Len(t, all, 4)
-
-	// Filter by state=running
-	running, err := store.ListAgents(ctx, &AgentFilter{State: AgentStateRunning})
-	require.NoError(t, err)
-	assert.Len(t, running, 2)
-	for _, a := range running {
-		assert.Equal(t, AgentStateRunning, a.State)
-	}
-
-	// Filter by room=roomL1
-	room1Agents, err := store.ListAgents(ctx, &AgentFilter{Room: "roomL1"})
-	require.NoError(t, err)
-	assert.Len(t, room1Agents, 2)
-	for _, a := range room1Agents {
-		assert.Equal(t, "roomL1", a.Room)
-	}
-
-	// Filter by room=roomL2 and state=running
-	combo, err := store.ListAgents(ctx, &AgentFilter{Room: "roomL2", State: AgentStateRunning})
-	require.NoError(t, err)
-	assert.Len(t, combo, 1)
-	assert.Equal(t, "agent-l-3", combo[0].ID)
+	require.Equal(t, spec.StatusRunning, got.Status.State)
+	require.Equal(t, "/tmp/shim.sock", got.Status.ShimSocketPath)
+	require.Equal(t, 12345, got.Status.ShimPID)
 }
 
-// TestAgentUpdateNonExistent verifies updating a non-existent agent returns an error.
-func TestAgentUpdateNonExistent(t *testing.T) {
-	t.Parallel()
-	store := newTestStore(t)
-	ctx := context.Background()
-
-	err := store.UpdateAgent(ctx, "nonexistent-id", AgentStateRunning, "", nil)
-	require.Error(t, err, "UpdateAgent on non-existent ID should fail")
-	assert.Contains(t, err.Error(), "does not exist")
+func TestUpdateAgentStatus_NotFound(t *testing.T) {
+	s := tempStore(t)
+	err := s.UpdateAgentStatus(t.Context(), "ws", "ghost", meta.AgentStatus{State: spec.StatusRunning})
+	require.Error(t, err)
 }
 
-// TestAgentDeleteNonExistent verifies deleting a non-existent agent returns an error.
-func TestAgentDeleteNonExistent(t *testing.T) {
-	t.Parallel()
-	store := newTestStore(t)
-	ctx := context.Background()
+// ── Delete ────────────────────────────────────────────────────────────────────
 
-	err := store.DeleteAgent(ctx, "nonexistent-id")
-	require.Error(t, err, "DeleteAgent on non-existent ID should fail")
-	assert.Contains(t, err.Error(), "does not exist")
+func TestDeleteAgent(t *testing.T) {
+	s := tempStore(t)
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws", "a")))
+	require.NoError(t, s.DeleteAgent(t.Context(), "ws", "a"))
+
+	got, err := s.GetAgent(t.Context(), "ws", "a")
+	require.NoError(t, err)
+	require.Nil(t, got)
 }
 
-// TestSchemav3AgentsTableExists verifies that the agents table, indexes, and
-// trigger are created after NewStore (schema v3).
-func TestSchemav3AgentsTableExists(t *testing.T) {
-	t.Parallel()
-	store := newTestStore(t)
-	ctx := context.Background()
+func TestDeleteAgent_NotFound(t *testing.T) {
+	s := tempStore(t)
+	err := s.DeleteAgent(t.Context(), "ws", "ghost")
+	require.Error(t, err)
+}
 
-	// Verify agents table exists.
-	var tableExists bool
-	err := store.db.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='agents')",
-	).Scan(&tableExists)
+func TestDeleteAgent_SameName_DifferentWorkspace(t *testing.T) {
+	s := tempStore(t)
+	// Same name in two different workspaces — should be independent.
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws1", "common")))
+	require.NoError(t, s.CreateAgent(t.Context(), makeAgent("ws2", "common")))
+
+	// Delete from ws1 only.
+	require.NoError(t, s.DeleteAgent(t.Context(), "ws1", "common"))
+
+	// ws2 copy should still exist.
+	got, err := s.GetAgent(t.Context(), "ws2", "common")
 	require.NoError(t, err)
-	assert.True(t, tableExists, "agents table should exist")
-
-	// Verify indexes exist.
-	expectedIndexes := []string{
-		"idx_agents_room",
-		"idx_agents_state",
-		"idx_agents_room_name",
-	}
-	for _, idx := range expectedIndexes {
-		var exists bool
-		err := store.db.QueryRowContext(ctx,
-			"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name=?)",
-			idx,
-		).Scan(&exists)
-		require.NoError(t, err)
-		assert.True(t, exists, "index %s should exist", idx)
-	}
-
-	// Verify trigger exists.
-	var triggerExists bool
-	err = store.db.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='trg_agents_updated')",
-	).Scan(&triggerExists)
-	require.NoError(t, err)
-	assert.True(t, triggerExists, "trg_agents_updated trigger should exist")
-
-	// Verify schema version is 4 (v3 agents table + v4 sessions.agent_id FK).
-	var version int
-	err = store.db.QueryRowContext(ctx,
-		"SELECT MAX(version) FROM schema_version",
-	).Scan(&version)
-	require.NoError(t, err)
-	assert.Equal(t, 4, version, "schema version should be 4")
+	require.NotNil(t, got)
 }

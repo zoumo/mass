@@ -28,7 +28,7 @@ func sampleState() spec.State {
 	return spec.State{
 		OarVersion:  "0.1.0",
 		ID:          "test-session-123",
-		Status:      spec.StatusCreated,
+		Status:      spec.StatusIdle,
 		PID:         42,
 		Bundle:      "/path/to/bundle",
 		Annotations: map[string]string{"key": "value"},

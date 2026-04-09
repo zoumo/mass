@@ -1,4 +1,4 @@
-// Package agentd implements the agent daemon that manages agent runtime sessions.
+// Package agentd implements the agent daemon that manages agent runtime lifecycle.
 // This file contains integration tests for the ProcessManager.
 package agentd
 
@@ -10,17 +10,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // TestProcessManagerStart tests the full Start workflow:
-// get Session → resolve RuntimeClass → generate config.json → create bundle
+// get Agent → resolve RuntimeClass → generate config.json → create bundle
 // → fork agent-shim → wait for socket → connect ShimClient → subscribe events
-// → transition session state to "running".
+// → transition agent status to "running".
 func TestProcessManagerStart(t *testing.T) {
 	// Build and find binaries.
 	shimBinary := findShimBinary(t)
@@ -38,17 +36,11 @@ func TestProcessManagerStart(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "meta.db")
 	workspaceRoot := filepath.Join(tmpDir, "workspaces")
 	bundleRoot := filepath.Join(tmpDir, "bundles")
-	stateDirRoot := filepath.Join(tmpDir, "shim-state")
 
-	// Create directories.
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-		t.Fatalf("mkdir workspaceRoot: %v", err)
-	}
-	if err := os.MkdirAll(bundleRoot, 0o755); err != nil {
-		t.Fatalf("mkdir bundleRoot: %v", err)
-	}
-	if err := os.MkdirAll(stateDirRoot, 0o755); err != nil {
-		t.Fatalf("mkdir stateDirRoot: %v", err)
+	for _, dir := range []string{workspaceRoot, bundleRoot} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
 	}
 
 	// Create meta store.
@@ -57,9 +49,6 @@ func TestProcessManagerStart(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	defer store.Close()
-
-	// Create SessionManager.
-	sessionMgr := NewSessionManager(store)
 
 	// Create RuntimeClassRegistry with mockagent.
 	runtimeClasses := map[string]RuntimeClassConfig{
@@ -81,7 +70,7 @@ func TestProcessManagerStart(t *testing.T) {
 
 	// Create ProcessManager config.
 	cfg := Config{
-		Socket:        filepath.Join(tmpDir, "agentd.sock"), // Use temp dir to indicate test mode
+		Socket:        filepath.Join(tmpDir, "agentd.sock"),
 		WorkspaceRoot: bundleRoot,
 		MetaDB:        dbPath,
 		Runtime: RuntimeConfig{
@@ -92,66 +81,58 @@ func TestProcessManagerStart(t *testing.T) {
 		},
 	}
 
-	// Create ProcessManager.
+	// Create AgentManager and ProcessManager.
 	agentMgr := NewAgentManager(store)
-	procMgr := NewProcessManager(registry, sessionMgr, agentMgr, store, cfg)
+	procMgr := NewProcessManager(registry, agentMgr, store, cfg)
 
-	// Create a workspace.
-	workspaceID := uuid.New().String()
+	// Create a workspace with a ready path.
 	workspacePath := filepath.Join(workspaceRoot, "test-workspace")
 	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
 		t.Fatalf("mkdir workspacePath: %v", err)
 	}
-	workspace := &meta.Workspace{
-		ID:     workspaceID,
-		Name:   "test-workspace",
-		Path:   workspacePath,
-		Status: meta.WorkspaceStatusActive,
+	ws := &meta.Workspace{
+		Metadata: meta.ObjectMeta{Name: "test-ws"},
+		Status: meta.WorkspaceStatus{
+			Phase: meta.WorkspacePhaseReady,
+			Path:  workspacePath,
+		},
 	}
-	if err := store.CreateWorkspace(ctx, workspace); err != nil {
+	if err := store.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("CreateWorkspace: %v", err)
 	}
 
-	// Create a session in "created" state.
-	sessionID := uuid.New().String()
-	session := &meta.Session{
-		ID:           sessionID,
-		RuntimeClass: "mockagent",
-		WorkspaceID:  workspaceID,
-		State:        meta.SessionStateCreated,
+	// Create an agent in "creating" state (required by Start).
+	agentWorkspace := "test-ws"
+	agentName := "test-agent"
+	agent := &meta.Agent{
+		Metadata: meta.ObjectMeta{
+			Workspace: agentWorkspace,
+			Name:      agentName,
+		},
+		Spec: meta.AgentSpec{
+			RuntimeClass: "mockagent",
+		},
+		Status: meta.AgentStatus{
+			State: spec.StatusCreating,
+		},
 	}
-	if err := sessionMgr.Create(ctx, session); err != nil {
-		t.Fatalf("CreateSession: %v", err)
+	if err := store.CreateAgent(ctx, agent); err != nil {
+		t.Fatalf("CreateAgent: %v", err)
 	}
 
 	// Call ProcessManager.Start.
-	shimProc, err := procMgr.Start(ctx, sessionID)
+	shimProc, err := procMgr.Start(ctx, agentWorkspace, agentName)
 	if err != nil {
+		key := agentKey(agentWorkspace, agentName)
 		// Print state directory content for debugging.
-		stateDirPath := filepath.Join(os.TempDir(), "agentd-shim", sessionID)
+		stateDirPath := filepath.Join(os.TempDir(), "agentd-shim", key)
 		t.Logf("State directory %s contents:", stateDirPath)
-		if entries, err := os.ReadDir(stateDirPath); err == nil {
+		if entries, readErr := os.ReadDir(stateDirPath); readErr == nil {
 			for _, entry := range entries {
 				t.Logf("  %s", entry.Name())
 				if entry.Name() == "state.json" {
-					if data, err := os.ReadFile(filepath.Join(stateDirPath, "state.json")); err == nil {
+					if data, readErr := os.ReadFile(filepath.Join(stateDirPath, "state.json")); readErr == nil {
 						t.Logf("state.json content:\n%s", string(data))
-					}
-				}
-			}
-		} else {
-			t.Logf("Could not read state directory: %v", err)
-		}
-
-		// Print bundle directory content for debugging.
-		bundlePath := filepath.Join(bundleRoot, sessionID)
-		t.Logf("Bundle directory %s contents:", bundlePath)
-		if entries, err := os.ReadDir(bundlePath); err == nil {
-			for _, entry := range entries {
-				t.Logf("  %s", entry.Name())
-				if entry.Name() == "config.json" {
-					if data, err := os.ReadFile(filepath.Join(bundlePath, "config.json")); err == nil {
-						t.Logf("config.json content:\n%s", string(data))
 					}
 				}
 			}
@@ -159,13 +140,13 @@ func TestProcessManagerStart(t *testing.T) {
 		t.Fatalf("ProcessManager.Start: %v", err)
 	}
 
-	// Verify session state is "running".
-	updatedSession, err := sessionMgr.Get(ctx, sessionID)
+	// Verify agent status is "running".
+	updatedAgent, err := agentMgr.Get(ctx, agentWorkspace, agentName)
 	if err != nil {
-		t.Fatalf("GetSession after Start: %v", err)
+		t.Fatalf("Get agent after Start: %v", err)
 	}
-	if updatedSession.State != meta.SessionStateRunning {
-		t.Errorf("expected session state 'running', got '%s'", updatedSession.State)
+	if updatedAgent.Status.State != spec.StatusRunning {
+		t.Errorf("expected agent state 'running', got '%s'", updatedAgent.Status.State)
 	}
 
 	// Verify PID > 0.
@@ -187,8 +168,8 @@ func TestProcessManagerStart(t *testing.T) {
 	t.Logf("Shim state: ID=%s, Status=%s, PID=%d, Bundle=%s, recovery.lastSeq=%d",
 		state.ID, state.Status, state.PID, state.Bundle, statusResult.Recovery.LastSeq)
 
-	if state.Status != spec.StatusCreated && state.Status != spec.StatusRunning {
-		t.Errorf("expected shim status 'created' or 'running', got '%s'", state.Status)
+	if state.Status != spec.StatusIdle && state.Status != spec.StatusRunning {
+		t.Errorf("expected shim status 'idle' or 'running', got '%s'", state.Status)
 	}
 
 	// Send a Prompt to trigger events (session/prompt).
@@ -199,26 +180,21 @@ func TestProcessManagerStart(t *testing.T) {
 	t.Logf("Prompt result: stopReason=%s", promptResult.StopReason)
 
 	// Verify events were received.
-	// Mockagent sends text events after a prompt.
 	eventCount := 0
 	timeout := time.After(5 * time.Second)
 
-	// Collect events with timeout.
 	for {
 		select {
 		case ev, ok := <-shimProc.Events:
 			if !ok {
-				// Channel closed, shim process exited.
 				t.Log("Events channel closed")
 				goto done
 			}
 			eventCount++
 			t.Logf("Received event #%d: %T", eventCount, ev)
-			// Look for text events from mockagent.
 			if _, ok := ev.(events.TextEvent); ok {
 				t.Logf("TextEvent received")
 			}
-			// Check for turn_end event to know the prompt is done.
 			if _, ok := ev.(events.TurnEndEvent); ok {
 				t.Logf("TurnEndEvent received, prompt complete")
 				goto done
@@ -255,13 +231,13 @@ done:
 		_ = shimProc.Cmd.Process.Kill()
 	}
 
-	// Verify session state transitioned to "stopped".
-	finalSession, err := sessionMgr.Get(ctx, sessionID)
+	// Verify agent status transitioned to "stopped".
+	finalAgent, err := agentMgr.Get(ctx, agentWorkspace, agentName)
 	if err != nil {
-		t.Fatalf("GetSession after shutdown: %v", err)
+		t.Fatalf("Get agent after shutdown: %v", err)
 	}
-	if finalSession.State != meta.SessionStateStopped {
-		t.Errorf("expected session state 'stopped' after shutdown, got '%s'", finalSession.State)
+	if finalAgent.Status.State != spec.StatusStopped {
+		t.Errorf("expected agent state 'stopped' after shutdown, got '%s'", finalAgent.Status.State)
 	}
 
 	// Verify bundle directory was cleaned up.
@@ -269,13 +245,13 @@ done:
 		t.Errorf("expected bundle directory to be cleaned up, but %s still exists", shimProc.BundlePath)
 	}
 
-	t.Logf("Test complete: session %s lifecycle: created → running → stopped", sessionID)
+	t.Logf("Test complete: agent %s/%s lifecycle: creating → running → stopped", agentWorkspace, agentName)
 }
 
 // ── generateConfig ────────────────────────────────────────────────────────────
 
-func TestGenerateConfigWithRoomMCPInjection(t *testing.T) {
-	// Minimal ProcessManager with socket config set.
+// TestGenerateConfig verifies that generateConfig produces correct config from an Agent.
+func TestGenerateConfig(t *testing.T) {
 	pm := &ProcessManager{
 		config: Config{
 			Socket: "/tmp/test-agentd.sock",
@@ -285,122 +261,88 @@ func TestGenerateConfigWithRoomMCPInjection(t *testing.T) {
 		Name:    "mockagent",
 		Command: "/usr/bin/mockagent",
 		Args:    []string{},
-		Env:     map[string]string{},
+		Env:     map[string]string{"SOME_VAR": "value"},
 	}
 
-	t.Run("session with Room injects room MCP server", func(t *testing.T) {
-		session := &meta.Session{
-			ID:        "sess-123",
-			AgentID:   "sess-123",
-			Room:      "design-room",
-			RoomAgent: "agent-alice",
+	t.Run("basic agent config", func(t *testing.T) {
+		agent := &meta.Agent{
+			Metadata: meta.ObjectMeta{
+				Workspace: "ws1",
+				Name:      "my-agent",
+				Labels:    map[string]string{"team": "platform"},
+			},
+			Spec: meta.AgentSpec{
+				RuntimeClass: "mockagent",
+				SystemPrompt: "you are helpful",
+			},
 		}
 
-		cfg := pm.generateConfig(session, rc)
+		cfg := pm.generateConfig(agent, rc)
 
-		servers := cfg.AcpAgent.Session.McpServers
-		if len(servers) != 1 {
-			t.Fatalf("expected 1 MCP server, got %d", len(servers))
+		if cfg.Metadata.Name != "my-agent" {
+			t.Errorf("expected Name=my-agent, got %q", cfg.Metadata.Name)
 		}
-		srv := servers[0]
-		if srv.Type != "stdio" {
-			t.Errorf("expected Type=stdio, got %q", srv.Type)
+		if cfg.AcpAgent.SystemPrompt != "you are helpful" {
+			t.Errorf("expected SystemPrompt='you are helpful', got %q", cfg.AcpAgent.SystemPrompt)
 		}
-		if srv.Name != "room-tools" {
-			t.Errorf("expected Name=room-tools, got %q", srv.Name)
+		if cfg.AcpAgent.Process.Command != "/usr/bin/mockagent" {
+			t.Errorf("expected Command=/usr/bin/mockagent, got %q", cfg.AcpAgent.Process.Command)
 		}
-		// Command is resolved via resolveRoomMCPBinary — in test env it falls
-		// back to "room-mcp-server" (PATH lookup) since no binary exists.
-		if srv.Command == "" {
-			t.Error("expected non-empty Command")
-		}
-
-		// Verify env vars.
-		envMap := make(map[string]string)
-		for _, e := range srv.Env {
-			envMap[e.Name] = e.Value
-		}
-		if envMap["OAR_AGENTD_SOCKET"] != "/tmp/test-agentd.sock" {
-			t.Errorf("OAR_AGENTD_SOCKET = %q, want /tmp/test-agentd.sock", envMap["OAR_AGENTD_SOCKET"])
-		}
-		if envMap["OAR_ROOM_NAME"] != "design-room" {
-			t.Errorf("OAR_ROOM_NAME = %q, want design-room", envMap["OAR_ROOM_NAME"])
-		}
-		// Deprecated vars must be absent.
-		if _, exists := envMap["OAR_SESSION_ID"]; exists {
-			t.Errorf("OAR_SESSION_ID should not be present (deprecated)")
-		}
-		if _, exists := envMap["OAR_ROOM_AGENT"]; exists {
-			t.Errorf("OAR_ROOM_AGENT should not be present (deprecated)")
-		}
-		// New canonical vars must be present.
-		if envMap["OAR_AGENT_ID"] != "sess-123" {
-			t.Errorf("OAR_AGENT_ID = %q, want sess-123", envMap["OAR_AGENT_ID"])
-		}
-		if envMap["OAR_AGENT_NAME"] != "agent-alice" {
-			t.Errorf("OAR_AGENT_NAME = %q, want agent-alice", envMap["OAR_AGENT_NAME"])
-		}
-	})
-
-	t.Run("session without Room has empty McpServers", func(t *testing.T) {
-		session := &meta.Session{
-			ID: "sess-456",
-		}
-
-		cfg := pm.generateConfig(session, rc)
-
 		if len(cfg.AcpAgent.Session.McpServers) != 0 {
-			t.Errorf("expected 0 MCP servers for non-room session, got %d", len(cfg.AcpAgent.Session.McpServers))
+			t.Errorf("expected 0 MCP servers, got %d", len(cfg.AcpAgent.Session.McpServers))
+		}
+		// Verify annotations include runtimeClass.
+		if cfg.Metadata.Annotations["runtimeClass"] != "mockagent" {
+			t.Errorf("expected annotations.runtimeClass=mockagent, got %q", cfg.Metadata.Annotations["runtimeClass"])
+		}
+		// Verify team label propagated.
+		if cfg.Metadata.Annotations["team"] != "platform" {
+			t.Errorf("expected annotations.team=platform, got %q", cfg.Metadata.Annotations["team"])
+		}
+		// Verify env var.
+		found := false
+		for _, e := range cfg.AcpAgent.Process.Env {
+			if e == "SOME_VAR=value" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected SOME_VAR=value in env, not found")
 		}
 	})
 
-	t.Run("session with Room but empty RoomAgent still injects", func(t *testing.T) {
-		session := &meta.Session{
-			ID:        "sess-789",
-			Room:      "chat-room",
-			RoomAgent: "", // empty is valid
+	t.Run("agent without system prompt", func(t *testing.T) {
+		agent := &meta.Agent{
+			Metadata: meta.ObjectMeta{
+				Workspace: "ws1",
+				Name:      "bare-agent",
+			},
+			Spec: meta.AgentSpec{
+				RuntimeClass: "mockagent",
+			},
 		}
 
-		cfg := pm.generateConfig(session, rc)
-
-		servers := cfg.AcpAgent.Session.McpServers
-		if len(servers) != 1 {
-			t.Fatalf("expected 1 MCP server, got %d", len(servers))
-		}
-		// Verify OAR_AGENT_NAME is present with empty value; deprecated OAR_ROOM_AGENT absent.
-		envMap := make(map[string]string)
-		for _, e := range servers[0].Env {
-			envMap[e.Name] = e.Value
-		}
-		if _, exists := envMap["OAR_ROOM_AGENT"]; exists {
-			t.Error("OAR_ROOM_AGENT should not be present (deprecated)")
-		}
-		if _, exists := envMap["OAR_AGENT_NAME"]; !exists {
-			t.Error("OAR_AGENT_NAME env var should exist even when RoomAgent is empty")
-		}
-		if envMap["OAR_AGENT_NAME"] != "" {
-			t.Errorf("OAR_AGENT_NAME = %q, want empty string", envMap["OAR_AGENT_NAME"])
+		cfg := pm.generateConfig(agent, rc)
+		if cfg.AcpAgent.SystemPrompt != "" {
+			t.Errorf("expected empty SystemPrompt, got %q", cfg.AcpAgent.SystemPrompt)
 		}
 	})
 }
 
 // findShimBinary finds the agent-shim binary for testing.
-// Returns the path or skips the test if not found.
 func findShimBinary(t *testing.T) string {
-	// Try project bin directory first.
 	projectRoot := findProjectRoot(t)
 	builtPath := filepath.Join(projectRoot, "bin", "agent-shim")
 	if _, err := os.Stat(builtPath); err == nil {
 		return builtPath
 	}
 
-	// Try building it on-the-fly.
 	binDir := filepath.Join(projectRoot, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bin dir: %v", err)
 	}
 
-	// Build agent-shim.
 	cmd := exec.Command("go", "build", "-o", builtPath, "./cmd/agent-shim")
 	cmd.Dir = projectRoot
 	if err := cmd.Run(); err != nil {
@@ -411,22 +353,18 @@ func findShimBinary(t *testing.T) string {
 }
 
 // findMockagentBinary finds the mockagent binary for testing.
-// Returns the path or skips the test if not found.
 func findMockagentBinary(t *testing.T) string {
-	// Try project bin directory first.
 	projectRoot := findProjectRoot(t)
 	builtPath := filepath.Join(projectRoot, "bin", "mockagent")
 	if _, err := os.Stat(builtPath); err == nil {
 		return builtPath
 	}
 
-	// Try building it on-the-fly.
 	binDir := filepath.Join(projectRoot, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bin dir: %v", err)
 	}
 
-	// Build mockagent.
 	cmd := exec.Command("go", "build", "-o", builtPath, "./internal/testutil/mockagent")
 	cmd.Dir = projectRoot
 	if err := cmd.Run(); err != nil {
@@ -436,17 +374,15 @@ func findMockagentBinary(t *testing.T) string {
 	return builtPath
 }
 
-// findProjectRoot finds the project root directory.
+// findProjectRoot finds the project root directory by walking up to go.mod.
 func findProjectRoot(t *testing.T) string {
-	// Walk up from current directory until we find go.mod.
 	dir, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
 
 	for {
-		goModPath := filepath.Join(dir, "go.mod")
-		if _, err := os.Stat(goModPath); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)

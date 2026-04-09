@@ -210,7 +210,7 @@ func (m *WorkspaceManager) InitRefCounts(store *meta.Store) error {
 	ctx := context.Background()
 
 	workspaces, err := store.ListWorkspaces(ctx, &meta.WorkspaceFilter{
-		Status: meta.WorkspaceStatusActive,
+		Phase: meta.WorkspacePhaseReady,
 	})
 	if err != nil {
 		return fmt.Errorf("workspace: init refcounts: list workspaces: %w", err)
@@ -220,8 +220,13 @@ func (m *WorkspaceManager) InitRefCounts(store *meta.Store) error {
 	defer m.mutex.Unlock()
 
 	for _, ws := range workspaces {
-		if ws.RefCount > 0 {
-			m.refCount[ws.Path] = ws.RefCount
+		// New meta model has no RefCount field; initialise each ready workspace
+		// to refcount 0 so the path is tracked. Actual increments happen via
+		// IncrRefCount / DecrRefCount at runtime.
+		if ws.Status.Path != "" {
+			if _, ok := m.refCount[ws.Status.Path]; !ok {
+				m.refCount[ws.Status.Path] = 0
+			}
 		}
 	}
 
