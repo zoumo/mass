@@ -3,7 +3,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -242,23 +241,21 @@ func runAgentPrompt(cmd *cobra.Command, args []string) error {
 
 	outputJSON(result)
 
-	if agentPromptWait && result.Accepted {
-		fmt.Println("Waiting for agent to finish processing...")
-		ctx := context.Background()
-		for {
-			time.Sleep(500 * time.Millisecond)
-			var statusResult ari.AgentStatusResult
-			if err := client.Call("agent/status", ari.AgentStatusParams{AgentId: agentId}, &statusResult); err != nil {
-				fmt.Printf("agent/status error: %v\n", err)
+		if agentPromptWait && result.Accepted {
+			fmt.Println("Waiting for agent to finish processing...")
+			for {
+				time.Sleep(500 * time.Millisecond)
+				var statusResult ari.AgentStatusResult
+				if err := client.Call("agent/status", ari.AgentStatusParams{AgentId: agentId}, &statusResult); err != nil {
+					fmt.Printf("agent/status error: %v\n", err)
 				break
 			}
-			if statusResult.Agent.State != "running" {
-				fmt.Printf("Agent state: %s\n", statusResult.Agent.State)
-				break
+				if statusResult.Agent.State != "running" {
+					fmt.Printf("Agent state: %s\n", statusResult.Agent.State)
+					break
+				}
 			}
 		}
-		_ = ctx
-	}
 
 	return nil
 }
