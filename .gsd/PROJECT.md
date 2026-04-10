@@ -10,9 +10,9 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-**M008 in progress — S01 complete.** Binary skeleton reorganization done: `cmd/agentd` is now a cobra tree (server/shim/workspace-mcp), `cmd/agentdctl` extended with shimCmd (full client) and agentrunCmd (9-subcommand stub), Makefile produces only `bin/agentd` + `bin/agentdctl`. `go build ./...` and `go vet ./...` both clean. Legacy cmd/ directories remain for S04 deletion.
+**M008 in progress — S01 ✅ S02 ✅ S03 ✅.** Binary consolidation complete. Config-free startup via `--root` fully wired. RuntimeClass is DB-persisted. CLI grammar aligned: `agentrun prompt` has `-w`/`--workspace` and `--text` flags; `workspace create` uses positional `<type> <name>` args. Socket-path overflow validated at `agentrun/create` entry (pre-DB-write `-32602` guard) with platform build-tag constants (`maxsockpath_darwin.go` / `maxsockpath_linux.go`).
 
-**Remaining M008 slices:** S02 (--root config + RuntimeClass DB entity + self-fork shim), S03 (CLI grammar alignment + socket validation), S04 (cleanup + API rename to agent/agentrun + integration tests).
+**Remaining M008 slices:** S04 (cleanup + API rename to agent=template/agentrun=running instance + integration tests).
 
 ### Completed Milestones
 
@@ -30,26 +30,33 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 | Milestone | Title | Slice Progress |
 |-----------|-------|---------------|
-| M008 | CLI consolidation + API model rename | S01 ✅ / S02 ⬜ / S03 ⬜ / S04 ⬜ |
+| M008 | CLI consolidation + API model rename | S01 ✅ / S02 ✅ / S03 ✅ / S04 ⬜ |
 
 ### What's Implemented
 
 - `agentd` manages agents with **(workspace, name)** identity (no UUID), async lifecycle, fail-closed recovery
-- `agentd` is now a **cobra tree**: `agentd server` (daemon), `agentd shim` (inlined from agent-shim), `agentd workspace-mcp` (inlined from workspace-mcp-server)
-- `agentdctl` is now a **full-featured CLI**: agent/workspace/daemon/shim (full client) + agentrun (stubs, wired in S04)
-- `agent-shim` starts ACP agent processes, performs the ACP handshake, exposes `session/*` + `runtime/*` shim RPC surface
-- **bbolt metadata store**: `v1/workspaces/{name}` + `v1/agents/{workspace}/{name}` bucket layout
+- `agentd` is a **cobra tree**: `agentd server` (daemon, --root flag, no config.yaml), `agentd shim` (inlined from agent-shim), `agentd workspace-mcp` (inlined from workspace-mcp-server)
+- `agentdctl` is a **full-featured CLI**: agent/workspace/daemon/shim/runtime (full clients) + agentrun (prompt/create/stop/delete stubs with correct flag grammar, wired in S04)
+- **Runtime entity CLI grammar (finalized):** `agentrun prompt <run-id> -w <ws> --text <text>`; `workspace create <type> <name> [--path|--url|--ref|--depth]`
+- **DB-persisted runtime entities**: `meta.Runtime` in `v1/runtimes` bbolt bucket; ARI `runtime/set|get|list|delete`; `agentdctl runtime apply -f` YAML-based CLI
+- **Self-fork shim**: `forkShim` uses `os.Executable()` for single-binary deployment; `OAR_SHIM_BINARY` env override for testing
+- **agent-shim** starts ACP agent processes, performs the ACP handshake, exposes `session/*` + `runtime/*` shim RPC surface
+- **bbolt metadata store**: `v1/workspaces/{name}` + `v1/agents/{workspace}/{name}` + `v1/runtimes/{name}` bucket layout
 - **spec.Status as sole state enum**: creating/idle/running/stopped/error
-- **Full ARI JSON-RPC server**: workspace/* and agent/* handlers over Unix socket
-- **agentdctl CLI**: agent/workspace/daemon/shim subcommands (resource-first grammar finalized in S03)
+- **Full ARI JSON-RPC server**: workspace/*, agent/*, runtime/* handlers over Unix socket
+- **Socket path overflow guard**: `ValidateAgentSocketPath` in ProcessManager; early `-32602` at `agentrun/create` entry before any DB write; platform limits in build-tag files
 
 ## Architecture / Key Patterns
 
-- **2-binary model (M008 target, skeleton complete):** `agentd` (server/shim/workspace-mcp subcommands) + `agentdctl` (agent/agentrun/workspace/shim resource commands)
+- **2-binary model (M008 target, skeleton complete):** `agentd` (server/shim/workspace-mcp subcommands) + `agentdctl` (agent/agentrun/workspace/shim/runtime resource commands)
 - **ARI protocol:** JSON-RPC 2.0 over Unix domain socket
 - **OCI-inspired layering:** workspace=rootfs, agent(template)=container definition, agentrun=task/running instance, shim=runc equivalent
-- **bbolt buckets:** `v1/workspaces/{name}`, `v1/agents/{workspace}/{name}`; `v1/runtimes/{name}` added in S02, renamed to `v1/agents` (templates) in S04
+- **bbolt buckets:** `v1/workspaces/{name}`, `v1/agents/{workspace}/{name}`, `v1/runtimes/{name}` (renamed to `v1/agents` templates + `v1/agentruns` instances in S04)
+- **--root derived paths**: Options.SocketPath(), WorkspaceRoot(), BundleRoot(), MetaDBPath() — no config file needed
 - **cobra package main collision avoidance:** wmcp prefix for workspace-mcp types, shim prefix for shim client types, local flag vars scoped inside constructor functions (K068)
+- **cobra inline command literal extraction:** Named var required before calling Flags() — anonymous literals are unaddressable (K072)
+- **runtimeApplySpec local YAML struct**: CLI YAML deserialization struct is separate from pkg/ari canonical params types (K071)
+- **ari.Client.Call error surfacing**: Wraps RPC errors as plain fmt.Errorf strings — use err.Error() contains check, not errors.As(*jsonrpc2.Error) (K073)
 
 ## Capability Contract
 
@@ -64,8 +71,4 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 - [x] M005 — Agent model refactoring
 - [x] M006 — Fix golangci-lint v2 issues
 - [x] M007 — Platform terminal state refactor
-- [ ] M008 — CLI consolidation + API model rename (5→2 binaries, --root config, agent/agentrun model)
-  - [x] S01 — Binary skeleton reorganization (cobra tree, shim+agentrun stubs, Makefile)
-  - [ ] S02 — --root config + RuntimeClass DB entity + self-fork shim
-  - [ ] S03 — CLI grammar alignment + socket validation
-  - [ ] S04 — Cleanup + API rename (agent/agentrun) + integration tests
+- [ ] M008 — CLI consolidation + API model rename (S01 ✅ S02 ✅ S03 ✅ S04 ⬜)

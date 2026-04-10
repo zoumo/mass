@@ -828,6 +828,18 @@ func (m *ProcessManager) BundlePath(workspace, name string) string {
 	return filepath.Join(m.bundleRoot, dirFragment)
 }
 
+// ValidateAgentSocketPath checks whether the would-be Unix socket path for the
+// given agent would exceed the OS limit. The path is computed the same way
+// createBundle does it — bundleRoot/<workspace>-<name>/agent-shim.sock — but
+// without creating any files or directories.
+//
+// Call this before writing any DB records (e.g. in handleAgentCreate) so that
+// a -32602 error is returned before any side effects.
+func (m *ProcessManager) ValidateAgentSocketPath(workspace, name string) error {
+	sockPath := filepath.Join(m.bundleRoot, workspace+"-"+name, "agent-shim.sock")
+	return spec.ValidateShimSocketPath(sockPath)
+}
+
 // SetAgentRecoveryInfo sets the recovery metadata on a running agent's
 // ShimProcess. Returns false if the agent is not in the processes map.
 func (m *ProcessManager) SetAgentRecoveryInfo(key string, info *RecoveryInfo) bool {

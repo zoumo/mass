@@ -39,6 +39,9 @@ func main() {
 	// Add agentrun commands (defined in agentrun.go)
 	rootCmd.AddCommand(agentrunCmd)
 
+	// Add runtime commands (defined in runtime.go)
+	rootCmd.AddCommand(runtimeCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

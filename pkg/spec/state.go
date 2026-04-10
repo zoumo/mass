@@ -24,10 +24,6 @@ func EventLogPath(stateDir string) string {
 	return filepath.Join(stateDir, eventLogFile)
 }
 
-// maxUnixSocketPath is the maximum byte length of a Unix domain socket path.
-// macOS defines UNIX_PATH_MAX as 104; Linux uses 108. We use the lower bound.
-const maxUnixSocketPath = 104
-
 // ShimSocketPath returns the Unix socket path for the agent-shim RPC server.
 // The socket lives inside the state dir so agentd can discover all running
 // shims by scanning /run/agentd/shim/*/agent-shim.sock after a restart.

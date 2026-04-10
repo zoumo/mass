@@ -519,6 +519,12 @@ func (s *Server) handleAgentCreate(ctx context.Context, conn *jsonrpc2.Conn, req
 		return
 	}
 
+	// Early socket-path length guard — fail before any DB write (D111).
+	if err := s.processes.ValidateAgentSocketPath(params.Workspace, params.Name); err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+
 	s.logger.Info("agent/create", "workspace", params.Workspace, "name", params.Name)
 
 	// Load workspace from DB — must exist and be ready.

@@ -762,3 +762,38 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** Multiple inlined mains share a single namespace. Without prefixing, identically-named types (`Config`, `Client`, `conn`) collide. Without local flag scoping, two subcommands that both register `--socket` or `--bundle` will overwrite each other's package-level `var` at `init()` time. Local scoping + prefix is the zero-ambiguity pattern.
 - **Reference:** M008/S01/T01 — cmd/agentd/shim.go (shim flags local), cmd/agentd/workspacemcp.go (wmcp prefix); M008/S01/T02 — cmd/agentdctl/shim.go (shim-prefixed client types).
 - **When:** M008/S01
+
+## K069 — Self-fork (os.Executable) requires OAR_SHIM_BINARY env override for integration tests
+
+- **Pattern:** After the binary consolidation in S02, `forkShim` uses `os.Executable()` for self-fork by default. However, `go test` runs the test binary, not `bin/agentd`. Integration tests that fork a shim require `OAR_SHIM_BINARY=/path/to/bin/agent-shim` to override the default self-fork path.
+- **Lesson:** `os.Executable()` in a test binary returns the test binary path, which cannot handle the `shim` subcommand. Integration tests must set `OAR_SHIM_BINARY` (or the setupAgentdTest helper must ensure agentd binary is used, not the test binary). The override env var is intentionally retained even post-consolidation as an escape hatch for exactly this scenario.
+- **Reference:** M008/S02/T02 — pkg/agentd/process.go forkShim(); M008/S02/T03 — tests/integration/session_test.go setupAgentdTest; D107.
+- **When:** M008/S02
+
+## K070 — bbolt -run TestRuntime filter too narrow; use -run Runtime
+
+- **Pattern:** When naming bbolt Store tests for Runtime CRUD (TestSetRuntime_CreateNew, TestGetRuntime_NotFound, etc.), the plan's suggested `-run TestRuntime` filter matches nothing because none of the test function names start with `TestRuntime`. Use `-run Runtime` or `-run 'TestSet|TestGet|TestList|TestDelete'` instead.
+- **Lesson:** Go's `-run` flag is a regex matched against the full test function name starting at any position. `TestRuntime` matches only functions that start with that exact string. `Runtime` (without prefix) matches `TestSetRuntime_*`, `TestGetRuntime_*`, etc. When writing slice plans with test filter commands, use the shortest unambiguous substring, not the common prefix of the function names.
+- **Reference:** M008/S02/T01 — pkg/meta/runtime_test.go; T01 SUMMARY deviations section.
+- **When:** M008/S02
+
+## K071 — runtimeApplySpec local YAML struct avoids polluting canonical ARI types with yaml tags
+
+- **Pattern:** When adding CLI commands that read YAML files and call ARI, define a local struct mirroring the ARI params struct but with `yaml:""` tags. Do not add yaml tags to pkg/ari types.
+- **Lesson:** pkg/ari types are canonical JSON-RPC parameter types. Adding `yaml:""` tags to them for CLI convenience would couple the internal wire format to YAML field naming conventions. A thin local struct in the CLI package (cmd/agentdctl/runtime.go) handles deserialization while pkg/ari types stay clean. The mapping is trivial and immediately visible in the apply subcommand.
+- **Reference:** M008/S02/T03 — cmd/agentdctl/runtime.go runtimeApplySpec; D108 on env type choice.
+- **When:** M008/S02
+
+## K072 — cobra inline command literal must be extracted to named var before calling Flags()
+
+- **Pattern:** When adding flags to a cobra subcommand that was defined as an inline `&cobra.Command{...}` literal inside `AddCommand(...)`, extract it to a named variable first, then call `cmd.Flags().StringP(...)` before `parent.AddCommand(cmd)`.
+- **Lesson:** You cannot call `Flags()` on an anonymous struct literal — Go will not allow taking the address of an unaddressable value. Extracting to a named variable (e.g. `promptCmd := &cobra.Command{...}`) is the required step before attaching flags. This comes up whenever a stub command is initially wired without flags and later needs them added.
+- **Reference:** M008/S03/T01 — cmd/agentdctl/agentrun.go promptCmd extraction; D111.
+- **When:** M008/S03
+
+## K073 — ari.Client.Call wraps RPC errors as fmt.Errorf strings, not *jsonrpc2.Error
+
+- **Pattern:** In tests against the ARI server, assert RPC error codes via `assert.Contains(t, err.Error(), "-32602")` rather than `require.ErrorAs(t, err, &rpcErr)` with a `*jsonrpc2.Error` target.
+- **Lesson:** `ari.Client.Call` returns a plain `fmt.Errorf` wrapping the error string, not a `*jsonrpc2.Error` struct. `errors.As` will not match because the concrete type is `*errors.errorString`. Checking `err.Error()` for the numeric error code string is the reliable pattern until the ARI client surfaces typed errors.
+- **Reference:** M008/S03/T02 — pkg/ari/server_test.go TestAgentCreateSocketPathTooLong; T02 SUMMARY deviations.
+- **When:** M008/S03

@@ -14,76 +14,46 @@ import (
 	"time"
 
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
-// setupAgentdTestWithRuntimeClass creates a temporary agentd instance with a
-// custom runtime class configuration. Accepts an arbitrary runtime class name
-// and its YAML body (indented for embedding under runtimeClasses:).
+// setupAgentdTestWithRuntimeClass creates a temporary agentd instance and registers
+// a custom runtime via runtime/set. Uses --root flag (no config.yaml) and self-fork
+// shim (no OAR_SHIM_BINARY).
 func setupAgentdTestWithRuntimeClass(
 	t *testing.T,
-	runtimeClassName, runtimeClassYAML string,
+	runtimeClassName string,
+	runtimeSpec ari.RuntimeSetParams,
 ) (context.Context, context.CancelFunc, *ari.Client, func()) {
 	t.Helper()
 
-	tmpDir := t.TempDir()
-	// Use short socket path in /tmp to avoid macOS 104-char Unix socket path limit (K025)
+	// Use a short root path under /tmp to avoid macOS 104-char Unix socket path limit (K025).
 	counter := atomic.AddInt64(&testSocketCounter, 1)
-	socketPath := fmt.Sprintf("/tmp/oar-%d-%d.sock", os.Getpid(), counter)
-	workspaceRoot := filepath.Join(tmpDir, "workspaces")
-	metaDB := filepath.Join(tmpDir, "agentd.db")
-	bundleRoot := filepath.Join(tmpDir, "bundles")
+	rootDir := fmt.Sprintf("/tmp/oar-%d-%d", os.Getpid(), counter)
+	socketPath := filepath.Join(rootDir, "agentd.sock")
 
 	os.Remove(socketPath)
-
-	for _, dir := range []string{workspaceRoot, bundleRoot} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("failed to create directory %s: %v", dir, err)
-		}
-	}
 
 	agentdBin, err := filepath.Abs("../../bin/agentd")
 	if err != nil {
 		t.Fatalf("failed to get agentd path: %v", err)
 	}
-	agentShimBin, err := filepath.Abs("../../bin/agent-shim")
-	if err != nil {
-		t.Fatalf("failed to get agent-shim path: %v", err)
-	}
 
-	for _, bin := range []string{agentdBin, agentShimBin} {
-		if _, err := os.Stat(bin); os.IsNotExist(err) {
-			t.Fatalf("binary not found: %s (run: go build -o bin/agentd ./cmd/agentd && go build -o bin/agent-shim ./cmd/agent-shim)", bin)
-		}
+	if _, err := os.Stat(agentdBin); os.IsNotExist(err) {
+		t.Fatalf("binary not found: %s (run: make build)", agentdBin)
 	}
-
-	// Build config YAML with the provided runtime class
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	configContent := fmt.Sprintf(`socket: %s
-workspaceRoot: %s
-metaDB: %s
-bundleRoot: %s
-runtimeClasses:
-  %s:
-%s
-`, socketPath, workspaceRoot, metaDB, bundleRoot, runtimeClassName, runtimeClassYAML)
-
-	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
-	}
-	t.Logf("config written to %s", configPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 
-	agentdCmd := exec.CommandContext(ctx, agentdBin, "--config", configPath)
+	agentdCmd := exec.CommandContext(ctx, agentdBin, "server", "--root", rootDir)
 	agentdCmd.Stdout = os.Stdout
 	agentdCmd.Stderr = os.Stderr
-	agentdCmd.Env = append(os.Environ(), fmt.Sprintf("OAR_SHIM_BINARY=%s", agentShimBin))
 
 	if err := agentdCmd.Start(); err != nil {
 		cancel()
 		t.Fatalf("failed to start agentd: %v", err)
 	}
-	t.Logf("agentd started with PID %d", agentdCmd.Process.Pid)
+	t.Logf("agentd started with PID %d (root=%s)", agentdCmd.Process.Pid, rootDir)
 
 	if err := waitForSocket(socketPath, 10*time.Second); err != nil {
 		cancel()
@@ -98,6 +68,17 @@ runtimeClasses:
 		t.Fatalf("failed to create ARI client: %v", err)
 	}
 
+	// Register the runtime via runtime/set. Ensure the name field is set.
+	runtimeSpec.Name = runtimeClassName
+	var runtimeResult ari.RuntimeInfo
+	if err := client.Call("runtime/set", runtimeSpec, &runtimeResult); err != nil {
+		cancel()
+		client.Close()
+		agentdCmd.Process.Kill()
+		t.Fatalf("failed to register runtime %q: %v", runtimeClassName, err)
+	}
+	t.Logf("runtime registered: name=%s command=%s", runtimeResult.Name, runtimeResult.Command)
+
 	cleanup := func() {
 		client.Close()
 		if agentdCmd.Process != nil {
@@ -106,8 +87,8 @@ runtimeClasses:
 			t.Log("agentd stopped")
 		}
 		os.Remove(socketPath)
+		os.RemoveAll(rootDir)
 		// Kill leftover agent processes from real CLI runtimes
-		exec.Command("pkill", "-f", "agent-shim").Run()
 		exec.Command("pkill", "-f", "pi-acp").Run()
 		exec.Command("pkill", "-f", "claude-agent-acp").Run()
 	}
@@ -224,14 +205,14 @@ func TestRealCLI_GsdPi(t *testing.T) {
 		t.Skip("skipping: ANTHROPIC_API_KEY not set (gsd-pi needs an LLM key to process prompts)")
 	}
 
-	runtimeClassYAML := `    command: bunx
-    args:
-      - "pi-acp"
-    env:
-      PI_ACP_PI_COMMAND: gsd
-      PI_CODING_AGENT_DIR: /Users/jim/.gsd/agent`
-
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", runtimeClassYAML)
+	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", ari.RuntimeSetParams{
+		Command: "bunx",
+		Args:    []string{"pi-acp"},
+		Env: []spec.EnvVar{
+			{Name: "PI_ACP_PI_COMMAND", Value: "gsd"},
+			{Name: "PI_CODING_AGENT_DIR", Value: "/Users/jim/.gsd/agent"},
+		},
+	})
 	defer cleanup()
 	defer cancel()
 
@@ -257,13 +238,13 @@ func TestRealCLI_ClaudeCode(t *testing.T) {
 		t.Skipf("skipping: claude-code adapter not found at %s", adapterPath)
 	}
 
-	runtimeClassYAML := fmt.Sprintf(`    command: node
-    args:
-      - "%s"
-    env:
-      ANTHROPIC_API_KEY: "%s"`, adapterPath, apiKey)
-
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", runtimeClassYAML)
+	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", ari.RuntimeSetParams{
+		Command: "node",
+		Args:    []string{adapterPath},
+		Env: []spec.EnvVar{
+			{Name: "ANTHROPIC_API_KEY", Value: apiKey},
+		},
+	})
 	defer cleanup()
 	defer cancel()
 

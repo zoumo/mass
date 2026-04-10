@@ -4,26 +4,26 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Validated
 
-### R001 — agentd daemon can start, parse config.yaml, and listen on ARI Unix socket
+### R001 — agentd daemon can start with --root flag (no config.yaml) and listen on ARI Unix socket
 - Class: launchability
 - Status: validated
-- Description: agentd daemon can start, parse config.yaml, and listen on ARI Unix socket
+- Description: agentd daemon can start with --root flag (no config.yaml) and listen on ARI Unix socket
 - Why it matters: Foundation for all agentd functionality
 - Source: execution
 - Primary owning slice: M001-tvc4z0/S01
 - Supporting slices: none
-- Validation: S01 tests pass. Daemon starts successfully with minimal config.yaml (socket, workspaceRoot, metaDB fields), initializes workspace manager and registry, creates ARI server, listens on Unix socket, handles SIGTERM graceful shutdown. Build verified with `go build -o bin/agentd ./cmd/agentd`.
+- Validation: M008/S02: `agentd server --root /tmp/test-agentd-s02` creates socket at /tmp/test-agentd-s02/agentd.sock without any config.yaml. All paths (socket, DB, bundles, workspaces) are derived from --root. config.yaml and ParseConfig() deleted entirely.
 - Notes: Includes project scaffolding, config parsing, signal handling
 
-### R002 — RuntimeClass registry can resolve runtimeClass name to command/args/env/capabilities
+### R002 — Runtime entity can be registered via ARI runtime/set, persisted to DB, and resolved by name to command/args/env
 - Class: core-capability
 - Status: validated
-- Description: RuntimeClass registry can resolve runtimeClass name to command/args/env/capabilities
+- Description: Runtime entity can be registered via ARI runtime/set, persisted to DB, and resolved by name to command/args/env
 - Why it matters: Enables declarative agent type selection (K8s RuntimeClass pattern)
 - Source: execution
 - Primary owning slice: M001-tvc4z0/S03
 - Supporting slices: none
-- Validation: S03 tests pass (6 unit tests). RuntimeClass registry resolves names to launch configs with ${VAR} env substitution, validates Command required, applies Capabilities defaults (Streaming=true, SessionLoad=false, ConcurrentSessions=1).
+- Validation: M008/S02: meta.Runtime stored in v1/runtimes bbolt bucket. ARI runtime/set|get|list|delete handlers implemented. agentdctl runtime apply/get/list/delete CLI. TestRuntimeLifecycle integration test verifies full chain: runtime/set → agent creates → idle state. Static RuntimeClassRegistry config deleted.
 - Notes: Config parsing, ${VAR} substitution, validation
 
 ### R003 — SQLite-based metadata store persists session/workspace/room records with CRUD operations
@@ -323,14 +323,14 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: M007/S03 validated: TestAgentCreateReturnsCreating (PASS) — handleAgentCreate replies synchronously with state=creating, background goroutine fires Start(). TestAgentListAndStatus (PASS) — polls agent/status and finds state transitions. S02 D088 enforcement: shim stateChange is the sole post-bootstrap write path; agentd no longer writes StatusRunning directly. Integration tests (TestAgentLifecycle, TestEndToEndPipeline) use waitForAgentState polling to idle after create.
 - Notes: M007 supersedes M005 validation: target poll state changed from created→idle (StatusCreated deleted, StatusIdle is the new post-bootstrap state per D085). Workspace+name identity used throughout per D087.
 
-### R049 — Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
+### R049 — Agent state machine uses creating/idle/running/stopped/error. meta.AgentState and meta.SessionState deleted. spec.Status is the sole state enum across all packages.
 - Class: core-capability
 - Status: validated
-- Description: Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
+- Description: Agent state machine uses creating/idle/running/stopped/error. meta.AgentState and meta.SessionState deleted. spec.Status is the sole state enum across all packages.
 - Why it matters: paused:warm/paused:cold are implementation details of future checkpoint/recovery, not natural states for current user-facing agent model.
 - Source: docs/plan/agent-runtime-alignment-plan.md
 - Primary owning slice: M005/S02
-- Validation: M007/S01 validated: meta.AgentState and meta.SessionState deleted from codebase. spec.Status (creating/idle/running/stopped/error) is the sole state enum across all packages. pkg/runtime/runtime.go writes "idle" to state.json after ACP handshake and after each prompt turn. `rg 'meta\.AgentState|meta\.SessionState' --type go` returns zero matches. go test ./pkg/spec/... ./pkg/runtime/... passes 64 tests including state assertions.
+- Validation: M007/S01 validated: meta.AgentState and meta.SessionState deleted; spec.Status (creating/idle/running/stopped/error) is the sole state enum across all packages. pkg/runtime/runtime.go writes 'idle' to state.json after ACP handshake and after each prompt turn. `rg 'meta.AgentState|meta.SessionState' --type go` returns zero matches. go test ./pkg/spec/... ./pkg/runtime/... passes 64 tests including state assertions. StatusCreated removed, StatusIdle added per D085.
 
 ### R050 — Event envelopes carry turnId, streamSeq, and phase for turn-aware ordering. Global seq retained as log sequence. Chat/replay orders by (turnId, streamSeq).
 - Class: core-capability
@@ -501,8 +501,8 @@ This file is the explicit capability and coverage contract for the project.
 
 | ID | Class | Status | Primary owner | Supporting | Proof |
 |---|---|---|---|---|---|
-| R001 | launchability | validated | M001-tvc4z0/S01 | none | S01 tests pass. Daemon starts successfully with minimal config.yaml (socket, workspaceRoot, metaDB fields), initializes workspace manager and registry, creates ARI server, listens on Unix socket, handles SIGTERM graceful shutdown. Build verified with `go build -o bin/agentd ./cmd/agentd`. |
-| R002 | core-capability | validated | M001-tvc4z0/S03 | none | S03 tests pass (6 unit tests). RuntimeClass registry resolves names to launch configs with ${VAR} env substitution, validates Command required, applies Capabilities defaults (Streaming=true, SessionLoad=false, ConcurrentSessions=1). |
+| R001 | launchability | validated | M001-tvc4z0/S01 | none | M008/S02: `agentd server --root /tmp/test-agentd-s02` creates socket at /tmp/test-agentd-s02/agentd.sock without any config.yaml. All paths (socket, DB, bundles, workspaces) are derived from --root. config.yaml and ParseConfig() deleted entirely. |
+| R002 | core-capability | validated | M001-tvc4z0/S03 | none | M008/S02: meta.Runtime stored in v1/runtimes bbolt bucket. ARI runtime/set|get|list|delete handlers implemented. agentdctl runtime apply/get/list/delete CLI. TestRuntimeLifecycle integration test verifies full chain: runtime/set → agent creates → idle state. Static RuntimeClassRegistry config deleted. |
 | R003 | core-capability | validated | M001-tvc4z0/S02 | none | S02 tests pass (26 unit tests + 2 integration tests). SQLite metadata store with WAL mode, foreign keys, embedded schema. CRUD operations for Session, Workspace, Room. Transaction support via BeginTx. Daemon lifecycle integration verified. |
 | R004 | core-capability | validated | M001-tvc4z0/S04 | none | S04 tests pass (12 SessionManager tests). CRUD operations work. State machine validates 9 valid transitions (created→running, created→stopped, running→paused:warm, running→stopped, paused:warm→running, paused:warm→paused:cold, paused:warm→stopped, paused:cold→running, paused:cold→stopped). Delete protection blocks running/paused:warm sessions. |
 | R005 | core-capability | validated | M001-tvc4z0/S05 | none | S05 tests pass. ProcessManager.Start forks shim, connects socket, subscribes events. ProcessManager.Stop gracefully shuts down with Shutdown RPC + 10s wait + kill. ShimClient provides RPC communication. Integration tests verify full lifecycle with mockagent. |
@@ -542,91 +542,14 @@ This file is the explicit capability and coverage contract for the project.
 | R046 | anti-feature | out-of-scope | none | none | n/a |
 | R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | M007/S03 validated: Full ARI JSON-RPC surface (workspace/* + agent/* handlers) implemented in pkg/ari/server.go with (workspace,name) identity throughout. 22 handler tests in pkg/ari/server_test.go cover workspace/create→agent/create→agent/prompt→agent/stop lifecycle. TestNoAgentIDInResponses confirms no agentId field in any response. ari-spec.md documents all 5 workspace/* and 9 agent/* methods with workspace+name params. golangci-lint passes 0 issues. |
 | R048 | core-capability | validated | M005/S04 | M005/S03 | M007/S03 validated: TestAgentCreateReturnsCreating (PASS) — handleAgentCreate replies synchronously with state=creating, background goroutine fires Start(). TestAgentListAndStatus (PASS) — polls agent/status and finds state transitions. S02 D088 enforcement: shim stateChange is the sole post-bootstrap write path; agentd no longer writes StatusRunning directly. Integration tests (TestAgentLifecycle, TestEndToEndPipeline) use waitForAgentState polling to idle after create. |
-| R049 | core-capability | validated | M005/S02 | none | M007/S01 validated: meta.AgentState and meta.SessionState deleted from codebase. spec.Status (creating/idle/running/stopped/error) is the sole state enum across all packages. pkg/runtime/runtime.go writes "idle" to state.json after ACP handshake and after each prompt turn. `rg 'meta\.AgentState|meta\.SessionState' --type go` returns zero matches. go test ./pkg/spec/... ./pkg/runtime/... passes 64 tests including state assertions. |
+| R049 | core-capability | validated | M005/S02 | none | M007/S01 validated: meta.AgentState and meta.SessionState deleted; spec.Status (creating/idle/running/stopped/error) is the sole state enum across all packages. pkg/runtime/runtime.go writes 'idle' to state.json after ACP handshake and after each prompt turn. `rg 'meta.AgentState|meta.SessionState' --type go` returns zero matches. go test ./pkg/spec/... ./pkg/runtime/... passes 64 tests including state assertions. StatusCreated removed, StatusIdle added per D085. |
 | R050 | core-capability | validated | M005/S05 | M005/S01 | M007/S01 validated: go.etcd.io/bbolt is the sole metadata backend. mattn/go-sqlite3 removed from go.mod. schema.sql, session.go, room.go deleted. 37 bbolt store tests pass (agent CRUD, workspace CRUD, nested bucket layout). `rg 'go-sqlite3' --type go` returns zero matches across entire codebase. |
 | R051 | integration | validated | M005/S06 | none | go.mod contains github.com/modelcontextprotocol/go-sdk v0.8.0; go build ./cmd/room-mcp-server exits 0; TestGenerateConfigWithRoomMCPInjection (3 subtests) asserts presence of OAR_AGENT_ID/OAR_AGENT_NAME and absence of deprecated OAR_SESSION_ID/OAR_ROOM_AGENT |
 | R052 | continuity | validated | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery (7-phase integration test, 4.47s, PASS): agents created pre-restart have identical agentId+room+name post-restart even in error state; RecoverSessions fail-safe marks dead-shim agents as error; creating-cleanup pass handles bootstrap races during restart window |
 
-### R053 — Single system binary: agentd contains server, shim, workspace-mcp subcommands
-- Class: operability
-- Status: active
-- Description: agentd is the sole system binary, containing server (daemon), shim (process shim entry point), and workspace-mcp (MCP server) as subcommands
-- Why it matters: Eliminates separate agent-shim and workspace-mcp-server binaries; single binary simplifies deployment and upgrades
-- Source: user
-- Primary owning slice: M008/S01
-- Supporting slices: M008/S04
-- Validation: mapped
-- Notes: agentd server starts the daemon; agentd shim is invoked by ProcessManager self-fork; agentd workspace-mcp is started by shim config injection
-
-### R054 — Single user CLI: agentdctl with resource-first grammar
-- Class: admin/support
-- Status: active
-- Description: agentdctl is the sole user CLI, with resource-first subcommand grammar (agentdctl agent/agentrun/workspace/shim) replacing the previous verb-first structure; agent-shim-cli merged into agentdctl shim
-- Why it matters: Consistent kubectl/ctr-style UX; eliminates agent-shim-cli as a separate binary
-- Source: user
-- Primary owning slice: M008/S01
-- Supporting slices: M008/S03
-- Validation: mapped
-- Notes: Final grammar: agentdctl {agent|agentrun|workspace|shim} <verb> [args] [flags]
-
-### R055 — agentd server starts from --root flag; no config.yaml required
-- Class: operability
-- Status: active
-- Description: agentd server derives all paths (socket, workspaceRoot, bundleRoot, metaDB) from a single --root directory; config.yaml is eliminated
-- Why it matters: Simpler startup model; defaults work out of the box (--root /var/run/agentd); no separate config file management
-- Source: user
-- Primary owning slice: M008/S02
-- Supporting slices: none
-- Validation: mapped
-- Notes: Default --root is /var/run/agentd; if dir creation fails, error message suggests --root ~/.agentd for non-root users
-
-### R056 — RuntimeClass / agent template is a DB-persisted entity managed via ARI methods
-- Class: core-capability
-- Status: active
-- Description: Agent templates (command/args/env/systemPrompt configuration) are persisted in the bbolt store and managed via ARI runtime/set + runtime/get + runtime/list + runtime/delete (later renamed to agent/* in S04)
-- Why it matters: Removes config.yaml as the source of truth for runtime classes; enables dynamic registration without daemon restart
-- Source: user
-- Primary owning slice: M008/S02
-- Supporting slices: M008/S04
-- Validation: mapped
-- Notes: Supersedes static RuntimeClasses map in config.yaml; agentdctl runtime apply -f installs a template from YAML
-
-### R057 — agentd shim subcommand replaces separate agent-shim binary; ProcessManager self-forks
-- Class: operability
-- Status: active
-- Description: ProcessManager forks agentd itself with the shim subcommand instead of a separate agent-shim binary; OAR_SHIM_BINARY env var and resolveShimBinary() are removed
-- Why it matters: Single binary deployment; eliminates the agent-shim binary path resolution problem
-- Source: user
-- Primary owning slice: M008/S02
-- Supporting slices: none
-- Validation: mapped
-- Notes: go run detection: agentd server warns if os.Executable() path contains /tmp/go-build; does not fatal but makes shim fork failure predictable
-
-### R058 — Socket path length validated at workspace/create and agent/create before DB write
-- Class: quality-attribute
-- Status: active
-- Description: workspace/create and agentrun/create validate that the derived shim socket path does not exceed the platform limit (104 chars on macOS, 108 on Linux) before writing to DB; returns -32602 with a clear message on overflow
-- Why it matters: Long workspace/agent names silently exceed macOS UNIX_PATH_MAX (104), causing shim bind failures at runtime; validation surfaces the error immediately
-- Source: inferred
-- Primary owning slice: M008/S03
-- Supporting slices: none
-- Validation: mapped
-- Notes: Platform limits via build tags: maxsockpath_darwin.go (104), maxsockpath_linux.go (108)
-
-### R059 — API model: agent=template, agentrun=running instance
-- Class: core-capability
-- Status: active
-- Description: ARI surface uses agent/* for template CRUD (set/get/list/delete) and agentrun/* for running instance lifecycle (create/prompt/cancel/stop/delete/restart/list/status/attach); aligns with containerd Container/Task model
-- Why it matters: Correct conceptual separation — a template (agent) is durable configuration; a running instance (agentrun) is ephemeral and workspace-scoped. Eliminates confusion between runtimeClass, agent, and session concepts
-- Source: user
-- Primary owning slice: M008/S04
-- Supporting slices: none
-- Validation: mapped
-- Notes: agent = containerd Container (definition); agentrun = containerd Task (running); session = internal ACP concept (shim-level, not exposed at ARI)
-
 ## Coverage Summary
 
-- Active requirements: 7 (R053, R054, R055, R056, R057, R058, R059)
-- Mapped to slices: 7
+- Active requirements: 0
+- Mapped to slices: 0
 - Validated: 33 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052)
 - Unmapped active requirements: 0

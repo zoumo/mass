@@ -17,19 +17,18 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
-// startAgentd launches agentd with the given config and env, waits for the socket,
+// startAgentd launches agentd with --root rootDir, waits for the socket,
 // and returns the Cmd. Caller is responsible for cleanup.
-func startAgentd(t *testing.T, ctx context.Context, agentdBin, configPath, agentShimBin, socketPath string) *exec.Cmd {
+func startAgentd(t *testing.T, ctx context.Context, agentdBin, rootDir, socketPath string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, agentdBin, "--config", configPath)
+	cmd := exec.CommandContext(ctx, agentdBin, "server", "--root", rootDir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), fmt.Sprintf("OAR_SHIM_BINARY=%s", agentShimBin))
 
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start agentd: %v", err)
 	}
-	t.Logf("agentd started with PID %d", cmd.Process.Pid)
+	t.Logf("agentd started with PID %d (root=%s)", cmd.Process.Pid, rootDir)
 
 	if err := waitForSocket(socketPath, 10*time.Second); err != nil {
 		t.Fatalf("socket not ready: %v", err)
@@ -59,52 +58,25 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	}
 
 	// ── Setup ──────────────────────────────────────────────────────────────
-	tmpDir := t.TempDir()
+	// Use a persistent rootDir under /tmp so the metaDB survives the restart.
+	// Socket lands at rootDir/agentd.sock which is within the 104-char macOS limit (K025).
 	counter := atomic.AddInt64(&testSocketCounter, 1)
-	socketPath := fmt.Sprintf("/tmp/oar-%d-%d.sock", os.Getpid(), counter)
-	workspaceRoot := filepath.Join(tmpDir, "workspaces")
-	metaDB := filepath.Join(tmpDir, "agentd.db")
-	bundleRoot := filepath.Join(tmpDir, "bundles")
-
-	os.Remove(socketPath)
-	for _, d := range []string{workspaceRoot, bundleRoot} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", d, err)
-		}
-	}
+	rootDir := fmt.Sprintf("/tmp/oar-restart-%d-%d", os.Getpid(), counter)
+	socketPath := filepath.Join(rootDir, "agentd.sock")
 
 	agentdBin, _ := filepath.Abs("../../bin/agentd")
-	agentShimBin, _ := filepath.Abs("../../bin/agent-shim")
 	mockagentBin, _ := filepath.Abs("../../bin/mockagent")
 
-	for _, bin := range []string{agentdBin, agentShimBin, mockagentBin} {
+	for _, bin := range []string{agentdBin, mockagentBin} {
 		if _, err := os.Stat(bin); os.IsNotExist(err) {
-			t.Fatalf("binary not found: %s", bin)
+			t.Fatalf("binary not found: %s (run: make build)", bin)
 		}
 	}
 
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	configContent := fmt.Sprintf(`
-socket: %s
-workspaceRoot: %s
-metaDB: %s
-bundleRoot: %s
-runtimeClasses:
-  mockagent:
-    command: %s
-    args: []
-    env:
-      PATH: /usr/bin:/bin
-`, socketPath, workspaceRoot, metaDB, bundleRoot, mockagentBin)
-
-	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	// Cleanup leftover processes at the end of the test.
+	// Cleanup leftover processes and rootDir at the end of the test.
 	defer func() {
 		os.Remove(socketPath)
-		exec.Command("pkill", "-f", "agent-shim").Run()
+		os.RemoveAll(rootDir)
 		exec.Command("pkill", "-f", "mockagent").Run()
 	}()
 
@@ -116,12 +88,22 @@ runtimeClasses:
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel1()
 
-	agentdCmd1 := startAgentd(t, ctx1, agentdBin, configPath, agentShimBin, socketPath)
+	agentdCmd1 := startAgentd(t, ctx1, agentdBin, rootDir, socketPath)
 
 	client1, err := ari.NewClient(socketPath)
 	if err != nil {
 		t.Fatalf("ARI client: %v", err)
 	}
+
+	// Register the mockagent runtime so agents can be created with runtimeClass="mockagent".
+	var runtimeResult1 ari.RuntimeInfo
+	if err := client1.Call("runtime/set", ari.RuntimeSetParams{
+		Name:    "mockagent",
+		Command: mockagentBin,
+	}, &runtimeResult1); err != nil {
+		t.Fatalf("runtime/set (phase 1): %v", err)
+	}
+	t.Logf("runtime registered (phase 1): name=%s", runtimeResult1.Name)
 
 	const wsName = "test-ws"
 	createTestWorkspace(t, client1, wsName)
@@ -197,7 +179,7 @@ runtimeClasses:
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel2()
 
-	agentdCmd2 := startAgentd(t, ctx2, agentdBin, configPath, agentShimBin, socketPath)
+	agentdCmd2 := startAgentd(t, ctx2, agentdBin, rootDir, socketPath)
 	defer stopAgentd(t, agentdCmd2, socketPath)
 
 	client2, err := ari.NewClient(socketPath)
@@ -205,6 +187,17 @@ runtimeClasses:
 		t.Fatalf("ARI client after restart: %v", err)
 	}
 	defer client2.Close()
+
+	// Re-register the mockagent runtime on restart (runtimes are persisted in DB,
+	// so this is idempotent — ensures the runtime is available after restart).
+	var runtimeResult2 ari.RuntimeInfo
+	if err := client2.Call("runtime/set", ari.RuntimeSetParams{
+		Name:    "mockagent",
+		Command: mockagentBin,
+	}, &runtimeResult2); err != nil {
+		t.Fatalf("runtime/set (phase 3): %v", err)
+	}
+	t.Logf("runtime registered (phase 3): name=%s", runtimeResult2.Name)
 
 	// Wait for recovery pass to complete (typically 1-2s).
 	t.Log("Waiting for recovery pass to complete...")

@@ -23,74 +23,45 @@ var testSocketCounter int64
 // =============================================================================
 
 // setupAgentdTest starts agentd daemon and returns context, client, and cleanup function.
+// It uses --root flag path derivation (no config.yaml) and self-fork shim (no OAR_SHIM_BINARY).
+// After the socket is ready it registers the "mockagent" runtime via runtime/set.
 func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *ari.Client, func()) {
 	t.Helper()
-	tmpDir := t.TempDir()
-	// Use short socket path in /tmp to avoid macOS 104-char Unix socket path limit (K025)
+	// Use a short root path under /tmp to avoid macOS 104-char Unix socket path limit (K025).
+	// Socket lands at rootDir/agentd.sock which is within the limit.
 	counter := atomic.AddInt64(&testSocketCounter, 1)
-	socketPath := fmt.Sprintf("/tmp/oar-%d-%d.sock", os.Getpid(), counter)
-	workspaceRoot := filepath.Join(tmpDir, "workspaces")
-	metaDB := filepath.Join(tmpDir, "agentd.db")
-	bundleRoot := filepath.Join(tmpDir, "bundles")
+	rootDir := fmt.Sprintf("/tmp/oar-%d-%d", os.Getpid(), counter)
+	socketPath := filepath.Join(rootDir, "agentd.sock")
 
+	// Remove any leftover socket from a prior run.
 	os.Remove(socketPath)
-
-	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
-		t.Fatalf("failed to create workspace root: %v", err)
-	}
-	if err := os.MkdirAll(bundleRoot, 0o755); err != nil {
-		t.Fatalf("failed to create bundle root: %v", err)
-	}
 
 	agentdBin, err := filepath.Abs("../../bin/agentd")
 	if err != nil {
 		t.Fatalf("failed to get agentd path: %v", err)
-	}
-	agentShimBin, err := filepath.Abs("../../bin/agent-shim")
-	if err != nil {
-		t.Fatalf("failed to get agent-shim path: %v", err)
 	}
 	mockagentBin, err := filepath.Abs("../../bin/mockagent")
 	if err != nil {
 		t.Fatalf("failed to get mockagent path: %v", err)
 	}
 
-	for _, bin := range []string{agentdBin, agentShimBin, mockagentBin} {
+	for _, bin := range []string{agentdBin, mockagentBin} {
 		if _, err := os.Stat(bin); os.IsNotExist(err) {
-			t.Fatalf("binary not found: %s", bin)
+			t.Fatalf("binary not found: %s (run: make build)", bin)
 		}
-	}
-
-	configPath := filepath.Join(tmpDir, "config.yaml")
-	configContent := fmt.Sprintf(`
-socket: %s
-workspaceRoot: %s
-metaDB: %s
-bundleRoot: %s
-runtimeClasses:
-  mockagent:
-    command: %s
-    args: []
-    env:
-      PATH: /usr/bin:/bin
-`, socketPath, workspaceRoot, metaDB, bundleRoot, mockagentBin)
-
-	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
-		t.Fatalf("failed to write config: %v", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 
-	agentdCmd := exec.CommandContext(ctx, agentdBin, "--config", configPath)
+	agentdCmd := exec.CommandContext(ctx, agentdBin, "server", "--root", rootDir)
 	agentdCmd.Stdout = os.Stdout
 	agentdCmd.Stderr = os.Stderr
-	agentdCmd.Env = append(os.Environ(), fmt.Sprintf("OAR_SHIM_BINARY=%s", agentShimBin))
 
 	if err := agentdCmd.Start(); err != nil {
 		cancel()
 		t.Fatalf("failed to start agentd: %v", err)
 	}
-	t.Logf("agentd started with PID %d", agentdCmd.Process.Pid)
+	t.Logf("agentd started with PID %d (root=%s)", agentdCmd.Process.Pid, rootDir)
 
 	if err := waitForSocket(socketPath, 10*time.Second); err != nil {
 		cancel()
@@ -103,6 +74,18 @@ runtimeClasses:
 		t.Fatalf("failed to create ARI client: %v", err)
 	}
 
+	// Register the mockagent runtime so tests can use runtimeClass="mockagent".
+	var runtimeResult ari.RuntimeInfo
+	if err := client.Call("runtime/set", ari.RuntimeSetParams{
+		Name:    "mockagent",
+		Command: mockagentBin,
+	}, &runtimeResult); err != nil {
+		cancel()
+		client.Close()
+		t.Fatalf("failed to register mockagent runtime: %v", err)
+	}
+	t.Logf("runtime registered: name=%s command=%s", runtimeResult.Name, runtimeResult.Command)
+
 	cleanup := func() {
 		client.Close()
 		if agentdCmd.Process != nil {
@@ -111,7 +94,7 @@ runtimeClasses:
 			t.Log("agentd stopped")
 		}
 		os.Remove(socketPath)
-		exec.Command("pkill", "-f", "agent-shim").Run()
+		os.RemoveAll(rootDir)
 		exec.Command("pkill", "-f", "mockagent").Run()
 	}
 

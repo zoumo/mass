@@ -19,9 +19,21 @@ var workspaceCmd = &cobra.Command{
 
 // workspaceCreateCmd creates a workspace from the specified source.
 var workspaceCreateCmd = &cobra.Command{
-	Use:   "create",
-	Short: "Create a workspace",
-	RunE:  runWorkspaceCreate,
+	Use:   "create <type> <name>",
+	Short: "Create a workspace from a source type",
+	Long: `Create a workspace of the given source type with the given name.
+
+Source types:
+  git       Clone a remote git repository
+  emptyDir  Create an empty directory workspace
+  local     Mount a local directory as a workspace
+
+Examples:
+  agentdctl workspace create emptyDir myws
+  agentdctl workspace create local myws --path /tmp/mydir
+  agentdctl workspace create git myws --url https://github.com/org/repo --ref main`,
+	Args: cobra.ExactArgs(2),
+	RunE: runWorkspaceCreate,
 }
 
 // workspaceListCmd lists all workspaces in the registry.
@@ -48,8 +60,6 @@ var workspaceSendCmd = &cobra.Command{
 
 // Flags for workspace create command.
 var (
-	wsCreateName      string
-	wsCreateType      string // git, emptyDir, local
 	wsCreateGitURL    string
 	wsCreateGitRef    string
 	wsCreateGitDepth  int
@@ -65,13 +75,10 @@ var (
 )
 
 func init() {
-	workspaceCreateCmd.Flags().StringVar(&wsCreateName, "name", "", "Workspace name (required)")
-	workspaceCreateCmd.Flags().StringVar(&wsCreateType, "type", "emptyDir", "Source type: git, emptyDir, or local")
 	workspaceCreateCmd.Flags().StringVar(&wsCreateGitURL, "url", "", "Git repository URL (required for git type)")
 	workspaceCreateCmd.Flags().StringVar(&wsCreateGitRef, "ref", "", "Git reference (branch, tag, or commit)")
 	workspaceCreateCmd.Flags().IntVar(&wsCreateGitDepth, "depth", 0, "Git shallow clone depth (0 = full clone)")
 	workspaceCreateCmd.Flags().StringVar(&wsCreateLocalPath, "path", "", "Local directory path (required for local type)")
-	_ = workspaceCreateCmd.MarkFlagRequired("name")
 
 	workspaceSendCmd.Flags().StringVar(&wsSendWorkspace, "workspace", "", "Workspace name (required)")
 	workspaceSendCmd.Flags().StringVar(&wsSendFrom, "from", "", "Sender agent name (required)")
@@ -89,8 +96,12 @@ func init() {
 }
 
 // runWorkspaceCreate creates a workspace via the ARI workspace/create method.
+// args[0] is the source type (git, emptyDir, local); args[1] is the workspace name.
 func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
-	switch wsCreateType {
+	wsType := args[0]
+	wsName := args[1]
+
+	switch wsType {
 	case "git":
 		if wsCreateGitURL == "" {
 			return fmt.Errorf("--url is required for git source type")
@@ -102,7 +113,7 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("--path is required for local source type")
 		}
 	default:
-		return fmt.Errorf("unknown source type %q (valid: git, emptyDir, local)", wsCreateType)
+		return fmt.Errorf("unknown source type %q (valid: git, emptyDir, local)", wsType)
 	}
 
 	client, err := getClient()
@@ -113,7 +124,7 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 
 	// Build Source from flags.
 	var src workspace.Source
-	switch wsCreateType {
+	switch wsType {
 	case "git":
 		src = workspace.Source{
 			Type: workspace.SourceTypeGit,
@@ -131,7 +142,7 @@ func runWorkspaceCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	params := ari.WorkspaceCreateParams{
-		Name:   wsCreateName,
+		Name:   wsName,
 		Source: srcJSON,
 	}
 

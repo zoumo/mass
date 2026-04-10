@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -338,6 +339,39 @@ func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
 		"name":      "active-agent",
 	}, nil)
 	require.Error(t, err, "agent/delete for non-terminal agent must return an error")
+}
+
+// TestAgentCreateSocketPathTooLong verifies that agent/create returns -32602
+// (CodeInvalidParams) and writes no DB record when the combined socket path
+// would exceed the OS limit.
+func TestAgentCreateSocketPathTooLong(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "sock-ws")
+
+	// 70 'a' chars: combined with any realistic tmpdir bundleRoot this will
+	// exceed 104 bytes (macOS) / 108 bytes (Linux).
+	longName := strings.Repeat("a", 70)
+
+	_, err := callRaw(t, env.client, "agent/create", map[string]any{
+		"workspace":    "sock-ws",
+		"name":         longName,
+		"runtimeClass": "default",
+	})
+	require.Error(t, err, "agent/create with too-long name must return an error")
+
+	// ari.Client.Call surfaces RPC errors as "rpc error <code>: <msg>" strings;
+	// verify the code is -32602 (CodeInvalidParams).
+	assert.Contains(t, err.Error(), "-32602",
+		"error must carry code -32602 (CodeInvalidParams)")
+
+	// No agent record must have been written to DB.
+	var listResult ari.AgentListResult
+	require.NoError(t, env.client.Call("agent/list",
+		map[string]string{"workspace": "sock-ws"}, &listResult))
+	for _, ag := range listResult.Agents {
+		assert.NotEqual(t, longName, ag.Name,
+			"agent with too-long name must not appear in agent/list")
+	}
 }
 
 // ────────────────────────────────────────────────────────────────────────────
