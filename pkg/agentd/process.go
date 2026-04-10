@@ -218,8 +218,6 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	// 5. Fork agent-shim process.
 	shimProc, err := m.forkShim(agent, bundlePath, stateDir)
 	if err != nil {
-		// Clean up bundle directory on fork failure.
-		_ = os.RemoveAll(bundlePath)
 		return nil, fmt.Errorf("process: fork shim: %w", err)
 	}
 
@@ -228,11 +226,14 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	shimProc.StateDir = stateDir
 	shimProc.SocketPath = socketPath
 
+	// Start watchProcess now so shimProc.Done is closed as soon as the OS
+	// process exits. waitForSocket checks Done to fail fast on early crash.
+	go m.watchProcess(workspace, name, shimProc)
+
 	// 6. Wait for socket to appear (poll with timeout).
-	if err := m.waitForSocket(ctx, socketPath); err != nil {
-		// Kill shim process and clean up.
+	if err := m.waitForSocket(ctx, socketPath, shimProc); err != nil {
+		// Kill shim process; leave bundle intact (preserved until agent/delete).
 		_ = m.killShim(shimProc)
-		_ = os.RemoveAll(bundlePath)
 		return nil, fmt.Errorf("process: wait for socket: %w", err)
 	}
 
@@ -240,9 +241,8 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	// Routes session/update → shimProc.Events and runtime/stateChange → DB (D088).
 	client, err := DialWithHandler(ctx, socketPath, m.buildNotifHandler(workspace, name, shimProc))
 	if err != nil {
-		// Kill shim process and clean up.
+		// Kill shim process; leave bundle intact (preserved until agent/delete).
 		_ = m.killShim(shimProc)
-		_ = os.RemoveAll(bundlePath)
 		return nil, fmt.Errorf("process: connect shim client: agent=%s: %w", key, err)
 	}
 	shimProc.Client = client
@@ -267,10 +267,9 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 
 	// 8. Subscribe to events (no afterSeq — this is a fresh start).
 	if _, err := client.Subscribe(ctx, nil, nil); err != nil {
-		// Close client, kill shim, clean up.
+		// Close client, kill shim; leave bundle intact (preserved until agent/delete).
 		_ = client.Close()
 		_ = m.killShim(shimProc)
-		_ = os.RemoveAll(bundlePath)
 		return nil, fmt.Errorf("process: subscribe events: agent=%s: %w", key, err)
 	}
 
@@ -355,9 +354,9 @@ func (m *ProcessManager) generateConfig(agent *meta.Agent, rc *RuntimeClass) spe
 // Also creates the workspace symlink (agentRoot.path -> actual workspace).
 // Returns bundlePath, stateDir, socketPath.
 func (m *ProcessManager) createBundle(agent *meta.Agent, cfg spec.Config) (string, string, string, error) {
-	// Bundle directory: <WorkspaceRoot>/<workspace>/<name>
+	// Bundle directory: <BundleRoot>/<workspace>-<name>
 	dirFragment := agent.Metadata.Workspace + "-" + agent.Metadata.Name
-	bundlePath := filepath.Join(m.config.WorkspaceRoot, dirFragment)
+	bundlePath := filepath.Join(m.config.BundleRoot, dirFragment)
 
 	// Create bundle directory.
 	if err := os.MkdirAll(bundlePath, 0o755); err != nil {
@@ -397,12 +396,10 @@ func (m *ProcessManager) createBundle(agent *meta.Agent, cfg spec.Config) (strin
 		return "", "", "", fmt.Errorf("symlink workspace %s -> %s: %w", workspaceLink, workspace.Status.Path, err)
 	}
 
-	// State directory.
-	// Use /tmp for shorter paths (macOS has ~107 char limit for Unix sockets).
-	stateDir := spec.StateDir("/tmp/agentd-shim", dirFragment)
-	if m.config.Socket == "" {
-		stateDir = spec.StateDir("/run/agentd/shim", dirFragment)
-	}
+	// State directory is co-located with the bundle directory.
+	// All shim runtime files (agent-shim.sock, state.json, events.jsonl) live
+	// inside the bundle so the entire agent lifecycle is in one place.
+	stateDir := bundlePath
 
 	// Socket path.
 	socketPath := spec.ShimSocketPath(stateDir)
@@ -447,14 +444,13 @@ func (m *ProcessManager) forkShim(agent *meta.Agent, bundlePath, stateDir string
 	key := agentKey(agent.Metadata.Workspace, agent.Metadata.Name)
 
 	// Build command arguments.
-	// Pass filepath.Base(stateDir) as --id so the shim computes the same
-	// stateDir as agentd expects. stateDir uses workspace-name (hyphenated),
-	// while agentKey uses workspace/name (slash); mismatching them causes the
-	// socket path to diverge and waitForSocket to time out.
+	// stateDir == bundlePath, so --id is the bundle directory name and
+	// --state-dir is BundleRoot. The shim computes: stateDir = parent/<id>,
+	// which resolves back to bundlePath.
 	args := []string{
 		"--bundle", bundlePath,
-		"--id", filepath.Base(stateDir),
-		"--state-dir", filepath.Dir(stateDir), // parent dir, shim adds /<id>
+		"--id", filepath.Base(bundlePath),
+		"--state-dir", filepath.Dir(bundlePath), // BundleRoot; shim appends /<id>
 		"--permissions", "approve-all",
 	}
 
@@ -488,21 +484,28 @@ func (m *ProcessManager) forkShim(agent *meta.Agent, bundlePath, stateDir string
 }
 
 // waitForSocket waits for the shim's RPC socket to appear.
-// Polls with a 20s timeout — real CLI runtimes (gsd-pi, claude-code) need
-// npm resolution + ACP handshake which can take 10-20s.
-func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string) error {
-	timeout := 20 * time.Second
+// Polls with a 90s timeout — real CLI runtimes (gsd-pi, claude-code) need
+// bunx package resolution + process startup which can take 30-60s on cold cache.
+// Returns early if the shim process exits before the socket appears.
+func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string, shimProc *ShimProcess) error {
+	timeout := 90 * time.Second
 
 	deadline := time.Now().Add(timeout)
 	for {
-		// Check if socket exists.
+		// Check if socket exists and is connectable.
 		if _, err := os.Stat(socketPath); err == nil {
-			// Socket exists, try to connect to verify it's ready.
 			conn, err := net.Dial("unix", socketPath)
 			if err == nil {
 				_ = conn.Close()
 				return nil
 			}
+		}
+
+		// Fail fast if the shim process has already exited.
+		select {
+		case <-shimProc.Done:
+			return fmt.Errorf("shim process exited before socket appeared at %s", socketPath)
+		default:
 		}
 
 		// Check if timeout expired.
@@ -515,7 +518,6 @@ func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string) e
 			return ctx.Err()
 		}
 
-		// Wait a bit before polling again.
 		time.Sleep(50 * time.Millisecond)
 	}
 }
@@ -575,8 +577,8 @@ func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProc
 	defer cancel()
 	_ = m.agents.UpdateStatus(ctx, workspace, name, meta.AgentStatus{State: spec.StatusStopped})
 
-	// Clean up bundle directory (best effort).
-	_ = os.RemoveAll(shimProc.BundlePath)
+	// Bundle directory is intentionally NOT cleaned up here.
+	// It must persist until the agent is explicitly deleted via agent/delete.
 
 	// Close the Done channel LAST to signal all cleanup is complete.
 	close(shimProc.Done)
@@ -641,10 +643,8 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 		<-shimProc.Done
 	}
 
-	// Clean up bundle directory if it still exists.
-	if shimProc.BundlePath != "" {
-		_ = os.RemoveAll(shimProc.BundlePath)
-	}
+	// Bundle directory is intentionally NOT cleaned up here.
+	// It must persist until the agent is explicitly deleted via agent/delete.
 
 	m.logger.Info("agent stopped", "agent_key", key)
 	return nil
@@ -758,6 +758,14 @@ func (m *ProcessManager) InjectProcess(key string, proc *ShimProcess) {
 	m.mu.Lock()
 	m.processes[key] = proc
 	m.mu.Unlock()
+}
+
+// BundlePath returns the expected bundle directory path for the given agent.
+// This path is deterministic and can be computed even when the shim is not running,
+// allowing callers (e.g. agent/delete) to clean up the bundle after the process exits.
+func (m *ProcessManager) BundlePath(workspace, name string) string {
+	dirFragment := workspace + "-" + name
+	return filepath.Join(m.config.BundleRoot, dirFragment)
 }
 
 // SetAgentRecoveryInfo sets the recovery metadata on a running agent's

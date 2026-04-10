@@ -10,7 +10,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-M007 in progress — platform terminal state refactor. **S01, S02, S03, and S04 complete.** Storage + model foundation done (S01); shim write authority boundary enforced and RestartPolicy tryReload/alwaysNew implemented (S02); full ARI JSON-RPC surface (workspace/* + agent/*) implemented and handler-tested (S03); CLI + workspace-mcp-server + design docs updated to terminal-state model (S04). Next: S05 (Integration Tests + Final Verification).
+**M007 complete.** All five slices delivered. The platform terminal state refactor is done: bbolt replaces SQLite, `spec.Status` (creating/idle/running/stopped/error) is the sole state enum, Room/Session concepts eliminated, `(workspace, name)` identity throughout, shim-only post-bootstrap state writes enforced (D088), RestartPolicy tryReload/alwaysNew governs recovery (D089). Integration tests pass (`go test ./tests/integration/... -v -timeout 120s` → 7 PASS + 2 SKIP), lint is clean (`golangci-lint run ./... → 0 issues`), `bin/workspace-mcp-server` built, 0 banned references.
 
 ### Completed Milestones
 
@@ -22,53 +22,42 @@ M007 in progress — platform terminal state refactor. **S01, S02, S03, and S04 
 | M004 | Room runtime | mesh/star/isolated room modes, room/send, room-mcp-server |
 | M005 | Agent model refactoring | session→agent migration, async lifecycle, agent-centric ARI surface |
 | M006 | Fix golangci-lint v2 issues | 202 → 0 issues across 11 linter categories; clean lint posture established |
+| M007 | Platform terminal state refactor | bbolt storage, unified spec.Status (idle replaces created), (workspace,name) identity, shim write authority, Room/Session elimination; all integration tests pass; 0 lint issues |
 
 ### What's Implemented
 
 - `agent-shim` starts ACP agent processes, performs the ACP handshake, exposes `session/*` + `runtime/*` shim RPC surface
 - `agentd` manages agents with **(workspace, name)** identity (no UUID), async lifecycle, fail-closed recovery
-- **bbolt metadata store**: v1/workspaces/{name} + v1/agents/{workspace}/{name} bucket layout; full CRUD for Agent + Workspace; 37 unit tests
-- **spec.Status as sole state enum**: creating/idle/running/stopped/error; meta.AgentState and meta.SessionState deleted; pkg/runtime writes "idle" to state.json
+- **bbolt metadata store**: `v1/workspaces/{name}` + `v1/agents/{workspace}/{name}` bucket layout; full CRUD for Agent + Workspace; 37 unit tests
+- **spec.Status as sole state enum**: creating/idle/running/stopped/error; meta.AgentState and meta.SessionState deleted; pkg/runtime writes "idle" to state.json after ACP handshake and after each prompt turn
 - **D088 shim write authority boundary**: post-bootstrap state transitions flow exclusively through `runtime/stateChange` notifications; direct `UpdateStatus(StatusRunning)` removed from `Start()`; `buildNotifHandler` shared method handles both `session/update` and `runtime/stateChange`
-- **D089 RestartPolicy tryReload/alwaysNew**: `tryReload` reads ACP sessionId from state.json and calls `session/load` on the shim, falling back silently on any failure; `alwaysNew` (default) skips session/load entirely; constants in `pkg/meta/models.go`
-- **Full ARI JSON-RPC server** (`pkg/ari/server.go`, 946 lines): all workspace/* and agent/* handlers with Unix socket, Serve/Shutdown lifecycle, slog observability. 27 tests pass (18 handler tests + 9 pre-existing client/registry tests).
+- **D089 RestartPolicy tryReload/alwaysNew**: `tryReload` reads ACP sessionId from state.json and calls `session/load` on the shim after Subscribe (critical ordering), falling back silently on any failure; `alwaysNew` (default) skips session/load entirely; constants in `pkg/meta/models.go`
+- **Full ARI JSON-RPC server** (`pkg/ari/server.go`, 946 lines): all workspace/* and agent/* handlers with Unix socket, Serve/Shutdown lifecycle, slog observability at every handler entry. 22 unit tests pass.
   - workspace/create → pending immediately, async prepare → ready/error
   - workspace/status → registry fast-path then DB fallback
   - workspace/list → registry-tracked (ready) workspaces only
-  - workspace/delete → guarded by agent existence check
+  - workspace/delete → guarded by agent existence check (CodeRecoveryBlocked -32001 if agents exist)
   - workspace/send → recovery guard, error-state rejection, fire-and-forget ShimClient.Prompt
   - agent/create → state=creating synchronously, background Start() goroutine
   - agent/prompt → StatusIdle gate; CodeRecoveryBlocked for any other state
   - agent/cancel, agent/stop, agent/delete, agent/restart, agent/list, agent/status, agent/attach
-  - Zero `agentId` fields in any response (agentToInfo helper enforces structurally)
-  - CodeRecoveryBlocked (-32001) for recovery-active paths
+  - **Zero `agentId` fields** in any response (agentToInfo helper enforces structurally)
 - **InjectProcess(key, proc)** on ProcessManager: test injection hook for workspace/send and agent/prompt tests without a real shim binary
 - **Turn-aware event ordering**: TurnId/StreamSeq/Phase on session/update envelopes
 - **Workspace preparation** for Git/EmptyDir/Local sources with hooks and reference tracking
 - **CLI tooling** (`agentdctl`) with agent/workspace/daemon subcommands using (workspace,name) identity and `parseAgentKey()` helper
-  - `agentdctl workspace send` subcommand added (--workspace, --from, --to, --text flags); stale `room` command removed
-- **workspace-mcp-server binary** (`cmd/workspace-mcp-server/main.go`): renamed from room-mcp-server; reads OAR_WORKSPACE_NAME; exposes workspace_send and workspace_status MCP tools; logs workspace=/agentName=/agentID= on startup; `go build ./cmd/workspace-mcp-server` clean
-- **Design docs updated**: `docs/design/agentd/ari-spec.md` fully rewritten for workspace/agent model; `docs/design/agentd/agentd.md` updated to remove Session Manager, use workspace+name identity, and match spec.Status state values
-- **Fully clean golangci-lint v2 posture**: 0 issues across all 11 linter categories (as of M006; M007/S05 will re-validate)
+  - `agentdctl workspace send` subcommand (--workspace, --from, --to, --text flags); stale `room` command removed
+- **workspace-mcp-server binary** (`cmd/workspace-mcp-server/main.go`): renamed from room-mcp-server; reads OAR_WORKSPACE_NAME; exposes workspace_send and workspace_status MCP tools; self-contained local ARI structs
+- **Design docs**: `docs/design/agentd/ari-spec.md` fully rewritten for workspace/agent model (all 14 methods documented with params/responses); `docs/design/agentd/agentd.md` updated to remove Session Manager, use workspace+name identity, and match spec.Status state values
+- **Integration tests** (`tests/integration/`): All 9 integration tests pass (7 PASS + 2 SKIP for missing ANTHROPIC_API_KEY); 5 test files fully rewritten for new workspace/agent ARI model; concurrent, e2e, lifecycle, restart, and real-CLI families covered
+- **Clean golangci-lint v2 posture**: `golangci-lint run ./... → 0 issues`
 
-### M007 Slice Status
+### Infrastructure Fixes (M007/S05)
 
-| Slice | Title | Status |
-|-------|-------|--------|
-| S01 | Storage + Model Foundation | ✅ complete |
-| S02 | agentd Core Adaptation | ✅ complete |
-| S03 | ARI Surface Rewrite | ✅ complete |
-| S04 | CLI + workspace-mcp-server + Design Docs | ✅ complete |
-| S05 | Integration Tests + Final Verification | ⬜ next |
-
-### Lint Status (post-M006)
-
-`golangci-lint run ./...` → **0 issues** pre-M007. M007/S05 will re-validate after all structural changes land.
-
-### Known Pre-existing Issues
-
-- `TestProcessManagerStart` in `pkg/agentd` fails when `bin/agent-shim` socket doesn't start (requires live mock agent); confirmed pre-existing since before M007/S01.
-- Integration tests in `tests/integration/` pre-date M006; will be rewritten for new (workspace,name) identity in M007/S05.
+Three pre-existing bugs in `pkg/agentd/process.go` discovered and fixed during integration test rewrite:
+1. **Shim socket path mismatch (D101)**: `forkShim` now passes `filepath.Base(stateDir)` (hyphenated `workspace-name`) as `--id` instead of slash-separated `workspace/name`; shim and agentd now agree on socket location
+2. **Missed idle notification (D102)**: After Subscribe, agentd now reads `runtime/status` to bootstrap DB to idle if shim is already past the creating state (SetStateChangeHook is registered after Create() returns, so the first notification fires before the hook is set)
+3. **Stale socket files**: `os.Remove(socketPath)` called before fork to clear leftover sockets from prior test runs
 
 ## Milestone Sequence
 
@@ -79,9 +68,20 @@ M007 in progress — platform terminal state refactor. **S01, S02, S03, and S04 
 - [x] M004: Room runtime — mesh/star/isolated room modes, room/send, room-mcp-server
 - [x] M005: Agent model refactoring — session→agent migration, async lifecycle, agent-centric ARI surface
 - [x] M006: Fix golangci-lint v2 issues — 202→0 issues across 11 linter categories
-- [ ] M007: Platform terminal state refactor — bbolt storage, unified spec.Status, (workspace,name) identity, shim write authority, Room/Session elimination
+- [x] M007: Platform terminal state refactor — bbolt storage, unified spec.Status, (workspace,name) identity, shim write authority, Room/Session elimination
   - [x] S01: Storage + Model Foundation — bbolt store, new Agent+Workspace models, spec.StatusIdle, green build
   - [x] S02: agentd Core Adaptation — shim write authority (D088), RestartPolicy tryReload/alwaysNew (D089), 10 unit tests
-  - [x] S03: ARI Surface Rewrite — 946-line server.go with all workspace/* + agent/* handlers; 27 tests pass; zero agentId fields
+  - [x] S03: ARI Surface Rewrite — server.go with all workspace/* + agent/* handlers; 22 tests pass; zero agentId fields
   - [x] S04: CLI + workspace-mcp-server + Design Docs — workspace-mcp-server binary, workspace send subcommand, room cmd removed, design docs rewritten
-  - [ ] S05: Integration Tests + Final Verification (depends S04)
+  - [x] S05: Integration Tests + Final Verification — all 9 integration tests pass; golangci-lint → 0 issues; 3 infra bugs fixed
+
+## Lint Status
+
+`golangci-lint run ./...` → **0 issues** (validated M007/S05)
+
+## Known Open Work
+
+- session/load handler in real agent-shim binary (shim side of D089 tryReload; shim-side is currently a no-op; end-to-end proof deferred)
+- Integration test for workspace/send message delivery (currently only unit-tested in S03)
+- Workspace filesystem isolation: Workspace.Status.Path exists in the model but workspace/create does not yet provision a real filesystem directory
+- TestRealCLI_GsdPi and TestRealCLI_ClaudeCode skip without ANTHROPIC_API_KEY; a mock-LLM CI toggle could enable lightweight functional verification

@@ -65,6 +65,14 @@ type Config struct {
 	// WorkspaceRoot is the root directory for workspace creation.
 	WorkspaceRoot string `yaml:"workspaceRoot"`
 
+	// BundleRoot is the root directory for agent bundle creation.
+	// Each agent gets a subdirectory: <BundleRoot>/<workspace>-<name>/
+	// The bundle directory also serves as the shim state directory, so the
+	// socket and state files (agent-shim.sock, state.json, events.jsonl) all
+	// live in the same place.
+	// Defaults to WorkspaceRoot if not specified.
+	BundleRoot string `yaml:"bundleRoot"`
+
 	// MetaDB is the path to the metadata database file (SQLite or similar).
 	MetaDB string `yaml:"metaDB"`
 
@@ -111,6 +119,9 @@ func ParseConfig(path string) (Config, error) {
 	}
 	if cfg.WorkspaceRoot == "" {
 		return Config{}, fmt.Errorf("config missing required field: workspaceRoot")
+	}
+	if cfg.BundleRoot == "" {
+		cfg.BundleRoot = cfg.WorkspaceRoot
 	}
 
 	return cfg, nil

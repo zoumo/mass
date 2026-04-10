@@ -699,3 +699,59 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** When writing docs that explain removed concepts, use the affirmative: "identity is (workspace, name)" rather than "no agentId". The information is conveyed without tripping the grep gate. D100 documents this decision.
 - **Reference:** M007/S04/T02 — docs/design/agentd/ari-spec.md, agentd.md.
 - **When:** M007/S04
+
+## K060 — shim --id must be workspace-name (hyphen), not workspace/name (slash) — socket path mismatch
+
+- **Pattern:** `pkg/agentd/process.go` forkShim passes `filepath.Base(stateDir)` as `--id` to the agent-shim. `stateDir` is computed as `workspace-name` (hyphen-joined). Passing the raw `agentKey` (`workspace/name`, slash-separated) instead makes the shim socket land at a different path than agentd expects.
+- **Lesson:** The shim resolves its socket path as `filepath.Join(flagStateDir, flagID, "agent-shim.sock")`. If `--id` contains a slash, it creates a nested subdirectory that doesn't match agentd's `waitForSocket` path. Always pass `filepath.Base(stateDir)` (the hyphenated leaf) — not the composite agentKey — when forking the shim.
+- **Reference:** M007/S05/T02 — pkg/agentd/process.go forkShim; D101.
+- **When:** M007/S05
+
+## K061 — bootstrap agentd state from shim status after Subscribe, not from stateChange hook
+
+- **Pattern:** When agentd calls `shimClient.Subscribe()` and then immediately sets a stateChange hook on the shim (via `shimClient.SetStateChangeHook`), the hook is registered *after* `shimClient.Create()` returns. The creating→idle stateChange fires while the hook is nil and is silently dropped.
+- **Lesson:** After Subscribe(), call `shimClient.Status()` to read the current runtime state. If status reports `"idle"` (or any non-creating state), write it to the DB directly as a bootstrap sync. This avoids restructuring the shim startup sequence and handles the case where mockagent completes the ACP handshake in <1ms. The `waitForAgentStateOneOf` helper pattern in integration tests also exists because of this: poll for idle-or-other rather than waiting for a specific notification.
+- **Reference:** M007/S05/T02 — pkg/agentd/process.go Start(); D102.
+- **When:** M007/S05
+
+## K062 — integration test socket paths must use /tmp/oar-<pid>-<counter>.sock (macOS ≤104 char limit)
+
+- **Pattern:** `setupAgentdTest` in `tests/integration/session_test.go` constructs socket paths as `/tmp/oar-<pid>-<counter>.sock`. Each test gets its own counter via an atomic `testCounter`. The path intentionally avoids embedding temp-dir UUIDs.
+- **Lesson:** macOS Unix domain socket paths are limited to 104 characters (UNIX_PATH_MAX). Paths that embed `os.TempDir()` UUIDs (`/var/folders/v7/hcm12_5x49lf7szbrsz4p_p80000gp/T/...`) exceed this limit. Use `/tmp/` as the base for socket paths in tests; embed only a PID + counter for uniqueness. K025 documents the same constraint at the general level.
+- **Reference:** M007/S05/T02 — tests/integration/session_test.go setupAgentdTest; K025.
+- **When:** M007/S05
+
+## K063 — stale socket files from previous test runs cause bind failures; remove before fork
+
+- **Pattern:** `forkShim` in `process.go` now calls `os.Remove(socketPath)` before forking. If a previous test crashed without cleanup, the old socket file remains and the new shim fails to bind.
+- **Lesson:** Always remove the target socket file before forking the shim. The remove is idempotent (ignore ENOENT). Without this, flaky tests occur when prior runs leave stale sockets — not on the first run, but unpredictably on subsequent CI runs if the temp dir is reused.
+- **Reference:** M007/S05/T02 — pkg/agentd/process.go forkShim.
+- **When:** M007/S05
+
+## K064 — tryReload Subscribe-before-Load ordering is a correctness invariant
+
+- **Pattern:** In `recoverAgent()`, the `Subscribe()` call on the shim client must be established *before* the `session/load` call (tryReload path). The notification channel must be open before the load triggers a stateChange from the shim.
+- **Lesson:** If session/load fires before Subscribe, the immediate stateChange notification (creating→idle) arrives before the notification handler is registered and is silently dropped. The agent stays in an incorrect state in the DB. Subscribe first, load second — this is a correctness invariant for the tryReload path. D089 documents this ordering decision.
+- **Reference:** M007/S02/T02 — pkg/agentd/recovery.go recoverAgent(); D089.
+- **When:** M007/S02
+
+## K065 — compilable stub replaces incompatible large file while preserving green build
+
+- **Pattern:** When a file (e.g. pkg/ari/server.go, 1663 lines) is structurally incompatible with new types AND is scheduled for full replacement in a later slice, replace it with a minimal compilable stub (60 lines, Serve/Shutdown return nil) rather than adapting it.
+- **Lesson:** Partial adaptation of a large incompatible file has near-zero value if the file will be fully replaced. The stub approach: (a) preserves `go build ./...` green state; (b) gives the replacement slice a clean target; (c) avoids introducing transient bugs in intermediate states. Document the stub with a `// TODO(S0N): full implementation` comment so the intent is clear.
+- **Reference:** M007/S01/T04 — pkg/ari/server.go; M007/S03 replaced the stub.
+- **When:** M007/S01
+
+## K066 — agentToInfo helper pattern: prevent agentId field leakage structurally
+
+- **Pattern:** Centralise AgentInfo construction in a single `agentToInfo` helper function that produces the response shape from a `meta.Agent`. No handler builds AgentInfo directly.
+- **Lesson:** Without centralisation, each of the 9+ agent/* handlers needs its own manual field omission to guarantee no agentId appears in responses. A single helper makes the omission a structural property — it literally cannot be added without modifying one place. Pair this with a dedicated test (`TestNoAgentIDInResponses`) that audits the full set of handler responses via JSON marshalling.
+- **Reference:** M007/S03/T02 — pkg/ari/server.go agentToInfo(); D095.
+- **When:** M007/S03
+
+## K067 — waitForAgentStateOneOf: integration test polling must accept multiple valid terminal states
+
+- **Pattern:** Integration test polling for agent state after async operations should accept a set of valid states (e.g. idle-or-stopped), not a single exact state, when the operation may complete faster than the poll interval.
+- **Lesson:** mockagent completes turns in <1ms. If a test polls every 200ms for `idle` after an `agent/prompt`, the state may already be `stopped` (via a race with another transition) before the first poll fires. `waitForAgentStateOneOf(ctx, client, workspace, name, []string{"idle","stopped"}, timeout)` avoids spurious poll timeouts. Also relevant for post-stop polling where recovery may mark an agent `stopped` immediately.
+- **Reference:** M007/S05/T02 — tests/integration/session_test.go waitForAgentStateOneOf.
+- **When:** M007/S05

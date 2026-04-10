@@ -738,6 +738,14 @@ func (s *Server) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn, req
 		return
 	}
 
+	// Clean up bundle directory (best effort; DB record already deleted).
+	bundlePath := s.processes.BundlePath(params.Workspace, params.Name)
+	if err := os.RemoveAll(bundlePath); err != nil {
+		s.logger.Warn("agent/delete: failed to remove bundle",
+			"workspace", params.Workspace, "name", params.Name,
+			"bundle", bundlePath, "error", err)
+	}
+
 	s.replyOK(ctx, conn, req, struct{}{})
 }
 

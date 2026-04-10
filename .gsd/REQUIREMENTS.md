@@ -301,27 +301,27 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real shim binary.
 - Notes: Covered by M007: RestartPolicy+tryReload (S02), shim state authority (S02), CLI hardening (S04), integration test completeness (S05). Cross-client hardening (Codex) remains deferred per D014.
 
-### R047 — agentd exposes agent/* ARI methods as external surface; session/* is internal only. Agent identified by room+name unique key.
+### R047 — agentd exposes agent/* ARI methods as external surface; session/* is removed. Agent identified by (workspace, name) pair — no opaque UUID.
 - Class: core-capability
 - Status: validated
-- Description: agentd exposes agent/* ARI methods as external surface; session/* is internal only. Agent identified by room+name unique key.
+- Description: agentd exposes agent/* ARI methods as external surface; session/* is removed. Agent identified by (workspace, name) pair — no opaque UUID.
 - Why it matters: Users operate on agents, not sessions. The external model must match the user's mental model to reduce cognitive load and API confusion.
 - Source: docs/plan/agent-runtime-alignment-plan.md
 - Primary owning slice: M005/S03
 - Supporting slices: M005/S01, M005/S02
-- Validation: 10 agent/* dispatch cases in pkg/ari/server.go; TestARISessionMethodsRemoved confirms all 8 session/* methods return MethodNotFound; 64+ pkg/ari tests pass; grep count=25 for agent/* methods in ari-spec.md
-- Notes: M007/S01 laid the data model foundation: Workspace struct (ObjectMeta, Spec, Status.Phase/Path) is in pkg/meta; pkg/ari/types.go uses WorkspaceCreateParams/WorkspaceStatusResult with workspace-scoped agents. Full ARI handler implementation in S03.
+- Validation: M007/S03 validated: Full ARI JSON-RPC surface (workspace/* + agent/* handlers) implemented in pkg/ari/server.go with (workspace,name) identity throughout. 22 handler tests in pkg/ari/server_test.go cover workspace/create→agent/create→agent/prompt→agent/stop lifecycle. TestNoAgentIDInResponses confirms no agentId field in any response. ari-spec.md documents all 5 workspace/* and 9 agent/* methods with workspace+name params. golangci-lint passes 0 issues.
+- Notes: M007 supersedes M005 validation: identity model changed from room+name to workspace+name; session/* methods removed entirely (not just internal); Workspace replaces Room+Namespace per D086/D087.
 
-### R048 — agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
+### R048 — agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for idle/error.
 - Class: core-capability
 - Status: validated
-- Description: agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for created/error.
+- Description: agent/create uses async semantics — returns creating state immediately, bootstrap completes in background. Callers poll agent/status for idle/error.
 - Why it matters: ACP bootstrap can take 10-30 seconds. Synchronous blocking on create is unacceptable for orchestrator responsiveness.
 - Source: docs/plan/agent-runtime-alignment-plan.md
 - Primary owning slice: M005/S04
 - Supporting slices: M005/S03
-- Validation: TestARIAgentCreateAsync (PASS): create returns creating → background goroutine → transitions to created. TestARIAgentCreateAsyncErrorState (PASS): invalid runtimeClass → error state with non-empty ErrorMessage. Both tests use real mockagent shim.
-- Notes: M007/S01 established the foundation: Agent bbolt key = agents/{workspace}/{name}, AgentManager API uses (workspace,name), pkg/ari/types.go uses Workspace+Name fields in all agent params. Full ARI handler implementation in S03.
+- Validation: M007/S03 validated: TestAgentCreateReturnsCreating (PASS) — handleAgentCreate replies synchronously with state=creating, background goroutine fires Start(). TestAgentListAndStatus (PASS) — polls agent/status and finds state transitions. S02 D088 enforcement: shim stateChange is the sole post-bootstrap write path; agentd no longer writes StatusRunning directly. Integration tests (TestAgentLifecycle, TestEndToEndPipeline) use waitForAgentState polling to idle after create.
+- Notes: M007 supersedes M005 validation: target poll state changed from created→idle (StatusCreated deleted, StatusIdle is the new post-bootstrap state per D085). Workspace+name identity used throughout per D087.
 
 ### R049 — Agent state machine uses creating/created/running/stopped/error. paused:warm and paused:cold are removed from active state machine.
 - Class: core-capability
@@ -540,8 +540,8 @@ This file is the explicit capability and coverage contract for the project.
 | R044 | quality-attribute | validated | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real shim binary. |
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
-| R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | 10 agent/* dispatch cases in pkg/ari/server.go; TestARISessionMethodsRemoved confirms all 8 session/* methods return MethodNotFound; 64+ pkg/ari tests pass; grep count=25 for agent/* methods in ari-spec.md |
-| R048 | core-capability | validated | M005/S04 | M005/S03 | TestARIAgentCreateAsync (PASS): create returns creating → background goroutine → transitions to created. TestARIAgentCreateAsyncErrorState (PASS): invalid runtimeClass → error state with non-empty ErrorMessage. Both tests use real mockagent shim. |
+| R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | M007/S03 validated: Full ARI JSON-RPC surface (workspace/* + agent/* handlers) implemented in pkg/ari/server.go with (workspace,name) identity throughout. 22 handler tests in pkg/ari/server_test.go cover workspace/create→agent/create→agent/prompt→agent/stop lifecycle. TestNoAgentIDInResponses confirms no agentId field in any response. ari-spec.md documents all 5 workspace/* and 9 agent/* methods with workspace+name params. golangci-lint passes 0 issues. |
+| R048 | core-capability | validated | M005/S04 | M005/S03 | M007/S03 validated: TestAgentCreateReturnsCreating (PASS) — handleAgentCreate replies synchronously with state=creating, background goroutine fires Start(). TestAgentListAndStatus (PASS) — polls agent/status and finds state transitions. S02 D088 enforcement: shim stateChange is the sole post-bootstrap write path; agentd no longer writes StatusRunning directly. Integration tests (TestAgentLifecycle, TestEndToEndPipeline) use waitForAgentState polling to idle after create. |
 | R049 | core-capability | validated | M005/S02 | none | M007/S01 validated: meta.AgentState and meta.SessionState deleted from codebase. spec.Status (creating/idle/running/stopped/error) is the sole state enum across all packages. pkg/runtime/runtime.go writes "idle" to state.json after ACP handshake and after each prompt turn. `rg 'meta\.AgentState|meta\.SessionState' --type go` returns zero matches. go test ./pkg/spec/... ./pkg/runtime/... passes 64 tests including state assertions. |
 | R050 | core-capability | validated | M005/S05 | M005/S01 | M007/S01 validated: go.etcd.io/bbolt is the sole metadata backend. mattn/go-sqlite3 removed from go.mod. schema.sql, session.go, room.go deleted. 37 bbolt store tests pass (agent CRUD, workspace CRUD, nested bucket layout). `rg 'go-sqlite3' --type go` returns zero matches across entire codebase. |
 | R051 | integration | validated | M005/S06 | none | go.mod contains github.com/modelcontextprotocol/go-sdk v0.8.0; go build ./cmd/room-mcp-server exits 0; TestGenerateConfigWithRoomMCPInjection (3 subtests) asserts presence of OAR_AGENT_ID/OAR_AGENT_NAME and absence of deprecated OAR_SESSION_ID/OAR_ROOM_AGENT |
