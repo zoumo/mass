@@ -86,8 +86,11 @@ type ShimProcess struct {
 	// Events are delivered after Subscribe is called.
 	Events chan events.Event
 
-	// Done is closed when the shim process exits.
+	// Done is closed when the shim process exits and all cleanup is complete.
 	Done chan struct{}
+
+	// exitErr holds the error returned by cmd.Wait(). Set before Done is closed.
+	exitErr error
 
 	// Recovery holds per-agent recovery metadata. Nil for agents that
 	// were started normally (not recovered after a daemon restart).
@@ -214,6 +217,9 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	if err != nil {
 		return nil, fmt.Errorf("process: create bundle: %w", err)
 	}
+	if err := spec.ValidateShimSocketPath(socketPath); err != nil {
+		return nil, err
+	}
 
 	// 5. Fork agent-shim process.
 	shimProc, err := m.forkShim(agent, bundlePath, stateDir)
@@ -226,9 +232,13 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	shimProc.StateDir = stateDir
 	shimProc.SocketPath = socketPath
 
-	// Start watchProcess now so shimProc.Done is closed as soon as the OS
-	// process exits. waitForSocket checks Done to fail fast on early crash.
-	go m.watchProcess(workspace, name, shimProc)
+	// Close Done as soon as the OS process exits so waitForSocket can fail fast
+	// on early crash. Full cleanup (map removal, DB update) runs in the
+	// watchProcess goroutine started after successful bootstrap.
+	go func() {
+		shimProc.exitErr = shimProc.Cmd.Wait()
+		close(shimProc.Done)
+	}()
 
 	// 6. Wait for socket to appear (poll with timeout).
 	if err := m.waitForSocket(ctx, socketPath, shimProc); err != nil {
@@ -328,6 +338,24 @@ func (m *ProcessManager) generateConfig(agent *meta.Agent, rc *RuntimeClass) spe
 	}
 	annotations["runtimeClass"] = rc.Name
 
+	// Compute the bundle/state directory (same formula as createBundle) so we
+	// can pass OAR_STATE_DIR to the workspace-mcp-server before the directory
+	// is actually created.
+	stateDir := filepath.Join(m.config.BundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
+
+	workspaceMcp := spec.McpServer{
+		Type:    "stdio",
+		Name:    "workspace",
+		Command: m.findWorkspaceMcpBinary(),
+		Args:    []string{},
+		Env: []spec.EnvVar{
+			{Name: "OAR_AGENTD_SOCKET", Value: m.config.Socket},
+			{Name: "OAR_WORKSPACE_NAME", Value: agent.Metadata.Workspace},
+			{Name: "OAR_AGENT_NAME", Value: agent.Metadata.Name},
+			{Name: "OAR_STATE_DIR", Value: stateDir},
+		},
+	}
+
 	return spec.Config{
 		OarVersion: "0.1.0",
 		Metadata: spec.Metadata{
@@ -344,10 +372,30 @@ func (m *ProcessManager) generateConfig(agent *meta.Agent, rc *RuntimeClass) spe
 				Args:    rc.Args,
 				Env:     env,
 			},
-			Session: spec.AcpSession{},
+			Session: spec.AcpSession{
+				McpServers: []spec.McpServer{workspaceMcp},
+			},
 		},
 		Permissions: spec.ApproveAll,
 	}
+}
+
+// findWorkspaceMcpBinary returns the path to the workspace-mcp-server binary.
+// Resolution order:
+//  1. OAR_WORKSPACE_MCP_BINARY env var (test override)
+//  2. ./bin/workspace-mcp-server relative to current working directory
+//  3. PATH lookup
+func (m *ProcessManager) findWorkspaceMcpBinary() string {
+	if envPath := os.Getenv("OAR_WORKSPACE_MCP_BINARY"); envPath != "" {
+		return envPath
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		builtPath := filepath.Join(cwd, "bin", "workspace-mcp-server")
+		if _, err := os.Stat(builtPath); err == nil {
+			return builtPath
+		}
+	}
+	return "workspace-mcp-server"
 }
 
 // createBundle creates the bundle directory and writes config.json.
@@ -557,14 +605,17 @@ func (m *ProcessManager) killShim(shimProc *ShimProcess) error {
 }
 
 // watchProcess waits for the shim process to exit and cleans up.
+// The process exit itself is detected by the lightweight goroutine started in
+// Start(), which calls cmd.Wait() and closes shimProc.Done. This goroutine
+// waits on Done and then performs full cleanup.
 func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProcess) {
-	// Wait for process to exit.
-	err := shimProc.Cmd.Wait()
+	// Wait for the lightweight goroutine to signal process exit.
+	<-shimProc.Done
 	key := shimProc.AgentKey
 
-	m.logger.Info("shim process exited", "agent_key", key, "error", err)
+	m.logger.Info("shim process exited", "agent_key", key, "error", shimProc.exitErr)
 
-	// Close the Events channel first.
+	// Close the Events channel.
 	close(shimProc.Events)
 
 	// Remove from processes map.
@@ -579,9 +630,6 @@ func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProc
 
 	// Bundle directory is intentionally NOT cleaned up here.
 	// It must persist until the agent is explicitly deleted via agent/delete.
-
-	// Close the Done channel LAST to signal all cleanup is complete.
-	close(shimProc.Done)
 }
 
 // Stop gracefully stops a running shim process for the given agent.

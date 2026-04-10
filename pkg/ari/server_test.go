@@ -180,6 +180,40 @@ func TestWorkspaceStatusReady(t *testing.T) {
 	assert.NotEmpty(t, statusResult.Path, "ready workspace must have a path")
 }
 
+func TestWorkspaceStatusMembers(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "ws-members")
+
+	// Seed two agents directly into the store (bypasses shim start).
+	seedAgent(t, env.store, "ws-members", "checker", spec.StatusIdle)
+	seedAgent(t, env.store, "ws-members", "reviewer", spec.StatusRunning)
+
+	var result ari.WorkspaceStatusResult
+	require.NoError(t, env.client.Call("workspace/status",
+		map[string]string{"name": "ws-members"}, &result))
+
+	assert.Equal(t, "ready", result.Phase)
+	require.Len(t, result.Members, 2)
+
+	names := make([]string, 0, len(result.Members))
+	for _, m := range result.Members {
+		names = append(names, m.Name)
+	}
+	assert.ElementsMatch(t, []string{"checker", "reviewer"}, names)
+}
+
+func TestWorkspaceStatusMembersEmpty(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "ws-empty")
+
+	var result ari.WorkspaceStatusResult
+	require.NoError(t, env.client.Call("workspace/status",
+		map[string]string{"name": "ws-empty"}, &result))
+
+	assert.Equal(t, "ready", result.Phase)
+	assert.Empty(t, result.Members)
+}
+
 func TestWorkspaceList(t *testing.T) {
 	env := newTestServer(t)
 

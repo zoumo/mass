@@ -116,6 +116,13 @@ func (m *Manager) Create(ctx context.Context) error {
 	defer func() {
 		if handshakeErr != nil {
 			_ = cmd.Process.Kill()
+			_ = m.writeState(spec.State{
+				OarVersion:  m.cfg.OarVersion,
+				ID:          m.cfg.Metadata.Name,
+				Status:      spec.StatusStopped,
+				Bundle:      m.bundleDir,
+				Annotations: m.cfg.Metadata.Annotations,
+			}, "bootstrap-failed")
 		}
 	}()
 

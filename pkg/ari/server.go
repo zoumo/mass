@@ -339,10 +339,12 @@ func (s *Server) handleWorkspaceStatus(ctx context.Context, conn *jsonrpc2.Conn,
 
 	// Fast path: registry contains ready workspaces.
 	if wm := s.registry.Get(params.Name); wm != nil {
+		members := s.listWorkspaceMembers(ctx, params.Name)
 		s.replyOK(ctx, conn, req, WorkspaceStatusResult{
-			Name:  wm.Name,
-			Phase: wm.Status,
-			Path:  wm.Path,
+			Name:    wm.Name,
+			Phase:   wm.Status,
+			Path:    wm.Path,
+			Members: members,
 		})
 		return
 	}
@@ -359,10 +361,12 @@ func (s *Server) handleWorkspaceStatus(ctx context.Context, conn *jsonrpc2.Conn,
 		return
 	}
 
+	members := s.listWorkspaceMembers(ctx, params.Name)
 	s.replyOK(ctx, conn, req, WorkspaceStatusResult{
-		Name:  ws.Metadata.Name,
-		Phase: string(ws.Status.Phase),
-		Path:  ws.Status.Path,
+		Name:    ws.Metadata.Name,
+		Phase:   string(ws.Status.Phase),
+		Path:    ws.Status.Path,
+		Members: members,
 	})
 }
 
@@ -940,6 +944,21 @@ func agentToInfo(ag *meta.Agent) AgentInfo {
 		Labels:       ag.Metadata.Labels,
 		CreatedAt:    ag.Metadata.CreatedAt,
 	}
+}
+
+// listWorkspaceMembers returns AgentInfo for all agents in the given workspace.
+// Returns nil (not an error) if the query fails.
+func (s *Server) listWorkspaceMembers(ctx context.Context, wsName string) []AgentInfo {
+	agents, err := s.agents.List(ctx, &meta.AgentFilter{Workspace: wsName})
+	if err != nil {
+		s.logger.Error("listWorkspaceMembers: list agents failed", "workspace", wsName, "err", err)
+		return nil
+	}
+	infos := make([]AgentInfo, 0, len(agents))
+	for _, ag := range agents {
+		infos = append(infos, agentToInfo(ag))
+	}
+	return infos
 }
 
 // ────────────────────────────────────────────────────────────────────────────

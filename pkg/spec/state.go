@@ -24,11 +24,25 @@ func EventLogPath(stateDir string) string {
 	return filepath.Join(stateDir, eventLogFile)
 }
 
+// maxUnixSocketPath is the maximum byte length of a Unix domain socket path.
+// macOS defines UNIX_PATH_MAX as 104; Linux uses 108. We use the lower bound.
+const maxUnixSocketPath = 104
+
 // ShimSocketPath returns the Unix socket path for the agent-shim RPC server.
 // The socket lives inside the state dir so agentd can discover all running
 // shims by scanning /run/agentd/shim/*/agent-shim.sock after a restart.
 func ShimSocketPath(stateDir string) string {
 	return filepath.Join(stateDir, shimSocketFile)
+}
+
+// ValidateShimSocketPath checks that the socket path does not exceed the OS
+// limit for Unix domain socket paths (104 bytes on macOS, 108 on Linux).
+func ValidateShimSocketPath(socketPath string) error {
+	if len(socketPath) > maxUnixSocketPath {
+		return fmt.Errorf("spec: socket path too long (%d bytes, max %d): %s — shorten the bundle root or agent name",
+			len(socketPath), maxUnixSocketPath, socketPath)
+	}
+	return nil
 }
 
 // WriteState atomically writes s to dir/state.json.

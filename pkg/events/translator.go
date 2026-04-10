@@ -210,32 +210,33 @@ func (t *Translator) broadcastSessionEvent(ev Event) {
 }
 
 func (t *Translator) broadcastEnvelope(build func(seq int, at time.Time) Envelope) {
-	var (
-		env  Envelope
-		log  *EventLog
-		subs []chan Envelope
-	)
-
 	t.mu.Lock()
-	env = build(t.nextSeq, time.Now().UTC())
-	t.nextSeq++
-	log = t.log
-	subs = make([]chan Envelope, 0, len(t.subs))
-	for _, ch := range t.subs {
-		subs = append(subs, ch)
-	}
-	t.mu.Unlock()
 
-	if log != nil {
-		// Log writes are best-effort; a history failure must not block live fan-out.
-		_ = log.Append(env)
+	// If the translator is stopped, channels may already be closed — bail out.
+	select {
+	case <-t.done:
+		t.mu.Unlock()
+		return
+	default:
 	}
-	for _, ch := range subs {
+
+	env := build(t.nextSeq, time.Now().UTC())
+	t.nextSeq++
+	log := t.log
+	// Send while holding the lock so Stop() cannot close channels concurrently.
+	// Sends are non-blocking (buffered channel + default case), so no deadlock risk.
+	for _, ch := range t.subs {
 		select {
 		case ch <- env:
 		default:
 			// Slow subscriber — drop rather than block fan-out.
 		}
+	}
+	t.mu.Unlock()
+
+	if log != nil {
+		// Log writes are best-effort and happen outside the lock.
+		_ = log.Append(env)
 	}
 }
 

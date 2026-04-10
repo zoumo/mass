@@ -57,7 +57,6 @@ type ariWorkspaceMember struct {
 type config struct {
 	agentdSocket  string // OAR_AGENTD_SOCKET
 	workspaceName string // OAR_WORKSPACE_NAME
-	agentID       string // OAR_AGENT_ID
 	agentName     string // OAR_AGENT_NAME
 }
 
@@ -65,7 +64,6 @@ func loadConfig() (config, error) {
 	c := config{
 		agentdSocket:  os.Getenv("OAR_AGENTD_SOCKET"),
 		workspaceName: os.Getenv("OAR_WORKSPACE_NAME"),
-		agentID:       os.Getenv("OAR_AGENT_ID"),
 		agentName:     os.Getenv("OAR_AGENT_NAME"),
 	}
 	if c.agentdSocket == "" {
@@ -73,9 +71,6 @@ func loadConfig() (config, error) {
 	}
 	if c.workspaceName == "" {
 		return c, fmt.Errorf("OAR_WORKSPACE_NAME is required")
-	}
-	if c.agentID == "" {
-		return c, fmt.Errorf("OAR_AGENT_ID is required")
 	}
 	// OAR_AGENT_NAME may be empty (agent name within workspace is optional)
 	return c, nil
@@ -250,7 +245,7 @@ func main() {
 		log.Fatalf("configuration error: %v", err)
 	}
 
-	log.Printf("starting (workspace=%s, agentName=%s, agentID=%s)", cfg.workspaceName, cfg.agentName, cfg.agentID)
+	log.Printf("starting (workspace=%s, agentName=%s)", cfg.workspaceName, cfg.agentName)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "workspace-mcp-server", Version: "0.1.0"}, nil)
 
