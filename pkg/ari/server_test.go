@@ -58,18 +58,13 @@ func newTestServer(t *testing.T) *testEnv {
 	mgr := workspace.NewWorkspaceManager()
 	registry := ari.NewRegistry()
 
-	runtimeClasses, err := agentd.NewRuntimeClassRegistry(nil)
-	require.NoError(t, err)
-
 	agents := agentd.NewAgentManager(store)
-	cfg := agentd.Config{WorkspaceRoot: filepath.Join(tmpDir, "ws-root")}
-	processes := agentd.NewProcessManager(runtimeClasses, agents, store, cfg)
+	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"))
 
 	sockPath := shortSockPath(t)
 	t.Cleanup(func() { _ = os.Remove(sockPath) })
 
-	srv := ari.New(mgr, registry, agents, processes, runtimeClasses, cfg, store,
-		sockPath, tmpDir)
+	srv := ari.New(mgr, registry, agents, processes, store, sockPath, tmpDir)
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve() }()

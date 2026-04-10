@@ -16,7 +16,7 @@ import (
 )
 
 // TestProcessManagerStart tests the full Start workflow:
-// get Agent → resolve RuntimeClass → generate config.json → create bundle
+// get Agent → resolve RuntimeClass from DB → generate config.json → create bundle
 // → fork agent-shim → wait for socket → connect ShimClient → subscribe events
 // → transition agent status to "running".
 func TestProcessManagerStart(t *testing.T) {
@@ -50,40 +50,22 @@ func TestProcessManagerStart(t *testing.T) {
 	}
 	defer store.Close()
 
-	// Create RuntimeClassRegistry with mockagent.
-	runtimeClasses := map[string]RuntimeClassConfig{
-		"mockagent": {
+	// Persist runtime record for "mockagent" to the DB store.
+	if err := store.SetRuntime(ctx, &meta.Runtime{
+		Metadata: meta.ObjectMeta{Name: "mockagent"},
+		Spec: meta.RuntimeSpec{
 			Command: mockagentBinary,
 			Args:    []string{},
-			Env:     map[string]string{},
-			Capabilities: CapabilitiesConfig{
-				Streaming:          true,
-				SessionLoad:        false,
-				ConcurrentSessions: 1,
-			},
 		},
-	}
-	registry, err := NewRuntimeClassRegistry(runtimeClasses)
-	if err != nil {
-		t.Fatalf("NewRuntimeClassRegistry: %v", err)
+	}); err != nil {
+		t.Fatalf("SetRuntime: %v", err)
 	}
 
-	// Create ProcessManager config.
-	cfg := Config{
-		Socket:        filepath.Join(tmpDir, "agentd.sock"),
-		WorkspaceRoot: bundleRoot,
-		MetaDB:        dbPath,
-		Runtime: RuntimeConfig{
-			DefaultClass: "mockagent",
-		},
-		SessionPolicy: SessionPolicyConfig{
-			MaxSessions: 10,
-		},
-	}
+	socketPath := filepath.Join(tmpDir, "agentd.sock")
 
 	// Create AgentManager and ProcessManager.
 	agentMgr := NewAgentManager(store)
-	procMgr := NewProcessManager(registry, agentMgr, store, cfg)
+	procMgr := NewProcessManager(agentMgr, store, socketPath, bundleRoot)
 
 	// Create a workspace with a ready path.
 	workspacePath := filepath.Join(workspaceRoot, "test-workspace")
@@ -261,15 +243,15 @@ done:
 // TestGenerateConfig verifies that generateConfig produces correct config from an Agent.
 func TestGenerateConfig(t *testing.T) {
 	pm := &ProcessManager{
-		config: Config{
-			Socket: "/tmp/test-agentd.sock",
-		},
+		socketPath: "/tmp/test-agentd.sock",
 	}
 	rc := &RuntimeClass{
 		Name:    "mockagent",
 		Command: "/usr/bin/mockagent",
 		Args:    []string{},
-		Env:     map[string]string{"SOME_VAR": "value"},
+		Env: []spec.EnvVar{
+			{Name: "SOME_VAR", Value: "value"},
+		},
 	}
 
 	t.Run("basic agent config", func(t *testing.T) {

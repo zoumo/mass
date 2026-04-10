@@ -17,10 +17,12 @@ import (
 //	v1/
 //	  workspaces/{name}            → Workspace JSON blob
 //	  agents/{workspace}/{name}    → Agent JSON blob (nested buckets)
+//	  runtimes/{name}              → Runtime JSON blob
 var (
 	bucketV1         = []byte("v1")
 	bucketWorkspaces = []byte("workspaces")
 	bucketAgents     = []byte("agents")
+	bucketRuntimes   = []byte("runtimes")
 )
 
 // Store is the bbolt-backed metadata store.
@@ -78,6 +80,9 @@ func (s *Store) initBuckets() error {
 		}
 		if _, err := v1.CreateBucketIfNotExists(bucketAgents); err != nil {
 			return fmt.Errorf("create v1/agents bucket: %w", err)
+		}
+		if _, err := v1.CreateBucketIfNotExists(bucketRuntimes); err != nil {
+			return fmt.Errorf("create v1/runtimes bucket: %w", err)
 		}
 		return nil
 	})

@@ -21,18 +21,16 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
-// Server is a JSON-RPC 2.0 server that exposes workspace/* and agent/* methods
-// over a Unix-domain socket.
+// Server is a JSON-RPC 2.0 server that exposes workspace/*, agent/*, and
+// runtime/* methods over a Unix-domain socket.
 type Server struct {
-	manager        *workspace.WorkspaceManager
-	registry       *Registry
-	agents         *agentd.AgentManager
-	processes      *agentd.ProcessManager
-	runtimeClasses *agentd.RuntimeClassRegistry
-	config         agentd.Config
-	store          *meta.Store
-	socketPath     string
-	baseDir        string
+	manager    *workspace.WorkspaceManager
+	registry   *Registry
+	agents     *agentd.AgentManager
+	processes  *agentd.ProcessManager
+	store      *meta.Store
+	socketPath string
+	baseDir    string
 
 	// ln is the active listener; set by Serve, used by Shutdown.
 	ln net.Listener
@@ -56,24 +54,20 @@ func New(
 	registry *Registry,
 	agents *agentd.AgentManager,
 	processes *agentd.ProcessManager,
-	runtimeClasses *agentd.RuntimeClassRegistry,
-	config agentd.Config,
 	store *meta.Store,
 	socketPath, baseDir string,
 ) *Server {
 	return &Server{
-		manager:        manager,
-		registry:       registry,
-		agents:         agents,
-		processes:      processes,
-		runtimeClasses: runtimeClasses,
-		config:         config,
-		store:          store,
-		socketPath:     socketPath,
-		baseDir:        baseDir,
-		conns:          make(map[*jsonrpc2.Conn]struct{}),
-		shutdownCh:     make(chan struct{}),
-		logger:         slog.Default().With("component", "ari.server"),
+		manager:    manager,
+		registry:   registry,
+		agents:     agents,
+		processes:  processes,
+		store:      store,
+		socketPath: socketPath,
+		baseDir:    baseDir,
+		conns:      make(map[*jsonrpc2.Conn]struct{}),
+		shutdownCh: make(chan struct{}),
+		logger:     slog.Default().With("component", "ari.server"),
 	}
 }
 
@@ -212,6 +206,16 @@ func (s *Server) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 		s.handleAgentStatus(ctx, conn, req)
 	case "agent/attach":
 		s.handleAgentAttach(ctx, conn, req)
+
+	// runtime/*
+	case "runtime/set":
+		s.handleRuntimeSet(ctx, conn, req)
+	case "runtime/get":
+		s.handleRuntimeGet(ctx, conn, req)
+	case "runtime/list":
+		s.handleRuntimeList(ctx, conn, req)
+	case "runtime/delete":
+		s.handleRuntimeDelete(ctx, conn, req)
 
 	default:
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeMethodNotFound,
@@ -959,6 +963,141 @@ func (s *Server) listWorkspaceMembers(ctx context.Context, wsName string) []Agen
 		infos = append(infos, agentToInfo(ag))
 	}
 	return infos
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// runtime/* handlers
+// ────────────────────────────────────────────────────────────────────────────
+
+// handleRuntimeSet handles the runtime/set method.
+// Creates or updates a runtime entity in the metadata store.
+//
+// Observability: INFO on success with name and command logged.
+func (s *Server) handleRuntimeSet(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var params RuntimeSetParams
+	if err := unmarshalParams(req, &params); err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+	if params.Name == "" {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, "name is required")
+		return
+	}
+	if params.Command == "" {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, "command is required")
+		return
+	}
+
+	s.logger.Info("runtime/set", "name", params.Name, "command", params.Command)
+
+	rt := &meta.Runtime{
+		Metadata: meta.ObjectMeta{Name: params.Name},
+		Spec: meta.RuntimeSpec{
+			Command:               params.Command,
+			Args:                  params.Args,
+			Env:                   params.Env,
+			StartupTimeoutSeconds: params.StartupTimeoutSeconds,
+		},
+	}
+	if err := s.store.SetRuntime(ctx, rt); err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
+		return
+	}
+
+	// Read back to get server-assigned timestamps.
+	stored, err := s.store.GetRuntime(ctx, params.Name)
+	if err != nil || stored == nil {
+		s.replyOK(ctx, conn, req, runtimeToInfo(rt))
+		return
+	}
+	s.replyOK(ctx, conn, req, runtimeToInfo(stored))
+}
+
+// handleRuntimeGet handles the runtime/get method.
+//
+// Returns the runtime info or -32602 (InvalidParams) if not found.
+func (s *Server) handleRuntimeGet(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var params RuntimeGetParams
+	if err := unmarshalParams(req, &params); err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+	if params.Name == "" {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, "name is required")
+		return
+	}
+
+	s.logger.Info("runtime/get", "name", params.Name)
+
+	rt, err := s.store.GetRuntime(ctx, params.Name)
+	if err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
+		return
+	}
+	if rt == nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("runtime %s not found", params.Name))
+		return
+	}
+
+	s.replyOK(ctx, conn, req, RuntimeGetResult{Runtime: runtimeToInfo(rt)})
+}
+
+// handleRuntimeList handles the runtime/list method.
+//
+// Returns all runtime info objects stored in the metadata DB.
+func (s *Server) handleRuntimeList(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	s.logger.Info("runtime/list")
+
+	rts, err := s.store.ListRuntimes(ctx)
+	if err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
+		return
+	}
+
+	infos := make([]RuntimeInfo, 0, len(rts))
+	for _, rt := range rts {
+		infos = append(infos, runtimeToInfo(rt))
+	}
+
+	s.replyOK(ctx, conn, req, RuntimeListResult{Runtimes: infos})
+}
+
+// handleRuntimeDelete handles the runtime/delete method.
+// No-op if the runtime does not exist.
+//
+// Observability: INFO on delete with name logged.
+func (s *Server) handleRuntimeDelete(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var params RuntimeDeleteParams
+	if err := unmarshalParams(req, &params); err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
+		return
+	}
+	if params.Name == "" {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, "name is required")
+		return
+	}
+
+	s.logger.Info("runtime/delete", "name", params.Name)
+
+	if err := s.store.DeleteRuntime(ctx, params.Name); err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
+		return
+	}
+
+	s.replyOK(ctx, conn, req, struct{}{})
+}
+
+// runtimeToInfo converts a meta.Runtime to a RuntimeInfo wire type.
+func runtimeToInfo(rt *meta.Runtime) RuntimeInfo {
+	return RuntimeInfo{
+		Name:      rt.Metadata.Name,
+		Command:   rt.Spec.Command,
+		Args:      rt.Spec.Args,
+		Env:       rt.Spec.Env,
+		CreatedAt: rt.Metadata.CreatedAt,
+		UpdatedAt: rt.Metadata.UpdatedAt,
+	}
 }
 
 // ────────────────────────────────────────────────────────────────────────────

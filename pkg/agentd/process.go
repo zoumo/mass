@@ -38,15 +38,15 @@ func agentKey(workspace, name string) string {
 // ProcessManager manages the lifecycle of agent-shim processes.
 // It orchestrates:
 //   - Agent status transitions
-//   - Runtime class resolution
+//   - Runtime entity resolution from DB
 //   - Bundle creation (config.json + workspace symlink)
-//   - Shim process fork/exec
+//   - Shim process fork/exec (self-fork or OAR_SHIM_BINARY override)
 //   - ShimClient connection and event subscription
 type ProcessManager struct {
-	registry *RuntimeClassRegistry
-	agents   *AgentManager
-	store    *meta.Store
-	config   Config
+	agents     *AgentManager
+	store      *meta.Store
+	socketPath string
+	bundleRoot string
 
 	mu        sync.RWMutex
 	processes map[string]*ShimProcess // agentKey (workspace+"/"+name) -> ShimProcess
@@ -98,15 +98,15 @@ type ShimProcess struct {
 }
 
 // NewProcessManager creates a new ProcessManager.
-func NewProcessManager(registry *RuntimeClassRegistry, agents *AgentManager, store *meta.Store, cfg Config) *ProcessManager {
+func NewProcessManager(agents *AgentManager, store *meta.Store, socketPath, bundleRoot string) *ProcessManager {
 	logger := slog.Default().With("component", "agentd.process")
 	return &ProcessManager{
-		registry:  registry,
-		agents:    agents,
-		store:     store,
-		config:    cfg,
-		processes: make(map[string]*ShimProcess),
-		logger:    logger,
+		agents:     agents,
+		store:      store,
+		socketPath: socketPath,
+		bundleRoot: bundleRoot,
+		processes:  make(map[string]*ShimProcess),
+		logger:     logger,
 	}
 }
 
@@ -171,10 +171,10 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 // Start creates and starts a shim process for the given agent.
 // The full workflow:
 //  1. Get Agent from AgentManager
-//  2. Resolve RuntimeClass from registry
+//  2. Resolve RuntimeClass from DB store via GetRuntime → NewRuntimeClassFromMeta
 //  3. Generate config.json
 //  4. Create bundle directory with workspace symlink
-//  5. Fork agent-shim process
+//  5. Fork agent-shim process (self-fork or OAR_SHIM_BINARY override)
 //  6. Wait for socket to appear
 //  7. Connect ShimClient with the unified notification handler (D088)
 //  8. Subscribe to events
@@ -203,11 +203,15 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.State)
 	}
 
-	// 2. Resolve RuntimeClass from registry.
-	runtimeClass, err := m.registry.Get(agent.Spec.RuntimeClass)
+	// 2. Resolve RuntimeClass from DB.
+	rt, err := m.store.GetRuntime(ctx, agent.Spec.RuntimeClass)
 	if err != nil {
-		return nil, fmt.Errorf("process: resolve runtime class %s: %w", agent.Spec.RuntimeClass, err)
+		return nil, fmt.Errorf("process: get runtime %s: %w", agent.Spec.RuntimeClass, err)
 	}
+	if rt == nil {
+		return nil, fmt.Errorf("process: runtime %s not found", agent.Spec.RuntimeClass)
+	}
+	runtimeClass := NewRuntimeClassFromMeta(rt)
 
 	// 3. Generate config.json for this agent.
 	cfg := m.generateConfig(agent, runtimeClass)
@@ -327,8 +331,8 @@ func (m *ProcessManager) generateConfig(agent *meta.Agent, rc *RuntimeClass) spe
 	// Build environment variables in KEY=VALUE format.
 	// Merge runtime class env with any agent-specific env.
 	env := make([]string, 0, len(rc.Env))
-	for key, value := range rc.Env {
-		env = append(env, fmt.Sprintf("%s=%s", key, value))
+	for _, ev := range rc.Env {
+		env = append(env, fmt.Sprintf("%s=%s", ev.Name, ev.Value))
 	}
 
 	// Build annotations from agent labels.
@@ -341,7 +345,7 @@ func (m *ProcessManager) generateConfig(agent *meta.Agent, rc *RuntimeClass) spe
 	// Compute the bundle/state directory (same formula as createBundle) so we
 	// can pass OAR_STATE_DIR to the workspace-mcp-server before the directory
 	// is actually created.
-	stateDir := filepath.Join(m.config.BundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
+	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
 
 	workspaceMcp := spec.McpServer{
 		Type:    "stdio",
@@ -349,7 +353,7 @@ func (m *ProcessManager) generateConfig(agent *meta.Agent, rc *RuntimeClass) spe
 		Command: m.findWorkspaceMcpBinary(),
 		Args:    []string{},
 		Env: []spec.EnvVar{
-			{Name: "OAR_AGENTD_SOCKET", Value: m.config.Socket},
+			{Name: "OAR_AGENTD_SOCKET", Value: m.socketPath},
 			{Name: "OAR_WORKSPACE_NAME", Value: agent.Metadata.Workspace},
 			{Name: "OAR_AGENT_NAME", Value: agent.Metadata.Name},
 			{Name: "OAR_STATE_DIR", Value: stateDir},
@@ -402,9 +406,9 @@ func (m *ProcessManager) findWorkspaceMcpBinary() string {
 // Also creates the workspace symlink (agentRoot.path -> actual workspace).
 // Returns bundlePath, stateDir, socketPath.
 func (m *ProcessManager) createBundle(agent *meta.Agent, cfg spec.Config) (string, string, string, error) {
-	// Bundle directory: <BundleRoot>/<workspace>-<name>
+	// Bundle directory: <bundleRoot>/<workspace>-<name>
 	dirFragment := agent.Metadata.Workspace + "-" + agent.Metadata.Name
-	bundlePath := filepath.Join(m.config.BundleRoot, dirFragment)
+	bundlePath := filepath.Join(m.bundleRoot, dirFragment)
 
 	// Create bundle directory.
 	if err := os.MkdirAll(bundlePath, 0o755); err != nil {
@@ -457,28 +461,35 @@ func (m *ProcessManager) createBundle(agent *meta.Agent, cfg spec.Config) (strin
 	return bundlePath, stateDir, socketPath, nil
 }
 
-// forkShim forks the agent-shim process.
+// forkShim forks the agent-shim process using self-fork or OAR_SHIM_BINARY override.
+// Self-fork: uses os.Executable() to re-invoke the daemon with "shim" as the first arg.
+// Override: if OAR_SHIM_BINARY is set, that binary is used instead.
+//
 // Note: We intentionally do NOT use exec.CommandContext here because the shim
 // process should run independently of the request context that initiated Start.
 // Using CommandContext would kill the shim when the request context is canceled.
 // The shim process lifecycle is managed by ProcessManager.Stop and watchProcess.
 func (m *ProcessManager) forkShim(agent *meta.Agent, bundlePath, stateDir string) (*ShimProcess, error) {
-	// Find the agent-shim binary.
-	// Priority:
-	//  1. OAR_SHIM_BINARY env var (test override)
-	//  2. ./bin/agent-shim relative to current working directory (development)
-	//  3. PATH lookup (production)
 	var shimBinary string
+	var usingOverride bool
+
 	if envPath := os.Getenv("OAR_SHIM_BINARY"); envPath != "" {
 		shimBinary = envPath
-	} else if cwd, err := os.Getwd(); err == nil {
-		builtPath := filepath.Join(cwd, "bin", "agent-shim")
-		if _, err := os.Stat(builtPath); err == nil {
-			shimBinary = builtPath
+		usingOverride = true
+	} else {
+		// Self-fork: use the current executable.
+		self, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("os.Executable: %w", err)
 		}
+		shimBinary = self
+		usingOverride = false
 	}
-	if shimBinary == "" {
-		shimBinary = "agent-shim" // PATH lookup
+
+	if usingOverride {
+		m.logger.Info("forkShim: using OAR_SHIM_BINARY override", "shim_binary", shimBinary)
+	} else {
+		m.logger.Info("forkShim: using self-fork", "shim_binary", shimBinary)
 	}
 
 	// Create state directory before starting shim.
@@ -493,27 +504,28 @@ func (m *ProcessManager) forkShim(agent *meta.Agent, bundlePath, stateDir string
 
 	// Build command arguments.
 	// stateDir == bundlePath, so --id is the bundle directory name and
-	// --state-dir is BundleRoot. The shim computes: stateDir = parent/<id>,
+	// --state-dir is bundleRoot. The shim computes: stateDir = parent/<id>,
 	// which resolves back to bundlePath.
+	// Prepend "shim" as the first arg so the process knows to behave as a shim.
 	args := []string{
+		"shim",
 		"--bundle", bundlePath,
 		"--id", filepath.Base(bundlePath),
-		"--state-dir", filepath.Dir(bundlePath), // BundleRoot; shim appends /<id>
+		"--state-dir", filepath.Dir(bundlePath), // bundleRoot; shim appends /<id>
 		"--permissions", "approve-all",
 	}
 
 	// Log the command for debugging.
-	m.logger.Info("forking shim process", "shim_binary", shimBinary, "args", args, "state_dir", stateDir, "bundle_path", bundlePath)
+	m.logger.Info("forking shim process",
+		"shim_binary", shimBinary,
+		"args", args,
+		"state_dir", stateDir,
+		"bundle_path", bundlePath)
 
 	// Create exec.Cmd WITHOUT tying to the request context.
 	cmd := exec.Command(shimBinary, args...)
-	// In test mode, pipe stderr to os.Stderr for debugging.
-	if m.config.Socket != "" {
-		cmd.Stderr = os.Stderr
-	} else {
-		cmd.Stderr = nil // discard stderr for production
-	}
-	cmd.Stdout = nil // discard stdout (shim logs to stderr via slog)
+	cmd.Stderr = os.Stderr // always pipe stderr for debugging
+	cmd.Stdout = nil       // discard stdout (shim logs to stderr via slog)
 
 	// Start the process.
 	if err := cmd.Start(); err != nil {
@@ -813,7 +825,7 @@ func (m *ProcessManager) InjectProcess(key string, proc *ShimProcess) {
 // allowing callers (e.g. agent/delete) to clean up the bundle after the process exits.
 func (m *ProcessManager) BundlePath(workspace, name string) string {
 	dirFragment := workspace + "-" + name
-	return filepath.Join(m.config.BundleRoot, dirFragment)
+	return filepath.Join(m.bundleRoot, dirFragment)
 }
 
 // SetAgentRecoveryInfo sets the recovery metadata on a running agent's

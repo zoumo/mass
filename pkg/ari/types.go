@@ -5,6 +5,8 @@ package ari
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -315,4 +317,75 @@ type ShimStateInfo struct {
 	// ExitCode is the OS exit code of the shim process.
 	// Only populated after the process has exited.
 	ExitCode *int `json:"exitCode,omitempty"`
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Runtime Types
+// ────────────────────────────────────────────────────────────────────────────
+
+// RuntimeSetParams is the request params for runtime/set method.
+type RuntimeSetParams struct {
+	// Name is the unique runtime name (required).
+	Name string `json:"name"`
+
+	// Command is the ACP agent executable (required).
+	Command string `json:"command"`
+
+	// Args are command-line arguments for the runtime (optional).
+	Args []string `json:"args,omitempty"`
+
+	// Env is the list of environment variable overrides (optional).
+	Env []spec.EnvVar `json:"env,omitempty"`
+
+	// StartupTimeoutSeconds is the optional startup timeout in seconds.
+	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
+}
+
+// RuntimeInfo describes a single runtime entity.
+// Returned by runtime/set, runtime/get, and runtime/list methods.
+type RuntimeInfo struct {
+	// Name is the unique runtime name.
+	Name string `json:"name"`
+
+	// Command is the ACP agent executable.
+	Command string `json:"command"`
+
+	// Args are command-line arguments for the runtime.
+	Args []string `json:"args,omitempty"`
+
+	// Env is the list of environment variable overrides.
+	Env []spec.EnvVar `json:"env,omitempty"`
+
+	// CreatedAt is the timestamp when the runtime was created.
+	CreatedAt time.Time `json:"createdAt"`
+
+	// UpdatedAt is the timestamp when the runtime was last updated.
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// RuntimeGetParams is the request params for runtime/get method.
+type RuntimeGetParams struct {
+	// Name is the runtime name (required).
+	Name string `json:"name"`
+}
+
+// RuntimeGetResult is the response result for runtime/get method.
+type RuntimeGetResult struct {
+	// Runtime is the requested runtime info.
+	Runtime RuntimeInfo `json:"runtime"`
+}
+
+// RuntimeListParams is the request params for runtime/list method.
+type RuntimeListParams struct{}
+
+// RuntimeListResult is the response result for runtime/list method.
+type RuntimeListResult struct {
+	// Runtimes is the array of runtime info objects.
+	Runtimes []RuntimeInfo `json:"runtimes"`
+}
+
+// RuntimeDeleteParams is the request params for runtime/delete method.
+type RuntimeDeleteParams struct {
+	// Name is the runtime name to delete (required).
+	Name string `json:"name"`
 }

@@ -27,15 +27,7 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *meta.Store) {
 
 	agents := NewAgentManager(store)
 
-	cfg := Config{
-		Socket:        filepath.Join(tmpDir, "agentd.sock"),
-		WorkspaceRoot: filepath.Join(tmpDir, "workspaces"),
-	}
-
-	registry, err := NewRuntimeClassRegistry(nil)
-	require.NoError(t, err)
-
-	pm := NewProcessManager(registry, agents, store, cfg)
+	pm := NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"))
 	return pm, store
 }
 
