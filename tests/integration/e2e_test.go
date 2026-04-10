@@ -45,8 +45,8 @@ func TestEndToEndPipeline(t *testing.T) {
 
 	// Step 3: agent/prompt (async dispatch)
 	t.Log("Step 3: agent/prompt (async dispatch)")
-	var promptResult ari.AgentPromptResult
-	if err := client.Call("agent/prompt", map[string]interface{}{
+	var promptResult ari.AgentRunPromptResult
+	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,
 		"prompt":    "hello from e2e integration test",
@@ -65,7 +65,7 @@ func TestEndToEndPipeline(t *testing.T) {
 
 	// Step 5: agent/stop → poll until state=stopped
 	t.Log("Step 5: agent/stop → poll until state=stopped")
-	if err := client.Call("agent/stop", map[string]interface{}{
+	if err := client.Call("agentrun/stop", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,
 	}, nil); err != nil {
@@ -76,7 +76,7 @@ func TestEndToEndPipeline(t *testing.T) {
 
 	// Step 6: agent/delete
 	t.Log("Step 6: agent/delete")
-	if err := client.Call("agent/delete", map[string]interface{}{
+	if err := client.Call("agentrun/delete", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,
 	}, nil); err != nil {

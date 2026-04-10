@@ -52,9 +52,9 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		go func(idx int, agentName string) {
 			defer wg.Done()
 
-			var promptResult ari.AgentPromptResult
+			var promptResult ari.AgentRunPromptResult
 			clientMu.Lock()
-			err := client.Call("agent/prompt", map[string]interface{}{
+			err := client.Call("agentrun/prompt", map[string]interface{}{
 				"workspace": wsName,
 				"name":      agentName,
 				"prompt":    fmt.Sprintf("concurrent prompt %d", idx+1),
@@ -97,9 +97,9 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 	// Verify each agent is in running state after prompt dispatch
 	t.Log("Verifying all agents are running...")
 	for i, name := range agentNames {
-		var statusResult ari.AgentStatusResult
+		var statusResult ari.AgentRunStatusResult
 		clientMu.Lock()
-		err := client.Call("agent/status", map[string]interface{}{
+		err := client.Call("agentrun/status", map[string]interface{}{
 			"workspace": wsName,
 			"name":      name,
 		}, &statusResult)
@@ -119,7 +119,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 	t.Log("Stopping and deleting all agents...")
 	for i, name := range agentNames {
 		clientMu.Lock()
-		stopErr := client.Call("agent/stop", map[string]interface{}{
+		stopErr := client.Call("agentrun/stop", map[string]interface{}{
 			"workspace": wsName,
 			"name":      name,
 		}, nil)
@@ -131,9 +131,9 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		// Poll for stopped/error state before deleting (serialized)
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
-			var st ari.AgentStatusResult
+			var st ari.AgentRunStatusResult
 			clientMu.Lock()
-			err := client.Call("agent/status", map[string]interface{}{
+			err := client.Call("agentrun/status", map[string]interface{}{
 				"workspace": wsName,
 				"name":      name,
 			}, &st)
@@ -148,7 +148,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		}
 
 		clientMu.Lock()
-		delErr := client.Call("agent/delete", map[string]interface{}{
+		delErr := client.Call("agentrun/delete", map[string]interface{}{
 			"workspace": wsName,
 			"name":      name,
 		}, nil)

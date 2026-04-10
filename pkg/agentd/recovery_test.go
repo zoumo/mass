@@ -35,22 +35,22 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *meta.Store) {
 // Returns the (workspace, name) pair.
 func createRecoveryTestAgent(t *testing.T, ctx context.Context, store *meta.Store, workspace, name string, state spec.Status, socketPath string) (string, string) {
 	t.Helper()
-	agent := &meta.Agent{
+	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{
 			Workspace: workspace,
 			Name:      name,
 		},
-		Spec: meta.AgentSpec{
+		Spec: meta.AgentRunSpec{
 			RuntimeClass: "default",
 		},
-		Status: meta.AgentStatus{
+		Status: meta.AgentRunStatus{
 			State:          state,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   "/tmp/shim-state-" + name,
 			ShimPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgent(ctx, agent))
+	require.NoError(t, store.CreateAgentRun(ctx, agent))
 	return workspace, name
 }
 
@@ -122,7 +122,7 @@ func TestRecoverSessions_DeadShim(t *testing.T) {
 	require.NoError(t, err, "RecoverSessions should not return error for individual failures")
 
 	// Verify agent was marked stopped.
-	agent, err := store.GetAgent(ctx, ws, name)
+	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusStopped, agent.Status.State,
 		"dead shim agent should be marked stopped")
@@ -197,7 +197,7 @@ func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
 
 	// Dead agent should be marked stopped and not in processes map.
 	assert.Nil(t, pm.GetProcess(deadKey), "dead agent should not be in processes map")
-	deadAgent, err := store.GetAgent(ctx, deadWS, deadName)
+	deadAgent, err := store.GetAgentRun(ctx, deadWS, deadName)
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusStopped, deadAgent.Status.State)
 
@@ -226,7 +226,7 @@ func TestRecoverSessions_NoSocketPath(t *testing.T) {
 	require.NoError(t, err)
 
 	// Agent should be marked stopped.
-	agent, err := store.GetAgent(ctx, ws, name)
+	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusStopped, agent.Status.State)
 }
@@ -259,7 +259,7 @@ func TestRecoverSessions_ShimReportsStopped(t *testing.T) {
 	require.NoError(t, err)
 
 	// Agent should be marked stopped (fail-closed).
-	agent, err := store.GetAgent(ctx, ws, name)
+	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusStopped, agent.Status.State,
 		"shim-reports-stopped agent should be marked stopped in DB")
@@ -305,7 +305,7 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 	require.NoError(t, err)
 
 	// Agent state in DB should now be "running" (reconciled from idle).
-	agent, err := store.GetAgent(ctx, ws, name)
+	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusRunning, agent.Status.State,
 		"agent should be transitioned from idle to running")
@@ -367,7 +367,7 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 
 	// DB state should remain "creating" — the default branch logs but
 	// does not update the DB state.
-	agent, err := store.GetAgent(ctx, ws, name)
+	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusCreating, agent.Status.State,
 		"DB state should remain creating (mismatch only logged, not reconciled)")
@@ -394,19 +394,19 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 // createAgentForRecovery creates an agent directly in the store for recovery tests.
 func createAgentForRecovery(t *testing.T, ctx context.Context, store *meta.Store, workspace, name string, state spec.Status) {
 	t.Helper()
-	agent := &meta.Agent{
+	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{
 			Workspace: workspace,
 			Name:      name,
 		},
-		Spec: meta.AgentSpec{
+		Spec: meta.AgentRunSpec{
 			RuntimeClass: "default",
 		},
-		Status: meta.AgentStatus{
+		Status: meta.AgentRunStatus{
 			State: state,
 		},
 	}
-	require.NoError(t, store.CreateAgent(ctx, agent))
+	require.NoError(t, store.CreateAgentRun(ctx, agent))
 }
 
 // TestRecoverSessions_CreatingAgentMarkedError verifies that an agent stuck in
@@ -424,7 +424,7 @@ func TestRecoverSessions_CreatingAgentMarkedError(t *testing.T) {
 	require.NoError(t, pm.RecoverSessions(ctx))
 
 	// Agent should be in error state.
-	agent, err := store.GetAgent(ctx, "default", "stuck-creating")
+	agent, err := store.GetAgentRun(ctx, "default", "stuck-creating")
 	require.NoError(t, err)
 	require.NotNil(t, agent)
 	assert.Equal(t, spec.StatusError, agent.Status.State,
@@ -449,7 +449,7 @@ func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
 	assert.Empty(t, pm.ListProcesses())
 
 	// The error state should be unchanged.
-	agent, err := store.GetAgent(ctx, "default", "error-agent")
+	agent, err := store.GetAgentRun(ctx, "default", "error-agent")
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusError, agent.Status.State)
 }
@@ -478,20 +478,20 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 		Bundle:     "/tmp/test-bundle",
 	}))
 
-	agent := &meta.Agent{
+	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-agent"},
-		Spec: meta.AgentSpec{
+		Spec: meta.AgentRunSpec{
 			RuntimeClass:  "default",
 			RestartPolicy: meta.RestartPolicyTryReload,
 		},
-		Status: meta.AgentStatus{
+		Status: meta.AgentRunStatus{
 			State:          spec.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
 			ShimPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgent(ctx, agent))
+	require.NoError(t, store.CreateAgentRun(ctx, agent))
 	key := agentKey("default", "tryreload-agent")
 
 	require.NoError(t, pm.RecoverSessions(ctx))
@@ -543,20 +543,20 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 		Bundle:     "/tmp/test-bundle",
 	}))
 
-	agent := &meta.Agent{
+	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-fallback"},
-		Spec: meta.AgentSpec{
+		Spec: meta.AgentRunSpec{
 			RuntimeClass:  "default",
 			RestartPolicy: meta.RestartPolicyTryReload,
 		},
-		Status: meta.AgentStatus{
+		Status: meta.AgentRunStatus{
 			State:          spec.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
 			ShimPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgent(ctx, agent))
+	require.NoError(t, store.CreateAgentRun(ctx, agent))
 	key := agentKey("default", "tryreload-fallback")
 
 	// RecoverSessions must succeed even though session/load returned an error.
@@ -587,20 +587,20 @@ func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
 
 	srv, socketPath := newMockShimServer(t)
 
-	agent := &meta.Agent{
+	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-nostate"},
-		Spec: meta.AgentSpec{
+		Spec: meta.AgentRunSpec{
 			RuntimeClass:  "default",
 			RestartPolicy: meta.RestartPolicyTryReload,
 		},
-		Status: meta.AgentStatus{
+		Status: meta.AgentRunStatus{
 			State:          spec.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   "/tmp/nonexistent-state-dir-tryreload-test",
 			ShimPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgent(ctx, agent))
+	require.NoError(t, store.CreateAgentRun(ctx, agent))
 	key := agentKey("default", "tryreload-nostate")
 
 	// Must not panic; must succeed.
@@ -639,20 +639,20 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 		Bundle:     "/tmp/test-bundle",
 	}))
 
-	agent := &meta.Agent{
+	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
-		Spec: meta.AgentSpec{
+		Spec: meta.AgentRunSpec{
 			RuntimeClass:  "default",
 			RestartPolicy: "", // empty = alwaysNew (default)
 		},
-		Status: meta.AgentStatus{
+		Status: meta.AgentRunStatus{
 			State:          spec.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
 			ShimPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgent(ctx, agent))
+	require.NoError(t, store.CreateAgentRun(ctx, agent))
 	key := agentKey("default", "alwaysnew-agent")
 
 	require.NoError(t, pm.RecoverSessions(ctx))

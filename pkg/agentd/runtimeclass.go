@@ -1,5 +1,5 @@
 // Package agentd implements the agent daemon that manages agent runtime sessions.
-// This file defines the RuntimeClass type and its constructor from a meta.Runtime entity.
+// This file defines the RuntimeClass type and its constructor from a meta.AgentTemplate entity.
 package agentd
 
 import (
@@ -22,8 +22,8 @@ type RuntimeClass struct {
 	Env []spec.EnvVar
 }
 
-// NewRuntimeClassFromMeta constructs a RuntimeClass from a meta.Runtime record.
-func NewRuntimeClassFromMeta(r *meta.Runtime) *RuntimeClass {
+// NewRuntimeClassFromMeta constructs a RuntimeClass from a meta.AgentTemplate record.
+func NewRuntimeClassFromMeta(r *meta.AgentTemplate) *RuntimeClass {
 	return &RuntimeClass{
 		Name:    r.Metadata.Name,
 		Command: r.Spec.Command,

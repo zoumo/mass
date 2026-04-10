@@ -30,10 +30,10 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	key := agentKey(ws, agentName)
 
 	// Create agent at StatusCreating in the DB.
-	require.NoError(t, store.CreateAgent(ctx, &meta.Agent{
+	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentSpec{RuntimeClass: "default"},
-		Status:   meta.AgentStatus{State: spec.StatusCreating},
+		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Status:   meta.AgentRunStatus{State: spec.StatusCreating},
 	}))
 
 	// Set up mock shim, queue a creating→idle stateChange notification.
@@ -77,13 +77,13 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 
 	// Wait for the stateChange notification to drive the DB update.
 	require.Eventually(t, func() bool {
-		agent, _ := store.GetAgent(ctx, ws, agentName)
+		agent, _ := store.GetAgentRun(ctx, ws, agentName)
 		return agent != nil && agent.Status.State == spec.StatusIdle
 	}, 3*time.Second, 50*time.Millisecond,
 		"DB state should become idle after runtime/stateChange notification")
 
 	// Confirm final DB state.
-	agent, err := store.GetAgent(ctx, ws, agentName)
+	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusIdle, agent.Status.State,
 		"DB state must reflect the shim-emitted stateChange, not a direct write")
@@ -102,10 +102,10 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	key := agentKey(ws, agentName)
 
 	// Create agent at StatusIdle.
-	require.NoError(t, store.CreateAgent(ctx, &meta.Agent{
+	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentSpec{RuntimeClass: "default"},
-		Status:   meta.AgentStatus{State: spec.StatusIdle},
+		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Status:   meta.AgentRunStatus{State: spec.StatusIdle},
 	}))
 
 	// Queue two successive stateChange notifications: idle→running, then running→idle.
@@ -151,12 +151,12 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 
 	// Wait for both stateChange notifications to be processed (final state = idle).
 	require.Eventually(t, func() bool {
-		agent, _ := store.GetAgent(ctx, ws, agentName)
+		agent, _ := store.GetAgentRun(ctx, ws, agentName)
 		return agent != nil && agent.Status.State == spec.StatusIdle
 	}, 3*time.Second, 50*time.Millisecond,
 		"DB state should settle at idle after running→idle stateChange notification")
 
-	agent, err := store.GetAgent(ctx, ws, agentName)
+	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusIdle, agent.Status.State,
 		"final DB state must be idle after running→idle stateChange")
@@ -177,10 +177,10 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	key := agentKey(ws, agentName)
 
 	// Create agent at StatusCreating.
-	require.NoError(t, store.CreateAgent(ctx, &meta.Agent{
+	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentSpec{RuntimeClass: "default"},
-		Status:   meta.AgentStatus{State: spec.StatusCreating},
+		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Status:   meta.AgentRunStatus{State: spec.StatusCreating},
 	}))
 
 	// Set up mock shim with NO queued notifications.
@@ -215,7 +215,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify DB state is NOT StatusRunning — no direct write happened.
-	agent, err := store.GetAgent(ctx, ws, agentName)
+	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
 	require.NotNil(t, agent)
 	assert.NotEqual(t, spec.StatusRunning, agent.Status.State,
@@ -237,10 +237,10 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	agentName := "malformed-sc"
 	key := agentKey(ws, agentName)
 
-	require.NoError(t, store.CreateAgent(ctx, &meta.Agent{
+	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentSpec{RuntimeClass: "default"},
-		Status:   meta.AgentStatus{State: spec.StatusCreating},
+		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Status:   meta.AgentRunStatus{State: spec.StatusCreating},
 	}))
 
 	// Queue a malformed stateChange notification (array instead of object).
@@ -274,7 +274,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	// DB state must be unchanged.
-	agent, err := store.GetAgent(ctx, ws, agentName)
+	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusCreating, agent.Status.State,
 		"malformed stateChange must be dropped; DB state must be unchanged")

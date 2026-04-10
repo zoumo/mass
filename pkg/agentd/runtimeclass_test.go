@@ -10,9 +10,9 @@ import (
 )
 
 func TestNewRuntimeClassFromMeta_BasicFields(t *testing.T) {
-	rt := &meta.Runtime{
+	rt := &meta.AgentTemplate{
 		Metadata: meta.ObjectMeta{Name: "mockagent"},
-		Spec: meta.RuntimeSpec{
+		Spec: meta.AgentTemplateSpec{
 			Command: "/usr/bin/mockagent",
 			Args:    []string{"--mode", "test"},
 		},
@@ -31,9 +31,9 @@ func TestNewRuntimeClassFromMeta_BasicFields(t *testing.T) {
 }
 
 func TestNewRuntimeClassFromMeta_EmptyEnv(t *testing.T) {
-	rt := &meta.Runtime{
+	rt := &meta.AgentTemplate{
 		Metadata: meta.ObjectMeta{Name: "bare"},
-		Spec: meta.RuntimeSpec{
+		Spec: meta.AgentTemplateSpec{
 			Command: "bare-cmd",
 		},
 	}
@@ -45,9 +45,9 @@ func TestNewRuntimeClassFromMeta_EmptyEnv(t *testing.T) {
 }
 
 func TestNewRuntimeClassFromMeta_EnvSlice(t *testing.T) {
-	rt := &meta.Runtime{
+	rt := &meta.AgentTemplate{
 		Metadata: meta.ObjectMeta{Name: "envtest"},
-		Spec: meta.RuntimeSpec{
+		Spec: meta.AgentTemplateSpec{
 			Command: "envtest-cmd",
 			Env: []spec.EnvVar{
 				{Name: "FOO", Value: "bar"},

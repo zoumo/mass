@@ -15,9 +15,9 @@ import (
 
 const (
 	// CodeRecoveryBlocked is the JSON-RPC error code returned when an
-	// operational action (agent/prompt, agent/cancel) is refused because
+	// operational action (agentrun/prompt, agentrun/cancel) is refused because
 	// the daemon is actively recovering agents. Clients should retry once
-	// recovery completes (poll agent/status or agent/list to observe
+	// recovery completes (poll agentrun/status or agentrun/list to observe
 	// the daemon leaving the recovering phase).
 	CodeRecoveryBlocked int64 = -32001
 )
@@ -64,8 +64,8 @@ type WorkspaceStatusResult struct {
 	// Path is the absolute path to the prepared workspace directory.
 	Path string `json:"path,omitempty"`
 
-	// Members is the list of agents currently using this workspace.
-	Members []AgentInfo `json:"members,omitempty"`
+	// Members is the list of agent runs currently using this workspace.
+	Members []AgentRunInfo `json:"members,omitempty"`
 }
 
 // WorkspaceListParams is the request params for workspace/list method.
@@ -97,7 +97,7 @@ type WorkspaceDeleteParams struct {
 }
 
 // WorkspaceSendParams is the request params for workspace/send method.
-// Routes a message from one agent to another within a workspace.
+// Routes a message from one agent run to another within a workspace.
 type WorkspaceSendParams struct {
 	// Workspace is the workspace name (required).
 	Workspace string `json:"workspace"`
@@ -119,18 +119,18 @@ type WorkspaceSendResult struct {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Agent Types
+// AgentRun Types
 // ────────────────────────────────────────────────────────────────────────────
 
-// AgentCreateParams is the request params for agent/create method.
-type AgentCreateParams struct {
-	// Workspace is the workspace this agent belongs to (required).
+// AgentRunCreateParams is the request params for agentrun/create method.
+type AgentRunCreateParams struct {
+	// Workspace is the workspace this agent run belongs to (required).
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name, unique within the workspace (required).
+	// Name is the agent run name, unique within the workspace (required).
 	Name string `json:"name"`
 
-	// RuntimeClass is the runtime class for this agent (required).
+	// RuntimeClass is the runtime class for this agent run (required).
 	RuntimeClass string `json:"runtimeClass"`
 
 	// RestartPolicy controls restart behavior ("never", "on-failure", "always").
@@ -139,162 +139,162 @@ type AgentCreateParams struct {
 	// SystemPrompt is the agent's system prompt (optional).
 	SystemPrompt string `json:"systemPrompt,omitempty"`
 
-	// Labels are optional key-value metadata for the agent.
+	// Labels are optional key-value metadata for the agent run.
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
-// AgentCreateResult is the response result for agent/create method.
-type AgentCreateResult struct {
-	// Workspace is the workspace this agent belongs to.
+// AgentRunCreateResult is the response result for agentrun/create method.
+type AgentRunCreateResult struct {
+	// Workspace is the workspace this agent run belongs to.
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name.
+	// Name is the agent run name.
 	Name string `json:"name"`
 
-	// State is the initial agent state ("creating").
+	// State is the initial agent run state ("creating").
 	State string `json:"state"`
 }
 
-// AgentPromptParams is the request params for agent/prompt method.
-type AgentPromptParams struct {
-	// Workspace is the workspace this agent belongs to (required).
+// AgentRunPromptParams is the request params for agentrun/prompt method.
+type AgentRunPromptParams struct {
+	// Workspace is the workspace this agent run belongs to (required).
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name (required).
+	// Name is the agent run name (required).
 	Name string `json:"name"`
 
 	// Prompt is the prompt message to send to the agent (required).
 	Prompt string `json:"prompt"`
 }
 
-// AgentPromptResult is the response result for agent/prompt method.
-type AgentPromptResult struct {
+// AgentRunPromptResult is the response result for agentrun/prompt method.
+type AgentRunPromptResult struct {
 	// Accepted is true when the prompt was successfully dispatched.
 	Accepted bool `json:"accepted"`
 }
 
-// AgentCancelParams is the request params for agent/cancel method.
-type AgentCancelParams struct {
-	// Workspace is the workspace this agent belongs to (required).
+// AgentRunCancelParams is the request params for agentrun/cancel method.
+type AgentRunCancelParams struct {
+	// Workspace is the workspace this agent run belongs to (required).
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name (required).
+	// Name is the agent run name (required).
 	Name string `json:"name"`
 }
 
-// AgentStopParams is the request params for agent/stop method.
-type AgentStopParams struct {
-	// Workspace is the workspace this agent belongs to (required).
+// AgentRunStopParams is the request params for agentrun/stop method.
+type AgentRunStopParams struct {
+	// Workspace is the workspace this agent run belongs to (required).
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name (required).
+	// Name is the agent run name (required).
 	Name string `json:"name"`
 }
 
-// AgentDeleteParams is the request params for agent/delete method.
-type AgentDeleteParams struct {
-	// Workspace is the workspace this agent belongs to (required).
+// AgentRunDeleteParams is the request params for agentrun/delete method.
+type AgentRunDeleteParams struct {
+	// Workspace is the workspace this agent run belongs to (required).
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name (required).
+	// Name is the agent run name (required).
 	Name string `json:"name"`
 }
 
-// AgentRestartParams is the request params for agent/restart method.
-type AgentRestartParams struct {
-	// Workspace is the workspace this agent belongs to (required).
+// AgentRunRestartParams is the request params for agentrun/restart method.
+type AgentRunRestartParams struct {
+	// Workspace is the workspace this agent run belongs to (required).
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name (required).
+	// Name is the agent run name (required).
 	Name string `json:"name"`
 }
 
-// AgentRestartResult is the response result for agent/restart method.
-type AgentRestartResult struct {
-	// Workspace is the workspace this agent belongs to.
+// AgentRunRestartResult is the response result for agentrun/restart method.
+type AgentRunRestartResult struct {
+	// Workspace is the workspace this agent run belongs to.
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name.
+	// Name is the agent run name.
 	Name string `json:"name"`
 
-	// State is the agent state immediately after restart ("creating").
+	// State is the agent run state immediately after restart ("creating").
 	State string `json:"state"`
 }
 
-// AgentStatusParams is the request params for agent/status method.
-type AgentStatusParams struct {
-	// Workspace is the workspace this agent belongs to (required).
+// AgentRunStatusParams is the request params for agentrun/status method.
+type AgentRunStatusParams struct {
+	// Workspace is the workspace this agent run belongs to (required).
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name (required).
+	// Name is the agent run name (required).
 	Name string `json:"name"`
 }
 
-// AgentStatusResult is the response result for agent/status method.
-type AgentStatusResult struct {
-	// Agent is the agent metadata.
-	Agent AgentInfo `json:"agent"`
+// AgentRunStatusResult is the response result for agentrun/status method.
+type AgentRunStatusResult struct {
+	// Agent is the agent run metadata.
+	Agent AgentRunInfo `json:"agent"`
 
 	// ShimState is the runtime state of the shim process.
-	// Only populated if the agent is running.
+	// Only populated if the agent run is running.
 	ShimState *ShimStateInfo `json:"shimState,omitempty"`
 }
 
-// AgentListParams is the request params for agent/list method.
-type AgentListParams struct {
+// AgentRunListParams is the request params for agentrun/list method.
+type AgentRunListParams struct {
 	// Workspace filters by workspace name (optional).
 	Workspace string `json:"workspace,omitempty"`
 
-	// State filters by agent state (optional).
+	// State filters by agent run state (optional).
 	State string `json:"state,omitempty"`
 
-	// Labels is an optional filter to match agents by labels.
+	// Labels is an optional filter to match agent runs by labels.
 	Labels map[string]string `json:"labels,omitempty"`
 }
 
-// AgentListResult is the response result for agent/list method.
-type AgentListResult struct {
-	// Agents is the array of agent info objects.
-	Agents []AgentInfo `json:"agents"`
+// AgentRunListResult is the response result for agentrun/list method.
+type AgentRunListResult struct {
+	// Agents is the array of agent run info objects.
+	Agents []AgentRunInfo `json:"agents"`
 }
 
-// AgentInfo describes a single agent.
-// Returned by agent/list and agent/status methods.
-type AgentInfo struct {
-	// Workspace is the workspace this agent belongs to.
+// AgentRunInfo describes a single agent run.
+// Returned by agentrun/list and agentrun/status methods.
+type AgentRunInfo struct {
+	// Workspace is the workspace this agent run belongs to.
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name within the workspace.
+	// Name is the agent run name within the workspace.
 	Name string `json:"name"`
 
-	// RuntimeClass is the runtime class for this agent.
+	// RuntimeClass is the runtime class for this agent run.
 	RuntimeClass string `json:"runtimeClass"`
 
-	// State is the current agent state (spec.Status value).
+	// State is the current agent run state (spec.Status value).
 	// Values: "creating", "idle", "running", "stopped", "error".
 	State string `json:"state"`
 
 	// ErrorMessage is the error message when state is "error".
 	ErrorMessage string `json:"errorMessage,omitempty"`
 
-	// Labels are arbitrary key-value metadata for the agent.
+	// Labels are arbitrary key-value metadata for the agent run.
 	Labels map[string]string `json:"labels,omitempty"`
 
-	// CreatedAt is the timestamp when the agent was created.
+	// CreatedAt is the timestamp when the agent run was created.
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// AgentAttachParams is the request params for agent/attach method.
-type AgentAttachParams struct {
-	// Workspace is the workspace this agent belongs to (required).
+// AgentRunAttachParams is the request params for agentrun/attach method.
+type AgentRunAttachParams struct {
+	// Workspace is the workspace this agent run belongs to (required).
 	Workspace string `json:"workspace"`
 
-	// Name is the agent name (required).
+	// Name is the agent run name (required).
 	Name string `json:"name"`
 }
 
-// AgentAttachResult is the response result for agent/attach method.
-type AgentAttachResult struct {
+// AgentRunAttachResult is the response result for agentrun/attach method.
+type AgentRunAttachResult struct {
 	// SocketPath is the Unix domain socket path for the shim RPC server.
 	SocketPath string `json:"socketPath"`
 }
@@ -320,18 +320,18 @@ type ShimStateInfo struct {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Runtime Types
+// AgentTemplate Types
 // ────────────────────────────────────────────────────────────────────────────
 
-// RuntimeSetParams is the request params for runtime/set method.
-type RuntimeSetParams struct {
-	// Name is the unique runtime name (required).
+// AgentTemplateSetParams is the request params for agent/set method.
+type AgentTemplateSetParams struct {
+	// Name is the unique agent template name (required).
 	Name string `json:"name"`
 
 	// Command is the ACP agent executable (required).
 	Command string `json:"command"`
 
-	// Args are command-line arguments for the runtime (optional).
+	// Args are command-line arguments for the agent template (optional).
 	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variable overrides (optional).
@@ -341,51 +341,51 @@ type RuntimeSetParams struct {
 	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
 }
 
-// RuntimeInfo describes a single runtime entity.
-// Returned by runtime/set, runtime/get, and runtime/list methods.
-type RuntimeInfo struct {
-	// Name is the unique runtime name.
+// AgentTemplateInfo describes a single agent template entity.
+// Returned by agent/set, agent/get, and agent/list methods.
+type AgentTemplateInfo struct {
+	// Name is the unique agent template name.
 	Name string `json:"name"`
 
 	// Command is the ACP agent executable.
 	Command string `json:"command"`
 
-	// Args are command-line arguments for the runtime.
+	// Args are command-line arguments for the agent template.
 	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variable overrides.
 	Env []spec.EnvVar `json:"env,omitempty"`
 
-	// CreatedAt is the timestamp when the runtime was created.
+	// CreatedAt is the timestamp when the agent template was created.
 	CreatedAt time.Time `json:"createdAt"`
 
-	// UpdatedAt is the timestamp when the runtime was last updated.
+	// UpdatedAt is the timestamp when the agent template was last updated.
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// RuntimeGetParams is the request params for runtime/get method.
-type RuntimeGetParams struct {
-	// Name is the runtime name (required).
+// AgentTemplateGetParams is the request params for agent/get method.
+type AgentTemplateGetParams struct {
+	// Name is the agent template name (required).
 	Name string `json:"name"`
 }
 
-// RuntimeGetResult is the response result for runtime/get method.
-type RuntimeGetResult struct {
-	// Runtime is the requested runtime info.
-	Runtime RuntimeInfo `json:"runtime"`
+// AgentTemplateGetResult is the response result for agent/get method.
+type AgentTemplateGetResult struct {
+	// AgentTemplate is the requested agent template info.
+	AgentTemplate AgentTemplateInfo `json:"agentTemplate"`
 }
 
-// RuntimeListParams is the request params for runtime/list method.
-type RuntimeListParams struct{}
+// AgentTemplateListParams is the request params for agent/list method.
+type AgentTemplateListParams struct{}
 
-// RuntimeListResult is the response result for runtime/list method.
-type RuntimeListResult struct {
-	// Runtimes is the array of runtime info objects.
-	Runtimes []RuntimeInfo `json:"runtimes"`
+// AgentTemplateListResult is the response result for agent/list method.
+type AgentTemplateListResult struct {
+	// AgentTemplates is the array of agent template info objects.
+	AgentTemplates []AgentTemplateInfo `json:"agentTemplates"`
 }
 
-// RuntimeDeleteParams is the request params for runtime/delete method.
-type RuntimeDeleteParams struct {
-	// Name is the runtime name to delete (required).
+// AgentTemplateDeleteParams is the request params for agent/delete method.
+type AgentTemplateDeleteParams struct {
+	// Name is the agent template name to delete (required).
 	Name string `json:"name"`
 }

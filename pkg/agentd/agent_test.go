@@ -37,15 +37,15 @@ func newTestAgentManager(t *testing.T) *AgentManager {
 	return NewAgentManager(store)
 }
 
-// makeTestAgent builds a minimal valid Agent struct using the new model.
-func makeTestAgent(workspace, name string) *meta.Agent {
-	return &meta.Agent{
+// makeTestAgentRun builds a minimal valid Agent struct using the new model.
+func makeTestAgentRun(workspace, name string) *meta.AgentRun {
+	return &meta.AgentRun{
 		Metadata: meta.ObjectMeta{
 			Workspace: workspace,
 			Name:      name,
 			Labels:    map[string]string{"env": "test"},
 		},
-		Spec: meta.AgentSpec{
+		Spec: meta.AgentRunSpec{
 			RuntimeClass: "default",
 			Description:  "test agent",
 			SystemPrompt: "you are a test",
@@ -60,7 +60,7 @@ func TestAgentCreate_RoundTrip(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	agent := makeTestAgent("default", "alpha")
+	agent := makeTestAgentRun("default", "alpha")
 	require.NoError(t, am.Create(ctx, agent), "Create should succeed")
 
 	// Verify default state was applied.
@@ -86,7 +86,7 @@ func TestAgentGetByWorkspaceName(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	agent := makeTestAgent("ws1", "beta")
+	agent := makeTestAgentRun("ws1", "beta")
 	require.NoError(t, am.Create(ctx, agent))
 
 	got, err := am.GetByWorkspaceName(ctx, "ws1", "beta")
@@ -103,19 +103,19 @@ func TestAgentList_StateFilter(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	a1 := makeTestAgent("ws1", "a1")
-	a2 := makeTestAgent("ws1", "a2")
+	a1 := makeTestAgentRun("ws1", "a1")
+	a2 := makeTestAgentRun("ws1", "a2")
 	require.NoError(t, am.Create(ctx, a1))
 	require.NoError(t, am.Create(ctx, a2))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", meta.AgentStatus{State: spec.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", meta.AgentRunStatus{State: spec.StatusStopped}))
 
-	stoppedAgents, err := am.List(ctx, &meta.AgentFilter{State: spec.StatusStopped})
+	stoppedAgents, err := am.List(ctx, &meta.AgentRunFilter{State: spec.StatusStopped})
 	require.NoError(t, err)
 	require.Len(t, stoppedAgents, 1)
 	assert.Equal(t, "a1", stoppedAgents[0].Metadata.Name)
 
-	creatingAgents, err := am.List(ctx, &meta.AgentFilter{State: spec.StatusCreating})
+	creatingAgents, err := am.List(ctx, &meta.AgentRunFilter{State: spec.StatusCreating})
 	require.NoError(t, err)
 	require.Len(t, creatingAgents, 1)
 	assert.Equal(t, "a2", creatingAgents[0].Metadata.Name)
@@ -128,17 +128,17 @@ func TestAgentList_WorkspaceFilter(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	a1 := makeTestAgent("wsA", "agent1")
-	a2 := makeTestAgent("wsB", "agent2")
+	a1 := makeTestAgentRun("wsA", "agent1")
+	a2 := makeTestAgentRun("wsB", "agent2")
 	require.NoError(t, am.Create(ctx, a1))
 	require.NoError(t, am.Create(ctx, a2))
 
-	wsAAgents, err := am.List(ctx, &meta.AgentFilter{Workspace: "wsA"})
+	wsAAgents, err := am.List(ctx, &meta.AgentRunFilter{Workspace: "wsA"})
 	require.NoError(t, err)
 	require.Len(t, wsAAgents, 1)
 	assert.Equal(t, "agent1", wsAAgents[0].Metadata.Name)
 
-	wsBAgents, err := am.List(ctx, &meta.AgentFilter{Workspace: "wsB"})
+	wsBAgents, err := am.List(ctx, &meta.AgentRunFilter{Workspace: "wsB"})
 	require.NoError(t, err)
 	require.Len(t, wsBAgents, 1)
 	assert.Equal(t, "agent2", wsBAgents[0].Metadata.Name)
@@ -151,10 +151,10 @@ func TestAgentUpdateStatus(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	agent := makeTestAgent("ws1", "stateful")
+	agent := makeTestAgentRun("ws1", "stateful")
 	require.NoError(t, am.Create(ctx, agent))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", meta.AgentStatus{State: spec.StatusRunning}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", meta.AgentRunStatus{State: spec.StatusRunning}))
 
 	got, err := am.Get(ctx, "ws1", "stateful")
 	require.NoError(t, err)
@@ -169,11 +169,11 @@ func TestAgentDelete_RequiresStopped(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	agent := makeTestAgent("ws1", "deletable")
+	agent := makeTestAgentRun("ws1", "deletable")
 	require.NoError(t, am.Create(ctx, agent))
 
 	// Transition to stopped.
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", meta.AgentStatus{State: spec.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", meta.AgentRunStatus{State: spec.StatusStopped}))
 
 	// Delete should succeed.
 	require.NoError(t, am.Delete(ctx, "ws1", "deletable"))
@@ -191,9 +191,9 @@ func TestAgentDelete_AllowsError(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	agent := makeTestAgent("ws1", "errored")
+	agent := makeTestAgentRun("ws1", "errored")
 	require.NoError(t, am.Create(ctx, agent))
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "errored", meta.AgentStatus{
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "errored", meta.AgentRunStatus{
 		State:        spec.StatusError,
 		ErrorMessage: "boom",
 	}))
@@ -212,7 +212,7 @@ func TestAgentDelete_Protected(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	agent := makeTestAgent("ws1", "protected")
+	agent := makeTestAgentRun("ws1", "protected")
 	require.NoError(t, am.Create(ctx, agent))
 	// State is "creating" — not stopped.
 
@@ -259,10 +259,10 @@ func TestAgentCreate_AlreadyExists(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	agent := makeTestAgent("ws1", "dup")
+	agent := makeTestAgentRun("ws1", "dup")
 	require.NoError(t, am.Create(ctx, agent))
 
-	agent2 := makeTestAgent("ws1", "dup")
+	agent2 := makeTestAgentRun("ws1", "dup")
 	err := am.Create(ctx, agent2)
 	require.Error(t, err, "Create of duplicate should fail")
 

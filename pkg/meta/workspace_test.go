@@ -144,12 +144,12 @@ func TestDeleteWorkspace_WithAgents(t *testing.T) {
 	// Create workspace.
 	require.NoError(t, s.CreateWorkspace(t.Context(), makeWorkspace("ws-with-agents")))
 
-	// Create an agent in that workspace.
-	agent := &meta.Agent{
+	// Create an agent run in that workspace.
+	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "ws-with-agents", Name: "agent1"},
-		Spec:     meta.AgentSpec{RuntimeClass: "default"},
+		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
 	}
-	require.NoError(t, s.CreateAgent(t.Context(), agent))
+	require.NoError(t, s.CreateAgentRun(t.Context(), agent))
 
 	// Deletion should fail because agents exist.
 	err := s.DeleteWorkspace(t.Context(), "ws-with-agents")

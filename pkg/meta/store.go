@@ -15,18 +15,19 @@ import (
 // Layout:
 //
 //	v1/
-//	  workspaces/{name}            → Workspace JSON blob
-//	  agents/{workspace}/{name}    → Agent JSON blob (nested buckets)
-//	  runtimes/{name}              → Runtime JSON blob
+//	  workspaces/{name}              → Workspace JSON blob
+//	  agents/{workspace}/{name}      → AgentRun JSON blob (nested buckets)
+//	  agentruns/{workspace}/{name}   → (alias path; actual bucket name is "agentruns")
+//	  agents/{name}                  → AgentTemplate JSON blob
 var (
-	bucketV1         = []byte("v1")
-	bucketWorkspaces = []byte("workspaces")
-	bucketAgents     = []byte("agents")
-	bucketRuntimes   = []byte("runtimes")
+	bucketV1             = []byte("v1")
+	bucketWorkspaces     = []byte("workspaces")
+	bucketAgentRuns      = []byte("agentruns")
+	bucketAgentTemplates = []byte("agents")
 )
 
 // Store is the bbolt-backed metadata store.
-// It exposes typed CRUD operations for Agent and Workspace objects.
+// It exposes typed CRUD operations for AgentRun, AgentTemplate, and Workspace objects.
 // All writes use bbolt.Update transactions; all reads use bbolt.View transactions.
 type Store struct {
 	db     *bolt.DB
@@ -78,11 +79,11 @@ func (s *Store) initBuckets() error {
 		if _, err := v1.CreateBucketIfNotExists(bucketWorkspaces); err != nil {
 			return fmt.Errorf("create v1/workspaces bucket: %w", err)
 		}
-		if _, err := v1.CreateBucketIfNotExists(bucketAgents); err != nil {
-			return fmt.Errorf("create v1/agents bucket: %w", err)
+		if _, err := v1.CreateBucketIfNotExists(bucketAgentRuns); err != nil {
+			return fmt.Errorf("create v1/agentruns bucket: %w", err)
 		}
-		if _, err := v1.CreateBucketIfNotExists(bucketRuntimes); err != nil {
-			return fmt.Errorf("create v1/runtimes bucket: %w", err)
+		if _, err := v1.CreateBucketIfNotExists(bucketAgentTemplates); err != nil {
+			return fmt.Errorf("create v1/agents bucket: %w", err)
 		}
 		return nil
 	})
@@ -104,28 +105,28 @@ func workspacesBucket(tx *bolt.Tx) *bolt.Bucket {
 	return tx.Bucket(bucketV1).Bucket(bucketWorkspaces)
 }
 
-// agentsBucket returns the v1/agents bucket from the given transaction.
-func agentsBucket(tx *bolt.Tx) *bolt.Bucket {
-	return tx.Bucket(bucketV1).Bucket(bucketAgents)
+// agentRunsBucket returns the v1/agentruns bucket from the given transaction.
+func agentRunsBucket(tx *bolt.Tx) *bolt.Bucket {
+	return tx.Bucket(bucketV1).Bucket(bucketAgentRuns)
 }
 
 // workspaceBucket returns (or creates) the per-workspace sub-bucket under
-// v1/agents/{workspace}. Must be called from an Update transaction.
+// v1/agentruns/{workspace}. Must be called from an Update transaction.
 func workspaceBucket(tx *bolt.Tx, workspace string) (*bolt.Bucket, error) {
-	agents := agentsBucket(tx)
-	if agents == nil {
-		return nil, fmt.Errorf("v1/agents bucket not found")
+	runs := agentRunsBucket(tx)
+	if runs == nil {
+		return nil, fmt.Errorf("v1/agentruns bucket not found")
 	}
-	return agents.CreateBucketIfNotExists([]byte(workspace))
+	return runs.CreateBucketIfNotExists([]byte(workspace))
 }
 
 // workspaceBucketRO returns the per-workspace sub-bucket under
-// v1/agents/{workspace} for read-only access.
+// v1/agentruns/{workspace} for read-only access.
 // Returns nil (not an error) if the workspace sub-bucket does not exist.
 func workspaceBucketRO(tx *bolt.Tx, workspace string) *bolt.Bucket {
-	agents := agentsBucket(tx)
-	if agents == nil {
+	runs := agentRunsBucket(tx)
+	if runs == nil {
 		return nil
 	}
-	return agents.Bucket([]byte(workspace))
+	return runs.Bucket([]byte(workspace))
 }

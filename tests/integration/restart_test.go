@@ -96,8 +96,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	}
 
 	// Register the mockagent runtime so agents can be created with runtimeClass="mockagent".
-	var runtimeResult1 ari.RuntimeInfo
-	if err := client1.Call("runtime/set", ari.RuntimeSetParams{
+	var runtimeResult1 ari.AgentTemplateInfo
+	if err := client1.Call("agent/set", ari.AgentTemplateSetParams{
 		Name:    "mockagent",
 		Command: mockagentBin,
 	}, &runtimeResult1); err != nil {
@@ -127,8 +127,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// Prompt agent-A to exercise the running state (async dispatch).
 	t.Log("Prompting agent-A before restart")
-	var promptResultA ari.AgentPromptResult
-	if err := client1.Call("agent/prompt", map[string]interface{}{
+	var promptResultA ari.AgentRunPromptResult
+	if err := client1.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-a",
 		"prompt":    "hello before restart",
@@ -139,8 +139,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// Prompt agent-B (async dispatch).
 	t.Log("Prompting agent-B before restart")
-	var promptResultB ari.AgentPromptResult
-	if err := client1.Call("agent/prompt", map[string]interface{}{
+	var promptResultB ari.AgentRunPromptResult
+	if err := client1.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-b",
 		"prompt":    "hello before restart",
@@ -190,8 +190,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// Re-register the mockagent runtime on restart (runtimes are persisted in DB,
 	// so this is idempotent — ensures the runtime is available after restart).
-	var runtimeResult2 ari.RuntimeInfo
-	if err := client2.Call("runtime/set", ari.RuntimeSetParams{
+	var runtimeResult2 ari.AgentTemplateInfo
+	if err := client2.Call("agent/set", ari.AgentTemplateSetParams{
 		Name:    "mockagent",
 		Command: mockagentBin,
 	}, &runtimeResult2); err != nil {
@@ -244,8 +244,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	// =========================================================================
 	t.Log("Phase 6: Verify agent list shows both agents in workspace")
 
-	var listResult ari.AgentListResult
-	if err := client2.Call("agent/list", map[string]interface{}{"workspace": wsName}, &listResult); err != nil {
+	var listResult ari.AgentRunListResult
+	if err := client2.Call("agentrun/list", map[string]interface{}{"workspace": wsName}, &listResult); err != nil {
 		t.Fatalf("agent/list: %v", err)
 	}
 	t.Logf("agent/list returned %d agents in workspace %s", len(listResult.Agents), wsName)
@@ -274,13 +274,13 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// Agents in terminal state (stopped/error): call agent/stop (idempotent) then delete
 	for _, agentName := range []string{"agent-a", "agent-b"} {
-		if err := client2.Call("agent/stop", map[string]interface{}{
+		if err := client2.Call("agentrun/stop", map[string]interface{}{
 			"workspace": wsName,
 			"name":      agentName,
 		}, nil); err != nil {
 			t.Logf("agent/stop %s: %v (may already be stopped)", agentName, err)
 		}
-		if err := client2.Call("agent/delete", map[string]interface{}{
+		if err := client2.Call("agentrun/delete", map[string]interface{}{
 			"workspace": wsName,
 			"name":      agentName,
 		}, nil); err != nil {

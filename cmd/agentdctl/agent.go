@@ -144,7 +144,7 @@ func runAgentCreate(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.AgentCreateParams{
+	params := ari.AgentRunCreateParams{
 		Workspace:     agentCreateWorkspace,
 		Name:          agentCreateName,
 		RuntimeClass:  agentCreateRuntimeClass,
@@ -152,8 +152,8 @@ func runAgentCreate(cmd *cobra.Command, args []string) error {
 		SystemPrompt:  agentCreateSystemPrompt,
 	}
 
-	var result ari.AgentCreateResult
-	if err := client.Call("agent/create", params, &result); err != nil {
+	var result ari.AgentRunCreateResult
+	if err := client.Call("agentrun/create", params, &result); err != nil {
 		handleError(err)
 		return nil
 	}
@@ -169,12 +169,12 @@ func runAgentList(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.AgentListParams{
+	params := ari.AgentRunListParams{
 		Workspace: agentListWorkspace,
 		State:     agentListState,
 	}
-	var result ari.AgentListResult
-	if err := client.Call("agent/list", params, &result); err != nil {
+	var result ari.AgentRunListResult
+	if err := client.Call("agentrun/list", params, &result); err != nil {
 		handleError(err)
 		return nil
 	}
@@ -195,9 +195,9 @@ func runAgentStatus(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.AgentStatusParams{Workspace: ws, Name: name}
-	var result ari.AgentStatusResult
-	if err := client.Call("agent/status", params, &result); err != nil {
+	params := ari.AgentRunStatusParams{Workspace: ws, Name: name}
+	var result ari.AgentRunStatusResult
+	if err := client.Call("agentrun/status", params, &result); err != nil {
 		handleError(err)
 		return nil
 	}
@@ -218,13 +218,13 @@ func runAgentPrompt(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.AgentPromptParams{
+	params := ari.AgentRunPromptParams{
 		Workspace: ws,
 		Name:      name,
 		Prompt:    agentPromptText,
 	}
-	var result ari.AgentPromptResult
-	if err := client.Call("agent/prompt", params, &result); err != nil {
+	var result ari.AgentRunPromptResult
+	if err := client.Call("agentrun/prompt", params, &result); err != nil {
 		handleError(err)
 		return nil
 	}
@@ -235,9 +235,9 @@ func runAgentPrompt(cmd *cobra.Command, args []string) error {
 		fmt.Println("Waiting for agent to finish processing...")
 		for {
 			time.Sleep(500 * time.Millisecond)
-			var statusResult ari.AgentStatusResult
-			statusParams := ari.AgentStatusParams{Workspace: ws, Name: name}
-			if err := client.Call("agent/status", statusParams, &statusResult); err != nil {
+			var statusResult ari.AgentRunStatusResult
+			statusParams := ari.AgentRunStatusParams{Workspace: ws, Name: name}
+			if err := client.Call("agentrun/status", statusParams, &statusResult); err != nil {
 				fmt.Printf("agent/status error: %v\n", err)
 				break
 			}
@@ -263,8 +263,8 @@ func runAgentStop(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.AgentStopParams{Workspace: ws, Name: name}
-	if err := client.Call("agent/stop", params, nil); err != nil {
+	params := ari.AgentRunStopParams{Workspace: ws, Name: name}
+	if err := client.Call("agentrun/stop", params, nil); err != nil {
 		handleError(err)
 		return nil
 	}
@@ -285,8 +285,8 @@ func runAgentDelete(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.AgentDeleteParams{Workspace: ws, Name: name}
-	if err := client.Call("agent/delete", params, nil); err != nil {
+	params := ari.AgentRunDeleteParams{Workspace: ws, Name: name}
+	if err := client.Call("agentrun/delete", params, nil); err != nil {
 		handleError(err)
 		return nil
 	}
@@ -307,9 +307,9 @@ func runAgentAttach(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.AgentAttachParams{Workspace: ws, Name: name}
-	var result ari.AgentAttachResult
-	if err := client.Call("agent/attach", params, &result); err != nil {
+	params := ari.AgentRunAttachParams{Workspace: ws, Name: name}
+	var result ari.AgentRunAttachResult
+	if err := client.Call("agentrun/attach", params, &result); err != nil {
 		handleError(err)
 		return nil
 	}
@@ -330,8 +330,8 @@ func runAgentCancel(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.AgentCancelParams{Workspace: ws, Name: name}
-	if err := client.Call("agent/cancel", params, nil); err != nil {
+	params := ari.AgentRunCancelParams{Workspace: ws, Name: name}
+	if err := client.Call("agentrun/cancel", params, nil); err != nil {
 		handleError(err)
 		return nil
 	}
@@ -352,9 +352,9 @@ func runAgentRestart(cmd *cobra.Command, args []string) error {
 	}
 	defer client.Close()
 
-	params := ari.AgentRestartParams{Workspace: ws, Name: name}
-	var result ari.AgentRestartResult
-	if err := client.Call("agent/restart", params, &result); err != nil {
+	params := ari.AgentRunRestartParams{Workspace: ws, Name: name}
+	var result ari.AgentRunRestartResult
+	if err := client.Call("agentrun/restart", params, &result); err != nil {
 		handleError(err)
 		return nil
 	}

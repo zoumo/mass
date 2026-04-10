@@ -137,13 +137,13 @@ func createAndWaitWorkspace(t *testing.T, client *ari.Client, name string) ari.W
 // background shim start. Used to prime DB state for handler-only tests.
 func seedAgent(t *testing.T, store *meta.Store, wsName, name string, state spec.Status) {
 	t.Helper()
-	err := store.CreateAgent(context.Background(), &meta.Agent{
+	err := store.CreateAgentRun(context.Background(), &meta.AgentRun{
 		Metadata: meta.ObjectMeta{
 			Name:      name,
 			Workspace: wsName,
 		},
-		Spec: meta.AgentSpec{RuntimeClass: "default"},
-		Status: meta.AgentStatus{
+		Spec: meta.AgentRunSpec{RuntimeClass: "default"},
+		Status: meta.AgentRunStatus{
 			State: state,
 		},
 	})
@@ -266,14 +266,14 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "ac-ws")
 
 	// Call via raw to inspect JSON for absence of "agentId".
-	raw, err := callRaw(t, env.client, "agent/create", map[string]any{
+	raw, err := callRaw(t, env.client, "agentrun/create", map[string]any{
 		"workspace":    "ac-ws",
 		"name":         "my-agent",
 		"runtimeClass": "default",
 	})
 	require.NoError(t, err)
 
-	var result ari.AgentCreateResult
+	var result ari.AgentRunCreateResult
 	require.NoError(t, json.Unmarshal(raw, &result))
 	assert.Equal(t, "creating", result.State)
 	assert.Equal(t, "ac-ws", result.Workspace)
@@ -283,7 +283,7 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 	var rawMap map[string]any
 	require.NoError(t, json.Unmarshal(raw, &rawMap))
 	_, hasAgentID := rawMap["agentId"]
-	assert.False(t, hasAgentID, "agentId must not appear in agent/create response")
+	assert.False(t, hasAgentID, "agentId must not appear in agentrun/create response")
 }
 
 func TestAgentListAndStatus(t *testing.T) {
@@ -293,13 +293,13 @@ func TestAgentListAndStatus(t *testing.T) {
 	seedAgent(t, env.store, "als-ws", "agent-idle", spec.StatusIdle)
 	seedAgent(t, env.store, "als-ws", "agent-stopped", spec.StatusStopped)
 
-	var listResult ari.AgentListResult
-	require.NoError(t, env.client.Call("agent/list", map[string]string{"workspace": "als-ws"}, &listResult))
+	var listResult ari.AgentRunListResult
+	require.NoError(t, env.client.Call("agentrun/list", map[string]string{"workspace": "als-ws"}, &listResult))
 	assert.Len(t, listResult.Agents, 2)
 
-	// Verify agent/status returns correct state.
-	var statusResult ari.AgentStatusResult
-	require.NoError(t, env.client.Call("agent/status", map[string]string{
+	// Verify agentrun/status returns correct state.
+	var statusResult ari.AgentRunStatusResult
+	require.NoError(t, env.client.Call("agentrun/status", map[string]string{
 		"workspace": "als-ws",
 		"name":      "agent-idle",
 	}, &statusResult))
@@ -317,12 +317,12 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 	seedAgent(t, env.store, "pr-ws", "agent-creating", spec.StatusCreating)
 
 	for _, name := range []string{"agent-stopped", "agent-error", "agent-creating"} {
-		err := env.client.Call("agent/prompt", map[string]any{
+		err := env.client.Call("agentrun/prompt", map[string]any{
 			"workspace": "pr-ws",
 			"name":      name,
 			"prompt":    "hello",
 		}, nil)
-		require.Error(t, err, "agent/prompt for %s must return an error", name)
+		require.Error(t, err, "agentrun/prompt for %s must return an error", name)
 		assert.Contains(t, err.Error(), "not in idle state",
 			"error for %s must mention 'not in idle state'", name)
 	}
@@ -334,14 +334,14 @@ func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
 
 	seedAgent(t, env.store, "del-ws", "active-agent", spec.StatusIdle)
 
-	err := env.client.Call("agent/delete", map[string]string{
+	err := env.client.Call("agentrun/delete", map[string]string{
 		"workspace": "del-ws",
 		"name":      "active-agent",
 	}, nil)
-	require.Error(t, err, "agent/delete for non-terminal agent must return an error")
+	require.Error(t, err, "agentrun/delete for non-terminal agent must return an error")
 }
 
-// TestAgentCreateSocketPathTooLong verifies that agent/create returns -32602
+// TestAgentCreateSocketPathTooLong verifies that agentrun/create returns -32602
 // (CodeInvalidParams) and writes no DB record when the combined socket path
 // would exceed the OS limit.
 func TestAgentCreateSocketPathTooLong(t *testing.T) {
@@ -352,12 +352,12 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 	// exceed 104 bytes (macOS) / 108 bytes (Linux).
 	longName := strings.Repeat("a", 70)
 
-	_, err := callRaw(t, env.client, "agent/create", map[string]any{
+	_, err := callRaw(t, env.client, "agentrun/create", map[string]any{
 		"workspace":    "sock-ws",
 		"name":         longName,
 		"runtimeClass": "default",
 	})
-	require.Error(t, err, "agent/create with too-long name must return an error")
+	require.Error(t, err, "agentrun/create with too-long name must return an error")
 
 	// ari.Client.Call surfaces RPC errors as "rpc error <code>: <msg>" strings;
 	// verify the code is -32602 (CodeInvalidParams).
@@ -365,17 +365,17 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 		"error must carry code -32602 (CodeInvalidParams)")
 
 	// No agent record must have been written to DB.
-	var listResult ari.AgentListResult
-	require.NoError(t, env.client.Call("agent/list",
+	var listResult ari.AgentRunListResult
+	require.NoError(t, env.client.Call("agentrun/list",
 		map[string]string{"workspace": "sock-ws"}, &listResult))
 	for _, ag := range listResult.Agents {
 		assert.NotEqual(t, longName, ag.Name,
-			"agent with too-long name must not appear in agent/list")
+			"agent with too-long name must not appear in agentrun/list")
 	}
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Mock shim for workspace/send and agent/prompt delivery tests
+// Mock shim for workspace/send and agentrun/prompt delivery tests
 // ────────────────────────────────────────────────────────────────────────────
 
 // miniShimServer is a lightweight in-process shim that accepts session/prompt
@@ -588,16 +588,16 @@ func TestNoAgentIDInResponses(t *testing.T) {
 	seedAgent(t, env.store, "noid-ws", "a1", spec.StatusIdle)
 	seedAgent(t, env.store, "noid-ws", "a2", spec.StatusStopped)
 
-	// agent/list
-	listRaw, err := callRaw(t, env.client, "agent/list", map[string]string{"workspace": "noid-ws"})
+	// agentrun/list
+	listRaw, err := callRaw(t, env.client, "agentrun/list", map[string]string{"workspace": "noid-ws"})
 	require.NoError(t, err)
 	var listMap any
 	require.NoError(t, json.Unmarshal(listRaw, &listMap))
-	assert.False(t, hasAgentIDKey(listMap), "agent/list response must not contain agentId")
+	assert.False(t, hasAgentIDKey(listMap), "agentrun/list response must not contain agentId")
 
-	// agent/status for each agent
+	// agentrun/status for each agent
 	for _, name := range []string{"a1", "a2"} {
-		statusRaw, err := callRaw(t, env.client, "agent/status", map[string]string{
+		statusRaw, err := callRaw(t, env.client, "agentrun/status", map[string]string{
 			"workspace": "noid-ws",
 			"name":      name,
 		})
@@ -605,7 +605,7 @@ func TestNoAgentIDInResponses(t *testing.T) {
 		var statusMap any
 		require.NoError(t, json.Unmarshal(statusRaw, &statusMap))
 		assert.False(t, hasAgentIDKey(statusMap),
-			"agent/status response for %s must not contain agentId", name)
+			"agentrun/status response for %s must not contain agentId", name)
 	}
 }
 

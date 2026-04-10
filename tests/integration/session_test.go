@@ -75,8 +75,8 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *ari.Cl
 	}
 
 	// Register the mockagent runtime so tests can use runtimeClass="mockagent".
-	var runtimeResult ari.RuntimeInfo
-	if err := client.Call("runtime/set", ari.RuntimeSetParams{
+	var runtimeResult ari.AgentTemplateInfo
+	if err := client.Call("agent/set", ari.AgentTemplateSetParams{
 		Name:    "mockagent",
 		Command: mockagentBin,
 	}, &runtimeResult); err != nil {
@@ -154,7 +154,7 @@ func waitForAgentState(
 	client *ari.Client,
 	workspace, name, wantState string,
 	timeout time.Duration,
-) ari.AgentStatusResult {
+) ari.AgentRunStatusResult {
 	t.Helper()
 	return waitForAgentStateOneOf(t, client, workspace, name, []string{wantState}, timeout)
 }
@@ -168,13 +168,13 @@ func waitForAgentStateOneOf(
 	workspace, name string,
 	wantStates []string,
 	timeout time.Duration,
-) ari.AgentStatusResult {
+) ari.AgentRunStatusResult {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	params := map[string]interface{}{"workspace": workspace, "name": name}
-	var result ari.AgentStatusResult
+	var result ari.AgentRunStatusResult
 	for time.Now().Before(deadline) {
-		if err := client.Call("agent/status", params, &result); err != nil {
+		if err := client.Call("agentrun/status", params, &result); err != nil {
 			t.Logf("agent/status (%s/%s): %v (retrying)", workspace, name, err)
 			time.Sleep(200 * time.Millisecond)
 			continue
@@ -193,10 +193,10 @@ func waitForAgentStateOneOf(
 
 // createAgentAndWait calls agent/create and polls until state=="idle".
 // Returns the status result after the agent is ready.
-func createAgentAndWait(t *testing.T, client *ari.Client, workspace, name, runtimeClass string) ari.AgentStatusResult {
+func createAgentAndWait(t *testing.T, client *ari.Client, workspace, name, runtimeClass string) ari.AgentRunStatusResult {
 	t.Helper()
-	var createResult ari.AgentCreateResult
-	if err := client.Call("agent/create", map[string]interface{}{
+	var createResult ari.AgentRunCreateResult
+	if err := client.Call("agentrun/create", map[string]interface{}{
 		"workspace":    workspace,
 		"name":         name,
 		"runtimeClass": runtimeClass,
@@ -213,7 +213,7 @@ func createAgentAndWait(t *testing.T, client *ari.Client, workspace, name, runti
 // because agent/delete requires state "stopped" or "error".
 func stopAndDeleteAgent(t *testing.T, client *ari.Client, workspace, name string) {
 	t.Helper()
-	if err := client.Call("agent/stop", map[string]interface{}{
+	if err := client.Call("agentrun/stop", map[string]interface{}{
 		"workspace": workspace,
 		"name":      name,
 	}, nil); err != nil {
@@ -222,8 +222,8 @@ func stopAndDeleteAgent(t *testing.T, client *ari.Client, workspace, name string
 	// Poll briefly for stopped/error state before delete (best-effort)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		var st ari.AgentStatusResult
-		if err := client.Call("agent/status", map[string]interface{}{
+		var st ari.AgentRunStatusResult
+		if err := client.Call("agentrun/status", map[string]interface{}{
 			"workspace": workspace,
 			"name":      name,
 		}, &st); err != nil {
@@ -234,7 +234,7 @@ func stopAndDeleteAgent(t *testing.T, client *ari.Client, workspace, name string
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if err := client.Call("agent/delete", map[string]interface{}{
+	if err := client.Call("agentrun/delete", map[string]interface{}{
 		"workspace": workspace,
 		"name":      name,
 	}, nil); err != nil {
@@ -272,8 +272,8 @@ func TestAgentLifecycle(t *testing.T) {
 
 	// Step 2: agent/prompt → async dispatch; state transitions to running
 	t.Log("Step 2: agent/prompt (async dispatch)")
-	var promptResult ari.AgentPromptResult
-	if err := client.Call("agent/prompt", map[string]interface{}{
+	var promptResult ari.AgentRunPromptResult
+	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-lifecycle",
 		"prompt":    "test lifecycle prompt",
@@ -292,7 +292,7 @@ func TestAgentLifecycle(t *testing.T) {
 
 	// Step 4: agent/stop → state=stopped
 	t.Log("Step 4: agent/stop → state=stopped")
-	if err := client.Call("agent/stop", map[string]interface{}{
+	if err := client.Call("agentrun/stop", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-lifecycle",
 	}, nil); err != nil {
@@ -303,7 +303,7 @@ func TestAgentLifecycle(t *testing.T) {
 
 	// Step 5: agent/delete
 	t.Log("Step 5: agent/delete")
-	if err := client.Call("agent/delete", map[string]interface{}{
+	if err := client.Call("agentrun/delete", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-lifecycle",
 	}, nil); err != nil {
@@ -311,8 +311,8 @@ func TestAgentLifecycle(t *testing.T) {
 	}
 
 	// Verify agent is gone (status should return error)
-	var verifyStatus ari.AgentStatusResult
-	err := client.Call("agent/status", map[string]interface{}{
+	var verifyStatus ari.AgentRunStatusResult
+	err := client.Call("agentrun/status", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-lifecycle",
 	}, &verifyStatus)
@@ -341,8 +341,8 @@ func TestAgentPromptAndStop(t *testing.T) {
 	t.Logf("agent ready: state=%s", status.Agent.State)
 
 	// Prompt the agent (async dispatch)
-	var promptResult ari.AgentPromptResult
-	if err := client.Call("agent/prompt", map[string]interface{}{
+	var promptResult ari.AgentRunPromptResult
+	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-ps",
 		"prompt":    "prompt and stop test",
@@ -355,7 +355,7 @@ func TestAgentPromptAndStop(t *testing.T) {
 	}
 
 	// Stop the agent (may still be transitioning to running — stop is valid from any live state)
-	if err := client.Call("agent/stop", map[string]interface{}{
+	if err := client.Call("agentrun/stop", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-ps",
 	}, nil); err != nil {
@@ -365,7 +365,7 @@ func TestAgentPromptAndStop(t *testing.T) {
 	t.Log("agent stopped ✓")
 
 	// Delete agent
-	if err := client.Call("agent/delete", map[string]interface{}{
+	if err := client.Call("agentrun/delete", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-ps",
 	}, nil); err != nil {
@@ -395,8 +395,8 @@ func TestAgentPromptFromIdle(t *testing.T) {
 	}
 
 	// Prompt immediately from idle state
-	var promptResult ari.AgentPromptResult
-	if err := client.Call("agent/prompt", map[string]interface{}{
+	var promptResult ari.AgentRunPromptResult
+	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-auto",
 		"prompt":    "auto-start prompt",
@@ -443,8 +443,8 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 
 	for i, promptText := range prompts {
 		t.Logf("Sending prompt %d/%d: %q", i+1, len(prompts), promptText)
-		var promptResult ari.AgentPromptResult
-		if err := client.Call("agent/prompt", map[string]interface{}{
+		var promptResult ari.AgentRunPromptResult
+		if err := client.Call("agentrun/prompt", map[string]interface{}{
 			"workspace": wsName,
 			"name":      "agent-seq",
 			"prompt":    promptText,

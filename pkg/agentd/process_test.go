@@ -51,14 +51,14 @@ func TestProcessManagerStart(t *testing.T) {
 	defer store.Close()
 
 	// Persist runtime record for "mockagent" to the DB store.
-	if err := store.SetRuntime(ctx, &meta.Runtime{
+	if err := store.SetAgentTemplate(ctx, &meta.AgentTemplate{
 		Metadata: meta.ObjectMeta{Name: "mockagent"},
-		Spec: meta.RuntimeSpec{
+		Spec: meta.AgentTemplateSpec{
 			Command: mockagentBinary,
 			Args:    []string{},
 		},
 	}); err != nil {
-		t.Fatalf("SetRuntime: %v", err)
+		t.Fatalf("SetAgentTemplate: %v", err)
 	}
 
 	socketPath := filepath.Join(tmpDir, "agentd.sock")
@@ -86,20 +86,20 @@ func TestProcessManagerStart(t *testing.T) {
 	// Create an agent in "creating" state (required by Start).
 	agentWorkspace := "test-ws"
 	agentName := "test-agent"
-	agent := &meta.Agent{
+	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{
 			Workspace: agentWorkspace,
 			Name:      agentName,
 		},
-		Spec: meta.AgentSpec{
+		Spec: meta.AgentRunSpec{
 			RuntimeClass: "mockagent",
 		},
-		Status: meta.AgentStatus{
+		Status: meta.AgentRunStatus{
 			State: spec.StatusCreating,
 		},
 	}
-	if err := store.CreateAgent(ctx, agent); err != nil {
-		t.Fatalf("CreateAgent: %v", err)
+	if err := store.CreateAgentRun(ctx, agent); err != nil {
+		t.Fatalf("CreateAgentRun: %v", err)
 	}
 
 	// Call ProcessManager.Start.
@@ -125,7 +125,7 @@ func TestProcessManagerStart(t *testing.T) {
 	// Verify agent status transitions to idle/running via runtime/stateChange
 	// notification (D088 — direct StatusRunning write removed from Start).
 	// Poll until the shim emits its first stateChange notification.
-	var updatedAgent *meta.Agent
+	var updatedAgent *meta.AgentRun
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		updatedAgent, err = agentMgr.Get(ctx, agentWorkspace, agentName)
 		if err != nil {
@@ -255,13 +255,13 @@ func TestGenerateConfig(t *testing.T) {
 	}
 
 	t.Run("basic agent config", func(t *testing.T) {
-		agent := &meta.Agent{
+		agent := &meta.AgentRun{
 			Metadata: meta.ObjectMeta{
 				Workspace: "ws1",
 				Name:      "my-agent",
 				Labels:    map[string]string{"team": "platform"},
 			},
-			Spec: meta.AgentSpec{
+			Spec: meta.AgentRunSpec{
 				RuntimeClass: "mockagent",
 				SystemPrompt: "you are helpful",
 			},
@@ -303,12 +303,12 @@ func TestGenerateConfig(t *testing.T) {
 	})
 
 	t.Run("agent without system prompt", func(t *testing.T) {
-		agent := &meta.Agent{
+		agent := &meta.AgentRun{
 			Metadata: meta.ObjectMeta{
 				Workspace: "ws1",
 				Name:      "bare-agent",
 			},
-			Spec: meta.AgentSpec{
+			Spec: meta.AgentRunSpec{
 				RuntimeClass: "mockagent",
 			},
 		}

@@ -23,7 +23,7 @@ import (
 func setupAgentdTestWithRuntimeClass(
 	t *testing.T,
 	runtimeClassName string,
-	runtimeSpec ari.RuntimeSetParams,
+	runtimeSpec ari.AgentTemplateSetParams,
 ) (context.Context, context.CancelFunc, *ari.Client, func()) {
 	t.Helper()
 
@@ -70,8 +70,8 @@ func setupAgentdTestWithRuntimeClass(
 
 	// Register the runtime via runtime/set. Ensure the name field is set.
 	runtimeSpec.Name = runtimeClassName
-	var runtimeResult ari.RuntimeInfo
-	if err := client.Call("runtime/set", runtimeSpec, &runtimeResult); err != nil {
+	var runtimeResult ari.AgentTemplateInfo
+	if err := client.Call("agent/set", runtimeSpec, &runtimeResult); err != nil {
 		cancel()
 		client.Close()
 		agentdCmd.Process.Kill()
@@ -121,8 +121,8 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ari.Client, ru
 
 	// Step 3: agent/prompt — async dispatch; agent startup may take 10-30s for real CLIs
 	t.Log("Step 3: agent/prompt (async — triggers agent startup, may take 10-30s)")
-	var promptResult ari.AgentPromptResult
-	if err := client.Call("agent/prompt", map[string]interface{}{
+	var promptResult ari.AgentRunPromptResult
+	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,
 		"prompt":    "respond with only the word hello",
@@ -142,8 +142,8 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ari.Client, ru
 
 	// Step 5: agent/status — verify shimState is non-nil (shim still running)
 	t.Log("Step 5: agent/status")
-	var statusResult ari.AgentStatusResult
-	if err := client.Call("agent/status", map[string]interface{}{
+	var statusResult ari.AgentRunStatusResult
+	if err := client.Call("agentrun/status", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,
 	}, &statusResult); err != nil {
@@ -156,7 +156,7 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ari.Client, ru
 
 	// Step 6: agent/stop → poll until stopped
 	t.Log("Step 6: agent/stop → poll until stopped")
-	if err := client.Call("agent/stop", map[string]interface{}{
+	if err := client.Call("agentrun/stop", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,
 	}, nil); err != nil {
@@ -167,7 +167,7 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ari.Client, ru
 
 	// Step 7: agent/delete
 	t.Log("Step 7: agent/delete")
-	if err := client.Call("agent/delete", map[string]interface{}{
+	if err := client.Call("agentrun/delete", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,
 	}, nil); err != nil {
@@ -205,7 +205,7 @@ func TestRealCLI_GsdPi(t *testing.T) {
 		t.Skip("skipping: ANTHROPIC_API_KEY not set (gsd-pi needs an LLM key to process prompts)")
 	}
 
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", ari.RuntimeSetParams{
+	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", ari.AgentTemplateSetParams{
 		Command: "bunx",
 		Args:    []string{"pi-acp"},
 		Env: []spec.EnvVar{
@@ -238,7 +238,7 @@ func TestRealCLI_ClaudeCode(t *testing.T) {
 		t.Skipf("skipping: claude-code adapter not found at %s", adapterPath)
 	}
 
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", ari.RuntimeSetParams{
+	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", ari.AgentTemplateSetParams{
 		Command: "node",
 		Args:    []string{adapterPath},
 		Env: []spec.EnvVar{

@@ -154,7 +154,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 				"new", newStatus)
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentStatus{
+			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentRunStatus{
 				State:          spec.Status(newStatus),
 				ShimSocketPath: shimProc.SocketPath,
 				ShimStateDir:   shimProc.StateDir,
@@ -171,7 +171,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 // Start creates and starts a shim process for the given agent.
 // The full workflow:
 //  1. Get Agent from AgentManager
-//  2. Resolve RuntimeClass from DB store via GetRuntime → NewRuntimeClassFromMeta
+//  2. Resolve RuntimeClass from DB store via GetAgentTemplate → NewRuntimeClassFromMeta
 //  3. Generate config.json
 //  4. Create bundle directory with workspace symlink
 //  5. Fork agent-shim process (self-fork or OAR_SHIM_BINARY override)
@@ -204,7 +204,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	}
 
 	// 2. Resolve RuntimeClass from DB.
-	rt, err := m.store.GetRuntime(ctx, agent.Spec.RuntimeClass)
+	rt, err := m.store.GetAgentTemplate(ctx, agent.Spec.RuntimeClass)
 	if err != nil {
 		return nil, fmt.Errorf("process: get runtime %s: %w", agent.Spec.RuntimeClass, err)
 	}
@@ -267,7 +267,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		m.logger.Error("failed to marshal bootstrap config", "agent_key", key, "error", err)
 		// Non-fatal: agent can still run, just won't have recovery data.
 	} else {
-		if err := m.store.UpdateAgentStatus(ctx, workspace, name, meta.AgentStatus{
+		if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, meta.AgentRunStatus{
 			State:           spec.StatusCreating, // keep creating until we transition below
 			ShimSocketPath:  socketPath,
 			ShimStateDir:    stateDir,
@@ -298,7 +298,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		if statusResult.State.Status != spec.StatusCreating {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentStatus{
+			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentRunStatus{
 				State:          statusResult.State.Status,
 				ShimSocketPath: socketPath,
 				ShimStateDir:   stateDir,
@@ -327,7 +327,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 }
 
 // generateConfig creates the OAR Runtime config.json for this agent.
-func (m *ProcessManager) generateConfig(agent *meta.Agent, rc *RuntimeClass) spec.Config {
+func (m *ProcessManager) generateConfig(agent *meta.AgentRun, rc *RuntimeClass) spec.Config {
 	// Build environment variables in KEY=VALUE format.
 	// Merge runtime class env with any agent-specific env.
 	env := make([]string, 0, len(rc.Env))
@@ -405,7 +405,7 @@ func (m *ProcessManager) findWorkspaceMcpBinary() string {
 // createBundle creates the bundle directory and writes config.json.
 // Also creates the workspace symlink (agentRoot.path -> actual workspace).
 // Returns bundlePath, stateDir, socketPath.
-func (m *ProcessManager) createBundle(agent *meta.Agent, cfg spec.Config) (string, string, string, error) {
+func (m *ProcessManager) createBundle(agent *meta.AgentRun, cfg spec.Config) (string, string, string, error) {
 	// Bundle directory: <bundleRoot>/<workspace>-<name>
 	dirFragment := agent.Metadata.Workspace + "-" + agent.Metadata.Name
 	bundlePath := filepath.Join(m.bundleRoot, dirFragment)
@@ -469,7 +469,7 @@ func (m *ProcessManager) createBundle(agent *meta.Agent, cfg spec.Config) (strin
 // process should run independently of the request context that initiated Start.
 // Using CommandContext would kill the shim when the request context is canceled.
 // The shim process lifecycle is managed by ProcessManager.Stop and watchProcess.
-func (m *ProcessManager) forkShim(agent *meta.Agent, bundlePath, stateDir string) (*ShimProcess, error) {
+func (m *ProcessManager) forkShim(agent *meta.AgentRun, bundlePath, stateDir string) (*ShimProcess, error) {
 	var shimBinary string
 	var usingOverride bool
 
@@ -638,7 +638,7 @@ func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProc
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, meta.AgentStatus{State: spec.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{State: spec.StatusStopped})
 
 	// Bundle directory is intentionally NOT cleaned up here.
 	// It must persist until the agent is explicitly deleted via agent/delete.
@@ -674,7 +674,7 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 		}
 		// Agent exists but is not running — transition to stopped if needed.
 		if agent.Status.State != spec.StatusStopped {
-			if err := m.agents.UpdateStatus(ctx, workspace, name, meta.AgentStatus{State: spec.StatusStopped}); err != nil {
+			if err := m.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{State: spec.StatusStopped}); err != nil {
 				return fmt.Errorf("process: transition agent %s to stopped: %w", key, err)
 			}
 		}

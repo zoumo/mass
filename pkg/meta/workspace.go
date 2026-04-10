@@ -145,8 +145,8 @@ func (s *Store) DeleteWorkspace(_ context.Context, name string) error {
 			return fmt.Errorf("meta: workspace %s does not exist", name)
 		}
 
-		// Refuse deletion if agents sub-bucket is non-empty.
-		if wb := agentsBucket(tx).Bucket([]byte(name)); wb != nil {
+		// Refuse deletion if agentRuns sub-bucket is non-empty.
+		if wb := agentRunsBucket(tx).Bucket([]byte(name)); wb != nil {
 			count := 0
 			_ = wb.ForEach(func(k, v []byte) error {
 				if v != nil {

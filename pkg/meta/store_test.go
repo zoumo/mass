@@ -64,7 +64,7 @@ func TestNewStore_BucketsCreated(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, wss)
 
-	agents, err := s.ListAgents(t.Context(), nil)
+	agents, err := s.ListAgentRuns(t.Context(), nil)
 	require.NoError(t, err)
 	require.Empty(t, agents)
 }

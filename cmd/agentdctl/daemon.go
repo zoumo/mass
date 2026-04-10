@@ -41,8 +41,8 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	defer client.Close()
 
 	// Call agent/list to verify daemon is responsive
-	params := ari.AgentListParams{}
-	var result ari.AgentListResult
+	params := ari.AgentRunListParams{}
+	var result ari.AgentRunListResult
 	if err := client.Call("agent/list", params, &result); err != nil {
 		// RPC error means daemon is not healthy
 		fmt.Println("daemon: not running")

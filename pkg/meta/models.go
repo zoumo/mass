@@ -12,10 +12,10 @@ import (
 // ObjectMeta holds identity and lifecycle fields common to all stored objects.
 type ObjectMeta struct {
 	// Name is the unique name within the parent scope.
-	// For Workspace: unique globally. For Agent: unique within the Workspace.
+	// For Workspace: unique globally. For AgentRun: unique within the Workspace.
 	Name string `json:"name"`
 
-	// Workspace is the parent workspace name. Used only on Agent records.
+	// Workspace is the parent workspace name. Used only on AgentRun records.
 	// Empty for Workspace records.
 	Workspace string `json:"workspace,omitempty"`
 
@@ -30,7 +30,7 @@ type ObjectMeta struct {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Agent
+// AgentRun
 // ────────────────────────────────────────────────────────────────────────────
 
 const (
@@ -44,8 +44,8 @@ const (
 	RestartPolicyAlwaysNew = "alwaysNew"
 )
 
-// AgentSpec describes the desired configuration of an agent.
-type AgentSpec struct {
+// AgentRunSpec describes the desired configuration of an agent run.
+type AgentRunSpec struct {
 	// RuntimeClass is the runtime class for this agent (e.g., "default", "cuda").
 	RuntimeClass string `json:"runtimeClass"`
 
@@ -61,9 +61,9 @@ type AgentSpec struct {
 	SystemPrompt string `json:"systemPrompt,omitempty"`
 }
 
-// AgentStatus holds the observed runtime state of an agent.
+// AgentRunStatus holds the observed runtime state of an agent run.
 // These fields are written by the daemon as the agent transitions through its lifecycle.
-type AgentStatus struct {
+type AgentRunStatus struct {
 	// State is the current lifecycle status of the agent.
 	State spec.Status `json:"state"`
 
@@ -87,21 +87,21 @@ type AgentStatus struct {
 	BootstrapConfig json.RawMessage `json:"bootstrapConfig,omitempty"`
 }
 
-// Agent represents an agent record.
+// AgentRun represents an agent run record.
 // Identity is (Metadata.Workspace, Metadata.Name) — no UUID.
-type Agent struct {
+type AgentRun struct {
 	// Metadata holds identity and lifecycle fields.
 	Metadata ObjectMeta `json:"metadata"`
 
 	// Spec describes the desired configuration.
-	Spec AgentSpec `json:"spec"`
+	Spec AgentRunSpec `json:"spec"`
 
 	// Status holds the observed runtime state.
-	Status AgentStatus `json:"status"`
+	Status AgentRunStatus `json:"status"`
 }
 
-// AgentFilter defines filter criteria for listing agents.
-type AgentFilter struct {
+// AgentRunFilter defines filter criteria for listing agent runs.
+type AgentRunFilter struct {
 	// Workspace filters by workspace name. Empty means all workspaces.
 	Workspace string
 
