@@ -547,9 +547,86 @@ This file is the explicit capability and coverage contract for the project.
 | R051 | integration | validated | M005/S06 | none | go.mod contains github.com/modelcontextprotocol/go-sdk v0.8.0; go build ./cmd/room-mcp-server exits 0; TestGenerateConfigWithRoomMCPInjection (3 subtests) asserts presence of OAR_AGENT_ID/OAR_AGENT_NAME and absence of deprecated OAR_SESSION_ID/OAR_ROOM_AGENT |
 | R052 | continuity | validated | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery (7-phase integration test, 4.47s, PASS): agents created pre-restart have identical agentId+room+name post-restart even in error state; RecoverSessions fail-safe marks dead-shim agents as error; creating-cleanup pass handles bootstrap races during restart window |
 
+### R053 — Single system binary: agentd contains server, shim, workspace-mcp subcommands
+- Class: operability
+- Status: active
+- Description: agentd is the sole system binary, containing server (daemon), shim (process shim entry point), and workspace-mcp (MCP server) as subcommands
+- Why it matters: Eliminates separate agent-shim and workspace-mcp-server binaries; single binary simplifies deployment and upgrades
+- Source: user
+- Primary owning slice: M008/S01
+- Supporting slices: M008/S04
+- Validation: mapped
+- Notes: agentd server starts the daemon; agentd shim is invoked by ProcessManager self-fork; agentd workspace-mcp is started by shim config injection
+
+### R054 — Single user CLI: agentdctl with resource-first grammar
+- Class: admin/support
+- Status: active
+- Description: agentdctl is the sole user CLI, with resource-first subcommand grammar (agentdctl agent/agentrun/workspace/shim) replacing the previous verb-first structure; agent-shim-cli merged into agentdctl shim
+- Why it matters: Consistent kubectl/ctr-style UX; eliminates agent-shim-cli as a separate binary
+- Source: user
+- Primary owning slice: M008/S01
+- Supporting slices: M008/S03
+- Validation: mapped
+- Notes: Final grammar: agentdctl {agent|agentrun|workspace|shim} <verb> [args] [flags]
+
+### R055 — agentd server starts from --root flag; no config.yaml required
+- Class: operability
+- Status: active
+- Description: agentd server derives all paths (socket, workspaceRoot, bundleRoot, metaDB) from a single --root directory; config.yaml is eliminated
+- Why it matters: Simpler startup model; defaults work out of the box (--root /var/run/agentd); no separate config file management
+- Source: user
+- Primary owning slice: M008/S02
+- Supporting slices: none
+- Validation: mapped
+- Notes: Default --root is /var/run/agentd; if dir creation fails, error message suggests --root ~/.agentd for non-root users
+
+### R056 — RuntimeClass / agent template is a DB-persisted entity managed via ARI methods
+- Class: core-capability
+- Status: active
+- Description: Agent templates (command/args/env/systemPrompt configuration) are persisted in the bbolt store and managed via ARI runtime/set + runtime/get + runtime/list + runtime/delete (later renamed to agent/* in S04)
+- Why it matters: Removes config.yaml as the source of truth for runtime classes; enables dynamic registration without daemon restart
+- Source: user
+- Primary owning slice: M008/S02
+- Supporting slices: M008/S04
+- Validation: mapped
+- Notes: Supersedes static RuntimeClasses map in config.yaml; agentdctl runtime apply -f installs a template from YAML
+
+### R057 — agentd shim subcommand replaces separate agent-shim binary; ProcessManager self-forks
+- Class: operability
+- Status: active
+- Description: ProcessManager forks agentd itself with the shim subcommand instead of a separate agent-shim binary; OAR_SHIM_BINARY env var and resolveShimBinary() are removed
+- Why it matters: Single binary deployment; eliminates the agent-shim binary path resolution problem
+- Source: user
+- Primary owning slice: M008/S02
+- Supporting slices: none
+- Validation: mapped
+- Notes: go run detection: agentd server warns if os.Executable() path contains /tmp/go-build; does not fatal but makes shim fork failure predictable
+
+### R058 — Socket path length validated at workspace/create and agent/create before DB write
+- Class: quality-attribute
+- Status: active
+- Description: workspace/create and agentrun/create validate that the derived shim socket path does not exceed the platform limit (104 chars on macOS, 108 on Linux) before writing to DB; returns -32602 with a clear message on overflow
+- Why it matters: Long workspace/agent names silently exceed macOS UNIX_PATH_MAX (104), causing shim bind failures at runtime; validation surfaces the error immediately
+- Source: inferred
+- Primary owning slice: M008/S03
+- Supporting slices: none
+- Validation: mapped
+- Notes: Platform limits via build tags: maxsockpath_darwin.go (104), maxsockpath_linux.go (108)
+
+### R059 — API model: agent=template, agentrun=running instance
+- Class: core-capability
+- Status: active
+- Description: ARI surface uses agent/* for template CRUD (set/get/list/delete) and agentrun/* for running instance lifecycle (create/prompt/cancel/stop/delete/restart/list/status/attach); aligns with containerd Container/Task model
+- Why it matters: Correct conceptual separation — a template (agent) is durable configuration; a running instance (agentrun) is ephemeral and workspace-scoped. Eliminates confusion between runtimeClass, agent, and session concepts
+- Source: user
+- Primary owning slice: M008/S04
+- Supporting slices: none
+- Validation: mapped
+- Notes: agent = containerd Container (definition); agentrun = containerd Task (running); session = internal ACP concept (shim-level, not exposed at ARI)
+
 ## Coverage Summary
 
-- Active requirements: 0
-- Mapped to slices: 0
+- Active requirements: 7 (R053, R054, R055, R056, R057, R058, R059)
+- Mapped to slices: 7
 - Validated: 33 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052)
 - Unmapped active requirements: 0

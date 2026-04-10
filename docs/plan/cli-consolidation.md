@@ -324,7 +324,7 @@ agentd workspace-mcp   # 同样 via env
 
 1. `cmd/agentd/subcommands/server/command.go` 新增 `--root` flag，从 root 派生所有路径，移除 `--runtime-classes` flag
 2. 在 `pkg/meta/` 新增 `runtime.go`：`Runtime` 数据模型 + Store CRUD（参考 agent.go / workspace.go 规范）
-3. daemon 启动时从 DB 加载已有 runtime，初始化 `RuntimeClassRegistry`
+3. daemon 启动时从 DB 加载已有 runtime，初始化 `RuntimeClassRegistry`；废弃 `Capabilities` 字段，从 `RuntimeClass` 中移除
 4. 新增 ARI 方法：`runtime/set`、`runtime/list`、`runtime/get`、`runtime/delete`
 5. 实现 `agentdctl runtime apply/get/list/delete` 子命令
 7. 更新 `bin/e2e/` 下的脚本，去掉 config.yaml 依赖
