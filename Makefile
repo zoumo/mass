@@ -1,13 +1,14 @@
-CMDS     := $(wildcard cmd/*)
-BINARIES := $(notdir $(CMDS))
-BIN_DIR  := bin
+BIN_DIR := bin
 
-.PHONY: build clean $(BINARIES)
+.PHONY: build clean agentd agentdctl
 
-build: $(BINARIES)
+build: agentd agentdctl
 
-$(BINARIES):
-	go build -o $(BIN_DIR)/$@ ./cmd/$@
+agentd:
+	go build -o $(BIN_DIR)/agentd ./cmd/agentd
+
+agentdctl:
+	go build -o $(BIN_DIR)/agentdctl ./cmd/agentdctl
 
 clean:
 	rm -rf $(BIN_DIR)

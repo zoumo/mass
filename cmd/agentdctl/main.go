@@ -33,6 +33,12 @@ func main() {
 	// Add daemon commands (defined in daemon.go)
 	rootCmd.AddCommand(daemonCmd)
 
+	// Add shim commands (defined in shim.go)
+	rootCmd.AddCommand(shimCmd)
+
+	// Add agentrun commands (defined in agentrun.go)
+	rootCmd.AddCommand(agentrunCmd)
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}

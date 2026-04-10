@@ -755,3 +755,10 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** mockagent completes turns in <1ms. If a test polls every 200ms for `idle` after an `agent/prompt`, the state may already be `stopped` (via a race with another transition) before the first poll fires. `waitForAgentStateOneOf(ctx, client, workspace, name, []string{"idle","stopped"}, timeout)` avoids spurious poll timeouts. Also relevant for post-stop polling where recovery may mark an agent `stopped` immediately.
 - **Reference:** M007/S05/T02 — tests/integration/session_test.go waitForAgentStateOneOf.
 - **When:** M007/S05
+
+## K068 — Package collision avoidance when inlining multiple source commands into one cobra main package
+
+- **Pattern:** When migrating multiple independent `main` packages into a single cobra `package main` as subcommands, prefix all types, functions, and package-level vars from each source package with a distinguishing short prefix (e.g. `wmcp` for workspace-mcp, `shim` for shim client). Scope flag variables as locals inside the `newXyzCmd()` constructor, not as package-level `var`.
+- **Lesson:** Multiple inlined mains share a single namespace. Without prefixing, identically-named types (`Config`, `Client`, `conn`) collide. Without local flag scoping, two subcommands that both register `--socket` or `--bundle` will overwrite each other's package-level `var` at `init()` time. Local scoping + prefix is the zero-ambiguity pattern.
+- **Reference:** M008/S01/T01 — cmd/agentd/shim.go (shim flags local), cmd/agentd/workspacemcp.go (wmcp prefix); M008/S01/T02 — cmd/agentdctl/shim.go (shim-prefixed client types).
+- **When:** M008/S01
