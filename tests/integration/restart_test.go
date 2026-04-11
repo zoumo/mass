@@ -41,9 +41,17 @@ func stopAgentd(t *testing.T, cmd *exec.Cmd, socketPath string) {
 	t.Helper()
 	if cmd.Process != nil {
 		_ = cmd.Process.Signal(os.Interrupt)
-		_ = cmd.Wait()
+		done := make(chan error, 1)
+		go func() { done <- cmd.Wait() }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
+		}
 		t.Log("agentd stopped")
 	}
+	exec.Command("pkill", "-f", filepath.Dir(socketPath)).Run()
 	os.Remove(socketPath)
 }
 
@@ -77,6 +85,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	defer func() {
 		os.Remove(socketPath)
 		os.RemoveAll(rootDir)
+		exec.Command("pkill", "-f", rootDir).Run()
 		exec.Command("pkill", "-f", "mockagent").Run()
 	}()
 

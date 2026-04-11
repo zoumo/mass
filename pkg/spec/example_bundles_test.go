@@ -12,7 +12,7 @@ import (
 )
 
 func TestExampleBundlesAreValid(t *testing.T) {
-	bundlesRoot := filepath.Join("..", "..", "bin", "bundles")
+	bundlesRoot := filepath.Join("testdata", "bundles")
 
 	var bundleDirs []string
 	err := filepath.WalkDir(bundlesRoot, func(path string, d fs.DirEntry, err error) error {

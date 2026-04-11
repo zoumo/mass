@@ -20,10 +20,11 @@ import (
 // ────────────────────────────────────────────────────────────────────────────
 
 type ariWorkspaceSendParams struct {
-	Workspace string `json:"workspace"`
-	From      string `json:"from"`
-	To        string `json:"to"`
-	Message   string `json:"message"`
+	Workspace  string `json:"workspace"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Message    string `json:"message"`
+	NeedsReply bool   `json:"needsReply,omitempty"`
 }
 
 type ariWorkspaceSendResult struct {
@@ -109,6 +110,10 @@ var workspaceSendSchema = json.RawMessage(`{
     "message": {
       "type": "string",
       "description": "The message text to send"
+    },
+    "needsReply": {
+      "type": "boolean",
+      "description": "Set to true when you expect the target agent to reply back via workspace message"
     }
   },
   "required": ["targetAgent", "message"]
@@ -129,6 +134,7 @@ func workspaceSendHandler(cfg config) mcp.ToolHandler {
 		var input struct {
 			TargetAgent string `json:"targetAgent"`
 			Message     string `json:"message"`
+			NeedsReply  bool   `json:"needsReply"`
 		}
 		if err := json.Unmarshal(req.Params.Arguments, &input); err != nil {
 			return &mcp.CallToolResult{
@@ -143,13 +149,14 @@ func workspaceSendHandler(cfg config) mcp.ToolHandler {
 			}, nil
 		}
 
-		log.Printf("workspace_send: target=%s", input.TargetAgent)
+		log.Printf("workspace_send: target=%s needsReply=%v", input.TargetAgent, input.NeedsReply)
 
 		ariParams := ariWorkspaceSendParams{
-			Workspace: cfg.workspaceName,
-			From:      cfg.agentName,
-			To:        input.TargetAgent,
-			Message:   input.Message,
+			Workspace:  cfg.workspaceName,
+			From:       cfg.agentName,
+			To:         input.TargetAgent,
+			Message:    input.Message,
+			NeedsReply: input.NeedsReply,
 		}
 
 		var result ariWorkspaceSendResult

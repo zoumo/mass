@@ -32,7 +32,11 @@ func TestProcessManagerStart(t *testing.T) {
 	defer cancel()
 
 	// Create temp directories.
-	tmpDir := t.TempDir()
+	tmpDir, err := os.MkdirTemp("/tmp", "oar-pm-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	dbPath := filepath.Join(tmpDir, "meta.db")
 	workspaceRoot := filepath.Join(tmpDir, "workspaces")
 	bundleRoot := filepath.Join(tmpDir, "bundles")
@@ -162,6 +166,9 @@ func TestProcessManagerStart(t *testing.T) {
 		t.Errorf("expected shim status 'idle' or 'running', got '%s'", state.Status)
 	}
 
+	// Stop the default drain goroutine so the test can read events.
+	shimProc.StopDrain()
+
 	// Send a Prompt to trigger events (session/prompt).
 	promptResult, err := shimProc.Client.Prompt(ctx, "hello mockagent")
 	if err != nil {
@@ -227,17 +234,27 @@ done:
 	}
 
 	// Verify agent status transitioned to "stopped".
-	finalAgent, err := agentMgr.Get(ctx, agentWorkspace, agentName)
-	if err != nil {
-		t.Fatalf("Get agent after shutdown: %v", err)
+	var finalAgent *meta.AgentRun
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		finalAgent, err = agentMgr.Get(ctx, agentWorkspace, agentName)
+		if err != nil {
+			t.Fatalf("Get agent after shutdown: %v", err)
+		}
+		if finalAgent.Status.State == spec.StatusStopped {
+			break
+		}
 	}
-	if finalAgent.Status.State != spec.StatusStopped {
-		t.Errorf("expected agent state 'stopped' after shutdown, got '%s'", finalAgent.Status.State)
+	if finalAgent == nil || finalAgent.Status.State != spec.StatusStopped {
+		got := spec.Status("")
+		if finalAgent != nil {
+			got = finalAgent.Status.State
+		}
+		t.Errorf("expected agent state 'stopped' after shutdown, got '%s'", got)
 	}
 
-	// Verify bundle directory was cleaned up.
-	if _, err := os.Stat(shimProc.BundlePath); err == nil {
-		t.Errorf("expected bundle directory to be cleaned up, but %s still exists", shimProc.BundlePath)
+	// Stop leaves the bundle on disk; explicit agent deletion owns bundle cleanup.
+	if _, err := os.Stat(shimProc.BundlePath); err != nil {
+		t.Errorf("expected bundle directory to remain after stop, got %v", err)
 	}
 
 	t.Logf("Test complete: agent %s/%s lifecycle: creating → running → stopped", agentWorkspace, agentName)
@@ -283,8 +300,10 @@ func TestGenerateConfig(t *testing.T) {
 		if cfg.AcpAgent.Process.Command != "/usr/bin/mockagent" {
 			t.Errorf("expected Command=/usr/bin/mockagent, got %q", cfg.AcpAgent.Process.Command)
 		}
-		if len(cfg.AcpAgent.Session.McpServers) != 0 {
-			t.Errorf("expected 0 MCP servers, got %d", len(cfg.AcpAgent.Session.McpServers))
+		if len(cfg.AcpAgent.Session.McpServers) != 1 {
+			t.Errorf("expected 1 MCP server, got %d", len(cfg.AcpAgent.Session.McpServers))
+		} else if cfg.AcpAgent.Session.McpServers[0].Name != "workspace" {
+			t.Errorf("expected workspace MCP server, got %q", cfg.AcpAgent.Session.McpServers[0].Name)
 		}
 		// Verify annotations include runtimeClass.
 		if cfg.Metadata.Annotations["runtimeClass"] != "mockagent" {

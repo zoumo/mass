@@ -260,7 +260,8 @@ func translate(n acp.SessionNotification) Event {
 		return ToolResultEvent{ID: string(tcu.ToolCallId), Status: safeStatus(tcu.Status)}
 	case u.Plan != nil:
 		return PlanEvent{Entries: u.Plan.Entries}
-	case u.AvailableCommandsUpdate != nil, u.CurrentModeUpdate != nil:
+	case u.AvailableCommandsUpdate != nil, u.CurrentModeUpdate != nil,
+		u.ConfigOptionUpdate != nil, u.SessionInfoUpdate != nil, u.UsageUpdate != nil:
 		return nil
 	default:
 		return ErrorEvent{Msg: "unknown session update variant"}

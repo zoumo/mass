@@ -163,6 +163,7 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			if wait && result.Accepted {
 				fmt.Println("Waiting for agent run to finish processing...")
+				observedRunning := true
 				for {
 					time.Sleep(500 * time.Millisecond)
 					var statusResult ari.AgentRunStatusResult
@@ -170,7 +171,11 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 						fmt.Printf("agentrun/status error: %v\n", err)
 						break
 					}
-					if statusResult.Agent.State != "running" {
+					if statusResult.Agent.State == "running" {
+						observedRunning = true
+						continue
+					}
+					if observedRunning {
 						fmt.Printf("Agent run state: %s\n", statusResult.Agent.State)
 						break
 					}

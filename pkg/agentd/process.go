@@ -82,11 +82,15 @@ type ShimProcess struct {
 	Cmd *exec.Cmd
 
 	// Events is a channel receiving ordered session/update params from the shim.
-	// Events are delivered after Subscribe is called.
+	// A default drain goroutine consumes events when no external reader is active.
 	Events chan events.SessionUpdateParams
 
 	// Done is closed when the shim process exits and all cleanup is complete.
 	Done chan struct{}
+
+	// stopDrain is closed to stop the default drain goroutine when an external
+	// consumer takes over reading from Events.
+	stopDrain chan struct{}
 
 	// exitErr holds the error returned by cmd.Wait(). Set before Done is closed.
 	exitErr error
@@ -130,7 +134,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 			select {
 			case shimProc.Events <- p:
 			default:
-				logger.Warn("event channel full, dropping event", "seq", p.Seq)
+				// No consumer is draining Events; drop silently to avoid log spam.
 			}
 
 		case events.MethodRuntimeStateChange:
@@ -147,6 +151,20 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 				"new", newStatus)
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
+			current, err := m.agents.Get(updateCtx, workspace, name)
+			if err != nil {
+				logger.Warn("stateChange: failed to read DB state",
+					"agent_key", key,
+					"error", err)
+				return
+			}
+			if current != nil && current.Status.State == spec.StatusStopped && spec.Status(newStatus) != spec.StatusStopped {
+				logger.Info("stateChange: dropped stale live state after stop",
+					"agent_key", key,
+					"current", current.Status.State,
+					"new", newStatus)
+				return
+			}
 			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentRunStatus{
 				State:          spec.Status(newStatus),
 				ShimSocketPath: shimProc.SocketPath,
@@ -340,11 +358,12 @@ func (m *ProcessManager) generateConfig(agent *meta.AgentRun, rc *RuntimeClass) 
 	// is actually created.
 	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
 
+	mcpBinary, mcpArgs := m.workspaceMcpCommand()
 	workspaceMcp := spec.McpServer{
 		Type:    "stdio",
 		Name:    "workspace",
-		Command: m.findWorkspaceMcpBinary(),
-		Args:    []string{},
+		Command: mcpBinary,
+		Args:    mcpArgs,
 		Env: []spec.EnvVar{
 			{Name: "OAR_AGENTD_SOCKET", Value: m.socketPath},
 			{Name: "OAR_WORKSPACE_NAME", Value: agent.Metadata.Workspace},
@@ -377,22 +396,15 @@ func (m *ProcessManager) generateConfig(agent *meta.AgentRun, rc *RuntimeClass) 
 	}
 }
 
-// findWorkspaceMcpBinary returns the path to the workspace-mcp-server binary.
-// Resolution order:
-//  1. OAR_WORKSPACE_MCP_BINARY env var (test override)
-//  2. ./bin/workspace-mcp-server relative to current working directory
-//  3. PATH lookup
-func (m *ProcessManager) findWorkspaceMcpBinary() string {
-	if envPath := os.Getenv("OAR_WORKSPACE_MCP_BINARY"); envPath != "" {
-		return envPath
+// workspaceMcpCommand returns the command and args for the workspace MCP server.
+// Uses self-fork: os.Executable() + "workspace-mcp" subcommand (same pattern as shim).
+func (m *ProcessManager) workspaceMcpCommand() (string, []string) {
+	self, err := os.Executable()
+	if err != nil {
+		m.logger.Error("os.Executable failed for workspace-mcp, falling back to PATH", "error", err)
+		return "agentd", []string{"workspace-mcp"}
 	}
-	if cwd, err := os.Getwd(); err == nil {
-		builtPath := filepath.Join(cwd, "bin", "workspace-mcp-server")
-		if _, err := os.Stat(builtPath); err == nil {
-			return builtPath
-		}
-	}
-	return "workspace-mcp-server"
+	return self, []string{"workspace-mcp"}
 }
 
 // createBundle creates the bundle directory and writes config.json.
@@ -527,13 +539,45 @@ func (m *ProcessManager) forkShim(agent *meta.AgentRun, bundlePath, stateDir str
 
 	m.logger.Debug("shim forked", "agent_key", key, "pid", cmd.Process.Pid)
 
-	return &ShimProcess{
-		AgentKey: key,
-		PID:      cmd.Process.Pid,
-		Cmd:      cmd,
-		Events:   make(chan events.SessionUpdateParams, 1024), // buffered for async delivery
-		Done:     make(chan struct{}),
-	}, nil
+	sp := &ShimProcess{
+		AgentKey:  key,
+		PID:       cmd.Process.Pid,
+		Cmd:       cmd,
+		Events:    make(chan events.SessionUpdateParams, 1024), // buffered for async delivery
+		Done:      make(chan struct{}),
+		stopDrain: make(chan struct{}),
+	}
+	go sp.drainEvents()
+	return sp, nil
+}
+
+// drainEvents is the default consumer that discards events from the Events
+// channel. It runs until stopDrain or Done is closed, preventing the channel
+// from filling up when no external consumer is reading.
+func (sp *ShimProcess) drainEvents() {
+	for {
+		select {
+		case <-sp.stopDrain:
+			return
+		case <-sp.Done:
+			return
+		case _, ok := <-sp.Events:
+			if !ok {
+				return
+			}
+		}
+	}
+}
+
+// StopDrain stops the default drain goroutine so an external consumer can
+// take over reading from Events without racing.
+func (sp *ShimProcess) StopDrain() {
+	select {
+	case <-sp.stopDrain:
+		// already stopped
+	default:
+		close(sp.stopDrain)
+	}
 }
 
 // waitForSocket waits for the shim's RPC socket to appear.
@@ -619,9 +663,6 @@ func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProc
 	key := shimProc.AgentKey
 
 	m.logger.Info("shim process exited", "agent_key", key, "error", shimProc.exitErr)
-
-	// Close the Events channel.
-	close(shimProc.Events)
 
 	// Remove from processes map.
 	m.mu.Lock()

@@ -184,6 +184,35 @@ func TestUpdateAgentRunStatus_NotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestTransitionAgentRunState(t *testing.T) {
+	s := tempStore(t)
+	agent := makeAgentRun("ws", "reserved")
+	agent.Status.ShimSocketPath = "/tmp/shim.sock"
+	require.NoError(t, s.CreateAgentRun(t.Context(), agent))
+
+	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "reserved", spec.StatusIdle, spec.StatusRunning)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	got, err := s.GetAgentRun(t.Context(), "ws", "reserved")
+	require.NoError(t, err)
+	require.Equal(t, spec.StatusRunning, got.Status.State)
+	require.Equal(t, "/tmp/shim.sock", got.Status.ShimSocketPath)
+}
+
+func TestTransitionAgentRunState_WrongExpectedState(t *testing.T) {
+	s := tempStore(t)
+	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws", "busy")))
+
+	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "busy", spec.StatusStopped, spec.StatusRunning)
+	require.NoError(t, err)
+	require.False(t, ok)
+
+	got, err := s.GetAgentRun(t.Context(), "ws", "busy")
+	require.NoError(t, err)
+	require.Equal(t, spec.StatusIdle, got.Status.State)
+}
+
 // ── Delete ────────────────────────────────────────────────────────────────────
 
 func TestDeleteAgentRun(t *testing.T) {

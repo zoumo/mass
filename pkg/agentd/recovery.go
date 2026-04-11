@@ -194,8 +194,10 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *meta.AgentRun)
 		SocketPath: agent.Status.ShimSocketPath,
 		Events:     make(chan events.SessionUpdateParams, 100),
 		Done:       make(chan struct{}),
+		stopDrain:  make(chan struct{}),
 		// Cmd is nil for recovered agents — we didn't fork the process.
 	}
+	go shimProc.drainEvents()
 
 	// Connect to the shim socket with the unified notification handler.
 	// Routes session/update → shimProc.Events and runtime/stateChange → DB (D088).

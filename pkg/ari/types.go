@@ -110,6 +110,10 @@ type WorkspaceSendParams struct {
 
 	// Message is the text to send (required).
 	Message string `json:"message"`
+
+	// NeedsReply indicates whether the sender expects a reply via workspace message.
+	// When true, the delivered prompt includes reply-to and reply-requested=true headers.
+	NeedsReply bool `json:"needsReply,omitempty"`
 }
 
 // WorkspaceSendResult is the response result for workspace/send method.

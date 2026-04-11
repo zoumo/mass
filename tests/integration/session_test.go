@@ -89,10 +89,18 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *ari.Cl
 	cleanup := func() {
 		client.Close()
 		if agentdCmd.Process != nil {
-			agentdCmd.Process.Signal(os.Interrupt)
-			agentdCmd.Wait()
+			_ = agentdCmd.Process.Signal(os.Interrupt)
+			done := make(chan error, 1)
+			go func() { done <- agentdCmd.Wait() }()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				_ = agentdCmd.Process.Kill()
+				<-done
+			}
 			t.Log("agentd stopped")
 		}
+		exec.Command("pkill", "-f", rootDir).Run()
 		os.Remove(socketPath)
 		os.RemoveAll(rootDir)
 		exec.Command("pkill", "-f", "mockagent").Run()

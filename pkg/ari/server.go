@@ -474,26 +474,115 @@ func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "target agent is in error state")
 		return
 	}
+	if agent.Status.State != spec.StatusIdle {
+		s.logger.Warn("workspace/send: target agent not idle",
+			"workspace", params.Workspace, "to", params.To, "state", agent.Status.State)
+		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
+			fmt.Sprintf("target agent not in idle state: %s", agent.Status.State))
+		return
+	}
+
+	reserved, err := s.agents.TransitionState(ctx, params.Workspace, params.To, spec.StatusIdle, spec.StatusRunning)
+	if err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
+		return
+	}
+	if !reserved {
+		current, getErr := s.store.GetAgentRun(ctx, params.Workspace, params.To)
+		if getErr != nil {
+			s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, getErr.Error())
+			return
+		}
+		state := "<missing>"
+		if current != nil {
+			state = string(current.Status.State)
+		}
+		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
+			fmt.Sprintf("target agent not in idle state: %s", state))
+		return
+	}
 
 	// Connect to the target shim.
 	client, err := s.processes.Connect(ctx, params.Workspace, params.To)
 	if err != nil {
 		s.logger.Warn("workspace/send: target agent not running",
 			"workspace", params.Workspace, "to", params.To, "error", err)
+		s.recordPromptDeliveryFailure(params.Workspace, params.To, agent.Status, err, true)
 		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "target agent is not running")
 		return
 	}
 
 	// Fire-and-forget: send prompt without blocking the caller.
-	msg := params.Message
+	msg := buildWorkspaceEnvelope(params) + params.Message
 	go func() {
 		if _, err := client.Prompt(context.Background(), msg); err != nil {
 			s.logger.Warn("workspace/send: prompt delivery failed",
 				"workspace", params.Workspace, "to", params.To, "error", err)
+			s.recordPromptDeliveryFailure(params.Workspace, params.To, agent.Status, err, false)
 		}
 	}()
 
 	s.replyOK(ctx, conn, req, WorkspaceSendResult{Delivered: true})
+}
+
+// buildWorkspaceEnvelope constructs the envelope header prepended to every
+// workspace message before delivery. It encodes the sender identity and, when
+// NeedsReply is set, the reply-to address and reply-requested flag so the
+// receiving agent knows it is expected to respond.
+func buildWorkspaceEnvelope(p WorkspaceSendParams) string {
+	if p.NeedsReply {
+		return "[workspace-message from=" + p.From + " reply-to=" + p.From + " reply-requested=true]\n\n"
+	}
+	return "[workspace-message from=" + p.From + "]\n\n"
+}
+
+func (s *Server) recordPromptDeliveryFailure(workspace, name string, fallback meta.AgentRunStatus, cause error, markErrorWhenRuntimeUnavailable bool) {
+	ctx := context.Background()
+	current, err := s.store.GetAgentRun(ctx, workspace, name)
+	if err != nil {
+		s.logger.Warn("prompt failure: current state lookup failed",
+			"workspace", workspace, "name", name, "error", err)
+	}
+	if current != nil && current.Status.State == spec.StatusStopped {
+		s.logger.Info("prompt failure: ignored after stop",
+			"workspace", workspace, "name", name, "error", cause)
+		return
+	}
+
+	if rts, statusErr := s.processes.RuntimeStatus(ctx, workspace, name); statusErr == nil {
+		status := fallback
+		if current != nil {
+			status = current.Status
+		}
+		status.State = rts.State.Status
+		status.ErrorMessage = cause.Error()
+		_ = s.agents.UpdateStatus(ctx, workspace, name, status)
+		return
+	}
+	if !markErrorWhenRuntimeUnavailable {
+		s.logger.Info("prompt failure: runtime unavailable, leaving terminal state to process watcher",
+			"workspace", workspace, "name", name, "error", cause)
+		return
+	}
+
+	current, err = s.store.GetAgentRun(ctx, workspace, name)
+	if err != nil {
+		s.logger.Warn("prompt failure: current state lookup failed",
+			"workspace", workspace, "name", name, "error", err)
+	}
+	if current != nil && current.Status.State == spec.StatusStopped {
+		s.logger.Info("prompt failure: ignored after stop",
+			"workspace", workspace, "name", name, "error", cause)
+		return
+	}
+
+	_ = s.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{
+		State:          spec.StatusError,
+		ShimSocketPath: fallback.ShimSocketPath,
+		ShimStateDir:   fallback.ShimStateDir,
+		ShimPID:        fallback.ShimPID,
+		ErrorMessage:   cause.Error(),
+	})
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -610,6 +699,11 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
 	}
+	if params.Workspace == "" || params.Name == "" || params.Prompt == "" {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams,
+			"workspace, name, and prompt are required")
+		return
+	}
 
 	s.logger.Info("agentrun/prompt", "workspace", params.Workspace, "name", params.Name)
 
@@ -642,11 +736,36 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 		return
 	}
 
+	// Reserve the agent run before acknowledging the prompt. The shim remains
+	// the post-bootstrap state authority; this write is an admission lock so a
+	// second prompt/stop/delete cannot observe stale idle while delivery is
+	// still queued in the goroutine below.
+	reserved, err := s.agents.TransitionState(ctx, params.Workspace, params.Name, spec.StatusIdle, spec.StatusRunning)
+	if err != nil {
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
+		return
+	}
+	if !reserved {
+		current, getErr := s.store.GetAgentRun(ctx, params.Workspace, params.Name)
+		if getErr != nil {
+			s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, getErr.Error())
+			return
+		}
+		state := "<missing>"
+		if current != nil {
+			state = string(current.Status.State)
+		}
+		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
+			fmt.Sprintf("agent not in idle state: %s", state))
+		return
+	}
+
 	// Connect to shim.
 	client, err := s.processes.Connect(ctx, params.Workspace, params.Name)
 	if err != nil {
 		s.logger.Warn("agentrun/prompt: agent not running",
 			"workspace", params.Workspace, "name", params.Name, "error", err)
+		s.recordPromptDeliveryFailure(params.Workspace, params.Name, agent.Status, err, true)
 		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "agent not running")
 		return
 	}
@@ -657,6 +776,7 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 		if _, err := client.Prompt(context.Background(), prompt); err != nil {
 			s.logger.Warn("agentrun/prompt: prompt delivery failed",
 				"workspace", params.Workspace, "name", params.Name, "error", err)
+			s.recordPromptDeliveryFailure(params.Workspace, params.Name, agent.Status, err, false)
 		}
 	}()
 

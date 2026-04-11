@@ -1,0 +1,15 @@
+{
+  "oarVersion": "0.1.0",
+  "metadata": {
+    "name": "minimal"
+  },
+  "agentRoot": {
+    "path": "workspace"
+  },
+  "acpAgent": {
+    "process": {
+      "command": "mockagent"
+    }
+  },
+  "permissions": "approve-all"
+}

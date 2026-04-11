@@ -8,6 +8,8 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+
+	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // CreateAgentRun stores a new AgentRun record.
@@ -184,6 +186,58 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 			"state", status.State)
 		return nil
 	})
+}
+
+// TransitionAgentRunState updates only Status.State when the current state
+// matches expected. It preserves shim metadata, error text, and bootstrap data.
+// Returns false, nil when the agent exists but is not in the expected state.
+func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next spec.Status) (bool, error) {
+	if workspace == "" {
+		return false, fmt.Errorf("meta: workspace is required")
+	}
+	if name == "" {
+		return false, fmt.Errorf("meta: agent name is required")
+	}
+
+	var transitioned bool
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		wb, err := workspaceBucket(tx, workspace)
+		if err != nil {
+			return err
+		}
+		key := []byte(name)
+		data := wb.Get(key)
+		if data == nil {
+			return fmt.Errorf("meta: agent %s/%s does not exist", workspace, name)
+		}
+		var agent AgentRun
+		if err := json.Unmarshal(data, &agent); err != nil {
+			return fmt.Errorf("meta: unmarshal agent %s/%s: %w", workspace, name, err)
+		}
+		if agent.Status.State != expected {
+			return nil
+		}
+		agent.Status.State = next
+		agent.Metadata.UpdatedAt = time.Now()
+		updated, err := json.Marshal(&agent)
+		if err != nil {
+			return fmt.Errorf("meta: marshal agent %s/%s: %w", workspace, name, err)
+		}
+		if err := wb.Put(key, updated); err != nil {
+			return fmt.Errorf("meta: store agent %s/%s: %w", workspace, name, err)
+		}
+		transitioned = true
+		s.logger.Debug("agentRun state transitioned",
+			"workspace", workspace,
+			"name", name,
+			"from", expected,
+			"to", next)
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return transitioned, nil
 }
 
 // DeleteAgentRun removes the identified agent run.

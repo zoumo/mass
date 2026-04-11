@@ -50,7 +50,9 @@ func shortSockPath(t *testing.T) string {
 func newTestServer(t *testing.T) *testEnv {
 	t.Helper()
 
-	tmpDir := t.TempDir()
+	tmpDir, err := os.MkdirTemp("/tmp", "oar-ari-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	dbPath := filepath.Join(tmpDir, "test.db")
 	store, err := meta.NewStore(dbPath)
 	require.NoError(t, err)
@@ -328,6 +330,80 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 	}
 }
 
+func TestAgentPromptRejectsEmptyPrompt(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "empty-prompt-ws")
+	seedAgent(t, env.store, "empty-prompt-ws", "agent-idle", spec.StatusIdle)
+
+	err := env.client.Call("agentrun/prompt", map[string]any{
+		"workspace": "empty-prompt-ws",
+		"name":      "agent-idle",
+		"prompt":    "",
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-32602")
+
+	agent, getErr := env.store.GetAgentRun(context.Background(), "empty-prompt-ws", "agent-idle")
+	require.NoError(t, getErr)
+	require.NotNil(t, agent)
+	assert.Equal(t, spec.StatusIdle, agent.Status.State)
+}
+
+func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "reserve-ws")
+
+	agentName := "agent-reserve"
+	seedAgent(t, env.store, "reserve-ws", agentName, spec.StatusIdle)
+
+	shimSrv, shimSock := newMiniShimServer(t)
+	_ = shimSrv
+
+	require.Eventually(t, func() bool {
+		c, err := net.Dial("unix", shimSock)
+		if err == nil {
+			_ = c.Close()
+			return true
+		}
+		return false
+	}, 2*time.Second, 10*time.Millisecond, "mini shim socket not ready")
+
+	shimClient, err := agentd.Dial(context.Background(), shimSock)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = shimClient.Close() })
+
+	env.processes.InjectProcess("reserve-ws/"+agentName, &agentd.ShimProcess{
+		AgentKey:   "reserve-ws/" + agentName,
+		SocketPath: shimSock,
+		Client:     shimClient,
+		Events:     make(chan events.SessionUpdateParams, 1024),
+		Done:       make(chan struct{}),
+	})
+
+	var result ari.AgentRunPromptResult
+	require.NoError(t, env.client.Call("agentrun/prompt", map[string]any{
+		"workspace": "reserve-ws",
+		"name":      agentName,
+		"prompt":    "hello",
+	}, &result))
+	require.True(t, result.Accepted)
+
+	var status ari.AgentRunStatusResult
+	require.NoError(t, env.client.Call("agentrun/status", map[string]string{
+		"workspace": "reserve-ws",
+		"name":      agentName,
+	}, &status))
+	assert.Equal(t, "running", status.Agent.State)
+
+	err = env.client.Call("agentrun/prompt", map[string]any{
+		"workspace": "reserve-ws",
+		"name":      agentName,
+		"prompt":    "second",
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not in idle state")
+}
+
 func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "del-ws")
@@ -484,18 +560,13 @@ func (h *miniShimHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *
 // workspace/send tests
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestWorkspaceSendDelivered(t *testing.T) {
-	env := newTestServer(t)
-	wsStatus := createAndWaitWorkspace(t, env.client, "send-ws")
-	_ = wsStatus
-
-	agentName := "recv-agent"
-	seedAgent(t, env.store, "send-ws", agentName, spec.StatusIdle)
-
-	// Start in-process mock shim.
+// injectMockShim starts a mini shim server, waits for it to be ready, and
+// injects it into the process manager under "wsName/agentName".
+// Returns the shim server so callers can inspect received prompts.
+func injectMockShim(t *testing.T, env *testEnv, wsName, agentName string) *miniShimServer {
+	t.Helper()
 	shimSrv, shimSock := newMiniShimServer(t)
 
-	// Wait for shim socket to be ready.
 	require.Eventually(t, func() bool {
 		c, err := net.Dial("unix", shimSock)
 		if err == nil {
@@ -505,39 +576,74 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 		return false
 	}, 2*time.Second, 10*time.Millisecond, "mini shim socket not ready")
 
-	// Build a ShimClient connected to the mock shim.
 	shimClient, err := agentd.Dial(context.Background(), shimSock)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = shimClient.Close() })
 
-	// Build a ShimProcess with the mock client and inject into ProcessManager.
-	shimProc := &agentd.ShimProcess{
-		AgentKey:   "send-ws/" + agentName,
+	env.processes.InjectProcess(wsName+"/"+agentName, &agentd.ShimProcess{
+		AgentKey:   wsName + "/" + agentName,
 		SocketPath: shimSock,
 		Client:     shimClient,
 		Events:     make(chan events.SessionUpdateParams, 1024),
 		Done:       make(chan struct{}),
-	}
-	env.processes.InjectProcess("send-ws/"+agentName, shimProc)
+	})
+	return shimSrv
+}
 
-	// Call workspace/send.
+func TestWorkspaceSendDelivered(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "send-ws")
+
+	agentName := "recv-agent"
+	seedAgent(t, env.store, "send-ws", agentName, spec.StatusIdle)
+	shimSrv := injectMockShim(t, env, "send-ws", agentName)
+
 	var sendResult ari.WorkspaceSendResult
-	require.NoError(t, env.client.Call("workspace/send", map[string]string{
+	require.NoError(t, env.client.Call("workspace/send", map[string]any{
 		"workspace": "send-ws",
 		"from":      "sender",
 		"to":        agentName,
 		"message":   "hello",
 	}, &sendResult))
-
 	assert.True(t, sendResult.Delivered)
 
-	// Wait for the async prompt to reach the mock shim.
 	require.Eventually(t, func() bool {
 		return len(shimSrv.receivedPrompts()) >= 1
 	}, 2*time.Second, 20*time.Millisecond, "mock shim did not receive prompt")
 
-	prompts := shimSrv.receivedPrompts()
-	assert.Equal(t, "hello", prompts[0])
+	// Delivered prompt must include the sender envelope and the original message.
+	prompt := shimSrv.receivedPrompts()[0]
+	assert.Contains(t, prompt, "[workspace-message from=sender]")
+	assert.Contains(t, prompt, "hello")
+}
+
+func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "reply-ws")
+
+	agentName := "reply-agent"
+	seedAgent(t, env.store, "reply-ws", agentName, spec.StatusIdle)
+	shimSrv := injectMockShim(t, env, "reply-ws", agentName)
+
+	var sendResult ari.WorkspaceSendResult
+	require.NoError(t, env.client.Call("workspace/send", map[string]any{
+		"workspace":  "reply-ws",
+		"from":       "codex",
+		"to":         agentName,
+		"message":    "please review",
+		"needsReply": true,
+	}, &sendResult))
+	assert.True(t, sendResult.Delivered)
+
+	require.Eventually(t, func() bool {
+		return len(shimSrv.receivedPrompts()) >= 1
+	}, 2*time.Second, 20*time.Millisecond, "mock shim did not receive prompt")
+
+	// When needsReply=true the envelope must include reply-to and reply-requested=true.
+	prompt := shimSrv.receivedPrompts()[0]
+	assert.Contains(t, prompt, "reply-to=codex")
+	assert.Contains(t, prompt, "reply-requested=true")
+	assert.Contains(t, prompt, "please review")
 }
 
 func TestWorkspaceSendRejectedForErrorAgent(t *testing.T) {

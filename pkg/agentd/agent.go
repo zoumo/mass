@@ -153,6 +153,32 @@ func (m *AgentManager) UpdateStatus(ctx context.Context, workspace, name string,
 	return nil
 }
 
+// TransitionState updates an agent state only when the current state matches
+// expected. It returns false when the agent exists but was already in another
+// state. Other status fields are preserved.
+func (m *AgentManager) TransitionState(ctx context.Context, workspace, name string, expected, next spec.Status) (bool, error) {
+	m.logger.Info("transitioning agent state",
+		"workspace", workspace,
+		"name", name,
+		"from", expected,
+		"to", next)
+
+	ok, err := m.store.TransitionAgentRunState(ctx, workspace, name, expected, next)
+	if err != nil {
+		if strings.Contains(err.Error(), "does not exist") {
+			return false, &ErrAgentNotFound{Workspace: workspace, Name: name}
+		}
+		m.logger.Error("failed to transition agent state",
+			"workspace", workspace,
+			"name", name,
+			"from", expected,
+			"to", next,
+			"error", err)
+		return false, fmt.Errorf("agentd: failed to transition agent state: %w", err)
+	}
+	return ok, nil
+}
+
 // Delete deletes an agent by (workspace, name).
 // Returns ErrDeleteNotStopped if the agent is not in the stopped or error state.
 // Returns ErrAgentNotFound if the agent does not exist.

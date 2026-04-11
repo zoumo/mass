@@ -10,17 +10,8 @@ import (
 
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/pkg/meta"
 )
-
-// applySpec is the YAML shape for agent apply -f.
-type applySpec struct {
-	Name                  string        `yaml:"name"`
-	Command               string        `yaml:"command"`
-	Args                  []string      `yaml:"args,omitempty"`
-	Env                   []spec.EnvVar `yaml:"env,omitempty"`
-	StartupTimeoutSeconds *int          `yaml:"startupTimeoutSeconds,omitempty"`
-}
 
 // NewCommand returns the "agent" cobra command.
 func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
@@ -45,15 +36,15 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("reading agent-template file %q: %w", file, err)
 			}
-			var s applySpec
-			if err := yaml.Unmarshal(data, &s); err != nil {
+			var tmpl meta.AgentTemplate
+			if err := yaml.Unmarshal(data, &tmpl); err != nil {
 				return fmt.Errorf("parsing agent-template YAML %q: %w", file, err)
 			}
-			if s.Name == "" {
-				return fmt.Errorf("agent-template YAML must have a non-empty 'name' field")
+			if tmpl.Metadata.Name == "" {
+				return fmt.Errorf("agent-template YAML must have a non-empty 'metadata.name' field")
 			}
-			if s.Command == "" {
-				return fmt.Errorf("agent-template YAML must have a non-empty 'command' field")
+			if tmpl.Spec.Command == "" {
+				return fmt.Errorf("agent-template YAML must have a non-empty 'spec.command' field")
 			}
 
 			client, err := getClient()
@@ -63,11 +54,11 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 			defer client.Close()
 
 			params := ari.AgentTemplateSetParams{
-				Name:                  s.Name,
-				Command:               s.Command,
-				Args:                  s.Args,
-				Env:                   s.Env,
-				StartupTimeoutSeconds: s.StartupTimeoutSeconds,
+				Name:                  tmpl.Metadata.Name,
+				Command:               tmpl.Spec.Command,
+				Args:                  tmpl.Spec.Args,
+				Env:                   tmpl.Spec.Env,
+				StartupTimeoutSeconds: tmpl.Spec.StartupTimeoutSeconds,
 			}
 			var result ari.AgentTemplateInfo
 			if err := client.Call("agent/set", params, &result); err != nil {
