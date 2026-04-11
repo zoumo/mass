@@ -1,0 +1,53 @@
+package create
+
+import (
+	"encoding/json"
+
+	"github.com/spf13/cobra"
+
+	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
+	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	"github.com/open-agent-d/open-agent-d/pkg/workspace"
+)
+
+func newGitCmd(getClient cliutil.ClientFn) *cobra.Command {
+	var (
+		url   string
+		ref   string
+		depth int
+	)
+	cmd := &cobra.Command{
+		Use:   "git <name> --url <url> [--ref <ref>] [--depth <n>]",
+		Short: "Create a workspace by cloning a git repository",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			src := workspace.Source{
+				Type: workspace.SourceTypeGit,
+				Git:  workspace.GitSource{URL: url, Ref: ref, Depth: depth},
+			}
+			srcJSON, err := json.Marshal(src)
+			if err != nil {
+				return nil
+			}
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			params := ari.WorkspaceCreateParams{Name: args[0], Source: srcJSON}
+			var result ari.WorkspaceCreateResult
+			if err := client.Call("workspace/create", params, &result); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			cliutil.OutputJSON(result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&url, "url", "", "Git repository URL (required)")
+	_ = cmd.MarkFlagRequired("url")
+	cmd.Flags().StringVar(&ref, "ref", "", "Git reference (branch, tag, or commit)")
+	cmd.Flags().IntVar(&depth, "depth", 0, "Shallow clone depth (0 = full clone)")
+	return cmd
+}
