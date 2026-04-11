@@ -12,7 +12,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: execution
 - Primary owning slice: M001-tvc4z0/S01
 - Supporting slices: none
-- Validation: M008/S02: `agentd server --root /tmp/test-agentd-s02` creates socket at /tmp/test-agentd-s02/agentd.sock without any config.yaml. All paths (socket, DB, bundles, workspaces) are derived from --root. config.yaml and ParseConfig() deleted entirely.
+- Validation: M008/S02: `agentd server --root /tmp/test-agentd-s02` creates socket at /tmp/test-agentd-s02/agentd.sock without any config.yaml. All paths (socket, DB, bundles, workspaces) are derived from --root via Options.Validate(). config.yaml and ParseConfig() deleted entirely. TestRuntimeLifecycle integration test confirmed the full chain in 1.4s.
 - Notes: Includes project scaffolding, config parsing, signal handling
 
 ### R002 — Runtime entity can be registered via ARI runtime/set, persisted to DB, and resolved by name to command/args/env
@@ -23,7 +23,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: execution
 - Primary owning slice: M001-tvc4z0/S03
 - Supporting slices: none
-- Validation: M008/S02: meta.Runtime stored in v1/runtimes bbolt bucket. ARI runtime/set|get|list|delete handlers implemented. agentdctl runtime apply/get/list/delete CLI. TestRuntimeLifecycle integration test verifies full chain: runtime/set → agent creates → idle state. Static RuntimeClassRegistry config deleted.
+- Validation: M008/S04: meta.AgentTemplate (renamed from Runtime) stored in v1/agents bbolt bucket. ARI agent/set|get|list|delete handlers wired and verified. agentdctl agent apply/get/list/delete CLI functional. Integration tests (TestRuntimeLifecycle, TestEndToEndPipeline) confirm full chain: agent/set → agentrun/create → idle state. Old runtime/* ARI surface fully removed — rg 'runtime/' pkg/ari/server.go returns zero non-comment dispatch matches.
 - Notes: Config parsing, ${VAR} substitution, validation
 
 ### R003 — SQLite-based metadata store persists session/workspace/room records with CRUD operations
@@ -78,7 +78,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: execution
 - Primary owning slice: M001-tvc4z0/S07
 - Supporting slices: none
-- Validation: S07 build verified. agentdctl CLI has 11 subcommands (7 session, 3 workspace, 1 daemon). CLI help output confirms all commands. Functional verification: CLI executes, error handling works, cobra validation works for missing required flags.
+- Validation: M008/S01+S04: agentdctl CLI fully consolidated. `agentdctl agent` (apply/get/list/delete template CRUD) + `agentdctl agentrun` (create/list/status/prompt/stop/delete/restart/attach/cancel lifecycle) + `agentdctl workspace` + `agentdctl shim` + `agentdctl daemon`. Resource-first grammar matches kubectl/containerd model. All subcommands verified via --help and integration tests.
 - Notes: Extends agent-shim-cli or separate agentdctl binary
 
 ### R008 — Full pipeline agentd → agent-shim → mockagent works: create → prompt → stop → remove
@@ -440,29 +440,7 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: unmapped
 - Notes: Current recommendation is to retain SQLite because the model already relies on relational features.
 
-### R043 — Terminal work can return only after the converged runtime contract is stable enough to place it correctly.
-- Class: constraint
-- Status: deferred
-- Description: Terminal work can return only after the converged runtime contract is stable enough to place it correctly.
-- Why it matters: Prevents the roadmap from reviving a cancelled direction prematurely.
-- Source: user
-- Primary owning slice: none
-- Supporting slices: none
-- Validation: unmapped
-- Notes: Keeps terminal explicitly out of the near-term roadmap without banning it forever.
-
 ## Out of Scope
-
-### R030 — Runtime interactive approval for fs/terminal operations
-- Class: anti-feature
-- Status: out-of-scope
-- Description: Runtime interactive approval for fs/terminal operations
-- Why it matters: agentd manages headless sessions; interactive approval is for tools like toad
-- Source: execution
-- Primary owning slice: none
-- Supporting slices: none
-- Validation: n/a
-- Notes: Use toad/acpx for interactive approval scenarios
 
 ### R031 — Direct ACP message manipulation (bypassing typed events)
 - Class: anti-feature
@@ -475,39 +453,17 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: n/a
 - Notes: Typed events are the core protocol
 
-### R045 — The convergence wave does not preserve compatibility with old contract shapes that the user no longer wants to carry.
-- Class: anti-feature
-- Status: out-of-scope
-- Description: The convergence wave does not preserve compatibility with old contract shapes that the user no longer wants to carry.
-- Why it matters: Prevents the roadmap from paying complexity for compatibility the sole operator explicitly does not need.
-- Source: user
-- Primary owning slice: none
-- Supporting slices: none
-- Validation: n/a
-- Notes: This is the explicit “不需要考虑兼容性的问题” decision.
-
-### R046 — The cancelled `M001-terminal` direction is not treated as an obligation in the new roadmap.
-- Class: anti-feature
-- Status: out-of-scope
-- Description: The cancelled `M001-terminal` direction is not treated as an obligation in the new roadmap.
-- Why it matters: Prevents the new milestone sequence from inheriting a plan the user explicitly rejected.
-- Source: user
-- Primary owning slice: none
-- Supporting slices: none
-- Validation: n/a
-- Notes: Superseded: terminal ACP operations (R020, R026–R029) were implemented in pkg/runtime/terminal.go and are now validated. The M001-terminal milestone directory was invalid and has been deleted. This out-of-scope marker no longer applies.
-
 ## Traceability
 
 | ID | Class | Status | Primary owner | Supporting | Proof |
 |---|---|---|---|---|---|
-| R001 | launchability | validated | M001-tvc4z0/S01 | none | M008/S02: `agentd server --root /tmp/test-agentd-s02` creates socket at /tmp/test-agentd-s02/agentd.sock without any config.yaml. All paths (socket, DB, bundles, workspaces) are derived from --root. config.yaml and ParseConfig() deleted entirely. |
-| R002 | core-capability | validated | M001-tvc4z0/S03 | none | M008/S02: meta.Runtime stored in v1/runtimes bbolt bucket. ARI runtime/set|get|list|delete handlers implemented. agentdctl runtime apply/get/list/delete CLI. TestRuntimeLifecycle integration test verifies full chain: runtime/set → agent creates → idle state. Static RuntimeClassRegistry config deleted. |
+| R001 | launchability | validated | M001-tvc4z0/S01 | none | M008/S02: `agentd server --root /tmp/test-agentd-s02` creates socket at /tmp/test-agentd-s02/agentd.sock without any config.yaml. All paths (socket, DB, bundles, workspaces) are derived from --root via Options.Validate(). config.yaml and ParseConfig() deleted entirely. TestRuntimeLifecycle integration test confirmed the full chain in 1.4s. |
+| R002 | core-capability | validated | M001-tvc4z0/S03 | none | M008/S04: meta.AgentTemplate (renamed from Runtime) stored in v1/agents bbolt bucket. ARI agent/set|get|list|delete handlers wired and verified. agentdctl agent apply/get/list/delete CLI functional. Integration tests (TestRuntimeLifecycle, TestEndToEndPipeline) confirm full chain: agent/set → agentrun/create → idle state. Old runtime/* ARI surface fully removed — rg 'runtime/' pkg/ari/server.go returns zero non-comment dispatch matches. |
 | R003 | core-capability | validated | M001-tvc4z0/S02 | none | S02 tests pass (26 unit tests + 2 integration tests). SQLite metadata store with WAL mode, foreign keys, embedded schema. CRUD operations for Session, Workspace, Room. Transaction support via BeginTx. Daemon lifecycle integration verified. |
 | R004 | core-capability | validated | M001-tvc4z0/S04 | none | S04 tests pass (12 SessionManager tests). CRUD operations work. State machine validates 9 valid transitions (created→running, created→stopped, running→paused:warm, running→stopped, paused:warm→running, paused:warm→paused:cold, paused:warm→stopped, paused:cold→running, paused:cold→stopped). Delete protection blocks running/paused:warm sessions. |
 | R005 | core-capability | validated | M001-tvc4z0/S05 | none | S05 tests pass. ProcessManager.Start forks shim, connects socket, subscribes events. ProcessManager.Stop gracefully shuts down with Shutdown RPC + 10s wait + kill. ShimClient provides RPC communication. Integration tests verify full lifecycle with mockagent. |
 | R006 | integration | validated | M001-tvc4z0/S06 | none | S06 tests pass (27 ARI tests including 10 session tests). All 9 session/* methods implemented: new/prompt/cancel/stop/remove/list/status/attach/detach. Auto-start on prompt. Error handling with JSON-RPC error codes. Integration tests verify over Unix socket. |
-| R007 | admin/support | validated | M001-tvc4z0/S07 | none | S07 build verified. agentdctl CLI has 11 subcommands (7 session, 3 workspace, 1 daemon). CLI help output confirms all commands. Functional verification: CLI executes, error handling works, cobra validation works for missing required flags. |
+| R007 | admin/support | validated | M001-tvc4z0/S07 | none | M008/S01+S04: agentdctl CLI fully consolidated. `agentdctl agent` (apply/get/list/delete template CRUD) + `agentdctl agentrun` (create/list/status/prompt/stop/delete/restart/attach/cancel lifecycle) + `agentdctl workspace` + `agentdctl shim` + `agentdctl daemon`. Resource-first grammar matches kubectl/containerd model. All subcommands verified via --help and integration tests. |
 | R008 | integration | validated | M001-tvc4z0/S08 | none | S08 Integration Tests: 8 tests pass — TestEndToEndPipeline (full lifecycle), TestSessionLifecycle (state machine), TestSessionPromptStoppedSession (error handling), TestSessionRemoveRunningSession (protected deletion), TestSessionList (listing), TestAgentdRestartRecovery (restart test reveals reconnection not yet implemented), TestMultipleConcurrentSessions (concurrent sessions), TestConcurrentPromptsSameSession (concurrent prompts same session) |
 | R009 | core-capability | validated | M001-tlbeko/S04 | M001-tlbeko/S01, M001-tlbeko/S02 | S04 WorkspaceManager tests: 13 tests pass, Prepare→Cleanup round-trips for Git/EmptyDir/Local, reference counting prevents premature cleanup (TestWorkspaceManagerReferenceCounting), hook failure handling verified |
 | R010 | core-capability | validated | M001-tlbeko/S01 | none | S01 GitHandler integration tests: 6 tests pass on github.com/octocat/Hello-World.git — default clone, shallow depth=1, branch ref='test', commit SHA checkout, context cancellation, invalid URL error handling |
@@ -523,7 +479,6 @@ This file is the explicit capability and coverage contract for the project.
 | R027 | core-capability | validated | pkg/runtime | none | validated |
 | R028 | core-capability | validated | pkg/runtime | none | validated |
 | R029 | core-capability | validated | pkg/runtime | none | validated |
-| R030 | anti-feature | out-of-scope | none | none | n/a |
 | R031 | anti-feature | out-of-scope | none | none | n/a |
 | R032 | core-capability | validated | M002-ssi4mk/S01 | none | M002/S01 final verifier passed: `bash scripts/verify-m002-s01-contract.sh`; bundle proof passed: `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1`. The design set now defines one non-conflicting contract across Room, Session, Runtime, Workspace, and shim recovery semantics. |
 | R033 | integration | validated | M002-ssi4mk/S01 | M002-ssi4mk/S02 | T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close. |
@@ -536,10 +491,7 @@ This file is the explicit capability and coverage contract for the project.
 | R040 | integration | deferred | none | none | deferred by user |
 | R041 | differentiator | validated | M003-c761yf (provisional) | none | Fully realized in M004: room/create, room/status, room/delete ARI handlers (ownership); room/send with target resolution and sender attribution (routing); deliverPrompt helper with auto-start semantics (delivery). Proven by TestARIMultiAgentRoundTrip — 3-agent bidirectional messaging end-to-end. |
 | R042 | constraint | deferred | none | none | unmapped |
-| R043 | constraint | deferred | none | none | unmapped |
 | R044 | quality-attribute | validated | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real shim binary. |
-| R045 | anti-feature | out-of-scope | none | none | n/a |
-| R046 | anti-feature | out-of-scope | none | none | n/a |
 | R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | M007/S03 validated: Full ARI JSON-RPC surface (workspace/* + agent/* handlers) implemented in pkg/ari/server.go with (workspace,name) identity throughout. 22 handler tests in pkg/ari/server_test.go cover workspace/create→agent/create→agent/prompt→agent/stop lifecycle. TestNoAgentIDInResponses confirms no agentId field in any response. ari-spec.md documents all 5 workspace/* and 9 agent/* methods with workspace+name params. golangci-lint passes 0 issues. |
 | R048 | core-capability | validated | M005/S04 | M005/S03 | M007/S03 validated: TestAgentCreateReturnsCreating (PASS) — handleAgentCreate replies synchronously with state=creating, background goroutine fires Start(). TestAgentListAndStatus (PASS) — polls agent/status and finds state transitions. S02 D088 enforcement: shim stateChange is the sole post-bootstrap write path; agentd no longer writes StatusRunning directly. Integration tests (TestAgentLifecycle, TestEndToEndPipeline) use waitForAgentState polling to idle after create. |
 | R049 | core-capability | validated | M005/S02 | none | M007/S01 validated: meta.AgentState and meta.SessionState deleted; spec.Status (creating/idle/running/stopped/error) is the sole state enum across all packages. pkg/runtime/runtime.go writes 'idle' to state.json after ACP handshake and after each prompt turn. `rg 'meta.AgentState|meta.SessionState' --type go` returns zero matches. go test ./pkg/spec/... ./pkg/runtime/... passes 64 tests including state assertions. StatusCreated removed, StatusIdle added per D085. |

@@ -797,3 +797,24 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** `ari.Client.Call` returns a plain `fmt.Errorf` wrapping the error string, not a `*jsonrpc2.Error` struct. `errors.As` will not match because the concrete type is `*errors.errorString`. Checking `err.Error()` for the numeric error code string is the reliable pattern until the ARI client surfaces typed errors.
 - **Reference:** M008/S03/T02 — pkg/ari/server_test.go TestAgentCreateSocketPathTooLong; T02 SUMMARY deviations.
 - **When:** M008/S03
+
+## K074 — Three-layer rename (meta → ari types → ari server) must compile as a unit, not layer-by-layer
+
+- **Pattern:** When performing a system-wide rename across meta DB layer, ARI types, ARI server, CLI, and tests, update all layers simultaneously in a single task. If you update meta and try to compile before updating pkg/agentd and pkg/ari, every downstream file fails to compile — the partial-rename state is never buildable.
+- **Lesson:** Go's type system propagates rename failures transitively. A meta.Agent→meta.AgentRun rename produces hundreds of compile errors in agentd and ari immediately. The only efficient approach is to batch all changes across the three layers (meta, ari/types, ari/server) in one editorial pass, then compile once to catch residuals. This is faster than incremental layer-by-layer rename + fix cycles.
+- **Reference:** M008/S04/T01 — meta layer + ari/types.go + ari/server.go renamed simultaneously.
+- **When:** M008/S04
+
+## K075 — macOS t.TempDir() paths frequently exceed 104-byte Unix socket limit
+
+- **Pattern:** `t.TempDir()` on macOS returns paths of the form `/var/folders/v7/hcm12_5x49lf7szbrsz4p_p80000gp/T/TestFunctionName123456789/001/` — typically 80-90+ characters. Adding a workspace-agent bundle path (e.g., `bundles/ws-agent/agent-shim.sock`) easily pushes past 104. Tests that call agentrun/create or ProcessManager.Start with a bundle root derived from t.TempDir() will produce "socket path too long" failures on macOS but not Linux.
+- **Lesson:** Use `os.MkdirTemp("/tmp", "oar-*")` for tests that exercise socket-path-sensitive code (ProcessManager.Start, agentrun/create). `/tmp/oar-XXXXX/bundles/ws-ag/agent-shim.sock` is 47 bytes — well within limit. Register `t.Cleanup(func() { os.RemoveAll(dir) })` for cleanup. Tests that already use `/tmp` prefix (integration tests) are immune.
+- **Reference:** M008/S04/T01 — TestAgentCreateReturnsCreating + TestProcessManagerStart pre-existing macOS failures; D111 socket path validation.
+- **When:** M008/S04
+
+## K076 — When one CLI file is renamed, all cross-references in main.go must be simultaneously updated
+
+- **Pattern:** Renaming `runtime.go` (exports `runtimeCmd`) to `agent_template.go` (exports `agentTemplateCmd`) and rewriting `agent.go` (exports `agentrunCmd` instead of `agentCmd`) produces compile failures in `main.go` for every reference to the old variable names. The stub `agentrun.go` also becomes a duplicate export.
+- **Lesson:** CLI cmd package renames require a three-file edit: (1) rename/rewrite the source file, (2) delete any stub file that conflicts, and (3) update main.go in the same pass. Go will refuse to compile if two files in the same package export the same var name (e.g., two files both defining `agentrunCmd`). Always delete the stub before or at the same time as creating the real implementation.
+- **Reference:** M008/S04/T02 — agentrun.go stub deleted, runtime.go deleted, main.go updated atomically.
+- **When:** M008/S04
