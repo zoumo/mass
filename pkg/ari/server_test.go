@@ -515,7 +515,7 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 		AgentKey:   "send-ws/" + agentName,
 		SocketPath: shimSock,
 		Client:     shimClient,
-		Events:     make(chan events.Event, 1024),
+		Events:     make(chan events.SessionUpdateParams, 1024),
 		Done:       make(chan struct{}),
 	}
 	env.processes.InjectProcess("send-ws/"+agentName, shimProc)

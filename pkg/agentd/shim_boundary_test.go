@@ -6,6 +6,8 @@ package agentd
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -55,7 +57,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 		PID:        1234,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.Event, 1024),
+		Events:     make(chan events.SessionUpdateParams, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -87,6 +89,74 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, spec.StatusIdle, agent.Status.State,
 		"DB state must reflect the shim-emitted stateChange, not a direct write")
+}
+
+// TestSessionUpdate_DeliversOrderedParams verifies that session/update
+// notifications keep their ordering metadata all the way through the
+// production buildNotifHandler into ShimProcess.Events.
+func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
+	pm, _ := setupRecoveryTest(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	ws := "default"
+	agentName := "session-update-order"
+	key := agentKey(ws, agentName)
+	turnID := "turn-ordering"
+
+	srv, socketPath := newMockShimServer(t)
+	for i := 0; i < 3; i++ {
+		textPayload, err := json.Marshal(events.TextEvent{Text: fmt.Sprintf("chunk-%d", i)})
+		require.NoError(t, err)
+		streamSeq := i
+		srv.queueNotification(events.MethodSessionUpdate, map[string]any{
+			"sessionId": "test-session",
+			"seq":       i,
+			"timestamp": "2026-01-01T00:00:00Z",
+			"turnId":    turnID,
+			"streamSeq": streamSeq,
+			"event": map[string]any{
+				"type":    "text",
+				"payload": json.RawMessage(textPayload),
+			},
+		})
+	}
+
+	shimProc := &ShimProcess{
+		AgentKey:   key,
+		PID:        1234,
+		SocketPath: socketPath,
+		StateDir:   "/tmp/shim-state-" + agentName,
+		Events:     make(chan events.SessionUpdateParams, 1024),
+		Done:       make(chan struct{}),
+	}
+
+	handler := pm.buildNotifHandler(ws, agentName, shimProc)
+	client, err := DialWithHandler(ctx, socketPath, handler)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	shimProc.Client = client
+
+	_, err = client.Subscribe(ctx, nil, nil)
+	require.NoError(t, err)
+
+	for i := 0; i < 3; i++ {
+		var update events.SessionUpdateParams
+		select {
+		case update = <-shimProc.Events:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for session/update %d", i)
+		}
+
+		require.Equal(t, i, update.Seq)
+		require.Equal(t, turnID, update.TurnId)
+		require.NotNil(t, update.StreamSeq)
+		require.Equal(t, i, *update.StreamSeq)
+		require.Equal(t, "text", update.Event.Type)
+		payload, ok := update.Event.Payload.(events.TextEvent)
+		require.True(t, ok)
+		require.Equal(t, fmt.Sprintf("chunk-%d", i), payload.Text)
+	}
 }
 
 // TestStateChange_RunningToIdle_UpdatesDB verifies that two successive
@@ -132,7 +202,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 		PID:        5678,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.Event, 1024),
+		Events:     make(chan events.SessionUpdateParams, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -192,7 +262,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 		PID:        0,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.Event, 1024),
+		Events:     make(chan events.SessionUpdateParams, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -253,7 +323,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 		PID:        0,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.Event, 1024),
+		Events:     make(chan events.SessionUpdateParams, 1024),
 		Done:       make(chan struct{}),
 	}
 

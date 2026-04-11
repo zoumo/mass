@@ -3,7 +3,7 @@ module github.com/open-agent-d/open-agent-d
 go 1.24.13
 
 require (
-	github.com/coder/acp-go-sdk v0.6.3
+	github.com/coder/acp-go-sdk v0.6.4-0.20260227160919-584abe6abe22
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v0.8.0
 	github.com/sourcegraph/jsonrpc2 v0.2.1

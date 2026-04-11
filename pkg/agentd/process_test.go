@@ -175,13 +175,18 @@ func TestProcessManagerStart(t *testing.T) {
 
 	for {
 		select {
-		case ev, ok := <-shimProc.Events:
+		case update, ok := <-shimProc.Events:
 			if !ok {
 				t.Log("Events channel closed")
 				goto done
 			}
 			eventCount++
-			t.Logf("Received event #%d: %T", eventCount, ev)
+			ev, ok := update.Event.Payload.(events.Event)
+			if !ok {
+				t.Fatalf("expected event payload, got %T", update.Event.Payload)
+			}
+			t.Logf("Received event #%d: seq=%d streamSeq=%v type=%T",
+				eventCount, update.Seq, update.StreamSeq, ev)
 			if _, ok := ev.(events.TextEvent); ok {
 				t.Logf("TextEvent received")
 			}

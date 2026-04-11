@@ -61,8 +61,10 @@ func dialInternal(ctx context.Context, socketPath string, handler NotificationHa
 	}
 
 	stream := jsonrpc2.NewPlainObjectStream(nc)
-	h := jsonrpc2.AsyncHandler(&clientHandler{notifHandler: handler})
-	conn := jsonrpc2.NewConn(ctx, stream, h)
+	// Keep shim notifications serialized on the client side. The shim already
+	// assigns monotonically increasing seq values; dispatching each inbound
+	// notification in its own goroutine can reorder delivery into agentd.
+	conn := jsonrpc2.NewConn(ctx, stream, &clientHandler{notifHandler: handler})
 
 	return &ShimClient{
 		conn:       conn,

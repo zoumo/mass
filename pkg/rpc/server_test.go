@@ -3,6 +3,7 @@ package rpc_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -131,6 +132,11 @@ type serverHarness struct {
 
 func newServerHarness(t *testing.T) *serverHarness {
 	t.Helper()
+	return newServerHarnessWithConfig(t, testConfig(t.Name()))
+}
+
+func newServerHarnessWithConfig(t *testing.T, cfg spec.Config) *serverHarness {
+	t.Helper()
 
 	bundleDir, err := os.MkdirTemp("", "oad-bnd-")
 	require.NoError(t, err)
@@ -142,7 +148,7 @@ func newServerHarness(t *testing.T) *serverHarness {
 	socketPath := spec.ShimSocketPath(stateDir)
 	logPath := spec.EventLogPath(stateDir)
 
-	mgr := pkgruntime.New(testConfig(t.Name()), bundleDir, stateDir)
+	mgr := pkgruntime.New(cfg, bundleDir, stateDir)
 	agentCtx, agentCancel := context.WithTimeout(context.Background(), 120*time.Second)
 	t.Cleanup(agentCancel)
 	require.NoError(t, mgr.Create(agentCtx))
@@ -206,6 +212,16 @@ func (h *serverHarness) dial(t *testing.T, handler jsonrpc2.Handler) *jsonrpc2.C
 	require.NoError(t, err)
 	stream := jsonrpc2.NewPlainObjectStream(nc)
 	conn := jsonrpc2.NewConn(context.Background(), stream, jsonrpc2.AsyncHandler(handler))
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+func (h *serverHarness) dialSerialized(t *testing.T, handler jsonrpc2.Handler) *jsonrpc2.Conn {
+	t.Helper()
+	nc, err := net.Dial("unix", h.socket)
+	require.NoError(t, err)
+	stream := jsonrpc2.NewPlainObjectStream(nc)
+	conn := jsonrpc2.NewConn(context.Background(), stream, handler)
 	t.Cleanup(func() { _ = conn.Close() })
 	return conn
 }
@@ -346,6 +362,56 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 			require.Greater(t, seq, afterSeq)
 		}
 	})
+}
+
+func TestRPCServer_DirectShimLiveOrdering(t *testing.T) {
+	cfg := testConfig(t.Name())
+	cfg.AcpAgent.Process.Env = []string{"OAR_MOCKAGENT_CHUNKS=20"}
+	h := newServerHarnessWithConfig(t, cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	notifH := newNotifHandler()
+	client := h.dialSerialized(t, notifH)
+
+	var subResult rpc.SessionSubscribeResult
+	require.NoError(t, client.Call(ctx, "session/subscribe", nil, &subResult))
+
+	var promptResult rpc.SessionPromptResult
+	require.NoError(t, client.Call(ctx, "session/prompt", rpc.SessionPromptParams{Prompt: "ordering"}, &promptResult))
+	require.Equal(t, "end_turn", promptResult.StopReason)
+
+	live := notifH.collect(24, 10*time.Second)
+	require.Len(t, live, 24)
+
+	lastSeq := -1
+	var textStreamSeqs []int
+	var textChunks []string
+	for _, env := range live {
+		seq, err := env.Seq()
+		require.NoError(t, err)
+		require.Equal(t, lastSeq+1, seq, "live notification seq must match receive order")
+		lastSeq = seq
+
+		p, ok := env.Params.(events.SessionUpdateParams)
+		if !ok {
+			continue
+		}
+		if p.Event.Type != "text" {
+			continue
+		}
+		require.NotNil(t, p.StreamSeq)
+		textStreamSeqs = append(textStreamSeqs, *p.StreamSeq)
+		payload, ok := p.Event.Payload.(events.TextEvent)
+		require.True(t, ok)
+		textChunks = append(textChunks, payload.Text)
+	}
+
+	require.Len(t, textChunks, 20)
+	for i := 0; i < 20; i++ {
+		require.Equal(t, fmt.Sprintf("text-chunk-%02d", i), textChunks[i])
+		require.Equal(t, i+1, textStreamSeqs[i])
+	}
 }
 
 func TestRPCServer_RejectsLegacyAndInvalidParams(t *testing.T) {

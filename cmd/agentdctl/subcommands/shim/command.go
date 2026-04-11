@@ -63,7 +63,7 @@ func dial(socketPath string) (*client, error) {
 		scanner: bufio.NewScanner(conn),
 		enc:     json.NewEncoder(conn),
 		pending: make(map[int]chan rpcResponse),
-		notifs:  make(chan rpcResponse, 64),
+		notifs:  make(chan rpcResponse, 1024),
 	}
 	go c.readLoop()
 	return c, nil
@@ -77,10 +77,7 @@ func (c *client) readLoop() {
 			continue
 		}
 		if msg.ID == nil && msg.Method != "" {
-			select {
-			case c.notifs <- msg:
-			default:
-			}
+			c.notifs <- msg
 			continue
 		}
 		if msg.ID != nil {
@@ -130,6 +127,8 @@ type sessionUpdateParams struct {
 	SessionID string       `json:"sessionId"`
 	Seq       int          `json:"seq"`
 	Timestamp string       `json:"timestamp"`
+	TurnID    string       `json:"turnId,omitempty"`
+	StreamSeq *int         `json:"streamSeq,omitempty"`
 	Event     sessionEvent `json:"event"`
 }
 
@@ -176,6 +175,48 @@ func printNotification(msg rpcResponse) {
 	}
 }
 
+func isTurnEndNotification(msg rpcResponse) bool {
+	if msg.Method != "session/update" {
+		return false
+	}
+	var p sessionUpdateParams
+	if err := json.Unmarshal(msg.Params, &p); err != nil {
+		return false
+	}
+	return p.Event.Type == "turn_end"
+}
+
+func startNotificationPrinter(ctx context.Context, c *client) <-chan struct{} {
+	turnEnd := make(chan struct{}, 16)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-c.notifs:
+				if !ok {
+					return
+				}
+				printNotification(msg)
+				if isTurnEndNotification(msg) {
+					turnEnd <- struct{}{}
+				}
+			}
+		}
+	}()
+	return turnEnd
+}
+
+func drainTurnEnd(ch <-chan struct{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
 func printSessionEvent(seq int, ev sessionEvent) {
 	switch ev.Type {
 	case "text":
@@ -204,27 +245,23 @@ func runPrompt(sock, text string) error {
 	if err != nil {
 		return err
 	}
+	defer c.close()
 
 	if _, err := c.call("session/subscribe", nil); err != nil {
-		c.close()
 		return fmt.Errorf("session/subscribe: %w", err)
 	}
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for msg := range c.notifs {
-			printNotification(msg)
-		}
-	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	turnEnd := startNotificationPrinter(ctx, c)
+	drainTurnEnd(turnEnd)
 
 	result, err := c.call("session/prompt", map[string]string{"prompt": text})
-	c.close()
-	<-done
-
 	if err != nil {
 		return fmt.Errorf("session/prompt: %w", err)
 	}
+	<-turnEnd
+
 	var pr struct {
 		StopReason string `json:"stopReason"`
 	}
@@ -248,20 +285,7 @@ func runChat(sock string) error {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-c.notifs:
-				if !ok {
-					return
-				}
-				printNotification(msg)
-			}
-		}
-	}()
+	turnEnd := startNotificationPrinter(ctx, c)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("agentdctl shim chat — type your message, 'exit' to quit")
@@ -277,11 +301,13 @@ func runChat(sock string) error {
 		if line == "exit" || line == "quit" {
 			break
 		}
+		drainTurnEnd(turnEnd)
 		result, err := c.call("session/prompt", map[string]string{"prompt": line})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			continue
 		}
+		<-turnEnd
 		var pr struct {
 			StopReason string `json:"stopReason"`
 		}

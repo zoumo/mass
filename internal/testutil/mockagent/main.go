@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/coder/acp-go-sdk"
 )
@@ -39,6 +40,22 @@ func (a *mockAgent) NewSession(_ context.Context, _ acp.NewSessionRequest) (acp.
 }
 
 func (a *mockAgent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResponse, error) {
+	if chunksRaw := os.Getenv("OAR_MOCKAGENT_CHUNKS"); chunksRaw != "" {
+		chunks, err := strconv.Atoi(chunksRaw)
+		if err != nil {
+			return acp.PromptResponse{}, fmt.Errorf("invalid OAR_MOCKAGENT_CHUNKS: %w", err)
+		}
+		for i := 0; i < chunks; i++ {
+			_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{
+				SessionId: p.SessionId,
+				Update:    acp.UpdateAgentMessageText(fmt.Sprintf("text-chunk-%02d", i)),
+			})
+		}
+		return acp.PromptResponse{
+			StopReason: acp.StopReasonEndTurn,
+		}, nil
+	}
+
 	_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: p.SessionId,
 		Update:    acp.UpdateAgentMessageText("mock response"),
@@ -50,6 +67,10 @@ func (a *mockAgent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.Prompt
 
 func (a *mockAgent) SetSessionMode(_ context.Context, _ acp.SetSessionModeRequest) (acp.SetSessionModeResponse, error) {
 	return acp.SetSessionModeResponse{}, nil
+}
+
+func (a *mockAgent) SetSessionConfigOption(_ context.Context, _ acp.SetSessionConfigOptionRequest) (acp.SetSessionConfigOptionResponse, error) {
+	return acp.SetSessionConfigOptionResponse{}, nil
 }
 
 func main() {

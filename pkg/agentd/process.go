@@ -20,10 +20,9 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
-// EventHandler is called for each event received from the shim via
-// session/update notifications. Handlers must be registered before calling
-// Subscribe.
-type EventHandler func(ctx context.Context, ev events.Event)
+// EventHandler is called for each session/update received from the shim.
+// Handlers must be registered before calling Subscribe.
+type EventHandler func(ctx context.Context, update events.SessionUpdateParams)
 
 // agentKey returns the composite map key for an agent: workspace+"/"+name.
 // This matches the bbolt key path convention used by the meta store.
@@ -82,9 +81,9 @@ type ShimProcess struct {
 	// Cmd is the exec.Cmd for the shim process (for Wait/Kill).
 	Cmd *exec.Cmd
 
-	// Events is a channel receiving events from the shim.
+	// Events is a channel receiving ordered session/update params from the shim.
 	// Events are delivered after Subscribe is called.
-	Events chan events.Event
+	Events chan events.SessionUpdateParams
 
 	// Done is closed when the shim process exits and all cleanup is complete.
 	Done chan struct{}
@@ -111,7 +110,7 @@ func NewProcessManager(agents *AgentManager, store *meta.Store, socketPath, bund
 }
 
 // buildNotifHandler returns a NotificationHandler that:
-//   - routes session/update events to shimProc.Events (async, non-blocking), and
+//   - routes session/update params to shimProc.Events (async, non-blocking), and
 //   - handles runtime/stateChange notifications by updating DB agent state (D088).
 //
 // This is the single authoritative handler used by both Start() and recoverAgent().
@@ -128,14 +127,8 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 				logger.Warn("malformed session/update notification dropped", "error", err)
 				return
 			}
-			ev, ok := p.Event.Payload.(events.Event)
-			if !ok {
-				logger.Warn("session/update payload is not an events.Event — dropped",
-					"type", p.Event.Type)
-				return
-			}
 			select {
-			case shimProc.Events <- ev:
+			case shimProc.Events <- p:
 			default:
 				logger.Warn("event channel full, dropping event", "seq", p.Seq)
 			}
@@ -538,7 +531,7 @@ func (m *ProcessManager) forkShim(agent *meta.AgentRun, bundlePath, stateDir str
 		AgentKey: key,
 		PID:      cmd.Process.Pid,
 		Cmd:      cmd,
-		Events:   make(chan events.Event, 1024), // buffered for async delivery
+		Events:   make(chan events.SessionUpdateParams, 1024), // buffered for async delivery
 		Done:     make(chan struct{}),
 	}, nil
 }

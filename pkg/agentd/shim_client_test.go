@@ -471,6 +471,65 @@ func TestShimClientSubscribeReceivesSessionUpdate(t *testing.T) {
 	assert.True(t, methods["runtime/stateChange"], "should have received runtime/stateChange")
 }
 
+// TestShimClientNotificationsAreSerialized verifies that a slow handler for an
+// earlier notification cannot be overtaken by a later notification on the same
+// shim connection.
+func TestShimClientNotificationsAreSerialized(t *testing.T) {
+	srv, socketPath := newMockShimServer(t)
+	defer srv.close()
+
+	for i := 0; i < 3; i++ {
+		textPayload, _ := json.Marshal(events.TextEvent{Text: fmt.Sprintf("msg-%d", i)})
+		srv.queueNotification(events.MethodSessionUpdate, map[string]any{
+			"sessionId": "test-session",
+			"seq":       i,
+			"timestamp": "2026-01-01T00:00:00Z",
+			"event": map[string]any{
+				"type":    "text",
+				"payload": json.RawMessage(textPayload),
+			},
+		})
+	}
+
+	var got []int
+	var handlerErr error
+	var mu sync.Mutex
+	c, err := DialWithHandler(context.Background(), socketPath, func(_ context.Context, method string, params json.RawMessage) {
+		if method != events.MethodSessionUpdate {
+			return
+		}
+		p, parseErr := ParseSessionUpdate(params)
+		if parseErr != nil {
+			mu.Lock()
+			handlerErr = parseErr
+			mu.Unlock()
+			return
+		}
+		if p.Seq == 0 {
+			time.Sleep(50 * time.Millisecond)
+		}
+		mu.Lock()
+		got = append(got, p.Seq)
+		mu.Unlock()
+	})
+	require.NoError(t, err)
+	defer c.Close()
+
+	_, err = c.Subscribe(context.Background(), nil, nil)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(got) == 3
+	}, 2*time.Second, 20*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NoError(t, handlerErr)
+	require.Equal(t, []int{0, 1, 2}, got)
+}
+
 // TestShimClientSubscribeDropsUnknownMethods verifies that notifications for
 // unknown methods (e.g. $/event from the legacy surface) are silently dropped
 // and not forwarded to the handler.

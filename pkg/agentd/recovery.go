@@ -192,7 +192,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *meta.AgentRun)
 		BundlePath: "", // not needed for recovered agents
 		StateDir:   agent.Status.ShimStateDir,
 		SocketPath: agent.Status.ShimSocketPath,
-		Events:     make(chan events.Event, 100),
+		Events:     make(chan events.SessionUpdateParams, 100),
 		Done:       make(chan struct{}),
 		// Cmd is nil for recovered agents — we didn't fork the process.
 	}

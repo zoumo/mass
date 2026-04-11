@@ -369,9 +369,19 @@ func convertMcpServers(servers []spec.McpServer) []acp.McpServer {
 				Env:     env,
 			}})
 		case "sse":
-			result = append(result, acp.McpServer{Sse: &acp.McpServerSse{Url: s.URL, Type: s.Type}})
+			result = append(result, acp.McpServer{Sse: &acp.McpServerSseInline{
+				Name:    s.Name,
+				Type:    s.Type,
+				Url:     s.URL,
+				Headers: []acp.HttpHeader{},
+			}})
 		default:
-			result = append(result, acp.McpServer{Http: &acp.McpServerHttp{Url: s.URL, Type: s.Type}})
+			result = append(result, acp.McpServer{Http: &acp.McpServerHttpInline{
+				Name:    s.Name,
+				Type:    s.Type,
+				Url:     s.URL,
+				Headers: []acp.HttpHeader{},
+			}})
 		}
 	}
 	return result
