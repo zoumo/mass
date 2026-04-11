@@ -1,0 +1,320 @@
+// Package agentrun provides agentrun lifecycle management commands.
+package agentrun
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
+	"github.com/open-agent-d/open-agent-d/pkg/ari"
+)
+
+// NewCommand returns the "agentrun" cobra command.
+func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "agentrun",
+		Short: "Agent-run lifecycle management",
+	}
+
+	cmd.AddCommand(newCreateCmd(getClient))
+	cmd.AddCommand(newListCmd(getClient))
+	cmd.AddCommand(newStatusCmd(getClient))
+	cmd.AddCommand(newPromptCmd(getClient))
+	cmd.AddCommand(newStopCmd(getClient))
+	cmd.AddCommand(newDeleteCmd(getClient))
+	cmd.AddCommand(newAttachCmd(getClient))
+	cmd.AddCommand(newCancelCmd(getClient))
+	cmd.AddCommand(newRestartCmd(getClient))
+	return cmd
+}
+
+func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
+	var (
+		workspace     string
+		name          string
+		runtimeClass  string
+		restartPolicy string
+		systemPrompt  string
+	)
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a new agent run",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			params := ari.AgentRunCreateParams{
+				Workspace:     workspace,
+				Name:          name,
+				RuntimeClass:  runtimeClass,
+				RestartPolicy: restartPolicy,
+				SystemPrompt:  systemPrompt,
+			}
+			var result ari.AgentRunCreateResult
+			if err := client.Call("agentrun/create", params, &result); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			cliutil.OutputJSON(result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace name (required)")
+	cmd.Flags().StringVar(&name, "name", "", "Agent name within the workspace (required)")
+	cmd.Flags().StringVar(&runtimeClass, "runtime-class", "", "Runtime class (required)")
+	cmd.Flags().StringVar(&restartPolicy, "restart-policy", "", "Restart policy: never, on-failure, always")
+	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "System prompt for the agent run")
+	_ = cmd.MarkFlagRequired("workspace")
+	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("runtime-class")
+	return cmd
+}
+
+func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
+	var (
+		workspace string
+		state     string
+	)
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List agent runs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			params := ari.AgentRunListParams{Workspace: workspace, State: state}
+			var result ari.AgentRunListResult
+			if err := client.Call("agentrun/list", params, &result); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			cliutil.OutputJSON(result)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&workspace, "workspace", "", "Filter by workspace name")
+	cmd.Flags().StringVar(&state, "state", "", "Filter by state")
+	return cmd
+}
+
+func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
+	return &cobra.Command{
+		Use:   "status <workspace/name>",
+		Short: "Get agent run status",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, name, err := cliutil.ParseAgentKey(args[0])
+			if err != nil {
+				return err
+			}
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			params := ari.AgentRunStatusParams{Workspace: ws, Name: name}
+			var result ari.AgentRunStatusResult
+			if err := client.Call("agentrun/status", params, &result); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			cliutil.OutputJSON(result)
+			return nil
+		},
+	}
+}
+
+func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
+	var (
+		text string
+		wait bool
+	)
+	cmd := &cobra.Command{
+		Use:   "prompt <workspace/name>",
+		Short: "Send prompt to agent run",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, name, err := cliutil.ParseAgentKey(args[0])
+			if err != nil {
+				return err
+			}
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			params := ari.AgentRunPromptParams{Workspace: ws, Name: name, Prompt: text}
+			var result ari.AgentRunPromptResult
+			if err := client.Call("agentrun/prompt", params, &result); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			cliutil.OutputJSON(result)
+
+			if wait && result.Accepted {
+				fmt.Println("Waiting for agent run to finish processing...")
+				for {
+					time.Sleep(500 * time.Millisecond)
+					var statusResult ari.AgentRunStatusResult
+					if err := client.Call("agentrun/status", ari.AgentRunStatusParams{Workspace: ws, Name: name}, &statusResult); err != nil {
+						fmt.Printf("agentrun/status error: %v\n", err)
+						break
+					}
+					if statusResult.Agent.State != "running" {
+						fmt.Printf("Agent run state: %s\n", statusResult.Agent.State)
+						break
+					}
+				}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&text, "text", "", "Prompt text (required)")
+	_ = cmd.MarkFlagRequired("text")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Poll agentrun/status until state is no longer 'running'")
+	return cmd
+}
+
+func newStopCmd(getClient cliutil.ClientFn) *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop <workspace/name>",
+		Short: "Stop an agent run",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, name, err := cliutil.ParseAgentKey(args[0])
+			if err != nil {
+				return err
+			}
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			if err := client.Call("agentrun/stop", ari.AgentRunStopParams{Workspace: ws, Name: name}, nil); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			fmt.Printf("Agent run %s stopped\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete <workspace/name>",
+		Short: "Delete an agent run",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, name, err := cliutil.ParseAgentKey(args[0])
+			if err != nil {
+				return err
+			}
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			if err := client.Call("agentrun/delete", ari.AgentRunDeleteParams{Workspace: ws, Name: name}, nil); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			fmt.Printf("Agent run %s deleted\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newAttachCmd(getClient cliutil.ClientFn) *cobra.Command {
+	return &cobra.Command{
+		Use:   "attach <workspace/name>",
+		Short: "Get shim socket path for attaching",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, name, err := cliutil.ParseAgentKey(args[0])
+			if err != nil {
+				return err
+			}
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			params := ari.AgentRunAttachParams{Workspace: ws, Name: name}
+			var result ari.AgentRunAttachResult
+			if err := client.Call("agentrun/attach", params, &result); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			cliutil.OutputJSON(result)
+			return nil
+		},
+	}
+}
+
+func newCancelCmd(getClient cliutil.ClientFn) *cobra.Command {
+	return &cobra.Command{
+		Use:   "cancel <workspace/name>",
+		Short: "Cancel current agent run prompt",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, name, err := cliutil.ParseAgentKey(args[0])
+			if err != nil {
+				return err
+			}
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			if err := client.Call("agentrun/cancel", ari.AgentRunCancelParams{Workspace: ws, Name: name}, nil); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			fmt.Printf("Agent run %s cancel requested\n", args[0])
+			return nil
+		},
+	}
+}
+
+func newRestartCmd(getClient cliutil.ClientFn) *cobra.Command {
+	return &cobra.Command{
+		Use:   "restart <workspace/name>",
+		Short: "Restart a stopped agent run",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, name, err := cliutil.ParseAgentKey(args[0])
+			if err != nil {
+				return err
+			}
+			client, err := getClient()
+			if err != nil {
+				return err
+			}
+			defer client.Close()
+
+			params := ari.AgentRunRestartParams{Workspace: ws, Name: name}
+			var result ari.AgentRunRestartResult
+			if err := client.Call("agentrun/restart", params, &result); err != nil {
+				cliutil.HandleError(err)
+				return nil
+			}
+			cliutil.OutputJSON(result)
+			return nil
+		},
+	}
+}
