@@ -44,7 +44,6 @@ type Manager struct {
 	conn            *acp.ClientSideConnection
 	sessionID       acp.SessionId
 	events          chan acp.SessionNotification
-	terminalMgr     *TerminalManager
 	stateChangeHook StateChangeHook
 }
 
@@ -54,7 +53,7 @@ func New(cfg spec.Config, bundleDir, stateDir string) *Manager {
 		cfg:       cfg,
 		bundleDir: bundleDir,
 		stateDir:  stateDir,
-		events:    make(chan acp.SessionNotification, 64),
+		events:    make(chan acp.SessionNotification, 1024),
 	}
 }
 
@@ -106,9 +105,8 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: start agent: %w", err)
 	}
 	m.cmd = cmd
-	m.terminalMgr = NewTerminalManager(workDir, cmd.Env, m.cfg.Permissions)
 
-	client := &acpClient{mgr: m, terminalMgr: m.terminalMgr}
+	client := &acpClient{mgr: m}
 	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutPipe)
 	m.conn = conn
 
@@ -127,13 +125,8 @@ func (m *Manager) Create(ctx context.Context) error {
 	}()
 
 	_, handshakeErr = conn.Initialize(ctx, acp.InitializeRequest{
-		ProtocolVersion: acp.ProtocolVersionNumber,
-		ClientCapabilities: acp.ClientCapabilities{
-			Fs: acp.FileSystemCapability{
-				ReadTextFile:  true,
-				WriteTextFile: true,
-			},
-		},
+		ProtocolVersion:    acp.ProtocolVersionNumber,
+		ClientCapabilities: acp.ClientCapabilities{},
 	})
 	if handshakeErr != nil {
 		return fmt.Errorf("runtime: acp initialize: %w", handshakeErr)

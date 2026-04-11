@@ -39,21 +39,6 @@ func (a *mockAgent) NewSession(_ context.Context, _ acp.NewSessionRequest) (acp.
 }
 
 func (a *mockAgent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResponse, error) {
-	// Attempt a WriteTextFile to exercise the client-side permission policy.
-	// The result (allowed or denied) is surfaced as a session update so the
-	// integration test can observe which policy was in effect.
-	_, writeErr := a.conn.WriteTextFile(ctx, acp.WriteTextFileRequest{
-		Path:    "/tmp/mock-agent-test.txt",
-		Content: "hello from mock agent",
-	})
-	notifText := "write:ok"
-	if writeErr != nil {
-		notifText = "write:denied:" + writeErr.Error()
-	}
-	_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{
-		SessionId: p.SessionId,
-		Update:    acp.UpdateAgentMessageText(notifText),
-	})
 	_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: p.SessionId,
 		Update:    acp.UpdateAgentMessageText("mock response"),

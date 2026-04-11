@@ -43,110 +43,6 @@ func cleanupManager(m *Manager) {
 	_ = os.RemoveAll(m.stateDir)
 }
 
-// ── readFile ─────────────────────────────────────────────────────────────────
-
-func TestReadFile_ExistingFile(t *testing.T) {
-	f, err := os.CreateTemp("", "readfile-test-*")
-	require.NoError(t, err)
-	defer os.Remove(f.Name())
-
-	content := "hello, readFile"
-	_, err = f.WriteString(content)
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-
-	got, err := readFile(f.Name())
-	require.NoError(t, err)
-	assert.Equal(t, content, got)
-}
-
-func TestReadFile_NonExistent(t *testing.T) {
-	_, err := readFile("/nonexistent/path/that/does/not/exist")
-	assert.Error(t, err, "expected error for nonexistent path")
-}
-
-// ── writeFile ────────────────────────────────────────────────────────────────
-
-func TestWriteFile_CreatesAndWrites(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "output.txt")
-	content := "hello, writeFile"
-
-	require.NoError(t, writeFile(path, content))
-
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, content, string(data))
-}
-
-func TestWriteFile_Truncates(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "trunc.txt")
-
-	require.NoError(t, writeFile(path, "long original content"))
-	require.NoError(t, writeFile(path, "short"))
-
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, "short", string(data))
-}
-
-// ── acpClient.ReadTextFile ───────────────────────────────────────────────────
-
-func TestAcpClient_ReadTextFile_ApproveReads(t *testing.T) {
-	mgr := newTestManager(spec.ApproveReads)
-	defer cleanupManager(mgr)
-
-	// Write a temp file to read.
-	f, err := os.CreateTemp("", "readtextfile-*")
-	require.NoError(t, err)
-	defer os.Remove(f.Name())
-	_, err = f.WriteString("approve-reads content")
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-
-	client := &acpClient{mgr: mgr}
-	resp, err := client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{Path: f.Name()})
-	require.NoError(t, err)
-	assert.Equal(t, "approve-reads content", resp.Content)
-}
-
-func TestAcpClient_ReadTextFile_ApproveAll(t *testing.T) {
-	mgr := newTestManager(spec.ApproveAll)
-	defer cleanupManager(mgr)
-
-	f, err := os.CreateTemp("", "readtextfile-aa-*")
-	require.NoError(t, err)
-	defer os.Remove(f.Name())
-	_, err = f.WriteString("approve-all content")
-	require.NoError(t, err)
-	require.NoError(t, f.Close())
-
-	client := &acpClient{mgr: mgr}
-	resp, err := client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{Path: f.Name()})
-	require.NoError(t, err)
-	assert.Equal(t, "approve-all content", resp.Content)
-}
-
-func TestAcpClient_ReadTextFile_DenyAll(t *testing.T) {
-	mgr := newTestManager(spec.DenyAll)
-	defer cleanupManager(mgr)
-
-	client := &acpClient{mgr: mgr}
-	_, err := client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{Path: "/some/file"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "permission denied")
-}
-
-func TestAcpClient_ReadTextFile_FileReadError(t *testing.T) {
-	mgr := newTestManager(spec.ApproveAll)
-	defer cleanupManager(mgr)
-
-	client := &acpClient{mgr: mgr}
-	_, err := client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{Path: "/nonexistent/path/file.txt"})
-	require.Error(t, err, "expected error reading nonexistent file")
-}
-
 // ── acpClient.RequestPermission ──────────────────────────────────────────────
 
 func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
@@ -178,34 +74,41 @@ func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
 	require.NoError(t, err, "approve-all should return no error")
 }
 
-// ── Terminal operations ─────────────────────────────────────────────────────
+// ── Not-supported stubs ───────────────────────────────────────────────────────
 
-func TestAcpClient_TerminalNotInitialized(t *testing.T) {
+func TestAcpClient_NotSupported(t *testing.T) {
 	mgr := newTestManager(spec.ApproveAll)
 	defer cleanupManager(mgr)
-	// Note: terminalMgr is nil since newTestManager doesn't initialize it
 	client := &acpClient{mgr: mgr}
 	ctx := context.Background()
 
-	_, err := client.CreateTerminal(ctx, acp.CreateTerminalRequest{})
+	_, err := client.ReadTextFile(ctx, acp.ReadTextFileRequest{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "terminal manager not initialized")
+	assert.Equal(t, "not supported", err.Error())
+
+	_, err = client.WriteTextFile(ctx, acp.WriteTextFileRequest{})
+	require.Error(t, err)
+	assert.Equal(t, "not supported", err.Error())
+
+	_, err = client.CreateTerminal(ctx, acp.CreateTerminalRequest{})
+	require.Error(t, err)
+	assert.Equal(t, "not supported", err.Error())
 
 	_, err = client.KillTerminalCommand(ctx, acp.KillTerminalCommandRequest{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "terminal manager not initialized")
+	assert.Equal(t, "not supported", err.Error())
 
 	_, err = client.TerminalOutput(ctx, acp.TerminalOutputRequest{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "terminal manager not initialized")
+	assert.Equal(t, "not supported", err.Error())
 
 	_, err = client.ReleaseTerminal(ctx, acp.ReleaseTerminalRequest{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "terminal manager not initialized")
+	assert.Equal(t, "not supported", err.Error())
 
 	_, err = client.WaitForTerminalExit(ctx, acp.WaitForTerminalExitRequest{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "terminal manager not initialized")
+	assert.Equal(t, "not supported", err.Error())
 }
 
 // ── convertMcpServers ─────────────────────────────────────────────────────────

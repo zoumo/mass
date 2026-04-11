@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -167,7 +166,7 @@ func (s *RuntimeSuite) TestPrompt_ReceivesSessionUpdates() {
 	s.Require().NoError(err)
 	s.Equal(acp.StopReasonEndTurn, resp.StopReason)
 
-	// Drain events emitted during the turn (mock agent sends 2).
+	// Drain events emitted during the turn (mock agent sends 1).
 	events := mgr.Events()
 	var notifications []acp.SessionNotification
 	timeout := time.After(5 * time.Second)
@@ -176,7 +175,7 @@ drain:
 		select {
 		case n := <-events:
 			notifications = append(notifications, n)
-			if len(notifications) >= 2 {
+			if len(notifications) >= 1 {
 				break drain
 			}
 		case <-timeout:
@@ -184,73 +183,14 @@ drain:
 		}
 	}
 
-	s.Require().Len(notifications, 2)
-	// Notifications may arrive in any order (ACP fire-and-forget); scan all entries.
-	var foundWriteOk, foundMockResponse bool
-	for _, n := range notifications {
-		if n.Update.AgentMessageChunk == nil {
-			continue
-		}
-		txt := n.Update.AgentMessageChunk.Content.Text.Text
-		if strings.Contains(txt, "write:ok") {
-			foundWriteOk = true
-		}
-		if txt == "mock response" {
-			foundMockResponse = true
-		}
-	}
-	s.True(foundWriteOk, "expected a notification containing 'write:ok'")
-	s.True(foundMockResponse, "expected a notification with text 'mock response'")
+	s.Require().Len(notifications, 1)
+	chunk := notifications[0].Update.AgentMessageChunk
+	s.Require().NotNil(chunk)
+	s.Equal("mock response", chunk.Content.Text.Text)
 
 	s.Require().NoError(mgr.Kill(ctx))
 }
 
-func (s *RuntimeSuite) TestPrompt_DenyAll_BlocksWrite() {
-	cfg := newTestConfig("test-deny-all")
-	cfg.Permissions = spec.DenyAll
-	mgr := newManager(s.T(), cfg)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	s.Require().NoError(mgr.Create(ctx))
-
-	resp, err := mgr.Prompt(ctx, []acp.ContentBlock{
-		{Text: &acp.ContentBlockText{Text: "hello"}},
-	})
-	s.Require().NoError(err)
-	s.Equal(acp.StopReasonEndTurn, resp.StopReason)
-
-	events := mgr.Events()
-	var notifications []acp.SessionNotification
-	timeout := time.After(5 * time.Second)
-drain:
-	for {
-		select {
-		case n := <-events:
-			notifications = append(notifications, n)
-			if len(notifications) >= 2 {
-				break drain
-			}
-		case <-timeout:
-			break drain
-		}
-	}
-
-	s.Require().Len(notifications, 2)
-	// At least one notification must carry write:denied prefix (order not guaranteed).
-	hasWriteDenied := false
-	for _, n := range notifications {
-		if n.Update.AgentMessageChunk != nil && n.Update.AgentMessageChunk.Content.Text != nil {
-			if strings.Contains(n.Update.AgentMessageChunk.Content.Text.Text, "write:denied") {
-				hasWriteDenied = true
-			}
-		}
-	}
-	s.True(hasWriteDenied, "expected a write:denied notification under deny-all policy")
-
-	s.Require().NoError(mgr.Kill(ctx))
-}
 
 func (s *RuntimeSuite) TestCancel_SendsCancelToAgent() {
 	mgr := newManager(s.T(), newTestConfig("test-cancel"))
