@@ -23,7 +23,7 @@ import (
 func setupAgentdTestWithRuntimeClass(
 	t *testing.T,
 	runtimeClassName string,
-	runtimeSpec ari.AgentTemplateSetParams,
+	templateSpec ari.AgentTemplateSetParams,
 ) (context.Context, context.CancelFunc, *ari.Client, func()) {
 	t.Helper()
 
@@ -68,10 +68,10 @@ func setupAgentdTestWithRuntimeClass(
 		t.Fatalf("failed to create ARI client: %v", err)
 	}
 
-	// Register the runtime via runtime/set. Ensure the name field is set.
-	runtimeSpec.Name = runtimeClassName
+	// Register the agent template via agent/set. Ensure the name field is set.
+	templateSpec.Name = runtimeClassName
 	var runtimeResult ari.AgentTemplateInfo
-	if err := client.Call("agent/set", runtimeSpec, &runtimeResult); err != nil {
+	if err := client.Call("agent/set", templateSpec, &runtimeResult); err != nil {
 		cancel()
 		client.Close()
 		agentdCmd.Process.Kill()

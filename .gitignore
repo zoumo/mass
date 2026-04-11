@@ -1,6 +1,9 @@
 # ── Binaries ──
 /bin/
 /dist/
+./mockagent
+./agentd
+./agentdctl
 
 # ── Scripts (auto-generated) ──
 scripts/verify-*
