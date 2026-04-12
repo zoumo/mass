@@ -51,6 +51,7 @@ type chatModel struct {
 	notifs <-chan rpcResponse
 
 	currentAssistantID string // ID of the current streaming assistant item
+	currentThinkingID  string // ID of the current streaming thinking item
 	turnCounter        int    // monotonic counter for generating unique IDs
 
 	waiting bool
@@ -167,6 +168,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case turnEndMsg:
 		m.waiting = false
 		m.currentAssistantID = ""
+		m.currentThinkingID = ""
 		cmds = append(cmds, m.input.Focus(), waitNotif(m.notifs))
 
 	case promptErrMsg:
@@ -179,6 +181,15 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var spinCmd tea.Cmd
 		m.spinner, spinCmd = m.spinner.Update(msg)
 		cmds = append(cmds, spinCmd)
+
+	case tea.MouseWheelMsg:
+		mouse := msg.Mouse()
+		switch mouse.Button {
+		case tea.MouseWheelUp:
+			m.chat.ScrollBy(-3)
+		case tea.MouseWheelDown:
+			m.chat.ScrollBy(3)
+		}
 
 	case tea.KeyPressMsg:
 		key := tea.Key(msg)
@@ -258,6 +269,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) {
 	}
 	switch p.Event.Type {
 	case "text":
+		m.currentThinkingID = "" // thinking phase ended
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 		m.chat.Update(m.currentAssistantID, func(item chat.MessageItem) {
@@ -269,9 +281,20 @@ func (m *chatModel) handleNotif(msg rpcResponse) {
 	case "thinking":
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
-		m.chat.Append(chat.NewThinkingItem(m.nextID("think"), pl.Text, styleThink))
+		if m.currentThinkingID == "" {
+			id := m.nextID("think")
+			m.currentThinkingID = id
+			m.chat.Append(chat.NewThinkingItem(id, pl.Text, styleThink))
+		} else {
+			m.chat.Update(m.currentThinkingID, func(item chat.MessageItem) {
+				if t, ok := item.(*chat.ThinkingItem); ok {
+					t.AppendText(pl.Text)
+				}
+			})
+		}
 
 	case "tool_call":
+		m.currentThinkingID = "" // thinking phase ended
 		var pl struct {
 			ID    string `json:"id"`
 			Kind  string `json:"kind"`
@@ -314,6 +337,7 @@ func (m chatModel) View() tea.View {
 
 	v := tea.NewView(chatView + "\n" + divider + "\n" + bottom)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 

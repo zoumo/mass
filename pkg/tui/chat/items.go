@@ -92,6 +92,12 @@ func NewThinkingItem(id, text string, style lipgloss.Style) *ThinkingItem {
 
 func (t *ThinkingItem) ID() string { return t.id }
 
+// AppendText appends streamed thinking text and invalidates the render cache.
+func (t *ThinkingItem) AppendText(s string) {
+	t.text += s
+	t.clear()
+}
+
 func (t *ThinkingItem) Render(width int) string {
 	w := cappedWidth(width)
 	if s, _, ok := t.get(w); ok {

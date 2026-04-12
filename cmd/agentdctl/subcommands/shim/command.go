@@ -57,9 +57,11 @@ func dial(socketPath string) (*client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", socketPath, err)
 	}
+	sc := bufio.NewScanner(conn)
+	sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // up to 10 MB per line
 	c := &client{
 		conn:    conn,
-		scanner: bufio.NewScanner(conn),
+		scanner: sc,
 		enc:     json.NewEncoder(conn),
 		pending: make(map[int]chan rpcResponse),
 		notifs:  make(chan rpcResponse, 1024),
@@ -73,6 +75,7 @@ func (c *client) readLoop() {
 		line := c.scanner.Bytes()
 		var msg rpcResponse
 		if err := json.Unmarshal(line, &msg); err != nil {
+			fmt.Fprintf(os.Stderr, "\n[readLoop] json unmarshal error: %v\n", err)
 			continue
 		}
 		if msg.ID == nil && msg.Method != "" {
@@ -87,6 +90,9 @@ func (c *client) readLoop() {
 				ch <- msg
 			}
 		}
+	}
+	if err := c.scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "\n[readLoop] scanner error: %v\n", err)
 	}
 	close(c.notifs)
 }
