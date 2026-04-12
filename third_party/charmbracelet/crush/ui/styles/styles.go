@@ -12,7 +12,7 @@ import (
 	"charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
-	// diffview: not ported
+	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/diffview"
 	"github.com/charmbracelet/x/exp/charmtone"
 )
 
@@ -56,28 +56,6 @@ const (
 	defaultMargin     = 2
 	defaultListIndent = 2
 )
-
-// ptr returns a pointer to the given value.
-// Workaround for Go < 1.26 which does not support ptr(expr).
-func ptr[T any](v T) *T { return &v }
-
-// DiffLineStyle defines the styles for a given line type in the diff view.
-// Ported inline since diffview package is not included.
-type DiffLineStyle struct {
-	LineNumber lipgloss.Style
-	Symbol     lipgloss.Style
-	Code       lipgloss.Style
-}
-
-// DiffStyle defines the overall style for the diff view.
-// Ported inline since diffview package is not included.
-type DiffStyle struct {
-	DividerLine DiffLineStyle
-	MissingLine DiffLineStyle
-	EqualLine   DiffLineStyle
-	InsertLine  DiffLineStyle
-	DeleteLine  DiffLineStyle
-}
 
 type Styles struct {
 	WindowTooSmall lipgloss.Style
@@ -151,8 +129,8 @@ type Styles struct {
 	// Help
 	Help help.Styles
 
-	// Diff — uses inline DiffStyle since diffview package is not ported
-	Diff DiffStyle
+	// Diff
+	Diff diffview.Style
 
 	// FilePicker
 	FilePicker filepicker.Styles
@@ -658,14 +636,14 @@ func DefaultStyles() Styles {
 			StylePrimitive: ansi.StylePrimitive{
 				// BlockPrefix: "\n",
 				// BlockSuffix: "\n",
-				Color: ptr(charmtone.Smoke.Hex()),
+				Color: new(charmtone.Smoke.Hex()),
 			},
-			// Margin: ptr(uint(defaultMargin)),
+			// Margin: new(uint(defaultMargin)),
 		},
 		BlockQuote: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{},
-			Indent:         ptr(uint(1)),
-			IndentToken:    ptr("│ "),
+			Indent:         new(uint(1)),
+			IndentToken:    new("│ "),
 		},
 		List: ansi.StyleList{
 			LevelIndent: defaultListIndent,
@@ -673,17 +651,17 @@ func DefaultStyles() Styles {
 		Heading: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				BlockSuffix: "\n",
-				Color:       ptr(charmtone.Malibu.Hex()),
-				Bold:        ptr(true),
+				Color:       new(charmtone.Malibu.Hex()),
+				Bold:        new(true),
 			},
 		},
 		H1: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          " ",
 				Suffix:          " ",
-				Color:           ptr(charmtone.Zest.Hex()),
-				BackgroundColor: ptr(charmtone.Charple.Hex()),
-				Bold:            ptr(true),
+				Color:           new(charmtone.Zest.Hex()),
+				BackgroundColor: new(charmtone.Charple.Hex()),
+				Bold:            new(true),
 			},
 		},
 		H2: ansi.StyleBlock{
@@ -709,21 +687,21 @@ func DefaultStyles() Styles {
 		H6: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix: "###### ",
-				Color:  ptr(charmtone.Guac.Hex()),
-				Bold:   ptr(false),
+				Color:  new(charmtone.Guac.Hex()),
+				Bold:   new(false),
 			},
 		},
 		Strikethrough: ansi.StylePrimitive{
-			CrossedOut: ptr(true),
+			CrossedOut: new(true),
 		},
 		Emph: ansi.StylePrimitive{
-			Italic: ptr(true),
+			Italic: new(true),
 		},
 		Strong: ansi.StylePrimitive{
-			Bold: ptr(true),
+			Bold: new(true),
 		},
 		HorizontalRule: ansi.StylePrimitive{
-			Color:  ptr(charmtone.Charcoal.Hex()),
+			Color:  new(charmtone.Charcoal.Hex()),
 			Format: "\n--------\n",
 		},
 		Item: ansi.StylePrimitive{
@@ -738,117 +716,117 @@ func DefaultStyles() Styles {
 			Unticked:       "[ ] ",
 		},
 		Link: ansi.StylePrimitive{
-			Color:     ptr(charmtone.Zinc.Hex()),
-			Underline: ptr(true),
+			Color:     new(charmtone.Zinc.Hex()),
+			Underline: new(true),
 		},
 		LinkText: ansi.StylePrimitive{
-			Color: ptr(charmtone.Guac.Hex()),
-			Bold:  ptr(true),
+			Color: new(charmtone.Guac.Hex()),
+			Bold:  new(true),
 		},
 		Image: ansi.StylePrimitive{
-			Color:     ptr(charmtone.Cheeky.Hex()),
-			Underline: ptr(true),
+			Color:     new(charmtone.Cheeky.Hex()),
+			Underline: new(true),
 		},
 		ImageText: ansi.StylePrimitive{
-			Color:  ptr(charmtone.Squid.Hex()),
+			Color:  new(charmtone.Squid.Hex()),
 			Format: "Image: {{.text}} →",
 		},
 		Code: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          " ",
 				Suffix:          " ",
-				Color:           ptr(charmtone.Coral.Hex()),
-				BackgroundColor: ptr(charmtone.Charcoal.Hex()),
+				Color:           new(charmtone.Coral.Hex()),
+				BackgroundColor: new(charmtone.Charcoal.Hex()),
 			},
 		},
 		CodeBlock: ansi.StyleCodeBlock{
 			StyleBlock: ansi.StyleBlock{
 				StylePrimitive: ansi.StylePrimitive{
-					Color: ptr(charmtone.Charcoal.Hex()),
+					Color: new(charmtone.Charcoal.Hex()),
 				},
-				Margin: ptr(uint(defaultMargin)),
+				Margin: new(uint(defaultMargin)),
 			},
 			Chroma: &ansi.Chroma{
 				Text: ansi.StylePrimitive{
-					Color: ptr(charmtone.Smoke.Hex()),
+					Color: new(charmtone.Smoke.Hex()),
 				},
 				Error: ansi.StylePrimitive{
-					Color:           ptr(charmtone.Butter.Hex()),
-					BackgroundColor: ptr(charmtone.Sriracha.Hex()),
+					Color:           new(charmtone.Butter.Hex()),
+					BackgroundColor: new(charmtone.Sriracha.Hex()),
 				},
 				Comment: ansi.StylePrimitive{
-					Color: ptr(charmtone.Oyster.Hex()),
+					Color: new(charmtone.Oyster.Hex()),
 				},
 				CommentPreproc: ansi.StylePrimitive{
-					Color: ptr(charmtone.Bengal.Hex()),
+					Color: new(charmtone.Bengal.Hex()),
 				},
 				Keyword: ansi.StylePrimitive{
-					Color: ptr(charmtone.Malibu.Hex()),
+					Color: new(charmtone.Malibu.Hex()),
 				},
 				KeywordReserved: ansi.StylePrimitive{
-					Color: ptr(charmtone.Pony.Hex()),
+					Color: new(charmtone.Pony.Hex()),
 				},
 				KeywordNamespace: ansi.StylePrimitive{
-					Color: ptr(charmtone.Pony.Hex()),
+					Color: new(charmtone.Pony.Hex()),
 				},
 				KeywordType: ansi.StylePrimitive{
-					Color: ptr(charmtone.Guppy.Hex()),
+					Color: new(charmtone.Guppy.Hex()),
 				},
 				Operator: ansi.StylePrimitive{
-					Color: ptr(charmtone.Salmon.Hex()),
+					Color: new(charmtone.Salmon.Hex()),
 				},
 				Punctuation: ansi.StylePrimitive{
-					Color: ptr(charmtone.Zest.Hex()),
+					Color: new(charmtone.Zest.Hex()),
 				},
 				Name: ansi.StylePrimitive{
-					Color: ptr(charmtone.Smoke.Hex()),
+					Color: new(charmtone.Smoke.Hex()),
 				},
 				NameBuiltin: ansi.StylePrimitive{
-					Color: ptr(charmtone.Cheeky.Hex()),
+					Color: new(charmtone.Cheeky.Hex()),
 				},
 				NameTag: ansi.StylePrimitive{
-					Color: ptr(charmtone.Mauve.Hex()),
+					Color: new(charmtone.Mauve.Hex()),
 				},
 				NameAttribute: ansi.StylePrimitive{
-					Color: ptr(charmtone.Hazy.Hex()),
+					Color: new(charmtone.Hazy.Hex()),
 				},
 				NameClass: ansi.StylePrimitive{
-					Color:     ptr(charmtone.Salt.Hex()),
-					Underline: ptr(true),
-					Bold:      ptr(true),
+					Color:     new(charmtone.Salt.Hex()),
+					Underline: new(true),
+					Bold:      new(true),
 				},
 				NameDecorator: ansi.StylePrimitive{
-					Color: ptr(charmtone.Citron.Hex()),
+					Color: new(charmtone.Citron.Hex()),
 				},
 				NameFunction: ansi.StylePrimitive{
-					Color: ptr(charmtone.Guac.Hex()),
+					Color: new(charmtone.Guac.Hex()),
 				},
 				LiteralNumber: ansi.StylePrimitive{
-					Color: ptr(charmtone.Julep.Hex()),
+					Color: new(charmtone.Julep.Hex()),
 				},
 				LiteralString: ansi.StylePrimitive{
-					Color: ptr(charmtone.Cumin.Hex()),
+					Color: new(charmtone.Cumin.Hex()),
 				},
 				LiteralStringEscape: ansi.StylePrimitive{
-					Color: ptr(charmtone.Bok.Hex()),
+					Color: new(charmtone.Bok.Hex()),
 				},
 				GenericDeleted: ansi.StylePrimitive{
-					Color: ptr(charmtone.Coral.Hex()),
+					Color: new(charmtone.Coral.Hex()),
 				},
 				GenericEmph: ansi.StylePrimitive{
-					Italic: ptr(true),
+					Italic: new(true),
 				},
 				GenericInserted: ansi.StylePrimitive{
-					Color: ptr(charmtone.Guac.Hex()),
+					Color: new(charmtone.Guac.Hex()),
 				},
 				GenericStrong: ansi.StylePrimitive{
-					Bold: ptr(true),
+					Bold: new(true),
 				},
 				GenericSubheading: ansi.StylePrimitive{
-					Color: ptr(charmtone.Squid.Hex()),
+					Color: new(charmtone.Squid.Hex()),
 				},
 				Background: ansi.StylePrimitive{
-					BackgroundColor: ptr(charmtone.Charcoal.Hex()),
+					BackgroundColor: new(charmtone.Charcoal.Hex()),
 				},
 			},
 		},
@@ -863,8 +841,8 @@ func DefaultStyles() Styles {
 	}
 
 	// PlainMarkdown style - muted colors on subtle background for thinking content.
-	plainBg := ptr(bgBaseLighter.Hex())
-	plainFg := ptr(fgMuted.Hex())
+	plainBg := new(bgBaseLighter.Hex())
+	plainFg := new(fgMuted.Hex())
 	s.PlainMarkdown = ansi.StyleConfig{
 		Document: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
@@ -877,8 +855,8 @@ func DefaultStyles() Styles {
 				Color:           plainFg,
 				BackgroundColor: plainBg,
 			},
-			Indent:      ptr(uint(1)),
-			IndentToken: ptr("│ "),
+			Indent:      new(uint(1)),
+			IndentToken: new("│ "),
 		},
 		List: ansi.StyleList{
 			LevelIndent: defaultListIndent,
@@ -886,7 +864,7 @@ func DefaultStyles() Styles {
 		Heading: ansi.StyleBlock{
 			StylePrimitive: ansi.StylePrimitive{
 				BlockSuffix:     "\n",
-				Bold:            ptr(true),
+				Bold:            new(true),
 				Color:           plainFg,
 				BackgroundColor: plainBg,
 			},
@@ -895,7 +873,7 @@ func DefaultStyles() Styles {
 			StylePrimitive: ansi.StylePrimitive{
 				Prefix:          " ",
 				Suffix:          " ",
-				Bold:            ptr(true),
+				Bold:            new(true),
 				Color:           plainFg,
 				BackgroundColor: plainBg,
 			},
@@ -936,17 +914,17 @@ func DefaultStyles() Styles {
 			},
 		},
 		Strikethrough: ansi.StylePrimitive{
-			CrossedOut:      ptr(true),
+			CrossedOut:      new(true),
 			Color:           plainFg,
 			BackgroundColor: plainBg,
 		},
 		Emph: ansi.StylePrimitive{
-			Italic:          ptr(true),
+			Italic:          new(true),
 			Color:           plainFg,
 			BackgroundColor: plainBg,
 		},
 		Strong: ansi.StylePrimitive{
-			Bold:            ptr(true),
+			Bold:            new(true),
 			Color:           plainFg,
 			BackgroundColor: plainBg,
 		},
@@ -974,17 +952,17 @@ func DefaultStyles() Styles {
 			Unticked: "[ ] ",
 		},
 		Link: ansi.StylePrimitive{
-			Underline:       ptr(true),
+			Underline:       new(true),
 			Color:           plainFg,
 			BackgroundColor: plainBg,
 		},
 		LinkText: ansi.StylePrimitive{
-			Bold:            ptr(true),
+			Bold:            new(true),
 			Color:           plainFg,
 			BackgroundColor: plainBg,
 		},
 		Image: ansi.StylePrimitive{
-			Underline:       ptr(true),
+			Underline:       new(true),
 			Color:           plainFg,
 			BackgroundColor: plainBg,
 		},
@@ -1007,7 +985,7 @@ func DefaultStyles() Styles {
 					Color:           plainFg,
 					BackgroundColor: plainBg,
 				},
-				Margin: ptr(uint(defaultMargin)),
+				Margin: new(uint(defaultMargin)),
 			},
 		},
 		Table: ansi.StyleTable{
@@ -1035,9 +1013,8 @@ func DefaultStyles() Styles {
 		FullSeparator:  base.Foreground(border),
 	}
 
-	// diffview: not ported — Diff styles are inlined using DiffStyle/DiffLineStyle
-	s.Diff = DiffStyle{
-		DividerLine: DiffLineStyle{
+	s.Diff = diffview.Style{
+		DividerLine: diffview.LineStyle{
 			LineNumber: lipgloss.NewStyle().
 				Foreground(fgHalfMuted).
 				Background(bgBaseLighter),
@@ -1045,13 +1022,13 @@ func DefaultStyles() Styles {
 				Foreground(fgHalfMuted).
 				Background(bgBaseLighter),
 		},
-		MissingLine: DiffLineStyle{
+		MissingLine: diffview.LineStyle{
 			LineNumber: lipgloss.NewStyle().
 				Background(bgBaseLighter),
 			Code: lipgloss.NewStyle().
 				Background(bgBaseLighter),
 		},
-		EqualLine: DiffLineStyle{
+		EqualLine: diffview.LineStyle{
 			LineNumber: lipgloss.NewStyle().
 				Foreground(fgMuted).
 				Background(bgBase),
@@ -1059,7 +1036,7 @@ func DefaultStyles() Styles {
 				Foreground(fgMuted).
 				Background(bgBase),
 		},
-		InsertLine: DiffLineStyle{
+		InsertLine: diffview.LineStyle{
 			LineNumber: lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#629657")).
 				Background(lipgloss.Color("#2b322a")),
@@ -1069,7 +1046,7 @@ func DefaultStyles() Styles {
 			Code: lipgloss.NewStyle().
 				Background(lipgloss.Color("#323931")),
 		},
-		DeleteLine: DiffLineStyle{
+		DeleteLine: diffview.LineStyle{
 			LineNumber: lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#a45c59")).
 				Background(lipgloss.Color("#312929")),

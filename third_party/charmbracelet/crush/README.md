@@ -3,28 +3,32 @@
 Vendored subset of internal packages from [github.com/charmbracelet/crush](https://github.com/charmbracelet/crush).
 
 - **Source**: github.com/charmbracelet/crush
-- **Commit**: e23ef333aa7b58aed57a0e238cd72a908eb1e20d
+- **Commit**: `e23ef333aa7b58aed57a0e238cd72a908eb1e20d`
 - **License**: FSL-1.1-MIT (see [LICENSE.md](LICENSE.md))
+- **Go version**: 1.26.1 (required by crush for `new(expr)` syntax and `sync.WaitGroup.Go`)
 
 ## Copied directories
 
 | Directory | Source | Modifications |
 |-----------|--------|---------------|
-| `csync/` | `internal/csync/` | Direct copy (4 files + doc.go), no crush-internal imports |
-| `stringext/` | `internal/stringext/` | Direct copy, no crush-internal imports |
-| `ui/util/` | `internal/ui/util/` | Direct copy, no crush-internal imports |
-| `ui/styles/` | `internal/ui/styles/` | Removed `diffview` import; replaced `diffview.Style`/`diffview.LineStyle` with inline `DiffStyle`/`DiffLineStyle` types; replaced Go 1.26 `new(expr)` calls with `ptr(expr)` helper for Go 1.25 compat |
-| `ui/anim/` | `internal/ui/anim/` | Changed `crush/internal/csync` import to our third_party path |
-| `ui/common/` | `internal/ui/common/` | Changed crush-internal imports; simplified `Common` struct (see below); removed `home.Short` dependency in `PrettyPath` |
-| `ui/list/` | `internal/ui/list/` (partial, pre-existing) | Updated `highlight.go` to use `stringext.NormalizeSpace` instead of inline implementation |
+| `ansiext/` | `internal/ansiext/` | Import path only |
+| `csync/` | `internal/csync/` | Import path only (4 files + doc.go) |
+| `stringext/` | `internal/stringext/` | None (no crush-internal imports) |
+| `ui/anim/` | `internal/ui/anim/` | Import path only |
+| `ui/common/` | `internal/ui/common/` | Import path + simplified `Common` struct (see below) |
+| `ui/diffview/` | `internal/ui/diffview/` | Import path only (test files excluded) |
+| `ui/list/` | `internal/ui/list/` | Import path only |
+| `ui/styles/` | `internal/ui/styles/` | Import path only |
+| `ui/util/` | `internal/ui/util/` | Import path only |
+
+## Modification policy
+
+**Third-party code should be kept as close to upstream as possible.** The only acceptable changes are:
+
+1. **Import path rewriting**: `github.com/charmbracelet/crush/internal/...` → `github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/...`
+2. **Removing test files**: `*_test.go` files are not copied
 
 ## Notable modifications
-
-### diffview not ported
-
-The `internal/ui/diffview` package is not included. The `Diff` field on `styles.Styles`
-uses inline `DiffStyle`/`DiffLineStyle` types that mirror the original `diffview.Style`/`diffview.LineStyle`
-struct layout.
 
 ### common.go simplification
 
@@ -37,8 +41,7 @@ simplified to only contain:
 - `Height int`
 
 Functions that depended on config/home/workspace have been removed. `DefaultCommon()` takes
-no arguments (the original took a `workspace.Workspace`). `PrettyPath` renders the raw path
-without home-directory shortening.
+no arguments. `PrettyPath` renders the raw path without home-directory shortening.
 
 ### Import path rewriting
 
