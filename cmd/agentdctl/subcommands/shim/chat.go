@@ -504,8 +504,11 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		input, _ := json.Marshal(map[string]string{"title": pl.Title})
 		tc := chat.ToolCall{ID: pl.ID, Name: pl.Kind, Input: string(input), Finished: true}
 		toolItem := chat.NewToolMessageItem(&m.sty, toolItemID, tc, nil, false)
+		// Our tool_call event means the tool was already invoked. Set initial
+		// status to Success to avoid showing "Waiting for tool response...".
+		// The actual status will be overwritten when tool_result arrives.
 		if ti, ok := toolItem.(chat.ToolMessageItem); ok {
-			ti.SetStatus(chat.ToolStatusRunning)
+			ti.SetStatus(chat.ToolStatusSuccess)
 		}
 		m.chat.AppendMessages(toolItem)
 		m.toolItemIDs[pl.ID] = toolItemID
@@ -535,8 +538,6 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		}
 
 		// Find the matching tool call item and update its status.
-		// If not found (late join), silently skip — these are historical
-		// results the user doesn't need to see individually.
 		if itemID, ok := m.toolItemIDs[pl.ID]; ok {
 			if item := m.chat.MessageItem(itemID); item != nil {
 				if ti, ok := item.(chat.ToolMessageItem); ok {
