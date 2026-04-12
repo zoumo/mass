@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/stringext"
 )
 
 // DefaultHighlighter is the default highlighter function that applies inverse style.
@@ -53,10 +54,7 @@ func Highlight(content string, area image.Rectangle, startLine, startCol, endLin
 // HighlightBuffer highlights a region of text within the given content and
 // region, returning a [uv.ScreenBuffer].
 func HighlightBuffer(content string, area image.Rectangle, startLine, startCol, endLine, endCol int, highlighter Highlighter) *uv.ScreenBuffer {
-	// Inline NormalizeSpace (from crush internal/stringext).
-	content = strings.ReplaceAll(content, "\r\n", "\n")
-	content = strings.ReplaceAll(content, "\t", "    ")
-	content = strings.TrimSpace(content)
+	content = stringext.NormalizeSpace(content)
 
 	if startLine < 0 || startCol < 0 {
 		return nil

@@ -1,5 +1,10 @@
 package chat
 
+// This file provides simple message item types for quick integration.
+// These are the original lightweight items used by the shim before
+// the full crush-style rendering layer was added. They implement
+// MessageItem (list.Item + list.RawRenderable + Identifiable).
+
 import (
 	"strings"
 
@@ -11,7 +16,7 @@ import (
 
 // UserItem renders a user message: "You: <text>".
 type UserItem struct {
-	cachedItem
+	cachedMessageItem
 	id    string
 	text  string
 	style lipgloss.Style
@@ -24,15 +29,19 @@ func NewUserItem(id, text string, style lipgloss.Style) *UserItem {
 
 func (u *UserItem) ID() string { return u.id }
 
+func (u *UserItem) RawRender(width int) string {
+	return u.Render(width)
+}
+
 func (u *UserItem) Render(width int) string {
-	w := cappedWidth(width)
-	if s, _, ok := u.get(w); ok {
+	w := min(width, maxTextWidth)
+	if s, _, ok := u.getCachedRender(w); ok {
 		return s
 	}
 	prefix := u.style.Render("You: ")
 	content := ansi.Wordwrap(prefix+u.text, w, " \t")
 	h := strings.Count(content, "\n") + 1
-	u.set(content, w, h)
+	u.setCachedRender(content, w, h)
 	return content
 }
 
@@ -41,7 +50,7 @@ func (u *UserItem) Render(width int) string {
 // AssistantItem renders a streaming agent response. Use [AppendText] to
 // accumulate streamed tokens.
 type AssistantItem struct {
-	cachedItem
+	cachedMessageItem
 	id    string
 	text  string
 	style lipgloss.Style
@@ -57,29 +66,33 @@ func (a *AssistantItem) ID() string { return a.id }
 // AppendText appends streamed text and invalidates the render cache.
 func (a *AssistantItem) AppendText(s string) {
 	a.text += s
-	a.clear()
+	a.clearCache()
 }
 
 // Text returns the accumulated text.
 func (a *AssistantItem) Text() string { return a.text }
 
+func (a *AssistantItem) RawRender(width int) string {
+	return a.Render(width)
+}
+
 func (a *AssistantItem) Render(width int) string {
-	w := cappedWidth(width)
-	if s, _, ok := a.get(w); ok {
+	w := min(width, maxTextWidth)
+	if s, _, ok := a.getCachedRender(w); ok {
 		return s
 	}
 	prefix := a.style.Render("Agent: ")
 	content := ansi.Wordwrap(prefix+a.text, w, " \t")
 	h := strings.Count(content, "\n") + 1
-	a.set(content, w, h)
+	a.setCachedRender(content, w, h)
 	return content
 }
 
 // ── ThinkingItem ─────────────────────────────────────────────────────────────
 
-// ThinkingItem renders a thinking/reasoning event: "  · <text>".
+// ThinkingItem renders a thinking/reasoning event: "  . <text>".
 type ThinkingItem struct {
-	cachedItem
+	cachedMessageItem
 	id    string
 	text  string
 	style lipgloss.Style
@@ -95,26 +108,30 @@ func (t *ThinkingItem) ID() string { return t.id }
 // AppendText appends streamed thinking text and invalidates the render cache.
 func (t *ThinkingItem) AppendText(s string) {
 	t.text += s
-	t.clear()
+	t.clearCache()
+}
+
+func (t *ThinkingItem) RawRender(width int) string {
+	return t.Render(width)
 }
 
 func (t *ThinkingItem) Render(width int) string {
-	w := cappedWidth(width)
-	if s, _, ok := t.get(w); ok {
+	w := min(width, maxTextWidth)
+	if s, _, ok := t.getCachedRender(w); ok {
 		return s
 	}
-	content := t.style.Render("  · " + t.text)
+	content := t.style.Render("  . " + t.text)
 	content = ansi.Wordwrap(content, w, " \t")
 	h := strings.Count(content, "\n") + 1
-	t.set(content, w, h)
+	t.setCachedRender(content, w, h)
 	return content
 }
 
 // ── ToolCallItem ─────────────────────────────────────────────────────────────
 
-// ToolCallItem renders a tool invocation: "  ⚙ <kind>: <title>".
+// ToolCallItem renders a tool invocation: "  tool <kind>: <title>".
 type ToolCallItem struct {
-	cachedItem
+	cachedMessageItem
 	id    string
 	kind  string
 	title string
@@ -128,27 +145,31 @@ func NewToolCallItem(id, kind, title string, style lipgloss.Style) *ToolCallItem
 
 func (tc *ToolCallItem) ID() string { return tc.id }
 
+func (tc *ToolCallItem) RawRender(width int) string {
+	return tc.Render(width)
+}
+
 func (tc *ToolCallItem) Render(width int) string {
-	w := cappedWidth(width)
-	if s, _, ok := tc.get(w); ok {
+	w := min(width, maxTextWidth)
+	if s, _, ok := tc.getCachedRender(w); ok {
 		return s
 	}
 	text := tc.kind
 	if tc.title != "" {
 		text += ": " + tc.title
 	}
-	content := tc.style.Render("  ⚙ " + text)
+	content := tc.style.Render("  tool " + text)
 	content = ansi.Wordwrap(content, w, " \t")
 	h := strings.Count(content, "\n") + 1
-	tc.set(content, w, h)
+	tc.setCachedRender(content, w, h)
 	return content
 }
 
 // ── ToolResultItem ───────────────────────────────────────────────────────────
 
-// ToolResultItem renders a tool result: "  ↳ <status>".
+// ToolResultItem renders a tool result: "  > <status>".
 type ToolResultItem struct {
-	cachedItem
+	cachedMessageItem
 	id     string
 	status string
 	style  lipgloss.Style
@@ -161,15 +182,19 @@ func NewToolResultItem(id, status string, style lipgloss.Style) *ToolResultItem 
 
 func (tr *ToolResultItem) ID() string { return tr.id }
 
+func (tr *ToolResultItem) RawRender(width int) string {
+	return tr.Render(width)
+}
+
 func (tr *ToolResultItem) Render(width int) string {
-	w := cappedWidth(width)
-	if s, _, ok := tr.get(w); ok {
+	w := min(width, maxTextWidth)
+	if s, _, ok := tr.getCachedRender(w); ok {
 		return s
 	}
-	content := tr.style.Render("  ↳ " + tr.status)
+	content := tr.style.Render("  > " + tr.status)
 	content = ansi.Wordwrap(content, w, " \t")
 	h := strings.Count(content, "\n") + 1
-	tr.set(content, w, h)
+	tr.setCachedRender(content, w, h)
 	return content
 }
 
@@ -177,7 +202,7 @@ func (tr *ToolResultItem) Render(width int) string {
 
 // SystemItem renders a system message (connected, error, cancelling, etc.).
 type SystemItem struct {
-	cachedItem
+	cachedMessageItem
 	id    string
 	text  string
 	style lipgloss.Style
@@ -190,14 +215,18 @@ func NewSystemItem(id, text string, style lipgloss.Style) *SystemItem {
 
 func (s *SystemItem) ID() string { return s.id }
 
+func (s *SystemItem) RawRender(width int) string {
+	return s.Render(width)
+}
+
 func (s *SystemItem) Render(width int) string {
-	w := cappedWidth(width)
-	if r, _, ok := s.get(w); ok {
+	w := min(width, maxTextWidth)
+	if r, _, ok := s.getCachedRender(w); ok {
 		return r
 	}
 	content := s.style.Render(s.text)
 	content = ansi.Wordwrap(content, w, " \t")
 	h := strings.Count(content, "\n") + 1
-	s.set(content, w, h)
+	s.setCachedRender(content, w, h)
 	return content
 }
