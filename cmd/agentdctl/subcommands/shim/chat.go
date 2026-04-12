@@ -244,18 +244,16 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case stateChangeMsg:
 		m.agentStatus = msg.status
-		// If agent transitions to running and we're not already in waiting state,
-		// it means someone else sent a prompt (or we late-joined a running turn).
 		if msg.status == "running" && !m.waiting {
 			m.waiting = true
 			m.input.Blur()
 		}
-		// If agent returns to idle, ensure we can type.
 		if msg.status == "idle" && m.waiting {
 			m.waiting = false
 			m.chatFocused = false
 			cmds = append(cmds, m.input.Focus())
 		}
+		cmds = append(cmds, waitNotif(m.notifs)) // keep the notification chain alive
 
 	case anim.StepMsg:
 		// Forward animation ticks to the chat (for spinner animations).
