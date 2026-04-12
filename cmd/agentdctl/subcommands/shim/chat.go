@@ -280,6 +280,22 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat.ScrollBy(3)
 		}
 
+	case tea.PasteMsg:
+		// Forward paste events to textarea.
+		if !m.waiting && !m.chatFocused {
+			var taCmd tea.Cmd
+			m.input, taCmd = m.input.Update(msg)
+			cmds = append(cmds, taCmd)
+		}
+
+	case tea.PasteStartMsg, tea.PasteEndMsg:
+		// Forward bracketed paste markers to textarea.
+		if !m.waiting && !m.chatFocused {
+			var taCmd tea.Cmd
+			m.input, taCmd = m.input.Update(msg)
+			cmds = append(cmds, taCmd)
+		}
+
 	case tea.KeyPressMsg:
 		cmds = append(cmds, m.handleKey(tea.Key(msg))...)
 	}
@@ -351,10 +367,17 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 
 	switch {
 	case key.Code == tea.KeyEnter && key.Mod&tea.ModShift != 0:
+		// Shift+Enter: newline (terminal must support modifier reporting).
 		if !m.waiting {
 			var taCmd tea.Cmd
 			m.input, taCmd = m.input.Update(tea.KeyPressMsg(key))
 			cmds = append(cmds, taCmd)
+		}
+
+	case key.Mod&tea.ModCtrl != 0 && key.Code == 'j':
+		// Ctrl+J: newline (works in all terminals, fallback for Shift+Enter).
+		if !m.waiting {
+			m.input.InsertRune('\n')
 		}
 
 	case key.Code == tea.KeyEnter && key.Mod == 0:
@@ -487,11 +510,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.updateCurrentAssistant()
 
 	case api.EventTypeToolCall:
-		var pl struct {
-			ID    string `json:"id"`
-			Kind  string `json:"kind"`
-			Title string `json:"title"`
-		}
+		var pl toolEventPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 
 		// Finish current assistant text before tool.
@@ -500,10 +519,10 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			m.updateCurrentAssistant()
 		}
 
-		// Add tool call item and track its ID for later result linking.
+		// Build input from event data for display.
 		toolItemID := m.nextID("tc")
-		input, _ := json.Marshal(map[string]string{"title": pl.Title})
-		tc := chat.ToolCall{ID: pl.ID, Name: pl.Kind, Input: string(input), Finished: true}
+		input := pl.buildInput()
+		tc := chat.ToolCall{ID: pl.ID, Name: pl.Kind, Input: input, Finished: true}
 		toolItem := chat.NewToolMessageItem(&m.sty, toolItemID, tc, nil, false)
 		// Our tool_call event means the tool was already invoked. Set initial
 		// status to Success to avoid showing "Waiting for tool response...".
@@ -529,10 +548,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		}
 
 	case api.EventTypeToolResult:
-		var pl struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-		}
+		var pl toolEventPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 
 		status := chat.ToolStatusSuccess
@@ -540,14 +556,28 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			status = chat.ToolStatusError
 		}
 
+		// Build result content from event data.
+		resultContent := pl.buildResultContent()
+
 		// Find the matching tool call item and update its status.
 		if itemID, ok := m.toolItemIDs[pl.ID]; ok {
 			if item := m.chat.MessageItem(itemID); item != nil {
 				if ti, ok := item.(chat.ToolMessageItem); ok {
 					ti.SetStatus(status)
+					// Update tool call with title/kind from result if available.
+					if pl.Title != "" || pl.Kind != "" {
+						tc := ti.ToolCall()
+						if pl.Title != "" {
+							tc.Input = pl.buildInput()
+						}
+						if pl.Kind != "" {
+							tc.Name = pl.Kind
+						}
+						ti.SetToolCall(tc)
+					}
 					ti.SetResult(&chat.ToolResult{
 						ToolCallID: pl.ID,
-						Content:    pl.Status,
+						Content:    resultContent,
 					})
 				}
 			}
@@ -636,7 +666,7 @@ func (m chatModel) renderHelp() string {
 	if m.chatFocused {
 		keys = append(keys, "j/k scroll", "d/u half-page", "g/G top/bottom", "tab editor", "esc back")
 	} else {
-		keys = append(keys, "enter send", "shift+enter newline", "tab chat", "ctrl+x cancel")
+		keys = append(keys, "enter send", "ctrl+j newline", "tab chat", "ctrl+x cancel")
 	}
 	keys = append(keys, "shift+click select text", "ctrl+c quit")
 	return styleHelp.Render(" " + strings.Join(keys, " · "))
