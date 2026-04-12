@@ -14,6 +14,7 @@ import (
 	"github.com/open-agent-d/open-agent-d/api"
 	"github.com/open-agent-d/open-agent-d/api/meta"
 	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/store"
 )
@@ -69,14 +70,14 @@ func TestRecoverSessions_LiveShim(t *testing.T) {
 	// Start a mock shim server.
 	srv, socketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = RuntimeStatusResult{
+	srv.statusResult = shimapi.RuntimeStatusResult{
 		State: apispec.State{
 			OarVersion: "0.1.0",
 			ID:         "recovered-agent",
 			Status:     api.StatusRunning,
 			Bundle:     "/tmp/test-bundle",
 		},
-		Recovery: RuntimeStatusRecovery{LastSeq: 5},
+		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 5},
 	}
 	srv.mu.Unlock()
 
@@ -177,9 +178,9 @@ func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
 	// Start a mock shim for the live agent.
 	srv, liveSocketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = RuntimeStatusResult{
+	srv.statusResult = shimapi.RuntimeStatusResult{
 		State:    apispec.State{Status: api.StatusRunning, ID: "live"},
-		Recovery: RuntimeStatusRecovery{LastSeq: 2},
+		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 2},
 	}
 	srv.mu.Unlock()
 
@@ -246,13 +247,13 @@ func TestRecoverSessions_ShimReportsStopped(t *testing.T) {
 	// Start a mock shim that reports stopped.
 	srv, socketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = RuntimeStatusResult{
+	srv.statusResult = shimapi.RuntimeStatusResult{
 		State: apispec.State{
 			OarVersion: "0.1.0",
 			ID:         "stopped-agent",
 			Status:     api.StatusStopped,
 		},
-		Recovery: RuntimeStatusRecovery{LastSeq: 0},
+		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 0},
 	}
 	srv.mu.Unlock()
 
@@ -290,13 +291,13 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 	// Start a mock shim that reports running.
 	srv, socketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = RuntimeStatusResult{
+	srv.statusResult = shimapi.RuntimeStatusResult{
 		State: apispec.State{
 			OarVersion: "0.1.0",
 			ID:         "reconciled-agent",
 			Status:     api.StatusRunning,
 		},
-		Recovery: RuntimeStatusRecovery{LastSeq: 3},
+		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 3},
 	}
 	srv.mu.Unlock()
 
@@ -347,13 +348,13 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 	// Start a mock shim that reports running.
 	srv, socketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = RuntimeStatusResult{
+	srv.statusResult = shimapi.RuntimeStatusResult{
 		State: apispec.State{
 			OarVersion: "0.1.0",
 			ID:         "mismatched-agent",
 			Status:     api.StatusRunning,
 		},
-		Recovery: RuntimeStatusRecovery{LastSeq: 1},
+		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 1},
 	}
 	srv.mu.Unlock()
 

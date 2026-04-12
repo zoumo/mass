@@ -10,8 +10,8 @@ import (
 
 	"github.com/sourcegraph/jsonrpc2"
 
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
+	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -88,22 +88,12 @@ func (c *ShimClient) DisconnectNotify() <-chan struct{} {
 // session/* RPC Methods
 // ────────────────────────────────────────────────────────────────────────────
 
-// SessionPromptParams is the JSON body for the "session/prompt" method.
-type SessionPromptParams struct {
-	Prompt string `json:"prompt"`
-}
-
-// SessionPromptResult is returned by the "session/prompt" method.
-type SessionPromptResult struct {
-	StopReason string `json:"stopReason"`
-}
-
 // Prompt sends a text prompt to the agent and waits for the turn to complete.
 // Returns the stop reason (e.g., "end_turn", "canceled", "tool_use").
-func (c *ShimClient) Prompt(ctx context.Context, text string) (SessionPromptResult, error) {
-	var result SessionPromptResult
-	if err := c.call(ctx, "session/prompt", SessionPromptParams{Prompt: text}, &result); err != nil {
-		return SessionPromptResult{}, fmt.Errorf("shim_client: session/prompt: session=%s: %w", c.socketPath, err)
+func (c *ShimClient) Prompt(ctx context.Context, text string) (shimapi.SessionPromptResult, error) {
+	var result shimapi.SessionPromptResult
+	if err := c.call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: text}, &result); err != nil {
+		return shimapi.SessionPromptResult{}, fmt.Errorf("shim_client: session/prompt: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
 }
@@ -116,31 +106,14 @@ func (c *ShimClient) Cancel(ctx context.Context) error {
 	return nil
 }
 
-// SessionLoadParams is the JSON body for the "session/load" RPC method.
-type SessionLoadParams struct {
-	SessionID string `json:"sessionId"`
-}
-
 // Load sends session/load to the shim with the given ACP sessionId.
 // Returns nil on success; returns error if the shim rejects the call (e.g.
 // runtime does not support session/load) so the caller can fall back.
 func (c *ShimClient) Load(ctx context.Context, sessionID string) error {
-	if err := c.call(ctx, "session/load", SessionLoadParams{SessionID: sessionID}, nil); err != nil {
+	if err := c.call(ctx, "session/load", shimapi.SessionLoadParams{SessionID: sessionID}, nil); err != nil {
 		return fmt.Errorf("shim_client: session/load: session=%s: %w", c.socketPath, err)
 	}
 	return nil
-}
-
-// SessionSubscribeParams is the JSON body for the "session/subscribe" method.
-type SessionSubscribeParams struct {
-	AfterSeq *int `json:"afterSeq,omitempty"`
-	FromSeq  *int `json:"fromSeq,omitempty"`
-}
-
-// SessionSubscribeResult is returned by "session/subscribe".
-type SessionSubscribeResult struct {
-	NextSeq int               `json:"nextSeq"`
-	Entries []events.Envelope `json:"entries,omitempty"`
 }
 
 // Subscribe registers for live session/update and runtime/stateChange
@@ -154,11 +127,11 @@ type SessionSubscribeResult struct {
 // log from fromSeq under the same lock that registers the subscription,
 // returning backfill entries in the result alongside the live subscription.
 // This eliminates the gap between a separate History + Subscribe call pair.
-func (c *ShimClient) Subscribe(ctx context.Context, afterSeq, fromSeq *int) (SessionSubscribeResult, error) {
-	params := SessionSubscribeParams{AfterSeq: afterSeq, FromSeq: fromSeq}
-	var result SessionSubscribeResult
+func (c *ShimClient) Subscribe(ctx context.Context, afterSeq, fromSeq *int) (shimapi.SessionSubscribeResult, error) {
+	params := shimapi.SessionSubscribeParams{AfterSeq: afterSeq, FromSeq: fromSeq}
+	var result shimapi.SessionSubscribeResult
 	if err := c.call(ctx, "session/subscribe", params, &result); err != nil {
-		return SessionSubscribeResult{}, fmt.Errorf("shim_client: session/subscribe: session=%s: %w", c.socketPath, err)
+		return shimapi.SessionSubscribeResult{}, fmt.Errorf("shim_client: session/subscribe: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
 }
@@ -167,46 +140,25 @@ func (c *ShimClient) Subscribe(ctx context.Context, afterSeq, fromSeq *int) (Ses
 // runtime/* RPC Methods
 // ────────────────────────────────────────────────────────────────────────────
 
-// RuntimeStatusRecovery holds recovery metadata from the shim's durable log.
-type RuntimeStatusRecovery struct {
-	LastSeq int `json:"lastSeq"`
-}
-
-// RuntimeStatusResult is returned by "runtime/status".
-type RuntimeStatusResult struct {
-	State    apispec.State            `json:"state"`
-	Recovery RuntimeStatusRecovery `json:"recovery"`
-}
-
 // Status retrieves the current runtime state and recovery metadata.
 // The recovery.lastSeq field indicates how many events have been durably
 // committed to the log — clients use this to resume subscriptions cleanly.
-func (c *ShimClient) Status(ctx context.Context) (RuntimeStatusResult, error) {
-	var result RuntimeStatusResult
+func (c *ShimClient) Status(ctx context.Context) (shimapi.RuntimeStatusResult, error) {
+	var result shimapi.RuntimeStatusResult
 	if err := c.call(ctx, "runtime/status", nil, &result); err != nil {
-		return RuntimeStatusResult{}, fmt.Errorf("shim_client: runtime/status: session=%s: %w", c.socketPath, err)
+		return shimapi.RuntimeStatusResult{}, fmt.Errorf("shim_client: runtime/status: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
-}
-
-// RuntimeHistoryParams is the JSON body for the "runtime/history" method.
-type RuntimeHistoryParams struct {
-	FromSeq *int `json:"fromSeq,omitempty"`
-}
-
-// RuntimeHistoryResult is returned by "runtime/history".
-type RuntimeHistoryResult struct {
-	Entries []events.Envelope `json:"entries"`
 }
 
 // History retrieves replayable event history starting from fromSeq (inclusive).
 // Returns parse failure when the response is malformed — callers must not
 // treat partial results as valid history.
-func (c *ShimClient) History(ctx context.Context, fromSeq *int) (RuntimeHistoryResult, error) {
-	params := RuntimeHistoryParams{FromSeq: fromSeq}
-	var result RuntimeHistoryResult
+func (c *ShimClient) History(ctx context.Context, fromSeq *int) (shimapi.RuntimeHistoryResult, error) {
+	params := shimapi.RuntimeHistoryParams{FromSeq: fromSeq}
+	var result shimapi.RuntimeHistoryResult
 	if err := c.call(ctx, "runtime/history", params, &result); err != nil {
-		return RuntimeHistoryResult{}, fmt.Errorf("shim_client: runtime/history: session=%s: %w", c.socketPath, err)
+		return shimapi.RuntimeHistoryResult{}, fmt.Errorf("shim_client: runtime/history: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
 }

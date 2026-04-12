@@ -18,11 +18,12 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/stretchr/testify/require"
 
+	"github.com/open-agent-d/open-agent-d/api"
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/rpc"
 	pkgruntime "github.com/open-agent-d/open-agent-d/pkg/runtime"
-	"github.com/open-agent-d/open-agent-d/api"
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
@@ -238,12 +239,12 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 	client := h.dial(t, notifH)
 
 	t.Run("subscribe and status", func(t *testing.T) {
-		var subResult rpc.SessionSubscribeResult
+		var subResult shimapi.SessionSubscribeResult
 		err := client.Call(ctx, "session/subscribe", nil, &subResult)
 		require.NoError(t, err)
 		require.Equal(t, 0, subResult.NextSeq)
 
-		var status rpc.RuntimeStatusResult
+		var status shimapi.RuntimeStatusResult
 		err = client.Call(ctx, "runtime/status", nil, &status)
 		require.NoError(t, err)
 		require.Equal(t, api.StatusIdle, status.State.Status)
@@ -251,8 +252,8 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 	})
 
 	t.Run("prompt history and recovery metadata", func(t *testing.T) {
-		var promptResult rpc.SessionPromptResult
-		err := client.Call(ctx, "session/prompt", rpc.SessionPromptParams{Prompt: "hello"}, &promptResult)
+		var promptResult shimapi.SessionPromptResult
+		err := client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: "hello"}, &promptResult)
 		require.NoError(t, err)
 		require.Equal(t, "end_turn", promptResult.StopReason)
 
@@ -285,12 +286,12 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		require.NotNil(t, te.StreamSeq)
 		require.Equal(t, 2, *te.StreamSeq)
 
-		var history rpc.RuntimeHistoryResult
-		err = client.Call(ctx, "runtime/history", rpc.RuntimeHistoryParams{FromSeq: intPtr(0)}, &history)
+		var history shimapi.RuntimeHistoryResult
+		err = client.Call(ctx, "runtime/history", shimapi.RuntimeHistoryParams{FromSeq: intPtr(0)}, &history)
 		require.NoError(t, err)
 		require.Equal(t, live, history.Entries)
 
-		var status rpc.RuntimeStatusResult
+		var status shimapi.RuntimeStatusResult
 		err = client.Call(ctx, "runtime/status", nil, &status)
 		require.NoError(t, err)
 		require.Equal(t, api.StatusIdle, status.State.Status)
@@ -303,9 +304,9 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		backfillNotifs := newNotifHandler()
 		backfillClient := h.dial(t, backfillNotifs)
 
-		var subResult rpc.SessionSubscribeResult
+		var subResult shimapi.SessionSubscribeResult
 		fromSeq := 0
-		err := backfillClient.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{FromSeq: &fromSeq}, &subResult)
+		err := backfillClient.Call(ctx, "session/subscribe", shimapi.SessionSubscribeParams{FromSeq: &fromSeq}, &subResult)
 		require.NoError(t, err)
 		require.Len(t, subResult.Entries, 5, "expected 5 backfill entries from first prompt")
 		sortEnvelopesBySeq(subResult.Entries)
@@ -316,8 +317,8 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		}
 
 		// Trigger a second prompt and assert live events arrive.
-		var promptResult rpc.SessionPromptResult
-		err = client.Call(ctx, "session/prompt", rpc.SessionPromptParams{Prompt: "second"}, &promptResult)
+		var promptResult shimapi.SessionPromptResult
+		err = client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: "second"}, &promptResult)
 		require.NoError(t, err)
 		require.Equal(t, "end_turn", promptResult.StopReason)
 
@@ -333,7 +334,7 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 	t.Run("subscribe afterSeq filters prior history", func(t *testing.T) {
 		// Get the current nextSeq from status so the afterSeq floor is correct
 		// even if earlier subtests generated additional events.
-		var curStatus rpc.RuntimeStatusResult
+		var curStatus shimapi.RuntimeStatusResult
 		err := client.Call(ctx, "runtime/status", nil, &curStatus)
 		require.NoError(t, err)
 		afterSeq := curStatus.Recovery.LastSeq
@@ -341,8 +342,8 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		secondaryNotifs := newNotifHandler()
 		secondaryClient := h.dial(t, secondaryNotifs)
 
-		var subResult rpc.SessionSubscribeResult
-		err = secondaryClient.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{AfterSeq: &afterSeq}, &subResult)
+		var subResult shimapi.SessionSubscribeResult
+		err = secondaryClient.Call(ctx, "session/subscribe", shimapi.SessionSubscribeParams{AfterSeq: &afterSeq}, &subResult)
 		require.NoError(t, err)
 		require.Equal(t, afterSeq+1, subResult.NextSeq)
 
@@ -352,8 +353,8 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		case <-time.After(200 * time.Millisecond):
 		}
 
-		var promptResult rpc.SessionPromptResult
-		err = client.Call(ctx, "session/prompt", rpc.SessionPromptParams{Prompt: "again"}, &promptResult)
+		var promptResult shimapi.SessionPromptResult
+		err = client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: "again"}, &promptResult)
 		require.NoError(t, err)
 		require.Equal(t, "end_turn", promptResult.StopReason)
 
@@ -377,11 +378,11 @@ func TestRPCServer_DirectShimLiveOrdering(t *testing.T) {
 	notifH := newNotifHandler()
 	client := h.dialSerialized(t, notifH)
 
-	var subResult rpc.SessionSubscribeResult
+	var subResult shimapi.SessionSubscribeResult
 	require.NoError(t, client.Call(ctx, "session/subscribe", nil, &subResult))
 
-	var promptResult rpc.SessionPromptResult
-	require.NoError(t, client.Call(ctx, "session/prompt", rpc.SessionPromptParams{Prompt: "ordering"}, &promptResult))
+	var promptResult shimapi.SessionPromptResult
+	require.NoError(t, client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: "ordering"}, &promptResult))
 	require.Equal(t, "end_turn", promptResult.StopReason)
 
 	live := notifH.collect(24, 10*time.Second)
@@ -436,39 +437,39 @@ func TestRPCServer_RejectsLegacyAndInvalidParams(t *testing.T) {
 	}
 
 	t.Run("session prompt missing params", func(t *testing.T) {
-		var result rpc.SessionPromptResult
+		var result shimapi.SessionPromptResult
 		err := client.Call(ctx, "session/prompt", nil, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})
 
 	t.Run("session prompt empty prompt", func(t *testing.T) {
-		var result rpc.SessionPromptResult
-		err := client.Call(ctx, "session/prompt", rpc.SessionPromptParams{}, &result)
+		var result shimapi.SessionPromptResult
+		err := client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{}, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})
 
 	t.Run("subscribe negative afterSeq", func(t *testing.T) {
-		var result rpc.SessionSubscribeResult
+		var result shimapi.SessionSubscribeResult
 		neg := -1
-		err := client.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{AfterSeq: &neg}, &result)
+		err := client.Call(ctx, "session/subscribe", shimapi.SessionSubscribeParams{AfterSeq: &neg}, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})
 
 	t.Run("subscribe negative fromSeq", func(t *testing.T) {
-		var result rpc.SessionSubscribeResult
+		var result shimapi.SessionSubscribeResult
 		neg := -1
-		err := client.Call(ctx, "session/subscribe", rpc.SessionSubscribeParams{FromSeq: &neg}, &result)
+		err := client.Call(ctx, "session/subscribe", shimapi.SessionSubscribeParams{FromSeq: &neg}, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})
 
 	t.Run("history negative fromSeq", func(t *testing.T) {
-		var result rpc.RuntimeHistoryResult
+		var result shimapi.RuntimeHistoryResult
 		neg := -1
-		err := client.Call(ctx, "runtime/history", rpc.RuntimeHistoryParams{FromSeq: &neg}, &result)
+		err := client.Call(ctx, "runtime/history", shimapi.RuntimeHistoryParams{FromSeq: &neg}, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})

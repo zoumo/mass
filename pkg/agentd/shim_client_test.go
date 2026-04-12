@@ -18,6 +18,7 @@ import (
 	"github.com/open-agent-d/open-agent-d/api"
 	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
+	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -33,8 +34,8 @@ type mockShimServer struct {
 	once     sync.Once
 
 	mu                sync.Mutex
-	statusResult      RuntimeStatusResult
-	promptResult      SessionPromptResult
+	statusResult      shimapi.RuntimeStatusResult
+	promptResult      shimapi.SessionPromptResult
 	historyEntries    []events.Envelope
 	subscribed        bool
 	liveNotifications []shimNotif // queued to emit after subscribe
@@ -63,16 +64,16 @@ func newMockShimServer(t *testing.T) (*mockShimServer, string) {
 	s := &mockShimServer{
 		listener: ln,
 		done:     make(chan struct{}),
-		statusResult: RuntimeStatusResult{
+		statusResult: shimapi.RuntimeStatusResult{
 			State: apispec.State{
 				OarVersion: "0.1.0",
 				ID:         "test-session",
 				Status:     api.StatusIdle,
 				Bundle:     "/tmp/test-bundle",
 			},
-			Recovery: RuntimeStatusRecovery{LastSeq: -1},
+			Recovery: shimapi.RuntimeStatusRecovery{LastSeq: -1},
 		},
-		promptResult: SessionPromptResult{StopReason: "end_turn"},
+		promptResult: shimapi.SessionPromptResult{StopReason: "end_turn"},
 	}
 
 	go s.serve()
@@ -165,7 +166,7 @@ func (h *mockShimHandler) handleCancel(ctx context.Context, conn *jsonrpc2.Conn,
 }
 
 func (h *mockShimHandler) handleLoad(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params SessionLoadParams
+	var params shimapi.SessionLoadParams
 	if req.Params != nil {
 		_ = json.Unmarshal(*req.Params, &params)
 	}
@@ -188,7 +189,7 @@ func (h *mockShimHandler) handleLoad(ctx context.Context, conn *jsonrpc2.Conn, r
 
 func (h *mockShimHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	// Parse params to check for fromSeq.
-	var params SessionSubscribeParams
+	var params shimapi.SessionSubscribeParams
 	if req.Params != nil {
 		_ = json.Unmarshal(*req.Params, &params)
 	}
@@ -199,7 +200,7 @@ func (h *mockShimHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Co
 	copy(notifs, h.srv.liveNotifications)
 
 	// When fromSeq is present, return backfill entries from historyEntries.
-	var result SessionSubscribeResult
+	var result shimapi.SessionSubscribeResult
 	if params.FromSeq != nil {
 		// Return all history entries (mock always stores them in order).
 		result.Entries = make([]events.Envelope, len(h.srv.historyEntries))
@@ -230,7 +231,7 @@ func (h *mockShimHandler) handleHistory(ctx context.Context, conn *jsonrpc2.Conn
 	entries := make([]events.Envelope, len(h.srv.historyEntries))
 	copy(entries, h.srv.historyEntries)
 	h.srv.mu.Unlock()
-	_ = conn.Reply(ctx, req.ID, RuntimeHistoryResult{Entries: entries})
+	_ = conn.Reply(ctx, req.ID, shimapi.RuntimeHistoryResult{Entries: entries})
 }
 
 func (h *mockShimHandler) handleStop(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {

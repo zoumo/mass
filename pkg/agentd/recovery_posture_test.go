@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-agent-d/open-agent-d/api"
 	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -85,14 +86,14 @@ func TestRecoverSessions_PhaseTransitions_WithLiveShim(t *testing.T) {
 	// Start a mock shim server.
 	srv, socketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = RuntimeStatusResult{
+	srv.statusResult = shimapi.RuntimeStatusResult{
 		State: apispec.State{
 			OarVersion: "0.1.0",
 			ID:         "phase-test-agent",
 			Status:     api.StatusRunning,
 			Bundle:     "/tmp/test-bundle",
 		},
-		Recovery: RuntimeStatusRecovery{LastSeq: 0},
+		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 0},
 	}
 	srv.mu.Unlock()
 

@@ -19,6 +19,7 @@ import (
 	"github.com/open-agent-d/open-agent-d/api/meta"
 	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
+	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/store"
 )
@@ -781,18 +782,18 @@ func (m *ProcessManager) State(ctx context.Context, workspace, name string) (api
 
 // RuntimeStatus returns the full runtime/status result including recovery
 // metadata for the given agent.
-func (m *ProcessManager) RuntimeStatus(ctx context.Context, workspace, name string) (RuntimeStatusResult, error) {
+func (m *ProcessManager) RuntimeStatus(ctx context.Context, workspace, name string) (shimapi.RuntimeStatusResult, error) {
 	key := agentKey(workspace, name)
 	m.mu.RLock()
 	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		return RuntimeStatusResult{}, fmt.Errorf("process: agent %s is not running", key)
+		return shimapi.RuntimeStatusResult{}, fmt.Errorf("process: agent %s is not running", key)
 	}
 
 	if shimProc.Client == nil {
-		return RuntimeStatusResult{}, fmt.Errorf("process: agent %s has no client connection", key)
+		return shimapi.RuntimeStatusResult{}, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
 	return shimProc.Client.Status(ctx)

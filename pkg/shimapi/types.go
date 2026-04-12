@@ -1,0 +1,67 @@
+// Package shimapi contains the shared wire types for the Shim JSON-RPC protocol.
+// Both pkg/rpc (shim server) and pkg/agentd (shim client) import this package
+// so the types have a single authoritative definition.
+package shimapi
+
+import (
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	"github.com/open-agent-d/open-agent-d/pkg/events"
+)
+
+// ────────────────────────────────────────────────────────────────────────────
+// session/* wire types
+// ────────────────────────────────────────────────────────────────────────────
+
+// SessionPromptParams is the JSON body for the "session/prompt" method.
+type SessionPromptParams struct {
+	Prompt string `json:"prompt"`
+}
+
+// SessionPromptResult is returned by the "session/prompt" method.
+type SessionPromptResult struct {
+	StopReason string `json:"stopReason"`
+}
+
+// SessionLoadParams is the JSON body for the "session/load" RPC method.
+// The shim server exposes this for tryReload restart policy; agentd calls it
+// during recovery to restore a prior ACP session.
+type SessionLoadParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// SessionSubscribeParams is the JSON body for the "session/subscribe" method.
+type SessionSubscribeParams struct {
+	AfterSeq *int `json:"afterSeq,omitempty"`
+	FromSeq  *int `json:"fromSeq,omitempty"`
+}
+
+// SessionSubscribeResult is returned by "session/subscribe".
+type SessionSubscribeResult struct {
+	NextSeq int               `json:"nextSeq"`
+	Entries []events.Envelope `json:"entries,omitempty"`
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// runtime/* wire types
+// ────────────────────────────────────────────────────────────────────────────
+
+// RuntimeHistoryParams is the JSON body for the "runtime/history" method.
+type RuntimeHistoryParams struct {
+	FromSeq *int `json:"fromSeq,omitempty"`
+}
+
+// RuntimeHistoryResult is returned by "runtime/history".
+type RuntimeHistoryResult struct {
+	Entries []events.Envelope `json:"entries"`
+}
+
+// RuntimeStatusRecovery holds recovery metadata from the shim's durable log.
+type RuntimeStatusRecovery struct {
+	LastSeq int `json:"lastSeq"`
+}
+
+// RuntimeStatusResult is returned by "runtime/status".
+type RuntimeStatusResult struct {
+	State    apispec.State          `json:"state"`
+	Recovery RuntimeStatusRecovery `json:"recovery"`
+}

@@ -21,45 +21,10 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/sourcegraph/jsonrpc2"
 
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/runtime"
+	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
 )
-
-type SessionPromptParams struct {
-	Prompt string `json:"prompt"`
-}
-
-type SessionPromptResult struct {
-	StopReason string `json:"stopReason"`
-}
-
-type SessionSubscribeParams struct {
-	AfterSeq *int `json:"afterSeq,omitempty"`
-	FromSeq  *int `json:"fromSeq,omitempty"`
-}
-
-type SessionSubscribeResult struct {
-	NextSeq int               `json:"nextSeq"`
-	Entries []events.Envelope `json:"entries,omitempty"`
-}
-
-type RuntimeHistoryParams struct {
-	FromSeq *int `json:"fromSeq,omitempty"`
-}
-
-type RuntimeHistoryResult struct {
-	Entries []events.Envelope `json:"entries"`
-}
-
-type RuntimeStatusRecovery struct {
-	LastSeq int `json:"lastSeq"`
-}
-
-type RuntimeStatusResult struct {
-	State    apispec.State            `json:"state"`
-	Recovery RuntimeStatusRecovery `json:"recovery"`
-}
 
 // Server is a JSON-RPC 2.0 server that exposes the agent runtime over a
 // Unix-domain socket.
@@ -158,7 +123,7 @@ func (h *connHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *json
 }
 
 func (h *connHandler) handlePrompt(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p SessionPromptParams
+	var p shimapi.SessionPromptParams
 	if err := unmarshalParams(req, &p); err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -180,7 +145,7 @@ func (h *connHandler) handlePrompt(ctx context.Context, conn *jsonrpc2.Conn, req
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
 		return
 	}
-	_ = conn.Reply(ctx, req.ID, SessionPromptResult{StopReason: string(resp.StopReason)})
+	_ = conn.Reply(ctx, req.ID, shimapi.SessionPromptResult{StopReason: string(resp.StopReason)})
 }
 
 func (h *connHandler) handleCancel(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -192,7 +157,7 @@ func (h *connHandler) handleCancel(ctx context.Context, conn *jsonrpc2.Conn, req
 }
 
 func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p SessionSubscribeParams
+	var p shimapi.SessionSubscribeParams
 	if req.Params != nil {
 		if err := unmarshalParams(req, &p); err != nil {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
@@ -217,7 +182,7 @@ func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, 
 			return
 		}
 
-		_ = conn.Reply(ctx, req.ID, SessionSubscribeResult{NextSeq: nextSeq, Entries: entries})
+		_ = conn.Reply(ctx, req.ID, shimapi.SessionSubscribeResult{NextSeq: nextSeq, Entries: entries})
 
 		go func() {
 			defer h.srv.trans.Unsubscribe(subID)
@@ -246,7 +211,7 @@ func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, 
 		floor = *p.AfterSeq
 	}
 
-	_ = conn.Reply(ctx, req.ID, SessionSubscribeResult{NextSeq: nextSeq})
+	_ = conn.Reply(ctx, req.ID, shimapi.SessionSubscribeResult{NextSeq: nextSeq})
 
 	go func() {
 		defer h.srv.trans.Unsubscribe(subID)
@@ -272,7 +237,7 @@ func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, 
 }
 
 func (h *connHandler) handleHistory(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p RuntimeHistoryParams
+	var p shimapi.RuntimeHistoryParams
 	if req.Params != nil {
 		if err := unmarshalParams(req, &p); err != nil {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
@@ -296,7 +261,7 @@ func (h *connHandler) handleHistory(ctx context.Context, conn *jsonrpc2.Conn, re
 	if entries == nil {
 		entries = []events.Envelope{}
 	}
-	_ = conn.Reply(ctx, req.ID, RuntimeHistoryResult{Entries: entries})
+	_ = conn.Reply(ctx, req.ID, shimapi.RuntimeHistoryResult{Entries: entries})
 }
 
 func (h *connHandler) handleStatus(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -305,9 +270,9 @@ func (h *connHandler) handleStatus(ctx context.Context, conn *jsonrpc2.Conn, req
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
 		return
 	}
-	_ = conn.Reply(ctx, req.ID, RuntimeStatusResult{
+	_ = conn.Reply(ctx, req.ID, shimapi.RuntimeStatusResult{
 		State: st,
-		Recovery: RuntimeStatusRecovery{
+		Recovery: shimapi.RuntimeStatusRecovery{
 			LastSeq: h.srv.trans.LastSeq(),
 		},
 	})
