@@ -1,16 +1,16 @@
 # ARI — Agent Runtime Interface
 
-ARI is the local control API between the orchestrator and agentd.
-It is a runtime API for **realized objects**. It does not replace the orchestrator's desired-state contracts.
+ARI is the local control API between an external caller and agentd.
+It is a runtime API for **realized objects**. It does not replace the caller's desired-state contracts.
 
 ## Desired vs Realized
 
 | Concept | Desired-state authority | Realized-state authority |
 |---|---|---|
 | Workspace intent | `docs/design/workspace/workspace-spec.md` | `workspace/*` in ARI |
-| Agent configuration | orchestrator / operator | `agent/*` in ARI |
+| Agent configuration | operator / external caller | `agent/*` in ARI |
 | AgentRun bootstrap contract | runtime/config design docs | `agentrun/create` in ARI |
-| Work execution | orchestrator policy | `agentrun/prompt` in ARI |
+| Work execution | external caller policy | `agentrun/prompt` in ARI |
 
 ARI exposes what callers ask agentd to realize and observe.
 It must not smuggle desired-state ownership into agentd.
@@ -161,7 +161,7 @@ Create or update an Agent record.
 | `env` | [{name, value}] | no | Environment variables as a list of `{name, value}` objects |
 | `startupTimeoutSeconds` | int | no | Bootstrap timeout in seconds |
 
-**Result:** `AgentTemplateInfo`
+**Result:** `AgentInfo`
 
 ### `agent/get`
 
@@ -169,7 +169,7 @@ Retrieve an Agent definition by name.
 
 **Params:** `{name}`
 
-**Result:** `{agentTemplate: AgentTemplateInfo}`
+**Result:** `{agent: AgentInfo}`
 
 ### `agent/list`
 
@@ -177,7 +177,7 @@ List all Agent records.
 
 **Params:** `{}`
 
-**Result:** `{agentTemplates: AgentTemplateInfo[]}`
+**Result:** `{agents: AgentInfo[]}`
 
 ### `agent/delete`
 
@@ -220,7 +220,7 @@ Callers poll `agentrun/status` until state transitions to `"idle"` or `"error"`.
 | `workspace` | string | yes | Workspace this AgentRun belongs to (must be ready) |
 | `name` | string | yes | Agent name, unique within the workspace |
 | `agent` | string | yes | Selects the registered runtime class |
-| `restartPolicy` | string | no | `"never"` \| `"on-failure"` \| `"always"` |
+| `restartPolicy` | string | no | `"try_reload"` \| `"always_new"` (default: `"always_new"`) |
 | `systemPrompt` | string | no | Bootstrap system prompt for the agent session |
 | `labels` | map | no | Arbitrary metadata |
 
@@ -266,7 +266,7 @@ Poll until idle:
   "jsonrpc": "2.0",
   "id": 11,
   "result": {
-    "agent": {
+    "agentRun": {
       "workspace": "my-project",
       "name": "architect",
       "agent": "claude",
@@ -334,7 +334,7 @@ List AgentRun records with optional filters.
 
 **Params:** `{workspace?, state?, labels?}`
 
-**Result:** `{agents[]}` — array of `AgentRunInfo` objects.
+**Result:** `{agentRuns[]}` — array of `AgentRunInfo` objects.
 
 Filters:
 - `workspace`: restrict to a single workspace
@@ -351,7 +351,7 @@ Return current AgentRun state and optional shim runtime state.
 
 ```json
 {
-  "agent": {
+  "agentRun": {
     "workspace": "my-project",
     "name": "architect",
     "agent": "claude",
@@ -428,7 +428,7 @@ Transition rules:
 Events are not streamed directly over the ARI connection. Instead:
 
 - `agentrun/attach` returns the shim socket path.
-- Callers connect directly to the shim socket and call `session/subscribe` to receive `session/update` and `runtime/stateChange` notifications.
+- Callers connect directly to the shim socket and call `session/subscribe` to receive `session/update` and `runtime/state_change` notifications.
 - See [shim-rpc-spec.md](../runtime/shim-rpc-spec.md) for the full notification surface.
 
 ## Error Codes

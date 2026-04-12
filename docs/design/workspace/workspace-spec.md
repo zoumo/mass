@@ -159,7 +159,7 @@ The contract is explicit:
 - shared workspace means shared filesystem visibility;
 - shared workspace means shared write risk unless a later feature adds stronger isolation;
 - cleanup must respect reference tracking and must not delete a managed workspace while it is still attached;
-- orchestrator policy decides whether reuse is appropriate for a given workload.
+- external caller policy decides whether reuse is appropriate for a given workload.
 
 This is the design-set authority for the phrase **shared workspace**.
 

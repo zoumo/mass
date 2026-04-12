@@ -86,10 +86,10 @@ The design set now names these boundaries explicitly:
 
 | Layer | Identity | State owned here | Notes |
 |---|---|---|---|
-| Orchestrator | desired workspace/agentrun names | desired membership and completion logic | decides what should exist |
+| External Caller | desired workspace/agentrun names | desired membership and completion logic | decides what should exist |
 | agentd / ARI | `(workspace, name)` AgentRun identity | AgentRun lifecycle (`creating`/`idle`/`running`/`stopped`/`error`), workspace refs | external-facing; translates to internal shim handles |
 | agentd / internal (Process Manager) | shim socket path, shim PID, bundle directory | shim connections, realized workspace attachment | internal-only; surfaced via `agentrun/status` shimState |
-| Runtime / shim | process identity, runtime status | process truth, typed notifications, runtime-local failure details | does not own orchestration intent |
+| Runtime / shim | process identity, runtime status | process truth, typed notifications, runtime-local failure details | does not own scheduling intent |
 | ACP peer session | ACP session identity | agent-protocol session state | separate protocol identity |
 
 ## Shim Target Contract
@@ -97,7 +97,7 @@ The design set now names these boundaries explicitly:
 The shim-facing design set is converged on the following target (fully implemented):
 
 - the normative shim method surface is `session/prompt`, `session/cancel`, `session/subscribe`, `runtime/status`, `runtime/history`, and `runtime/stop` (internal agentd↔shim protocol);
-- the normative live notification surface is `session/update` plus `runtime/stateChange` (internal);
+- the normative live notification surface is `session/update` plus `runtime/state_change` (internal);
 - socket path and state-dir layout are owned by `runtime-spec.md`, while replay / reconnect semantics are owned by `shim-rpc-spec.md`;
 - `agent-shim.md` is descriptive only: it explains component responsibilities and the ACP boundary, but it does not redefine method names or recovery rules;
 - any remaining references to legacy PascalCase methods or `$/event` in planning docs or historical notes are implementation lag artifacts, not current API contract.
@@ -115,7 +115,7 @@ Still gaps (future work):
 - OAR runtime ID ↔ ACP `sessionId` mapping (restart diagnostics);
 - hook stdout/stderr output persistence (currently not returned via ARI);
 - AgentRun-level env override (currently no such field in `agentrun/create`);
-- ARI-level event fanout to orchestrator clients (currently events are consumed via shim `session/subscribe` only).
+- ARI-level event fanout to ARI clients (currently events are consumed via shim `session/subscribe` only).
 
 ## Future Work / Target Gaps
 

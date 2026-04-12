@@ -1,18 +1,18 @@
 # agentd — runtime realization daemon
 
 agentd is the daemon that realizes already-decided runtime objects.
-It owns workspaces, AgentTemplates, AgentRuns, process supervision, and exposes the ARI control surface.
-It does **not** own orchestrator intent.
+It owns workspaces, Agents, AgentRuns, process supervision, and exposes the ARI control surface.
+It does **not** own external scheduling intent.
 
 ## Desired vs Realized
 
 | Concern | Primary owner | agentd role |
 |---|---|---|
-| Which workspaces should exist | orchestrator | realize them when asked |
-| Which AgentRuns should run | orchestrator | store realized `workspace` / `name` identity on AgentRuns |
-| When work is complete | orchestrator | expose runtime state only |
+| Which workspaces should exist | external caller | realize them when asked |
+| Which AgentRuns should run | external caller | store realized `workspace` / `name` identity on AgentRuns |
+| When work is complete | external caller | expose runtime state only |
 | Workspace preparation and cleanup | Workspace Manager | authoritative runtime execution |
-| Agent configuration | operator / orchestrator | store and serve via `agent/*` |
+| Agent configuration | operator / external caller | store and serve via `agent/*` |
 | AgentRun lifecycle and identity | Agent Manager | external lifecycle authority |
 | Shim process truth | Process Manager | internal runtime execution |
 | ACP protocol details | runtime / shim | hidden behind shim and translated for ARI |
@@ -50,7 +50,7 @@ An Agent definition is a named runtime configuration template with the following
 
 There is no runtime process associated with an Agent definition.
 When an AgentRun is created, the Process Manager looks up the Agent definition named by `agentrun/create.agent` and uses its `command`, `args`, and `env` to generate the OAR Runtime Spec `config.json`.
-AgentTemplates are managed via `agent/set`, `agent/get`, `agent/list`, `agent/delete`.
+Agents are managed via `agent/set`, `agent/get`, `agent/list`, `agent/delete`.
 
 ### Agent Manager
 
@@ -230,15 +230,15 @@ External callers never see internal shim process details beyond what `agentrun/s
 ## Runtime Bootstrap Flow
 
 ```text
-orchestrator
+ARI client
   -> workspace/create(name, source)
   <- { name, phase: "pending" }
 
-orchestrator
+ARI client
   -> workspace/status(name)          # poll until phase == "ready"
   <- { name, phase: "ready", path }
 
-orchestrator
+ARI client
   -> agentrun/create(workspace, name, runtimeClass, ...)   # async bootstrap
   <- { workspace, name, state: "creating" }
 
@@ -246,11 +246,11 @@ agentd (background)
   -> materialize bundle + resolve cwd + ACP initialize
   -> reach bootstrap-complete / idle state (agentRun.state = "idle")
 
-orchestrator
+ARI client
   -> agentrun/status(workspace, name)   # poll until state != "creating"
   <- { agent: { workspace, name, state: "idle", ... } }
 
-orchestrator or another runtime caller
+ARI client
   -> agentrun/prompt(workspace, name, prompt)
   <- { accepted: true }
 ```

@@ -104,7 +104,7 @@ runtime/stop         优雅停止 runtime
 对上暴露的 live notification 也是 shim 自己的 surface：
 
 - `session/update`
-- `runtime/stateChange`
+- `runtime/state_change`
 
 这层 API 让 agentd 只关心：
 
@@ -122,9 +122,9 @@ agent-shim 处在 OAR runtime design set 的 authority split 中间：
 | AgentRun identity `(workspace, name)` | agentd / ARI | 读取外部分配结果，不重新定义 |
 | process truth、runtime status、runtime-local failure | runtime / shim | 直接拥有并对上暴露 |
 | ACP `sessionId` 与 ACP 协议细节 | ACP peer + shim | 内部维护，不让上层越过 shim 边界 |
-| desired orchestration intent | orchestrator | 不拥有 |
+| desired scheduling intent | external caller | 不拥有 |
 
-因此，agent-shim 负责的是 **runtime-local truth**，不是 orchestrator policy。
+因此，agent-shim 负责的是 **runtime-local truth**，不是外部调度策略。
 
 ## ACP 是实现细节，typed notifications 才是契约
 
@@ -138,7 +138,7 @@ agent-shim ↔ agent:   ACP over stdio
 这意味着：
 
 - agentd 不需要理解 ACP 事件名、握手细节或客户端职责；
-- shim 把底层协议翻译成上层能消费的 `session/update` / `runtime/stateChange`；
+- shim 把底层协议翻译成上层能消费的 `session/update` / `runtime/state_change`；
 - 若未来某个 agent 不走 ACP，只要 shim 继续维持相同的对上 surface，
   上层 contract 仍然成立。
 
@@ -182,4 +182,4 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 - 规范 surface 是 `session/*` + `runtime/*`（`pkg/rpc/server.go`、`pkg/agentd/shim_client.go` 已实现）；
 - recovery story 通过 `runtime/status` / `runtime/history` / `session/subscribe` 闭合；
 - ACP 继续留在 shim 内部；
-- `session/load` 在 `ShimClient` 中作为可失败的恢复尝试（用于 `tryReload` restart policy）；该调用允许失败并 fallback。当前生产 shim RPC server（`pkg/rpc/server.go`）尚未注册 `session/load`，调用会返回 `MethodNotFound`；生产 shim 实现此方法是 future work。
+- `session/load` 在 `ShimClient` 中作为可失败的恢复尝试（用于 `try_reload` restart policy）；该调用允许失败并 fallback。当前生产 shim RPC server（`pkg/rpc/server.go`）尚未注册 `session/load`，调用会返回 `MethodNotFound`；生产 shim 实现此方法是 future work。

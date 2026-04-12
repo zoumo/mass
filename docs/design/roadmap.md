@@ -41,7 +41,7 @@ Implemented:
 
 Production shim server registers: `session/prompt`, `session/cancel`, `session/subscribe`, `runtime/status`, `runtime/history`, `runtime/stop`.
 
-Live notifications: `session/update`, `runtime/stateChange`.
+Live notifications: `session/update`, `runtime/state_change`.
 
 ---
 
@@ -52,7 +52,7 @@ Live notifications: `session/update`, `runtime/stateChange`.
 | Area | Gap |
 |---|---|
 | Terminal operations | `terminal/execute`, `terminal/read_output`, `terminal/set_timeout` stub in `pkg/runtime/client.go` — not yet wired |
-| `session/load` (warm resume) | agentd client calls it in `tryReload` recovery policy; production shim server does not register it yet — calls return `MethodNotFound` |
+| `session/load` (warm resume) | agentd client calls it in `try_reload` recovery policy; production shim server does not register it yet — calls return `MethodNotFound` |
 
 ### Future Work
 
@@ -73,7 +73,7 @@ Live notifications: `session/update`, `runtime/stateChange`.
 ## Architecture Layers
 
 ```
-Layer 3 — Orchestrator (external)
+Layer 3 — External Caller (outside OAR scope)
     decides desired state, calls ARI
 
 Layer 2 — agentd + ARI  [implemented]
