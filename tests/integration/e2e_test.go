@@ -9,7 +9,6 @@ import (
 	"time"
 
 	ari "github.com/open-agent-d/open-agent-d/api/ari"
-	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
 // TestEndToEndPipeline tests the complete agentd → agent-shim → mockagent lifecycle
