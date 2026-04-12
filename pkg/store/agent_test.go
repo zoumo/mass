@@ -1,15 +1,15 @@
-package meta_test
+package store_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
+	"github.com/open-agent-d/open-agent-d/api/meta"
 )
 
-// makeAgent returns a minimal valid AgentTemplate for test use.
+// makeAgent returns a minimal valid Agent for test use.
 func makeAgent(name string) *meta.Agent {
 	return &meta.Agent{
 		Metadata: meta.ObjectMeta{
@@ -18,7 +18,7 @@ func makeAgent(name string) *meta.Agent {
 		Spec: meta.AgentSpec{
 			Command: "/usr/bin/my-agent",
 			Args:    []string{"--serve"},
-			Env: []spec.EnvVar{
+			Env: []api.EnvVar{
 				{Name: "FOO", Value: "bar"},
 			},
 		},
@@ -53,7 +53,6 @@ func TestSetAgent_Upsert(t *testing.T) {
 	require.NotNil(t, got1)
 	createdAt := got1.Metadata.CreatedAt
 
-	// Upsert with a new command.
 	second := makeAgent("gpu")
 	second.Spec.Command = "/usr/bin/gpu-agent"
 	require.NoError(t, s.SetAgent(t.Context(), second))
@@ -113,11 +112,10 @@ func TestDeleteAgent_Existing(t *testing.T) {
 
 	got, err := s.GetAgent(t.Context(), "todelete")
 	require.NoError(t, err)
-	require.Nil(t, got, "deleted agentTemplate should not be retrievable")
+	require.Nil(t, got, "deleted agent should not be retrievable")
 }
 
 func TestDeleteAgent_NoOp(t *testing.T) {
 	s := tempStore(t)
-	// Deleting a non-existent agentTemplate should be a no-op (no error).
 	require.NoError(t, s.DeleteAgent(t.Context(), "nonexistent"))
 }

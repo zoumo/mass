@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -340,7 +340,7 @@ type AgentSetParams struct {
 	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variable overrides (optional).
-	Env []spec.EnvVar `json:"env,omitempty"`
+	Env []api.EnvVar `json:"env,omitempty"`
 
 	// StartupTimeoutSeconds is the optional startup timeout in seconds.
 	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
@@ -359,7 +359,7 @@ type AgentInfo struct {
 	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variable overrides.
-	Env []spec.EnvVar `json:"env,omitempty"`
+	Env []api.EnvVar `json:"env,omitempty"`
 
 	// StartupTimeoutSeconds is the optional startup timeout in seconds.
 	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`

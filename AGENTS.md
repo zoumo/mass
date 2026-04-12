@@ -5,5 +5,5 @@
 
 ## 设计一致性
 
-- Code changes **must be** aligned with docs/design
+- Code changes **must be** aligned with `docs/design`
 - No need to consider compatibility Now

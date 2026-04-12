@@ -18,6 +18,7 @@ coverage/
 docs/design_slides/
 
 .gsd/mcp.json
+.gsd/CODEBASE.md
 # ── GSD runtime state (auto-generated) ──
 .gsd/auto.lock
 .gsd/completed-units.json

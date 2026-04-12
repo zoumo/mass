@@ -8,28 +8,29 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // validConfig returns a Config that passes all validation rules.
-func validConfig() spec.Config {
-	return spec.Config{
+func validConfig() apispec.Config {
+	return apispec.Config{
 		OarVersion: "0.1.0",
-		Metadata: spec.Metadata{
+		Metadata: apispec.Metadata{
 			Name: "test-agent",
 		},
-		AgentRoot: spec.AgentRoot{Path: "workspace"},
-		AcpAgent: spec.AcpAgent{
-			Process: spec.AcpProcess{
+		AgentRoot: apispec.AgentRoot{Path: "workspace"},
+		AcpAgent: apispec.AcpAgent{
+			Process: apispec.AcpProcess{
 				Command: "/usr/bin/agent",
 			},
 		},
-		Permissions: spec.ApproveAll,
+		Permissions: apispec.ApproveAll,
 	}
 }
 
 // writeConfigFile writes c as config.json into dir and returns the dir path.
-func writeConfigFile(t *testing.T, dir string, c spec.Config) {
+func writeConfigFile(t *testing.T, dir string, c apispec.Config) {
 	t.Helper()
 	data, err := json.Marshal(c)
 	if err != nil {
@@ -131,7 +132,6 @@ func (s *ConfigSuite) TestValidateAbsoluteAgentRootPath() {
 }
 
 func (s *ConfigSuite) TestResolveAgentRoot_PlainDir() {
-	// Create a real subdirectory inside the bundle dir.
 	subdir := filepath.Join(s.dir, "workspace")
 	s.Require().NoError(os.MkdirAll(subdir, 0o755))
 
@@ -140,18 +140,15 @@ func (s *ConfigSuite) TestResolveAgentRoot_PlainDir() {
 
 	resolved, err := spec.ResolveAgentRoot(s.dir, c)
 	s.Require().NoError(err)
-	// Resolve s.dir itself to handle macOS /var → /private/var symlink.
 	wantDir, err := filepath.EvalSymlinks(subdir)
 	s.Require().NoError(err)
 	s.Equal(wantDir, resolved)
 }
 
 func (s *ConfigSuite) TestResolveAgentRoot_Symlink() {
-	// Create a real target directory outside the bundle.
 	target := filepath.Join(s.dir, "actual-workspace")
 	s.Require().NoError(os.MkdirAll(target, 0o755))
 
-	// Create a symlink inside the bundle pointing to the target.
 	link := filepath.Join(s.dir, "workspace")
 	s.Require().NoError(os.Symlink(target, link))
 
@@ -160,7 +157,6 @@ func (s *ConfigSuite) TestResolveAgentRoot_Symlink() {
 
 	resolved, err := spec.ResolveAgentRoot(s.dir, c)
 	s.Require().NoError(err)
-	// Should resolve to the symlink target (with any OS-level symlinks resolved).
 	wantTarget, err := filepath.EvalSymlinks(target)
 	s.Require().NoError(err)
 	s.Equal(wantTarget, resolved)
@@ -177,7 +173,7 @@ func (s *ConfigSuite) TestResolveAgentRoot_NonExistent() {
 
 func (s *ConfigSuite) TestValidateInvalidPermissions() {
 	c := validConfig()
-	c.Permissions = spec.PermissionPolicy("bad-policy")
+	c.Permissions = apispec.PermissionPolicy("bad-policy")
 	err := spec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "permissions")

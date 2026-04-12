@@ -1,12 +1,12 @@
-package meta_test
+package store_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
+	"github.com/open-agent-d/open-agent-d/api/meta"
 )
 
 // makeAgentRun returns a minimal valid AgentRun for test use.
@@ -20,7 +20,7 @@ func makeAgentRun(workspace, name string) *meta.AgentRun {
 			Agent: "default",
 		},
 		Status: meta.AgentRunStatus{
-			State: spec.StatusIdle,
+			State: api.StatusIdle,
 		},
 	}
 }
@@ -84,7 +84,6 @@ func TestGetAgentRun_NotFound(t *testing.T) {
 
 func TestGetAgentRun_NoWorkspaceBucket(t *testing.T) {
 	s := tempStore(t)
-	// workspace "nobody" has no agentRuns sub-bucket yet.
 	got, err := s.GetAgentRun(t.Context(), "nobody", "agent1")
 	require.NoError(t, err)
 	require.Nil(t, got)
@@ -129,14 +128,14 @@ func TestListAgentRuns_FilterByState(t *testing.T) {
 	s := tempStore(t)
 
 	agentRunning := makeAgentRun("ws", "runner")
-	agentRunning.Status.State = spec.StatusRunning
+	agentRunning.Status.State = api.StatusRunning
 	require.NoError(t, s.CreateAgentRun(t.Context(), agentRunning))
 
 	agentIdle := makeAgentRun("ws", "idler")
-	agentIdle.Status.State = spec.StatusIdle
+	agentIdle.Status.State = api.StatusIdle
 	require.NoError(t, s.CreateAgentRun(t.Context(), agentIdle))
 
-	running, err := s.ListAgentRuns(t.Context(), &meta.AgentRunFilter{State: spec.StatusRunning})
+	running, err := s.ListAgentRuns(t.Context(), &meta.AgentRunFilter{State: api.StatusRunning})
 	require.NoError(t, err)
 	require.Len(t, running, 1)
 	require.Equal(t, "runner", running[0].Metadata.Name)
@@ -165,7 +164,7 @@ func TestUpdateAgentRunStatus(t *testing.T) {
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws", "a")))
 
 	newStatus := meta.AgentRunStatus{
-		State:          spec.StatusRunning,
+		State:          api.StatusRunning,
 		ShimSocketPath: "/tmp/shim.sock",
 		ShimPID:        12345,
 	}
@@ -173,14 +172,14 @@ func TestUpdateAgentRunStatus(t *testing.T) {
 
 	got, err := s.GetAgentRun(t.Context(), "ws", "a")
 	require.NoError(t, err)
-	require.Equal(t, spec.StatusRunning, got.Status.State)
+	require.Equal(t, api.StatusRunning, got.Status.State)
 	require.Equal(t, "/tmp/shim.sock", got.Status.ShimSocketPath)
 	require.Equal(t, 12345, got.Status.ShimPID)
 }
 
 func TestUpdateAgentRunStatus_NotFound(t *testing.T) {
 	s := tempStore(t)
-	err := s.UpdateAgentRunStatus(t.Context(), "ws", "ghost", meta.AgentRunStatus{State: spec.StatusRunning})
+	err := s.UpdateAgentRunStatus(t.Context(), "ws", "ghost", meta.AgentRunStatus{State: api.StatusRunning})
 	require.Error(t, err)
 }
 
@@ -190,13 +189,13 @@ func TestTransitionAgentRunState(t *testing.T) {
 	agent.Status.ShimSocketPath = "/tmp/shim.sock"
 	require.NoError(t, s.CreateAgentRun(t.Context(), agent))
 
-	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "reserved", spec.StatusIdle, spec.StatusRunning)
+	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "reserved", api.StatusIdle, api.StatusRunning)
 	require.NoError(t, err)
 	require.True(t, ok)
 
 	got, err := s.GetAgentRun(t.Context(), "ws", "reserved")
 	require.NoError(t, err)
-	require.Equal(t, spec.StatusRunning, got.Status.State)
+	require.Equal(t, api.StatusRunning, got.Status.State)
 	require.Equal(t, "/tmp/shim.sock", got.Status.ShimSocketPath)
 }
 
@@ -204,13 +203,13 @@ func TestTransitionAgentRunState_WrongExpectedState(t *testing.T) {
 	s := tempStore(t)
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws", "busy")))
 
-	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "busy", spec.StatusStopped, spec.StatusRunning)
+	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "busy", api.StatusStopped, api.StatusRunning)
 	require.NoError(t, err)
 	require.False(t, ok)
 
 	got, err := s.GetAgentRun(t.Context(), "ws", "busy")
 	require.NoError(t, err)
-	require.Equal(t, spec.StatusIdle, got.Status.State)
+	require.Equal(t, api.StatusIdle, got.Status.State)
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
@@ -233,14 +232,11 @@ func TestDeleteAgentRun_NotFound(t *testing.T) {
 
 func TestDeleteAgentRun_SameName_DifferentWorkspace(t *testing.T) {
 	s := tempStore(t)
-	// Same name in two different workspaces — should be independent.
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws1", "common")))
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws2", "common")))
 
-	// Delete from ws1 only.
 	require.NoError(t, s.DeleteAgentRun(t.Context(), "ws1", "common"))
 
-	// ws2 copy should still exist.
 	got, err := s.GetAgentRun(t.Context(), "ws2", "common")
 	require.NoError(t, err)
 	require.NotNil(t, got)

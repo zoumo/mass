@@ -7,19 +7,21 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 )
 
 // ParseConfig reads and unmarshals config.json from bundlePath.
 // bundlePath is the agent bundle directory (config.json lives at bundlePath/config.json).
-func ParseConfig(bundlePath string) (Config, error) {
+func ParseConfig(bundlePath string) (apispec.Config, error) {
 	cfgPath := filepath.Join(bundlePath, "config.json")
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
-		return Config{}, fmt.Errorf("spec: read config.json: %w", err)
+		return apispec.Config{}, fmt.Errorf("spec: read config.json: %w", err)
 	}
-	var c Config
+	var c apispec.Config
 	if err := json.Unmarshal(data, &c); err != nil {
-		return Config{}, fmt.Errorf("spec: parse config.json: %w", err)
+		return apispec.Config{}, fmt.Errorf("spec: parse config.json: %w", err)
 	}
 	return c, nil
 }
@@ -32,7 +34,7 @@ func ParseConfig(bundlePath string) (Config, error) {
 //   - acpAgent.process.command must be non-empty
 //   - permissions must be a known PermissionPolicy value (or empty, which
 //     defaults to ApproveAll)
-func ValidateConfig(c Config) error {
+func ValidateConfig(c apispec.Config) error {
 	if c.OarVersion == "" {
 		return fmt.Errorf("spec: oarVersion is required")
 	}
@@ -69,7 +71,7 @@ func ValidateConfig(c Config) error {
 //  3. filepath.EvalSymlinks — follow any symlink, returning the real path
 //
 // The result is used as cmd.Dir and as the ACP session/new cwd parameter.
-func ResolveAgentRoot(bundleDir string, cfg Config) (string, error) {
+func ResolveAgentRoot(bundleDir string, cfg apispec.Config) (string, error) {
 	absBundleDir, err := filepath.Abs(bundleDir)
 	if err != nil {
 		return "", fmt.Errorf("spec: abs bundleDir %q: %w", bundleDir, err)

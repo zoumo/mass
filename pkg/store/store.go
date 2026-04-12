@@ -1,6 +1,6 @@
-// Package meta provides metadata storage for OAR agent and workspace records.
+// Package store provides metadata persistence for OAR agent and workspace records.
 // It uses bbolt (pure Go embedded key-value store) for persistence.
-package meta
+package store
 
 import (
 	"fmt"
@@ -26,7 +26,7 @@ var (
 )
 
 // Store is the bbolt-backed metadata store.
-// It exposes typed CRUD operations for AgentRun, AgentTemplate, and Workspace objects.
+// It exposes typed CRUD operations for AgentRun, Agent, and Workspace objects.
 // All writes use bbolt.Update transactions; all reads use bbolt.View transactions.
 type Store struct {
 	db     *bolt.DB
@@ -39,8 +39,8 @@ type Store struct {
 // NewStore opens (or creates) a bbolt database at path and initializes the
 // bucket hierarchy. It returns an error if the file cannot be opened within
 // the 5-second lock timeout.
-func NewStore(path string) (*Store, error) {
-	logger := slog.Default().With("component", "meta.store", "path", path)
+func NewStore(path string, logger *slog.Logger) (*Store, error) {
+	logger = logger.With("component", "store", "path", path)
 	logger.Info("opening metadata store")
 
 	db, err := bolt.Open(path, 0o600, &bolt.Options{
@@ -48,7 +48,7 @@ func NewStore(path string) (*Store, error) {
 	})
 	if err != nil {
 		logger.Error("failed to open bbolt database", "error", err)
-		return nil, fmt.Errorf("meta: failed to open database at %s: %w", path, err)
+		return nil, fmt.Errorf("store: failed to open database at %s: %w", path, err)
 	}
 
 	s := &Store{
@@ -60,7 +60,7 @@ func NewStore(path string) (*Store, error) {
 	if err := s.initBuckets(); err != nil {
 		_ = db.Close()
 		logger.Error("failed to initialize buckets", "error", err)
-		return nil, fmt.Errorf("meta: failed to initialize buckets: %w", err)
+		return nil, fmt.Errorf("store: failed to initialize buckets: %w", err)
 	}
 
 	logger.Info("metadata store opened")
@@ -93,7 +93,7 @@ func (s *Store) Close() error {
 	s.logger.Info("closing metadata store")
 	if err := s.db.Close(); err != nil {
 		s.logger.Error("failed to close database", "error", err)
-		return fmt.Errorf("meta: failed to close database: %w", err)
+		return fmt.Errorf("store: failed to close database: %w", err)
 	}
 	s.logger.Info("metadata store closed")
 	return nil

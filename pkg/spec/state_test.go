@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/open-agent-d/open-agent-d/api"
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
@@ -24,11 +26,11 @@ func (s *StateSuite) TeardownTest() {
 	_ = os.RemoveAll(s.baseDir)
 }
 
-func sampleState() spec.State {
-	return spec.State{
+func sampleState() apispec.State {
+	return apispec.State{
 		OarVersion:  "0.1.0",
 		ID:          "test-session-123",
-		Status:      spec.StatusIdle,
+		Status:      api.StatusIdle,
 		PID:         42,
 		Bundle:      "/path/to/bundle",
 		Annotations: map[string]string{"key": "value"},
@@ -58,7 +60,6 @@ func (s *StateSuite) TestWriteReadRoundTrip() {
 }
 
 func (s *StateSuite) TestWriteCreatesDir() {
-	// WriteState should create the directory if it doesn't exist.
 	dir := spec.StateDir(s.baseDir, "new-session")
 	s.Require().NoError(spec.WriteState(dir, sampleState()))
 
@@ -85,19 +86,16 @@ func (s *StateSuite) TestDeleteState() {
 
 func (s *StateSuite) TestDeleteNonexistentIsNoop() {
 	dir := spec.StateDir(s.baseDir, "ghost")
-	// Deleting a nonexistent dir should not error (RemoveAll semantics).
 	s.NoError(spec.DeleteState(dir))
 }
 
 func (s *StateSuite) TestWriteIsAtomic() {
-	// After a successful write, state.json should exist and be valid JSON.
 	st := sampleState()
 	dir := spec.StateDir(s.baseDir, st.ID)
 	s.Require().NoError(spec.WriteState(dir, st))
 
 	entries, err := os.ReadDir(dir)
 	s.Require().NoError(err)
-	// Should only have state.json; no leftover temp files.
 	s.Len(entries, 1)
 	s.Equal("state.json", entries[0].Name())
 }

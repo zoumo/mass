@@ -1,5 +1,6 @@
-// Package meta provides metadata storage for OAR agent and workspace records.
-package meta
+// Package store provides metadata persistence for OAR agent and workspace records.
+// This file defines AgentRun CRUD methods.
+package store
 
 import (
 	"context"
@@ -9,21 +10,22 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
+	"github.com/open-agent-d/open-agent-d/api/meta"
 )
 
 // CreateAgentRun stores a new AgentRun record.
 // The agent run identity is (Metadata.Workspace, Metadata.Name).
 // Returns an error if an agent run with the same (workspace, name) already exists.
-func (s *Store) CreateAgentRun(_ context.Context, agent *AgentRun) error {
+func (s *Store) CreateAgentRun(_ context.Context, agent *meta.AgentRun) error {
 	if agent.Metadata.Workspace == "" {
-		return fmt.Errorf("meta: agent workspace is required")
+		return fmt.Errorf("store: agent workspace is required")
 	}
 	if agent.Metadata.Name == "" {
-		return fmt.Errorf("meta: agent name is required")
+		return fmt.Errorf("store: agent name is required")
 	}
 	if agent.Spec.Agent == "" {
-		return fmt.Errorf("meta: agent run requires an agent definition name")
+		return fmt.Errorf("store: agent run requires an agent definition name")
 	}
 
 	now := time.Now()
@@ -41,16 +43,16 @@ func (s *Store) CreateAgentRun(_ context.Context, agent *AgentRun) error {
 		}
 		key := []byte(agent.Metadata.Name)
 		if existing := wb.Get(key); existing != nil {
-			return fmt.Errorf("meta: agent %s/%s already exists",
+			return fmt.Errorf("store: agent %s/%s already exists",
 				agent.Metadata.Workspace, agent.Metadata.Name)
 		}
 		data, err := json.Marshal(agent)
 		if err != nil {
-			return fmt.Errorf("meta: marshal agent %s/%s: %w",
+			return fmt.Errorf("store: marshal agent %s/%s: %w",
 				agent.Metadata.Workspace, agent.Metadata.Name, err)
 		}
 		if err := wb.Put(key, data); err != nil {
-			return fmt.Errorf("meta: store agent %s/%s: %w",
+			return fmt.Errorf("store: store agent %s/%s: %w",
 				agent.Metadata.Workspace, agent.Metadata.Name, err)
 		}
 		s.logger.Debug("agentRun created",
@@ -62,15 +64,15 @@ func (s *Store) CreateAgentRun(_ context.Context, agent *AgentRun) error {
 
 // GetAgentRun retrieves an agent run by (workspace, name).
 // Returns nil, nil if the agent run does not exist.
-func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*AgentRun, error) {
+func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*meta.AgentRun, error) {
 	if workspace == "" {
-		return nil, fmt.Errorf("meta: workspace is required")
+		return nil, fmt.Errorf("store: workspace is required")
 	}
 	if name == "" {
-		return nil, fmt.Errorf("meta: agent name is required")
+		return nil, fmt.Errorf("store: agent name is required")
 	}
 
-	var agent *AgentRun
+	var agent *meta.AgentRun
 	err := s.db.View(func(tx *bolt.Tx) error {
 		wb := workspaceBucketRO(tx, workspace)
 		if wb == nil {
@@ -80,11 +82,11 @@ func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*AgentRu
 		if data == nil {
 			return nil // not found
 		}
-		agent = &AgentRun{}
+		agent = &meta.AgentRun{}
 		return json.Unmarshal(data, agent)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("meta: get agent %s/%s: %w", workspace, name, err)
+		return nil, fmt.Errorf("store: get agent %s/%s: %w", workspace, name, err)
 	}
 	return agent, nil
 }
@@ -94,8 +96,8 @@ func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*AgentRu
 //   - If filter.Workspace is non-empty, only that workspace's sub-bucket is scanned.
 //   - If filter.State is non-empty, only agent runs with that state are returned.
 //   - If filter is nil every agent run in every workspace is returned.
-func (s *Store) ListAgentRuns(_ context.Context, filter *AgentRunFilter) ([]*AgentRun, error) {
-	var result []*AgentRun
+func (s *Store) ListAgentRuns(_ context.Context, filter *meta.AgentRunFilter) ([]*meta.AgentRun, error) {
+	var result []*meta.AgentRun
 
 	err := s.db.View(func(tx *bolt.Tx) error {
 		runs := agentRunsBucket(tx)
@@ -106,7 +108,7 @@ func (s *Store) ListAgentRuns(_ context.Context, filter *AgentRunFilter) ([]*Age
 				if v == nil {
 					return nil // skip nested buckets
 				}
-				var a AgentRun
+				var a meta.AgentRun
 				if err := json.Unmarshal(v, &a); err != nil {
 					s.logger.Error("skipping corrupt agentRun record", "error", err)
 					return nil
@@ -142,19 +144,19 @@ func (s *Store) ListAgentRuns(_ context.Context, filter *AgentRunFilter) ([]*Age
 		})
 	})
 	if err != nil {
-		return nil, fmt.Errorf("meta: list agentRuns: %w", err)
+		return nil, fmt.Errorf("store: list agentRuns: %w", err)
 	}
 	return result, nil
 }
 
 // UpdateAgentRunStatus overwrites the Status field of the identified agent run.
 // Returns an error if the agent run does not exist.
-func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, status AgentRunStatus) error {
+func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, status meta.AgentRunStatus) error {
 	if workspace == "" {
-		return fmt.Errorf("meta: workspace is required")
+		return fmt.Errorf("store: workspace is required")
 	}
 	if name == "" {
-		return fmt.Errorf("meta: agent name is required")
+		return fmt.Errorf("store: agent name is required")
 	}
 
 	return s.db.Update(func(tx *bolt.Tx) error {
@@ -165,20 +167,20 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 		key := []byte(name)
 		data := wb.Get(key)
 		if data == nil {
-			return fmt.Errorf("meta: agent %s/%s does not exist", workspace, name)
+			return fmt.Errorf("store: agent %s/%s does not exist", workspace, name)
 		}
-		var agent AgentRun
+		var agent meta.AgentRun
 		if err := json.Unmarshal(data, &agent); err != nil {
-			return fmt.Errorf("meta: unmarshal agent %s/%s: %w", workspace, name, err)
+			return fmt.Errorf("store: unmarshal agent %s/%s: %w", workspace, name, err)
 		}
 		agent.Status = status
 		agent.Metadata.UpdatedAt = time.Now()
 		updated, err := json.Marshal(&agent)
 		if err != nil {
-			return fmt.Errorf("meta: marshal agent %s/%s: %w", workspace, name, err)
+			return fmt.Errorf("store: marshal agent %s/%s: %w", workspace, name, err)
 		}
 		if err := wb.Put(key, updated); err != nil {
-			return fmt.Errorf("meta: store agent %s/%s: %w", workspace, name, err)
+			return fmt.Errorf("store: store agent %s/%s: %w", workspace, name, err)
 		}
 		s.logger.Debug("agentRun status updated",
 			"workspace", workspace,
@@ -191,12 +193,12 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 // TransitionAgentRunState updates only Status.State when the current state
 // matches expected. It preserves shim metadata, error text, and bootstrap data.
 // Returns false, nil when the agent exists but is not in the expected state.
-func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next spec.Status) (bool, error) {
+func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next api.Status) (bool, error) {
 	if workspace == "" {
-		return false, fmt.Errorf("meta: workspace is required")
+		return false, fmt.Errorf("store: workspace is required")
 	}
 	if name == "" {
-		return false, fmt.Errorf("meta: agent name is required")
+		return false, fmt.Errorf("store: agent name is required")
 	}
 
 	var transitioned bool
@@ -208,11 +210,11 @@ func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name strin
 		key := []byte(name)
 		data := wb.Get(key)
 		if data == nil {
-			return fmt.Errorf("meta: agent %s/%s does not exist", workspace, name)
+			return fmt.Errorf("store: agent %s/%s does not exist", workspace, name)
 		}
-		var agent AgentRun
+		var agent meta.AgentRun
 		if err := json.Unmarshal(data, &agent); err != nil {
-			return fmt.Errorf("meta: unmarshal agent %s/%s: %w", workspace, name, err)
+			return fmt.Errorf("store: unmarshal agent %s/%s: %w", workspace, name, err)
 		}
 		if agent.Status.State != expected {
 			return nil
@@ -221,10 +223,10 @@ func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name strin
 		agent.Metadata.UpdatedAt = time.Now()
 		updated, err := json.Marshal(&agent)
 		if err != nil {
-			return fmt.Errorf("meta: marshal agent %s/%s: %w", workspace, name, err)
+			return fmt.Errorf("store: marshal agent %s/%s: %w", workspace, name, err)
 		}
 		if err := wb.Put(key, updated); err != nil {
-			return fmt.Errorf("meta: store agent %s/%s: %w", workspace, name, err)
+			return fmt.Errorf("store: store agent %s/%s: %w", workspace, name, err)
 		}
 		transitioned = true
 		s.logger.Debug("agentRun state transitioned",
@@ -244,10 +246,10 @@ func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name strin
 // Returns an error if the agent run does not exist.
 func (s *Store) DeleteAgentRun(_ context.Context, workspace, name string) error {
 	if workspace == "" {
-		return fmt.Errorf("meta: workspace is required")
+		return fmt.Errorf("store: workspace is required")
 	}
 	if name == "" {
-		return fmt.Errorf("meta: agent name is required")
+		return fmt.Errorf("store: agent name is required")
 	}
 
 	return s.db.Update(func(tx *bolt.Tx) error {
@@ -257,10 +259,10 @@ func (s *Store) DeleteAgentRun(_ context.Context, workspace, name string) error 
 		}
 		key := []byte(name)
 		if wb.Get(key) == nil {
-			return fmt.Errorf("meta: agent %s/%s does not exist", workspace, name)
+			return fmt.Errorf("store: agent %s/%s does not exist", workspace, name)
 		}
 		if err := wb.Delete(key); err != nil {
-			return fmt.Errorf("meta: delete agent %s/%s: %w", workspace, name, err)
+			return fmt.Errorf("store: delete agent %s/%s: %w", workspace, name, err)
 		}
 		s.logger.Debug("agentRun deleted", "workspace", workspace, "name", name)
 		return nil

@@ -1,12 +1,14 @@
-// Package meta provides metadata storage for OAR agent and workspace records.
-// It uses bbolt (pure Go embedded key-value store) for persistence.
+// Package meta defines the OAR orchestration API types for agent runs,
+// agent definitions, and workspaces. These types are the wire-format
+// definitions shared between the metadata store (pkg/store) and the ARI
+// JSON-RPC interface. No business logic or I/O belongs here.
 package meta
 
 import (
 	"encoding/json"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
 )
 
 // ObjectMeta holds identity and lifecycle fields common to all stored objects.
@@ -27,6 +29,38 @@ type ObjectMeta struct {
 
 	// UpdatedAt is the timestamp when the object was last updated.
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Agent definition
+// ────────────────────────────────────────────────────────────────────────────
+
+// AgentSpec describes how to launch an agent process for this named agent definition.
+type AgentSpec struct {
+	// Command is the ACP agent executable.
+	Command string `json:"command"`
+
+	// Args are the command-line arguments passed to Command.
+	Args []string `json:"args,omitempty"`
+
+	// Env is the list of environment variable overrides applied to the process.
+	Env []api.EnvVar `json:"env,omitempty"`
+
+	// StartupTimeoutSeconds is the maximum time (in seconds) to wait for the
+	// agent shim to reach idle state. Nil means use the daemon default.
+	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
+}
+
+// Agent represents an agent definition record.
+// An Agent is a named, reusable launch configuration (command, args, env, startup timeout).
+// It is selected by AgentRun.Spec.Agent when creating a running instance.
+// Identity is Metadata.Name — globally unique across all agent definitions.
+type Agent struct {
+	// Metadata holds identity and lifecycle fields.
+	Metadata ObjectMeta `json:"metadata"`
+
+	// Spec describes the desired launch configuration.
+	Spec AgentSpec `json:"spec"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -66,9 +100,9 @@ type AgentRunSpec struct {
 // These fields are written by the daemon as the agent transitions through its lifecycle.
 type AgentRunStatus struct {
 	// State is the current lifecycle status of the agent.
-	State spec.Status `json:"state"`
+	State api.Status `json:"state"`
 
-	// ErrorMessage is a non-empty error description when State is spec.StatusError.
+	// ErrorMessage is a non-empty error description when State is api.StatusError.
 	ErrorMessage string `json:"errorMessage,omitempty"`
 
 	// ShimSocketPath is the Unix socket path for the shim's RPC endpoint.
@@ -107,7 +141,7 @@ type AgentRunFilter struct {
 	Workspace string
 
 	// State filters by agent status. Empty/zero means all states.
-	State spec.Status
+	State api.Status
 }
 
 // ────────────────────────────────────────────────────────────────────────────

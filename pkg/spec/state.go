@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 )
 
 const (
@@ -44,7 +46,7 @@ func ValidateShimSocketPath(socketPath string) error {
 // WriteState atomically writes s to dir/state.json.
 // Atomicity is achieved by writing to a temp file then renaming it, which
 // prevents partial reads if the process crashes mid-write.
-func WriteState(dir string, s State) error {
+func WriteState(dir string, s apispec.State) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("spec: mkdir %s: %w", dir, err)
 	}
@@ -80,14 +82,14 @@ func WriteState(dir string, s State) error {
 }
 
 // ReadState reads and unmarshals state.json from dir.
-func ReadState(dir string) (State, error) {
+func ReadState(dir string) (apispec.State, error) {
 	data, err := os.ReadFile(filepath.Join(dir, stateFile))
 	if err != nil {
-		return State{}, fmt.Errorf("spec: read state.json: %w", err)
+		return apispec.State{}, fmt.Errorf("spec: read state.json: %w", err)
 	}
-	var s State
+	var s apispec.State
 	if err := json.Unmarshal(data, &s); err != nil {
-		return State{}, fmt.Errorf("spec: parse state.json: %w", err)
+		return apispec.State{}, fmt.Errorf("spec: parse state.json: %w", err)
 	}
 	return s, nil
 }

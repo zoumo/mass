@@ -1,11 +1,11 @@
-package meta_test
+package store_test
 
 import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
+	"github.com/open-agent-d/open-agent-d/api/meta"
 )
 
 // makeWorkspace returns a minimal valid Workspace for test use.
@@ -141,17 +141,14 @@ func TestDeleteWorkspace_NotFound(t *testing.T) {
 func TestDeleteWorkspace_WithAgents(t *testing.T) {
 	s := tempStore(t)
 
-	// Create workspace.
 	require.NoError(t, s.CreateWorkspace(t.Context(), makeWorkspace("ws-with-agents")))
 
-	// Create an agent run in that workspace.
 	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "ws-with-agents", Name: "agent1"},
 		Spec:     meta.AgentRunSpec{Agent: "default"},
 	}
 	require.NoError(t, s.CreateAgentRun(t.Context(), agent))
 
-	// Deletion should fail because agents exist.
 	err := s.DeleteWorkspace(t.Context(), "ws-with-agents")
 	require.Error(t, err, "should refuse deletion when agents exist")
 }
