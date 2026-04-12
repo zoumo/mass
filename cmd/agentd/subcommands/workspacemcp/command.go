@@ -5,14 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
+
+	"github.com/open-agent-d/open-agent-d/internal/logging"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -129,7 +133,7 @@ var workspaceStatusSchema = json.RawMessage(`{
 // Tool handlers
 // ────────────────────────────────────────────────────────────────────────────
 
-func workspaceSendHandler(cfg config) mcp.ToolHandler {
+func workspaceSendHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var input struct {
 			TargetAgent string `json:"targetAgent"`
@@ -149,7 +153,7 @@ func workspaceSendHandler(cfg config) mcp.ToolHandler {
 			}, nil
 		}
 
-		log.Printf("workspace_send: target=%s needsReply=%v", input.TargetAgent, input.NeedsReply)
+		logger.Info("workspace_send", "target", input.TargetAgent, "needsReply", input.NeedsReply)
 
 		ariParams := ariWorkspaceSendParams{
 			Workspace:  cfg.workspaceName,
@@ -188,9 +192,9 @@ func workspaceSendHandler(cfg config) mcp.ToolHandler {
 	}
 }
 
-func workspaceStatusHandler(cfg config) mcp.ToolHandler {
+func workspaceStatusHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		log.Printf("workspace_status: workspace=%s", cfg.workspaceName)
+		logger.Info("workspace_status", "workspace", cfg.workspaceName)
 
 		ariParams := ariWorkspaceStatusParams{Name: cfg.workspaceName}
 		var result ariWorkspaceStatusResult
@@ -236,27 +240,40 @@ Reads OAR_AGENTD_SOCKET, OAR_WORKSPACE_NAME, and OAR_AGENT_NAME from the environ
 }
 
 func run() error {
-	log.SetPrefix("workspace-mcp-server: ")
-
+	// Determine log output target.
+	var w io.Writer = os.Stderr
 	if stateDir := os.Getenv("OAR_STATE_DIR"); stateDir != "" {
-		logPath := fmt.Sprintf("%s/workspace-mcp-server.log", stateDir)
+		logPath := filepath.Join(stateDir, "workspace-mcp-server.log")
 		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err == nil {
-			log.SetOutput(f)
+		if err != nil {
+			// Cannot open log file; warn on stderr and continue with stderr.
+			fmt.Fprintf(os.Stderr, "workspace-mcp-server: failed to open log file %s: %v, falling back to stderr\n", logPath, err)
 		} else {
-			log.SetOutput(os.Stderr)
-			log.Printf("failed to open log file %s: %v, falling back to stderr", logPath, err)
+			w = f
+			defer f.Close()
 		}
-	} else {
-		log.SetOutput(os.Stderr)
 	}
+
+	// Initialize slog from env (inherited from agentd via generateConfig).
+	logLevel := os.Getenv("OAR_LOG_LEVEL")
+	logFormat := os.Getenv("OAR_LOG_FORMAT")
+	level, err := logging.ParseLevel(logLevel)
+	if err != nil {
+		level = slog.LevelInfo
+	}
+	if logFormat == "" {
+		logFormat = "pretty"
+	}
+	handler := logging.NewHandler(logFormat, level, w)
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
 
 	cfg, err := loadConfig()
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
 	}
 
-	log.Printf("starting (workspace=%s, agentName=%s)", cfg.workspaceName, cfg.agentName)
+	logger.Info("starting", "workspace", cfg.workspaceName, "agent", cfg.agentName)
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "workspace-mcp-server", Version: "0.1.0"}, nil)
 
@@ -264,17 +281,17 @@ func run() error {
 		Name:        "workspace_send",
 		Description: "Send a message to another agent in the current workspace",
 		InputSchema: workspaceSendSchema,
-	}, workspaceSendHandler(cfg))
+	}, workspaceSendHandler(cfg, logger))
 
 	server.AddTool(&mcp.Tool{
 		Name:        "workspace_status",
 		Description: "Get the current workspace membership and status",
 		InputSchema: workspaceStatusSchema,
-	}, workspaceStatusHandler(cfg))
+	}, workspaceStatusHandler(cfg, logger))
 
 	ctx := context.Background()
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
-		log.Printf("server exited: %v", err)
+		logger.Error("server exited", "error", err)
 	}
 	return nil
 }

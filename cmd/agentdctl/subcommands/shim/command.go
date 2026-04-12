@@ -5,6 +5,7 @@ package shim
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,8 @@ import (
 	"sync"
 
 	"github.com/spf13/cobra"
+
+	"github.com/open-agent-d/open-agent-d/pkg/ndjson"
 )
 
 // ── JSON-RPC wire types ────────────────────────────────────────────────────
@@ -40,12 +43,12 @@ type rpcError struct {
 // ── Client ────────────────────────────────────────────────────────────────
 
 type client struct {
-	conn   net.Conn
-	dec    *json.Decoder
-	enc    *json.Encoder
-	mu     sync.Mutex
-	nextID int
+	conn net.Conn
+	dec  *ndjson.Reader
+	enc  *json.Encoder
+	mu   sync.Mutex
 
+	nextID    int
 	pending   map[int]chan rpcResponse
 	pendingMu sync.Mutex
 
@@ -59,7 +62,7 @@ func dial(socketPath string) (*client, error) {
 	}
 	c := &client{
 		conn:    conn,
-		dec:     json.NewDecoder(conn),
+		dec:     ndjson.NewReader(conn),
 		enc:     json.NewEncoder(conn),
 		pending: make(map[int]chan rpcResponse),
 		notifs:  make(chan rpcResponse, 1024),
@@ -71,17 +74,20 @@ func dial(socketPath string) (*client, error) {
 func (c *client) readLoop() {
 	for {
 		var msg rpcResponse
-		if err := c.dec.Decode(&msg); err != nil {
+		err := c.dec.Decode(&msg)
+		if errors.Is(err, ndjson.ErrInvalidJSON) {
+			fmt.Fprintf(os.Stderr, "\n[readLoop] skipping non-JSON line: %v\n", err)
+			continue
+		}
+		if err != nil {
 			if err != io.EOF {
-				fmt.Fprintf(os.Stderr, "\n[readLoop] decode error: %v\n", err)
+				fmt.Fprintf(os.Stderr, "\n[readLoop] read error: %v\n", err)
 			}
 			break
 		}
 		if msg.ID == nil && msg.Method != "" {
 			c.notifs <- msg
-			continue
-		}
-		if msg.ID != nil {
+		} else if msg.ID != nil {
 			c.pendingMu.Lock()
 			ch, ok := c.pending[*msg.ID]
 			c.pendingMu.Unlock()

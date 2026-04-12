@@ -4,7 +4,7 @@ package shim
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	"github.com/open-agent-d/open-agent-d/internal/logging"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/rpc"
 	"github.com/open-agent-d/open-agent-d/pkg/runtime"
@@ -54,6 +55,20 @@ discover all running shims by scanning /run/agentd/shim/*/agent-shim.sock.`,
 }
 
 func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
+	// Initialize slog from env vars inherited from agentd (OAR_LOG_LEVEL / OAR_LOG_FORMAT).
+	logLevel := os.Getenv("OAR_LOG_LEVEL")
+	logFormat := os.Getenv("OAR_LOG_FORMAT")
+	level, err := logging.ParseLevel(logLevel)
+	if err != nil {
+		level = slog.LevelInfo // invalid or empty → default info
+	}
+	if logFormat == "" {
+		logFormat = "pretty"
+	}
+	handler := logging.NewHandler(logFormat, level, os.Stderr)
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+
 	cfg, err := spec.ParseConfig(bundle)
 	if err != nil {
 		return err
@@ -71,7 +86,7 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 
 	shimStateDir := spec.StateDir(stateDir, id)
 	socketPath := spec.ShimSocketPath(shimStateDir)
-	mgr := runtime.New(cfg, bundle, shimStateDir)
+	mgr := runtime.New(cfg, bundle, shimStateDir, logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer cancel()
@@ -96,10 +111,10 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 	trans.Start()
 	defer trans.Stop()
 
-	srv := rpc.New(mgr, trans, socketPath, logPath)
+	srv := rpc.New(mgr, trans, socketPath, logPath, logger)
 	go func() {
 		if err := srv.Serve(); err != nil {
-			log.Printf("agent-shim: rpc server error: %v", err)
+			logger.Error("rpc server error", "error", err)
 		}
 		cancel()
 	}()

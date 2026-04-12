@@ -101,7 +101,7 @@ func run(rootPath, logLevel, logFormat string) error {
 	logger.Info("agent run manager initialized")
 
 	// Create ProcessManager (self-fork or OAR_SHIM_BINARY override).
-	processes := agentd.NewProcessManager(agents, store, opts.SocketPath(), opts.BundleRoot(), logger)
+	processes := agentd.NewProcessManager(agents, store, opts.SocketPath(), opts.BundleRoot(), logger, logLevel, logFormat)
 	logger.Info("process manager initialized",
 		"socket_path", opts.SocketPath(),
 		"bundle_root", opts.BundleRoot(),
