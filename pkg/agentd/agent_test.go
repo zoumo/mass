@@ -1,5 +1,5 @@
 // Package agentd implements the agent daemon that manages agent runtime lifecycle.
-// This file tests the AgentManager for agent lifecycle management.
+// This file tests the AgentRunManager for agent lifecycle management.
 package agentd
 
 import (
@@ -30,11 +30,11 @@ func newTestMetaStore(t *testing.T) *meta.Store {
 	return store
 }
 
-// newTestAgentManager creates an AgentManager with a temp bbolt store.
-func newTestAgentManager(t *testing.T) *AgentManager {
+// newTestAgentManager creates an AgentRunManager with a temp bbolt store.
+func newTestAgentManager(t *testing.T) *AgentRunManager {
 	t.Helper()
 	store := newTestMetaStore(t)
-	return NewAgentManager(store)
+	return NewAgentRunManager(store)
 }
 
 // makeTestAgentRun builds a minimal valid Agent struct using the new model.
@@ -46,7 +46,7 @@ func makeTestAgentRun(workspace, name string) *meta.AgentRun {
 			Labels:    map[string]string{"env": "test"},
 		},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass: "default",
+			Agent: "default",
 			Description:  "test agent",
 			SystemPrompt: "you are a test",
 		},
@@ -72,7 +72,7 @@ func TestAgentCreate_RoundTrip(t *testing.T) {
 
 	assert.Equal(t, "default", got.Metadata.Workspace)
 	assert.Equal(t, "alpha", got.Metadata.Name)
-	assert.Equal(t, "default", got.Spec.RuntimeClass)
+	assert.Equal(t, "default", got.Spec.Agent)
 	assert.Equal(t, "test agent", got.Spec.Description)
 	assert.Equal(t, "you are a test", got.Spec.SystemPrompt)
 	assert.Equal(t, spec.StatusCreating, got.Status.State)
@@ -238,7 +238,7 @@ func TestAgentGet_NotFound(t *testing.T) {
 	assert.Nil(t, got, "Get on missing agent should return nil")
 }
 
-// TestAgentDelete_NotFound tests that Delete returns ErrAgentNotFound for a missing agent.
+// TestAgentDelete_NotFound tests that Delete returns ErrAgentRunNotFound for a missing agent.
 func TestAgentDelete_NotFound(t *testing.T) {
 	t.Parallel()
 
@@ -248,8 +248,8 @@ func TestAgentDelete_NotFound(t *testing.T) {
 	err := am.Delete(ctx, "ws1", "ghost")
 	require.Error(t, err, "Delete of missing agent should fail")
 
-	var notFound *ErrAgentNotFound
-	require.ErrorAs(t, err, &notFound, "error should be ErrAgentNotFound")
+	var notFound *ErrAgentRunNotFound
+	require.ErrorAs(t, err, &notFound, "error should be ErrAgentRunNotFound")
 }
 
 // TestAgentCreate_AlreadyExists tests that creating a duplicate agent fails.
@@ -266,7 +266,7 @@ func TestAgentCreate_AlreadyExists(t *testing.T) {
 	err := am.Create(ctx, agent2)
 	require.Error(t, err, "Create of duplicate should fail")
 
-	var alreadyExists *ErrAgentAlreadyExists
+	var alreadyExists *ErrAgentRunAlreadyExists
 	require.ErrorAs(t, err, &alreadyExists)
 	assert.Equal(t, "ws1", alreadyExists.Workspace)
 	assert.Equal(t, "dup", alreadyExists.Name)

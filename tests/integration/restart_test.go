@@ -105,8 +105,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	}
 
 	// Register the mockagent runtime so agents can be created with runtimeClass="mockagent".
-	var runtimeResult1 ari.AgentTemplateInfo
-	if err := client1.Call("agent/set", ari.AgentTemplateSetParams{
+	var runtimeResult1 ari.AgentInfo
+	if err := client1.Call("agent/set", ari.AgentSetParams{
 		Name:    "mockagent",
 		Command: mockagentBin,
 	}, &runtimeResult1); err != nil {
@@ -122,17 +122,17 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	t.Log("Creating agent-A")
 	statusA1 := createAgentAndWait(t, client1, wsName, "agent-a", "mockagent")
 	t.Logf("agent-A: workspace=%s name=%s state=%s",
-		statusA1.Agent.Workspace, statusA1.Agent.Name, statusA1.Agent.State)
+		statusA1.AgentRun.Workspace, statusA1.AgentRun.Name, statusA1.AgentRun.State)
 
-	if statusA1.Agent.State != "idle" {
-		t.Fatalf("expected agent-A state=idle, got %s", statusA1.Agent.State)
+	if statusA1.AgentRun.State != "idle" {
+		t.Fatalf("expected agent-A state=idle, got %s", statusA1.AgentRun.State)
 	}
 
 	// Create agent-B (will also have shim killed before restart).
 	t.Log("Creating agent-B")
 	statusB1 := createAgentAndWait(t, client1, wsName, "agent-b", "mockagent")
 	t.Logf("agent-B: workspace=%s name=%s state=%s",
-		statusB1.Agent.Workspace, statusB1.Agent.Name, statusB1.Agent.State)
+		statusB1.AgentRun.Workspace, statusB1.AgentRun.Name, statusB1.AgentRun.State)
 
 	// Prompt agent-A to exercise the running state (async dispatch).
 	t.Log("Prompting agent-A before restart")
@@ -199,8 +199,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// Re-register the mockagent runtime on restart (runtimes are persisted in DB,
 	// so this is idempotent — ensures the runtime is available after restart).
-	var runtimeResult2 ari.AgentTemplateInfo
-	if err := client2.Call("agent/set", ari.AgentTemplateSetParams{
+	var runtimeResult2 ari.AgentInfo
+	if err := client2.Call("agent/set", ari.AgentSetParams{
 		Name:    "mockagent",
 		Command: mockagentBin,
 	}, &runtimeResult2); err != nil {
@@ -223,22 +223,22 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	statusA2 := waitForAgentStateOneOf(t, client2, wsName, "agent-a", terminalStates, 10*time.Second)
 
 	// Identity: workspace and name must be preserved.
-	if statusA2.Agent.Workspace != wsName {
+	if statusA2.AgentRun.Workspace != wsName {
 		t.Errorf("agent-A workspace changed across restart: expected=%s got=%s",
-			wsName, statusA2.Agent.Workspace)
+			wsName, statusA2.AgentRun.Workspace)
 	} else {
-		t.Logf("agent-A workspace preserved ✓: %s", statusA2.Agent.Workspace)
+		t.Logf("agent-A workspace preserved ✓: %s", statusA2.AgentRun.Workspace)
 	}
 
-	if statusA2.Agent.Name != "agent-a" {
+	if statusA2.AgentRun.Name != "agent-a" {
 		t.Errorf("agent-A name changed across restart: expected=agent-a got=%s",
-			statusA2.Agent.Name)
+			statusA2.AgentRun.Name)
 	} else {
-		t.Logf("agent-A name preserved ✓: %s", statusA2.Agent.Name)
+		t.Logf("agent-A name preserved ✓: %s", statusA2.AgentRun.Name)
 	}
 
 	t.Logf("agent-A post-restart state=%s (shim killed → fail-closed, identity preserved)",
-		statusA2.Agent.State)
+		statusA2.AgentRun.State)
 
 	// =========================================================================
 	// Phase 5: Verify agent-B is in a terminal state (dead shim → fail-closed)
@@ -246,7 +246,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	t.Log("Phase 5: Verify agent-B is in terminal state (dead shim fail-closed)")
 
 	statusB2 := waitForAgentStateOneOf(t, client2, wsName, "agent-b", terminalStates, 10*time.Second)
-	t.Logf("agent-B post-restart state=%s ✓", statusB2.Agent.State)
+	t.Logf("agent-B post-restart state=%s ✓", statusB2.AgentRun.State)
 
 	// =========================================================================
 	// Phase 6: Verify agent list — both agents queryable with identity intact

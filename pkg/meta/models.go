@@ -46,8 +46,9 @@ const (
 
 // AgentRunSpec describes the desired configuration of an agent run.
 type AgentRunSpec struct {
-	// RuntimeClass is the runtime class for this agent (e.g., "default", "cuda").
-	RuntimeClass string `json:"runtimeClass"`
+	// Agent is the agent definition name that this run is based on.
+	// It references an Agent record by name (analogous to Kubernetes runtimeClassName).
+	Agent string `json:"agent"`
 
 	// RestartPolicy controls session continuation on agent restart.
 	// Values: "tryReload" — attempt ACP session/load to restore conversation history;

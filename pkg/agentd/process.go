@@ -42,7 +42,7 @@ func agentKey(workspace, name string) string {
 //   - Shim process fork/exec (self-fork or OAR_SHIM_BINARY override)
 //   - ShimClient connection and event subscription
 type ProcessManager struct {
-	agents     *AgentManager
+	agents     *AgentRunManager
 	store      *meta.Store
 	socketPath string
 	bundleRoot string
@@ -101,7 +101,7 @@ type ShimProcess struct {
 }
 
 // NewProcessManager creates a new ProcessManager.
-func NewProcessManager(agents *AgentManager, store *meta.Store, socketPath, bundleRoot string) *ProcessManager {
+func NewProcessManager(agents *AgentRunManager, store *meta.Store, socketPath, bundleRoot string) *ProcessManager {
 	logger := slog.Default().With("component", "agentd.process")
 	return &ProcessManager{
 		agents:     agents,
@@ -181,8 +181,8 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 
 // Start creates and starts a shim process for the given agent.
 // The full workflow:
-//  1. Get Agent from AgentManager
-//  2. Resolve RuntimeClass from DB store via GetAgentTemplate → NewRuntimeClassFromMeta
+//  1. Get AgentRun from AgentRunManager
+//  2. Resolve Agent definition from DB store via GetAgent
 //  3. Generate config.json
 //  4. Create bundle directory with workspace symlink
 //  5. Fork agent-shim process (self-fork or OAR_SHIM_BINARY override)
@@ -200,7 +200,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	key := agentKey(workspace, name)
 	m.logger.Info("starting agent", "agent_key", key)
 
-	// 1. Get Agent from AgentManager.
+	// 1. Get AgentRun from AgentRunManager.
 	agent, err := m.agents.Get(ctx, workspace, name)
 	if err != nil {
 		return nil, fmt.Errorf("process: get agent %s: %w", key, err)
@@ -214,18 +214,17 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.State)
 	}
 
-	// 2. Resolve RuntimeClass from DB.
-	rt, err := m.store.GetAgentTemplate(ctx, agent.Spec.RuntimeClass)
+	// 2. Resolve Agent definition from DB.
+	agentDef, err := m.store.GetAgent(ctx, agent.Spec.Agent)
 	if err != nil {
-		return nil, fmt.Errorf("process: get runtime %s: %w", agent.Spec.RuntimeClass, err)
+		return nil, fmt.Errorf("process: get agent definition %s: %w", agent.Spec.Agent, err)
 	}
-	if rt == nil {
-		return nil, fmt.Errorf("process: runtime %s not found", agent.Spec.RuntimeClass)
+	if agentDef == nil {
+		return nil, fmt.Errorf("process: agent definition %s not found", agent.Spec.Agent)
 	}
-	runtimeClass := NewRuntimeClassFromMeta(rt)
 
-	// 3. Generate config.json for this agent.
-	cfg := m.generateConfig(agent, runtimeClass)
+	// 3. Generate config.json for this agent run.
+	cfg := m.generateConfig(agent, agentDef)
 
 	// 4. Create bundle directory with workspace symlink.
 	bundlePath, stateDir, socketPath, err := m.createBundle(agent, cfg)
@@ -338,11 +337,10 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 }
 
 // generateConfig creates the OAR Runtime config.json for this agent.
-func (m *ProcessManager) generateConfig(agent *meta.AgentRun, rc *RuntimeClass) spec.Config {
-	// Build environment variables in KEY=VALUE format.
-	// Merge runtime class env with any agent-specific env.
-	env := make([]string, 0, len(rc.Env))
-	for _, ev := range rc.Env {
+func (m *ProcessManager) generateConfig(agent *meta.AgentRun, agentDef *meta.Agent) spec.Config {
+	// Build environment variables in KEY=VALUE format from the Agent definition.
+	env := make([]string, 0, len(agentDef.Spec.Env))
+	for _, ev := range agentDef.Spec.Env {
 		env = append(env, fmt.Sprintf("%s=%s", ev.Name, ev.Value))
 	}
 
@@ -351,7 +349,7 @@ func (m *ProcessManager) generateConfig(agent *meta.AgentRun, rc *RuntimeClass) 
 	for k, v := range agent.Metadata.Labels {
 		annotations[k] = v
 	}
-	annotations["runtimeClass"] = rc.Name
+	annotations["agent"] = agentDef.Metadata.Name
 
 	// Compute the bundle/state directory (same formula as createBundle) so we
 	// can pass OAR_STATE_DIR to the workspace-mcp-server before the directory
@@ -384,8 +382,8 @@ func (m *ProcessManager) generateConfig(agent *meta.AgentRun, rc *RuntimeClass) 
 		AcpAgent: spec.AcpAgent{
 			SystemPrompt: agent.Spec.SystemPrompt,
 			Process: spec.AcpProcess{
-				Command: rc.Command,
-				Args:    rc.Args,
+				Command: agentDef.Spec.Command,
+				Args:    agentDef.Spec.Args,
 				Env:     env,
 			},
 			Session: spec.AcpSession{

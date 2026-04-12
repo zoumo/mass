@@ -22,8 +22,8 @@ func (s *Store) CreateAgentRun(_ context.Context, agent *AgentRun) error {
 	if agent.Metadata.Name == "" {
 		return fmt.Errorf("meta: agent name is required")
 	}
-	if agent.Spec.RuntimeClass == "" {
-		return fmt.Errorf("meta: agent runtime class is required")
+	if agent.Spec.Agent == "" {
+		return fmt.Errorf("meta: agent run requires an agent definition name")
 	}
 
 	now := time.Now()

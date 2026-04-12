@@ -17,7 +17,7 @@ func makeAgentRun(workspace, name string) *meta.AgentRun {
 			Name:      name,
 		},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass: "default",
+			Agent: "default",
 		},
 		Status: meta.AgentRunStatus{
 			State: spec.StatusIdle,
@@ -51,7 +51,7 @@ func TestCreateAgentRun_MissingWorkspace(t *testing.T) {
 	s := tempStore(t)
 	err := s.CreateAgentRun(t.Context(), &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Name: "agent1"},
-		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Spec:     meta.AgentRunSpec{Agent: "default"},
 	})
 	require.Error(t, err)
 }
@@ -60,7 +60,7 @@ func TestCreateAgentRun_MissingName(t *testing.T) {
 	s := tempStore(t)
 	err := s.CreateAgentRun(t.Context(), &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "ws"},
-		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Spec:     meta.AgentRunSpec{Agent: "default"},
 	})
 	require.Error(t, err)
 }

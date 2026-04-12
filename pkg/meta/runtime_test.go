@@ -9,13 +9,13 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
-// makeAgentTemplate returns a minimal valid AgentTemplate for test use.
-func makeAgentTemplate(name string) *meta.AgentTemplate {
-	return &meta.AgentTemplate{
+// makeAgent returns a minimal valid AgentTemplate for test use.
+func makeAgent(name string) *meta.Agent {
+	return &meta.Agent{
 		Metadata: meta.ObjectMeta{
 			Name: name,
 		},
-		Spec: meta.AgentTemplateSpec{
+		Spec: meta.AgentSpec{
 			Command: "/usr/bin/my-agent",
 			Args:    []string{"--serve"},
 			Env: []spec.EnvVar{
@@ -25,15 +25,15 @@ func makeAgentTemplate(name string) *meta.AgentTemplate {
 	}
 }
 
-// ── SetAgentTemplate ──────────────────────────────────────────────────────────
+// ── SetAgent ──────────────────────────────────────────────────────────
 
-func TestSetAgentTemplate_CreateNew(t *testing.T) {
+func TestSetAgent_CreateNew(t *testing.T) {
 	s := tempStore(t)
-	rt := makeAgentTemplate("default")
+	rt := makeAgent("default")
 
-	require.NoError(t, s.SetAgentTemplate(t.Context(), rt))
+	require.NoError(t, s.SetAgent(t.Context(), rt))
 
-	got, err := s.GetAgentTemplate(t.Context(), "default")
+	got, err := s.GetAgent(t.Context(), "default")
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	require.Equal(t, "default", got.Metadata.Name)
@@ -42,23 +42,23 @@ func TestSetAgentTemplate_CreateNew(t *testing.T) {
 	require.False(t, got.Metadata.UpdatedAt.IsZero(), "UpdatedAt should be set on first write")
 }
 
-func TestSetAgentTemplate_Upsert(t *testing.T) {
+func TestSetAgent_Upsert(t *testing.T) {
 	s := tempStore(t)
 
-	first := makeAgentTemplate("gpu")
-	require.NoError(t, s.SetAgentTemplate(t.Context(), first))
+	first := makeAgent("gpu")
+	require.NoError(t, s.SetAgent(t.Context(), first))
 
-	got1, err := s.GetAgentTemplate(t.Context(), "gpu")
+	got1, err := s.GetAgent(t.Context(), "gpu")
 	require.NoError(t, err)
 	require.NotNil(t, got1)
 	createdAt := got1.Metadata.CreatedAt
 
 	// Upsert with a new command.
-	second := makeAgentTemplate("gpu")
+	second := makeAgent("gpu")
 	second.Spec.Command = "/usr/bin/gpu-agent"
-	require.NoError(t, s.SetAgentTemplate(t.Context(), second))
+	require.NoError(t, s.SetAgent(t.Context(), second))
 
-	got2, err := s.GetAgentTemplate(t.Context(), "gpu")
+	got2, err := s.GetAgent(t.Context(), "gpu")
 	require.NoError(t, err)
 	require.NotNil(t, got2)
 	require.Equal(t, "/usr/bin/gpu-agent", got2.Spec.Command, "command should be updated")
@@ -68,32 +68,32 @@ func TestSetAgentTemplate_Upsert(t *testing.T) {
 		"UpdatedAt should be >= CreatedAt after upsert")
 }
 
-// ── GetAgentTemplate ──────────────────────────────────────────────────────────
+// ── GetAgent ──────────────────────────────────────────────────────────
 
-func TestGetAgentTemplate_NotFound(t *testing.T) {
+func TestGetAgent_NotFound(t *testing.T) {
 	s := tempStore(t)
-	got, err := s.GetAgentTemplate(t.Context(), "ghost")
+	got, err := s.GetAgent(t.Context(), "ghost")
 	require.NoError(t, err)
 	require.Nil(t, got)
 }
 
-// ── ListAgentTemplates ────────────────────────────────────────────────────────
+// ── ListAgents ────────────────────────────────────────────────────────
 
-func TestListAgentTemplates_Empty(t *testing.T) {
+func TestListAgents_Empty(t *testing.T) {
 	s := tempStore(t)
-	rts, err := s.ListAgentTemplates(t.Context())
+	rts, err := s.ListAgents(t.Context())
 	require.NoError(t, err)
-	require.NotNil(t, rts, "ListAgentTemplates should return a non-nil slice even when empty")
+	require.NotNil(t, rts, "ListAgents should return a non-nil slice even when empty")
 	require.Empty(t, rts)
 }
 
-func TestListAgentTemplates_MultipleEntries(t *testing.T) {
+func TestListAgents_MultipleEntries(t *testing.T) {
 	s := tempStore(t)
-	require.NoError(t, s.SetAgentTemplate(t.Context(), makeAgentTemplate("alpha")))
-	require.NoError(t, s.SetAgentTemplate(t.Context(), makeAgentTemplate("beta")))
-	require.NoError(t, s.SetAgentTemplate(t.Context(), makeAgentTemplate("gamma")))
+	require.NoError(t, s.SetAgent(t.Context(), makeAgent("alpha")))
+	require.NoError(t, s.SetAgent(t.Context(), makeAgent("beta")))
+	require.NoError(t, s.SetAgent(t.Context(), makeAgent("gamma")))
 
-	rts, err := s.ListAgentTemplates(t.Context())
+	rts, err := s.ListAgents(t.Context())
 	require.NoError(t, err)
 	require.Len(t, rts, 3)
 
@@ -104,20 +104,20 @@ func TestListAgentTemplates_MultipleEntries(t *testing.T) {
 	require.ElementsMatch(t, []string{"alpha", "beta", "gamma"}, names)
 }
 
-// ── DeleteAgentTemplate ───────────────────────────────────────────────────────
+// ── DeleteAgent ───────────────────────────────────────────────────────
 
-func TestDeleteAgentTemplate_Existing(t *testing.T) {
+func TestDeleteAgent_Existing(t *testing.T) {
 	s := tempStore(t)
-	require.NoError(t, s.SetAgentTemplate(t.Context(), makeAgentTemplate("todelete")))
-	require.NoError(t, s.DeleteAgentTemplate(t.Context(), "todelete"))
+	require.NoError(t, s.SetAgent(t.Context(), makeAgent("todelete")))
+	require.NoError(t, s.DeleteAgent(t.Context(), "todelete"))
 
-	got, err := s.GetAgentTemplate(t.Context(), "todelete")
+	got, err := s.GetAgent(t.Context(), "todelete")
 	require.NoError(t, err)
 	require.Nil(t, got, "deleted agentTemplate should not be retrievable")
 }
 
-func TestDeleteAgentTemplate_NoOp(t *testing.T) {
+func TestDeleteAgent_NoOp(t *testing.T) {
 	s := tempStore(t)
 	// Deleting a non-existent agentTemplate should be a no-op (no error).
-	require.NoError(t, s.DeleteAgentTemplate(t.Context(), "nonexistent"))
+	require.NoError(t, s.DeleteAgent(t.Context(), "nonexistent"))
 }

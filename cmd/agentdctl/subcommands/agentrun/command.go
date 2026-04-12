@@ -34,7 +34,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
 		workspace     string
 		name          string
-		runtimeClass  string
+		agent         string
 		restartPolicy string
 		systemPrompt  string
 	)
@@ -51,7 +51,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 			params := ari.AgentRunCreateParams{
 				Workspace:     workspace,
 				Name:          name,
-				RuntimeClass:  runtimeClass,
+				Agent:         agent,
 				RestartPolicy: restartPolicy,
 				SystemPrompt:  systemPrompt,
 			}
@@ -66,12 +66,12 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent name within the workspace (required)")
-	cmd.Flags().StringVar(&runtimeClass, "runtime-class", "", "Runtime class (required)")
+	cmd.Flags().StringVar(&agent, "agent", "", "Agent definition name (required)")
 	cmd.Flags().StringVar(&restartPolicy, "restart-policy", "", "Restart policy: never, on-failure, always")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "System prompt for the agent run")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("runtime-class")
+	_ = cmd.MarkFlagRequired("agent")
 	return cmd
 }
 
@@ -171,12 +171,12 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 						fmt.Printf("agentrun/status error: %v\n", err)
 						break
 					}
-					if statusResult.Agent.State == "running" {
+					if statusResult.AgentRun.State == "running" {
 						observedRunning = true
 						continue
 					}
 					if observedRunning {
-						fmt.Printf("Agent run state: %s\n", statusResult.Agent.State)
+						fmt.Printf("Agent run state: %s\n", statusResult.AgentRun.State)
 						break
 					}
 				}

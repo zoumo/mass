@@ -1,5 +1,6 @@
 // Package meta provides metadata storage for OAR agent and workspace records.
-// This file defines the AgentTemplate entity and its CRUD methods on *Store.
+// This file defines the Agent entity (agent definition / named runtime configuration)
+// and its CRUD methods on *Store.
 package meta
 
 import (
@@ -14,11 +15,11 @@ import (
 )
 
 // ────────────────────────────────────────────────────────────────────────────
-// AgentTemplate model
+// Agent model
 // ────────────────────────────────────────────────────────────────────────────
 
-// AgentTemplateSpec describes how to launch an agent process for this template.
-type AgentTemplateSpec struct {
+// AgentSpec describes how to launch an agent process for this named agent definition.
+type AgentSpec struct {
 	// Command is the ACP agent executable.
 	Command string `json:"command"`
 
@@ -33,78 +34,80 @@ type AgentTemplateSpec struct {
 	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
 }
 
-// AgentTemplate represents an agent template entity record.
-// Identity is Metadata.Name — globally unique across all agent templates.
-type AgentTemplate struct {
+// Agent represents an agent definition record.
+// An Agent is a named, reusable launch configuration (command, args, env, startup timeout).
+// It is selected by AgentRun.Spec.Agent when creating a running instance.
+// Identity is Metadata.Name — globally unique across all agent definitions.
+type Agent struct {
 	// Metadata holds identity and lifecycle fields.
 	Metadata ObjectMeta `json:"metadata"`
 
 	// Spec describes the desired launch configuration.
-	Spec AgentTemplateSpec `json:"spec"`
+	Spec AgentSpec `json:"spec"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // CRUD methods
 // ────────────────────────────────────────────────────────────────────────────
 
-// agentTemplatesBucket returns the v1/agents bucket from the given transaction.
-func agentTemplatesBucket(tx *bolt.Tx) *bolt.Bucket {
-	return tx.Bucket(bucketV1).Bucket(bucketAgentTemplates)
+// agentsBucket returns the v1/agents bucket from the given transaction.
+func agentsBucket(tx *bolt.Tx) *bolt.Bucket {
+	return tx.Bucket(bucketV1).Bucket(bucketAgents)
 }
 
-// SetAgentTemplate upserts an AgentTemplate record keyed by Metadata.Name.
+// SetAgent upserts an Agent record keyed by Metadata.Name.
 // On first write, CreatedAt is set to now. On every write, UpdatedAt is set to now.
-func (s *Store) SetAgentTemplate(_ context.Context, rt *AgentTemplate) error {
-	if rt.Metadata.Name == "" {
-		return fmt.Errorf("meta: agentTemplate name is required")
+func (s *Store) SetAgent(_ context.Context, ag *Agent) error {
+	if ag.Metadata.Name == "" {
+		return fmt.Errorf("meta: agent name is required")
 	}
 
 	now := time.Now()
 
 	return s.db.Update(func(tx *bolt.Tx) error {
-		rb := agentTemplatesBucket(tx)
+		rb := agentsBucket(tx)
 		if rb == nil {
 			return fmt.Errorf("meta: v1/agents bucket not found")
 		}
-		key := []byte(rt.Metadata.Name)
+		key := []byte(ag.Metadata.Name)
 
 		// Preserve CreatedAt from the existing record on upsert.
 		if existing := rb.Get(key); existing != nil {
-			var prev AgentTemplate
+			var prev Agent
 			if err := json.Unmarshal(existing, &prev); err == nil {
 				if !prev.Metadata.CreatedAt.IsZero() {
-					rt.Metadata.CreatedAt = prev.Metadata.CreatedAt
+					ag.Metadata.CreatedAt = prev.Metadata.CreatedAt
 				}
 			}
 		}
 
-		if rt.Metadata.CreatedAt.IsZero() {
-			rt.Metadata.CreatedAt = now
+		if ag.Metadata.CreatedAt.IsZero() {
+			ag.Metadata.CreatedAt = now
 		}
-		rt.Metadata.UpdatedAt = now
+		ag.Metadata.UpdatedAt = now
 
-		data, err := json.Marshal(rt)
+		data, err := json.Marshal(ag)
 		if err != nil {
-			return fmt.Errorf("meta: marshal agentTemplate %s: %w", rt.Metadata.Name, err)
+			return fmt.Errorf("meta: marshal agent %s: %w", ag.Metadata.Name, err)
 		}
 		if err := rb.Put(key, data); err != nil {
-			return fmt.Errorf("meta: store agentTemplate %s: %w", rt.Metadata.Name, err)
+			return fmt.Errorf("meta: store agent %s: %w", ag.Metadata.Name, err)
 		}
-		s.logger.Info("agentTemplate set", "name", rt.Metadata.Name)
+		s.logger.Info("agent set", "name", ag.Metadata.Name)
 		return nil
 	})
 }
 
-// GetAgentTemplate retrieves an AgentTemplate by name.
-// Returns nil, nil if the agent template does not exist.
-func (s *Store) GetAgentTemplate(_ context.Context, name string) (*AgentTemplate, error) {
+// GetAgent retrieves an Agent by name.
+// Returns nil, nil if the agent does not exist.
+func (s *Store) GetAgent(_ context.Context, name string) (*Agent, error) {
 	if name == "" {
-		return nil, fmt.Errorf("meta: agentTemplate name is required")
+		return nil, fmt.Errorf("meta: agent name is required")
 	}
 
-	var rt *AgentTemplate
+	var ag *Agent
 	err := s.db.View(func(tx *bolt.Tx) error {
-		rb := agentTemplatesBucket(tx)
+		rb := agentsBucket(tx)
 		if rb == nil {
 			return nil // bucket absent → not found
 		}
@@ -112,22 +115,22 @@ func (s *Store) GetAgentTemplate(_ context.Context, name string) (*AgentTemplate
 		if data == nil {
 			return nil // not found
 		}
-		rt = &AgentTemplate{}
-		return json.Unmarshal(data, rt)
+		ag = &Agent{}
+		return json.Unmarshal(data, ag)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("meta: get agentTemplate %s: %w", name, err)
+		return nil, fmt.Errorf("meta: get agent %s: %w", name, err)
 	}
-	return rt, nil
+	return ag, nil
 }
 
-// ListAgentTemplates returns all AgentTemplate records stored in v1/agents.
-// Returns an empty (non-nil) slice when no agent templates are stored.
-func (s *Store) ListAgentTemplates(_ context.Context) ([]*AgentTemplate, error) {
-	var result []*AgentTemplate
+// ListAgents returns all Agent records stored in v1/agents.
+// Returns an empty (non-nil) slice when no agents are stored.
+func (s *Store) ListAgents(_ context.Context) ([]*Agent, error) {
+	var result []*Agent
 
 	err := s.db.View(func(tx *bolt.Tx) error {
-		rb := agentTemplatesBucket(tx)
+		rb := agentsBucket(tx)
 		if rb == nil {
 			return nil // bucket absent → empty list
 		}
@@ -135,34 +138,34 @@ func (s *Store) ListAgentTemplates(_ context.Context) ([]*AgentTemplate, error) 
 			if v == nil {
 				return nil // skip nested buckets
 			}
-			var rt AgentTemplate
-			if err := json.Unmarshal(v, &rt); err != nil {
-				s.logger.Error("skipping corrupt agentTemplate record", "error", err)
+			var ag Agent
+			if err := json.Unmarshal(v, &ag); err != nil {
+				s.logger.Error("skipping corrupt agent record", "error", err)
 				return nil
 			}
-			copy := rt
+			copy := ag
 			result = append(result, &copy)
 			return nil
 		})
 	})
 	if err != nil {
-		return nil, fmt.Errorf("meta: list agentTemplates: %w", err)
+		return nil, fmt.Errorf("meta: list agents: %w", err)
 	}
 	if result == nil {
-		result = []*AgentTemplate{}
+		result = []*Agent{}
 	}
 	return result, nil
 }
 
-// DeleteAgentTemplate removes the identified AgentTemplate.
-// No-op if the agent template does not exist.
-func (s *Store) DeleteAgentTemplate(_ context.Context, name string) error {
+// DeleteAgent removes the identified Agent.
+// No-op if the agent does not exist.
+func (s *Store) DeleteAgent(_ context.Context, name string) error {
 	if name == "" {
-		return fmt.Errorf("meta: agentTemplate name is required")
+		return fmt.Errorf("meta: agent name is required")
 	}
 
 	return s.db.Update(func(tx *bolt.Tx) error {
-		rb := agentTemplatesBucket(tx)
+		rb := agentsBucket(tx)
 		if rb == nil {
 			return nil // bucket absent → no-op
 		}
@@ -171,9 +174,9 @@ func (s *Store) DeleteAgentTemplate(_ context.Context, name string) error {
 			return nil // not found → no-op
 		}
 		if err := rb.Delete(key); err != nil {
-			return fmt.Errorf("meta: delete agentTemplate %s: %w", name, err)
+			return fmt.Errorf("meta: delete agent %s: %w", name, err)
 		}
-		s.logger.Info("agentTemplate deleted", "name", name)
+		s.logger.Info("agent deleted", "name", name)
 		return nil
 	})
 }

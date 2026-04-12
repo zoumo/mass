@@ -35,7 +35,7 @@ type testEnv struct {
 	client    *ari.Client
 	store     *meta.Store
 	processes *agentd.ProcessManager
-	agents    *agentd.AgentManager
+	agents    *agentd.AgentRunManager
 }
 
 // shortSockPath returns a process-unique Unix socket path safe for macOS.
@@ -61,7 +61,7 @@ func newTestServer(t *testing.T) *testEnv {
 	mgr := workspace.NewWorkspaceManager()
 	registry := ari.NewRegistry()
 
-	agents := agentd.NewAgentManager(store)
+	agents := agentd.NewAgentRunManager(store)
 	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"))
 
 	sockPath := shortSockPath(t)
@@ -144,7 +144,7 @@ func seedAgent(t *testing.T, store *meta.Store, wsName, name string, state spec.
 			Name:      name,
 			Workspace: wsName,
 		},
-		Spec: meta.AgentRunSpec{RuntimeClass: "default"},
+		Spec: meta.AgentRunSpec{Agent: "default"},
 		Status: meta.AgentRunStatus{
 			State: state,
 		},
@@ -271,7 +271,7 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 	raw, err := callRaw(t, env.client, "agentrun/create", map[string]any{
 		"workspace":    "ac-ws",
 		"name":         "my-agent",
-		"runtimeClass": "default",
+		"agent": "default",
 	})
 	require.NoError(t, err)
 
@@ -297,7 +297,7 @@ func TestAgentListAndStatus(t *testing.T) {
 
 	var listResult ari.AgentRunListResult
 	require.NoError(t, env.client.Call("agentrun/list", map[string]string{"workspace": "als-ws"}, &listResult))
-	assert.Len(t, listResult.Agents, 2)
+	assert.Len(t, listResult.AgentRuns, 2)
 
 	// Verify agentrun/status returns correct state.
 	var statusResult ari.AgentRunStatusResult
@@ -305,9 +305,9 @@ func TestAgentListAndStatus(t *testing.T) {
 		"workspace": "als-ws",
 		"name":      "agent-idle",
 	}, &statusResult))
-	assert.Equal(t, "idle", statusResult.Agent.State)
-	assert.Equal(t, "als-ws", statusResult.Agent.Workspace)
-	assert.Equal(t, "agent-idle", statusResult.Agent.Name)
+	assert.Equal(t, "idle", statusResult.AgentRun.State)
+	assert.Equal(t, "als-ws", statusResult.AgentRun.Workspace)
+	assert.Equal(t, "agent-idle", statusResult.AgentRun.Name)
 }
 
 func TestAgentPromptRejectedForBadState(t *testing.T) {
@@ -393,7 +393,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		"workspace": "reserve-ws",
 		"name":      agentName,
 	}, &status))
-	assert.Equal(t, "running", status.Agent.State)
+	assert.Equal(t, "running", status.AgentRun.State)
 
 	err = env.client.Call("agentrun/prompt", map[string]any{
 		"workspace": "reserve-ws",
@@ -402,6 +402,38 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not in idle state")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// agentrun/restart tests
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestAgentRunRestartFromIdle(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "restart-idle-ws")
+	seedAgent(t, env.store, "restart-idle-ws", "idle-agent", spec.StatusIdle)
+
+	var result ari.AgentRunRestartResult
+	err := env.client.Call("agentrun/restart", map[string]string{
+		"workspace": "restart-idle-ws",
+		"name":      "idle-agent",
+	}, &result)
+	require.NoError(t, err, "agentrun/restart from idle state must succeed")
+	assert.Equal(t, "creating", result.State)
+}
+
+func TestAgentRunRestartFromRunning(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "restart-running-ws")
+	seedAgent(t, env.store, "restart-running-ws", "running-agent", spec.StatusRunning)
+
+	var result ari.AgentRunRestartResult
+	err := env.client.Call("agentrun/restart", map[string]string{
+		"workspace": "restart-running-ws",
+		"name":      "running-agent",
+	}, &result)
+	require.NoError(t, err, "agentrun/restart from running state must succeed")
+	assert.Equal(t, "creating", result.State)
 }
 
 func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
@@ -431,7 +463,7 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 	_, err := callRaw(t, env.client, "agentrun/create", map[string]any{
 		"workspace":    "sock-ws",
 		"name":         longName,
-		"runtimeClass": "default",
+		"agent": "default",
 	})
 	require.Error(t, err, "agentrun/create with too-long name must return an error")
 
@@ -444,7 +476,7 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 	var listResult ari.AgentRunListResult
 	require.NoError(t, env.client.Call("agentrun/list",
 		map[string]string{"workspace": "sock-ws"}, &listResult))
-	for _, ag := range listResult.Agents {
+	for _, ag := range listResult.AgentRuns {
 		assert.NotEqual(t, longName, ag.Name,
 			"agent with too-long name must not appear in agentrun/list")
 	}

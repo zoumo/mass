@@ -23,7 +23,7 @@ import (
 func setupAgentdTestWithRuntimeClass(
 	t *testing.T,
 	runtimeClassName string,
-	templateSpec ari.AgentTemplateSetParams,
+	templateSpec ari.AgentSetParams,
 ) (context.Context, context.CancelFunc, *ari.Client, func()) {
 	t.Helper()
 
@@ -70,7 +70,7 @@ func setupAgentdTestWithRuntimeClass(
 
 	// Register the agent template via agent/set. Ensure the name field is set.
 	templateSpec.Name = runtimeClassName
-	var runtimeResult ari.AgentTemplateInfo
+	var runtimeResult ari.AgentInfo
 	if err := client.Call("agent/set", templateSpec, &runtimeResult); err != nil {
 		cancel()
 		client.Close()
@@ -122,9 +122,9 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ari.Client, ru
 	t.Log("Step 2: agent/create → poll until idle")
 	createResult := createAgentAndWait(t, client, wsName, agentName, runtimeClass)
 	t.Logf("agent ready: workspace=%s name=%s state=%s",
-		wsName, agentName, createResult.Agent.State)
-	if createResult.Agent.State != "idle" {
-		t.Fatalf("expected state=idle, got %s", createResult.Agent.State)
+		wsName, agentName, createResult.AgentRun.State)
+	if createResult.AgentRun.State != "idle" {
+		t.Fatalf("expected state=idle, got %s", createResult.AgentRun.State)
 	}
 
 	// Step 3: agent/prompt — async dispatch; agent startup may take 10-30s for real CLIs
@@ -146,7 +146,7 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ari.Client, ru
 	t.Log("Step 4: poll agent/status until state=idle (turn completed)")
 	statusAfterTurn := waitForAgentState(t, client, wsName, agentName, "idle", 90*time.Second)
 	t.Logf("turn completed: workspace=%s name=%s state=%s",
-		wsName, agentName, statusAfterTurn.Agent.State)
+		wsName, agentName, statusAfterTurn.AgentRun.State)
 
 	// Step 5: agent/status — verify shimState is non-nil (shim still running)
 	t.Log("Step 5: agent/status")
@@ -157,7 +157,7 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ari.Client, ru
 	}, &statusResult); err != nil {
 		t.Fatalf("agent/status failed: %v", err)
 	}
-	t.Logf("agent status: state=%s", statusResult.Agent.State)
+	t.Logf("agent status: state=%s", statusResult.AgentRun.State)
 	if statusResult.ShimState != nil {
 		t.Logf("shimState: status=%s pid=%d", statusResult.ShimState.Status, statusResult.ShimState.PID)
 	}
@@ -213,7 +213,7 @@ func TestRealCLI_GsdPi(t *testing.T) {
 		t.Skip("skipping: ANTHROPIC_API_KEY not set (gsd-pi needs an LLM key to process prompts)")
 	}
 
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", ari.AgentTemplateSetParams{
+	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", ari.AgentSetParams{
 		Command: "bunx",
 		Args:    []string{"pi-acp"},
 		Env: []spec.EnvVar{
@@ -246,7 +246,7 @@ func TestRealCLI_ClaudeCode(t *testing.T) {
 		t.Skipf("skipping: claude-code adapter not found at %s", adapterPath)
 	}
 
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", ari.AgentTemplateSetParams{
+	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", ari.AgentSetParams{
 		Command: "node",
 		Args:    []string{adapterPath},
 		Env: []spec.EnvVar{

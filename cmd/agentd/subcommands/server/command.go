@@ -81,9 +81,9 @@ func run(rootPath string) error {
 	registry := ari.NewRegistry()
 	slog.Info("agentd: registry initialized")
 
-	// Create AgentManager.
-	agents := agentd.NewAgentManager(store)
-	slog.Info("agentd: agent manager initialized")
+	// Create AgentRunManager.
+	agents := agentd.NewAgentRunManager(store)
+	slog.Info("agentd: agent run manager initialized")
 
 	// Create ProcessManager (self-fork or OAR_SHIM_BINARY override).
 	processes := agentd.NewProcessManager(agents, store, opts.SocketPath(), opts.BundleRoot())

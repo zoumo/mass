@@ -29,28 +29,28 @@ func TestRuntimeLifecycle(t *testing.T) {
 
 	// ── Step 1: runtime/get mockagent → assert name and non-empty command ──────
 	t.Log("Step 1: runtime/get mockagent")
-	var getResult ari.AgentTemplateGetResult
-	if err := client.Call("agent/get", ari.AgentTemplateGetParams{Name: "mockagent"}, &getResult); err != nil {
+	var getResult ari.AgentGetResult
+	if err := client.Call("agent/get", ari.AgentGetParams{Name: "mockagent"}, &getResult); err != nil {
 		t.Fatalf("runtime/get mockagent: %v", err)
 	}
-	if getResult.AgentTemplate.Name != "mockagent" {
-		t.Errorf("runtime/get: expected name=%q, got %q", "mockagent", getResult.AgentTemplate.Name)
+	if getResult.AgentRun.Name != "mockagent" {
+		t.Errorf("runtime/get: expected name=%q, got %q", "mockagent", getResult.AgentRun.Name)
 	}
-	if getResult.AgentTemplate.Command == "" {
+	if getResult.Agent.Command == "" {
 		t.Error("runtime/get: expected non-empty command")
 	}
-	t.Logf("runtime/get OK: name=%s command=%s", getResult.AgentTemplate.Name, getResult.AgentTemplate.Command)
+	t.Logf("runtime/get OK: name=%s command=%s", getResult.AgentRun.Name, getResult.Agent.Command)
 
 	// ── Step 2: runtime/list → assert 1 entry ─────────────────────────────────
 	t.Log("Step 2: runtime/list")
-	var listResult ari.AgentTemplateListResult
-	if err := client.Call("agent/list", ari.AgentTemplateListParams{}, &listResult); err != nil {
+	var listResult ari.AgentListResult
+	if err := client.Call("agent/list", ari.AgentListParams{}, &listResult); err != nil {
 		t.Fatalf("runtime/list: %v", err)
 	}
-	if len(listResult.AgentTemplates) != 1 {
-		t.Errorf("runtime/list: expected 1 runtime, got %d", len(listResult.AgentTemplates))
+	if len(listResult.Agents) != 1 {
+		t.Errorf("runtime/list: expected 1 runtime, got %d", len(listResult.Agents))
 	} else {
-		t.Logf("runtime/list OK: 1 runtime (%s)", listResult.AgentTemplates[0].Name)
+		t.Logf("runtime/list OK: 1 runtime (%s)", listResult.Agents[0].Name)
 	}
 
 	// ── Step 3: workspace/create + agent/create → poll idle ───────────────────
@@ -64,10 +64,10 @@ func TestRuntimeLifecycle(t *testing.T) {
 	status := createAgentAndWait(t, client, wsName, agentName, "mockagent")
 
 	// ── Step 4: assert state == idle ──────────────────────────────────────────
-	if status.Agent.State != "idle" {
-		t.Errorf("agent/create: expected state=idle, got %s", status.Agent.State)
+	if status.AgentRun.State != "idle" {
+		t.Errorf("agent/create: expected state=idle, got %s", status.AgentRun.State)
 	} else {
-		t.Logf("agent reached idle ✓: workspace=%s name=%s state=%s", wsName, agentName, status.Agent.State)
+		t.Logf("agent reached idle ✓: workspace=%s name=%s state=%s", wsName, agentName, status.AgentRun.State)
 	}
 
 	// Cleanup agent before deleting runtime
@@ -76,15 +76,15 @@ func TestRuntimeLifecycle(t *testing.T) {
 
 	// ── Step 5: runtime/delete mockagent → no error ───────────────────────────
 	t.Log("Step 5: runtime/delete mockagent")
-	if err := client.Call("agent/delete", ari.AgentTemplateDeleteParams{Name: "mockagent"}, nil); err != nil {
+	if err := client.Call("agent/delete", ari.AgentDeleteParams{Name: "mockagent"}, nil); err != nil {
 		t.Fatalf("runtime/delete mockagent: %v", err)
 	}
 	t.Log("runtime/delete OK ✓")
 
 	// ── Step 6: runtime/get mockagent → expect error response ─────────────────
 	t.Log("Step 6: runtime/get mockagent after delete → expect error")
-	var getAfterDelete ari.AgentTemplateGetResult
-	err := client.Call("agent/get", ari.AgentTemplateGetParams{Name: "mockagent"}, &getAfterDelete)
+	var getAfterDelete ari.AgentGetResult
+	err := client.Call("agent/get", ari.AgentGetParams{Name: "mockagent"}, &getAfterDelete)
 	if err == nil {
 		t.Error("runtime/get after delete: expected error, got nil")
 	} else {

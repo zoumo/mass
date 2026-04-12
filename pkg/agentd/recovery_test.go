@@ -25,7 +25,7 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *meta.Store) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
-	agents := NewAgentManager(store)
+	agents := NewAgentRunManager(store)
 
 	pm := NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"))
 	return pm, store
@@ -41,7 +41,7 @@ func createRecoveryTestAgent(t *testing.T, ctx context.Context, store *meta.Stor
 			Name:      name,
 		},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass: "default",
+			Agent: "default",
 		},
 		Status: meta.AgentRunStatus{
 			State:          state,
@@ -400,7 +400,7 @@ func createAgentForRecovery(t *testing.T, ctx context.Context, store *meta.Store
 			Name:      name,
 		},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass: "default",
+			Agent: "default",
 		},
 		Status: meta.AgentRunStatus{
 			State: state,
@@ -481,7 +481,7 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-agent"},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass:  "default",
+			Agent: "default",
 			RestartPolicy: meta.RestartPolicyTryReload,
 		},
 		Status: meta.AgentRunStatus{
@@ -546,7 +546,7 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-fallback"},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass:  "default",
+			Agent: "default",
 			RestartPolicy: meta.RestartPolicyTryReload,
 		},
 		Status: meta.AgentRunStatus{
@@ -590,7 +590,7 @@ func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
 	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-nostate"},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass:  "default",
+			Agent: "default",
 			RestartPolicy: meta.RestartPolicyTryReload,
 		},
 		Status: meta.AgentRunStatus{
@@ -642,7 +642,7 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass:  "default",
+			Agent: "default",
 			RestartPolicy: "", // empty = alwaysNew (default)
 		},
 		Status: meta.AgentRunStatus{

@@ -147,7 +147,7 @@ func TestDeleteWorkspace_WithAgents(t *testing.T) {
 	// Create an agent run in that workspace.
 	agent := &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: "ws-with-agents", Name: "agent1"},
-		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Spec:     meta.AgentRunSpec{Agent: "default"},
 	}
 	require.NoError(t, s.CreateAgentRun(t.Context(), agent))
 

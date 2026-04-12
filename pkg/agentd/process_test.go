@@ -16,7 +16,7 @@ import (
 )
 
 // TestProcessManagerStart tests the full Start workflow:
-// get Agent → resolve RuntimeClass from DB → generate config.json → create bundle
+// get AgentRun → resolve Agent definition from DB → generate config.json → create bundle
 // → fork agent-shim → wait for socket → connect ShimClient → subscribe events
 // → transition agent status to "running".
 func TestProcessManagerStart(t *testing.T) {
@@ -55,20 +55,20 @@ func TestProcessManagerStart(t *testing.T) {
 	defer store.Close()
 
 	// Persist runtime record for "mockagent" to the DB store.
-	if err := store.SetAgentTemplate(ctx, &meta.AgentTemplate{
+	if err := store.SetAgent(ctx, &meta.Agent{
 		Metadata: meta.ObjectMeta{Name: "mockagent"},
-		Spec: meta.AgentTemplateSpec{
+		Spec: meta.AgentSpec{
 			Command: mockagentBinary,
 			Args:    []string{},
 		},
 	}); err != nil {
-		t.Fatalf("SetAgentTemplate: %v", err)
+		t.Fatalf("SetAgent: %v", err)
 	}
 
 	socketPath := filepath.Join(tmpDir, "agentd.sock")
 
 	// Create AgentManager and ProcessManager.
-	agentMgr := NewAgentManager(store)
+	agentMgr := NewAgentRunManager(store)
 	procMgr := NewProcessManager(agentMgr, store, socketPath, bundleRoot)
 
 	// Create a workspace with a ready path.
@@ -96,7 +96,7 @@ func TestProcessManagerStart(t *testing.T) {
 			Name:      agentName,
 		},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass: "mockagent",
+			Agent: "mockagent",
 		},
 		Status: meta.AgentRunStatus{
 			State: spec.StatusCreating,
@@ -267,12 +267,14 @@ func TestGenerateConfig(t *testing.T) {
 	pm := &ProcessManager{
 		socketPath: "/tmp/test-agentd.sock",
 	}
-	rc := &RuntimeClass{
-		Name:    "mockagent",
-		Command: "/usr/bin/mockagent",
-		Args:    []string{},
-		Env: []spec.EnvVar{
-			{Name: "SOME_VAR", Value: "value"},
+	rc := &meta.Agent{
+		Metadata: meta.ObjectMeta{Name: "mockagent"},
+		Spec: meta.AgentSpec{
+			Command: "/usr/bin/mockagent",
+			Args:    []string{},
+			Env: []spec.EnvVar{
+				{Name: "SOME_VAR", Value: "value"},
+			},
 		},
 	}
 
@@ -284,7 +286,7 @@ func TestGenerateConfig(t *testing.T) {
 				Labels:    map[string]string{"team": "platform"},
 			},
 			Spec: meta.AgentRunSpec{
-				RuntimeClass: "mockagent",
+				Agent: "mockagent",
 				SystemPrompt: "you are helpful",
 			},
 		}
@@ -306,8 +308,8 @@ func TestGenerateConfig(t *testing.T) {
 			t.Errorf("expected workspace MCP server, got %q", cfg.AcpAgent.Session.McpServers[0].Name)
 		}
 		// Verify annotations include runtimeClass.
-		if cfg.Metadata.Annotations["runtimeClass"] != "mockagent" {
-			t.Errorf("expected annotations.runtimeClass=mockagent, got %q", cfg.Metadata.Annotations["runtimeClass"])
+		if cfg.Metadata.Annotations["agent"] != "mockagent" {
+			t.Errorf("expected annotations.runtimeClass=mockagent, got %q", cfg.Metadata.Annotations["agent"])
 		}
 		// Verify team label propagated.
 		if cfg.Metadata.Annotations["team"] != "platform" {
@@ -333,7 +335,7 @@ func TestGenerateConfig(t *testing.T) {
 				Name:      "bare-agent",
 			},
 			Spec: meta.AgentRunSpec{
-				RuntimeClass: "mockagent",
+				Agent: "mockagent",
 			},
 		}
 

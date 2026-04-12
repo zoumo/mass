@@ -15,15 +15,14 @@ import (
 // Layout:
 //
 //	v1/
-//	  workspaces/{name}              → Workspace JSON blob
-//	  agents/{workspace}/{name}      → AgentRun JSON blob (nested buckets)
-//	  agentruns/{workspace}/{name}   → (alias path; actual bucket name is "agentruns")
-//	  agents/{name}                  → AgentTemplate JSON blob
+//	  workspaces/{name}            → Workspace JSON blob
+//	  agents/{name}               → Agent JSON blob (agent definitions)
+//	  agentruns/{workspace}/{name} → AgentRun JSON blob (nested buckets)
 var (
-	bucketV1             = []byte("v1")
-	bucketWorkspaces     = []byte("workspaces")
-	bucketAgentRuns      = []byte("agentruns")
-	bucketAgentTemplates = []byte("agents")
+	bucketV1         = []byte("v1")
+	bucketWorkspaces = []byte("workspaces")
+	bucketAgentRuns  = []byte("agentruns")
+	bucketAgents     = []byte("agents")
 )
 
 // Store is the bbolt-backed metadata store.
@@ -82,7 +81,7 @@ func (s *Store) initBuckets() error {
 		if _, err := v1.CreateBucketIfNotExists(bucketAgentRuns); err != nil {
 			return fmt.Errorf("create v1/agentruns bucket: %w", err)
 		}
-		if _, err := v1.CreateBucketIfNotExists(bucketAgentTemplates); err != nil {
+		if _, err := v1.CreateBucketIfNotExists(bucketAgents); err != nil {
 			return fmt.Errorf("create v1/agents bucket: %w", err)
 		}
 		return nil

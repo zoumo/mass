@@ -34,7 +34,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	// Create agent at StatusCreating in the DB.
 	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Spec:     meta.AgentRunSpec{Agent: "default"},
 		Status:   meta.AgentRunStatus{State: spec.StatusCreating},
 	}))
 
@@ -174,7 +174,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	// Create agent at StatusIdle.
 	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Spec:     meta.AgentRunSpec{Agent: "default"},
 		Status:   meta.AgentRunStatus{State: spec.StatusIdle},
 	}))
 
@@ -249,7 +249,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	// Create agent at StatusCreating.
 	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Spec:     meta.AgentRunSpec{Agent: "default"},
 		Status:   meta.AgentRunStatus{State: spec.StatusCreating},
 	}))
 
@@ -309,7 +309,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 
 	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
 		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentRunSpec{RuntimeClass: "default"},
+		Spec:     meta.AgentRunSpec{Agent: "default"},
 		Status:   meta.AgentRunStatus{State: spec.StatusCreating},
 	}))
 

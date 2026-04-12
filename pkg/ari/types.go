@@ -134,8 +134,9 @@ type AgentRunCreateParams struct {
 	// Name is the agent run name, unique within the workspace (required).
 	Name string `json:"name"`
 
-	// RuntimeClass is the runtime class for this agent run (required).
-	RuntimeClass string `json:"runtimeClass"`
+	// Agent is the agent definition name to use for this run (required).
+	// References an Agent record by name.
+	Agent string `json:"agent"`
 
 	// RestartPolicy controls restart behavior ("never", "on-failure", "always").
 	RestartPolicy string `json:"restartPolicy,omitempty"`
@@ -236,8 +237,8 @@ type AgentRunStatusParams struct {
 
 // AgentRunStatusResult is the response result for agentrun/status method.
 type AgentRunStatusResult struct {
-	// Agent is the agent run metadata.
-	Agent AgentRunInfo `json:"agent"`
+	// AgentRun is the agent run metadata.
+	AgentRun AgentRunInfo `json:"agentRun"`
 
 	// ShimState is the runtime state of the shim process.
 	// Only populated if the agent run is running.
@@ -258,8 +259,8 @@ type AgentRunListParams struct {
 
 // AgentRunListResult is the response result for agentrun/list method.
 type AgentRunListResult struct {
-	// Agents is the array of agent run info objects.
-	Agents []AgentRunInfo `json:"agents"`
+	// AgentRuns is the array of agent run info objects.
+	AgentRuns []AgentRunInfo `json:"agentRuns"`
 }
 
 // AgentRunInfo describes a single agent run.
@@ -271,8 +272,8 @@ type AgentRunInfo struct {
 	// Name is the agent run name within the workspace.
 	Name string `json:"name"`
 
-	// RuntimeClass is the runtime class for this agent run.
-	RuntimeClass string `json:"runtimeClass"`
+	// Agent is the agent definition name used by this run.
+	Agent string `json:"agent"`
 
 	// State is the current agent run state (spec.Status value).
 	// Values: "creating", "idle", "running", "stopped", "error".
@@ -324,18 +325,18 @@ type ShimStateInfo struct {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// AgentTemplate Types
+// Agent Types (agent definition CRUD)
 // ────────────────────────────────────────────────────────────────────────────
 
-// AgentTemplateSetParams is the request params for agent/set method.
-type AgentTemplateSetParams struct {
-	// Name is the unique agent template name (required).
+// AgentSetParams is the request params for agent/set method.
+type AgentSetParams struct {
+	// Name is the unique agent definition name (required).
 	Name string `json:"name"`
 
 	// Command is the ACP agent executable (required).
 	Command string `json:"command"`
 
-	// Args are command-line arguments for the agent template (optional).
+	// Args are command-line arguments for the agent (optional).
 	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variable overrides (optional).
@@ -345,51 +346,54 @@ type AgentTemplateSetParams struct {
 	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
 }
 
-// AgentTemplateInfo describes a single agent template entity.
+// AgentInfo describes a single agent definition entity.
 // Returned by agent/set, agent/get, and agent/list methods.
-type AgentTemplateInfo struct {
-	// Name is the unique agent template name.
+type AgentInfo struct {
+	// Name is the unique agent definition name.
 	Name string `json:"name"`
 
 	// Command is the ACP agent executable.
 	Command string `json:"command"`
 
-	// Args are command-line arguments for the agent template.
+	// Args are command-line arguments for the agent.
 	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variable overrides.
 	Env []spec.EnvVar `json:"env,omitempty"`
 
-	// CreatedAt is the timestamp when the agent template was created.
+	// StartupTimeoutSeconds is the optional startup timeout in seconds.
+	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
+
+	// CreatedAt is the timestamp when the agent definition was created.
 	CreatedAt time.Time `json:"createdAt"`
 
-	// UpdatedAt is the timestamp when the agent template was last updated.
+	// UpdatedAt is the timestamp when the agent definition was last updated.
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-// AgentTemplateGetParams is the request params for agent/get method.
-type AgentTemplateGetParams struct {
-	// Name is the agent template name (required).
+// AgentGetParams is the request params for agent/get method.
+type AgentGetParams struct {
+	// Name is the agent definition name (required).
 	Name string `json:"name"`
 }
 
-// AgentTemplateGetResult is the response result for agent/get method.
-type AgentTemplateGetResult struct {
-	// AgentTemplate is the requested agent template info.
-	AgentTemplate AgentTemplateInfo `json:"agentTemplate"`
+// AgentGetResult is the response result for agent/get method.
+type AgentGetResult struct {
+	// Agent is the requested agent definition info.
+	Agent AgentInfo `json:"agent"`
 }
 
-// AgentTemplateListParams is the request params for agent/list method.
-type AgentTemplateListParams struct{}
+// AgentListParams is the request params for agent/list method.
+type AgentListParams struct{}
 
-// AgentTemplateListResult is the response result for agent/list method.
-type AgentTemplateListResult struct {
-	// AgentTemplates is the array of agent template info objects.
-	AgentTemplates []AgentTemplateInfo `json:"agentTemplates"`
+// AgentListResult is the response result for agent/list method.
+type AgentListResult struct {
+	// Agents is the array of agent definition info objects.
+	Agents []AgentInfo `json:"agents"`
 }
 
-// AgentTemplateDeleteParams is the request params for agent/delete method.
-type AgentTemplateDeleteParams struct {
-	// Name is the agent template name to delete (required).
+// AgentDeleteParams is the request params for agent/delete method.
+type AgentDeleteParams struct {
+	// Name is the agent definition name to delete (required).
 	Name string `json:"name"`
 }

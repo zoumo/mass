@@ -26,7 +26,7 @@ import (
 type Server struct {
 	manager    *workspace.WorkspaceManager
 	registry   *Registry
-	agents     *agentd.AgentManager
+	agents     *agentd.AgentRunManager
 	processes  *agentd.ProcessManager
 	store      *meta.Store
 	socketPath string
@@ -52,7 +52,7 @@ type Server struct {
 func New(
 	manager *workspace.WorkspaceManager,
 	registry *Registry,
-	agents *agentd.AgentManager,
+	agents *agentd.AgentRunManager,
 	processes *agentd.ProcessManager,
 	store *meta.Store,
 	socketPath, baseDir string,
@@ -209,13 +209,13 @@ func (s *Server) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 
 	// agent/* — agent template (configuration) CRUD methods
 	case "agent/set":
-		s.handleAgentTemplateSet(ctx, conn, req)
+		s.handleAgentSet(ctx, conn, req)
 	case "agent/get":
-		s.handleAgentTemplateGet(ctx, conn, req)
+		s.handleAgentGet(ctx, conn, req)
 	case "agent/list":
-		s.handleAgentTemplateList(ctx, conn, req)
+		s.handleAgentList(ctx, conn, req)
 	case "agent/delete":
-		s.handleAgentTemplateDelete(ctx, conn, req)
+		s.handleAgentDelete(ctx, conn, req)
 
 	default:
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeMethodNotFound,
@@ -591,7 +591,7 @@ func (s *Server) recordPromptDeliveryFailure(workspace, name string, fallback me
 
 // handleAgentRunCreate handles the agentrun/create method.
 //
-// Validates Workspace/Name/RuntimeClass, checks workspace phase, creates the
+// Validates Workspace/Name/Agent, checks workspace phase, creates the
 // agent run record with state=creating, and starts the shim in a background goroutine.
 // Returns AgentRunCreateResult immediately (state is always "creating").
 //
@@ -602,9 +602,9 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
 	}
-	if params.Workspace == "" || params.Name == "" || params.RuntimeClass == "" {
+	if params.Workspace == "" || params.Name == "" || params.Agent == "" {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams,
-			"workspace, name, and runtimeClass are required")
+			"workspace, name, and agent are required")
 		return
 	}
 
@@ -641,7 +641,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 			Labels:    params.Labels,
 		},
 		Spec: meta.AgentRunSpec{
-			RuntimeClass:  params.RuntimeClass,
+			Agent:         params.Agent,
 			RestartPolicy: params.RestartPolicy,
 			SystemPrompt:  params.SystemPrompt,
 		},
@@ -650,7 +650,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 		},
 	}
 	if err := s.agents.Create(ctx, agent); err != nil {
-		var alreadyExists *agentd.ErrAgentAlreadyExists
+		var alreadyExists *agentd.ErrAgentRunAlreadyExists
 		if errors.As(err, &alreadyExists) {
 			s.replyErr(ctx, conn, req, CodeRecoveryBlocked, err.Error())
 			return
@@ -847,7 +847,7 @@ func (s *Server) handleAgentRunStop(ctx context.Context, conn *jsonrpc2.Conn, re
 // handleAgentRunDelete handles the agentrun/delete method.
 //
 // Validates agent run is in stopped/error state, then deletes from DB.
-// Maps ErrDeleteNotStopped → -32001, ErrAgentNotFound → -32602.
+// Maps ErrDeleteNotStopped → -32001, ErrAgentRunNotFound → -32602.
 func (s *Server) handleAgentRunDelete(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	var params AgentRunDeleteParams
 	if err := unmarshalParams(req, &params); err != nil {
@@ -858,7 +858,7 @@ func (s *Server) handleAgentRunDelete(ctx context.Context, conn *jsonrpc2.Conn, 
 	s.logger.Info("agentrun/delete", "workspace", params.Workspace, "name", params.Name)
 
 	if err := s.agents.Delete(ctx, params.Workspace, params.Name); err != nil {
-		var notFound *agentd.ErrAgentNotFound
+		var notFound *agentd.ErrAgentRunNotFound
 		if errors.As(err, &notFound) {
 			s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 			return
@@ -885,7 +885,8 @@ func (s *Server) handleAgentRunDelete(ctx context.Context, conn *jsonrpc2.Conn, 
 
 // handleAgentRunRestart handles the agentrun/restart method.
 //
-// Validates agent run is stopped/error, updates state to creating, starts shim.
+// Accepts any agent state. For agents with an active shim (creating/idle/running),
+// the shim is stopped first in the background before a new one is started.
 // Returns AgentRunRestartResult immediately (state="creating").
 func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	var params AgentRunRestartParams
@@ -908,11 +909,8 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 		return
 	}
 
-	if agent.Status.State != spec.StatusStopped && agent.Status.State != spec.StatusError {
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
-			fmt.Sprintf("agent not in stopped/error state: %s", agent.Status.State))
-		return
-	}
+	// Agents in terminal states (stopped/error) have no active shim; others do.
+	needsStop := agent.Status.State != spec.StatusStopped && agent.Status.State != spec.StatusError
 
 	// Transition to creating.
 	if err := s.agents.UpdateStatus(ctx, params.Workspace, params.Name, meta.AgentRunStatus{
@@ -922,11 +920,25 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 		return
 	}
 
-	// Start shim in background.
+	// Start shim in background, stopping any existing shim first if needed.
 	wsName := params.Workspace
 	agName := params.Name
 	go func() {
 		bgCtx := context.Background()
+		if needsStop {
+			if err := s.processes.Stop(bgCtx, wsName, agName); err != nil {
+				s.logger.Warn("agentrun/restart: pre-stop failed, continuing",
+					"workspace", wsName, "name", agName, "error", err)
+			}
+			// Stop() transitions state to "stopped"; re-set to "creating" for Start().
+			if err := s.agents.UpdateStatus(bgCtx, wsName, agName, meta.AgentRunStatus{
+				State: spec.StatusCreating,
+			}); err != nil {
+				s.logger.Warn("agentrun/restart: failed to re-transition to creating",
+					"workspace", wsName, "name", agName, "error", err)
+				return
+			}
+		}
 		if _, err := s.processes.Start(bgCtx, wsName, agName); err != nil {
 			s.logger.Warn("agentrun/restart: shim start failed",
 				"workspace", wsName, "name", agName, "error", err)
@@ -974,7 +986,7 @@ func (s *Server) handleAgentRunList(ctx context.Context, conn *jsonrpc2.Conn, re
 		infos = append(infos, agentRunToInfo(ag))
 	}
 
-	s.replyOK(ctx, conn, req, AgentRunListResult{Agents: infos})
+	s.replyOK(ctx, conn, req, AgentRunListResult{AgentRuns: infos})
 }
 
 // handleAgentRunStatus handles the agentrun/status method.
@@ -1000,7 +1012,7 @@ func (s *Server) handleAgentRunStatus(ctx context.Context, conn *jsonrpc2.Conn, 
 		return
 	}
 
-	result := AgentRunStatusResult{Agent: agentRunToInfo(agent)}
+	result := AgentRunStatusResult{AgentRun: agentRunToInfo(agent)}
 
 	// Best-effort: fetch shim runtime state if available.
 	if rts, err := s.processes.RuntimeStatus(ctx, params.Workspace, params.Name); err == nil {
@@ -1068,7 +1080,7 @@ func agentRunToInfo(ag *meta.AgentRun) AgentRunInfo {
 	return AgentRunInfo{
 		Workspace:    ag.Metadata.Workspace,
 		Name:         ag.Metadata.Name,
-		RuntimeClass: ag.Spec.RuntimeClass,
+		Agent:        ag.Spec.Agent,
 		State:        string(ag.Status.State),
 		ErrorMessage: ag.Status.ErrorMessage,
 		Labels:       ag.Metadata.Labels,
@@ -1092,15 +1104,15 @@ func (s *Server) listWorkspaceMembers(ctx context.Context, wsName string) []Agen
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// agent/* handlers (AgentTemplate CRUD)
+// agent/* handlers (Agent definition CRUD)
 // ────────────────────────────────────────────────────────────────────────────
 
-// handleAgentTemplateSet handles the agent/set method.
-// Creates or updates an agent template entity in the metadata store.
+// handleAgentSet handles the agent/set method.
+// Creates or updates an agent definition entity in the metadata store.
 //
 // Observability: INFO on success with name and command logged.
-func (s *Server) handleAgentTemplateSet(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentTemplateSetParams
+func (s *Server) handleAgentSet(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var params AgentSetParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -1116,34 +1128,34 @@ func (s *Server) handleAgentTemplateSet(ctx context.Context, conn *jsonrpc2.Conn
 
 	s.logger.Info("agent/set", "name", params.Name, "command", params.Command)
 
-	rt := &meta.AgentTemplate{
+	ag := &meta.Agent{
 		Metadata: meta.ObjectMeta{Name: params.Name},
-		Spec: meta.AgentTemplateSpec{
+		Spec: meta.AgentSpec{
 			Command:               params.Command,
 			Args:                  params.Args,
 			Env:                   params.Env,
 			StartupTimeoutSeconds: params.StartupTimeoutSeconds,
 		},
 	}
-	if err := s.store.SetAgentTemplate(ctx, rt); err != nil {
+	if err := s.store.SetAgent(ctx, ag); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
 		return
 	}
 
 	// Read back to get server-assigned timestamps.
-	stored, err := s.store.GetAgentTemplate(ctx, params.Name)
+	stored, err := s.store.GetAgent(ctx, params.Name)
 	if err != nil || stored == nil {
-		s.replyOK(ctx, conn, req, agentTemplateToInfo(rt))
+		s.replyOK(ctx, conn, req, agentToInfo(ag))
 		return
 	}
-	s.replyOK(ctx, conn, req, agentTemplateToInfo(stored))
+	s.replyOK(ctx, conn, req, agentToInfo(stored))
 }
 
-// handleAgentTemplateGet handles the agent/get method.
+// handleAgentGet handles the agent/get method.
 //
-// Returns the agent template info or -32602 (InvalidParams) if not found.
-func (s *Server) handleAgentTemplateGet(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentTemplateGetParams
+// Returns the agent definition info or -32602 (InvalidParams) if not found.
+func (s *Server) handleAgentGet(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var params AgentGetParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -1155,46 +1167,46 @@ func (s *Server) handleAgentTemplateGet(ctx context.Context, conn *jsonrpc2.Conn
 
 	s.logger.Info("agent/get", "name", params.Name)
 
-	rt, err := s.store.GetAgentTemplate(ctx, params.Name)
+	ag, err := s.store.GetAgent(ctx, params.Name)
 	if err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
 		return
 	}
-	if rt == nil {
+	if ag == nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams,
-			fmt.Sprintf("agentTemplate %s not found", params.Name))
+			fmt.Sprintf("agent %s not found", params.Name))
 		return
 	}
 
-	s.replyOK(ctx, conn, req, AgentTemplateGetResult{AgentTemplate: agentTemplateToInfo(rt)})
+	s.replyOK(ctx, conn, req, AgentGetResult{Agent: agentToInfo(ag)})
 }
 
-// handleAgentTemplateList handles the agent/list method.
+// handleAgentList handles the agent/list method.
 //
-// Returns all agent template info objects stored in the metadata DB.
-func (s *Server) handleAgentTemplateList(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+// Returns all agent definition info objects stored in the metadata DB.
+func (s *Server) handleAgentList(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	s.logger.Info("agent/list")
 
-	rts, err := s.store.ListAgentTemplates(ctx)
+	ags, err := s.store.ListAgents(ctx)
 	if err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
 		return
 	}
 
-	infos := make([]AgentTemplateInfo, 0, len(rts))
-	for _, rt := range rts {
-		infos = append(infos, agentTemplateToInfo(rt))
+	infos := make([]AgentInfo, 0, len(ags))
+	for _, ag := range ags {
+		infos = append(infos, agentToInfo(ag))
 	}
 
-	s.replyOK(ctx, conn, req, AgentTemplateListResult{AgentTemplates: infos})
+	s.replyOK(ctx, conn, req, AgentListResult{Agents: infos})
 }
 
-// handleAgentTemplateDelete handles the agent/delete method.
-// No-op if the agent template does not exist.
+// handleAgentDelete handles the agent/delete method.
+// No-op if the agent definition does not exist.
 //
 // Observability: INFO on delete with name logged.
-func (s *Server) handleAgentTemplateDelete(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentTemplateDeleteParams
+func (s *Server) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	var params AgentDeleteParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -1206,7 +1218,7 @@ func (s *Server) handleAgentTemplateDelete(ctx context.Context, conn *jsonrpc2.C
 
 	s.logger.Info("agent/delete", "name", params.Name)
 
-	if err := s.store.DeleteAgentTemplate(ctx, params.Name); err != nil {
+	if err := s.store.DeleteAgent(ctx, params.Name); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
 		return
 	}
@@ -1214,15 +1226,16 @@ func (s *Server) handleAgentTemplateDelete(ctx context.Context, conn *jsonrpc2.C
 	s.replyOK(ctx, conn, req, struct{}{})
 }
 
-// agentTemplateToInfo converts a meta.AgentTemplate to an AgentTemplateInfo wire type.
-func agentTemplateToInfo(rt *meta.AgentTemplate) AgentTemplateInfo {
-	return AgentTemplateInfo{
-		Name:      rt.Metadata.Name,
-		Command:   rt.Spec.Command,
-		Args:      rt.Spec.Args,
-		Env:       rt.Spec.Env,
-		CreatedAt: rt.Metadata.CreatedAt,
-		UpdatedAt: rt.Metadata.UpdatedAt,
+// agentToInfo converts a meta.Agent to an AgentInfo wire type.
+func agentToInfo(ag *meta.Agent) AgentInfo {
+	return AgentInfo{
+		Name:                  ag.Metadata.Name,
+		Command:               ag.Spec.Command,
+		Args:                  ag.Spec.Args,
+		Env:                   ag.Spec.Env,
+		StartupTimeoutSeconds: ag.Spec.StartupTimeoutSeconds,
+		CreatedAt:             ag.Metadata.CreatedAt,
+		UpdatedAt:             ag.Metadata.UpdatedAt,
 	}
 }
 
