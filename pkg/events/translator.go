@@ -146,6 +146,26 @@ func (t *Translator) NotifyTurnStart() {
 	})
 }
 
+// NotifyUserPrompt broadcasts a session/update user_message envelope so that
+// all subscribers (including late-joining chat clients) see the user's prompt.
+// This must be called after NotifyTurnStart and before mgr.Prompt.
+func (t *Translator) NotifyUserPrompt(text string) {
+	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
+		ss := t.currentStreamSeq
+		t.currentStreamSeq++
+		params := SessionUpdateParams{
+			SequenceMeta: SequenceMeta{
+				SessionID: t.sessionID, Seq: seq,
+				Timestamp: at.UTC().Format(time.RFC3339Nano),
+			},
+			TurnId:    t.currentTurnId,
+			StreamSeq: &ss,
+			Event:     newTypedEvent(UserMessageEvent{Text: text}),
+		}
+		return Envelope{Method: MethodSessionUpdate, Params: params}
+	})
+}
+
 // NotifyTurnEnd broadcasts a session/update turn_end envelope.
 // The current turnId is included in the event and cleared AFTER use so the
 // turn_end event itself carries the identifier. All state mutations run inside

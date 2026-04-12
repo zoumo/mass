@@ -134,6 +134,7 @@ func (h *connHandler) handlePrompt(ctx context.Context, conn *jsonrpc2.Conn, req
 	}
 
 	h.srv.trans.NotifyTurnStart()
+	h.srv.trans.NotifyUserPrompt(p.Prompt)
 	resp, err := h.srv.mgr.Prompt(ctx, []acp.ContentBlock{acp.TextBlock(p.Prompt)})
 	stopReason := "error"
 	if err == nil {

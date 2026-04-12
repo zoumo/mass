@@ -68,6 +68,10 @@ type chatModel struct {
 	// Tool tracking: tool_call ID → chat item ID, for linking tool_result.
 	toolItemIDs map[string]string // toolCall.ID → chat MessageItem ID
 
+	// sentPrompt is true when the most recent prompt was sent from this chat
+	// instance. Used to skip the user_message broadcast (we already show it).
+	sentPrompt bool
+
 	turnCounter int // monotonic counter for generating unique IDs
 
 	agentStatus string // current agent status: "idle", "running", "stopped", "error"
@@ -382,6 +386,7 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		}
 
 		m.waiting = true
+		m.sentPrompt = true
 		m.toolItemIDs = make(map[string]string) // reset tool tracking
 		cmds = append(cmds, sendPromptCmd(m.client, text))
 
@@ -447,6 +452,21 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch p.Event.Type {
+	case "user_message":
+		// User prompt broadcast. Skip if we sent this prompt (already shown).
+		if m.sentPrompt {
+			m.sentPrompt = false
+			break
+		}
+		var pl textPayload
+		_ = json.Unmarshal(p.Event.Payload, &pl)
+		if pl.Text != "" {
+			userMsg := newShimMessage(m.nextID("user"), chat.RoleUser)
+			userMsg.text = pl.Text
+			userMsg.finished = true
+			m.chat.AppendMessages(chat.NewUserMessageItem(&m.sty, userMsg))
+		}
+
 	case "text":
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
