@@ -305,13 +305,19 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		return cmds
 
 	case key.Code == tea.KeyEscape && key.Mod == 0:
-		if m.waiting {
-			m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "[canceling…]", styleDim))
-			cmds = append(cmds, cancelPromptCmd(m.client))
-		} else if m.chatFocused {
+		// Esc only switches focus, never cancels. Use Ctrl+X to cancel.
+		if m.chatFocused {
 			m.chatFocused = false
 			m.chat.Blur()
 			cmds = append(cmds, m.input.Focus())
+		}
+		return cmds
+
+	case key.Mod&tea.ModCtrl != 0 && key.Code == 'x':
+		// Ctrl+X: explicit cancel of running turn.
+		if m.waiting {
+			m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "[canceling…]", styleDim))
+			cmds = append(cmds, cancelPromptCmd(m.client))
 		}
 		return cmds
 	}
@@ -475,7 +481,8 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 
 		// Add tool call item and track its ID for later result linking.
 		toolItemID := m.nextID("tc")
-		tc := chat.ToolCall{ID: pl.ID, Name: pl.Kind, Input: fmt.Sprintf(`{"title":%q}`, pl.Title)}
+		input, _ := json.Marshal(map[string]string{"title": pl.Title})
+		tc := chat.ToolCall{ID: pl.ID, Name: pl.Kind, Input: string(input), Finished: true}
 		toolItem := chat.NewToolMessageItem(&m.sty, toolItemID, tc, nil, false)
 		if ti, ok := toolItem.(chat.ToolMessageItem); ok {
 			ti.SetStatus(chat.ToolStatusRunning)
@@ -588,7 +595,7 @@ func (m chatModel) renderStatusLine() string {
 	hint := ""
 	switch status {
 	case "running":
-		hint = styleDim.Render(" — esc to cancel")
+		hint = styleDim.Render(" — ctrl+x to cancel")
 	case "idle":
 		hint = styleDim.Render(" — ready for input")
 	case "error":
@@ -605,7 +612,7 @@ func (m chatModel) renderHelp() string {
 	if m.chatFocused {
 		keys = append(keys, "j/k scroll", "d/u half-page", "g/G top/bottom", "tab editor", "esc back")
 	} else {
-		keys = append(keys, "enter send", "shift+enter newline", "tab chat", "esc cancel")
+		keys = append(keys, "enter send", "shift+enter newline", "tab chat", "ctrl+x cancel")
 	}
 	keys = append(keys, "shift+click select text", "ctrl+c quit")
 	return styleHelp.Render(" " + strings.Join(keys, " · "))
