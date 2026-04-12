@@ -72,6 +72,12 @@ case anim.StepMsg:
 
 **不要在 pkg/tui/chat 中直接修改 Message 内容**——这是调用方的职责。
 
+## 已知问题
+
+### CJK 文本换行异常
+
+`ansi.Wordwrap` 和 `glamour` markdown 渲染在处理中日韩(CJK)字符与 ASCII 混合文本时，可能在错误位置断行，导致视觉上看起来像插入了中文标点（如文件路径 `.md` 前出现中文逗号 `，`）。这是上游 `charmbracelet/x/ansi` 的 CJK word-wrap 问题，不是我们的代码 bug。数据层（events.jsonl）中的文本是正确的。
+
 ## 不要做的事
 
 - 不要在 `isSpinning()` 中只检查 `hasContent`——必须同时检查 `hasThinking`
