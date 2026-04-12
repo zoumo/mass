@@ -32,7 +32,7 @@ type (
 	promptErrMsg struct{ err error }
 )
 
-// stateChangeMsg is sent when the shim reports a runtime/stateChange notification.
+// stateChangeMsg is sent when the shim reports a runtime/state_change notification.
 type stateChangeMsg struct {
 	previous string
 	status   string
@@ -139,7 +139,7 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 		if isTurnEndNotification(msg) {
 			return turnEndMsg{}
 		}
-		if msg.Method == "runtime/stateChange" {
+		if msg.Method == "runtime/state_change" {
 			var p runtimeStateChangeParams
 			if err := json.Unmarshal(msg.Params, &p); err == nil {
 				return stateChangeMsg{

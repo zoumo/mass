@@ -20,8 +20,8 @@ import (
 // Methods exposed:
 //   session/prompt    — send a prompt and wait for the turn to complete
 //   session/cancel    — cancel the current agent turn
-//   session/load      — restore a prior ACP session (tryReload restart policy)
-//   session/subscribe — register for live session/update and runtime/stateChange notifications
+//   session/load      — restore a prior ACP session (try_reload restart policy)
+//   session/subscribe — register for live session/update and runtime/state_change notifications
 //   runtime/status    — get current runtime state plus recovery.lastSeq metadata
 //   runtime/history   — get replayable event history from a given sequence number
 //   runtime/stop      — request graceful shim shutdown
@@ -48,7 +48,7 @@ func Dial(ctx context.Context, socketPath string) (*ShimClient, error) {
 }
 
 // DialWithHandler connects to the shim and registers a notification handler
-// for session/update and runtime/stateChange notifications. This is the
+// for session/update and runtime/state_change notifications. This is the
 // preferred constructor when you need live event delivery after Subscribe.
 func DialWithHandler(ctx context.Context, socketPath string, handler NotificationHandler) (*ShimClient, error) {
 	return dialInternal(ctx, socketPath, handler)
@@ -116,7 +116,7 @@ func (c *ShimClient) Load(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// Subscribe registers for live session/update and runtime/stateChange
+// Subscribe registers for live session/update and runtime/state_change
 // notifications. Notifications are dispatched to the handler registered via
 // DialWithHandler. Subscribe returns immediately; events arrive asynchronously.
 //
@@ -207,14 +207,14 @@ func (c *ShimClient) call(ctx context.Context, method string, params, resultPtr 
 // ────────────────────────────────────────────────────────────────────────────
 
 // clientHandler implements jsonrpc2.Handler for the ShimClient side.
-// It dispatches session/update and runtime/stateChange notifications to the
+// It dispatches session/update and runtime/state_change notifications to the
 // registered NotificationHandler.
 type clientHandler struct {
 	notifHandler NotificationHandler
 }
 
 // Handle processes incoming JSON-RPC messages. For the ShimClient, this is
-// exclusively inbound notifications (session/update, runtime/stateChange).
+// exclusively inbound notifications (session/update, runtime/state_change).
 // Any inbound requests (unexpected from a shim) are ignored.
 func (h *clientHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	if !req.Notif {
@@ -251,13 +251,13 @@ func ParseSessionUpdate(params json.RawMessage) (events.SessionUpdateParams, err
 	return p, nil
 }
 
-// ParseRuntimeStateChange parses a runtime/stateChange notification params
+// ParseRuntimeStateChange parses a runtime/state_change notification params
 // into a typed RuntimeStateChangeParams. Returns an error if the payload is
 // malformed.
 func ParseRuntimeStateChange(params json.RawMessage) (events.RuntimeStateChangeParams, error) {
 	var p events.RuntimeStateChangeParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return events.RuntimeStateChangeParams{}, fmt.Errorf("shim_client: parse runtime/stateChange: %w", err)
+		return events.RuntimeStateChangeParams{}, fmt.Errorf("shim_client: parse runtime/state_change: %w", err)
 	}
 	return p, nil
 }

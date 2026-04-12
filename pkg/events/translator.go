@@ -138,7 +138,7 @@ func (t *Translator) NotifyTurnStart() {
 				SessionID: t.sessionID, Seq: seq,
 				Timestamp: at.UTC().Format(time.RFC3339Nano),
 			},
-			TurnId:    t.currentTurnId,
+			TurnID:    t.currentTurnId,
 			StreamSeq: &ss,
 			Event:     newTypedEvent(TurnStartEvent{}),
 		}
@@ -158,7 +158,7 @@ func (t *Translator) NotifyUserPrompt(text string) {
 				SessionID: t.sessionID, Seq: seq,
 				Timestamp: at.UTC().Format(time.RFC3339Nano),
 			},
-			TurnId:    t.currentTurnId,
+			TurnID:    t.currentTurnId,
 			StreamSeq: &ss,
 			Event:     newTypedEvent(UserMessageEvent{Text: text}),
 		}
@@ -180,7 +180,7 @@ func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 				SessionID: t.sessionID, Seq: seq,
 				Timestamp: at.UTC().Format(time.RFC3339Nano),
 			},
-			TurnId:    t.currentTurnId,
+			TurnID:    t.currentTurnId,
 			StreamSeq: &ss,
 			Event:     newTypedEvent(TurnEndEvent{StopReason: string(reason)}),
 		}
@@ -189,7 +189,7 @@ func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 	})
 }
 
-// NotifyStateChange broadcasts a runtime/stateChange envelope.
+// NotifyStateChange broadcasts a runtime/state_change envelope.
 func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, reason string) {
 	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
 		return NewRuntimeStateChangeEnvelope(t.sessionID, seq, at, previousStatus, status, pid, reason)
@@ -219,7 +219,7 @@ func (t *Translator) broadcastSessionEvent(ev Event) {
 		env := NewSessionUpdateEnvelope(t.sessionID, seq, at, ev)
 		if t.currentTurnId != "" {
 			params := env.Params.(SessionUpdateParams)
-			params.TurnId = t.currentTurnId
+			params.TurnID = t.currentTurnId
 			ss := t.currentStreamSeq
 			params.StreamSeq = &ss
 			t.currentStreamSeq++

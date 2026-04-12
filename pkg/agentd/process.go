@@ -123,7 +123,7 @@ func NewProcessManager(agents *AgentRunManager, s *store.Store, socketPath, bund
 
 // buildNotifHandler returns a NotificationHandler that:
 //   - routes session/update params to shimProc.Events (async, non-blocking), and
-//   - handles runtime/stateChange notifications by updating DB agent state (D088).
+//   - handles runtime/state_change notifications by updating DB agent state (D088).
 //
 // This is the single authoritative handler used by both Start() and recoverAgent().
 // All DB state transitions after bootstrap must flow through here, never via a
@@ -198,7 +198,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 //  7. Connect ShimClient with the unified notification handler (D088)
 //  8. Subscribe to events
 //
-// After Subscribe, the shim emits runtime/stateChange creating→idle once the
+// After Subscribe, the shim emits runtime/state_change creating→idle once the
 // ACP handshake completes; the notification handler updates DB state
 // asynchronously per D088 — callers must not assume StatusRunning immediately.
 //
@@ -270,7 +270,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	}
 
 	// 7. Connect ShimClient with the unified notification handler.
-	// Routes session/update → shimProc.Events and runtime/stateChange → DB (D088).
+	// Routes session/update → shimProc.Events and runtime/state_change → DB (D088).
 	client, err := DialWithHandler(ctx, socketPath, m.buildNotifHandler(workspace, name, shimProc))
 	if err != nil {
 		// Kill shim process; leave bundle intact (preserved until agent/delete).
@@ -525,7 +525,7 @@ func (m *ProcessManager) forkShim(agent *meta.AgentRun, bundlePath, stateDir str
 		"--bundle", bundlePath,
 		"--id", filepath.Base(bundlePath),
 		"--state-dir", filepath.Dir(bundlePath), // bundleRoot; shim appends /<id>
-		"--permissions", "approve-all",
+		"--permissions", string(apispec.ApproveAll),
 	}
 
 	// Log the command for debugging.

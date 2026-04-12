@@ -201,7 +201,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *meta.AgentRun)
 	go shimProc.drainEvents()
 
 	// Connect to the shim socket with the unified notification handler.
-	// Routes session/update → shimProc.Events and runtime/stateChange → DB (D088).
+	// Routes session/update → shimProc.Events and runtime/state_change → DB (D088).
 	client, err := DialWithHandler(ctx, agent.Status.ShimSocketPath, m.buildNotifHandler(ws, name, shimProc))
 	if err != nil {
 		return api.StatusStopped, fmt.Errorf("connect to shim socket %s: %w", agent.Status.ShimSocketPath, err)
@@ -265,22 +265,22 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *meta.AgentRun)
 		"backfill_entries", len(subResult.Entries),
 		"next_seq", subResult.NextSeq)
 
-	// Apply RestartPolicy: tryReload attempts ACP session/load to restore
-	// conversation history. alwaysNew (default) starts fresh.
+	// Apply RestartPolicy: try_reload attempts ACP session/load to restore
+	// conversation history. always_new (default) starts fresh.
 	if agent.Spec.RestartPolicy == meta.RestartPolicyTryReload {
 		sessionID, readErr := m.readStateSessionID(agent.Status.ShimStateDir)
 		if readErr != nil {
-			logger.Info("tryReload: could not read sessionId from state file, skipping",
+			logger.Info("try_reload: could not read sessionId from state file, skipping",
 				"error", readErr)
 		} else if sessionID != "" {
 			if loadErr := client.Load(ctx, sessionID); loadErr != nil {
-				logger.Info("tryReload: session/load failed, continuing",
+				logger.Info("try_reload: session/load failed, continuing",
 					"session_id", sessionID, "error", loadErr)
 			} else {
-				logger.Info("tryReload: session/load succeeded", "session_id", sessionID)
+				logger.Info("try_reload: session/load succeeded", "session_id", sessionID)
 			}
 		} else {
-			logger.Info("tryReload: no sessionId in state file, skipping")
+			logger.Info("try_reload: no sessionId in state file, skipping")
 		}
 	}
 

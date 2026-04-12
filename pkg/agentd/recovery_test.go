@@ -460,11 +460,11 @@ func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// RestartPolicy: tryReload / alwaysNew tests
+// RestartPolicy: try_reload / always_new tests
 // ────────────────────────────────────────────────────────────────────────────
 
 // TestRecovery_TryReload_AttemptsSessionLoad verifies that an agent with
-// RestartPolicy=tryReload calls session/load on the shim with the sessionId
+// RestartPolicy=try_reload calls session/load on the shim with the sessionId
 // read from the persisted state.json.
 func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 	pm, store := setupRecoveryTest(t)
@@ -507,7 +507,7 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 	loadCalledWith := srv.loadCalledWith
 	srv.mu.Unlock()
 
-	assert.True(t, loadCalled, "session/load should have been called for tryReload policy")
+	assert.True(t, loadCalled, "session/load should have been called for try_reload policy")
 	assert.Equal(t, knownSessionID, loadCalledWith, "session/load should carry the persisted sessionId")
 
 	// Agent must be in the processes map.
@@ -627,7 +627,7 @@ func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
 }
 
 // TestRecovery_AlwaysNew_SkipsSessionLoad verifies that an agent with
-// RestartPolicy="" (default/alwaysNew) does NOT call session/load on the shim.
+// RestartPolicy="" (default/always_new) does NOT call session/load on the shim.
 func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 	pm, store := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -648,7 +648,7 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 		Metadata: meta.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
 		Spec: meta.AgentRunSpec{
 			Agent: "default",
-			RestartPolicy: "", // empty = alwaysNew (default)
+			RestartPolicy: "", // empty = always_new (default)
 		},
 		Status: meta.AgentRunStatus{
 			State:          api.StatusIdle,
@@ -666,11 +666,11 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 	srv.mu.Lock()
 	loadCalled := srv.loadCalled
 	srv.mu.Unlock()
-	assert.False(t, loadCalled, "session/load should not be called for alwaysNew/empty policy")
+	assert.False(t, loadCalled, "session/load should not be called for always_new/empty policy")
 
 	// Agent should still be recovered.
 	shimProc := pm.GetProcess(key)
-	assert.NotNil(t, shimProc, "agent should be recovered with alwaysNew policy")
+	assert.NotNil(t, shimProc, "agent should be recovered with always_new policy")
 
 	// Cleanup.
 	srv.close()

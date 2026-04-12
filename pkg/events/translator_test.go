@@ -221,8 +221,8 @@ func TestNotifyTurnStartAndEnd(t *testing.T) {
 	assert.Equal(t, TurnEndEvent{StopReason: "end_turn"}, second.Event.Payload)
 
 	// Turn field assertions.
-	assert.NotEmpty(t, first.TurnId, "turn_start must carry a non-empty TurnId")
-	assert.Equal(t, first.TurnId, second.TurnId, "turn_end must carry the same TurnId as turn_start")
+	assert.NotEmpty(t, first.TurnID, "turn_start must carry a non-empty TurnId")
+	assert.Equal(t, first.TurnID, second.TurnID, "turn_end must carry the same TurnId as turn_start")
 	require.NotNil(t, first.StreamSeq, "turn_start must carry StreamSeq")
 	assert.Equal(t, 0, *first.StreamSeq, "turn_start StreamSeq must be 0")
 	require.NotNil(t, second.StreamSeq, "turn_end must carry StreamSeq")
@@ -397,10 +397,10 @@ func TestTurnAwareEnvelope_TurnIdAssigned(t *testing.T) {
 	txt2Params := txt2Env.Params.(SessionUpdateParams)
 	teParams := teEnv.Params.(SessionUpdateParams)
 
-	require.NotEmpty(t, tsParams.TurnId)
-	assert.Equal(t, tsParams.TurnId, txt1Params.TurnId, "text event 1 must carry TurnId")
-	assert.Equal(t, tsParams.TurnId, txt2Params.TurnId, "text event 2 must carry TurnId")
-	assert.Equal(t, tsParams.TurnId, teParams.TurnId, "turn_end must carry same TurnId")
+	require.NotEmpty(t, tsParams.TurnID)
+	assert.Equal(t, tsParams.TurnID, txt1Params.TurnID, "text event 1 must carry TurnId")
+	assert.Equal(t, tsParams.TurnID, txt2Params.TurnID, "text event 2 must carry TurnId")
+	assert.Equal(t, tsParams.TurnID, teParams.TurnID, "turn_end must carry same TurnId")
 
 	// Event after turn_end should have no TurnId.
 	tr.NotifyStateChange("running", "created", 0, "done")
@@ -463,9 +463,9 @@ func TestTurnAwareEnvelope_MultipleTurns(t *testing.T) {
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
 	te2 := drainEnvelope(t, ch).Params.(SessionUpdateParams)
 
-	require.NotEmpty(t, ts1.TurnId)
-	require.NotEmpty(t, ts2.TurnId)
-	assert.NotEqual(t, ts1.TurnId, ts2.TurnId, "second turn must have a different TurnId")
+	require.NotEmpty(t, ts1.TurnID)
+	require.NotEmpty(t, ts2.TurnID)
+	assert.NotEqual(t, ts1.TurnID, ts2.TurnID, "second turn must have a different TurnId")
 
 	require.NotNil(t, ts2.StreamSeq)
 	assert.Equal(t, 0, *ts2.StreamSeq, "second turn_start streamSeq must reset to 0")
@@ -475,7 +475,7 @@ func TestTurnAwareEnvelope_MultipleTurns(t *testing.T) {
 }
 
 // TestTurnAwareEnvelope_StateChangeExcludesTurnFields verifies that a
-// runtime/stateChange envelope emitted during a turn is not a SessionUpdateParams
+// runtime/state_change envelope emitted during a turn is not a SessionUpdateParams
 // (and therefore has no TurnId/StreamSeq), while its global seq still increments.
 func TestTurnAwareEnvelope_StateChangeExcludesTurnFields(t *testing.T) {
 	in := make(chan acp.SessionNotification)
@@ -506,7 +506,7 @@ func TestTurnAwareEnvelope_RoundTrip(t *testing.T) {
 	ss := 2
 	original := SessionUpdateParams{
 		SequenceMeta: SequenceMeta{SessionID: "s1", Seq: 5, Timestamp: "2024-01-01T00:00:00Z"},
-		TurnId:       "test-turn",
+		TurnID:       "test-turn",
 		StreamSeq:    &ss,
 		Phase:        "thinking",
 		Event:        newTypedEvent(TextEvent{Text: "hello"}),
@@ -522,7 +522,7 @@ func TestTurnAwareEnvelope_RoundTrip(t *testing.T) {
 	params, ok := decoded.Params.(SessionUpdateParams)
 	require.True(t, ok)
 
-	assert.Equal(t, "test-turn", params.TurnId)
+	assert.Equal(t, "test-turn", params.TurnID)
 	require.NotNil(t, params.StreamSeq)
 	assert.Equal(t, 2, *params.StreamSeq)
 	assert.Equal(t, "thinking", params.Phase)
@@ -588,20 +588,20 @@ func TestTurnAwareEnvelope_ReplayOrdering(t *testing.T) {
 	turn2 := []Envelope{ts2Env, t2aEnv, te2Env}
 
 	// (1) All turn 1 events share a common TurnId.
-	tid1 := turn1[0].Params.(SessionUpdateParams).TurnId
+	tid1 := turn1[0].Params.(SessionUpdateParams).TurnID
 	require.NotEmpty(t, tid1)
 	for i, env := range turn1 {
 		p := env.Params.(SessionUpdateParams)
-		assert.Equal(t, tid1, p.TurnId, "turn1[%d] TurnId mismatch", i)
+		assert.Equal(t, tid1, p.TurnID, "turn1[%d] TurnId mismatch", i)
 	}
 
 	// (2) All turn 2 events share a different common TurnId.
-	tid2 := turn2[0].Params.(SessionUpdateParams).TurnId
+	tid2 := turn2[0].Params.(SessionUpdateParams).TurnID
 	require.NotEmpty(t, tid2)
 	assert.NotEqual(t, tid1, tid2, "turn 2 must have a different TurnId than turn 1")
 	for i, env := range turn2 {
 		p := env.Params.(SessionUpdateParams)
-		assert.Equal(t, tid2, p.TurnId, "turn2[%d] TurnId mismatch", i)
+		assert.Equal(t, tid2, p.TurnID, "turn2[%d] TurnId mismatch", i)
 	}
 
 	// (3) streamSeq is 0,1,2,3 in turn 1 and 0,1,2 in turn 2.

@@ -140,7 +140,7 @@ type AgentRunCreateParams struct {
 	// References an Agent record by name.
 	Agent string `json:"agent"`
 
-	// RestartPolicy controls restart behavior ("never", "on-failure", "always").
+	// RestartPolicy controls restart behavior ("try_reload", "always_new").
 	RestartPolicy string `json:"restartPolicy,omitempty"`
 
 	// SystemPrompt is the agent's system prompt (optional).

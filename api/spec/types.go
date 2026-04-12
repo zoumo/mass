@@ -119,14 +119,14 @@ type PermissionPolicy string
 
 const (
 	// ApproveAll automatically approves all fs/* and terminal/* operations.
-	ApproveAll PermissionPolicy = "approve-all"
+	ApproveAll PermissionPolicy = "approve_all"
 
 	// ApproveReads automatically approves read operations; write operations
 	// return a deny error.
-	ApproveReads PermissionPolicy = "approve-reads"
+	ApproveReads PermissionPolicy = "approve_reads"
 
 	// DenyAll returns a deny error for all fs/* and terminal/* operations.
-	DenyAll PermissionPolicy = "deny-all"
+	DenyAll PermissionPolicy = "deny_all"
 )
 
 // IsValid reports whether p is a known PermissionPolicy value.

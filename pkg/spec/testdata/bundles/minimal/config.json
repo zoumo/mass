@@ -11,5 +11,5 @@
       "command": "mockagent"
     }
   },
-  "permissions": "approve-all"
+  "permissions": "approve_all"
 }

@@ -242,15 +242,15 @@ stdio MCP server：
 
 * **`permissions`** (string, OPTIONAL) 指定 agent-shim 处理 agent 发起的
   `fs/*` / `terminal/*` 请求时的权限策略。
-  默认值为 `"approve-all"`。
+  默认值为 `"approve_all"`。
 
   取值：
 
   | 值 | 行为 |
   |------|------|
-  | `"approve-all"` | 所有 fs/terminal 操作自动批准 |
-  | `"approve-reads"` | 只读操作批准，写操作返回 deny |
-  | `"deny-all"` | 所有操作返回 deny |
+  | `"approve_all"` | 所有 fs/terminal 操作自动批准 |
+  | `"approve_reads"` | 只读操作批准，写操作返回 deny |
+  | `"deny_all"` | 所有操作返回 deny |
 
   策略在 session 创建时确定，运行时不可更改。
 
@@ -258,7 +258,7 @@ stdio MCP server：
 
 ```json
 {
-  "permissions": "approve-all"
+  "permissions": "approve_all"
 }
 ```
 
@@ -303,7 +303,7 @@ agentd 生成的完整 config.json（runtimeClass "claude" 解析后）：
     }
   },
 
-  "permissions": "approve-all"
+  "permissions": "approve_all"
 }
 ```
 

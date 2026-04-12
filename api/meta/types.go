@@ -71,11 +71,11 @@ const (
 	// RestartPolicyTryReload attempts ACP session/load to restore conversation
 	// history from the prior session when the agent is recovered after a
 	// daemon restart.
-	RestartPolicyTryReload = "tryReload"
+	RestartPolicyTryReload = "try_reload"
 
 	// RestartPolicyAlwaysNew (default) always starts a fresh ACP session on
 	// recovery, discarding prior conversation history.
-	RestartPolicyAlwaysNew = "alwaysNew"
+	RestartPolicyAlwaysNew = "always_new"
 )
 
 // AgentRunSpec describes the desired configuration of an agent run.
@@ -85,8 +85,8 @@ type AgentRunSpec struct {
 	Agent string `json:"agent"`
 
 	// RestartPolicy controls session continuation on agent restart.
-	// Values: "tryReload" — attempt ACP session/load to restore conversation history;
-	//         "alwaysNew" (default) — always start a fresh ACP session.
+	// Values: "try_reload" — attempt ACP session/load to restore conversation history;
+	//         "always_new" (default) — always start a fresh ACP session.
 	RestartPolicy string `json:"restartPolicy,omitempty"`
 
 	// Description is a human-readable description of the agent.

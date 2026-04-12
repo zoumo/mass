@@ -1,6 +1,6 @@
 // Package agentd implements the agent daemon that manages agent runtime lifecycle.
 // This file contains boundary tests for the shim write authority rule (D088):
-// after bootstrap, only runtime/stateChange notifications may update DB agent
+// after bootstrap, only runtime/state_change notifications may update DB agent
 // state — Start() and recoverAgent() must not call UpdateStatus directly.
 package agentd
 
@@ -20,7 +20,7 @@ import (
 	
 )
 
-// TestStateChange_CreatingToIdle_UpdatesDB verifies that a runtime/stateChange
+// TestStateChange_CreatingToIdle_UpdatesDB verifies that a runtime/state_change
 // notification (creating → idle) from the shim drives a DB state update via the
 // production buildNotifHandler — no direct UpdateStatus(StatusRunning) call.
 func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
@@ -43,7 +43,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	srv, socketPath := newMockShimServer(t)
 	_ = srv // cleanup registered via t.Cleanup in newMockShimServer
 
-	srv.queueNotification("runtime/stateChange", map[string]any{
+	srv.queueNotification("runtime/state_change", map[string]any{
 		"sessionId":      "test-session",
 		"seq":            0,
 		"timestamp":      "2026-01-01T00:00:00Z",
@@ -83,7 +83,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 		agent, _ := store.GetAgentRun(ctx, ws, agentName)
 		return agent != nil && agent.Status.State == api.StatusIdle
 	}, 3*time.Second, 50*time.Millisecond,
-		"DB state should become idle after runtime/stateChange notification")
+		"DB state should become idle after runtime/state_change notification")
 
 	// Confirm final DB state.
 	agent, err := store.GetAgentRun(ctx, ws, agentName)
@@ -150,7 +150,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 		}
 
 		require.Equal(t, i, update.Seq)
-		require.Equal(t, turnID, update.TurnId)
+		require.Equal(t, turnID, update.TurnID)
 		require.NotNil(t, update.StreamSeq)
 		require.Equal(t, i, *update.StreamSeq)
 		require.Equal(t, "text", update.Event.Type)
@@ -161,7 +161,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 }
 
 // TestStateChange_RunningToIdle_UpdatesDB verifies that two successive
-// runtime/stateChange notifications (idle→running, running→idle) each drive
+// runtime/state_change notifications (idle→running, running→idle) each drive
 // independent DB state updates via the production handler.
 func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	pm, store := setupRecoveryTest(t)
@@ -181,7 +181,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 
 	// Queue two successive stateChange notifications: idle→running, then running→idle.
 	srv, socketPath := newMockShimServer(t)
-	srv.queueNotification("runtime/stateChange", map[string]any{
+	srv.queueNotification("runtime/state_change", map[string]any{
 		"sessionId":      "test-session",
 		"seq":            1,
 		"timestamp":      "2026-01-01T00:00:00Z",
@@ -189,7 +189,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 		"status":         "running",
 		"pid":            5678,
 	})
-	srv.queueNotification("runtime/stateChange", map[string]any{
+	srv.queueNotification("runtime/state_change", map[string]any{
 		"sessionId":      "test-session",
 		"seq":            2,
 		"timestamp":      "2026-01-01T00:00:01Z",
@@ -234,7 +234,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 }
 
 // TestStart_DoesNotWriteStatusRunning proves the D088 boundary: without a
-// runtime/stateChange notification from the shim, the DB state never becomes
+// runtime/state_change notification from the shim, the DB state never becomes
 // StatusRunning. The only direct write Start() may do post-connect is the
 // bootstrap config write (StatusCreating); all subsequent state transitions
 // must arrive via stateChange notifications.
@@ -291,13 +291,13 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	require.NotNil(t, agent)
 	assert.NotEqual(t, api.StatusRunning, agent.Status.State,
 		"Start() must not write StatusRunning directly (D088); "+
-			"state should only change via runtime/stateChange notification")
+			"state should only change via runtime/state_change notification")
 	assert.Equal(t, api.StatusCreating, agent.Status.State,
 		"without a stateChange notification, DB state must remain StatusCreating")
 }
 
 // TestStateChange_MalformedParamsDropped verifies that a malformed
-// runtime/stateChange params payload is silently dropped and does not
+// runtime/state_change params payload is silently dropped and does not
 // update the DB or panic.
 func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	pm, store := setupRecoveryTest(t)
@@ -317,7 +317,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	// Queue a malformed stateChange notification (array instead of object).
 	srv, socketPath := newMockShimServer(t)
 	defer srv.close()
-	srv.queueNotification("runtime/stateChange", []any{"this", "is", "not", "a", "stateChange"})
+	srv.queueNotification("runtime/state_change", []any{"this", "is", "not", "a", "stateChange"})
 
 	shimProc := &ShimProcess{
 		AgentKey:   key,

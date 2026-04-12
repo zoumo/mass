@@ -25,7 +25,7 @@ spec:
         name: claude-code
       spec:
         agent: claude
-        restartPolicy: on-failure
+        restartPolicy: try_reload
         systemPrompt: "You are a helpful assistant."
 `
 	cfg, err := parseConfig([]byte(input))
@@ -44,7 +44,7 @@ spec:
 
 	assert.Equal(t, "claude-code", cfg.Spec.Agents[1].Metadata.Name)
 	assert.Equal(t, "claude", cfg.Spec.Agents[1].Spec.Agent)
-	assert.Equal(t, "on-failure", cfg.Spec.Agents[1].Spec.RestartPolicy)
+	assert.Equal(t, "try_reload", cfg.Spec.Agents[1].Spec.RestartPolicy)
 	assert.Equal(t, "You are a helpful assistant.", cfg.Spec.Agents[1].Spec.SystemPrompt)
 }
 

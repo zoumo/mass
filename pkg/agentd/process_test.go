@@ -128,7 +128,7 @@ func TestProcessManagerStart(t *testing.T) {
 		t.Fatalf("ProcessManager.Start: %v", err)
 	}
 
-	// Verify agent status transitions to idle/running via runtime/stateChange
+	// Verify agent status transitions to idle/running via runtime/state_change
 	// notification (D088 — direct StatusRunning write removed from Start).
 	// Poll until the shim emits its first stateChange notification.
 	var updatedAgent *meta.AgentRun

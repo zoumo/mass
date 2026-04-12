@@ -424,8 +424,8 @@ func TestShimClientSubscribeReceivesSessionUpdate(t *testing.T) {
 			"payload": json.RawMessage(textPayload),
 		},
 	})
-	// Queue a runtime/stateChange notification.
-	srv.queueNotification("runtime/stateChange", map[string]any{
+	// Queue a runtime/state_change notification.
+	srv.queueNotification("runtime/state_change", map[string]any{
 		"sessionId":      "test-session",
 		"seq":            0,
 		"timestamp":      "2026-01-01T00:00:00Z",
@@ -470,7 +470,7 @@ func TestShimClientSubscribeReceivesSessionUpdate(t *testing.T) {
 	mu.Unlock()
 
 	assert.True(t, methods["session/update"], "should have received session/update")
-	assert.True(t, methods["runtime/stateChange"], "should have received runtime/stateChange")
+	assert.True(t, methods["runtime/state_change"], "should have received runtime/state_change")
 }
 
 // TestShimClientNotificationsAreSerialized verifies that a slow handler for an
@@ -542,7 +542,7 @@ func TestShimClientSubscribeDropsUnknownMethods(t *testing.T) {
 	// Queue a legacy-style notification that should be rejected.
 	srv.queueNotification("$/event", map[string]any{"type": "text", "payload": map[string]any{"text": "oops"}})
 	// Queue a valid notification.
-	srv.queueNotification("runtime/stateChange", map[string]any{
+	srv.queueNotification("runtime/state_change", map[string]any{
 		"sessionId": "s", "seq": 0, "timestamp": "2026-01-01T00:00:00Z",
 		"previousStatus": "created", "status": "running",
 	})
@@ -575,7 +575,7 @@ func TestShimClientSubscribeDropsUnknownMethods(t *testing.T) {
 	for _, m := range received {
 		assert.NotEqual(t, "$/event", m, "$/event must not be forwarded to handler")
 	}
-	assert.Contains(t, received, "runtime/stateChange")
+	assert.Contains(t, received, "runtime/state_change")
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -721,7 +721,7 @@ func TestParseRuntimeStateChange(t *testing.T) {
 func TestParseRuntimeStateChangeMalformed(t *testing.T) {
 	_, err := ParseRuntimeStateChange(json.RawMessage(`[1, 2]`))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parse runtime/stateChange")
+	assert.Contains(t, err.Error(), "parse runtime/state_change")
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -856,7 +856,7 @@ func TestShimClient_Load_Success(t *testing.T) {
 }
 
 // TestShimClient_Load_RpcError verifies that Load propagates RPC errors from
-// the shim so the caller can fall back (e.g. tryReload policy).
+// the shim so the caller can fall back (e.g. try_reload policy).
 func TestShimClient_Load_RpcError(t *testing.T) {
 	srv, socketPath := newMockShimServer(t)
 	defer srv.close()

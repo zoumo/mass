@@ -23,7 +23,7 @@ type SessionPromptResult struct {
 }
 
 // SessionLoadParams is the JSON body for the "session/load" RPC method.
-// The shim server exposes this for tryReload restart policy; agentd calls it
+// The shim server exposes this for try_reload restart policy; agentd calls it
 // during recovery to restore a prior ACP session.
 type SessionLoadParams struct {
 	SessionID string `json:"sessionId"`

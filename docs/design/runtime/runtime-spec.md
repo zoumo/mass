@@ -334,7 +334,7 @@ The runtime reads `config.json` from the bundle directory. Fields:
       ]
     }
   },
-  "permissions": "approve-all"
+  "permissions": "approve_all"
 }
 ```
 
@@ -352,9 +352,9 @@ runtime 按创建时指定的权限策略处理：
 
 | 策略 | 行为 |
 |------|------|
-| `approve-all` | 所有操作自动批准 |
-| `approve-reads` | 只读操作批准，写操作返回 deny |
-| `deny-all` | 所有操作返回 deny |
+| `approve_all` | 所有操作自动批准 |
+| `approve_reads` | 只读操作批准，写操作返回 deny |
+| `deny_all` | 所有操作返回 deny |
 
 策略通过 config.json 的 `permissions` 字段指定，运行时不可更改。
 

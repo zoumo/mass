@@ -181,10 +181,10 @@ func printNotification(msg rpcResponse) {
 		}
 		printSessionEvent(p.Seq, p.Event)
 
-	case "runtime/stateChange":
+	case "runtime/state_change":
 		var p runtimeStateChangeParams
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			fmt.Fprintf(os.Stderr, "[runtime/stateChange parse error: %v]\n", err)
+			fmt.Fprintf(os.Stderr, "[runtime/state_change parse error: %v]\n", err)
 			return
 		}
 		fmt.Fprintf(os.Stderr, "\033[2m[stateChange seq=%d] %s → %s pid=%d reason=%q\033[0m\n",

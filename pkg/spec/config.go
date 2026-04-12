@@ -59,7 +59,7 @@ func ValidateConfig(c apispec.Config) error {
 	}
 	// Empty permissions defaults to ApproveAll — treat as valid.
 	if c.Permissions != "" && !c.Permissions.IsValid() {
-		return fmt.Errorf("spec: unknown permissions value %q (valid: approve-all, approve-reads, deny-all)", c.Permissions)
+		return fmt.Errorf("spec: unknown permissions value %q (valid: approve_all, approve_reads, deny_all)", c.Permissions)
 	}
 	return nil
 }

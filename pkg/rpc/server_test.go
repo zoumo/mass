@@ -274,7 +274,7 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 
 		// Assert turn_start (live[0]) has TurnId and StreamSeq=0
 		ts := live[0].Params.(events.SessionUpdateParams)
-		require.NotEmpty(t, ts.TurnId)
+		require.NotEmpty(t, ts.TurnID)
 		require.NotNil(t, ts.StreamSeq)
 		require.Equal(t, 0, *ts.StreamSeq)
 		// Assert user_message (live[1]) has StreamSeq=1
@@ -284,7 +284,7 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		// Assert all session/update events in turn share the same TurnId
 		for _, idx := range []int{0, 1, 3, 5} {
 			p := live[idx].Params.(events.SessionUpdateParams)
-			require.Equal(t, ts.TurnId, p.TurnId, "live[%d] TurnId mismatch", idx)
+			require.Equal(t, ts.TurnID, p.TurnID, "live[%d] TurnId mismatch", idx)
 		}
 		// Assert turn_end (live[5]) has StreamSeq=3
 		te := live[5].Params.(events.SessionUpdateParams)

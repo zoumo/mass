@@ -8,7 +8,7 @@ import (
 
 const (
 	MethodSessionUpdate      = "session/update"
-	MethodRuntimeStateChange = "runtime/stateChange"
+	MethodRuntimeStateChange = "runtime/state_change"
 )
 
 type sequenceParams interface {
@@ -69,7 +69,7 @@ func (e *TypedEvent) UnmarshalJSON(data []byte) error {
 // SessionUpdateParams is the params object for session/update notifications.
 type SessionUpdateParams struct {
 	SequenceMeta
-	TurnId    string     `json:"turnId,omitempty"`
+	TurnID    string     `json:"turnId,omitempty"`
 	StreamSeq *int       `json:"streamSeq,omitempty"`
 	Phase     string     `json:"phase,omitempty"`
 	Event     TypedEvent `json:"event"`
@@ -78,7 +78,7 @@ type SessionUpdateParams struct {
 func (SessionUpdateParams) envelopeMethod() string { return MethodSessionUpdate }
 func (p SessionUpdateParams) sequence() int        { return p.Seq }
 
-// RuntimeStateChangeParams is the params object for runtime/stateChange notifications.
+// RuntimeStateChangeParams is the params object for runtime/state_change notifications.
 type RuntimeStateChangeParams struct {
 	SequenceMeta
 	PreviousStatus string `json:"previousStatus"`

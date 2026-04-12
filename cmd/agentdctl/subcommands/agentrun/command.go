@@ -68,7 +68,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent name within the workspace (required)")
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent definition name (required)")
-	cmd.Flags().StringVar(&restartPolicy, "restart-policy", "", "Restart policy: never, on-failure, always")
+	cmd.Flags().StringVar(&restartPolicy, "restart-policy", "", "Restart policy: try_reload, always_new (default: always_new)")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "System prompt for the agent run")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
