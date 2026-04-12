@@ -226,13 +226,15 @@ func (a *AssistantMessageItem) renderError(width int) string {
 	return fmt.Sprintf("%s\n\n%s", title, details)
 }
 
-// isSpinning returns true if the assistant message is still generating.
+// isSpinning returns true if the assistant message is still generating
+// and has no renderable content yet.
 func (a *AssistantMessageItem) isSpinning() bool {
 	isThinking := a.message.IsThinking()
 	isFinished := a.message.IsFinished()
 	hasContent := strings.TrimSpace(a.message.Content().Text) != ""
+	hasThinking := strings.TrimSpace(a.message.ReasoningContent().Thinking) != ""
 	hasToolCalls := len(a.message.ToolCalls()) > 0
-	return (isThinking || !isFinished) && !hasContent && !hasToolCalls
+	return (isThinking || !isFinished) && !hasContent && !hasThinking && !hasToolCalls
 }
 
 // SetMessage is used to update the underlying message.

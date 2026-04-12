@@ -360,6 +360,23 @@ func (m *chatModel) updateCurrentAssistant() {
 	}
 }
 
+// ensureCurrentMsg creates an assistant message if we don't have one yet.
+// This happens when we connect to a shim mid-turn (late join).
+func (m *chatModel) ensureCurrentMsg() tea.Cmd {
+	if m.currentMsg != nil {
+		return nil
+	}
+	msg := newShimMessage(m.nextID("assistant"), chat.RoleAssistant)
+	m.currentMsg = msg
+	m.currentMsgID = msg.id
+	item := chat.NewAssistantMessageItem(&m.sty, msg)
+	m.chat.AppendMessages(item)
+	if a, ok := item.(*chat.AssistantMessageItem); ok {
+		return a.StartAnimation()
+	}
+	return nil
+}
+
 func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 	if msg.Method != "session/update" {
 		return nil
@@ -368,22 +385,27 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		return nil
 	}
+
+	var cmds []tea.Cmd
+
 	switch p.Event.Type {
 	case "text":
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
-		if m.currentMsg != nil {
-			m.currentMsg.appendText(pl.Text)
-			m.updateCurrentAssistant()
+		if cmd := m.ensureCurrentMsg(); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
+		m.currentMsg.appendText(pl.Text)
+		m.updateCurrentAssistant()
 
 	case "thinking":
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
-		if m.currentMsg != nil {
-			m.currentMsg.appendThinking(pl.Text)
-			m.updateCurrentAssistant()
+		if cmd := m.ensureCurrentMsg(); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
+		m.currentMsg.appendThinking(pl.Text)
+		m.updateCurrentAssistant()
 
 	case "tool_call":
 		var pl struct {
@@ -415,11 +437,9 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.currentMsgID = newMsg.id
 		item := chat.NewAssistantMessageItem(&m.sty, newMsg)
 		m.chat.AppendMessages(item)
-
-		// Start animation for new assistant item.
 		if a, ok := item.(*chat.AssistantMessageItem); ok {
 			if cmd := a.StartAnimation(); cmd != nil {
-				return cmd
+				cmds = append(cmds, cmd)
 			}
 		}
 
@@ -430,14 +450,15 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		}
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 
+		status := chat.ToolStatusSuccess
+		if pl.Status == "error" {
+			status = chat.ToolStatusError
+		}
+
 		// Find the tool call item and update its result/status.
 		if itemID, ok := m.toolItemIDs[pl.ID]; ok {
 			if item := m.chat.MessageItem(itemID); item != nil {
 				if ti, ok := item.(chat.ToolMessageItem); ok {
-					status := chat.ToolStatusSuccess
-					if pl.Status == "error" {
-						status = chat.ToolStatusError
-					}
 					ti.SetStatus(status)
 					ti.SetResult(&chat.ToolResult{
 						ToolCallID: pl.ID,
@@ -445,10 +466,24 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 					})
 				}
 			}
+		} else {
+			// Late join: tool_call was before we connected. Show as standalone.
+			toolItemID := m.nextID("tc")
+			tc := chat.ToolCall{ID: pl.ID, Name: pl.ID} // use ID as name fallback
+			result := &chat.ToolResult{ToolCallID: pl.ID, Content: pl.Status}
+			toolItem := chat.NewToolMessageItem(&m.sty, toolItemID, tc, result, false)
+			if ti, ok := toolItem.(chat.ToolMessageItem); ok {
+				ti.SetStatus(status)
+			}
+			m.chat.AppendMessages(toolItem)
 		}
 		if m.chat.Follow() {
 			m.chat.ScrollToBottom()
 		}
+	}
+
+	if len(cmds) > 0 {
+		return tea.Batch(cmds...)
 	}
 	return nil
 }
