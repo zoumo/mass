@@ -8,9 +8,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/anim"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/common"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/anim"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/common"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
 )
 
 // assistantMessageTruncateFormat is the text shown when an assistant message is

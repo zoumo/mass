@@ -2,16 +2,17 @@ package chat
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/stringext"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/anim"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/common"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/stringext"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/anim"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/common"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
 )
 
 // responseContextHeight limits the number of lines displayed in tool output.
@@ -251,18 +252,25 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 }
 
 // Render renders the tool message item at the given width.
+// Uses a colored left border (▌) consistent with our unified style.
 func (t *baseToolMessageItem) Render(width int) string {
-	var prefix string
-	if t.isCompact {
-		prefix = t.sty.Chat.Message.ToolCallCompact.Render()
-	} else if t.focused {
-		prefix = t.sty.Chat.Message.ToolCallFocused.Render()
-	} else {
-		prefix = t.sty.Chat.Message.ToolCallBlurred.Render()
+	raw := t.RawRender(width)
+
+	// Pick border color based on status.
+	var borderColor color.Color
+	switch t.computeStatus() {
+	case ToolStatusSuccess:
+		borderColor = t.sty.GreenDark
+	case ToolStatusError:
+		borderColor = t.sty.Error
+	default:
+		borderColor = t.sty.FgMuted
 	}
-	lines := strings.Split(t.RawRender(width), "\n")
+
+	border := lipgloss.NewStyle().Foreground(borderColor).Render("▌")
+	lines := strings.Split(raw, "\n")
 	for i, ln := range lines {
-		lines[i] = prefix + ln
+		lines[i] = border + " " + ln
 	}
 	return strings.Join(lines, "\n")
 }

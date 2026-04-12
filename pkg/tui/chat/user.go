@@ -5,8 +5,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/common"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/common"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
 )
 
 // UserMessageItem represents a user message in the chat UI.
@@ -63,11 +63,12 @@ func (m *UserMessageItem) Render(width int) string {
 	// Label line
 	label := lipgloss.NewStyle().Bold(true).Foreground(m.sty.Primary).Render("[User]")
 
-	// Wrap in a background block (dark gray background with padding)
+	// Wrap in a background block (dark gray background with padding + bottom margin)
 	blockStyle := lipgloss.NewStyle().
 		Background(m.sty.BgBaseLighter).
 		Width(cappedWidth).
-		Padding(0, 1)
+		Padding(0, 1).
+		MarginBottom(1)
 
 	return blockStyle.Render(label + "\n" + rawContent)
 }

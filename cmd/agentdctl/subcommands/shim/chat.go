@@ -10,9 +10,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/open-agent-d/open-agent-d/pkg/tui/chat"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/anim"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/pkg/tui/chat"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/anim"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
 )
 
 // ── Tea messages ──────────────────────────────────────────────────────────────
@@ -122,7 +123,7 @@ func connectCmd(sock string) tea.Cmd {
 		if err != nil {
 			return connErrMsg{fmt.Errorf("connect: %w", err)}
 		}
-		if _, err := c.call("session/subscribe", nil); err != nil {
+		if _, err := c.call(api.MethodSessionSubscribe, nil); err != nil {
 			c.close()
 			return connErrMsg{fmt.Errorf("session/subscribe: %w", err)}
 		}
@@ -139,7 +140,7 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 		if isTurnEndNotification(msg) {
 			return turnEndMsg{}
 		}
-		if msg.Method == "runtime/state_change" {
+		if msg.Method == api.MethodRuntimeStateChange {
 			var p runtimeStateChangeParams
 			if err := json.Unmarshal(msg.Params, &p); err == nil {
 				return stateChangeMsg{
@@ -155,7 +156,7 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 
 func sendPromptCmd(c *client, text string) tea.Cmd {
 	return func() tea.Msg {
-		if err := c.send("session/prompt", map[string]string{"prompt": text}); err != nil {
+		if err := c.send(api.MethodSessionPrompt, map[string]string{"prompt": text}); err != nil {
 			return promptErrMsg{err}
 		}
 		return nil
@@ -164,14 +165,14 @@ func sendPromptCmd(c *client, text string) tea.Cmd {
 
 func cancelPromptCmd(c *client) tea.Cmd {
 	return func() tea.Msg {
-		_, _ = c.call("session/cancel", nil)
+		_, _ = c.call(api.MethodSessionCancel, nil)
 		return nil
 	}
 }
 
 func fetchStatusCmd(c *client) tea.Cmd {
 	return func() tea.Msg {
-		result, err := c.call("runtime/status", nil)
+		result, err := c.call(api.MethodRuntimeStatus, nil)
 		if err != nil {
 			return nil
 		}
@@ -441,7 +442,7 @@ func (m *chatModel) ensureCurrentMsg() tea.Cmd {
 }
 
 func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
-	if msg.Method != "session/update" {
+	if msg.Method != api.MethodSessionUpdate {
 		return nil
 	}
 	var p sessionUpdateParams
@@ -452,7 +453,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch p.Event.Type {
-	case "user_message":
+	case api.EventTypeUserMessage:
 		// User prompt broadcast. Skip if we sent this prompt (already shown).
 		if m.sentPrompt {
 			m.sentPrompt = false
@@ -467,7 +468,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			m.chat.AppendMessages(chat.NewUserMessageItem(&m.sty, userMsg))
 		}
 
-	case "text":
+	case api.EventTypeText:
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
@@ -476,7 +477,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.currentMsg.appendText(pl.Text)
 		m.updateCurrentAssistant()
 
-	case "thinking":
+	case api.EventTypeThinking:
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
@@ -485,7 +486,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.currentMsg.appendThinking(pl.Text)
 		m.updateCurrentAssistant()
 
-	case "tool_call":
+	case api.EventTypeToolCall:
 		var pl struct {
 			ID    string `json:"id"`
 			Kind  string `json:"kind"`
@@ -513,19 +514,13 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.chat.AppendMessages(toolItem)
 		m.toolItemIDs[pl.ID] = toolItemID
 
-		// Start new assistant message for text after tool.
-		newMsg := newShimMessage(m.nextID("assistant"), chat.RoleAssistant)
-		m.currentMsg = newMsg
-		m.currentMsgID = newMsg.id
-		item := chat.NewAssistantMessageItem(&m.sty, newMsg)
-		m.chat.AppendMessages(item)
-		if a, ok := item.(*chat.AssistantMessageItem); ok {
-			if cmd := a.StartAnimation(); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
+		// Clear current message — a new AssistantMessageItem will be created
+		// on demand when the next text event arrives (via ensureCurrentMsg).
+		// This avoids empty [Agent] blocks between tool calls.
+		m.currentMsg = nil
+		m.currentMsgID = ""
 
-	case "tool_result":
+	case api.EventTypeToolResult:
 		var pl struct {
 			ID     string `json:"id"`
 			Status string `json:"status"`
