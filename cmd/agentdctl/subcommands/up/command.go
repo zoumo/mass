@@ -9,7 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	ari "github.com/open-agent-d/open-agent-d/api/ari"
+	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
@@ -87,7 +88,7 @@ Example config (kind: workspace-up):
 	return cmd
 }
 
-func createWorkspace(client *ari.Client, cfg Config) error {
+func createWorkspace(client *ariclient.Client, cfg Config) error {
 	src, err := buildSource(cfg.Spec.Source)
 	if err != nil {
 		return err
@@ -105,7 +106,7 @@ func createWorkspace(client *ari.Client, cfg Config) error {
 	return nil
 }
 
-func waitWorkspaceReady(client *ari.Client, name string) error {
+func waitWorkspaceReady(client *ariclient.Client, name string) error {
 	fmt.Printf("Waiting for workspace %q to be ready...\n", name)
 	for {
 		time.Sleep(500 * time.Millisecond)
@@ -123,7 +124,7 @@ func waitWorkspaceReady(client *ari.Client, name string) error {
 	}
 }
 
-func createAgentRun(client *ari.Client, wsName string, a AgentRunEntry) error {
+func createAgentRun(client *ariclient.Client, wsName string, a AgentRunEntry) error {
 	params := ari.AgentRunCreateParams{
 		Workspace:     wsName,
 		Name:          a.Metadata.Name,
@@ -139,7 +140,7 @@ func createAgentRun(client *ari.Client, wsName string, a AgentRunEntry) error {
 	return nil
 }
 
-func waitAgentIdle(client *ari.Client, wsName, agName string) error {
+func waitAgentIdle(client *ariclient.Client, wsName, agName string) error {
 	fmt.Printf("Waiting for agent %q/%q to be idle...\n", wsName, agName)
 	for {
 		time.Sleep(500 * time.Millisecond)
@@ -159,7 +160,7 @@ func waitAgentIdle(client *ari.Client, wsName, agName string) error {
 	}
 }
 
-func printAttachInfo(client *ari.Client, wsName, agName string) {
+func printAttachInfo(client *ariclient.Client, wsName, agName string) {
 	var result ari.AgentRunAttachResult
 	if err := client.Call("agentrun/attach", ari.AgentRunAttachParams{Workspace: wsName, Name: agName}, &result); err != nil {
 		fmt.Printf("  %s/%s: (attach failed: %v)\n", wsName, agName, err)

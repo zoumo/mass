@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
 // ClientFn is a factory for ARI clients, injected by the root command.
-type ClientFn func() (*ari.Client, error)
+type ClientFn func() (*ariclient.Client, error)
 
 // OutputJSON pretty-prints the result as JSON to stdout.
 func OutputJSON(result any) {

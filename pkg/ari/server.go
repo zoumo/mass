@@ -16,6 +16,7 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 
 	"github.com/open-agent-d/open-agent-d/api"
+	apiari "github.com/open-agent-d/open-agent-d/api/ari"
 	"github.com/open-agent-d/open-agent-d/api/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/agentd"
 	"github.com/open-agent-d/open-agent-d/pkg/store"
@@ -246,7 +247,7 @@ func (s *Server) replyErr(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc
 // Observability: INFO on entry (name, phase:pending); INFO/WARN in goroutine
 // on prepare success (phase:ready, path) or failure (phase:error).
 func (s *Server) handleWorkspaceCreate(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params WorkspaceCreateParams
+	var params apiari.WorkspaceCreateParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -282,7 +283,7 @@ func (s *Server) handleWorkspaceCreate(ctx context.Context, conn *jsonrpc2.Conn,
 	}
 
 	// Reply with pending immediately, then prepare asynchronously.
-	s.replyOK(ctx, conn, req, WorkspaceCreateResult{
+	s.replyOK(ctx, conn, req, apiari.WorkspaceCreateResult{
 		Name:  params.Name,
 		Phase: string(meta.WorkspacePhasePending),
 	})
@@ -335,7 +336,7 @@ func (s *Server) handleWorkspaceCreate(ctx context.Context, conn *jsonrpc2.Conn,
 // Lookup order: in-memory registry (fast path for ready workspaces), then DB
 // fallback for workspaces still in pending/error phase.
 func (s *Server) handleWorkspaceStatus(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params WorkspaceStatusParams
+	var params apiari.WorkspaceStatusParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -346,7 +347,7 @@ func (s *Server) handleWorkspaceStatus(ctx context.Context, conn *jsonrpc2.Conn,
 	// Fast path: registry contains ready workspaces.
 	if wm := s.registry.Get(params.Name); wm != nil {
 		members := s.listWorkspaceMembers(ctx, params.Name)
-		s.replyOK(ctx, conn, req, WorkspaceStatusResult{
+		s.replyOK(ctx, conn, req, apiari.WorkspaceStatusResult{
 			Name:    wm.Name,
 			Phase:   wm.Status,
 			Path:    wm.Path,
@@ -368,7 +369,7 @@ func (s *Server) handleWorkspaceStatus(ctx context.Context, conn *jsonrpc2.Conn,
 	}
 
 	members := s.listWorkspaceMembers(ctx, params.Name)
-	s.replyOK(ctx, conn, req, WorkspaceStatusResult{
+	s.replyOK(ctx, conn, req, apiari.WorkspaceStatusResult{
 		Name:    ws.Metadata.Name,
 		Phase:   string(ws.Status.Phase),
 		Path:    ws.Status.Path,
@@ -385,23 +386,23 @@ func (s *Server) handleWorkspaceList(ctx context.Context, conn *jsonrpc2.Conn, r
 	s.logger.Info("workspace/list")
 
 	metas := s.registry.List()
-	infos := make([]WorkspaceInfo, 0, len(metas))
+	infos := make([]apiari.WorkspaceInfo, 0, len(metas))
 	for _, m := range metas {
-		infos = append(infos, WorkspaceInfo{
+		infos = append(infos, apiari.WorkspaceInfo{
 			Name:  m.Name,
 			Phase: m.Status,
 			Path:  m.Path,
 		})
 	}
 
-	s.replyOK(ctx, conn, req, WorkspaceListResult{Workspaces: infos})
+	s.replyOK(ctx, conn, req, apiari.WorkspaceListResult{Workspaces: infos})
 }
 
 // handleWorkspaceDelete handles the workspace/delete method.
 //
 // Rejects deletion if the workspace has active agent runs (enforced by the store).
 func (s *Server) handleWorkspaceDelete(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params WorkspaceDeleteParams
+	var params apiari.WorkspaceDeleteParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -415,7 +416,7 @@ func (s *Server) handleWorkspaceDelete(ctx context.Context, conn *jsonrpc2.Conn,
 			return
 		}
 		// "has N agent(s)" or other domain error.
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, err.Error())
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked, err.Error())
 		return
 	}
 
@@ -427,7 +428,7 @@ func (s *Server) handleWorkspaceDelete(ctx context.Context, conn *jsonrpc2.Conn,
 //
 // Routes a message from one agent run to another within a workspace via a
 // fire-and-forget ShimClient.Prompt call. Rejects when:
-//   - recovery is active (CodeRecoveryBlocked)
+//   - recovery is active (apiari.CodeRecoveryBlocked)
 //   - target agent run not found (-32602)
 //   - target agent run is in error state (-32001)
 //   - target shim is not running (-32001)
@@ -435,7 +436,7 @@ func (s *Server) handleWorkspaceDelete(ctx context.Context, conn *jsonrpc2.Conn,
 // Observability: INFO on dispatch (workspace, from, to); WARN on each
 // rejection path with reason.
 func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params WorkspaceSendParams
+	var params apiari.WorkspaceSendParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -453,7 +454,7 @@ func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, r
 	if s.processes.IsRecovering() {
 		s.logger.Warn("workspace/send: recovery blocked",
 			"workspace", params.Workspace, "to", params.To)
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "daemon is recovering agents")
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked, "daemon is recovering agents")
 		return
 	}
 
@@ -473,13 +474,13 @@ func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, r
 	if agent.Status.State == api.StatusError {
 		s.logger.Warn("workspace/send: target agent in error state",
 			"workspace", params.Workspace, "to", params.To)
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "target agent is in error state")
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked, "target agent is in error state")
 		return
 	}
 	if agent.Status.State != api.StatusIdle {
 		s.logger.Warn("workspace/send: target agent not idle",
 			"workspace", params.Workspace, "to", params.To, "state", agent.Status.State)
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked,
 			fmt.Sprintf("target agent not in idle state: %s", agent.Status.State))
 		return
 	}
@@ -499,7 +500,7 @@ func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		if current != nil {
 			state = string(current.Status.State)
 		}
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked,
 			fmt.Sprintf("target agent not in idle state: %s", state))
 		return
 	}
@@ -510,7 +511,7 @@ func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		s.logger.Warn("workspace/send: target agent not running",
 			"workspace", params.Workspace, "to", params.To, "error", err)
 		s.recordPromptDeliveryFailure(params.Workspace, params.To, agent.Status, err, true)
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "target agent is not running")
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked, "target agent is not running")
 		return
 	}
 
@@ -524,14 +525,14 @@ func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		}
 	}()
 
-	s.replyOK(ctx, conn, req, WorkspaceSendResult{Delivered: true})
+	s.replyOK(ctx, conn, req, apiari.WorkspaceSendResult{Delivered: true})
 }
 
 // buildWorkspaceEnvelope constructs the envelope header prepended to every
 // workspace message before delivery. It encodes the sender identity and, when
 // NeedsReply is set, the reply-to address and reply-requested flag so the
 // receiving agent knows it is expected to respond.
-func buildWorkspaceEnvelope(p WorkspaceSendParams) string {
+func buildWorkspaceEnvelope(p apiari.WorkspaceSendParams) string {
 	if p.NeedsReply {
 		return "[workspace-message from=" + p.From + " reply-to=" + p.From + " reply-requested=true]\n\n"
 	}
@@ -595,11 +596,11 @@ func (s *Server) recordPromptDeliveryFailure(workspace, name string, fallback me
 //
 // Validates Workspace/Name/Agent, checks workspace phase, creates the
 // agent run record with state=creating, and starts the shim in a background goroutine.
-// Returns AgentRunCreateResult immediately (state is always "creating").
+// Returns apiari.AgentRunCreateResult immediately (state is always "creating").
 //
 // Observability: INFO on creation; INFO/WARN in goroutine on Start success/failure.
 func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentRunCreateParams
+	var params apiari.AgentRunCreateParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -630,7 +631,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 		return
 	}
 	if ws.Status.Phase != meta.WorkspacePhaseReady {
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked,
 			fmt.Sprintf("workspace %s is not ready (phase=%s)", params.Workspace, ws.Status.Phase))
 		return
 	}
@@ -654,7 +655,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 	if err := s.agents.Create(ctx, agent); err != nil {
 		var alreadyExists *agentd.ErrAgentRunAlreadyExists
 		if errors.As(err, &alreadyExists) {
-			s.replyErr(ctx, conn, req, CodeRecoveryBlocked, err.Error())
+			s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked, err.Error())
 			return
 		}
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
@@ -682,7 +683,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 		}
 	}()
 
-	s.replyOK(ctx, conn, req, AgentRunCreateResult{
+	s.replyOK(ctx, conn, req, apiari.AgentRunCreateResult{
 		Workspace: params.Workspace,
 		Name:      params.Name,
 		State:     string(api.StatusCreating),
@@ -692,11 +693,11 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 // handleAgentRunPrompt handles the agentrun/prompt method.
 //
 // Validates agent run state == idle, connects to shim, fires prompt in background.
-// Returns AgentRunPromptResult{Accepted: true} immediately.
+// Returns apiari.AgentRunPromptResult{Accepted: true} immediately.
 //
 // Observability: INFO on dispatch; WARN on rejection (bad state, not running).
 func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentRunPromptParams
+	var params apiari.AgentRunPromptParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -713,7 +714,7 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 	if s.processes.IsRecovering() {
 		s.logger.Warn("agentrun/prompt: recovery blocked",
 			"workspace", params.Workspace, "name", params.Name)
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "daemon is recovering agents")
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked, "daemon is recovering agents")
 		return
 	}
 
@@ -733,7 +734,7 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 	if agent.Status.State != api.StatusIdle {
 		s.logger.Warn("agentrun/prompt: agent not in idle state",
 			"workspace", params.Workspace, "name", params.Name, "state", agent.Status.State)
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked,
 			fmt.Sprintf("agent not in idle state: %s", agent.Status.State))
 		return
 	}
@@ -757,7 +758,7 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 		if current != nil {
 			state = string(current.Status.State)
 		}
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked,
 			fmt.Sprintf("agent not in idle state: %s", state))
 		return
 	}
@@ -768,7 +769,7 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 		s.logger.Warn("agentrun/prompt: agent not running",
 			"workspace", params.Workspace, "name", params.Name, "error", err)
 		s.recordPromptDeliveryFailure(params.Workspace, params.Name, agent.Status, err, true)
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "agent not running")
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked, "agent not running")
 		return
 	}
 
@@ -784,14 +785,14 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 
 	s.logger.Info("agentrun/prompt: dispatched",
 		"workspace", params.Workspace, "name", params.Name)
-	s.replyOK(ctx, conn, req, AgentRunPromptResult{Accepted: true})
+	s.replyOK(ctx, conn, req, apiari.AgentRunPromptResult{Accepted: true})
 }
 
 // handleAgentRunCancel handles the agentrun/cancel method.
 //
 // Connects to the running shim and calls Cancel. Returns empty result.
 func (s *Server) handleAgentRunCancel(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentRunCancelParams
+	var params apiari.AgentRunCancelParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -813,7 +814,7 @@ func (s *Server) handleAgentRunCancel(ctx context.Context, conn *jsonrpc2.Conn, 
 
 	client, err := s.processes.Connect(ctx, params.Workspace, params.Name)
 	if err != nil {
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "agent not running")
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked, "agent not running")
 		return
 	}
 
@@ -830,7 +831,7 @@ func (s *Server) handleAgentRunCancel(ctx context.Context, conn *jsonrpc2.Conn, 
 // Calls processes.Stop which sends runtime/stop to the shim and waits.
 // Returns empty result.
 func (s *Server) handleAgentRunStop(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentRunStopParams
+	var params apiari.AgentRunStopParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -851,7 +852,7 @@ func (s *Server) handleAgentRunStop(ctx context.Context, conn *jsonrpc2.Conn, re
 // Validates agent run is in stopped/error state, then deletes from DB.
 // Maps ErrDeleteNotStopped → -32001, ErrAgentRunNotFound → -32602.
 func (s *Server) handleAgentRunDelete(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentRunDeleteParams
+	var params apiari.AgentRunDeleteParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -867,7 +868,7 @@ func (s *Server) handleAgentRunDelete(ctx context.Context, conn *jsonrpc2.Conn, 
 		}
 		var notStopped *agentd.ErrDeleteNotStopped
 		if errors.As(err, &notStopped) {
-			s.replyErr(ctx, conn, req, CodeRecoveryBlocked, err.Error())
+			s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked, err.Error())
 			return
 		}
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
@@ -889,9 +890,9 @@ func (s *Server) handleAgentRunDelete(ctx context.Context, conn *jsonrpc2.Conn, 
 //
 // Accepts any agent state. For agents with an active shim (creating/idle/running),
 // the shim is stopped first in the background before a new one is started.
-// Returns AgentRunRestartResult immediately (state="creating").
+// Returns apiari.AgentRunRestartResult immediately (state="creating").
 func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentRunRestartParams
+	var params apiari.AgentRunRestartParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -951,7 +952,7 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 		}
 	}()
 
-	s.replyOK(ctx, conn, req, AgentRunRestartResult{
+	s.replyOK(ctx, conn, req, apiari.AgentRunRestartResult{
 		Workspace: params.Workspace,
 		Name:      params.Name,
 		State:     string(api.StatusCreating),
@@ -962,7 +963,7 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 //
 // Returns all agent runs matching the optional workspace/state filter.
 func (s *Server) handleAgentRunList(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentRunListParams
+	var params apiari.AgentRunListParams
 	if req.Params != nil {
 		if err := unmarshalParams(req, &params); err != nil {
 			s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
@@ -983,19 +984,19 @@ func (s *Server) handleAgentRunList(ctx context.Context, conn *jsonrpc2.Conn, re
 		return
 	}
 
-	infos := make([]AgentRunInfo, 0, len(agents))
+	infos := make([]apiari.AgentRunInfo, 0, len(agents))
 	for _, ag := range agents {
 		infos = append(infos, agentRunToInfo(ag))
 	}
 
-	s.replyOK(ctx, conn, req, AgentRunListResult{AgentRuns: infos})
+	s.replyOK(ctx, conn, req, apiari.AgentRunListResult{AgentRuns: infos})
 }
 
 // handleAgentRunStatus handles the agentrun/status method.
 //
 // Returns detailed agent run info plus optional shim runtime state.
 func (s *Server) handleAgentRunStatus(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentRunStatusParams
+	var params apiari.AgentRunStatusParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -1014,12 +1015,12 @@ func (s *Server) handleAgentRunStatus(ctx context.Context, conn *jsonrpc2.Conn, 
 		return
 	}
 
-	result := AgentRunStatusResult{AgentRun: agentRunToInfo(agent)}
+	result := apiari.AgentRunStatusResult{AgentRun: agentRunToInfo(agent)}
 
 	// Best-effort: fetch shim runtime state if available.
 	if rts, err := s.processes.RuntimeStatus(ctx, params.Workspace, params.Name); err == nil {
 		st := rts.State
-		result.ShimState = &ShimStateInfo{
+		result.ShimState = &apiari.ShimStateInfo{
 			Status: string(st.Status),
 			PID:    agent.Status.ShimPID,
 			Bundle: st.Bundle,
@@ -1034,7 +1035,7 @@ func (s *Server) handleAgentRunStatus(ctx context.Context, conn *jsonrpc2.Conn, 
 // Returns the shim's Unix socket path so the caller can connect directly.
 // Agent run must be in idle or running state.
 func (s *Server) handleAgentRunAttach(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentRunAttachParams
+	var params apiari.AgentRunAttachParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -1054,7 +1055,7 @@ func (s *Server) handleAgentRunAttach(ctx context.Context, conn *jsonrpc2.Conn, 
 	}
 
 	if agent.Status.State != api.StatusIdle && agent.Status.State != api.StatusRunning {
-		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
+		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked,
 			fmt.Sprintf("agent not in idle/running state: %s", agent.Status.State))
 		return
 	}
@@ -1069,17 +1070,17 @@ func (s *Server) handleAgentRunAttach(ctx context.Context, conn *jsonrpc2.Conn, 
 		socketPath = p.SocketPath
 	}
 
-	s.replyOK(ctx, conn, req, AgentRunAttachResult{SocketPath: socketPath})
+	s.replyOK(ctx, conn, req, apiari.AgentRunAttachResult{SocketPath: socketPath})
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // agentrun helper
 // ────────────────────────────────────────────────────────────────────────────
 
-// agentRunToInfo converts a meta.AgentRun to an AgentRunInfo wire type.
+// agentRunToInfo converts a meta.AgentRun to an apiari.AgentRunInfo wire type.
 // Note: no agentId field — identity is (workspace, name).
-func agentRunToInfo(ag *meta.AgentRun) AgentRunInfo {
-	return AgentRunInfo{
+func agentRunToInfo(ag *meta.AgentRun) apiari.AgentRunInfo {
+	return apiari.AgentRunInfo{
 		Workspace:    ag.Metadata.Workspace,
 		Name:         ag.Metadata.Name,
 		Agent:        ag.Spec.Agent,
@@ -1090,15 +1091,15 @@ func agentRunToInfo(ag *meta.AgentRun) AgentRunInfo {
 	}
 }
 
-// listWorkspaceMembers returns AgentRunInfo for all agent runs in the given workspace.
+// listWorkspaceMembers returns apiari.AgentRunInfo for all agent runs in the given workspace.
 // Returns nil (not an error) if the query fails.
-func (s *Server) listWorkspaceMembers(ctx context.Context, wsName string) []AgentRunInfo {
+func (s *Server) listWorkspaceMembers(ctx context.Context, wsName string) []apiari.AgentRunInfo {
 	agents, err := s.agents.List(ctx, &meta.AgentRunFilter{Workspace: wsName})
 	if err != nil {
 		s.logger.Error("listWorkspaceMembers: list agent runs failed", "workspace", wsName, "err", err)
 		return nil
 	}
-	infos := make([]AgentRunInfo, 0, len(agents))
+	infos := make([]apiari.AgentRunInfo, 0, len(agents))
 	for _, ag := range agents {
 		infos = append(infos, agentRunToInfo(ag))
 	}
@@ -1114,7 +1115,7 @@ func (s *Server) listWorkspaceMembers(ctx context.Context, wsName string) []Agen
 //
 // Observability: INFO on success with name and command logged.
 func (s *Server) handleAgentSet(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentSetParams
+	var params apiari.AgentSetParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -1157,7 +1158,7 @@ func (s *Server) handleAgentSet(ctx context.Context, conn *jsonrpc2.Conn, req *j
 //
 // Returns the agent definition info or -32602 (InvalidParams) if not found.
 func (s *Server) handleAgentGet(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentGetParams
+	var params apiari.AgentGetParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -1180,7 +1181,7 @@ func (s *Server) handleAgentGet(ctx context.Context, conn *jsonrpc2.Conn, req *j
 		return
 	}
 
-	s.replyOK(ctx, conn, req, AgentGetResult{Agent: agentToInfo(ag)})
+	s.replyOK(ctx, conn, req, apiari.AgentGetResult{Agent: agentToInfo(ag)})
 }
 
 // handleAgentList handles the agent/list method.
@@ -1195,12 +1196,12 @@ func (s *Server) handleAgentList(ctx context.Context, conn *jsonrpc2.Conn, req *
 		return
 	}
 
-	infos := make([]AgentInfo, 0, len(ags))
+	infos := make([]apiari.AgentInfo, 0, len(ags))
 	for _, ag := range ags {
 		infos = append(infos, agentToInfo(ag))
 	}
 
-	s.replyOK(ctx, conn, req, AgentListResult{Agents: infos})
+	s.replyOK(ctx, conn, req, apiari.AgentListResult{Agents: infos})
 }
 
 // handleAgentDelete handles the agent/delete method.
@@ -1208,7 +1209,7 @@ func (s *Server) handleAgentList(ctx context.Context, conn *jsonrpc2.Conn, req *
 //
 // Observability: INFO on delete with name logged.
 func (s *Server) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params AgentDeleteParams
+	var params apiari.AgentDeleteParams
 	if err := unmarshalParams(req, &params); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -1228,9 +1229,9 @@ func (s *Server) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn, req
 	s.replyOK(ctx, conn, req, struct{}{})
 }
 
-// agentToInfo converts a meta.Agent to an AgentInfo wire type.
-func agentToInfo(ag *meta.Agent) AgentInfo {
-	return AgentInfo{
+// agentToInfo converts a meta.Agent to an apiari.AgentInfo wire type.
+func agentToInfo(ag *meta.Agent) apiari.AgentInfo {
+	return apiari.AgentInfo{
 		Name:                  ag.Metadata.Name,
 		Command:               ag.Spec.Command,
 		Args:                  ag.Spec.Args,

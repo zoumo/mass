@@ -10,7 +10,7 @@ import (
 
 	"github.com/open-agent-d/open-agent-d/api/meta"
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	"github.com/open-agent-d/open-agent-d/api/ari"
 )
 
 // NewCommand returns the "agent" cobra command.

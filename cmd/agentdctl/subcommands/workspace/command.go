@@ -8,7 +8,7 @@ import (
 
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/workspace/create"
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	"github.com/open-agent-d/open-agent-d/api/ari"
 )
 
 // NewCommand returns the "workspace" cobra command.

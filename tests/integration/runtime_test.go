@@ -6,7 +6,8 @@ package integration_test
 import (
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	ari "github.com/open-agent-d/open-agent-d/api/ari"
+	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
 // TestRuntimeLifecycle is the S02 acceptance test.

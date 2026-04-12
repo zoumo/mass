@@ -13,7 +13,7 @@ import (
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/shim"
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/up"
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/workspace"
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
 // NewRootCommand returns the agentdctl root cobra command.
@@ -26,11 +26,11 @@ func NewRootCommand() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&socketPath, "socket", "/var/run/agentd/ari.sock", "ARI socket path")
 
-	getClient := func() (*ari.Client, error) {
+	getClient := func() (*ariclient.Client, error) {
 		if socketPath == "" {
 			return nil, os.ErrInvalid
 		}
-		return ari.NewClient(socketPath)
+		return ariclient.NewClient(socketPath)
 	}
 
 	root.AddCommand(agentrun.NewCommand(cliutil.ClientFn(getClient)))

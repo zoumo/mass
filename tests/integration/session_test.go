@@ -12,7 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	ari "github.com/open-agent-d/open-agent-d/api/ari"
+	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
 // testSocketCounter provides unique socket paths for each test.
@@ -25,7 +26,7 @@ var testSocketCounter int64
 // setupAgentdTest starts agentd daemon and returns context, client, and cleanup function.
 // It uses --root flag path derivation (no config.yaml) and self-fork shim (no OAR_SHIM_BINARY).
 // After the socket is ready it registers the "mockagent" runtime via runtime/set.
-func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *ari.Client, func()) {
+func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *ariclient.Client, func()) {
 	t.Helper()
 	// Use a short root path under /tmp to avoid macOS 104-char Unix socket path limit (K025).
 	// Socket lands at rootDir/agentd.sock which is within the limit.
@@ -68,7 +69,7 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *ari.Cl
 		t.Fatalf("socket not ready: %v", err)
 	}
 
-	client, err := ari.NewClient(socketPath)
+	client, err := ariclient.NewClient(socketPath)
 	if err != nil {
 		cancel()
 		t.Fatalf("failed to create ARI client: %v", err)
@@ -111,7 +112,7 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *ari.Cl
 
 // createTestWorkspace calls workspace/create and polls workspace/status until
 // phase=="ready". Returns the workspace name. Fatals on timeout or error.
-func createTestWorkspace(t *testing.T, client *ari.Client, name string) string {
+func createTestWorkspace(t *testing.T, client *ariclient.Client, name string) string {
 	t.Helper()
 	var createResult ari.WorkspaceCreateResult
 	if err := client.Call("workspace/create", map[string]interface{}{
@@ -147,7 +148,7 @@ func createTestWorkspace(t *testing.T, client *ari.Client, name string) string {
 }
 
 // deleteTestWorkspace removes a workspace. Logs but does not fatal on error (best-effort cleanup).
-func deleteTestWorkspace(t *testing.T, client *ari.Client, name string) {
+func deleteTestWorkspace(t *testing.T, client *ariclient.Client, name string) {
 	t.Helper()
 	if err := client.Call("workspace/delete", map[string]interface{}{"name": name}, nil); err != nil {
 		t.Logf("workspace/delete (name=%s): %v (ignored)", name, err)
@@ -159,7 +160,7 @@ func deleteTestWorkspace(t *testing.T, client *ari.Client, name string) {
 // Calls t.Fatalf on timeout.
 func waitForAgentState(
 	t *testing.T,
-	client *ari.Client,
+	client *ariclient.Client,
 	workspace, name, wantState string,
 	timeout time.Duration,
 ) ari.AgentRunStatusResult {
@@ -172,7 +173,7 @@ func waitForAgentState(
 // Calls t.Fatalf on timeout.
 func waitForAgentStateOneOf(
 	t *testing.T,
-	client *ari.Client,
+	client *ariclient.Client,
 	workspace, name string,
 	wantStates []string,
 	timeout time.Duration,
@@ -201,7 +202,7 @@ func waitForAgentStateOneOf(
 
 // createAgentAndWait calls agent/create and polls until state=="idle".
 // Returns the status result after the agent is ready.
-func createAgentAndWait(t *testing.T, client *ari.Client, workspace, name, agentDef string) ari.AgentRunStatusResult {
+func createAgentAndWait(t *testing.T, client *ariclient.Client, workspace, name, agentDef string) ari.AgentRunStatusResult {
 	t.Helper()
 	var createResult ari.AgentRunCreateResult
 	if err := client.Call("agentrun/create", map[string]interface{}{
@@ -219,7 +220,7 @@ func createAgentAndWait(t *testing.T, client *ari.Client, workspace, name, agent
 // stopAndDeleteAgent stops and then deletes an agent. Best-effort cleanup —
 // logs but does not fatal on errors. Polls for stopped state before deleting
 // because agent/delete requires state "stopped" or "error".
-func stopAndDeleteAgent(t *testing.T, client *ari.Client, workspace, name string) {
+func stopAndDeleteAgent(t *testing.T, client *ariclient.Client, workspace, name string) {
 	t.Helper()
 	if err := client.Call("agentrun/stop", map[string]interface{}{
 		"workspace": workspace,

@@ -14,7 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	ari "github.com/open-agent-d/open-agent-d/api/ari"
+	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
 )
 
 // startAgentd launches agentd with --root rootDir, waits for the socket,
@@ -99,7 +100,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	agentdCmd1 := startAgentd(t, ctx1, agentdBin, rootDir, socketPath)
 
-	client1, err := ari.NewClient(socketPath)
+	client1, err := ariclient.NewClient(socketPath)
 	if err != nil {
 		t.Fatalf("ARI client: %v", err)
 	}
@@ -191,7 +192,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	agentdCmd2 := startAgentd(t, ctx2, agentdBin, rootDir, socketPath)
 	defer stopAgentd(t, agentdCmd2, socketPath)
 
-	client2, err := ari.NewClient(socketPath)
+	client2, err := ariclient.NewClient(socketPath)
 	if err != nil {
 		t.Fatalf("ARI client after restart: %v", err)
 	}

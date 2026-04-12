@@ -1,5 +1,7 @@
-// Package ari implements the Agent Runtime Interface (ARI) JSON-RPC server.
-// ARI provides methods for workspace management and agent lifecycle.
+// Package ari contains the ARI (Agent Runtime Interface) JSON-RPC wire types.
+// These are pure request/response parameter and result types for all ARI methods.
+// This package has no external dependencies — only the Go standard library and
+// other api/ sub-packages.
 package ari
 
 import (

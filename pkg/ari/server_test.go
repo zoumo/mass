@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/open-agent-d/open-agent-d/api"
+	apiari "github.com/open-agent-d/open-agent-d/api/ari"
 	"github.com/open-agent-d/open-agent-d/api/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/agentd"
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
@@ -114,16 +115,16 @@ func callRaw(t *testing.T, client *ari.Client, method string, params any) (json.
 func waitUntilWorkspaceReady(t *testing.T, client *ari.Client, wsName string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		var res ari.WorkspaceStatusResult
+		var res apiari.WorkspaceStatusResult
 		err := client.Call("workspace/status", map[string]string{"name": wsName}, &res)
 		return err == nil && res.Phase == "ready"
 	}, 5*time.Second, 50*time.Millisecond, "workspace %s did not become ready", wsName)
 }
 
 // createAndWaitWorkspace creates a workspace with emptyDir source and polls until ready.
-func createAndWaitWorkspace(t *testing.T, client *ari.Client, name string) ari.WorkspaceStatusResult {
+func createAndWaitWorkspace(t *testing.T, client *ari.Client, name string) apiari.WorkspaceStatusResult {
 	t.Helper()
-	var createResult ari.WorkspaceCreateResult
+	var createResult apiari.WorkspaceCreateResult
 	require.NoError(t, client.Call("workspace/create", map[string]any{
 		"name":   name,
 		"source": json.RawMessage(`{"type":"emptyDir"}`),
@@ -132,7 +133,7 @@ func createAndWaitWorkspace(t *testing.T, client *ari.Client, name string) ari.W
 
 	waitUntilWorkspaceReady(t, client, name)
 
-	var statusResult ari.WorkspaceStatusResult
+	var statusResult apiari.WorkspaceStatusResult
 	require.NoError(t, client.Call("workspace/status", map[string]string{"name": name}, &statusResult))
 	return statusResult
 }
@@ -161,7 +162,7 @@ func seedAgent(t *testing.T, store *store.Store, wsName, name string, state api.
 func TestWorkspaceCreatePending(t *testing.T) {
 	env := newTestServer(t)
 
-	var result ari.WorkspaceCreateResult
+	var result apiari.WorkspaceCreateResult
 	err := env.client.Call("workspace/create", map[string]any{
 		"name":   "w1",
 		"source": json.RawMessage(`{"type":"emptyDir"}`),
@@ -188,7 +189,7 @@ func TestWorkspaceStatusMembers(t *testing.T) {
 	seedAgent(t, env.store, "ws-members", "checker", api.StatusIdle)
 	seedAgent(t, env.store, "ws-members", "reviewer", api.StatusRunning)
 
-	var result ari.WorkspaceStatusResult
+	var result apiari.WorkspaceStatusResult
 	require.NoError(t, env.client.Call("workspace/status",
 		map[string]string{"name": "ws-members"}, &result))
 
@@ -206,7 +207,7 @@ func TestWorkspaceStatusMembersEmpty(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "ws-empty")
 
-	var result ari.WorkspaceStatusResult
+	var result apiari.WorkspaceStatusResult
 	require.NoError(t, env.client.Call("workspace/status",
 		map[string]string{"name": "ws-empty"}, &result))
 
@@ -220,7 +221,7 @@ func TestWorkspaceList(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "wl-1")
 	createAndWaitWorkspace(t, env.client, "wl-2")
 
-	var listResult ari.WorkspaceListResult
+	var listResult apiari.WorkspaceListResult
 	require.NoError(t, env.client.Call("workspace/list", nil, &listResult))
 	assert.GreaterOrEqual(t, len(listResult.Workspaces), 2)
 
@@ -241,7 +242,7 @@ func TestWorkspaceDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	// After delete: status should return an error (not found → -32602 or phase error).
-	var statusResult ari.WorkspaceStatusResult
+	var statusResult apiari.WorkspaceStatusResult
 	statusErr := env.client.Call("workspace/status", map[string]string{"name": "w-del"}, &statusResult)
 	// Either an RPC error (not found) or phase=="error" are acceptable.
 	if statusErr == nil {
@@ -277,7 +278,7 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var result ari.AgentRunCreateResult
+	var result apiari.AgentRunCreateResult
 	require.NoError(t, json.Unmarshal(raw, &result))
 	assert.Equal(t, "creating", result.State)
 	assert.Equal(t, "ac-ws", result.Workspace)
@@ -297,12 +298,12 @@ func TestAgentListAndStatus(t *testing.T) {
 	seedAgent(t, env.store, "als-ws", "agent-idle", api.StatusIdle)
 	seedAgent(t, env.store, "als-ws", "agent-stopped", api.StatusStopped)
 
-	var listResult ari.AgentRunListResult
+	var listResult apiari.AgentRunListResult
 	require.NoError(t, env.client.Call("agentrun/list", map[string]string{"workspace": "als-ws"}, &listResult))
 	assert.Len(t, listResult.AgentRuns, 2)
 
 	// Verify agentrun/status returns correct state.
-	var statusResult ari.AgentRunStatusResult
+	var statusResult apiari.AgentRunStatusResult
 	require.NoError(t, env.client.Call("agentrun/status", map[string]string{
 		"workspace": "als-ws",
 		"name":      "agent-idle",
@@ -382,7 +383,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		Done:       make(chan struct{}),
 	})
 
-	var result ari.AgentRunPromptResult
+	var result apiari.AgentRunPromptResult
 	require.NoError(t, env.client.Call("agentrun/prompt", map[string]any{
 		"workspace": "reserve-ws",
 		"name":      agentName,
@@ -390,7 +391,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	}, &result))
 	require.True(t, result.Accepted)
 
-	var status ari.AgentRunStatusResult
+	var status apiari.AgentRunStatusResult
 	require.NoError(t, env.client.Call("agentrun/status", map[string]string{
 		"workspace": "reserve-ws",
 		"name":      agentName,
@@ -415,7 +416,7 @@ func TestAgentRunRestartFromIdle(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "restart-idle-ws")
 	seedAgent(t, env.store, "restart-idle-ws", "idle-agent", api.StatusIdle)
 
-	var result ari.AgentRunRestartResult
+	var result apiari.AgentRunRestartResult
 	err := env.client.Call("agentrun/restart", map[string]string{
 		"workspace": "restart-idle-ws",
 		"name":      "idle-agent",
@@ -429,7 +430,7 @@ func TestAgentRunRestartFromRunning(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "restart-running-ws")
 	seedAgent(t, env.store, "restart-running-ws", "running-agent", api.StatusRunning)
 
-	var result ari.AgentRunRestartResult
+	var result apiari.AgentRunRestartResult
 	err := env.client.Call("agentrun/restart", map[string]string{
 		"workspace": "restart-running-ws",
 		"name":      "running-agent",
@@ -475,7 +476,7 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 		"error must carry code -32602 (CodeInvalidParams)")
 
 	// No agent record must have been written to DB.
-	var listResult ari.AgentRunListResult
+	var listResult apiari.AgentRunListResult
 	require.NoError(t, env.client.Call("agentrun/list",
 		map[string]string{"workspace": "sock-ws"}, &listResult))
 	for _, ag := range listResult.AgentRuns {
@@ -632,7 +633,7 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 	seedAgent(t, env.store, "send-ws", agentName, api.StatusIdle)
 	shimSrv := injectMockShim(t, env, "send-ws", agentName)
 
-	var sendResult ari.WorkspaceSendResult
+	var sendResult apiari.WorkspaceSendResult
 	require.NoError(t, env.client.Call("workspace/send", map[string]any{
 		"workspace": "send-ws",
 		"from":      "sender",
@@ -659,7 +660,7 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 	seedAgent(t, env.store, "reply-ws", agentName, api.StatusIdle)
 	shimSrv := injectMockShim(t, env, "reply-ws", agentName)
 
-	var sendResult ari.WorkspaceSendResult
+	var sendResult apiari.WorkspaceSendResult
 	require.NoError(t, env.client.Call("workspace/send", map[string]any{
 		"workspace":  "reply-ws",
 		"from":       "codex",

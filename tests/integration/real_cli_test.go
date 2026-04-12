@@ -13,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	ari "github.com/open-agent-d/open-agent-d/api/ari"
+	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
 	"github.com/open-agent-d/open-agent-d/api"
 )
 
@@ -24,7 +25,7 @@ func setupAgentdTestWithRuntimeClass(
 	t *testing.T,
 	runtimeClassName string,
 	templateSpec ari.AgentSetParams,
-) (context.Context, context.CancelFunc, *ari.Client, func()) {
+) (context.Context, context.CancelFunc, *ariclient.Client, func()) {
 	t.Helper()
 
 	// Use a short root path under /tmp to avoid macOS 104-char Unix socket path limit (K025).
@@ -61,7 +62,7 @@ func setupAgentdTestWithRuntimeClass(
 		t.Fatalf("agentd socket not ready: %v", err)
 	}
 
-	client, err := ari.NewClient(socketPath)
+	client, err := ariclient.NewClient(socketPath)
 	if err != nil {
 		cancel()
 		agentdCmd.Process.Kill()
@@ -107,7 +108,7 @@ func setupAgentdTestWithRuntimeClass(
 // runRealCLILifecycle exercises the full ARI agent lifecycle against a real
 // CLI runtime: workspace/create → agent/create → agent/prompt → poll idle →
 // agent/status → agent/stop → agent/delete → workspace/delete.
-func runRealCLILifecycle(t *testing.T, _ context.Context, client *ari.Client, runtimeClass string) {
+func runRealCLILifecycle(t *testing.T, _ context.Context, client *ariclient.Client, runtimeClass string) {
 	t.Helper()
 
 	wsName := fmt.Sprintf("test-%s", runtimeClass)

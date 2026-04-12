@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
+	"github.com/open-agent-d/open-agent-d/api/ari"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
