@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -273,50 +272,7 @@ func runPrompt(sock, text string) error {
 }
 
 func runChat(sock string) error {
-	c, err := dial(sock)
-	if err != nil {
-		return err
-	}
-	defer c.close()
-
-	if _, err := c.call("session/subscribe", nil); err != nil {
-		return fmt.Errorf("session/subscribe: %w", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	turnEnd := startNotificationPrinter(ctx, c)
-
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("agentdctl shim chat — type your message, 'exit' to quit")
-	for {
-		fmt.Print("\n> ")
-		if !scanner.Scan() {
-			break
-		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		if line == "exit" || line == "quit" {
-			break
-		}
-		drainTurnEnd(turnEnd)
-		result, err := c.call("session/prompt", map[string]string{"prompt": line})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			continue
-		}
-		<-turnEnd
-		var pr struct {
-			StopReason string `json:"stopReason"`
-		}
-		_ = json.Unmarshal(result, &pr)
-		if pr.StopReason != "" {
-			fmt.Fprintf(os.Stderr, "[stop: %s]", pr.StopReason)
-		}
-	}
-	return nil
+	return runChatTUI(sock)
 }
 
 // ── NewCommand ─────────────────────────────────────────────────────────────
