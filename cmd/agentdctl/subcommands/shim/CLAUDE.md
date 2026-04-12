@@ -40,13 +40,13 @@ shim chat 可以随时连接到正在运行的 agent。这意味着：
 - `c.send()` 发完立即返回，不注册 pending handler
 - 这样 `session/cancel` 的 `c.call()` 不会和 prompt 的 encoder 竞争
 
-## scanner buffer
+## RPC 读取
 
-`bufio.Scanner` 默认 64KB。agent 的 tool_result 可能很大（代码文件内容）。已增大到 10MB：
+使用 `bufio.Reader.ReadBytes('\n')` + `json.Unmarshal` 逐行读取 NDJSON 流：
 
-```go
-sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-```
+- **无大小限制**：`ReadBytes` 按需增长，不像 `bufio.Scanner` 有硬上限
+- **非 JSON 容错**：遇到非 JSON 行时 skip 并 log warning，不中断连接
+- **流状态可恢复**：`json.Decoder` 遇到非 JSON 后流位置损坏无法恢复，`ReadBytes` 按行边界切分，天然可以跳过坏行
 
 ## 状态栏
 
@@ -94,9 +94,25 @@ tool_result{id, status}
     → not found (late join): skip silently
 ```
 
+## waitNotif 链必须不间断
+
+`waitNotif` 是一个自调度链：读一个通知 → 返回 tea.Msg → Update 处理 → 在 cmds 里加 `waitNotif` 继续读下一个。
+
+**Update 中每个消费 notifs channel 的 case 都必须重新调度 `waitNotif(m.notifs)`：**
+
+```go
+case notifMsg:     cmds = append(cmds, waitNotif(m.notifs))  // ✓
+case turnEndMsg:   cmds = append(cmds, waitNotif(m.notifs))  // ✓
+case stateChangeMsg: cmds = append(cmds, waitNotif(m.notifs))  // ✓ 曾经遗漏导致消息全丢
+case connClosedMsg:  // 不需要（连接已断）
+```
+
+如果某个 case 漏了 `waitNotif`，链就断了，**后续所有通知（text、thinking、tool_call 等）都会被静默丢弃**。症状：状态栏显示 running 但看不到任何过程消息。
+
 ## 不要做的事
 
 - 不要用 `c.call("session/prompt")` —— 会阻塞到 turn 结束
 - 不要给没有 tool_call 的 tool_result 创建独立行 —— late join 场景会刷屏
 - 不要忘记在创建 AssistantMessageItem 后调用 `StartAnimation()` + 处理 `anim.StepMsg`
 - 不要忘记 `ensureCurrentMsg()` —— 中途接入时第一个 text/thinking 可能没有 currentMsg
+- **不要在任何消费 notifs 的 case 中遗漏 `waitNotif` 重新调度** —— 会导致整个通知流中断
