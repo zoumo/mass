@@ -105,14 +105,20 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 
 // Render implements list.Item.
 func (a *AssistantMessageItem) Render(width int) string {
+	// If spinning (no content yet), show just the animation without [Agent] label.
+	if a.isSpinning() {
+		return a.RawRender(width)
+	}
+
 	rendered := a.RawRender(width)
 
-	// Add [Agent] label on first line
-	label := lipgloss.NewStyle().Bold(true).Foreground(a.sty.GreenDark).Render("[Agent]")
-
+	// Skip empty messages (e.g., finished with no text after a tool call).
 	if strings.TrimSpace(rendered) == "" {
-		return label
+		return ""
 	}
+
+	// Add [Agent] label on first line.
+	label := lipgloss.NewStyle().Bold(true).Foreground(a.sty.GreenDark).Render("[Agent]")
 	return label + "\n" + rendered
 }
 

@@ -514,11 +514,19 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.chat.AppendMessages(toolItem)
 		m.toolItemIDs[pl.ID] = toolItemID
 
-		// Clear current message — a new AssistantMessageItem will be created
-		// on demand when the next text event arrives (via ensureCurrentMsg).
-		// This avoids empty [Agent] blocks between tool calls.
-		m.currentMsg = nil
-		m.currentMsgID = ""
+		// Create new assistant message for post-tool content.
+		// If no text arrives, it renders as just the spinner animation
+		// (no [Agent] label for empty messages — handled in Render).
+		newMsg := newShimMessage(m.nextID("assistant"), chat.RoleAssistant)
+		m.currentMsg = newMsg
+		m.currentMsgID = newMsg.id
+		item := chat.NewAssistantMessageItem(&m.sty, newMsg)
+		m.chat.AppendMessages(item)
+		if a, ok := item.(*chat.AssistantMessageItem); ok {
+			if cmd := a.StartAnimation(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 
 	case api.EventTypeToolResult:
 		var pl struct {
