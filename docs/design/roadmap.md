@@ -10,6 +10,8 @@ Implemented:
                        no I/O, no business logic, no external dependencies
   api/meta/          — API types in api/meta: Agent, AgentRun, Workspace, ObjectMeta, phase constants
   api/spec/          — API types in api/spec: Config, State, PermissionPolicy, ACP types
+  api/ari/           — ARI JSON-RPC wire types: all Params/Result/Info types for workspace/*, agent/*,
+                       agentrun/* methods, plus CodeRecoveryBlocked error code constant
   pkg/spec           — OAR Runtime Spec I/O: config parsing, state file read/write; types in api/spec
   pkg/runtime        — agent process lifecycle, ACP handshake, permissions
   pkg/events         — Typed event stream, EventLog (JSONL), ACP→Event translator
