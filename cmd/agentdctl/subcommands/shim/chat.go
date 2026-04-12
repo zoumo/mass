@@ -505,7 +505,9 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			status = chat.ToolStatusError
 		}
 
-		// Find the tool call item and update its result/status.
+		// Find the matching tool call item and update its status.
+		// If not found (late join), silently skip — these are historical
+		// results the user doesn't need to see individually.
 		if itemID, ok := m.toolItemIDs[pl.ID]; ok {
 			if item := m.chat.MessageItem(itemID); item != nil {
 				if ti, ok := item.(chat.ToolMessageItem); ok {
@@ -516,20 +518,11 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 					})
 				}
 			}
-		} else {
-			// Late join: tool_call was before we connected. Show as standalone.
-			toolItemID := m.nextID("tc")
-			tc := chat.ToolCall{ID: pl.ID, Name: pl.ID} // use ID as name fallback
-			result := &chat.ToolResult{ToolCallID: pl.ID, Content: pl.Status}
-			toolItem := chat.NewToolMessageItem(&m.sty, toolItemID, tc, result, false)
-			if ti, ok := toolItem.(chat.ToolMessageItem); ok {
-				ti.SetStatus(status)
+			if m.chat.Follow() {
+				m.chat.ScrollToBottom()
 			}
-			m.chat.AppendMessages(toolItem)
 		}
-		if m.chat.Follow() {
-			m.chat.ScrollToBottom()
-		}
+		// else: late join — no matching tool_call, skip silently
 	}
 
 	if len(cmds) > 0 {
