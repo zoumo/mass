@@ -456,6 +456,8 @@ Configuration is read from environment variables:
 | `OAR_WORKSPACE_NAME` | yes | The workspace this server instance belongs to |
 | `OAR_AGENT_NAME` | no | The agent name for sender identification |
 | `OAR_STATE_DIR` | no | State directory for log output |
+| `OAR_LOG_LEVEL` | no | Log level (debug, info, warn, error); defaults to `info` |
+| `OAR_LOG_FORMAT` | no | Log format (pretty, text, json); defaults to `pretty` |
 
 ## Capability Posture
 
