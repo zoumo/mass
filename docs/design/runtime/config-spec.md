@@ -72,7 +72,7 @@
   | `root.path` — relative path to rootfs inside the bundle | `agentRoot.path` — relative path to workspace link inside the bundle |
   | containerd prepares rootfs (via snapshotter), places it in the bundle | agentd's Workspace Manager prepares the workspace directory, symlinks it into the bundle |
   | runc reads `root.path`, resolves it, uses it as the container's `/` | agent-shim reads `agentRoot.path`, resolves it, uses it as the agent's cwd |
-  | rootfs is isolated per container | workspace is shared across agents in a Room |
+  | rootfs is isolated per container | workspace is shared across AgentRuns in the same workspace |
 
   Key difference from the old `workspace` field: the path is **relative**, not absolute.
   The absolute path is never stored in config.json — it is derived by agent-shim at runtime
@@ -115,7 +115,7 @@ that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
 * **`acpAgent.systemPrompt`** (string, OPTIONAL) 是 agent 的角色定义和能力约束。
   它属于 session bootstrap 配置，而不是外部工作 turn。
   Runtime 在 `Create` 阶段必须先落实这份 bootstrap 语义，再对外暴露可接收
-  `session/prompt` 的 `created` 状态。
+  `session/prompt` 的 `idle` 状态。
 
   当前 ACP v0.6.3 的 `NewSessionRequest` 还没有 `systemPrompt` 字段，
   因此 runtime 需要在内部把该字段翻译为 ACP 兼容的 bootstrap 流程。
@@ -181,12 +181,27 @@ that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
 
 #### McpServer
 
-每个 MCP 服务条目：
+每个 MCP 服务条目支持两种模式：HTTP/SSE 远程服务，或 stdio 本地进程。
+
+**HTTP / SSE 模式：**
 
   * **`type`** (string, REQUIRED) 是传输类型。取值：`"http"`、`"sse"`。
   * **`url`** (string, REQUIRED) 是 MCP 服务的 URL。
 
+**stdio 模式：**
+
+  * **`type`** (string, REQUIRED) 取值：`"stdio"`。
+  * **`name`** (string, OPTIONAL) 是 MCP 服务的显示名称。
+  * **`command`** (string, REQUIRED) 是 MCP 服务的可执行文件。
+  * **`args`** ([]string, REQUIRED) 是命令行参数。必须显式指定为数组，不会做 shell 拆分。
+  * **`env`** ([]EnvVar, REQUIRED) 是额外环境变量。格式为 `[{"name": "KEY", "value": "VALUE"}]`。
+
+注意：agentd 在创建每个 AgentRun 时，会自动注入一个名为 `workspace` 的 stdio MCP server，
+提供 `workspace_status` 和 `workspace_send` 工具。该 server 无需在 config.json 中显式声明。
+
 #### 示例
+
+HTTP MCP server：
 
 ```json
 {
@@ -196,6 +211,26 @@ that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
         {
           "type": "http",
           "url": "http://localhost:3000/mcp"
+        }
+      ]
+    }
+  }
+}
+```
+
+stdio MCP server：
+
+```json
+{
+  "acpAgent": {
+    "session": {
+      "mcpServers": [
+        {
+          "type": "stdio",
+          "name": "my-tool",
+          "command": "/usr/local/bin/my-mcp-server",
+          "args": ["--port", "0"],
+          "env": [{"name": "API_KEY", "value": "xxx"}]
         }
       ]
     }
@@ -272,9 +307,9 @@ agentd 生成的完整 config.json（runtimeClass "claude" 解析后）：
 }
 ```
 
-启动后，agent 等待编排器通过 ARI `session/prompt` 发送任务。
+启动后，agent 等待编排器通过 ARI `agentrun/prompt` 发送任务。
 
-### 空闲 Agent（Room 成员）
+### 空闲 Agent（workspace 成员）
 
 runtimeClass "gemini" 解析后：
 
@@ -299,7 +334,7 @@ runtimeClass "gemini" 解析后：
 }
 ```
 
-启动后，agent 等待 Room 中其他 agent 的审查请求（通过 ARI `session/prompt`）。
+启动后，agent 等待 workspace 中其他 agent 的审查请求（通过 `workspace/send` 或 ARI `agentrun/prompt`）。
 
 ### 最小配置
 

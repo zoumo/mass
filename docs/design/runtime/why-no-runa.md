@@ -55,7 +55,7 @@ runc 的核心价值在 agent 场景下不存在。
 | 持有 stdio | agent-shim（唯一的 ACP client） |
 | 内核隔离 | 不需要 |
 | 写 state.json | agent-shim（维护 session 状态） |
-| 生命周期操作（create/kill/delete） | agent-shim RPC（Prompt/Cancel/Shutdown/GetState） |
+| 生命周期操作（create/kill/delete） | agent-shim RPC（`session/prompt`、`session/cancel`、`runtime/stop`、`runtime/status`） |
 
 OAR 的结论是：**在 agent 世界里，"启动进程"和"持有 stdio 作为 ACP client"
 必须由同一个常驻进程完成。这个进程是 agent-shim，没有 runa 的位置。**

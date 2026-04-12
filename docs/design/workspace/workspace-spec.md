@@ -1,6 +1,6 @@
 # OAR Workspace Spec
 
-The Workspace Spec declares how agentd should prepare a working directory for one or more sessions.
+The Workspace Spec declares how agentd should prepare a working directory for one or more AgentRuns.
 It is the authority for **workspace identity, source preparation, hook lifecycle, and host-impact boundary rules**.
 
 ## Top-Level Shape
@@ -107,7 +107,7 @@ Hooks let agentd run host commands around workspace lifecycle transitions.
 
 Hooks execute in array order with the workspace directory as `cwd`.
 Any `setup` hook failure fails workspace preparation.
-`teardown` hook behavior and cleanup reporting are owned by agentd’s workspace lifecycle contract.
+`teardown` hook behavior and cleanup reporting are owned by agentd's workspace lifecycle contract.
 
 ## Host-Impact Boundary Rules
 
@@ -132,8 +132,9 @@ That means:
 
 - a hook may mutate files in the workspace;
 - a hook may start or stop host-side services;
-- hook stdout/stderr and failure status must be observable to the caller;
-- hook execution happens before or after session work, not inside a session turn.
+- hook failure aborts workspace preparation (for `setup` hooks) and the error is returned to the ARI caller;
+- hook stdout/stderr is captured by agentd but is **not** currently returned through `workspace/status` — this is a future work gap;
+- hook execution happens before or after agent work, not inside an agent turn.
 
 This is the design-set authority for the phrase **hook execution**.
 
@@ -142,20 +143,17 @@ This is the design-set authority for the phrase **hook execution**.
 The Workspace Spec does **not** define per-hook `env` fields today.
 The boundary rules are therefore:
 
-- workspace hooks run in agentd’s host process environment, subject to future daemon policy;
-- ARI `session/new` env overrides do **not** implicitly flow into workspace hooks;
-- agent process env precedence is defined across the design set as:
-  1. inherited daemon/host environment as the base,
-  2. runtime-class env layered on top,
-  3. `session/new` env overrides layered last.
+- workspace hooks run in agentd's host process environment, subject to future daemon policy;
+- agent process env is built from: inherited daemon/host environment as the base, plus Agent definition `env` layered on top;
+- there is no AgentRun-level env override in `agentrun/create`; env is fixed by the Agent definition;
+- hook environment and agent environment are different surfaces — hooks are not affected by Agent definition env.
 
 This file owns the boundary that hook environment and agent environment are different surfaces.
 It does not turn workspace preparation into a secret-distribution mechanism.
 
 ### 4. Shared workspace reuse and access
 
-A single prepared workspace may be attached to multiple sessions.
-That includes Room members intentionally sharing one `workspaceId`.
+A single prepared workspace may be attached to multiple AgentRuns.
 The contract is explicit:
 
 - shared workspace means shared filesystem visibility;

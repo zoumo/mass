@@ -2,13 +2,25 @@
 
 ## 验证场景
 
-在同一个 Workspace 中拉起三个 AgentRun，协作完成 code review → 复查 → 修复：
+在同一个 Workspace 中拉起三个 AgentRun，协作完成 **方案设计 → 严格审查 → 执行** 的通用任务流：
 
 | Agent 名称 | Runtime Class | 角色 | ACP Adapter |
 |---|---|---|---|
-| **codex** | `codex` | 深度 code review，产出问题列表 | `@zed-industries/codex-acp` (Node, via bunx) |
-| **claude-code** | `claude` | 复查 review 结果，标注优先级 | `@agentclientprotocol/claude-agent-acp` (Node) |
-| **gsd-pi** | `gsd-pi` | 按复查结果执行修复 | `gsd-pi-acp` (Node) |
+| **claude-code** | `claude` | 方案设计者：理解需求，产出具体可执行的方案 | `@agentclientprotocol/claude-agent-acp` (Node) |
+| **codex** | `codex` | 严格审查者：质疑假设，找漏洞，最多 3 轮达成一致 | `@zed-industries/codex-acp` (Node, via bunx) |
+| **gsd-pi** | `gsd-pi` | 执行者：严格按最终方案操作，不做额外设计决策 | `gsd-pi-acp` (Node) |
+
+**协作流**：
+
+```
+human → claude-code [round-1-proposal]
+           ↓ ↑  (最多 3 轮)
+         codex [round-N-feedback / final-approved]
+           ↓
+       claude-code [execution-request]
+           ↓
+         gsd-pi [execution-done]
+```
 
 ## 前置条件
 
@@ -170,59 +182,20 @@ codex(阶段5) → [workspace msg] → gsd-pi(阶段6)
 
 ```bash
 ctl agentrun prompt "$WS/codex" --text \
-"请严格按以下步骤执行，完成每步后立即进行下一步，全部完成后停止：
-
-步骤1：审查 docs/design/ 目录下的所有设计文档，找出与当前代码实现不一致的内容。
-对每个问题记录：文件路径、过时内容描述、建议的修复方案。可以参考 docs/plan/2026-04-12-design-implementation-drift-audit 这是上一轮的审查结果
-
-步骤2：将审查结果写入 docs/plan/design-review-<YYYYMMDD>.md，使用以下结构：
-  ## 审查结论
-  （你的发现，每项包含文件路径、问题描述、修复建议）
-
-  ## 讨论记录
-  （留空）
-
-  ## 最终方案
-  （留空）
-
-步骤3：通过 workspace 消息发送给 claude-code，原文如下（勿修改）：
----
-[round-1-review-request]
-我已完成初步审查，报告路径：docs/plan/design-review-<实际文件名>.md
-
-请完成以下任务后，通过 workspace 消息回复给 codex，标注 [round-1-reply]：
-1. 阅读「审查结论」中的每一项，对照实际代码核实
-2. 对每项注明：同意 / 不同意（不同意时说明理由）
-3. 将意见追加写入该文档「讨论记录」章节，标注「claude-code 第1轮」
-4. 回复消息只需包含简短摘要（哪些同意，哪些有异议）
-回复后请立即停止，等待我的下一条消息。
----
-
-步骤4：消息发送后，立即停止全部操作。不要轮询检查回复，不要联系 gsd-pi，等待被唤醒。"
+"请开始 code review 流程。"
 ```
+
+> codex 的 system prompt 已固化完整流程，它会自动：审查文档 → 写入 design-review-YYYYMMDD.md → 发消息给 claude-code → 等待复查循环 → 派发给 gsd-pi。
 
 ---
 
 #### 阶段2：claude-code 复查（收到 workspace 消息后触发，或人工触发）
 
-> 如果 claude-code 不能自动被 workspace 消息唤醒，手动执行：
+> 正常情况下由 codex 发送的 workspace 消息自动触发。如果 claude-code 不能被消息唤醒，手动执行：
 
 ```bash
 ctl agentrun prompt "$WS/claude-code" --text \
-"你收到了 codex 的 [round-1-review-request]。请严格按以下步骤执行：
-
-步骤1：找到 codex 消息中指定的审查文档（docs/plan/design-review-*.md），
-      仔细阅读「审查结论」中的每一项，对照实际代码进行核实。
-
-步骤2：将复查意见追加写入该文档「讨论记录」章节，标注「claude-code 第1轮」：
-  - 对每项注明：同意 / 不同意
-  - 不同意的项请说明理由
-
-步骤3：通过 workspace 消息回复给 codex，标注 [round-1-reply]，内容包含：
-  - 文档已更新
-  - 简短说明：同意哪些项、对哪些项有异议
-
-步骤4：消息发送后立即停止。不要联系 gsd-pi，等待 codex 的回复。"
+"你收到了 codex 的 [round-1-review-request]，请按协作协议处理。"
 ```
 
 ---
@@ -231,43 +204,16 @@ ctl agentrun prompt "$WS/claude-code" --text \
 
 ```bash
 ctl agentrun prompt "$WS/codex" --text \
-"你收到了 claude-code 的 [round-1-reply]。请严格按以下步骤执行：
-
-步骤1：阅读 docs/plan/design-review-*.md「讨论记录」中「claude-code 第1轮」的意见。
-
-步骤2：将你的回应追加写入「讨论记录」章节，标注「codex 第2轮」：
-  - 接受的意见：说明修改方案
-  - 坚持的意见：给出理由
-
-步骤3：通过 workspace 消息发送给 claude-code，标注 [round-2-codex-response]，内容包含：
-  - 已更新讨论记录
-  - 对各分歧项的最终立场简述
-  - 请求：这是第2轮，请给出你的最终立场并共同确认方案，然后通过 workspace 回复 [round-2-final]
-
-步骤4：消息发送后立即停止，等待 [round-2-final]。"
+"你收到了 claude-code 的 [round-1-reply]，请按协作协议处理。"
 ```
 
 ---
 
-#### 阶段4：claude-code 最终立场（收到 [round-2-codex-response] 后触发，或人工触发）
+#### 阶段4：claude-code 最终立场（收到 [round-2-review-request] 后触发，或人工触发）
 
 ```bash
 ctl agentrun prompt "$WS/claude-code" --text \
-"你收到了 codex 的 [round-2-codex-response]，这是第2轮也是最后一轮。请严格按以下步骤执行：
-
-步骤1：阅读 docs/plan/design-review-*.md「讨论记录」中「codex 第2轮」的回应。
-
-步骤2：将最终立场追加写入「讨论记录」章节，标注「claude-code 第2轮（最终）」。
-
-步骤3：在文档「最终方案」章节写入共识：
-  - 每个确认修复项标注 APPROVED
-  - 每项注明优先级：P0（必须）/ P1（应该）/ P2（可改善）
-  - 写明具体修复要求
-
-步骤4：通过 workspace 消息回复给 codex，标注 [round-2-final]，内容包含：
-  - 讨论完成，最终方案已写入文档
-
-步骤5：消息发送后立即停止，等待 codex 通知执行结果。"
+"你收到了 codex 的 [round-2-review-request]，这是最后一轮，请按协作协议给出最终立场并写入最终方案。"
 ```
 
 ---
@@ -276,22 +222,7 @@ ctl agentrun prompt "$WS/claude-code" --text \
 
 ```bash
 ctl agentrun prompt "$WS/codex" --text \
-"你收到了 claude-code 的 [round-2-final]，讨论已完成。请执行以下操作：
-
-步骤1：阅读 docs/plan/design-review-*.md「最终方案」章节，确认 APPROVED 项完整。
-
-步骤2：通过 workspace 消息发送给 gsd-pi，原文如下（勿修改，填入实际文件名）：
----
-[execution-request]
-请执行 docs/plan/design-review-<实际文件名>.md 「最终方案」章节所有标注 APPROVED 的修复项。
-
-执行要求：
-1. 按 P0 → P1 → P2 顺序执行
-2. 每完成一项，在文档该项后标注 DONE
-3. 全部完成后，通过 workspace 消息回复给 codex，附执行结果摘要
----
-
-步骤3：消息发送后停止，等待 gsd-pi 的完成报告。"
+"你收到了 claude-code 的 [round-2-final]，请按协作协议派发给 gsd-pi。"
 ```
 
 ---
@@ -300,16 +231,7 @@ ctl agentrun prompt "$WS/codex" --text \
 
 ```bash
 ctl agentrun prompt "$WS/gsd-pi" --text \
-"你收到了 codex 的 [execution-request]。请严格按以下步骤执行：
-
-步骤1：阅读 docs/plan/design-review-*.md「最终方案」章节所有标注 APPROVED 的修复项。
-
-步骤2：按 P0 → P1 → P2 优先级顺序逐项执行修复。
-      每完成一项，在文档该项后追加标注 DONE。
-
-步骤3：全部完成后，通过 workspace 消息回复给 codex，内容包含执行结果摘要。
-
-步骤4：发送完成报告后停止。"
+"你收到了 codex 的 [execution-request]，请按协作协议执行修复。"
 ```
 
 ### 状态检查与调试

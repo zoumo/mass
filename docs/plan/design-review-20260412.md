@@ -2,175 +2,205 @@
 
 ### 1. `docs/design/README.md`
 
-问题描述：架构总览仍把 `Pod -> Room`、`Container -> Agent/Session`、`crictl -> agent-shim-cli` 作为当前映射，并把 `docs/design/orchestrator/room-spec.md` 列入索引；但代码中没有 Room Manager、Room ARI，也没有该设计文件。当前二进制是 `agentd` 和 `agentdctl`，直接 shim 管理是 `agentdctl shim` 子命令。
+- 文件路径：`docs/design/README.md`
+- 过时内容描述：总览仍把 `Pod` 映射为 `Room`，把 `Container` 映射为外部 `Agent` / 内部 `Session`，把 `crictl` 映射为 `agent-shim-cli`；架构图仍写 Orchestrator 消费 Room Spec、agentd 包含 Room Manager、外部 API 对象是 `agent/*`；文档索引仍引用不存在的 `docs/design/orchestrator/room-spec.md`。当前代码没有 Room 包、Room ARI 方法或 room-spec；二进制是 `agentd` 和 `agentdctl`；运行实例生命周期是 `agentrun/*`，`agent/*` 只管理 AgentTemplate。
+- 建议的修复方案：更新总览为当前实现词汇：Workspace、AgentTemplate、AgentRun、shim session。删除或标注 Room 为 future work；移除不存在的 room-spec 索引；将 `agent-shim-cli` 改为 `agentdctl shim`；说明 `agent/*` = AgentTemplate CRUD，`agentrun/*` = AgentRun 生命周期。
 
-修复建议：将当前实现概念改为 Workspace、AgentTemplate、AgentRun、shim session；删除或标注 Room 为未来设计；移除不存在的 `orchestrator/room-spec.md` 索引；把 `agent-shim-cli` 改为 `agentdctl shim`；说明外部运行实例生命周期由 `agentrun/*` 提供，`agent/*` 只管理 AgentTemplate。
+### 2. `docs/design/roadmap.md`
 
-### 2. `docs/design/contract-convergence.md`
+- 文件路径：`docs/design/roadmap.md`
+- 过时内容描述：roadmap 仍说只有 agent-shim 层实现，agentd 未实现；仍列出不存在的 `cmd/agent-shim`、`cmd/agent-shim-cli`；仍规划创建已经存在的 `cmd/agentd/main.go`、`pkg/agentd`、`pkg/ari`、`pkg/meta`、`pkg/workspace`；仍以 `session/*` 作为 ARI 生命周期；建议 SQLite 元数据存储；workspace API 写为 `workspace/prepare` / `workspace/cleanup`；Room Manager 仍作为活跃阶段。当前实现已有 agentd、agentdctl、bbolt store、Workspace Manager、AgentTemplate CRUD、AgentRun 生命周期、recovery 和集成测试。
+- 建议的修复方案：将 roadmap 改成当前状态矩阵。标记已实现项：agentd、agentdctl、bbolt、Workspace Manager、AgentTemplate CRUD、AgentRun 生命周期、clean-break shim RPC、部分 recovery。保留未实现或目标项：terminal operation 支持、真正的 ARI 事件 fanout、Room、workspace task/inbox、AgentRun 级 env override、hook 输出通过 ARI 持久化/查询等。
 
-问题描述：authority map 和不变量仍声明外部生命周期是 `agent/create`、`agent/status`、`agent/prompt` 等，Agent identity 是 `room + name`，所有 agent 都属于 Room，`workspace/prepare` 产生 `workspaceId`，状态机包含 `created`。当前实现是 `workspace + name` 的 AgentRun，生命周期方法是 `agentrun/*`，`agent/*` 是 AgentTemplate CRUD，workspace 创建方法是 `workspace/create`，空闲状态是 `idle`。
+### 3. `docs/design/contract-convergence.md`
 
-修复建议：重写该文件作为当前实现的 source of truth：`agent/* = AgentTemplate CRUD`，`agentrun/* = AgentRun lifecycle`，`workspace/* = workspace lifecycle/message routing`；把 Room 相关内容移入未来工作；把 `workspaceId` 改为 workspace name；把 `created` 改为 `idle`；事件边界说明应改为 `agentrun/attach` 返回 shim socket，随后消费 shim 的 `session/update` 和 `runtime/stateChange`。
-
-### 3. `docs/design/roadmap.md`
-
-问题描述：roadmap 仍说只有 agent-shim 已实现、agentd 未实现，并列出 `cmd/agent-shim`、`cmd/agent-shim-cli`、SQLite metadata store、`session/*` ARI、`workspace/prepare` / `workspace/cleanup` 等计划项。代码中已有 `cmd/agentd`、`cmd/agentdctl`、`pkg/agentd`、`pkg/ari`、`pkg/meta`、`pkg/workspace`，metadata 使用 bbolt，ARI 为 `workspace/*`、`agentrun/*`、`agent/*`。
-
-修复建议：把 roadmap 改成状态矩阵：标记 agentd、agentdctl、bbolt store、Workspace、AgentTemplate CRUD、AgentRun lifecycle、clean-break shim RPC、恢复流程等已实现；剩余项应包括真正的 shim `session/load` server 支持、hook 输出持久化、AgentRun 级 env overrides、Room 设计、ARI-level event fanout 等。
+- 文件路径：`docs/design/contract-convergence.md`
+- 过时内容描述：文档整体已经按 `workspace/*`、`agent/*`、`agentrun/*` 收敛，但 AgentTemplate 词汇仍写成包含 `runtimeClass` 的记录。当前 `pkg/meta/runtime.go` 和 `pkg/ari/types.go` 中 AgentTemplate 本身就是被 `AgentRun.Spec.RuntimeClass` 按名称引用的运行模板，字段是 `name`、`command`、`args`、`env`、`startupTimeoutSeconds`，没有 `runtimeClass` 字段。
+- 建议的修复方案：将 AgentTemplate 定义改为“被 AgentRun 的 `runtimeClass` 字段按名称选择的模板/运行类记录”，字段只列当前 wire schema；不要写成“template 包含 runtimeClass”或“相对 runtimeClass 的 override”。
 
 ### 4. `docs/design/agentd/ari-spec.md`
 
-问题描述：文档已把 identity 改成 `workspace + name`，但仍把运行实例生命周期定义在 `agent/create`、`agent/prompt`、`agent/status`、`agent/attach` 等方法下，并把 `agent/list`、`agent/delete` 用作运行实例操作。当前 `pkg/ari/server.go` 暴露的运行实例方法是 `agentrun/create|prompt|cancel|stop|delete|restart|list|status|attach`；`agent/set|get|list|delete` 管理 AgentTemplate。
+- 文件路径：`docs/design/agentd/ari-spec.md`
+- 过时内容描述：AgentRun 部分已基本对齐 `agentrun/*`，但 AgentTemplate schema 仍错误：`agent/set` 参数要求 `runtimeClass`，`command` 反而是可选 override，`env` 写成 map，schema 还包含 `labels`。当前代码的 `AgentTemplateSetParams` 要求 `name` 和 `command`，`args` 可选，`env` 是 `[]spec.EnvVar`，`startupTimeoutSeconds` 可选；没有 `runtimeClass`、`labels` 字段。`AgentTemplateInfo` 也没有返回 `startupTimeoutSeconds`，这是代码/文档需要明确取舍的缺口。
+- 建议的修复方案：按 `pkg/ari/types.go` 修正 `agent/set|get|list|delete` schema：`name`、`command`、`args`、`env: [{name,value}]`、`startupTimeoutSeconds`。删除 `runtimeClass` / `labels` / override 叙述；补充说明 `agentrun/create.runtimeClass` 是 AgentTemplate 名称。若希望 status/list 返回 `startupTimeoutSeconds`，需要改代码；否则文档不要声明返回。
 
-修复建议：按代码拆成三个章节：Workspace methods、AgentTemplate methods (`agent/*`)、AgentRun methods (`agentrun/*`)；把所有运行实例示例和错误说明从 `agent/*` 改成 `agentrun/*`；补充 `agent/set|get|list|delete` 的 AgentTemplate schema；`AgentInfo` 改名或描述为 `AgentRunInfo`。
+### 5. `docs/design/agentd/agentd.md`
 
-### 5. `docs/design/agentd/ari-spec.md`
+- 文件路径：`docs/design/agentd/agentd.md`
+- 过时内容描述：AgentRun、状态机、bootstrap、shim layout 已基本对齐当前实现，但 AgentTemplate Manager 仍说模板记录 `runtimeClass`、相对 runtime class 的 `command/args/env` override、`labels`。当前实现没有这些字段；`ProcessManager` 是用 AgentRun 的 `runtimeClass` 字段去 `GetAgentTemplate`，再从模板取 `command/args/env` 生成 runtime class。
+- 建议的修复方案：重写 AgentTemplate Manager 小节：AgentTemplate 是命名运行模板，字段为 `name`、`command`、`args`、`env`、`startupTimeoutSeconds`；AgentRun 的 `runtimeClass` 选择 AgentTemplate；删除 override 和 labels 表述。
 
-问题描述：Events 章节声明 `agent/update` 和 `agent/stateChange` 是 attached ARI clients 的事件；当前 `agentrun/attach` 只返回 shim Unix socket path，并没有 ARI 层 fanout。真实 live notification 是 shim socket 上的 `session/update` 和 `runtime/stateChange`。
+### 6. `docs/design/runtime/runtime-spec.md`
 
-修复建议：删除 ARI-level `agent/update` / `agent/stateChange` 作为当前契约，改写为 attach-to-shim 模型；如果希望保留 ARI 层 fanout，应标为未来计划并对应修改代码。
+- 文件路径：`docs/design/runtime/runtime-spec.md`
+- 过时内容描述：文档大部分已从 `created` 改为 `idle`，但仍残留“runtime returns `created`”和“not [`created`](#state)”等旧状态引用。当前 `pkg/spec/state_types.go` 状态为 `creating`、`idle`、`running`、`stopped`、`error`，没有 `created`；`pid` 注释在代码中也仍写 “created or running”，但设计文档应以 `idle` 为准。
+- 建议的修复方案：删除所有作为状态值出现的 `created`，改为 `idle` 或 “successfully created” 这类自然语言。同步检查 lifecycle、operation precondition、示例和状态映射，确保只有 `creating/idle/running/stopped/error`。
 
-### 6. `docs/design/agentd/ari-spec.md`
+### 7. `docs/design/runtime/design.md`
 
-问题描述：workspace MCP 日志描述包含 `agentID=`；当前 `cmd/agentd/subcommands/workspacemcp` 读取 `OAR_AGENTD_SOCKET`、`OAR_WORKSPACE_NAME`、`OAR_AGENT_NAME`、`OAR_STATE_DIR`，没有 `OAR_AGENT_ID` 或 `agentID` 字段。
+- 文件路径：`docs/design/runtime/design.md`
+- 过时内容描述：文档前半部分已改为 `agentrun/create` / `agentrun/prompt` 和 `idle`，但 OCI 对照表仍写 `ARI session/new`、`ARI session/prompt after runtime reaches created`；Durable State Gaps 仍把 bundle path、shim socket path、bootstrap config snapshot 列为 S03 缺口。当前 `AgentRunStatus` 已持久化 `ShimSocketPath`、`ShimStateDir`、`ShimPID`、`BootstrapConfig`，正常 agentd 启动的 bundle/state/socket 共置于 `<bundleRoot>/<workspace>-<name>/`。
+- 建议的修复方案：将残留对照表改为 `agentrun/create` 和 `agentrun/prompt` after `idle`。Durable gaps 应拆成“已实现持久化字段”和“仍缺口”：例如 OAR runtime ID ↔ ACP sessionId、resolved cwd、时间戳/失败阶段、hook 输出等。
 
-修复建议：将 workspace MCP 环境变量和日志描述改为当前实现：`workspace=`、`agentName=` 以及相关 env vars；删除 `agentID`。
+### 8. `docs/design/runtime/agent-shim.md`
 
-### 7. `docs/design/agentd/agentd.md`
+- 文件路径：`docs/design/runtime/agent-shim.md`
+- 过时内容描述：文档末尾说 `session/load` 在 `ShimClient` 中作为可失败恢复尝试，且“shim server 已注册该方法”。当前 `pkg/agentd/shim_client.go` 确实会调用 `session/load`，但生产 `pkg/rpc/server.go` 没有注册 `session/load`，只注册 `session/prompt`、`session/cancel`、`session/subscribe`、`runtime/status`、`runtime/history`、`runtime/stop`。相关测试里的 `session/load` 是 mock shim 支持。
+- 建议的修复方案：将说明改为：agentd client 在 `tryReload` recovery policy 下会尝试 `session/load`，该调用允许失败并 fallback；当前生产 shim RPC server 尚未实现/稳定暴露 `session/load`。不要写成 server 已注册。
 
-问题描述：文档仍把外部运行对象称为 Agent，并说 `agent/create`、`agent/prompt`、`agent/stop` 等是外部运行生命周期。当前持久运行对象是 `meta.AgentRun`，由 `agentrun/*` 管理；`agent/*` 是 `meta.AgentTemplate` 的 CRUD，`agentdctl agent` 管模板，`agentdctl agentrun` 管运行实例。
+### 9. `docs/design/workspace/workspace-spec.md`
 
-修复建议：将外部运行对象统一改为 AgentRun；新增 AgentTemplate 小节，说明 `metadata.name`、`spec.command`、`spec.args`、`spec.env`、`startupTimeoutSeconds` 和 `agent/set|get|list|delete`；所有运行生命周期 API 改为 `agentrun/*`。
+- 文件路径：`docs/design/workspace/workspace-spec.md`
+- 过时内容描述：文档仍使用 `session/new` env override、sessions、Room、`workspaceId`。当前外部运行对象是 AgentRun，workspace identity 是 name；`AgentRunCreateParams` 没有 env override。文档还要求 hook stdout/stderr 和失败状态必须对 caller 可见，但 ARI `workspace/create` 只接收 `name`、`source`、`labels`，没有接收 hooks；`workspace/status` 也不返回 hook 输出。代码层面的 `pkg/workspace` 支持 hooks，但 ARI 入口未把 hooks 从请求传入 `WorkspaceSpec`。
+- 建议的修复方案：将 session/Room/`workspaceId` 全部改为 AgentRun/workspace name。环境说明改为：hooks 使用 agentd host env，agent process 使用父进程环境 + AgentTemplate env，无 AgentRun 级 env override。明确区分底层 Workspace Spec 支持 hooks 与当前 ARI `workspace/create` 尚未暴露 hooks；hook 输出通过 ARI 持久化/查询是目标缺口。
 
-### 8. `docs/design/runtime/runtime-spec.md`
+### 10. `docs/design/workspace/communication.md`
 
-问题描述：runtime 状态模型仍使用 `created` 表示 bootstrap 后可接收 prompt，并说 `pid` 在 `created` 或 `running` 时必填；代码中 `pkg/spec/state_types.go` 定义的是 `creating`、`idle`、`running`、`stopped`、`error`，`pkg/runtime.Manager.Create` 写入 `StatusIdle`。文档示例、生命周期、state mapping、start/kill/delete 前置条件和 notification 示例仍大量使用 `created`。
-
-修复建议：把 `created` 全部替换为 `idle`，并加入 `error`；修正 `pid` 条件为 `idle` 或 `running`；更新生命周期图、state mapping、operation preconditions、示例 JSON 和 notification 示例。
-
-### 9. `docs/design/runtime/runtime-spec.md`
-
-问题描述：文件系统布局仍声明 bundle 在 `/var/lib/agentd/bundles/<agent-id>/`，state dir 在 `/run/agentd/shim/<agent-id>/`，agentd 重启通过扫描 `/run/agentd/shim/*/agent-shim.sock` 恢复且无需记录 socket path。当前 agentd 正常启动时把 state files 与 bundle co-locate：`<BundleRoot>/<workspace>-<name>/config.json`、`state.json`、`events.jsonl`、`agent-shim.sock` 同目录，并持久化 `ShimSocketPath` / `ShimStateDir` / `ShimPID`。
-
-修复建议：将 agentd 部署布局改为 bundle/state co-location；保留 `agentd shim --state-dir /run/agentd/shim` 作为 standalone 默认说明；恢复语义改为优先使用 metadata 中的 persisted shim path，而不是只扫描 `/run/agentd/shim/*`。
-
-### 10. `docs/design/runtime/runtime-spec.md`
-
-问题描述：State 定义没有记录已实现字段 `lastTurn` 和 `exitCode`，但 `pkg/spec.State` 已包含它们。
-
-修复建议：在 State schema 中加入 `lastTurn` 和 `exitCode`，说明 `lastTurn` 保存最近一轮结果，`exitCode` 在进程退出后填充。
-
-### 11. `docs/design/runtime/shim-rpc-spec.md`
-
-问题描述：“实现滞后说明”仍说 `pkg/rpc`、`pkg/agentd/shim_client.go`、`cmd/agent-shim-cli` 使用 legacy PascalCase / `$/event`。当前 `pkg/rpc/server.go`、`pkg/agentd/shim_client.go`、`agentdctl shim` 已使用 `session/*` + `runtime/*` 和 `session/update` / `runtime/stateChange`。
-
-修复建议：删除该 stale implementation-lag 段，改为说明实现已对齐 clean-break surface；`cmd/agent-shim-cli` 改为 `agentdctl shim`。
-
-### 12. `docs/design/runtime/shim-rpc-spec.md`
-
-问题描述：示例仍使用 `status: "created"`、`previousStatus: "created"`；`runtime/history` 说 `fromSeq` 默认 `1`；`session/subscribe` 只规范 `afterSeq`。当前实现 `runtime/history` 默认 `fromSeq=0`，`session/subscribe` 同时支持 `afterSeq` 和原子 backfill 的 `fromSeq`。
-
-修复建议：示例改为 `idle`；把 `runtime/history` 默认值改成 `0` 或修改代码保持一致；在 `session/subscribe` 中记录 `fromSeq` 语义，以及 `fromSeq` 与 `afterSeq` 的使用边界。
-
-### 13. `docs/design/runtime/shim-rpc-spec.md`
-
-问题描述：`session/prompt` 描述为对应上层 ARI `session/prompt`；当前上层 public ARI 是 `agentrun/prompt` 或 `workspace/send`，`session/prompt` 只存在于 agentd 与 shim 之间。
-
-修复建议：将该句改为“对应上层 `agentrun/prompt` / `workspace/send` 转发到 shim 的 runtime 侧落点”，并强调 `session/*` 是内部 shim boundary。
-
-### 14. `docs/design/runtime/agent-shim.md`
-
-问题描述：文档仍说每个 OAR session 对应一个 shim、M005 外部 ARI 从 `session/*` 迁移到 `agent/*`、当前实现仍使用 legacy PascalCase / `$/event`；当前外部运行对象是 AgentRun，public ARI 是 `agentrun/*`，shim RPC 已是 clean-break surface。
-
-修复建议：把外部术语改为 AgentRun runtime instance，保留 “session” 只描述 shim RPC / ACP boundary；删除 legacy implementation-lag 段；把 `agent/*` 改为 `agentrun/*`，并说明 `agent/*` 已用于 AgentTemplate。
-
-### 15. `docs/design/runtime/agent-shim.md`
-
-问题描述：文档把 `session/load` 作为 agent-shim 职责。当前 `pkg/agentd/shim_client.go` 有 `Load` 调用，recovery 在 `tryReload` 策略下尝试 `session/load`，但 `pkg/rpc/server.go` 没有实现 `session/load` dispatch；失败被视为可回退行为。
-
-修复建议：标注 `session/load` 目前是 agentd recovery 的可选尝试 / 未来 shim server 能力，不是当前已支持的 shim RPC；若要让文档保持规范，应同步实现 `session/load` server 方法。
-
-### 16. `docs/design/runtime/config-spec.md`
-
-问题描述：MCP server schema 只允许 `"http"` 和 `"sse"`，但 `pkg/spec.McpServer` 和 `pkg/runtime.convertMcpServers` 已支持 `"stdio"`；`pkg/agentd/process.go` 还为每个 AgentRun 注入名为 `workspace` 的 stdio MCP server，并设置 `OAR_AGENTD_SOCKET`、`OAR_WORKSPACE_NAME`、`OAR_AGENT_NAME`、`OAR_STATE_DIR`。
-
-修复建议：补充 `stdio` MCP server schema：`name`、`command`、`args`、`env`；说明 `args` 和 `env` 为 ACP 兼容需要显式数组；记录 agentd 自动注入 workspace MCP server 的当前行为。
-
-### 17. `docs/design/runtime/config-spec.md`
-
-问题描述：文档称 `acpAgent.systemPrompt` 必须在 Create 阶段作为 bootstrap 语义落实，不是外部工作 turn；但当前 `pkg/runtime.Manager.Create` 在 `session/new` 后通过内部 ACP Prompt 发送 systemPrompt 来实现 seeding。文档还说 agent 启动后等待 ARI `session/prompt`，当前 public daemon prompt 是 `agentrun/prompt`。
-
-修复建议：二选一对齐：若 prompt-based seeding 可接受，文档应明确这是当前 bootstrap-compatible internal prompt；若不可接受，则把它列为 runtime implementation drift。所有 public ARI 入口改为 `agentrun/prompt`，只把 shim 内部入口称为 `session/prompt`。
-
-### 18. `docs/design/runtime/design.md`
-
-问题描述：bootstrap flow、state mapping 和 config generation 仍使用 ARI `session/new`、`session/prompt`、OAR `sessionId`、`created`、`paused:warm` / `paused:cold`，并描述 Room 共享 workspace。当前 public flow 是 `workspace/create` -> `agentrun/create` -> `agentrun/status` -> `agentrun/prompt`，状态为 `idle`，没有 warm/cold pause，Room 未实现。
-
-修复建议：将该设计说明改为当前 AgentRun 流程；把 OAR `sessionId` 改为 AgentRun runtime ID / shim session boundary；删除当前态 warm/cold pause 和 Room 共享描述，或标为未来设计；把 `created` 改为 `idle`。
-
-### 19. `docs/design/runtime/design.md`
-
-问题描述：Durable State Gaps 仍把 bundle path、shim socket path、bootstrap config snapshot、last known state transition metadata 统称为 S03 未解决；当前 `pkg/agentd/process.go` 已持久化 `ShimSocketPath`、`ShimStateDir`、`ShimPID`、`BootstrapConfig`，`pkg/spec.State` 也包含 `lastTurn` / `exitCode`。
-
-修复建议：将 durable-state 表格拆成“已实现”和“剩余缺口”：已实现 persisted shim path/state dir/pid/bootstrap config 和 last-turn/exit-code runtime state；剩余缺口再描述 ACP session 映射、完整 replay/cleanup/cross-client hardening 等。
-
-### 20. `docs/design/runtime/why-no-runa.md`
-
-问题描述：职责表仍把生命周期操作写成 legacy `Prompt` / `Cancel` / `Shutdown` / `GetState`，并链接 `[config.md](config-spec.md)`；当前 shim RPC 是 `session/prompt`、`session/cancel`、`session/subscribe`、`runtime/status`、`runtime/history`、`runtime/stop`，直接 CLI 是 `agentdctl shim`。
-
-修复建议：把 legacy 操作名改成 clean-break shim method names；将链接文本改成 `config-spec.md`。
-
-### 21. `docs/design/workspace/workspace-spec.md`
-
-问题描述：文档仍说 workspace 为 “one or more sessions” 准备，env 边界使用 ARI `session/new` overrides，shared workspace 通过 Room members 和 `workspaceId` 描述。当前外部运行对象是 AgentRun，workspace identity 是 name，AgentRun create params 没有 env overrides，Room 不存在。
-
-修复建议：把 session/Room/`workspaceId` 用语改为 AgentRun/workspace name；env precedence 改为 inherited daemon/host env + AgentTemplate env，明确 AgentRun-specific env overrides 当前未实现。
-
-### 22. `docs/design/workspace/workspace-spec.md`
-
-问题描述：Top-Level Shape 示例给出空 `{}` 的 `metadata` 和 `source`，但 `pkg/workspace.WorkspaceSpec` 要求 `metadata.name` 和 `source.type`；ARI `workspace/create` 只接收 `name`、raw `source`、`labels`，不接收 hooks。虽然 lower-level workspace manager 支持 hooks，`handleWorkspaceCreate` 没有把 hooks 从 ARI params 传入。
-
-修复建议：示例补充 `metadata.name` 和 `source.type`；明确当前 ARI `workspace/create` 不支持 hooks 字段，hook 支持只存在于 lower-level `workspace.WorkspaceSpec` / manager，除非扩展 ARI params 并持久化 hooks。
-
-### 23. `docs/design/workspace/workspace-spec.md`
-
-问题描述：文档声明 hook stdout/stderr 和 failure status 必须对 caller 可观察；当前 ARI workspace status 只有 `phase` 和 `path`，hook 失败只落为 `phase=error`，没有持久化 stdout/stderr 或失败详情。
-
-修复建议：将 hook 输出可观察性标为目标缺口，或实现 ARI/status 持久化 hook output/error detail 后再保留为当前保证。
+- 文件路径：`docs/design/workspace/communication.md`
+- 过时内容描述：文档描述 `replyTo`、`threadId`、auto-reply、task/inbox、`workspace_task_*` MCP 工具、pending reply 队列，并在 API 扩展中写 `agent/create` 增加 `description` / `capabilities`。当前实现只有 `workspace/send`，参数为 `workspace`、`from`、`to`、`message`、`needsReply`；只在 prompt 前加 envelope，`needsReply=true` 时加入 `reply-to` 和 `reply-requested=true`；不支持 threadId、replyTo 参数、auto-reply、inbox、task 数据模型或 `workspace_task_*` 工具。
+- 建议的修复方案：重构为“已实现 Message v0”和“未来 Task/Inbox”。已实现部分只描述 `workspace/send` + envelope + idle-only 投递约束；未实现的 thread、auto-reply、inbox、task、`workspace_task_*` 标为 future work。将任何运行实例 API 扩展从 `agent/create` 改为 `agentrun/create`，或移入 future API 设计。
 
 ## 讨论记录
 
 ### claude-code 第1轮
 
-逐项核实结果（对照实际代码验证）：
+逐项对照实际代码核实结果：
 
-| # | 结论 | 说明 |
-|---|------|------|
-| 1 | **同意** | `docs/design/README.md` 确认仍有 Pod→Room、Container→Agent/Session 映射（L18-19），引用不存在的 `orchestrator/room-spec.md`（L140），使用 `agent-shim-cli`（L21）。均已过时。 |
-| 2 | **同意** | `contract-convergence.md` 确认仍使用 `agent/create`、Room identity (`room + name`, L52)、`workspace/prepare`（L34）、`created` 状态（L54）。代码已用 workspace-based identity 和 `idle` 状态。 |
-| 3 | **同意** | `roadmap.md` 确认仍说仅 agent-shim 已实现（L5），列出 `cmd/agent-shim`、SQLite、`session/*` ARI、`workspace/prepare`。实际 agentd 已实现，用 bbolt 和 `agentrun/*`。 |
-| 4 | **同意** | `ari-spec.md` 确认把运行实例生命周期放在 `agent/create`（L148）、`agent/prompt`（L217）等下。`pkg/ari/server.go` L191-209 已暴露 `agentrun/*` 方法，`agent/*` 用于 AgentTemplate CRUD。 |
-| 5 | **同意** | Events 章节（L359-369）声明 `agent/update` / `agent/stateChange`。`handleAgentRunAttach`（L1011-1048）仅返回 `{socketPath}`，无 ARI 层事件推送。 |
-| 6 | **同意** | ari-spec.md L388 声明 `agentID=` 日志字段。`cmd/agentd/subcommands/workspacemcp/command.go` L252 实际打印 `workspace=`、`agentName=`，环境变量为 `OAR_AGENT_NAME`，无 `agentID`。 |
-| 7 | **同意** | `agentd.md` 确认仍用 Agent 表示运行实例、`agent/create`/`agent/prompt`/`agent/stop` 作为生命周期。代码已是 `meta.AgentRun` + `agentrun/*`。 |
-| 8 | **同意** | `runtime-spec.md` L24 定义 `created` 状态并在多处使用。`pkg/spec/state_types.go` L8-22 实际定义 `creating`/`idle`/`running`/`stopped`/`error`。`created` → `idle` 漂移已确认。 |
-| 9 | **同意** | `runtime-spec.md` L82-89 仍用分离路径。`pkg/agentd/process.go` L459 `stateDir := bundlePath` 且有注释 "State directory is co-located with the bundle directory"。 |
-| 10 | **同意** | `runtime-spec.md` State 定义（L14-38）无 `lastTurn`/`exitCode`。`pkg/spec/state_types.go` L66-72 已有 `LastTurn *LastTurn` 和 `ExitCode *int`。 |
-| 11 | **同意** | `shim-rpc-spec.md` L33-39 仍有 legacy implementation-lag 段。`pkg/rpc/server.go` L139-151 已使用 `session/prompt`、`runtime/status` 等 clean-break 名称，lag 段已过时。 |
-| 12 | **同意** | 示例用 `"status": "created"`（L60, L199 等）。`runtime/history` 文档默认 `fromSeq=1`（L229），代码 `pkg/rpc/server.go` L281 默认 `fromSeq=0`。`session/subscribe` 文档仅记录 `afterSeq`（L150），代码还支持 `fromSeq`（L38-39）提供原子 backfill。 |
-| 13 | **同意** | `session/prompt` 确为 shim 内部 RPC。公共 ARI 入口为 `agentrun/prompt`（L192）和 `workspace/send`（L188）。文档应区分内外层。 |
-| 14 | **同意** | `agent-shim.md` L13 仍说 "每个 OAR session 对应一个独立的 agent-shim 进程"，L29 描述 M005 从 `session/*` 迁移到 `agent/*`。代码已用 `agentrun/*` 和 clean-break surface，文档 L180 的 legacy PascalCase 描述已不准确。 |
-| 15 | **同意** | `agent-shim.md` L87 列出 `session/load`。`pkg/agentd/shim_client.go` L127 有 `Load()` 调用 `session/load`，但 `pkg/rpc/server.go` method dispatch 中未实现 server 端。应标注为可选/未来能力。 |
-| 16 | **同意** | `config-spec.md` L186-187 仅列 `"http"` 和 `"sse"`。`pkg/spec/types.go` L91 支持 `"stdio"`，`pkg/agentd/process.go` L361-373 注入 stdio workspace MCP server。 |
-| 17 | **同意** | `config-spec.md` L116-117 描述 systemPrompt 为 bootstrap 语义。`pkg/runtime/runtime.go` L152 通过内部 ACP `Prompt` 发送——这是 bootstrap-compatible internal prompt，文档应明确。ARI 层引用的 `session/prompt`（L118, L275）应改为 `agentrun/prompt`。 |
-| 18 | **同意** | `design.md` 确认仍使用 `session/new`（L48, L84 等）、`sessionId`（L92, L106 等）、`paused:warm`/`paused:cold`（L107）、`Room`（L131, L154 等）。全部为过时术语。 |
-| 19 | **同意** | `design.md` L272-285 列出 S03 Durable State Gaps。`pkg/agentd/process.go` L275-291 已持久化 `ShimSocketPath`/`ShimStateDir`/`ShimPID`/`BootstrapConfig`；`pkg/spec/state_types.go` 已有 `LastTurn`/`ExitCode`。Gap 表应拆分已实现/剩余。 |
-| 20 | **同意** | `why-no-runa.md` L58 仍用 `Prompt`/`Cancel`/`Shutdown`/`GetState`。`pkg/agentd/shim_client.go` L17-27 已用 `session/prompt`、`session/cancel`、`runtime/stop`、`runtime/status`。 |
-| 21 | **同意** | `workspace-spec.md` L3 说 "one or more sessions"，L159 引用 "Room members" 和 `workspaceId`。代码用 AgentRun、workspace name。 |
-| 22 | **同意** | Top-Level Shape 示例（L8-14）空 `metadata`/`source` 有误导性——`pkg/workspace/spec.go` L253 要求 `metadata.name` 非空，L257 要求 `source.type`。ARI `workspace/create` 确实无 hooks 字段（`ari/types.go` L30-39）。 |
-| 23 | **同意** | `workspace-spec.md` L135 要求 hook stdout/stderr 可观察。ARI `WorkspaceStatusResult`（`ari/types.go` L57-69）仅有 `Name`/`Phase`/`Path`/`Members`，无 hook 输出字段。`HookError` 仅记录日志未暴露 API。应标为目标缺口。 |
+#### 第1项：`docs/design/README.md` — **同意**
 
-**总结：全部 23 项同意，无异议。** 审查定位精准，每项漂移均经代码行级验证确认。修复建议方向正确，可直接作为文档对齐工作的任务列表。
+代码验证：
+- README 第18行 `Pod → Room`、第19行 `Container → Agent/Session`、第21行 `crictl → agent-shim-cli` 均已过时。当前二进制为 `agentd` + `agentdctl`（非 `agent-shim-cli`）。
+- README 第58行 Orchestrator 仍写"消费 Room Spec"，第72行仍有 Room Manager。当前代码中没有 Room 包或 Room ARI 方法。
+- README 第142行引用 `orchestrator/room-spec.md`，已确认该目录和文件不存在。
+- README 没有提及 `agentrun/*` 方法组，仅写 `agent/*`。实际代码中 ARI server 注册了 `workspace/*`、`agentrun/*`、`agent/*` 三组方法（`pkg/ari/server.go:177-223`）。
+
+修复建议合理，完全同意。
+
+#### 第2项：`docs/design/roadmap.md` — **同意**
+
+代码验证：
+- roadmap 第5-6行仍说"只有 agent-shim 层实现"，但 `cmd/agentd`、`cmd/agentdctl`、`pkg/agentd`、`pkg/ari`、`pkg/meta`、`pkg/workspace` 均已存在并有完整实现。
+- 第11行仍列 `cmd/agent-shim`、`cmd/agent-shim-cli`；实际已改为 `cmd/agentd`、`cmd/agentdctl`。
+- 第68-69行规划创建 `cmd/agentd/main.go`、`pkg/agentd/`，这些早已存在。
+- 第90行建议 SQLite，实际使用 bbolt（`pkg/meta/runtime.go` 使用 `go.etcd.io/bbolt`）。
+- 第125行仍写 `session/new`、`session/prompt`；实际 ARI 方法为 `agentrun/create`、`agentrun/prompt`。
+- 第155行仍写 `workspace/prepare` / `workspace/cleanup`；实际为 `workspace/create` / `workspace/delete`。
+
+roadmap 严重过时，改为状态矩阵的建议合理。完全同意。
+
+#### 第3项：`docs/design/contract-convergence.md` AgentTemplate runtimeClass — **同意**
+
+代码验证：
+- contract-convergence.md 第20行 AgentTemplate 定义列出字段为 `name, command, args, env, runtimeClass, startupTimeoutSeconds`。
+- 实际 `pkg/meta/runtime.go:21-34` `AgentTemplateSpec` 字段为：`Command`、`Args`、`Env []spec.EnvVar`、`StartupTimeoutSeconds *int`。**没有 `runtimeClass`**。
+- 实际 `pkg/ari/types.go:331-346` `AgentTemplateSetParams` 字段为：`Name`（required）、`Command`（required）、`Args`、`Env`、`StartupTimeoutSeconds`。**没有 `runtimeClass`**。
+- `runtimeClass` 实际在 `AgentRunCreateParams.RuntimeClass`（`types.go:139`），是 `agentrun/create` 的参数，引用 AgentTemplate 的名字。
+
+AgentTemplate 本身就是被 `agentrun/create.runtimeClass` 按名字引用的模板。完全同意。
+
+#### 第4项：`docs/design/agentd/ari-spec.md` AgentTemplate schema — **同意**
+
+代码验证：
+- ari-spec.md 第155-165行 `agent/set` params 写 `runtimeClass: required`、`command: optional`、`env: map`、`labels: map`。
+- 实际代码 `AgentTemplateSetParams`（`types.go:331-346`）：`Name` required、`Command` **required**、`Args` optional、`Env []spec.EnvVar`（不是 map）、`StartupTimeoutSeconds` optional。**无 `runtimeClass`、无 `labels`**。
+- `AgentTemplateInfo`（`types.go:350-368`）返回：`Name`、`Command`、`Args`、`Env`、`CreatedAt`、`UpdatedAt`。**未返回 `startupTimeoutSeconds`**。
+
+补充发现：`startupTimeoutSeconds` 在 `SetParams` 和 `meta.AgentTemplateSpec` 中均存在且可存储到 DB，但 `AgentTemplateInfo` 和 `agentTemplateToInfo`（`server.go:1230-1239`）未包含此字段。这是代码缺口——写入但不返回。文档若声明返回需改代码，否则不应声明。
+
+完全同意，修复建议合理。
+
+#### 第5项：`docs/design/agentd/agentd.md` AgentTemplate Manager — **同意**
+
+代码验证：
+- agentd.md 第43-49行描述 AgentTemplate 包含 `runtimeClass`、override `command/args/env`、`labels`。
+- 实际代码如第3/4项所述，AgentTemplate 没有 `runtimeClass` 和 `labels`，`command/args/env` 是直接字段而非 override。
+- `pkg/agentd/process_manager.go` 中 `ProcessManager.Start` 通过 `store.GetAgentTemplate(agentRun.Spec.RuntimeClass)` 用 AgentRun 的 `runtimeClass` 查找 AgentTemplate，然后从模板取 `command/args/env` 生成 config。
+
+完全同意。
+
+#### 第6项：`docs/design/runtime/runtime-spec.md` 残留 `created` — **同意**
+
+代码验证：
+- `pkg/spec/state_types.go:7-22` 定义的状态常量为：`creating`、`idle`、`running`、`stopped`、`error`。**无 `created`**。
+- runtime-spec.md 第174行："before the runtime returns `created`" — 应改为 `idle`。
+- runtime-spec.md 第288行："Attempting to `start` an agent that is not [`created`](#state)" — 应改为 `idle`。
+- `state_types.go:56-57` PID 注释已正确写为 `idle or running`。
+
+完全同意。
+
+#### 第7项：`docs/design/runtime/design.md` OCI 对照表和 Durable State Gaps — **同意**
+
+代码验证：
+- design.md 第260行 OCI 对照表 Step 1 仍写 `ARI session/new`，应为 `agentrun/create`。
+- design.md 第270行 Step 7 写 "`session/prompt` after runtime reaches `created`"，应为 `agentrun/prompt` after `idle`。
+- Durable State Gaps（第273-285行）仍列 bundle path、shim socket path、bootstrap config snapshot 为缺口。
+- 实际 `contract-convergence.md:107-111` 已明确记录 `AgentRunStatus` 持久化了 `ShimSocketPath`、`ShimStateDir`、`ShimPID`、`BootstrapConfig`。`agentd.md:209-215` 亦同。
+- `pkg/meta/` 的 AgentRunStatus 结构体实际也包含这些字段。
+
+完全同意。Gaps 应拆为"已持久化"和"仍缺口"两部分。
+
+#### 第8项：`docs/design/runtime/agent-shim.md` session/load — **同意**
+
+代码验证：
+- agent-shim.md 第185行写 "shim server 已注册该方法"。
+- 实际 `pkg/rpc/server.go:138-157` 只注册了 6 个方法：`session/prompt`、`session/cancel`、`session/subscribe`、`runtime/status`、`runtime/history`、`runtime/stop`。**`session/load` 未注册**。
+- `pkg/agentd/shim_client.go:127-132` 确实有 `Load` 方法调用 `session/load`，但这是 client 端。生产 server 端不处理此方法，调用会返回 `MethodNotFound`。
+
+文档应改为：client 端在 tryReload policy 下尝试 `session/load`，该调用允许失败；生产 shim server 尚未实现。完全同意。
+
+#### 第9项：`docs/design/workspace/workspace-spec.md` session/Room/workspaceId — **同意**
+
+代码验证：
+- workspace-spec.md 第4行 "for one or more sessions" — 应为 AgentRuns。
+- 第147行 "ARI `session/new` env overrides" — 应为 AgentTemplate env（实际无 AgentRun 级 env override）。
+- 第148行 env 优先级第3层仍写 "`session/new` env overrides layered last" — 实际无此层，`AgentRunCreateParams` 无 `env` 字段。
+- 第157行 "multiple sessions"、第158行 "Room members"、"`workspaceId`" — 应为 AgentRuns、workspace name。
+- 第135行 "hook stdout/stderr and failure status must be observable to the caller" — 但 ARI `workspace/create`（`types.go:30-39`）无 hooks 参数，`workspace/status` 结果（`types.go:57-69`）不返回 hook 输出。底层 `pkg/workspace` 支持 hooks，但 ARI 入口未暴露。
+
+完全同意。
+
+#### 第10项：`docs/design/workspace/communication.md` — **同意，但有补充**
+
+代码验证：
+- `WorkspaceSendParams`（`types.go:101-117`）只有 `Workspace`、`From`、`To`、`Message`、`NeedsReply`。**无 `threadId`、无独立 `replyTo` 参数**。
+- envelope 构建（`server.go:532-537`）只用 `from` 和 `needsReply`，`reply-to` 硬编码等于 `from`。无 `threadId`。
+- ARI server 无 `workspace/taskCreate` 等方法（`server.go:177-223`）。
+- `AgentRunCreateParams` 无 `description`、`capabilities`。
+- 不存在 Inbox 数据结构、PendingReply 或 auto-reply 逻辑。
+
+**补充意见**：communication.md 更像是一个 **forward-looking design proposal**，而非声称已实现的规范。建议将其重构为两部分时，明确标注文档性质：
+1. "已实现 Message v0" — 描述当前 `workspace/send` + envelope + idle-only 投递
+2. "设计提案：Task/Inbox" — 明确标注为 **future design**，不是当前实现
+
+同意审查结论，修复建议合理。
+
+---
+
+**汇总**：10 项审查结论全部 **同意**，代码验证均一致。第4项补充了一个代码缺口（`startupTimeoutSeconds` 写入但不返回），第10项补充了文档性质标注建议。
 
 ## 最终方案
 
+第 1 轮讨论已达成一致：`claude-code` 对 10 项审查结论全部同意，无异议；无需进入第 2 轮讨论。
+
+执行范围：修复 `docs/design/` 下设计文档，使其与当前代码实现对齐；除第 4 项明确指出的 `startupTimeoutSeconds` 返回缺口外，不主动修改代码。若选择修复该代码缺口，必须同步更新 ARI 类型、转换函数和测试。
+
+修复原则：
+
+1. 当前实现词汇以 `Workspace`、`AgentTemplate`、`AgentRun`、shim `session/*` 为准。
+2. 公共 ARI 边界以 `workspace/*`、`agent/*` AgentTemplate CRUD、`agentrun/*` AgentRun 生命周期为准。
+3. `AgentTemplate` 是被 `agentrun/create.runtimeClass` 按名称引用的运行模板，当前字段为 `name`、`command`、`args`、`env`、`startupTimeoutSeconds`；不要写成包含 `runtimeClass` 的 override record。
+4. Room、workspace task/inbox、auto-reply、threadId/replyTo、`workspace_task_*`、ARI 级事件 fanout、AgentRun 级 env override、hook 输出通过 ARI 持久化/查询等未实现内容必须标为 future work / design proposal，不能写成当前能力。
+5. runtime 状态以 `creating`、`idle`、`running`、`stopped`、`error` 为准；删除作为状态值出现的 `created`。
+6. shim RPC 以生产 server 当前注册的方法为准：`session/prompt`、`session/cancel`、`session/subscribe`、`runtime/status`、`runtime/history`、`runtime/stop`。`session/load` 只描述为 agentd client 在 `tryReload` recovery policy 下的可失败尝试，当前生产 shim server 尚未稳定暴露该方法。
+7. agentd 正常启动的 shim 文件布局以 bundle/state/socket 共置于 `<bundleRoot>/<workspace>-<name>/` 为准；持久化字段 `ShimSocketPath`、`ShimStateDir`、`ShimPID`、`BootstrapConfig` 已实现，不应继续列为缺口。
+8. Workspace Spec 底层支持 hooks，但当前 ARI `workspace/create` 尚未暴露 hooks，`workspace/status` 也不返回 hook 输出；文档必须区分底层 spec 能力与 ARI 暴露能力。
+
+建议执行顺序：
+
+1. 先修 `docs/design/agentd/ari-spec.md`、`docs/design/agentd/agentd.md`、`docs/design/contract-convergence.md` 的 AgentTemplate schema 和 `runtimeClass` 语义。
+2. 再修 `docs/design/runtime/runtime-spec.md`、`docs/design/runtime/design.md`、`docs/design/runtime/agent-shim.md` 的 `created`、durable gaps、`session/load` 描述。
+3. 接着修 `docs/design/workspace/workspace-spec.md`、`docs/design/workspace/communication.md`，明确当前 `workspace/send` v0 与 future Task/Inbox。
+4. 最后修总览与规划：`docs/design/README.md`、`docs/design/roadmap.md`。
+5. 修复后运行 `make build`。如时间允许，再运行聚焦测试：
+   - `go test ./pkg/spec ./pkg/runtime ./pkg/rpc ./pkg/events`
+   - `go test ./pkg/ari ./pkg/agentd ./pkg/workspace ./pkg/meta`

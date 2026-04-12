@@ -15,10 +15,10 @@ OCI Image Spec                  →    OAR Workspace Spec
 runc + containerd-shim          →    agent-shim（合并，无独立 runa）
 containerd                      →    agentd
 CRI (Container Runtime Interface) →  ARI (Agent Runtime Interface)
-Pod                             →    Room
-Container                       →    Agent（外部对象）/ Session（内部运行时实例）
+Pod                             →    Room（future work，尚未实现）
+Container（外部对象）             →    Agent definition（模板）/ AgentRun（运行实例）
 Image / rootfs                  →    Workspace
-crictl                          →    agent-shim-cli
+crictl                          →    agentdctl
 ```
 
 ## 为什么对标 OCI
@@ -31,9 +31,9 @@ Agent 面临着同样的分层关切：
 | "运行什么" | OCI Runtime Spec (config.json) | OAR Runtime Spec (config.json) |
 | "准备什么环境" | OCI Image Spec (layers → rootfs) | OAR Workspace Spec (source + hooks → workdir) |
 | "底层执行 + 协议适配" | runc + containerd-shim | agent-shim（合并，无独立 runa） |
-| "高层管理" | containerd (images, snapshots, tasks) | agentd（Agent Manager 管理外部 agent 生命周期；Session Manager 为内部实现） |
-| "管理接口" | CRI (kubelet → containerd) | ARI (orchestrator → agentd)，外部对象为 agent |
-| "协同调度组" | Pod（共享 network/IPC namespace） | Room（共享 workspace、消息总线） |
+| "高层管理" | containerd | agentd（Agent CRUD + AgentRun 生命周期 + Workspace Manager） |
+| "管理接口" | CRI (kubelet → containerd) | ARI (orchestrator → agentd) |
+| "协同调度组" | Pod（共享 network/IPC namespace） | Room（共享 workspace、消息总线）— **future work** |
 
 通过遵循这套经过验证的分层架构，每个组件都有清晰、有界的职责。
 规范是契约；组件是可替换的实现。
@@ -55,24 +55,26 @@ Agent 面临着同样的分层关切：
 ┌────────────────────────────────────────────────────────────┐
 │                       Orchestrator                          │
 │                                                             │
-│   消费: Room Spec, Workspace Spec, Runtime Spec             │
-│   决策: 运行哪些 agent、准备什么 workspace                    │
-│   调用: ARI                                                 │
+│   调用: ARI (`workspace/*`, `agent/*`, `agentrun/*`)        │
+│   决策: 准备哪些 workspace、创建哪些 AgentRun               │
 └──────────────────────────┬─────────────────────────────────┘
                            │ ARI（JSON-RPC over Unix Socket）
                            ▼
 ┌────────────────────────────────────────────────────────────┐
 │                        agentd                               │
 │                                                             │
-│   ┌──────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│   ┌─────────────────────────────────────────────────────┐   │
-│   │  Agent Manager (external API object: agent/*)       │   │
-│   └──────┬──────────────────────────────────────────────┘   │
-│          │ [internal: Session Manager + Workspace Manager +  │
-│          │  Room Manager]                                     │
+│   ┌─────────────────────────────────────────────────────┐  │
+│   │  workspace/*  — Workspace lifecycle                 │  │
+│   ├─────────────────────────────────────────────────────┤  │
+│   │  agent/*      — Agent CRUD                  │  │
+│   ├─────────────────────────────────────────────────────┤  │
+│   │  agentrun/*   — AgentRun lifecycle (running instances) │  │
+│   └─────────────────────────────────────────────────────┘  │
+│          [internal: Process Manager, Workspace Manager,     │
+│           Agent Manager, Recovery, bbolt Metadata Store]    │
 └──────────────────────────────────────────────────────────────┘
              │            │            │
-             │ shim RPC over Unix socket │
+             │ shim RPC (session/* + runtime/*) over Unix socket
              ▼            ▼            ▼
         ┌────────────┐ ┌────────────┐ ┌────────────┐
         │ agent-shim │ │ agent-shim │ │ agent-shim │
@@ -82,6 +84,25 @@ Agent 面临着同样的分层关切：
              ▼              ▼              ▼
           Agent A        Agent B        Agent C
 ```
+
+## 当前实现状态
+
+已实现（`cmd/agentd`、`cmd/agentdctl`、相关包）：
+
+- `workspace/*` — workspace 生命周期管理（create/status/list/delete/send）
+- `agent/*` — Agent CRUD（set/get/list/delete）
+- `agentrun/*` — AgentRun 生命周期（create/prompt/cancel/stop/delete/restart/list/status/attach）
+- agentd 重启后的 shim reconnect 和 recovery
+- bbolt-based metadata persistence
+- workspace-mcp-server（`agentd workspacemcp` 子命令）
+
+尚未实现（future work）：
+
+- **Room**：共享 workspace 的 group 管理与消息总线（无 `room/*` ARI 方法）
+- **workspace task/inbox**：结构化任务委派和排队交付
+- **ARI-level event fanout**：直接向 ARI 客户端推送事件流
+- **AgentRun 级 env override**：`agentrun/create` 当前无 `env` 字段
+- **Hook output persistence**：workspace hook stdout/stderr 不通过 ARI 返回
 
 ## 先看哪里
 
@@ -107,7 +128,7 @@ Agent 面临着同样的分层关切：
 | 文档 | 类型 | 内容 |
 |------|------|------|
 | [contract-convergence.md](./contract-convergence.md) | authority map | 跨文档 authority、收敛不变量、实现滞后说明 |
-| [roadmap.md](./roadmap.md) | 规划 | Development Roadmap — 分阶段实现计划（可能记录当前实现滞后，不替代规范） |
+| [roadmap.md](./roadmap.md) | 规划 | Development Roadmap — 当前实现状态与未来规划 |
 
 ### runtime/ — Layer 1: 单 agent 进程（对标 runc + containerd-shim）
 
@@ -116,7 +137,7 @@ Agent 面临着同样的分层关切：
 | [runtime/runtime-spec.md](./runtime/runtime-spec.md) | 规范 | OAR Runtime Spec — state、bundle、lifecycle、operations、typed events |
 | [runtime/config-spec.md](./runtime/config-spec.md) | 规范 | Config Spec — config.json schema（对标 OCI config.md） |
 | [runtime/shim-rpc-spec.md](./runtime/shim-rpc-spec.md) | 规范 | Shim RPC Spec — clean-break `session/*` + `runtime/*` surface、`session/update` / `runtime/stateChange`、回放与重连语义 |
-| [runtime/agent-shim.md](./runtime/agent-shim.md) | 组件 | agent-shim — 组件职责、ACP 边界、runtime truth、实现滞后说明（描述性，不重新定义协议） |
+| [runtime/agent-shim.md](./runtime/agent-shim.md) | 组件 | agent-shim — 组件职责、ACP 边界、runtime truth、实现状态（描述性，不重新定义协议） |
 | [runtime/design.md](./runtime/design.md) | 设计 | 设计思路 — OCI 对标分析、架构决策、config.json 生成流程 |
 | [runtime/why-no-runa.md](./runtime/why-no-runa.md) | 设计 | 为什么 OAR 没有 runa — agent 场景下独立运行时 CLI 不成立的原因 |
 
@@ -125,18 +146,13 @@ Agent 面临着同样的分层关切：
 | 文档 | 类型 | 内容 |
 |------|------|------|
 | [workspace/workspace-spec.md](./workspace/workspace-spec.md) | 规范 | OAR Workspace Spec — 如何准备 agent 的工作环境（对标 OCI Image Spec） |
+| [workspace/communication.md](./workspace/communication.md) | 设计 | Agent 间通信 — 已实现 workspace/send v0 + future Task/Inbox 设计提案 |
 
 ### agentd/ — Layer 2: 多 agent 管理（对标 containerd + CRI）
 
-Agent 是外部 API 对象（orchestrator 通过 ARI `agent/*` 方法管理）；Session 是 agentd 内部的运行时实例，不暴露给外部调用方。
+`agent/*` 管理 Agent CRUD（reusable named configurations）；`agentrun/*` 管理 AgentRun 生命周期（running instances）；`workspace/*` 管理 workspace 生命周期。
 
 | 文档 | 类型 | 内容 |
 |------|------|------|
-| [agentd/ari-spec.md](./agentd/ari-spec.md) | 规范 | ARI — Agent Runtime Interface（对标 CRI）；外部对象为 agent，使用 `agent/*` 方法 |
-| [agentd/agentd.md](./agentd/agentd.md) | 组件 | agentd — agent 运行时守护进程（对标 containerd）；包含 Agent Manager（外部）和 Session Manager（内部） |
-
-### orchestrator/ — Layer 3: 多 agent 协同调度（对标 kubelet + Pod）
-
-| 文档 | 类型 | 内容 |
-|------|------|------|
-| [orchestrator/room-spec.md](./orchestrator/room-spec.md) | 规范 | Room Spec — 协同调度的 agent 组（对标 Pod Spec） |
+| [agentd/ari-spec.md](./agentd/ari-spec.md) | 规范 | ARI — Agent Runtime Interface；`workspace/*`、`agent/*` Agent CRUD、`agentrun/*` AgentRun 生命周期 |
+| [agentd/agentd.md](./agentd/agentd.md) | 组件 | agentd — agent 运行时守护进程；Workspace Manager、Agent Manager、Agent Manager、Process Manager |

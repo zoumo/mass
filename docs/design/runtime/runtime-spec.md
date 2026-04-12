@@ -21,15 +21,17 @@ The state of an agent includes the following properties:
   The value MAY be one of:
 
   * `creating`: the agent is being created (step 2 in the [lifecycle](#lifecycle))
-  * `created`: the runtime has finished the [create operation](#create),
-    the agent process is running and the ACP session has been established
+  * `idle`: the runtime has finished the [create operation](#create),
+    the agent process is running, the ACP session has been established,
+    and the agent is ready to receive prompts
   * `running`: the agent is executing a prompt (processing a `session/prompt`)
   * `stopped`: the agent process has exited (step 7 in the [lifecycle](#lifecycle))
+  * `error`: an unrecoverable failure occurred during creating, idle, or running
 
   Additional values MAY be defined by the runtime, however,
   they MUST be used to represent new runtime states not defined above.
 
-* **`pid`** (int, REQUIRED when `status` is `created` or `running`) is the ID
+* **`pid`** (int, REQUIRED when `status` is `idle` or `running`) is the ID
   of the agent process as seen by the host OS.
 * **`bundle`** (string, REQUIRED) is the absolute path to the agent's bundle directory.
   This is provided so that consumers can find the agent's configuration on the host.
@@ -44,7 +46,7 @@ The state MAY include additional properties.
 |---------------|----------------|-------|
 | `ociVersion` | `oarVersion` | Same |
 | `id` | `id` | Same |
-| `status` | `status` | Same pattern: creating/created/running/stopped |
+| `status` | `status` | Same pattern: creating/idle/running/stopped/error |
 | `pid` | `pid` | Same |
 | `bundle` (rootfs + config path) | `bundle` (config.json path) | Same concept |
 | `annotations` | `annotations` | Same |
@@ -56,10 +58,10 @@ The state MAY include additional properties.
 ```json
 {
   "oarVersion": "0.1.0",
-  "id": "session-abc123",
-  "status": "created",
+  "id": "my-project-architect",
+  "status": "idle",
   "pid": 12345,
-  "bundle": "/var/lib/agentd/bundles/session-abc123",
+  "bundle": "/var/lib/agentd/bundles/my-project-architect",
   "annotations": {
     "org.openagents.task": "PROJ-1234"
   }
@@ -78,22 +80,21 @@ bundle, not to `/run/runc/<id>/`.
 
 ## File System Layout
 
+In agentd-managed deployments, bundle, state, and socket are co-located under the bundle root:
+
 ```
-/var/lib/agentd/bundles/<agent-id>/   ← bundle dir (bundle field in state.json)
-├── config.json
-└── workspace -> /var/lib/agentd/workspaces/ws-abc/
-
-/run/agentd/shim/<agent-id>/          ← state dir (ephemeral)
-├── state.json
-├── agent-shim.sock
-└── events.jsonl
+<bundleRoot>/<workspace>-<name>/      ← bundle dir (bundle field in state.json)
+├── config.json                       ← agentd writes (OAR Runtime Spec)
+├── workspace -> <workspace-dir>      ← agentd symlinks to workspace directory
+├── state.json                        ← shim writes
+├── agent-shim.sock                   ← shim creates (Unix domain socket)
+└── events.jsonl                      ← shim appends
 ```
 
-Socket 路径约定：`/run/agentd/shim/<session-id>/agent-shim.sock`
+When running `agentd shim` in standalone mode, the default state directory is `<cwd>`.
 
-socket 与 state.json、events.jsonl 同在一个 state dir 下。
-agentd 重启后扫描 `/run/agentd/shim/*/agent-shim.sock` 即可重连所有存活的 runtime，
-无需额外记录 socket 路径。
+agentd persists `ShimSocketPath` and `ShimStateDir` in AgentRun metadata,
+so recovery uses persisted metadata rather than filesystem scanning.
 
 ## Bundle
 
@@ -133,7 +134,7 @@ agentd's Workspace Manager prepares the workspace directory and creates a symlin
 creates or modifies the workspace directory.
 
 The key difference: OCI rootfs is isolated per container. OAR workspace is shared —
-multiple agents in a Room each have their own bundle, but their `agentRoot.path`
+multiple AgentRuns sharing a workspace each have their own bundle, but their `agentRoot.path`
 symlinks all point to the same underlying workspace directory.
 
 ### Bundle Lifecycle
@@ -170,11 +171,11 @@ to when it ceases to exist.
    using the resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt` values.
    For ACP v0.6.3, `session/new` carries the resolved `cwd` plus
    `acpAgent.session.mcpServers`; any compatibility exchange required to realize
-   `systemPrompt` happens inside `create` before the runtime returns `created`.
+   `systemPrompt` happens inside `create` before the runtime transitions to `idle`.
    This bootstrap work is internal session establishment, not an external user turn.
    If session creation fails, the runtime MUST [generate an error](#errors),
    kill the process, and continue the lifecycle at step 8.
-6. The agent is now in `created` state — process is running,
+6. The agent is now in `idle` state — process is running,
    ACP bootstrap is complete, and the agent is ready to receive prompts.
 7. The agent process exits.
    This MAY happen due to error, the runtime's [`kill`](#kill) operation being invoked,
@@ -200,8 +201,8 @@ The `start` operation is currently a no-op, reserved for future use.
            │ process started + ACP initialized + session established
            ▼
       ┌──────────┐          session/prompt           ┌──────────┐
-      │ created   │ ──────────────────────────────► │ running   │
-      │ (idle)    │ ◄────────────────────────────── │(prompting)│
+      │  idle     │ ──────────────────────────────► │ running   │
+      │           │ ◄────────────────────────────── │(prompting)│
       └────┬──────┘          prompt completed        └────┬──────┘
            │                                              │
            │ kill / exit / error                          │ kill / exit / error
@@ -219,16 +220,17 @@ The `start` operation is currently a no-op, reserved for future use.
 The design set uses the following cross-layer mapping. `status` in this document is the
 runtime-owned state, not the agentd session state, and not the ACP peer's session identifier.
 
-| OAR runtime `status` | agentd session state | Process status | ACP `sessionId` authority | Notes |
+| OAR runtime `status` | agentd AgentRun state | Process status | ACP `sessionId` authority | Notes |
 |---|---|---|---|---|
-| `creating` | `created` while bootstrap is still in progress | process may be absent or starting | none yet, or not yet durable | agentd has allocated the OAR `sessionId`, but ACP bootstrap is not complete. |
-| `created` | `created` | running | ACP peer may now return its own `sessionId`; it is subordinate protocol state | Runtime bootstrap is complete and the session is idle/ready. |
-| `running` | `running` | running | same ACP `sessionId` established during bootstrap | External work is flowing through `session/prompt`. |
-| `stopped` | `stopped` or a pause/cleanup transition in agentd | stopped or exited | last known ACP `sessionId` is historical only | Process has exited; runtime state is terminal until delete. |
+| `creating` | `creating` — bootstrap in progress | process may be absent or starting | none yet, or not yet durable | agentd has allocated the AgentRun identity, but ACP bootstrap is not complete. |
+| `idle` | `idle` | running | ACP peer may now return its own `sessionId`; it is subordinate protocol state | Runtime bootstrap is complete and the agent is ready to receive prompts. |
+| `running` | `running` | running | same ACP `sessionId` established during bootstrap | External work is flowing through `agentrun/prompt`. |
+| `stopped` | `stopped` | stopped or exited | last known ACP `sessionId` is historical only | Process has exited; runtime state is terminal until delete. |
+| `error` | `error` | stopped or absent | last known ACP `sessionId` is historical only | Unrecoverable failure; agent must be restarted or deleted. |
 
 Identity authority stays split:
 
-- OAR `sessionId` is allocated and owned by agentd/ARI and names the runtime object.
+- AgentRun identity `(workspace, name)` is allocated and owned by agentd/ARI and names the runtime object.
 - ACP `sessionId` is allocated by the ACP peer during bootstrap and only identifies the inner protocol session.
 - Implementations MUST NOT imply that the two identifiers are equal, interchangeable, or durably mirrored unless later persistence work explicitly records that mapping.
 
@@ -280,7 +282,7 @@ will not have an effect on the agent.
 `start <agent-id>`
 
 This operation MUST [generate an error](#errors) if it is not provided the agent ID.
-Attempting to `start` an agent that is not [`created`](#state) MUST have no effect
+Attempting to `start` an agent that is not [`idle`](#state) MUST have no effect
 on the agent and MUST [generate an error](#errors).
 
 In the current specification, `create` already starts the agent process and
@@ -292,7 +294,7 @@ and for API compatibility with OCI's create/start separation.
 `kill <agent-id> <signal>`
 
 This operation MUST [generate an error](#errors) if it is not provided the agent ID.
-Attempting to send a signal to an agent that is neither [`created` nor `running`](#state)
+Attempting to send a signal to an agent that is neither [`idle` nor `running`](#state)
 MUST have no effect on the agent and MUST [generate an error](#errors).
 This operation MUST send the specified signal to the agent process.
 
@@ -307,7 +309,7 @@ This operation MUST [generate an error](#errors) if it is not provided the agent
 Attempting to `delete` an agent that is not [`stopped`](#state) MUST have no effect
 on the agent and MUST [generate an error](#errors).
 Deleting an agent MUST delete the resources that were created during the `create` step
-(e.g. the `/run/agentd/shim/<agent-id>/` state directory).
+(e.g. the bundle/state directory under `<bundleRoot>/<workspace>-<name>/`).
 Once an agent is deleted its ID MAY be used by a subsequent agent.
 
 ## config.json
@@ -338,7 +340,7 @@ The runtime reads `config.json` from the bundle directory. Fields:
 
 * `agentRoot.path` → 相对路径，runtime 在 create 时解析为绝对路径（EvalSymlinks），用作 cmd.Dir 和 ACP session/new cwd
 * `acpAgent.process` → fork/exec agent 进程
-* `acpAgent.systemPrompt` + `acpAgent.session` → ACP bootstrap 配置；`session/new` 承载 resolved cwd 与 session 字段，兼容性转换必须在对外暴露 `created` 前完成
+* `acpAgent.systemPrompt` + `acpAgent.session` → ACP bootstrap 配置；`session/new` 承载 resolved cwd 与 session 字段，兼容性转换必须在对外暴露 `idle` 状态前完成
 * `permissions` → fs/terminal 权限策略
 
 详见 [config.md](config-spec.md)。

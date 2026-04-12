@@ -1,7 +1,7 @@
 # agentd — runtime realization daemon
 
 agentd is the daemon that realizes already-decided runtime objects.
-It owns workspaces, agents, process supervision, and exposes the ARI control surface.
+It owns workspaces, AgentTemplates, AgentRuns, process supervision, and exposes the ARI control surface.
 It does **not** own orchestrator intent.
 
 ## Desired vs Realized
@@ -9,10 +9,11 @@ It does **not** own orchestrator intent.
 | Concern | Primary owner | agentd role |
 |---|---|---|
 | Which workspaces should exist | orchestrator | realize them when asked |
-| Which agents should run | orchestrator | store realized `workspace` / `name` identity on agents |
+| Which AgentRuns should run | orchestrator | store realized `workspace` / `name` identity on AgentRuns |
 | When work is complete | orchestrator | expose runtime state only |
 | Workspace preparation and cleanup | Workspace Manager | authoritative runtime execution |
-| Agent lifecycle and identity | Agent Manager | external lifecycle authority |
+| Agent configuration | operator / orchestrator | store and serve via `agent/*` |
+| AgentRun lifecycle and identity | Agent Manager | external lifecycle authority |
 | Shim process truth | Process Manager | internal runtime execution |
 | ACP protocol details | runtime / shim | hidden behind shim and translated for ARI |
 
@@ -38,20 +39,35 @@ Important boundary rules:
 
 ### Agent Manager
 
-Agent Manager owns the **external** lifecycle of agents.
-An agent is the durable, externally-visible runtime object that records:
+Agent Manager owns the CRUD lifecycle of reusable named configurations.
+An Agent definition is a named runtime configuration template with the following fields:
 
-- identity: `workspace` + `name` (unique key — all agents belong to a workspace);
-- selected `runtimeClass`;
+- `name` (unique key) — the name that `agentrun/create.agent` references to select this template;
+- `command` — the executable command for the agent process;
+- optional `args` — command arguments;
+- optional `env` — environment variables as a list of `{name, value}` objects;
+- optional `startupTimeoutSeconds` — bootstrap timeout.
+
+There is no runtime process associated with an Agent definition.
+When an AgentRun is created, the Process Manager looks up the Agent definition named by `agentrun/create.agent` and uses its `command`, `args`, and `env` to generate the OAR Runtime Spec `config.json`.
+AgentTemplates are managed via `agent/set`, `agent/get`, `agent/list`, `agent/delete`.
+
+### Agent Manager
+
+Agent Manager owns the **external** lifecycle of running agent instances (AgentRuns).
+An AgentRun is the durable, externally-visible runtime object that records:
+
+- identity: `workspace` + `name` (unique key — all AgentRuns belong to a workspace);
+- selected `agent`;
 - restart policy and bootstrap inputs (`systemPrompt`, `labels`);
 - external lifecycle state (`creating`, `idle`, `running`, `stopped`, `error`).
 
-Agent identity (`workspace` + `name`) is stable across restarts.
-`agent/create` is the external entry point; the Agent Manager validates inputs, writes durable agent metadata, and triggers the internal bootstrap sequence via Process Manager.
+AgentRun identity (`workspace` + `name`) is stable across restarts.
+`agentrun/create` is the external entry point; the Agent Manager validates inputs, writes durable AgentRun metadata, and triggers the internal bootstrap sequence via Process Manager.
 
 ### Process Manager
 
-Process Manager realizes an agent into an actual runtime process through the shim.
+Process Manager realizes an AgentRun into an actual runtime process through the shim.
 It owns:
 
 - bundle materialization;
@@ -61,20 +77,20 @@ It owns:
 - typed event subscription;
 - recovery on daemon restart.
 
-Session-level concerns (shim socket path, PID, bundle directory) are tracked directly by Process Manager and surfaced through `agent/status` via `shimState`.
+Session-level concerns (shim socket path, PID, bundle directory) are tracked directly by Process Manager and surfaced through `agentrun/status` via `shimState`.
 
-## Agent Identity
+## AgentRun Identity
 
-The `(workspace, name)` pair is the stable external identity for an agent.
+The `(workspace, name)` pair is the stable external identity for an AgentRun.
 
-- `workspace` — the workspace this agent is a member of;
+- `workspace` — the workspace this AgentRun is a member of;
 - `name` — the agent name within that workspace (e.g. `architect`, `coder`).
 
 Together they form a unique key within agentd.
-External callers always refer to agents by `(workspace, name)`.
-External callers address agents by `(workspace, name)` only — no opaque UUID is exposed through ARI.
+External callers always refer to AgentRuns by `(workspace, name)`.
+No opaque UUID is exposed through ARI.
 
-## Agent State Machine
+## AgentRun State Machine
 
 ```
 creating ──┐
@@ -85,7 +101,7 @@ creating ──┐
 
 | State | Meaning |
 |---|---|
-| `creating` | `agent/create` accepted; background bootstrap in progress |
+| `creating` | `agentrun/create` accepted; background bootstrap in progress |
 | `idle` | Bootstrap complete; agent is ready to accept a prompt |
 | `running` | Agent is processing an active prompt turn |
 | `stopped` | Agent process is stopped; state is preserved |
@@ -95,38 +111,38 @@ Transition rules:
 
 - `creating → idle`: shim started successfully (ACP initialized);
 - `creating → error`: shim start failed;
-- `idle → running`: `agent/prompt` dispatched;
+- `idle → running`: `agentrun/prompt` dispatched;
 - `running → idle`: prompt turn completes (agent returns to idle);
-- `idle → stopped` / `running → stopped`: `agent/stop` received;
+- `idle → stopped` / `running → stopped`: `agentrun/stop` received;
 - `running → error`: runtime failure during a turn;
-- `error → creating` / `stopped → creating`: `agent/restart` triggers re-bootstrap.
+- `error → creating` / `stopped → creating`: `agentrun/restart` triggers re-bootstrap.
 
 ## Bootstrap Contract
 
-The converged bootstrap story for agent creation:
+The converged bootstrap story for AgentRun creation:
 
 1. `workspace/create` is called; agentd prepares the workspace asynchronously.
 2. Caller polls `workspace/status` until `phase: "ready"`.
-3. `agent/create` is called with `workspace` + `name` + `runtimeClass`.
-4. agentd validates the workspace is ready, writes agent metadata with `state: "creating"`, and starts the shim in a background goroutine.
+3. `agentrun/create` is called with `workspace` + `name` + `agent`.
+4. agentd validates the workspace is ready, writes AgentRun metadata with `state: "creating"`, and starts the shim in a background goroutine.
 5. The shim materializes the bundle, resolves `cwd`, and completes ACP bootstrap.
-6. On success: agent transitions to `idle`. On failure: agent transitions to `error`.
-7. Actual work arrives later through `agent/prompt`.
-8. Callers poll `agent/status` until state transitions out of `creating`.
+6. On success: AgentRun transitions to `idle`. On failure: AgentRun transitions to `error`.
+7. Actual work arrives later through `agentrun/prompt`.
+8. Callers poll `agentrun/status` until state transitions out of `creating`.
 
-`agent/create` returns immediately with `state: "creating"`.
+`agentrun/create` returns immediately with `state: "creating"`.
 It does **not** wait for bootstrap to complete.
 
 ## Async Create Semantics
 
-`agent/create` is non-blocking.
+`agentrun/create` is non-blocking.
 The response is:
 
 ```json
 { "workspace": "my-project", "name": "architect", "state": "creating" }
 ```
 
-The caller polls `agent/status` to determine when the agent is ready:
+The caller polls `agentrun/status` to determine when the agent is ready:
 
 ```json
 { "agent": { "workspace": "my-project", "name": "architect", "state": "idle", ... } }
@@ -140,43 +156,43 @@ Bootstrap errors surface as:
 
 ## Stop and Delete Separation
 
-`agent/stop` and `agent/delete` are distinct operations:
+`agentrun/stop` and `agentrun/delete` are distinct operations:
 
 | Operation | Effect | Requires |
 |---|---|---|
-| `agent/stop` | Stops the runtime process; preserves agent metadata and state | Agent in `idle` or `running` state |
-| `agent/delete` | Removes agent record and releases resources | Agent must be in `stopped` or `error` state |
+| `agentrun/stop` | Stops the runtime process; preserves AgentRun metadata and state | AgentRun in `idle` or `running` state |
+| `agentrun/delete` | Removes AgentRun record and releases resources | AgentRun must be in `stopped` or `error` state |
 
-`agent/stop` does not delete.
-`agent/delete` requires a prior `agent/stop` only for healthy agents.
+`agentrun/stop` does not delete.
+`agentrun/delete` requires a prior `agentrun/stop` only for healthy agents.
 Agents already in `error` may be deleted directly because they are already non-operational.
 
 ## Restart
 
-`agent/restart` re-bootstraps an agent from `stopped` or `error` state:
+`agentrun/restart` re-bootstraps an AgentRun from `stopped` or `error` state:
 
 1. Validates agent is `stopped` or `error`.
 2. Transitions agent to `creating`.
-3. Triggers background re-bootstrap using existing agent metadata.
-4. Caller polls `agent/status` until `idle` or `error`.
+3. Triggers background re-bootstrap using existing AgentRun metadata.
+4. Caller polls `agentrun/status` until `idle` or `error`.
 
 Restart preserves `workspace`, `name`, and bootstrap configuration.
-It does not create a new agent identity.
+It does not create a new AgentRun identity.
 
 ## Error State Contract
 
 `error` is a retained-failure state:
 
-- the agent record still exists;
+- the AgentRun record still exists;
 - the current runtime instance is no longer trustworthy;
 - callers must not route new work to the agent until it is restarted;
-- the primary operator actions are `agent/status`, `agent/restart`, or `agent/delete`.
+- the primary operator actions are `agentrun/status`, `agentrun/restart`, or `agentrun/delete`.
 
 Operational consequences:
 
-- `agent/prompt` is rejected for `error` agents (must be in `idle` state);
+- `agentrun/prompt` is rejected for `error` agents (must be in `idle` state);
 - `workspace/send` is rejected when the target agent is in `error` state;
-- `workspace/delete` is blocked (`-32001`) when the workspace has any agents.
+- `workspace/delete` is blocked (`-32001`) when the workspace has any AgentRuns.
 
 ## workspace/send and Agent-to-Agent Routing
 
@@ -192,27 +208,24 @@ Rejection conditions:
 ## Recovery and Persistence Posture
 
 agentd is authoritative for realized runtime metadata.
-After restart, agent identity (`workspace` + `name`) is the recovery key.
+After restart, AgentRun identity (`workspace` + `name`) is the recovery key.
 
 Persisted recovery state:
 
-- `workspace`, `name`, `runtimeClass`, bootstrap configuration;
-- shim socket path, state directory, shim PID for live process reconnect;
+- `workspace`, `name`, `agent`, bootstrap configuration (`BootstrapConfig`);
+- shim socket path (`ShimSocketPath`), state directory (`ShimStateDir`), shim PID (`ShimPID`) for live process reconnect;
 - last known agent state.
 
 On daemon restart:
 
-1. Load all agent records from DB.
-2. For each agent with `idle` or `running` state, attempt shim reconnect.
+1. Load all AgentRun records from DB.
+2. For each AgentRun with `idle` or `running` state, attempt shim reconnect.
 3. If reconnect succeeds: restore to `idle` state (or recover running state via runtime/status).
-4. If reconnect fails: mark agent `stopped` (fail-closed per D029).
+4. If reconnect fails: mark agent `error` (fail-closed).
 
-External callers never see internal shim process details beyond what `agent/status` surfaces in `shimState`.
+AgentRuns in `creating` state at daemon restart are marked `error` ("daemon restarted during creating phase") — they never completed bootstrap.
 
-The design still leaves several durable-state gaps for later work:
-
-- restart-safe replay, reconnect, cleanup, and cross-client hardening;
-- cross-client delivery and routing hardening for multi-agent workspaces.
+External callers never see internal shim process details beyond what `agentrun/status` surfaces in `shimState`.
 
 ## Runtime Bootstrap Flow
 
@@ -226,38 +239,40 @@ orchestrator
   <- { name, phase: "ready", path }
 
 orchestrator
-  -> agent/create(workspace, name, runtimeClass, ...)   # async bootstrap
+  -> agentrun/create(workspace, name, runtimeClass, ...)   # async bootstrap
   <- { workspace, name, state: "creating" }
 
 agentd (background)
   -> materialize bundle + resolve cwd + ACP initialize
-  -> reach bootstrap-complete / idle state (agent.state = "idle")
+  -> reach bootstrap-complete / idle state (agentRun.state = "idle")
 
 orchestrator
-  -> agent/status(workspace, name)   # poll until state != "creating"
+  -> agentrun/status(workspace, name)   # poll until state != "creating"
   <- { agent: { workspace, name, state: "idle", ... } }
 
 orchestrator or another runtime caller
-  -> agent/prompt(workspace, name, prompt)
+  -> agentrun/prompt(workspace, name, prompt)
   <- { accepted: true }
 ```
 
 ## Environment and Capability Posture
 
-agentd runtime bootstrap may depend on daemon/host environment and `runtimeClass.env`,
-but those are runtime configuration concerns rather than part of the external `agent/create` contract.
+The agent process env is built from: parent process (agentd host) environment + Agent definition env.
+There is no AgentRun-level env override in `agentrun/create`; env is fixed by the Agent definition and runtime class configuration.
+
+Workspace hooks run in agentd's host process environment and are not affected by Agent definition env.
 
 Capability posture is also explicit:
 
 - ACP remains the inner protocol between shim and agent;
-- agentd exposes a curated ARI surface (`agent/*`, `workspace/*`, attach notifications);
+- agentd exposes a curated ARI surface (`agentrun/*`, `agent/*`, `workspace/*`);
 - raw ACP client responsibilities such as `fs/*`, `terminal/*`, or low-level protocol negotiation remain behind the shim boundary and are governed by permission policy rather than by direct ARI passthrough.
 
 ## Shared Workspace Semantics
 
-Multiple agents may intentionally share one workspace.
+Multiple AgentRuns may intentionally share one workspace.
 The runtime guarantees reference tracking and cleanup safety, but **not** per-agent filesystem isolation.
-If several agents share a workspace, they share read/write impact on the same host path.
+If several AgentRuns share a workspace, they share read/write impact on the same host path.
 
 ## Security Boundary Summary
 
@@ -265,3 +280,18 @@ If several agents share a workspace, they share read/write impact on the same ho
 - hooks execute as host commands and can have host-side effects before any agent prompt runs;
 - shared workspace means shared host-path impact;
 - ACP capability exposure is intentionally narrower at the ARI boundary than at the shim boundary.
+
+## Shim File Layout
+
+For each AgentRun, agentd stores bundle, state, and socket co-located under the bundle root:
+
+```
+<bundleRoot>/<workspace>-<name>/
+├── config.json          ← agentd writes (OAR Runtime Spec)
+├── workspace -> <path>  ← agentd symlinks to the workspace directory
+├── state.json           ← shim writes
+├── agent-shim.sock      ← shim creates (Unix domain socket)
+└── events.jsonl         ← shim appends
+```
+
+`ShimSocketPath` and `ShimStateDir` are persisted in the AgentRun metadata so agentd can reconnect after restart without scanning the filesystem.
