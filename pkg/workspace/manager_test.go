@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
+	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 )
 
 // TestWorkspaceErrorStructure verifies WorkspaceError has all required fields.
@@ -1075,7 +1077,7 @@ func TestWorkspaceManagerMultipleSessions(t *testing.T) {
 // InitRefCounts pre-registers paths at count=0 so cleanup logic works correctly.
 func TestWorkspaceManagerInitRefCounts(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	store, err := meta.NewStore(dbPath)
+	store, err := store.NewStore(dbPath, slog.Default())
 	if err != nil {
 		t.Fatalf("NewStore failed: %v", err)
 	}

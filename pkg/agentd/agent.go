@@ -8,8 +8,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
+	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 )
 
 // ErrAgentRunNotFound is returned when an agent does not exist.
@@ -27,7 +28,7 @@ func (e *ErrAgentRunNotFound) Error() string {
 type ErrDeleteNotStopped struct {
 	Workspace string
 	Name      string
-	State     spec.Status
+	State     api.Status
 }
 
 func (e *ErrDeleteNotStopped) Error() string {
@@ -46,30 +47,30 @@ func (e *ErrAgentRunAlreadyExists) Error() string {
 }
 
 // AgentRunManager manages agent lifecycle.
-// It wraps meta.Store and provides Create/Get/List/UpdateStatus/Delete
+// It wraps store.Store and provides Create/Get/List/UpdateStatus/Delete
 // with domain error types and structured logging.
 // Agent identity is (workspace, name) — no UUID.
 type AgentRunManager struct {
-	store  *meta.Store
+	store  *store.Store
 	logger *slog.Logger
 }
 
 // NewAgentRunManager creates a new AgentRunManager wrapping the provided store.
 // The logger is configured with component=agentd.agent for observability.
-func NewAgentRunManager(store *meta.Store) *AgentRunManager {
-	logger := slog.Default().With("component", "agentd.agent")
+func NewAgentRunManager(s *store.Store, logger *slog.Logger) *AgentRunManager {
+	logger = logger.With("component", "agentd.agent")
 	return &AgentRunManager{
-		store:  store,
+		store:  s,
 		logger: logger,
 	}
 }
 
 // Create creates a new agent.
-// Sets default status.State to spec.StatusCreating if empty.
+// Sets default status.State to api.StatusCreating if empty.
 // Returns ErrAgentRunAlreadyExists if the (workspace, name) pair already exists.
 func (m *AgentRunManager) Create(ctx context.Context, agent *meta.AgentRun) error {
 	if agent.Status.State == "" {
-		agent.Status.State = spec.StatusCreating
+		agent.Status.State = api.StatusCreating
 	}
 
 	m.logger.Info("creating agent",
@@ -156,7 +157,7 @@ func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name stri
 // TransitionState updates an agent state only when the current state matches
 // expected. It returns false when the agent exists but was already in another
 // state. Other status fields are preserved.
-func (m *AgentRunManager) TransitionState(ctx context.Context, workspace, name string, expected, next spec.Status) (bool, error) {
+func (m *AgentRunManager) TransitionState(ctx context.Context, workspace, name string, expected, next api.Status) (bool, error) {
 	m.logger.Info("transitioning agent state",
 		"workspace", workspace,
 		"name", name,
@@ -183,7 +184,6 @@ func (m *AgentRunManager) TransitionState(ctx context.Context, workspace, name s
 // Returns ErrDeleteNotStopped if the agent is not in the stopped or error state.
 // Returns ErrAgentRunNotFound if the agent does not exist.
 func (m *AgentRunManager) Delete(ctx context.Context, workspace, name string) error {
-	// Fetch current agent to validate deletion preconditions.
 	current, err := m.store.GetAgentRun(ctx, workspace, name)
 	if err != nil {
 		return fmt.Errorf("agentd: failed to get agent for deletion: %w", err)
@@ -193,7 +193,7 @@ func (m *AgentRunManager) Delete(ctx context.Context, workspace, name string) er
 	}
 
 	// Only stopped or error agents may be deleted.
-	if current.Status.State != spec.StatusStopped && current.Status.State != spec.StatusError {
+	if current.Status.State != api.StatusStopped && current.Status.State != api.StatusError {
 		m.logger.Warn("delete blocked: agent is still active",
 			"workspace", workspace,
 			"name", name,

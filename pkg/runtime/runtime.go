@@ -18,14 +18,16 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 
+	"github.com/open-agent-d/open-agent-d/api"
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // StateChange describes an externally visible runtime lifecycle transition.
 type StateChange struct {
 	SessionID      string
-	PreviousStatus spec.Status
-	Status         spec.Status
+	PreviousStatus api.Status
+	Status         api.Status
 	PID            int
 	Reason         string
 }
@@ -35,7 +37,7 @@ type StateChangeHook func(StateChange)
 
 // Manager manages the lifecycle of a single ACP agent process.
 type Manager struct {
-	cfg       spec.Config
+	cfg       apispec.Config
 	bundleDir string
 	stateDir  string
 
@@ -48,7 +50,7 @@ type Manager struct {
 }
 
 // New creates a new Manager. It does not start the agent process.
-func New(cfg spec.Config, bundleDir, stateDir string) *Manager {
+func New(cfg apispec.Config, bundleDir, stateDir string) *Manager {
 	return &Manager{
 		cfg:       cfg,
 		bundleDir: bundleDir,
@@ -75,10 +77,10 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: %w", err)
 	}
 
-	if err := m.writeState(spec.State{
+	if err := m.writeState(apispec.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
-		Status:      spec.StatusCreating,
+		Status:      api.StatusCreating,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
 	}, "bootstrap-started"); err != nil {
@@ -114,10 +116,10 @@ func (m *Manager) Create(ctx context.Context) error {
 	defer func() {
 		if handshakeErr != nil {
 			_ = cmd.Process.Kill()
-			_ = m.writeState(spec.State{
+			_ = m.writeState(apispec.State{
 				OarVersion:  m.cfg.OarVersion,
 				ID:          m.cfg.Metadata.Name,
-				Status:      spec.StatusStopped,
+				Status:      api.StatusStopped,
 				Bundle:      m.bundleDir,
 				Annotations: m.cfg.Metadata.Annotations,
 			}, "bootstrap-failed")
@@ -159,10 +161,10 @@ func (m *Manager) Create(ctx context.Context) error {
 		}
 	}
 
-	if err := m.writeState(spec.State{
+	if err := m.writeState(apispec.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
-		Status:      spec.StatusIdle,
+		Status:      api.StatusIdle,
 		PID:         cmd.Process.Pid,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
@@ -173,10 +175,10 @@ func (m *Manager) Create(ctx context.Context) error {
 
 	go func() {
 		_ = cmd.Wait()
-		_ = m.writeState(spec.State{
+		_ = m.writeState(apispec.State{
 			OarVersion:  m.cfg.OarVersion,
 			ID:          m.cfg.Metadata.Name,
-			Status:      spec.StatusStopped,
+			Status:      api.StatusStopped,
 			Bundle:      m.bundleDir,
 			Annotations: m.cfg.Metadata.Annotations,
 		}, "process-exited")
@@ -211,10 +213,10 @@ func (m *Manager) Kill(ctx context.Context) error {
 		}
 	}
 
-	return m.writeState(spec.State{
+	return m.writeState(apispec.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
-		Status:      spec.StatusStopped,
+		Status:      api.StatusStopped,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
 	}, "runtime-stop")
@@ -226,14 +228,14 @@ func (m *Manager) Delete() error {
 	if err != nil {
 		return fmt.Errorf("runtime: read state for delete: %w", err)
 	}
-	if s.Status != spec.StatusStopped {
+	if s.Status != api.StatusStopped {
 		return fmt.Errorf("runtime: cannot delete agent in status %q (must be stopped)", s.Status)
 	}
 	return spec.DeleteState(m.stateDir)
 }
 
 // GetState returns the current persisted state of the agent.
-func (m *Manager) GetState() (spec.State, error) {
+func (m *Manager) GetState() (apispec.State, error) {
 	return spec.ReadState(m.stateDir)
 }
 
@@ -252,7 +254,7 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 	}
 
 	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
-		st.Status = spec.StatusRunning
+		st.Status = api.StatusRunning
 		_ = m.writeState(st, "prompt-started")
 	}
 
@@ -261,14 +263,14 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		Prompt:    prompt,
 	})
 
-	lt := &spec.LastTurn{CompletedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	lt := &apispec.LastTurn{CompletedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if err != nil {
 		lt.Error = err.Error()
 	} else {
 		lt.StopReason = string(resp.StopReason)
 	}
 	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
-		st.Status = spec.StatusIdle
+		st.Status = api.StatusIdle
 		st.LastTurn = lt
 		reason := "prompt-completed"
 		if err != nil {
@@ -319,7 +321,7 @@ func (m *Manager) done() <-chan struct{} {
 	return make(chan struct{})
 }
 
-func (m *Manager) writeState(state spec.State, reason string) error {
+func (m *Manager) writeState(state apispec.State, reason string) error {
 	previous, prevErr := spec.ReadState(m.stateDir)
 	if err := spec.WriteState(m.stateDir, state); err != nil {
 		return err
@@ -330,7 +332,7 @@ func (m *Manager) writeState(state spec.State, reason string) error {
 	return nil
 }
 
-func (m *Manager) emitStateChange(previous, current spec.State, reason string) {
+func (m *Manager) emitStateChange(previous, current apispec.State, reason string) {
 	m.mu.Lock()
 	hook := m.stateChangeHook
 	m.mu.Unlock()
@@ -346,9 +348,9 @@ func (m *Manager) emitStateChange(previous, current spec.State, reason string) {
 	})
 }
 
-// convertMcpServers maps spec.McpServer slice to acp.McpServer slice.
-// spec.McpServer.Type is "http" or "sse"; both map to the acp union variants.
-func convertMcpServers(servers []spec.McpServer) []acp.McpServer {
+// convertMcpServers maps apispec.McpServer slice to acp.McpServer slice.
+// apispec.McpServer.Type is "http" or "sse"; both map to the acp union variants.
+func convertMcpServers(servers []apispec.McpServer) []acp.McpServer {
 	result := make([]acp.McpServer, 0, len(servers))
 	for _, s := range servers {
 		switch s.Type {

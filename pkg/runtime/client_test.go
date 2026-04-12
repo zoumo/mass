@@ -10,12 +10,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 )
 
 // newTestManager builds a Manager with no agent process — just enough to
 // exercise unexported helpers and acpClient methods.
-func newTestManager(policy spec.PermissionPolicy) *Manager {
+func newTestManager(policy apispec.PermissionPolicy) *Manager {
 	bundleDir, err := os.MkdirTemp("", "oad-bundle-")
 	if err != nil {
 		panic("newTestManager: MkdirTemp bundleDir: " + err.Error())
@@ -28,10 +29,10 @@ func newTestManager(policy spec.PermissionPolicy) *Manager {
 	if err != nil {
 		panic("newTestManager: MkdirTemp stateDir: " + err.Error())
 	}
-	cfg := spec.Config{
+	cfg := apispec.Config{
 		OarVersion:  "0.1.0",
-		Metadata:    spec.Metadata{Name: "test-agent"},
-		AgentRoot:   spec.AgentRoot{Path: "workspace"},
+		Metadata:    apispec.Metadata{Name: "test-agent"},
+		AgentRoot:   apispec.AgentRoot{Path: "workspace"},
 		Permissions: policy,
 	}
 	return New(cfg, bundleDir, stateDir)
@@ -46,7 +47,7 @@ func cleanupManager(m *Manager) {
 // ── acpClient.RequestPermission ──────────────────────────────────────────────
 
 func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
-	mgr := newTestManager(spec.DenyAll)
+	mgr := newTestManager(apispec.DenyAll)
 	defer cleanupManager(mgr)
 
 	client := &acpClient{mgr: mgr}
@@ -56,7 +57,7 @@ func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
 }
 
 func TestAcpClient_RequestPermission_ApproveReads(t *testing.T) {
-	mgr := newTestManager(spec.ApproveReads)
+	mgr := newTestManager(apispec.ApproveReads)
 	defer cleanupManager(mgr)
 
 	client := &acpClient{mgr: mgr}
@@ -66,7 +67,7 @@ func TestAcpClient_RequestPermission_ApproveReads(t *testing.T) {
 }
 
 func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
-	mgr := newTestManager(spec.ApproveAll)
+	mgr := newTestManager(apispec.ApproveAll)
 	defer cleanupManager(mgr)
 
 	client := &acpClient{mgr: mgr}
@@ -77,7 +78,7 @@ func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
 // ── Not-supported stubs ───────────────────────────────────────────────────────
 
 func TestAcpClient_NotSupported(t *testing.T) {
-	mgr := newTestManager(spec.ApproveAll)
+	mgr := newTestManager(apispec.ApproveAll)
 	defer cleanupManager(mgr)
 	client := &acpClient{mgr: mgr}
 	ctx := context.Background()
@@ -114,7 +115,7 @@ func TestAcpClient_NotSupported(t *testing.T) {
 // ── convertMcpServers ─────────────────────────────────────────────────────────
 
 func TestConvertMcpServers_SSEBranch(t *testing.T) {
-	servers := []spec.McpServer{
+	servers := []apispec.McpServer{
 		{Type: "sse", URL: "http://example.com/sse"},
 	}
 	result := convertMcpServers(servers)
@@ -125,7 +126,7 @@ func TestConvertMcpServers_SSEBranch(t *testing.T) {
 }
 
 func TestConvertMcpServers_HTTPBranch(t *testing.T) {
-	servers := []spec.McpServer{
+	servers := []apispec.McpServer{
 		{Type: "http", URL: "http://example.com/mcp"},
 	}
 	result := convertMcpServers(servers)
@@ -136,13 +137,13 @@ func TestConvertMcpServers_HTTPBranch(t *testing.T) {
 }
 
 func TestConvertMcpServers_StdioBranch(t *testing.T) {
-	servers := []spec.McpServer{
+	servers := []apispec.McpServer{
 		{
 			Type:    "stdio",
 			Name:    "room-tools",
 			Command: "/usr/bin/room-mcp-server",
 			Args:    []string{"--verbose"},
-			Env:     []spec.EnvVar{{Name: "FOO", Value: "bar"}, {Name: "BAZ", Value: "qux"}},
+			Env:     []api.EnvVar{{Name: "FOO", Value: "bar"}, {Name: "BAZ", Value: "qux"}},
 		},
 	}
 	result := convertMcpServers(servers)
@@ -168,7 +169,7 @@ func TestConvertMcpServers_Empty(t *testing.T) {
 // ── acpClient.SessionUpdate ───────────────────────────────────────────────────
 
 func TestAcpClient_SessionUpdate_DropsWhenFull(t *testing.T) {
-	mgr := newTestManager(spec.ApproveAll)
+	mgr := newTestManager(apispec.ApproveAll)
 	defer cleanupManager(mgr)
 	client := &acpClient{mgr: mgr}
 
@@ -183,7 +184,7 @@ func TestAcpClient_SessionUpdate_DropsWhenFull(t *testing.T) {
 }
 
 func TestAcpClient_SessionUpdate_Delivers(t *testing.T) {
-	mgr := newTestManager(spec.ApproveAll)
+	mgr := newTestManager(apispec.ApproveAll)
 	defer cleanupManager(mgr)
 	client := &acpClient{mgr: mgr}
 

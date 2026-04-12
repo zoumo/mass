@@ -10,7 +10,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
+	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 )
 
 // WorkspaceManager orchestrates workspace lifecycle operations.
@@ -206,10 +207,10 @@ func (m *WorkspaceManager) Cleanup(ctx context.Context, workspaceID string, spec
 // initializes the in-memory refCount map from their DB ref_count values.
 // This is called once during daemon startup after recovery so that
 // workspace cleanup decisions use the persisted reference counts.
-func (m *WorkspaceManager) InitRefCounts(store *meta.Store) error {
+func (m *WorkspaceManager) InitRefCounts(s *store.Store) error {
 	ctx := context.Background()
 
-	workspaces, err := store.ListWorkspaces(ctx, &meta.WorkspaceFilter{
+	workspaces, err := s.ListWorkspaces(ctx, &meta.WorkspaceFilter{
 		Phase: meta.WorkspacePhaseReady,
 	})
 	if err != nil {

@@ -4,10 +4,12 @@ package ari
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"path/filepath"
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
+	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
@@ -15,7 +17,7 @@ import (
 // from the metadata store into the registry with correct fields.
 func TestRegistryRebuildFromDB(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	store, err := meta.NewStore(dbPath)
+	store, err := store.NewStore(dbPath, slog.Default())
 	if err != nil {
 		t.Fatalf("NewStore failed: %v", err)
 	}

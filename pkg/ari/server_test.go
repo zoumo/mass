@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -17,11 +18,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/open-agent-d/open-agent-d/api"
+	"github.com/open-agent-d/open-agent-d/api/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/agentd"
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
@@ -33,7 +35,7 @@ import (
 type testEnv struct {
 	srv       *ari.Server
 	client    *ari.Client
-	store     *meta.Store
+	store     *store.Store
 	processes *agentd.ProcessManager
 	agents    *agentd.AgentRunManager
 }
@@ -54,20 +56,20 @@ func newTestServer(t *testing.T) *testEnv {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := meta.NewStore(dbPath)
+	store, err := store.NewStore(dbPath, slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
 	mgr := workspace.NewWorkspaceManager()
 	registry := ari.NewRegistry()
 
-	agents := agentd.NewAgentRunManager(store)
-	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"))
+	agents := agentd.NewAgentRunManager(store, slog.Default())
+	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"), slog.Default())
 
 	sockPath := shortSockPath(t)
 	t.Cleanup(func() { _ = os.Remove(sockPath) })
 
-	srv := ari.New(mgr, registry, agents, processes, store, sockPath, tmpDir)
+	srv := ari.New(mgr, registry, agents, processes, store, sockPath, tmpDir, slog.Default())
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve() }()
@@ -137,7 +139,7 @@ func createAndWaitWorkspace(t *testing.T, client *ari.Client, name string) ari.W
 
 // seedAgent inserts a raw agent record directly into the store, bypassing the
 // background shim start. Used to prime DB state for handler-only tests.
-func seedAgent(t *testing.T, store *meta.Store, wsName, name string, state spec.Status) {
+func seedAgent(t *testing.T, store *store.Store, wsName, name string, state api.Status) {
 	t.Helper()
 	err := store.CreateAgentRun(context.Background(), &meta.AgentRun{
 		Metadata: meta.ObjectMeta{
@@ -183,8 +185,8 @@ func TestWorkspaceStatusMembers(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "ws-members")
 
 	// Seed two agents directly into the store (bypasses shim start).
-	seedAgent(t, env.store, "ws-members", "checker", spec.StatusIdle)
-	seedAgent(t, env.store, "ws-members", "reviewer", spec.StatusRunning)
+	seedAgent(t, env.store, "ws-members", "checker", api.StatusIdle)
+	seedAgent(t, env.store, "ws-members", "reviewer", api.StatusRunning)
 
 	var result ari.WorkspaceStatusResult
 	require.NoError(t, env.client.Call("workspace/status",
@@ -253,7 +255,7 @@ func TestWorkspaceDeleteBlockedByAgent(t *testing.T) {
 	env := newTestServer(t)
 
 	createAndWaitWorkspace(t, env.client, "w-blocked")
-	seedAgent(t, env.store, "w-blocked", "blocker", spec.StatusIdle)
+	seedAgent(t, env.store, "w-blocked", "blocker", api.StatusIdle)
 
 	err := env.client.Call("workspace/delete", map[string]string{"name": "w-blocked"}, nil)
 	require.Error(t, err, "workspace/delete must fail when an agent is present")
@@ -292,8 +294,8 @@ func TestAgentListAndStatus(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "als-ws")
 
-	seedAgent(t, env.store, "als-ws", "agent-idle", spec.StatusIdle)
-	seedAgent(t, env.store, "als-ws", "agent-stopped", spec.StatusStopped)
+	seedAgent(t, env.store, "als-ws", "agent-idle", api.StatusIdle)
+	seedAgent(t, env.store, "als-ws", "agent-stopped", api.StatusStopped)
 
 	var listResult ari.AgentRunListResult
 	require.NoError(t, env.client.Call("agentrun/list", map[string]string{"workspace": "als-ws"}, &listResult))
@@ -314,9 +316,9 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "pr-ws")
 
-	seedAgent(t, env.store, "pr-ws", "agent-stopped", spec.StatusStopped)
-	seedAgent(t, env.store, "pr-ws", "agent-error", spec.StatusError)
-	seedAgent(t, env.store, "pr-ws", "agent-creating", spec.StatusCreating)
+	seedAgent(t, env.store, "pr-ws", "agent-stopped", api.StatusStopped)
+	seedAgent(t, env.store, "pr-ws", "agent-error", api.StatusError)
+	seedAgent(t, env.store, "pr-ws", "agent-creating", api.StatusCreating)
 
 	for _, name := range []string{"agent-stopped", "agent-error", "agent-creating"} {
 		err := env.client.Call("agentrun/prompt", map[string]any{
@@ -333,7 +335,7 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 func TestAgentPromptRejectsEmptyPrompt(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "empty-prompt-ws")
-	seedAgent(t, env.store, "empty-prompt-ws", "agent-idle", spec.StatusIdle)
+	seedAgent(t, env.store, "empty-prompt-ws", "agent-idle", api.StatusIdle)
 
 	err := env.client.Call("agentrun/prompt", map[string]any{
 		"workspace": "empty-prompt-ws",
@@ -346,7 +348,7 @@ func TestAgentPromptRejectsEmptyPrompt(t *testing.T) {
 	agent, getErr := env.store.GetAgentRun(context.Background(), "empty-prompt-ws", "agent-idle")
 	require.NoError(t, getErr)
 	require.NotNil(t, agent)
-	assert.Equal(t, spec.StatusIdle, agent.Status.State)
+	assert.Equal(t, api.StatusIdle, agent.Status.State)
 }
 
 func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
@@ -354,7 +356,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "reserve-ws")
 
 	agentName := "agent-reserve"
-	seedAgent(t, env.store, "reserve-ws", agentName, spec.StatusIdle)
+	seedAgent(t, env.store, "reserve-ws", agentName, api.StatusIdle)
 
 	shimSrv, shimSock := newMiniShimServer(t)
 	_ = shimSrv
@@ -411,7 +413,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 func TestAgentRunRestartFromIdle(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "restart-idle-ws")
-	seedAgent(t, env.store, "restart-idle-ws", "idle-agent", spec.StatusIdle)
+	seedAgent(t, env.store, "restart-idle-ws", "idle-agent", api.StatusIdle)
 
 	var result ari.AgentRunRestartResult
 	err := env.client.Call("agentrun/restart", map[string]string{
@@ -425,7 +427,7 @@ func TestAgentRunRestartFromIdle(t *testing.T) {
 func TestAgentRunRestartFromRunning(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "restart-running-ws")
-	seedAgent(t, env.store, "restart-running-ws", "running-agent", spec.StatusRunning)
+	seedAgent(t, env.store, "restart-running-ws", "running-agent", api.StatusRunning)
 
 	var result ari.AgentRunRestartResult
 	err := env.client.Call("agentrun/restart", map[string]string{
@@ -440,7 +442,7 @@ func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "del-ws")
 
-	seedAgent(t, env.store, "del-ws", "active-agent", spec.StatusIdle)
+	seedAgent(t, env.store, "del-ws", "active-agent", api.StatusIdle)
 
 	err := env.client.Call("agentrun/delete", map[string]string{
 		"workspace": "del-ws",
@@ -627,7 +629,7 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "send-ws")
 
 	agentName := "recv-agent"
-	seedAgent(t, env.store, "send-ws", agentName, spec.StatusIdle)
+	seedAgent(t, env.store, "send-ws", agentName, api.StatusIdle)
 	shimSrv := injectMockShim(t, env, "send-ws", agentName)
 
 	var sendResult ari.WorkspaceSendResult
@@ -654,7 +656,7 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "reply-ws")
 
 	agentName := "reply-agent"
-	seedAgent(t, env.store, "reply-ws", agentName, spec.StatusIdle)
+	seedAgent(t, env.store, "reply-ws", agentName, api.StatusIdle)
 	shimSrv := injectMockShim(t, env, "reply-ws", agentName)
 
 	var sendResult ari.WorkspaceSendResult
@@ -681,7 +683,7 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 func TestWorkspaceSendRejectedForErrorAgent(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "serr-ws")
-	seedAgent(t, env.store, "serr-ws", "err-agent", spec.StatusError)
+	seedAgent(t, env.store, "serr-ws", "err-agent", api.StatusError)
 
 	err := env.client.Call("workspace/send", map[string]string{
 		"workspace": "serr-ws",
@@ -723,8 +725,8 @@ func TestNoAgentIDInResponses(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "noid-ws")
 
-	seedAgent(t, env.store, "noid-ws", "a1", spec.StatusIdle)
-	seedAgent(t, env.store, "noid-ws", "a2", spec.StatusStopped)
+	seedAgent(t, env.store, "noid-ws", "a1", api.StatusIdle)
+	seedAgent(t, env.store, "noid-ws", "a2", api.StatusStopped)
 
 	// agentrun/list
 	listRaw, err := callRaw(t, env.client, "agentrun/list", map[string]string{"workspace": "noid-ws"})

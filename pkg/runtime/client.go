@@ -6,7 +6,7 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 )
 
 // acpClient implements acp.Client on behalf of Manager.
@@ -39,9 +39,9 @@ func (c *acpClient) SessionUpdate(_ context.Context, n acp.SessionNotification) 
 // an empty Outcome is treated as denial by ACP agents.
 func (c *acpClient) RequestPermission(_ context.Context, req acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 	switch c.mgr.cfg.Permissions {
-	case spec.DenyAll:
+	case apispec.DenyAll:
 		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: deny-all policy blocks all operations")
-	case spec.ApproveReads:
+	case apispec.ApproveReads:
 		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: approve-reads policy blocks write operations")
 	default: // approve-all — select the first available option
 		if len(req.Options) == 0 {

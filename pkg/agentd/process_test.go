@@ -4,15 +4,17 @@ package agentd
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/open-agent-d/open-agent-d/api"
+	"github.com/open-agent-d/open-agent-d/api/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 )
 
 // TestProcessManagerStart tests the full Start workflow:
@@ -48,7 +50,7 @@ func TestProcessManagerStart(t *testing.T) {
 	}
 
 	// Create meta store.
-	store, err := meta.NewStore(dbPath)
+	store, err := store.NewStore(dbPath, slog.Default())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -68,8 +70,8 @@ func TestProcessManagerStart(t *testing.T) {
 	socketPath := filepath.Join(tmpDir, "agentd.sock")
 
 	// Create AgentManager and ProcessManager.
-	agentMgr := NewAgentRunManager(store)
-	procMgr := NewProcessManager(agentMgr, store, socketPath, bundleRoot)
+	agentMgr := NewAgentRunManager(store, slog.Default())
+	procMgr := NewProcessManager(agentMgr, store, socketPath, bundleRoot, slog.Default())
 
 	// Create a workspace with a ready path.
 	workspacePath := filepath.Join(workspaceRoot, "test-workspace")
@@ -99,7 +101,7 @@ func TestProcessManagerStart(t *testing.T) {
 			Agent: "mockagent",
 		},
 		Status: meta.AgentRunStatus{
-			State: spec.StatusCreating,
+			State: api.StatusCreating,
 		},
 	}
 	if err := store.CreateAgentRun(ctx, agent); err != nil {
@@ -135,11 +137,11 @@ func TestProcessManagerStart(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get agent after Start: %v", err)
 		}
-		if updatedAgent.Status.State != spec.StatusCreating {
+		if updatedAgent.Status.State != api.StatusCreating {
 			break
 		}
 	}
-	if updatedAgent.Status.State != spec.StatusIdle && updatedAgent.Status.State != spec.StatusRunning {
+	if updatedAgent.Status.State != api.StatusIdle && updatedAgent.Status.State != api.StatusRunning {
 		t.Errorf("expected agent state 'idle' or 'running' after stateChange notification, got '%s'", updatedAgent.Status.State)
 	}
 
@@ -162,7 +164,7 @@ func TestProcessManagerStart(t *testing.T) {
 	t.Logf("Shim state: ID=%s, Status=%s, PID=%d, Bundle=%s, recovery.lastSeq=%d",
 		state.ID, state.Status, state.PID, state.Bundle, statusResult.Recovery.LastSeq)
 
-	if state.Status != spec.StatusIdle && state.Status != spec.StatusRunning {
+	if state.Status != api.StatusIdle && state.Status != api.StatusRunning {
 		t.Errorf("expected shim status 'idle' or 'running', got '%s'", state.Status)
 	}
 
@@ -240,12 +242,12 @@ done:
 		if err != nil {
 			t.Fatalf("Get agent after shutdown: %v", err)
 		}
-		if finalAgent.Status.State == spec.StatusStopped {
+		if finalAgent.Status.State == api.StatusStopped {
 			break
 		}
 	}
-	if finalAgent == nil || finalAgent.Status.State != spec.StatusStopped {
-		got := spec.Status("")
+	if finalAgent == nil || finalAgent.Status.State != api.StatusStopped {
+		got := api.Status("")
 		if finalAgent != nil {
 			got = finalAgent.Status.State
 		}
@@ -272,7 +274,7 @@ func TestGenerateConfig(t *testing.T) {
 		Spec: meta.AgentSpec{
 			Command: "/usr/bin/mockagent",
 			Args:    []string{},
-			Env: []spec.EnvVar{
+			Env: []api.EnvVar{
 				{Name: "SOME_VAR", Value: "value"},
 			},
 		},

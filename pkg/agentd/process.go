@@ -15,9 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/open-agent-d/open-agent-d/api"
+	"github.com/open-agent-d/open-agent-d/api/meta"
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 )
 
 // EventHandler is called for each session/update received from the shim.
@@ -43,7 +46,7 @@ func agentKey(workspace, name string) string {
 //   - ShimClient connection and event subscription
 type ProcessManager struct {
 	agents     *AgentRunManager
-	store      *meta.Store
+	store      *store.Store
 	socketPath string
 	bundleRoot string
 
@@ -101,11 +104,11 @@ type ShimProcess struct {
 }
 
 // NewProcessManager creates a new ProcessManager.
-func NewProcessManager(agents *AgentRunManager, store *meta.Store, socketPath, bundleRoot string) *ProcessManager {
-	logger := slog.Default().With("component", "agentd.process")
+func NewProcessManager(agents *AgentRunManager, s *store.Store, socketPath, bundleRoot string, logger *slog.Logger) *ProcessManager {
+	logger = logger.With("component", "agentd.process")
 	return &ProcessManager{
 		agents:     agents,
-		store:      store,
+		store:      s,
 		socketPath: socketPath,
 		bundleRoot: bundleRoot,
 		processes:  make(map[string]*ShimProcess),
@@ -158,7 +161,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 					"error", err)
 				return
 			}
-			if current != nil && current.Status.State == spec.StatusStopped && spec.Status(newStatus) != spec.StatusStopped {
+			if current != nil && current.Status.State == api.StatusStopped && api.Status(newStatus) != api.StatusStopped {
 				logger.Info("stateChange: dropped stale live state after stop",
 					"agent_key", key,
 					"current", current.Status.State,
@@ -166,7 +169,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 				return
 			}
 			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentRunStatus{
-				State:          spec.Status(newStatus),
+				State:          api.Status(newStatus),
 				ShimSocketPath: shimProc.SocketPath,
 				ShimStateDir:   shimProc.StateDir,
 				ShimPID:        shimProc.PID,
@@ -210,7 +213,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	}
 
 	// Validate agent status - must be "creating" to start.
-	if agent.Status.State != spec.StatusCreating {
+	if agent.Status.State != api.StatusCreating {
 		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.State)
 	}
 
@@ -278,7 +281,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		// Non-fatal: agent can still run, just won't have recovery data.
 	} else {
 		if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, meta.AgentRunStatus{
-			State:           spec.StatusCreating, // keep creating until we transition below
+			State:           api.StatusCreating, // keep creating until we transition below
 			ShimSocketPath:  socketPath,
 			ShimStateDir:    stateDir,
 			ShimPID:         shimProc.PID,
@@ -305,7 +308,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	// here ensures the DB reflects the actual state even when the notification
 	// was dropped.
 	if statusResult, statusErr := client.Status(ctx); statusErr == nil {
-		if statusResult.State.Status != spec.StatusCreating {
+		if statusResult.State.Status != api.StatusCreating {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentRunStatus{
@@ -337,7 +340,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 }
 
 // generateConfig creates the OAR Runtime config.json for this agent.
-func (m *ProcessManager) generateConfig(agent *meta.AgentRun, agentDef *meta.Agent) spec.Config {
+func (m *ProcessManager) generateConfig(agent *meta.AgentRun, agentDef *meta.Agent) apispec.Config {
 	// Build environment variables in KEY=VALUE format from the Agent definition.
 	env := make([]string, 0, len(agentDef.Spec.Env))
 	for _, ev := range agentDef.Spec.Env {
@@ -357,12 +360,12 @@ func (m *ProcessManager) generateConfig(agent *meta.AgentRun, agentDef *meta.Age
 	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
 
 	mcpBinary, mcpArgs := m.workspaceMcpCommand()
-	workspaceMcp := spec.McpServer{
+	workspaceMcp := apispec.McpServer{
 		Type:    "stdio",
 		Name:    "workspace",
 		Command: mcpBinary,
 		Args:    mcpArgs,
-		Env: []spec.EnvVar{
+		Env: []api.EnvVar{
 			{Name: "OAR_AGENTD_SOCKET", Value: m.socketPath},
 			{Name: "OAR_WORKSPACE_NAME", Value: agent.Metadata.Workspace},
 			{Name: "OAR_AGENT_NAME", Value: agent.Metadata.Name},
@@ -370,27 +373,27 @@ func (m *ProcessManager) generateConfig(agent *meta.AgentRun, agentDef *meta.Age
 		},
 	}
 
-	return spec.Config{
+	return apispec.Config{
 		OarVersion: "0.1.0",
-		Metadata: spec.Metadata{
+		Metadata: apispec.Metadata{
 			Name:        agent.Metadata.Name,
 			Annotations: annotations,
 		},
-		AgentRoot: spec.AgentRoot{
+		AgentRoot: apispec.AgentRoot{
 			Path: "workspace", // symlink to actual workspace
 		},
-		AcpAgent: spec.AcpAgent{
+		AcpAgent: apispec.AcpAgent{
 			SystemPrompt: agent.Spec.SystemPrompt,
-			Process: spec.AcpProcess{
+			Process: apispec.AcpProcess{
 				Command: agentDef.Spec.Command,
 				Args:    agentDef.Spec.Args,
 				Env:     env,
 			},
-			Session: spec.AcpSession{
-				McpServers: []spec.McpServer{workspaceMcp},
+			Session: apispec.AcpSession{
+				McpServers: []apispec.McpServer{workspaceMcp},
 			},
 		},
-		Permissions: spec.ApproveAll,
+		Permissions: apispec.ApproveAll,
 	}
 }
 
@@ -408,7 +411,7 @@ func (m *ProcessManager) workspaceMcpCommand() (string, []string) {
 // createBundle creates the bundle directory and writes config.json.
 // Also creates the workspace symlink (agentRoot.path -> actual workspace).
 // Returns bundlePath, stateDir, socketPath.
-func (m *ProcessManager) createBundle(agent *meta.AgentRun, cfg spec.Config) (string, string, string, error) {
+func (m *ProcessManager) createBundle(agent *meta.AgentRun, cfg apispec.Config) (string, string, string, error) {
 	// Bundle directory: <bundleRoot>/<workspace>-<name>
 	dirFragment := agent.Metadata.Workspace + "-" + agent.Metadata.Name
 	bundlePath := filepath.Join(m.bundleRoot, dirFragment)
@@ -670,7 +673,7 @@ func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProc
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{State: spec.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{State: api.StatusStopped})
 
 	// Bundle directory is intentionally NOT cleaned up here.
 	// It must persist until the agent is explicitly deleted via agent/delete.
@@ -705,8 +708,8 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 			return fmt.Errorf("process: agent %s does not exist", key)
 		}
 		// Agent exists but is not running — transition to stopped if needed.
-		if agent.Status.State != spec.StatusStopped {
-			if err := m.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{State: spec.StatusStopped}); err != nil {
+		if agent.Status.State != api.StatusStopped {
+			if err := m.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{State: api.StatusStopped}); err != nil {
 				return fmt.Errorf("process: transition agent %s to stopped: %w", key, err)
 			}
 		}
@@ -744,23 +747,23 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 
 // State returns the current runtime state of the shim for the given agent.
 // Returns an error if the agent is not running or the response is malformed.
-func (m *ProcessManager) State(ctx context.Context, workspace, name string) (spec.State, error) {
+func (m *ProcessManager) State(ctx context.Context, workspace, name string) (apispec.State, error) {
 	key := agentKey(workspace, name)
 	m.mu.RLock()
 	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		return spec.State{}, fmt.Errorf("process: agent %s is not running", key)
+		return apispec.State{}, fmt.Errorf("process: agent %s is not running", key)
 	}
 
 	if shimProc.Client == nil {
-		return spec.State{}, fmt.Errorf("process: agent %s has no client connection", key)
+		return apispec.State{}, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
 	status, err := shimProc.Client.Status(ctx)
 	if err != nil {
-		return spec.State{}, fmt.Errorf("process: runtime/status for agent %s: %w", key, err)
+		return apispec.State{}, fmt.Errorf("process: runtime/status for agent %s: %w", key, err)
 	}
 
 	return status.State, nil

@@ -10,8 +10,8 @@ import (
 
 	"github.com/sourcegraph/jsonrpc2"
 
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -174,7 +174,7 @@ type RuntimeStatusRecovery struct {
 
 // RuntimeStatusResult is returned by "runtime/status".
 type RuntimeStatusResult struct {
-	State    spec.State            `json:"state"`
+	State    apispec.State            `json:"state"`
 	Recovery RuntimeStatusRecovery `json:"recovery"`
 }
 

@@ -15,7 +15,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	pkgruntime "github.com/open-agent-d/open-agent-d/pkg/runtime"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 )
 
 var mockAgentBin string
@@ -56,24 +57,24 @@ func TestRuntimeSuite(t *testing.T) {
 
 // newTestConfig returns a Config with agentRoot.path = "workspace".
 // The caller is responsible for creating the bundle dir and workspace subdir.
-func newTestConfig(name string) spec.Config {
-	return spec.Config{
+func newTestConfig(name string) apispec.Config {
+	return apispec.Config{
 		OarVersion: "0.1.0",
-		Metadata:   spec.Metadata{Name: name},
-		AgentRoot:  spec.AgentRoot{Path: "workspace"},
-		AcpAgent: spec.AcpAgent{
-			Process: spec.AcpProcess{
+		Metadata:   apispec.Metadata{Name: name},
+		AgentRoot:  apispec.AgentRoot{Path: "workspace"},
+		AcpAgent: apispec.AcpAgent{
+			Process: apispec.AcpProcess{
 				Command: mockAgentBin,
 				Args:    []string{},
 			},
 		},
-		Permissions: spec.ApproveAll,
+		Permissions: apispec.ApproveAll,
 	}
 }
 
 // newManager creates a bundle dir with a workspace subdir and a separate state
 // dir, then returns a Manager wired to both. Dirs are cleaned up via t.Cleanup.
-func newManager(t *testing.T, cfg spec.Config) *pkgruntime.Manager {
+func newManager(t *testing.T, cfg apispec.Config) *pkgruntime.Manager {
 	t.Helper()
 	bundleDir, err := os.MkdirTemp("", "oad-bundle-")
 	require.NoError(t, err)
@@ -99,7 +100,7 @@ func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
 
 	state, err := mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(spec.StatusIdle, state.Status)
+	s.Equal(api.StatusIdle, state.Status)
 	s.Positive(state.PID)
 
 	// Kill process externally and verify state transitions to stopped.
@@ -110,7 +111,7 @@ func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
 	// Wait for background goroutine to write stopped state.
 	s.Require().Eventually(func() bool {
 		st, err := mgr.GetState()
-		return err == nil && st.Status == spec.StatusStopped
+		return err == nil && st.Status == api.StatusStopped
 	}, 10*time.Second, 100*time.Millisecond, "expected status=stopped after SIGKILL")
 }
 
@@ -125,7 +126,7 @@ func (s *RuntimeSuite) TestKill_TransitionsToStopped() {
 
 	state, err := mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(spec.StatusStopped, state.Status)
+	s.Equal(api.StatusStopped, state.Status)
 }
 
 func (s *RuntimeSuite) TestDelete_RemovesStateDir() {

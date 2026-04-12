@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
+	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
@@ -142,10 +143,10 @@ func (r *Registry) Release(id, agentKey string) int {
 // repopulates the registry. This is called once during daemon startup after
 // recovery completes so that workspace/list and workspace/cleanup work across
 // daemon restarts.
-func (r *Registry) RebuildFromDB(store *meta.Store) error {
+func (r *Registry) RebuildFromDB(s *store.Store) error {
 	ctx := context.Background()
 
-	workspaces, err := store.ListWorkspaces(ctx, &meta.WorkspaceFilter{
+	workspaces, err := s.ListWorkspaces(ctx, &meta.WorkspaceFilter{
 		Phase: meta.WorkspacePhaseReady,
 	})
 	if err != nil {

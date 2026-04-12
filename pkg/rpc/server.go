@@ -21,9 +21,9 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/sourcegraph/jsonrpc2"
 
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/runtime"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 type SessionPromptParams struct {
@@ -57,7 +57,7 @@ type RuntimeStatusRecovery struct {
 }
 
 type RuntimeStatusResult struct {
-	State    spec.State            `json:"state"`
+	State    apispec.State            `json:"state"`
 	Recovery RuntimeStatusRecovery `json:"recovery"`
 }
 

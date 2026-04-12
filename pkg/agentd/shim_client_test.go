@@ -15,8 +15,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/open-agent-d/open-agent-d/api"
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -63,10 +64,10 @@ func newMockShimServer(t *testing.T) (*mockShimServer, string) {
 		listener: ln,
 		done:     make(chan struct{}),
 		statusResult: RuntimeStatusResult{
-			State: spec.State{
+			State: apispec.State{
 				OarVersion: "0.1.0",
 				ID:         "test-session",
-				Status:     spec.StatusIdle,
+				Status:     api.StatusIdle,
 				Bundle:     "/tmp/test-bundle",
 			},
 			Recovery: RuntimeStatusRecovery{LastSeq: -1},
@@ -592,7 +593,7 @@ func TestShimClientStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "0.1.0", status.State.OarVersion)
 	assert.Equal(t, "test-session", status.State.ID)
-	assert.Equal(t, spec.StatusIdle, status.State.Status)
+	assert.Equal(t, api.StatusIdle, status.State.Status)
 	assert.Equal(t, "/tmp/test-bundle", status.State.Bundle)
 	assert.Equal(t, -1, status.Recovery.LastSeq)
 }
@@ -604,7 +605,7 @@ func TestShimClientStatusRecoveryMetadata(t *testing.T) {
 	// Advance the recovery sequence to simulate post-prompt state.
 	srv.mu.Lock()
 	srv.statusResult.Recovery.LastSeq = 7
-	srv.statusResult.State.Status = spec.StatusRunning
+	srv.statusResult.State.Status = api.StatusRunning
 	srv.mu.Unlock()
 
 	c, err := Dial(context.Background(), socketPath)
@@ -614,7 +615,7 @@ func TestShimClientStatusRecoveryMetadata(t *testing.T) {
 	status, err := c.Status(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, 7, status.Recovery.LastSeq)
-	assert.Equal(t, spec.StatusRunning, status.State.Status)
+	assert.Equal(t, api.StatusRunning, status.State.Status)
 }
 
 func TestShimClientHistoryEmpty(t *testing.T) {

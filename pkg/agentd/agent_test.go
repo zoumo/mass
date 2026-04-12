@@ -4,22 +4,24 @@ package agentd
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
+	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 )
 
 // newTestMetaStore creates a file-backed bbolt store in a temp directory.
 // bbolt does not support in-memory mode; each test gets its own DB file.
-func newTestMetaStore(t *testing.T) *meta.Store {
+func newTestMetaStore(t *testing.T) *store.Store {
 	t.Helper()
 
-	store, err := meta.NewStore(filepath.Join(t.TempDir(), "meta.db"))
+	store, err := store.NewStore(filepath.Join(t.TempDir(), "meta.db"), slog.Default())
 	require.NoError(t, err, "NewStore should succeed")
 	require.NotNil(t, store, "Store should not be nil")
 
@@ -34,7 +36,7 @@ func newTestMetaStore(t *testing.T) *meta.Store {
 func newTestAgentManager(t *testing.T) *AgentRunManager {
 	t.Helper()
 	store := newTestMetaStore(t)
-	return NewAgentRunManager(store)
+	return NewAgentRunManager(store, slog.Default())
 }
 
 // makeTestAgentRun builds a minimal valid Agent struct using the new model.
@@ -64,7 +66,7 @@ func TestAgentCreate_RoundTrip(t *testing.T) {
 	require.NoError(t, am.Create(ctx, agent), "Create should succeed")
 
 	// Verify default state was applied.
-	assert.Equal(t, spec.StatusCreating, agent.Status.State, "default state should be creating")
+	assert.Equal(t, api.StatusCreating, agent.Status.State, "default state should be creating")
 
 	got, err := am.Get(ctx, "default", "alpha")
 	require.NoError(t, err, "Get should succeed")
@@ -75,7 +77,7 @@ func TestAgentCreate_RoundTrip(t *testing.T) {
 	assert.Equal(t, "default", got.Spec.Agent)
 	assert.Equal(t, "test agent", got.Spec.Description)
 	assert.Equal(t, "you are a test", got.Spec.SystemPrompt)
-	assert.Equal(t, spec.StatusCreating, got.Status.State)
+	assert.Equal(t, api.StatusCreating, got.Status.State)
 	assert.Equal(t, map[string]string{"env": "test"}, got.Metadata.Labels)
 }
 
@@ -108,14 +110,14 @@ func TestAgentList_StateFilter(t *testing.T) {
 	require.NoError(t, am.Create(ctx, a1))
 	require.NoError(t, am.Create(ctx, a2))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", meta.AgentRunStatus{State: spec.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", meta.AgentRunStatus{State: api.StatusStopped}))
 
-	stoppedAgents, err := am.List(ctx, &meta.AgentRunFilter{State: spec.StatusStopped})
+	stoppedAgents, err := am.List(ctx, &meta.AgentRunFilter{State: api.StatusStopped})
 	require.NoError(t, err)
 	require.Len(t, stoppedAgents, 1)
 	assert.Equal(t, "a1", stoppedAgents[0].Metadata.Name)
 
-	creatingAgents, err := am.List(ctx, &meta.AgentRunFilter{State: spec.StatusCreating})
+	creatingAgents, err := am.List(ctx, &meta.AgentRunFilter{State: api.StatusCreating})
 	require.NoError(t, err)
 	require.Len(t, creatingAgents, 1)
 	assert.Equal(t, "a2", creatingAgents[0].Metadata.Name)
@@ -154,12 +156,12 @@ func TestAgentUpdateStatus(t *testing.T) {
 	agent := makeTestAgentRun("ws1", "stateful")
 	require.NoError(t, am.Create(ctx, agent))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", meta.AgentRunStatus{State: spec.StatusRunning}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", meta.AgentRunStatus{State: api.StatusRunning}))
 
 	got, err := am.Get(ctx, "ws1", "stateful")
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, spec.StatusRunning, got.Status.State)
+	assert.Equal(t, api.StatusRunning, got.Status.State)
 }
 
 // TestAgentDelete_RequiresStopped tests that a stopped agent can be deleted.
@@ -173,7 +175,7 @@ func TestAgentDelete_RequiresStopped(t *testing.T) {
 	require.NoError(t, am.Create(ctx, agent))
 
 	// Transition to stopped.
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", meta.AgentRunStatus{State: spec.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", meta.AgentRunStatus{State: api.StatusStopped}))
 
 	// Delete should succeed.
 	require.NoError(t, am.Delete(ctx, "ws1", "deletable"))
@@ -194,7 +196,7 @@ func TestAgentDelete_AllowsError(t *testing.T) {
 	agent := makeTestAgentRun("ws1", "errored")
 	require.NoError(t, am.Create(ctx, agent))
 	require.NoError(t, am.UpdateStatus(ctx, "ws1", "errored", meta.AgentRunStatus{
-		State:        spec.StatusError,
+		State:        api.StatusError,
 		ErrorMessage: "boom",
 	}))
 
@@ -223,7 +225,7 @@ func TestAgentDelete_Protected(t *testing.T) {
 	require.ErrorAs(t, err, &notStopped, "error should be ErrDeleteNotStopped")
 	assert.Equal(t, "ws1", notStopped.Workspace)
 	assert.Equal(t, "protected", notStopped.Name)
-	assert.Equal(t, spec.StatusCreating, notStopped.State)
+	assert.Equal(t, api.StatusCreating, notStopped.State)
 }
 
 // TestAgentGet_NotFound tests that Get returns nil,nil for a missing agent.

@@ -20,6 +20,8 @@ import (
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/rpc"
 	pkgruntime "github.com/open-agent-d/open-agent-d/pkg/runtime"
+	"github.com/open-agent-d/open-agent-d/api"
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/spec"
 )
 
@@ -48,15 +50,15 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func testConfig(name string) spec.Config {
-	return spec.Config{
+func testConfig(name string) apispec.Config {
+	return apispec.Config{
 		OarVersion: "0.1.0",
-		Metadata:   spec.Metadata{Name: name},
-		AgentRoot:  spec.AgentRoot{Path: "workspace"},
-		AcpAgent: spec.AcpAgent{
-			Process: spec.AcpProcess{Command: mockAgentBin, Args: []string{}},
+		Metadata:   apispec.Metadata{Name: name},
+		AgentRoot:  apispec.AgentRoot{Path: "workspace"},
+		AcpAgent: apispec.AcpAgent{
+			Process: apispec.AcpProcess{Command: mockAgentBin, Args: []string{}},
 		},
-		Permissions: spec.ApproveAll,
+		Permissions: apispec.ApproveAll,
 	}
 }
 
@@ -135,7 +137,7 @@ func newServerHarness(t *testing.T) *serverHarness {
 	return newServerHarnessWithConfig(t, testConfig(t.Name()))
 }
 
-func newServerHarnessWithConfig(t *testing.T, cfg spec.Config) *serverHarness {
+func newServerHarnessWithConfig(t *testing.T, cfg apispec.Config) *serverHarness {
 	t.Helper()
 
 	bundleDir, err := os.MkdirTemp("", "oad-bnd-")
@@ -196,7 +198,7 @@ func newServerHarnessWithConfig(t *testing.T, cfg spec.Config) *serverHarness {
 		}
 		require.Eventually(t, func() bool {
 			st, err := mgr.GetState()
-			return err == nil && st.Status == spec.StatusStopped
+			return err == nil && st.Status == api.StatusStopped
 		}, 5*time.Second, 20*time.Millisecond, "expected agent status=stopped before cleanup")
 
 		_ = os.RemoveAll(stateDir)
@@ -243,7 +245,7 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		var status rpc.RuntimeStatusResult
 		err = client.Call(ctx, "runtime/status", nil, &status)
 		require.NoError(t, err)
-		require.Equal(t, spec.StatusIdle, status.State.Status)
+		require.Equal(t, api.StatusIdle, status.State.Status)
 		require.Equal(t, -1, status.Recovery.LastSeq)
 	})
 
@@ -290,7 +292,7 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		var status rpc.RuntimeStatusResult
 		err = client.Call(ctx, "runtime/status", nil, &status)
 		require.NoError(t, err)
-		require.Equal(t, spec.StatusIdle, status.State.Status)
+		require.Equal(t, api.StatusIdle, status.State.Status)
 		require.Equal(t, 4, status.Recovery.LastSeq)
 	})
 

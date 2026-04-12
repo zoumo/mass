@@ -15,9 +15,10 @@ import (
 
 	"github.com/sourcegraph/jsonrpc2"
 
+	"github.com/open-agent-d/open-agent-d/api"
+	"github.com/open-agent-d/open-agent-d/api/meta"
 	"github.com/open-agent-d/open-agent-d/pkg/agentd"
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
@@ -28,7 +29,7 @@ type Server struct {
 	registry   *Registry
 	agents     *agentd.AgentRunManager
 	processes  *agentd.ProcessManager
-	store      *meta.Store
+	store      *store.Store
 	socketPath string
 	baseDir    string
 
@@ -54,20 +55,21 @@ func New(
 	registry *Registry,
 	agents *agentd.AgentRunManager,
 	processes *agentd.ProcessManager,
-	store *meta.Store,
+	s *store.Store,
 	socketPath, baseDir string,
+	logger *slog.Logger,
 ) *Server {
 	return &Server{
 		manager:    manager,
 		registry:   registry,
 		agents:     agents,
 		processes:  processes,
-		store:      store,
+		store:      s,
 		socketPath: socketPath,
 		baseDir:    baseDir,
 		conns:      make(map[*jsonrpc2.Conn]struct{}),
 		shutdownCh: make(chan struct{}),
-		logger:     slog.Default().With("component", "ari.server"),
+		logger:     logger.With("component", "ari.server"),
 	}
 }
 
@@ -468,13 +470,13 @@ func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, r
 			fmt.Sprintf("agent %s/%s not found", params.Workspace, params.To))
 		return
 	}
-	if agent.Status.State == spec.StatusError {
+	if agent.Status.State == api.StatusError {
 		s.logger.Warn("workspace/send: target agent in error state",
 			"workspace", params.Workspace, "to", params.To)
 		s.replyErr(ctx, conn, req, CodeRecoveryBlocked, "target agent is in error state")
 		return
 	}
-	if agent.Status.State != spec.StatusIdle {
+	if agent.Status.State != api.StatusIdle {
 		s.logger.Warn("workspace/send: target agent not idle",
 			"workspace", params.Workspace, "to", params.To, "state", agent.Status.State)
 		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
@@ -482,7 +484,7 @@ func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, r
 		return
 	}
 
-	reserved, err := s.agents.TransitionState(ctx, params.Workspace, params.To, spec.StatusIdle, spec.StatusRunning)
+	reserved, err := s.agents.TransitionState(ctx, params.Workspace, params.To, api.StatusIdle, api.StatusRunning)
 	if err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
 		return
@@ -543,7 +545,7 @@ func (s *Server) recordPromptDeliveryFailure(workspace, name string, fallback me
 		s.logger.Warn("prompt failure: current state lookup failed",
 			"workspace", workspace, "name", name, "error", err)
 	}
-	if current != nil && current.Status.State == spec.StatusStopped {
+	if current != nil && current.Status.State == api.StatusStopped {
 		s.logger.Info("prompt failure: ignored after stop",
 			"workspace", workspace, "name", name, "error", cause)
 		return
@@ -570,14 +572,14 @@ func (s *Server) recordPromptDeliveryFailure(workspace, name string, fallback me
 		s.logger.Warn("prompt failure: current state lookup failed",
 			"workspace", workspace, "name", name, "error", err)
 	}
-	if current != nil && current.Status.State == spec.StatusStopped {
+	if current != nil && current.Status.State == api.StatusStopped {
 		s.logger.Info("prompt failure: ignored after stop",
 			"workspace", workspace, "name", name, "error", cause)
 		return
 	}
 
 	_ = s.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{
-		State:          spec.StatusError,
+		State:          api.StatusError,
 		ShimSocketPath: fallback.ShimSocketPath,
 		ShimStateDir:   fallback.ShimStateDir,
 		ShimPID:        fallback.ShimPID,
@@ -646,7 +648,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 			SystemPrompt:  params.SystemPrompt,
 		},
 		Status: meta.AgentRunStatus{
-			State: spec.StatusCreating,
+			State: api.StatusCreating,
 		},
 	}
 	if err := s.agents.Create(ctx, agent); err != nil {
@@ -671,7 +673,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 			s.logger.Warn("agentrun/create: shim start failed",
 				"workspace", wsName, "name", agName, "error", err)
 			_ = s.agents.UpdateStatus(bgCtx, wsName, agName, meta.AgentRunStatus{
-				State:        spec.StatusError,
+				State:        api.StatusError,
 				ErrorMessage: err.Error(),
 			})
 		} else {
@@ -683,7 +685,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 	s.replyOK(ctx, conn, req, AgentRunCreateResult{
 		Workspace: params.Workspace,
 		Name:      params.Name,
-		State:     string(spec.StatusCreating),
+		State:     string(api.StatusCreating),
 	})
 }
 
@@ -728,7 +730,7 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 	}
 
 	// Validate state is idle.
-	if agent.Status.State != spec.StatusIdle {
+	if agent.Status.State != api.StatusIdle {
 		s.logger.Warn("agentrun/prompt: agent not in idle state",
 			"workspace", params.Workspace, "name", params.Name, "state", agent.Status.State)
 		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
@@ -740,7 +742,7 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 	// the post-bootstrap state authority; this write is an admission lock so a
 	// second prompt/stop/delete cannot observe stale idle while delivery is
 	// still queued in the goroutine below.
-	reserved, err := s.agents.TransitionState(ctx, params.Workspace, params.Name, spec.StatusIdle, spec.StatusRunning)
+	reserved, err := s.agents.TransitionState(ctx, params.Workspace, params.Name, api.StatusIdle, api.StatusRunning)
 	if err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
 		return
@@ -910,11 +912,11 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 	}
 
 	// Agents in terminal states (stopped/error) have no active shim; others do.
-	needsStop := agent.Status.State != spec.StatusStopped && agent.Status.State != spec.StatusError
+	needsStop := agent.Status.State != api.StatusStopped && agent.Status.State != api.StatusError
 
 	// Transition to creating.
 	if err := s.agents.UpdateStatus(ctx, params.Workspace, params.Name, meta.AgentRunStatus{
-		State: spec.StatusCreating,
+		State: api.StatusCreating,
 	}); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
 		return
@@ -932,7 +934,7 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 			}
 			// Stop() transitions state to "stopped"; re-set to "creating" for Start().
 			if err := s.agents.UpdateStatus(bgCtx, wsName, agName, meta.AgentRunStatus{
-				State: spec.StatusCreating,
+				State: api.StatusCreating,
 			}); err != nil {
 				s.logger.Warn("agentrun/restart: failed to re-transition to creating",
 					"workspace", wsName, "name", agName, "error", err)
@@ -943,7 +945,7 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 			s.logger.Warn("agentrun/restart: shim start failed",
 				"workspace", wsName, "name", agName, "error", err)
 			_ = s.agents.UpdateStatus(bgCtx, wsName, agName, meta.AgentRunStatus{
-				State:        spec.StatusError,
+				State:        api.StatusError,
 				ErrorMessage: err.Error(),
 			})
 		}
@@ -952,7 +954,7 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 	s.replyOK(ctx, conn, req, AgentRunRestartResult{
 		Workspace: params.Workspace,
 		Name:      params.Name,
-		State:     string(spec.StatusCreating),
+		State:     string(api.StatusCreating),
 	})
 }
 
@@ -972,7 +974,7 @@ func (s *Server) handleAgentRunList(ctx context.Context, conn *jsonrpc2.Conn, re
 
 	filter := &meta.AgentRunFilter{
 		Workspace: params.Workspace,
-		State:     spec.Status(params.State),
+		State:     api.Status(params.State),
 	}
 
 	agents, err := s.agents.List(ctx, filter)
@@ -1051,7 +1053,7 @@ func (s *Server) handleAgentRunAttach(ctx context.Context, conn *jsonrpc2.Conn, 
 		return
 	}
 
-	if agent.Status.State != spec.StatusIdle && agent.Status.State != spec.StatusRunning {
+	if agent.Status.State != api.StatusIdle && agent.Status.State != api.StatusRunning {
 		s.replyErr(ctx, conn, req, CodeRecoveryBlocked,
 			fmt.Sprintf("agent not in idle/running state: %s", agent.Status.State))
 		return
