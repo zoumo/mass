@@ -29,6 +29,7 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List all workspaces",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -48,10 +49,11 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 }
 
 func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
-	return &cobra.Command{
-		Use:   "get <name>",
+	var name string
+	cmd := &cobra.Command{
+		Use:   "get",
 		Short: "Get workspace status",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -59,7 +61,7 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.WorkspaceStatusParams{Name: args[0]}
+			params := ari.WorkspaceStatusParams{Name: name}
 			var result ari.WorkspaceStatusResult
 			if err := client.Call("workspace/status", params, &result); err != nil {
 				cliutil.HandleError(err)
@@ -69,13 +71,17 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "Workspace name (required)")
+	_ = cmd.MarkFlagRequired("name")
+	return cmd
 }
 
 func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
-	return &cobra.Command{
-		Use:   "delete <name>",
+	var name string
+	cmd := &cobra.Command{
+		Use:   "delete",
 		Short: "Delete a workspace",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -83,26 +89,30 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call("workspace/delete", ari.WorkspaceDeleteParams{Name: args[0]}, nil); err != nil {
+			if err := client.Call("workspace/delete", ari.WorkspaceDeleteParams{Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			fmt.Printf("Workspace %s deleted\n", args[0])
+			fmt.Printf("Workspace %s deleted\n", name)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "Workspace name (required)")
+	_ = cmd.MarkFlagRequired("name")
+	return cmd
 }
 
 func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		from string
-		to   string
-		text string
+		workspace string
+		from      string
+		to        string
+		text      string
 	)
 	cmd := &cobra.Command{
-		Use:   "send <name> --from <agent> --to <agent> --text <message>",
+		Use:   "send",
 		Short: "Send a message from one agent to another within a workspace",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -111,7 +121,7 @@ func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 			defer client.Close()
 
 			params := ari.WorkspaceSendParams{
-				Workspace: args[0],
+				Workspace: workspace,
 				From:      from,
 				To:        to,
 				Message:   text,
@@ -125,9 +135,11 @@ func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVarP(&workspace, "name", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&from, "from", "", "Sender agent name (required)")
 	cmd.Flags().StringVar(&to, "to", "", "Target agent name (required)")
 	cmd.Flags().StringVar(&text, "text", "", "Message text (required)")
+	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("from")
 	_ = cmd.MarkFlagRequired("to")
 	_ = cmd.MarkFlagRequired("text")

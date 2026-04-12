@@ -33,13 +33,13 @@ func TestRuntimeLifecycle(t *testing.T) {
 	if err := client.Call("agent/get", ari.AgentGetParams{Name: "mockagent"}, &getResult); err != nil {
 		t.Fatalf("runtime/get mockagent: %v", err)
 	}
-	if getResult.AgentRun.Name != "mockagent" {
-		t.Errorf("runtime/get: expected name=%q, got %q", "mockagent", getResult.AgentRun.Name)
+	if getResult.Agent.Name != "mockagent" {
+		t.Errorf("runtime/get: expected name=%q, got %q", "mockagent", getResult.Agent.Name)
 	}
 	if getResult.Agent.Command == "" {
 		t.Error("runtime/get: expected non-empty command")
 	}
-	t.Logf("runtime/get OK: name=%s command=%s", getResult.AgentRun.Name, getResult.Agent.Command)
+	t.Logf("runtime/get OK: name=%s command=%s", getResult.Agent.Name, getResult.Agent.Command)
 
 	// ── Step 2: runtime/list → assert 1 entry ─────────────────────────────────
 	t.Log("Step 2: runtime/list")

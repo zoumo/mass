@@ -12,14 +12,15 @@ import (
 
 func newGitCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
+		name  string
 		url   string
 		ref   string
 		depth int
 	)
 	cmd := &cobra.Command{
-		Use:   "git <name> --url <url> [--ref <ref>] [--depth <n>]",
+		Use:   "git",
 		Short: "Create a workspace by cloning a git repository",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			src := workspace.Source{
 				Type: workspace.SourceTypeGit,
@@ -35,7 +36,7 @@ func newGitCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.WorkspaceCreateParams{Name: args[0], Source: srcJSON}
+			params := ari.WorkspaceCreateParams{Name: name, Source: srcJSON}
 			var result ari.WorkspaceCreateResult
 			if err := client.Call("workspace/create", params, &result); err != nil {
 				cliutil.HandleError(err)
@@ -45,7 +46,9 @@ func newGitCmd(getClient cliutil.ClientFn) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&url, "url", "", "Git repository URL (required)")
+	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("url")
 	cmd.Flags().StringVar(&ref, "ref", "", "Git reference (branch, tag, or commit)")
 	cmd.Flags().IntVar(&depth, "depth", 0, "Shallow clone depth (0 = full clone)")

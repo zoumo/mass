@@ -3,7 +3,6 @@ package server
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -13,30 +12,46 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/open-agent-d/open-agent-d/internal/logging"
 	"github.com/open-agent-d/open-agent-d/pkg/agentd"
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
+	"github.com/open-agent-d/open-agent-d/pkg/store"
 	"github.com/open-agent-d/open-agent-d/pkg/workspace"
 )
 
 // NewCommand returns the "server" cobra command.
 func NewCommand() *cobra.Command {
-	var rootPath string
+	var (
+		rootPath  string
+		logLevel  string
+		logFormat string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Start the agentd daemon",
 		Long:  `Start the OAR agent daemon and listen for ARI connections on the configured Unix socket.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(rootPath)
+			return run(rootPath, logLevel, logFormat)
 		},
 	}
 
 	cmd.Flags().StringVar(&rootPath, "root", agentd.DefaultRoot, "root directory for agentd data (socket, DB, bundles, workspaces)")
+	cmd.Flags().StringVar(&logLevel, "log-level", "info", "log level (debug, info, warn, error)")
+	cmd.Flags().StringVar(&logFormat, "log-format", "pretty", "log format (pretty, text, json)")
 	return cmd
 }
 
-func run(rootPath string) error {
+func run(rootPath, logLevel, logFormat string) error {
+	// Configure logger before anything else.
+	level, err := logging.ParseLevel(logLevel)
+	if err != nil {
+		return err
+	}
+	handler := logging.NewHandler(logFormat, level, os.Stderr)
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
+
 	opts := agentd.Options{Root: rootPath}
 	if err := opts.Validate(); err != nil {
 		return err
@@ -45,13 +60,13 @@ func run(rootPath string) error {
 	// go-run detection: warn when the binary path looks like a temporary go build artifact.
 	if self, err := os.Executable(); err == nil {
 		if strings.Contains(self, "/tmp/go-build") {
-			slog.Warn("agentd: running from go-run temp binary — os.Executable() path is ephemeral",
+			logger.Warn("running from go-run temp binary — os.Executable() path is ephemeral",
 				"executable", self,
 				"note", "D107: self-fork shim will use this path; use 'go build' for production")
 		}
 	}
 
-	slog.Info("agentd: starting",
+	logger.Info("agentd starting",
 		"root", opts.Root,
 		"socket", opts.SocketPath(),
 		"workspace_root", opts.WorkspaceRoot(),
@@ -67,27 +82,27 @@ func run(rootPath string) error {
 	}
 
 	// Initialize metadata store.
-	store, err := meta.NewStore(opts.MetaDBPath())
+	store, err := store.NewStore(opts.MetaDBPath(), logger)
 	if err != nil {
 		return err
 	}
-	slog.Info("agentd: metadata store initialized", "path", opts.MetaDBPath())
+	logger.Info("metadata store initialized", "path", opts.MetaDBPath())
 
 	// Create WorkspaceManager.
 	manager := workspace.NewWorkspaceManager()
-	slog.Info("agentd: workspace manager initialized")
+	logger.Info("workspace manager initialized")
 
 	// Create Registry.
 	registry := ari.NewRegistry()
-	slog.Info("agentd: registry initialized")
+	logger.Info("registry initialized")
 
 	// Create AgentRunManager.
-	agents := agentd.NewAgentRunManager(store)
-	slog.Info("agentd: agent run manager initialized")
+	agents := agentd.NewAgentRunManager(store, logger)
+	logger.Info("agent run manager initialized")
 
 	// Create ProcessManager (self-fork or OAR_SHIM_BINARY override).
-	processes := agentd.NewProcessManager(agents, store, opts.SocketPath(), opts.BundleRoot())
-	slog.Info("agentd: process manager initialized",
+	processes := agentd.NewProcessManager(agents, store, opts.SocketPath(), opts.BundleRoot(), logger)
+	logger.Info("process manager initialized",
 		"socket_path", opts.SocketPath(),
 		"bundle_root", opts.BundleRoot(),
 	)
@@ -96,34 +111,34 @@ func run(rootPath string) error {
 	{
 		recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := processes.RecoverSessions(recoverCtx); err != nil {
-			log.Printf("agentd: session recovery failed (non-fatal): %v", err)
+			logger.Warn("session recovery failed (non-fatal)", "error", err)
 		} else {
-			slog.Info("agentd: session recovery complete")
+			logger.Info("session recovery complete")
 		}
 		recoverCancel()
 	}
 
 	// Rebuild registry from DB after recovery.
 	if err := registry.RebuildFromDB(store); err != nil {
-		log.Printf("agentd: registry rebuild failed (non-fatal): %v", err)
+		logger.Warn("registry rebuild failed (non-fatal)", "error", err)
 	} else {
-		slog.Info("agentd: registry rebuilt from database")
+		logger.Info("registry rebuilt from database")
 	}
 
 	// Initialize workspace manager refcounts from DB.
 	if err := manager.InitRefCounts(store); err != nil {
-		log.Printf("agentd: workspace refcount init failed (non-fatal): %v", err)
+		logger.Warn("workspace refcount init failed (non-fatal)", "error", err)
 	}
 
 	// Create ARI Server.
-	srv := ari.New(manager, registry, agents, processes, store, opts.SocketPath(), opts.WorkspaceRoot())
-	slog.Info("agentd: ARI server created")
+	srv := ari.New(manager, registry, agents, processes, store, opts.SocketPath(), opts.WorkspaceRoot(), logger)
+	logger.Info("ARI server created")
 
 	// Start server in goroutine.
 	go func() {
-		slog.Info("agentd: starting ARI server", "socket", opts.SocketPath())
+		logger.Info("starting ARI server", "socket", opts.SocketPath())
 		if err := srv.Serve(); err != nil {
-			log.Printf("agentd: server error: %v", err)
+			logger.Error("server error", "error", err)
 		}
 	}()
 
@@ -132,22 +147,22 @@ func run(rootPath string) error {
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
 
 	sig := <-sigChan
-	slog.Info("agentd: received signal, shutting down", "signal", sig)
+	logger.Info("received signal, shutting down", "signal", sig)
 
 	// Graceful shutdown with timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("agentd: shutdown error: %v", err)
+		logger.Error("shutdown error", "error", err)
 	}
 
 	// Close metadata store.
-	slog.Info("agentd: closing metadata store")
+	logger.Info("closing metadata store")
 	if err := store.Close(); err != nil {
-		log.Printf("agentd: metadata store close error: %v", err)
+		logger.Error("metadata store close error", "error", err)
 	}
 
-	slog.Info("agentd: shutdown complete")
+	logger.Info("shutdown complete")
 	return nil
 }

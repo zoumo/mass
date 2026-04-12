@@ -11,6 +11,7 @@ import (
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/daemon"
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/shim"
+	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/up"
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/workspace"
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
 )
@@ -37,5 +38,6 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(workspace.NewCommand(cliutil.ClientFn(getClient)))
 	root.AddCommand(daemon.NewCommand(cliutil.ClientFn(getClient)))
 	root.AddCommand(shim.NewCommand())
+	root.AddCommand(up.NewCommand(cliutil.ClientFn(getClient)))
 	return root
 }

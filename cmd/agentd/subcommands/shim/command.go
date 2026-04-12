@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	apispec "github.com/open-agent-d/open-agent-d/api/spec"
 	"github.com/open-agent-d/open-agent-d/pkg/events"
 	"github.com/open-agent-d/open-agent-d/pkg/rpc"
 	"github.com/open-agent-d/open-agent-d/pkg/runtime"
@@ -61,7 +62,7 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 		return err
 	}
 	if cmd.Flag("permissions").Changed {
-		cfg.Permissions = spec.PermissionPolicy(permissions)
+		cfg.Permissions = apispec.PermissionPolicy(permissions)
 	}
 
 	if id == "" {

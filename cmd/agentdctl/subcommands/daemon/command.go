@@ -24,6 +24,7 @@ func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Check daemon health",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {

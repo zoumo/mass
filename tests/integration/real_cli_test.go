@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/open-agent-d/open-agent-d/api"
 )
 
 // setupAgentdTestWithRuntimeClass creates a temporary agentd instance and registers
@@ -216,7 +216,7 @@ func TestRealCLI_GsdPi(t *testing.T) {
 	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", ari.AgentSetParams{
 		Command: "bunx",
 		Args:    []string{"pi-acp"},
-		Env: []spec.EnvVar{
+		Env: []api.EnvVar{
 			{Name: "PI_ACP_PI_COMMAND", Value: "gsd"},
 			{Name: "PI_CODING_AGENT_DIR", Value: "/Users/jim/.gsd/agent"},
 		},
@@ -249,7 +249,7 @@ func TestRealCLI_ClaudeCode(t *testing.T) {
 	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", ari.AgentSetParams{
 		Command: "node",
 		Args:    []string{adapterPath},
-		Env: []spec.EnvVar{
+		Env: []api.EnvVar{
 			{Name: "ANTHROPIC_API_KEY", Value: apiKey},
 		},
 	})

@@ -257,14 +257,14 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	if err := client2.Call("agentrun/list", map[string]interface{}{"workspace": wsName}, &listResult); err != nil {
 		t.Fatalf("agent/list: %v", err)
 	}
-	t.Logf("agent/list returned %d agents in workspace %s", len(listResult.Agents), wsName)
+	t.Logf("agent/list returned %d agents in workspace %s", len(listResult.AgentRuns), wsName)
 
-	if len(listResult.Agents) != 2 {
-		t.Errorf("expected 2 agents in workspace %s, got %d", wsName, len(listResult.Agents))
+	if len(listResult.AgentRuns) != 2 {
+		t.Errorf("expected 2 agents in workspace %s, got %d", wsName, len(listResult.AgentRuns))
 	}
 
 	agentStates := make(map[string]string) // name → state
-	for _, a := range listResult.Agents {
+	for _, a := range listResult.AgentRuns {
 		agentStates[a.Name] = a.State
 		t.Logf("  agent: workspace=%s name=%s state=%s", a.Workspace, a.Name, a.State)
 	}

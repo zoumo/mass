@@ -8,9 +8,9 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
+	"github.com/open-agent-d/open-agent-d/api/meta"
 	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
 	"github.com/open-agent-d/open-agent-d/pkg/ari"
-	"github.com/open-agent-d/open-agent-d/pkg/meta"
 )
 
 // NewCommand returns the "agent" cobra command.
@@ -31,6 +31,7 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Apply (create or update) an agent definition from a YAML file",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := os.ReadFile(file)
 			if err != nil {
@@ -75,10 +76,11 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 }
 
 func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
-	return &cobra.Command{
-		Use:   "get <name>",
+	var name string
+	cmd := &cobra.Command{
+		Use:   "get",
 		Short: "Get an agent definition by name",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -86,7 +88,7 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.AgentGetParams{Name: args[0]}
+			params := ari.AgentGetParams{Name: name}
 			var result ari.AgentGetResult
 			if err := client.Call("agent/get", params, &result); err != nil {
 				cliutil.HandleError(err)
@@ -96,12 +98,16 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "Agent name (required)")
+	_ = cmd.MarkFlagRequired("name")
+	return cmd
 }
 
 func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List all agent definitions",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -121,10 +127,11 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 }
 
 func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
-	return &cobra.Command{
-		Use:   "delete <name>",
+	var name string
+	cmd := &cobra.Command{
+		Use:   "delete",
 		Short: "Delete an agent definition by name",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -132,12 +139,15 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call("agent/delete", ari.AgentDeleteParams{Name: args[0]}, nil); err != nil {
+			if err := client.Call("agent/delete", ari.AgentDeleteParams{Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			fmt.Printf("Agent %q deleted\n", args[0])
+			fmt.Printf("Agent %q deleted\n", name)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "Agent name (required)")
+	_ = cmd.MarkFlagRequired("name")
+	return cmd
 }

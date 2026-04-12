@@ -32,6 +32,7 @@ func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "-f <file>",
 		Short: "Create a workspace from a YAML spec file",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := os.ReadFile(file)
 			if err != nil {

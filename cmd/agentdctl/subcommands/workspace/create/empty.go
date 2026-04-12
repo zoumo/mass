@@ -11,10 +11,11 @@ import (
 )
 
 func newEmptyCmd(getClient cliutil.ClientFn) *cobra.Command {
-	return &cobra.Command{
-		Use:   "empty <name>",
+	var name string
+	cmd := &cobra.Command{
+		Use:   "empty",
 		Short: "Create an empty directory workspace",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			src := workspace.Source{Type: workspace.SourceTypeEmptyDir}
 			srcJSON, err := json.Marshal(src)
@@ -27,7 +28,7 @@ func newEmptyCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.WorkspaceCreateParams{Name: args[0], Source: srcJSON}
+			params := ari.WorkspaceCreateParams{Name: name, Source: srcJSON}
 			var result ari.WorkspaceCreateResult
 			if err := client.Call("workspace/create", params, &result); err != nil {
 				cliutil.HandleError(err)
@@ -37,4 +38,7 @@ func newEmptyCmd(getClient cliutil.ClientFn) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&name, "name", "", "Workspace name (required)")
+	_ = cmd.MarkFlagRequired("name")
+	return cmd
 }

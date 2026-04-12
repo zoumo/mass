@@ -15,9 +15,9 @@ func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 		Long: `Create a workspace from a source.
 
 Subcommands:
-  local  <name> --path <path>
-  git    <name> --url <url> [--ref <ref>] [--depth <n>]
-  empty  <name>
+  local  --name <name> --path <path>
+  git    --name <name> --url <url> [--ref <ref>] [--depth <n>]
+  empty  --name <name>
   -f     <file>   (full spec YAML)`,
 	}
 	cmd.AddCommand(newLocalCmd(getClient))

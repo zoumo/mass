@@ -3,10 +3,10 @@
 package shim
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
@@ -40,11 +40,11 @@ type rpcError struct {
 // ── Client ────────────────────────────────────────────────────────────────
 
 type client struct {
-	conn    net.Conn
-	scanner *bufio.Scanner
-	enc     *json.Encoder
-	mu      sync.Mutex
-	nextID  int
+	conn   net.Conn
+	dec    *json.Decoder
+	enc    *json.Encoder
+	mu     sync.Mutex
+	nextID int
 
 	pending   map[int]chan rpcResponse
 	pendingMu sync.Mutex
@@ -57,11 +57,9 @@ func dial(socketPath string) (*client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", socketPath, err)
 	}
-	sc := bufio.NewScanner(conn)
-	sc.Buffer(make([]byte, 0, 64*1024), 10*1024*1024) // up to 10 MB per line
 	c := &client{
 		conn:    conn,
-		scanner: sc,
+		dec:     json.NewDecoder(conn),
 		enc:     json.NewEncoder(conn),
 		pending: make(map[int]chan rpcResponse),
 		notifs:  make(chan rpcResponse, 1024),
@@ -71,12 +69,13 @@ func dial(socketPath string) (*client, error) {
 }
 
 func (c *client) readLoop() {
-	for c.scanner.Scan() {
-		line := c.scanner.Bytes()
+	for {
 		var msg rpcResponse
-		if err := json.Unmarshal(line, &msg); err != nil {
-			fmt.Fprintf(os.Stderr, "\n[readLoop] json unmarshal error: %v\n", err)
-			continue
+		if err := c.dec.Decode(&msg); err != nil {
+			if err != io.EOF {
+				fmt.Fprintf(os.Stderr, "\n[readLoop] decode error: %v\n", err)
+			}
+			break
 		}
 		if msg.ID == nil && msg.Method != "" {
 			c.notifs <- msg
@@ -90,9 +89,6 @@ func (c *client) readLoop() {
 				ch <- msg
 			}
 		}
-	}
-	if err := c.scanner.Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "\n[readLoop] scanner error: %v\n", err)
 	}
 	close(c.notifs)
 }
@@ -310,6 +306,7 @@ func NewCommand() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "state",
 		Short: "Print agent state and recovery metadata (runtime/status)",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := dial(socket)
 			if err != nil {
@@ -332,6 +329,7 @@ func NewCommand() *cobra.Command {
 	historyCmd := &cobra.Command{
 		Use:   "history",
 		Short: "Print replayable event history (runtime/history)",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := dial(socket)
 			if err != nil {
@@ -360,6 +358,7 @@ func NewCommand() *cobra.Command {
 	promptCmd := &cobra.Command{
 		Use:   "prompt",
 		Short: "Send a prompt and stream the response (session/prompt)",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if promptText == "" {
 				return fmt.Errorf("--prompt is required")
@@ -373,6 +372,7 @@ func NewCommand() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "chat",
 		Short: "Interactive chat REPL (type 'exit' to quit)",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runChat(socket)
 		},
@@ -381,6 +381,7 @@ func NewCommand() *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "stop",
 		Short: "Gracefully shut down the agent (runtime/stop)",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := dial(socket)
 			if err != nil {
