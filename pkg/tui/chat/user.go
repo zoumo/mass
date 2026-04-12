@@ -60,17 +60,22 @@ func (m *UserMessageItem) Render(width int) string {
 	cappedWidth := cappedMessageWidth(width)
 	rawContent := m.RawRender(width)
 
-	// Label line
 	label := lipgloss.NewStyle().Bold(true).Foreground(m.sty.Primary).Render("[User]")
+	text := label + "\n" + rawContent
 
-	// Wrap in a background block (dark gray background with padding + bottom margin)
-	blockStyle := lipgloss.NewStyle().
+	// Apply background to each line individually so the color fills the
+	// full width consistently, even when ANSI-styled content varies in
+	// visible length.
+	lineStyle := lipgloss.NewStyle().
 		Background(m.sty.BgBaseLighter).
 		Width(cappedWidth).
-		Padding(0, 1).
-		MarginBottom(1)
+		PaddingLeft(1).PaddingRight(1)
 
-	return blockStyle.Render(label + "\n" + rawContent)
+	lines := strings.Split(text, "\n")
+	for i, ln := range lines {
+		lines[i] = lineStyle.Render(ln)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ID implements Identifiable.
