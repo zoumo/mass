@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/open-agent-d/open-agent-d/pkg/tui/chat"
+	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/anim"
 	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
 )
 
@@ -42,20 +43,22 @@ type chatModel struct {
 	chat    *chat.Chat
 	input   textarea.Model
 	spinner spinner.Model
-	sty     styles.Styles // crush styles for message rendering
+	sty     styles.Styles
 
 	sock   string
 	client *client
 	notifs <-chan rpcResponse
 
-	// Current streaming state: we maintain a mutable shimMessage that gets
-	// passed to the crush-style AssistantMessageItem via SetMessage().
-	currentMsg   *shimMessage // the mutable message being streamed
-	currentMsgID string       // the chat item ID for the assistant message
+	// Streaming state.
+	currentMsg   *shimMessage // mutable message being streamed
+	currentMsgID string       // chat item ID for assistant message
+
+	// Tool tracking: tool_call ID → chat item ID, for linking tool_result.
+	toolItemIDs map[string]string // toolCall.ID → chat MessageItem ID
 
 	turnCounter int // monotonic counter for generating unique IDs
 
-	chatFocused bool // true when chat area has focus (for vim scrolling)
+	chatFocused bool
 	waiting     bool
 	ready       bool
 	width       int
@@ -80,11 +83,12 @@ func newChatModel(sock string) chatModel {
 	sty := styles.DefaultStyles()
 
 	return chatModel{
-		sock:    sock,
-		chat:    chat.NewChat(),
-		input:   ta,
-		spinner: sp,
-		sty:     sty,
+		sock:        sock,
+		chat:        chat.NewChat(),
+		input:       ta,
+		spinner:     sp,
+		sty:         sty,
+		toolItemIDs: make(map[string]string),
 	}
 }
 
@@ -158,7 +162,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case connReadyMsg:
 		m.client = msg.c
 		m.notifs = msg.notifs
-		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "connected — tab to switch focus, ctrl+c to quit", styleDim))
+		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "connected — tab focus · shift select text · ctrl+c quit", styleDim))
 		cmds = append(cmds, waitNotif(m.notifs))
 
 	case connErrMsg:
@@ -170,7 +174,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case notifMsg:
-		m.handleNotif(msg.rpcResponse)
+		cmd := m.handleNotif(msg.rpcResponse)
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		cmds = append(cmds, waitNotif(m.notifs))
 
 	case turnEndMsg:
@@ -195,6 +202,12 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.waiting = false
 		m.chatFocused = false
 		cmds = append(cmds, m.input.Focus(), waitNotif(m.notifs))
+
+	case anim.StepMsg:
+		// Forward animation ticks to the chat (for spinner animations).
+		if cmd := m.chat.Animate(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case spinner.TickMsg:
 		var spinCmd tea.Cmd
@@ -221,7 +234,6 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch {
-	// ── Global keys ──────────────────────────────────────────────────────
 	case key.Mod&tea.ModCtrl != 0 && key.Code == 'c':
 		if m.client != nil {
 			m.client.close()
@@ -230,7 +242,6 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		return cmds
 
 	case key.Code == tea.KeyTab && key.Mod == 0:
-		// Toggle focus between chat and editor.
 		m.chatFocused = !m.chatFocused
 		if m.chatFocused {
 			m.input.Blur()
@@ -246,7 +257,6 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 			m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "[cancelling…]", styleDim))
 			cmds = append(cmds, cancelPromptCmd(m.client))
 		} else if m.chatFocused {
-			// Switch back to editor.
 			m.chatFocused = false
 			m.chat.Blur()
 			cmds = append(cmds, m.input.Focus())
@@ -254,7 +264,6 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		return cmds
 	}
 
-	// ── Chat-focused keys (vim-style scrolling) ─────────────────────────
 	if m.chatFocused {
 		switch {
 		case key.Code == 'j' || key.Code == tea.KeyDown:
@@ -277,7 +286,6 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		return cmds
 	}
 
-	// ── Editor-focused keys ─────────────────────────────────────────────
 	switch {
 	case key.Code == tea.KeyEnter && key.Mod&tea.ModShift != 0:
 		if !m.waiting {
@@ -297,19 +305,26 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		m.input.Reset()
 		m.input.Blur()
 
-		// Create user message.
 		userMsg := newShimMessage(m.nextID("user"), chat.RoleUser)
 		userMsg.text = text
 		userMsg.finished = true
 		m.chat.AppendMessages(chat.NewUserMessageItem(&m.sty, userMsg))
 
-		// Create assistant message (will be updated as tokens stream in).
 		assistantMsg := newShimMessage(m.nextID("assistant"), chat.RoleAssistant)
 		m.currentMsg = assistantMsg
 		m.currentMsgID = assistantMsg.id
-		m.chat.AppendMessages(chat.NewAssistantMessageItem(&m.sty, assistantMsg))
+		item := chat.NewAssistantMessageItem(&m.sty, assistantMsg)
+		m.chat.AppendMessages(item)
+
+		// Start the spinner animation for the new assistant item.
+		if a, ok := item.(*chat.AssistantMessageItem); ok {
+			if cmd := a.StartAnimation(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
 
 		m.waiting = true
+		m.toolItemIDs = make(map[string]string) // reset tool tracking
 		cmds = append(cmds, sendPromptCmd(m.client, text))
 
 	case key.Code == tea.KeyPgUp:
@@ -329,8 +344,6 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 	return cmds
 }
 
-// updateCurrentAssistant calls SetMessage on the current assistant item
-// to trigger a re-render with the latest message state.
 func (m *chatModel) updateCurrentAssistant() {
 	if m.currentMsgID == "" {
 		return
@@ -347,13 +360,13 @@ func (m *chatModel) updateCurrentAssistant() {
 	}
 }
 
-func (m *chatModel) handleNotif(msg rpcResponse) {
+func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 	if msg.Method != "session/update" {
-		return
+		return nil
 	}
 	var p sessionUpdateParams
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
-		return
+		return nil
 	}
 	switch p.Event.Type {
 	case "text":
@@ -380,23 +393,35 @@ func (m *chatModel) handleNotif(msg rpcResponse) {
 		}
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 
-		// Finish current assistant text before tool, start fresh after.
+		// Finish current assistant text before tool.
 		if m.currentMsg != nil {
 			m.currentMsg.finish(chat.FinishReasonToolUse)
 			m.updateCurrentAssistant()
 		}
 
-		// Add tool call as a generic tool message.
-		toolMsg := newShimMessage(m.nextID("tool"), chat.RoleTool)
+		// Add tool call item and track its ID for later result linking.
+		toolItemID := m.nextID("tc")
 		tc := chat.ToolCall{ID: pl.ID, Name: pl.Kind, Input: fmt.Sprintf(`{"title":%q}`, pl.Title)}
-		toolMsg.toolCalls = []chat.ToolCall{tc}
-		m.chat.AppendMessages(chat.NewToolMessageItem(&m.sty, toolMsg.id, tc, nil, false))
+		toolItem := chat.NewToolMessageItem(&m.sty, toolItemID, tc, nil, false)
+		if ti, ok := toolItem.(chat.ToolMessageItem); ok {
+			ti.SetStatus(chat.ToolStatusRunning)
+		}
+		m.chat.AppendMessages(toolItem)
+		m.toolItemIDs[pl.ID] = toolItemID
 
-		// Create new assistant message for text after tool.
+		// Start new assistant message for text after tool.
 		newMsg := newShimMessage(m.nextID("assistant"), chat.RoleAssistant)
 		m.currentMsg = newMsg
 		m.currentMsgID = newMsg.id
-		m.chat.AppendMessages(chat.NewAssistantMessageItem(&m.sty, newMsg))
+		item := chat.NewAssistantMessageItem(&m.sty, newMsg)
+		m.chat.AppendMessages(item)
+
+		// Start animation for new assistant item.
+		if a, ok := item.(*chat.AssistantMessageItem); ok {
+			if cmd := a.StartAnimation(); cmd != nil {
+				return cmd
+			}
+		}
 
 	case "tool_result":
 		var pl struct {
@@ -405,14 +430,27 @@ func (m *chatModel) handleNotif(msg rpcResponse) {
 		}
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 
-		// Add as system message for now (tool result rendering requires
-		// linking to the original tool call which we don't track).
-		m.chat.AppendMessages(chat.NewSystemItem(
-			m.nextID("tr"),
-			fmt.Sprintf("  ↳ %s", pl.Status),
-			styleDim,
-		))
+		// Find the tool call item and update its result/status.
+		if itemID, ok := m.toolItemIDs[pl.ID]; ok {
+			if item := m.chat.MessageItem(itemID); item != nil {
+				if ti, ok := item.(chat.ToolMessageItem); ok {
+					status := chat.ToolStatusSuccess
+					if pl.Status == "error" {
+						status = chat.ToolStatusError
+					}
+					ti.SetStatus(status)
+					ti.SetResult(&chat.ToolResult{
+						ToolCallID: pl.ID,
+						Content:    pl.Status,
+					})
+				}
+			}
+		}
+		if m.chat.Follow() {
+			m.chat.ScrollToBottom()
+		}
 	}
+	return nil
 }
 
 // ── View ──────────────────────────────────────────────────────────────────────
@@ -447,7 +485,7 @@ func (m chatModel) renderHelp() string {
 	} else {
 		keys = append(keys, "enter send", "shift+enter newline", "tab chat", "esc cancel")
 	}
-	keys = append(keys, "ctrl+c quit")
+	keys = append(keys, "shift+click select text", "ctrl+c quit")
 	return styleHelp.Render(" " + strings.Join(keys, " · "))
 }
 
