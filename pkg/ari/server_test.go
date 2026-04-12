@@ -64,7 +64,7 @@ func newTestServer(t *testing.T) *testEnv {
 	registry := ari.NewRegistry()
 
 	agents := agentd.NewAgentRunManager(store, slog.Default())
-	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"), slog.Default())
+	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
 
 	sockPath := shortSockPath(t)
 	t.Cleanup(func() { _ = os.Remove(sockPath) })

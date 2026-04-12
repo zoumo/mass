@@ -2,6 +2,7 @@ package runtime_test
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,7 +88,7 @@ func newManager(t *testing.T, cfg apispec.Config) *pkgruntime.Manager {
 		os.RemoveAll(bundleDir)
 		os.RemoveAll(stateDir)
 	})
-	return pkgruntime.New(cfg, bundleDir, stateDir)
+	return pkgruntime.New(cfg, bundleDir, stateDir, slog.Default())
 }
 
 func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
@@ -140,7 +141,7 @@ func (s *RuntimeSuite) TestDelete_RemovesStateDir() {
 	// Note: do NOT register cleanup for stateDir — we're testing that Delete() removes it.
 	s.T().Cleanup(func() { os.RemoveAll(bundleDir) })
 
-	mgr := pkgruntime.New(cfg, bundleDir, stateDir)
+	mgr := pkgruntime.New(cfg, bundleDir, stateDir, slog.Default())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

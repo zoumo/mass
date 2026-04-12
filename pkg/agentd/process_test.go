@@ -71,7 +71,7 @@ func TestProcessManagerStart(t *testing.T) {
 
 	// Create AgentManager and ProcessManager.
 	agentMgr := NewAgentRunManager(store, slog.Default())
-	procMgr := NewProcessManager(agentMgr, store, socketPath, bundleRoot, slog.Default())
+	procMgr := NewProcessManager(agentMgr, store, socketPath, bundleRoot, slog.Default(), "info", "pretty")
 
 	// Create a workspace with a ready path.
 	workspacePath := filepath.Join(workspaceRoot, "test-workspace")

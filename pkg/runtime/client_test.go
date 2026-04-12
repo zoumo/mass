@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,7 +36,7 @@ func newTestManager(policy apispec.PermissionPolicy) *Manager {
 		AgentRoot:   apispec.AgentRoot{Path: "workspace"},
 		Permissions: policy,
 	}
-	return New(cfg, bundleDir, stateDir)
+	return New(cfg, bundleDir, stateDir, slog.Default())
 }
 
 // cleanupManager removes the bundleDir and stateDir created by newTestManager.

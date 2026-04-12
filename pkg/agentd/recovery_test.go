@@ -31,7 +31,7 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *store.Store) {
 
 	agents := NewAgentRunManager(store, slog.Default())
 
-	pm := NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"), slog.Default())
+	pm := NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
 	return pm, store
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -150,7 +151,7 @@ func newServerHarnessWithConfig(t *testing.T, cfg apispec.Config) *serverHarness
 	socketPath := spec.ShimSocketPath(stateDir)
 	logPath := spec.EventLogPath(stateDir)
 
-	mgr := pkgruntime.New(cfg, bundleDir, stateDir)
+	mgr := pkgruntime.New(cfg, bundleDir, stateDir, slog.Default())
 	agentCtx, agentCancel := context.WithTimeout(context.Background(), 120*time.Second)
 	t.Cleanup(agentCancel)
 	require.NoError(t, mgr.Create(agentCtx))
@@ -164,7 +165,7 @@ func newServerHarnessWithConfig(t *testing.T, cfg apispec.Config) *serverHarness
 	})
 	trans.Start()
 
-	srv := rpc.New(mgr, trans, socketPath, logPath)
+	srv := rpc.New(mgr, trans, socketPath, logPath, slog.Default())
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.Serve() }()
 

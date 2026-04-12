@@ -49,6 +49,8 @@ type ProcessManager struct {
 	store      *store.Store
 	socketPath string
 	bundleRoot string
+	logLevel   string // propagated to shim and workspace-mcp child processes
+	logFormat  string // propagated to shim and workspace-mcp child processes
 
 	mu        sync.RWMutex
 	processes map[string]*ShimProcess // agentKey (workspace+"/"+name) -> ShimProcess
@@ -104,13 +106,15 @@ type ShimProcess struct {
 }
 
 // NewProcessManager creates a new ProcessManager.
-func NewProcessManager(agents *AgentRunManager, s *store.Store, socketPath, bundleRoot string, logger *slog.Logger) *ProcessManager {
+func NewProcessManager(agents *AgentRunManager, s *store.Store, socketPath, bundleRoot string, logger *slog.Logger, logLevel, logFormat string) *ProcessManager {
 	logger = logger.With("component", "agentd.process")
 	return &ProcessManager{
 		agents:     agents,
 		store:      s,
 		socketPath: socketPath,
 		bundleRoot: bundleRoot,
+		logLevel:   logLevel,
+		logFormat:  logFormat,
 		processes:  make(map[string]*ShimProcess),
 		logger:     logger,
 	}
@@ -370,6 +374,8 @@ func (m *ProcessManager) generateConfig(agent *meta.AgentRun, agentDef *meta.Age
 			{Name: "OAR_WORKSPACE_NAME", Value: agent.Metadata.Workspace},
 			{Name: "OAR_AGENT_NAME", Value: agent.Metadata.Name},
 			{Name: "OAR_STATE_DIR", Value: stateDir},
+			{Name: "OAR_LOG_LEVEL", Value: m.logLevel},
+			{Name: "OAR_LOG_FORMAT", Value: m.logFormat},
 		},
 	}
 
@@ -530,6 +536,10 @@ func (m *ProcessManager) forkShim(agent *meta.AgentRun, bundlePath, stateDir str
 
 	// Create exec.Cmd WITHOUT tying to the request context.
 	cmd := exec.Command(shimBinary, args...)
+	cmd.Env = append(os.Environ(),
+		"OAR_LOG_LEVEL="+m.logLevel,
+		"OAR_LOG_FORMAT="+m.logFormat,
+	)
 	cmd.Stderr = os.Stderr // always pipe stderr for debugging
 	cmd.Stdout = nil       // discard stdout (shim logs to stderr via slog)
 

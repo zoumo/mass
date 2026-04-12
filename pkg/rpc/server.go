@@ -14,7 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 
@@ -68,6 +68,7 @@ type Server struct {
 	trans   *events.Translator
 	path    string
 	logPath string
+	logger  *slog.Logger
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -76,8 +77,8 @@ type Server struct {
 }
 
 // New creates a Server that listens on socketPath. Call Serve to begin accepting connections.
-func New(mgr *runtime.Manager, trans *events.Translator, socketPath, logPath string) *Server {
-	return &Server{mgr: mgr, trans: trans, path: socketPath, logPath: logPath, done: make(chan struct{})}
+func New(mgr *runtime.Manager, trans *events.Translator, socketPath, logPath string, logger *slog.Logger) *Server {
+	return &Server{mgr: mgr, trans: trans, path: socketPath, logPath: logPath, logger: logger, done: make(chan struct{})}
 }
 
 // Serve creates the Unix socket, enters the accept loop, and blocks until the server is shut down.
@@ -98,7 +99,7 @@ func (s *Server) Serve() error {
 				return nil
 			default:
 			}
-			log.Printf("rpc: accept error: %v", err)
+			s.logger.Error("accept error", "error", err)
 			return fmt.Errorf("rpc: accept: %w", err)
 		}
 		go s.handleConn(conn)
@@ -316,7 +317,7 @@ func (h *connHandler) handleStop(ctx context.Context, conn *jsonrpc2.Conn, req *
 	_ = conn.Reply(ctx, req.ID, nil)
 	go func() {
 		if err := h.srv.Shutdown(context.Background()); err != nil {
-			log.Printf("rpc: stop error: %v", err)
+			h.srv.logger.Error("stop error", "error", err)
 		}
 	}()
 }

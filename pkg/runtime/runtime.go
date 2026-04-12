@@ -8,7 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -40,6 +40,7 @@ type Manager struct {
 	cfg       apispec.Config
 	bundleDir string
 	stateDir  string
+	logger    *slog.Logger
 
 	mu              sync.Mutex
 	cmd             *exec.Cmd
@@ -50,11 +51,12 @@ type Manager struct {
 }
 
 // New creates a new Manager. It does not start the agent process.
-func New(cfg apispec.Config, bundleDir, stateDir string) *Manager {
+func New(cfg apispec.Config, bundleDir, stateDir string, logger *slog.Logger) *Manager {
 	return &Manager{
 		cfg:       cfg,
 		bundleDir: bundleDir,
 		stateDir:  stateDir,
+		logger:    logger,
 		events:    make(chan acp.SessionNotification, 1024),
 	}
 }
@@ -140,7 +142,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		McpServers: mcpServers,
 	}
 	if debugJSON, err := json.MarshalIndent(newSessionReq, "", "  "); err == nil {
-		log.Printf("runtime: acp session/new request:\n%s", string(debugJSON))
+		m.logger.Debug("acp session/new request", "body", string(debugJSON))
 	}
 
 	sessionResp, err := conn.NewSession(ctx, newSessionReq)

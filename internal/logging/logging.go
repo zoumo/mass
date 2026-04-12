@@ -24,12 +24,12 @@ func NewHandler(format string, level slog.Level, w io.Writer) slog.Handler {
 	case "pretty":
 		return tint.NewHandler(w, &tint.Options{
 			Level:      level,
-			TimeFormat: time.Kitchen,
+			TimeFormat: time.DateTime,
 		})
 	default:
 		return tint.NewHandler(w, &tint.Options{
 			Level:      level,
-			TimeFormat: time.Kitchen,
+			TimeFormat: time.DateTime,
 		})
 	}
 }
