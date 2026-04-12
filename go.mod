@@ -13,6 +13,7 @@ require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8
 	github.com/charmbracelet/x/ansi v0.11.6
 	github.com/charmbracelet/x/exp/charmtone v0.0.0-20260412004207-d48a6f9a4964
+	github.com/charmbracelet/x/exp/golden v0.0.0-20250806222409-83e3a29d542f
 	github.com/charmbracelet/x/exp/slice v0.0.0-20260412004207-d48a6f9a4964
 	github.com/coder/acp-go-sdk v0.6.4-0.20260227160919-584abe6abe22
 	github.com/google/uuid v1.6.0

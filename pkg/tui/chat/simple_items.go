@@ -200,7 +200,7 @@ func (tr *ToolResultItem) Render(width int) string {
 
 // ── SystemItem ───────────────────────────────────────────────────────────────
 
-// SystemItem renders a system message (connected, error, cancelling, etc.).
+// SystemItem renders a system message (connected, error, canceling, etc.).
 type SystemItem struct {
 	cachedMessageItem
 	id    string

@@ -17,15 +17,20 @@ import (
 
 // ── Tea messages ──────────────────────────────────────────────────────────────
 
-type notifMsg struct{ rpcResponse }
-type turnEndMsg struct{}
-type connClosedMsg struct{}
-type connReadyMsg struct {
-	c      *client
-	notifs <-chan rpcResponse
-}
-type connErrMsg struct{ err error }
-type promptErrMsg struct{ err error }
+type (
+	notifMsg      struct{ rpcResponse }
+	turnEndMsg    struct{}
+	connClosedMsg struct{}
+	connReadyMsg  struct {
+		c      *client
+		notifs <-chan rpcResponse
+	}
+)
+
+type (
+	connErrMsg   struct{ err error }
+	promptErrMsg struct{ err error }
+)
 
 // stateChangeMsg is sent when the shim reports a runtime/stateChange notification.
 type stateChangeMsg struct {
@@ -182,7 +187,6 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
-
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
@@ -304,7 +308,7 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 
 	case key.Code == tea.KeyEscape && key.Mod == 0:
 		if m.waiting {
-			m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "[cancelling…]", styleDim))
+			m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "[canceling…]", styleDim))
 			cmds = append(cmds, cancelPromptCmd(m.client))
 		} else if m.chatFocused {
 			m.chatFocused = false

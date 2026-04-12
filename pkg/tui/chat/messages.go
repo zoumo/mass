@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
 	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/list"
 	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
 )
@@ -24,7 +25,8 @@ type Identifiable interface {
 
 // Animatable is an interface for items that support animation.
 type Animatable interface {
-	StartAnimation() interface{ /* tea.Cmd */ }
+	StartAnimation() interface { /* tea.Cmd */
+	}
 }
 
 // Expandable is an interface for items that can be expanded or collapsed.
@@ -81,7 +83,7 @@ func (h *highlightableMessageItem) renderHighlighted(content string, width, heig
 }
 
 // SetHighlight implements list.Highlightable.
-func (h *highlightableMessageItem) SetHighlight(startLine int, startCol int, endLine int, endCol int) {
+func (h *highlightableMessageItem) SetHighlight(startLine, startCol, endLine, endCol int) {
 	// Adjust columns for the style's left inset (border + padding) since we
 	// highlight the content only.
 	offset := MessageLeftPaddingTotal
@@ -96,7 +98,7 @@ func (h *highlightableMessageItem) SetHighlight(startLine int, startCol int, end
 }
 
 // Highlight implements list.Highlightable.
-func (h *highlightableMessageItem) Highlight() (startLine int, startCol int, endLine int, endCol int) {
+func (h *highlightableMessageItem) Highlight() (startLine, startCol, endLine, endCol int) {
 	return h.startLine, h.startCol, h.endLine, h.endCol
 }
 
@@ -202,7 +204,7 @@ func (a *AssistantInfoItem) Render(width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func (a *AssistantInfoItem) renderContent(width int) string {
+func (a *AssistantInfoItem) renderContent(_ int) string { //nolint:unparam // stub for future use
 	finishData := a.message.FinishPart()
 	if finishData == nil {
 		return ""

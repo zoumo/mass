@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
 	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/common"
 	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
 )

@@ -195,7 +195,7 @@ func TestFollow_ScrollDownToBottomRe_enables(t *testing.T) {
 	c.AppendMessages(makeItems(20)...)
 
 	c.ScrollToBottom()
-	c.ScrollBy(-5) // disable follow
+	c.ScrollBy(-5)  // disable follow
 	c.ScrollBy(100) // scroll way down past bottom
 
 	if !c.Follow() {

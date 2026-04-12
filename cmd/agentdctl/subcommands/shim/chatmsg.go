@@ -35,16 +35,17 @@ func newShimMessage(id string, role chat.MessageRole) *shimMessage {
 	return &shimMessage{id: id, role: role}
 }
 
-func (m *shimMessage) GetID() string           { return m.id }
+func (m *shimMessage) GetID() string             { return m.id }
 func (m *shimMessage) GetRole() chat.MessageRole { return m.role }
 func (m *shimMessage) Content() chat.ContentBlock {
 	return chat.ContentBlock{Text: m.text}
 }
+
 func (m *shimMessage) ReasoningContent() chat.ReasoningBlock {
 	return chat.ReasoningBlock{Thinking: m.thinking}
 }
-func (m *shimMessage) IsThinking() bool         { return m.isThinking }
-func (m *shimMessage) IsFinished() bool         { return m.finished }
+func (m *shimMessage) IsThinking() bool                { return m.isThinking }
+func (m *shimMessage) IsFinished() bool                { return m.finished }
 func (m *shimMessage) FinishReason() chat.FinishReason { return m.reason }
 func (m *shimMessage) FinishPart() *chat.FinishPart {
 	if !m.finished {

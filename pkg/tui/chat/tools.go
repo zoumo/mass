@@ -1,13 +1,13 @@
 package chat
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
 	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/stringext"
 	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/anim"
 	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/common"
@@ -127,11 +127,11 @@ type baseToolMessageItem struct {
 	*cachedMessageItem
 	*focusableMessageItem
 
-	toolRenderer ToolRenderer
-	toolCall     ToolCall
-	result       *ToolResult
-	messageID    string
-	status       ToolStatus
+	toolRenderer   ToolRenderer
+	toolCall       ToolCall
+	result         *ToolResult
+	messageID      string
+	status         ToolStatus
 	hasCappedWidth bool
 	isCompact      bool
 	spinningFunc   SpinningFunc
@@ -364,7 +364,7 @@ func pendingTool(sty *styles.Styles, name string, a *anim.Anim, nested bool) str
 	return fmt.Sprintf("%s %s %s", icon, toolName, animView)
 }
 
-// toolEarlyStateContent handles error/cancelled/pending states before content rendering.
+// toolEarlyStateContent handles error/canceled/pending states before content rendering.
 func toolEarlyStateContent(sty *styles.Styles, opts *ToolRenderOpts, width int) (string, bool) {
 	var msg string
 	switch opts.Status {
@@ -546,45 +546,6 @@ func toolOutputImageContent(sty *styles.Styles, data, mediaType string) string {
 	))
 }
 
-// toolOutputMarkdownContent renders markdown content with optional truncation.
-func toolOutputMarkdownContent(sty *styles.Styles, content string, width int, expanded bool) string {
-	content = stringext.NormalizeSpace(content)
-
-	// Cap width for readability.
-	if width > maxTextWidth {
-		width = maxTextWidth
-	}
-
-	renderer := common.PlainMarkdownRenderer(sty, width)
-	rendered, err := renderer.Render(content)
-	if err != nil {
-		return toolOutputPlainContent(sty, content, width, expanded)
-	}
-
-	lines := strings.Split(rendered, "\n")
-	maxLines := responseContextHeight
-	if expanded {
-		maxLines = len(lines)
-	}
-
-	var out []string
-	for i, ln := range lines {
-		if i >= maxLines {
-			break
-		}
-		out = append(out, ln)
-	}
-
-	if len(lines) > maxLines && !expanded {
-		out = append(out, sty.Tool.ContentTruncation.
-			Width(width).
-			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-maxLines)),
-		)
-	}
-
-	return sty.Tool.Body.Render(strings.Join(out, "\n"))
-}
-
 // joinToolParts joins header and body with a blank line separator.
 func joinToolParts(header, body string) string {
 	return strings.Join([]string{header, "", body}, "\n")
@@ -642,53 +603,4 @@ func formatSize(bytes int) string {
 	default:
 		return fmt.Sprintf("%d B", bytes)
 	}
-}
-
-// prettifyToolName returns a human-readable name for tool names.
-func prettifyToolName(name string) string {
-	return genericPrettyName(name)
-}
-
-// formatToolForCopy formats the tool call for clipboard copying.
-func (t *baseToolMessageItem) formatToolForCopy() string {
-	var parts []string
-
-	toolName := prettifyToolName(t.toolCall.Name)
-	parts = append(parts, fmt.Sprintf("## %s Tool Call", toolName))
-
-	if t.toolCall.Input != "" {
-		var params map[string]any
-		if json.Unmarshal([]byte(t.toolCall.Input), &params) == nil {
-			var paramParts []string
-			for key, value := range params {
-				displayKey := strings.ReplaceAll(key, "_", " ")
-				if len(displayKey) > 0 {
-					displayKey = strings.ToUpper(displayKey[:1]) + displayKey[1:]
-				}
-				paramParts = append(paramParts, fmt.Sprintf("**%s:** %v", displayKey, value))
-			}
-			if len(paramParts) > 0 {
-				parts = append(parts, "### Parameters:")
-				parts = append(parts, strings.Join(paramParts, "\n"))
-			}
-		}
-	}
-
-	if t.result != nil && t.result.ToolCallID != "" {
-		if t.result.IsError {
-			parts = append(parts, "### Error:")
-			parts = append(parts, t.result.Content)
-		} else {
-			parts = append(parts, "### Result:")
-			parts = append(parts, t.result.Content)
-		}
-	} else if t.status == ToolStatusCanceled {
-		parts = append(parts, "### Status:")
-		parts = append(parts, "Cancelled")
-	} else {
-		parts = append(parts, "### Status:")
-		parts = append(parts, "Pending...")
-	}
-
-	return strings.Join(parts, "\n\n")
 }
