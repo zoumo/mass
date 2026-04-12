@@ -54,7 +54,7 @@ func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
 	client := &acpClient{mgr: mgr}
 	_, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "deny-all")
+	assert.Contains(t, err.Error(), "deny_all")
 }
 
 func TestAcpClient_RequestPermission_ApproveReads(t *testing.T) {
@@ -64,7 +64,7 @@ func TestAcpClient_RequestPermission_ApproveReads(t *testing.T) {
 	client := &acpClient{mgr: mgr}
 	_, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "approve-reads")
+	assert.Contains(t, err.Error(), "approve_reads")
 }
 
 func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
@@ -73,7 +73,7 @@ func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
 
 	client := &acpClient{mgr: mgr}
 	_, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{})
-	require.NoError(t, err, "approve-all should return no error")
+	require.NoError(t, err, "approve_all should return no error")
 }
 
 // ── Not-supported stubs ───────────────────────────────────────────────────────

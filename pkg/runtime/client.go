@@ -34,16 +34,16 @@ func (c *acpClient) SessionUpdate(_ context.Context, n acp.SessionNotification) 
 }
 
 // RequestPermission respects the permission policy.
-// For approve-all, selects the first option from the request (auto-approve).
+// For approve_all, selects the first option from the request (auto-approve).
 // The response must include a valid Outcome with Selected + OptionId;
 // an empty Outcome is treated as denial by ACP agents.
 func (c *acpClient) RequestPermission(_ context.Context, req acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 	switch c.mgr.cfg.Permissions {
 	case apispec.DenyAll:
-		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: deny-all policy blocks all operations")
+		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: deny_all policy blocks all operations")
 	case apispec.ApproveReads:
-		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: approve-reads policy blocks write operations")
-	default: // approve-all — select the first available option
+		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: approve_reads policy blocks write operations")
+	case apispec.ApproveAll: // select the first available option
 		if len(req.Options) == 0 {
 			return acp.RequestPermissionResponse{
 				Outcome: acp.RequestPermissionOutcome{
@@ -61,6 +61,9 @@ func (c *acpClient) RequestPermission(_ context.Context, req acp.RequestPermissi
 				},
 			},
 		}, nil
+	default:
+		// Unknown permission policy: fail closed to prevent silent permission escalation.
+		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: unknown permission policy %q", c.mgr.cfg.Permissions)
 	}
 }
 

@@ -485,6 +485,45 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 	}
 }
 
+// TestAgentRunCreateRestartPolicyValidation verifies that agentrun/create
+// rejects unknown restartPolicy values with -32602 (CodeInvalidParams) and
+// accepts valid values ("", "try_reload", "always_new").
+func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "rp-ws")
+
+	// Invalid values must be rejected.
+	for _, bad := range []string{"on-failure", "never", "always", "bad-value"} {
+		_, err := callRaw(t, env.client, "agentrun/create", map[string]any{
+			"workspace":     "rp-ws",
+			"name":          "rp-agent-bad",
+			"agent":         "default",
+			"restartPolicy": bad,
+		})
+		require.Error(t, err, "restartPolicy=%q must be rejected", bad)
+		assert.Contains(t, err.Error(), "-32602",
+			"restartPolicy=%q must return CodeInvalidParams", bad)
+	}
+
+	// Valid values must not be rejected at the validation layer.
+	// (The agent goes into "creating" state; shim start will fail in test env — that's OK.)
+	for _, good := range []string{"", "try_reload", "always_new"} {
+		_, err := callRaw(t, env.client, "agentrun/create", map[string]any{
+			"workspace":     "rp-ws",
+			"name":          "rp-agent-" + good,
+			"agent":         "default",
+			"restartPolicy": good,
+		})
+		// The call may succeed (state=creating) or fail with an internal error
+		// (shim start fails in test env) — but must NOT fail with -32602 for
+		// the restartPolicy field itself.
+		if err != nil {
+			assert.NotContains(t, err.Error(), "invalid restartPolicy",
+				"restartPolicy=%q should not be rejected as invalid", good)
+		}
+	}
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Mock shim for workspace/send and agentrun/prompt delivery tests
 // ────────────────────────────────────────────────────────────────────────────

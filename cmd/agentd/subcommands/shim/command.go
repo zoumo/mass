@@ -46,7 +46,7 @@ discover all running shims by scanning /run/agentd/shim/*/agent-shim.sock.`,
 	}
 
 	cmd.Flags().StringVar(&bundle, "bundle", "", "path to the OAR bundle directory containing config.json (required)")
-	cmd.Flags().StringVar(&permissions, "permissions", "approve-all", "fs/terminal permission policy: approve-all | approve-reads | deny-all")
+	cmd.Flags().StringVar(&permissions, "permissions", "approve_all", "fs/terminal permission policy: approve_all | approve_reads | deny_all")
 	cmd.Flags().StringVar(&id, "id", "", "agent session ID (auto-generated if empty)")
 	cmd.Flags().StringVar(&stateDir, "state-dir", "/run/agentd/shim", "base directory for ephemeral state files")
 
@@ -78,6 +78,9 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 	}
 	if cmd.Flag("permissions").Changed {
 		cfg.Permissions = apispec.PermissionPolicy(permissions)
+		if !cfg.Permissions.IsValid() {
+			return fmt.Errorf("invalid --permissions value %q: must be one of approve_all, approve_reads, deny_all", permissions)
+		}
 	}
 
 	if id == "" {

@@ -617,6 +617,16 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 		return
 	}
 
+	// Validate RestartPolicy: accept "", "try_reload", "always_new".
+	switch params.RestartPolicy {
+	case "", meta.RestartPolicyTryReload, meta.RestartPolicyAlwaysNew:
+		// valid
+	default:
+		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams,
+			fmt.Sprintf("invalid restartPolicy %q: must be one of \"try_reload\", \"always_new\"", params.RestartPolicy))
+		return
+	}
+
 	s.logger.Info("agentrun/create", "workspace", params.Workspace, "name", params.Name)
 
 	// Load workspace from DB — must exist and be ready.
