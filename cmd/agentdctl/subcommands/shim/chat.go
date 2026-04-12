@@ -27,6 +27,13 @@ type connReadyMsg struct {
 type connErrMsg struct{ err error }
 type promptErrMsg struct{ err error }
 
+// stateChangeMsg is sent when the shim reports a runtime/stateChange notification.
+type stateChangeMsg struct {
+	previous string
+	status   string
+	reason   string
+}
+
 // ── Styles ────────────────────────────────────────────────────────────────────
 
 var (
@@ -57,6 +64,8 @@ type chatModel struct {
 	toolItemIDs map[string]string // toolCall.ID → chat MessageItem ID
 
 	turnCounter int // monotonic counter for generating unique IDs
+
+	agentStatus string // current agent status: "idle", "running", "stopped", "error"
 
 	chatFocused bool
 	waiting     bool
@@ -121,6 +130,16 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 		if isTurnEndNotification(msg) {
 			return turnEndMsg{}
 		}
+		if msg.Method == "runtime/stateChange" {
+			var p runtimeStateChangeParams
+			if err := json.Unmarshal(msg.Params, &p); err == nil {
+				return stateChangeMsg{
+					previous: p.PreviousStatus,
+					status:   p.Status,
+					reason:   p.Reason,
+				}
+			}
+		}
 		return notifMsg{msg}
 	}
 }
@@ -138,6 +157,22 @@ func cancelPromptCmd(c *client) tea.Cmd {
 	return func() tea.Msg {
 		_, _ = c.call("session/cancel", nil)
 		return nil
+	}
+}
+
+func fetchStatusCmd(c *client) tea.Cmd {
+	return func() tea.Msg {
+		result, err := c.call("runtime/status", nil)
+		if err != nil {
+			return nil
+		}
+		var status struct {
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal(result, &status); err != nil {
+			return nil
+		}
+		return stateChangeMsg{status: status.Status}
 	}
 }
 
@@ -162,8 +197,8 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case connReadyMsg:
 		m.client = msg.c
 		m.notifs = msg.notifs
-		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "connected — tab focus · shift select text · ctrl+c quit", styleDim))
-		cmds = append(cmds, waitNotif(m.notifs))
+		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "connected — tab focus · shift+click select text · ctrl+c quit", styleDim))
+		cmds = append(cmds, waitNotif(m.notifs), fetchStatusCmd(m.client))
 
 	case connErrMsg:
 		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "error: "+msg.err.Error(), styleErr))
@@ -202,6 +237,21 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.waiting = false
 		m.chatFocused = false
 		cmds = append(cmds, m.input.Focus(), waitNotif(m.notifs))
+
+	case stateChangeMsg:
+		m.agentStatus = msg.status
+		// If agent transitions to running and we're not already in waiting state,
+		// it means someone else sent a prompt (or we late-joined a running turn).
+		if msg.status == "running" && !m.waiting {
+			m.waiting = true
+			m.input.Blur()
+		}
+		// If agent returns to idle, ensure we can type.
+		if msg.status == "idle" && m.waiting {
+			m.waiting = false
+			m.chatFocused = false
+			cmds = append(cmds, m.input.Focus())
+		}
 
 	case anim.StepMsg:
 		// Forward animation ticks to the chat (for spinner animations).
@@ -500,7 +550,7 @@ func (m chatModel) View() tea.View {
 
 	var bottom string
 	if m.waiting {
-		bottom = "  " + m.spinner.View() + styleDim.Render(" waiting… (esc cancel)")
+		bottom = "  " + m.spinner.View() + m.renderStatusLine()
 	} else {
 		bottom = m.input.View()
 	}
@@ -511,6 +561,48 @@ func (m chatModel) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
+}
+
+var (
+	styleStatusRunning = lipgloss.NewStyle().Foreground(lipgloss.Color("10")) // green
+	styleStatusIdle    = lipgloss.NewStyle().Foreground(lipgloss.Color("12")) // blue
+	styleStatusError   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))  // red
+	styleStatusStopped = lipgloss.NewStyle().Faint(true)
+)
+
+func (m chatModel) renderStatusLine() string {
+	status := m.agentStatus
+	if status == "" {
+		status = "unknown"
+	}
+
+	var styled string
+	switch status {
+	case "running":
+		styled = styleStatusRunning.Render("● running")
+	case "idle":
+		styled = styleStatusIdle.Render("● idle")
+	case "error":
+		styled = styleStatusError.Render("● error")
+	case "stopped":
+		styled = styleStatusStopped.Render("● stopped")
+	default:
+		styled = styleDim.Render("● " + status)
+	}
+
+	hint := ""
+	switch status {
+	case "running":
+		hint = styleDim.Render(" — esc to cancel")
+	case "idle":
+		hint = styleDim.Render(" — ready for input")
+	case "error":
+		hint = styleDim.Render(" — agent error, check logs")
+	case "stopped":
+		hint = styleDim.Render(" — agent stopped")
+	}
+
+	return " " + styled + hint
 }
 
 func (m chatModel) renderHelp() string {
