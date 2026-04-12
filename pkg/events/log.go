@@ -1,13 +1,15 @@
 package events
 
 import (
-	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
+	"io"
+	"log/slog"
 	"os"
-	"strings"
 	"sync"
+
+	"github.com/open-agent-d/open-agent-d/pkg/ndjson"
 )
 
 // EventLog appends replayable notification envelopes to a JSONL file.
@@ -95,31 +97,29 @@ func ReadEventLog(path string, fromSeq int) ([]Envelope, error) {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024) // 1 MB max line, matching countLines
+	dec := ndjson.NewReader(f)
 
 	// First pass: collect all non-empty lines.
 	type lineRecord struct {
-		raw   string
 		valid bool
 		env   Envelope
+		err   error // non-nil for invalid lines
 	}
 	var lines []lineRecord
-	for scanner.Scan() {
-		text := strings.TrimSpace(scanner.Text())
-		if text == "" {
+	for {
+		var e Envelope
+		err := dec.Decode(&e)
+		if errors.Is(err, ndjson.ErrInvalidJSON) {
+			lines = append(lines, lineRecord{valid: false, err: err})
 			continue
 		}
-		var e Envelope
-		if err := json.Unmarshal([]byte(text), &e); err != nil {
-			lines = append(lines, lineRecord{raw: text, valid: false})
-		} else {
-			lines = append(lines, lineRecord{raw: text, valid: true, env: e})
+		if err != nil {
+			if err != io.EOF {
+				return nil, fmt.Errorf("events: read log %s: %w", path, err)
+			}
+			break
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("events: scan log %s: %w", path, err)
+		lines = append(lines, lineRecord{valid: true, env: e})
 	}
 
 	// Walk through collected lines. If a corrupt line is followed by any
@@ -140,11 +140,11 @@ func ReadEventLog(path string, fromSeq int) ([]Envelope, error) {
 		// Corrupt line — check if any valid line follows.
 		for j := i + 1; j < len(lines); j++ {
 			if lines[j].valid {
-				return nil, fmt.Errorf("events: decode log entry: mid-file corruption at line %d", i+1)
+				return nil, fmt.Errorf("events: mid-file corruption at line %d: %v", i+1, lr.err)
 			}
 		}
 		// No valid lines follow — damaged tail. Log and break.
-		log.Printf("events: skipping %d damaged tail line(s) in %s", len(lines)-i, path)
+		slog.Warn("skipping damaged tail lines", "count", len(lines)-i, "path", path, "first_error", lr.err)
 		break
 	}
 
@@ -153,6 +153,7 @@ func ReadEventLog(path string, fromSeq int) ([]Envelope, error) {
 
 // countLines counts non-empty lines in path without decoding them. This keeps
 // the live append path usable even when older history rows are corrupt.
+// Uses chunk-based reading with O(1) memory regardless of line size.
 func countLines(path string) (int, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -163,18 +164,29 @@ func countLines(path string) (int, error) {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
+	buf := make([]byte, 32*1024)
 	count := 0
-	for scanner.Scan() {
-		if strings.TrimSpace(scanner.Text()) == "" {
-			continue
+	hasContent := false // tracks whether current line has non-whitespace
+	for {
+		n, err := f.Read(buf)
+		for i := 0; i < n; i++ {
+			switch {
+			case buf[i] == '\n':
+				if hasContent {
+					count++
+				}
+				hasContent = false
+			case buf[i] != ' ' && buf[i] != '\t' && buf[i] != '\r':
+				hasContent = true
+			}
 		}
-		count++
+		if err != nil {
+			break
+		}
 	}
-	if err := scanner.Err(); err != nil {
-		return 0, err
+	// Handle last line without trailing newline.
+	if hasContent {
+		count++
 	}
 	return count, nil
 }
