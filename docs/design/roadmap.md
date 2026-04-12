@@ -6,13 +6,17 @@ The following layers are implemented and in production use:
 
 ```
 Implemented:
-  pkg/spec           — OAR Runtime Spec types, config parsing, state management
+  api/               — Pure API type definitions (Status, EnvVar, meta objects, spec objects);
+                       no I/O, no business logic, no external dependencies
+  api/meta/          — API types in api/meta: Agent, AgentRun, Workspace, ObjectMeta, phase constants
+  api/spec/          — API types in api/spec: Config, State, PermissionPolicy, ACP types
+  pkg/spec           — OAR Runtime Spec I/O: config parsing, state file read/write; types in api/spec
   pkg/runtime        — agent process lifecycle, ACP handshake, permissions
   pkg/events         — Typed event stream, EventLog (JSONL), ACP→Event translator
   pkg/rpc            — JSON-RPC 2.0 server over Unix socket (shim RPC: session/* + runtime/*)
   pkg/workspace      — Workspace Manager: git/emptyDir/local source handlers, hook execution,
                        reference counting, cleanup
-  pkg/meta           — Metadata persistence (bbolt): Agent definition, AgentRun, Workspace records
+  pkg/store          — Metadata persistence (bbolt): Agent, AgentRun, Workspace CRUD; types in api/meta
   pkg/agentd         — agentd subsystems: Agent Manager, Process Manager, RuntimeClass Registry,
                        Recovery (shim reconnect on daemon restart), recovery posture gating
   pkg/ari            — ARI JSON-RPC server: workspace/*, agent/*, agentrun/* method handlers,

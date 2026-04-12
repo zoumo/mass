@@ -78,6 +78,76 @@ source:
 
 > 注意：`source.path` 必须为绝对路径，请根据实际项目位置修改。
 
+## 快速启动（agentdctl up）
+
+`agentdctl up` 从一个 YAML 配置文件中读取 workspace + agent 描述，一次性调用 agentd RPC 创建全部资源并等待就绪：
+
+**`bin/e2e/up.yaml`**
+```yaml
+kind: workspace-up
+metadata:
+  name: agentd-e2e
+spec:
+  source:
+    type: local
+    path: /Users/jim/code/zoumo/open-agent-runtime
+  agents:
+    - metadata:
+        name: codex
+      spec:
+        agent: codex
+    - metadata:
+        name: claude-code
+      spec:
+        agent: claude
+    - metadata:
+        name: gsd-pi
+      spec:
+        agent: gsd-pi
+```
+
+> `source.path` 必须为绝对路径，请根据实际项目位置修改。
+
+前置步骤（需手动执行一次）：
+
+```bash
+# 1. 启动 agentd
+./bin/agentd server &
+# 等待 ARI socket 就绪
+
+# 2. 注册 agent 模板
+./bin/agentdctl agent apply -f bin/e2e/agents/codex.yaml
+./bin/agentdctl agent apply -f bin/e2e/agents/claude.yaml
+./bin/agentdctl agent apply -f bin/e2e/agents/gsd-pi.yaml
+```
+
+然后执行 `up`，会自动创建 workspace、所有 agent run，并等待全部 idle 后输出 attach socket 路径：
+
+```bash
+./bin/agentdctl --socket /var/run/agentd/ari.sock up -f bin/e2e/up.yaml
+```
+
+示例输出：
+```
+Workspace "agentd-e2e" created (phase: pending)
+Waiting for workspace "agentd-e2e" to be ready...
+Workspace "agentd-e2e" is ready (path: /Users/jim/code/zoumo/open-agent-runtime)
+Agent run "agentd-e2e"/"codex" created (state: creating)
+Agent run "agentd-e2e"/"claude-code" created (state: creating)
+Agent run "agentd-e2e"/"gsd-pi" created (state: creating)
+Waiting for agent "agentd-e2e"/"codex" to be idle...
+Agent "agentd-e2e"/"codex" is idle
+Waiting for agent "agentd-e2e"/"claude-code" to be idle...
+Agent "agentd-e2e"/"claude-code" is idle
+Waiting for agent "agentd-e2e"/"gsd-pi" to be idle...
+Agent "agentd-e2e"/"gsd-pi" is idle
+
+All agents are ready. Attach info:
+  agentd-e2e/codex: /tmp/oar-<PID>/codex.sock
+  agentd-e2e/claude-code: /tmp/oar-<PID>/claude-code.sock
+  agentd-e2e/gsd-pi: /tmp/oar-<PID>/gsd-pi.sock
+```
+
 ## 一键启动脚本
 
 脚本位于 `bin/e2e/setup.sh`，使用 [cmux](https://github.com/manaflow-ai/cmux) 创建多窗格终端环境。
@@ -86,10 +156,9 @@ source:
 
 1. 启动 `agentd server`，等待 ARI socket 就绪
 2. 通过 `agentdctl agent apply` 注册三个 agent 模板
-3. 通过 `agentdctl workspace create local` 创建本地 workspace
-4. 通过 `agentdctl agentrun create` 启动三个 agent run，等待全部进入 `idle` 状态
-5. 通过 `agentdctl agentrun attach` 获取各 agent 的 shim socket 路径
-6. 使用 cmux CLI 创建一个 workspace，分裂为三个 pane，分别启动 `agentdctl shim chat` 连接三个 agent
+3. 通过 `agentdctl up -f bin/e2e/up.yaml` 创建 workspace + 所有 agent run，等待全部 idle
+4. 通过 `agentdctl agentrun attach` 获取各 agent 的 shim socket 路径
+5. 使用 cmux CLI 创建一个 workspace，分裂为三个 pane，分别启动 `agentdctl shim chat` 连接三个 agent
 
 ```
 ┌──────────────────────┬──────────────────────┐
@@ -136,102 +205,84 @@ alias ctl './bin/agentdctl --socket $SOCKET'
 
 ### 场景一：Agent 自我介绍与互发现
 
-分别给三个 agent 发送自我介绍的 prompt，并要求它们报告通过 workspace 工具看到的其他 agent：
+分别给三个 agent 发送自我介绍的 prompt，验证 workspace 互发现：
 
 ```bash
-# 1. codex 自我介绍
-ctl agentrun prompt "$WS/codex" --text \
-  "请自我介绍你的名称和角色。然后使用 workspace 工具列出你所在 workspace 中的所有 agent，报告你看到了哪些其他 agent。"
-
-# 2. claude-code 自我介绍
-ctl agentrun prompt "$WS/claude-code" --text \
-  "请自我介绍你的名称和角色。然后使用 workspace 工具列出你所在 workspace 中的所有 agent，报告你看到了哪些其他 agent。"
-
-# 3. gsd-pi 自我介绍
-ctl agentrun prompt "$WS/gsd-pi" --text \
-  "请自我介绍你的名称和角色。然后使用 workspace 工具列出你所在 workspace 中的所有 agent，报告你看到了哪些其他 agent。"
+for agent in claude-code codex gsd-pi; do
+  ctl agentrun prompt --workspace "$WS" --name "$agent" --text \
+    "请自我介绍你的名称和角色。然后使用 workspace 工具列出你所在 workspace 中的所有 agent，报告你看到了哪些其他 agent。"
+done
 ```
 
-**预期结果**：每个 agent 应该能报告出 workspace 中的三个 agent（codex、claude-code、gsd-pi）。
+**预期结果**：每个 agent 能报告出三个 agent（claude-code、codex、gsd-pi）。
 
-也可以通过 workspace send 在 agent 间直接发消息测试互通：
+也可以通过 workspace send 测试直接互通：
 
 ```bash
-# codex 给 claude-code 打招呼
-ctl workspace send "$WS" --from codex --to claude-code --text "你好 claude-code，我是 codex，请回复确认收到。"
-
-# claude-code 给 gsd-pi 打招呼
-ctl workspace send "$WS" --from claude-code --to gsd-pi --text "你好 gsd-pi，我是 claude-code，请回复确认收到。"
+ctl workspace send --name "$WS" --from claude-code --to codex --text "你好 codex，我是 claude-code，请回复确认收到。"
+ctl workspace send --name "$WS" --from codex --to gsd-pi --text "你好 gsd-pi，我是 codex，请回复确认收到。"
 ```
 
-### 场景二：Code Review → 复查 → 修复协作流程
+### 场景二：方案设计 → 审查 → 执行 协作流程
 
 此场景验证三个 agent 的完整协作链路。
 
-**设计原则**：每个 prompt 只负责一个阶段——agent 完成任务后发一条 workspace 消息，然后立即停止，由对方收到消息后继续。不做轮询，不跨阶段驱动。
+**设计原则**：每个 agent 完成阶段任务后发一条 workspace 消息然后停止，由对方消息驱动下一阶段。不做轮询，不跨阶段驱动。
 
+---
+
+#### 阶段1：触发 claude-code 出方案（人工触发）
+
+```bash
+ctl agentrun prompt --workspace "$WS" --name claude-code --text \
+"任务：<在这里描述具体任务，例如：重构 pkg/ari/server.go 的错误处理，使其统一返回结构化错误>"
 ```
-codex(阶段1) → [workspace msg] → claude-code(阶段2) → [workspace msg] →
-codex(阶段3) → [workspace msg] → claude-code(阶段4) → [workspace msg] →
-codex(阶段5) → [workspace msg] → gsd-pi(阶段6)
+
+> claude-code 的 system prompt 已固化后续流程：写方案文档 → 发 [round-1-proposal] 给 codex → 根据反馈修订 → 收到 [final-approved] 后派发给 gsd-pi。
+
+---
+
+#### 阶段2：codex 审查（收到 [round-1-proposal] 后自动触发，或人工触发）
+
+```bash
+ctl agentrun prompt --workspace "$WS" --name codex --text \
+"你收到了 claude-code 的 [round-1-proposal]，请按协作协议审查。"
 ```
 
 ---
 
-#### 阶段1：codex 初步审查（人工触发）
+#### 阶段3：claude-code 修订（收到 [round-1-feedback] 后自动触发，或人工触发）
 
 ```bash
-ctl agentrun prompt "$WS/codex" --text \
-"请开始 code review 流程。"
-```
-
-> codex 的 system prompt 已固化完整流程，它会自动：审查文档 → 写入 design-review-YYYYMMDD.md → 发消息给 claude-code → 等待复查循环 → 派发给 gsd-pi。
-
----
-
-#### 阶段2：claude-code 复查（收到 workspace 消息后触发，或人工触发）
-
-> 正常情况下由 codex 发送的 workspace 消息自动触发。如果 claude-code 不能被消息唤醒，手动执行：
-
-```bash
-ctl agentrun prompt "$WS/claude-code" --text \
-"你收到了 codex 的 [round-1-review-request]，请按协作协议处理。"
+ctl agentrun prompt --workspace "$WS" --name claude-code --text \
+"你收到了 codex 的 [round-1-feedback]，请按协作协议修订方案。"
 ```
 
 ---
 
-#### 阶段3：codex 第2轮回应（收到 [round-1-reply] 后触发，或人工触发）
+#### 阶段4+：后续轮次（最多到 round-3）
+
+codex 每轮发 `[round-N-feedback]`，claude-code 回复 `[round-N-revised-proposal]`，直到 codex 发出 `[final-approved]`。
+
+手动触发时替换消息标注即可：
 
 ```bash
-ctl agentrun prompt "$WS/codex" --text \
-"你收到了 claude-code 的 [round-1-reply]，请按协作协议处理。"
+# codex 第N轮审查
+ctl agentrun prompt --workspace "$WS" --name codex --text \
+"你收到了 claude-code 的 [round-N-revised-proposal]，请按协作协议审查。"
+
+# claude-code 第N轮修订
+ctl agentrun prompt --workspace "$WS" --name claude-code --text \
+"你收到了 codex 的 [round-N-feedback]，请按协作协议修订方案。"
 ```
 
 ---
 
-#### 阶段4：claude-code 最终立场（收到 [round-2-review-request] 后触发，或人工触发）
+#### 最终阶段：gsd-pi 执行（收到 [execution-request] 后自动触发，或人工触发）
 
 ```bash
-ctl agentrun prompt "$WS/claude-code" --text \
-"你收到了 codex 的 [round-2-review-request]，这是最后一轮，请按协作协议给出最终立场并写入最终方案。"
-```
-
----
-
-#### 阶段5：codex 派发给 gsd-pi（收到 [round-2-final] 后触发，或人工触发）
-
-```bash
-ctl agentrun prompt "$WS/codex" --text \
-"你收到了 claude-code 的 [round-2-final]，请按协作协议派发给 gsd-pi。"
-```
-
----
-
-#### 阶段6：gsd-pi 执行修复（收到 [execution-request] 后触发，或人工触发）
-
-```bash
-ctl agentrun prompt "$WS/gsd-pi" --text \
-"你收到了 codex 的 [execution-request]，请按协作协议执行修复。"
+ctl agentrun prompt --workspace "$WS" --name gsd-pi --text \
+"你收到了 claude-code 的 [execution-request]，请按协作协议执行。"
 ```
 
 ### 状态检查与调试
@@ -241,19 +292,19 @@ ctl agentrun prompt "$WS/gsd-pi" --text \
 ctl agentrun list --workspace "$WS"
 
 # 查看单个 agent 详细状态
-ctl agentrun status "$WS/codex"
-ctl agentrun status "$WS/claude-code"
-ctl agentrun status "$WS/gsd-pi"
+ctl agentrun status --workspace "$WS" --name codex
+ctl agentrun status --workspace "$WS" --name claude-code
+ctl agentrun status --workspace "$WS" --name gsd-pi
 
 # 检查 workspace 状态
-ctl workspace get "$WS"
+ctl workspace get --name "$WS"
 
 # 取消正在执行的 prompt
-ctl agentrun cancel "$WS/codex"
+ctl agentrun cancel --workspace "$WS" --name codex
 
 # 查看 shim 历史事件（需要 shim socket 路径）
 # 先获取 socket 路径
-ctl agentrun attach "$WS/codex"
+ctl agentrun attach --workspace "$WS" --name codex
 # 然后用返回的 socketPath 查看历史
 ctl shim --socket <socketPath> history
 ```
@@ -262,17 +313,17 @@ ctl shim --socket <socketPath> history
 
 ```bash
 # 停止所有 agent
-ctl agentrun stop "$WS/codex"
-ctl agentrun stop "$WS/claude-code"
-ctl agentrun stop "$WS/gsd-pi"
+ctl agentrun stop --workspace "$WS" --name codex
+ctl agentrun stop --workspace "$WS" --name claude-code
+ctl agentrun stop --workspace "$WS" --name gsd-pi
 
 # 等待停止后删除
-ctl agentrun delete "$WS/codex"
-ctl agentrun delete "$WS/claude-code"
-ctl agentrun delete "$WS/gsd-pi"
+ctl agentrun delete --workspace "$WS" --name codex
+ctl agentrun delete --workspace "$WS" --name claude-code
+ctl agentrun delete --workspace "$WS" --name gsd-pi
 
 # 删除 workspace
-ctl workspace delete "$WS"
+ctl workspace delete --name "$WS"
 
 # 或直接 Ctrl-C setup.sh，会自动清理
 ```
@@ -281,18 +332,19 @@ ctl workspace delete "$WS"
 
 | 操作 | 命令 |
 |---|---|
+| **一键创建 workspace+agents** | `agentdctl up -f <config.yaml>` |
 | 注册 agent 模板 | `agentdctl agent apply -f <file.yaml>` |
 | 查看 agent 模板 | `agentdctl agent list` |
-| 创建本地 workspace | `agentdctl workspace create local <name> --path <abs-path>` |
-| 查看 workspace 状态 | `agentdctl workspace get <name>` |
+| 创建本地 workspace | `agentdctl workspace create local --name <name> --path <abs-path>` |
+| 查看 workspace 状态 | `agentdctl workspace get --name <name>` |
 | 创建 agent run | `agentdctl agentrun create --workspace <ws> --name <n> --runtime-class <rc>` |
-| 发送 prompt（阻塞等待） | `agentdctl agentrun prompt <ws/name> --text '...' --wait` |
-| 发送 prompt（异步） | `agentdctl agentrun prompt <ws/name> --text '...'` |
-| 查看 agent 状态 | `agentdctl agentrun status <ws/name>` |
-| agent 间消息 | `agentdctl workspace send <ws> --from <a> --to <b> --text '...'` |
-| 取消执行中的 prompt | `agentdctl agentrun cancel <ws/name>` |
-| 停止 agent | `agentdctl agentrun stop <ws/name>` |
-| 删除 agent | `agentdctl agentrun delete <ws/name>` |
+| 发送 prompt（阻塞等待） | `agentdctl agentrun prompt --workspace <ws> --name <name> --text '...' --wait` |
+| 发送 prompt（异步） | `agentdctl agentrun prompt --workspace <ws> --name <name> --text '...'` |
+| 查看 agent 状态 | `agentdctl agentrun status --workspace <ws> --name <name>` |
+| agent 间消息 | `agentdctl workspace send --name <ws> --from <a> --to <b> --text '...'` |
+| 取消执行中的 prompt | `agentdctl agentrun cancel --workspace <ws> --name <name>` |
+| 停止 agent | `agentdctl agentrun stop --workspace <ws> --name <name>` |
+| 删除 agent | `agentdctl agentrun delete --workspace <ws> --name <name>` |
 | 交互式 chat | `agentdctl shim --socket <path> chat` |
 | 查看 shim 状态 | `agentdctl shim --socket <path> state` |
 | 查看事件历史 | `agentdctl shim --socket <path> history` |
