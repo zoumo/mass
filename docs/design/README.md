@@ -32,7 +32,7 @@ Agent 面临着同样的分层关切：
 | "准备什么环境" | OCI Image Spec (layers → rootfs) | OAR Workspace Spec (source + hooks → workdir) |
 | "底层执行 + 协议适配" | runc + containerd-shim | agent-shim（合并，无独立 runa） |
 | "高层管理" | containerd | agentd（Agent CRUD + AgentRun 生命周期 + Workspace Manager） |
-| "管理接口" | CRI (kubelet → containerd) | ARI (orchestrator → agentd) |
+| "管理接口" | CRI (kubelet → containerd) | ARI (external caller → agentd) |
 | "协同调度组" | Pod（共享 network/IPC namespace） | Room（共享 workspace、消息总线）— **future work** |
 
 通过遵循这套经过验证的分层架构，每个组件都有清晰、有界的职责。
@@ -46,43 +46,50 @@ Agent 面临着同样的分层关切：
 3. **面向 Agent 的原生关切** — 聚焦 Agent 真正需要的：workspace 准备、
    协议通信（ACP）、技能/知识注入、Agent 间通信。
 4. **分层分离** — 每层只做一件事。agent-shim 运行进程并持有 ACP。agentd 管理生命周期。
-   Orchestrator 决定运行什么。Spec 是各层之间的粘合剂。
+   外部调用方决定运行什么。Spec 是各层之间的粘合剂。
 5. **简单优先** — 为当前需求设计。扩展点存在但保持空白，直到真实需求出现。
 
 ## 架构概览
 
 ```text
-┌────────────────────────────────────────────────────────────┐
-│                       Orchestrator                          │
-│                                                             │
-│   调用: ARI (`workspace/*`, `agent/*`, `agentrun/*`)        │
-│   决策: 准备哪些 workspace、创建哪些 AgentRun               │
-└──────────────────────────┬─────────────────────────────────┘
-                           │ ARI（JSON-RPC over Unix Socket）
+┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐
+  External Caller (ARI Client)            outside OAR scope
+│                                                                 │
+   调用: ARI (workspace/*, agent/*, agentrun/*)
+│  决策: 准备哪些 workspace、创建哪些 AgentRun                     │
+└ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┬ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┘
+                            │ ARI（JSON-RPC over Unix Socket）
+                            ▼
+┌────────────────────────────────────────────────────────────────┐
+│                          agentd                                 │
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐  │
+│   │  workspace/*  — Workspace lifecycle + message routing   │  │
+│   ├─────────────────────────────────────────────────────────┤  │
+│   │  agent/*      — Agent CRUD                              │  │
+│   ├─────────────────────────────────────────────────────────┤  │
+│   │  agentrun/*   — AgentRun lifecycle (running instances)  │  │
+│   └─────────────────────────────────────────────────────────┘  │
+│          [internal: Process Manager, Workspace Manager,         │
+│           Agent Manager, Recovery, bbolt Metadata Store]        │
+└──────────────────────────┬─────────────────────────────────────┘
+                           │ shim RPC (session/* + runtime/*)
                            ▼
-┌────────────────────────────────────────────────────────────┐
-│                        agentd                               │
-│                                                             │
-│   ┌─────────────────────────────────────────────────────┐  │
-│   │  workspace/*  — Workspace lifecycle                 │  │
-│   ├─────────────────────────────────────────────────────┤  │
-│   │  agent/*      — Agent CRUD                  │  │
-│   ├─────────────────────────────────────────────────────┤  │
-│   │  agentrun/*   — AgentRun lifecycle (running instances) │  │
-│   └─────────────────────────────────────────────────────┘  │
-│          [internal: Process Manager, Workspace Manager,     │
-│           Agent Manager, Recovery, bbolt Metadata Store]    │
-└──────────────────────────────────────────────────────────────┘
-             │            │            │
-             │ shim RPC (session/* + runtime/*) over Unix socket
-             ▼            ▼            ▼
-        ┌────────────┐ ┌────────────┐ ┌────────────┐
-        │ agent-shim │ │ agent-shim │ │ agent-shim │
-        └────┬───────┘ └────┬───────┘ └────┬───────┘
-             │              │              │
-             │ ACP over stdio              │
-             ▼              ▼              ▼
-          Agent A        Agent B        Agent C
+┌─── Workspace: agentd-e2e ──────────────────────────────────────┐
+│                                                                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │ claude-code  │  │    codex     │  │    gsd-pi    │          │
+│  │  (Designer)  │  │  (Reviewer)  │  │  (Executor)  │          │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
+│         │ ACP stdio       │ ACP stdio       │ ACP stdio        │
+│  ┌──────┴───────┐  ┌──────┴───────┐  ┌──────┴───────┐          │
+│  │  agent-shim  │  │  agent-shim  │  │  agent-shim  │          │
+│  │+workspace-mcp│  │+workspace-mcp│  │+workspace-mcp│          │
+│  └──────┬───────┘  └──────┴───────┘  └──────┬───────┘          │
+│         │                 │                 │                    │
+│         └─────────────────┼─────────────────┘                    │
+│                           │ workspace-mcp → agentd → target shim │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## 当前实现状态
@@ -136,7 +143,7 @@ Agent 面临着同样的分层关切：
 |------|------|------|
 | [runtime/runtime-spec.md](./runtime/runtime-spec.md) | 规范 | OAR Runtime Spec — state、bundle、lifecycle、operations、typed events |
 | [runtime/config-spec.md](./runtime/config-spec.md) | 规范 | Config Spec — config.json schema（对标 OCI config.md） |
-| [runtime/shim-rpc-spec.md](./runtime/shim-rpc-spec.md) | 规范 | Shim RPC Spec — clean-break `session/*` + `runtime/*` surface、`session/update` / `runtime/stateChange`、回放与重连语义 |
+| [runtime/shim-rpc-spec.md](./runtime/shim-rpc-spec.md) | 规范 | Shim RPC Spec — clean-break `session/*` + `runtime/*` surface、`session/update` / `runtime/state_change`、回放与重连语义 |
 | [runtime/agent-shim.md](./runtime/agent-shim.md) | 组件 | agent-shim — 组件职责、ACP 边界、runtime truth、实现状态（描述性，不重新定义协议） |
 | [runtime/design.md](./runtime/design.md) | 设计 | 设计思路 — OCI 对标分析、架构决策、config.json 生成流程 |
 | [runtime/why-no-runa.md](./runtime/why-no-runa.md) | 设计 | 为什么 OAR 没有 runa — agent 场景下独立运行时 CLI 不成立的原因 |

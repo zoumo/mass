@@ -9,6 +9,62 @@
 
 ---
 
+## 通信协议 — MCP 路由架构
+
+Agent 间通信通过 workspace-mcp-server 实现。agentd 为每个 agent-shim 进程注入一个 workspace-mcp 实例，作为 MCP stdio server 运行在 agent 的进程树中。
+
+### MCP 工具
+
+workspace-mcp-server 提供两个 MCP tool：
+
+| MCP Tool | 对应 ARI 方法 | 功能 |
+|----------|--------------|------|
+| `workspace_send` | `workspace/send` | 向 workspace 内另一个 agent 发送消息 |
+| `workspace_status` | `workspace/status` | 查询 workspace 成员与状态 |
+
+### 注入方式
+
+ProcessManager 在生成 `config.json` 时将 workspace-mcp 写入 `acpAgent.session.mcpServers`：
+
+```json
+{
+  "type": "stdio",
+  "name": "workspace",
+  "command": "agentd",
+  "args": ["workspace-mcp"],
+  "env": [
+    { "name": "OAR_AGENTD_SOCKET", "value": "<agentd unix socket path>" },
+    { "name": "OAR_WORKSPACE_NAME", "value": "<workspace name>" },
+    { "name": "OAR_AGENT_NAME", "value": "<agent name>" }
+  ]
+}
+```
+
+agent-shim 启动时读取 `config.json`，fork/exec workspace-mcp 子进程。workspace-mcp 通过 `OAR_AGENTD_SOCKET` 连接回 agentd 发起 ARI 调用。
+
+### 消息路由数据流
+
+以 3-agent 协作场景（claude-code / codex / gsd-pi）为例，claude-code 向 codex 发送 proposal 的完整路径：
+
+```text
+claude-code
+  │  calls MCP tool: workspace_send(targetAgent="codex", message="[round-1-proposal] ...")
+  ▼
+workspace-mcp (claude-code 的 MCP server)
+  │  ARI call: workspace/send(workspace="agentd-e2e", from="claude-code", to="codex", message=...)
+  ▼
+agentd
+  │  lookup target shim → codex 的 agent-shim
+  │  inject envelope: [workspace-message from=claude-code reply-requested=true]
+  ▼
+agent-shim (codex)
+  │  deliver as prompt to codex agent process
+  ▼
+codex (receives message, processes, replies via same path in reverse)
+```
+
+---
+
 ## 第一部分：已实现 — Message v0
 
 ### workspace/send
