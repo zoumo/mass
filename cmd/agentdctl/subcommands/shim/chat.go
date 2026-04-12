@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	"github.com/open-agent-d/open-agent-d/pkg/tui/chat"
 )
 
 // ── Tea messages ──────────────────────────────────────────────────────────────
@@ -41,42 +42,41 @@ const inputAreaHeight = 5 // textarea (3 rows) + divider + bottom hint
 // ── Model ─────────────────────────────────────────────────────────────────────
 
 type chatModel struct {
-	viewport viewport.Model
-	input    textarea.Model
-	spinner  spinner.Model
+	chat    *chat.Chat
+	input   textarea.Model
+	spinner spinner.Model
 
 	sock   string
 	client *client
 	notifs <-chan rpcResponse
 
-	// lines holds rendered conversation history.
-	// agentLineIdx is the index of the current streaming agent text line; -1 if none.
-	lines        []string
-	agentLineIdx int
+	currentAssistantID string // ID of the current streaming assistant item
+	turnCounter        int    // monotonic counter for generating unique IDs
 
 	waiting bool
 	ready   bool
 	width   int
 }
 
+func (m *chatModel) nextID(prefix string) string {
+	m.turnCounter++
+	return fmt.Sprintf("%s-%d", prefix, m.turnCounter)
+}
+
 func newChatModel(sock string) chatModel {
 	ta := textarea.New()
-	ta.Placeholder = "Type a message… (Enter to send, Alt+Enter for newline)"
+	ta.Placeholder = "Type a message… (Enter to send, Shift+Enter for newline)"
 	ta.ShowLineNumbers = false
-	ta.SetHeight(3)
-	ta.Focus()
-	// Remove the default border so we control layout ourselves.
-	ta.FocusedStyle.Base = lipgloss.NewStyle()
-	ta.BlurredStyle.Base = lipgloss.NewStyle()
+	ta.MaxHeight = 5
+	ta.CharLimit = 0
 
 	sp := spinner.New()
-	sp.Spinner = spinner.Dot
 
 	return chatModel{
-		sock:         sock,
-		input:        ta,
-		spinner:      sp,
-		agentLineIdx: -1,
+		sock:    sock,
+		chat:    chat.New(),
+		input:   ta,
+		spinner: sp,
 	}
 }
 
@@ -115,11 +115,10 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 
 func sendPromptCmd(c *client, text string) tea.Cmd {
 	return func() tea.Msg {
-		_, err := c.call("session/prompt", map[string]string{"prompt": text})
-		if err != nil {
+		if err := c.send("session/prompt", map[string]string{"prompt": text}); err != nil {
 			return promptErrMsg{err}
 		}
-		return nil // completion arrives via turnEndMsg from notifs
+		return nil
 	}
 }
 
@@ -143,72 +142,74 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if vpHeight < 1 {
 			vpHeight = 1
 		}
-		if !m.ready {
-			m.viewport = viewport.New(msg.Width, vpHeight)
-			m.input.SetWidth(msg.Width)
-			m.ready = true
-		} else {
-			m.viewport.Width = msg.Width
-			m.viewport.Height = vpHeight
-			m.input.SetWidth(msg.Width)
-		}
-		m.syncViewport()
+		m.chat.SetSize(msg.Width, vpHeight)
+		m.input.SetWidth(msg.Width)
+		m.ready = true
 
 	case connReadyMsg:
 		m.client = msg.c
 		m.notifs = msg.notifs
-		m.appendLine(styleDim.Render("connected — Esc to cancel, Ctrl+C to quit"))
-		m.syncViewport()
+		m.chat.Append(chat.NewSystemItem(m.nextID("sys"), "connected — Esc to cancel, Ctrl+C to quit", styleDim))
 		cmds = append(cmds, waitNotif(m.notifs))
 
 	case connErrMsg:
-		m.appendLine(styleErr.Render("error: " + msg.err.Error()))
-		m.syncViewport()
+		m.chat.Append(chat.NewSystemItem(m.nextID("sys"), "error: "+msg.err.Error(), styleErr))
 		return m, tea.Quit
 
 	case connClosedMsg:
-		m.appendLine(styleDim.Render("connection closed"))
-		m.syncViewport()
+		m.chat.Append(chat.NewSystemItem(m.nextID("sys"), "connection closed", styleDim))
 		return m, tea.Quit
 
 	case notifMsg:
 		m.handleNotif(msg.rpcResponse)
-		m.syncViewport()
 		cmds = append(cmds, waitNotif(m.notifs))
 
 	case turnEndMsg:
 		m.waiting = false
-		m.agentLineIdx = -1
-		m.input.Focus()
-		cmds = append(cmds, waitNotif(m.notifs))
+		m.currentAssistantID = ""
+		cmds = append(cmds, m.input.Focus(), waitNotif(m.notifs))
 
 	case promptErrMsg:
-		m.appendLine(styleErr.Render("error: " + msg.err.Error()))
+		m.chat.Append(chat.NewSystemItem(m.nextID("sys"), "error: "+msg.err.Error(), styleErr))
 		m.waiting = false
-		m.agentLineIdx = -1
-		m.input.Focus()
-		m.syncViewport()
-		cmds = append(cmds, waitNotif(m.notifs))
+		m.currentAssistantID = ""
+		cmds = append(cmds, m.input.Focus(), waitNotif(m.notifs))
 
 	case spinner.TickMsg:
 		var spinCmd tea.Cmd
 		m.spinner, spinCmd = m.spinner.Update(msg)
 		cmds = append(cmds, spinCmd)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
+		key := tea.Key(msg)
 		switch {
-		case msg.Type == tea.KeyCtrlC:
+		case key.Code == tea.KeyEscape && key.Mod == 0:
+			if m.waiting {
+				m.chat.Append(chat.NewSystemItem(m.nextID("sys"), "[cancelling…]", styleDim))
+				cmds = append(cmds, cancelPromptCmd(m.client))
+			} else {
+				// Not waiting — quit
+				if m.client != nil {
+					m.client.close()
+				}
+				return m, tea.Quit
+			}
+
+		case key.Mod&tea.ModCtrl != 0 && key.Code == 'c':
 			if m.client != nil {
 				m.client.close()
 			}
 			return m, tea.Quit
 
-		case msg.Type == tea.KeyEsc && m.waiting:
-			m.appendLine(styleDim.Render("[cancelling…]"))
-			m.syncViewport()
-			cmds = append(cmds, cancelPromptCmd(m.client))
+		case key.Code == tea.KeyEnter && key.Mod&tea.ModShift != 0:
+			// Shift+Enter: insert newline into textarea.
+			if !m.waiting {
+				var taCmd tea.Cmd
+				m.input, taCmd = m.input.Update(msg)
+				cmds = append(cmds, taCmd)
+			}
 
-		case msg.Type == tea.KeyEnter && !msg.Alt:
+		case key.Code == tea.KeyEnter && key.Mod == 0:
 			// Plain Enter: send message.
 			if m.waiting || m.client == nil {
 				break
@@ -219,20 +220,21 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.input.Reset()
 			m.input.Blur()
-			m.appendLine(styleUser.Render("You: ") + text)
-			m.agentLineIdx = len(m.lines)
-			m.appendLine(styleAgent.Render("Agent: "))
-			m.syncViewport()
+
+			m.chat.Append(chat.NewUserItem(m.nextID("user"), text, styleUser))
+
+			id := m.nextID("assistant")
+			m.currentAssistantID = id
+			m.chat.Append(chat.NewAssistantItem(id, styleAgent))
+
 			m.waiting = true
 			cmds = append(cmds, sendPromptCmd(m.client, text))
 
-		case msg.Type == tea.KeyEnter && msg.Alt:
-			// Alt+Enter: insert newline into textarea.
-			if !m.waiting {
-				var taCmd tea.Cmd
-				m.input, taCmd = m.input.Update(tea.KeyMsg{Type: tea.KeyEnter})
-				cmds = append(cmds, taCmd)
-			}
+		case key.Code == tea.KeyPgUp:
+			m.chat.ScrollBy(-m.chat.Height())
+
+		case key.Code == tea.KeyPgDown:
+			m.chat.ScrollBy(m.chat.Height())
 
 		default:
 			if !m.waiting {
@@ -242,10 +244,6 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-
-	var vpCmd tea.Cmd
-	m.viewport, vpCmd = m.viewport.Update(msg)
-	cmds = append(cmds, vpCmd)
 
 	return m, tea.Batch(cmds...)
 }
@@ -262,60 +260,49 @@ func (m *chatModel) handleNotif(msg rpcResponse) {
 	case "text":
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
-		if m.agentLineIdx >= 0 && m.agentLineIdx < len(m.lines) {
-			m.lines[m.agentLineIdx] += pl.Text
-		}
+		m.chat.Update(m.currentAssistantID, func(item chat.MessageItem) {
+			if a, ok := item.(*chat.AssistantItem); ok {
+				a.AppendText(pl.Text)
+			}
+		})
+
 	case "thinking":
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
-		// Insert thinking line before the current agent line.
-		if m.agentLineIdx >= 0 {
-			thinking := styleThink.Render("  · " + pl.Text)
-			m.lines = append(m.lines[:m.agentLineIdx],
-				append([]string{thinking}, m.lines[m.agentLineIdx:]...)...)
-			m.agentLineIdx++
-		}
+		m.chat.Append(chat.NewThinkingItem(m.nextID("think"), pl.Text, styleThink))
+
 	case "tool_call":
-		m.appendAfterAgent(styleTool.Render("  ⚙ " + string(p.Event.Payload)))
+		var pl struct {
+			ID    string `json:"id"`
+			Kind  string `json:"kind"`
+			Title string `json:"title"`
+		}
+		_ = json.Unmarshal(p.Event.Payload, &pl)
+		m.chat.Append(chat.NewToolCallItem(m.nextID("tc"), pl.Kind, pl.Title, styleTool))
+
+		// Start a new assistant item for text that may follow the tool call.
+		id := m.nextID("assistant")
+		m.currentAssistantID = id
+		m.chat.Append(chat.NewAssistantItem(id, styleAgent))
+
 	case "tool_result":
-		m.appendAfterAgent(styleResult.Render("  ↳ " + string(p.Event.Payload)))
+		var pl struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		}
+		_ = json.Unmarshal(p.Event.Payload, &pl)
+		m.chat.Append(chat.NewToolResultItem(m.nextID("tr"), pl.Status, styleResult))
 	}
-}
-
-func (m *chatModel) appendLine(s string) {
-	m.lines = append(m.lines, s)
-}
-
-// appendAfterAgent inserts a line after the current agent streaming line
-// and advances agentLineIdx past it, seeding a new "Agent: " continuation.
-func (m *chatModel) appendAfterAgent(s string) {
-	if m.agentLineIdx < 0 || m.agentLineIdx >= len(m.lines) {
-		m.appendLine(s)
-		return
-	}
-	after := m.agentLineIdx + 1
-	m.lines = append(m.lines[:after], append([]string{s}, m.lines[after:]...)...)
-	m.agentLineIdx = after + 1
-	if m.agentLineIdx >= len(m.lines) {
-		m.lines = append(m.lines, styleAgent.Render("Agent: "))
-	}
-}
-
-func (m *chatModel) syncViewport() {
-	if !m.ready {
-		return
-	}
-	m.viewport.SetContent(strings.Join(m.lines, "\n"))
-	m.viewport.GotoBottom()
 }
 
 // ── View ──────────────────────────────────────────────────────────────────────
 
-func (m chatModel) View() string {
+func (m chatModel) View() tea.View {
 	if !m.ready {
-		return "\n  " + m.spinner.View() + " connecting…\n"
+		return tea.NewView("\n  " + m.spinner.View() + " connecting…\n")
 	}
 
+	chatView := m.chat.Render()
 	divider := styleDim.Render(strings.Repeat("─", m.width))
 
 	var bottom string
@@ -325,16 +312,15 @@ func (m chatModel) View() string {
 		bottom = m.input.View()
 	}
 
-	return m.viewport.View() + "\n" + divider + "\n" + bottom
+	v := tea.NewView(chatView + "\n" + divider + "\n" + bottom)
+	v.AltScreen = true
+	return v
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 func runChatTUI(sock string) error {
-	p := tea.NewProgram(
-		newChatModel(sock),
-		tea.WithAltScreen(),
-	)
+	p := tea.NewProgram(newChatModel(sock))
 	_, err := p.Run()
 	return err
 }

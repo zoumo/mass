@@ -108,7 +108,10 @@ func (c *client) call(method string, params any) (json.RawMessage, error) {
 	}()
 
 	req := rpcRequest{JSONRPC: "2.0", ID: &id, Method: method, Params: params}
-	if err := c.enc.Encode(req); err != nil {
+	c.mu.Lock()
+	err := c.enc.Encode(req)
+	c.mu.Unlock()
+	if err != nil {
 		return nil, fmt.Errorf("send: %w", err)
 	}
 	resp := <-ch
@@ -116,6 +119,16 @@ func (c *client) call(method string, params any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
 	}
 	return resp.Result, nil
+}
+
+// send sends a request without waiting for a response. Safe for concurrent use.
+func (c *client) send(method string, params any) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	id := c.nextID
+	c.nextID++
+	req := rpcRequest{JSONRPC: "2.0", ID: &id, Method: method, Params: params}
+	return c.enc.Encode(req)
 }
 
 func (c *client) close() { _ = c.conn.Close() }
