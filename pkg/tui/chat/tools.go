@@ -447,7 +447,7 @@ func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, n
 		nameStyle = sty.Tool.NameNested
 	}
 	toolName := nameStyle.Render(name)
-	prefix := fmt.Sprintf("%s %s ", icon, toolName)
+	prefix := fmt.Sprintf("%s [%s] ", icon, toolName)
 	prefixWidth := lipgloss.Width(prefix)
 	remainingWidth := width - prefixWidth
 	paramsStr := toolParamList(sty, params, remainingWidth)

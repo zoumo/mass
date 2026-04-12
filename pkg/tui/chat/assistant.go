@@ -17,12 +17,10 @@ import (
 // truncated.
 const assistantMessageTruncateFormat = "... (%d lines hidden) [click or space to expand]"
 
-// maxCollapsedThinkingHeight defines the maximum height of the thinking.
+// maxCollapsedThinkingHeight defines the maximum height of the thinking
 const maxCollapsedThinkingHeight = 10
 
 // AssistantMessageItem represents an assistant message in the chat UI.
-//
-// This item includes thinking, and the content but does not include the tool calls.
 type AssistantMessageItem struct {
 	*highlightableMessageItem
 	*cachedMessageItem
@@ -107,18 +105,15 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 
 // Render implements list.Item.
 func (a *AssistantMessageItem) Render(width int) string {
-	focused := a.sty.Chat.Message.AssistantFocused.Render()
-	blurred := a.sty.Chat.Message.AssistantBlurred.Render()
 	rendered := a.RawRender(width)
-	lines := strings.Split(rendered, "\n")
-	for i, line := range lines {
-		if a.focused {
-			lines[i] = focused + line
-		} else {
-			lines[i] = blurred + line
-		}
+
+	// Add [Agent] label on first line
+	label := lipgloss.NewStyle().Bold(true).Foreground(a.sty.GreenDark).Render("[Agent]")
+
+	if strings.TrimSpace(rendered) == "" {
+		return label
 	}
-	return strings.Join(lines, "\n")
+	return label + "\n" + rendered
 }
 
 // renderMessageContent renders the message content including thinking, main content, and finish reason.
@@ -153,7 +148,7 @@ func (a *AssistantMessageItem) renderMessageContent(width int) string {
 	return strings.Join(messageParts, "\n")
 }
 
-// renderThinking renders the thinking/reasoning content with footer.
+// renderThinking renders the thinking/reasoning content with [Think] label and faint style.
 func (a *AssistantMessageItem) renderThinking(thinking string, width int) string {
 	renderer := common.PlainMarkdownRenderer(a.sty, width)
 	rendered, err := renderer.Render(thinking)
@@ -174,12 +169,14 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 		lines = append([]string{hint, ""}, lines...)
 	}
 
-	thinkingStyle := a.sty.Chat.Message.ThinkingBox.Width(width)
-	result := thinkingStyle.Render(strings.Join(lines, "\n"))
+	// Add [Think] label and render with faint style
+	thinkLabel := lipgloss.NewStyle().Faint(true).Bold(true).Render("[Think]")
+	thinkContent := lipgloss.NewStyle().Faint(true).Render(strings.Join(lines, "\n"))
+
+	result := thinkLabel + "\n" + thinkContent
 	a.thinkingBoxHeight = lipgloss.Height(result)
 
 	var footer string
-	// if thinking is done add the thought for footer
 	if !a.message.IsThinking() || len(a.message.ToolCalls()) > 0 {
 		duration := a.message.ThinkingDuration()
 		if duration.String() != "0s" {
@@ -189,7 +186,7 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	}
 
 	if footer != "" {
-		result += "\n\n" + footer
+		result += "\n" + footer
 	}
 
 	return result
@@ -250,10 +247,9 @@ func (a *AssistantMessageItem) SetMessage(message Message) tea.Cmd {
 }
 
 // ToggleExpanded toggles the expanded state of the thinking box.
-func (a *AssistantMessageItem) ToggleExpanded() bool {
+func (a *AssistantMessageItem) ToggleExpanded() {
 	a.thinkingExpanded = !a.thinkingExpanded
 	a.clearCache()
-	return a.thinkingExpanded
 }
 
 // HandleMouseClick implements MouseClickable.
@@ -261,7 +257,6 @@ func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) 
 	if btn != ansi.MouseLeft {
 		return false
 	}
-	// check if the click is within the thinking box
 	if a.thinkingBoxHeight > 0 && y < a.thinkingBoxHeight {
 		a.ToggleExpanded()
 		return true

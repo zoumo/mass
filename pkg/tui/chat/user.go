@@ -40,7 +40,7 @@ func (m *UserMessageItem) RawRender(width int) string {
 		return m.renderHighlighted(content, cappedWidth, height)
 	}
 
-	renderer := common.MarkdownRenderer(m.sty, cappedWidth)
+	renderer := common.MarkdownRenderer(m.sty, cappedWidth-2) // -2 for block padding
 
 	msgContent := strings.TrimSpace(m.message.Content().Text)
 	result, err := renderer.Render(msgContent)
@@ -57,17 +57,19 @@ func (m *UserMessageItem) RawRender(width int) string {
 
 // Render implements list.Item.
 func (m *UserMessageItem) Render(width int) string {
-	var prefix string
-	if m.focused {
-		prefix = m.sty.Chat.Message.UserFocused.Render()
-	} else {
-		prefix = m.sty.Chat.Message.UserBlurred.Render()
-	}
-	lines := strings.Split(m.RawRender(width), "\n")
-	for i, line := range lines {
-		lines[i] = prefix + line
-	}
-	return strings.Join(lines, "\n")
+	cappedWidth := cappedMessageWidth(width)
+	rawContent := m.RawRender(width)
+
+	// Label line
+	label := lipgloss.NewStyle().Bold(true).Foreground(m.sty.Primary).Render("[User]")
+
+	// Wrap in a background block (dark gray background with padding)
+	blockStyle := lipgloss.NewStyle().
+		Background(m.sty.BgBaseLighter).
+		Width(cappedWidth).
+		Padding(0, 1)
+
+	return blockStyle.Render(label + "\n" + rawContent)
 }
 
 // ID implements Identifiable.
