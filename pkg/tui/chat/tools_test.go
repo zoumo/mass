@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
 )
 
 func TestToolMessageItem_FinishedNotSpinning(t *testing.T) {

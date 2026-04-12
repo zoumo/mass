@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	ari "github.com/open-agent-d/open-agent-d/api/ari"
-	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
-	"github.com/open-agent-d/open-agent-d/api"
+	ari "github.com/zoumo/oar/api/ari"
+	ariclient "github.com/zoumo/oar/pkg/ari"
+	"github.com/zoumo/oar/api"
 )
 
 // setupAgentdTestWithRuntimeClass creates a temporary agentd instance and registers

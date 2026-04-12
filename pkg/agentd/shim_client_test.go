@@ -15,10 +15,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
+	"github.com/zoumo/oar/api"
+	apispec "github.com/zoumo/oar/api/spec"
+	"github.com/zoumo/oar/pkg/events"
+	"github.com/zoumo/oar/pkg/shimapi"
 )
 
 // ────────────────────────────────────────────────────────────────────────────

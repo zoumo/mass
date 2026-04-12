@@ -10,8 +10,9 @@ import (
 
 	"github.com/sourcegraph/jsonrpc2"
 
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/pkg/events"
+	"github.com/zoumo/oar/pkg/shimapi"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ func (c *ShimClient) DisconnectNotify() <-chan struct{} {
 // Returns the stop reason (e.g., "end_turn", "canceled", "tool_use").
 func (c *ShimClient) Prompt(ctx context.Context, text string) (shimapi.SessionPromptResult, error) {
 	var result shimapi.SessionPromptResult
-	if err := c.call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: text}, &result); err != nil {
+	if err := c.call(ctx, api.MethodSessionPrompt, shimapi.SessionPromptParams{Prompt: text}, &result); err != nil {
 		return shimapi.SessionPromptResult{}, fmt.Errorf("shim_client: session/prompt: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
@@ -100,7 +101,7 @@ func (c *ShimClient) Prompt(ctx context.Context, text string) (shimapi.SessionPr
 
 // Cancel cancels the current agent turn. Returns nil on success.
 func (c *ShimClient) Cancel(ctx context.Context) error {
-	if err := c.call(ctx, "session/cancel", nil, nil); err != nil {
+	if err := c.call(ctx, api.MethodSessionCancel, nil, nil); err != nil {
 		return fmt.Errorf("shim_client: session/cancel: session=%s: %w", c.socketPath, err)
 	}
 	return nil
@@ -110,7 +111,7 @@ func (c *ShimClient) Cancel(ctx context.Context) error {
 // Returns nil on success; returns error if the shim rejects the call (e.g.
 // runtime does not support session/load) so the caller can fall back.
 func (c *ShimClient) Load(ctx context.Context, sessionID string) error {
-	if err := c.call(ctx, "session/load", shimapi.SessionLoadParams{SessionID: sessionID}, nil); err != nil {
+	if err := c.call(ctx, api.MethodSessionLoad, shimapi.SessionLoadParams{SessionID: sessionID}, nil); err != nil {
 		return fmt.Errorf("shim_client: session/load: session=%s: %w", c.socketPath, err)
 	}
 	return nil
@@ -130,7 +131,7 @@ func (c *ShimClient) Load(ctx context.Context, sessionID string) error {
 func (c *ShimClient) Subscribe(ctx context.Context, afterSeq, fromSeq *int) (shimapi.SessionSubscribeResult, error) {
 	params := shimapi.SessionSubscribeParams{AfterSeq: afterSeq, FromSeq: fromSeq}
 	var result shimapi.SessionSubscribeResult
-	if err := c.call(ctx, "session/subscribe", params, &result); err != nil {
+	if err := c.call(ctx, api.MethodSessionSubscribe, params, &result); err != nil {
 		return shimapi.SessionSubscribeResult{}, fmt.Errorf("shim_client: session/subscribe: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
@@ -145,7 +146,7 @@ func (c *ShimClient) Subscribe(ctx context.Context, afterSeq, fromSeq *int) (shi
 // committed to the log — clients use this to resume subscriptions cleanly.
 func (c *ShimClient) Status(ctx context.Context) (shimapi.RuntimeStatusResult, error) {
 	var result shimapi.RuntimeStatusResult
-	if err := c.call(ctx, "runtime/status", nil, &result); err != nil {
+	if err := c.call(ctx, api.MethodRuntimeStatus, nil, &result); err != nil {
 		return shimapi.RuntimeStatusResult{}, fmt.Errorf("shim_client: runtime/status: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
@@ -157,7 +158,7 @@ func (c *ShimClient) Status(ctx context.Context) (shimapi.RuntimeStatusResult, e
 func (c *ShimClient) History(ctx context.Context, fromSeq *int) (shimapi.RuntimeHistoryResult, error) {
 	params := shimapi.RuntimeHistoryParams{FromSeq: fromSeq}
 	var result shimapi.RuntimeHistoryResult
-	if err := c.call(ctx, "runtime/history", params, &result); err != nil {
+	if err := c.call(ctx, api.MethodRuntimeHistory, params, &result); err != nil {
 		return shimapi.RuntimeHistoryResult{}, fmt.Errorf("shim_client: runtime/history: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
@@ -166,7 +167,7 @@ func (c *ShimClient) History(ctx context.Context, fromSeq *int) (shimapi.Runtime
 // Stop requests the shim to gracefully stop the agent and close the server.
 // After Stop returns, the connection will be closed by the shim.
 func (c *ShimClient) Stop(ctx context.Context) error {
-	if err := c.call(ctx, "runtime/stop", nil, nil); err != nil {
+	if err := c.call(ctx, api.MethodRuntimeStop, nil, nil); err != nil {
 		return fmt.Errorf("shim_client: runtime/stop: session=%s: %w", c.socketPath, err)
 	}
 	return nil
@@ -223,7 +224,7 @@ func (h *clientHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *js
 
 	// Only forward recognized notification methods to the handler.
 	switch req.Method {
-	case events.MethodSessionUpdate, events.MethodRuntimeStateChange:
+	case api.MethodSessionUpdate, api.MethodRuntimeStateChange:
 		// Valid clean-break notification.
 	default:
 		// Unknown method — reject silently; don't dispatch to handler.

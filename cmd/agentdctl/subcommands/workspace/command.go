@@ -6,9 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/workspace/create"
-	"github.com/open-agent-d/open-agent-d/api/ari"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/ari"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/workspace/create"
 )
 
 // NewCommand returns the "workspace" cobra command.
@@ -38,7 +39,7 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 			defer client.Close()
 
 			var result ari.WorkspaceListResult
-			if err := client.Call("workspace/list", ari.WorkspaceListParams{}, &result); err != nil {
+			if err := client.Call(api.MethodWorkspaceList, ari.WorkspaceListParams{}, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -63,7 +64,7 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			params := ari.WorkspaceStatusParams{Name: name}
 			var result ari.WorkspaceStatusResult
-			if err := client.Call("workspace/status", params, &result); err != nil {
+			if err := client.Call(api.MethodWorkspaceStatus, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -89,7 +90,7 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call("workspace/delete", ari.WorkspaceDeleteParams{Name: name}, nil); err != nil {
+			if err := client.Call(api.MethodWorkspaceDelete, ari.WorkspaceDeleteParams{Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -127,7 +128,7 @@ func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 				Message:   text,
 			}
 			var result ari.WorkspaceSendResult
-			if err := client.Call("workspace/send", params, &result); err != nil {
+			if err := client.Call(api.MethodWorkspaceSend, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

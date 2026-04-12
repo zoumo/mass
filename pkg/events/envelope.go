@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/zoumo/oar/api"
 )
 
+// Deprecated: use api.MethodSessionUpdate and api.MethodRuntimeStateChange.
 const (
-	MethodSessionUpdate      = "session/update"
-	MethodRuntimeStateChange = "runtime/state_change"
+	MethodSessionUpdate      = api.MethodSessionUpdate
+	MethodRuntimeStateChange = api.MethodRuntimeStateChange
 )
 
 type sequenceParams interface {
@@ -75,7 +78,7 @@ type SessionUpdateParams struct {
 	Event     TypedEvent `json:"event"`
 }
 
-func (SessionUpdateParams) envelopeMethod() string { return MethodSessionUpdate }
+func (SessionUpdateParams) envelopeMethod() string { return api.MethodSessionUpdate }
 func (p SessionUpdateParams) sequence() int        { return p.Seq }
 
 // RuntimeStateChangeParams is the params object for runtime/state_change notifications.
@@ -87,7 +90,7 @@ type RuntimeStateChangeParams struct {
 	Reason         string `json:"reason,omitempty"`
 }
 
-func (RuntimeStateChangeParams) envelopeMethod() string { return MethodRuntimeStateChange }
+func (RuntimeStateChangeParams) envelopeMethod() string { return api.MethodRuntimeStateChange }
 func (p RuntimeStateChangeParams) sequence() int        { return p.Seq }
 
 // Envelope is the canonical replayable notification shape shared by live
@@ -99,7 +102,7 @@ type Envelope struct {
 
 func NewSessionUpdateEnvelope(sessionID string, seq int, at time.Time, ev Event) Envelope {
 	return Envelope{
-		Method: MethodSessionUpdate,
+		Method: api.MethodSessionUpdate,
 		Params: SessionUpdateParams{
 			SequenceMeta: SequenceMeta{
 				SessionID: sessionID,
@@ -113,7 +116,7 @@ func NewSessionUpdateEnvelope(sessionID string, seq int, at time.Time, ev Event)
 
 func NewRuntimeStateChangeEnvelope(sessionID string, seq int, at time.Time, previousStatus, status string, pid int, reason string) Envelope {
 	return Envelope{
-		Method: MethodRuntimeStateChange,
+		Method: api.MethodRuntimeStateChange,
 		Params: RuntimeStateChangeParams{
 			SequenceMeta: SequenceMeta{
 				SessionID: sessionID,
@@ -168,13 +171,13 @@ func (e *Envelope) UnmarshalJSON(data []byte) error {
 
 	var params sequenceParams
 	switch raw.Method {
-	case MethodSessionUpdate:
+	case api.MethodSessionUpdate:
 		var p SessionUpdateParams
 		if err := json.Unmarshal(raw.Params, &p); err != nil {
 			return fmt.Errorf("events: decode %s params: %w", raw.Method, err)
 		}
 		params = p
-	case MethodRuntimeStateChange:
+	case api.MethodRuntimeStateChange:
 		var p RuntimeStateChangeParams
 		if err := json.Unmarshal(raw.Params, &p); err != nil {
 			return fmt.Errorf("events: decode %s params: %w", raw.Method, err)
@@ -255,36 +258,71 @@ func decodeEventPayload(eventType string, payload json.RawMessage) (Event, error
 				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
 			}
 			return v, nil
+		case AvailableCommandsEvent:
+			if err := json.Unmarshal(payload, &v); err != nil {
+				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
+			}
+			return v, nil
+		case CurrentModeEvent:
+			if err := json.Unmarshal(payload, &v); err != nil {
+				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
+			}
+			return v, nil
+		case ConfigOptionEvent:
+			if err := json.Unmarshal(payload, &v); err != nil {
+				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
+			}
+			return v, nil
+		case SessionInfoEvent:
+			if err := json.Unmarshal(payload, &v); err != nil {
+				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
+			}
+			return v, nil
+		case UsageEvent:
+			if err := json.Unmarshal(payload, &v); err != nil {
+				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
+			}
+			return v, nil
 		default:
 			return nil, fmt.Errorf("events: unknown typed event %q", eventType)
 		}
 	}
 
 	switch eventType {
-	case "text":
+	case api.EventTypeText:
 		return unmarshal(TextEvent{})
-	case "thinking":
+	case api.EventTypeThinking:
 		return unmarshal(ThinkingEvent{})
-	case "user_message":
+	case api.EventTypeUserMessage:
 		return unmarshal(UserMessageEvent{})
-	case "tool_call":
+	case api.EventTypeToolCall:
 		return unmarshal(ToolCallEvent{})
-	case "tool_result":
+	case api.EventTypeToolResult:
 		return unmarshal(ToolResultEvent{})
-	case "file_write":
+	case api.EventTypeFileWrite:
 		return unmarshal(FileWriteEvent{})
-	case "file_read":
+	case api.EventTypeFileRead:
 		return unmarshal(FileReadEvent{})
-	case "command":
+	case api.EventTypeCommand:
 		return unmarshal(CommandEvent{})
-	case "plan":
+	case api.EventTypePlan:
 		return unmarshal(PlanEvent{})
-	case "turn_start":
+	case api.EventTypeTurnStart:
 		return unmarshal(TurnStartEvent{})
-	case "turn_end":
+	case api.EventTypeTurnEnd:
 		return unmarshal(TurnEndEvent{})
-	case "error":
+	case api.EventTypeError:
 		return unmarshal(ErrorEvent{})
+	case api.EventTypeAvailableCommands:
+		return unmarshal(AvailableCommandsEvent{})
+	case api.EventTypeCurrentMode:
+		return unmarshal(CurrentModeEvent{})
+	case api.EventTypeConfigOption:
+		return unmarshal(ConfigOptionEvent{})
+	case api.EventTypeSessionInfo:
+		return unmarshal(SessionInfoEvent{})
+	case api.EventTypeUsage:
+		return unmarshal(UsageEvent{})
 	default:
 		return nil, fmt.Errorf("events: unknown typed event %q", eventType)
 	}

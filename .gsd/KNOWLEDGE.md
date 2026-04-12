@@ -84,7 +84,7 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 ## K013 — External test package pattern for internal Go packages
 
 - **Pattern:** Use external test package (e.g., ari_test) to test internal packages without accessing internal symbols. This follows Go best practices and enables testing from consumer perspective.
-- **Implementation:** pkg/ari/server_test.go uses package ari_test (not ari), imports github.com/open-agent-d/open-agent-d/pkg/ari as external package.
+- **Implementation:** pkg/ari/server_test.go uses package ari_test (not ari), imports github.com/zoumo/oar/pkg/ari as external package.
 - **Lesson:** External test packages ensure tests only use exported API, catching visibility issues early.
 - **Reference:** pkg/ari/server_test.go, pkg/rpc/server_test.go (established pattern)
 - **When:** M001-tlbeko/S05/T02

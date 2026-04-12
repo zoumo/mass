@@ -18,13 +18,13 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/rpc"
-	pkgruntime "github.com/open-agent-d/open-agent-d/pkg/runtime"
-	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/zoumo/oar/api"
+	apispec "github.com/zoumo/oar/api/spec"
+	"github.com/zoumo/oar/pkg/events"
+	"github.com/zoumo/oar/pkg/rpc"
+	pkgruntime "github.com/zoumo/oar/pkg/runtime"
+	"github.com/zoumo/oar/pkg/shimapi"
+	"github.com/zoumo/oar/pkg/spec"
 )
 
 var mockAgentBin string
@@ -38,7 +38,7 @@ func TestMain(m *testing.M) {
 	repoRoot := filepath.Join(filepath.Dir(filename), "..", "..")
 
 	binPath := filepath.Join(tmpDir, "mockagent")
-	cmd := exec.Command("go", "build", "-o", binPath, "github.com/open-agent-d/open-agent-d/internal/testutil/mockagent")
+	cmd := exec.Command("go", "build", "-o", binPath, "github.com/zoumo/oar/internal/testutil/mockagent")
 	cmd.Dir = repoRoot
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

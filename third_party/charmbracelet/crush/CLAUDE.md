@@ -25,7 +25,7 @@ Vendored subset of internal packages from [github.com/charmbracelet/crush](https
 
 **Third-party code should be kept as close to upstream as possible.** The only acceptable changes are:
 
-1. **Import path rewriting**: `github.com/charmbracelet/crush/internal/...` → `github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/...`
+1. **Import path rewriting**: `github.com/charmbracelet/crush/internal/...` → `github.com/zoumo/oar/third_party/charmbracelet/crush/...`
 2. **Removing test files**: `*_test.go` files are not copied
 
 ## Notable modifications
@@ -46,4 +46,4 @@ no arguments. `PrettyPath` renders the raw path without home-directory shortenin
 ### Import path rewriting
 
 All `github.com/charmbracelet/crush/internal/...` imports have been rewritten to
-`github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/...`.
+`github.com/zoumo/oar/third_party/charmbracelet/crush/...`.

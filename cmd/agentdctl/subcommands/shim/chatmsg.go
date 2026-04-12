@@ -3,7 +3,7 @@ package shim
 import (
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/pkg/tui/chat"
+	"github.com/zoumo/oar/pkg/tui/chat"
 )
 
 // shimMessage is a mutable implementation of [chat.Message] used by the shim

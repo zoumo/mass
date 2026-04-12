@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	ari "github.com/open-agent-d/open-agent-d/api/ari"
-	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
+	ari "github.com/zoumo/oar/api/ari"
+	ariclient "github.com/zoumo/oar/pkg/ari"
 )
 
 // testSocketCounter provides unique socket paths for each test.

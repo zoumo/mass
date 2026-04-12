@@ -6,7 +6,7 @@ package integration_test
 import (
 	"testing"
 
-	ari "github.com/open-agent-d/open-agent-d/api/ari"
+	ari "github.com/zoumo/oar/api/ari"
 )
 
 // TestRuntimeLifecycle is the S02 acceptance test.

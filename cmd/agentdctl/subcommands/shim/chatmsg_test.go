@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/pkg/tui/chat"
+	"github.com/zoumo/oar/pkg/tui/chat"
 )
 
 func TestShimMessage_Basic(t *testing.T) {

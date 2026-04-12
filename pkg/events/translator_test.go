@@ -56,7 +56,12 @@ func TestTranslate_AgentMessageChunk(t *testing.T) {
 	params := env.Params.(SessionUpdateParams)
 	assert.Equal(t, "session-1", params.SessionID)
 	assert.Equal(t, 0, params.Seq)
-	assert.Equal(t, TextEvent{Text: "hello"}, sessionPayload(t, env))
+	ev, ok := sessionPayload(t, env).(TextEvent)
+	require.True(t, ok)
+	assert.Equal(t, "hello", ev.Text)
+	require.NotNil(t, ev.Content)
+	require.NotNil(t, ev.Content.Text)
+	assert.Equal(t, "hello", ev.Content.Text.Text)
 }
 
 func TestTranslate_AgentThoughtChunk(t *testing.T) {
@@ -72,7 +77,10 @@ func TestTranslate_AgentThoughtChunk(t *testing.T) {
 		}
 	})
 
-	assert.Equal(t, ThinkingEvent{Text: "thinking"}, sessionPayload(t, drainEnvelope(t, ch)))
+	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(ThinkingEvent)
+	require.True(t, ok)
+	assert.Equal(t, "thinking", ev.Text)
+	require.NotNil(t, ev.Content)
 }
 
 func TestTranslate_ToolCall(t *testing.T) {
@@ -149,10 +157,15 @@ func TestTranslate_UserMessageChunk(t *testing.T) {
 		},
 	}}
 
-	assert.Equal(t, UserMessageEvent{Text: "hello from user"}, sessionPayload(t, drainEnvelope(t, ch)))
+	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(UserMessageEvent)
+	require.True(t, ok)
+	assert.Equal(t, "hello from user", ev.Text)
+	require.NotNil(t, ev.Content)
 }
 
-func TestTranslate_IgnoredVariants(t *testing.T) {
+// TestTranslate_PreviouslyIgnoredVariants verifies that AvailableCommandsUpdate and
+// CurrentModeUpdate now produce real events instead of being silently discarded.
+func TestTranslate_PreviouslyIgnoredVariants(t *testing.T) {
 	in := make(chan acp.SessionNotification, 3)
 	tr := NewTranslator("session-1", in, nil)
 	ch, _, _ := tr.Subscribe()
@@ -163,11 +176,19 @@ func TestTranslate_IgnoredVariants(t *testing.T) {
 	in <- acp.SessionNotification{Update: acp.SessionUpdate{CurrentModeUpdate: &acp.SessionCurrentModeUpdate{}}}
 	in <- acp.SessionNotification{Update: acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "after ignored"}},
+			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "after"}},
 		},
 	}}
 
-	assert.Equal(t, TextEvent{Text: "after ignored"}, sessionPayload(t, drainEnvelope(t, ch)))
+	// All three produce events now.
+	ev1 := sessionPayload(t, drainEnvelope(t, ch))
+	ev2 := sessionPayload(t, drainEnvelope(t, ch))
+	ev3 := sessionPayload(t, drainEnvelope(t, ch))
+	assert.IsType(t, AvailableCommandsEvent{}, ev1)
+	assert.IsType(t, CurrentModeEvent{}, ev2)
+	te, ok := ev3.(TextEvent)
+	require.True(t, ok)
+	assert.Equal(t, "after", te.Text)
 }
 
 func TestTranslate_UnknownVariant(t *testing.T) {
@@ -197,10 +218,12 @@ func TestFanOut_ThreeSubscribers(t *testing.T) {
 		}
 	})
 
-	want := TextEvent{Text: "broadcast"}
-	assert.Equal(t, want, sessionPayload(t, drainEnvelope(t, ch1)))
-	assert.Equal(t, want, sessionPayload(t, drainEnvelope(t, ch2)))
-	assert.Equal(t, want, sessionPayload(t, drainEnvelope(t, ch3)))
+	for _, ch := range []<-chan Envelope{ch1, ch2, ch3} {
+		ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(TextEvent)
+		require.True(t, ok)
+		assert.Equal(t, "broadcast", ev.Text)
+		require.NotNil(t, ev.Content)
+	}
 }
 
 func TestNotifyTurnStartAndEnd(t *testing.T) {

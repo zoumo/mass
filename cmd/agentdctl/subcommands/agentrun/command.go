@@ -7,8 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/api/ari"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/ari"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
 )
 
 // NewCommand returns the "agentrun" cobra command.
@@ -57,7 +58,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 				SystemPrompt:  systemPrompt,
 			}
 			var result ari.AgentRunCreateResult
-			if err := client.Call("agentrun/create", params, &result); err != nil {
+			if err := client.Call(api.MethodAgentRunCreate, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -94,7 +95,7 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			params := ari.AgentRunListParams{Workspace: workspace, State: state}
 			var result ari.AgentRunListResult
-			if err := client.Call("agentrun/list", params, &result); err != nil {
+			if err := client.Call(api.MethodAgentRunList, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -125,7 +126,7 @@ func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			params := ari.AgentRunStatusParams{Workspace: workspace, Name: name}
 			var result ari.AgentRunStatusResult
-			if err := client.Call("agentrun/status", params, &result); err != nil {
+			if err := client.Call(api.MethodAgentRunStatus, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -160,7 +161,7 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			params := ari.AgentRunPromptParams{Workspace: workspace, Name: name, Prompt: text}
 			var result ari.AgentRunPromptResult
-			if err := client.Call("agentrun/prompt", params, &result); err != nil {
+			if err := client.Call(api.MethodAgentRunPrompt, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -172,7 +173,7 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 				for {
 					time.Sleep(500 * time.Millisecond)
 					var statusResult ari.AgentRunStatusResult
-					if err := client.Call("agentrun/status", ari.AgentRunStatusParams{Workspace: workspace, Name: name}, &statusResult); err != nil {
+					if err := client.Call(api.MethodAgentRunStatus, ari.AgentRunStatusParams{Workspace: workspace, Name: name}, &statusResult); err != nil {
 						fmt.Printf("agentrun/status error: %v\n", err)
 						break
 					}
@@ -215,7 +216,7 @@ func newStopCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call("agentrun/stop", ari.AgentRunStopParams{Workspace: workspace, Name: name}, nil); err != nil {
+			if err := client.Call(api.MethodAgentRunStop, ari.AgentRunStopParams{Workspace: workspace, Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -246,7 +247,7 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call("agentrun/delete", ari.AgentRunDeleteParams{Workspace: workspace, Name: name}, nil); err != nil {
+			if err := client.Call(api.MethodAgentRunDelete, ari.AgentRunDeleteParams{Workspace: workspace, Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -279,7 +280,7 @@ func newAttachCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			params := ari.AgentRunAttachParams{Workspace: workspace, Name: name}
 			var result ari.AgentRunAttachResult
-			if err := client.Call("agentrun/attach", params, &result); err != nil {
+			if err := client.Call(api.MethodAgentRunAttach, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -310,7 +311,7 @@ func newCancelCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call("agentrun/cancel", ari.AgentRunCancelParams{Workspace: workspace, Name: name}, nil); err != nil {
+			if err := client.Call(api.MethodAgentRunCancel, ari.AgentRunCancelParams{Workspace: workspace, Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -343,7 +344,7 @@ func newRestartCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			params := ari.AgentRunRestartParams{Workspace: workspace, Name: name}
 			var result ari.AgentRunRestartResult
-			if err := client.Call("agentrun/restart", params, &result); err != nil {
+			if err := client.Call(api.MethodAgentRunRestart, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

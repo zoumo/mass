@@ -3,8 +3,8 @@ package chat
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/anim"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/list"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/anim"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/list"
 )
 
 // Chat represents the chat UI model that handles chat interactions and

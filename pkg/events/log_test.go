@@ -278,5 +278,8 @@ func TestEventLog_TranslatorWritesCanonicalEnvelope(t *testing.T) {
 	assert.Equal(t, MethodSessionUpdate, entries[0].Method)
 	params := entries[0].Params.(SessionUpdateParams)
 	assert.Equal(t, "session-1", params.SessionID)
-	assert.Equal(t, TextEvent{Text: "logged"}, params.Event.Payload)
+	ev, ok := params.Event.Payload.(TextEvent)
+	require.True(t, ok)
+	assert.Equal(t, "logged", ev.Text)
+	require.NotNil(t, ev.Content, "Content should be populated from ACP ContentBlock")
 }

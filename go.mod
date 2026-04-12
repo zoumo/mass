@@ -1,4 +1,4 @@
-module github.com/open-agent-d/open-agent-d
+module github.com/zoumo/oar
 
 go 1.26.1
 

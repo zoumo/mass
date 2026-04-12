@@ -377,6 +377,16 @@ Runtime 必须产出结构化的 typed event stream，供上层消费。
 | `TurnStartEvent` | prompt 开始处理 | 标记一个 turn 的开始 |
 | `TurnEndEvent` | ACP prompt_response | 标记一个 turn 的结束 |
 | `ErrorEvent` | ACP 错误或进程异常 | 错误信息 |
+| `AvailableCommandsEvent` | ACP `available_commands_update` | 可用命令/工具列表更新 |
+| `CurrentModeEvent` | ACP `current_mode_update` | 当前操作模式变更 |
+| `ConfigOptionEvent` | ACP `config_option_update` | 配置选项变更 |
+| `SessionInfoEvent` | ACP `session_info_update` | 会话元数据更新 |
+| `UsageEvent` | ACP `usage_update` | Token/API 用量和费用统计 |
+
+> **Payload 保留策略**：所有事件类型完整保留 ACP 原始字段（包括 `_meta`），
+> JSON wire shape 与 ACP SDK marshal 结果一致，仅省略 `sessionUpdate` 鉴别器字段。
+> union 类型（如 `ContentBlock`、`ToolCallContent`）使用 flat JSON shape + `type` 鉴别器，
+> 与 ACP SDK wire format 一致。
 
 ### 事件持久化
 

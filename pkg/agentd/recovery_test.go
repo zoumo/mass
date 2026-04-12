@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	"github.com/open-agent-d/open-agent-d/api/meta"
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
-	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
-	"github.com/open-agent-d/open-agent-d/pkg/store"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/meta"
+	apispec "github.com/zoumo/oar/api/spec"
+	"github.com/zoumo/oar/pkg/shimapi"
+	"github.com/zoumo/oar/pkg/spec"
+	"github.com/zoumo/oar/pkg/store"
 )
 
 // setupRecoveryTest creates a ProcessManager backed by a real meta.Store with

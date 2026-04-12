@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
+	ariclient "github.com/zoumo/oar/pkg/ari"
 )
 
 // ClientFn is a factory for ARI clients, injected by the root command.

@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	"github.com/open-agent-d/open-agent-d/api/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/store"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/meta"
+	"github.com/zoumo/oar/pkg/store"
 )
 
 // newTestMetaStore creates a file-backed bbolt store in a temp directory.

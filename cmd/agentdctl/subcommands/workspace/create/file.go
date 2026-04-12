@@ -8,9 +8,10 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/api/ari"
-	"github.com/open-agent-d/open-agent-d/pkg/workspace"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/ari"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
+	"github.com/zoumo/oar/pkg/workspace"
 )
 
 // workspaceSpec is the YAML shape for workspace create -f.
@@ -83,7 +84,7 @@ func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			params := ari.WorkspaceCreateParams{Name: s.Name, Source: srcJSON}
 			var result ari.WorkspaceCreateResult
-			if err := client.Call("workspace/create", params, &result); err != nil {
+			if err := client.Call(api.MethodWorkspaceCreate, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

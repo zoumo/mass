@@ -10,7 +10,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/zoumo/oar/api/meta"
 )
 
 // agentsBucket returns the v1/agents bucket from the given transaction.

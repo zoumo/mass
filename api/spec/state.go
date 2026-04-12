@@ -2,7 +2,7 @@
 // This file contains the State types written to state.json by agent-shim.
 package spec
 
-import "github.com/open-agent-d/open-agent-d/api"
+import "github.com/zoumo/oar/api"
 
 // LastTurn records the outcome of the most recent agent turn.
 // Written when a turn ends (success or error) so callers can check

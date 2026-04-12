@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ndjson"
+	"github.com/zoumo/oar/pkg/ndjson"
 )
 
 type msg struct {

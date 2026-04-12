@@ -265,7 +265,7 @@ pkg/
 1. **P1 迁移范围不完整，会导致编译失败或调用点语义不清。**
    - 问题：方案只写了更新 `pkg/ari/server.go`、`pkg/ari/client.go` 和“所有外部引用”，但当前 `cmd/agentdctl/...` 与 `tests/integration/...` 都通过 `pkg/ari` 同时使用 `Client` 和 wire types，例如 `ari.AgentSetParams`、`ari.WorkspaceCreateParams`。如果删除 `pkg/ari/types.go`，这些调用点必须拆成 `pkg/ari` client 包与 `api/ari` types 包两个 import；而两个包默认名都叫 `ari`，必须明确 alias 规则。
    - 为什么是问题：这是迁移是否能落地的关键编译面；未明确 alias 策略会导致实现时出现包名冲突、遗漏测试引用，或者为了省事继续在 `pkg/ari` 保留 re-export，削弱“统一到 `api/ari`”的目标。
-   - 期望解决：方案中补充完整迁移策略：`pkg/ari` 内部统一以 `apiari` alias 引入 `github.com/open-agent-d/open-agent-d/api/ari`；外部需要同时使用 client 和 types 的文件使用类似 `ariclient`/`apiari` 的别名；列出至少 `cmd/agentdctl` 与 `tests/integration` 为必须更新范围。若选择在 `pkg/ari/types.go` 保留 type alias 兼容层，也要明确这是临时过渡还是长期 API，并解释与“不考虑兼容”的约束如何一致。
+   - 期望解决：方案中补充完整迁移策略：`pkg/ari` 内部统一以 `apiari` alias 引入 `github.com/zoumo/oar/api/ari`；外部需要同时使用 client 和 types 的文件使用类似 `ariclient`/`apiari` 的别名；列出至少 `cmd/agentdctl` 与 `tests/integration` 为必须更新范围。若选择在 `pkg/ari/types.go` 保留 type alias 兼容层，也要明确这是临时过渡还是长期 API，并解释与“不考虑兼容”的约束如何一致。
 
 2. **`CodeRecoveryBlocked` 是否属于 `api/ari` 没有说明清楚。**
    - 问题：`pkg/ari/types.go` 中不仅有 params/result struct，还有 JSON-RPC error code 常量 `CodeRecoveryBlocked`。方案称“所有类型移入 `api/ari/types.go`”，但没有说明该常量是否一起移动、留在 server 包，还是拆到 `api/ari/errors.go`。

@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/stringext"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/stringext"
 	uv "github.com/charmbracelet/ultraviolet"
 )
 

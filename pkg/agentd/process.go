@@ -15,13 +15,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	"github.com/open-agent-d/open-agent-d/api/meta"
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
-	"github.com/open-agent-d/open-agent-d/pkg/store"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/meta"
+	apispec "github.com/zoumo/oar/api/spec"
+	"github.com/zoumo/oar/pkg/events"
+	"github.com/zoumo/oar/pkg/shimapi"
+	"github.com/zoumo/oar/pkg/spec"
+	"github.com/zoumo/oar/pkg/store"
 )
 
 // EventHandler is called for each session/update received from the shim.
@@ -133,7 +133,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 	logger := m.logger.With("agent_key", key)
 	return func(ctx context.Context, method string, params json.RawMessage) {
 		switch method {
-		case events.MethodSessionUpdate:
+		case api.MethodSessionUpdate:
 			p, err := ParseSessionUpdate(params)
 			if err != nil {
 				logger.Warn("malformed session/update notification dropped", "error", err)
@@ -145,7 +145,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 				// No consumer is draining Events; drop silently to avoid log spam.
 			}
 
-		case events.MethodRuntimeStateChange:
+		case api.MethodRuntimeStateChange:
 			p, err := ParseRuntimeStateChange(params)
 			if err != nil {
 				logger.Warn("stateChange: malformed notification dropped", "error", err)

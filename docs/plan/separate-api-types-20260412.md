@@ -48,21 +48,21 @@ pkg/
 
 ```go
 // API 类型（无外部依赖，只有标准库）
-import "github.com/open-agent-d/open-agent-d/api"          // api.Status, api.EnvVar
-import "github.com/open-agent-d/open-agent-d/api/meta"      // meta.Agent, meta.ObjectMeta
-import "github.com/open-agent-d/open-agent-d/api/spec"      // spec.Config, spec.State
+import "github.com/zoumo/oar/api"          // api.Status, api.EnvVar
+import "github.com/zoumo/oar/api/meta"      // meta.Agent, meta.ObjectMeta
+import "github.com/zoumo/oar/api/spec"      // spec.Config, spec.State
 
 // 业务逻辑
-import "github.com/open-agent-d/open-agent-d/pkg/store"     // store.Store, store.NewStore
-import "github.com/open-agent-d/open-agent-d/pkg/spec"      // spec.ParseConfig, spec.WriteState
+import "github.com/zoumo/oar/pkg/store"     // store.Store, store.NewStore
+import "github.com/zoumo/oar/pkg/spec"      // spec.ParseConfig, spec.WriteState
 ```
 
 **api/spec 与 pkg/spec 冲突处理**：`pkg/spec` 保留原名不重命名（原因见下方分析）。共 3 个文件需同时导入 `api/spec`（类型）和 `pkg/spec`（I/O 函数），统一使用 `apispec` 作为 `api/spec` 的别名：
 
 ```go
 import (
-    apispec "github.com/open-agent-d/open-agent-d/api/spec"
-    "github.com/open-agent-d/open-agent-d/pkg/spec"
+    apispec "github.com/zoumo/oar/api/spec"
+    "github.com/zoumo/oar/pkg/spec"
 )
 // 使用：apispec.Config, spec.ParseConfig()
 ```
@@ -100,7 +100,7 @@ Codex 正确指出：`pkg/spec/state.go` 中的 `WriteState`、`ReadState`、`De
 来源 `pkg/meta/runtime.go`（仅类型定义）：
 - `Agent`, `AgentSpec` 结构体
 
-**依赖**：`import "github.com/open-agent-d/open-agent-d/api"` — 仅依赖 api.Status 和 api.EnvVar。
+**依赖**：`import "github.com/zoumo/oar/api"` — 仅依赖 api.Status 和 api.EnvVar。
 
 #### api/spec/types.go（package spec）
 
@@ -108,14 +108,14 @@ Codex 正确指出：`pkg/spec/state.go` 中的 `WriteState`、`ReadState`、`De
 - `Config`, `AgentRoot`, `Metadata`, `AcpAgent`, `AcpProcess`, `AcpSession`, `McpServer` 结构体
 - `PermissionPolicy` 类型 + 常量（`ApproveAll`, `ApproveReads`, `DenyAll`）+ `IsValid()`, `String()` 方法
 
-**依赖**：`import "github.com/open-agent-d/open-agent-d/api"` — 仅依赖 api.EnvVar（在 McpServer.Env 中使用）。
+**依赖**：`import "github.com/zoumo/oar/api"` — 仅依赖 api.EnvVar（在 McpServer.Env 中使用）。
 
 #### api/spec/state.go（package spec）
 
 来源 `pkg/spec/state_types.go`：
 - `State`, `LastTurn` 结构体
 
-**依赖**：`import "github.com/open-agent-d/open-agent-d/api"` — 仅依赖 api.Status（在 State.Status 中使用）。
+**依赖**：`import "github.com/zoumo/oar/api"` — 仅依赖 api.Status（在 State.Status 中使用）。
 
 ### pkg/store 方法签名（pkg/meta → pkg/store）
 
@@ -126,7 +126,7 @@ Codex 正确指出：`pkg/spec/state.go` 中的 `WriteState`、`ReadState`、`De
 ```go
 package store
 
-import "github.com/open-agent-d/open-agent-d/api/meta"
+import "github.com/zoumo/oar/api/meta"
 
 type Store struct { ... }  // bbolt 连接 + logger
 
@@ -141,7 +141,7 @@ package store
 
 import (
     "context"
-    "github.com/open-agent-d/open-agent-d/api/meta"
+    "github.com/zoumo/oar/api/meta"
 )
 
 func (s *Store) SetAgent(ctx context.Context, ag *meta.Agent) error
@@ -157,8 +157,8 @@ package store
 
 import (
     "context"
-    "github.com/open-agent-d/open-agent-d/api"
-    "github.com/open-agent-d/open-agent-d/api/meta"
+    "github.com/zoumo/oar/api"
+    "github.com/zoumo/oar/api/meta"
 )
 
 func (s *Store) CreateAgentRun(ctx context.Context, agent *meta.AgentRun) error
@@ -176,7 +176,7 @@ package store
 
 import (
     "context"
-    "github.com/open-agent-d/open-agent-d/api/meta"
+    "github.com/zoumo/oar/api/meta"
 )
 
 func (s *Store) CreateWorkspace(ctx context.Context, ws *meta.Workspace) error
@@ -230,7 +230,7 @@ func (s *Store) DeleteWorkspace(ctx context.Context, name string) error
 11. 从 `pkg/spec/types.go` 删除所有类型和常量定义（Config, EnvVar, PermissionPolicy 等已迁到 api/）
 12. 从 `pkg/spec/state_types.go` 删除所有类型和常量定义（Status, State, LastTurn 已迁到 api/）
 13. 如果 `types.go` 和 `state_types.go` 变为空文件则删除
-14. 更新 `pkg/spec/config.go` 和 `pkg/spec/state.go` 的 import，引用 `api` 和 `api/spec`（此处 pkg/spec 内部引用 api/spec 需要 alias：`apispec "github.com/open-agent-d/open-agent-d/api/spec"`）
+14. 更新 `pkg/spec/config.go` 和 `pkg/spec/state.go` 的 import，引用 `api` 和 `api/spec`（此处 pkg/spec 内部引用 api/spec 需要 alias：`apispec "github.com/zoumo/oar/api/spec"`）
 
 **Phase 4: 更新所有消费者 import**
 15. 按上方消费者表逐文件更新 import 和类型引用
@@ -260,7 +260,7 @@ go test ./pkg/spec -run TestExampleBundlesAreValid
 
 # 4. 验证 api/ 包无外部依赖（应只有标准库和当前 module）
 #    期望输出为空；若非空，则说明 api/ 引入了模块外第三方依赖
-go list -deps -f '{{if and (not .Standard) (not (eq .Module.Path "github.com/open-agent-d/open-agent-d"))}}{{.ImportPath}}{{end}}' ./api/... | sed '/^$/d'
+go list -deps -f '{{if and (not .Standard) (not (eq .Module.Path "github.com/zoumo/oar"))}}{{.ImportPath}}{{end}}' ./api/... | sed '/^$/d'
 
 # 5. 验证 contract 脚本（如存在）
 scripts/verify-m002-s01-contract.sh
@@ -362,7 +362,7 @@ pkg/runtime/       ← 依赖 api/, api/spec(alias), pkg/spec
    - 期望如何解决：将该验证命令替换为基于 `go list -deps -f` 的标准库判断，例如对 `./api/...` 统一执行：
 
 ```bash
-go list -deps -f '{{if and (not .Standard) (not (eq .Module.Path "github.com/open-agent-d/open-agent-d"))}}{{.ImportPath}}{{end}}' ./api/... | sed '/^$/d'
+go list -deps -f '{{if and (not .Standard) (not (eq .Module.Path "github.com/zoumo/oar"))}}{{.ImportPath}}{{end}}' ./api/... | sed '/^$/d'
 ```
 
    期望输出为空；若非空，则说明 `api/` 引入了模块外部依赖。也可以使用等价脚本，但必须明确能区分标准库、当前 module 和第三方 module。
@@ -454,8 +454,8 @@ func (s *Store) DeleteWorkspace(ctx context.Context, name string) error
 
 ```go
 import (
-    apispec "github.com/open-agent-d/open-agent-d/api/spec"
-    "github.com/open-agent-d/open-agent-d/pkg/spec"
+    apispec "github.com/zoumo/oar/api/spec"
+    "github.com/zoumo/oar/pkg/spec"
 )
 ```
 
@@ -495,6 +495,6 @@ import (
 make build
 go test ./...
 go test ./pkg/spec -run TestExampleBundlesAreValid
-go list -deps -f '{{if and (not .Standard) (not (eq .Module.Path "github.com/open-agent-d/open-agent-d"))}}{{.ImportPath}}{{end}}' ./api/... | sed '/^$/d'
+go list -deps -f '{{if and (not .Standard) (not (eq .Module.Path "github.com/zoumo/oar"))}}{{.ImportPath}}{{end}}' ./api/... | sed '/^$/d'
 scripts/verify-m002-s01-contract.sh
 ```

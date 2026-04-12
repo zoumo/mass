@@ -6,6 +6,8 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/google/uuid"
+
+	"github.com/zoumo/oar/api"
 )
 
 // Translator drains ACP session notifications, translates each notification
@@ -142,7 +144,7 @@ func (t *Translator) NotifyTurnStart() {
 			StreamSeq: &ss,
 			Event:     newTypedEvent(TurnStartEvent{}),
 		}
-		return Envelope{Method: MethodSessionUpdate, Params: params}
+		return Envelope{Method: api.MethodSessionUpdate, Params: params}
 	})
 }
 
@@ -162,7 +164,7 @@ func (t *Translator) NotifyUserPrompt(text string) {
 			StreamSeq: &ss,
 			Event:     newTypedEvent(UserMessageEvent{Text: text}),
 		}
-		return Envelope{Method: MethodSessionUpdate, Params: params}
+		return Envelope{Method: api.MethodSessionUpdate, Params: params}
 	})
 }
 
@@ -185,7 +187,7 @@ func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 			Event:     newTypedEvent(TurnEndEvent{StopReason: string(reason)}),
 		}
 		t.currentTurnId = "" // Clear AFTER using — turn_end event carries the turnId
-		return Envelope{Method: MethodSessionUpdate, Params: params}
+		return Envelope{Method: api.MethodSessionUpdate, Params: params}
 	})
 }
 
@@ -261,32 +263,95 @@ func (t *Translator) broadcastEnvelope(build func(seq int, at time.Time) Envelop
 }
 
 // translate converts a raw SessionNotification into a typed Event.
-// Returns nil for known-but-uninteresting variants (AvailableCommandsUpdate,
-// CurrentModeUpdate) that have no meaningful representation in the event stream.
+// All SessionUpdate branches are translated — no branch is silently discarded.
 func translate(n acp.SessionNotification) Event {
 	u := n.Update
 	switch {
 	case u.AgentMessageChunk != nil:
-		return TextEvent{Text: safeBlockText(u.AgentMessageChunk.Content)}
+		c := u.AgentMessageChunk
+		return TextEvent{
+			Text:    safeBlockText(c.Content),
+			Content: convertContentBlock(c.Content),
+		}
 	case u.AgentThoughtChunk != nil:
-		return ThinkingEvent{Text: safeBlockText(u.AgentThoughtChunk.Content)}
+		c := u.AgentThoughtChunk
+		return ThinkingEvent{
+			Text:    safeBlockText(c.Content),
+			Content: convertContentBlock(c.Content),
+		}
 	case u.UserMessageChunk != nil:
-		return UserMessageEvent{Text: safeBlockText(u.UserMessageChunk.Content)}
+		c := u.UserMessageChunk
+		return UserMessageEvent{
+			Text:    safeBlockText(c.Content),
+			Content: convertContentBlock(c.Content),
+		}
 	case u.ToolCall != nil:
 		tc := u.ToolCall
-		return ToolCallEvent{ID: string(tc.ToolCallId), Kind: string(tc.Kind), Title: tc.Title}
+		return ToolCallEvent{
+			Meta:      tc.Meta,
+			ID:        string(tc.ToolCallId),
+			Kind:      string(tc.Kind),
+			Title:     tc.Title,
+			Status:    string(tc.Status),
+			Content:   convertToolCallContents(tc.Content),
+			Locations: convertLocations(tc.Locations),
+			RawInput:  tc.RawInput,
+			RawOutput: tc.RawOutput,
+		}
 	case u.ToolCallUpdate != nil:
 		tcu := u.ToolCallUpdate
-		return ToolResultEvent{ID: string(tcu.ToolCallId), Status: safeStatus(tcu.Status)}
+		return ToolResultEvent{
+			Meta:      tcu.Meta,
+			ID:        string(tcu.ToolCallId),
+			Status:    safeStatus(tcu.Status),
+			Kind:      safeToolKind(tcu.Kind),
+			Title:     safeStringPtr(tcu.Title),
+			Content:   convertToolCallContents(tcu.Content),
+			Locations: convertLocations(tcu.Locations),
+			RawInput:  tcu.RawInput,
+			RawOutput: tcu.RawOutput,
+		}
 	case u.Plan != nil:
-		return PlanEvent{Entries: u.Plan.Entries}
-	case u.AvailableCommandsUpdate != nil, u.CurrentModeUpdate != nil,
-		u.ConfigOptionUpdate != nil, u.SessionInfoUpdate != nil, u.UsageUpdate != nil:
-		return nil
+		return PlanEvent{Meta: u.Plan.Meta, Entries: u.Plan.Entries}
+	case u.AvailableCommandsUpdate != nil:
+		ac := u.AvailableCommandsUpdate
+		return AvailableCommandsEvent{
+			Meta:     ac.Meta,
+			Commands: convertCommands(ac.AvailableCommands),
+		}
+	case u.CurrentModeUpdate != nil:
+		cm := u.CurrentModeUpdate
+		return CurrentModeEvent{
+			Meta:   cm.Meta,
+			ModeID: string(cm.CurrentModeId),
+		}
+	case u.ConfigOptionUpdate != nil:
+		co := u.ConfigOptionUpdate
+		return ConfigOptionEvent{
+			Meta:          co.Meta,
+			ConfigOptions: convertConfigOptions(co.ConfigOptions),
+		}
+	case u.SessionInfoUpdate != nil:
+		si := u.SessionInfoUpdate
+		return SessionInfoEvent{
+			Meta:      si.Meta,
+			Title:     si.Title,
+			UpdatedAt: si.UpdatedAt,
+		}
+	case u.UsageUpdate != nil:
+		uu := u.UsageUpdate
+		return UsageEvent{
+			Meta: uu.Meta,
+			Cost: convertCost(uu.Cost),
+			Size: uu.Size,
+			Used: uu.Used,
+		}
 	default:
 		return ErrorEvent{Msg: "unknown session update variant"}
 	}
 }
+
+// ── Helper: text extraction ───────────────────────────────────────────────────
 
 // safeBlockText extracts the text string from a ContentBlock, returning ""
 // if the Text variant is nil.
@@ -297,10 +362,285 @@ func safeBlockText(cb acp.ContentBlock) string {
 	return ""
 }
 
+// ── Convert: ContentBlock ─────────────────────────────────────────────────────
+
+// convertContentBlock converts an acp.ContentBlock to the OAR mirror type.
+// Returns nil if the block has no active variant.
+func convertContentBlock(cb acp.ContentBlock) *ContentBlock {
+	switch {
+	case cb.Text != nil:
+		return &ContentBlock{Text: &TextContent{
+			Meta:        cb.Text.Meta,
+			Text:        cb.Text.Text,
+			Annotations: convertAnnotations(cb.Text.Annotations),
+		}}
+	case cb.Image != nil:
+		return &ContentBlock{Image: &ImageContent{
+			Meta:        cb.Image.Meta,
+			Data:        cb.Image.Data,
+			MimeType:    cb.Image.MimeType,
+			URI:         cb.Image.Uri,
+			Annotations: convertAnnotations(cb.Image.Annotations),
+		}}
+	case cb.Audio != nil:
+		return &ContentBlock{Audio: &AudioContent{
+			Meta:        cb.Audio.Meta,
+			Data:        cb.Audio.Data,
+			MimeType:    cb.Audio.MimeType,
+			Annotations: convertAnnotations(cb.Audio.Annotations),
+		}}
+	case cb.ResourceLink != nil:
+		return &ContentBlock{ResourceLink: &ResourceLinkContent{
+			Meta:        cb.ResourceLink.Meta,
+			URI:         cb.ResourceLink.Uri,
+			Name:        cb.ResourceLink.Name,
+			Description: cb.ResourceLink.Description,
+			MimeType:    cb.ResourceLink.MimeType,
+			Title:       cb.ResourceLink.Title,
+			Size:        cb.ResourceLink.Size,
+			Annotations: convertAnnotations(cb.ResourceLink.Annotations),
+		}}
+	case cb.Resource != nil:
+		return &ContentBlock{Resource: &ResourceContent{
+			Meta:        cb.Resource.Meta,
+			Resource:    convertEmbeddedResource(cb.Resource.Resource),
+			Annotations: convertAnnotations(cb.Resource.Annotations),
+		}}
+	default:
+		return nil
+	}
+}
+
+// convertAnnotations converts *acp.Annotations to *Annotations.
+func convertAnnotations(a *acp.Annotations) *Annotations {
+	if a == nil {
+		return nil
+	}
+	ann := &Annotations{
+		Meta:         a.Meta,
+		LastModified: a.LastModified,
+		Priority:     a.Priority,
+	}
+	for _, r := range a.Audience {
+		ann.Audience = append(ann.Audience, string(r))
+	}
+	return ann
+}
+
+// convertEmbeddedResource converts acp.EmbeddedResourceResource to EmbeddedResource.
+func convertEmbeddedResource(r acp.EmbeddedResourceResource) EmbeddedResource {
+	switch {
+	case r.TextResourceContents != nil:
+		return EmbeddedResource{TextResource: &TextResourceContents{
+			Meta:     r.TextResourceContents.Meta,
+			URI:      r.TextResourceContents.Uri,
+			MimeType: r.TextResourceContents.MimeType,
+			Text:     r.TextResourceContents.Text,
+		}}
+	case r.BlobResourceContents != nil:
+		return EmbeddedResource{BlobResource: &BlobResourceContents{
+			Meta:     r.BlobResourceContents.Meta,
+			URI:      r.BlobResourceContents.Uri,
+			MimeType: r.BlobResourceContents.MimeType,
+			Blob:     r.BlobResourceContents.Blob,
+		}}
+	default:
+		return EmbeddedResource{}
+	}
+}
+
+// ── Convert: ToolCall content & locations ────────────────────────────────────
+
+// convertToolCallContents converts a slice of acp.ToolCallContent.
+func convertToolCallContents(contents []acp.ToolCallContent) []ToolCallContent {
+	if len(contents) == 0 {
+		return nil
+	}
+	out := make([]ToolCallContent, 0, len(contents))
+	for _, c := range contents {
+		switch {
+		case c.Content != nil:
+			out = append(out, ToolCallContent{Content: &ToolCallContentContent{
+				Meta:    c.Content.Meta,
+				Content: convertContentBlockValue(c.Content.Content),
+			}})
+		case c.Diff != nil:
+			out = append(out, ToolCallContent{Diff: &ToolCallContentDiff{
+				Meta:    c.Diff.Meta,
+				Path:    c.Diff.Path,
+				OldText: c.Diff.OldText,
+				NewText: c.Diff.NewText,
+			}})
+		case c.Terminal != nil:
+			out = append(out, ToolCallContent{Terminal: &ToolCallContentTerminal{
+				Meta:       c.Terminal.Meta,
+				TerminalID: c.Terminal.TerminalId,
+			}})
+		}
+	}
+	return out
+}
+
+// convertContentBlockValue converts acp.ContentBlock by value (not pointer).
+func convertContentBlockValue(cb acp.ContentBlock) ContentBlock {
+	p := convertContentBlock(cb)
+	if p == nil {
+		return ContentBlock{}
+	}
+	return *p
+}
+
+// convertLocations converts a slice of acp.ToolCallLocation.
+func convertLocations(locs []acp.ToolCallLocation) []ToolCallLocation {
+	if len(locs) == 0 {
+		return nil
+	}
+	out := make([]ToolCallLocation, len(locs))
+	for i, l := range locs {
+		out[i] = ToolCallLocation{Meta: l.Meta, Path: l.Path, Line: l.Line}
+	}
+	return out
+}
+
+// ── Convert: AvailableCommands ────────────────────────────────────────────────
+
+// convertCommands converts a slice of acp.AvailableCommand.
+func convertCommands(cmds []acp.AvailableCommand) []AvailableCommand {
+	if len(cmds) == 0 {
+		return nil
+	}
+	out := make([]AvailableCommand, len(cmds))
+	for i, c := range cmds {
+		out[i] = AvailableCommand{
+			Meta:        c.Meta,
+			Name:        c.Name,
+			Description: c.Description,
+			Input:       convertAvailableCommandInput(c.Input),
+		}
+	}
+	return out
+}
+
+// convertAvailableCommandInput converts *acp.AvailableCommandInput.
+func convertAvailableCommandInput(inp *acp.AvailableCommandInput) *AvailableCommandInput {
+	if inp == nil {
+		return nil
+	}
+	if inp.Unstructured != nil {
+		return &AvailableCommandInput{Unstructured: &UnstructuredCommandInput{
+			Meta: inp.Unstructured.Meta,
+			Hint: inp.Unstructured.Hint,
+		}}
+	}
+	return nil
+}
+
+// ── Convert: ConfigOptions ───────────────────────────────────────────────────
+
+// convertConfigOptions converts a slice of acp.SessionConfigOption.
+func convertConfigOptions(opts []acp.SessionConfigOption) []ConfigOption {
+	if len(opts) == 0 {
+		return nil
+	}
+	out := make([]ConfigOption, 0, len(opts))
+	for _, o := range opts {
+		if o.Select != nil {
+			s := o.Select
+			co := ConfigOption{Select: &ConfigOptionSelect{
+				Meta:         s.Meta,
+				ID:           string(s.Id),
+				Name:         s.Name,
+				CurrentValue: string(s.CurrentValue),
+				Description:  s.Description,
+				Category:     convertConfigCategory(s.Category),
+				Options:      convertConfigSelectOptions(s.Options),
+			}}
+			out = append(out, co)
+		}
+	}
+	return out
+}
+
+// convertConfigCategory converts *acp.SessionConfigOptionCategory to *string.
+// ACP category is a union with a single "Other" raw-string variant.
+func convertConfigCategory(cat *acp.SessionConfigOptionCategory) *string {
+	if cat == nil {
+		return nil
+	}
+	if cat.Other != nil {
+		s := string(*cat.Other)
+		return &s
+	}
+	return nil
+}
+
+// convertConfigSelectOptions converts acp.SessionConfigSelectOptions.
+func convertConfigSelectOptions(opts acp.SessionConfigSelectOptions) ConfigSelectOptions {
+	switch {
+	case opts.Grouped != nil:
+		groups := make([]ConfigSelectGroup, len(*opts.Grouped))
+		for i, g := range *opts.Grouped {
+			groups[i] = ConfigSelectGroup{
+				Meta:    g.Meta,
+				Group:   string(g.Group),
+				Name:    g.Name,
+				Options: convertConfigSelectOptionSlice(g.Options),
+			}
+		}
+		return ConfigSelectOptions{Grouped: groups}
+	case opts.Ungrouped != nil:
+		return ConfigSelectOptions{Ungrouped: convertConfigSelectOptionSlice(*opts.Ungrouped)}
+	default:
+		return ConfigSelectOptions{}
+	}
+}
+
+// convertConfigSelectOptionSlice converts a slice of acp.SessionConfigSelectOption.
+func convertConfigSelectOptionSlice(opts []acp.SessionConfigSelectOption) []ConfigSelectOption {
+	out := make([]ConfigSelectOption, len(opts))
+	for i, o := range opts {
+		out[i] = ConfigSelectOption{
+			Meta:        o.Meta,
+			Name:        o.Name,
+			Value:       string(o.Value),
+			Description: o.Description,
+		}
+	}
+	return out
+}
+
+// ── Convert: Cost ─────────────────────────────────────────────────────────────
+
+// convertCost converts *acp.Cost to *Cost.
+func convertCost(c *acp.Cost) *Cost {
+	if c == nil {
+		return nil
+	}
+	return &Cost{Amount: c.Amount, Currency: c.Currency}
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 // safeStatus converts a *ToolCallStatus to a string, returning "unknown" when nil.
 func safeStatus(s *acp.ToolCallStatus) string {
 	if s == nil {
 		return "unknown"
 	}
 	return string(*s)
+}
+
+// safeToolKind converts *acp.ToolKind to string, returning "" when nil.
+func safeToolKind(k *acp.ToolKind) string {
+	if k == nil {
+		return ""
+	}
+	return string(*k)
+}
+
+// safeStringPtr dereferences *string safely, returning "" when nil.
+func safeStringPtr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

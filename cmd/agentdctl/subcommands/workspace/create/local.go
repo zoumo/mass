@@ -6,9 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/api/ari"
-	"github.com/open-agent-d/open-agent-d/pkg/workspace"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/ari"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
+	"github.com/zoumo/oar/pkg/workspace"
 )
 
 func newLocalCmd(getClient cliutil.ClientFn) *cobra.Command {
@@ -40,7 +41,7 @@ func newLocalCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			params := ari.WorkspaceCreateParams{Name: name, Source: srcJSON}
 			var result ari.WorkspaceCreateResult
-			if err := client.Call("workspace/create", params, &result); err != nil {
+			if err := client.Call(api.MethodWorkspaceCreate, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

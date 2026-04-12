@@ -12,11 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/open-agent-d/open-agent-d/internal/logging"
-	"github.com/open-agent-d/open-agent-d/pkg/agentd"
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
-	"github.com/open-agent-d/open-agent-d/pkg/store"
-	"github.com/open-agent-d/open-agent-d/pkg/workspace"
+	"github.com/zoumo/oar/internal/logging"
+	"github.com/zoumo/oar/pkg/agentd"
+	"github.com/zoumo/oar/pkg/ari"
+	"github.com/zoumo/oar/pkg/store"
+	"github.com/zoumo/oar/pkg/workspace"
 )
 
 // NewCommand returns the "server" cobra command.

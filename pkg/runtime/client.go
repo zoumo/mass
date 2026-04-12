@@ -6,7 +6,7 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	apispec "github.com/zoumo/oar/api/spec"
 )
 
 // acpClient implements acp.Client on behalf of Manager.

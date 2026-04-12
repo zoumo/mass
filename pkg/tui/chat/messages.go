@@ -7,8 +7,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/list"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/list"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
 )
 
 // MessageLeftPaddingTotal is the total width that is taken up by the border +

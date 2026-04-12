@@ -10,8 +10,8 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/meta"
 )
 
 // CreateAgentRun stores a new AgentRun record.

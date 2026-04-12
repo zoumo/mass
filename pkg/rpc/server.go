@@ -21,9 +21,10 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/sourcegraph/jsonrpc2"
 
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/runtime"
-	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/pkg/events"
+	"github.com/zoumo/oar/pkg/runtime"
+	"github.com/zoumo/oar/pkg/shimapi"
 )
 
 // Server is a JSON-RPC 2.0 server that exposes the agent runtime over a
@@ -102,17 +103,17 @@ func (h *connHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *json
 	}
 
 	switch req.Method {
-	case "session/prompt":
+	case api.MethodSessionPrompt:
 		h.handlePrompt(ctx, conn, req)
-	case "session/cancel":
+	case api.MethodSessionCancel:
 		h.handleCancel(ctx, conn, req)
-	case "session/subscribe":
+	case api.MethodSessionSubscribe:
 		h.handleSubscribe(ctx, conn, req)
-	case "runtime/status":
+	case api.MethodRuntimeStatus:
 		h.handleStatus(ctx, conn, req)
-	case "runtime/history":
+	case api.MethodRuntimeHistory:
 		h.handleHistory(ctx, conn, req)
-	case "runtime/stop":
+	case api.MethodRuntimeStop:
 		h.handleStop(ctx, conn, req)
 	default:
 		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	ari "github.com/open-agent-d/open-agent-d/api/ari"
+	ari "github.com/zoumo/oar/api/ari"
 )
 
 // TestMultipleConcurrentAgents tests that multiple agents can run concurrently

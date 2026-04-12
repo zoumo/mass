@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/zoumo/oar/api/meta"
 )
 
 // makeWorkspace returns a minimal valid Workspace for test use.

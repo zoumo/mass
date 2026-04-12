@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	"github.com/zoumo/oar/api"
+	apispec "github.com/zoumo/oar/api/spec"
 )
 
 // newTestManager builds a Manager with no agent process — just enough to

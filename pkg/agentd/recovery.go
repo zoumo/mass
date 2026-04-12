@@ -9,10 +9,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	"github.com/open-agent-d/open-agent-d/api/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/meta"
+	"github.com/zoumo/oar/pkg/events"
+	"github.com/zoumo/oar/pkg/spec"
 )
 
 // RecoverSessions runs at daemon startup and attempts to reconnect to shim

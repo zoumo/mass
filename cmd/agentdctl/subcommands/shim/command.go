@@ -14,7 +14,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ndjson"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/pkg/ndjson"
 )
 
 // ── JSON-RPC wire types ────────────────────────────────────────────────────
@@ -173,7 +174,7 @@ type runtimeStateChangeParams struct {
 
 func printNotification(msg rpcResponse) {
 	switch msg.Method {
-	case "session/update":
+	case api.MethodSessionUpdate:
 		var p sessionUpdateParams
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
 			fmt.Fprintf(os.Stderr, "[session/update parse error: %v]\n", err)
@@ -181,7 +182,7 @@ func printNotification(msg rpcResponse) {
 		}
 		printSessionEvent(p.Seq, p.Event)
 
-	case "runtime/state_change":
+	case api.MethodRuntimeStateChange:
 		var p runtimeStateChangeParams
 		if err := json.Unmarshal(msg.Params, &p); err != nil {
 			fmt.Fprintf(os.Stderr, "[runtime/state_change parse error: %v]\n", err)
@@ -196,14 +197,14 @@ func printNotification(msg rpcResponse) {
 }
 
 func isTurnEndNotification(msg rpcResponse) bool {
-	if msg.Method != "session/update" {
+	if msg.Method != api.MethodSessionUpdate {
 		return false
 	}
 	var p sessionUpdateParams
 	if err := json.Unmarshal(msg.Params, &p); err != nil {
 		return false
 	}
-	return p.Event.Type == "turn_end"
+	return p.Event.Type == api.EventTypeTurnEnd
 }
 
 func startNotificationPrinter(ctx context.Context, c *client) <-chan struct{} {
@@ -239,19 +240,19 @@ func drainTurnEnd(ch <-chan struct{}) {
 
 func printSessionEvent(seq int, ev sessionEvent) {
 	switch ev.Type {
-	case "text":
+	case api.EventTypeText:
 		var p textPayload
 		_ = json.Unmarshal(ev.Payload, &p)
 		fmt.Print(p.Text)
-	case "thinking":
+	case api.EventTypeThinking:
 		var p textPayload
 		_ = json.Unmarshal(ev.Payload, &p)
 		fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", seq, p.Text)
-	case "tool_call":
+	case api.EventTypeToolCall:
 		fmt.Fprintf(os.Stderr, "\033[33m[tool_call seq=%d] %s\033[0m\n", seq, string(ev.Payload))
-	case "tool_result":
+	case api.EventTypeToolResult:
 		fmt.Fprintf(os.Stderr, "\033[2m[tool_result seq=%d] %s\033[0m\n", seq, string(ev.Payload))
-	case "turn_end":
+	case api.EventTypeTurnEnd:
 		fmt.Println()
 	default:
 		fmt.Fprintf(os.Stderr, "[%s seq=%d] %s\n", ev.Type, seq, string(ev.Payload))
@@ -267,7 +268,7 @@ func runPrompt(sock, text string) error {
 	}
 	defer c.close()
 
-	if _, err := c.call("session/subscribe", nil); err != nil {
+	if _, err := c.call(api.MethodSessionSubscribe, nil); err != nil {
 		return fmt.Errorf("session/subscribe: %w", err)
 	}
 
@@ -276,7 +277,7 @@ func runPrompt(sock, text string) error {
 	turnEnd := startNotificationPrinter(ctx, c)
 	drainTurnEnd(turnEnd)
 
-	result, err := c.call("session/prompt", map[string]string{"prompt": text})
+	result, err := c.call(api.MethodSessionPrompt, map[string]string{"prompt": text})
 	if err != nil {
 		return fmt.Errorf("session/prompt: %w", err)
 	}
@@ -319,7 +320,7 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 			defer c.close()
-			result, err := c.call("runtime/status", nil)
+			result, err := c.call(api.MethodRuntimeStatus, nil)
 			if err != nil {
 				return err
 			}
@@ -346,7 +347,7 @@ func NewCommand() *cobra.Command {
 			if cmd.Flags().Changed("from-seq") {
 				params["fromSeq"] = fromSeq
 			}
-			result, err := c.call("runtime/history", params)
+			result, err := c.call(api.MethodRuntimeHistory, params)
 			if err != nil {
 				return err
 			}
@@ -394,7 +395,7 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 			defer c.close()
-			_, err = c.call("runtime/stop", nil)
+			_, err = c.call(api.MethodRuntimeStop, nil)
 			if err == nil {
 				fmt.Println("stop sent")
 			}

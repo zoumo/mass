@@ -15,12 +15,12 @@ import (
 
 	"github.com/sourcegraph/jsonrpc2"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	apiari "github.com/open-agent-d/open-agent-d/api/ari"
-	"github.com/open-agent-d/open-agent-d/api/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/agentd"
-	"github.com/open-agent-d/open-agent-d/pkg/store"
-	"github.com/open-agent-d/open-agent-d/pkg/workspace"
+	"github.com/zoumo/oar/api"
+	apiari "github.com/zoumo/oar/api/ari"
+	"github.com/zoumo/oar/api/meta"
+	"github.com/zoumo/oar/pkg/agentd"
+	"github.com/zoumo/oar/pkg/store"
+	"github.com/zoumo/oar/pkg/workspace"
 )
 
 // Server is a JSON-RPC 2.0 server that exposes workspace/*, agentrun/*, and
@@ -179,45 +179,45 @@ func (s *Server) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 
 	switch req.Method {
 	// workspace/*
-	case "workspace/create":
+	case api.MethodWorkspaceCreate:
 		s.handleWorkspaceCreate(ctx, conn, req)
-	case "workspace/status":
+	case api.MethodWorkspaceStatus:
 		s.handleWorkspaceStatus(ctx, conn, req)
-	case "workspace/list":
+	case api.MethodWorkspaceList:
 		s.handleWorkspaceList(ctx, conn, req)
-	case "workspace/delete":
+	case api.MethodWorkspaceDelete:
 		s.handleWorkspaceDelete(ctx, conn, req)
-	case "workspace/send":
+	case api.MethodWorkspaceSend:
 		s.handleWorkspaceSend(ctx, conn, req)
 
 	// agentrun/* — running agent instance methods
-	case "agentrun/create":
+	case api.MethodAgentRunCreate:
 		s.handleAgentRunCreate(ctx, conn, req)
-	case "agentrun/prompt":
+	case api.MethodAgentRunPrompt:
 		s.handleAgentRunPrompt(ctx, conn, req)
-	case "agentrun/cancel":
+	case api.MethodAgentRunCancel:
 		s.handleAgentRunCancel(ctx, conn, req)
-	case "agentrun/stop":
+	case api.MethodAgentRunStop:
 		s.handleAgentRunStop(ctx, conn, req)
-	case "agentrun/delete":
+	case api.MethodAgentRunDelete:
 		s.handleAgentRunDelete(ctx, conn, req)
-	case "agentrun/restart":
+	case api.MethodAgentRunRestart:
 		s.handleAgentRunRestart(ctx, conn, req)
-	case "agentrun/list":
+	case api.MethodAgentRunList:
 		s.handleAgentRunList(ctx, conn, req)
-	case "agentrun/status":
+	case api.MethodAgentRunStatus:
 		s.handleAgentRunStatus(ctx, conn, req)
-	case "agentrun/attach":
+	case api.MethodAgentRunAttach:
 		s.handleAgentRunAttach(ctx, conn, req)
 
 	// agent/* — agent template (configuration) CRUD methods
-	case "agent/set":
+	case api.MethodAgentSet:
 		s.handleAgentSet(ctx, conn, req)
-	case "agent/get":
+	case api.MethodAgentGet:
 		s.handleAgentGet(ctx, conn, req)
-	case "agent/list":
+	case api.MethodAgentList:
 		s.handleAgentList(ctx, conn, req)
-	case "agent/delete":
+	case api.MethodAgentDelete:
 		s.handleAgentDelete(ctx, conn, req)
 
 	default:

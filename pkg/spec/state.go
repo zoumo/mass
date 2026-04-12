@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	apispec "github.com/zoumo/oar/api/spec"
 )
 
 const (

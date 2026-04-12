@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/open-agent-d/open-agent-d/api/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/store"
-	"github.com/open-agent-d/open-agent-d/pkg/workspace"
+	"github.com/zoumo/oar/api/meta"
+	"github.com/zoumo/oar/pkg/store"
+	"github.com/zoumo/oar/pkg/workspace"
 )
 
 // TestRegistryRebuildFromDB verifies that RebuildFromDB loads ready workspaces

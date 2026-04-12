@@ -1,0 +1,275 @@
+package events
+
+import (
+	"encoding/json"
+	"testing"
+
+	acp "github.com/coder/acp-go-sdk"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// jsonKeys returns the top-level keys of a JSON object, ignoring sessionUpdate.
+func jsonKeys(t *testing.T, v any) map[string]bool {
+	t.Helper()
+	b, err := json.Marshal(v)
+	require.NoError(t, err)
+	var m map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(b, &m))
+	keys := make(map[string]bool, len(m))
+	for k := range m {
+		if k == "sessionUpdate" {
+			continue // omit the ACP wire discriminator per design
+		}
+		keys[k] = true
+	}
+	return keys
+}
+
+// ── Test 16: ContentBlock JSON shape alignment ────────────────────────────────
+
+func TestWireShape_ContentBlock_Text(t *testing.T) {
+	// Note: ACP SDK ContentBlock.MarshalJSON builds a selective nm map that
+	// intentionally excludes _meta and annotations from the union wire shape.
+	// OAR preserves _meta (design principle #2). To test structural key layout
+	// alignment (type + required fields), we use inputs without Meta.
+	acpObj := acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}}
+	oarObj := ContentBlock{Text: &TextContent{Text: "hello"}}
+	acpKeys := jsonKeys(t, acpObj)
+	oarKeys := jsonKeys(t, oarObj)
+	assert.Equal(t, acpKeys, oarKeys, "ContentBlock text variant structural key layout mismatch")
+	assert.True(t, acpKeys["type"], "type discriminator must be present")
+	assert.True(t, acpKeys["text"], "text field must be present")
+}
+
+func TestWireShape_ContentBlock_Image(t *testing.T) {
+	uri := "https://x.com/img.png"
+	acpObj := acp.ContentBlock{Image: &acp.ContentBlockImage{
+		Data: "b64", MimeType: "image/png", Uri: &uri,
+	}}
+	oarObj := ContentBlock{Image: &ImageContent{
+		Data: "b64", MimeType: "image/png", URI: &uri,
+	}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock image variant")
+}
+
+func TestWireShape_ContentBlock_Audio(t *testing.T) {
+	acpObj := acp.ContentBlock{Audio: &acp.ContentBlockAudio{Data: "d", MimeType: "audio/ogg"}}
+	oarObj := ContentBlock{Audio: &AudioContent{Data: "d", MimeType: "audio/ogg"}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock audio variant")
+}
+
+func TestWireShape_ContentBlock_ResourceLink(t *testing.T) {
+	acpObj := acp.ContentBlock{ResourceLink: &acp.ContentBlockResourceLink{
+		Uri: "file:///a", Name: "a",
+	}}
+	oarObj := ContentBlock{ResourceLink: &ResourceLinkContent{URI: "file:///a", Name: "a"}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock resource_link variant")
+}
+
+func TestWireShape_ContentBlock_Resource(t *testing.T) {
+	acpObj := acp.ContentBlock{Resource: &acp.ContentBlockResource{
+		Resource: acp.EmbeddedResourceResource{
+			TextResourceContents: &acp.TextResourceContents{Uri: "file:///a", Text: "x"},
+		},
+	}}
+	oarObj := ContentBlock{Resource: &ResourceContent{
+		Resource: EmbeddedResource{TextResource: &TextResourceContents{URI: "file:///a", Text: "x"}},
+	}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock resource variant")
+}
+
+// ── Test 17: ToolCallContent JSON shape alignment ─────────────────────────────
+
+func TestWireShape_ToolCallContent_Content(t *testing.T) {
+	acpObj := acp.ToolCallContent{Content: &acp.ToolCallContentContent{
+		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hi"}},
+	}}
+	oarObj := ToolCallContent{Content: &ToolCallContentContent{
+		Content: ContentBlock{Text: &TextContent{Text: "hi"}},
+	}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ToolCallContent content variant")
+}
+
+func TestWireShape_ToolCallContent_Diff(t *testing.T) {
+	acpObj := acp.ToolCallContent{Diff: &acp.ToolCallContentDiff{Path: "a.go", NewText: "x"}}
+	oarObj := ToolCallContent{Diff: &ToolCallContentDiff{Path: "a.go", NewText: "x"}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ToolCallContent diff variant")
+}
+
+func TestWireShape_ToolCallContent_Terminal(t *testing.T) {
+	acpObj := acp.ToolCallContent{Terminal: &acp.ToolCallContentTerminal{TerminalId: "t1"}}
+	oarObj := ToolCallContent{Terminal: &ToolCallContentTerminal{TerminalID: "t1"}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ToolCallContent terminal variant")
+}
+
+// ── Test 18: AvailableCommandInput JSON shape alignment ───────────────────────
+
+func TestWireShape_AvailableCommandInput_Unstructured(t *testing.T) {
+	acpObj := acp.AvailableCommandInput{
+		Unstructured: &acp.UnstructuredCommandInput{Hint: "flags here"},
+	}
+	oarObj := AvailableCommandInput{
+		Unstructured: &UnstructuredCommandInput{Hint: "flags here"},
+	}
+	acpKeys := jsonKeys(t, acpObj)
+	oarKeys := jsonKeys(t, oarObj)
+	assert.Equal(t, acpKeys, oarKeys, "AvailableCommandInput unstructured variant")
+	// Must be flat {"hint":"..."} — no type field, no nesting.
+	assert.True(t, acpKeys["hint"], "hint field must be present")
+	assert.False(t, acpKeys["type"], "type field must NOT be present (no discriminator)")
+	assert.False(t, acpKeys["unstructured"], "no nesting wrapper")
+}
+
+// ── Test 19: ConfigOption JSON shape alignment ────────────────────────────────
+
+func TestWireShape_ConfigOption_Select_Ungrouped(t *testing.T) {
+	ungrouped := acp.SessionConfigSelectOptionsUngrouped([]acp.SessionConfigSelectOption{
+		{Name: "fast", Value: "fast"},
+	})
+	acpObj := acp.SessionConfigOption{Select: &acp.SessionConfigOptionSelect{
+		Id: "model", Name: "Model", CurrentValue: "fast",
+		Options: acp.SessionConfigSelectOptions{Ungrouped: &ungrouped},
+	}}
+	oarObj := ConfigOption{Select: &ConfigOptionSelect{
+		ID: "model", Name: "Model", CurrentValue: "fast",
+		Options: ConfigSelectOptions{Ungrouped: []ConfigSelectOption{{Name: "fast", Value: "fast"}}},
+	}}
+
+	acpKeys := jsonKeys(t, acpObj)
+	oarKeys := jsonKeys(t, oarObj)
+	assert.Equal(t, acpKeys, oarKeys, "ConfigOption select variant top-level keys")
+	assert.True(t, acpKeys["type"], "type discriminator must be present")
+	assert.True(t, acpKeys["id"])
+	assert.True(t, acpKeys["options"])
+
+	// Check options wire shape: must be bare array.
+	acpOptJSON, _ := json.Marshal(acpObj)
+	var acpMap map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(acpOptJSON, &acpMap))
+	var acpOpts []json.RawMessage
+	require.NoError(t, json.Unmarshal(acpMap["options"], &acpOpts), "options must be bare array")
+
+	oarOptJSON, _ := json.Marshal(oarObj)
+	var oarMap map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(oarOptJSON, &oarMap))
+	var oarOpts []json.RawMessage
+	require.NoError(t, json.Unmarshal(oarMap["options"], &oarOpts), "options must be bare array")
+}
+
+func TestWireShape_ConfigOption_Select_Grouped(t *testing.T) {
+	grouped := acp.SessionConfigSelectOptionsGrouped([]acp.SessionConfigSelectGroup{
+		{Group: "g1", Name: "Group 1", Options: []acp.SessionConfigSelectOption{{Name: "opt", Value: "opt"}}},
+	})
+	acpObj := acp.SessionConfigOption{Select: &acp.SessionConfigOptionSelect{
+		Id: "model", Name: "Model", CurrentValue: "opt",
+		Options: acp.SessionConfigSelectOptions{Grouped: &grouped},
+	}}
+	oarObj := ConfigOption{Select: &ConfigOptionSelect{
+		ID: "model", Name: "Model", CurrentValue: "opt",
+		Options: ConfigSelectOptions{Grouped: []ConfigSelectGroup{
+			{Group: "g1", Name: "Group 1", Options: []ConfigSelectOption{{Name: "opt", Value: "opt"}}},
+		}},
+	}}
+
+	acpKeys := jsonKeys(t, acpObj)
+	oarKeys := jsonKeys(t, oarObj)
+	assert.Equal(t, acpKeys, oarKeys, "ConfigOption select+grouped top-level keys")
+
+	// options must be bare array of group objects.
+	acpOptJSON, _ := json.Marshal(acpObj)
+	var acpMap map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(acpOptJSON, &acpMap))
+	var acpOpts []json.RawMessage
+	require.NoError(t, json.Unmarshal(acpMap["options"], &acpOpts))
+	var grp map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(acpOpts[0], &grp))
+	assert.Contains(t, grp, "group")
+	assert.Contains(t, grp, "options")
+}
+
+// ── Test 20: EmbeddedResource JSON shape alignment ────────────────────────────
+
+func TestWireShape_EmbeddedResource_Text(t *testing.T) {
+	acpObj := acp.EmbeddedResourceResource{
+		TextResourceContents: &acp.TextResourceContents{Uri: "file:///a", Text: "hello"},
+	}
+	oarObj := EmbeddedResource{
+		TextResource: &TextResourceContents{URI: "file:///a", Text: "hello"},
+	}
+	acpKeys := jsonKeys(t, acpObj)
+	oarKeys := jsonKeys(t, oarObj)
+	assert.Equal(t, acpKeys, oarKeys, "EmbeddedResource text variant")
+	assert.True(t, acpKeys["text"], "text field must be present")
+	assert.True(t, acpKeys["uri"], "uri field must be present")
+	assert.False(t, acpKeys["type"], "type discriminator must NOT be present")
+}
+
+func TestWireShape_EmbeddedResource_Blob(t *testing.T) {
+	acpObj := acp.EmbeddedResourceResource{
+		BlobResourceContents: &acp.BlobResourceContents{Uri: "file:///img.png", Blob: "b64"},
+	}
+	oarObj := EmbeddedResource{
+		BlobResource: &BlobResourceContents{URI: "file:///img.png", Blob: "b64"},
+	}
+	acpKeys := jsonKeys(t, acpObj)
+	oarKeys := jsonKeys(t, oarObj)
+	assert.Equal(t, acpKeys, oarKeys, "EmbeddedResource blob variant")
+	assert.True(t, acpKeys["blob"], "blob field must be present")
+	assert.False(t, acpKeys["type"], "no type discriminator")
+}
+
+// ── Test 21: Union empty variant marshal errors ───────────────────────────────
+
+func TestWireShape_UnionEmptyVariant_MarshalErrors(t *testing.T) {
+	t.Run("ContentBlock empty", func(t *testing.T) {
+		_, err := json.Marshal(ContentBlock{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ContentBlock")
+	})
+	t.Run("ToolCallContent empty", func(t *testing.T) {
+		_, err := json.Marshal(ToolCallContent{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ToolCallContent")
+	})
+	t.Run("EmbeddedResource empty", func(t *testing.T) {
+		_, err := json.Marshal(EmbeddedResource{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "EmbeddedResource")
+	})
+	t.Run("ConfigOption empty", func(t *testing.T) {
+		_, err := json.Marshal(ConfigOption{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ConfigOption")
+	})
+	t.Run("AvailableCommandInput empty", func(t *testing.T) {
+		_, err := json.Marshal(AvailableCommandInput{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "AvailableCommandInput")
+	})
+}
+
+// ── Test 22: Union unknown type unmarshal errors ──────────────────────────────
+
+func TestWireShape_UnionUnknownType_UnmarshalErrors(t *testing.T) {
+	t.Run("ContentBlock unknown type", func(t *testing.T) {
+		var cb ContentBlock
+		err := json.Unmarshal([]byte(`{"type":"video","data":"x"}`), &cb)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ContentBlock")
+		assert.Contains(t, err.Error(), "video")
+	})
+	t.Run("ToolCallContent unknown type", func(t *testing.T) {
+		var tc ToolCallContent
+		err := json.Unmarshal([]byte(`{"type":"unknown_variant"}`), &tc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ToolCallContent")
+	})
+	t.Run("ConfigOption unknown type", func(t *testing.T) {
+		var co ConfigOption
+		err := json.Unmarshal([]byte(`{"type":"checkbox","id":"x"}`), &co)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ConfigOption")
+		assert.Contains(t, err.Error(), "checkbox")
+	})
+}

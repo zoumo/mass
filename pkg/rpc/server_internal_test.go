@@ -7,7 +7,7 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/pkg/shimapi"
+	"github.com/zoumo/oar/pkg/shimapi"
 )
 
 func TestUnmarshalParams_MissingParams(t *testing.T) {

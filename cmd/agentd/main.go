@@ -5,7 +5,7 @@ package main
 import (
 	"os"
 
-	"github.com/open-agent-d/open-agent-d/cmd/agentd/subcommands"
+	"github.com/zoumo/oar/cmd/agentd/subcommands"
 )
 
 func main() {

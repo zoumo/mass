@@ -11,12 +11,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
-	"github.com/open-agent-d/open-agent-d/internal/logging"
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/rpc"
-	"github.com/open-agent-d/open-agent-d/pkg/runtime"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	apispec "github.com/zoumo/oar/api/spec"
+	"github.com/zoumo/oar/internal/logging"
+	"github.com/zoumo/oar/pkg/events"
+	"github.com/zoumo/oar/pkg/rpc"
+	"github.com/zoumo/oar/pkg/runtime"
+	"github.com/zoumo/oar/pkg/spec"
 )
 
 // NewCommand returns the "shim" cobra command.

@@ -4,8 +4,8 @@
 package shimapi
 
 import (
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
-	"github.com/open-agent-d/open-agent-d/pkg/events"
+	apispec "github.com/zoumo/oar/api/spec"
+	"github.com/zoumo/oar/pkg/events"
 )
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -6,8 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/api/ari"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/ari"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
 )
 
 // NewCommand returns the "daemon" cobra command.
@@ -35,7 +36,7 @@ func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
 			defer client.Close()
 
 			var result ari.AgentRunListResult
-			if err := client.Call("agent/list", ari.AgentRunListParams{}, &result); err != nil {
+			if err := client.Call(api.MethodAgentList, ari.AgentRunListParams{}, &result); err != nil {
 				fmt.Println("daemon: not running")
 				fmt.Fprintf(cmd.ErrOrStderr(), "Error: %v\n", err)
 				return nil

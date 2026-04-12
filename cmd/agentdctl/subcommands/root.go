@@ -6,14 +6,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/agent"
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/agentrun"
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/daemon"
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/shim"
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/up"
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/workspace"
-	ariclient "github.com/open-agent-d/open-agent-d/pkg/ari"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/agent"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/agentrun"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/daemon"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/shim"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/up"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/workspace"
+	ariclient "github.com/zoumo/oar/pkg/ari"
 )
 
 // NewRootCommand returns the agentdctl root cobra command.

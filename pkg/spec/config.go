@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	apispec "github.com/zoumo/oar/api/spec"
 )
 
 // ParseConfig reads and unmarshals config.json from bundlePath.

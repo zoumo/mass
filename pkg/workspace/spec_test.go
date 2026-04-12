@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/open-agent-d/open-agent-d/pkg/workspace"
+	"github.com/zoumo/oar/pkg/workspace"
 )
 
 // validWorkspaceSpec returns a WorkspaceSpec that passes all validation rules.

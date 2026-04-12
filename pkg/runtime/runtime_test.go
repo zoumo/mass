@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	pkgruntime "github.com/open-agent-d/open-agent-d/pkg/runtime"
-	"github.com/open-agent-d/open-agent-d/api"
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
+	pkgruntime "github.com/zoumo/oar/pkg/runtime"
+	"github.com/zoumo/oar/api"
+	apispec "github.com/zoumo/oar/api/spec"
 )
 
 var mockAgentBin string
@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 
 	binPath := filepath.Join(tmpDir, "mockagent")
 	cmd := exec.Command("go", "build", "-o", binPath,
-		"github.com/open-agent-d/open-agent-d/internal/testutil/mockagent")
+		"github.com/zoumo/oar/internal/testutil/mockagent")
 	cmd.Dir = repoRoot
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

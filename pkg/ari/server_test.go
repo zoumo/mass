@@ -18,14 +18,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	apiari "github.com/open-agent-d/open-agent-d/api/ari"
-	"github.com/open-agent-d/open-agent-d/api/meta"
-	"github.com/open-agent-d/open-agent-d/pkg/agentd"
-	"github.com/open-agent-d/open-agent-d/pkg/ari"
-	"github.com/open-agent-d/open-agent-d/pkg/events"
-	"github.com/open-agent-d/open-agent-d/pkg/store"
-	"github.com/open-agent-d/open-agent-d/pkg/workspace"
+	"github.com/zoumo/oar/api"
+	apiari "github.com/zoumo/oar/api/ari"
+	"github.com/zoumo/oar/api/meta"
+	"github.com/zoumo/oar/pkg/agentd"
+	"github.com/zoumo/oar/pkg/ari"
+	"github.com/zoumo/oar/pkg/events"
+	"github.com/zoumo/oar/pkg/store"
+	"github.com/zoumo/oar/pkg/workspace"
 )
 
 // ────────────────────────────────────────────────────────────────────────────

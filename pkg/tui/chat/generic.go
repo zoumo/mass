@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/stringext"
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/stringext"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
 )
 
 // GenericToolMessageItem is a message item that represents an unknown tool call.

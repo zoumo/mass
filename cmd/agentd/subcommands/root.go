@@ -4,9 +4,9 @@ package subcommands
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/open-agent-d/open-agent-d/cmd/agentd/subcommands/server"
-	"github.com/open-agent-d/open-agent-d/cmd/agentd/subcommands/shim"
-	"github.com/open-agent-d/open-agent-d/cmd/agentd/subcommands/workspacemcp"
+	"github.com/zoumo/oar/cmd/agentd/subcommands/server"
+	"github.com/zoumo/oar/cmd/agentd/subcommands/shim"
+	"github.com/zoumo/oar/cmd/agentd/subcommands/workspacemcp"
 )
 
 // NewRootCommand returns the agentd root cobra command.

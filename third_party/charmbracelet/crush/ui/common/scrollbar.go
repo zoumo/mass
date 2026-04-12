@@ -3,7 +3,7 @@ package common
 import (
 	"strings"
 
-	"github.com/open-agent-d/open-agent-d/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
 )
 
 // Scrollbar renders a vertical scrollbar based on content and viewport size.

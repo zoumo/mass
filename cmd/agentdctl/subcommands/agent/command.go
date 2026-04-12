@@ -8,9 +8,10 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/open-agent-d/open-agent-d/api/meta"
-	"github.com/open-agent-d/open-agent-d/cmd/agentdctl/subcommands/cliutil"
-	"github.com/open-agent-d/open-agent-d/api/ari"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/ari"
+	"github.com/zoumo/oar/api/meta"
+	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
 )
 
 // NewCommand returns the "agent" cobra command.
@@ -62,7 +63,7 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 				StartupTimeoutSeconds: ag.Spec.StartupTimeoutSeconds,
 			}
 			var result ari.AgentInfo
-			if err := client.Call("agent/set", params, &result); err != nil {
+			if err := client.Call(api.MethodAgentSet, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -90,7 +91,7 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			params := ari.AgentGetParams{Name: name}
 			var result ari.AgentGetResult
-			if err := client.Call("agent/get", params, &result); err != nil {
+			if err := client.Call(api.MethodAgentGet, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -116,7 +117,7 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 			defer client.Close()
 
 			var result ari.AgentListResult
-			if err := client.Call("agent/list", ari.AgentListParams{}, &result); err != nil {
+			if err := client.Call(api.MethodAgentList, ari.AgentListParams{}, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -139,7 +140,7 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call("agent/delete", ari.AgentDeleteParams{Name: name}, nil); err != nil {
+			if err := client.Call(api.MethodAgentDelete, ari.AgentDeleteParams{Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

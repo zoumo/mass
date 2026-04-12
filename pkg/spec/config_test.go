@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	apispec "github.com/zoumo/oar/api/spec"
+	"github.com/zoumo/oar/pkg/spec"
 )
 
 // validConfig returns a Config that passes all validation rules.

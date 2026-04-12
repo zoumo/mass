@@ -9,7 +9,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/open-agent-d/open-agent-d/pkg/ndjson"
+	"github.com/zoumo/oar/pkg/ndjson"
 )
 
 // EventLog appends replayable notification envelopes to a JSONL file.

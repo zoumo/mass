@@ -18,9 +18,9 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	apispec "github.com/open-agent-d/open-agent-d/api/spec"
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/zoumo/oar/api"
+	apispec "github.com/zoumo/oar/api/spec"
+	"github.com/zoumo/oar/pkg/spec"
 )
 
 // StateChange describes an externally visible runtime lifecycle transition.

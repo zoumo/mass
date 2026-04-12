@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/pkg/spec"
+	"github.com/zoumo/oar/pkg/spec"
 )
 
 func TestExampleBundlesAreValid(t *testing.T) {

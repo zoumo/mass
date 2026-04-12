@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/open-agent-d/open-agent-d/api"
-	"github.com/open-agent-d/open-agent-d/api/meta"
+	"github.com/zoumo/oar/api"
+	"github.com/zoumo/oar/api/meta"
 )
 
 // makeAgentRun returns a minimal valid AgentRun for test use.
