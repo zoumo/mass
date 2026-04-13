@@ -26,7 +26,7 @@ Not provided.
   - Files: `pkg/shim/server/service.go`, `pkg/shim/client/client.go`
   - Verify: go build ./pkg/shim/...
 
-- [ ] **T02: Create pkg/ari/server/ split implementations** `est:2h`
+- [x] **T02: Create pkg/ari/server/ split implementations** `est:2h`
   Split pkg/ari/server.go into pkg/ari/server/server.go (combined service implementing all 3 interfaces via one struct with shared deps). Register with jsonrpc.Server using api/ari Register functions.
   - Files: `pkg/ari/server/server.go`
   - Verify: go build ./pkg/ari/...
