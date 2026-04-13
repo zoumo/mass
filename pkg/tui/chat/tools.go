@@ -252,10 +252,8 @@ func (t *baseToolMessageItem) RawRender(width int) string {
 }
 
 // Render renders the tool message item at the given width.
-// Uses a colored left border (▌) consistent with our unified style.
+// Uses the unified Block component with colored left border.
 func (t *baseToolMessageItem) Render(width int) string {
-	raw := t.RawRender(width)
-
 	// Pick border color based on status.
 	var borderColor color.Color
 	switch t.computeStatus() {
@@ -267,12 +265,31 @@ func (t *baseToolMessageItem) Render(width int) string {
 		borderColor = t.sty.FgMuted
 	}
 
-	border := lipgloss.NewStyle().Foreground(borderColor).Render("▌")
-	lines := strings.Split(raw, "\n")
-	for i, ln := range lines {
-		lines[i] = border + " " + ln
+	// Build label from icon + tool name + params (the header line).
+	raw := t.RawRender(width)
+	// RawRender returns header + body. Split to extract header as label
+	// and body as detail.
+	header, detail := splitToolHeaderBody(raw)
+
+	return RenderBlock(BlockConfig{
+		Border: &BorderConfig{Char: "▌", Color: borderColor},
+		Label: &LabelConfig{
+			Text:  header,
+			Style: lipgloss.NewStyle(),
+		},
+		Detail: detail,
+	})
+}
+
+// splitToolHeaderBody splits RawRender output into header (first line)
+// and body (remaining lines after the blank separator).
+func splitToolHeaderBody(raw string) (header, body string) {
+	parts := strings.SplitN(raw, "\n\n", 2)
+	header = parts[0]
+	if len(parts) > 1 {
+		body = parts[1]
 	}
-	return strings.Join(lines, "\n")
+	return header, body
 }
 
 // ToolCall returns the tool call associated with this message item.

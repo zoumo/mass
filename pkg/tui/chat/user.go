@@ -35,7 +35,6 @@ func (m *UserMessageItem) RawRender(width int) string {
 	cappedWidth := cappedMessageWidth(width)
 
 	content, height, ok := m.getCachedRender(cappedWidth)
-	// cache hit
 	if ok {
 		return m.renderHighlighted(content, cappedWidth, height)
 	}
@@ -58,24 +57,16 @@ func (m *UserMessageItem) RawRender(width int) string {
 // Render implements list.Item.
 func (m *UserMessageItem) Render(width int) string {
 	cappedWidth := cappedMessageWidth(width)
-	rawContent := m.RawRender(width)
-
-	label := lipgloss.NewStyle().Bold(true).Foreground(m.sty.Primary).Render("[User]")
-	text := label + "\n" + rawContent
-
-	// Apply background to each line individually so the color fills the
-	// full width consistently, even when ANSI-styled content varies in
-	// visible length.
-	lineStyle := lipgloss.NewStyle().
-		Background(m.sty.BgBaseLighter).
-		Width(cappedWidth).
-		PaddingLeft(1).PaddingRight(1)
-
-	lines := strings.Split(text, "\n")
-	for i, ln := range lines {
-		lines[i] = lineStyle.Render(ln)
-	}
-	return strings.Join(lines, "\n")
+	bg := m.sty.BgBaseLighter
+	return RenderBlock(BlockConfig{
+		Label: &LabelConfig{
+			Text:  "[User]",
+			Style: lipgloss.NewStyle().Bold(true).Foreground(m.sty.Primary),
+		},
+		Body:       m.RawRender(width),
+		Background: &bg,
+		Width:      cappedWidth,
+	})
 }
 
 // ID implements Identifiable.

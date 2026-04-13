@@ -13,11 +13,7 @@ import (
 	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
 )
 
-// assistantMessageTruncateFormat is the text shown when an assistant message is
-// truncated.
 const assistantMessageTruncateFormat = "... (%d lines hidden) [click or space to expand]"
-
-// maxCollapsedThinkingHeight defines the maximum height of the thinking
 const maxCollapsedThinkingHeight = 10
 
 // AssistantMessageItem represents an assistant message in the chat UI.
@@ -30,7 +26,7 @@ type AssistantMessageItem struct {
 	sty               *styles.Styles
 	anim              *anim.Anim
 	thinkingExpanded  bool
-	thinkingBoxHeight int // Tracks the rendered thinking box height for click detection.
+	thinkingBoxHeight int
 }
 
 // NewAssistantMessageItem creates a new AssistantMessageItem.
@@ -42,7 +38,6 @@ func NewAssistantMessageItem(sty *styles.Styles, message Message) MessageItem {
 		message:                  message,
 		sty:                      sty,
 	}
-
 	a.anim = anim.New(anim.Settings{
 		ID:          a.ID(),
 		Size:        15,
@@ -54,7 +49,6 @@ func NewAssistantMessageItem(sty *styles.Styles, message Message) MessageItem {
 	return a
 }
 
-// StartAnimation starts the assistant message animation if it should be spinning.
 func (a *AssistantMessageItem) StartAnimation() tea.Cmd {
 	if !a.isSpinning() {
 		return nil
@@ -62,7 +56,6 @@ func (a *AssistantMessageItem) StartAnimation() tea.Cmd {
 	return a.anim.Start()
 }
 
-// Animate progresses the assistant message animation if it should be spinning.
 func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
 	if !a.isSpinning() {
 		return nil
@@ -70,7 +63,6 @@ func (a *AssistantMessageItem) Animate(msg anim.StepMsg) tea.Cmd {
 	return a.anim.Animate(msg)
 }
 
-// ID implements Identifiable.
 func (a *AssistantMessageItem) ID() string {
 	return a.message.GetID()
 }
@@ -86,76 +78,78 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 
 	content, height, ok := a.getCachedRender(cappedWidth)
 	if !ok {
-		content = a.renderMessageContent(cappedWidth)
+		content = a.renderTextContent(cappedWidth)
 		height = lipgloss.Height(content)
-		// cache the rendered content
 		a.setCachedRender(content, cappedWidth, height)
 	}
 
-	highlightedContent := a.renderHighlighted(content, cappedWidth, height)
+	highlighted := a.renderHighlighted(content, cappedWidth, height)
 	if spinner != "" {
-		if highlightedContent != "" {
-			highlightedContent += "\n\n"
+		if highlighted != "" {
+			highlighted += "\n\n"
 		}
-		return highlightedContent + spinner
+		return highlighted + spinner
 	}
-
-	return highlightedContent
+	return highlighted
 }
 
 // Render implements list.Item.
 func (a *AssistantMessageItem) Render(width int) string {
-	// If spinning (no content yet), show just the animation without [Agent] label.
+	// Spinning: show just the animation, no block.
 	if a.isSpinning() {
-		return a.RawRender(width)
+		return "  " + a.RawRender(width)
 	}
 
-	rendered := a.RawRender(width)
-
-	// Skip empty messages (e.g., finished with no text after a tool call).
-	if strings.TrimSpace(rendered) == "" {
+	body := a.renderTextContent(cappedMessageWidth(width))
+	if strings.TrimSpace(body) == "" {
 		return ""
 	}
 
-	// Add [Agent] label on first line.
-	label := lipgloss.NewStyle().Bold(true).Foreground(a.sty.GreenDark).Render("[Agent]")
-	return label + "\n" + rendered
+	// Thinking goes into Detail.
+	var detail string
+	thinkingFaint := lipgloss.NewStyle().Faint(true)
+	thinking := strings.TrimSpace(a.message.ReasoningContent().Thinking)
+	if thinking != "" {
+		detail = a.renderThinkingText(thinking, cappedMessageWidth(width))
+	}
+
+	return RenderBlock(BlockConfig{
+		Border: &BorderConfig{Char: "▌", Color: a.sty.Primary},
+		Body:   body,
+		Detail:      detail,
+		DetailStyle: &thinkingFaint,
+	})
 }
 
-// renderMessageContent renders the message content including thinking, main content, and finish reason.
-func (a *AssistantMessageItem) renderMessageContent(width int) string {
-	var messageParts []string
-	thinking := strings.TrimSpace(a.message.ReasoningContent().Thinking)
+// renderTextContent renders only the text content (no thinking).
+func (a *AssistantMessageItem) renderTextContent(width int) string {
+	var parts []string
+
 	content := strings.TrimSpace(a.message.Content().Text)
-	// if the message has reasoning content add that first
-	if thinking != "" {
-		messageParts = append(messageParts, a.renderThinking(a.message.ReasoningContent().Thinking, width))
-	}
-
-	// then add the main content
 	if content != "" {
-		// add a spacer between thinking and content
-		if thinking != "" {
-			messageParts = append(messageParts, "")
+		renderer := common.MarkdownRenderer(a.sty, width)
+		result, err := renderer.Render(content)
+		if err != nil {
+			parts = append(parts, content)
+		} else {
+			parts = append(parts, strings.TrimSuffix(result, "\n"))
 		}
-		messageParts = append(messageParts, a.renderMarkdown(content, width))
 	}
 
-	// finally add any finish reason info
 	if a.message.IsFinished() {
 		switch a.message.FinishReason() {
 		case FinishReasonCanceled:
-			messageParts = append(messageParts, a.sty.Base.Italic(true).Render("Canceled"))
+			parts = append(parts, a.sty.Base.Italic(true).Render("Canceled"))
 		case FinishReasonError:
-			messageParts = append(messageParts, a.renderError(width))
+			parts = append(parts, a.renderError(width))
 		}
 	}
 
-	return strings.Join(messageParts, "\n")
+	return strings.Join(parts, "\n")
 }
 
-// renderThinking renders the thinking/reasoning content with [Think] label and faint style.
-func (a *AssistantMessageItem) renderThinking(thinking string, width int) string {
+// renderThinkingText renders thinking content for the Detail section.
+func (a *AssistantMessageItem) renderThinkingText(thinking string, width int) string {
 	renderer := common.PlainMarkdownRenderer(a.sty, width)
 	rendered, err := renderer.Render(thinking)
 	if err != nil {
@@ -164,48 +158,26 @@ func (a *AssistantMessageItem) renderThinking(thinking string, width int) string
 	rendered = strings.TrimSpace(rendered)
 
 	lines := strings.Split(rendered, "\n")
-	totalLines := len(lines)
-
-	isTruncated := totalLines > maxCollapsedThinkingHeight
-	if !a.thinkingExpanded && isTruncated {
-		lines = lines[totalLines-maxCollapsedThinkingHeight:]
-		hint := a.sty.Chat.Message.ThinkingTruncationHint.Render(
-			fmt.Sprintf(assistantMessageTruncateFormat, totalLines-maxCollapsedThinkingHeight),
-		)
+	total := len(lines)
+	if !a.thinkingExpanded && total > maxCollapsedThinkingHeight {
+		lines = lines[total-maxCollapsedThinkingHeight:]
+		hint := fmt.Sprintf(assistantMessageTruncateFormat, total-maxCollapsedThinkingHeight)
 		lines = append([]string{hint, ""}, lines...)
 	}
+	a.thinkingBoxHeight = len(lines)
 
-	// Add [Think] label and render with faint style
-	thinkLabel := lipgloss.NewStyle().Faint(true).Bold(true).Render("[Think]")
-	thinkContent := lipgloss.NewStyle().Faint(true).Render(strings.Join(lines, "\n"))
+	result := strings.Join(lines, "\n")
 
-	result := thinkLabel + "\n" + thinkContent
-	a.thinkingBoxHeight = lipgloss.Height(result)
-
-	var footer string
 	if !a.message.IsThinking() || len(a.message.ToolCalls()) > 0 {
 		duration := a.message.ThinkingDuration()
 		if duration.String() != "0s" {
-			footer = a.sty.Chat.Message.ThinkingFooterTitle.Render("Thought for ") +
+			footer := a.sty.Chat.Message.ThinkingFooterTitle.Render("Thought for ") +
 				a.sty.Chat.Message.ThinkingFooterDuration.Render(duration.String())
+			result += "\n" + footer
 		}
 	}
 
-	if footer != "" {
-		result += "\n" + footer
-	}
-
 	return result
-}
-
-// renderMarkdown renders content as markdown.
-func (a *AssistantMessageItem) renderMarkdown(content string, width int) string {
-	renderer := common.MarkdownRenderer(a.sty, width)
-	result, err := renderer.Render(content)
-	if err != nil {
-		return content
-	}
-	return strings.TrimSuffix(result, "\n")
 }
 
 func (a *AssistantMessageItem) renderSpinning() string {
@@ -217,7 +189,6 @@ func (a *AssistantMessageItem) renderSpinning() string {
 	return a.anim.Render()
 }
 
-// renderError renders an error message.
 func (a *AssistantMessageItem) renderError(width int) string {
 	finishPart := a.message.FinishPart()
 	if finishPart == nil {
@@ -230,8 +201,6 @@ func (a *AssistantMessageItem) renderError(width int) string {
 	return fmt.Sprintf("%s\n\n%s", title, details)
 }
 
-// isSpinning returns true if the assistant message is still generating
-// and has no renderable content yet.
 func (a *AssistantMessageItem) isSpinning() bool {
 	isThinking := a.message.IsThinking()
 	isFinished := a.message.IsFinished()
@@ -241,7 +210,6 @@ func (a *AssistantMessageItem) isSpinning() bool {
 	return (isThinking || !isFinished) && !hasContent && !hasThinking && !hasToolCalls
 }
 
-// SetMessage is used to update the underlying message.
 func (a *AssistantMessageItem) SetMessage(message Message) tea.Cmd {
 	wasSpinning := a.isSpinning()
 	a.message = message
@@ -252,13 +220,11 @@ func (a *AssistantMessageItem) SetMessage(message Message) tea.Cmd {
 	return nil
 }
 
-// ToggleExpanded toggles the expanded state of the thinking box.
 func (a *AssistantMessageItem) ToggleExpanded() {
 	a.thinkingExpanded = !a.thinkingExpanded
 	a.clearCache()
 }
 
-// HandleMouseClick implements MouseClickable.
 func (a *AssistantMessageItem) HandleMouseClick(btn ansi.MouseButton, x, y int) bool {
 	if btn != ansi.MouseLeft {
 		return false

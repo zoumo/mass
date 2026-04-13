@@ -586,6 +586,15 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			}
 		}
 		// else: late join — no matching tool_call, skip silently
+
+	case api.EventTypePlan:
+		var pl struct {
+			Entries []chat.PlanEntry `json:"entries"`
+		}
+		_ = json.Unmarshal(p.Event.Payload, &pl)
+		if len(pl.Entries) > 0 {
+			m.chat.AppendMessages(chat.NewPlanItem(m.nextID("plan"), pl.Entries, m.sty.Info))
+		}
 	}
 
 	if len(cmds) > 0 {
