@@ -103,7 +103,7 @@ func createWorkspace(client *ariclient.Client, cfg Config) error {
 	if err := client.Call(api.MethodWorkspaceCreate, params, &result); err != nil {
 		return fmt.Errorf("workspace/create: %w", err)
 	}
-	fmt.Printf("Workspace %q created (phase: %s)\n", result.Name, result.Phase)
+	fmt.Printf("Workspace %q created (phase: %s)\n", result.Workspace.Metadata.Name, result.Workspace.Status.Phase)
 	return nil
 }
 
@@ -115,9 +115,9 @@ func waitWorkspaceReady(client *ariclient.Client, name string) error {
 		if err := client.Call(api.MethodWorkspaceStatus, ari.WorkspaceStatusParams{Name: name}, &result); err != nil {
 			return fmt.Errorf("workspace/status: %w", err)
 		}
-		switch result.Phase {
+		switch result.Workspace.Status.Phase {
 		case "ready":
-			fmt.Printf("Workspace %q is ready (path: %s)\n", name, result.Path)
+			fmt.Printf("Workspace %q is ready (path: %s)\n", name, result.Workspace.Status.Path)
 			return nil
 		case "error":
 			return fmt.Errorf("workspace %q entered error state", name)
@@ -137,7 +137,7 @@ func createAgentRun(client *ariclient.Client, wsName string, a AgentRunEntry) er
 	if err := client.Call(api.MethodAgentRunCreate, params, &result); err != nil {
 		return fmt.Errorf("agentrun/create %q: %w", a.Metadata.Name, err)
 	}
-	fmt.Printf("Agent run %q/%q created (state: %s)\n", wsName, a.Metadata.Name, result.State)
+	fmt.Printf("Agent run %q/%q created (state: %s)\n", wsName, a.Metadata.Name, result.AgentRun.Status.State)
 	return nil
 }
 
@@ -149,12 +149,12 @@ func waitAgentIdle(client *ariclient.Client, wsName, agName string) error {
 		if err := client.Call(api.MethodAgentRunStatus, ari.AgentRunStatusParams{Workspace: wsName, Name: agName}, &result); err != nil {
 			return fmt.Errorf("agentrun/status %q: %w", agName, err)
 		}
-		switch result.AgentRun.State {
+		switch result.AgentRun.Status.State {
 		case "idle":
 			fmt.Printf("Agent %q/%q is idle\n", wsName, agName)
 			return nil
 		case "error":
-			return fmt.Errorf("agent %q/%q entered error state: %s", wsName, agName, result.AgentRun.ErrorMessage)
+			return fmt.Errorf("agent %q/%q entered error state: %s", wsName, agName, result.AgentRun.Status.ErrorMessage)
 		case "stopped":
 			return fmt.Errorf("agent %q/%q stopped unexpectedly", wsName, agName)
 		}

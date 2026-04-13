@@ -19,11 +19,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/oar/api"
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/rpc"
 	pkgruntime "github.com/zoumo/oar/pkg/runtime"
-	"github.com/zoumo/oar/pkg/shimapi"
+	"github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/spec"
 )
 
@@ -52,68 +52,60 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func testConfig(name string) apispec.Config {
-	return apispec.Config{
+func testConfig(name string) apiruntime.Config {
+	return apiruntime.Config{
 		OarVersion: "0.1.0",
-		Metadata:   apispec.Metadata{Name: name},
-		AgentRoot:  apispec.AgentRoot{Path: "workspace"},
-		AcpAgent: apispec.AcpAgent{
-			Process: apispec.AcpProcess{Command: mockAgentBin, Args: []string{}},
+		Metadata:   apiruntime.Metadata{Name: name},
+		AgentRoot:  apiruntime.AgentRoot{Path: "workspace"},
+		AcpAgent: apiruntime.AcpAgent{
+			Process: apiruntime.AcpProcess{Command: mockAgentBin, Args: []string{}},
 		},
-		Permissions: apispec.ApproveAll,
+		Permissions: apiruntime.ApproveAll,
 	}
 }
 
 type notifHandler struct {
 	mu   sync.Mutex
-	evts []events.Envelope
-	ch   chan events.Envelope
+	evts []events.ShimEvent
+	ch   chan events.ShimEvent
 }
 
 func newNotifHandler() *notifHandler {
-	return &notifHandler{ch: make(chan events.Envelope, 128)}
+	return &notifHandler{ch: make(chan events.ShimEvent, 128)}
 }
 
 func (h *notifHandler) Handle(_ context.Context, _ *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	if !req.Notif {
 		return
 	}
-	if req.Method != events.MethodSessionUpdate && req.Method != events.MethodRuntimeStateChange {
+	if req.Method != api.MethodShimEvent {
 		return
 	}
 	if req.Params == nil {
 		return
 	}
 
-	wire, err := json.Marshal(struct {
-		Method string          `json:"method"`
-		Params json.RawMessage `json:"params"`
-	}{Method: req.Method, Params: *req.Params})
-	if err != nil {
-		return
-	}
-
-	var env events.Envelope
-	if err := json.Unmarshal(wire, &env); err != nil {
+	var ev events.ShimEvent
+	if err := json.Unmarshal(*req.Params, &ev); err != nil {
 		return
 	}
 
 	h.mu.Lock()
-	h.evts = append(h.evts, env)
+	h.evts = append(h.evts, ev)
 	h.mu.Unlock()
 	select {
-	case h.ch <- env:
+	case h.ch <- ev:
 	default:
 	}
 }
 
-func (h *notifHandler) collect(want int, timeout time.Duration) []events.Envelope {
-	var out []events.Envelope
+func (h *notifHandler) collect(want int, timeout time.Duration) []events.ShimEvent {
+	var out []events.ShimEvent
 	deadline := time.After(timeout)
 	for len(out) < want {
 		select {
-		case env := <-h.ch:
-			out = append(out, env)
+		case ev := <-h.ch:
+			out = append(out, ev)
 		case <-deadline:
 			return out
 		}
@@ -139,7 +131,7 @@ func newServerHarness(t *testing.T) *serverHarness {
 	return newServerHarnessWithConfig(t, testConfig(t.Name()))
 }
 
-func newServerHarnessWithConfig(t *testing.T, cfg apispec.Config) *serverHarness {
+func newServerHarnessWithConfig(t *testing.T, cfg apiruntime.Config) *serverHarness {
 	t.Helper()
 
 	bundleDir, err := os.MkdirTemp("", "oad-bnd-")
@@ -239,12 +231,12 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 	client := h.dial(t, notifH)
 
 	t.Run("subscribe and status", func(t *testing.T) {
-		var subResult shimapi.SessionSubscribeResult
+		var subResult shim.SessionSubscribeResult
 		err := client.Call(ctx, "session/subscribe", nil, &subResult)
 		require.NoError(t, err)
 		require.Equal(t, 0, subResult.NextSeq)
 
-		var status shimapi.RuntimeStatusResult
+		var status shim.RuntimeStatusResult
 		err = client.Call(ctx, "runtime/status", nil, &status)
 		require.NoError(t, err)
 		require.Equal(t, api.StatusIdle, status.State.Status)
@@ -252,41 +244,41 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 	})
 
 	t.Run("prompt history and recovery metadata", func(t *testing.T) {
-		var promptResult shimapi.SessionPromptResult
-		err := client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: "hello"}, &promptResult)
+		var promptResult shim.SessionPromptResult
+		err := client.Call(ctx, "session/prompt", shim.SessionPromptParams{Prompt: "hello"}, &promptResult)
 		require.NoError(t, err)
 		require.Equal(t, "end_turn", promptResult.StopReason)
 
 		live := notifH.collect(6, 10*time.Second)
 		require.Len(t, live, 6)
-		sortEnvelopesBySeq(live)
+		sortShimEventsBySeq(live)
 
-		seq0, err := live[0].Seq()
-		require.NoError(t, err)
-		require.Equal(t, 0, seq0)
+		require.Equal(t, 0, live[0].Seq)
 		// live[0]=turn_start, live[1]=user_message, live[2]=stateChange(idle→running),
 		// live[3]=text(mock response), live[4]=stateChange(running→idle),
 		// live[5]=turn_end
-		require.Equal(t, events.MethodSessionUpdate, live[0].Method)
-		require.Equal(t, events.MethodSessionUpdate, live[1].Method)       // user_message
-		require.Equal(t, events.MethodRuntimeStateChange, live[2].Method)
-		require.Equal(t, events.MethodRuntimeStateChange, live[4].Method)
+		require.Equal(t, "turn_start", live[0].Type)
+		require.Equal(t, "user_message", live[1].Type)
+		require.Equal(t, api.CategoryRuntime, live[2].Category)
+		require.Equal(t, api.CategoryRuntime, live[4].Category)
 
-		// Assert turn_start (live[0]) has TurnId
-		ts := live[0].Params.(events.SessionUpdateParams)
-		require.NotEmpty(t, ts.TurnID)
-		// Assert all session/update events in turn share the same TurnId
+		// Assert turn_start (live[0]) has TurnID
+		require.NotEmpty(t, live[0].TurnID)
+		// Assert all session events in turn share the same TurnID
 		for _, idx := range []int{0, 1, 3, 5} {
-			p := live[idx].Params.(events.SessionUpdateParams)
-			require.Equal(t, ts.TurnID, p.TurnID, "live[%d] TurnId mismatch", idx)
+			require.Equal(t, live[0].TurnID, live[idx].TurnID, "live[%d] TurnID mismatch", idx)
 		}
 
-		var history shimapi.RuntimeHistoryResult
-		err = client.Call(ctx, "runtime/history", shimapi.RuntimeHistoryParams{FromSeq: intPtr(0)}, &history)
+		var history shim.RuntimeHistoryResult
+		err = client.Call(ctx, "runtime/history", shim.RuntimeHistoryParams{FromSeq: intPtr(0)}, &history)
 		require.NoError(t, err)
-		require.Equal(t, live, history.Entries)
+		require.Len(t, history.Entries, len(live), "history must have same count as live events")
+		for i := range live {
+			require.Equal(t, live[i].Seq, history.Entries[i].Seq, "history entry %d seq mismatch", i)
+			require.Equal(t, live[i].Type, history.Entries[i].Type, "history entry %d type mismatch", i)
+		}
 
-		var status shimapi.RuntimeStatusResult
+		var status shim.RuntimeStatusResult
 		err = client.Call(ctx, "runtime/status", nil, &status)
 		require.NoError(t, err)
 		require.Equal(t, api.StatusIdle, status.State.Status)
@@ -299,37 +291,33 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		backfillNotifs := newNotifHandler()
 		backfillClient := h.dial(t, backfillNotifs)
 
-		var subResult shimapi.SessionSubscribeResult
+		var subResult shim.SessionSubscribeResult
 		fromSeq := 0
-		err := backfillClient.Call(ctx, "session/subscribe", shimapi.SessionSubscribeParams{FromSeq: &fromSeq}, &subResult)
+		err := backfillClient.Call(ctx, "session/subscribe", shim.SessionSubscribeParams{FromSeq: &fromSeq}, &subResult)
 		require.NoError(t, err)
 		require.Len(t, subResult.Entries, 6, "expected 6 backfill entries from first prompt")
-		sortEnvelopesBySeq(subResult.Entries)
-		for i, env := range subResult.Entries {
-			seq, seqErr := env.Seq()
-			require.NoError(t, seqErr)
-			require.Equal(t, i, seq, "backfill entry %d has wrong seq", i)
+		sortShimEventsBySeq(subResult.Entries)
+		for i, ev := range subResult.Entries {
+			require.Equal(t, i, ev.Seq, "backfill entry %d has wrong seq", i)
 		}
 
 		// Trigger a second prompt and assert live events arrive.
-		var promptResult shimapi.SessionPromptResult
-		err = client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: "second"}, &promptResult)
+		var promptResult shim.SessionPromptResult
+		err = client.Call(ctx, "session/prompt", shim.SessionPromptParams{Prompt: "second"}, &promptResult)
 		require.NoError(t, err)
 		require.Equal(t, "end_turn", promptResult.StopReason)
 
 		live := backfillNotifs.collect(6, 10*time.Second)
 		require.Len(t, live, 6, "expected 6 live events from second prompt")
 		for _, env := range live {
-			seq, seqErr := env.Seq()
-			require.NoError(t, seqErr)
-			require.GreaterOrEqual(t, seq, 6, "live events should have seq >= 6")
+			require.GreaterOrEqual(t, env.Seq, 6, "live events should have seq >= 6")
 		}
 	})
 
 	t.Run("subscribe afterSeq filters prior history", func(t *testing.T) {
 		// Get the current nextSeq from status so the afterSeq floor is correct
 		// even if earlier subtests generated additional events.
-		var curStatus shimapi.RuntimeStatusResult
+		var curStatus shim.RuntimeStatusResult
 		err := client.Call(ctx, "runtime/status", nil, &curStatus)
 		require.NoError(t, err)
 		afterSeq := curStatus.Recovery.LastSeq
@@ -337,8 +325,8 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		secondaryNotifs := newNotifHandler()
 		secondaryClient := h.dial(t, secondaryNotifs)
 
-		var subResult shimapi.SessionSubscribeResult
-		err = secondaryClient.Call(ctx, "session/subscribe", shimapi.SessionSubscribeParams{AfterSeq: &afterSeq}, &subResult)
+		var subResult shim.SessionSubscribeResult
+		err = secondaryClient.Call(ctx, "session/subscribe", shim.SessionSubscribeParams{AfterSeq: &afterSeq}, &subResult)
 		require.NoError(t, err)
 		require.Equal(t, afterSeq+1, subResult.NextSeq)
 
@@ -348,17 +336,15 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		case <-time.After(200 * time.Millisecond):
 		}
 
-		var promptResult shimapi.SessionPromptResult
-		err = client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: "again"}, &promptResult)
+		var promptResult shim.SessionPromptResult
+		err = client.Call(ctx, "session/prompt", shim.SessionPromptParams{Prompt: "again"}, &promptResult)
 		require.NoError(t, err)
 		require.Equal(t, "end_turn", promptResult.StopReason)
 
 		live := secondaryNotifs.collect(5, 10*time.Second)
 		require.Len(t, live, 5)
 		for _, env := range live {
-			seq, seqErr := env.Seq()
-			require.NoError(t, seqErr)
-			require.Greater(t, seq, afterSeq)
+			require.Greater(t, env.Seq, afterSeq)
 		}
 	})
 }
@@ -373,11 +359,11 @@ func TestRPCServer_DirectShimLiveOrdering(t *testing.T) {
 	notifH := newNotifHandler()
 	client := h.dialSerialized(t, notifH)
 
-	var subResult shimapi.SessionSubscribeResult
+	var subResult shim.SessionSubscribeResult
 	require.NoError(t, client.Call(ctx, "session/subscribe", nil, &subResult))
 
-	var promptResult shimapi.SessionPromptResult
-	require.NoError(t, client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{Prompt: "ordering"}, &promptResult))
+	var promptResult shim.SessionPromptResult
+	require.NoError(t, client.Call(ctx, "session/prompt", shim.SessionPromptParams{Prompt: "ordering"}, &promptResult))
 	require.Equal(t, "end_turn", promptResult.StopReason)
 
 	live := notifH.collect(24, 10*time.Second)
@@ -385,22 +371,16 @@ func TestRPCServer_DirectShimLiveOrdering(t *testing.T) {
 
 	lastSeq := -1
 	var textChunks []string
-	for _, env := range live {
-		seq, err := env.Seq()
-		require.NoError(t, err)
-		require.Equal(t, lastSeq+1, seq, "live notification seq must match receive order")
-		lastSeq = seq
+	for _, ev := range live {
+		require.Equal(t, lastSeq+1, ev.Seq, "live notification seq must match receive order")
+		lastSeq = ev.Seq
 
-		p, ok := env.Params.(events.SessionUpdateParams)
-		if !ok {
+		if ev.Type != "text" {
 			continue
 		}
-		if p.Event.Type != "text" {
-			continue
-		}
-		payload, ok := p.Event.Payload.(events.TextEvent)
+		te, ok := ev.Content.(events.TextEvent)
 		require.True(t, ok)
-		textChunks = append(textChunks, payload.Text)
+		textChunks = append(textChunks, te.Text)
 	}
 
 	require.Len(t, textChunks, 20)
@@ -428,39 +408,39 @@ func TestRPCServer_RejectsLegacyAndInvalidParams(t *testing.T) {
 	}
 
 	t.Run("session prompt missing params", func(t *testing.T) {
-		var result shimapi.SessionPromptResult
+		var result shim.SessionPromptResult
 		err := client.Call(ctx, "session/prompt", nil, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})
 
 	t.Run("session prompt empty prompt", func(t *testing.T) {
-		var result shimapi.SessionPromptResult
-		err := client.Call(ctx, "session/prompt", shimapi.SessionPromptParams{}, &result)
+		var result shim.SessionPromptResult
+		err := client.Call(ctx, "session/prompt", shim.SessionPromptParams{}, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})
 
 	t.Run("subscribe negative afterSeq", func(t *testing.T) {
-		var result shimapi.SessionSubscribeResult
+		var result shim.SessionSubscribeResult
 		neg := -1
-		err := client.Call(ctx, "session/subscribe", shimapi.SessionSubscribeParams{AfterSeq: &neg}, &result)
+		err := client.Call(ctx, "session/subscribe", shim.SessionSubscribeParams{AfterSeq: &neg}, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})
 
 	t.Run("subscribe negative fromSeq", func(t *testing.T) {
-		var result shimapi.SessionSubscribeResult
+		var result shim.SessionSubscribeResult
 		neg := -1
-		err := client.Call(ctx, "session/subscribe", shimapi.SessionSubscribeParams{FromSeq: &neg}, &result)
+		err := client.Call(ctx, "session/subscribe", shim.SessionSubscribeParams{FromSeq: &neg}, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})
 
 	t.Run("history negative fromSeq", func(t *testing.T) {
-		var result shimapi.RuntimeHistoryResult
+		var result shim.RuntimeHistoryResult
 		neg := -1
-		err := client.Call(ctx, "runtime/history", shimapi.RuntimeHistoryParams{FromSeq: &neg}, &result)
+		err := client.Call(ctx, "runtime/history", shim.RuntimeHistoryParams{FromSeq: &neg}, &result)
 		require.Error(t, err)
 		assertRPCCode(t, err, jsonrpc2.CodeInvalidParams)
 	})
@@ -501,14 +481,9 @@ func assertRPCCode(t *testing.T, err error, code int64) {
 	require.Equal(t, code, rpcErr.Code)
 }
 
-func sortEnvelopesBySeq(entries []events.Envelope) {
+func sortShimEventsBySeq(entries []events.ShimEvent) {
 	sort.Slice(entries, func(i, j int) bool {
-		left, leftErr := entries[i].Seq()
-		right, rightErr := entries[j].Seq()
-		if leftErr != nil || rightErr != nil {
-			return i < j
-		}
-		return left < right
+		return entries[i].Seq < entries[j].Seq
 	})
 }
 

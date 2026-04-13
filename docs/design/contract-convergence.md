@@ -11,7 +11,7 @@ This file is the slice-level authority map for the design set. It names which do
 | Workspace preparation and host-impact rules | `docs/design/workspace/workspace-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/agentd/ari-spec.md` | local workspace, hook execution, env precedence, and shared workspace semantics must tell one safety story. |
 | Agent configuration CRUD | `docs/design/agentd/ari-spec.md` | `docs/design/agentd/agentd.md` | `agent/*` methods manage Agent records (set/get/list/delete). No runtime process is involved. |
 | AgentRun lifecycle (running instances) | `docs/design/agentd/ari-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/runtime/agent-shim.md` | ARI exposes `agentrun/*` methods for the lifecycle of running agent instances. Workspace-scoped message routing is via `workspace/send`. |
-| Shim control, replay, and reconnect contract | `docs/design/runtime/shim-rpc-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/agent-shim.md`, `docs/design/agentd/agentd.md` | The clean-break shim surface is `session/*` + `runtime/*` (internal); runtime-spec owns state-dir / socket layout, shim-rpc-spec owns recovery method semantics. |
+| Shim control, replay, and reconnect contract | `docs/design/runtime/shim-rpc-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/agent-shim.md`, `docs/design/agentd/agentd.md` | The clean-break shim surface: request/response is `session/*` + `runtime/*` (internal); notification surface is `shim/event`. runtime-spec owns state-dir / socket layout, shim-rpc-spec owns recovery method semantics. |
 
 ## Current Implementation Vocabulary
 
@@ -51,7 +51,7 @@ Invariant wording:
 - AgentRun identity = `workspace` + `name` (stable external key).
 - OAR AgentRun identity is not ACP session identity.
 - `systemPrompt` is bootstrap configuration, not a hidden work turn.
-- The shim surface (`session/*` + `runtime/*`) is UNCHANGED; it remains an internal agentd↔shim protocol.
+- The shim request/response surface (`session/*` + `runtime/*`) is UNCHANGED; it remains an internal agentd↔shim protocol. The notification surface is unified as `shim/event`.
 
 ## AgentRun State Machine
 

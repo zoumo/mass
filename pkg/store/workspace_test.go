@@ -5,15 +5,15 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 )
 
 // makeWorkspace returns a minimal valid Workspace for test use.
-func makeWorkspace(name string) *meta.Workspace {
-	return &meta.Workspace{
-		Metadata: meta.ObjectMeta{Name: name},
-		Spec:     meta.WorkspaceSpec{},
-		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhasePending},
+func makeWorkspace(name string) *apiari.Workspace {
+	return &apiari.Workspace{
+		Metadata: apiari.ObjectMeta{Name: name},
+		Spec:     apiari.WorkspaceSpec{},
+		Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhasePending},
 	}
 }
 
@@ -41,7 +41,7 @@ func TestCreateWorkspace_Duplicate(t *testing.T) {
 
 func TestCreateWorkspace_MissingName(t *testing.T) {
 	s := tempStore(t)
-	err := s.CreateWorkspace(t.Context(), &meta.Workspace{})
+	err := s.CreateWorkspace(t.Context(), &apiari.Workspace{})
 	require.Error(t, err)
 }
 
@@ -81,9 +81,9 @@ func TestListWorkspaces_FilterByPhase(t *testing.T) {
 	wsReady := makeWorkspace("ready-ws")
 	require.NoError(t, s.CreateWorkspace(t.Context(), wsReady))
 	require.NoError(t, s.UpdateWorkspaceStatus(t.Context(), "ready-ws",
-		meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady, Path: "/tmp/ready"}))
+		apiari.WorkspaceStatus{Phase: apiari.WorkspacePhaseReady, Path: "/tmp/ready"}))
 
-	ready, err := s.ListWorkspaces(t.Context(), &meta.WorkspaceFilter{Phase: meta.WorkspacePhaseReady})
+	ready, err := s.ListWorkspaces(t.Context(), &apiari.WorkspaceFilter{Phase: apiari.WorkspacePhaseReady})
 	require.NoError(t, err)
 	require.Len(t, ready, 1)
 	require.Equal(t, "ready-ws", ready[0].Metadata.Name)
@@ -102,21 +102,21 @@ func TestUpdateWorkspaceStatus(t *testing.T) {
 	s := tempStore(t)
 	require.NoError(t, s.CreateWorkspace(t.Context(), makeWorkspace("ws-update")))
 
-	newStatus := meta.WorkspaceStatus{
-		Phase: meta.WorkspacePhaseReady,
+	newStatus := apiari.WorkspaceStatus{
+		Phase: apiari.WorkspacePhaseReady,
 		Path:  "/data/ready-ws",
 	}
 	require.NoError(t, s.UpdateWorkspaceStatus(t.Context(), "ws-update", newStatus))
 
 	got, err := s.GetWorkspace(t.Context(), "ws-update")
 	require.NoError(t, err)
-	require.Equal(t, meta.WorkspacePhaseReady, got.Status.Phase)
+	require.Equal(t, apiari.WorkspacePhaseReady, got.Status.Phase)
 	require.Equal(t, "/data/ready-ws", got.Status.Path)
 }
 
 func TestUpdateWorkspaceStatus_NotFound(t *testing.T) {
 	s := tempStore(t)
-	err := s.UpdateWorkspaceStatus(t.Context(), "ghost", meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady})
+	err := s.UpdateWorkspaceStatus(t.Context(), "ghost", apiari.WorkspaceStatus{Phase: apiari.WorkspacePhaseReady})
 	require.Error(t, err)
 }
 
@@ -143,9 +143,9 @@ func TestDeleteWorkspace_WithAgents(t *testing.T) {
 
 	require.NoError(t, s.CreateWorkspace(t.Context(), makeWorkspace("ws-with-agents")))
 
-	agent := &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: "ws-with-agents", Name: "agent1"},
-		Spec:     meta.AgentRunSpec{Agent: "default"},
+	agent := &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: "ws-with-agents", Name: "agent1"},
+		Spec:     apiari.AgentRunSpec{Agent: "default"},
 	}
 	require.NoError(t, s.CreateAgentRun(t.Context(), agent))
 

@@ -71,14 +71,14 @@ func setupAgentdTestWithRuntimeClass(
 
 	// Register the agent template via agent/set. Ensure the name field is set.
 	templateSpec.Name = runtimeClassName
-	var runtimeResult ari.AgentInfo
+	var runtimeResult ari.AgentSetResult
 	if err := client.Call("agent/set", templateSpec, &runtimeResult); err != nil {
 		cancel()
 		client.Close()
 		agentdCmd.Process.Kill()
 		t.Fatalf("failed to register runtime %q: %v", runtimeClassName, err)
 	}
-	t.Logf("runtime registered: name=%s command=%s", runtimeResult.Name, runtimeResult.Command)
+	t.Logf("runtime registered: name=%s command=%s", runtimeResult.Agent.Metadata.Name, runtimeResult.Agent.Spec.Command)
 
 	cleanup := func() {
 		client.Close()
@@ -123,9 +123,9 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ariclient.Clie
 	t.Log("Step 2: agent/create → poll until idle")
 	createResult := createAgentAndWait(t, client, wsName, agentName, runtimeClass)
 	t.Logf("agent ready: workspace=%s name=%s state=%s",
-		wsName, agentName, createResult.AgentRun.State)
-	if createResult.AgentRun.State != "idle" {
-		t.Fatalf("expected state=idle, got %s", createResult.AgentRun.State)
+		wsName, agentName, createResult.AgentRun.Status.State)
+	if createResult.AgentRun.Status.State != "idle" {
+		t.Fatalf("expected state=idle, got %s", createResult.AgentRun.Status.State)
 	}
 
 	// Step 3: agent/prompt — async dispatch; agent startup may take 10-30s for real CLIs
@@ -147,7 +147,7 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ariclient.Clie
 	t.Log("Step 4: poll agent/status until state=idle (turn completed)")
 	statusAfterTurn := waitForAgentState(t, client, wsName, agentName, "idle", 90*time.Second)
 	t.Logf("turn completed: workspace=%s name=%s state=%s",
-		wsName, agentName, statusAfterTurn.AgentRun.State)
+		wsName, agentName, statusAfterTurn.AgentRun.Status.State)
 
 	// Step 5: agent/status — verify shimState is non-nil (shim still running)
 	t.Log("Step 5: agent/status")
@@ -158,7 +158,7 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ariclient.Clie
 	}, &statusResult); err != nil {
 		t.Fatalf("agent/status failed: %v", err)
 	}
-	t.Logf("agent status: state=%s", statusResult.AgentRun.State)
+	t.Logf("agent status: state=%s", statusResult.AgentRun.Status.State)
 	if statusResult.ShimState != nil {
 		t.Logf("shimState: status=%s pid=%d", statusResult.ShimState.Status, statusResult.ShimState.PID)
 	}

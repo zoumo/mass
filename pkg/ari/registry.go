@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
 )
@@ -146,8 +146,8 @@ func (r *Registry) Release(id, agentKey string) int {
 func (r *Registry) RebuildFromDB(s *store.Store) error {
 	ctx := context.Background()
 
-	workspaces, err := s.ListWorkspaces(ctx, &meta.WorkspaceFilter{
-		Phase: meta.WorkspacePhaseReady,
+	workspaces, err := s.ListWorkspaces(ctx, &apiari.WorkspaceFilter{
+		Phase: apiari.WorkspacePhaseReady,
 	})
 	if err != nil {
 		return fmt.Errorf("ari: rebuild registry: list workspaces: %w", err)

@@ -1,6 +1,6 @@
 package api
 
-// Event type identifiers used in session/update payloads.
+// Event type identifiers used in shim/event payloads.
 const (
 	EventTypeText        = "text"
 	EventTypeThinking    = "thinking"
@@ -21,4 +21,15 @@ const (
 	EventTypeConfigOption      = "config_option"
 	EventTypeSessionInfo       = "session_info"
 	EventTypeUsage             = "usage"
+
+	// EventTypeStateChange is a runtime category event for process lifecycle transitions.
+	EventTypeStateChange = "state_change"
+)
+
+// Event category identifiers for ShimEvent.Category.
+const (
+	// CategorySession covers all ACP SessionUpdate translated events.
+	CategorySession = "session"
+	// CategoryRuntime covers runtime/process lifecycle events (state_change).
+	CategoryRuntime = "runtime"
 )

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
 )
@@ -30,28 +30,28 @@ func TestRegistryRebuildFromDB(t *testing.T) {
 		Type: workspace.SourceTypeGit,
 		Git:  workspace.GitSource{URL: "https://github.com/example/repo.git", Ref: "main", Depth: 1},
 	})
-	if err := store.CreateWorkspace(ctx, &meta.Workspace{
-		Metadata: meta.ObjectMeta{Name: "git-workspace"},
-		Spec:     meta.WorkspaceSpec{Source: src1JSON},
-		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady, Path: "/var/workspaces/git-workspace"},
+	if err := store.CreateWorkspace(ctx, &apiari.Workspace{
+		Metadata: apiari.ObjectMeta{Name: "git-workspace"},
+		Spec:     apiari.WorkspaceSpec{Source: src1JSON},
+		Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhaseReady, Path: "/var/workspaces/git-workspace"},
 	}); err != nil {
 		t.Fatalf("CreateWorkspace git-workspace: %v", err)
 	}
 
 	// Workspace 2: emptyDir source, phase=ready.
 	src2JSON, _ := json.Marshal(workspace.Source{Type: workspace.SourceTypeEmptyDir})
-	if err := store.CreateWorkspace(ctx, &meta.Workspace{
-		Metadata: meta.ObjectMeta{Name: "empty-workspace"},
-		Spec:     meta.WorkspaceSpec{Source: src2JSON},
-		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady, Path: "/var/workspaces/empty-workspace"},
+	if err := store.CreateWorkspace(ctx, &apiari.Workspace{
+		Metadata: apiari.ObjectMeta{Name: "empty-workspace"},
+		Spec:     apiari.WorkspaceSpec{Source: src2JSON},
+		Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhaseReady, Path: "/var/workspaces/empty-workspace"},
 	}); err != nil {
 		t.Fatalf("CreateWorkspace empty-workspace: %v", err)
 	}
 
 	// Workspace 3: phase=pending — should NOT appear after rebuild.
-	if err := store.CreateWorkspace(ctx, &meta.Workspace{
-		Metadata: meta.ObjectMeta{Name: "pending-workspace"},
-		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhasePending},
+	if err := store.CreateWorkspace(ctx, &apiari.Workspace{
+		Metadata: apiari.ObjectMeta{Name: "pending-workspace"},
+		Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhasePending},
 	}); err != nil {
 		t.Fatalf("CreateWorkspace pending-workspace: %v", err)
 	}

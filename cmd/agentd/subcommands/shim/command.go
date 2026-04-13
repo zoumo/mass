@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/internal/logging"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/rpc"
@@ -77,7 +77,7 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 		return err
 	}
 	if cmd.Flag("permissions").Changed {
-		cfg.Permissions = apispec.PermissionPolicy(permissions)
+		cfg.Permissions = apiruntime.PermissionPolicy(permissions)
 		if !cfg.Permissions.IsValid() {
 			return fmt.Errorf("invalid --permissions value %q: must be one of approve_all, approve_reads, deny_all", permissions)
 		}
@@ -108,6 +108,8 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 	defer evLog.Close()
 
 	trans := events.NewTranslator(id, mgr.Events(), evLog)
+	// Inject the ACP session ID now that Create() has completed the handshake.
+	trans.SetSessionID(mgr.SessionID())
 	mgr.SetStateChangeHook(func(change runtime.StateChange) {
 		trans.NotifyStateChange(change.PreviousStatus.String(), change.Status.String(), change.PID, change.Reason)
 	})

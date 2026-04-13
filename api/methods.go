@@ -13,8 +13,9 @@ const (
 
 // Shim notification methods.
 const (
-	MethodSessionUpdate      = "session/update"
-	MethodRuntimeStateChange = "runtime/state_change"
+	// MethodShimEvent is the unified notification method for all shim events.
+	// It replaces the former session/update and runtime/state_change notifications.
+	MethodShimEvent = "shim/event"
 )
 
 // ARI workspace methods (orchestrator ↔ agentd).

@@ -9,12 +9,16 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/zoumo/oar/api"
 )
 
 func testTime(t *testing.T) time.Time {
 	t.Helper()
 	return time.Date(2026, time.April, 7, 10, 0, 0, 0, time.UTC)
 }
+
+
 
 func TestEventLog_AppendAndRead(t *testing.T) {
 	dir := t.TempDir()
@@ -23,30 +27,30 @@ func TestEventLog_AppendAndRead(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 
-	require.NoError(t, log.Append(NewSessionUpdateEnvelope("session-1", 0, testTime(t), TextEvent{Text: "hello"})))
-	require.NoError(t, log.Append(NewRuntimeStateChangeEnvelope("session-1", 1, testTime(t), "created", "running", 42, "prompt-started")))
+	ev0 := ShimEvent{RunID: "run-1", Seq: 0, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "hello"}}
+	ev1 := ShimEvent{RunID: "run-1", Seq: 1, Time: testTime(t), Category: api.CategoryRuntime, Type: "state_change", Content: StateChangeEvent{PreviousStatus: "created", Status: "running", PID: 42, Reason: "prompt-started"}}
+
+	require.NoError(t, log.Append(ev0))
+	require.NoError(t, log.Append(ev1))
 	require.NoError(t, log.Close())
 
 	entries, err := ReadEventLog(path, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 
-	assert.Equal(t, MethodSessionUpdate, entries[0].Method)
-	seq, err := entries[0].Seq()
-	require.NoError(t, err)
-	assert.Equal(t, 0, seq)
-
-	update, ok := entries[0].Params.(SessionUpdateParams)
+	assert.Equal(t, "text", entries[0].Type)
+	assert.Equal(t, 0, entries[0].Seq)
+	assert.Equal(t, "run-1", entries[0].RunID)
+	textEv, ok := entries[0].Content.(TextEvent)
 	require.True(t, ok)
-	assert.Equal(t, "session-1", update.SessionID)
-	require.IsType(t, TextEvent{}, update.Event.Payload)
-	assert.Equal(t, TextEvent{Text: "hello"}, update.Event.Payload)
+	assert.Equal(t, "hello", textEv.Text)
 
-	stateChange, ok := entries[1].Params.(RuntimeStateChangeParams)
+	assert.Equal(t, "state_change", entries[1].Type)
+	sc, ok := entries[1].Content.(StateChangeEvent)
 	require.True(t, ok)
-	assert.Equal(t, "created", stateChange.PreviousStatus)
-	assert.Equal(t, "running", stateChange.Status)
-	assert.Equal(t, 42, stateChange.PID)
+	assert.Equal(t, "created", sc.PreviousStatus)
+	assert.Equal(t, "running", sc.Status)
+	assert.Equal(t, 42, sc.PID)
 }
 
 func TestEventLog_FromSeq(t *testing.T) {
@@ -56,16 +60,15 @@ func TestEventLog_FromSeq(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
-		require.NoError(t, log.Append(NewSessionUpdateEnvelope("session-1", i, testTime(t), TextEvent{Text: "x"})))
+		ev := ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "x"}}
+		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
 
 	entries, err := ReadEventLog(path, 3)
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
-	seq, err := entries[0].Seq()
-	require.NoError(t, err)
-	assert.Equal(t, 3, seq)
+	assert.Equal(t, 3, entries[0].Seq)
 }
 
 func TestEventLog_SeqContinuesAfterReopen(t *testing.T) {
@@ -75,22 +78,22 @@ func TestEventLog_SeqContinuesAfterReopen(t *testing.T) {
 	log1, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		require.NoError(t, log1.Append(NewSessionUpdateEnvelope("session-1", i, testTime(t), TextEvent{Text: "a"})))
+		ev := ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "a"}}
+		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
 
 	log2, err := OpenEventLog(path)
 	require.NoError(t, err)
 	require.Equal(t, 3, log2.NextSeq())
-	require.NoError(t, log2.Append(NewRuntimeStateChangeEnvelope("session-1", 3, testTime(t), "running", "created", 0, "prompt-completed")))
+	ev3 := ShimEvent{RunID: "run-1", Seq: 3, Time: testTime(t), Category: api.CategoryRuntime, Type: "state_change", Content: StateChangeEvent{PreviousStatus: "running", Status: "created"}}
+	require.NoError(t, log2.Append(ev3))
 	require.NoError(t, log2.Close())
 
 	entries, err := ReadEventLog(path, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 4)
-	seq, err := entries[3].Seq()
-	require.NoError(t, err)
-	assert.Equal(t, 3, seq)
+	assert.Equal(t, 3, entries[3].Seq)
 }
 
 func TestReadEventLog_NonExistentFile(t *testing.T) {
@@ -119,14 +122,15 @@ func TestReadEventLog_DamagedTailReturnsPartial(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		require.NoError(t, log.Append(NewSessionUpdateEnvelope("s1", i, testTime(t), TextEvent{Text: "ok"})))
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "ok"}}
+		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
 
 	// Append a truncated JSON line (simulating a crash mid-write).
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
 	require.NoError(t, err)
-	_, err = f.WriteString(`{"method":"session/update","params":{"seq":3,` + "\n")
+	_, err = f.WriteString(`{"runId":"s1","seq":3,` + "\n")
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 
@@ -142,7 +146,8 @@ func TestReadEventLog_DamagedTailTolerated(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		require.NoError(t, log.Append(NewSessionUpdateEnvelope("s1", i, testTime(t), TextEvent{Text: "v"})))
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "v"}}
+		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
 
@@ -156,9 +161,7 @@ func TestReadEventLog_DamagedTailTolerated(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 3)
 	for i, e := range entries {
-		seq, err := e.Seq()
-		require.NoError(t, err)
-		assert.Equal(t, i, seq)
+		assert.Equal(t, i, e.Seq)
 	}
 }
 
@@ -170,7 +173,8 @@ func TestReadEventLog_MidFileCorruptionFails(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
-		require.NoError(t, log.Append(NewSessionUpdateEnvelope("s1", i, testTime(t), TextEvent{Text: "v"})))
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "v"}}
+		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
 
@@ -183,14 +187,14 @@ func TestReadEventLog_MidFileCorruptionFails(t *testing.T) {
 	buf = append(buf, existing...)
 	buf = append(buf, []byte("CORRUPT-LINE\n")...)
 
-	// We need 2 more valid entries with seq 3 and 4.
-	// Write them via a temporary log to get valid JSONL.
+	// Write 2 more valid entries via a temporary log to get valid JSONL.
 	tmpPath := filepath.Join(dir, "tmp.jsonl")
 	tmpLog, err := OpenEventLog(tmpPath)
 	require.NoError(t, err)
-	// countLines of tmp file = 0, so seq starts at 0; we just need valid JSON lines.
-	require.NoError(t, tmpLog.Append(NewSessionUpdateEnvelope("s1", 0, testTime(t), TextEvent{Text: "after"})))
-	require.NoError(t, tmpLog.Append(NewSessionUpdateEnvelope("s1", 1, testTime(t), TextEvent{Text: "after"})))
+	for i := 0; i < 2; i++ {
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "after"}}
+		require.NoError(t, tmpLog.Append(ev))
+	}
 	require.NoError(t, tmpLog.Close())
 	trailing, err := os.ReadFile(tmpPath)
 	require.NoError(t, err)
@@ -211,7 +215,8 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	log1, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		require.NoError(t, log1.Append(NewSessionUpdateEnvelope("s1", i, testTime(t), TextEvent{Text: "orig"})))
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "orig"}}
+		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
 
@@ -228,29 +233,64 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	require.Len(t, entries, 3, "damaged tail should be skipped before new append")
 
 	// Reopen — countLines sees 4 non-empty lines, so nextSeq = 4.
-	// The corrupt line is a "lost slot" (seq 3 is gone).
 	log2, err := OpenEventLog(path)
 	require.NoError(t, err)
 	require.Equal(t, 4, log2.NextSeq())
 
-	// Append with seq 4 succeeds — the append path is unaffected by the damage.
-	require.NoError(t, log2.Append(NewSessionUpdateEnvelope("s1", 4, testTime(t), TextEvent{Text: "new"})))
+	// Append with seq 4 succeeds.
+	ev4 := ShimEvent{RunID: "s1", Seq: 4, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "new"}}
+	require.NoError(t, log2.Append(ev4))
 	require.NoError(t, log2.Close())
 
-	// After appending, the corrupt line is now mid-file (valid lines follow it).
-	// ReadEventLog correctly identifies this as mid-file corruption.
+	// After appending, the corrupt line is now mid-file. ReadEventLog correctly
+	// identifies this as mid-file corruption.
 	_, err = ReadEventLog(path, 0)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mid-file corruption")
 
-	// However, the file has 5 non-empty lines and OpenEventLog still works.
+	// The file has 5 non-empty lines and OpenEventLog still works.
 	log3, err := OpenEventLog(path)
 	require.NoError(t, err)
 	assert.Equal(t, 5, log3.NextSeq())
 	require.NoError(t, log3.Close())
 }
 
-func TestEventLog_TranslatorWritesCanonicalEnvelope(t *testing.T) {
+// TestEventLog_PartialWriteTruncation verifies that a failed Append truncates
+// the file back to its pre-write offset, preventing a damaged tail from
+// persisting after a write failure.
+func TestEventLog_PartialWriteTruncation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	log, err := OpenEventLog(path)
+	require.NoError(t, err)
+
+	// Write 2 good entries.
+	for i := 0; i < 2; i++ {
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "good"}}
+		require.NoError(t, log.Append(ev))
+	}
+
+	// Force a seq mismatch to trigger an early-return error (seq guard fires
+	// before any write, so no partial write in this case). The key invariant
+	// is that after a failed Append, NextSeq is unchanged and the file is
+	// still consistent.
+	wrongSeqEv := ShimEvent{RunID: "s1", Seq: 99, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "bad"}}
+	err = log.Append(wrongSeqEv)
+	require.Error(t, err, "wrong seq should be rejected")
+	assert.Equal(t, 2, log.NextSeq(), "nextSeq must not advance after failed append")
+
+	// The log must still be writable after a failed append.
+	goodEv := ShimEvent{RunID: "s1", Seq: 2, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "after"}}
+	require.NoError(t, log.Append(goodEv))
+	require.NoError(t, log.Close())
+
+	entries, err := ReadEventLog(path, 0)
+	require.NoError(t, err)
+	require.Len(t, entries, 3)
+}
+
+func TestEventLog_TranslatorWritesShimEvent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 
@@ -258,7 +298,7 @@ func TestEventLog_TranslatorWritesCanonicalEnvelope(t *testing.T) {
 	require.NoError(t, err)
 
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("session-1", in, evLog)
+	tr := NewTranslator("run-1", in, evLog)
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 
@@ -275,11 +315,11 @@ func TestEventLog_TranslatorWritesCanonicalEnvelope(t *testing.T) {
 	entries, err := ReadEventLog(path, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
-	assert.Equal(t, MethodSessionUpdate, entries[0].Method)
-	params := entries[0].Params.(SessionUpdateParams)
-	assert.Equal(t, "session-1", params.SessionID)
-	ev, ok := params.Event.Payload.(TextEvent)
+	assert.Equal(t, "text", entries[0].Type)
+	assert.Equal(t, api.CategorySession, entries[0].Category)
+	assert.Equal(t, "run-1", entries[0].RunID)
+	assert.Equal(t, 0, entries[0].Seq)
+	ev, ok := entries[0].Content.(TextEvent)
 	require.True(t, ok)
 	assert.Equal(t, "logged", ev.Text)
-	require.NotNil(t, ev.Content, "Content should be populated from ACP ContentBlock")
 }

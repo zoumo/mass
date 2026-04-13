@@ -140,16 +140,27 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 		if !ok {
 			return connClosedMsg{}
 		}
-		if isTurnEndNotification(msg) {
+		if msg.Method != api.MethodShimEvent {
+			return notifMsg{msg}
+		}
+		var ev shimEvent
+		if err := json.Unmarshal(msg.Params, &ev); err != nil {
+			return notifMsg{msg}
+		}
+		if ev.Type == api.EventTypeTurnEnd {
 			return turnEndMsg{}
 		}
-		if msg.Method == api.MethodRuntimeStateChange {
-			var p runtimeStateChangeParams
-			if err := json.Unmarshal(msg.Params, &p); err == nil {
+		if ev.Category == "runtime" && ev.Type == api.EventTypeStateChange {
+			var sc struct {
+				PreviousStatus string `json:"previousStatus"`
+				Status         string `json:"status"`
+				Reason         string `json:"reason,omitempty"`
+			}
+			if err := json.Unmarshal(ev.Content, &sc); err == nil {
 				return stateChangeMsg{
-					previous: p.PreviousStatus,
-					status:   p.Status,
-					reason:   p.Reason,
+					previous: sc.PreviousStatus,
+					status:   sc.Status,
+					reason:   sc.Reason,
 				}
 			}
 		}
@@ -474,17 +485,21 @@ func (m *chatModel) ensureCurrentMsg() tea.Cmd {
 }
 
 func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
-	if msg.Method != api.MethodSessionUpdate {
+	if msg.Method != api.MethodShimEvent {
 		return nil
 	}
-	var p sessionUpdateParams
-	if err := json.Unmarshal(msg.Params, &p); err != nil {
+	var ev shimEvent
+	if err := json.Unmarshal(msg.Params, &ev); err != nil {
+		return nil
+	}
+	// runtime category events are handled by waitNotif; skip here.
+	if ev.Category == "runtime" {
 		return nil
 	}
 
 	var cmds []tea.Cmd
 
-	switch p.Event.Type {
+	switch ev.Type {
 	case api.EventTypeUserMessage:
 		// User prompt broadcast. Skip if we sent this prompt (already shown).
 		if m.sentPrompt {
@@ -492,7 +507,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			break
 		}
 		var pl textPayload
-		_ = json.Unmarshal(p.Event.Payload, &pl)
+		_ = json.Unmarshal(ev.Content, &pl)
 		if pl.Text != "" {
 			userMsg := newShimMessage(m.nextID("user"), chat.RoleUser)
 			userMsg.text = pl.Text
@@ -502,7 +517,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 
 	case api.EventTypeText:
 		var pl textPayload
-		_ = json.Unmarshal(p.Event.Payload, &pl)
+		_ = json.Unmarshal(ev.Content, &pl)
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -511,7 +526,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 
 	case api.EventTypeThinking:
 		var pl textPayload
-		_ = json.Unmarshal(p.Event.Payload, &pl)
+		_ = json.Unmarshal(ev.Content, &pl)
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -520,7 +535,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 
 	case api.EventTypeToolCall:
 		var pl toolEventPayload
-		_ = json.Unmarshal(p.Event.Payload, &pl)
+		_ = json.Unmarshal(ev.Content, &pl)
 
 		// Finish current assistant text before tool.
 		if m.currentMsg != nil {
@@ -558,7 +573,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 
 	case api.EventTypeToolResult:
 		var pl toolEventPayload
-		_ = json.Unmarshal(p.Event.Payload, &pl)
+		_ = json.Unmarshal(ev.Content, &pl)
 
 		status := chat.ToolStatusSuccess
 		if pl.Status == "error" {
@@ -600,7 +615,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		var pl struct {
 			Entries []chat.PlanEntry `json:"entries"`
 		}
-		_ = json.Unmarshal(p.Event.Payload, &pl)
+		_ = json.Unmarshal(ev.Content, &pl)
 		if len(pl.Entries) > 0 {
 			m.chat.AppendMessages(chat.NewPlanItem(m.nextID("plan"), pl.Entries, m.sty.Info))
 		}

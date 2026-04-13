@@ -33,13 +33,13 @@ func TestRuntimeLifecycle(t *testing.T) {
 	if err := client.Call("agent/get", ari.AgentGetParams{Name: "mockagent"}, &getResult); err != nil {
 		t.Fatalf("runtime/get mockagent: %v", err)
 	}
-	if getResult.Agent.Name != "mockagent" {
-		t.Errorf("runtime/get: expected name=%q, got %q", "mockagent", getResult.Agent.Name)
+	if getResult.Agent.Metadata.Name != "mockagent" {
+		t.Errorf("runtime/get: expected name=%q, got %q", "mockagent", getResult.Agent.Metadata.Name)
 	}
-	if getResult.Agent.Command == "" {
+	if getResult.Agent.Spec.Command == "" {
 		t.Error("runtime/get: expected non-empty command")
 	}
-	t.Logf("runtime/get OK: name=%s command=%s", getResult.Agent.Name, getResult.Agent.Command)
+	t.Logf("runtime/get OK: name=%s command=%s", getResult.Agent.Metadata.Name, getResult.Agent.Spec.Command)
 
 	// ── Step 2: runtime/list → assert 1 entry ─────────────────────────────────
 	t.Log("Step 2: runtime/list")
@@ -50,7 +50,7 @@ func TestRuntimeLifecycle(t *testing.T) {
 	if len(listResult.Agents) != 1 {
 		t.Errorf("runtime/list: expected 1 runtime, got %d", len(listResult.Agents))
 	} else {
-		t.Logf("runtime/list OK: 1 runtime (%s)", listResult.Agents[0].Name)
+		t.Logf("runtime/list OK: 1 runtime (%s)", listResult.Agents[0].Metadata.Name)
 	}
 
 	// ── Step 3: workspace/create + agent/create → poll idle ───────────────────
@@ -64,10 +64,10 @@ func TestRuntimeLifecycle(t *testing.T) {
 	status := createAgentAndWait(t, client, wsName, agentName, "mockagent")
 
 	// ── Step 4: assert state == idle ──────────────────────────────────────────
-	if status.AgentRun.State != "idle" {
-		t.Errorf("agent/create: expected state=idle, got %s", status.AgentRun.State)
+	if status.AgentRun.Status.State != "idle" {
+		t.Errorf("agent/create: expected state=idle, got %s", status.AgentRun.Status.State)
 	} else {
-		t.Logf("agent reached idle ✓: workspace=%s name=%s state=%s", wsName, agentName, status.AgentRun.State)
+		t.Logf("agent reached idle ✓: workspace=%s name=%s state=%s", wsName, agentName, status.AgentRun.Status.State)
 	}
 
 	// Cleanup agent before deleting runtime

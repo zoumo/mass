@@ -20,7 +20,6 @@ import (
 
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
-	"github.com/zoumo/oar/api/meta"
 	"github.com/zoumo/oar/pkg/agentd"
 	"github.com/zoumo/oar/pkg/ari"
 	"github.com/zoumo/oar/pkg/events"
@@ -117,7 +116,7 @@ func waitUntilWorkspaceReady(t *testing.T, client *ari.Client, wsName string) {
 	require.Eventually(t, func() bool {
 		var res apiari.WorkspaceStatusResult
 		err := client.Call("workspace/status", map[string]string{"name": wsName}, &res)
-		return err == nil && res.Phase == "ready"
+		return err == nil && res.Workspace.Status.Phase == "ready"
 	}, 5*time.Second, 50*time.Millisecond, "workspace %s did not become ready", wsName)
 }
 
@@ -129,7 +128,7 @@ func createAndWaitWorkspace(t *testing.T, client *ari.Client, name string) apiar
 		"name":   name,
 		"source": json.RawMessage(`{"type":"emptyDir"}`),
 	}, &createResult))
-	assert.Equal(t, "pending", createResult.Phase)
+	assert.Equal(t, apiari.WorkspacePhasePending, createResult.Workspace.Status.Phase)
 
 	waitUntilWorkspaceReady(t, client, name)
 
@@ -142,13 +141,13 @@ func createAndWaitWorkspace(t *testing.T, client *ari.Client, name string) apiar
 // background shim start. Used to prime DB state for handler-only tests.
 func seedAgent(t *testing.T, store *store.Store, wsName, name string, state api.Status) {
 	t.Helper()
-	err := store.CreateAgentRun(context.Background(), &meta.AgentRun{
-		Metadata: meta.ObjectMeta{
+	err := store.CreateAgentRun(context.Background(), &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{
 			Name:      name,
 			Workspace: wsName,
 		},
-		Spec: meta.AgentRunSpec{Agent: "default"},
-		Status: meta.AgentRunStatus{
+		Spec: apiari.AgentRunSpec{Agent: "default"},
+		Status: apiari.AgentRunStatus{
 			State: state,
 		},
 	})
@@ -168,8 +167,8 @@ func TestWorkspaceCreatePending(t *testing.T) {
 		"source": json.RawMessage(`{"type":"emptyDir"}`),
 	}, &result)
 	require.NoError(t, err)
-	assert.Equal(t, "w1", result.Name)
-	assert.Equal(t, "pending", result.Phase)
+	assert.Equal(t, "w1", result.Workspace.Metadata.Name)
+	assert.Equal(t, apiari.WorkspacePhasePending, result.Workspace.Status.Phase)
 }
 
 func TestWorkspaceStatusReady(t *testing.T) {
@@ -177,8 +176,8 @@ func TestWorkspaceStatusReady(t *testing.T) {
 
 	statusResult := createAndWaitWorkspace(t, env.client, "w-ready")
 
-	assert.Equal(t, "ready", statusResult.Phase)
-	assert.NotEmpty(t, statusResult.Path, "ready workspace must have a path")
+	assert.Equal(t, apiari.WorkspacePhaseReady, statusResult.Workspace.Status.Phase)
+	assert.NotEmpty(t, statusResult.Workspace.Status.Path, "ready workspace must have a path")
 }
 
 func TestWorkspaceStatusMembers(t *testing.T) {
@@ -193,12 +192,12 @@ func TestWorkspaceStatusMembers(t *testing.T) {
 	require.NoError(t, env.client.Call("workspace/status",
 		map[string]string{"name": "ws-members"}, &result))
 
-	assert.Equal(t, "ready", result.Phase)
+	assert.Equal(t, apiari.WorkspacePhaseReady, result.Workspace.Status.Phase)
 	require.Len(t, result.Members, 2)
 
 	names := make([]string, 0, len(result.Members))
 	for _, m := range result.Members {
-		names = append(names, m.Name)
+		names = append(names, m.Metadata.Name)
 	}
 	assert.ElementsMatch(t, []string{"checker", "reviewer"}, names)
 }
@@ -211,7 +210,7 @@ func TestWorkspaceStatusMembersEmpty(t *testing.T) {
 	require.NoError(t, env.client.Call("workspace/status",
 		map[string]string{"name": "ws-empty"}, &result))
 
-	assert.Equal(t, "ready", result.Phase)
+	assert.Equal(t, apiari.WorkspacePhaseReady, result.Workspace.Status.Phase)
 	assert.Empty(t, result.Members)
 }
 
@@ -227,7 +226,7 @@ func TestWorkspaceList(t *testing.T) {
 
 	names := make([]string, 0, len(listResult.Workspaces))
 	for _, w := range listResult.Workspaces {
-		names = append(names, w.Name)
+		names = append(names, w.Metadata.Name)
 	}
 	assert.Contains(t, names, "wl-1")
 	assert.Contains(t, names, "wl-2")
@@ -246,7 +245,7 @@ func TestWorkspaceDelete(t *testing.T) {
 	statusErr := env.client.Call("workspace/status", map[string]string{"name": "w-del"}, &statusResult)
 	// Either an RPC error (not found) or phase=="error" are acceptable.
 	if statusErr == nil {
-		assert.Equal(t, "error", statusResult.Phase)
+		assert.Equal(t, apiari.WorkspacePhaseError, statusResult.Workspace.Status.Phase)
 	} else {
 		assert.Contains(t, statusErr.Error(), "-32602")
 	}
@@ -280,9 +279,9 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 
 	var result apiari.AgentRunCreateResult
 	require.NoError(t, json.Unmarshal(raw, &result))
-	assert.Equal(t, "creating", result.State)
-	assert.Equal(t, "ac-ws", result.Workspace)
-	assert.Equal(t, "my-agent", result.Name)
+	assert.Equal(t, api.StatusCreating, result.AgentRun.Status.State)
+	assert.Equal(t, "ac-ws", result.AgentRun.Metadata.Workspace)
+	assert.Equal(t, "my-agent", result.AgentRun.Metadata.Name)
 
 	// No agentId key in the response JSON.
 	var rawMap map[string]any
@@ -308,9 +307,9 @@ func TestAgentListAndStatus(t *testing.T) {
 		"workspace": "als-ws",
 		"name":      "agent-idle",
 	}, &statusResult))
-	assert.Equal(t, "idle", statusResult.AgentRun.State)
-	assert.Equal(t, "als-ws", statusResult.AgentRun.Workspace)
-	assert.Equal(t, "agent-idle", statusResult.AgentRun.Name)
+	assert.Equal(t, api.StatusIdle, statusResult.AgentRun.Status.State)
+	assert.Equal(t, "als-ws", statusResult.AgentRun.Metadata.Workspace)
+	assert.Equal(t, "agent-idle", statusResult.AgentRun.Metadata.Name)
 }
 
 func TestAgentPromptRejectedForBadState(t *testing.T) {
@@ -379,7 +378,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		AgentKey:   "reserve-ws/" + agentName,
 		SocketPath: shimSock,
 		Client:     shimClient,
-		Events:     make(chan events.SessionUpdateParams, 1024),
+		Events:     make(chan events.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	})
 
@@ -396,7 +395,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		"workspace": "reserve-ws",
 		"name":      agentName,
 	}, &status))
-	assert.Equal(t, "running", status.AgentRun.State)
+	assert.Equal(t, api.StatusRunning, status.AgentRun.Status.State)
 
 	err = env.client.Call("agentrun/prompt", map[string]any{
 		"workspace": "reserve-ws",
@@ -422,7 +421,7 @@ func TestAgentRunRestartFromIdle(t *testing.T) {
 		"name":      "idle-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from idle state must succeed")
-	assert.Equal(t, "creating", result.State)
+	assert.Equal(t, api.StatusCreating, result.AgentRun.Status.State)
 }
 
 func TestAgentRunRestartFromRunning(t *testing.T) {
@@ -436,7 +435,7 @@ func TestAgentRunRestartFromRunning(t *testing.T) {
 		"name":      "running-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from running state must succeed")
-	assert.Equal(t, "creating", result.State)
+	assert.Equal(t, api.StatusCreating, result.AgentRun.Status.State)
 }
 
 func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
@@ -480,7 +479,7 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 	require.NoError(t, env.client.Call("agentrun/list",
 		map[string]string{"workspace": "sock-ws"}, &listResult))
 	for _, ag := range listResult.AgentRuns {
-		assert.NotEqual(t, longName, ag.Name,
+		assert.NotEqual(t, longName, ag.Metadata.Name,
 			"agent with too-long name must not appear in agentrun/list")
 	}
 }
@@ -658,7 +657,7 @@ func injectMockShim(t *testing.T, env *testEnv, wsName, agentName string) *miniS
 		AgentKey:   wsName + "/" + agentName,
 		SocketPath: shimSock,
 		Client:     shimClient,
-		Events:     make(chan events.SessionUpdateParams, 1024),
+		Events:     make(chan events.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	})
 	return shimSrv

@@ -17,7 +17,7 @@ import (
 
 	pkgruntime "github.com/zoumo/oar/pkg/runtime"
 	"github.com/zoumo/oar/api"
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 )
 
 var mockAgentBin string
@@ -58,24 +58,24 @@ func TestRuntimeSuite(t *testing.T) {
 
 // newTestConfig returns a Config with agentRoot.path = "workspace".
 // The caller is responsible for creating the bundle dir and workspace subdir.
-func newTestConfig(name string) apispec.Config {
-	return apispec.Config{
+func newTestConfig(name string) apiruntime.Config {
+	return apiruntime.Config{
 		OarVersion: "0.1.0",
-		Metadata:   apispec.Metadata{Name: name},
-		AgentRoot:  apispec.AgentRoot{Path: "workspace"},
-		AcpAgent: apispec.AcpAgent{
-			Process: apispec.AcpProcess{
+		Metadata:   apiruntime.Metadata{Name: name},
+		AgentRoot:  apiruntime.AgentRoot{Path: "workspace"},
+		AcpAgent: apiruntime.AcpAgent{
+			Process: apiruntime.AcpProcess{
 				Command: mockAgentBin,
 				Args:    []string{},
 			},
 		},
-		Permissions: apispec.ApproveAll,
+		Permissions: apiruntime.ApproveAll,
 	}
 }
 
 // newManager creates a bundle dir with a workspace subdir and a separate state
 // dir, then returns a Manager wired to both. Dirs are cleaned up via t.Cleanup.
-func newManager(t *testing.T, cfg apispec.Config) *pkgruntime.Manager {
+func newManager(t *testing.T, cfg apiruntime.Config) *pkgruntime.Manager {
 	t.Helper()
 	bundleDir, err := os.MkdirTemp("", "oad-bundle-")
 	require.NoError(t, err)

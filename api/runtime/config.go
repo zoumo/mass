@@ -1,8 +1,8 @@
-// Package spec defines the OAR Runtime Specification API types.
-// These types model config.json (the agent bundle configuration) and mirror
-// the schema defined in docs/design/runtime/config-spec.md.
-// No I/O or business logic belongs here.
-package spec
+// Package runtime defines the OAR Runtime Specification types:
+// config.json (bundle configuration) and state.json (runtime state).
+// These types mirror the schema defined in docs/design/runtime/config-spec.md
+// and docs/design/runtime/runtime-spec.md. No I/O or business logic belongs here.
+package runtime
 
 import "github.com/zoumo/oar/api"
 

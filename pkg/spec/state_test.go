@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/oar/api"
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/pkg/spec"
 )
 
@@ -26,8 +26,8 @@ func (s *StateSuite) TeardownTest() {
 	_ = os.RemoveAll(s.baseDir)
 }
 
-func sampleState() apispec.State {
-	return apispec.State{
+func sampleState() apiruntime.State {
+	return apiruntime.State{
 		OarVersion:  "0.1.0",
 		ID:          "test-session-123",
 		Status:      api.StatusIdle,

@@ -6,20 +6,20 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 )
 
 // makeAgentRun returns a minimal valid AgentRun for test use.
-func makeAgentRun(workspace, name string) *meta.AgentRun {
-	return &meta.AgentRun{
-		Metadata: meta.ObjectMeta{
+func makeAgentRun(workspace, name string) *apiari.AgentRun {
+	return &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{
 			Workspace: workspace,
 			Name:      name,
 		},
-		Spec: meta.AgentRunSpec{
+		Spec: apiari.AgentRunSpec{
 			Agent: "default",
 		},
-		Status: meta.AgentRunStatus{
+		Status: apiari.AgentRunStatus{
 			State: api.StatusIdle,
 		},
 	}
@@ -49,26 +49,26 @@ func TestCreateAgentRun_DuplicateRejected(t *testing.T) {
 
 func TestCreateAgentRun_MissingWorkspace(t *testing.T) {
 	s := tempStore(t)
-	err := s.CreateAgentRun(t.Context(), &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Name: "agent1"},
-		Spec:     meta.AgentRunSpec{Agent: "default"},
+	err := s.CreateAgentRun(t.Context(), &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Name: "agent1"},
+		Spec:     apiari.AgentRunSpec{Agent: "default"},
 	})
 	require.Error(t, err)
 }
 
 func TestCreateAgentRun_MissingName(t *testing.T) {
 	s := tempStore(t)
-	err := s.CreateAgentRun(t.Context(), &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: "ws"},
-		Spec:     meta.AgentRunSpec{Agent: "default"},
+	err := s.CreateAgentRun(t.Context(), &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: "ws"},
+		Spec:     apiari.AgentRunSpec{Agent: "default"},
 	})
 	require.Error(t, err)
 }
 
 func TestCreateAgentRun_MissingRuntimeClass(t *testing.T) {
 	s := tempStore(t)
-	err := s.CreateAgentRun(t.Context(), &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: "ws", Name: "agent1"},
+	err := s.CreateAgentRun(t.Context(), &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: "ws", Name: "agent1"},
 	})
 	require.Error(t, err)
 }
@@ -118,7 +118,7 @@ func TestListAgentRuns_FilterByWorkspace(t *testing.T) {
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws1", "a1")))
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws2", "a2")))
 
-	ws1agents, err := s.ListAgentRuns(t.Context(), &meta.AgentRunFilter{Workspace: "ws1"})
+	ws1agents, err := s.ListAgentRuns(t.Context(), &apiari.AgentRunFilter{Workspace: "ws1"})
 	require.NoError(t, err)
 	require.Len(t, ws1agents, 1)
 	require.Equal(t, "a1", ws1agents[0].Metadata.Name)
@@ -135,7 +135,7 @@ func TestListAgentRuns_FilterByState(t *testing.T) {
 	agentIdle.Status.State = api.StatusIdle
 	require.NoError(t, s.CreateAgentRun(t.Context(), agentIdle))
 
-	running, err := s.ListAgentRuns(t.Context(), &meta.AgentRunFilter{State: api.StatusRunning})
+	running, err := s.ListAgentRuns(t.Context(), &apiari.AgentRunFilter{State: api.StatusRunning})
 	require.NoError(t, err)
 	require.Len(t, running, 1)
 	require.Equal(t, "runner", running[0].Metadata.Name)
@@ -152,7 +152,7 @@ func TestListAgentRuns_FilterByWorkspace_NoMatch(t *testing.T) {
 	s := tempStore(t)
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws1", "a1")))
 
-	result, err := s.ListAgentRuns(t.Context(), &meta.AgentRunFilter{Workspace: "nobody"})
+	result, err := s.ListAgentRuns(t.Context(), &apiari.AgentRunFilter{Workspace: "nobody"})
 	require.NoError(t, err)
 	require.Empty(t, result)
 }
@@ -163,7 +163,7 @@ func TestUpdateAgentRunStatus(t *testing.T) {
 	s := tempStore(t)
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws", "a")))
 
-	newStatus := meta.AgentRunStatus{
+	newStatus := apiari.AgentRunStatus{
 		State:          api.StatusRunning,
 		ShimSocketPath: "/tmp/shim.sock",
 		ShimPID:        12345,
@@ -179,7 +179,7 @@ func TestUpdateAgentRunStatus(t *testing.T) {
 
 func TestUpdateAgentRunStatus_NotFound(t *testing.T) {
 	s := tempStore(t)
-	err := s.UpdateAgentRunStatus(t.Context(), "ws", "ghost", meta.AgentRunStatus{State: api.StatusRunning})
+	err := s.UpdateAgentRunStatus(t.Context(), "ws", "ghost", apiari.AgentRunStatus{State: api.StatusRunning})
 	require.Error(t, err)
 }
 

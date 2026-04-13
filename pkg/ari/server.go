@@ -17,7 +17,6 @@ import (
 
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
-	"github.com/zoumo/oar/api/meta"
 	"github.com/zoumo/oar/pkg/agentd"
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
@@ -260,16 +259,16 @@ func (s *Server) handleWorkspaceCreate(ctx context.Context, conn *jsonrpc2.Conn,
 	s.logger.Info("workspace/create", "workspace", params.Name, "phase", "pending")
 
 	// Create workspace record in the store.
-	ws := &meta.Workspace{
-		Metadata: meta.ObjectMeta{
+	ws := &apiari.Workspace{
+		Metadata: apiari.ObjectMeta{
 			Name:   params.Name,
 			Labels: params.Labels,
 		},
-		Spec: meta.WorkspaceSpec{
+		Spec: apiari.WorkspaceSpec{
 			Source: params.Source,
 		},
-		Status: meta.WorkspaceStatus{
-			Phase: meta.WorkspacePhasePending,
+		Status: apiari.WorkspaceStatus{
+			Phase: apiari.WorkspacePhasePending,
 		},
 	}
 	if err := s.store.CreateWorkspace(ctx, ws); err != nil {
@@ -283,10 +282,7 @@ func (s *Server) handleWorkspaceCreate(ctx context.Context, conn *jsonrpc2.Conn,
 	}
 
 	// Reply with pending immediately, then prepare asynchronously.
-	s.replyOK(ctx, conn, req, apiari.WorkspaceCreateResult{
-		Name:  params.Name,
-		Phase: string(meta.WorkspacePhasePending),
-	})
+	s.replyOK(ctx, conn, req, apiari.WorkspaceCreateResult{Workspace: ws.ARIView()})
 
 	// Build the workspace spec for Prepare.
 	var src workspace.Source
@@ -315,16 +311,16 @@ func (s *Server) handleWorkspaceCreate(ctx context.Context, conn *jsonrpc2.Conn,
 		if err != nil {
 			s.logger.Warn("workspace/create: prepare failed",
 				"workspace", wsName, "phase", "error", "error", err)
-			_ = s.store.UpdateWorkspaceStatus(prepareCtx, wsName, meta.WorkspaceStatus{
-				Phase: meta.WorkspacePhaseError,
+			_ = s.store.UpdateWorkspaceStatus(prepareCtx, wsName, apiari.WorkspaceStatus{
+				Phase: apiari.WorkspacePhaseError,
 			})
 			return
 		}
 
 		s.logger.Info("workspace/create: prepared",
 			"workspace", wsName, "phase", "ready", "path", path)
-		_ = s.store.UpdateWorkspaceStatus(prepareCtx, wsName, meta.WorkspaceStatus{
-			Phase: meta.WorkspacePhaseReady,
+		_ = s.store.UpdateWorkspaceStatus(prepareCtx, wsName, apiari.WorkspaceStatus{
+			Phase: apiari.WorkspacePhaseReady,
 			Path:  path,
 		})
 		s.registry.Add(wsName, wsName, path, wsSpec)
@@ -347,11 +343,13 @@ func (s *Server) handleWorkspaceStatus(ctx context.Context, conn *jsonrpc2.Conn,
 	// Fast path: registry contains ready workspaces.
 	if wm := s.registry.Get(params.Name); wm != nil {
 		members := s.listWorkspaceMembers(ctx, params.Name)
+		wsObj := apiari.Workspace{
+			Metadata: apiari.ObjectMeta{Name: wm.Name},
+			Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhase(wm.Status), Path: wm.Path},
+		}
 		s.replyOK(ctx, conn, req, apiari.WorkspaceStatusResult{
-			Name:    wm.Name,
-			Phase:   wm.Status,
-			Path:    wm.Path,
-			Members: members,
+			Workspace: wsObj.ARIView(),
+			Members:   members,
 		})
 		return
 	}
@@ -370,10 +368,8 @@ func (s *Server) handleWorkspaceStatus(ctx context.Context, conn *jsonrpc2.Conn,
 
 	members := s.listWorkspaceMembers(ctx, params.Name)
 	s.replyOK(ctx, conn, req, apiari.WorkspaceStatusResult{
-		Name:    ws.Metadata.Name,
-		Phase:   string(ws.Status.Phase),
-		Path:    ws.Status.Path,
-		Members: members,
+		Workspace: ws.ARIView(),
+		Members:   members,
 	})
 }
 
@@ -386,16 +382,15 @@ func (s *Server) handleWorkspaceList(ctx context.Context, conn *jsonrpc2.Conn, r
 	s.logger.Info("workspace/list")
 
 	metas := s.registry.List()
-	infos := make([]apiari.WorkspaceInfo, 0, len(metas))
+	workspaces := make([]apiari.Workspace, 0, len(metas))
 	for _, m := range metas {
-		infos = append(infos, apiari.WorkspaceInfo{
-			Name:  m.Name,
-			Phase: m.Status,
-			Path:  m.Path,
+		workspaces = append(workspaces, apiari.Workspace{
+			Metadata: apiari.ObjectMeta{Name: m.Name},
+			Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhase(m.Status), Path: m.Path},
 		})
 	}
 
-	s.replyOK(ctx, conn, req, apiari.WorkspaceListResult{Workspaces: infos})
+	s.replyOK(ctx, conn, req, apiari.WorkspaceListResult{Workspaces: workspaces})
 }
 
 // handleWorkspaceDelete handles the workspace/delete method.
@@ -539,7 +534,7 @@ func buildWorkspaceEnvelope(p apiari.WorkspaceSendParams) string {
 	return "[workspace-message from=" + p.From + "]\n\n"
 }
 
-func (s *Server) recordPromptDeliveryFailure(workspace, name string, fallback meta.AgentRunStatus, cause error, markErrorWhenRuntimeUnavailable bool) {
+func (s *Server) recordPromptDeliveryFailure(workspace, name string, fallback apiari.AgentRunStatus, cause error, markErrorWhenRuntimeUnavailable bool) {
 	ctx := context.Background()
 	current, err := s.store.GetAgentRun(ctx, workspace, name)
 	if err != nil {
@@ -579,7 +574,7 @@ func (s *Server) recordPromptDeliveryFailure(workspace, name string, fallback me
 		return
 	}
 
-	_ = s.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{
+	_ = s.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{
 		State:          api.StatusError,
 		ShimSocketPath: fallback.ShimSocketPath,
 		ShimStateDir:   fallback.ShimStateDir,
@@ -619,7 +614,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 
 	// Validate RestartPolicy: accept "", "try_reload", "always_new".
 	switch params.RestartPolicy {
-	case "", meta.RestartPolicyTryReload, meta.RestartPolicyAlwaysNew:
+	case "", apiari.RestartPolicyTryReload, apiari.RestartPolicyAlwaysNew:
 		// valid
 	default:
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInvalidParams,
@@ -640,25 +635,25 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 			fmt.Sprintf("workspace %s not found", params.Workspace))
 		return
 	}
-	if ws.Status.Phase != meta.WorkspacePhaseReady {
+	if ws.Status.Phase != apiari.WorkspacePhaseReady {
 		s.replyErr(ctx, conn, req, apiari.CodeRecoveryBlocked,
 			fmt.Sprintf("workspace %s is not ready (phase=%s)", params.Workspace, ws.Status.Phase))
 		return
 	}
 
 	// Create agent run record in DB.
-	agent := &meta.AgentRun{
-		Metadata: meta.ObjectMeta{
+	agent := &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{
 			Name:      params.Name,
 			Workspace: params.Workspace,
 			Labels:    params.Labels,
 		},
-		Spec: meta.AgentRunSpec{
+		Spec: apiari.AgentRunSpec{
 			Agent:         params.Agent,
 			RestartPolicy: params.RestartPolicy,
 			SystemPrompt:  params.SystemPrompt,
 		},
-		Status: meta.AgentRunStatus{
+		Status: apiari.AgentRunStatus{
 			State: api.StatusCreating,
 		},
 	}
@@ -683,7 +678,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 		if _, err := s.processes.Start(bgCtx, wsName, agName); err != nil {
 			s.logger.Warn("agentrun/create: shim start failed",
 				"workspace", wsName, "name", agName, "error", err)
-			_ = s.agents.UpdateStatus(bgCtx, wsName, agName, meta.AgentRunStatus{
+			_ = s.agents.UpdateStatus(bgCtx, wsName, agName, apiari.AgentRunStatus{
 				State:        api.StatusError,
 				ErrorMessage: err.Error(),
 			})
@@ -693,11 +688,7 @@ func (s *Server) handleAgentRunCreate(ctx context.Context, conn *jsonrpc2.Conn, 
 		}
 	}()
 
-	s.replyOK(ctx, conn, req, apiari.AgentRunCreateResult{
-		Workspace: params.Workspace,
-		Name:      params.Name,
-		State:     string(api.StatusCreating),
-	})
+	s.replyOK(ctx, conn, req, apiari.AgentRunCreateResult{AgentRun: agent.ARIView()})
 }
 
 // handleAgentRunPrompt handles the agentrun/prompt method.
@@ -926,7 +917,7 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 	needsStop := agent.Status.State != api.StatusStopped && agent.Status.State != api.StatusError
 
 	// Transition to creating.
-	if err := s.agents.UpdateStatus(ctx, params.Workspace, params.Name, meta.AgentRunStatus{
+	if err := s.agents.UpdateStatus(ctx, params.Workspace, params.Name, apiari.AgentRunStatus{
 		State: api.StatusCreating,
 	}); err != nil {
 		s.replyErr(ctx, conn, req, jsonrpc2.CodeInternalError, err.Error())
@@ -944,7 +935,7 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 					"workspace", wsName, "name", agName, "error", err)
 			}
 			// Stop() transitions state to "stopped"; re-set to "creating" for Start().
-			if err := s.agents.UpdateStatus(bgCtx, wsName, agName, meta.AgentRunStatus{
+			if err := s.agents.UpdateStatus(bgCtx, wsName, agName, apiari.AgentRunStatus{
 				State: api.StatusCreating,
 			}); err != nil {
 				s.logger.Warn("agentrun/restart: failed to re-transition to creating",
@@ -955,18 +946,23 @@ func (s *Server) handleAgentRunRestart(ctx context.Context, conn *jsonrpc2.Conn,
 		if _, err := s.processes.Start(bgCtx, wsName, agName); err != nil {
 			s.logger.Warn("agentrun/restart: shim start failed",
 				"workspace", wsName, "name", agName, "error", err)
-			_ = s.agents.UpdateStatus(bgCtx, wsName, agName, meta.AgentRunStatus{
+			_ = s.agents.UpdateStatus(bgCtx, wsName, agName, apiari.AgentRunStatus{
 				State:        api.StatusError,
 				ErrorMessage: err.Error(),
 			})
 		}
 	}()
 
-	s.replyOK(ctx, conn, req, apiari.AgentRunRestartResult{
-		Workspace: params.Workspace,
-		Name:      params.Name,
-		State:     string(api.StatusCreating),
-	})
+	// Read back updated agent state for the response.
+	agentUpdated, err2 := s.store.GetAgentRun(ctx, params.Workspace, params.Name)
+	if err2 != nil || agentUpdated == nil {
+		// Fallback: synthesize a minimal domain object.
+		agentUpdated = &apiari.AgentRun{
+			Metadata: apiari.ObjectMeta{Workspace: params.Workspace, Name: params.Name},
+			Status:   apiari.AgentRunStatus{State: api.StatusCreating},
+		}
+	}
+	s.replyOK(ctx, conn, req, apiari.AgentRunRestartResult{AgentRun: agentUpdated.ARIView()})
 }
 
 // handleAgentRunList handles the agentrun/list method.
@@ -983,7 +979,7 @@ func (s *Server) handleAgentRunList(ctx context.Context, conn *jsonrpc2.Conn, re
 
 	s.logger.Info("agentrun/list", "workspace", params.Workspace, "state", params.State)
 
-	filter := &meta.AgentRunFilter{
+	filter := &apiari.AgentRunFilter{
 		Workspace: params.Workspace,
 		State:     api.Status(params.State),
 	}
@@ -994,12 +990,12 @@ func (s *Server) handleAgentRunList(ctx context.Context, conn *jsonrpc2.Conn, re
 		return
 	}
 
-	infos := make([]apiari.AgentRunInfo, 0, len(agents))
+	runs := make([]apiari.AgentRun, 0, len(agents))
 	for _, ag := range agents {
-		infos = append(infos, agentRunToInfo(ag))
+		runs = append(runs, ag.ARIView())
 	}
 
-	s.replyOK(ctx, conn, req, apiari.AgentRunListResult{AgentRuns: infos})
+	s.replyOK(ctx, conn, req, apiari.AgentRunListResult{AgentRuns: runs})
 }
 
 // handleAgentRunStatus handles the agentrun/status method.
@@ -1025,7 +1021,7 @@ func (s *Server) handleAgentRunStatus(ctx context.Context, conn *jsonrpc2.Conn, 
 		return
 	}
 
-	result := apiari.AgentRunStatusResult{AgentRun: agentRunToInfo(agent)}
+	result := apiari.AgentRunStatusResult{AgentRun: agent.ARIView()}
 
 	// Best-effort: fetch shim runtime state if available.
 	if rts, err := s.processes.RuntimeStatus(ctx, params.Workspace, params.Name); err == nil {
@@ -1087,33 +1083,19 @@ func (s *Server) handleAgentRunAttach(ctx context.Context, conn *jsonrpc2.Conn, 
 // agentrun helper
 // ────────────────────────────────────────────────────────────────────────────
 
-// agentRunToInfo converts a meta.AgentRun to an apiari.AgentRunInfo wire type.
-// Note: no agentId field — identity is (workspace, name).
-func agentRunToInfo(ag *meta.AgentRun) apiari.AgentRunInfo {
-	return apiari.AgentRunInfo{
-		Workspace:    ag.Metadata.Workspace,
-		Name:         ag.Metadata.Name,
-		Agent:        ag.Spec.Agent,
-		State:        string(ag.Status.State),
-		ErrorMessage: ag.Status.ErrorMessage,
-		Labels:       ag.Metadata.Labels,
-		CreatedAt:    ag.Metadata.CreatedAt,
-	}
-}
-
-// listWorkspaceMembers returns apiari.AgentRunInfo for all agent runs in the given workspace.
+// listWorkspaceMembers returns all AgentRun domain objects for the given workspace.
 // Returns nil (not an error) if the query fails.
-func (s *Server) listWorkspaceMembers(ctx context.Context, wsName string) []apiari.AgentRunInfo {
-	agents, err := s.agents.List(ctx, &meta.AgentRunFilter{Workspace: wsName})
+func (s *Server) listWorkspaceMembers(ctx context.Context, wsName string) []apiari.AgentRun {
+	agents, err := s.agents.List(ctx, &apiari.AgentRunFilter{Workspace: wsName})
 	if err != nil {
 		s.logger.Error("listWorkspaceMembers: list agent runs failed", "workspace", wsName, "err", err)
 		return nil
 	}
-	infos := make([]apiari.AgentRunInfo, 0, len(agents))
+	runs := make([]apiari.AgentRun, 0, len(agents))
 	for _, ag := range agents {
-		infos = append(infos, agentRunToInfo(ag))
+		runs = append(runs, ag.ARIView())
 	}
-	return infos
+	return runs
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1141,9 +1123,9 @@ func (s *Server) handleAgentSet(ctx context.Context, conn *jsonrpc2.Conn, req *j
 
 	s.logger.Info("agent/set", "name", params.Name, "command", params.Command)
 
-	ag := &meta.Agent{
-		Metadata: meta.ObjectMeta{Name: params.Name},
-		Spec: meta.AgentSpec{
+	ag := &apiari.Agent{
+		Metadata: apiari.ObjectMeta{Name: params.Name},
+		Spec: apiari.AgentSpec{
 			Command:               params.Command,
 			Args:                  params.Args,
 			Env:                   params.Env,
@@ -1158,10 +1140,10 @@ func (s *Server) handleAgentSet(ctx context.Context, conn *jsonrpc2.Conn, req *j
 	// Read back to get server-assigned timestamps.
 	stored, err := s.store.GetAgent(ctx, params.Name)
 	if err != nil || stored == nil {
-		s.replyOK(ctx, conn, req, agentToInfo(ag))
+		s.replyOK(ctx, conn, req, apiari.AgentSetResult{Agent: *ag})
 		return
 	}
-	s.replyOK(ctx, conn, req, agentToInfo(stored))
+	s.replyOK(ctx, conn, req, apiari.AgentSetResult{Agent: *stored})
 }
 
 // handleAgentGet handles the agent/get method.
@@ -1191,7 +1173,7 @@ func (s *Server) handleAgentGet(ctx context.Context, conn *jsonrpc2.Conn, req *j
 		return
 	}
 
-	s.replyOK(ctx, conn, req, apiari.AgentGetResult{Agent: agentToInfo(ag)})
+	s.replyOK(ctx, conn, req, apiari.AgentGetResult{Agent: *ag})
 }
 
 // handleAgentList handles the agent/list method.
@@ -1206,12 +1188,12 @@ func (s *Server) handleAgentList(ctx context.Context, conn *jsonrpc2.Conn, req *
 		return
 	}
 
-	infos := make([]apiari.AgentInfo, 0, len(ags))
+	agents := make([]apiari.Agent, 0, len(ags))
 	for _, ag := range ags {
-		infos = append(infos, agentToInfo(ag))
+		agents = append(agents, *ag)
 	}
 
-	s.replyOK(ctx, conn, req, apiari.AgentListResult{Agents: infos})
+	s.replyOK(ctx, conn, req, apiari.AgentListResult{Agents: agents})
 }
 
 // handleAgentDelete handles the agent/delete method.
@@ -1237,19 +1219,6 @@ func (s *Server) handleAgentDelete(ctx context.Context, conn *jsonrpc2.Conn, req
 	}
 
 	s.replyOK(ctx, conn, req, struct{}{})
-}
-
-// agentToInfo converts a meta.Agent to an apiari.AgentInfo wire type.
-func agentToInfo(ag *meta.Agent) apiari.AgentInfo {
-	return apiari.AgentInfo{
-		Name:                  ag.Metadata.Name,
-		Command:               ag.Spec.Command,
-		Args:                  ag.Spec.Args,
-		Env:                   ag.Spec.Env,
-		StartupTimeoutSeconds: ag.Spec.StartupTimeoutSeconds,
-		CreatedAt:             ag.Metadata.CreatedAt,
-		UpdatedAt:             ag.Metadata.UpdatedAt,
-	}
 }
 
 // ────────────────────────────────────────────────────────────────────────────

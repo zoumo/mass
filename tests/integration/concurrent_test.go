@@ -110,8 +110,8 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		}
 		// Accept running or idle — the mockagent completes turns instantly so
 		// the turn may already be done by the time we poll status.
-		if statusResult.AgentRun.State != "running" && statusResult.AgentRun.State != "idle" {
-			t.Errorf("agent %d (%s): expected state=running or idle, got %s", i+1, name, statusResult.AgentRun.State)
+		if statusResult.AgentRun.Status.State != "running" && statusResult.AgentRun.Status.State != "idle" {
+			t.Errorf("agent %d (%s): expected state=running or idle, got %s", i+1, name, statusResult.AgentRun.Status.State)
 		}
 	}
 
@@ -141,7 +141,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 			if err != nil {
 				break
 			}
-			if st.AgentRun.State == "stopped" || st.AgentRun.State == "error" {
+			if st.AgentRun.Status.State == "stopped" || st.AgentRun.Status.State == "error" {
 				break
 			}
 			time.Sleep(200 * time.Millisecond)

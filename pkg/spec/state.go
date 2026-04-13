@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 )
 
 const (
@@ -46,7 +46,7 @@ func ValidateShimSocketPath(socketPath string) error {
 // WriteState atomically writes s to dir/state.json.
 // Atomicity is achieved by writing to a temp file then renaming it, which
 // prevents partial reads if the process crashes mid-write.
-func WriteState(dir string, s apispec.State) error {
+func WriteState(dir string, s apiruntime.State) error {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("spec: mkdir %s: %w", dir, err)
 	}
@@ -82,14 +82,14 @@ func WriteState(dir string, s apispec.State) error {
 }
 
 // ReadState reads and unmarshals state.json from dir.
-func ReadState(dir string) (apispec.State, error) {
+func ReadState(dir string) (apiruntime.State, error) {
 	data, err := os.ReadFile(filepath.Join(dir, stateFile))
 	if err != nil {
-		return apispec.State{}, fmt.Errorf("spec: read state.json: %w", err)
+		return apiruntime.State{}, fmt.Errorf("spec: read state.json: %w", err)
 	}
-	var s apispec.State
+	var s apiruntime.State
 	if err := json.Unmarshal(data, &s); err != nil {
-		return apispec.State{}, fmt.Errorf("spec: parse state.json: %w", err)
+		return apiruntime.State{}, fmt.Errorf("spec: parse state.json: %w", err)
 	}
 	return s, nil
 }

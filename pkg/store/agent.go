@@ -10,7 +10,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 )
 
 // agentsBucket returns the v1/agents bucket from the given transaction.
@@ -20,7 +20,7 @@ func agentsBucket(tx *bolt.Tx) *bolt.Bucket {
 
 // SetAgent upserts an Agent record keyed by Metadata.Name.
 // On first write, CreatedAt is set to now. On every write, UpdatedAt is set to now.
-func (s *Store) SetAgent(_ context.Context, ag *meta.Agent) error {
+func (s *Store) SetAgent(_ context.Context, ag *apiari.Agent) error {
 	if ag.Metadata.Name == "" {
 		return fmt.Errorf("store: agent name is required")
 	}
@@ -36,7 +36,7 @@ func (s *Store) SetAgent(_ context.Context, ag *meta.Agent) error {
 
 		// Preserve CreatedAt from the existing record on upsert.
 		if existing := rb.Get(key); existing != nil {
-			var prev meta.Agent
+			var prev apiari.Agent
 			if err := json.Unmarshal(existing, &prev); err == nil {
 				if !prev.Metadata.CreatedAt.IsZero() {
 					ag.Metadata.CreatedAt = prev.Metadata.CreatedAt
@@ -63,12 +63,12 @@ func (s *Store) SetAgent(_ context.Context, ag *meta.Agent) error {
 
 // GetAgent retrieves an Agent by name.
 // Returns nil, nil if the agent does not exist.
-func (s *Store) GetAgent(_ context.Context, name string) (*meta.Agent, error) {
+func (s *Store) GetAgent(_ context.Context, name string) (*apiari.Agent, error) {
 	if name == "" {
 		return nil, fmt.Errorf("store: agent name is required")
 	}
 
-	var ag *meta.Agent
+	var ag *apiari.Agent
 	err := s.db.View(func(tx *bolt.Tx) error {
 		rb := agentsBucket(tx)
 		if rb == nil {
@@ -78,7 +78,7 @@ func (s *Store) GetAgent(_ context.Context, name string) (*meta.Agent, error) {
 		if data == nil {
 			return nil // not found
 		}
-		ag = &meta.Agent{}
+		ag = &apiari.Agent{}
 		return json.Unmarshal(data, ag)
 	})
 	if err != nil {
@@ -89,8 +89,8 @@ func (s *Store) GetAgent(_ context.Context, name string) (*meta.Agent, error) {
 
 // ListAgents returns all Agent records stored in v1/agents.
 // Returns an empty (non-nil) slice when no agents are stored.
-func (s *Store) ListAgents(_ context.Context) ([]*meta.Agent, error) {
-	var result []*meta.Agent
+func (s *Store) ListAgents(_ context.Context) ([]*apiari.Agent, error) {
+	var result []*apiari.Agent
 
 	err := s.db.View(func(tx *bolt.Tx) error {
 		rb := agentsBucket(tx)
@@ -101,7 +101,7 @@ func (s *Store) ListAgents(_ context.Context) ([]*meta.Agent, error) {
 			if v == nil {
 				return nil // skip nested buckets
 			}
-			var ag meta.Agent
+			var ag apiari.Agent
 			if err := json.Unmarshal(v, &ag); err != nil {
 				s.logger.Error("skipping corrupt agent record", "error", err)
 				return nil
@@ -115,7 +115,7 @@ func (s *Store) ListAgents(_ context.Context) ([]*meta.Agent, error) {
 		return nil, fmt.Errorf("store: list agents: %w", err)
 	}
 	if result == nil {
-		result = []*meta.Agent{}
+		result = []*apiari.Agent{}
 	}
 	return result, nil
 }

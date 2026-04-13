@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 	"github.com/zoumo/oar/pkg/store"
 )
 
@@ -68,7 +68,7 @@ func NewAgentRunManager(s *store.Store, logger *slog.Logger) *AgentRunManager {
 // Create creates a new agent.
 // Sets default status.State to api.StatusCreating if empty.
 // Returns ErrAgentRunAlreadyExists if the (workspace, name) pair already exists.
-func (m *AgentRunManager) Create(ctx context.Context, agent *meta.AgentRun) error {
+func (m *AgentRunManager) Create(ctx context.Context, agent *apiari.AgentRun) error {
 	if agent.Status.State == "" {
 		agent.Status.State = api.StatusCreating
 	}
@@ -102,7 +102,7 @@ func (m *AgentRunManager) Create(ctx context.Context, agent *meta.AgentRun) erro
 
 // Get retrieves an agent by (workspace, name).
 // Returns nil, nil if the agent does not exist.
-func (m *AgentRunManager) Get(ctx context.Context, workspace, name string) (*meta.AgentRun, error) {
+func (m *AgentRunManager) Get(ctx context.Context, workspace, name string) (*apiari.AgentRun, error) {
 	agent, err := m.store.GetAgentRun(ctx, workspace, name)
 	if err != nil {
 		return nil, fmt.Errorf("agentd: failed to get agent: %w", err)
@@ -113,13 +113,13 @@ func (m *AgentRunManager) Get(ctx context.Context, workspace, name string) (*met
 // GetByWorkspaceName retrieves an agent by its unique (workspace, name) pair.
 // Alias for Get — provided for callers that prefer the explicit naming.
 // Returns nil, nil if no agent with that combination exists.
-func (m *AgentRunManager) GetByWorkspaceName(ctx context.Context, workspace, name string) (*meta.AgentRun, error) {
+func (m *AgentRunManager) GetByWorkspaceName(ctx context.Context, workspace, name string) (*apiari.AgentRun, error) {
 	return m.Get(ctx, workspace, name)
 }
 
 // List retrieves agents matching the filter.
 // If filter is nil, returns all agents.
-func (m *AgentRunManager) List(ctx context.Context, filter *meta.AgentRunFilter) ([]*meta.AgentRun, error) {
+func (m *AgentRunManager) List(ctx context.Context, filter *apiari.AgentRunFilter) ([]*apiari.AgentRun, error) {
 	agents, err := m.store.ListAgentRuns(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("agentd: failed to list agents: %w", err)
@@ -129,7 +129,7 @@ func (m *AgentRunManager) List(ctx context.Context, filter *meta.AgentRunFilter)
 
 // UpdateStatus updates an agent's status (state + optional shim metadata).
 // Returns ErrAgentRunNotFound if the agent does not exist.
-func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name string, status meta.AgentRunStatus) error {
+func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name string, status apiari.AgentRunStatus) error {
 	m.logger.Info("updating agent status",
 		"workspace", workspace,
 		"name", name,

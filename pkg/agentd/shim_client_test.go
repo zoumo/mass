@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/oar/api"
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/pkg/events"
-	"github.com/zoumo/oar/pkg/shimapi"
+	"github.com/zoumo/oar/api/shim"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -34,9 +34,9 @@ type mockShimServer struct {
 	once     sync.Once
 
 	mu                sync.Mutex
-	statusResult      shimapi.RuntimeStatusResult
-	promptResult      shimapi.SessionPromptResult
-	historyEntries    []events.Envelope
+	statusResult      shim.RuntimeStatusResult
+	promptResult      shim.SessionPromptResult
+	historyEntries    []events.ShimEvent
 	subscribed        bool
 	liveNotifications []shimNotif // queued to emit after subscribe
 
@@ -64,16 +64,16 @@ func newMockShimServer(t *testing.T) (*mockShimServer, string) {
 	s := &mockShimServer{
 		listener: ln,
 		done:     make(chan struct{}),
-		statusResult: shimapi.RuntimeStatusResult{
-			State: apispec.State{
+		statusResult: shim.RuntimeStatusResult{
+			State: apiruntime.State{
 				OarVersion: "0.1.0",
 				ID:         "test-session",
 				Status:     api.StatusIdle,
 				Bundle:     "/tmp/test-bundle",
 			},
-			Recovery: shimapi.RuntimeStatusRecovery{LastSeq: -1},
+			Recovery: shim.RuntimeStatusRecovery{LastSeq: -1},
 		},
-		promptResult: shimapi.SessionPromptResult{StopReason: "end_turn"},
+		promptResult: shim.SessionPromptResult{StopReason: "end_turn"},
 	}
 
 	go s.serve()
@@ -166,7 +166,7 @@ func (h *mockShimHandler) handleCancel(ctx context.Context, conn *jsonrpc2.Conn,
 }
 
 func (h *mockShimHandler) handleLoad(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var params shimapi.SessionLoadParams
+	var params shim.SessionLoadParams
 	if req.Params != nil {
 		_ = json.Unmarshal(*req.Params, &params)
 	}
@@ -189,7 +189,7 @@ func (h *mockShimHandler) handleLoad(ctx context.Context, conn *jsonrpc2.Conn, r
 
 func (h *mockShimHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	// Parse params to check for fromSeq.
-	var params shimapi.SessionSubscribeParams
+	var params shim.SessionSubscribeParams
 	if req.Params != nil {
 		_ = json.Unmarshal(*req.Params, &params)
 	}
@@ -200,10 +200,10 @@ func (h *mockShimHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Co
 	copy(notifs, h.srv.liveNotifications)
 
 	// When fromSeq is present, return backfill entries from historyEntries.
-	var result shimapi.SessionSubscribeResult
+	var result shim.SessionSubscribeResult
 	if params.FromSeq != nil {
 		// Return all history entries (mock always stores them in order).
-		result.Entries = make([]events.Envelope, len(h.srv.historyEntries))
+		result.Entries = make([]events.ShimEvent, len(h.srv.historyEntries))
 		copy(result.Entries, h.srv.historyEntries)
 		result.NextSeq = len(result.Entries)
 	}
@@ -228,10 +228,10 @@ func (h *mockShimHandler) handleStatus(ctx context.Context, conn *jsonrpc2.Conn,
 
 func (h *mockShimHandler) handleHistory(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	h.srv.mu.Lock()
-	entries := make([]events.Envelope, len(h.srv.historyEntries))
+	entries := make([]events.ShimEvent, len(h.srv.historyEntries))
 	copy(entries, h.srv.historyEntries)
 	h.srv.mu.Unlock()
-	_ = conn.Reply(ctx, req.ID, shimapi.RuntimeHistoryResult{Entries: entries})
+	_ = conn.Reply(ctx, req.ID, shim.RuntimeHistoryResult{Entries: entries})
 }
 
 func (h *mockShimHandler) handleStop(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -375,10 +375,11 @@ func TestShimClientSubscribeFromSeq(t *testing.T) {
 
 	// Pre-populate mock with 3 history entries.
 	srv.mu.Lock()
-	srv.historyEntries = []events.Envelope{
-		events.NewSessionUpdateEnvelope("test-session", 0, time.Now(), events.TextEvent{Text: "msg-0"}),
-		events.NewSessionUpdateEnvelope("test-session", 1, time.Now(), events.TextEvent{Text: "msg-1"}),
-		events.NewSessionUpdateEnvelope("test-session", 2, time.Now(), events.TextEvent{Text: "msg-2"}),
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	srv.historyEntries = []events.ShimEvent{
+		{RunID: "test-run", Seq: 0, Time: at, Category: "session", Type: "text", Content: events.TextEvent{Text: "msg-0"}},
+		{RunID: "test-run", Seq: 1, Time: at, Category: "session", Type: "text", Content: events.TextEvent{Text: "msg-1"}},
+		{RunID: "test-run", Seq: 2, Time: at, Category: "session", Type: "text", Content: events.TextEvent{Text: "msg-2"}},
 	}
 	srv.mu.Unlock()
 
@@ -393,9 +394,7 @@ func TestShimClientSubscribeFromSeq(t *testing.T) {
 	// Verify backfill entries returned.
 	require.Len(t, result.Entries, 3, "should return all 3 backfill entries")
 	for i, entry := range result.Entries {
-		seq, seqErr := entry.Seq()
-		require.NoError(t, seqErr)
-		assert.Equal(t, i, seq, "entry %d should have seq=%d", i, i)
+		assert.Equal(t, i, entry.Seq, "entry %d should have seq=%d", i, i)
 	}
 	assert.Equal(t, 3, result.NextSeq, "nextSeq should be count of entries")
 
@@ -406,47 +405,48 @@ func TestShimClientSubscribeFromSeq(t *testing.T) {
 	assert.True(t, subscribed, "shim should have been subscribed")
 }
 
-// TestShimClientSubscribeReceivesSessionUpdate verifies that session/update
+// TestShimClientSubscribeReceivesShimEvent verifies that shim/event
 // notifications are delivered to the NotificationHandler registered via
 // DialWithHandler.
-func TestShimClientSubscribeReceivesSessionUpdate(t *testing.T) {
+func TestShimClientSubscribeReceivesShimEvent(t *testing.T) {
 	srv, socketPath := newMockShimServer(t)
 	defer srv.close()
 
-	// Queue a session/update notification containing a text event.
-	textPayload, _ := json.Marshal(events.TextEvent{Text: "hello from shim"})
-	srv.queueNotification("session/update", map[string]any{
-		"sessionId": "test-session",
-		"seq":       1,
-		"timestamp": "2026-01-01T00:00:00Z",
-		"event": map[string]any{
-			"type":    "text",
-			"payload": json.RawMessage(textPayload),
-		},
+	// Queue a session text event.
+	contentBytes, _ := json.Marshal(events.TextEvent{Text: "hello from shim"})
+	srv.queueNotification(api.MethodShimEvent, map[string]any{
+		"runId":    "test-run",
+		"seq":      1,
+		"time":     "2026-01-01T00:00:00Z",
+		"category": "session",
+		"type":     "text",
+		"content":  json.RawMessage(contentBytes),
 	})
-	// Queue a runtime/state_change notification.
-	srv.queueNotification("runtime/state_change", map[string]any{
-		"sessionId":      "test-session",
-		"seq":            0,
-		"timestamp":      "2026-01-01T00:00:00Z",
-		"previousStatus": "created",
-		"status":         "running",
-		"pid":            12345,
+	// Queue a runtime state_change event.
+	scBytes, _ := json.Marshal(events.StateChangeEvent{PreviousStatus: "created", Status: "running", PID: 12345})
+	srv.queueNotification(api.MethodShimEvent, map[string]any{
+		"runId":    "test-run",
+		"seq":      0,
+		"time":     "2026-01-01T00:00:00Z",
+		"category": "runtime",
+		"type":     "state_change",
+		"content":  json.RawMessage(scBytes),
 	})
 
 	// Track received notifications.
-	var received []struct {
-		method string
-		params json.RawMessage
-	}
+	var received []events.ShimEvent
 	var mu sync.Mutex
 
 	c, err := DialWithHandler(context.Background(), socketPath, func(ctx context.Context, method string, params json.RawMessage) {
+		if method != api.MethodShimEvent {
+			return
+		}
+		ev, err := ParseShimEvent(params)
+		if err != nil {
+			return
+		}
 		mu.Lock()
-		received = append(received, struct {
-			method string
-			params json.RawMessage
-		}{method, params})
+		received = append(received, ev)
 		mu.Unlock()
 	})
 	require.NoError(t, err)
@@ -463,14 +463,14 @@ func TestShimClientSubscribeReceivesSessionUpdate(t *testing.T) {
 	}, 2*time.Second, 20*time.Millisecond, "expected at least 2 notifications")
 
 	mu.Lock()
-	methods := make(map[string]bool)
-	for _, r := range received {
-		methods[r.method] = true
+	types := make(map[string]bool)
+	for _, ev := range received {
+		types[ev.Type] = true
 	}
 	mu.Unlock()
 
-	assert.True(t, methods["session/update"], "should have received session/update")
-	assert.True(t, methods["runtime/state_change"], "should have received runtime/state_change")
+	assert.True(t, types["text"], "should have received text event")
+	assert.True(t, types["state_change"], "should have received state_change event")
 }
 
 // TestShimClientNotificationsAreSerialized verifies that a slow handler for an
@@ -481,15 +481,14 @@ func TestShimClientNotificationsAreSerialized(t *testing.T) {
 	defer srv.close()
 
 	for i := 0; i < 3; i++ {
-		textPayload, _ := json.Marshal(events.TextEvent{Text: fmt.Sprintf("msg-%d", i)})
-		srv.queueNotification(events.MethodSessionUpdate, map[string]any{
-			"sessionId": "test-session",
-			"seq":       i,
-			"timestamp": "2026-01-01T00:00:00Z",
-			"event": map[string]any{
-				"type":    "text",
-				"payload": json.RawMessage(textPayload),
-			},
+		contentBytes, _ := json.Marshal(events.TextEvent{Text: fmt.Sprintf("msg-%d", i)})
+		srv.queueNotification(api.MethodShimEvent, map[string]any{
+			"runId":    "test-run",
+			"seq":      i,
+			"time":     "2026-01-01T00:00:00Z",
+			"category": "session",
+			"type":     "text",
+			"content":  json.RawMessage(contentBytes),
 		})
 	}
 
@@ -497,10 +496,10 @@ func TestShimClientNotificationsAreSerialized(t *testing.T) {
 	var handlerErr error
 	var mu sync.Mutex
 	c, err := DialWithHandler(context.Background(), socketPath, func(_ context.Context, method string, params json.RawMessage) {
-		if method != events.MethodSessionUpdate {
+		if method != api.MethodShimEvent {
 			return
 		}
-		p, parseErr := ParseSessionUpdate(params)
+		p, parseErr := ParseShimEvent(params)
 		if parseErr != nil {
 			mu.Lock()
 			handlerErr = parseErr
@@ -533,18 +532,25 @@ func TestShimClientNotificationsAreSerialized(t *testing.T) {
 }
 
 // TestShimClientSubscribeDropsUnknownMethods verifies that notifications for
-// unknown methods (e.g. $/event from the legacy surface) are silently dropped
-// and not forwarded to the handler.
+// unknown methods (e.g. $/event, session/update from the legacy surface) are
+// silently dropped and not forwarded to the handler.
 func TestShimClientSubscribeDropsUnknownMethods(t *testing.T) {
 	srv, socketPath := newMockShimServer(t)
 	defer srv.close()
 
 	// Queue a legacy-style notification that should be rejected.
 	srv.queueNotification("$/event", map[string]any{"type": "text", "payload": map[string]any{"text": "oops"}})
-	// Queue a valid notification.
-	srv.queueNotification("runtime/state_change", map[string]any{
-		"sessionId": "s", "seq": 0, "timestamp": "2026-01-01T00:00:00Z",
-		"previousStatus": "created", "status": "running",
+	// Queue a legacy session/update that should also be rejected.
+	srv.queueNotification("session/update", map[string]any{"sessionId": "s", "seq": 0})
+	// Queue a valid shim/event notification.
+	scBytes, _ := json.Marshal(events.StateChangeEvent{PreviousStatus: "created", Status: "running"})
+	srv.queueNotification(api.MethodShimEvent, map[string]any{
+		"runId":    "test-run",
+		"seq":      0,
+		"time":     "2026-01-01T00:00:00Z",
+		"category": "runtime",
+		"type":     "state_change",
+		"content":  json.RawMessage(scBytes),
 	})
 
 	var received []string
@@ -574,8 +580,9 @@ func TestShimClientSubscribeDropsUnknownMethods(t *testing.T) {
 	defer mu.Unlock()
 	for _, m := range received {
 		assert.NotEqual(t, "$/event", m, "$/event must not be forwarded to handler")
+		assert.NotEqual(t, "session/update", m, "legacy session/update must not be forwarded")
 	}
-	assert.Contains(t, received, "runtime/state_change")
+	assert.Contains(t, received, api.MethodShimEvent)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -669,59 +676,69 @@ func TestShimClientStop(t *testing.T) {
 // Notification parsing helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-func TestParseSessionUpdate(t *testing.T) {
-	textPayload, _ := json.Marshal(events.TextEvent{Text: "hello"})
+func TestParseShimEvent_SessionText(t *testing.T) {
+	contentBytes, _ := json.Marshal(events.TextEvent{Text: "hello"})
 	raw, _ := json.Marshal(map[string]any{
+		"runId":     "run-1",
 		"sessionId": "s1",
 		"seq":       5,
-		"timestamp": "2026-01-01T00:00:00Z",
-		"event": map[string]any{
-			"type":    "text",
-			"payload": json.RawMessage(textPayload),
-		},
+		"time":      "2026-01-01T00:00:00Z",
+		"category":  "session",
+		"type":      "text",
+		"turnId":    "turn-001",
+		"streamSeq": 3,
+		"phase":     "acting",
+		"content":   json.RawMessage(contentBytes),
 	})
 
-	p, err := ParseSessionUpdate(raw)
+	p, err := ParseShimEvent(raw)
 	require.NoError(t, err)
+	assert.Equal(t, "run-1", p.RunID)
 	assert.Equal(t, "s1", p.SessionID)
 	assert.Equal(t, 5, p.Seq)
-	assert.Equal(t, "text", p.Event.Type)
-	ev, ok := p.Event.Payload.(events.TextEvent)
-	require.True(t, ok, "expected TextEvent payload")
+	assert.Equal(t, "session", p.Category)
+	assert.Equal(t, "text", p.Type)
+	assert.Equal(t, "turn-001", p.TurnID)
+	assert.Equal(t, 3, p.StreamSeq)
+	assert.Equal(t, "acting", p.Phase)
+	ev, ok := p.Content.(events.TextEvent)
+	require.True(t, ok, "expected TextEvent content")
 	assert.Equal(t, "hello", ev.Text)
 }
 
-func TestParseSessionUpdateMalformed(t *testing.T) {
-	_, err := ParseSessionUpdate(json.RawMessage(`{not valid json`))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parse session/update")
-}
-
-func TestParseRuntimeStateChange(t *testing.T) {
+func TestParseShimEvent_RuntimeStateChange(t *testing.T) {
+	contentBytes, _ := json.Marshal(events.StateChangeEvent{
+		PreviousStatus: "created",
+		Status:         "running",
+		PID:            42,
+		Reason:         "prompt",
+	})
 	raw, _ := json.Marshal(map[string]any{
-		"sessionId":      "s1",
-		"seq":            3,
-		"timestamp":      "2026-01-01T00:00:00Z",
-		"previousStatus": "created",
-		"status":         "running",
-		"pid":            42,
-		"reason":         "prompt",
+		"runId":    "run-1",
+		"seq":      3,
+		"time":     "2026-01-01T00:00:00Z",
+		"category": "runtime",
+		"type":     "state_change",
+		"content":  json.RawMessage(contentBytes),
 	})
 
-	p, err := ParseRuntimeStateChange(raw)
+	p, err := ParseShimEvent(raw)
 	require.NoError(t, err)
-	assert.Equal(t, "s1", p.SessionID)
+	assert.Equal(t, "runtime", p.Category)
+	assert.Equal(t, "state_change", p.Type)
 	assert.Equal(t, 3, p.Seq)
-	assert.Equal(t, "created", p.PreviousStatus)
-	assert.Equal(t, "running", p.Status)
-	assert.Equal(t, 42, p.PID)
-	assert.Equal(t, "prompt", p.Reason)
+	sc, ok := p.Content.(events.StateChangeEvent)
+	require.True(t, ok)
+	assert.Equal(t, "created", sc.PreviousStatus)
+	assert.Equal(t, "running", sc.Status)
+	assert.Equal(t, 42, sc.PID)
+	assert.Equal(t, "prompt", sc.Reason)
 }
 
-func TestParseRuntimeStateChangeMalformed(t *testing.T) {
-	_, err := ParseRuntimeStateChange(json.RawMessage(`[1, 2]`))
+func TestParseShimEventMalformed(t *testing.T) {
+	_, err := ParseShimEvent(json.RawMessage(`{not valid json`))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parse runtime/state_change")
+	assert.Contains(t, err.Error(), "parse shim/event")
 }
 
 // ────────────────────────────────────────────────────────────────────────────

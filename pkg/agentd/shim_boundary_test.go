@@ -16,7 +16,7 @@ import (
 
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 	
 )
 
@@ -33,23 +33,27 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	key := agentKey(ws, agentName)
 
 	// Create agent at StatusCreating in the DB.
-	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentRunSpec{Agent: "default"},
-		Status:   meta.AgentRunStatus{State: api.StatusCreating},
+	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
+		Spec:     apiari.AgentRunSpec{Agent: "default"},
+		Status:   apiari.AgentRunStatus{State: api.StatusCreating},
 	}))
 
 	// Set up mock shim, queue a creating→idle stateChange notification.
 	srv, socketPath := newMockShimServer(t)
 	_ = srv // cleanup registered via t.Cleanup in newMockShimServer
 
-	srv.queueNotification("runtime/state_change", map[string]any{
-		"sessionId":      "test-session",
-		"seq":            0,
-		"timestamp":      "2026-01-01T00:00:00Z",
-		"previousStatus": "creating",
-		"status":         "idle",
-		"pid":            1234,
+	srv.queueNotification(api.MethodShimEvent, map[string]any{
+		"runId":    "test-run",
+		"seq":      0,
+		"time":     "2026-01-01T00:00:00Z",
+		"category": "runtime",
+		"type":     "state_change",
+		"content": map[string]any{
+			"previousStatus": "creating",
+			"status":         "idle",
+			"pid":            1234,
+		},
 	})
 
 	// Create a ShimProcess (mirrors what Start() creates after forkShim).
@@ -58,7 +62,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 		PID:        1234,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.SessionUpdateParams, 1024),
+		Events:     make(chan events.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -107,19 +111,19 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 
 	srv, socketPath := newMockShimServer(t)
 	for i := 0; i < 3; i++ {
-		textPayload, err := json.Marshal(events.TextEvent{Text: fmt.Sprintf("chunk-%d", i)})
+		contentBytes, err := json.Marshal(events.TextEvent{Text: fmt.Sprintf("chunk-%d", i)})
 		require.NoError(t, err)
-		streamSeq := i
-		srv.queueNotification(events.MethodSessionUpdate, map[string]any{
+		srv.queueNotification(api.MethodShimEvent, map[string]any{
+			"runId":     "test-run",
 			"sessionId": "test-session",
 			"seq":       i,
-			"timestamp": "2026-01-01T00:00:00Z",
+			"time":      "2026-01-01T00:00:00Z",
+			"category":  "session",
+			"type":      "text",
 			"turnId":    turnID,
-			"streamSeq": streamSeq,
-			"event": map[string]any{
-				"type":    "text",
-				"payload": json.RawMessage(textPayload),
-			},
+			"streamSeq": i,
+			"phase":     "acting",
+			"content":   json.RawMessage(contentBytes),
 		})
 	}
 
@@ -128,7 +132,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 		PID:        1234,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.SessionUpdateParams, 1024),
+		Events:     make(chan events.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -142,17 +146,17 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 0; i < 3; i++ {
-		var update events.SessionUpdateParams
+		var update events.ShimEvent
 		select {
 		case update = <-shimProc.Events:
 		case <-time.After(2 * time.Second):
-			t.Fatalf("timeout waiting for session/update %d", i)
+			t.Fatalf("timeout waiting for shim/event %d", i)
 		}
 
 		require.Equal(t, i, update.Seq)
 		require.Equal(t, turnID, update.TurnID)
-		require.Equal(t, "text", update.Event.Type)
-		payload, ok := update.Event.Payload.(events.TextEvent)
+		require.Equal(t, "text", update.Type)
+		payload, ok := update.Content.(events.TextEvent)
 		require.True(t, ok)
 		require.Equal(t, fmt.Sprintf("chunk-%d", i), payload.Text)
 	}
@@ -171,29 +175,37 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	key := agentKey(ws, agentName)
 
 	// Create agent at StatusIdle.
-	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentRunSpec{Agent: "default"},
-		Status:   meta.AgentRunStatus{State: api.StatusIdle},
+	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
+		Spec:     apiari.AgentRunSpec{Agent: "default"},
+		Status:   apiari.AgentRunStatus{State: api.StatusIdle},
 	}))
 
 	// Queue two successive stateChange notifications: idle→running, then running→idle.
 	srv, socketPath := newMockShimServer(t)
-	srv.queueNotification("runtime/state_change", map[string]any{
-		"sessionId":      "test-session",
-		"seq":            1,
-		"timestamp":      "2026-01-01T00:00:00Z",
-		"previousStatus": "idle",
-		"status":         "running",
-		"pid":            5678,
+	srv.queueNotification(api.MethodShimEvent, map[string]any{
+		"runId":    "test-run",
+		"seq":      1,
+		"time":     "2026-01-01T00:00:00Z",
+		"category": "runtime",
+		"type":     "state_change",
+		"content": map[string]any{
+			"previousStatus": "idle",
+			"status":         "running",
+			"pid":            5678,
+		},
 	})
-	srv.queueNotification("runtime/state_change", map[string]any{
-		"sessionId":      "test-session",
-		"seq":            2,
-		"timestamp":      "2026-01-01T00:00:01Z",
-		"previousStatus": "running",
-		"status":         "idle",
-		"pid":            5678,
+	srv.queueNotification(api.MethodShimEvent, map[string]any{
+		"runId":    "test-run",
+		"seq":      2,
+		"time":     "2026-01-01T00:00:01Z",
+		"category": "runtime",
+		"type":     "state_change",
+		"content": map[string]any{
+			"previousStatus": "running",
+			"status":         "idle",
+			"pid":            5678,
+		},
 	})
 
 	shimProc := &ShimProcess{
@@ -201,7 +213,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 		PID:        5678,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.SessionUpdateParams, 1024),
+		Events:     make(chan events.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -246,10 +258,10 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	key := agentKey(ws, agentName)
 
 	// Create agent at StatusCreating.
-	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentRunSpec{Agent: "default"},
-		Status:   meta.AgentRunStatus{State: api.StatusCreating},
+	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
+		Spec:     apiari.AgentRunSpec{Agent: "default"},
+		Status:   apiari.AgentRunStatus{State: api.StatusCreating},
 	}))
 
 	// Set up mock shim with NO queued notifications.
@@ -261,7 +273,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 		PID:        0,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.SessionUpdateParams, 1024),
+		Events:     make(chan events.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -306,23 +318,30 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	agentName := "malformed-sc"
 	key := agentKey(ws, agentName)
 
-	require.NoError(t, store.CreateAgentRun(ctx, &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     meta.AgentRunSpec{Agent: "default"},
-		Status:   meta.AgentRunStatus{State: api.StatusCreating},
+	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
+		Spec:     apiari.AgentRunSpec{Agent: "default"},
+		Status:   apiari.AgentRunStatus{State: api.StatusCreating},
 	}))
 
 	// Queue a malformed stateChange notification (array instead of object).
 	srv, socketPath := newMockShimServer(t)
 	defer srv.close()
-	srv.queueNotification("runtime/state_change", []any{"this", "is", "not", "a", "stateChange"})
+	srv.queueNotification(api.MethodShimEvent, map[string]any{
+		"runId":    "test-run",
+		"seq":      0,
+		"time":     "2026-01-01T00:00:00Z",
+		"category": "runtime",
+		"type":     "state_change",
+		"content":  []any{"this", "is", "not", "a", "stateChange"},
+	})
 
 	shimProc := &ShimProcess{
 		AgentKey:   key,
 		PID:        0,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.SessionUpdateParams, 1024),
+		Events:     make(chan events.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 

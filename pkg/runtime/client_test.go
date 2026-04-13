@@ -12,12 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/oar/api"
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 )
 
 // newTestManager builds a Manager with no agent process — just enough to
 // exercise unexported helpers and acpClient methods.
-func newTestManager(policy apispec.PermissionPolicy) *Manager {
+func newTestManager(policy apiruntime.PermissionPolicy) *Manager {
 	bundleDir, err := os.MkdirTemp("", "oad-bundle-")
 	if err != nil {
 		panic("newTestManager: MkdirTemp bundleDir: " + err.Error())
@@ -30,10 +30,10 @@ func newTestManager(policy apispec.PermissionPolicy) *Manager {
 	if err != nil {
 		panic("newTestManager: MkdirTemp stateDir: " + err.Error())
 	}
-	cfg := apispec.Config{
+	cfg := apiruntime.Config{
 		OarVersion:  "0.1.0",
-		Metadata:    apispec.Metadata{Name: "test-agent"},
-		AgentRoot:   apispec.AgentRoot{Path: "workspace"},
+		Metadata:    apiruntime.Metadata{Name: "test-agent"},
+		AgentRoot:   apiruntime.AgentRoot{Path: "workspace"},
 		Permissions: policy,
 	}
 	return New(cfg, bundleDir, stateDir, slog.Default())
@@ -48,7 +48,7 @@ func cleanupManager(m *Manager) {
 // ── acpClient.RequestPermission ──────────────────────────────────────────────
 
 func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
-	mgr := newTestManager(apispec.DenyAll)
+	mgr := newTestManager(apiruntime.DenyAll)
 	defer cleanupManager(mgr)
 
 	client := &acpClient{mgr: mgr}
@@ -58,7 +58,7 @@ func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
 }
 
 func TestAcpClient_RequestPermission_ApproveReads(t *testing.T) {
-	mgr := newTestManager(apispec.ApproveReads)
+	mgr := newTestManager(apiruntime.ApproveReads)
 	defer cleanupManager(mgr)
 
 	client := &acpClient{mgr: mgr}
@@ -68,7 +68,7 @@ func TestAcpClient_RequestPermission_ApproveReads(t *testing.T) {
 }
 
 func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
-	mgr := newTestManager(apispec.ApproveAll)
+	mgr := newTestManager(apiruntime.ApproveAll)
 	defer cleanupManager(mgr)
 
 	client := &acpClient{mgr: mgr}
@@ -79,7 +79,7 @@ func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
 // ── Not-supported stubs ───────────────────────────────────────────────────────
 
 func TestAcpClient_NotSupported(t *testing.T) {
-	mgr := newTestManager(apispec.ApproveAll)
+	mgr := newTestManager(apiruntime.ApproveAll)
 	defer cleanupManager(mgr)
 	client := &acpClient{mgr: mgr}
 	ctx := context.Background()
@@ -116,7 +116,7 @@ func TestAcpClient_NotSupported(t *testing.T) {
 // ── convertMcpServers ─────────────────────────────────────────────────────────
 
 func TestConvertMcpServers_SSEBranch(t *testing.T) {
-	servers := []apispec.McpServer{
+	servers := []apiruntime.McpServer{
 		{Type: "sse", URL: "http://example.com/sse"},
 	}
 	result := convertMcpServers(servers)
@@ -127,7 +127,7 @@ func TestConvertMcpServers_SSEBranch(t *testing.T) {
 }
 
 func TestConvertMcpServers_HTTPBranch(t *testing.T) {
-	servers := []apispec.McpServer{
+	servers := []apiruntime.McpServer{
 		{Type: "http", URL: "http://example.com/mcp"},
 	}
 	result := convertMcpServers(servers)
@@ -138,7 +138,7 @@ func TestConvertMcpServers_HTTPBranch(t *testing.T) {
 }
 
 func TestConvertMcpServers_StdioBranch(t *testing.T) {
-	servers := []apispec.McpServer{
+	servers := []apiruntime.McpServer{
 		{
 			Type:    "stdio",
 			Name:    "room-tools",
@@ -170,7 +170,7 @@ func TestConvertMcpServers_Empty(t *testing.T) {
 // ── acpClient.SessionUpdate ───────────────────────────────────────────────────
 
 func TestAcpClient_SessionUpdate_DropsWhenFull(t *testing.T) {
-	mgr := newTestManager(apispec.ApproveAll)
+	mgr := newTestManager(apiruntime.ApproveAll)
 	defer cleanupManager(mgr)
 	client := &acpClient{mgr: mgr}
 
@@ -185,7 +185,7 @@ func TestAcpClient_SessionUpdate_DropsWhenFull(t *testing.T) {
 }
 
 func TestAcpClient_SessionUpdate_Delivers(t *testing.T) {
-	mgr := newTestManager(apispec.ApproveAll)
+	mgr := newTestManager(apiruntime.ApproveAll)
 	defer cleanupManager(mgr)
 	client := &acpClient{mgr: mgr}
 

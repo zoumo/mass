@@ -19,7 +19,7 @@ import (
 	"github.com/coder/acp-go-sdk"
 
 	"github.com/zoumo/oar/api"
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/pkg/spec"
 )
 
@@ -37,7 +37,7 @@ type StateChangeHook func(StateChange)
 
 // Manager manages the lifecycle of a single ACP agent process.
 type Manager struct {
-	cfg       apispec.Config
+	cfg       apiruntime.Config
 	bundleDir string
 	stateDir  string
 	logger    *slog.Logger
@@ -51,7 +51,7 @@ type Manager struct {
 }
 
 // New creates a new Manager. It does not start the agent process.
-func New(cfg apispec.Config, bundleDir, stateDir string, logger *slog.Logger) *Manager {
+func New(cfg apiruntime.Config, bundleDir, stateDir string, logger *slog.Logger) *Manager {
 	return &Manager{
 		cfg:       cfg,
 		bundleDir: bundleDir,
@@ -79,7 +79,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: %w", err)
 	}
 
-	if err := m.writeState(apispec.State{
+	if err := m.writeState(apiruntime.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
 		Status:      api.StatusCreating,
@@ -118,7 +118,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	defer func() {
 		if handshakeErr != nil {
 			_ = cmd.Process.Kill()
-			_ = m.writeState(apispec.State{
+			_ = m.writeState(apiruntime.State{
 				OarVersion:  m.cfg.OarVersion,
 				ID:          m.cfg.Metadata.Name,
 				Status:      api.StatusStopped,
@@ -150,7 +150,9 @@ func (m *Manager) Create(ctx context.Context) error {
 		handshakeErr = err
 		return fmt.Errorf("runtime: acp session/new: %w", err)
 	}
+	m.mu.Lock()
 	m.sessionID = sessionResp.SessionId
+	m.mu.Unlock()
 
 	if m.cfg.AcpAgent.SystemPrompt != "" {
 		_, err = conn.Prompt(ctx, acp.PromptRequest{
@@ -163,7 +165,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		}
 	}
 
-	if err := m.writeState(apispec.State{
+	if err := m.writeState(apiruntime.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
 		Status:      api.StatusIdle,
@@ -177,7 +179,7 @@ func (m *Manager) Create(ctx context.Context) error {
 
 	go func() {
 		_ = cmd.Wait()
-		_ = m.writeState(apispec.State{
+		_ = m.writeState(apiruntime.State{
 			OarVersion:  m.cfg.OarVersion,
 			ID:          m.cfg.Metadata.Name,
 			Status:      api.StatusStopped,
@@ -215,7 +217,7 @@ func (m *Manager) Kill(ctx context.Context) error {
 		}
 	}
 
-	return m.writeState(apispec.State{
+	return m.writeState(apiruntime.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
 		Status:      api.StatusStopped,
@@ -237,7 +239,7 @@ func (m *Manager) Delete() error {
 }
 
 // GetState returns the current persisted state of the agent.
-func (m *Manager) GetState() (apispec.State, error) {
+func (m *Manager) GetState() (apiruntime.State, error) {
 	return spec.ReadState(m.stateDir)
 }
 
@@ -265,7 +267,7 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		Prompt:    prompt,
 	})
 
-	lt := &apispec.LastTurn{CompletedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	lt := &apiruntime.LastTurn{CompletedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if err != nil {
 		lt.Error = err.Error()
 	} else {
@@ -311,6 +313,14 @@ func (m *Manager) Events() <-chan acp.SessionNotification {
 	return m.events
 }
 
+// SessionID returns the ACP session ID obtained during the session/new handshake.
+// Returns empty string if the session has not been created yet.
+func (m *Manager) SessionID() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return string(m.sessionID)
+}
+
 // done returns a channel that closes when the ACP connection is closed.
 // Returns a never-closing channel if the connection has not been established.
 func (m *Manager) done() <-chan struct{} {
@@ -323,7 +333,7 @@ func (m *Manager) done() <-chan struct{} {
 	return make(chan struct{})
 }
 
-func (m *Manager) writeState(state apispec.State, reason string) error {
+func (m *Manager) writeState(state apiruntime.State, reason string) error {
 	previous, prevErr := spec.ReadState(m.stateDir)
 	if err := spec.WriteState(m.stateDir, state); err != nil {
 		return err
@@ -334,7 +344,7 @@ func (m *Manager) writeState(state apispec.State, reason string) error {
 	return nil
 }
 
-func (m *Manager) emitStateChange(previous, current apispec.State, reason string) {
+func (m *Manager) emitStateChange(previous, current apiruntime.State, reason string) {
 	m.mu.Lock()
 	hook := m.stateChangeHook
 	m.mu.Unlock()
@@ -350,9 +360,9 @@ func (m *Manager) emitStateChange(previous, current apispec.State, reason string
 	})
 }
 
-// convertMcpServers maps apispec.McpServer slice to acp.McpServer slice.
-// apispec.McpServer.Type is "http" or "sse"; both map to the acp union variants.
-func convertMcpServers(servers []apispec.McpServer) []acp.McpServer {
+// convertMcpServers maps apiruntime.McpServer slice to acp.McpServer slice.
+// apiruntime.McpServer.Type is "http" or "sse"; both map to the acp union variants.
+func convertMcpServers(servers []apiruntime.McpServer) []acp.McpServer {
 	result := make([]acp.McpServer, 0, len(servers))
 	for _, s := range servers {
 		switch s.Type {

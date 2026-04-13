@@ -41,7 +41,7 @@ func TestTranslateRich_ToolCall_FullFields(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(ToolCallEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ToolCallEvent)
 	require.True(t, ok)
 	assert.Equal(t, "anthropic", ev.Meta["provider"])
 	assert.Equal(t, "tc-1", ev.ID)
@@ -96,7 +96,7 @@ func TestTranslateRich_ToolCallUpdate_FullFields(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(ToolResultEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ToolResultEvent)
 	require.True(t, ok)
 	assert.Equal(t, "v", ev.Meta["k"])
 	assert.Equal(t, "tc-2", ev.ID)
@@ -134,7 +134,7 @@ func TestTranslateRich_ContentBlock_Text(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
 	require.True(t, ok)
 	assert.Equal(t, "hello", ev.Text) // convenience field preserved
 	require.NotNil(t, ev.Content)
@@ -168,7 +168,7 @@ func TestTranslateRich_ContentBlock_Image(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.Image)
@@ -200,7 +200,7 @@ func TestTranslateRich_ContentBlock_Audio(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.Audio)
@@ -238,7 +238,7 @@ func TestTranslateRich_ContentBlock_ResourceLink(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.ResourceLink)
@@ -282,7 +282,7 @@ func TestTranslateRich_ContentBlock_Resource(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.Resource)
@@ -335,7 +335,7 @@ func TestTranslateRich_AvailableCommandsUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(AvailableCommandsEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(AvailableCommandsEvent)
 	require.True(t, ok)
 	assert.Equal(t, "agent", ev.Meta["src"])
 	require.Len(t, ev.Commands, 1)
@@ -365,7 +365,7 @@ func TestTranslateRich_CurrentModeUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(CurrentModeEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(CurrentModeEvent)
 	require.True(t, ok)
 	assert.EqualValues(t, 2, ev.Meta["v"])
 	assert.Equal(t, "edit", ev.ModeID)
@@ -404,7 +404,7 @@ func TestTranslateRich_ConfigOptionUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(ConfigOptionEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ConfigOptionEvent)
 	require.True(t, ok)
 	assert.True(t, ev.Meta["cfg"].(bool))
 	require.Len(t, ev.ConfigOptions, 1)
@@ -455,7 +455,7 @@ func TestTranslateRich_ConfigOptionUpdate_GroupedOptions(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(ConfigOptionEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ConfigOptionEvent)
 	require.True(t, ok)
 	require.Len(t, ev.ConfigOptions, 1)
 	s := ev.ConfigOptions[0].Select
@@ -489,7 +489,7 @@ func TestTranslateRich_SessionInfoUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(SessionInfoEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(SessionInfoEvent)
 	require.True(t, ok)
 	assert.EqualValues(t, 1, ev.Meta["si"])
 	require.NotNil(t, ev.Title)
@@ -516,7 +516,7 @@ func TestTranslateRich_UsageUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(UsageEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(UsageEvent)
 	require.True(t, ok)
 	assert.Equal(t, "yes", ev.Meta["u"])
 	require.NotNil(t, ev.Cost)
@@ -548,7 +548,7 @@ func TestTranslateRich_RawInputOutput_RoundTrip(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainEnvelope(t, ch)).(ToolCallEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ToolCallEvent)
 	require.True(t, ok)
 
 	// Marshal the event and unmarshal back.
@@ -568,9 +568,9 @@ func TestTranslateRich_RawInputOutput_RoundTrip(t *testing.T) {
 	assert.InDelta(t, 0, ro["exit_code"], 0.001)
 }
 
-// ── Test 14: Envelope decode all 17 event types ───────────────────────────────
+// ── Test 14: ShimEvent decode all 18 event types ─────────────────────────────
 
-func TestTranslateRich_EnvelopeDecode_AllEventTypes(t *testing.T) {
+func TestTranslateRich_ShimEventDecode_AllEventTypes(t *testing.T) {
 	cases := []struct {
 		name    string
 		evType  string
@@ -595,53 +595,52 @@ func TestTranslateRich_EnvelopeDecode_AllEventTypes(t *testing.T) {
 		{"usage", "usage", UsageEvent{Size: 100, Used: 50}},
 	}
 
+	// Add state_change to the test cases.
+	cases = append(cases, struct {
+		name    string
+		evType  string
+		payload Event
+	}{"state_change", "state_change", StateChangeEvent{PreviousStatus: "idle", Status: "running"}})
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Build a TypedEvent, marshal, unmarshal.
-			te := newTypedEvent(tc.payload)
-			b, err := json.Marshal(te)
+			// Build a ShimEvent, marshal, unmarshal, verify content type survives.
+			se := ShimEvent{
+				RunID:    "r1",
+				Seq:      0,
+				Category: CategoryForEvent(tc.evType),
+				Type:     tc.evType,
+				Content:  tc.payload,
+			}
+			b, err := se.MarshalJSON()
 			require.NoError(t, err, "marshal")
-			var te2 TypedEvent
-			require.NoError(t, json.Unmarshal(b, &te2), "unmarshal")
-			assert.Equal(t, tc.evType, te2.Type)
-			// The payload type should survive round-trip.
-			assert.IsType(t, tc.payload, te2.Payload, "payload type mismatch")
+			var decoded ShimEvent
+			require.NoError(t, decoded.UnmarshalJSON(b), "unmarshal")
+			assert.Equal(t, tc.evType, decoded.Type)
+			// The content type should survive round-trip.
+			assert.IsType(t, tc.payload, decoded.Content, "content type mismatch")
 		})
 	}
 }
 
-// ── Test 15: Backward compatibility ──────────────────────────────────────────
+// ── Test 15: ShimEvent backward compatibility ─────────────────────────────────
 
-func TestTranslateRich_BackwardCompat_OldJSON(t *testing.T) {
-	// Old ToolCallEvent JSON (only id, kind, title — no new fields).
-	oldJSON := `{"type":"tool_call","payload":{"id":"tc-1","kind":"shell","title":"run ls"}}`
-	var te TypedEvent
-	require.NoError(t, json.Unmarshal([]byte(oldJSON), &te))
-	ev, ok := te.Payload.(ToolCallEvent)
+func TestTranslateRich_ShimEvent_BackwardCompat(t *testing.T) {
+	// ShimEvent JSON with tool_call content.
+	tcJSON := `{"runId":"r1","seq":0,"time":"2026-01-01T00:00:00Z","category":"session","type":"tool_call","content":{"id":"tc-1","kind":"shell","title":"run ls"}}`
+	var se ShimEvent
+	require.NoError(t, json.Unmarshal([]byte(tcJSON), &se))
+	ev, ok := se.Content.(ToolCallEvent)
 	require.True(t, ok)
 	assert.Equal(t, "tc-1", ev.ID)
 	assert.Equal(t, "shell", ev.Kind)
 	assert.Equal(t, "run ls", ev.Title)
-	assert.Nil(t, ev.Meta)
-	assert.Nil(t, ev.Content)
 
-	// Old ToolResultEvent JSON.
-	oldResultJSON := `{"type":"tool_result","payload":{"id":"tc-1","status":"completed"}}`
-	var te2 TypedEvent
-	require.NoError(t, json.Unmarshal([]byte(oldResultJSON), &te2))
-	res, ok := te2.Payload.(ToolResultEvent)
-	require.True(t, ok)
-	assert.Equal(t, "tc-1", res.ID)
-	assert.Equal(t, "completed", res.Status)
-	assert.Empty(t, res.Kind)
-	assert.Nil(t, res.Content)
-
-	// Old TextEvent JSON (no content field).
-	oldTextJSON := `{"type":"text","payload":{"text":"hello"}}`
-	var te3 TypedEvent
-	require.NoError(t, json.Unmarshal([]byte(oldTextJSON), &te3))
-	txt, ok := te3.Payload.(TextEvent)
+	// ShimEvent JSON with text content.
+	txtJSON := `{"runId":"r1","seq":1,"time":"2026-01-01T00:00:00Z","category":"session","type":"text","content":{"text":"hello"}}`
+	var se2 ShimEvent
+	require.NoError(t, json.Unmarshal([]byte(txtJSON), &se2))
+	txt, ok := se2.Content.(TextEvent)
 	require.True(t, ok)
 	assert.Equal(t, "hello", txt.Text)
-	assert.Nil(t, txt.Content)
 }

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 	"github.com/zoumo/oar/pkg/store"
 )
 
@@ -1088,29 +1088,29 @@ func TestWorkspaceManagerInitRefCounts(t *testing.T) {
 	srcJSON, _ := json.Marshal(Source{Type: SourceTypeEmptyDir})
 
 	// Workspace 1: phase=ready with a path — should appear in refCount map.
-	ws1 := &meta.Workspace{
-		Metadata: meta.ObjectMeta{Name: "ws-ready-a"},
-		Spec:     meta.WorkspaceSpec{Source: srcJSON},
-		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady, Path: "/var/workspaces/ws-ready-a"},
+	ws1 := &apiari.Workspace{
+		Metadata: apiari.ObjectMeta{Name: "ws-ready-a"},
+		Spec:     apiari.WorkspaceSpec{Source: srcJSON},
+		Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhaseReady, Path: "/var/workspaces/ws-ready-a"},
 	}
 	if err := store.CreateWorkspace(ctx, ws1); err != nil {
 		t.Fatalf("CreateWorkspace ws-ready-a: %v", err)
 	}
 
 	// Workspace 2: phase=ready with a path — also appears.
-	ws2 := &meta.Workspace{
-		Metadata: meta.ObjectMeta{Name: "ws-ready-b"},
-		Spec:     meta.WorkspaceSpec{Source: srcJSON},
-		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhaseReady, Path: "/var/workspaces/ws-ready-b"},
+	ws2 := &apiari.Workspace{
+		Metadata: apiari.ObjectMeta{Name: "ws-ready-b"},
+		Spec:     apiari.WorkspaceSpec{Source: srcJSON},
+		Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhaseReady, Path: "/var/workspaces/ws-ready-b"},
 	}
 	if err := store.CreateWorkspace(ctx, ws2); err != nil {
 		t.Fatalf("CreateWorkspace ws-ready-b: %v", err)
 	}
 
 	// Workspace 3: phase=pending — NOT included in the init (only ready workspaces are loaded).
-	ws3 := &meta.Workspace{
-		Metadata: meta.ObjectMeta{Name: "ws-pending"},
-		Status:   meta.WorkspaceStatus{Phase: meta.WorkspacePhasePending},
+	ws3 := &apiari.Workspace{
+		Metadata: apiari.ObjectMeta{Name: "ws-pending"},
+		Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhasePending},
 	}
 	if err := store.CreateWorkspace(ctx, ws3); err != nil {
 		t.Fatalf("CreateWorkspace ws-pending: %v", err)

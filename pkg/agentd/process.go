@@ -16,17 +16,17 @@ import (
 	"time"
 
 	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/meta"
-	apispec "github.com/zoumo/oar/api/spec"
+	apiari "github.com/zoumo/oar/api/ari"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/pkg/events"
-	"github.com/zoumo/oar/pkg/shimapi"
+	"github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/spec"
 	"github.com/zoumo/oar/pkg/store"
 )
 
-// EventHandler is called for each session/update received from the shim.
+// EventHandler is called for each shim/event notification received from the shim.
 // Handlers must be registered before calling Subscribe.
-type EventHandler func(ctx context.Context, update events.SessionUpdateParams)
+type EventHandler func(ctx context.Context, update events.ShimEvent)
 
 // agentKey returns the composite map key for an agent: workspace+"/"+name.
 // This matches the bbolt key path convention used by the meta store.
@@ -87,9 +87,9 @@ type ShimProcess struct {
 	// Cmd is the exec.Cmd for the shim process (for Wait/Kill).
 	Cmd *exec.Cmd
 
-	// Events is a channel receiving ordered session/update params from the shim.
+	// Events is a channel receiving ordered ShimEvents from the shim.
 	// A default drain goroutine consumes events when no external reader is active.
-	Events chan events.SessionUpdateParams
+	Events chan events.ShimEvent
 
 	// Done is closed when the shim process exits and all cleanup is complete.
 	Done chan struct{}
@@ -132,27 +132,25 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 	key := agentKey(workspace, name)
 	logger := m.logger.With("agent_key", key)
 	return func(ctx context.Context, method string, params json.RawMessage) {
-		switch method {
-		case api.MethodSessionUpdate:
-			p, err := ParseSessionUpdate(params)
-			if err != nil {
-				logger.Warn("malformed session/update notification dropped", "error", err)
-				return
-			}
-			select {
-			case shimProc.Events <- p:
-			default:
-				// No consumer is draining Events; drop silently to avoid log spam.
-			}
+		if method != api.MethodShimEvent {
+			return
+		}
+		ev, err := ParseShimEvent(params)
+		if err != nil {
+			logger.Warn("malformed shim/event notification dropped", "error", err)
+			return
+		}
 
-		case api.MethodRuntimeStateChange:
-			p, err := ParseRuntimeStateChange(params)
-			if err != nil {
-				logger.Warn("stateChange: malformed notification dropped", "error", err)
+		// Route by category/type.
+		if ev.Category == api.CategoryRuntime && ev.Type == api.EventTypeStateChange {
+			// state_change → update DB agent state.
+			sc, ok := ev.Content.(events.StateChangeEvent)
+			if !ok {
+				logger.Warn("stateChange: content type assertion failed", "agent_key", key)
 				return
 			}
-			prevStatus := p.PreviousStatus
-			newStatus := p.Status
+			prevStatus := sc.PreviousStatus
+			newStatus := sc.Status
 			logger.Info("stateChange: updating DB state",
 				"agent_key", key,
 				"prev", prevStatus,
@@ -173,7 +171,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 					"new", newStatus)
 				return
 			}
-			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentRunStatus{
+			if err := m.agents.UpdateStatus(updateCtx, workspace, name, apiari.AgentRunStatus{
 				State:          api.Status(newStatus),
 				ShimSocketPath: shimProc.SocketPath,
 				ShimStateDir:   shimProc.StateDir,
@@ -183,6 +181,14 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 					"agent_key", key,
 					"error", err)
 			}
+			return
+		}
+
+		// All other events → push to the Events channel for external consumers.
+		select {
+		case shimProc.Events <- ev:
+		default:
+			// No consumer is draining Events; drop silently to avoid log spam.
 		}
 	}
 }
@@ -285,7 +291,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		m.logger.Error("failed to marshal bootstrap config", "agent_key", key, "error", err)
 		// Non-fatal: agent can still run, just won't have recovery data.
 	} else {
-		if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, meta.AgentRunStatus{
+		if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, apiari.AgentRunStatus{
 			State:           api.StatusCreating, // keep creating until we transition below
 			ShimSocketPath:  socketPath,
 			ShimStateDir:    stateDir,
@@ -316,7 +322,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		if statusResult.State.Status != api.StatusCreating {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := m.agents.UpdateStatus(updateCtx, workspace, name, meta.AgentRunStatus{
+			if err := m.agents.UpdateStatus(updateCtx, workspace, name, apiari.AgentRunStatus{
 				State:          statusResult.State.Status,
 				ShimSocketPath: socketPath,
 				ShimStateDir:   stateDir,
@@ -345,7 +351,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 }
 
 // generateConfig creates the OAR Runtime config.json for this agent.
-func (m *ProcessManager) generateConfig(agent *meta.AgentRun, agentDef *meta.Agent) apispec.Config {
+func (m *ProcessManager) generateConfig(agent *apiari.AgentRun, agentDef *apiari.Agent) apiruntime.Config {
 	// Build environment variables in KEY=VALUE format from the Agent definition.
 	env := make([]string, 0, len(agentDef.Spec.Env))
 	for _, ev := range agentDef.Spec.Env {
@@ -365,7 +371,7 @@ func (m *ProcessManager) generateConfig(agent *meta.AgentRun, agentDef *meta.Age
 	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
 
 	mcpBinary, mcpArgs := m.workspaceMcpCommand()
-	workspaceMcp := apispec.McpServer{
+	workspaceMcp := apiruntime.McpServer{
 		Type:    "stdio",
 		Name:    "workspace",
 		Command: mcpBinary,
@@ -380,27 +386,27 @@ func (m *ProcessManager) generateConfig(agent *meta.AgentRun, agentDef *meta.Age
 		},
 	}
 
-	return apispec.Config{
+	return apiruntime.Config{
 		OarVersion: "0.1.0",
-		Metadata: apispec.Metadata{
+		Metadata: apiruntime.Metadata{
 			Name:        agent.Metadata.Name,
 			Annotations: annotations,
 		},
-		AgentRoot: apispec.AgentRoot{
+		AgentRoot: apiruntime.AgentRoot{
 			Path: "workspace", // symlink to actual workspace
 		},
-		AcpAgent: apispec.AcpAgent{
+		AcpAgent: apiruntime.AcpAgent{
 			SystemPrompt: agent.Spec.SystemPrompt,
-			Process: apispec.AcpProcess{
+			Process: apiruntime.AcpProcess{
 				Command: agentDef.Spec.Command,
 				Args:    agentDef.Spec.Args,
 				Env:     env,
 			},
-			Session: apispec.AcpSession{
-				McpServers: []apispec.McpServer{workspaceMcp},
+			Session: apiruntime.AcpSession{
+				McpServers: []apiruntime.McpServer{workspaceMcp},
 			},
 		},
-		Permissions: apispec.ApproveAll,
+		Permissions: apiruntime.ApproveAll,
 	}
 }
 
@@ -418,7 +424,7 @@ func (m *ProcessManager) workspaceMcpCommand() (string, []string) {
 // createBundle creates the bundle directory and writes config.json.
 // Also creates the workspace symlink (agentRoot.path -> actual workspace).
 // Returns bundlePath, stateDir, socketPath.
-func (m *ProcessManager) createBundle(agent *meta.AgentRun, cfg apispec.Config) (string, string, string, error) {
+func (m *ProcessManager) createBundle(agent *apiari.AgentRun, cfg apiruntime.Config) (string, string, string, error) {
 	// Bundle directory: <bundleRoot>/<workspace>-<name>
 	dirFragment := agent.Metadata.Workspace + "-" + agent.Metadata.Name
 	bundlePath := filepath.Join(m.bundleRoot, dirFragment)
@@ -482,7 +488,7 @@ func (m *ProcessManager) createBundle(agent *meta.AgentRun, cfg apispec.Config) 
 // process should run independently of the request context that initiated Start.
 // Using CommandContext would kill the shim when the request context is canceled.
 // The shim process lifecycle is managed by ProcessManager.Stop and watchProcess.
-func (m *ProcessManager) forkShim(agent *meta.AgentRun, bundlePath, stateDir string) (*ShimProcess, error) {
+func (m *ProcessManager) forkShim(agent *apiari.AgentRun, bundlePath, stateDir string) (*ShimProcess, error) {
 	var shimBinary string
 	var usingOverride bool
 
@@ -525,7 +531,7 @@ func (m *ProcessManager) forkShim(agent *meta.AgentRun, bundlePath, stateDir str
 		"--bundle", bundlePath,
 		"--id", filepath.Base(bundlePath),
 		"--state-dir", filepath.Dir(bundlePath), // bundleRoot; shim appends /<id>
-		"--permissions", string(apispec.ApproveAll),
+		"--permissions", string(apiruntime.ApproveAll),
 	}
 
 	// Log the command for debugging.
@@ -555,7 +561,7 @@ func (m *ProcessManager) forkShim(agent *meta.AgentRun, bundlePath, stateDir str
 		AgentKey:  key,
 		PID:       cmd.Process.Pid,
 		Cmd:       cmd,
-		Events:    make(chan events.SessionUpdateParams, 1024), // buffered for async delivery
+		Events:    make(chan events.ShimEvent, 1024), // buffered for async delivery
 		Done:      make(chan struct{}),
 		stopDrain: make(chan struct{}),
 	}
@@ -684,7 +690,7 @@ func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProc
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{State: api.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: api.StatusStopped})
 
 	// Bundle directory is intentionally NOT cleaned up here.
 	// It must persist until the agent is explicitly deleted via agent/delete.
@@ -720,7 +726,7 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 		}
 		// Agent exists but is not running — transition to stopped if needed.
 		if agent.Status.State != api.StatusStopped {
-			if err := m.agents.UpdateStatus(ctx, workspace, name, meta.AgentRunStatus{State: api.StatusStopped}); err != nil {
+			if err := m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: api.StatusStopped}); err != nil {
 				return fmt.Errorf("process: transition agent %s to stopped: %w", key, err)
 			}
 		}
@@ -758,23 +764,23 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 
 // State returns the current runtime state of the shim for the given agent.
 // Returns an error if the agent is not running or the response is malformed.
-func (m *ProcessManager) State(ctx context.Context, workspace, name string) (apispec.State, error) {
+func (m *ProcessManager) State(ctx context.Context, workspace, name string) (apiruntime.State, error) {
 	key := agentKey(workspace, name)
 	m.mu.RLock()
 	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		return apispec.State{}, fmt.Errorf("process: agent %s is not running", key)
+		return apiruntime.State{}, fmt.Errorf("process: agent %s is not running", key)
 	}
 
 	if shimProc.Client == nil {
-		return apispec.State{}, fmt.Errorf("process: agent %s has no client connection", key)
+		return apiruntime.State{}, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
 	status, err := shimProc.Client.Status(ctx)
 	if err != nil {
-		return apispec.State{}, fmt.Errorf("process: runtime/status for agent %s: %w", key, err)
+		return apiruntime.State{}, fmt.Errorf("process: runtime/status for agent %s: %w", key, err)
 	}
 
 	return status.State, nil
@@ -782,18 +788,18 @@ func (m *ProcessManager) State(ctx context.Context, workspace, name string) (api
 
 // RuntimeStatus returns the full runtime/status result including recovery
 // metadata for the given agent.
-func (m *ProcessManager) RuntimeStatus(ctx context.Context, workspace, name string) (shimapi.RuntimeStatusResult, error) {
+func (m *ProcessManager) RuntimeStatus(ctx context.Context, workspace, name string) (shim.RuntimeStatusResult, error) {
 	key := agentKey(workspace, name)
 	m.mu.RLock()
 	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		return shimapi.RuntimeStatusResult{}, fmt.Errorf("process: agent %s is not running", key)
+		return shim.RuntimeStatusResult{}, fmt.Errorf("process: agent %s is not running", key)
 	}
 
 	if shimProc.Client == nil {
-		return shimapi.RuntimeStatusResult{}, fmt.Errorf("process: agent %s has no client connection", key)
+		return shim.RuntimeStatusResult{}, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
 	return shimProc.Client.Status(ctx)

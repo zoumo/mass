@@ -6,16 +6,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 )
 
 // makeAgent returns a minimal valid Agent for test use.
-func makeAgent(name string) *meta.Agent {
-	return &meta.Agent{
-		Metadata: meta.ObjectMeta{
+func makeAgent(name string) *apiari.Agent {
+	return &apiari.Agent{
+		Metadata: apiari.ObjectMeta{
 			Name: name,
 		},
-		Spec: meta.AgentSpec{
+		Spec: apiari.AgentSpec{
 			Command: "/usr/bin/my-agent",
 			Args:    []string{"--serve"},
 			Env: []api.EnvVar{

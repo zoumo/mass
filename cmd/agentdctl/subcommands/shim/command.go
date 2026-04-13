@@ -83,10 +83,15 @@ func (c *client) readLoop() {
 		if err != nil {
 			if err != io.EOF {
 				fmt.Fprintf(os.Stderr, "\n[readLoop] read error: %v\n", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "\n[readLoop] EOF — server closed connection\n")
 			}
 			break
 		}
 		if msg.ID == nil && msg.Method != "" {
+			if len(c.notifs) == cap(c.notifs) {
+				fmt.Fprintf(os.Stderr, "\n[readLoop] notifs channel full (%d), dropping message: %s\n", cap(c.notifs), msg.Method)
+			}
 			c.notifs <- msg
 		} else if msg.ID != nil {
 			c.pendingMu.Lock()
@@ -144,51 +149,47 @@ func (c *client) close() { _ = c.conn.Close() }
 
 // ── Notification printing ──────────────────────────────────────────────────
 
-type sessionUpdateParams struct {
-	SessionID string       `json:"sessionId"`
-	Seq       int          `json:"seq"`
-	Timestamp string       `json:"timestamp"`
-	TurnID    string       `json:"turnId,omitempty"`
-	Event     sessionEvent `json:"event"`
-}
-
-type sessionEvent struct {
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload"`
+// shimEvent is a local mirror of events.ShimEvent for JSON decoding.
+// Content is kept as RawMessage to avoid importing the full events package.
+type shimEvent struct {
+	RunID     string          `json:"runId"`
+	SessionID string          `json:"sessionId,omitempty"`
+	Seq       int             `json:"seq"`
+	Time      string          `json:"time"`
+	Category  string          `json:"category"`
+	Type      string          `json:"type"`
+	TurnID    string          `json:"turnId,omitempty"`
+	StreamSeq int             `json:"streamSeq,omitempty"`
+	Phase     string          `json:"phase,omitempty"`
+	Content   json.RawMessage `json:"content"`
 }
 
 type textPayload struct {
 	Text string `json:"text"`
 }
 
-type runtimeStateChangeParams struct {
-	SessionID      string `json:"sessionId"`
-	Seq            int    `json:"seq"`
-	Timestamp      string `json:"timestamp"`
-	PreviousStatus string `json:"previousStatus"`
-	Status         string `json:"status"`
-	PID            int    `json:"pid,omitempty"`
-	Reason         string `json:"reason,omitempty"`
-}
-
 func printNotification(msg rpcResponse) {
 	switch msg.Method {
-	case api.MethodSessionUpdate:
-		var p sessionUpdateParams
-		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			fmt.Fprintf(os.Stderr, "[session/update parse error: %v]\n", err)
+	case api.MethodShimEvent:
+		var ev shimEvent
+		if err := json.Unmarshal(msg.Params, &ev); err != nil {
+			fmt.Fprintf(os.Stderr, "[shim/event parse error: %v]\n", err)
 			return
 		}
-		printSessionEvent(p.Seq, p.Event)
-
-	case api.MethodRuntimeStateChange:
-		var p runtimeStateChangeParams
-		if err := json.Unmarshal(msg.Params, &p); err != nil {
-			fmt.Fprintf(os.Stderr, "[runtime/state_change parse error: %v]\n", err)
+		if ev.Category == "runtime" && ev.Type == api.EventTypeStateChange {
+			var sc struct {
+				PreviousStatus string `json:"previousStatus"`
+				Status         string `json:"status"`
+				PID            int    `json:"pid,omitempty"`
+				Reason         string `json:"reason,omitempty"`
+			}
+			if err := json.Unmarshal(ev.Content, &sc); err == nil {
+				fmt.Fprintf(os.Stderr, "\033[2m[stateChange seq=%d] %s → %s pid=%d reason=%q\033[0m\n",
+					ev.Seq, sc.PreviousStatus, sc.Status, sc.PID, sc.Reason)
+			}
 			return
 		}
-		fmt.Fprintf(os.Stderr, "\033[2m[stateChange seq=%d] %s → %s pid=%d reason=%q\033[0m\n",
-			p.Seq, p.PreviousStatus, p.Status, p.PID, p.Reason)
+		printShimEvent(ev)
 
 	default:
 		fmt.Fprintf(os.Stderr, "[unknown notification: %s] %s\n", msg.Method, string(msg.Params))
@@ -196,14 +197,14 @@ func printNotification(msg rpcResponse) {
 }
 
 func isTurnEndNotification(msg rpcResponse) bool {
-	if msg.Method != api.MethodSessionUpdate {
+	if msg.Method != api.MethodShimEvent {
 		return false
 	}
-	var p sessionUpdateParams
-	if err := json.Unmarshal(msg.Params, &p); err != nil {
+	var ev shimEvent
+	if err := json.Unmarshal(msg.Params, &ev); err != nil {
 		return false
 	}
-	return p.Event.Type == api.EventTypeTurnEnd
+	return ev.Type == api.EventTypeTurnEnd
 }
 
 func startNotificationPrinter(ctx context.Context, c *client) <-chan struct{} {
@@ -237,24 +238,24 @@ func drainTurnEnd(ch <-chan struct{}) {
 	}
 }
 
-func printSessionEvent(seq int, ev sessionEvent) {
+func printShimEvent(ev shimEvent) {
 	switch ev.Type {
 	case api.EventTypeText:
 		var p textPayload
-		_ = json.Unmarshal(ev.Payload, &p)
+		_ = json.Unmarshal(ev.Content, &p)
 		fmt.Print(p.Text)
 	case api.EventTypeThinking:
 		var p textPayload
-		_ = json.Unmarshal(ev.Payload, &p)
-		fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", seq, p.Text)
+		_ = json.Unmarshal(ev.Content, &p)
+		fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", ev.Seq, p.Text)
 	case api.EventTypeToolCall:
-		fmt.Fprintf(os.Stderr, "\033[33m[tool_call seq=%d] %s\033[0m\n", seq, string(ev.Payload))
+		fmt.Fprintf(os.Stderr, "\033[33m[tool_call seq=%d] %s\033[0m\n", ev.Seq, string(ev.Content))
 	case api.EventTypeToolResult:
-		fmt.Fprintf(os.Stderr, "\033[2m[tool_result seq=%d] %s\033[0m\n", seq, string(ev.Payload))
+		fmt.Fprintf(os.Stderr, "\033[2m[tool_result seq=%d] %s\033[0m\n", ev.Seq, string(ev.Content))
 	case api.EventTypeTurnEnd:
 		fmt.Println()
 	default:
-		fmt.Fprintf(os.Stderr, "[%s seq=%d] %s\n", ev.Type, seq, string(ev.Payload))
+		fmt.Fprintf(os.Stderr, "[%s seq=%d] %s\n", ev.Type, ev.Seq, string(ev.Content))
 	}
 }
 

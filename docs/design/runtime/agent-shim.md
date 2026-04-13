@@ -24,10 +24,10 @@ agent 进程（claude-acp / pi-acp / gemini / ...）
 ## shim RPC 稳定性声明
 
 **agent-shim 保持现有 RPC 边界。**
-shim 提供 `session/*` + `runtime/*` RPC surface（clean-break 实现已对齐）、bundle/state 共置和单 AgentRun 单 shim 进程设计。
+shim 提供 `session/*` + `runtime/*` RPC surface（request/response，clean-break 实现已对齐）、bundle/state 共置和单 AgentRun 单 shim 进程设计。
 
 agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent/*` 管理 Agent CRUD。shim RPC 的 `session/*` + `runtime/*` 是内部协议，不暴露给外部调用方。
-**事件排序增强**：`session/update` envelope 中增加 `turnId`、`streamSeq`、`phase` 三个字段，用于支持 turn 级精确回放。
+**统一 notification surface**：live notification 统一为 `shim/event`，携带 `runId`、`sessionId`、`seq`、`category`、`type`、`turnId`（turn 内 session events）、`streamSeq`、`phase`、`content` 顶层字段。
 详见 [shim-rpc-spec.md](shim-rpc-spec.md) 中的"Turn-Aware Event Ordering"章节。
 
 ## 与规范文档的分工
@@ -103,8 +103,7 @@ runtime/stop         优雅停止 runtime
 
 对上暴露的 live notification 也是 shim 自己的 surface：
 
-- `session/update`
-- `runtime/state_change`
+- `shim/event`（统一 notification，包含 session category 和 runtime category 事件）
 
 这层 API 让 agentd 只关心：
 
@@ -138,7 +137,7 @@ agent-shim ↔ agent:   ACP over stdio
 这意味着：
 
 - agentd 不需要理解 ACP 事件名、握手细节或客户端职责；
-- shim 把底层协议翻译成上层能消费的 `session/update` / `runtime/state_change`；
+- shim 把底层协议翻译成上层能消费的 `shim/event` notification（session category + runtime category）；
 - 若未来某个 agent 不走 ACP，只要 shim 继续维持相同的对上 surface，
   上层 contract 仍然成立。
 
@@ -179,7 +178,8 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 
 当前实现已对齐 clean-break contract：
 
-- 规范 surface 是 `session/*` + `runtime/*`（`pkg/rpc/server.go`、`pkg/agentd/shim_client.go` 已实现）；
+- request/response surface 是 `session/*` + `runtime/*`（`pkg/rpc/server.go`、`pkg/agentd/shim_client.go` 已实现）；
+- notification surface 是 `shim/event`（统一替代原 `session/update` + `runtime/state_change`）；
 - recovery story 通过 `runtime/status` / `runtime/history` / `session/subscribe` 闭合；
 - ACP 继续留在 shim 内部；
 - `session/load` 在 `ShimClient` 中作为可失败的恢复尝试（用于 `try_reload` restart policy）；该调用允许失败并 fallback。当前生产 shim RPC server（`pkg/rpc/server.go`）尚未注册 `session/load`，调用会返回 `MethodNotFound`；生产 shim 实现此方法是 future work。

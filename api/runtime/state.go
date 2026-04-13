@@ -1,6 +1,6 @@
-// Package spec defines the OAR Runtime Specification API types.
+// Package runtime defines the OAR Runtime Specification types.
 // This file contains the State types written to state.json by agent-shim.
-package spec
+package runtime
 
 import "github.com/zoumo/oar/api"
 

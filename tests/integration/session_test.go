@@ -76,7 +76,7 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *aricli
 	}
 
 	// Register the mockagent runtime so tests can use runtimeClass="mockagent".
-	var runtimeResult ari.AgentInfo
+	var runtimeResult ari.AgentSetResult
 	if err := client.Call("agent/set", ari.AgentSetParams{
 		Name:    "mockagent",
 		Command: mockagentBin,
@@ -85,7 +85,7 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *aricli
 		client.Close()
 		t.Fatalf("failed to register mockagent runtime: %v", err)
 	}
-	t.Logf("runtime registered: name=%s command=%s", runtimeResult.Name, runtimeResult.Command)
+	t.Logf("runtime registered: name=%s command=%s", runtimeResult.Agent.Metadata.Name, runtimeResult.Agent.Spec.Command)
 
 	cleanup := func() {
 		client.Close()
@@ -123,7 +123,7 @@ func createTestWorkspace(t *testing.T, client *ariclient.Client, name string) st
 	}, &createResult); err != nil {
 		t.Fatalf("workspace/create (name=%s): %v", name, err)
 	}
-	t.Logf("workspace create dispatched: name=%s phase=%s", createResult.Name, createResult.Phase)
+	t.Logf("workspace create dispatched: name=%s phase=%s", createResult.Workspace.Metadata.Name, createResult.Workspace.Status.Phase)
 
 	// Poll workspace/status until phase=="ready"
 	deadline := time.Now().Add(15 * time.Second)
@@ -134,11 +134,11 @@ func createTestWorkspace(t *testing.T, client *ariclient.Client, name string) st
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		if statusResult.Phase == "ready" {
+		if statusResult.Workspace.Status.Phase == "ready" {
 			t.Logf("workspace ready: name=%s", name)
 			return name
 		}
-		if statusResult.Phase == "error" {
+		if statusResult.Workspace.Status.Phase == "error" {
 			t.Fatalf("workspace %s reached error phase", name)
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -189,14 +189,14 @@ func waitForAgentStateOneOf(
 			continue
 		}
 		for _, want := range wantStates {
-			if result.AgentRun.State == want {
+			if string(result.AgentRun.Status.State) == want {
 				return result
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("agent %s/%s did not reach state(s) %v within %v (last state: %q)",
-		workspace, name, wantStates, timeout, result.AgentRun.State)
+		workspace, name, wantStates, timeout, result.AgentRun.Status.State)
 	return result // unreachable
 }
 
@@ -213,7 +213,7 @@ func createAgentAndWait(t *testing.T, client *ariclient.Client, workspace, name,
 		t.Fatalf("agent/create (workspace=%s name=%s): %v", workspace, name, err)
 	}
 	t.Logf("agent create dispatched: workspace=%s name=%s state=%s",
-		createResult.Workspace, createResult.Name, createResult.State)
+		createResult.AgentRun.Metadata.Workspace, createResult.AgentRun.Metadata.Name, createResult.AgentRun.Status.State)
 	return waitForAgentState(t, client, workspace, name, "idle", 15*time.Second)
 }
 
@@ -238,7 +238,7 @@ func stopAndDeleteAgent(t *testing.T, client *ariclient.Client, workspace, name 
 		}, &st); err != nil {
 			break // agent may already be gone
 		}
-		if st.AgentRun.State == "stopped" || st.AgentRun.State == "error" {
+		if st.AgentRun.Status.State == "stopped" || st.AgentRun.Status.State == "error" {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -273,10 +273,10 @@ func TestAgentLifecycle(t *testing.T) {
 	// Step 1: agent/create → state=idle
 	t.Log("Step 1: agent/create → wait for state=idle")
 	status := createAgentAndWait(t, client, wsName, "agent-lifecycle", "mockagent")
-	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, "agent-lifecycle", status.AgentRun.State)
+	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, "agent-lifecycle", status.AgentRun.Status.State)
 
-	if status.AgentRun.State != "idle" {
-		t.Errorf("expected state=idle, got %s", status.AgentRun.State)
+	if status.AgentRun.Status.State != "idle" {
+		t.Errorf("expected state=idle, got %s", status.AgentRun.Status.State)
 	}
 
 	// Step 2: agent/prompt → async dispatch; state transitions to running
@@ -347,7 +347,7 @@ func TestAgentPromptAndStop(t *testing.T) {
 
 	// Create agent and wait for idle state
 	status := createAgentAndWait(t, client, wsName, "agent-ps", "mockagent")
-	t.Logf("agent ready: state=%s", status.AgentRun.State)
+	t.Logf("agent ready: state=%s", status.AgentRun.Status.State)
 
 	// Prompt the agent (async dispatch)
 	var promptResult ari.AgentRunPromptResult
@@ -399,8 +399,8 @@ func TestAgentPromptFromIdle(t *testing.T) {
 
 	// Create agent — should be in state=idle
 	status := createAgentAndWait(t, client, wsName, "agent-auto", "mockagent")
-	if status.AgentRun.State != "idle" {
-		t.Errorf("expected state=idle before first prompt, got %s", status.AgentRun.State)
+	if status.AgentRun.Status.State != "idle" {
+		t.Errorf("expected state=idle before first prompt, got %s", status.AgentRun.Status.State)
 	}
 
 	// Prompt immediately from idle state
@@ -442,7 +442,7 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 
 	// Create agent
 	status := createAgentAndWait(t, client, wsName, "agent-seq", "mockagent")
-	t.Logf("agent ready: state=%s", status.AgentRun.State)
+	t.Logf("agent ready: state=%s", status.AgentRun.Status.State)
 
 	prompts := []string{
 		"first sequential prompt",

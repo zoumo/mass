@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/meta"
+	apiari "github.com/zoumo/oar/api/ari"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/store"
 )
@@ -57,9 +57,9 @@ func TestProcessManagerStart(t *testing.T) {
 	defer store.Close()
 
 	// Persist runtime record for "mockagent" to the DB store.
-	if err := store.SetAgent(ctx, &meta.Agent{
-		Metadata: meta.ObjectMeta{Name: "mockagent"},
-		Spec: meta.AgentSpec{
+	if err := store.SetAgent(ctx, &apiari.Agent{
+		Metadata: apiari.ObjectMeta{Name: "mockagent"},
+		Spec: apiari.AgentSpec{
 			Command: mockagentBinary,
 			Args:    []string{},
 		},
@@ -78,10 +78,10 @@ func TestProcessManagerStart(t *testing.T) {
 	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
 		t.Fatalf("mkdir workspacePath: %v", err)
 	}
-	ws := &meta.Workspace{
-		Metadata: meta.ObjectMeta{Name: "test-ws"},
-		Status: meta.WorkspaceStatus{
-			Phase: meta.WorkspacePhaseReady,
+	ws := &apiari.Workspace{
+		Metadata: apiari.ObjectMeta{Name: "test-ws"},
+		Status: apiari.WorkspaceStatus{
+			Phase: apiari.WorkspacePhaseReady,
 			Path:  workspacePath,
 		},
 	}
@@ -92,15 +92,15 @@ func TestProcessManagerStart(t *testing.T) {
 	// Create an agent in "creating" state (required by Start).
 	agentWorkspace := "test-ws"
 	agentName := "test-agent"
-	agent := &meta.AgentRun{
-		Metadata: meta.ObjectMeta{
+	agent := &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{
 			Workspace: agentWorkspace,
 			Name:      agentName,
 		},
-		Spec: meta.AgentRunSpec{
+		Spec: apiari.AgentRunSpec{
 			Agent: "mockagent",
 		},
-		Status: meta.AgentRunStatus{
+		Status: apiari.AgentRunStatus{
 			State: api.StatusCreating,
 		},
 	}
@@ -131,7 +131,7 @@ func TestProcessManagerStart(t *testing.T) {
 	// Verify agent status transitions to idle/running via runtime/state_change
 	// notification (D088 — direct StatusRunning write removed from Start).
 	// Poll until the shim emits its first stateChange notification.
-	var updatedAgent *meta.AgentRun
+	var updatedAgent *apiari.AgentRun
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		updatedAgent, err = agentMgr.Get(ctx, agentWorkspace, agentName)
 		if err != nil {
@@ -190,16 +190,12 @@ func TestProcessManagerStart(t *testing.T) {
 				goto done
 			}
 			eventCount++
-			ev, ok := update.Event.Payload.(events.Event)
-			if !ok {
-				t.Fatalf("expected event payload, got %T", update.Event.Payload)
-			}
-			t.Logf("Received event #%d: seq=%d type=%T",
-				eventCount, update.Seq, ev)
-			if _, ok := ev.(events.TextEvent); ok {
+			t.Logf("Received event #%d: seq=%d type=%s category=%s",
+				eventCount, update.Seq, update.Type, update.Category)
+			if _, ok := update.Content.(events.TextEvent); ok {
 				t.Logf("TextEvent received")
 			}
-			if _, ok := ev.(events.TurnEndEvent); ok {
+			if _, ok := update.Content.(events.TurnEndEvent); ok {
 				t.Logf("TurnEndEvent received, prompt complete")
 				goto done
 			}
@@ -236,7 +232,7 @@ done:
 	}
 
 	// Verify agent status transitioned to "stopped".
-	var finalAgent *meta.AgentRun
+	var finalAgent *apiari.AgentRun
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		finalAgent, err = agentMgr.Get(ctx, agentWorkspace, agentName)
 		if err != nil {
@@ -269,9 +265,9 @@ func TestGenerateConfig(t *testing.T) {
 	pm := &ProcessManager{
 		socketPath: "/tmp/test-agentd.sock",
 	}
-	rc := &meta.Agent{
-		Metadata: meta.ObjectMeta{Name: "mockagent"},
-		Spec: meta.AgentSpec{
+	rc := &apiari.Agent{
+		Metadata: apiari.ObjectMeta{Name: "mockagent"},
+		Spec: apiari.AgentSpec{
 			Command: "/usr/bin/mockagent",
 			Args:    []string{},
 			Env: []api.EnvVar{
@@ -281,13 +277,13 @@ func TestGenerateConfig(t *testing.T) {
 	}
 
 	t.Run("basic agent config", func(t *testing.T) {
-		agent := &meta.AgentRun{
-			Metadata: meta.ObjectMeta{
+		agent := &apiari.AgentRun{
+			Metadata: apiari.ObjectMeta{
 				Workspace: "ws1",
 				Name:      "my-agent",
 				Labels:    map[string]string{"team": "platform"},
 			},
-			Spec: meta.AgentRunSpec{
+			Spec: apiari.AgentRunSpec{
 				Agent: "mockagent",
 				SystemPrompt: "you are helpful",
 			},
@@ -331,12 +327,12 @@ func TestGenerateConfig(t *testing.T) {
 	})
 
 	t.Run("agent without system prompt", func(t *testing.T) {
-		agent := &meta.AgentRun{
-			Metadata: meta.ObjectMeta{
+		agent := &apiari.AgentRun{
+			Metadata: apiari.ObjectMeta{
 				Workspace: "ws1",
 				Name:      "bare-agent",
 			},
-			Spec: meta.AgentRunSpec{
+			Spec: apiari.AgentRunSpec{
 				Agent: "mockagent",
 			},
 		}
@@ -348,23 +344,20 @@ func TestGenerateConfig(t *testing.T) {
 	})
 }
 
-// findShimBinary finds the agent-shim binary for testing.
+// findShimBinary finds the agentd binary for testing (it contains the shim subcommand).
 func findShimBinary(t *testing.T) string {
 	projectRoot := findProjectRoot(t)
-	builtPath := filepath.Join(projectRoot, "bin", "agent-shim")
-	if _, err := os.Stat(builtPath); err == nil {
-		return builtPath
-	}
+	builtPath := filepath.Join(projectRoot, "bin", "agentd")
 
 	binDir := filepath.Join(projectRoot, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bin dir: %v", err)
 	}
 
-	cmd := exec.Command("go", "build", "-o", builtPath, "./cmd/agent-shim")
+	cmd := exec.Command("go", "build", "-o", builtPath, "./cmd/agentd")
 	cmd.Dir = projectRoot
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("build agent-shim: %v", err)
+		t.Fatalf("build agentd: %v", err)
 	}
 
 	return builtPath

@@ -143,7 +143,7 @@ Agent 面临着同样的分层关切：
 |------|------|------|
 | [runtime/runtime-spec.md](./runtime/runtime-spec.md) | 规范 | OAR Runtime Spec — state、bundle、lifecycle、operations、typed events |
 | [runtime/config-spec.md](./runtime/config-spec.md) | 规范 | Config Spec — config.json schema（对标 OCI config.md） |
-| [runtime/shim-rpc-spec.md](./runtime/shim-rpc-spec.md) | 规范 | Shim RPC Spec — clean-break `session/*` + `runtime/*` surface、`session/update` / `runtime/state_change`、回放与重连语义 |
+| [runtime/shim-rpc-spec.md](./runtime/shim-rpc-spec.md) | 规范 | Shim RPC Spec — clean-break `session/*` + `runtime/*` request/response surface、`shim/event` notification、回放与重连语义 |
 | [runtime/agent-shim.md](./runtime/agent-shim.md) | 组件 | agent-shim — 组件职责、ACP 边界、runtime truth、实现状态（描述性，不重新定义协议） |
 | [runtime/design.md](./runtime/design.md) | 设计 | 设计思路 — OCI 对标分析、架构决策、config.json 生成流程 |
 | [runtime/why-no-runa.md](./runtime/why-no-runa.md) | 设计 | 为什么 OAR 没有 runa — agent 场景下独立运行时 CLI 不成立的原因 |

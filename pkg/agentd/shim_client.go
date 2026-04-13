@@ -12,7 +12,7 @@ import (
 
 	"github.com/zoumo/oar/api"
 	"github.com/zoumo/oar/pkg/events"
-	"github.com/zoumo/oar/pkg/shimapi"
+	"github.com/zoumo/oar/api/shim"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -37,8 +37,8 @@ type ShimClient struct {
 }
 
 // NotificationHandler is called for each live notification received from the
-// shim after Subscribe. The method is one of events.MethodSessionUpdate or
-// events.MethodRuntimeStateChange. Raw params are passed verbatim.
+// shim after Subscribe. The method is api.MethodShimEvent. Raw params are
+// passed verbatim.
 type NotificationHandler func(ctx context.Context, method string, params json.RawMessage)
 
 // Dial connects to the agent-shim RPC server at the given Unix socket path
@@ -91,10 +91,10 @@ func (c *ShimClient) DisconnectNotify() <-chan struct{} {
 
 // Prompt sends a text prompt to the agent and waits for the turn to complete.
 // Returns the stop reason (e.g., "end_turn", "canceled", "tool_use").
-func (c *ShimClient) Prompt(ctx context.Context, text string) (shimapi.SessionPromptResult, error) {
-	var result shimapi.SessionPromptResult
-	if err := c.call(ctx, api.MethodSessionPrompt, shimapi.SessionPromptParams{Prompt: text}, &result); err != nil {
-		return shimapi.SessionPromptResult{}, fmt.Errorf("shim_client: session/prompt: session=%s: %w", c.socketPath, err)
+func (c *ShimClient) Prompt(ctx context.Context, text string) (shim.SessionPromptResult, error) {
+	var result shim.SessionPromptResult
+	if err := c.call(ctx, api.MethodSessionPrompt, shim.SessionPromptParams{Prompt: text}, &result); err != nil {
+		return shim.SessionPromptResult{}, fmt.Errorf("shim_client: session/prompt: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
 }
@@ -111,7 +111,7 @@ func (c *ShimClient) Cancel(ctx context.Context) error {
 // Returns nil on success; returns error if the shim rejects the call (e.g.
 // runtime does not support session/load) so the caller can fall back.
 func (c *ShimClient) Load(ctx context.Context, sessionID string) error {
-	if err := c.call(ctx, api.MethodSessionLoad, shimapi.SessionLoadParams{SessionID: sessionID}, nil); err != nil {
+	if err := c.call(ctx, api.MethodSessionLoad, shim.SessionLoadParams{SessionID: sessionID}, nil); err != nil {
 		return fmt.Errorf("shim_client: session/load: session=%s: %w", c.socketPath, err)
 	}
 	return nil
@@ -128,11 +128,11 @@ func (c *ShimClient) Load(ctx context.Context, sessionID string) error {
 // log from fromSeq under the same lock that registers the subscription,
 // returning backfill entries in the result alongside the live subscription.
 // This eliminates the gap between a separate History + Subscribe call pair.
-func (c *ShimClient) Subscribe(ctx context.Context, afterSeq, fromSeq *int) (shimapi.SessionSubscribeResult, error) {
-	params := shimapi.SessionSubscribeParams{AfterSeq: afterSeq, FromSeq: fromSeq}
-	var result shimapi.SessionSubscribeResult
+func (c *ShimClient) Subscribe(ctx context.Context, afterSeq, fromSeq *int) (shim.SessionSubscribeResult, error) {
+	params := shim.SessionSubscribeParams{AfterSeq: afterSeq, FromSeq: fromSeq}
+	var result shim.SessionSubscribeResult
 	if err := c.call(ctx, api.MethodSessionSubscribe, params, &result); err != nil {
-		return shimapi.SessionSubscribeResult{}, fmt.Errorf("shim_client: session/subscribe: session=%s: %w", c.socketPath, err)
+		return shim.SessionSubscribeResult{}, fmt.Errorf("shim_client: session/subscribe: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
 }
@@ -144,10 +144,10 @@ func (c *ShimClient) Subscribe(ctx context.Context, afterSeq, fromSeq *int) (shi
 // Status retrieves the current runtime state and recovery metadata.
 // The recovery.lastSeq field indicates how many events have been durably
 // committed to the log — clients use this to resume subscriptions cleanly.
-func (c *ShimClient) Status(ctx context.Context) (shimapi.RuntimeStatusResult, error) {
-	var result shimapi.RuntimeStatusResult
+func (c *ShimClient) Status(ctx context.Context) (shim.RuntimeStatusResult, error) {
+	var result shim.RuntimeStatusResult
 	if err := c.call(ctx, api.MethodRuntimeStatus, nil, &result); err != nil {
-		return shimapi.RuntimeStatusResult{}, fmt.Errorf("shim_client: runtime/status: session=%s: %w", c.socketPath, err)
+		return shim.RuntimeStatusResult{}, fmt.Errorf("shim_client: runtime/status: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
 }
@@ -155,11 +155,11 @@ func (c *ShimClient) Status(ctx context.Context) (shimapi.RuntimeStatusResult, e
 // History retrieves replayable event history starting from fromSeq (inclusive).
 // Returns parse failure when the response is malformed — callers must not
 // treat partial results as valid history.
-func (c *ShimClient) History(ctx context.Context, fromSeq *int) (shimapi.RuntimeHistoryResult, error) {
-	params := shimapi.RuntimeHistoryParams{FromSeq: fromSeq}
-	var result shimapi.RuntimeHistoryResult
+func (c *ShimClient) History(ctx context.Context, fromSeq *int) (shim.RuntimeHistoryResult, error) {
+	params := shim.RuntimeHistoryParams{FromSeq: fromSeq}
+	var result shim.RuntimeHistoryResult
 	if err := c.call(ctx, api.MethodRuntimeHistory, params, &result); err != nil {
-		return shimapi.RuntimeHistoryResult{}, fmt.Errorf("shim_client: runtime/history: session=%s: %w", c.socketPath, err)
+		return shim.RuntimeHistoryResult{}, fmt.Errorf("shim_client: runtime/history: session=%s: %w", c.socketPath, err)
 	}
 	return result, nil
 }
@@ -215,18 +215,15 @@ type clientHandler struct {
 }
 
 // Handle processes incoming JSON-RPC messages. For the ShimClient, this is
-// exclusively inbound notifications (session/update, runtime/state_change).
+// exclusively inbound notifications (shim/event).
 // Any inbound requests (unexpected from a shim) are ignored.
 func (h *clientHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	if !req.Notif {
 		return
 	}
 
-	// Only forward recognized notification methods to the handler.
-	switch req.Method {
-	case api.MethodSessionUpdate, api.MethodRuntimeStateChange:
-		// Valid clean-break notification.
-	default:
+	// Only forward the unified shim/event notification to the handler.
+	if req.Method != api.MethodShimEvent {
 		// Unknown method — reject silently; don't dispatch to handler.
 		return
 	}
@@ -242,23 +239,12 @@ func (h *clientHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *js
 // Notification parsing helpers
 // ────────────────────────────────────────────────────────────────────────────
 
-// ParseSessionUpdate parses a session/update notification params into a
-// typed SessionUpdateParams. Returns an error if the payload is malformed.
-func ParseSessionUpdate(params json.RawMessage) (events.SessionUpdateParams, error) {
-	var p events.SessionUpdateParams
-	if err := json.Unmarshal(params, &p); err != nil {
-		return events.SessionUpdateParams{}, fmt.Errorf("shim_client: parse session/update: %w", err)
+// ParseShimEvent parses a shim/event notification params into a typed ShimEvent.
+// Returns an error if the payload is malformed.
+func ParseShimEvent(params json.RawMessage) (events.ShimEvent, error) {
+	var ev events.ShimEvent
+	if err := json.Unmarshal(params, &ev); err != nil {
+		return events.ShimEvent{}, fmt.Errorf("shim_client: parse shim/event: %w", err)
 	}
-	return p, nil
-}
-
-// ParseRuntimeStateChange parses a runtime/state_change notification params
-// into a typed RuntimeStateChangeParams. Returns an error if the payload is
-// malformed.
-func ParseRuntimeStateChange(params json.RawMessage) (events.RuntimeStateChangeParams, error) {
-	var p events.RuntimeStateChangeParams
-	if err := json.Unmarshal(params, &p); err != nil {
-		return events.RuntimeStateChangeParams{}, fmt.Errorf("shim_client: parse runtime/state_change: %w", err)
-	}
-	return p, nil
+	return ev, nil
 }

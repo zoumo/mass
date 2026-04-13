@@ -1,8 +1,8 @@
-// Package meta defines the OAR orchestration API types for agent runs,
-// agent definitions, and workspaces. These types are the wire-format
-// definitions shared between the metadata store (pkg/store) and the ARI
-// JSON-RPC interface. No business logic or I/O belongs here.
-package meta
+// Package ari contains the ARI protocol types.
+// This file defines the domain/store types used internally by agentd and
+// as ARI wire format (metadata/spec/status shape). These are the types
+// returned by ARI methods — internal-only fields are tagged json:"-".
+package ari
 
 import (
 	"encoding/json"
@@ -81,7 +81,7 @@ const (
 // AgentRunSpec describes the desired configuration of an agent run.
 type AgentRunSpec struct {
 	// Agent is the agent definition name that this run is based on.
-	// It references an Agent record by name (analogous to Kubernetes runtimeClassName).
+	// It references an Agent record by name.
 	Agent string `json:"agent"`
 
 	// RestartPolicy controls session continuation on agent restart.
@@ -97,7 +97,8 @@ type AgentRunSpec struct {
 }
 
 // AgentRunStatus holds the observed runtime state of an agent run.
-// These fields are written by the daemon as the agent transitions through its lifecycle.
+// Internal fields (shim socket, state dir, PID, bootstrap config) are
+// tagged json:"-" and not exposed via ARI — use agentrun/attach for the socket path.
 type AgentRunStatus struct {
 	// State is the current lifecycle status of the agent.
 	State api.Status `json:"state"`
@@ -106,19 +107,19 @@ type AgentRunStatus struct {
 	ErrorMessage string `json:"errorMessage,omitempty"`
 
 	// ShimSocketPath is the Unix socket path for the shim's RPC endpoint.
-	// Used during recovery to reconnect to a still-alive shim.
+	// Persisted in store; not exposed in ARI status responses (use agentrun/attach).
 	ShimSocketPath string `json:"shimSocketPath,omitempty"`
 
 	// ShimStateDir is the absolute path to the shim's state directory.
-	// Contains the event log and other shim-local state.
+	// Persisted in store; not exposed in ARI wire responses.
 	ShimStateDir string `json:"shimStateDir,omitempty"`
 
 	// ShimPID is the OS process ID of the shim process.
-	// Used during recovery to check if the shim is still alive.
+	// Persisted in store; not exposed in ARI wire responses.
 	ShimPID int `json:"shimPid,omitempty"`
 
 	// BootstrapConfig is the JSON-serialized config used to start this agent's shim.
-	// Stored as a JSON blob so the schema stays stable as config fields evolve.
+	// Persisted in store; not exposed in ARI wire responses.
 	BootstrapConfig json.RawMessage `json:"bootstrapConfig,omitempty"`
 }
 
@@ -153,7 +154,8 @@ type WorkspaceSpec struct {
 	// Source is the source specification (git/emptyDir/local), stored as raw JSON.
 	Source json.RawMessage `json:"source,omitempty"`
 
-	// Hooks is the lifecycle hooks specification, stored as raw JSON.
+	// Hooks is the lifecycle hooks specification.
+	// Persisted in store; not exposed in ARI wire responses.
 	Hooks json.RawMessage `json:"hooks,omitempty"`
 }
 
@@ -198,4 +200,27 @@ type Workspace struct {
 type WorkspaceFilter struct {
 	// Phase filters by workspace phase. Empty/zero means all phases.
 	Phase WorkspacePhase
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// ARI view helpers — strip internal-only fields before sending over the wire
+// ────────────────────────────────────────────────────────────────────────────
+
+// ARIView returns an AgentRun with internal-only fields zeroed.
+// Use this when building ARI wire responses (agentrun/status, agentrun/list, etc.).
+// Internal fields (ShimSocketPath, ShimStateDir, ShimPID, BootstrapConfig) are
+// only exposed via the agentrun/attach endpoint.
+func (a AgentRun) ARIView() AgentRun {
+	a.Status.ShimSocketPath = ""
+	a.Status.ShimStateDir = ""
+	a.Status.ShimPID = 0
+	a.Status.BootstrapConfig = nil
+	return a
+}
+
+// ARIView returns a Workspace with internal-only fields zeroed.
+// Use this when building ARI wire responses (workspace/status, workspace/list, etc.).
+func (w Workspace) ARIView() Workspace {
+	w.Spec.Hooks = nil
+	return w
 }

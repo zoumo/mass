@@ -12,8 +12,14 @@ import (
 	"github.com/zoumo/oar/pkg/ndjson"
 )
 
-// EventLog appends replayable notification envelopes to a JSONL file.
+// EventLog appends replayable ShimEvent records to a JSONL file.
 // It is safe for concurrent use.
+//
+// Partial-write safety: Append records the file offset before each write and
+// truncates back to that offset on failure, preventing damaged-tail corruption
+// from being followed by valid events. This is required by the fail-closed
+// strategy in Translator.broadcast — if Append fails, the seq number is not
+// incremented and the next event reuses it, so the file must be truncate-safe.
 type EventLog struct {
 	mu      sync.Mutex
 	f       *os.File
@@ -39,20 +45,29 @@ func OpenEventLog(path string) (*EventLog, error) {
 	return &EventLog{f: f, enc: json.NewEncoder(f), nextSeq: nextSeq}, nil
 }
 
-// Append writes env to the log.
-func (l *EventLog) Append(env Envelope) error {
-	seq, err := env.Seq()
-	if err != nil {
-		return fmt.Errorf("events: invalid envelope: %w", err)
-	}
-
+// Append writes ev to the log.
+// Partial-write safety: records the current file offset before writing; if
+// Encode/flush fails, truncates the file back to the pre-write offset so that
+// a damaged tail cannot be followed by a subsequent valid write.
+func (l *EventLog) Append(ev ShimEvent) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	if seq != l.nextSeq {
-		return fmt.Errorf("events: append expected seq %d, got %d", l.nextSeq, seq)
+	if ev.Seq != l.nextSeq {
+		return fmt.Errorf("events: append expected seq %d, got %d", l.nextSeq, ev.Seq)
 	}
-	if err := l.enc.Encode(env); err != nil {
+
+	// Record current offset for truncate-on-failure.
+	offset, err := l.f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("events: seek log for offset: %w", err)
+	}
+
+	if err := l.enc.Encode(ev); err != nil {
+		// Truncate back to the pre-write offset to remove any partial write.
+		if truncErr := l.f.Truncate(offset); truncErr != nil {
+			return fmt.Errorf("events: write log entry failed and truncate also failed (original: %w, truncate: %v)", err, truncErr)
+		}
 		return fmt.Errorf("events: write log entry: %w", err)
 	}
 	l.nextSeq++
@@ -80,14 +95,14 @@ func (l *EventLog) Close() error {
 	return l.f.Close()
 }
 
-// ReadEventLog reads all Envelope records from path starting at fromSeq.
+// ReadEventLog reads all ShimEvent records from path starting at fromSeq.
 // Returns an empty slice (not an error) if the file does not exist yet.
 //
 // Damaged-tail tolerance: if the last non-empty line(s) in the file fail to
 // unmarshal as JSON, they are treated as a partial write from a crash —
-// the successfully decoded entries are returned without error.  Mid-file
+// the successfully decoded entries are returned without error. Mid-file
 // corruption (corrupt lines followed by valid lines) still returns an error.
-func ReadEventLog(path string, fromSeq int) ([]Envelope, error) {
+func ReadEventLog(path string, fromSeq int) ([]ShimEvent, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -102,12 +117,12 @@ func ReadEventLog(path string, fromSeq int) ([]Envelope, error) {
 	// First pass: collect all non-empty lines.
 	type lineRecord struct {
 		valid bool
-		env   Envelope
+		ev    ShimEvent
 		err   error // non-nil for invalid lines
 	}
 	var lines []lineRecord
 	for {
-		var e Envelope
+		var e ShimEvent
 		err := dec.Decode(&e)
 		if errors.Is(err, ndjson.ErrInvalidJSON) {
 			lines = append(lines, lineRecord{valid: false, err: err})
@@ -119,21 +134,17 @@ func ReadEventLog(path string, fromSeq int) ([]Envelope, error) {
 			}
 			break
 		}
-		lines = append(lines, lineRecord{valid: true, env: e})
+		lines = append(lines, lineRecord{valid: true, ev: e})
 	}
 
 	// Walk through collected lines. If a corrupt line is followed by any
 	// valid line later, that is mid-file corruption — return an error.
 	// If corrupt lines only appear at the tail, skip them (damaged tail).
-	var entries []Envelope
+	var entries []ShimEvent
 	for i, lr := range lines {
 		if lr.valid {
-			seq, err := lr.env.Seq()
-			if err != nil {
-				return nil, fmt.Errorf("events: decode log entry: %w", err)
-			}
-			if seq >= fromSeq {
-				entries = append(entries, lr.env)
+			if lr.ev.Seq >= fromSeq {
+				entries = append(entries, lr.ev)
 			}
 			continue
 		}

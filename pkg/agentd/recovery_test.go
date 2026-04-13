@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/meta"
-	apispec "github.com/zoumo/oar/api/spec"
-	"github.com/zoumo/oar/pkg/shimapi"
+	apiari "github.com/zoumo/oar/api/ari"
+	apiruntime "github.com/zoumo/oar/api/runtime"
+	"github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/spec"
 	"github.com/zoumo/oar/pkg/store"
 )
@@ -40,15 +40,15 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *store.Store) {
 // Returns the (workspace, name) pair.
 func createRecoveryTestAgent(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state api.Status, socketPath string) (string, string) {
 	t.Helper()
-	agent := &meta.AgentRun{
-		Metadata: meta.ObjectMeta{
+	agent := &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{
 			Workspace: workspace,
 			Name:      name,
 		},
-		Spec: meta.AgentRunSpec{
+		Spec: apiari.AgentRunSpec{
 			Agent: "default",
 		},
-		Status: meta.AgentRunStatus{
+		Status: apiari.AgentRunStatus{
 			State:          state,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   "/tmp/shim-state-" + name,
@@ -70,14 +70,14 @@ func TestRecoverSessions_LiveShim(t *testing.T) {
 	// Start a mock shim server.
 	srv, socketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = shimapi.RuntimeStatusResult{
-		State: apispec.State{
+	srv.statusResult = shim.RuntimeStatusResult{
+		State: apiruntime.State{
 			OarVersion: "0.1.0",
 			ID:         "recovered-agent",
 			Status:     api.StatusRunning,
 			Bundle:     "/tmp/test-bundle",
 		},
-		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 5},
+		Recovery: shim.RuntimeStatusRecovery{LastSeq: 5},
 	}
 	srv.mu.Unlock()
 
@@ -178,9 +178,9 @@ func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
 	// Start a mock shim for the live agent.
 	srv, liveSocketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = shimapi.RuntimeStatusResult{
-		State:    apispec.State{Status: api.StatusRunning, ID: "live"},
-		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 2},
+	srv.statusResult = shim.RuntimeStatusResult{
+		State:    apiruntime.State{Status: api.StatusRunning, ID: "live"},
+		Recovery: shim.RuntimeStatusRecovery{LastSeq: 2},
 	}
 	srv.mu.Unlock()
 
@@ -247,13 +247,13 @@ func TestRecoverSessions_ShimReportsStopped(t *testing.T) {
 	// Start a mock shim that reports stopped.
 	srv, socketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = shimapi.RuntimeStatusResult{
-		State: apispec.State{
+	srv.statusResult = shim.RuntimeStatusResult{
+		State: apiruntime.State{
 			OarVersion: "0.1.0",
 			ID:         "stopped-agent",
 			Status:     api.StatusStopped,
 		},
-		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 0},
+		Recovery: shim.RuntimeStatusRecovery{LastSeq: 0},
 	}
 	srv.mu.Unlock()
 
@@ -291,13 +291,13 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 	// Start a mock shim that reports running.
 	srv, socketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = shimapi.RuntimeStatusResult{
-		State: apispec.State{
+	srv.statusResult = shim.RuntimeStatusResult{
+		State: apiruntime.State{
 			OarVersion: "0.1.0",
 			ID:         "reconciled-agent",
 			Status:     api.StatusRunning,
 		},
-		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 3},
+		Recovery: shim.RuntimeStatusRecovery{LastSeq: 3},
 	}
 	srv.mu.Unlock()
 
@@ -348,13 +348,13 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 	// Start a mock shim that reports running.
 	srv, socketPath := newMockShimServer(t)
 	srv.mu.Lock()
-	srv.statusResult = shimapi.RuntimeStatusResult{
-		State: apispec.State{
+	srv.statusResult = shim.RuntimeStatusResult{
+		State: apiruntime.State{
 			OarVersion: "0.1.0",
 			ID:         "mismatched-agent",
 			Status:     api.StatusRunning,
 		},
-		Recovery: shimapi.RuntimeStatusRecovery{LastSeq: 1},
+		Recovery: shim.RuntimeStatusRecovery{LastSeq: 1},
 	}
 	srv.mu.Unlock()
 
@@ -399,15 +399,15 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 // createAgentForRecovery creates an agent directly in the store for recovery tests.
 func createAgentForRecovery(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state api.Status) {
 	t.Helper()
-	agent := &meta.AgentRun{
-		Metadata: meta.ObjectMeta{
+	agent := &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{
 			Workspace: workspace,
 			Name:      name,
 		},
-		Spec: meta.AgentRunSpec{
+		Spec: apiari.AgentRunSpec{
 			Agent: "default",
 		},
-		Status: meta.AgentRunStatus{
+		Status: apiari.AgentRunStatus{
 			State: state,
 		},
 	}
@@ -476,20 +476,20 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 	// Write state.json with a known session ID.
 	stateDir := t.TempDir()
 	const knownSessionID = "reload-session-abc123"
-	require.NoError(t, spec.WriteState(stateDir, apispec.State{
+	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		OarVersion: "0.1.0",
 		ID:         knownSessionID,
 		Status:     api.StatusIdle,
 		Bundle:     "/tmp/test-bundle",
 	}))
 
-	agent := &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-agent"},
-		Spec: meta.AgentRunSpec{
+	agent := &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: "default", Name: "tryreload-agent"},
+		Spec: apiari.AgentRunSpec{
 			Agent: "default",
-			RestartPolicy: meta.RestartPolicyTryReload,
+			RestartPolicy: apiari.RestartPolicyTryReload,
 		},
-		Status: meta.AgentRunStatus{
+		Status: apiari.AgentRunStatus{
 			State:          api.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
@@ -541,20 +541,20 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 	srv.mu.Unlock()
 
 	stateDir := t.TempDir()
-	require.NoError(t, spec.WriteState(stateDir, apispec.State{
+	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		OarVersion: "0.1.0",
 		ID:         "some-session",
 		Status:     api.StatusIdle,
 		Bundle:     "/tmp/test-bundle",
 	}))
 
-	agent := &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-fallback"},
-		Spec: meta.AgentRunSpec{
+	agent := &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: "default", Name: "tryreload-fallback"},
+		Spec: apiari.AgentRunSpec{
 			Agent: "default",
-			RestartPolicy: meta.RestartPolicyTryReload,
+			RestartPolicy: apiari.RestartPolicyTryReload,
 		},
-		Status: meta.AgentRunStatus{
+		Status: apiari.AgentRunStatus{
 			State:          api.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
@@ -592,13 +592,13 @@ func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
 
 	srv, socketPath := newMockShimServer(t)
 
-	agent := &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: "default", Name: "tryreload-nostate"},
-		Spec: meta.AgentRunSpec{
+	agent := &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: "default", Name: "tryreload-nostate"},
+		Spec: apiari.AgentRunSpec{
 			Agent: "default",
-			RestartPolicy: meta.RestartPolicyTryReload,
+			RestartPolicy: apiari.RestartPolicyTryReload,
 		},
-		Status: meta.AgentRunStatus{
+		Status: apiari.AgentRunStatus{
 			State:          api.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   "/tmp/nonexistent-state-dir-tryreload-test",
@@ -637,20 +637,20 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 
 	// Write a state.json so there's something to load — should be ignored.
 	stateDir := t.TempDir()
-	require.NoError(t, spec.WriteState(stateDir, apispec.State{
+	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		OarVersion: "0.1.0",
 		ID:         "existing-session",
 		Status:     api.StatusIdle,
 		Bundle:     "/tmp/test-bundle",
 	}))
 
-	agent := &meta.AgentRun{
-		Metadata: meta.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
-		Spec: meta.AgentRunSpec{
+	agent := &apiari.AgentRun{
+		Metadata: apiari.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
+		Spec: apiari.AgentRunSpec{
 			Agent: "default",
 			RestartPolicy: "", // empty = always_new (default)
 		},
-		Status: meta.AgentRunStatus{
+		Status: apiari.AgentRunStatus{
 			State:          api.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,

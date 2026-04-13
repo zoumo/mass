@@ -177,12 +177,12 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 						fmt.Printf("agentrun/status error: %v\n", err)
 						break
 					}
-					if statusResult.AgentRun.State == "running" {
+					if statusResult.AgentRun.Status.State == "running" {
 						observedRunning = true
 						continue
 					}
 					if observedRunning {
-						fmt.Printf("Agent run state: %s\n", statusResult.AgentRun.State)
+						fmt.Printf("Agent run state: %s\n", statusResult.AgentRun.Status.State)
 						break
 					}
 				}

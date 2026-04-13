@@ -57,15 +57,17 @@ func (m *UserMessageItem) RawRender(width int) string {
 // Render implements list.Item.
 func (m *UserMessageItem) Render(width int) string {
 	cappedWidth := cappedMessageWidth(width)
-	bg := m.sty.BgBaseLighter
 	return RenderBlock(BlockConfig{
 		Label: &LabelConfig{
 			Text:  "[User]",
 			Style: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF9500")),
 		},
-		Body:       m.RawRender(width),
-		Background: &bg,
-		Width:      cappedWidth,
+		Body: m.RawRender(width),
+		Border: &BorderConfig{
+			Char:  "▌",
+			Color: lipgloss.Color("#FF9500"),
+		},
+		Width: cappedWidth,
 	})
 }
 

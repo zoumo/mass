@@ -1,6 +1,7 @@
 package events
 
 import (
+	"log/slog"
 	"sync"
 	"time"
 
@@ -11,38 +12,49 @@ import (
 )
 
 // Translator drains ACP session notifications, translates each notification
-// into the stable shim envelope surface, and fans the result out to all
-// registered subscriber channels. If log is non-nil, every envelope is also
-// appended to the JSONL event log for durable history.
+// into a ShimEvent, and fans the result out to all registered subscriber
+// channels. If log is non-nil, every ShimEvent is also appended to the JSONL
+// event log for durable history (log-before-fanout under mutex).
 type Translator struct {
-	sessionID string
+	runID     string
+	sessionID string // ACP session ID, set after handshake via SetSessionID
 	in        <-chan acp.SessionNotification
 	log       *EventLog
 
 	mu            sync.Mutex
-	subs          map[int]chan Envelope
+	subs          map[int]chan ShimEvent
 	nextID        int
 	nextSeq       int
 	done          chan struct{}
 	once          sync.Once
 	currentTurnId string
+	streamSeq     int
 }
 
 // NewTranslator creates a Translator that reads from in.
+// runID is the agent run identifier (the shim --id value).
 // Pass a non-nil EventLog to enable durable event logging.
-func NewTranslator(sessionID string, in <-chan acp.SessionNotification, log *EventLog) *Translator {
+func NewTranslator(runID string, in <-chan acp.SessionNotification, log *EventLog) *Translator {
 	nextSeq := 0
 	if log != nil {
 		nextSeq = log.NextSeq()
 	}
 	return &Translator{
-		sessionID: sessionID,
-		in:        in,
-		log:       log,
-		subs:      make(map[int]chan Envelope),
-		nextSeq:   nextSeq,
-		done:      make(chan struct{}),
+		runID:   runID,
+		in:      in,
+		log:     log,
+		subs:    make(map[int]chan ShimEvent),
+		nextSeq: nextSeq,
+		done:    make(chan struct{}),
 	}
+}
+
+// SetSessionID injects the ACP session ID after the session/new handshake
+// completes. This is called by the shim command after mgr.Create() succeeds.
+func (t *Translator) SetSessionID(id string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.sessionID = id
 }
 
 // Start launches the background fan-out goroutine. Call once.
@@ -63,16 +75,16 @@ func (t *Translator) Stop() {
 	})
 }
 
-// Subscribe returns a buffered channel that will receive translated envelopes,
+// Subscribe returns a buffered channel that will receive translated ShimEvents,
 // along with a subscription ID and the next sequence number that could be
 // assigned after the subscription is established.
-func (t *Translator) Subscribe() (<-chan Envelope, int, int) {
+func (t *Translator) Subscribe() (<-chan ShimEvent, int, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	id := t.nextID
 	t.nextID++
-	ch := make(chan Envelope, 64)
+	ch := make(chan ShimEvent, 64)
 	t.subs[id] = ch
 	return ch, id, t.nextSeq
 }
@@ -85,7 +97,7 @@ func (t *Translator) Subscribe() (<-chan Envelope, int, int) {
 //
 // Intended for recovery/startup only — holds the mutex during file I/O.
 // Do not use in hot paths where event broadcasting latency matters.
-func (t *Translator) SubscribeFromSeq(logPath string, fromSeq int) ([]Envelope, <-chan Envelope, int, int, error) {
+func (t *Translator) SubscribeFromSeq(logPath string, fromSeq int) ([]ShimEvent, <-chan ShimEvent, int, int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -94,12 +106,12 @@ func (t *Translator) SubscribeFromSeq(logPath string, fromSeq int) ([]Envelope, 
 		return nil, nil, 0, 0, err
 	}
 	if entries == nil {
-		entries = []Envelope{}
+		entries = []ShimEvent{}
 	}
 
 	id := t.nextID
 	t.nextID++
-	ch := make(chan Envelope, 64)
+	ch := make(chan ShimEvent, 64)
 	t.subs[id] = ch
 
 	return entries, ch, id, t.nextSeq, nil
@@ -115,7 +127,7 @@ func (t *Translator) Unsubscribe(id int) {
 	}
 }
 
-// LastSeq returns the last assigned sequence number, or -1 when no envelope
+// LastSeq returns the last assigned sequence number, or -1 when no event
 // has been emitted yet.
 func (t *Translator) LastSeq() int {
 	t.mu.Lock()
@@ -123,67 +135,92 @@ func (t *Translator) LastSeq() int {
 	return t.nextSeq - 1
 }
 
-// NotifyTurnStart broadcasts a session/update turn_start envelope.
+// NotifyTurnStart broadcasts a turn_start ShimEvent.
 // The new turnId and initial streamSeq are assigned atomically inside the
-// broadcastEnvelope callback, which runs under mu.Lock.
+// broadcast callback, which runs under mu.Lock.
 func (t *Translator) NotifyTurnStart() {
-	newTurnId := uuid.New().String()
-	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
+	newTurnID := uuid.New().String()
+	t.broadcast(func(seq int, at time.Time) ShimEvent {
 		// Runs under mu.Lock — safe to mutate turn state here.
-		t.currentTurnId = newTurnId
-		params := SessionUpdateParams{
-			SequenceMeta: SequenceMeta{
-				SessionID: t.sessionID, Seq: seq,
-				Timestamp: at.UTC().Format(time.RFC3339Nano),
-			},
-			TurnID: t.currentTurnId,
-			Event:  newTypedEvent(TurnStartEvent{}),
+		t.currentTurnId = newTurnID
+		t.streamSeq = 0
+		return ShimEvent{
+			RunID:     t.runID,
+			SessionID: t.sessionID,
+			Seq:       seq,
+			Time:      at,
+			Category:  api.CategorySession,
+			Type:      api.EventTypeTurnStart,
+			TurnID:    t.currentTurnId,
+			StreamSeq: t.streamSeq,
+			Phase:     "acting",
+			Content:   TurnStartEvent{},
 		}
-		return Envelope{Method: api.MethodSessionUpdate, Params: params}
 	})
 }
 
-// NotifyUserPrompt broadcasts a session/update user_message envelope so that
-// all subscribers (including late-joining chat clients) see the user's prompt.
+// NotifyUserPrompt broadcasts a user_message ShimEvent so that all subscribers
+// (including late-joining chat clients) see the user's prompt.
 // This must be called after NotifyTurnStart and before mgr.Prompt.
 func (t *Translator) NotifyUserPrompt(text string) {
-	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
-		params := SessionUpdateParams{
-			SequenceMeta: SequenceMeta{
-				SessionID: t.sessionID, Seq: seq,
-				Timestamp: at.UTC().Format(time.RFC3339Nano),
-			},
-			TurnID: t.currentTurnId,
-			Event:  newTypedEvent(UserMessageEvent{Text: text}),
+	t.broadcast(func(seq int, at time.Time) ShimEvent {
+		t.streamSeq++
+		return ShimEvent{
+			RunID:     t.runID,
+			SessionID: t.sessionID,
+			Seq:       seq,
+			Time:      at,
+			Category:  api.CategorySession,
+			Type:      api.EventTypeUserMessage,
+			TurnID:    t.currentTurnId,
+			StreamSeq: t.streamSeq,
+			Phase:     "acting",
+			Content:   UserMessageEvent{Text: text},
 		}
-		return Envelope{Method: api.MethodSessionUpdate, Params: params}
 	})
 }
 
-// NotifyTurnEnd broadcasts a session/update turn_end envelope.
+// NotifyTurnEnd broadcasts a turn_end ShimEvent.
 // The current turnId is included in the event and cleared AFTER use so the
-// turn_end event itself carries the identifier. All state mutations run inside
-// the broadcastEnvelope callback under mu.Lock.
+// turn_end event itself carries the identifier.
 func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
-	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
-		// Runs under mu.Lock.
-		params := SessionUpdateParams{
-			SequenceMeta: SequenceMeta{
-				SessionID: t.sessionID, Seq: seq,
-				Timestamp: at.UTC().Format(time.RFC3339Nano),
-			},
-			TurnID: t.currentTurnId,
-			Event:  newTypedEvent(TurnEndEvent{StopReason: string(reason)}),
+	t.broadcast(func(seq int, at time.Time) ShimEvent {
+		t.streamSeq++
+		se := ShimEvent{
+			RunID:     t.runID,
+			SessionID: t.sessionID,
+			Seq:       seq,
+			Time:      at,
+			Category:  api.CategorySession,
+			Type:      api.EventTypeTurnEnd,
+			TurnID:    t.currentTurnId,
+			StreamSeq: t.streamSeq,
+			Phase:     "acting",
+			Content:   TurnEndEvent{StopReason: string(reason)},
 		}
 		t.currentTurnId = "" // Clear AFTER using — turn_end event carries the turnId
-		return Envelope{Method: api.MethodSessionUpdate, Params: params}
+		return se
 	})
 }
 
-// NotifyStateChange broadcasts a runtime/state_change envelope.
+// NotifyStateChange broadcasts a runtime category state_change ShimEvent.
+// Runtime events never carry turn fields.
 func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, reason string) {
-	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
-		return NewRuntimeStateChangeEnvelope(t.sessionID, seq, at, previousStatus, status, pid, reason)
+	t.broadcast(func(seq int, at time.Time) ShimEvent {
+		return ShimEvent{
+			RunID:     t.runID,
+			SessionID: t.sessionID,
+			Seq:       seq,
+			Time:      at,
+			Category:  api.CategoryRuntime,
+			Type:      api.EventTypeStateChange,
+			Content: StateChangeEvent{
+				PreviousStatus: previousStatus,
+				Status:         status,
+				PID:            pid,
+				Reason:         reason,
+			},
+		}
 	})
 }
 
@@ -205,19 +242,43 @@ func (t *Translator) run() {
 	}
 }
 
+// broadcastSessionEvent builds and broadcasts a session category ShimEvent.
+// Turn metadata (TurnID/StreamSeq/Phase) is applied to all session events
+// when an active turn exists.
 func (t *Translator) broadcastSessionEvent(ev Event) {
-	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
-		env := NewSessionUpdateEnvelope(t.sessionID, seq, at, ev)
-		if t.currentTurnId != "" {
-			params := env.Params.(SessionUpdateParams)
-			params.TurnID = t.currentTurnId
-			env.Params = params
+	t.broadcast(func(seq int, at time.Time) ShimEvent {
+		eventType := ev.eventType()
+		se := ShimEvent{
+			RunID:     t.runID,
+			SessionID: t.sessionID,
+			Seq:       seq,
+			Time:      at,
+			Category:  api.CategorySession,
+			Type:      eventType,
+			Content:   ev,
 		}
-		return env
+		// Apply turn metadata to all session events when inside an active turn.
+		if t.currentTurnId != "" {
+			t.streamSeq++
+			se.TurnID = t.currentTurnId
+			se.StreamSeq = t.streamSeq
+			se.Phase = PhaseForEvent(eventType)
+		}
+		return se
 	})
 }
 
-func (t *Translator) broadcastEnvelope(build func(seq int, at time.Time) Envelope) {
+// broadcast is the single fan-out entry point. The build callback runs under
+// mu.Lock and receives the assigned seq and current timestamp. The lock is held
+// for the entire log-then-fanout sequence to guarantee:
+//   - log entries and live notifications share the same seq space
+//   - concurrent broadcasts do not interleave their seq numbers
+//
+// Fail-closed: if log.Append fails, the event is dropped (not fanned out) and
+// nextSeq is NOT incremented. The next event reuses the same seq number.
+// This preserves seq continuity for the history/live recovery invariant.
+// Append failures are logged as structured errors for monitoring.
+func (t *Translator) broadcast(build func(seq int, at time.Time) ShimEvent) {
 	t.mu.Lock()
 
 	// If the translator is stopped, channels may already be closed — bail out.
@@ -228,24 +289,35 @@ func (t *Translator) broadcastEnvelope(build func(seq int, at time.Time) Envelop
 	default:
 	}
 
-	env := build(t.nextSeq, time.Now().UTC())
+	ev := build(t.nextSeq, time.Now().UTC())
+	ev.Seq = t.nextSeq
+
+	if t.log != nil {
+		if err := t.log.Append(ev); err != nil {
+			slog.Error("events: log append failed, event dropped",
+				"seq", t.nextSeq,
+				"type", ev.Type,
+				"category", ev.Category,
+				"error", err,
+			)
+			// fail-closed: do NOT increment nextSeq, do NOT fan-out
+			t.mu.Unlock()
+			return
+		}
+	}
+
 	t.nextSeq++
-	log := t.log
-	// Send while holding the lock so Stop() cannot close channels concurrently.
+
+	// Fan-out while holding the lock so Stop() cannot close channels concurrently.
 	// Sends are non-blocking (buffered channel + default case), so no deadlock risk.
 	for _, ch := range t.subs {
 		select {
-		case ch <- env:
+		case ch <- ev:
 		default:
 			// Slow subscriber — drop rather than block fan-out.
 		}
 	}
 	t.mu.Unlock()
-
-	if log != nil {
-		// Log writes are best-effort and happen outside the lock.
-		_ = log.Append(env)
-	}
 }
 
 // translate converts a raw SessionNotification into a typed Event.

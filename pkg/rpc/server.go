@@ -24,7 +24,7 @@ import (
 	"github.com/zoumo/oar/api"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/runtime"
-	"github.com/zoumo/oar/pkg/shimapi"
+	"github.com/zoumo/oar/api/shim"
 )
 
 // Server is a JSON-RPC 2.0 server that exposes the agent runtime over a
@@ -124,7 +124,7 @@ func (h *connHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *json
 }
 
 func (h *connHandler) handlePrompt(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p shimapi.SessionPromptParams
+	var p shim.SessionPromptParams
 	if err := unmarshalParams(req, &p); err != nil {
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
 		return
@@ -147,7 +147,7 @@ func (h *connHandler) handlePrompt(ctx context.Context, conn *jsonrpc2.Conn, req
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
 		return
 	}
-	_ = conn.Reply(ctx, req.ID, shimapi.SessionPromptResult{StopReason: string(resp.StopReason)})
+	_ = conn.Reply(ctx, req.ID, shim.SessionPromptResult{StopReason: string(resp.StopReason)})
 }
 
 func (h *connHandler) handleCancel(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -159,7 +159,7 @@ func (h *connHandler) handleCancel(ctx context.Context, conn *jsonrpc2.Conn, req
 }
 
 func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p shimapi.SessionSubscribeParams
+	var p shim.SessionSubscribeParams
 	if req.Params != nil {
 		if err := unmarshalParams(req, &p); err != nil {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
@@ -184,7 +184,7 @@ func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, 
 			return
 		}
 
-		_ = conn.Reply(ctx, req.ID, shimapi.SessionSubscribeResult{NextSeq: nextSeq, Entries: entries})
+		_ = conn.Reply(ctx, req.ID, shim.SessionSubscribeResult{NextSeq: nextSeq, Entries: entries})
 
 		go func() {
 			defer h.srv.trans.Unsubscribe(subID)
@@ -193,11 +193,11 @@ func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, 
 				select {
 				case <-disconnect:
 					return
-				case env, ok := <-ch:
+				case ev, ok := <-ch:
 					if !ok {
 						return
 					}
-					if err := conn.Notify(ctx, env.Method, env.Params); err != nil {
+					if err := conn.Notify(ctx, api.MethodShimEvent, ev); err != nil {
 						return
 					}
 				}
@@ -213,7 +213,7 @@ func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, 
 		floor = *p.AfterSeq
 	}
 
-	_ = conn.Reply(ctx, req.ID, shimapi.SessionSubscribeResult{NextSeq: nextSeq})
+	_ = conn.Reply(ctx, req.ID, shim.SessionSubscribeResult{NextSeq: nextSeq})
 
 	go func() {
 		defer h.srv.trans.Unsubscribe(subID)
@@ -222,15 +222,14 @@ func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, 
 			select {
 			case <-disconnect:
 				return
-			case env, ok := <-ch:
+			case ev, ok := <-ch:
 				if !ok {
 					return
 				}
-				seq, err := env.Seq()
-				if err != nil || seq <= floor {
+				if ev.Seq <= floor {
 					continue
 				}
-				if err := conn.Notify(ctx, env.Method, env.Params); err != nil {
+				if err := conn.Notify(ctx, api.MethodShimEvent, ev); err != nil {
 					return
 				}
 			}
@@ -239,7 +238,7 @@ func (h *connHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, 
 }
 
 func (h *connHandler) handleHistory(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	var p shimapi.RuntimeHistoryParams
+	var p shim.RuntimeHistoryParams
 	if req.Params != nil {
 		if err := unmarshalParams(req, &p); err != nil {
 			replyError(ctx, conn, req.ID, jsonrpc2.CodeInvalidParams, err.Error())
@@ -261,9 +260,9 @@ func (h *connHandler) handleHistory(ctx context.Context, conn *jsonrpc2.Conn, re
 		return
 	}
 	if entries == nil {
-		entries = []events.Envelope{}
+		entries = []events.ShimEvent{}
 	}
-	_ = conn.Reply(ctx, req.ID, shimapi.RuntimeHistoryResult{Entries: entries})
+	_ = conn.Reply(ctx, req.ID, shim.RuntimeHistoryResult{Entries: entries})
 }
 
 func (h *connHandler) handleStatus(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -272,9 +271,9 @@ func (h *connHandler) handleStatus(ctx context.Context, conn *jsonrpc2.Conn, req
 		replyError(ctx, conn, req.ID, jsonrpc2.CodeInternalError, err.Error())
 		return
 	}
-	_ = conn.Reply(ctx, req.ID, shimapi.RuntimeStatusResult{
+	_ = conn.Reply(ctx, req.ID, shim.RuntimeStatusResult{
 		State: st,
-		Recovery: shimapi.RuntimeStatusRecovery{
+		Recovery: shim.RuntimeStatusRecovery{
 			LastSeq: h.srv.trans.LastSeq(),
 		},
 	})

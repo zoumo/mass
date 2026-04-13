@@ -8,29 +8,29 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/pkg/spec"
 )
 
 // validConfig returns a Config that passes all validation rules.
-func validConfig() apispec.Config {
-	return apispec.Config{
+func validConfig() apiruntime.Config {
+	return apiruntime.Config{
 		OarVersion: "0.1.0",
-		Metadata: apispec.Metadata{
+		Metadata: apiruntime.Metadata{
 			Name: "test-agent",
 		},
-		AgentRoot: apispec.AgentRoot{Path: "workspace"},
-		AcpAgent: apispec.AcpAgent{
-			Process: apispec.AcpProcess{
+		AgentRoot: apiruntime.AgentRoot{Path: "workspace"},
+		AcpAgent: apiruntime.AcpAgent{
+			Process: apiruntime.AcpProcess{
 				Command: "/usr/bin/agent",
 			},
 		},
-		Permissions: apispec.ApproveAll,
+		Permissions: apiruntime.ApproveAll,
 	}
 }
 
 // writeConfigFile writes c as config.json into dir and returns the dir path.
-func writeConfigFile(t *testing.T, dir string, c apispec.Config) {
+func writeConfigFile(t *testing.T, dir string, c apiruntime.Config) {
 	t.Helper()
 	data, err := json.Marshal(c)
 	if err != nil {
@@ -173,7 +173,7 @@ func (s *ConfigSuite) TestResolveAgentRoot_NonExistent() {
 
 func (s *ConfigSuite) TestValidateInvalidPermissions() {
 	c := validConfig()
-	c.Permissions = apispec.PermissionPolicy("bad-policy")
+	c.Permissions = apiruntime.PermissionPolicy("bad-policy")
 	err := spec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "permissions")

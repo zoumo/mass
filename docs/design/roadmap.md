@@ -41,7 +41,7 @@ Implemented:
 
 Production shim server registers: `session/prompt`, `session/cancel`, `session/subscribe`, `runtime/status`, `runtime/history`, `runtime/stop`.
 
-Live notifications: `session/update`, `runtime/state_change`.
+Live notifications: `shim/event` (unified — replaces `session/update` + `runtime/state_change`).
 
 ---
 

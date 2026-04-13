@@ -10,7 +10,6 @@ import (
 
 	"github.com/zoumo/oar/api"
 	"github.com/zoumo/oar/api/ari"
-	"github.com/zoumo/oar/api/meta"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
 )
 
@@ -38,7 +37,7 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("reading agent file %q: %w", file, err)
 			}
-			var ag meta.Agent
+			var ag ari.Agent
 			if err := yaml.Unmarshal(data, &ag); err != nil {
 				return fmt.Errorf("parsing agent YAML %q: %w", file, err)
 			}
@@ -62,7 +61,7 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 				Env:                   ag.Spec.Env,
 				StartupTimeoutSeconds: ag.Spec.StartupTimeoutSeconds,
 			}
-			var result ari.AgentInfo
+			var result ari.AgentSetResult
 			if err := client.Call(api.MethodAgentSet, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil

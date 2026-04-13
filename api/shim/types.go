@@ -1,10 +1,10 @@
-// Package shimapi contains the shared wire types for the Shim JSON-RPC protocol.
-// Both pkg/rpc (shim server) and pkg/agentd (shim client) import this package
-// so the types have a single authoritative definition.
-package shimapi
+// Package shim contains the shared wire types for the Shim JSON-RPC protocol.
+// Both pkg/shim/server (shim server) and pkg/shim/client (shim client) import
+// this package so the types have a single authoritative definition.
+package shim
 
 import (
-	apispec "github.com/zoumo/oar/api/spec"
+	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/pkg/events"
 )
 
@@ -37,8 +37,8 @@ type SessionSubscribeParams struct {
 
 // SessionSubscribeResult is returned by "session/subscribe".
 type SessionSubscribeResult struct {
-	NextSeq int               `json:"nextSeq"`
-	Entries []events.Envelope `json:"entries,omitempty"`
+	NextSeq int                `json:"nextSeq"`
+	Entries []events.ShimEvent `json:"entries,omitempty"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ type RuntimeHistoryParams struct {
 
 // RuntimeHistoryResult is returned by "runtime/history".
 type RuntimeHistoryResult struct {
-	Entries []events.Envelope `json:"entries"`
+	Entries []events.ShimEvent `json:"entries"`
 }
 
 // RuntimeStatusRecovery holds recovery metadata from the shim's durable log.
@@ -62,6 +62,6 @@ type RuntimeStatusRecovery struct {
 
 // RuntimeStatusResult is returned by "runtime/status".
 type RuntimeStatusResult struct {
-	State    apispec.State          `json:"state"`
+	State    apiruntime.State      `json:"state"`
 	Recovery RuntimeStatusRecovery `json:"recovery"`
 }

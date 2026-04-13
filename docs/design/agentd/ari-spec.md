@@ -26,12 +26,81 @@ AgentRuns are identified by the pair `(workspace, name)`.
 All `agentrun/*` method parameters and results use `workspace` + `name` together as the stable key.
 There is no opaque UUID identity exposed to ARI callers.
 
+## Domain Types
+
+ARI results use domain types with a `metadata/spec/status` structure:
+
+### Agent
+
+```json
+{
+  "metadata": {
+    "name": "claude",
+    "labels": {},
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-01T00:00:00Z"
+  },
+  "spec": {
+    "command": "/usr/bin/claude-agent",
+    "args": [],
+    "env": [],
+    "startupTimeoutSeconds": 30
+  }
+}
+```
+
+### AgentRun
+
+```json
+{
+  "metadata": {
+    "name": "architect",
+    "workspace": "my-project",
+    "labels": {},
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-01T00:00:00Z"
+  },
+  "spec": {
+    "agent": "claude",
+    "restartPolicy": "always_new"
+  },
+  "status": {
+    "state": "idle",
+    "errorMessage": ""
+  }
+}
+```
+
+### Workspace
+
+```json
+{
+  "metadata": {
+    "name": "my-project",
+    "labels": {},
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-01-01T00:00:00Z"
+  },
+  "spec": {
+    "source": { "type": "local", "path": "/home/user/project" }
+  },
+  "status": {
+    "phase": "ready",
+    "path": "/home/user/project"
+  }
+}
+```
+
+Internal fields (`shimSocketPath`, `shimStateDir`, `shimPid`, `bootstrapConfig` in AgentRun status;
+`hooks` in Workspace spec) are not exposed via ARI. The shim socket path is exposed only via
+`agentrun/attach`.
+
 ## Workspace Methods
 
 ### `workspace/create`
 
 Create a workspace record and begin async preparation.
-Returns immediately with `phase: "pending"`.
+Returns immediately with `status.phase: "pending"`.
 Callers poll `workspace/status` until phase transitions to `"ready"` or `"error"`.
 
 **Params:**
@@ -42,7 +111,7 @@ Callers poll `workspace/status` until phase transitions to `"ready"` or `"error"
 | `source` | object | yes | Workspace source spec (must include `type`). See [workspace-spec.md](../workspace/workspace-spec.md) |
 | `labels` | map | no | Arbitrary metadata |
 
-**Result:** `{name, phase}` where `phase` is always `"pending"` on success.
+**Result:** `{workspace: Workspace}` where `workspace.status.phase` is always `"pending"` on success.
 
 **Example:**
 
@@ -62,7 +131,13 @@ Callers poll `workspace/status` until phase transitions to `"ready"` or `"error"
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "result": { "name": "my-project", "phase": "pending" }
+  "result": {
+    "workspace": {
+      "metadata": { "name": "my-project", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z" },
+      "spec": { "source": { "type": "local", "path": "/home/user/project" } },
+      "status": { "phase": "pending" }
+    }
+  }
 }
 ```
 
@@ -82,9 +157,11 @@ Poll until ready:
   "jsonrpc": "2.0",
   "id": 2,
   "result": {
-    "name": "my-project",
-    "phase": "ready",
-    "path": "/home/user/project",
+    "workspace": {
+      "metadata": { "name": "my-project", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z" },
+      "spec": { "source": { "type": "local", "path": "/home/user/project" } },
+      "status": { "phase": "ready", "path": "/home/user/project" }
+    },
     "members": []
   }
 }
@@ -96,11 +173,11 @@ Return current workspace phase and membership.
 
 **Params:** `{name}`
 
-**Result:** `{name, phase, path?, members[]}`
+**Result:** `{workspace: Workspace, members: AgentRun[]}`
 
-- `phase`: `"pending"` | `"ready"` | `"error"`
-- `path`: absolute host path (only present when `phase` is `"ready"`)
-- `members`: array of `AgentRunInfo` objects for AgentRuns currently using this workspace
+- `workspace.status.phase`: `"pending"` | `"ready"` | `"error"`
+- `workspace.status.path`: absolute host path (only present when phase is `"ready"`)
+- `members`: array of `AgentRun` domain objects for AgentRuns currently using this workspace
 
 ### `workspace/list`
 
@@ -108,7 +185,7 @@ List all ready workspaces.
 
 **Params:** `{}`
 
-**Result:** `{workspaces[]}` — array of `{name, phase, path}` objects.
+**Result:** `{workspaces: Workspace[]}` — array of `Workspace` domain objects.
 
 ### `workspace/delete`
 
@@ -161,7 +238,7 @@ Create or update an Agent record.
 | `env` | [{name, value}] | no | Environment variables as a list of `{name, value}` objects |
 | `startupTimeoutSeconds` | int | no | Bootstrap timeout in seconds |
 
-**Result:** `AgentInfo`
+**Result:** `{agent: Agent}`
 
 ### `agent/get`
 
@@ -169,7 +246,7 @@ Retrieve an Agent definition by name.
 
 **Params:** `{name}`
 
-**Result:** `{agent: AgentInfo}`
+**Result:** `{agent: Agent}`
 
 ### `agent/list`
 
@@ -177,7 +254,7 @@ List all Agent records.
 
 **Params:** `{}`
 
-**Result:** `{agents: AgentInfo[]}`
+**Result:** `{agents: Agent[]}`
 
 ### `agent/delete`
 
@@ -187,19 +264,20 @@ Delete an Agent record.
 
 **Result:** `{}`
 
-### Agent definition Schema
+### Agent Domain Shape
 
-| Field | Type | Meaning |
+| Path | Type | Meaning |
 |---|---|---|
-| `name` | string | Unique template name (referenced by `agentrun/create.agent`) |
-| `command` | string | Executable command for the agent process |
-| `args` | []string? | Command arguments |
-| `env` | [{name, value}]? | Environment variables as a list of `{name, value}` objects |
-| `startupTimeoutSeconds` | int? | Bootstrap timeout in seconds |
-| `createdAt` | string | RFC3339 creation timestamp |
-| `updatedAt` | string | RFC3339 last-updated timestamp |
+| `metadata.name` | string | Unique name (referenced by `agentrun/create.agent`) |
+| `metadata.labels` | map? | Arbitrary metadata |
+| `metadata.createdAt` | string | RFC3339 creation timestamp |
+| `metadata.updatedAt` | string | RFC3339 last-updated timestamp |
+| `spec.command` | string | Executable command for the agent process |
+| `spec.args` | []string? | Command arguments |
+| `spec.env` | [{name, value}]? | Environment variables |
+| `spec.startupTimeoutSeconds` | int? | Bootstrap timeout in seconds |
 
-Note: `agentrun/create.agent` selects an Agent definition by name. The Agent definition itself is the named runtime configuration — it does not contain a `agent` field.
+Note: `agentrun/create.agent` selects an Agent definition by name.
 
 ## AgentRun Methods
 
@@ -209,7 +287,7 @@ An AgentRun is identified by `(workspace, name)` and has a shim process.
 ### `agentrun/create`
 
 `agentrun/create` is **async configuration-only bootstrap**.
-It creates the AgentRun record and returns immediately with `state: "creating"`.
+It creates the AgentRun record and returns immediately with `status.state: "creating"`.
 Actual bootstrap (shim startup, ACP initialization) happens in the background.
 Callers poll `agentrun/status` until state transitions to `"idle"` or `"error"`.
 
@@ -224,7 +302,7 @@ Callers poll `agentrun/status` until state transitions to `"idle"` or `"error"`.
 | `systemPrompt` | string | no | Bootstrap system prompt for the agent session |
 | `labels` | map | no | Arbitrary metadata |
 
-**Result:** `{workspace, name, state: "creating"}`
+**Result:** `{agentRun: AgentRun}` where `agentRun.status.state` is always `"creating"` on success.
 
 **Example:**
 
@@ -246,7 +324,13 @@ Callers poll `agentrun/status` until state transitions to `"idle"` or `"error"`.
 {
   "jsonrpc": "2.0",
   "id": 10,
-  "result": { "workspace": "my-project", "name": "architect", "state": "creating" }
+  "result": {
+    "agentRun": {
+      "metadata": { "name": "architect", "workspace": "my-project", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z" },
+      "spec": { "agent": "claude" },
+      "status": { "state": "creating" }
+    }
+  }
 }
 ```
 
@@ -267,11 +351,14 @@ Poll until idle:
   "id": 11,
   "result": {
     "agentRun": {
-      "workspace": "my-project",
-      "name": "architect",
-      "agent": "claude",
-      "state": "idle",
-      "createdAt": "2026-01-01T00:00:00Z"
+      "metadata": { "name": "architect", "workspace": "my-project", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z" },
+      "spec": { "agent": "claude" },
+      "status": { "state": "idle" }
+    },
+    "shimState": {
+      "status": "idle",
+      "pid": 12345,
+      "bundle": "/var/lib/agentd/bundles/my-project-architect"
     }
   }
 }
@@ -326,7 +413,7 @@ Caller polls `agentrun/status` until `idle` or `error`.
 
 **Params:** `{workspace, name}`
 
-**Result:** `{workspace, name, state: "creating"}`
+**Result:** `{agentRun: AgentRun}` where `agentRun.status.state` is `"creating"`.
 
 ### `agentrun/list`
 
@@ -334,7 +421,7 @@ List AgentRun records with optional filters.
 
 **Params:** `{workspace?, state?, labels?}`
 
-**Result:** `{agentRuns[]}` — array of `AgentRunInfo` objects.
+**Result:** `{agentRuns: AgentRun[]}` — array of `AgentRun` domain objects.
 
 Filters:
 - `workspace`: restrict to a single workspace
@@ -352,12 +439,9 @@ Return current AgentRun state and optional shim runtime state.
 ```json
 {
   "agentRun": {
-    "workspace": "my-project",
-    "name": "architect",
-    "agent": "claude",
-    "state": "idle",
-    "labels": {},
-    "createdAt": "2026-01-01T00:00:00Z"
+    "metadata": { "name": "architect", "workspace": "my-project", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z" },
+    "spec": { "agent": "claude" },
+    "status": { "state": "idle" }
   },
   "shimState": {
     "status": "idle",
@@ -383,19 +467,25 @@ AgentRun must be in `idle` or `running` state.
 After receiving `socketPath`, the caller connects to the shim and consumes events via
 `session/subscribe` on the shim RPC. See [shim-rpc-spec.md](../runtime/shim-rpc-spec.md).
 
-## AgentRunInfo Schema
+## AgentRun Domain Shape
 
-All `agentrun/*` methods that return AgentRun data use the `AgentRunInfo` shape:
-
-| Field | Type | Meaning |
+| Path | Type | Meaning |
 |---|---|---|
-| `workspace` | string | Workspace this AgentRun belongs to |
-| `name` | string | Agent name within the workspace |
-| `agent` | string | Selected runtime class |
-| `state` | string | Current agent state |
-| `errorMessage` | string? | Error details when `state` is `"error"` |
-| `labels` | map? | Arbitrary metadata |
-| `createdAt` | string | RFC3339 creation timestamp |
+| `metadata.name` | string | Agent name within the workspace |
+| `metadata.workspace` | string | Workspace this AgentRun belongs to |
+| `metadata.labels` | map? | Arbitrary metadata |
+| `metadata.createdAt` | string | RFC3339 creation timestamp |
+| `metadata.updatedAt` | string | RFC3339 last-updated timestamp |
+| `spec.agent` | string | Selected agent definition name |
+| `spec.restartPolicy` | string? | Session continuation policy on restart |
+| `spec.description` | string? | Human-readable description |
+| `spec.systemPrompt` | string? | Agent system prompt |
+| `status.state` | string | Current agent state |
+| `status.errorMessage` | string? | Error details when `state` is `"error"` |
+
+Internal fields (`shimSocketPath`, `shimStateDir`, `shimPid`, `bootstrapConfig`) are present in
+the store but are not serialized in ARI responses. The shim socket path is exposed only via
+`agentrun/attach`.
 
 ## AgentRun State Machine
 
