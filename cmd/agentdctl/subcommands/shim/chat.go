@@ -114,7 +114,7 @@ func newChatModel(sock string) chatModel {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 func (m chatModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, connectCmd(m.sock))
+	return tea.Batch(m.input.Focus(), m.spinner.Tick, connectCmd(m.sock))
 }
 
 func connectCmd(sock string) tea.Cmd {
