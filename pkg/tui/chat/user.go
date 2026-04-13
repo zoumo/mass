@@ -61,7 +61,7 @@ func (m *UserMessageItem) Render(width int) string {
 	return RenderBlock(BlockConfig{
 		Label: &LabelConfig{
 			Text:  "[User]",
-			Style: lipgloss.NewStyle().Bold(true).Foreground(m.sty.Primary),
+			Style: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF9500")),
 		},
 		Body:       m.RawRender(width),
 		Background: &bg,

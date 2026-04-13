@@ -114,7 +114,10 @@ func newChatModel(sock string) chatModel {
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 func (m chatModel) Init() tea.Cmd {
-	return tea.Batch(m.input.Focus(), m.spinner.Tick, connectCmd(m.sock))
+	// NOTE: Do not call m.input.Focus() here — Init() has a value receiver,
+	// so the mutation is applied to a copy and discarded. Input focus is
+	// established in the first WindowSizeMsg handler instead.
+	return tea.Batch(m.spinner.Tick, connectCmd(m.sock))
 }
 
 func connectCmd(sock string) tea.Cmd {
@@ -201,7 +204,13 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.chat.SetSize(msg.Width, vpHeight)
 		m.input.SetWidth(msg.Width)
-		m.ready = true
+		if !m.ready {
+			// First WindowSizeMsg: focus the input here because Init() has a
+			// value receiver — m.input.Focus() in Init mutates a copy that is
+			// discarded, leaving the textarea unfocused.
+			m.ready = true
+			cmds = append(cmds, m.input.Focus())
+		}
 
 	case connReadyMsg:
 		m.client = msg.c

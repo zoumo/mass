@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // BlockConfig defines the rendering parameters for a unified message block.
@@ -93,6 +94,16 @@ func RenderBlock(cfg BlockConfig) string {
 			Width(cfg.Width).
 			PaddingLeft(1).PaddingRight(1)
 		for i, ln := range lines {
+			// Glamour pads each line to the word-wrap width with ANSI-styled
+			// spaces (foreground only). These fill chars eat the Width budget so
+			// lipgloss never adds its own background-colored padding. Strip the
+			// trailing whitespace first and let bgStyle.Width re-pad with the
+			// correct background color.
+			plain := ansi.Strip(ln)
+			trimmed := strings.TrimRight(plain, " \t")
+			if len(trimmed) < len(plain) {
+				ln = ansi.Truncate(ln, lipgloss.Width(trimmed), "")
+			}
 			lines[i] = bgStyle.Render(ln)
 		}
 		return strings.Join(lines, "\n")
