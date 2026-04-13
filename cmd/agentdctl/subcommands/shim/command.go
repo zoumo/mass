@@ -149,7 +149,6 @@ type sessionUpdateParams struct {
 	Seq       int          `json:"seq"`
 	Timestamp string       `json:"timestamp"`
 	TurnID    string       `json:"turnId,omitempty"`
-	StreamSeq *int         `json:"streamSeq,omitempty"`
 	Event     sessionEvent `json:"event"`
 }
 

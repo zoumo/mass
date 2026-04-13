@@ -38,7 +38,34 @@ type ContentBlock struct {
 	Resource     *ResourceContent     `json:"-"`
 }
 
+func (c ContentBlock) variantCount() int {
+	n := 0
+	if c.Text != nil {
+		n++
+	}
+	if c.Image != nil {
+		n++
+	}
+	if c.Audio != nil {
+		n++
+	}
+	if c.ResourceLink != nil {
+		n++
+	}
+	if c.Resource != nil {
+		n++
+	}
+	return n
+}
+
 func (c ContentBlock) MarshalJSON() ([]byte, error) {
+	n := c.variantCount()
+	if n == 0 {
+		return nil, fmt.Errorf("events: empty ContentBlock: no variant set")
+	}
+	if n > 1 {
+		return nil, fmt.Errorf("events: ContentBlock: multiple variants set (%d)", n)
+	}
 	switch {
 	case c.Text != nil:
 		type wrapper struct {
@@ -64,14 +91,12 @@ func (c ContentBlock) MarshalJSON() ([]byte, error) {
 			ResourceLinkContent
 		}
 		return json.Marshal(wrapper{Type: "resource_link", ResourceLinkContent: *c.ResourceLink})
-	case c.Resource != nil:
+	default: // c.Resource != nil (guaranteed by n==1 check above)
 		type wrapper struct {
 			Type string `json:"type"`
 			ResourceContent
 		}
 		return json.Marshal(wrapper{Type: "resource", ResourceContent: *c.Resource})
-	default:
-		return nil, fmt.Errorf("events: empty ContentBlock: no variant set")
 	}
 }
 
@@ -157,14 +182,23 @@ type EmbeddedResource struct {
 }
 
 func (e EmbeddedResource) MarshalJSON() ([]byte, error) {
-	switch {
-	case e.TextResource != nil:
-		return json.Marshal(e.TextResource)
-	case e.BlobResource != nil:
-		return json.Marshal(e.BlobResource)
-	default:
+	n := 0
+	if e.TextResource != nil {
+		n++
+	}
+	if e.BlobResource != nil {
+		n++
+	}
+	if n == 0 {
 		return nil, fmt.Errorf("events: empty EmbeddedResource: no variant set")
 	}
+	if n > 1 {
+		return nil, fmt.Errorf("events: EmbeddedResource: multiple variants set (%d)", n)
+	}
+	if e.TextResource != nil {
+		return json.Marshal(e.TextResource)
+	}
+	return json.Marshal(e.BlobResource)
 }
 
 func (e *EmbeddedResource) UnmarshalJSON(data []byte) error {
@@ -214,6 +248,22 @@ type ToolCallContent struct {
 }
 
 func (t ToolCallContent) MarshalJSON() ([]byte, error) {
+	n := 0
+	if t.Content != nil {
+		n++
+	}
+	if t.Diff != nil {
+		n++
+	}
+	if t.Terminal != nil {
+		n++
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("events: empty ToolCallContent: no variant set")
+	}
+	if n > 1 {
+		return nil, fmt.Errorf("events: ToolCallContent: multiple variants set (%d)", n)
+	}
 	switch {
 	case t.Content != nil:
 		type wrapper struct {
@@ -227,14 +277,12 @@ func (t ToolCallContent) MarshalJSON() ([]byte, error) {
 			ToolCallContentDiff
 		}
 		return json.Marshal(wrapper{Type: "diff", ToolCallContentDiff: *t.Diff})
-	case t.Terminal != nil:
+	default: // t.Terminal != nil
 		type wrapper struct {
 			Type string `json:"type"`
 			ToolCallContentTerminal
 		}
 		return json.Marshal(wrapper{Type: "terminal", ToolCallContentTerminal: *t.Terminal})
-	default:
-		return nil, fmt.Errorf("events: empty ToolCallContent: no variant set")
 	}
 }
 
@@ -340,16 +388,15 @@ type ConfigOption struct {
 }
 
 func (c ConfigOption) MarshalJSON() ([]byte, error) {
-	switch {
-	case c.Select != nil:
-		type wrapper struct {
-			Type string `json:"type"`
-			ConfigOptionSelect
-		}
-		return json.Marshal(wrapper{Type: "select", ConfigOptionSelect: *c.Select})
-	default:
+	// Currently single-variant union; multi-variant guard for future-proofing.
+	if c.Select == nil {
 		return nil, fmt.Errorf("events: empty ConfigOption: no variant set")
 	}
+	type wrapper struct {
+		Type string `json:"type"`
+		ConfigOptionSelect
+	}
+	return json.Marshal(wrapper{Type: "select", ConfigOptionSelect: *c.Select})
 }
 
 func (c *ConfigOption) UnmarshalJSON(data []byte) error {
@@ -387,33 +434,54 @@ type ConfigSelectOptions struct {
 }
 
 func (c ConfigSelectOptions) MarshalJSON() ([]byte, error) {
-	switch {
-	case c.Grouped != nil:
-		return json.Marshal(c.Grouped)
-	case c.Ungrouped != nil:
-		return json.Marshal(c.Ungrouped)
-	default:
-		// empty — marshal as empty array
-		return json.Marshal([]struct{}{})
+	n := 0
+	if c.Ungrouped != nil {
+		n++
 	}
+	if c.Grouped != nil {
+		n++
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("events: empty ConfigSelectOptions: no variant set")
+	}
+	if n > 1 {
+		return nil, fmt.Errorf("events: ConfigSelectOptions: multiple variants set (%d)", n)
+	}
+	if c.Grouped != nil {
+		return json.Marshal(c.Grouped)
+	}
+	return json.Marshal(c.Ungrouped)
 }
 
 func (c *ConfigSelectOptions) UnmarshalJSON(data []byte) error {
-	// Try grouped first (elements have "group" field)
-	var grouped []ConfigSelectGroup
-	if err := json.Unmarshal(data, &grouped); err == nil && len(grouped) > 0 {
-		if grouped[0].Group != "" {
-			c.Grouped = grouped
-			return nil
-		}
+	// Parse as raw array to inspect element structure (field presence).
+	var raw []json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("events: ConfigSelectOptions: %w", err)
 	}
-	// Fall back to ungrouped
-	var ungrouped []ConfigSelectOption
-	if err := json.Unmarshal(data, &ungrouped); err == nil {
-		c.Ungrouped = ungrouped
-		return nil
+	if len(raw) == 0 {
+		return fmt.Errorf("events: empty ConfigSelectOptions: cannot determine variant from empty array")
 	}
-	return fmt.Errorf("events: unknown ConfigSelectOptions shape")
+	// Inspect first element's fields to discriminate:
+	// grouped elements have "group" + "name" + "options"
+	// ungrouped elements have "name" + "value"
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw[0], &fields); err != nil {
+		return fmt.Errorf("events: ConfigSelectOptions: cannot inspect element: %w", err)
+	}
+	_, hasGroup := fields["group"]
+	_, hasOptions := fields["options"]
+	_, hasValue := fields["value"]
+	switch {
+	case hasGroup && hasOptions: // grouped
+		c.Grouped = make([]ConfigSelectGroup, 0, len(raw))
+		return json.Unmarshal(data, &c.Grouped)
+	case hasValue: // ungrouped
+		c.Ungrouped = make([]ConfigSelectOption, 0, len(raw))
+		return json.Unmarshal(data, &c.Ungrouped)
+	default:
+		return fmt.Errorf("events: unknown ConfigSelectOptions element shape (has group=%v, options=%v, value=%v)", hasGroup, hasOptions, hasValue)
+	}
 }
 
 // ConfigSelectOption mirrors acp.SessionConfigSelectOption.

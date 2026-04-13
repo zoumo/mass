@@ -272,24 +272,14 @@ func TestRPCServer_CleanBreakSurface(t *testing.T) {
 		require.Equal(t, events.MethodRuntimeStateChange, live[2].Method)
 		require.Equal(t, events.MethodRuntimeStateChange, live[4].Method)
 
-		// Assert turn_start (live[0]) has TurnId and StreamSeq=0
+		// Assert turn_start (live[0]) has TurnId
 		ts := live[0].Params.(events.SessionUpdateParams)
 		require.NotEmpty(t, ts.TurnID)
-		require.NotNil(t, ts.StreamSeq)
-		require.Equal(t, 0, *ts.StreamSeq)
-		// Assert user_message (live[1]) has StreamSeq=1
-		um := live[1].Params.(events.SessionUpdateParams)
-		require.NotNil(t, um.StreamSeq)
-		require.Equal(t, 1, *um.StreamSeq)
 		// Assert all session/update events in turn share the same TurnId
 		for _, idx := range []int{0, 1, 3, 5} {
 			p := live[idx].Params.(events.SessionUpdateParams)
 			require.Equal(t, ts.TurnID, p.TurnID, "live[%d] TurnId mismatch", idx)
 		}
-		// Assert turn_end (live[5]) has StreamSeq=3
-		te := live[5].Params.(events.SessionUpdateParams)
-		require.NotNil(t, te.StreamSeq)
-		require.Equal(t, 3, *te.StreamSeq)
 
 		var history shimapi.RuntimeHistoryResult
 		err = client.Call(ctx, "runtime/history", shimapi.RuntimeHistoryParams{FromSeq: intPtr(0)}, &history)
@@ -394,7 +384,6 @@ func TestRPCServer_DirectShimLiveOrdering(t *testing.T) {
 	require.Len(t, live, 24)
 
 	lastSeq := -1
-	var textStreamSeqs []int
 	var textChunks []string
 	for _, env := range live {
 		seq, err := env.Seq()
@@ -409,8 +398,6 @@ func TestRPCServer_DirectShimLiveOrdering(t *testing.T) {
 		if p.Event.Type != "text" {
 			continue
 		}
-		require.NotNil(t, p.StreamSeq)
-		textStreamSeqs = append(textStreamSeqs, *p.StreamSeq)
 		payload, ok := p.Event.Payload.(events.TextEvent)
 		require.True(t, ok)
 		textChunks = append(textChunks, payload.Text)
@@ -419,7 +406,6 @@ func TestRPCServer_DirectShimLiveOrdering(t *testing.T) {
 	require.Len(t, textChunks, 20)
 	for i := 0; i < 20; i++ {
 		require.Equal(t, fmt.Sprintf("text-chunk-%02d", i), textChunks[i])
-		require.Equal(t, i+2, textStreamSeqs[i]) // +2: turn_start(0), user_message(1), first text at 2
 	}
 }
 

@@ -31,6 +31,7 @@ func TestTranslateRich_ToolCall_FullFields(t *testing.T) {
 			Title:      "run ls",
 			Status:     "in_progress",
 			Content: []acp.ToolCallContent{
+				{Content: &acp.ToolCallContentContent{Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "content variant"}}}},
 				{Diff: &acp.ToolCallContentDiff{Path: "a.go", NewText: "pkg main"}},
 				{Terminal: &acp.ToolCallContentTerminal{TerminalId: "term-1", Meta: map[string]any{"x": 1}}},
 			},
@@ -47,13 +48,19 @@ func TestTranslateRich_ToolCall_FullFields(t *testing.T) {
 	assert.Equal(t, "shell", ev.Kind)
 	assert.Equal(t, "run ls", ev.Title)
 	assert.Equal(t, "in_progress", ev.Status)
-	require.Len(t, ev.Content, 2)
-	require.NotNil(t, ev.Content[0].Diff)
-	assert.Equal(t, "a.go", ev.Content[0].Diff.Path)
-	assert.Equal(t, "pkg main", ev.Content[0].Diff.NewText)
-	require.NotNil(t, ev.Content[1].Terminal)
-	assert.Equal(t, "term-1", ev.Content[1].Terminal.TerminalID)
-	assert.EqualValues(t, 1, ev.Content[1].Terminal.Meta["x"])
+	require.Len(t, ev.Content, 3)
+	// content variant
+	require.NotNil(t, ev.Content[0].Content)
+	require.NotNil(t, ev.Content[0].Content.Content.Text)
+	assert.Equal(t, "content variant", ev.Content[0].Content.Content.Text.Text)
+	// diff variant
+	require.NotNil(t, ev.Content[1].Diff)
+	assert.Equal(t, "a.go", ev.Content[1].Diff.Path)
+	assert.Equal(t, "pkg main", ev.Content[1].Diff.NewText)
+	// terminal variant
+	require.NotNil(t, ev.Content[2].Terminal)
+	assert.Equal(t, "term-1", ev.Content[2].Terminal.TerminalID)
+	assert.EqualValues(t, 1, ev.Content[2].Terminal.Meta["x"])
 	require.Len(t, ev.Locations, 1)
 	assert.Equal(t, "a.go", ev.Locations[0].Path)
 	require.NotNil(t, ev.Locations[0].Line)

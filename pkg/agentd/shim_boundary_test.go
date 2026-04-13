@@ -151,8 +151,6 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 
 		require.Equal(t, i, update.Seq)
 		require.Equal(t, turnID, update.TurnID)
-		require.NotNil(t, update.StreamSeq)
-		require.Equal(t, i, *update.StreamSeq)
 		require.Equal(t, "text", update.Event.Type)
 		payload, ok := update.Event.Payload.(events.TextEvent)
 		require.True(t, ok)

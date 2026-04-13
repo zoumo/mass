@@ -19,14 +19,13 @@ type Translator struct {
 	in        <-chan acp.SessionNotification
 	log       *EventLog
 
-	mu               sync.Mutex
-	subs             map[int]chan Envelope
-	nextID           int
-	nextSeq          int
-	done             chan struct{}
-	once             sync.Once
-	currentTurnId    string
-	currentStreamSeq int
+	mu            sync.Mutex
+	subs          map[int]chan Envelope
+	nextID        int
+	nextSeq       int
+	done          chan struct{}
+	once          sync.Once
+	currentTurnId string
 }
 
 // NewTranslator creates a Translator that reads from in.
@@ -132,17 +131,13 @@ func (t *Translator) NotifyTurnStart() {
 	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
 		// Runs under mu.Lock — safe to mutate turn state here.
 		t.currentTurnId = newTurnId
-		t.currentStreamSeq = 0
-		ss := t.currentStreamSeq // = 0
-		t.currentStreamSeq++
 		params := SessionUpdateParams{
 			SequenceMeta: SequenceMeta{
 				SessionID: t.sessionID, Seq: seq,
 				Timestamp: at.UTC().Format(time.RFC3339Nano),
 			},
-			TurnID:    t.currentTurnId,
-			StreamSeq: &ss,
-			Event:     newTypedEvent(TurnStartEvent{}),
+			TurnID: t.currentTurnId,
+			Event:  newTypedEvent(TurnStartEvent{}),
 		}
 		return Envelope{Method: api.MethodSessionUpdate, Params: params}
 	})
@@ -153,16 +148,13 @@ func (t *Translator) NotifyTurnStart() {
 // This must be called after NotifyTurnStart and before mgr.Prompt.
 func (t *Translator) NotifyUserPrompt(text string) {
 	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
-		ss := t.currentStreamSeq
-		t.currentStreamSeq++
 		params := SessionUpdateParams{
 			SequenceMeta: SequenceMeta{
 				SessionID: t.sessionID, Seq: seq,
 				Timestamp: at.UTC().Format(time.RFC3339Nano),
 			},
-			TurnID:    t.currentTurnId,
-			StreamSeq: &ss,
-			Event:     newTypedEvent(UserMessageEvent{Text: text}),
+			TurnID: t.currentTurnId,
+			Event:  newTypedEvent(UserMessageEvent{Text: text}),
 		}
 		return Envelope{Method: api.MethodSessionUpdate, Params: params}
 	})
@@ -175,16 +167,13 @@ func (t *Translator) NotifyUserPrompt(text string) {
 func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 	t.broadcastEnvelope(func(seq int, at time.Time) Envelope {
 		// Runs under mu.Lock.
-		ss := t.currentStreamSeq
-		t.currentStreamSeq++
 		params := SessionUpdateParams{
 			SequenceMeta: SequenceMeta{
 				SessionID: t.sessionID, Seq: seq,
 				Timestamp: at.UTC().Format(time.RFC3339Nano),
 			},
-			TurnID:    t.currentTurnId,
-			StreamSeq: &ss,
-			Event:     newTypedEvent(TurnEndEvent{StopReason: string(reason)}),
+			TurnID: t.currentTurnId,
+			Event:  newTypedEvent(TurnEndEvent{StopReason: string(reason)}),
 		}
 		t.currentTurnId = "" // Clear AFTER using — turn_end event carries the turnId
 		return Envelope{Method: api.MethodSessionUpdate, Params: params}
@@ -222,9 +211,6 @@ func (t *Translator) broadcastSessionEvent(ev Event) {
 		if t.currentTurnId != "" {
 			params := env.Params.(SessionUpdateParams)
 			params.TurnID = t.currentTurnId
-			ss := t.currentStreamSeq
-			params.StreamSeq = &ss
-			t.currentStreamSeq++
 			env.Params = params
 		}
 		return env

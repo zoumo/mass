@@ -194,8 +194,8 @@ func TestProcessManagerStart(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected event payload, got %T", update.Event.Payload)
 			}
-			t.Logf("Received event #%d: seq=%d streamSeq=%v type=%T",
-				eventCount, update.Seq, update.StreamSeq, ev)
+			t.Logf("Received event #%d: seq=%d type=%T",
+				eventCount, update.Seq, ev)
 			if _, ok := ev.(events.TextEvent); ok {
 				t.Logf("TextEvent received")
 			}

@@ -249,6 +249,59 @@ func TestWireShape_UnionEmptyVariant_MarshalErrors(t *testing.T) {
 	})
 }
 
+// ── Test 21b: Union multi-variant marshal errors ─────────────────────────────
+
+func TestWireShape_UnionMultiVariant_MarshalErrors(t *testing.T) {
+	t.Run("ContentBlock multi-variant", func(t *testing.T) {
+		cb := ContentBlock{
+			Text:  &TextContent{Text: "hello"},
+			Image: &ImageContent{Data: "b64", MimeType: "image/png"},
+		}
+		_, err := json.Marshal(cb)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ContentBlock")
+		assert.Contains(t, err.Error(), "multiple")
+	})
+	t.Run("EmbeddedResource multi-variant", func(t *testing.T) {
+		er := EmbeddedResource{
+			TextResource: &TextResourceContents{URI: "file:///a", Text: "x"},
+			BlobResource: &BlobResourceContents{URI: "file:///b", Blob: "y"},
+		}
+		_, err := json.Marshal(er)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "EmbeddedResource")
+		assert.Contains(t, err.Error(), "multiple")
+	})
+	t.Run("ToolCallContent multi-variant", func(t *testing.T) {
+		tc := ToolCallContent{
+			Diff:     &ToolCallContentDiff{Path: "a.go", NewText: "x"},
+			Terminal: &ToolCallContentTerminal{TerminalID: "t1"},
+		}
+		_, err := json.Marshal(tc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ToolCallContent")
+		assert.Contains(t, err.Error(), "multiple")
+	})
+	t.Run("ConfigSelectOptions multi-variant", func(t *testing.T) {
+		cso := ConfigSelectOptions{
+			Ungrouped: []ConfigSelectOption{{Name: "a", Value: "a"}},
+			Grouped:   []ConfigSelectGroup{{Group: "g", Name: "G", Options: nil}},
+		}
+		_, err := json.Marshal(cso)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ConfigSelectOptions")
+		assert.Contains(t, err.Error(), "multiple")
+	})
+}
+
+// ── Test 21c: ConfigSelectOptions empty marshal error ────────────────────────
+
+func TestWireShape_ConfigSelectOptions_EmptyMarshalError(t *testing.T) {
+	_, err := json.Marshal(ConfigSelectOptions{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ConfigSelectOptions")
+}
+
 // ── Test 22: Union unknown type unmarshal errors ──────────────────────────────
 
 func TestWireShape_UnionUnknownType_UnmarshalErrors(t *testing.T) {
@@ -271,5 +324,29 @@ func TestWireShape_UnionUnknownType_UnmarshalErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ConfigOption")
 		assert.Contains(t, err.Error(), "checkbox")
+	})
+	t.Run("EmbeddedResource no matching shape", func(t *testing.T) {
+		var er EmbeddedResource
+		err := json.Unmarshal([]byte(`{"uri":"file:///a","unknown":"x"}`), &er)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "EmbeddedResource")
+	})
+	t.Run("AvailableCommandInput no matching variant", func(t *testing.T) {
+		var ai AvailableCommandInput
+		err := json.Unmarshal([]byte(`{"unknown":"x"}`), &ai)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "AvailableCommandInput")
+	})
+	t.Run("ConfigSelectOptions empty array", func(t *testing.T) {
+		var cso ConfigSelectOptions
+		err := json.Unmarshal([]byte(`[]`), &cso)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ConfigSelectOptions")
+	})
+	t.Run("ConfigSelectOptions no matching element shape", func(t *testing.T) {
+		var cso ConfigSelectOptions
+		err := json.Unmarshal([]byte(`[{"unknown":"x"}]`), &cso)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ConfigSelectOptions")
 	})
 }
