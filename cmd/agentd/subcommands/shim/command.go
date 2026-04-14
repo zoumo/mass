@@ -113,10 +113,17 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 	// Inject the ACP session ID now that Create() has completed the handshake.
 	trans.SetSessionID(mgr.SessionID())
 	mgr.SetStateChangeHook(func(change acpruntime.StateChange) {
-		trans.NotifyStateChange(change.PreviousStatus.String(), change.Status.String(), change.PID, change.Reason)
+		trans.NotifyStateChange(change.PreviousStatus.String(), change.Status.String(), change.PID, change.Reason, change.SessionChanged)
 	})
 	trans.Start()
 	defer trans.Stop()
+
+	// Emit synthetic bootstrap-metadata so subscribers discover agent identity
+	// and capabilities via history backfill (D124).
+	{
+		st, _ := mgr.GetState()
+		trans.NotifyStateChange("idle", "idle", st.PID, "bootstrap-metadata", []string{"agentInfo", "capabilities"})
+	}
 
 	// Build service and register it with a new jsonrpc.Server.
 	svc := shimserver.New(mgr, trans, logPath, logger)

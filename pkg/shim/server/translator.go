@@ -219,7 +219,9 @@ func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 
 // NotifyStateChange broadcasts a runtime category state_change ShimEvent.
 // Runtime events never carry turn fields.
-func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, reason string) {
+// sessionChanged lists state sections that were updated (e.g. ["agentInfo","capabilities"]
+// for the synthetic bootstrap-metadata event). Pass nil for lifecycle-only transitions.
+func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, reason string, sessionChanged []string) {
 	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
 		return apishim.ShimEvent{
 			RunID:     t.runID,
@@ -233,6 +235,7 @@ func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, r
 				Status:         status,
 				PID:            pid,
 				Reason:         reason,
+				SessionChanged: sessionChanged,
 			},
 		}
 	})

@@ -642,10 +642,11 @@ func (UsageEvent) eventType() string { return EventTypeUsage }
 // StateChangeEvent carries runtime process lifecycle transitions.
 // This is a runtime category event, not a session event.
 type StateChangeEvent struct {
-	PreviousStatus string `json:"previousStatus"`
-	Status         string `json:"status"`
-	PID            int    `json:"pid,omitempty"`
-	Reason         string `json:"reason,omitempty"`
+	PreviousStatus string   `json:"previousStatus"`
+	Status         string   `json:"status"`
+	PID            int      `json:"pid,omitempty"`
+	Reason         string   `json:"reason,omitempty"`
+	SessionChanged []string `json:"sessionChanged,omitempty"`
 }
 
 func (StateChangeEvent) eventType() string { return EventTypeStateChange }

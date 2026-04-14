@@ -79,7 +79,7 @@ Currently Manager.Create() discards the InitializeResponse from conn.Initialize(
   - Files: `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/runtime/acp/runtime_test.go`, `internal/testutil/mockagent/main.go`
   - Verify: go test ./pkg/shim/runtime/acp/... -count=1 -v -run TestCreate_PopulatesSession && go test ./pkg/shim/runtime/acp/... -count=1 && make build
 
-- [ ] **T02: Extend StateChangeEvent with SessionChanged, emit synthetic bootstrap-metadata event, and test** `est:45m`
+- [x] **T02: Extend StateChangeEvent with SessionChanged, emit synthetic bootstrap-metadata event, and test** `est:45m`
   ## Description
 
 Per D124, after Translator.Start() in command.go, a synthetic state_change event with reason `bootstrap-metadata` and sessionChanged `["agentInfo","capabilities"]` must be emitted so subscribers discover the agent's identity and capabilities via history backfill (fromSeq=0). This requires extending StateChangeEvent, StateChange, and NotifyStateChange with a SessionChanged field.

@@ -30,6 +30,7 @@ type StateChange struct {
 	Status         apiruntime.Status
 	PID            int
 	Reason         string
+	SessionChanged []string
 }
 
 // StateChangeHook is invoked after a lifecycle transition has been persisted.

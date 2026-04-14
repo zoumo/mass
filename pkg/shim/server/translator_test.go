@@ -279,7 +279,7 @@ func TestNotifyStateChange(t *testing.T) {
 	defer tr.Stop()
 
 	assert.Equal(t, 0, nextSeq)
-	tr.NotifyStateChange("created", "running", 1234, "prompt-started")
+	tr.NotifyStateChange("created", "running", 1234, "prompt-started", nil)
 
 	ev := drainShimEvent(t, ch)
 	assert.Equal(t, apishim.CategoryRuntime, ev.Category)
@@ -293,6 +293,40 @@ func TestNotifyStateChange(t *testing.T) {
 	assert.Equal(t, "running", sc.Status)
 	assert.Equal(t, 1234, sc.PID)
 	assert.Equal(t, "prompt-started", sc.Reason)
+}
+
+func TestNotifyStateChange_WithSessionChanged(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.jsonl")
+
+	evLog, err := OpenEventLog(logPath)
+	require.NoError(t, err)
+	defer evLog.Close()
+
+	in := make(chan acp.SessionNotification)
+	tr := NewTranslator("run-1", in, evLog)
+	tr.Start()
+
+	tr.NotifyStateChange("idle", "idle", 42, "bootstrap-metadata", []string{"agentInfo", "capabilities"})
+
+	// Read the event log to verify the persisted event.
+	entries, readErr := ReadEventLog(logPath, 0)
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1)
+
+	entry := entries[0]
+	assert.Equal(t, "state_change", entry.Type)
+	assert.Equal(t, apishim.CategoryRuntime, entry.Category)
+
+	sc, ok := entry.Content.(apishim.StateChangeEvent)
+	require.True(t, ok)
+	assert.Equal(t, "bootstrap-metadata", sc.Reason)
+	assert.Equal(t, []string{"agentInfo", "capabilities"}, sc.SessionChanged)
+	assert.Equal(t, "idle", sc.PreviousStatus)
+	assert.Equal(t, "idle", sc.Status)
+	assert.Equal(t, 42, sc.PID)
+
+	tr.Stop()
 }
 
 func TestShimEventRoundTrip(t *testing.T) {
@@ -452,7 +486,7 @@ func TestTurnAwareShimEvent_TurnIdAssigned(t *testing.T) {
 	assert.Equal(t, tsEv.TurnID, teEv.TurnID, "turn_end must carry same TurnID")
 
 	// State change after turn_end should not have TurnID.
-	tr.NotifyStateChange("running", "created", 0, "done")
+	tr.NotifyStateChange("running", "created", 0, "done", nil)
 	scEv := drainShimEvent(t, ch)
 	assert.Equal(t, apishim.CategoryRuntime, scEv.Category)
 	assert.Empty(t, scEv.TurnID, "runtime state_change must not carry TurnID")
@@ -557,7 +591,7 @@ func TestTurnAwareShimEvent_StateChangeExcludesTurnFields(t *testing.T) {
 	tsEv := drainShimEvent(t, ch)
 	require.NotEmpty(t, tsEv.TurnID)
 
-	tr.NotifyStateChange("created", "running", 0, "")
+	tr.NotifyStateChange("created", "running", 0, "", nil)
 	scEv := drainShimEvent(t, ch)
 
 	assert.Equal(t, apishim.CategoryRuntime, scEv.Category)
@@ -697,7 +731,7 @@ func TestConcurrentBroadcast_SeqContinuous(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < numEvents/2; i++ {
-			tr.NotifyStateChange("idle", "running", i, "test")
+			tr.NotifyStateChange("idle", "running", i, "test", nil)
 		}
 	}()
 
@@ -817,7 +851,7 @@ func TestEventCounts_PromptTurn(t *testing.T) {
 	drainShimEvent(t, ch)
 
 	// state_change
-	tr.NotifyStateChange("running", "idle", 0, "done")
+	tr.NotifyStateChange("running", "idle", 0, "done", nil)
 	drainShimEvent(t, ch)
 
 	counts := tr.EventCounts()
