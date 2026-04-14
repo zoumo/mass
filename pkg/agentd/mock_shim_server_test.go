@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	apishim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
@@ -34,7 +33,7 @@ type mockShimServer struct {
 	mu                sync.Mutex
 	statusResult      apishim.RuntimeStatusResult
 	promptResult      apishim.SessionPromptResult
-	historyEntries    []events.ShimEvent
+	historyEntries    []apishim.ShimEvent
 	subscribed        bool
 	liveNotifications []shimNotif // queued to emit after subscribe
 
@@ -201,7 +200,7 @@ func (h *mockShimHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Co
 	var result apishim.SessionSubscribeResult
 	if params.FromSeq != nil {
 		// Return all history entries (mock always stores them in order).
-		result.Entries = make([]events.ShimEvent, len(h.srv.historyEntries))
+		result.Entries = make([]apishim.ShimEvent, len(h.srv.historyEntries))
 		copy(result.Entries, h.srv.historyEntries)
 		result.NextSeq = len(result.Entries)
 	}
@@ -226,7 +225,7 @@ func (h *mockShimHandler) handleStatus(ctx context.Context, conn *jsonrpc2.Conn,
 
 func (h *mockShimHandler) handleHistory(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	h.srv.mu.Lock()
-	entries := make([]events.ShimEvent, len(h.srv.historyEntries))
+	entries := make([]apishim.ShimEvent, len(h.srv.historyEntries))
 	copy(entries, h.srv.historyEntries)
 	h.srv.mu.Unlock()
 	_ = conn.Reply(ctx, req.ID, apishim.RuntimeHistoryResult{Entries: entries})

@@ -13,7 +13,6 @@ import (
 
 	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	shim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	"github.com/zoumo/oar/pkg/store"
 )
@@ -193,10 +192,10 @@ func TestProcessManagerStart(t *testing.T) {
 			eventCount++
 			t.Logf("Received event #%d: seq=%d type=%s category=%s",
 				eventCount, update.Seq, update.Type, update.Category)
-			if _, ok := update.Content.(events.TextEvent); ok {
+			if _, ok := update.Content.(shim.TextEvent); ok {
 				t.Logf("TextEvent received")
 			}
-			if _, ok := update.Content.(events.TurnEndEvent); ok {
+			if _, ok := update.Content.(shim.TurnEndEvent); ok {
 				t.Logf("TurnEndEvent received, prompt complete")
 				goto done
 			}

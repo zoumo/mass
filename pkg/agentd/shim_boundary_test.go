@@ -16,7 +16,6 @@ import (
 
 	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apishim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	shimclient "github.com/zoumo/oar/pkg/shim/client"
 )
@@ -63,7 +62,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 		PID:        1234,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.ShimEvent, 1024),
+		Events:     make(chan apishim.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -112,7 +111,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 
 	srv, socketPath := newMockShimServer(t)
 	for i := 0; i < 3; i++ {
-		contentBytes, err := json.Marshal(events.TextEvent{Text: fmt.Sprintf("chunk-%d", i)})
+		contentBytes, err := json.Marshal(apishim.TextEvent{Text: fmt.Sprintf("chunk-%d", i)})
 		require.NoError(t, err)
 		srv.queueNotification(apishim.MethodShimEvent, map[string]any{
 			"runId":     "test-run",
@@ -133,7 +132,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 		PID:        1234,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.ShimEvent, 1024),
+		Events:     make(chan apishim.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -147,7 +146,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 0; i < 3; i++ {
-		var update events.ShimEvent
+		var update apishim.ShimEvent
 		select {
 		case update = <-shimProc.Events:
 		case <-time.After(2 * time.Second):
@@ -157,7 +156,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 		require.Equal(t, i, update.Seq)
 		require.Equal(t, turnID, update.TurnID)
 		require.Equal(t, "text", update.Type)
-		payload, ok := update.Content.(events.TextEvent)
+		payload, ok := update.Content.(apishim.TextEvent)
 		require.True(t, ok)
 		require.Equal(t, fmt.Sprintf("chunk-%d", i), payload.Text)
 	}
@@ -214,7 +213,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 		PID:        5678,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.ShimEvent, 1024),
+		Events:     make(chan apishim.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -274,7 +273,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 		PID:        0,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.ShimEvent, 1024),
+		Events:     make(chan apishim.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
@@ -342,7 +341,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 		PID:        0,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan events.ShimEvent, 1024),
+		Events:     make(chan apishim.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 

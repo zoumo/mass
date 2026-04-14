@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 
 	apishim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/jsonrpc"
 )
 
@@ -31,10 +30,10 @@ func DialWithHandler(ctx context.Context, socketPath string, handler Notificatio
 
 // ParseShimEvent unmarshals a raw shim/event notification params payload into
 // a typed ShimEvent.
-func ParseShimEvent(params json.RawMessage) (events.ShimEvent, error) {
-	var ev events.ShimEvent
+func ParseShimEvent(params json.RawMessage) (apishim.ShimEvent, error) {
+	var ev apishim.ShimEvent
 	if err := json.Unmarshal(params, &ev); err != nil {
-		return events.ShimEvent{}, err
+		return apishim.ShimEvent{}, err
 	}
 	return ev, nil
 }

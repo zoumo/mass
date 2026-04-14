@@ -17,7 +17,6 @@ import (
 
 	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apishim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	spec "github.com/zoumo/oar/pkg/runtime-spec"
 	shimclient "github.com/zoumo/oar/pkg/shim/client"
@@ -26,7 +25,7 @@ import (
 
 // EventHandler is called for each shim/event notification received from the shim.
 // Handlers must be registered before calling Subscribe.
-type EventHandler func(ctx context.Context, update events.ShimEvent)
+type EventHandler func(ctx context.Context, update apishim.ShimEvent)
 
 // agentKey returns the composite map key for an agent: workspace+"/"+name.
 // This matches the bbolt key path convention used by the meta store.
@@ -89,7 +88,7 @@ type ShimProcess struct {
 
 	// Events is a channel receiving ordered ShimEvents from the shim.
 	// A default drain goroutine consumes events when no external reader is active.
-	Events chan events.ShimEvent
+	Events chan apishim.ShimEvent
 
 	// Done is closed when the shim process exits and all cleanup is complete.
 	Done chan struct{}
@@ -142,9 +141,9 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 		}
 
 		// Route by category/type.
-		if ev.Category == events.CategoryRuntime && ev.Type == events.EventTypeStateChange {
+		if ev.Category == apishim.CategoryRuntime && ev.Type == apishim.EventTypeStateChange {
 			// state_change → update DB agent state.
-			sc, ok := ev.Content.(events.StateChangeEvent)
+			sc, ok := ev.Content.(apishim.StateChangeEvent)
 			if !ok {
 				logger.Warn("stateChange: content type assertion failed", "agent_key", key)
 				return
@@ -561,7 +560,7 @@ func (m *ProcessManager) forkShim(agent *pkgariapi.AgentRun, bundlePath, stateDi
 		AgentKey:  key,
 		PID:       cmd.Process.Pid,
 		Cmd:       cmd,
-		Events:    make(chan events.ShimEvent, 1024), // buffered for async delivery
+		Events:    make(chan apishim.ShimEvent, 1024), // buffered for async delivery
 		Done:      make(chan struct{}),
 		stopDrain: make(chan struct{}),
 	}

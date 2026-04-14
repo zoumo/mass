@@ -13,7 +13,6 @@ import (
 	"charm.land/lipgloss/v2"
 
 	shimapi "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/tui/chat"
 	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/anim"
 	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
@@ -166,10 +165,10 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 		if err := json.Unmarshal(msg.Params, &ev); err != nil {
 			return notifMsg{msg}
 		}
-		if ev.Type == events.EventTypeTurnEnd {
+		if ev.Type == shimapi.EventTypeTurnEnd {
 			return turnEndMsg{}
 		}
-		if ev.Category == "runtime" && ev.Type == events.EventTypeStateChange {
+		if ev.Category == "runtime" && ev.Type == shimapi.EventTypeStateChange {
 			var sc struct {
 				PreviousStatus string `json:"previousStatus"`
 				Status         string `json:"status"`
@@ -523,7 +522,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch ev.Type {
-	case events.EventTypeUserMessage:
+	case shimapi.EventTypeUserMessage:
 		// User prompt broadcast. Skip if we sent this prompt (already shown).
 		if m.sentPrompt {
 			m.sentPrompt = false
@@ -538,7 +537,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			m.chat.AppendMessages(chat.NewUserMessageItem(&m.sty, userMsg))
 		}
 
-	case events.EventTypeText:
+	case shimapi.EventTypeText:
 		var pl textPayload
 		_ = json.Unmarshal(ev.Content, &pl)
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
@@ -547,7 +546,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.currentMsg.appendText(pl.Text)
 		m.updateCurrentAssistant()
 
-	case events.EventTypeThinking:
+	case shimapi.EventTypeThinking:
 		var pl textPayload
 		_ = json.Unmarshal(ev.Content, &pl)
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
@@ -556,7 +555,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.currentMsg.appendThinking(pl.Text)
 		m.updateCurrentAssistant()
 
-	case events.EventTypeToolCall:
+	case shimapi.EventTypeToolCall:
 		var pl toolEventPayload
 		_ = json.Unmarshal(ev.Content, &pl)
 
@@ -592,7 +591,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			}
 		}
 
-	case events.EventTypeToolResult:
+	case shimapi.EventTypeToolResult:
 		var pl toolEventPayload
 		_ = json.Unmarshal(ev.Content, &pl)
 
@@ -632,7 +631,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		}
 		// else: late join — no matching tool_call, skip silently
 
-	case events.EventTypePlan:
+	case shimapi.EventTypePlan:
 		var pl struct {
 			Entries []chat.PlanEntry `json:"entries"`
 		}

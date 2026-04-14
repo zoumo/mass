@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -96,7 +97,11 @@ func (s *Service) Subscribe(ctx context.Context, req *apishim.SessionSubscribePa
 			}
 		}()
 
-		return &apishim.SessionSubscribeResult{NextSeq: nextSeq, Entries: entries}, nil
+		apiEntries, convErr := legacyEventsToAPI(entries)
+		if convErr != nil {
+			return nil, jsonrpc.ErrInternal(convErr.Error())
+		}
+		return &apishim.SessionSubscribeResult{NextSeq: nextSeq, Entries: apiEntries}, nil
 	}
 
 	// Legacy path: subscribe without atomic backfill; filter events by floor seq.
@@ -155,10 +160,14 @@ func (s *Service) History(_ context.Context, req *apishim.RuntimeHistoryParams) 
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
-	if entries == nil {
-		entries = []events.ShimEvent{}
+	if len(entries) == 0 {
+		return &apishim.RuntimeHistoryResult{Entries: []apishim.ShimEvent{}}, nil
 	}
-	return &apishim.RuntimeHistoryResult{Entries: entries}, nil
+	apiEntries, convErr := legacyEventsToAPI(entries)
+	if convErr != nil {
+		return nil, jsonrpc.ErrInternal(convErr.Error())
+	}
+	return &apishim.RuntimeHistoryResult{Entries: apiEntries}, nil
 }
 
 func (s *Service) Stop(_ context.Context) error {
@@ -166,4 +175,23 @@ func (s *Service) Stop(_ context.Context) error {
 	// reply and triggers Shutdown). The service layer itself has no lifecycle
 	// state to clean up here.
 	return nil
+}
+
+// legacyEventsToAPI converts []events.ShimEvent (from pkg/events log/translator)
+// into []apishim.ShimEvent via JSON round-trip. This bridge exists only until
+// T02 moves translator.go and log.go into pkg/shim/server so they produce
+// apishim.ShimEvent natively.
+func legacyEventsToAPI(src []events.ShimEvent) ([]apishim.ShimEvent, error) {
+	if len(src) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(src)
+	if err != nil {
+		return nil, err
+	}
+	dst := make([]apishim.ShimEvent, 0, len(src))
+	if err := json.Unmarshal(b, &dst); err != nil {
+		return nil, err
+	}
+	return dst, nil
 }

@@ -23,8 +23,8 @@ import (
 	"github.com/zoumo/oar/pkg/agentd"
 	ariclient "github.com/zoumo/oar/pkg/ari/client"
 	ariserver "github.com/zoumo/oar/pkg/ari/server"
-	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/jsonrpc"
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	shimclient "github.com/zoumo/oar/pkg/shim/client"
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
@@ -387,7 +387,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		AgentKey:   "reserve-ws/" + agentName,
 		SocketPath: shimSock,
 		Client:     shimClient,
-		Events:     make(chan events.ShimEvent, 1024),
+		Events:     make(chan apishim.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	})
 
@@ -666,7 +666,7 @@ func injectMockShim(t *testing.T, env *testEnv, wsName, agentName string) *miniS
 		AgentKey:   wsName + "/" + agentName,
 		SocketPath: shimSock,
 		Client:     shimClient,
-		Events:     make(chan events.ShimEvent, 1024),
+		Events:     make(chan apishim.ShimEvent, 1024),
 		Done:       make(chan struct{}),
 	})
 	return shimSrv

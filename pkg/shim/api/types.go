@@ -5,7 +5,6 @@ package api
 
 import (
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	"github.com/zoumo/oar/pkg/events"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -38,7 +37,7 @@ type SessionSubscribeParams struct {
 // SessionSubscribeResult is returned by "session/subscribe".
 type SessionSubscribeResult struct {
 	NextSeq int                `json:"nextSeq"`
-	Entries []events.ShimEvent `json:"entries,omitempty"`
+	Entries []ShimEvent `json:"entries,omitempty"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -52,7 +51,7 @@ type RuntimeHistoryParams struct {
 
 // RuntimeHistoryResult is returned by "runtime/history".
 type RuntimeHistoryResult struct {
-	Entries []events.ShimEvent `json:"entries"`
+	Entries []ShimEvent `json:"entries"`
 }
 
 // RuntimeStatusRecovery holds recovery metadata from the shim's durable log.

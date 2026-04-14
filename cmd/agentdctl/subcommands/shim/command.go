@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 
 	shimapi "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/ndjson"
 )
 
@@ -183,7 +182,7 @@ func printNotification(msg rpcResponse) {
 			fmt.Fprintf(os.Stderr, "[shim/event parse error: %v]\n", err)
 			return
 		}
-		if ev.Category == "runtime" && ev.Type == events.EventTypeStateChange {
+		if ev.Category == "runtime" && ev.Type == shimapi.EventTypeStateChange {
 			var sc struct {
 				PreviousStatus string `json:"previousStatus"`
 				Status         string `json:"status"`
@@ -211,7 +210,7 @@ func isTurnEndNotification(msg rpcResponse) bool {
 	if err := json.Unmarshal(msg.Params, &ev); err != nil {
 		return false
 	}
-	return ev.Type == events.EventTypeTurnEnd
+	return ev.Type == shimapi.EventTypeTurnEnd
 }
 
 func startNotificationPrinter(ctx context.Context, c *client) <-chan struct{} {
@@ -252,19 +251,19 @@ func drainTurnEnd(ch <-chan struct{}) {
 
 func printShimEvent(ev shimEvent) {
 	switch ev.Type {
-	case events.EventTypeText:
+	case shimapi.EventTypeText:
 		var p textPayload
 		_ = json.Unmarshal(ev.Content, &p)
 		fmt.Print(p.Text)
-	case events.EventTypeThinking:
+	case shimapi.EventTypeThinking:
 		var p textPayload
 		_ = json.Unmarshal(ev.Content, &p)
 		fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", ev.Seq, p.Text)
-	case events.EventTypeToolCall:
+	case shimapi.EventTypeToolCall:
 		fmt.Fprintf(os.Stderr, "\033[33m[tool_call seq=%d] %s\033[0m\n", ev.Seq, string(ev.Content))
-	case events.EventTypeToolResult:
+	case shimapi.EventTypeToolResult:
 		fmt.Fprintf(os.Stderr, "\033[2m[tool_result seq=%d] %s\033[0m\n", ev.Seq, string(ev.Content))
-	case events.EventTypeTurnEnd:
+	case shimapi.EventTypeTurnEnd:
 		fmt.Println()
 	default:
 		fmt.Fprintf(os.Stderr, "[%s seq=%d] %s\n", ev.Type, ev.Seq, string(ev.Content))

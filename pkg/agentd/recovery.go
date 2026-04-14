@@ -11,7 +11,6 @@ import (
 
 	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apishim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	spec "github.com/zoumo/oar/pkg/runtime-spec"
 	shimclient "github.com/zoumo/oar/pkg/shim/client"
@@ -195,7 +194,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 		BundlePath: "", // not needed for recovered agents
 		StateDir:   agent.Status.ShimStateDir,
 		SocketPath: agent.Status.ShimSocketPath,
-		Events:     make(chan events.ShimEvent, 100),
+		Events:     make(chan apishim.ShimEvent, 100),
 		Done:       make(chan struct{}),
 		stopDrain:  make(chan struct{}),
 		// Cmd is nil for recovered agents — we didn't fork the process.

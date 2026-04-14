@@ -8,5 +8,5 @@ Complete the package restructure defined in docs/plan/package-restructure-202604
 |----|-------|------|---------|------|------------|
 | S01 | S01 | medium | — | ✅ | After this: make build + go test ./... pass with no imports of api/runtime or api (for Status/EnvVar); api/runtime/ and api/types.go deleted; empty runtimeclass stub files deleted. |
 | S02 | S02 | medium | — | ✅ | After this: make build + go test ./... pass; pkg/ari/api/ has types.go+domain.go+methods.go; pkg/ari root has only api/, server/, client/ subdirs; no imports of api/ari remain. |
-| S03 | S03 | high | — | ⬜ | After this: make build + go test ./... pass; pkg/shim/api/ has all shim type files; no imports of api/shim, api (methods/events), remain; api/ directory is gone. |
-| S04 | Events impl + ACP runtime migration + final verification | medium | S03 | ⬜ | After this: make build + go test ./... + go vet ./... all pass; pkg/events/ and pkg/runtime/ do not exist; pkg/shim/server/ has translator.go and log.go; pkg/shim/runtime/acp/ has the ACP runtime. |
+| S03 | S03 | high | — | ✅ | After this: make build + go test ./... pass; pkg/shim/api/ has all shim type files; no imports of api/shim, api (methods/events), remain; api/ directory is gone. |
+| S04 | S04 | medium | — | ⬜ | After this: make build + go test ./... + go vet ./... all pass; pkg/events/ and pkg/runtime/ do not exist; pkg/shim/server/ has translator.go and log.go; pkg/shim/runtime/acp/ has the ACP runtime. |
