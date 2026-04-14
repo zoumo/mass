@@ -784,3 +784,89 @@ func TestTurnAwareShimEvent_ReplayOrdering(t *testing.T) {
 	assert.Equal(t, 0, ts1Ev.StreamSeq, "turn 1 start StreamSeq")
 	assert.Equal(t, 0, ts2Ev.StreamSeq, "turn 2 start StreamSeq must reset to 0")
 }
+
+// TestEventCounts_PromptTurn verifies that EventCounts() returns correct
+// per-type counts after a full prompt turn cycle.
+func TestEventCounts_PromptTurn(t *testing.T) {
+	in := make(chan acp.SessionNotification, 8)
+	tr := NewTranslator("run-1", in, nil)
+	ch, _, _ := tr.Subscribe()
+	tr.Start()
+	defer tr.Stop()
+
+	// turn_start
+	tr.NotifyTurnStart()
+	drainShimEvent(t, ch)
+
+	// user_message
+	tr.NotifyUserPrompt("hello")
+	drainShimEvent(t, ch)
+
+	// 2 text events (AgentMessageChunk)
+	sendAndDrainShimEvent(t, in, ch, "chunk-1")
+	sendAndDrainShimEvent(t, in, ch, "chunk-2")
+
+	// 1 tool_call
+	in <- makeNotif(func(u *acp.SessionUpdate) {
+		u.ToolCall = &acp.SessionUpdateToolCall{ToolCallId: "tc-1", Kind: "shell", Title: "ls"}
+	})
+	drainShimEvent(t, ch)
+
+	// turn_end
+	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	drainShimEvent(t, ch)
+
+	// state_change
+	tr.NotifyStateChange("running", "idle", 0, "done")
+	drainShimEvent(t, ch)
+
+	counts := tr.EventCounts()
+	assert.Equal(t, 1, counts["turn_start"], "turn_start count")
+	assert.Equal(t, 1, counts["user_message"], "user_message count")
+	assert.Equal(t, 2, counts["text"], "text count")
+	assert.Equal(t, 1, counts["tool_call"], "tool_call count")
+	assert.Equal(t, 1, counts["turn_end"], "turn_end count")
+	assert.Equal(t, 1, counts["state_change"], "state_change count")
+}
+
+// TestEventCounts_FailClosedOnAppendFailure verifies that eventCounts are NOT
+// incremented when EventLog.Append fails (fail-closed semantics).
+func TestEventCounts_FailClosedOnAppendFailure(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.jsonl")
+
+	evLog, err := OpenEventLog(logPath)
+	require.NoError(t, err)
+	defer evLog.Close()
+
+	in := make(chan acp.SessionNotification, 4)
+	tr := NewTranslator("run-1", in, evLog)
+	ch, _, _ := tr.Subscribe()
+	tr.Start()
+	defer tr.Stop()
+
+	// Send one successful AgentMessageChunk → count should be 1.
+	sendAndDrainShimEvent(t, in, ch, "ok")
+	assert.Equal(t, 1, tr.EventCounts()["text"], "text count after successful event")
+
+	// Close the event log file to force Append failures.
+	require.NoError(t, evLog.Close())
+
+	// Send another AgentMessageChunk — should be dropped (fail-closed).
+	in <- makeNotif(func(u *acp.SessionUpdate) {
+		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "dropped"}},
+		}
+	})
+
+	// Wait for the translator goroutine to process the failed event.
+	select {
+	case unexpectedEv := <-ch:
+		t.Fatalf("event should have been dropped, but got seq=%d type=%s", unexpectedEv.Seq, unexpectedEv.Type)
+	case <-time.After(200 * time.Millisecond):
+		// Expected: dropped.
+	}
+
+	// Count must still be 1 — the failed append must NOT increment.
+	assert.Equal(t, 1, tr.EventCounts()["text"], "text count must not increment on failed append")
+}

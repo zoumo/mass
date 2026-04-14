@@ -24,8 +24,20 @@ func (a *mockAgent) Authenticate(_ context.Context, _ acp.AuthenticateRequest) (
 
 func (a *mockAgent) Initialize(_ context.Context, _ acp.InitializeRequest) (acp.InitializeResponse, error) {
 	return acp.InitializeResponse{
-		ProtocolVersion:   acp.ProtocolVersionNumber,
-		AgentCapabilities: acp.AgentCapabilities{},
+		ProtocolVersion: acp.ProtocolVersionNumber,
+		AgentInfo: &acp.Implementation{
+			Name:    "mockagent",
+			Version: "0.1.0",
+		},
+		AgentCapabilities: acp.AgentCapabilities{
+			LoadSession: true,
+			McpCapabilities: acp.McpCapabilities{
+				Sse: true,
+			},
+			PromptCapabilities: acp.PromptCapabilities{
+				Image: true,
+			},
+		},
 	}, nil
 }
 

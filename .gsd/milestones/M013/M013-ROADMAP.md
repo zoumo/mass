@@ -1,4 +1,4 @@
-# M013: Package Restructure — Clean api/ Boundary + Event/Runtime Colocation
+# M013: Package Restructure - Clean api/ Boundary + Event/Runtime Colocation
 
 ## Vision
 Complete the package restructure defined in docs/plan/package-restructure-20260414.md: migrate all consumers off old import paths (api/runtime, api/ari, api/shim, api/), distribute service interfaces and client wrappers to server/ and client/ subdirectories, relocate pkg/events/ into pkg/shim/, and move pkg/runtime/ to pkg/shim/runtime/acp/. The result is a codebase where api/ subdirectories contain only pure types (struct/const/enum) and all implementation code lives in typed server/ or client/ packages.

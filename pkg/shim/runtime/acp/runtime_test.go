@@ -17,6 +17,7 @@ import (
 
 	acpruntime "github.com/zoumo/oar/pkg/shim/runtime/acp"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	spec "github.com/zoumo/oar/pkg/runtime-spec"
 )
 
 var mockAgentBin string
@@ -72,9 +73,10 @@ func newTestConfig(name string) apiruntime.Config {
 	}
 }
 
-// newManager creates a bundle dir with a workspace subdir and a separate state
-// dir, then returns a Manager wired to both. Dirs are cleaned up via t.Cleanup.
-func newManager(t *testing.T, cfg apiruntime.Config) *acpruntime.Manager {
+// newManagerWithStateDir creates a bundle dir with a workspace subdir and a
+// separate state dir, then returns a Manager wired to both plus the stateDir
+// path. Dirs are cleaned up via t.Cleanup.
+func newManagerWithStateDir(t *testing.T, cfg apiruntime.Config) (*acpruntime.Manager, string) {
 	t.Helper()
 	bundleDir, err := os.MkdirTemp("", "oad-bundle-")
 	require.NoError(t, err)
@@ -87,7 +89,15 @@ func newManager(t *testing.T, cfg apiruntime.Config) *acpruntime.Manager {
 		os.RemoveAll(bundleDir)
 		os.RemoveAll(stateDir)
 	})
-	return acpruntime.New(cfg, bundleDir, stateDir, slog.Default())
+	return acpruntime.New(cfg, bundleDir, stateDir, slog.Default()), stateDir
+}
+
+// newManager creates a bundle dir with a workspace subdir and a separate state
+// dir, then returns a Manager wired to both. Dirs are cleaned up via t.Cleanup.
+func newManager(t *testing.T, cfg apiruntime.Config) *acpruntime.Manager {
+	t.Helper()
+	mgr, _ := newManagerWithStateDir(t, cfg)
+	return mgr
 }
 
 func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
@@ -217,4 +227,149 @@ func (s *RuntimeSuite) TestCreate_FailsWithBadCommand() {
 
 	err := mgr.Create(ctx)
 	s.Error(err, "expected error when command does not exist")
+}
+
+// writeSessionToStateDir injects a recognizable Session into the existing
+// state.json via read-modify-write. This simulates what S05's
+// bootstrap-capture will do — writing Session metadata before Kill/process-exit.
+func writeSessionToStateDir(t *testing.T, stateDir string) {
+	t.Helper()
+	st, err := spec.ReadState(stateDir)
+	require.NoError(t, err)
+	st.Session = &apiruntime.SessionState{
+		AgentInfo: &apiruntime.AgentInfo{
+			Name:    "test-agent",
+			Version: "1.0.0",
+		},
+		AvailableCommands: []apiruntime.AvailableCommand{
+			{Name: "run", Description: "Run the agent"},
+		},
+	}
+	require.NoError(t, spec.WriteState(stateDir, st))
+}
+
+func (s *RuntimeSuite) TestKill_PreservesSession() {
+	mgr, stateDir := newManagerWithStateDir(s.T(), newTestConfig("test-kill-session"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	s.Require().NoError(mgr.Create(ctx))
+
+	state, err := mgr.GetState()
+	s.Require().NoError(err)
+	s.Equal(apiruntime.StatusIdle, state.Status)
+
+	// Inject Session into state.json (simulates bootstrap-capture from S05).
+	writeSessionToStateDir(s.T(), stateDir)
+
+	state, err = mgr.GetState()
+	s.Require().NoError(err)
+	s.Require().NotNil(state.Session, "Session should be present after injection")
+
+	// Kill should transition to stopped without clobbering Session.
+	s.Require().NoError(mgr.Kill(ctx))
+
+	state, err = mgr.GetState()
+	s.Require().NoError(err)
+	s.Equal(apiruntime.StatusStopped, state.Status)
+	s.Require().NotNil(state.Session, "Session must survive Kill()")
+	s.Equal("test-agent", state.Session.AgentInfo.Name)
+	s.NotEmpty(state.UpdatedAt, "UpdatedAt must be set after Kill")
+	_, parseErr := time.Parse(time.RFC3339Nano, state.UpdatedAt)
+	s.NoError(parseErr, "UpdatedAt must be valid RFC3339Nano")
+}
+
+func (s *RuntimeSuite) TestProcessExit_PreservesSession() {
+	mgr, stateDir := newManagerWithStateDir(s.T(), newTestConfig("test-exit-session"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	s.Require().NoError(mgr.Create(ctx))
+
+	// Inject Session into state.json.
+	writeSessionToStateDir(s.T(), stateDir)
+
+	// Kill process externally with SIGKILL (same pattern as TestCreate_ReachesCreatedState).
+	state, err := mgr.GetState()
+	s.Require().NoError(err)
+	proc, err := os.FindProcess(state.PID)
+	s.Require().NoError(err)
+	_ = proc.Signal(syscall.SIGKILL)
+
+	// Wait for background goroutine to write stopped state.
+	s.Require().Eventually(func() bool {
+		st, err := mgr.GetState()
+		return err == nil && st.Status == apiruntime.StatusStopped
+	}, 10*time.Second, 100*time.Millisecond, "expected status=stopped after SIGKILL")
+
+	state, err = mgr.GetState()
+	s.Require().NoError(err)
+	s.Require().NotNil(state.Session, "Session must survive external SIGKILL / process-exit")
+	s.Equal("test-agent", state.Session.AgentInfo.Name)
+	s.NotEmpty(state.UpdatedAt, "UpdatedAt must be set after process-exit")
+}
+
+func (s *RuntimeSuite) TestCreate_PopulatesSession() {
+	mgr := newManager(s.T(), newTestConfig("test-session-capture"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	s.Require().NoError(mgr.Create(ctx))
+
+	state, err := mgr.GetState()
+	s.Require().NoError(err)
+	s.Equal(apiruntime.StatusIdle, state.Status)
+
+	// Verify Session was populated from InitializeResponse at bootstrap-complete.
+	s.Require().NotNil(state.Session, "Session must be populated after Create()")
+
+	// AgentInfo assertions — mockagent returns Name="mockagent", Version="0.1.0".
+	s.Require().NotNil(state.Session.AgentInfo, "Session.AgentInfo must not be nil")
+	s.Equal("mockagent", state.Session.AgentInfo.Name)
+	s.Equal("0.1.0", state.Session.AgentInfo.Version)
+
+	// Capabilities assertions — mockagent returns LoadSession=true, Sse=true, Image=true.
+	s.Require().NotNil(state.Session.Capabilities, "Session.Capabilities must not be nil")
+	s.True(state.Session.Capabilities.LoadSession, "LoadSession should be true")
+	s.True(state.Session.Capabilities.McpCapabilities.Sse, "McpCapabilities.Sse should be true")
+	s.True(state.Session.Capabilities.PromptCapabilities.Image, "PromptCapabilities.Image should be true")
+
+	// Kill and verify Session survives (leverages S03's closure pattern).
+	s.Require().NoError(mgr.Kill(ctx))
+
+	state, err = mgr.GetState()
+	s.Require().NoError(err)
+	s.Equal(apiruntime.StatusStopped, state.Status)
+	s.Require().NotNil(state.Session, "Session must survive Kill()")
+	s.Equal("mockagent", state.Session.AgentInfo.Name)
+	s.True(state.Session.Capabilities.LoadSession, "LoadSession must survive Kill()")
+}
+
+func (s *RuntimeSuite) TestWriteState_SetsUpdatedAt() {
+	mgr := newManager(s.T(), newTestConfig("test-updatedat"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	s.Require().NoError(mgr.Create(ctx))
+
+	state, err := mgr.GetState()
+	s.Require().NoError(err)
+	s.NotEmpty(state.UpdatedAt, "UpdatedAt must be set after Create")
+	createTime, parseErr := time.Parse(time.RFC3339Nano, state.UpdatedAt)
+	s.Require().NoError(parseErr, "UpdatedAt must be valid RFC3339Nano after Create")
+
+	s.Require().NoError(mgr.Kill(ctx))
+
+	state, err = mgr.GetState()
+	s.Require().NoError(err)
+	s.NotEmpty(state.UpdatedAt, "UpdatedAt must be set after Kill")
+	killTime, parseErr := time.Parse(time.RFC3339Nano, state.UpdatedAt)
+	s.Require().NoError(parseErr, "UpdatedAt must be valid RFC3339Nano after Kill")
+
+	s.True(killTime.After(createTime) || killTime.Equal(createTime),
+		"UpdatedAt after Kill (%s) must be >= after Create (%s)", killTime, createTime)
 }

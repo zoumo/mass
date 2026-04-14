@@ -12,7 +12,7 @@ key_decisions:
   - Removed dead event types without replacement — they had no ACP source and no production consumers
 duration: 
 verification_result: passed
-completed_at: 2026-04-14T14:47:44.708Z
+completed_at: 2026-04-14T14:47:44.704Z
 blocker_discovered: false
 ---
 

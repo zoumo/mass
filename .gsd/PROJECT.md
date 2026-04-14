@@ -10,18 +10,21 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-**M013 complete.** All four slices delivered. The package restructure defined in docs/plan/package-restructure-20260414.md is finished: api/ directory is gone; pkg/ari/{api,server,client} and pkg/shim/{api,server,client,runtime/acp} are the canonical homes for all types and implementations; pkg/events/ and pkg/runtime/ no longer exist. `make build` + `go test ./...` + `go vet ./pkg/... ./cmd/...` all pass.
+**M014 in progress.** S01 (dead placeholder removal), S02 (state type enrichment), and S03 (writeState read-modify-write refactor) are complete. S04–S07 remain: EventCounts tracking, ACP bootstrap capture, session metadata hook chain, and runtime/status overlay.
 
-### Last Completed Milestone
+### Active Milestone
 
-**M013 — Package Restructure: Clean api/ Boundary + Event/Runtime Colocation**
+**M014 — Enrich state.json + Session Metadata Pipeline**
 
 | Slice | Title | Status |
 |-------|-------|--------|
-| S01 | Runtime-spec consumer migration | ✅ done |
-| S02 | ARI package restructure | ✅ done |
-| S03 | Shim package restructure + api/ deletion | ✅ done |
-| S04 | Events impl + ACP runtime migration + final verification | ✅ done |
+| S01 | Dead placeholder removal | ✅ done |
+| S02 | State type enrichment (SessionState, ConfigOption, etc.) | ✅ done |
+| S03 | writeState read-modify-write refactor | ✅ done |
+| S04 | Translator eventCounts | ⬜ pending |
+| S05 | ACP bootstrap capabilities capture | ⬜ pending (depends S02, S03) |
+| S06 | Session metadata hook chain | ⬜ pending (depends S03, S04) |
+| S07 | runtime/status overlay + doc updates | ⬜ pending (depends S04, S06) |
 
 ### Completed Milestones
 
@@ -45,8 +48,10 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - `agentdctl` is a **full-featured CLI**: `agentdctl agent` (template CRUD: apply/get/list/delete) + `agentdctl agentrun` (lifecycle: create/list/status/prompt/stop/delete/restart/attach/cancel) + workspace/daemon/shim commands
 - **ARI surface (final):** `workspace/*` (create/status/list/delete/send) + `agent/*` (set/get/list/delete — AgentTemplate CRUD) + `agentrun/*` (create/prompt/cancel/stop/delete/restart/list/status/attach — running instance lifecycle)
 - **pkg/ari tri-split (M013/S02):** `pkg/ari/api` (pure types + ARI method constants), `pkg/ari/server` (interfaces, Registry, RPC dispatch), `pkg/ari/client` (typed ARIClient + simple Client); api/ari/ directory deleted
-- **pkg/shim tri-split (M013/S03+S04):** `pkg/shim/api` (pure shim types + service interface + client + method constants + event wire types + EventType*/Category* constants), `pkg/shim/server` (shim service + Translator + EventLog), `pkg/shim/client` (dial helper); api/shim/ and pkg/events/ deleted
-- **pkg/shim/runtime/acp (M013/S04):** ACP runtime Manager and client, relocated from pkg/runtime/; pkg/runtime/ deleted
+- **pkg/shim tri-split (M013/S03+S04):** `pkg/shim/api` (pure shim types + service interface + client + method constants + event wire types + EventType*/Category* constants), `pkg/shim/server` (shim service + Translator + EventLog), `pkg/shim/client` (dial helper), `pkg/shim/runtime/acp` (ACP runtime Manager and client)
+- **writeState read-modify-write closure pattern (M014/S03):** All 7 writeState call sites use `func(*apiruntime.State)` closures; Session/EventCounts never clobbered by lifecycle writes; UpdatedAt stamped unconditionally on every write
+- **State type enrichment (M014/S02):** SessionState, AgentInfo, AgentCapabilities, ConfigOption (with Select variant), AvailableCommand (with Unstructured input), EventCounts — all in pkg/runtime-spec/api/state.go with round-trip JSON fidelity
+- **Dead placeholder removal (M014/S01):** EventTypeFileWrite, EventTypeFileRead, EventTypeCommand, and their wire types removed from codebase
 - **api/ directory deleted (M013/S03):** No more `github.com/zoumo/oar/api` import targets
 - **pkg/runtime-spec/api as sole Status/EnvVar home (M013/S01):** api/runtime/ deleted; all consumers use `apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"`
 - **Typed Service Interfaces (M012):** ShimService interface in pkg/shim/api + ARI service interfaces in pkg/ari/server — all implementations satisfy typed contracts
@@ -63,29 +68,18 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **2-binary model:** `agentd` (server/shim/workspace-mcp subcommands) + `agentdctl` (agent/agentrun/workspace/shim resource commands)
 - **ARI protocol:** JSON-RPC 2.0 over Unix domain socket
 - **OCI-inspired layering:** workspace=rootfs, agent (AgentTemplate)=container definition, agentrun=task/running instance, shim=runc equivalent
-- **pkg/ari tri-split pattern (M013/S02):** api/ for pure types+constants, server/ for interfaces+dispatch, client/ for dial helpers; canonical import `pkgariapi "github.com/zoumo/oar/pkg/ari/api"`
-- **pkg/shim tri-split pattern (M013/S03+S04):** api/ for pure shim types+service interface+event wire types+method constants, server/ for implementation+translator+eventlog, client/ for dial helper, runtime/acp/ for ACP runtime; canonical import `apishim "github.com/zoumo/oar/pkg/shim/api"`
-- **Event wire types location (M013/S04):** All event wire types (ShimEvent, typed events, EventType*/Category* constants, EventTypeOf accessor) live in `pkg/shim/api`; Translator and EventLog implementation in `pkg/shim/server`
-- **Sealed interface cross-package accessor (M013/S04, D118):** EventTypeOf(ev Event) string in pkg/shim/api/event_types.go is the exported bridge for the unexported eventType() method; needed when consumers move to a different package (K086)
-- **Two-task migration pattern for event packages (M013/S04, K087):** Move types to api/ first with all consumers; then move implementation to server/ with apishim.* qualifiers; T01→T02 bridge pattern cleans itself up
-- **Method constants scoping rule (M013/S03, D115):** Each protocol domain owns its method constants in its own api package — shim in pkg/shim/api/methods.go, ARI in pkg/ari/api/methods.go; no catch-all methods file
-- **Explicit alias strategy for package renames (M013/S03, D116):** When Go implicitly resolved `"api/shim"` to package name `shim`, migration adds an explicit `shim "pkg/shim/api"` alias to preserve all call sites verbatim
-- **Typed service interface pattern (M012):** pkg/shim/api.ShimService + pkg/ari/server.*Service interfaces; implementations in pkg/shim/server + pkg/ari/server; Dial helpers in pkg/shim/client + pkg/ari/client
-- **Adapter pattern for conflicting method names (M012):** WorkspaceService.List and AgentService.List have identical Go signatures — use three thin unexported adapter structs embedding *Service (K077, D112)
-- **cmd entrypoint pattern (M012):** net.Listen (explicit lifecycle) + jsonrpc.NewServer + Register(srv, svc) + srv.Serve(ln) in goroutine + srv.Shutdown(ctx) on signal
-- **Test server cleanup order (M012):** ln.Close() then srv.Shutdown(ctx) — closing listener unblocks Accept() so Serve() goroutine exits cleanly (K080, D114)
-- **Test file deletion safety (M012):** Before deleting *_test.go, grep for cross-file dependencies in the same package; extract shared infrastructure to a new file (K079, D113)
-- **Named type cascade migration (M013/S01):** When a Go named type moves packages, migrate all files passing it across package boundaries in the same build wave; compile errors are the dependency map (K083)
-- **Same-package type qualification (M013/S02):** When moving types and consumers into the same new sub-package, strip qualifiers from types now in the same package (K084); same for Register functions (K085)
-- **Dual-import consolidation (M013/S02 Rule B):** Files using both `api/ari` types AND bare `api` method constants consolidate to single `pkgariapi "pkg/ari/api"` — method constants are now in pkg/ari/api/methods.go
+- **writeState closure pattern (M014/S03, D119):** writeState accepts `func(*apiruntime.State)` — reads existing state (or zero on first write), applies closure, stamps UpdatedAt, writes atomically; callers mutate only the fields they care about
+- **pkg/ari tri-split pattern (M013/S02):** api/ for pure types+constants, server/ for interfaces+dispatch, client/ for dial helpers
+- **pkg/shim tri-split pattern (M013/S03+S04):** api/ for pure shim types+service interface+event wire types+method constants, server/ for implementation+translator+eventlog, client/ for dial helper, runtime/acp/ for ACP runtime
+- **Event wire types location (M013/S04):** All event wire types live in `pkg/shim/api`; Translator and EventLog in `pkg/shim/server`
+- **Sealed interface cross-package accessor (M013/S04, D118):** EventTypeOf(ev Event) in pkg/shim/api/event_types.go
+- **Typed service interface pattern (M012):** pkg/shim/api.ShimService + pkg/ari/server.*Service interfaces
+- **Adapter pattern for conflicting method names (M012):** Three thin unexported adapter structs for WorkspaceService.List and AgentService.List (K077, D112)
+- **errors.Is vs os.IsNotExist (K081):** spec.ReadState wraps with fmt.Errorf — must use errors.Is(err, os.ErrNotExist), not os.IsNotExist
 - **bbolt buckets:** `v1/workspaces/{name}`, `v1/agentruns/{workspace}/{name}`, `v1/agents/{name}`
 - **--root derived paths**: Options.SocketPath(), WorkspaceRoot(), BundleRoot(), MetaDBPath() — no config file needed
-- **cobra package main collision avoidance:** wmcp prefix for workspace-mcp types, shim prefix for shim client types, local flag vars scoped inside constructor functions (K068)
-- **Three-layer rename discipline**: meta layer → ari types → ari server + CLI must compile as a unit — never layer-by-layer (K074)
-- **runtimeApplySpec local YAML struct**: CLI YAML deserialization struct is separate from pkg/ari canonical params types (K071)
-- **ari.Client.Call error surfacing**: Wraps RPC errors as plain fmt.Errorf strings — use err.Error() contains check, not errors.As(*jsonrpc2.Error) (K073)
 - **macOS socket path limit**: t.TempDir() paths often exceed 104-byte Unix socket limit; use os.MkdirTemp("/tmp", "oar-*") for socket-sensitive tests (K075)
-- **pkg/jsonrpc notifCh race**: Client.enqueueNotification has a pre-existing send-on-closed-channel race visible under -count=3; single-run go test ./... is the acceptance bar (K078)
+- **pkg/jsonrpc notifCh race**: Pre-existing send-on-closed-channel race visible under -count=3; single-run go test ./... is the acceptance bar (K078)
 - **rg exit code semantics**: exit 1 = no matches (not a failure); zero-match verification gates must use `! rg PATTERN` (K082)
 
 ## Milestone Sequence
@@ -100,4 +94,4 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - [x] M008: CLI consolidation + API model rename
 - [x] M012: Codebase Refactor: Service Interface + Unified RPC + Directory Restructure
 - [x] M013: Package Restructure: Clean api/ Boundary + Event/Runtime Colocation
-- [ ] M014: Enrich state.json + Session Metadata Pipeline — extends state.json with ACP session metadata, wires metadata changes to state_change events, adds EventCounts, rewrites writeState as read-modify-write
+- [ ] M014: Enrich state.json + Session Metadata Pipeline — S01–S03 done; S04–S07 remaining

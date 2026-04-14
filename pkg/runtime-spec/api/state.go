@@ -27,4 +27,15 @@ type State struct {
 	// ExitCode is the OS exit code of the agent process.
 	// Nil while the process is running; populated after exit.
 	ExitCode *int `json:"exitCode,omitempty"`
+
+	// UpdatedAt is the RFC3339Nano timestamp of the last state write.
+	UpdatedAt string `json:"updatedAt,omitempty"`
+
+	// Session contains ACP session metadata populated progressively
+	// as the agent reports notifications.
+	Session *SessionState `json:"session,omitempty"`
+
+	// EventCounts maps event type strings to their cumulative counts.
+	// Derived field — set on every state write, not independently.
+	EventCounts map[string]int `json:"eventCounts,omitempty"`
 }

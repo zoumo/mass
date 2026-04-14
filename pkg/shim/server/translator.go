@@ -29,6 +29,7 @@ type Translator struct {
 	once          sync.Once
 	currentTurnId string
 	streamSeq     int
+	eventCounts   map[string]int
 }
 
 // NewTranslator creates a Translator that reads from in.
@@ -40,12 +41,13 @@ func NewTranslator(runID string, in <-chan acp.SessionNotification, log *EventLo
 		nextSeq = log.NextSeq()
 	}
 	return &Translator{
-		runID:   runID,
-		in:      in,
-		log:     log,
-		subs:    make(map[int]chan apishim.ShimEvent),
-		nextSeq: nextSeq,
-		done:    make(chan struct{}),
+		runID:       runID,
+		in:          in,
+		log:         log,
+		subs:        make(map[int]chan apishim.ShimEvent),
+		nextSeq:     nextSeq,
+		done:        make(chan struct{}),
+		eventCounts: make(map[string]int),
 	}
 }
 
@@ -125,6 +127,18 @@ func (t *Translator) Unsubscribe(id int) {
 		close(ch)
 		delete(t.subs, id)
 	}
+}
+
+// EventCounts returns a snapshot of the per-event-type count map.
+// The returned map is a copy — callers cannot race with broadcast().
+func (t *Translator) EventCounts() map[string]int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	cp := make(map[string]int, len(t.eventCounts))
+	for k, v := range t.eventCounts {
+		cp[k] = v
+	}
+	return cp
 }
 
 // LastSeq returns the last assigned sequence number, or -1 when no event
@@ -307,6 +321,7 @@ func (t *Translator) broadcast(build func(seq int, at time.Time) apishim.ShimEve
 	}
 
 	t.nextSeq++
+	t.eventCounts[ev.Type]++
 
 	// Fan-out while holding the lock so Stop() cannot close channels concurrently.
 	// Sends are non-blocking (buffered channel + default case), so no deadlock risk.

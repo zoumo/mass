@@ -7,6 +7,7 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -78,12 +79,12 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: %w", err)
 	}
 
-	if err := m.writeState(apiruntime.State{
-		OarVersion:  m.cfg.OarVersion,
-		ID:          m.cfg.Metadata.Name,
-		Status:      apiruntime.StatusCreating,
-		Bundle:      m.bundleDir,
-		Annotations: m.cfg.Metadata.Annotations,
+	if err := m.writeState(func(s *apiruntime.State) {
+		s.OarVersion = m.cfg.OarVersion
+		s.ID = m.cfg.Metadata.Name
+		s.Status = apiruntime.StatusCreating
+		s.Bundle = m.bundleDir
+		s.Annotations = m.cfg.Metadata.Annotations
 	}, "bootstrap-started"); err != nil {
 		return fmt.Errorf("runtime: write creating state: %w", err)
 	}
@@ -113,21 +114,22 @@ func (m *Manager) Create(ctx context.Context) error {
 	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutPipe)
 	m.conn = conn
 
+	var initResp acp.InitializeResponse
 	var handshakeErr error
 	defer func() {
 		if handshakeErr != nil {
 			_ = cmd.Process.Kill()
-			_ = m.writeState(apiruntime.State{
-				OarVersion:  m.cfg.OarVersion,
-				ID:          m.cfg.Metadata.Name,
-				Status:      apiruntime.StatusStopped,
-				Bundle:      m.bundleDir,
-				Annotations: m.cfg.Metadata.Annotations,
+			_ = m.writeState(func(s *apiruntime.State) {
+				s.OarVersion = m.cfg.OarVersion
+				s.ID = m.cfg.Metadata.Name
+				s.Status = apiruntime.StatusStopped
+				s.Bundle = m.bundleDir
+				s.Annotations = m.cfg.Metadata.Annotations
 			}, "bootstrap-failed")
 		}
 	}()
 
-	_, handshakeErr = conn.Initialize(ctx, acp.InitializeRequest{
+	initResp, handshakeErr = conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion:    acp.ProtocolVersionNumber,
 		ClientCapabilities: acp.ClientCapabilities{},
 	})
@@ -164,13 +166,14 @@ func (m *Manager) Create(ctx context.Context) error {
 		}
 	}
 
-	if err := m.writeState(apiruntime.State{
-		OarVersion:  m.cfg.OarVersion,
-		ID:          m.cfg.Metadata.Name,
-		Status:      apiruntime.StatusIdle,
-		PID:         cmd.Process.Pid,
-		Bundle:      m.bundleDir,
-		Annotations: m.cfg.Metadata.Annotations,
+	if err := m.writeState(func(s *apiruntime.State) {
+		s.OarVersion = m.cfg.OarVersion
+		s.ID = m.cfg.Metadata.Name
+		s.Status = apiruntime.StatusIdle
+		s.PID = cmd.Process.Pid
+		s.Bundle = m.bundleDir
+		s.Annotations = m.cfg.Metadata.Annotations
+		s.Session = convertInitializeToSession(initResp)
 	}, "bootstrap-complete"); err != nil {
 		handshakeErr = err
 		return fmt.Errorf("runtime: write created state: %w", err)
@@ -178,12 +181,12 @@ func (m *Manager) Create(ctx context.Context) error {
 
 	go func() {
 		_ = cmd.Wait()
-		_ = m.writeState(apiruntime.State{
-			OarVersion:  m.cfg.OarVersion,
-			ID:          m.cfg.Metadata.Name,
-			Status:      apiruntime.StatusStopped,
-			Bundle:      m.bundleDir,
-			Annotations: m.cfg.Metadata.Annotations,
+		_ = m.writeState(func(s *apiruntime.State) {
+			s.OarVersion = m.cfg.OarVersion
+			s.ID = m.cfg.Metadata.Name
+			s.Status = apiruntime.StatusStopped
+			s.Bundle = m.bundleDir
+			s.Annotations = m.cfg.Metadata.Annotations
 		}, "process-exited")
 	}()
 
@@ -216,12 +219,12 @@ func (m *Manager) Kill(ctx context.Context) error {
 		}
 	}
 
-	return m.writeState(apiruntime.State{
-		OarVersion:  m.cfg.OarVersion,
-		ID:          m.cfg.Metadata.Name,
-		Status:      apiruntime.StatusStopped,
-		Bundle:      m.bundleDir,
-		Annotations: m.cfg.Metadata.Annotations,
+	return m.writeState(func(s *apiruntime.State) {
+		s.OarVersion = m.cfg.OarVersion
+		s.ID = m.cfg.Metadata.Name
+		s.Status = apiruntime.StatusStopped
+		s.Bundle = m.bundleDir
+		s.Annotations = m.cfg.Metadata.Annotations
 	}, "runtime-stop")
 }
 
@@ -256,23 +259,23 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		return acp.PromptResponse{}, fmt.Errorf("runtime: agent not started")
 	}
 
-	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
-		st.Status = apiruntime.StatusRunning
-		_ = m.writeState(st, "prompt-started")
-	}
+	_ = m.writeState(func(s *apiruntime.State) {
+		s.Status = apiruntime.StatusRunning
+	}, "prompt-started")
 
 	resp, err := conn.Prompt(ctx, acp.PromptRequest{
 		SessionId: sessionID,
 		Prompt:    prompt,
 	})
 
-	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
-		st.Status = apiruntime.StatusIdle
+	{
 		reason := "prompt-completed"
 		if err != nil {
 			reason = "prompt-failed"
 		}
-		_ = m.writeState(st, reason)
+		_ = m.writeState(func(s *apiruntime.State) {
+			s.Status = apiruntime.StatusIdle
+		}, reason)
 	}
 
 	if err != nil {
@@ -325,8 +328,16 @@ func (m *Manager) done() <-chan struct{} {
 	return make(chan struct{})
 }
 
-func (m *Manager) writeState(state apiruntime.State, reason string) error {
+func (m *Manager) writeState(apply func(*apiruntime.State), reason string) error {
 	previous, prevErr := spec.ReadState(m.stateDir)
+	if prevErr != nil && !errors.Is(prevErr, os.ErrNotExist) {
+		return fmt.Errorf("runtime: read state for %s: %w", reason, prevErr)
+	}
+
+	state := previous // zero value if prevErr was NotExist
+	apply(&state)
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+
 	if err := spec.WriteState(m.stateDir, state); err != nil {
 		return err
 	}
@@ -350,6 +361,40 @@ func (m *Manager) emitStateChange(previous, current apiruntime.State, reason str
 		PID:            current.PID,
 		Reason:         reason,
 	})
+}
+
+// convertInitializeToSession maps an ACP InitializeResponse to the runtime-spec
+// SessionState so that agent identity and capabilities are captured in state.json
+// at bootstrap-complete.
+func convertInitializeToSession(resp acp.InitializeResponse) *apiruntime.SessionState {
+	session := &apiruntime.SessionState{
+		Capabilities: &apiruntime.AgentCapabilities{
+			LoadSession: resp.AgentCapabilities.LoadSession,
+			McpCapabilities: apiruntime.McpCapabilities{
+				Http: resp.AgentCapabilities.McpCapabilities.Http,
+				Sse:  resp.AgentCapabilities.McpCapabilities.Sse,
+			},
+			PromptCapabilities: apiruntime.PromptCapabilities{
+				Audio:           resp.AgentCapabilities.PromptCapabilities.Audio,
+				EmbeddedContext: resp.AgentCapabilities.PromptCapabilities.EmbeddedContext,
+				Image:           resp.AgentCapabilities.PromptCapabilities.Image,
+			},
+		},
+	}
+
+	if resp.AgentInfo != nil {
+		session.AgentInfo = &apiruntime.AgentInfo{
+			Name:    resp.AgentInfo.Name,
+			Version: resp.AgentInfo.Version,
+			Title:   resp.AgentInfo.Title,
+		}
+	}
+
+	if resp.AgentCapabilities.SessionCapabilities.Fork != nil {
+		session.Capabilities.SessionCapabilities.Fork = &apiruntime.SessionForkCapabilities{}
+	}
+
+	return session
 }
 
 // convertMcpServers maps apiruntime.McpServer slice to acp.McpServer slice.

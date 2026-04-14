@@ -896,3 +896,9 @@ terface (e.g., `EventTypeOf(ev Event) string` in `pkg/shim/api/event_types.go`).
 - **Lesson:** T01 moved ShimEvent, EventType*/Category* constants and typed event structs into pkg/shim/api, updating all consumers. T02 then moved translator.go and log.go into pkg/shim/server, where it could safely add the apishim.* qualifier. The T01→T02 boundary required a temporary JSON-round-trip bridge in service.go (to handle the type incompatibility), which T02 cleanly removed. The pattern generalizes: for any migration with a "types → impl" dependency, split the tasks at that boundary.
 - **Reference:** M013/S04 T01+T02; legacyEventsToAPI bridge in T01 removed in T02.
 - **When:** M013/S04
+
+## K081 — Use errors.Is(err, os.ErrNotExist) not os.IsNotExist for wrapped errors
+
+- **Rule:** `os.IsNotExist(err)` only unwraps `*os.PathError`, `*os.LinkError`, `*os.SyscallError`. It does NOT use `errors.Is` to unwrap `fmt.Errorf("%w", ...)` chains. When the error has been wrapped by a helper (e.g. `spec.ReadState` returns `fmt.Errorf("spec: read state.json: %w", err)`), `os.IsNotExist` returns false even though the underlying error is ENOENT. Always use `errors.Is(err, os.ErrNotExist)` which properly traverses the `Unwrap()` chain.
+- **Scope:** global
+- **When:** M014/S03
