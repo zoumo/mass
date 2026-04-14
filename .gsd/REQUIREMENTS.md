@@ -2,6 +2,68 @@
 
 This file is the explicit capability and coverage contract for the project.
 
+## Active
+
+### R053 — state.json reflects ACP session metadata — agentInfo, capabilities, availableCommands, configOptions, sessionInfo, currentMode — populated progressively as the agent reports ACP notifications
+- Class: core-capability
+- Status: active
+- Description: state.json reflects ACP session metadata — agentInfo, capabilities, availableCommands, configOptions, sessionInfo, currentMode — populated progressively as the agent reports ACP notifications
+- Why it matters: External consumers (agentd, orchestrators, monitoring) can discover agent capabilities and session state from state.json without subscribing to the event stream
+- Source: user
+- Primary owning slice: M014/S02+S03+S05+S06
+- Notes: usage explicitly excluded — high-frequency, event stream only
+
+### R054 — Changes to availableCommands, configOptions, sessionInfo, currentMode emit a state_change event with sessionChanged field identifying which fields changed; previousStatus==status (metadata-only)
+- Class: primary-user-loop
+- Status: active
+- Description: Changes to availableCommands, configOptions, sessionInfo, currentMode emit a state_change event with sessionChanged field identifying which fields changed; previousStatus==status (metadata-only)
+- Why it matters: Consumers can react to capability changes in real time without polling state.json
+- Source: user
+- Primary owning slice: M014/S06
+- Supporting slices: M014/S03, M014/S04
+
+### R055 — state.json carries eventCounts map updated on every state write; runtime/status overlays real-time in-memory counts from Translator; counts cover all event origins
+- Class: operability
+- Status: active
+- Description: state.json carries eventCounts map updated on every state write; runtime/status overlays real-time in-memory counts from Translator; counts cover all event origins
+- Why it matters: Operators can inspect session productivity at a glance without replaying the event log
+- Source: user
+- Primary owning slice: M014/S04
+- Supporting slices: M014/S03, M014/S07
+
+### R056 — ACP Initialize() response captured and written to state.Session at bootstrap-complete; synthetic state_change(bootstrap-metadata) emitted after Translator.Start() so subscribers get it via history backfill
+- Class: core-capability
+- Status: active
+- Description: ACP Initialize() response captured and written to state.Session at bootstrap-complete; synthetic state_change(bootstrap-metadata) emitted after Translator.Start() so subscribers get it via history backfill
+- Why it matters: Agent identity and capability profile available to consumers from first connection
+- Source: user
+- Primary owning slice: M014/S05
+- Supporting slices: M014/S02, M014/S03
+
+### R057 — All state write paths use read-modify-write closure pattern; Session fields and EventCounts never clobbered by status-only lifecycle writes (Kill, process-exit, prompt cycles)
+- Class: quality-attribute
+- Status: active
+- Description: All state write paths use read-modify-write closure pattern; Session fields and EventCounts never clobbered by status-only lifecycle writes (Kill, process-exit, prompt cycles)
+- Why it matters: Stopping or restarting an agent must not erase the capability metadata accumulated during the session
+- Source: user
+- Primary owning slice: M014/S03
+
+### R058 — EventTypeFileWrite, EventTypeFileRead, EventTypeCommand constants; FileWriteEvent, FileReadEvent, CommandEvent types; and decode cases removed from pkg/shim/api; no production code references them
+- Class: constraint
+- Status: active
+- Description: EventTypeFileWrite, EventTypeFileRead, EventTypeCommand constants; FileWriteEvent, FileReadEvent, CommandEvent types; and decode cases removed from pkg/shim/api; no production code references them
+- Why it matters: Eliminates misleading API surface that never had an ACP source and could confuse protocol consumers
+- Source: user
+- Primary owning slice: M014/S01
+
+### R059 — state.json carries updatedAt RFC3339Nano timestamp set uniformly in writeState() and UpdateSessionMetadata() before every spec.WriteState() call
+- Class: operability
+- Status: active
+- Description: state.json carries updatedAt RFC3339Nano timestamp set uniformly in writeState() and UpdateSessionMetadata() before every spec.WriteState() call
+- Why it matters: Operators can determine staleness of state.json without filesystem mtime heuristics
+- Source: inferred
+- Primary owning slice: M014/S03
+
 ## Validated
 
 ### R001 — agentd daemon can start with --root flag (no config.yaml) and listen on ARI Unix socket
@@ -23,7 +85,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: execution
 - Primary owning slice: M001-tvc4z0/S03
 - Supporting slices: none
-- Validation: M008/S04: meta.AgentTemplate (renamed from Runtime) stored in v1/agents bbolt bucket. ARI agent/set|get|list|delete handlers wired and verified. agentdctl agent apply/get/list/delete CLI functional. Integration tests (TestRuntimeLifecycle, TestEndToEndPipeline) confirm full chain: agent/set → agentrun/create → idle state. Old runtime/* ARI surface fully removed — rg 'runtime/' pkg/ari/server.go returns zero non-comment dispatch matches.
+- Validation: M008/S04: meta.AgentTemplate (renamed from Runtime) stored in v1/agents bbolt bucket. ARI agent/set|get|list|delete handlers wired and verified. agentdctl agent apply/get/list/delete CLI functional. Integration tests (TestAgentTemplateLifecycle, TestEndToEndPipeline) confirm full chain: agent/set → agentrun/create → idle state. Old runtime/* ARI surface fully removed — rg 'runtime/' pkg/ari/server.go returns zero non-comment dispatch matches.
 - Notes: Config parsing, ${VAR} substitution, validation
 
 ### R003 — SQLite-based metadata store persists session/workspace/room records with CRUD operations
@@ -440,7 +502,29 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: unmapped
 - Notes: Current recommendation is to retain SQLite because the model already relies on relational features.
 
+### R043 — Terminal work can return only after the converged runtime contract is stable enough to place it correctly.
+- Class: constraint
+- Status: deferred
+- Description: Terminal work can return only after the converged runtime contract is stable enough to place it correctly.
+- Why it matters: Prevents the roadmap from reviving a cancelled direction prematurely.
+- Source: user
+- Primary owning slice: none
+- Supporting slices: none
+- Validation: unmapped
+- Notes: Keeps terminal explicitly out of the near-term roadmap without banning it forever.
+
 ## Out of Scope
+
+### R030 — Runtime interactive approval for fs/terminal operations
+- Class: anti-feature
+- Status: out-of-scope
+- Description: Runtime interactive approval for fs/terminal operations
+- Why it matters: agentd manages headless sessions; interactive approval is for tools like toad
+- Source: execution
+- Primary owning slice: none
+- Supporting slices: none
+- Validation: n/a
+- Notes: Use toad/acpx for interactive approval scenarios
 
 ### R031 — Direct ACP message manipulation (bypassing typed events)
 - Class: anti-feature
@@ -453,12 +537,43 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: n/a
 - Notes: Typed events are the core protocol
 
+### R045 — The convergence wave does not preserve compatibility with old contract shapes that the user no longer wants to carry.
+- Class: anti-feature
+- Status: out-of-scope
+- Description: The convergence wave does not preserve compatibility with old contract shapes that the user no longer wants to carry.
+- Why it matters: Prevents the roadmap from paying complexity for compatibility the sole operator explicitly does not need.
+- Source: user
+- Primary owning slice: none
+- Supporting slices: none
+- Validation: n/a
+- Notes: This is the explicit “不需要考虑兼容性的问题” decision.
+
+### R046 — The cancelled `M001-terminal` direction is not treated as an obligation in the new roadmap.
+- Class: anti-feature
+- Status: out-of-scope
+- Description: The cancelled `M001-terminal` direction is not treated as an obligation in the new roadmap.
+- Why it matters: Prevents the new milestone sequence from inheriting a plan the user explicitly rejected.
+- Source: user
+- Primary owning slice: none
+- Supporting slices: none
+- Validation: n/a
+- Notes: Superseded: terminal ACP operations (R020, R026–R029) were implemented in pkg/runtime/terminal.go and are now validated. The M001-terminal milestone directory was invalid and has been deleted. This out-of-scope marker no longer applies.
+
+### R060 — Usage events (token counts, cost) are NOT written to state.json. They flow through the event stream and event log only.
+- Class: anti-feature
+- Status: out-of-scope
+- Description: Usage events (token counts, cost) are NOT written to state.json. They flow through the event stream and event log only.
+- Why it matters: Prevents state.json from becoming a high-write metrics sink; usage consumers use event stream or runtime/history
+- Source: user
+- Primary owning slice: none
+- Notes: Explicitly excluded by design — usage is high-frequency; state.json is not a metrics sink
+
 ## Traceability
 
 | ID | Class | Status | Primary owner | Supporting | Proof |
 |---|---|---|---|---|---|
 | R001 | launchability | validated | M001-tvc4z0/S01 | none | M008/S02: `agentd server --root /tmp/test-agentd-s02` creates socket at /tmp/test-agentd-s02/agentd.sock without any config.yaml. All paths (socket, DB, bundles, workspaces) are derived from --root via Options.Validate(). config.yaml and ParseConfig() deleted entirely. TestRuntimeLifecycle integration test confirmed the full chain in 1.4s. |
-| R002 | core-capability | validated | M001-tvc4z0/S03 | none | M008/S04: meta.AgentTemplate (renamed from Runtime) stored in v1/agents bbolt bucket. ARI agent/set|get|list|delete handlers wired and verified. agentdctl agent apply/get/list/delete CLI functional. Integration tests (TestRuntimeLifecycle, TestEndToEndPipeline) confirm full chain: agent/set → agentrun/create → idle state. Old runtime/* ARI surface fully removed — rg 'runtime/' pkg/ari/server.go returns zero non-comment dispatch matches. |
+| R002 | core-capability | validated | M001-tvc4z0/S03 | none | M008/S04: meta.AgentTemplate (renamed from Runtime) stored in v1/agents bbolt bucket. ARI agent/set|get|list|delete handlers wired and verified. agentdctl agent apply/get/list/delete CLI functional. Integration tests (TestAgentTemplateLifecycle, TestEndToEndPipeline) confirm full chain: agent/set → agentrun/create → idle state. Old runtime/* ARI surface fully removed — rg 'runtime/' pkg/ari/server.go returns zero non-comment dispatch matches. |
 | R003 | core-capability | validated | M001-tvc4z0/S02 | none | S02 tests pass (26 unit tests + 2 integration tests). SQLite metadata store with WAL mode, foreign keys, embedded schema. CRUD operations for Session, Workspace, Room. Transaction support via BeginTx. Daemon lifecycle integration verified. |
 | R004 | core-capability | validated | M001-tvc4z0/S04 | none | S04 tests pass (12 SessionManager tests). CRUD operations work. State machine validates 9 valid transitions (created→running, created→stopped, running→paused:warm, running→stopped, paused:warm→running, paused:warm→paused:cold, paused:warm→stopped, paused:cold→running, paused:cold→stopped). Delete protection blocks running/paused:warm sessions. |
 | R005 | core-capability | validated | M001-tvc4z0/S05 | none | S05 tests pass. ProcessManager.Start forks shim, connects socket, subscribes events. ProcessManager.Stop gracefully shuts down with Shutdown RPC + 10s wait + kill. ShimClient provides RPC communication. Integration tests verify full lifecycle with mockagent. |
@@ -479,6 +594,7 @@ This file is the explicit capability and coverage contract for the project.
 | R027 | core-capability | validated | pkg/runtime | none | validated |
 | R028 | core-capability | validated | pkg/runtime | none | validated |
 | R029 | core-capability | validated | pkg/runtime | none | validated |
+| R030 | anti-feature | out-of-scope | none | none | n/a |
 | R031 | anti-feature | out-of-scope | none | none | n/a |
 | R032 | core-capability | validated | M002-ssi4mk/S01 | none | M002/S01 final verifier passed: `bash scripts/verify-m002-s01-contract.sh`; bundle proof passed: `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1`. The design set now defines one non-conflicting contract across Room, Session, Runtime, Workspace, and shim recovery semantics. |
 | R033 | integration | validated | M002-ssi4mk/S01 | M002-ssi4mk/S02 | T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close. |
@@ -491,17 +607,28 @@ This file is the explicit capability and coverage contract for the project.
 | R040 | integration | deferred | none | none | deferred by user |
 | R041 | differentiator | validated | M003-c761yf (provisional) | none | Fully realized in M004: room/create, room/status, room/delete ARI handlers (ownership); room/send with target resolution and sender attribution (routing); deliverPrompt helper with auto-start semantics (delivery). Proven by TestARIMultiAgentRoundTrip — 3-agent bidirectional messaging end-to-end. |
 | R042 | constraint | deferred | none | none | unmapped |
+| R043 | constraint | deferred | none | none | unmapped |
 | R044 | quality-attribute | validated | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real shim binary. |
+| R045 | anti-feature | out-of-scope | none | none | n/a |
+| R046 | anti-feature | out-of-scope | none | none | n/a |
 | R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | M007/S03 validated: Full ARI JSON-RPC surface (workspace/* + agent/* handlers) implemented in pkg/ari/server.go with (workspace,name) identity throughout. 22 handler tests in pkg/ari/server_test.go cover workspace/create→agent/create→agent/prompt→agent/stop lifecycle. TestNoAgentIDInResponses confirms no agentId field in any response. ari-spec.md documents all 5 workspace/* and 9 agent/* methods with workspace+name params. golangci-lint passes 0 issues. |
 | R048 | core-capability | validated | M005/S04 | M005/S03 | M007/S03 validated: TestAgentCreateReturnsCreating (PASS) — handleAgentCreate replies synchronously with state=creating, background goroutine fires Start(). TestAgentListAndStatus (PASS) — polls agent/status and finds state transitions. S02 D088 enforcement: shim stateChange is the sole post-bootstrap write path; agentd no longer writes StatusRunning directly. Integration tests (TestAgentLifecycle, TestEndToEndPipeline) use waitForAgentState polling to idle after create. |
 | R049 | core-capability | validated | M005/S02 | none | M007/S01 validated: meta.AgentState and meta.SessionState deleted; spec.Status (creating/idle/running/stopped/error) is the sole state enum across all packages. pkg/runtime/runtime.go writes 'idle' to state.json after ACP handshake and after each prompt turn. `rg 'meta.AgentState|meta.SessionState' --type go` returns zero matches. go test ./pkg/spec/... ./pkg/runtime/... passes 64 tests including state assertions. StatusCreated removed, StatusIdle added per D085. |
 | R050 | core-capability | validated | M005/S05 | M005/S01 | M007/S01 validated: go.etcd.io/bbolt is the sole metadata backend. mattn/go-sqlite3 removed from go.mod. schema.sql, session.go, room.go deleted. 37 bbolt store tests pass (agent CRUD, workspace CRUD, nested bucket layout). `rg 'go-sqlite3' --type go` returns zero matches across entire codebase. |
 | R051 | integration | validated | M005/S06 | none | go.mod contains github.com/modelcontextprotocol/go-sdk v0.8.0; go build ./cmd/room-mcp-server exits 0; TestGenerateConfigWithRoomMCPInjection (3 subtests) asserts presence of OAR_AGENT_ID/OAR_AGENT_NAME and absence of deprecated OAR_SESSION_ID/OAR_ROOM_AGENT |
 | R052 | continuity | validated | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery (7-phase integration test, 4.47s, PASS): agents created pre-restart have identical agentId+room+name post-restart even in error state; RecoverSessions fail-safe marks dead-shim agents as error; creating-cleanup pass handles bootstrap races during restart window |
+| R053 | core-capability | active | M014/S02+S03+S05+S06 | none | unmapped |
+| R054 | primary-user-loop | active | M014/S06 | M014/S03, M014/S04 | unmapped |
+| R055 | operability | active | M014/S04 | M014/S03, M014/S07 | unmapped |
+| R056 | core-capability | active | M014/S05 | M014/S02, M014/S03 | unmapped |
+| R057 | quality-attribute | active | M014/S03 | none | unmapped |
+| R058 | constraint | active | M014/S01 | none | unmapped |
+| R059 | operability | active | M014/S03 | none | unmapped |
+| R060 | anti-feature | out-of-scope | none | none | unmapped |
 
 ## Coverage Summary
 
-- Active requirements: 0
-- Mapped to slices: 0
+- Active requirements: 7
+- Mapped to slices: 7
 - Validated: 33 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052)
 - Unmapped active requirements: 0

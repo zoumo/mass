@@ -216,21 +216,6 @@ func decodeEventPayload(eventType string, payload json.RawMessage) (Event, error
 				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
 			}
 			return v, nil
-		case FileWriteEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case FileReadEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case CommandEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
 		case PlanEvent:
 			if err := json.Unmarshal(payload, &v); err != nil {
 				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
@@ -297,12 +282,6 @@ func decodeEventPayload(eventType string, payload json.RawMessage) (Event, error
 		return unmarshal(ToolCallEvent{})
 	case EventTypeToolResult:
 		return unmarshal(ToolResultEvent{})
-	case EventTypeFileWrite:
-		return unmarshal(FileWriteEvent{})
-	case EventTypeFileRead:
-		return unmarshal(FileReadEvent{})
-	case EventTypeCommand:
-		return unmarshal(CommandEvent{})
 	case EventTypePlan:
 		return unmarshal(PlanEvent{})
 	case EventTypeTurnStart:

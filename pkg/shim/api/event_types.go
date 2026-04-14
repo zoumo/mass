@@ -555,30 +555,6 @@ type ToolResultEvent struct {
 
 func (ToolResultEvent) eventType() string { return EventTypeToolResult }
 
-// FileWriteEvent reports a file-write side-channel event from the ACP client.
-type FileWriteEvent struct {
-	Path    string `json:"path"`
-	Allowed bool   `json:"allowed"`
-}
-
-func (FileWriteEvent) eventType() string { return EventTypeFileWrite }
-
-// FileReadEvent reports a file-read side-channel event from the ACP client.
-type FileReadEvent struct {
-	Path    string `json:"path"`
-	Allowed bool   `json:"allowed"`
-}
-
-func (FileReadEvent) eventType() string { return EventTypeFileRead }
-
-// CommandEvent reports a shell-command side-channel event from the ACP client.
-type CommandEvent struct {
-	Command string `json:"command"`
-	Allowed bool   `json:"allowed"`
-}
-
-func (CommandEvent) eventType() string { return EventTypeCommand }
-
 // PlanEvent carries an updated plan from the agent session.
 // Meta is included to preserve the top-level _meta from SessionUpdatePlan.
 // Entries still uses acp.PlanEntry directly; full mirroring is deferred.

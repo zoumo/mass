@@ -87,3 +87,17 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **macOS socket path limit**: t.TempDir() paths often exceed 104-byte Unix socket limit; use os.MkdirTemp("/tmp", "oar-*") for socket-sensitive tests (K075)
 - **pkg/jsonrpc notifCh race**: Client.enqueueNotification has a pre-existing send-on-closed-channel race visible under -count=3; single-run go test ./... is the acceptance bar (K078)
 - **rg exit code semantics**: exit 1 = no matches (not a failure); zero-match verification gates must use `! rg PATTERN` (K082)
+
+## Milestone Sequence
+
+- [x] M001: Core runtime foundation
+- [x] M002: Contract convergence
+- [x] M003: Recovery hardening
+- [x] M004: Room runtime
+- [x] M005: Agent model refactoring
+- [x] M006: Fix golangci-lint v2 issues
+- [x] M007: Platform terminal state refactor
+- [x] M008: CLI consolidation + API model rename
+- [x] M012: Codebase Refactor: Service Interface + Unified RPC + Directory Restructure
+- [x] M013: Package Restructure: Clean api/ Boundary + Event/Runtime Colocation
+- [ ] M014: Enrich state.json + Session Metadata Pipeline — extends state.json with ACP session metadata, wires metadata changes to state_change events, adds EventCounts, rewrites writeState as read-modify-write
