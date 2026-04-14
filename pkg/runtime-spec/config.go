@@ -1,4 +1,4 @@
-package spec
+package runtimespec
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	apiruntime "github.com/zoumo/oar/api/runtime"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // ParseConfig reads and unmarshals config.json from bundlePath.

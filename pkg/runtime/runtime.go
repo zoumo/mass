@@ -18,16 +18,15 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 
-	"github.com/zoumo/oar/api"
-	apiruntime "github.com/zoumo/oar/api/runtime"
-	"github.com/zoumo/oar/pkg/spec"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	spec "github.com/zoumo/oar/pkg/runtime-spec"
 )
 
 // StateChange describes an externally visible runtime lifecycle transition.
 type StateChange struct {
 	SessionID      string
-	PreviousStatus api.Status
-	Status         api.Status
+	PreviousStatus apiruntime.Status
+	Status         apiruntime.Status
 	PID            int
 	Reason         string
 }
@@ -82,7 +81,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	if err := m.writeState(apiruntime.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
-		Status:      api.StatusCreating,
+		Status:      apiruntime.StatusCreating,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
 	}, "bootstrap-started"); err != nil {
@@ -121,7 +120,7 @@ func (m *Manager) Create(ctx context.Context) error {
 			_ = m.writeState(apiruntime.State{
 				OarVersion:  m.cfg.OarVersion,
 				ID:          m.cfg.Metadata.Name,
-				Status:      api.StatusStopped,
+				Status:      apiruntime.StatusStopped,
 				Bundle:      m.bundleDir,
 				Annotations: m.cfg.Metadata.Annotations,
 			}, "bootstrap-failed")
@@ -168,7 +167,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	if err := m.writeState(apiruntime.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
-		Status:      api.StatusIdle,
+		Status:      apiruntime.StatusIdle,
 		PID:         cmd.Process.Pid,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
@@ -182,7 +181,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		_ = m.writeState(apiruntime.State{
 			OarVersion:  m.cfg.OarVersion,
 			ID:          m.cfg.Metadata.Name,
-			Status:      api.StatusStopped,
+			Status:      apiruntime.StatusStopped,
 			Bundle:      m.bundleDir,
 			Annotations: m.cfg.Metadata.Annotations,
 		}, "process-exited")
@@ -220,7 +219,7 @@ func (m *Manager) Kill(ctx context.Context) error {
 	return m.writeState(apiruntime.State{
 		OarVersion:  m.cfg.OarVersion,
 		ID:          m.cfg.Metadata.Name,
-		Status:      api.StatusStopped,
+		Status:      apiruntime.StatusStopped,
 		Bundle:      m.bundleDir,
 		Annotations: m.cfg.Metadata.Annotations,
 	}, "runtime-stop")
@@ -232,7 +231,7 @@ func (m *Manager) Delete() error {
 	if err != nil {
 		return fmt.Errorf("runtime: read state for delete: %w", err)
 	}
-	if s.Status != api.StatusStopped {
+	if s.Status != apiruntime.StatusStopped {
 		return fmt.Errorf("runtime: cannot delete agent in status %q (must be stopped)", s.Status)
 	}
 	return spec.DeleteState(m.stateDir)
@@ -258,7 +257,7 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 	}
 
 	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
-		st.Status = api.StatusRunning
+		st.Status = apiruntime.StatusRunning
 		_ = m.writeState(st, "prompt-started")
 	}
 
@@ -274,7 +273,7 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		lt.StopReason = string(resp.StopReason)
 	}
 	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
-		st.Status = api.StatusIdle
+		st.Status = apiruntime.StatusIdle
 		st.LastTurn = lt
 		reason := "prompt-completed"
 		if err != nil {

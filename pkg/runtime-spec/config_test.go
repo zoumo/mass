@@ -1,4 +1,4 @@
-package spec_test
+package runtimespec_test
 
 import (
 	"encoding/json"
@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	apiruntime "github.com/zoumo/oar/api/runtime"
-	"github.com/zoumo/oar/pkg/spec"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	runtimespec "github.com/zoumo/oar/pkg/runtime-spec"
 )
 
 // validConfig returns a Config that passes all validation rules.
@@ -60,14 +60,14 @@ func (s *ConfigSuite) TeardownTest() {
 
 func (s *ConfigSuite) TestParseValid() {
 	writeConfigFile(s.T(), s.dir, validConfig())
-	c, err := spec.ParseConfig(s.dir)
+	c, err := runtimespec.ParseConfig(s.dir)
 	s.Require().NoError(err)
 	s.Equal("test-agent", c.Metadata.Name)
 	s.Equal("/usr/bin/agent", c.AcpAgent.Process.Command)
 }
 
 func (s *ConfigSuite) TestParseMissingFile() {
-	_, err := spec.ParseConfig(s.dir) // config.json not written
+	_, err := runtimespec.ParseConfig(s.dir) // config.json not written
 	s.Require().Error(err)
 	s.Contains(err.Error(), "config.json")
 }
@@ -75,18 +75,18 @@ func (s *ConfigSuite) TestParseMissingFile() {
 func (s *ConfigSuite) TestParseMalformedJSON() {
 	err := os.WriteFile(filepath.Join(s.dir, "config.json"), []byte("{not json}"), 0o600)
 	s.Require().NoError(err)
-	_, err = spec.ParseConfig(s.dir)
+	_, err = runtimespec.ParseConfig(s.dir)
 	s.Require().Error(err)
 }
 
 func (s *ConfigSuite) TestValidateValid() {
-	s.NoError(spec.ValidateConfig(validConfig()))
+	s.NoError(runtimespec.ValidateConfig(validConfig()))
 }
 
 func (s *ConfigSuite) TestValidateMissingOarVersion() {
 	c := validConfig()
 	c.OarVersion = ""
-	err := spec.ValidateConfig(c)
+	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "oarVersion")
 }
@@ -94,7 +94,7 @@ func (s *ConfigSuite) TestValidateMissingOarVersion() {
 func (s *ConfigSuite) TestValidateUnknownMajorVersion() {
 	c := validConfig()
 	c.OarVersion = "1.0.0" // major == 1, unsupported
-	err := spec.ValidateConfig(c)
+	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "major")
 }
@@ -102,7 +102,7 @@ func (s *ConfigSuite) TestValidateUnknownMajorVersion() {
 func (s *ConfigSuite) TestValidateMissingMetadataName() {
 	c := validConfig()
 	c.Metadata.Name = ""
-	err := spec.ValidateConfig(c)
+	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "metadata.name")
 }
@@ -110,7 +110,7 @@ func (s *ConfigSuite) TestValidateMissingMetadataName() {
 func (s *ConfigSuite) TestValidateMissingCommand() {
 	c := validConfig()
 	c.AcpAgent.Process.Command = ""
-	err := spec.ValidateConfig(c)
+	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "command")
 }
@@ -118,7 +118,7 @@ func (s *ConfigSuite) TestValidateMissingCommand() {
 func (s *ConfigSuite) TestValidateMissingAgentRootPath() {
 	c := validConfig()
 	c.AgentRoot.Path = ""
-	err := spec.ValidateConfig(c)
+	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "agentRoot.path")
 }
@@ -126,7 +126,7 @@ func (s *ConfigSuite) TestValidateMissingAgentRootPath() {
 func (s *ConfigSuite) TestValidateAbsoluteAgentRootPath() {
 	c := validConfig()
 	c.AgentRoot.Path = "/absolute/path"
-	err := spec.ValidateConfig(c)
+	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "relative")
 }
@@ -138,7 +138,7 @@ func (s *ConfigSuite) TestResolveAgentRoot_PlainDir() {
 	c := validConfig()
 	c.AgentRoot.Path = "workspace"
 
-	resolved, err := spec.ResolveAgentRoot(s.dir, c)
+	resolved, err := runtimespec.ResolveAgentRoot(s.dir, c)
 	s.Require().NoError(err)
 	wantDir, err := filepath.EvalSymlinks(subdir)
 	s.Require().NoError(err)
@@ -155,7 +155,7 @@ func (s *ConfigSuite) TestResolveAgentRoot_Symlink() {
 	c := validConfig()
 	c.AgentRoot.Path = "workspace"
 
-	resolved, err := spec.ResolveAgentRoot(s.dir, c)
+	resolved, err := runtimespec.ResolveAgentRoot(s.dir, c)
 	s.Require().NoError(err)
 	wantTarget, err := filepath.EvalSymlinks(target)
 	s.Require().NoError(err)
@@ -166,7 +166,7 @@ func (s *ConfigSuite) TestResolveAgentRoot_NonExistent() {
 	c := validConfig()
 	c.AgentRoot.Path = "nonexistent"
 
-	_, err := spec.ResolveAgentRoot(s.dir, c)
+	_, err := runtimespec.ResolveAgentRoot(s.dir, c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "agentRoot")
 }
@@ -174,7 +174,7 @@ func (s *ConfigSuite) TestResolveAgentRoot_NonExistent() {
 func (s *ConfigSuite) TestValidateInvalidPermissions() {
 	c := validConfig()
 	c.Permissions = apiruntime.PermissionPolicy("bad-policy")
-	err := spec.ValidateConfig(c)
+	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "permissions")
 }
@@ -182,7 +182,7 @@ func (s *ConfigSuite) TestValidateInvalidPermissions() {
 func (s *ConfigSuite) TestValidateEmptyPermissionsDefault() {
 	c := validConfig()
 	c.Permissions = "" // omitted — should default to valid
-	s.NoError(spec.ValidateConfig(c))
+	s.NoError(runtimespec.ValidateConfig(c))
 }
 
 func TestConfigSuite(t *testing.T) {

@@ -4,7 +4,7 @@
 package shim
 
 import (
-	apiruntime "github.com/zoumo/oar/api/runtime"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	"github.com/zoumo/oar/pkg/events"
 )
 

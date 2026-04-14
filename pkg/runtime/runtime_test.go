@@ -16,8 +16,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	pkgruntime "github.com/zoumo/oar/pkg/runtime"
-	"github.com/zoumo/oar/api"
-	apiruntime "github.com/zoumo/oar/api/runtime"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 var mockAgentBin string
@@ -101,7 +100,7 @@ func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
 
 	state, err := mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(api.StatusIdle, state.Status)
+	s.Equal(apiruntime.StatusIdle, state.Status)
 	s.Positive(state.PID)
 
 	// Kill process externally and verify state transitions to stopped.
@@ -112,7 +111,7 @@ func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
 	// Wait for background goroutine to write stopped state.
 	s.Require().Eventually(func() bool {
 		st, err := mgr.GetState()
-		return err == nil && st.Status == api.StatusStopped
+		return err == nil && st.Status == apiruntime.StatusStopped
 	}, 10*time.Second, 100*time.Millisecond, "expected status=stopped after SIGKILL")
 }
 
@@ -127,7 +126,7 @@ func (s *RuntimeSuite) TestKill_TransitionsToStopped() {
 
 	state, err := mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(api.StatusStopped, state.Status)
+	s.Equal(apiruntime.StatusStopped, state.Status)
 }
 
 func (s *RuntimeSuite) TestDelete_RemovesStateDir() {

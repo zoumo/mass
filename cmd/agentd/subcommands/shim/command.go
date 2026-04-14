@@ -12,14 +12,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	apiruntime "github.com/zoumo/oar/api/runtime"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/internal/logging"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/jsonrpc"
 	"github.com/zoumo/oar/pkg/runtime"
 	shimserver "github.com/zoumo/oar/pkg/shim/server"
-	"github.com/zoumo/oar/pkg/spec"
+	spec "github.com/zoumo/oar/pkg/runtime-spec"
 )
 
 // NewCommand returns the "shim" cobra command.

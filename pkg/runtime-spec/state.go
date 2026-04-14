@@ -1,4 +1,4 @@
-package spec
+package runtimespec
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	apiruntime "github.com/zoumo/oar/api/runtime"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 const (

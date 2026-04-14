@@ -1,4 +1,4 @@
-package spec_test
+package runtimespec_test
 
 import (
 	"os"
@@ -6,9 +6,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/oar/api"
-	apiruntime "github.com/zoumo/oar/api/runtime"
-	"github.com/zoumo/oar/pkg/spec"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	runtimespec "github.com/zoumo/oar/pkg/runtime-spec"
 )
 
 type StateSuite struct {
@@ -30,7 +29,7 @@ func sampleState() apiruntime.State {
 	return apiruntime.State{
 		OarVersion:  "0.1.0",
 		ID:          "test-session-123",
-		Status:      api.StatusIdle,
+		Status:      apiruntime.StatusIdle,
 		PID:         42,
 		Bundle:      "/path/to/bundle",
 		Annotations: map[string]string{"key": "value"},
@@ -38,17 +37,17 @@ func sampleState() apiruntime.State {
 }
 
 func (s *StateSuite) TestStateDir() {
-	dir := spec.StateDir(s.baseDir, "abc")
+	dir := runtimespec.StateDir(s.baseDir, "abc")
 	s.Equal(s.baseDir+"/abc", dir)
 }
 
 func (s *StateSuite) TestWriteReadRoundTrip() {
 	st := sampleState()
-	dir := spec.StateDir(s.baseDir, st.ID)
+	dir := runtimespec.StateDir(s.baseDir, st.ID)
 
-	s.Require().NoError(spec.WriteState(dir, st))
+	s.Require().NoError(runtimespec.WriteState(dir, st))
 
-	got, err := spec.ReadState(dir)
+	got, err := runtimespec.ReadState(dir)
 	s.Require().NoError(err)
 
 	s.Equal(st.OarVersion, got.OarVersion)
@@ -60,39 +59,39 @@ func (s *StateSuite) TestWriteReadRoundTrip() {
 }
 
 func (s *StateSuite) TestWriteCreatesDir() {
-	dir := spec.StateDir(s.baseDir, "new-session")
-	s.Require().NoError(spec.WriteState(dir, sampleState()))
+	dir := runtimespec.StateDir(s.baseDir, "new-session")
+	s.Require().NoError(runtimespec.WriteState(dir, sampleState()))
 
 	_, err := os.Stat(dir)
 	s.Require().NoError(err, "directory should exist after WriteState")
 }
 
 func (s *StateSuite) TestReadMissingReturnsError() {
-	dir := spec.StateDir(s.baseDir, "nonexistent")
-	_, err := spec.ReadState(dir)
+	dir := runtimespec.StateDir(s.baseDir, "nonexistent")
+	_, err := runtimespec.ReadState(dir)
 	s.Require().Error(err)
 }
 
 func (s *StateSuite) TestDeleteState() {
 	st := sampleState()
-	dir := spec.StateDir(s.baseDir, st.ID)
-	s.Require().NoError(spec.WriteState(dir, st))
+	dir := runtimespec.StateDir(s.baseDir, st.ID)
+	s.Require().NoError(runtimespec.WriteState(dir, st))
 
-	s.Require().NoError(spec.DeleteState(dir))
+	s.Require().NoError(runtimespec.DeleteState(dir))
 
 	_, err := os.Stat(dir)
 	s.True(os.IsNotExist(err), "directory should be removed after DeleteState")
 }
 
 func (s *StateSuite) TestDeleteNonexistentIsNoop() {
-	dir := spec.StateDir(s.baseDir, "ghost")
-	s.NoError(spec.DeleteState(dir))
+	dir := runtimespec.StateDir(s.baseDir, "ghost")
+	s.NoError(runtimespec.DeleteState(dir))
 }
 
 func (s *StateSuite) TestWriteIsAtomic() {
 	st := sampleState()
-	dir := spec.StateDir(s.baseDir, st.ID)
-	s.Require().NoError(spec.WriteState(dir, st))
+	dir := runtimespec.StateDir(s.baseDir, st.ID)
+	s.Require().NoError(runtimespec.WriteState(dir, st))
 
 	entries, err := os.ReadDir(dir)
 	s.Require().NoError(err)

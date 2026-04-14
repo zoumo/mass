@@ -11,8 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/api"
-	apiruntime "github.com/zoumo/oar/api/runtime"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // newTestManager builds a Manager with no agent process — just enough to
@@ -144,7 +143,7 @@ func TestConvertMcpServers_StdioBranch(t *testing.T) {
 			Name:    "room-tools",
 			Command: "/usr/bin/room-mcp-server",
 			Args:    []string{"--verbose"},
-			Env:     []api.EnvVar{{Name: "FOO", Value: "bar"}, {Name: "BAZ", Value: "qux"}},
+			Env:     []apiruntime.EnvVar{{Name: "FOO", Value: "bar"}, {Name: "BAZ", Value: "qux"}},
 		},
 	}
 	result := convertMcpServers(servers)
