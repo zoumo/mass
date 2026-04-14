@@ -902,3 +902,9 @@ terface (e.g., `EventTypeOf(ev Event) string` in `pkg/shim/api/event_types.go`).
 - **Rule:** `os.IsNotExist(err)` only unwraps `*os.PathError`, `*os.LinkError`, `*os.SyscallError`. It does NOT use `errors.Is` to unwrap `fmt.Errorf("%w", ...)` chains. When the error has been wrapped by a helper (e.g. `spec.ReadState` returns `fmt.Errorf("spec: read state.json: %w", err)`), `os.IsNotExist` returns false even though the underlying error is ENOENT. Always use `errors.Is(err, os.ErrNotExist)` which properly traverses the `Unwrap()` chain.
 - **Scope:** global
 - **When:** M014/S03
+
+## K082 — Session metadata hook chain: Translator → Manager lock-free handoff
+
+- **Rule:** The session metadata hook chain (Translator.maybeNotifyMetadata → Manager.UpdateSessionMetadata) relies on the hook being called AFTER Translator.mu is released (post-broadcastSessionEvent). Manager.UpdateSessionMetadata acquires its own m.mu, then releases before calling the stateChangeHook (which re-enters Translator.mu via NotifyStateChange). This 3-step lock dance (Translator.mu → release → Manager.mu → release → Translator.mu) avoids deadlock. If you add a new hook call site inside Translator, always place it after the lock is released. Use `maybeNotifyMetadata` as a type-switch gate — only the 4 metadata event types pass through; everything else is silently ignored.
+- **Scope:** pkg/shim/server, pkg/shim/runtime/acp
+- **When:** M014/S06

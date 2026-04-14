@@ -134,6 +134,9 @@ func (s *Service) Status(_ context.Context) (*apishim.RuntimeStatusResult, error
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
+	// Overlay real-time in-memory event counts from the Translator onto the
+	// state read from disk — the file value is stale between state writes.
+	st.EventCounts = s.trans.EventCounts()
 	return &apishim.RuntimeStatusResult{
 		State: st,
 		Recovery: apishim.RuntimeStatusRecovery{
