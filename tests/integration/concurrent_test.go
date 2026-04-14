@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	ari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 )
 
 // TestMultipleConcurrentAgents tests that multiple agents can run concurrently
 // without interference. Each agent should respond independently.
-// Note: ari.Client is NOT thread-safe — a sync.Mutex serializes all client calls.
+// Note: pkgariapi.Client is NOT thread-safe — a sync.Mutex serializes all client calls.
 func TestMultipleConcurrentAgents(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -39,7 +39,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		t.Logf("created agent %d: workspace=%s name=%s", i+1, wsName, name)
 	}
 
-	// Mutex for serializing client calls (ari.Client is not thread-safe)
+	// Mutex for serializing client calls (pkgariapi.Client is not thread-safe)
 	var clientMu sync.Mutex
 
 	// Prompt agents concurrently (serialized ARI calls via mutex)
@@ -52,7 +52,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		go func(idx int, agentName string) {
 			defer wg.Done()
 
-			var promptResult ari.AgentRunPromptResult
+			var promptResult pkgariapi.AgentRunPromptResult
 			clientMu.Lock()
 			err := client.Call("agentrun/prompt", map[string]interface{}{
 				"workspace": wsName,
@@ -97,7 +97,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 	// Verify each agent is in running state after prompt dispatch
 	t.Log("Verifying all agents are running...")
 	for i, name := range agentNames {
-		var statusResult ari.AgentRunStatusResult
+		var statusResult pkgariapi.AgentRunStatusResult
 		clientMu.Lock()
 		err := client.Call("agentrun/status", map[string]interface{}{
 			"workspace": wsName,
@@ -131,7 +131,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		// Poll for stopped/error state before deleting (serialized)
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
-			var st ari.AgentRunStatusResult
+			var st pkgariapi.AgentRunStatusResult
 			clientMu.Lock()
 			err := client.Call("agentrun/status", map[string]interface{}{
 				"workspace": wsName,

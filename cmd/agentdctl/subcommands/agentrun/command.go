@@ -7,8 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
 )
 
@@ -50,15 +49,15 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.AgentRunCreateParams{
+			params := pkgariapi.AgentRunCreateParams{
 				Workspace:     workspace,
 				Name:          name,
 				Agent:         agent,
 				RestartPolicy: restartPolicy,
 				SystemPrompt:  systemPrompt,
 			}
-			var result ari.AgentRunCreateResult
-			if err := client.Call(api.MethodAgentRunCreate, params, &result); err != nil {
+			var result pkgariapi.AgentRunCreateResult
+			if err := client.Call(pkgariapi.MethodAgentRunCreate, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -93,9 +92,9 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.AgentRunListParams{Workspace: workspace, State: state}
-			var result ari.AgentRunListResult
-			if err := client.Call(api.MethodAgentRunList, params, &result); err != nil {
+			params := pkgariapi.AgentRunListParams{Workspace: workspace, State: state}
+			var result pkgariapi.AgentRunListResult
+			if err := client.Call(pkgariapi.MethodAgentRunList, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -124,9 +123,9 @@ func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.AgentRunStatusParams{Workspace: workspace, Name: name}
-			var result ari.AgentRunStatusResult
-			if err := client.Call(api.MethodAgentRunStatus, params, &result); err != nil {
+			params := pkgariapi.AgentRunStatusParams{Workspace: workspace, Name: name}
+			var result pkgariapi.AgentRunStatusResult
+			if err := client.Call(pkgariapi.MethodAgentRunStatus, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -159,9 +158,9 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.AgentRunPromptParams{Workspace: workspace, Name: name, Prompt: text}
-			var result ari.AgentRunPromptResult
-			if err := client.Call(api.MethodAgentRunPrompt, params, &result); err != nil {
+			params := pkgariapi.AgentRunPromptParams{Workspace: workspace, Name: name, Prompt: text}
+			var result pkgariapi.AgentRunPromptResult
+			if err := client.Call(pkgariapi.MethodAgentRunPrompt, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -172,8 +171,8 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 				observedRunning := true
 				for {
 					time.Sleep(500 * time.Millisecond)
-					var statusResult ari.AgentRunStatusResult
-					if err := client.Call(api.MethodAgentRunStatus, ari.AgentRunStatusParams{Workspace: workspace, Name: name}, &statusResult); err != nil {
+					var statusResult pkgariapi.AgentRunStatusResult
+					if err := client.Call(pkgariapi.MethodAgentRunStatus, pkgariapi.AgentRunStatusParams{Workspace: workspace, Name: name}, &statusResult); err != nil {
 						fmt.Printf("agentrun/status error: %v\n", err)
 						break
 					}
@@ -216,7 +215,7 @@ func newStopCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(api.MethodAgentRunStop, ari.AgentRunStopParams{Workspace: workspace, Name: name}, nil); err != nil {
+			if err := client.Call(pkgariapi.MethodAgentRunStop, pkgariapi.AgentRunStopParams{Workspace: workspace, Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -247,7 +246,7 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(api.MethodAgentRunDelete, ari.AgentRunDeleteParams{Workspace: workspace, Name: name}, nil); err != nil {
+			if err := client.Call(pkgariapi.MethodAgentRunDelete, pkgariapi.AgentRunDeleteParams{Workspace: workspace, Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -278,9 +277,9 @@ func newAttachCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.AgentRunAttachParams{Workspace: workspace, Name: name}
-			var result ari.AgentRunAttachResult
-			if err := client.Call(api.MethodAgentRunAttach, params, &result); err != nil {
+			params := pkgariapi.AgentRunAttachParams{Workspace: workspace, Name: name}
+			var result pkgariapi.AgentRunAttachResult
+			if err := client.Call(pkgariapi.MethodAgentRunAttach, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -311,7 +310,7 @@ func newCancelCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(api.MethodAgentRunCancel, ari.AgentRunCancelParams{Workspace: workspace, Name: name}, nil); err != nil {
+			if err := client.Call(pkgariapi.MethodAgentRunCancel, pkgariapi.AgentRunCancelParams{Workspace: workspace, Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -342,9 +341,9 @@ func newRestartCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.AgentRunRestartParams{Workspace: workspace, Name: name}
-			var result ari.AgentRunRestartResult
-			if err := client.Call(api.MethodAgentRunRestart, params, &result); err != nil {
+			params := pkgariapi.AgentRunRestartParams{Workspace: workspace, Name: name}
+			var result pkgariapi.AgentRunRestartResult
+			if err := client.Call(pkgariapi.MethodAgentRunRestart, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

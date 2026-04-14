@@ -5,16 +5,15 @@ package client
 import (
 	"context"
 
-	apiari "github.com/zoumo/oar/api/ari"
 	"github.com/zoumo/oar/pkg/jsonrpc"
 )
 
 // ARIClient bundles all three typed ARI clients: workspace, agentrun, and agent.
 // Construct it with Dial; use the exported fields to call individual methods.
 type ARIClient struct {
-	Workspace *apiari.WorkspaceClient
-	AgentRun  *apiari.AgentRunClient
-	Agent     *apiari.AgentClient
+	Workspace *WorkspaceClient
+	AgentRun  *AgentRunClient
+	Agent     *AgentClient
 
 	raw *jsonrpc.Client
 }
@@ -44,9 +43,9 @@ func Dial(ctx context.Context, socketPath string, opts ...jsonrpc.DialOption) (*
 // newARIClient wraps an existing jsonrpc.Client and wires the typed sub-clients.
 func newARIClient(c *jsonrpc.Client) *ARIClient {
 	return &ARIClient{
-		Workspace: apiari.NewWorkspaceClient(c),
-		AgentRun:  apiari.NewAgentRunClient(c),
-		Agent:     apiari.NewAgentClient(c),
+		Workspace: NewWorkspaceClient(c),
+		AgentRun:  NewAgentRunClient(c),
+		Agent:     NewAgentClient(c),
 		raw:       c,
 	}
 }

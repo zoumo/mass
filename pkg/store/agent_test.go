@@ -5,17 +5,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // makeAgent returns a minimal valid Agent for test use.
-func makeAgent(name string) *apiari.Agent {
-	return &apiari.Agent{
-		Metadata: apiari.ObjectMeta{
+func makeAgent(name string) *pkgariapi.Agent {
+	return &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{
 			Name: name,
 		},
-		Spec: apiari.AgentSpec{
+		Spec: pkgariapi.AgentSpec{
 			Command: "/usr/bin/my-agent",
 			Args:    []string{"--serve"},
 			Env: []apiruntime.EnvVar{

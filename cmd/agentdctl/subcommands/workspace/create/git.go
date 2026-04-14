@@ -5,8 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
 	"github.com/zoumo/oar/pkg/workspace"
 )
@@ -37,9 +36,9 @@ func newGitCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.WorkspaceCreateParams{Name: name, Source: srcJSON}
-			var result ari.WorkspaceCreateResult
-			if err := client.Call(api.MethodWorkspaceCreate, params, &result); err != nil {
+			params := pkgariapi.WorkspaceCreateParams{Name: name, Source: srcJSON}
+			var result pkgariapi.WorkspaceCreateResult
+			if err := client.Call(pkgariapi.MethodWorkspaceCreate, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

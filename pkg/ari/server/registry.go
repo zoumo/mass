@@ -8,10 +8,7 @@ import (
 	"fmt"
 	"sync"
 
-	// apiari is retained here because pkg/store still uses api/ari types in its
-	// ListWorkspaces signature. This will be migrated to pkgariapi in T02 when
-	// the store interface is updated.
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
 )
@@ -149,8 +146,8 @@ func (r *Registry) Release(id, agentKey string) int {
 func (r *Registry) RebuildFromDB(s *store.Store) error {
 	ctx := context.Background()
 
-	workspaces, err := s.ListWorkspaces(ctx, &apiari.WorkspaceFilter{
-		Phase: apiari.WorkspacePhaseReady,
+	workspaces, err := s.ListWorkspaces(ctx, &pkgariapi.WorkspaceFilter{
+		Phase: pkgariapi.WorkspacePhaseReady,
 	})
 	if err != nil {
 		return fmt.Errorf("ari: rebuild registry: list workspaces: %w", err)

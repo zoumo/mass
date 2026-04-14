@@ -10,12 +10,12 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 )
 
 // CreateWorkspace stores a new Workspace record.
 // Returns an error if a workspace with the same name already exists.
-func (s *Store) CreateWorkspace(_ context.Context, ws *apiari.Workspace) error {
+func (s *Store) CreateWorkspace(_ context.Context, ws *pkgariapi.Workspace) error {
 	if ws.Metadata.Name == "" {
 		return fmt.Errorf("store: workspace name is required")
 	}
@@ -28,7 +28,7 @@ func (s *Store) CreateWorkspace(_ context.Context, ws *apiari.Workspace) error {
 		ws.Metadata.UpdatedAt = ws.Metadata.CreatedAt
 	}
 	if ws.Status.Phase == "" {
-		ws.Status.Phase = apiari.WorkspacePhasePending
+		ws.Status.Phase = pkgariapi.WorkspacePhasePending
 	}
 
 	return s.db.Update(func(tx *bolt.Tx) error {
@@ -51,18 +51,18 @@ func (s *Store) CreateWorkspace(_ context.Context, ws *apiari.Workspace) error {
 
 // GetWorkspace retrieves a workspace by name.
 // Returns nil, nil if the workspace does not exist.
-func (s *Store) GetWorkspace(_ context.Context, name string) (*apiari.Workspace, error) {
+func (s *Store) GetWorkspace(_ context.Context, name string) (*pkgariapi.Workspace, error) {
 	if name == "" {
 		return nil, fmt.Errorf("store: workspace name is required")
 	}
 
-	var ws *apiari.Workspace
+	var ws *pkgariapi.Workspace
 	err := s.db.View(func(tx *bolt.Tx) error {
 		data := workspacesBucket(tx).Get([]byte(name))
 		if data == nil {
 			return nil // not found
 		}
-		ws = &apiari.Workspace{}
+		ws = &pkgariapi.Workspace{}
 		return json.Unmarshal(data, ws)
 	})
 	if err != nil {
@@ -73,15 +73,15 @@ func (s *Store) GetWorkspace(_ context.Context, name string) (*apiari.Workspace,
 
 // ListWorkspaces returns all workspaces matching the optional filter.
 // If filter is nil every workspace is returned.
-func (s *Store) ListWorkspaces(_ context.Context, filter *apiari.WorkspaceFilter) ([]*apiari.Workspace, error) {
-	var result []*apiari.Workspace
+func (s *Store) ListWorkspaces(_ context.Context, filter *pkgariapi.WorkspaceFilter) ([]*pkgariapi.Workspace, error) {
+	var result []*pkgariapi.Workspace
 
 	err := s.db.View(func(tx *bolt.Tx) error {
 		return workspacesBucket(tx).ForEach(func(_, v []byte) error {
 			if v == nil {
 				return nil // skip nested buckets (none expected here)
 			}
-			var ws apiari.Workspace
+			var ws pkgariapi.Workspace
 			if err := json.Unmarshal(v, &ws); err != nil {
 				s.logger.Error("skipping corrupt workspace record", "error", err)
 				return nil
@@ -102,7 +102,7 @@ func (s *Store) ListWorkspaces(_ context.Context, filter *apiari.WorkspaceFilter
 
 // UpdateWorkspaceStatus overwrites the Status field of the named workspace.
 // Returns an error if the workspace does not exist.
-func (s *Store) UpdateWorkspaceStatus(_ context.Context, name string, status apiari.WorkspaceStatus) error {
+func (s *Store) UpdateWorkspaceStatus(_ context.Context, name string, status pkgariapi.WorkspaceStatus) error {
 	if name == "" {
 		return fmt.Errorf("store: workspace name is required")
 	}
@@ -114,7 +114,7 @@ func (s *Store) UpdateWorkspaceStatus(_ context.Context, name string, status api
 		if data == nil {
 			return fmt.Errorf("store: workspace %s does not exist", name)
 		}
-		var ws apiari.Workspace
+		var ws pkgariapi.Workspace
 		if err := json.Unmarshal(data, &ws); err != nil {
 			return fmt.Errorf("store: unmarshal workspace %s: %w", name, err)
 		}

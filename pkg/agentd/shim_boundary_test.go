@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/oar/api"
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
@@ -35,10 +35,10 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	key := agentKey(ws, agentName)
 
 	// Create agent at StatusCreating in the DB.
-	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     apiari.AgentRunSpec{Agent: "default"},
-		Status:   apiari.AgentRunStatus{State: apiruntime.StatusCreating},
+	require.NoError(t, store.CreateAgentRun(ctx, &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: ws, Name: agentName},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
+		Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusCreating},
 	}))
 
 	// Set up mock shim, queue a creating→idle stateChange notification.
@@ -177,10 +177,10 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	key := agentKey(ws, agentName)
 
 	// Create agent at StatusIdle.
-	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     apiari.AgentRunSpec{Agent: "default"},
-		Status:   apiari.AgentRunStatus{State: apiruntime.StatusIdle},
+	require.NoError(t, store.CreateAgentRun(ctx, &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: ws, Name: agentName},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
+		Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusIdle},
 	}))
 
 	// Queue two successive stateChange notifications: idle→running, then running→idle.
@@ -260,10 +260,10 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	key := agentKey(ws, agentName)
 
 	// Create agent at StatusCreating.
-	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     apiari.AgentRunSpec{Agent: "default"},
-		Status:   apiari.AgentRunStatus{State: apiruntime.StatusCreating},
+	require.NoError(t, store.CreateAgentRun(ctx, &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: ws, Name: agentName},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
+		Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusCreating},
 	}))
 
 	// Set up mock shim with NO queued notifications.
@@ -320,10 +320,10 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	agentName := "malformed-sc"
 	key := agentKey(ws, agentName)
 
-	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
-		Spec:     apiari.AgentRunSpec{Agent: "default"},
-		Status:   apiari.AgentRunStatus{State: apiruntime.StatusCreating},
+	require.NoError(t, store.CreateAgentRun(ctx, &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: ws, Name: agentName},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
+		Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusCreating},
 	}))
 
 	// Queue a malformed stateChange notification (array instead of object).

@@ -8,10 +8,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/oar/api"
-	ari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
-	ariclient "github.com/zoumo/oar/pkg/ari"
+	ariclient "github.com/zoumo/oar/pkg/ari/client"
 	"github.com/zoumo/oar/pkg/workspace"
 )
 
@@ -98,9 +97,9 @@ func createWorkspace(client *ariclient.Client, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("marshal source: %w", err)
 	}
-	params := ari.WorkspaceCreateParams{Name: cfg.Metadata.Name, Source: srcJSON}
-	var result ari.WorkspaceCreateResult
-	if err := client.Call(api.MethodWorkspaceCreate, params, &result); err != nil {
+	params := pkgariapi.WorkspaceCreateParams{Name: cfg.Metadata.Name, Source: srcJSON}
+	var result pkgariapi.WorkspaceCreateResult
+	if err := client.Call(pkgariapi.MethodWorkspaceCreate, params, &result); err != nil {
 		return fmt.Errorf("workspace/create: %w", err)
 	}
 	fmt.Printf("Workspace %q created (phase: %s)\n", result.Workspace.Metadata.Name, result.Workspace.Status.Phase)
@@ -111,8 +110,8 @@ func waitWorkspaceReady(client *ariclient.Client, name string) error {
 	fmt.Printf("Waiting for workspace %q to be ready...\n", name)
 	for {
 		time.Sleep(500 * time.Millisecond)
-		var result ari.WorkspaceStatusResult
-		if err := client.Call(api.MethodWorkspaceStatus, ari.WorkspaceStatusParams{Name: name}, &result); err != nil {
+		var result pkgariapi.WorkspaceStatusResult
+		if err := client.Call(pkgariapi.MethodWorkspaceStatus, pkgariapi.WorkspaceStatusParams{Name: name}, &result); err != nil {
 			return fmt.Errorf("workspace/status: %w", err)
 		}
 		switch result.Workspace.Status.Phase {
@@ -126,15 +125,15 @@ func waitWorkspaceReady(client *ariclient.Client, name string) error {
 }
 
 func createAgentRun(client *ariclient.Client, wsName string, a AgentRunEntry) error {
-	params := ari.AgentRunCreateParams{
+	params := pkgariapi.AgentRunCreateParams{
 		Workspace:     wsName,
 		Name:          a.Metadata.Name,
 		Agent:         a.Spec.Agent,
 		RestartPolicy: a.Spec.RestartPolicy,
 		SystemPrompt:  a.Spec.SystemPrompt,
 	}
-	var result ari.AgentRunCreateResult
-	if err := client.Call(api.MethodAgentRunCreate, params, &result); err != nil {
+	var result pkgariapi.AgentRunCreateResult
+	if err := client.Call(pkgariapi.MethodAgentRunCreate, params, &result); err != nil {
 		return fmt.Errorf("agentrun/create %q: %w", a.Metadata.Name, err)
 	}
 	fmt.Printf("Agent run %q/%q created (state: %s)\n", wsName, a.Metadata.Name, result.AgentRun.Status.State)
@@ -145,8 +144,8 @@ func waitAgentIdle(client *ariclient.Client, wsName, agName string) error {
 	fmt.Printf("Waiting for agent %q/%q to be idle...\n", wsName, agName)
 	for {
 		time.Sleep(500 * time.Millisecond)
-		var result ari.AgentRunStatusResult
-		if err := client.Call(api.MethodAgentRunStatus, ari.AgentRunStatusParams{Workspace: wsName, Name: agName}, &result); err != nil {
+		var result pkgariapi.AgentRunStatusResult
+		if err := client.Call(pkgariapi.MethodAgentRunStatus, pkgariapi.AgentRunStatusParams{Workspace: wsName, Name: agName}, &result); err != nil {
 			return fmt.Errorf("agentrun/status %q: %w", agName, err)
 		}
 		switch result.AgentRun.Status.State {
@@ -162,8 +161,8 @@ func waitAgentIdle(client *ariclient.Client, wsName, agName string) error {
 }
 
 func printAttachInfo(client *ariclient.Client, wsName, agName string) {
-	var result ari.AgentRunAttachResult
-	if err := client.Call(api.MethodAgentRunAttach, ari.AgentRunAttachParams{Workspace: wsName, Name: agName}, &result); err != nil {
+	var result pkgariapi.AgentRunAttachResult
+	if err := client.Call(pkgariapi.MethodAgentRunAttach, pkgariapi.AgentRunAttachParams{Workspace: wsName, Name: agName}, &result); err != nil {
 		fmt.Printf("  %s/%s: (attach failed: %v)\n", wsName, agName, err)
 		return
 	}

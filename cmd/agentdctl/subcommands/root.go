@@ -13,7 +13,7 @@ import (
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/shim"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/up"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/workspace"
-	ariclient "github.com/zoumo/oar/pkg/ari"
+	ariclient "github.com/zoumo/oar/pkg/ari/client"
 )
 
 // NewRootCommand returns the agentdctl root cobra command.

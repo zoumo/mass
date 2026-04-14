@@ -8,8 +8,7 @@ import (
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
 )
 
@@ -37,7 +36,7 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("reading agent file %q: %w", file, err)
 			}
-			var ag ari.Agent
+			var ag pkgariapi.Agent
 			if err := yaml.Unmarshal(data, &ag); err != nil {
 				return fmt.Errorf("parsing agent YAML %q: %w", file, err)
 			}
@@ -54,15 +53,15 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.AgentSetParams{
+			params := pkgariapi.AgentSetParams{
 				Name:                  ag.Metadata.Name,
 				Command:               ag.Spec.Command,
 				Args:                  ag.Spec.Args,
 				Env:                   ag.Spec.Env,
 				StartupTimeoutSeconds: ag.Spec.StartupTimeoutSeconds,
 			}
-			var result ari.AgentSetResult
-			if err := client.Call(api.MethodAgentSet, params, &result); err != nil {
+			var result pkgariapi.AgentSetResult
+			if err := client.Call(pkgariapi.MethodAgentSet, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -88,9 +87,9 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.AgentGetParams{Name: name}
-			var result ari.AgentGetResult
-			if err := client.Call(api.MethodAgentGet, params, &result); err != nil {
+			params := pkgariapi.AgentGetParams{Name: name}
+			var result pkgariapi.AgentGetResult
+			if err := client.Call(pkgariapi.MethodAgentGet, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -115,8 +114,8 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			var result ari.AgentListResult
-			if err := client.Call(api.MethodAgentList, ari.AgentListParams{}, &result); err != nil {
+			var result pkgariapi.AgentListResult
+			if err := client.Call(pkgariapi.MethodAgentList, pkgariapi.AgentListParams{}, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -139,7 +138,7 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(api.MethodAgentDelete, ari.AgentDeleteParams{Name: name}, nil); err != nil {
+			if err := client.Call(pkgariapi.MethodAgentDelete, pkgariapi.AgentDeleteParams{Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

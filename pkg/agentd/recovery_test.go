@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/api/shim"
 	spec "github.com/zoumo/oar/pkg/runtime-spec"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
@@ -39,15 +39,15 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *store.Store) {
 // Returns the (workspace, name) pair.
 func createRecoveryTestAgent(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state apiruntime.Status, socketPath string) (string, string) {
 	t.Helper()
-	agent := &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{
+	agent := &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{
 			Workspace: workspace,
 			Name:      name,
 		},
-		Spec: apiari.AgentRunSpec{
+		Spec: pkgariapi.AgentRunSpec{
 			Agent: "default",
 		},
-		Status: apiari.AgentRunStatus{
+		Status: pkgariapi.AgentRunStatus{
 			State:          state,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   "/tmp/shim-state-" + name,
@@ -398,15 +398,15 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 // createAgentForRecovery creates an agent directly in the store for recovery tests.
 func createAgentForRecovery(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state apiruntime.Status) {
 	t.Helper()
-	agent := &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{
+	agent := &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{
 			Workspace: workspace,
 			Name:      name,
 		},
-		Spec: apiari.AgentRunSpec{
+		Spec: pkgariapi.AgentRunSpec{
 			Agent: "default",
 		},
-		Status: apiari.AgentRunStatus{
+		Status: pkgariapi.AgentRunStatus{
 			State: state,
 		},
 	}
@@ -482,13 +482,13 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 		Bundle:     "/tmp/test-bundle",
 	}))
 
-	agent := &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{Workspace: "default", Name: "tryreload-agent"},
-		Spec: apiari.AgentRunSpec{
+	agent := &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "tryreload-agent"},
+		Spec: pkgariapi.AgentRunSpec{
 			Agent: "default",
-			RestartPolicy: apiari.RestartPolicyTryReload,
+			RestartPolicy: pkgariapi.RestartPolicyTryReload,
 		},
-		Status: apiari.AgentRunStatus{
+		Status: pkgariapi.AgentRunStatus{
 			State:          apiruntime.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
@@ -547,13 +547,13 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 		Bundle:     "/tmp/test-bundle",
 	}))
 
-	agent := &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{Workspace: "default", Name: "tryreload-fallback"},
-		Spec: apiari.AgentRunSpec{
+	agent := &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "tryreload-fallback"},
+		Spec: pkgariapi.AgentRunSpec{
 			Agent: "default",
-			RestartPolicy: apiari.RestartPolicyTryReload,
+			RestartPolicy: pkgariapi.RestartPolicyTryReload,
 		},
-		Status: apiari.AgentRunStatus{
+		Status: pkgariapi.AgentRunStatus{
 			State:          apiruntime.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
@@ -591,13 +591,13 @@ func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
 
 	srv, socketPath := newMockShimServer(t)
 
-	agent := &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{Workspace: "default", Name: "tryreload-nostate"},
-		Spec: apiari.AgentRunSpec{
+	agent := &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "tryreload-nostate"},
+		Spec: pkgariapi.AgentRunSpec{
 			Agent: "default",
-			RestartPolicy: apiari.RestartPolicyTryReload,
+			RestartPolicy: pkgariapi.RestartPolicyTryReload,
 		},
-		Status: apiari.AgentRunStatus{
+		Status: pkgariapi.AgentRunStatus{
 			State:          apiruntime.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   "/tmp/nonexistent-state-dir-tryreload-test",
@@ -643,13 +643,13 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 		Bundle:     "/tmp/test-bundle",
 	}))
 
-	agent := &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
-		Spec: apiari.AgentRunSpec{
+	agent := &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
+		Spec: pkgariapi.AgentRunSpec{
 			Agent: "default",
 			RestartPolicy: "", // empty = always_new (default)
 		},
-		Status: apiari.AgentRunStatus{
+		Status: pkgariapi.AgentRunStatus{
 			State:          apiruntime.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,

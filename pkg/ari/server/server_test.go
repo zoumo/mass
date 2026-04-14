@@ -1,5 +1,5 @@
-// Package ari_test tests the ARI JSON-RPC server via a real Unix socket.
-package ari_test
+// Package server_test tests the ARI JSON-RPC server via a real Unix socket.
+package server_test
 
 import (
 	"context"
@@ -18,10 +18,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	"github.com/zoumo/oar/pkg/agentd"
-	"github.com/zoumo/oar/pkg/ari"
+	ariclient "github.com/zoumo/oar/pkg/ari/client"
 	ariserver "github.com/zoumo/oar/pkg/ari/server"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/jsonrpc"
@@ -37,7 +37,7 @@ import (
 // testEnv holds all components for a running ARI test server.
 type testEnv struct {
 	srv       *jsonrpc.Server
-	client    *ari.Client
+	client    *ariclient.Client
 	store     *store.Store
 	processes *agentd.ProcessManager
 	agents    *agentd.AgentRunManager
@@ -64,7 +64,7 @@ func newTestServer(t *testing.T) *testEnv {
 	t.Cleanup(func() { _ = store.Close() })
 
 	mgr := workspace.NewWorkspaceManager()
-	registry := ari.NewRegistry()
+	registry := ariserver.NewRegistry()
 
 	agents := agentd.NewAgentRunManager(store, slog.Default())
 	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
@@ -88,7 +88,7 @@ func newTestServer(t *testing.T) *testEnv {
 		return err == nil
 	}, 2*time.Second, 10*time.Millisecond, "server socket did not appear")
 
-	client, err := ari.NewClient(sockPath)
+	client, err := ariclient.NewClient(sockPath)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -112,7 +112,7 @@ func newTestServer(t *testing.T) *testEnv {
 
 // callRaw calls a JSON-RPC method and returns the raw result bytes and error.
 // An RPC error is returned as an error value wrapping the code + message.
-func callRaw(t *testing.T, client *ari.Client, method string, params any) (json.RawMessage, error) {
+func callRaw(t *testing.T, client *ariclient.Client, method string, params any) (json.RawMessage, error) {
 	t.Helper()
 	var result json.RawMessage
 	err := client.Call(method, params, &result)
@@ -120,28 +120,28 @@ func callRaw(t *testing.T, client *ari.Client, method string, params any) (json.
 }
 
 // waitUntilWorkspaceReady polls workspace/status until phase == "ready".
-func waitUntilWorkspaceReady(t *testing.T, client *ari.Client, wsName string) {
+func waitUntilWorkspaceReady(t *testing.T, client *ariclient.Client, wsName string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		var res apiari.WorkspaceStatusResult
+		var res pkgariapi.WorkspaceStatusResult
 		err := client.Call("workspace/status", map[string]string{"name": wsName}, &res)
 		return err == nil && res.Workspace.Status.Phase == "ready"
 	}, 5*time.Second, 50*time.Millisecond, "workspace %s did not become ready", wsName)
 }
 
 // createAndWaitWorkspace creates a workspace with emptyDir source and polls until ready.
-func createAndWaitWorkspace(t *testing.T, client *ari.Client, name string) apiari.WorkspaceStatusResult {
+func createAndWaitWorkspace(t *testing.T, client *ariclient.Client, name string) pkgariapi.WorkspaceStatusResult {
 	t.Helper()
-	var createResult apiari.WorkspaceCreateResult
+	var createResult pkgariapi.WorkspaceCreateResult
 	require.NoError(t, client.Call("workspace/create", map[string]any{
 		"name":   name,
 		"source": json.RawMessage(`{"type":"emptyDir"}`),
 	}, &createResult))
-	assert.Equal(t, apiari.WorkspacePhasePending, createResult.Workspace.Status.Phase)
+	assert.Equal(t, pkgariapi.WorkspacePhasePending, createResult.Workspace.Status.Phase)
 
 	waitUntilWorkspaceReady(t, client, name)
 
-	var statusResult apiari.WorkspaceStatusResult
+	var statusResult pkgariapi.WorkspaceStatusResult
 	require.NoError(t, client.Call("workspace/status", map[string]string{"name": name}, &statusResult))
 	return statusResult
 }
@@ -150,13 +150,13 @@ func createAndWaitWorkspace(t *testing.T, client *ari.Client, name string) apiar
 // background shim start. Used to prime DB state for handler-only tests.
 func seedAgent(t *testing.T, store *store.Store, wsName, name string, state apiruntime.Status) {
 	t.Helper()
-	err := store.CreateAgentRun(context.Background(), &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{
+	err := store.CreateAgentRun(context.Background(), &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{
 			Name:      name,
 			Workspace: wsName,
 		},
-		Spec: apiari.AgentRunSpec{Agent: "default"},
-		Status: apiari.AgentRunStatus{
+		Spec: pkgariapi.AgentRunSpec{Agent: "default"},
+		Status: pkgariapi.AgentRunStatus{
 			State: state,
 		},
 	})
@@ -170,14 +170,14 @@ func seedAgent(t *testing.T, store *store.Store, wsName, name string, state apir
 func TestWorkspaceCreatePending(t *testing.T) {
 	env := newTestServer(t)
 
-	var result apiari.WorkspaceCreateResult
+	var result pkgariapi.WorkspaceCreateResult
 	err := env.client.Call("workspace/create", map[string]any{
 		"name":   "w1",
 		"source": json.RawMessage(`{"type":"emptyDir"}`),
 	}, &result)
 	require.NoError(t, err)
 	assert.Equal(t, "w1", result.Workspace.Metadata.Name)
-	assert.Equal(t, apiari.WorkspacePhasePending, result.Workspace.Status.Phase)
+	assert.Equal(t, pkgariapi.WorkspacePhasePending, result.Workspace.Status.Phase)
 }
 
 func TestWorkspaceStatusReady(t *testing.T) {
@@ -185,7 +185,7 @@ func TestWorkspaceStatusReady(t *testing.T) {
 
 	statusResult := createAndWaitWorkspace(t, env.client, "w-ready")
 
-	assert.Equal(t, apiari.WorkspacePhaseReady, statusResult.Workspace.Status.Phase)
+	assert.Equal(t, pkgariapi.WorkspacePhaseReady, statusResult.Workspace.Status.Phase)
 	assert.NotEmpty(t, statusResult.Workspace.Status.Path, "ready workspace must have a path")
 }
 
@@ -197,11 +197,11 @@ func TestWorkspaceStatusMembers(t *testing.T) {
 	seedAgent(t, env.store, "ws-members", "checker", apiruntime.StatusIdle)
 	seedAgent(t, env.store, "ws-members", "reviewer", apiruntime.StatusRunning)
 
-	var result apiari.WorkspaceStatusResult
+	var result pkgariapi.WorkspaceStatusResult
 	require.NoError(t, env.client.Call("workspace/status",
 		map[string]string{"name": "ws-members"}, &result))
 
-	assert.Equal(t, apiari.WorkspacePhaseReady, result.Workspace.Status.Phase)
+	assert.Equal(t, pkgariapi.WorkspacePhaseReady, result.Workspace.Status.Phase)
 	require.Len(t, result.Members, 2)
 
 	names := make([]string, 0, len(result.Members))
@@ -215,11 +215,11 @@ func TestWorkspaceStatusMembersEmpty(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "ws-empty")
 
-	var result apiari.WorkspaceStatusResult
+	var result pkgariapi.WorkspaceStatusResult
 	require.NoError(t, env.client.Call("workspace/status",
 		map[string]string{"name": "ws-empty"}, &result))
 
-	assert.Equal(t, apiari.WorkspacePhaseReady, result.Workspace.Status.Phase)
+	assert.Equal(t, pkgariapi.WorkspacePhaseReady, result.Workspace.Status.Phase)
 	assert.Empty(t, result.Members)
 }
 
@@ -229,7 +229,7 @@ func TestWorkspaceList(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "wl-1")
 	createAndWaitWorkspace(t, env.client, "wl-2")
 
-	var listResult apiari.WorkspaceListResult
+	var listResult pkgariapi.WorkspaceListResult
 	require.NoError(t, env.client.Call("workspace/list", nil, &listResult))
 	assert.GreaterOrEqual(t, len(listResult.Workspaces), 2)
 
@@ -250,11 +250,11 @@ func TestWorkspaceDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	// After delete: status should return an error (not found → -32602 or phase error).
-	var statusResult apiari.WorkspaceStatusResult
+	var statusResult pkgariapi.WorkspaceStatusResult
 	statusErr := env.client.Call("workspace/status", map[string]string{"name": "w-del"}, &statusResult)
 	// Either an RPC error (not found) or phase=="error" are acceptable.
 	if statusErr == nil {
-		assert.Equal(t, apiari.WorkspacePhaseError, statusResult.Workspace.Status.Phase)
+		assert.Equal(t, pkgariapi.WorkspacePhaseError, statusResult.Workspace.Status.Phase)
 	} else {
 		assert.Contains(t, statusErr.Error(), "-32602")
 	}
@@ -286,7 +286,7 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var result apiari.AgentRunCreateResult
+	var result pkgariapi.AgentRunCreateResult
 	require.NoError(t, json.Unmarshal(raw, &result))
 	assert.Equal(t, apiruntime.StatusCreating, result.AgentRun.Status.State)
 	assert.Equal(t, "ac-ws", result.AgentRun.Metadata.Workspace)
@@ -306,12 +306,12 @@ func TestAgentListAndStatus(t *testing.T) {
 	seedAgent(t, env.store, "als-ws", "agent-idle", apiruntime.StatusIdle)
 	seedAgent(t, env.store, "als-ws", "agent-stopped", apiruntime.StatusStopped)
 
-	var listResult apiari.AgentRunListResult
+	var listResult pkgariapi.AgentRunListResult
 	require.NoError(t, env.client.Call("agentrun/list", map[string]string{"workspace": "als-ws"}, &listResult))
 	assert.Len(t, listResult.AgentRuns, 2)
 
 	// Verify agentrun/status returns correct state.
-	var statusResult apiari.AgentRunStatusResult
+	var statusResult pkgariapi.AgentRunStatusResult
 	require.NoError(t, env.client.Call("agentrun/status", map[string]string{
 		"workspace": "als-ws",
 		"name":      "agent-idle",
@@ -391,7 +391,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		Done:       make(chan struct{}),
 	})
 
-	var result apiari.AgentRunPromptResult
+	var result pkgariapi.AgentRunPromptResult
 	require.NoError(t, env.client.Call("agentrun/prompt", map[string]any{
 		"workspace": "reserve-ws",
 		"name":      agentName,
@@ -399,7 +399,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	}, &result))
 	require.True(t, result.Accepted)
 
-	var status apiari.AgentRunStatusResult
+	var status pkgariapi.AgentRunStatusResult
 	require.NoError(t, env.client.Call("agentrun/status", map[string]string{
 		"workspace": "reserve-ws",
 		"name":      agentName,
@@ -424,7 +424,7 @@ func TestAgentRunRestartFromIdle(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "restart-idle-ws")
 	seedAgent(t, env.store, "restart-idle-ws", "idle-agent", apiruntime.StatusIdle)
 
-	var result apiari.AgentRunRestartResult
+	var result pkgariapi.AgentRunRestartResult
 	err := env.client.Call("agentrun/restart", map[string]string{
 		"workspace": "restart-idle-ws",
 		"name":      "idle-agent",
@@ -438,7 +438,7 @@ func TestAgentRunRestartFromRunning(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "restart-running-ws")
 	seedAgent(t, env.store, "restart-running-ws", "running-agent", apiruntime.StatusRunning)
 
-	var result apiari.AgentRunRestartResult
+	var result pkgariapi.AgentRunRestartResult
 	err := env.client.Call("agentrun/restart", map[string]string{
 		"workspace": "restart-running-ws",
 		"name":      "running-agent",
@@ -478,13 +478,13 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 	})
 	require.Error(t, err, "agentrun/create with too-long name must return an error")
 
-	// ari.Client.Call surfaces RPC errors as "rpc error <code>: <msg>" strings;
+	// ariclient.Client.Call surfaces RPC errors as "rpc error <code>: <msg>" strings;
 	// verify the code is -32602 (CodeInvalidParams).
 	assert.Contains(t, err.Error(), "-32602",
 		"error must carry code -32602 (CodeInvalidParams)")
 
 	// No agent record must have been written to DB.
-	var listResult apiari.AgentRunListResult
+	var listResult pkgariapi.AgentRunListResult
 	require.NoError(t, env.client.Call("agentrun/list",
 		map[string]string{"workspace": "sock-ws"}, &listResult))
 	for _, ag := range listResult.AgentRuns {
@@ -680,7 +680,7 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 	seedAgent(t, env.store, "send-ws", agentName, apiruntime.StatusIdle)
 	shimSrv := injectMockShim(t, env, "send-ws", agentName)
 
-	var sendResult apiari.WorkspaceSendResult
+	var sendResult pkgariapi.WorkspaceSendResult
 	require.NoError(t, env.client.Call("workspace/send", map[string]any{
 		"workspace": "send-ws",
 		"from":      "sender",
@@ -707,7 +707,7 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 	seedAgent(t, env.store, "reply-ws", agentName, apiruntime.StatusIdle)
 	shimSrv := injectMockShim(t, env, "reply-ws", agentName)
 
-	var sendResult apiari.WorkspaceSendResult
+	var sendResult pkgariapi.WorkspaceSendResult
 	require.NoError(t, env.client.Call("workspace/send", map[string]any{
 		"workspace":  "reply-ws",
 		"from":       "codex",

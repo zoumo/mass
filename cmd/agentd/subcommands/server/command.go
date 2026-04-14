@@ -15,7 +15,6 @@ import (
 
 	"github.com/zoumo/oar/internal/logging"
 	"github.com/zoumo/oar/pkg/agentd"
-	"github.com/zoumo/oar/pkg/ari"
 	ariserver "github.com/zoumo/oar/pkg/ari/server"
 	"github.com/zoumo/oar/pkg/jsonrpc"
 	"github.com/zoumo/oar/pkg/store"
@@ -96,7 +95,7 @@ func run(rootPath, logLevel, logFormat string) error {
 	logger.Info("workspace manager initialized")
 
 	// Create Registry.
-	registry := ari.NewRegistry()
+	registry := ariserver.NewRegistry()
 	logger.Info("registry initialized")
 
 	// Create AgentRunManager.

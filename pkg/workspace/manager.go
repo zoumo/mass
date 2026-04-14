@@ -10,7 +10,7 @@ import (
 	"os"
 	"sync"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/pkg/store"
 )
 
@@ -210,8 +210,8 @@ func (m *WorkspaceManager) Cleanup(ctx context.Context, workspaceID string, spec
 func (m *WorkspaceManager) InitRefCounts(s *store.Store) error {
 	ctx := context.Background()
 
-	workspaces, err := s.ListWorkspaces(ctx, &apiari.WorkspaceFilter{
-		Phase: apiari.WorkspacePhaseReady,
+	workspaces, err := s.ListWorkspaces(ctx, &pkgariapi.WorkspaceFilter{
+		Phase: pkgariapi.WorkspacePhaseReady,
 	})
 	if err != nil {
 		return fmt.Errorf("workspace: init refcounts: list workspaces: %w", err)

@@ -6,8 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/workspace/create"
 )
@@ -38,8 +37,8 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			var result ari.WorkspaceListResult
-			if err := client.Call(api.MethodWorkspaceList, ari.WorkspaceListParams{}, &result); err != nil {
+			var result pkgariapi.WorkspaceListResult
+			if err := client.Call(pkgariapi.MethodWorkspaceList, pkgariapi.WorkspaceListParams{}, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -62,9 +61,9 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.WorkspaceStatusParams{Name: name}
-			var result ari.WorkspaceStatusResult
-			if err := client.Call(api.MethodWorkspaceStatus, params, &result); err != nil {
+			params := pkgariapi.WorkspaceStatusParams{Name: name}
+			var result pkgariapi.WorkspaceStatusResult
+			if err := client.Call(pkgariapi.MethodWorkspaceStatus, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -90,7 +89,7 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(api.MethodWorkspaceDelete, ari.WorkspaceDeleteParams{Name: name}, nil); err != nil {
+			if err := client.Call(pkgariapi.MethodWorkspaceDelete, pkgariapi.WorkspaceDeleteParams{Name: name}, nil); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -121,14 +120,14 @@ func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := ari.WorkspaceSendParams{
+			params := pkgariapi.WorkspaceSendParams{
 				Workspace: workspace,
 				From:      from,
 				To:        to,
 				Message:   text,
 			}
-			var result ari.WorkspaceSendResult
-			if err := client.Call(api.MethodWorkspaceSend, params, &result); err != nil {
+			var result pkgariapi.WorkspaceSendResult
+			if err := client.Call(pkgariapi.MethodWorkspaceSend, params, &result); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

@@ -6,7 +6,7 @@ package integration_test
 import (
 	"testing"
 
-	ari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 )
 
 // TestRuntimeLifecycle is the S02 acceptance test.
@@ -29,8 +29,8 @@ func TestRuntimeLifecycle(t *testing.T) {
 
 	// ── Step 1: runtime/get mockagent → assert name and non-empty command ──────
 	t.Log("Step 1: runtime/get mockagent")
-	var getResult ari.AgentGetResult
-	if err := client.Call("agent/get", ari.AgentGetParams{Name: "mockagent"}, &getResult); err != nil {
+	var getResult pkgariapi.AgentGetResult
+	if err := client.Call("agent/get", pkgariapi.AgentGetParams{Name: "mockagent"}, &getResult); err != nil {
 		t.Fatalf("runtime/get mockagent: %v", err)
 	}
 	if getResult.Agent.Metadata.Name != "mockagent" {
@@ -43,8 +43,8 @@ func TestRuntimeLifecycle(t *testing.T) {
 
 	// ── Step 2: runtime/list → assert 1 entry ─────────────────────────────────
 	t.Log("Step 2: runtime/list")
-	var listResult ari.AgentListResult
-	if err := client.Call("agent/list", ari.AgentListParams{}, &listResult); err != nil {
+	var listResult pkgariapi.AgentListResult
+	if err := client.Call("agent/list", pkgariapi.AgentListParams{}, &listResult); err != nil {
 		t.Fatalf("runtime/list: %v", err)
 	}
 	if len(listResult.Agents) != 1 {
@@ -76,15 +76,15 @@ func TestRuntimeLifecycle(t *testing.T) {
 
 	// ── Step 5: runtime/delete mockagent → no error ───────────────────────────
 	t.Log("Step 5: runtime/delete mockagent")
-	if err := client.Call("agent/delete", ari.AgentDeleteParams{Name: "mockagent"}, nil); err != nil {
+	if err := client.Call("agent/delete", pkgariapi.AgentDeleteParams{Name: "mockagent"}, nil); err != nil {
 		t.Fatalf("runtime/delete mockagent: %v", err)
 	}
 	t.Log("runtime/delete OK ✓")
 
 	// ── Step 6: runtime/get mockagent → expect error response ─────────────────
 	t.Log("Step 6: runtime/get mockagent after delete → expect error")
-	var getAfterDelete ari.AgentGetResult
-	err := client.Call("agent/get", ari.AgentGetParams{Name: "mockagent"}, &getAfterDelete)
+	var getAfterDelete pkgariapi.AgentGetResult
+	err := client.Call("agent/get", pkgariapi.AgentGetParams{Name: "mockagent"}, &getAfterDelete)
 	if err == nil {
 		t.Error("runtime/get after delete: expected error, got nil")
 	} else {

@@ -115,7 +115,7 @@ After S02, api/ari/ is fully deleted. The remaining api/ directory still has met
   - Files: `pkg/ari/api/types.go`, `pkg/ari/api/domain.go`, `pkg/ari/api/methods.go`, `pkg/ari/server/service.go`, `pkg/ari/server/registry.go`, `pkg/ari/client/typed.go`, `pkg/ari/client/simple.go`
   - Verify: go build ./pkg/ari/api/... && go build ./pkg/ari/server/... && go build ./pkg/ari/client/...
 
-- [ ] **T02: Migrate all consumers, move test files, delete old source files** `est:90m`
+- [x] **T02: Migrate all consumers, move test files, delete old source files** `est:90m`
   Update every file that imports api/ari or pkg/ari (root) to use the new paths. Move test files to new locations. Delete the old source files. This task completes the restructure.
 
 ## Import mapping rules

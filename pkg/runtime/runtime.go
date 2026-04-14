@@ -266,15 +266,8 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		Prompt:    prompt,
 	})
 
-	lt := &apiruntime.LastTurn{CompletedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if err != nil {
-		lt.Error = err.Error()
-	} else {
-		lt.StopReason = string(resp.StopReason)
-	}
 	if st, readErr := spec.ReadState(m.stateDir); readErr == nil {
 		st.Status = apiruntime.StatusIdle
-		st.LastTurn = lt
 		reason := "prompt-completed"
 		if err != nil {
 			reason = "prompt-failed"

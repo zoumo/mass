@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/zoumo/oar/api"
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
@@ -172,7 +172,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 					"new", newStatus)
 				return
 			}
-			if err := m.agents.UpdateStatus(updateCtx, workspace, name, apiari.AgentRunStatus{
+			if err := m.agents.UpdateStatus(updateCtx, workspace, name, pkgariapi.AgentRunStatus{
 				State:          apiruntime.Status(newStatus),
 				ShimSocketPath: shimProc.SocketPath,
 				ShimStateDir:   shimProc.StateDir,
@@ -292,7 +292,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		m.logger.Error("failed to marshal bootstrap config", "agent_key", key, "error", err)
 		// Non-fatal: agent can still run, just won't have recovery data.
 	} else {
-		if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, apiari.AgentRunStatus{
+		if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{
 			State:           apiruntime.StatusCreating, // keep creating until we transition below
 			ShimSocketPath:  socketPath,
 			ShimStateDir:    stateDir,
@@ -323,7 +323,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		if statusResult.State.Status != apiruntime.StatusCreating {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := m.agents.UpdateStatus(updateCtx, workspace, name, apiari.AgentRunStatus{
+			if err := m.agents.UpdateStatus(updateCtx, workspace, name, pkgariapi.AgentRunStatus{
 				State:          statusResult.State.Status,
 				ShimSocketPath: socketPath,
 				ShimStateDir:   stateDir,
@@ -352,7 +352,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 }
 
 // generateConfig creates the OAR Runtime config.json for this agent.
-func (m *ProcessManager) generateConfig(agent *apiari.AgentRun, agentDef *apiari.Agent) apiruntime.Config {
+func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkgariapi.Agent) apiruntime.Config {
 	// Build environment variables in KEY=VALUE format from the Agent definition.
 	env := make([]string, 0, len(agentDef.Spec.Env))
 	for _, ev := range agentDef.Spec.Env {
@@ -425,7 +425,7 @@ func (m *ProcessManager) workspaceMcpCommand() (string, []string) {
 // createBundle creates the bundle directory and writes config.json.
 // Also creates the workspace symlink (agentRoot.path -> actual workspace).
 // Returns bundlePath, stateDir, socketPath.
-func (m *ProcessManager) createBundle(agent *apiari.AgentRun, cfg apiruntime.Config) (string, string, string, error) {
+func (m *ProcessManager) createBundle(agent *pkgariapi.AgentRun, cfg apiruntime.Config) (string, string, string, error) {
 	// Bundle directory: <bundleRoot>/<workspace>-<name>
 	dirFragment := agent.Metadata.Workspace + "-" + agent.Metadata.Name
 	bundlePath := filepath.Join(m.bundleRoot, dirFragment)
@@ -489,7 +489,7 @@ func (m *ProcessManager) createBundle(agent *apiari.AgentRun, cfg apiruntime.Con
 // process should run independently of the request context that initiated Start.
 // Using CommandContext would kill the shim when the request context is canceled.
 // The shim process lifecycle is managed by ProcessManager.Stop and watchProcess.
-func (m *ProcessManager) forkShim(agent *apiari.AgentRun, bundlePath, stateDir string) (*ShimProcess, error) {
+func (m *ProcessManager) forkShim(agent *pkgariapi.AgentRun, bundlePath, stateDir string) (*ShimProcess, error) {
 	var shimBinary string
 	var usingOverride bool
 
@@ -691,7 +691,7 @@ func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProc
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: apiruntime.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped})
 
 	// Bundle directory is intentionally NOT cleaned up here.
 	// It must persist until the agent is explicitly deleted via agent/delete.
@@ -727,7 +727,7 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 		}
 		// Agent exists but is not running — transition to stopped if needed.
 		if agent.Status.State != apiruntime.StatusStopped {
-			if err := m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: apiruntime.StatusStopped}); err != nil {
+			if err := m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped}); err != nil {
 				return fmt.Errorf("process: transition agent %s to stopped: %w", key, err)
 			}
 		}

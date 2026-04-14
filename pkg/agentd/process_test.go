@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
@@ -58,9 +58,9 @@ func TestProcessManagerStart(t *testing.T) {
 	defer store.Close()
 
 	// Persist runtime record for "mockagent" to the DB store.
-	if err := store.SetAgent(ctx, &apiari.Agent{
-		Metadata: apiari.ObjectMeta{Name: "mockagent"},
-		Spec: apiari.AgentSpec{
+	if err := store.SetAgent(ctx, &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "mockagent"},
+		Spec: pkgariapi.AgentSpec{
 			Command: mockagentBinary,
 			Args:    []string{},
 		},
@@ -79,10 +79,10 @@ func TestProcessManagerStart(t *testing.T) {
 	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
 		t.Fatalf("mkdir workspacePath: %v", err)
 	}
-	ws := &apiari.Workspace{
-		Metadata: apiari.ObjectMeta{Name: "test-ws"},
-		Status: apiari.WorkspaceStatus{
-			Phase: apiari.WorkspacePhaseReady,
+	ws := &pkgariapi.Workspace{
+		Metadata: pkgariapi.ObjectMeta{Name: "test-ws"},
+		Status: pkgariapi.WorkspaceStatus{
+			Phase: pkgariapi.WorkspacePhaseReady,
 			Path:  workspacePath,
 		},
 	}
@@ -93,15 +93,15 @@ func TestProcessManagerStart(t *testing.T) {
 	// Create an agent in "creating" state (required by Start).
 	agentWorkspace := "test-ws"
 	agentName := "test-agent"
-	agent := &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{
+	agent := &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{
 			Workspace: agentWorkspace,
 			Name:      agentName,
 		},
-		Spec: apiari.AgentRunSpec{
+		Spec: pkgariapi.AgentRunSpec{
 			Agent: "mockagent",
 		},
-		Status: apiari.AgentRunStatus{
+		Status: pkgariapi.AgentRunStatus{
 			State: apiruntime.StatusCreating,
 		},
 	}
@@ -132,7 +132,7 @@ func TestProcessManagerStart(t *testing.T) {
 	// Verify agent status transitions to idle/running via runtime/state_change
 	// notification (D088 — direct StatusRunning write removed from Start).
 	// Poll until the shim emits its first stateChange notification.
-	var updatedAgent *apiari.AgentRun
+	var updatedAgent *pkgariapi.AgentRun
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		updatedAgent, err = agentMgr.Get(ctx, agentWorkspace, agentName)
 		if err != nil {
@@ -233,7 +233,7 @@ done:
 	}
 
 	// Verify agent status transitioned to "stopped".
-	var finalAgent *apiari.AgentRun
+	var finalAgent *pkgariapi.AgentRun
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		finalAgent, err = agentMgr.Get(ctx, agentWorkspace, agentName)
 		if err != nil {
@@ -266,9 +266,9 @@ func TestGenerateConfig(t *testing.T) {
 	pm := &ProcessManager{
 		socketPath: "/tmp/test-agentd.sock",
 	}
-	rc := &apiari.Agent{
-		Metadata: apiari.ObjectMeta{Name: "mockagent"},
-		Spec: apiari.AgentSpec{
+	rc := &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "mockagent"},
+		Spec: pkgariapi.AgentSpec{
 			Command: "/usr/bin/mockagent",
 			Args:    []string{},
 			Env: []apiruntime.EnvVar{
@@ -278,13 +278,13 @@ func TestGenerateConfig(t *testing.T) {
 	}
 
 	t.Run("basic agent config", func(t *testing.T) {
-		agent := &apiari.AgentRun{
-			Metadata: apiari.ObjectMeta{
+		agent := &pkgariapi.AgentRun{
+			Metadata: pkgariapi.ObjectMeta{
 				Workspace: "ws1",
 				Name:      "my-agent",
 				Labels:    map[string]string{"team": "platform"},
 			},
-			Spec: apiari.AgentRunSpec{
+			Spec: pkgariapi.AgentRunSpec{
 				Agent: "mockagent",
 				SystemPrompt: "you are helpful",
 			},
@@ -328,12 +328,12 @@ func TestGenerateConfig(t *testing.T) {
 	})
 
 	t.Run("agent without system prompt", func(t *testing.T) {
-		agent := &apiari.AgentRun{
-			Metadata: apiari.ObjectMeta{
+		agent := &pkgariapi.AgentRun{
+			Metadata: pkgariapi.ObjectMeta{
 				Workspace: "ws1",
 				Name:      "bare-agent",
 			},
-			Spec: apiari.AgentRunSpec{
+			Spec: pkgariapi.AgentRunSpec{
 				Agent: "mockagent",
 			},
 		}

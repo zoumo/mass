@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	ari "github.com/zoumo/oar/api/ari"
-	ariclient "github.com/zoumo/oar/pkg/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
+	ariclient "github.com/zoumo/oar/pkg/ari/client"
 )
 
 // startAgentd launches agentd with --root rootDir, waits for the socket,
@@ -106,8 +106,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	}
 
 	// Register the mockagent runtime so agents can be created with runtimeClass="mockagent".
-	var runtimeResult1 ari.AgentSetResult
-	if err := client1.Call("agent/set", ari.AgentSetParams{
+	var runtimeResult1 pkgariapi.AgentSetResult
+	if err := client1.Call("agent/set", pkgariapi.AgentSetParams{
 		Name:    "mockagent",
 		Command: mockagentBin,
 	}, &runtimeResult1); err != nil {
@@ -137,7 +137,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// Prompt agent-A to exercise the running state (async dispatch).
 	t.Log("Prompting agent-A before restart")
-	var promptResultA ari.AgentRunPromptResult
+	var promptResultA pkgariapi.AgentRunPromptResult
 	if err := client1.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-a",
@@ -149,7 +149,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// Prompt agent-B (async dispatch).
 	t.Log("Prompting agent-B before restart")
-	var promptResultB ari.AgentRunPromptResult
+	var promptResultB pkgariapi.AgentRunPromptResult
 	if err := client1.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-b",
@@ -200,8 +200,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// Re-register the mockagent runtime on restart (runtimes are persisted in DB,
 	// so this is idempotent — ensures the runtime is available after restart).
-	var runtimeResult2 ari.AgentSetResult
-	if err := client2.Call("agent/set", ari.AgentSetParams{
+	var runtimeResult2 pkgariapi.AgentSetResult
+	if err := client2.Call("agent/set", pkgariapi.AgentSetParams{
 		Name:    "mockagent",
 		Command: mockagentBin,
 	}, &runtimeResult2); err != nil {
@@ -254,7 +254,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	// =========================================================================
 	t.Log("Phase 6: Verify agent list shows both agents in workspace")
 
-	var listResult ari.AgentRunListResult
+	var listResult pkgariapi.AgentRunListResult
 	if err := client2.Call("agentrun/list", map[string]interface{}{"workspace": wsName}, &listResult); err != nil {
 		t.Fatalf("agent/list: %v", err)
 	}

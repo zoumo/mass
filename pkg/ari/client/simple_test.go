@@ -1,4 +1,4 @@
-package ari
+package client
 
 import (
 	"encoding/json"

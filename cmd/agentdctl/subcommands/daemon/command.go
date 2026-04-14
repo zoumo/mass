@@ -6,8 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/oar/api"
-	"github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	"github.com/zoumo/oar/cmd/agentdctl/subcommands/cliutil"
 )
 
@@ -35,8 +34,8 @@ func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			var result ari.AgentRunListResult
-			if err := client.Call(api.MethodAgentList, ari.AgentRunListParams{}, &result); err != nil {
+			var result pkgariapi.AgentRunListResult
+			if err := client.Call(pkgariapi.MethodAgentList, pkgariapi.AgentRunListParams{}, &result); err != nil {
 				fmt.Println("daemon: not running")
 				fmt.Fprintf(cmd.ErrOrStderr(), "Error: %v\n", err)
 				return nil

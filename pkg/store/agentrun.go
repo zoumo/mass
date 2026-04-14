@@ -10,14 +10,14 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // CreateAgentRun stores a new AgentRun record.
 // The agent run identity is (Metadata.Workspace, Metadata.Name).
 // Returns an error if an agent run with the same (workspace, name) already exists.
-func (s *Store) CreateAgentRun(_ context.Context, agent *apiari.AgentRun) error {
+func (s *Store) CreateAgentRun(_ context.Context, agent *pkgariapi.AgentRun) error {
 	if agent.Metadata.Workspace == "" {
 		return fmt.Errorf("store: agent workspace is required")
 	}
@@ -64,7 +64,7 @@ func (s *Store) CreateAgentRun(_ context.Context, agent *apiari.AgentRun) error 
 
 // GetAgentRun retrieves an agent run by (workspace, name).
 // Returns nil, nil if the agent run does not exist.
-func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*apiari.AgentRun, error) {
+func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*pkgariapi.AgentRun, error) {
 	if workspace == "" {
 		return nil, fmt.Errorf("store: workspace is required")
 	}
@@ -72,7 +72,7 @@ func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*apiari.
 		return nil, fmt.Errorf("store: agent name is required")
 	}
 
-	var agent *apiari.AgentRun
+	var agent *pkgariapi.AgentRun
 	err := s.db.View(func(tx *bolt.Tx) error {
 		wb := workspaceBucketRO(tx, workspace)
 		if wb == nil {
@@ -82,7 +82,7 @@ func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*apiari.
 		if data == nil {
 			return nil // not found
 		}
-		agent = &apiari.AgentRun{}
+		agent = &pkgariapi.AgentRun{}
 		return json.Unmarshal(data, agent)
 	})
 	if err != nil {
@@ -96,8 +96,8 @@ func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*apiari.
 //   - If filter.Workspace is non-empty, only that workspace's sub-bucket is scanned.
 //   - If filter.State is non-empty, only agent runs with that state are returned.
 //   - If filter is nil every agent run in every workspace is returned.
-func (s *Store) ListAgentRuns(_ context.Context, filter *apiari.AgentRunFilter) ([]*apiari.AgentRun, error) {
-	var result []*apiari.AgentRun
+func (s *Store) ListAgentRuns(_ context.Context, filter *pkgariapi.AgentRunFilter) ([]*pkgariapi.AgentRun, error) {
+	var result []*pkgariapi.AgentRun
 
 	err := s.db.View(func(tx *bolt.Tx) error {
 		runs := agentRunsBucket(tx)
@@ -108,7 +108,7 @@ func (s *Store) ListAgentRuns(_ context.Context, filter *apiari.AgentRunFilter) 
 				if v == nil {
 					return nil // skip nested buckets
 				}
-				var a apiari.AgentRun
+				var a pkgariapi.AgentRun
 				if err := json.Unmarshal(v, &a); err != nil {
 					s.logger.Error("skipping corrupt agentRun record", "error", err)
 					return nil
@@ -151,7 +151,7 @@ func (s *Store) ListAgentRuns(_ context.Context, filter *apiari.AgentRunFilter) 
 
 // UpdateAgentRunStatus overwrites the Status field of the identified agent run.
 // Returns an error if the agent run does not exist.
-func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, status apiari.AgentRunStatus) error {
+func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, status pkgariapi.AgentRunStatus) error {
 	if workspace == "" {
 		return fmt.Errorf("store: workspace is required")
 	}
@@ -169,7 +169,7 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 		if data == nil {
 			return fmt.Errorf("store: agent %s/%s does not exist", workspace, name)
 		}
-		var agent apiari.AgentRun
+		var agent pkgariapi.AgentRun
 		if err := json.Unmarshal(data, &agent); err != nil {
 			return fmt.Errorf("store: unmarshal agent %s/%s: %w", workspace, name, err)
 		}
@@ -212,7 +212,7 @@ func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name strin
 		if data == nil {
 			return fmt.Errorf("store: agent %s/%s does not exist", workspace, name)
 		}
-		var agent apiari.AgentRun
+		var agent pkgariapi.AgentRun
 		if err := json.Unmarshal(data, &agent); err != nil {
 			return fmt.Errorf("store: unmarshal agent %s/%s: %w", workspace, name, err)
 		}

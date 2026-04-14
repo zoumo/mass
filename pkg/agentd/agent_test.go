@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	"github.com/zoumo/oar/pkg/store"
 )
@@ -40,14 +40,14 @@ func newTestAgentManager(t *testing.T) *AgentRunManager {
 }
 
 // makeTestAgentRun builds a minimal valid Agent struct using the new model.
-func makeTestAgentRun(workspace, name string) *apiari.AgentRun {
-	return &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{
+func makeTestAgentRun(workspace, name string) *pkgariapi.AgentRun {
+	return &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{
 			Workspace: workspace,
 			Name:      name,
 			Labels:    map[string]string{"env": "test"},
 		},
-		Spec: apiari.AgentRunSpec{
+		Spec: pkgariapi.AgentRunSpec{
 			Agent: "default",
 			Description:  "test agent",
 			SystemPrompt: "you are a test",
@@ -110,14 +110,14 @@ func TestAgentList_StateFilter(t *testing.T) {
 	require.NoError(t, am.Create(ctx, a1))
 	require.NoError(t, am.Create(ctx, a2))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", apiari.AgentRunStatus{State: apiruntime.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped}))
 
-	stoppedAgents, err := am.List(ctx, &apiari.AgentRunFilter{State: apiruntime.StatusStopped})
+	stoppedAgents, err := am.List(ctx, &pkgariapi.AgentRunFilter{State: apiruntime.StatusStopped})
 	require.NoError(t, err)
 	require.Len(t, stoppedAgents, 1)
 	assert.Equal(t, "a1", stoppedAgents[0].Metadata.Name)
 
-	creatingAgents, err := am.List(ctx, &apiari.AgentRunFilter{State: apiruntime.StatusCreating})
+	creatingAgents, err := am.List(ctx, &pkgariapi.AgentRunFilter{State: apiruntime.StatusCreating})
 	require.NoError(t, err)
 	require.Len(t, creatingAgents, 1)
 	assert.Equal(t, "a2", creatingAgents[0].Metadata.Name)
@@ -135,12 +135,12 @@ func TestAgentList_WorkspaceFilter(t *testing.T) {
 	require.NoError(t, am.Create(ctx, a1))
 	require.NoError(t, am.Create(ctx, a2))
 
-	wsAAgents, err := am.List(ctx, &apiari.AgentRunFilter{Workspace: "wsA"})
+	wsAAgents, err := am.List(ctx, &pkgariapi.AgentRunFilter{Workspace: "wsA"})
 	require.NoError(t, err)
 	require.Len(t, wsAAgents, 1)
 	assert.Equal(t, "agent1", wsAAgents[0].Metadata.Name)
 
-	wsBAgents, err := am.List(ctx, &apiari.AgentRunFilter{Workspace: "wsB"})
+	wsBAgents, err := am.List(ctx, &pkgariapi.AgentRunFilter{Workspace: "wsB"})
 	require.NoError(t, err)
 	require.Len(t, wsBAgents, 1)
 	assert.Equal(t, "agent2", wsBAgents[0].Metadata.Name)
@@ -156,7 +156,7 @@ func TestAgentUpdateStatus(t *testing.T) {
 	agent := makeTestAgentRun("ws1", "stateful")
 	require.NoError(t, am.Create(ctx, agent))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", apiari.AgentRunStatus{State: apiruntime.StatusRunning}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", pkgariapi.AgentRunStatus{State: apiruntime.StatusRunning}))
 
 	got, err := am.Get(ctx, "ws1", "stateful")
 	require.NoError(t, err)
@@ -175,7 +175,7 @@ func TestAgentDelete_RequiresStopped(t *testing.T) {
 	require.NoError(t, am.Create(ctx, agent))
 
 	// Transition to stopped.
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", apiari.AgentRunStatus{State: apiruntime.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped}))
 
 	// Delete should succeed.
 	require.NoError(t, am.Delete(ctx, "ws1", "deletable"))
@@ -195,7 +195,7 @@ func TestAgentDelete_AllowsError(t *testing.T) {
 
 	agent := makeTestAgentRun("ws1", "errored")
 	require.NoError(t, am.Create(ctx, agent))
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "errored", apiari.AgentRunStatus{
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "errored", pkgariapi.AgentRunStatus{
 		State:        apiruntime.StatusError,
 		ErrorMessage: "boom",
 	}))

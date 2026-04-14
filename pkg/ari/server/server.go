@@ -2,7 +2,7 @@
 //
 // Service holds the shared dependencies. Three unexported adapter types
 // (workspaceAdapter, agentRunAdapter, agentAdapter) wrap *Service and satisfy
-// the apiari.WorkspaceService, apiari.AgentRunService, and apiari.AgentService
+// the pkgariapi.WorkspaceService, pkgariapi.AgentRunService, and pkgariapi.AgentService
 // interfaces respectively. Use Register to wire all three with a jsonrpc.Server.
 //
 // NOTE: A single Go struct cannot implement all three interfaces because
@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/agentd"
@@ -29,14 +29,13 @@ import (
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
 
-	ariregistry "github.com/zoumo/oar/pkg/ari"
 )
 
 // Service holds shared dependencies for all ARI handlers.
 // Use Register to wire it with a jsonrpc.Server.
 type Service struct {
 	manager   *workspace.WorkspaceManager
-	registry  *ariregistry.Registry
+	registry  *Registry
 	agents    *agentd.AgentRunManager
 	processes *agentd.ProcessManager
 	store     *store.Store
@@ -48,7 +47,7 @@ type Service struct {
 // Call Register to attach it to a jsonrpc.Server.
 func New(
 	manager *workspace.WorkspaceManager,
-	registry *ariregistry.Registry,
+	registry *Registry,
 	agents *agentd.AgentRunManager,
 	processes *agentd.ProcessManager,
 	s *store.Store,
@@ -68,22 +67,22 @@ func New(
 
 // Register wires all three ARI service interfaces with the jsonrpc.Server.
 func Register(srv *jsonrpc.Server, svc *Service) {
-	apiari.RegisterWorkspaceService(srv, &workspaceAdapter{svc})
-	apiari.RegisterAgentRunService(srv, &agentRunAdapter{svc})
-	apiari.RegisterAgentService(srv, &agentAdapter{svc})
+	RegisterWorkspaceService(srv, &workspaceAdapter{svc})
+	RegisterAgentRunService(srv, &agentRunAdapter{svc})
+	RegisterAgentService(srv, &agentAdapter{svc})
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // Adapter types
 // ────────────────────────────────────────────────────────────────────────────
 
-// workspaceAdapter adapts *Service to apiari.WorkspaceService.
+// workspaceAdapter adapts *Service to pkgariapi.WorkspaceService.
 type workspaceAdapter struct{ *Service }
 
-// agentRunAdapter adapts *Service to apiari.AgentRunService.
+// agentRunAdapter adapts *Service to pkgariapi.AgentRunService.
 type agentRunAdapter struct{ *Service }
 
-// agentAdapter adapts *Service to apiari.AgentService.
+// agentAdapter adapts *Service to pkgariapi.AgentService.
 type agentAdapter struct{ *Service }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -97,23 +96,23 @@ type agentAdapter struct{ *Service }
 //
 // Observability: INFO on entry (name, phase:pending); INFO/WARN in goroutine
 // on prepare success (phase:ready, path) or failure (phase:error).
-func (a *workspaceAdapter) Create(ctx context.Context, req *apiari.WorkspaceCreateParams) (*apiari.WorkspaceCreateResult, error) {
+func (a *workspaceAdapter) Create(ctx context.Context, req *pkgariapi.WorkspaceCreateParams) (*pkgariapi.WorkspaceCreateResult, error) {
 	if req.Name == "" {
 		return nil, jsonrpc.ErrInvalidParams("name is required")
 	}
 
 	a.logger.Info("workspace/create", "workspace", req.Name, "phase", "pending")
 
-	ws := &apiari.Workspace{
-		Metadata: apiari.ObjectMeta{
+	ws := &pkgariapi.Workspace{
+		Metadata: pkgariapi.ObjectMeta{
 			Name:   req.Name,
 			Labels: req.Labels,
 		},
-		Spec: apiari.WorkspaceSpec{
+		Spec: pkgariapi.WorkspaceSpec{
 			Source: req.Source,
 		},
-		Status: apiari.WorkspaceStatus{
-			Phase: apiari.WorkspacePhasePending,
+		Status: pkgariapi.WorkspaceStatus{
+			Phase: pkgariapi.WorkspacePhasePending,
 		},
 	}
 	if err := a.store.CreateWorkspace(ctx, ws); err != nil {
@@ -123,7 +122,7 @@ func (a *workspaceAdapter) Create(ctx context.Context, req *apiari.WorkspaceCrea
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 
-	result := &apiari.WorkspaceCreateResult{Workspace: ws.ARIView()}
+	result := &pkgariapi.WorkspaceCreateResult{Workspace: ws.ARIView()}
 
 	// Parse source for the Prepare call.
 	var src workspace.Source
@@ -148,15 +147,15 @@ func (a *workspaceAdapter) Create(ctx context.Context, req *apiari.WorkspaceCrea
 		if err != nil {
 			a.logger.Warn("workspace/create: prepare failed",
 				"workspace", wsName, "phase", "error", "error", err)
-			_ = a.store.UpdateWorkspaceStatus(prepareCtx, wsName, apiari.WorkspaceStatus{
-				Phase: apiari.WorkspacePhaseError,
+			_ = a.store.UpdateWorkspaceStatus(prepareCtx, wsName, pkgariapi.WorkspaceStatus{
+				Phase: pkgariapi.WorkspacePhaseError,
 			})
 			return
 		}
 		a.logger.Info("workspace/create: prepared",
 			"workspace", wsName, "phase", "ready", "path", path)
-		_ = a.store.UpdateWorkspaceStatus(prepareCtx, wsName, apiari.WorkspaceStatus{
-			Phase: apiari.WorkspacePhaseReady,
+		_ = a.store.UpdateWorkspaceStatus(prepareCtx, wsName, pkgariapi.WorkspaceStatus{
+			Phase: pkgariapi.WorkspacePhaseReady,
 			Path:  path,
 		})
 		a.registry.Add(wsName, wsName, path, wsSpec)
@@ -169,16 +168,16 @@ func (a *workspaceAdapter) Create(ctx context.Context, req *apiari.WorkspaceCrea
 //
 // Fast path: in-memory registry for ready workspaces. Fallback: DB for
 // workspaces still in pending/error phase.
-func (a *workspaceAdapter) Status(ctx context.Context, req *apiari.WorkspaceStatusParams) (*apiari.WorkspaceStatusResult, error) {
+func (a *workspaceAdapter) Status(ctx context.Context, req *pkgariapi.WorkspaceStatusParams) (*pkgariapi.WorkspaceStatusResult, error) {
 	a.logger.Info("workspace/status", "workspace", req.Name)
 
 	if wm := a.registry.Get(req.Name); wm != nil {
 		members := a.listWorkspaceMembers(ctx, req.Name)
-		wsObj := apiari.Workspace{
-			Metadata: apiari.ObjectMeta{Name: wm.Name},
-			Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhase(wm.Status), Path: wm.Path},
+		wsObj := pkgariapi.Workspace{
+			Metadata: pkgariapi.ObjectMeta{Name: wm.Name},
+			Status:   pkgariapi.WorkspaceStatus{Phase: pkgariapi.WorkspacePhase(wm.Status), Path: wm.Path},
 		}
-		return &apiari.WorkspaceStatusResult{
+		return &pkgariapi.WorkspaceStatusResult{
 			Workspace: wsObj.ARIView(),
 			Members:   members,
 		}, nil
@@ -193,7 +192,7 @@ func (a *workspaceAdapter) Status(ctx context.Context, req *apiari.WorkspaceStat
 	}
 
 	members := a.listWorkspaceMembers(ctx, req.Name)
-	return &apiari.WorkspaceStatusResult{
+	return &pkgariapi.WorkspaceStatusResult{
 		Workspace: ws.ARIView(),
 		Members:   members,
 	}, nil
@@ -202,31 +201,31 @@ func (a *workspaceAdapter) Status(ctx context.Context, req *apiari.WorkspaceStat
 // List handles workspace/list.
 //
 // Returns all workspaces in the in-memory registry (ready workspaces only).
-func (a *workspaceAdapter) List(ctx context.Context) (*apiari.WorkspaceListResult, error) {
+func (a *workspaceAdapter) List(ctx context.Context) (*pkgariapi.WorkspaceListResult, error) {
 	a.logger.Info("workspace/list")
 
 	metas := a.registry.List()
-	workspaces := make([]apiari.Workspace, 0, len(metas))
+	workspaces := make([]pkgariapi.Workspace, 0, len(metas))
 	for _, m := range metas {
-		workspaces = append(workspaces, apiari.Workspace{
-			Metadata: apiari.ObjectMeta{Name: m.Name},
-			Status:   apiari.WorkspaceStatus{Phase: apiari.WorkspacePhase(m.Status), Path: m.Path},
+		workspaces = append(workspaces, pkgariapi.Workspace{
+			Metadata: pkgariapi.ObjectMeta{Name: m.Name},
+			Status:   pkgariapi.WorkspaceStatus{Phase: pkgariapi.WorkspacePhase(m.Status), Path: m.Path},
 		})
 	}
-	return &apiari.WorkspaceListResult{Workspaces: workspaces}, nil
+	return &pkgariapi.WorkspaceListResult{Workspaces: workspaces}, nil
 }
 
 // Delete handles workspace/delete.
 //
 // Rejects deletion if the workspace has active agent runs.
-func (a *workspaceAdapter) Delete(ctx context.Context, req *apiari.WorkspaceDeleteParams) error {
+func (a *workspaceAdapter) Delete(ctx context.Context, req *pkgariapi.WorkspaceDeleteParams) error {
 	a.logger.Info("workspace/delete", "workspace", req.Name)
 
 	if err := a.store.DeleteWorkspace(ctx, req.Name); err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			return jsonrpc.ErrInvalidParams(err.Error())
 		}
-		return &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: err.Error()}
+		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
 	}
 	a.registry.Remove(req.Name)
 	return nil
@@ -239,7 +238,7 @@ func (a *workspaceAdapter) Delete(ctx context.Context, req *apiari.WorkspaceDele
 //
 // Observability: INFO on dispatch (workspace, from, to); WARN on each
 // rejection path with reason.
-func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendParams) (*apiari.WorkspaceSendResult, error) {
+func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSendParams) (*pkgariapi.WorkspaceSendResult, error) {
 	if req.Workspace == "" || req.From == "" || req.To == "" || req.Message == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, from, to, and message are required")
 	}
@@ -250,7 +249,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendPa
 	if a.processes.IsRecovering() {
 		a.logger.Warn("workspace/send: recovery blocked",
 			"workspace", req.Workspace, "to", req.To)
-		return nil, &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
 	}
 
 	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.To)
@@ -265,13 +264,13 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendPa
 	if agent.Status.State == apiruntime.StatusError {
 		a.logger.Warn("workspace/send: target agent in error state",
 			"workspace", req.Workspace, "to", req.To)
-		return nil, &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: "target agent is in error state"}
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "target agent is in error state"}
 	}
 	if agent.Status.State != apiruntime.StatusIdle {
 		a.logger.Warn("workspace/send: target agent not idle",
 			"workspace", req.Workspace, "to", req.To, "state", agent.Status.State)
 		return nil, &jsonrpc.RPCError{
-			Code:    apiari.CodeRecoveryBlocked,
+			Code:    pkgariapi.CodeRecoveryBlocked,
 			Message: fmt.Sprintf("target agent not in idle state: %s", agent.Status.State),
 		}
 	}
@@ -290,7 +289,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendPa
 			state = string(current.Status.State)
 		}
 		return nil, &jsonrpc.RPCError{
-			Code:    apiari.CodeRecoveryBlocked,
+			Code:    pkgariapi.CodeRecoveryBlocked,
 			Message: fmt.Sprintf("target agent not in idle state: %s", state),
 		}
 	}
@@ -300,7 +299,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendPa
 		a.logger.Warn("workspace/send: target agent not running",
 			"workspace", req.Workspace, "to", req.To, "error", err)
 		a.recordPromptDeliveryFailure(req.Workspace, req.To, agent.Status, err, true)
-		return nil, &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: "target agent is not running"}
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "target agent is not running"}
 	}
 
 	msg := buildWorkspaceEnvelope(*req) + req.Message
@@ -312,7 +311,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendPa
 		}
 	}()
 
-	return &apiari.WorkspaceSendResult{Delivered: true}, nil
+	return &pkgariapi.WorkspaceSendResult{Delivered: true}, nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -326,7 +325,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendPa
 // Returns immediately with state="creating".
 //
 // Observability: INFO on creation; INFO/WARN in goroutine on Start success/failure.
-func (a *agentRunAdapter) Create(ctx context.Context, req *apiari.AgentRunCreateParams) (*apiari.AgentRunCreateResult, error) {
+func (a *agentRunAdapter) Create(ctx context.Context, req *pkgariapi.AgentRunCreateParams) (*pkgariapi.AgentRunCreateResult, error) {
 	if req.Workspace == "" || req.Name == "" || req.Agent == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, name, and agent are required")
 	}
@@ -336,7 +335,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, req *apiari.AgentRunCreate
 	}
 
 	switch req.RestartPolicy {
-	case "", apiari.RestartPolicyTryReload, apiari.RestartPolicyAlwaysNew:
+	case "", pkgariapi.RestartPolicyTryReload, pkgariapi.RestartPolicyAlwaysNew:
 		// valid
 	default:
 		return nil, jsonrpc.ErrInvalidParams(
@@ -352,32 +351,32 @@ func (a *agentRunAdapter) Create(ctx context.Context, req *apiari.AgentRunCreate
 	if ws == nil {
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s not found", req.Workspace))
 	}
-	if ws.Status.Phase != apiari.WorkspacePhaseReady {
+	if ws.Status.Phase != pkgariapi.WorkspacePhaseReady {
 		return nil, &jsonrpc.RPCError{
-			Code:    apiari.CodeRecoveryBlocked,
+			Code:    pkgariapi.CodeRecoveryBlocked,
 			Message: fmt.Sprintf("workspace %s is not ready (phase=%s)", req.Workspace, ws.Status.Phase),
 		}
 	}
 
-	agentRun := &apiari.AgentRun{
-		Metadata: apiari.ObjectMeta{
+	agentRun := &pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{
 			Name:      req.Name,
 			Workspace: req.Workspace,
 			Labels:    req.Labels,
 		},
-		Spec: apiari.AgentRunSpec{
+		Spec: pkgariapi.AgentRunSpec{
 			Agent:         req.Agent,
 			RestartPolicy: req.RestartPolicy,
 			SystemPrompt:  req.SystemPrompt,
 		},
-		Status: apiari.AgentRunStatus{
+		Status: pkgariapi.AgentRunStatus{
 			State: apiruntime.StatusCreating,
 		},
 	}
 	if err := a.agents.Create(ctx, agentRun); err != nil {
 		var alreadyExists *agentd.ErrAgentRunAlreadyExists
 		if errors.As(err, &alreadyExists) {
-			return nil, &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: err.Error()}
+			return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
 		}
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
@@ -392,7 +391,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, req *apiari.AgentRunCreate
 		if _, err := a.processes.Start(bgCtx, wsName, agName); err != nil {
 			a.logger.Warn("agentrun/create: shim start failed",
 				"workspace", wsName, "name", agName, "error", err)
-			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, apiari.AgentRunStatus{
+			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, pkgariapi.AgentRunStatus{
 				State:        apiruntime.StatusError,
 				ErrorMessage: err.Error(),
 			})
@@ -402,7 +401,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, req *apiari.AgentRunCreate
 		}
 	}()
 
-	return &apiari.AgentRunCreateResult{AgentRun: agentRun.ARIView()}, nil
+	return &pkgariapi.AgentRunCreateResult{AgentRun: agentRun.ARIView()}, nil
 }
 
 // Prompt handles agentrun/prompt.
@@ -411,7 +410,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, req *apiari.AgentRunCreate
 // and fires the prompt in the background. Returns Accepted:true immediately.
 //
 // Observability: INFO on dispatch; WARN on rejection (bad state, not running).
-func (a *agentRunAdapter) Prompt(ctx context.Context, req *apiari.AgentRunPromptParams) (*apiari.AgentRunPromptResult, error) {
+func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPromptParams) (*pkgariapi.AgentRunPromptResult, error) {
 	if req.Workspace == "" || req.Name == "" || req.Prompt == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, name, and prompt are required")
 	}
@@ -421,7 +420,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *apiari.AgentRunPrompt
 	if a.processes.IsRecovering() {
 		a.logger.Warn("agentrun/prompt: recovery blocked",
 			"workspace", req.Workspace, "name", req.Name)
-		return nil, &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
 	}
 
 	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
@@ -436,7 +435,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *apiari.AgentRunPrompt
 		a.logger.Warn("agentrun/prompt: agent not in idle state",
 			"workspace", req.Workspace, "name", req.Name, "state", agent.Status.State)
 		return nil, &jsonrpc.RPCError{
-			Code:    apiari.CodeRecoveryBlocked,
+			Code:    pkgariapi.CodeRecoveryBlocked,
 			Message: fmt.Sprintf("agent not in idle state: %s", agent.Status.State),
 		}
 	}
@@ -457,7 +456,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *apiari.AgentRunPrompt
 			state = string(current.Status.State)
 		}
 		return nil, &jsonrpc.RPCError{
-			Code:    apiari.CodeRecoveryBlocked,
+			Code:    pkgariapi.CodeRecoveryBlocked,
 			Message: fmt.Sprintf("agent not in idle state: %s", state),
 		}
 	}
@@ -467,7 +466,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *apiari.AgentRunPrompt
 		a.logger.Warn("agentrun/prompt: agent not running",
 			"workspace", req.Workspace, "name", req.Name, "error", err)
 		a.recordPromptDeliveryFailure(req.Workspace, req.Name, agent.Status, err, true)
-		return nil, &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: "agent not running"}
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
 	}
 
 	prompt := req.Prompt
@@ -481,13 +480,13 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *apiari.AgentRunPrompt
 
 	a.logger.Info("agentrun/prompt: dispatched",
 		"workspace", req.Workspace, "name", req.Name)
-	return &apiari.AgentRunPromptResult{Accepted: true}, nil
+	return &pkgariapi.AgentRunPromptResult{Accepted: true}, nil
 }
 
 // Cancel handles agentrun/cancel.
 //
 // Connects to the running shim and calls Cancel.
-func (a *agentRunAdapter) Cancel(ctx context.Context, req *apiari.AgentRunCancelParams) error {
+func (a *agentRunAdapter) Cancel(ctx context.Context, req *pkgariapi.AgentRunCancelParams) error {
 	a.logger.Info("agentrun/cancel", "workspace", req.Workspace, "name", req.Name)
 
 	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
@@ -500,7 +499,7 @@ func (a *agentRunAdapter) Cancel(ctx context.Context, req *apiari.AgentRunCancel
 
 	client, err := a.processes.Connect(ctx, req.Workspace, req.Name)
 	if err != nil {
-		return &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: "agent not running"}
+		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
 	}
 
 	if err := client.Cancel(ctx); err != nil {
@@ -512,7 +511,7 @@ func (a *agentRunAdapter) Cancel(ctx context.Context, req *apiari.AgentRunCancel
 // Stop handles agentrun/stop.
 //
 // Calls processes.Stop which sends runtime/stop to the shim and waits.
-func (a *agentRunAdapter) Stop(ctx context.Context, req *apiari.AgentRunStopParams) error {
+func (a *agentRunAdapter) Stop(ctx context.Context, req *pkgariapi.AgentRunStopParams) error {
 	a.logger.Info("agentrun/stop", "workspace", req.Workspace, "name", req.Name)
 
 	if err := a.processes.Stop(ctx, req.Workspace, req.Name); err != nil {
@@ -525,7 +524,7 @@ func (a *agentRunAdapter) Stop(ctx context.Context, req *apiari.AgentRunStopPara
 //
 // Validates agent run is in stopped/error state then deletes from DB.
 // Maps ErrDeleteNotStopped → -32001, ErrAgentRunNotFound → -32602.
-func (a *agentRunAdapter) Delete(ctx context.Context, req *apiari.AgentRunDeleteParams) error {
+func (a *agentRunAdapter) Delete(ctx context.Context, req *pkgariapi.AgentRunDeleteParams) error {
 	a.logger.Info("agentrun/delete", "workspace", req.Workspace, "name", req.Name)
 
 	if err := a.agents.Delete(ctx, req.Workspace, req.Name); err != nil {
@@ -535,7 +534,7 @@ func (a *agentRunAdapter) Delete(ctx context.Context, req *apiari.AgentRunDelete
 		}
 		var notStopped *agentd.ErrDeleteNotStopped
 		if errors.As(err, &notStopped) {
-			return &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: err.Error()}
+			return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
 		}
 		return jsonrpc.ErrInternal(err.Error())
 	}
@@ -554,7 +553,7 @@ func (a *agentRunAdapter) Delete(ctx context.Context, req *apiari.AgentRunDelete
 //
 // Accepts any agent state. Stops the existing shim (if running) then starts a
 // new one. Returns immediately with state="creating".
-func (a *agentRunAdapter) Restart(ctx context.Context, req *apiari.AgentRunRestartParams) (*apiari.AgentRunRestartResult, error) {
+func (a *agentRunAdapter) Restart(ctx context.Context, req *pkgariapi.AgentRunRestartParams) (*pkgariapi.AgentRunRestartResult, error) {
 	a.logger.Info("agentrun/restart", "workspace", req.Workspace, "name", req.Name)
 
 	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
@@ -568,7 +567,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, req *apiari.AgentRunResta
 	// Agents in terminal states have no active shim.
 	needsStop := agent.Status.State != apiruntime.StatusStopped && agent.Status.State != apiruntime.StatusError
 
-	if err := a.agents.UpdateStatus(ctx, req.Workspace, req.Name, apiari.AgentRunStatus{
+	if err := a.agents.UpdateStatus(ctx, req.Workspace, req.Name, pkgariapi.AgentRunStatus{
 		State: apiruntime.StatusCreating,
 	}); err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
@@ -584,7 +583,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, req *apiari.AgentRunResta
 					"workspace", wsName, "name", agName, "error", err)
 			}
 			// Stop() transitions state to "stopped"; re-set to "creating" for Start().
-			if err := a.agents.UpdateStatus(bgCtx, wsName, agName, apiari.AgentRunStatus{
+			if err := a.agents.UpdateStatus(bgCtx, wsName, agName, pkgariapi.AgentRunStatus{
 				State: apiruntime.StatusCreating,
 			}); err != nil {
 				a.logger.Warn("agentrun/restart: failed to re-transition to creating",
@@ -595,7 +594,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, req *apiari.AgentRunResta
 		if _, err := a.processes.Start(bgCtx, wsName, agName); err != nil {
 			a.logger.Warn("agentrun/restart: shim start failed",
 				"workspace", wsName, "name", agName, "error", err)
-			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, apiari.AgentRunStatus{
+			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, pkgariapi.AgentRunStatus{
 				State:        apiruntime.StatusError,
 				ErrorMessage: err.Error(),
 			})
@@ -605,21 +604,21 @@ func (a *agentRunAdapter) Restart(ctx context.Context, req *apiari.AgentRunResta
 	// Read back updated agent state for the response.
 	agentUpdated, err2 := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
 	if err2 != nil || agentUpdated == nil {
-		agentUpdated = &apiari.AgentRun{
-			Metadata: apiari.ObjectMeta{Workspace: req.Workspace, Name: req.Name},
-			Status:   apiari.AgentRunStatus{State: apiruntime.StatusCreating},
+		agentUpdated = &pkgariapi.AgentRun{
+			Metadata: pkgariapi.ObjectMeta{Workspace: req.Workspace, Name: req.Name},
+			Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusCreating},
 		}
 	}
-	return &apiari.AgentRunRestartResult{AgentRun: agentUpdated.ARIView()}, nil
+	return &pkgariapi.AgentRunRestartResult{AgentRun: agentUpdated.ARIView()}, nil
 }
 
 // List handles agentrun/list.
 //
 // Returns all agent runs matching the optional workspace/state filter.
-func (a *agentRunAdapter) List(ctx context.Context, req *apiari.AgentRunListParams) (*apiari.AgentRunListResult, error) {
+func (a *agentRunAdapter) List(ctx context.Context, req *pkgariapi.AgentRunListParams) (*pkgariapi.AgentRunListResult, error) {
 	a.logger.Info("agentrun/list", "workspace", req.Workspace, "state", req.State)
 
-	filter := &apiari.AgentRunFilter{
+	filter := &pkgariapi.AgentRunFilter{
 		Workspace: req.Workspace,
 		State:     apiruntime.Status(req.State),
 	}
@@ -628,17 +627,17 @@ func (a *agentRunAdapter) List(ctx context.Context, req *apiari.AgentRunListPara
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 
-	runs := make([]apiari.AgentRun, 0, len(agentRuns))
+	runs := make([]pkgariapi.AgentRun, 0, len(agentRuns))
 	for _, ag := range agentRuns {
 		runs = append(runs, ag.ARIView())
 	}
-	return &apiari.AgentRunListResult{AgentRuns: runs}, nil
+	return &pkgariapi.AgentRunListResult{AgentRuns: runs}, nil
 }
 
 // Status handles agentrun/status.
 //
 // Returns detailed agent run info plus optional shim runtime state.
-func (a *agentRunAdapter) Status(ctx context.Context, req *apiari.AgentRunStatusParams) (*apiari.AgentRunStatusResult, error) {
+func (a *agentRunAdapter) Status(ctx context.Context, req *pkgariapi.AgentRunStatusParams) (*pkgariapi.AgentRunStatusResult, error) {
 	a.logger.Info("agentrun/status", "workspace", req.Workspace, "name", req.Name)
 
 	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
@@ -649,12 +648,12 @@ func (a *agentRunAdapter) Status(ctx context.Context, req *apiari.AgentRunStatus
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.Name))
 	}
 
-	result := &apiari.AgentRunStatusResult{AgentRun: agent.ARIView()}
+	result := &pkgariapi.AgentRunStatusResult{AgentRun: agent.ARIView()}
 
 	// Best-effort: fetch shim runtime state if available.
 	if rts, err := a.processes.RuntimeStatus(ctx, req.Workspace, req.Name); err == nil {
 		st := rts.State
-		result.ShimState = &apiari.ShimStateInfo{
+		result.ShimState = &pkgariapi.ShimStateInfo{
 			Status: string(st.Status),
 			PID:    agent.Status.ShimPID,
 			Bundle: st.Bundle,
@@ -667,7 +666,7 @@ func (a *agentRunAdapter) Status(ctx context.Context, req *apiari.AgentRunStatus
 //
 // Returns the shim's Unix socket path so the caller can connect directly.
 // Agent run must be in idle or running state.
-func (a *agentRunAdapter) Attach(ctx context.Context, req *apiari.AgentRunAttachParams) (*apiari.AgentRunAttachResult, error) {
+func (a *agentRunAdapter) Attach(ctx context.Context, req *pkgariapi.AgentRunAttachParams) (*pkgariapi.AgentRunAttachResult, error) {
 	a.logger.Info("agentrun/attach", "workspace", req.Workspace, "name", req.Name)
 
 	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
@@ -679,7 +678,7 @@ func (a *agentRunAdapter) Attach(ctx context.Context, req *apiari.AgentRunAttach
 	}
 	if agent.Status.State != apiruntime.StatusIdle && agent.Status.State != apiruntime.StatusRunning {
 		return nil, &jsonrpc.RPCError{
-			Code:    apiari.CodeRecoveryBlocked,
+			Code:    pkgariapi.CodeRecoveryBlocked,
 			Message: fmt.Sprintf("agent not in idle/running state: %s", agent.Status.State),
 		}
 	}
@@ -690,7 +689,7 @@ func (a *agentRunAdapter) Attach(ctx context.Context, req *apiari.AgentRunAttach
 		socketPath = p.SocketPath
 	}
 
-	return &apiari.AgentRunAttachResult{SocketPath: socketPath}, nil
+	return &pkgariapi.AgentRunAttachResult{SocketPath: socketPath}, nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -702,7 +701,7 @@ func (a *agentRunAdapter) Attach(ctx context.Context, req *apiari.AgentRunAttach
 // Creates or updates an agent definition in the metadata store.
 //
 // Observability: INFO on success with name and command logged.
-func (a *agentAdapter) Set(ctx context.Context, req *apiari.AgentSetParams) (*apiari.AgentSetResult, error) {
+func (a *agentAdapter) Set(ctx context.Context, req *pkgariapi.AgentSetParams) (*pkgariapi.AgentSetResult, error) {
 	if req.Name == "" {
 		return nil, jsonrpc.ErrInvalidParams("name is required")
 	}
@@ -712,9 +711,9 @@ func (a *agentAdapter) Set(ctx context.Context, req *apiari.AgentSetParams) (*ap
 
 	a.logger.Info("agent/set", "name", req.Name, "command", req.Command)
 
-	ag := &apiari.Agent{
-		Metadata: apiari.ObjectMeta{Name: req.Name},
-		Spec: apiari.AgentSpec{
+	ag := &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: req.Name},
+		Spec: pkgariapi.AgentSpec{
 			Command:               req.Command,
 			Args:                  req.Args,
 			Env:                   req.Env,
@@ -728,15 +727,15 @@ func (a *agentAdapter) Set(ctx context.Context, req *apiari.AgentSetParams) (*ap
 	// Read back to get server-assigned timestamps.
 	stored, err := a.store.GetAgent(ctx, req.Name)
 	if err != nil || stored == nil {
-		return &apiari.AgentSetResult{Agent: *ag}, nil
+		return &pkgariapi.AgentSetResult{Agent: *ag}, nil
 	}
-	return &apiari.AgentSetResult{Agent: *stored}, nil
+	return &pkgariapi.AgentSetResult{Agent: *stored}, nil
 }
 
 // Get handles agent/get.
 //
 // Returns the agent definition info or InvalidParams if not found.
-func (a *agentAdapter) Get(ctx context.Context, req *apiari.AgentGetParams) (*apiari.AgentGetResult, error) {
+func (a *agentAdapter) Get(ctx context.Context, req *pkgariapi.AgentGetParams) (*pkgariapi.AgentGetResult, error) {
 	if req.Name == "" {
 		return nil, jsonrpc.ErrInvalidParams("name is required")
 	}
@@ -750,13 +749,13 @@ func (a *agentAdapter) Get(ctx context.Context, req *apiari.AgentGetParams) (*ap
 	if ag == nil {
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s not found", req.Name))
 	}
-	return &apiari.AgentGetResult{Agent: *ag}, nil
+	return &pkgariapi.AgentGetResult{Agent: *ag}, nil
 }
 
 // List handles agent/list.
 //
 // Returns all agent definition objects stored in the metadata DB.
-func (a *agentAdapter) List(ctx context.Context) (*apiari.AgentListResult, error) {
+func (a *agentAdapter) List(ctx context.Context) (*pkgariapi.AgentListResult, error) {
 	a.logger.Info("agent/list")
 
 	ags, err := a.store.ListAgents(ctx)
@@ -764,18 +763,18 @@ func (a *agentAdapter) List(ctx context.Context) (*apiari.AgentListResult, error
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 
-	agents := make([]apiari.Agent, 0, len(ags))
+	agents := make([]pkgariapi.Agent, 0, len(ags))
 	for _, ag := range ags {
 		agents = append(agents, *ag)
 	}
-	return &apiari.AgentListResult{Agents: agents}, nil
+	return &pkgariapi.AgentListResult{Agents: agents}, nil
 }
 
 // Delete handles agent/delete.
 // No-op if the agent definition does not exist.
 //
 // Observability: INFO on delete with name logged.
-func (a *agentAdapter) Delete(ctx context.Context, req *apiari.AgentDeleteParams) error {
+func (a *agentAdapter) Delete(ctx context.Context, req *pkgariapi.AgentDeleteParams) error {
 	if req.Name == "" {
 		return jsonrpc.ErrInvalidParams("name is required")
 	}
@@ -794,14 +793,14 @@ func (a *agentAdapter) Delete(ctx context.Context, req *apiari.AgentDeleteParams
 
 // listWorkspaceMembers returns all AgentRun domain objects for the given workspace.
 // Returns nil (not an error) if the query fails.
-func (s *Service) listWorkspaceMembers(ctx context.Context, wsName string) []apiari.AgentRun {
-	agentRuns, err := s.agents.List(ctx, &apiari.AgentRunFilter{Workspace: wsName})
+func (s *Service) listWorkspaceMembers(ctx context.Context, wsName string) []pkgariapi.AgentRun {
+	agentRuns, err := s.agents.List(ctx, &pkgariapi.AgentRunFilter{Workspace: wsName})
 	if err != nil {
 		s.logger.Error("listWorkspaceMembers: list agent runs failed",
 			"workspace", wsName, "err", err)
 		return nil
 	}
-	runs := make([]apiari.AgentRun, 0, len(agentRuns))
+	runs := make([]pkgariapi.AgentRun, 0, len(agentRuns))
 	for _, ag := range agentRuns {
 		runs = append(runs, ag.ARIView())
 	}
@@ -810,7 +809,7 @@ func (s *Service) listWorkspaceMembers(ctx context.Context, wsName string) []api
 
 // recordPromptDeliveryFailure updates agent run status after a failed prompt
 // delivery, consulting the runtime status to get the authoritative state.
-func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback apiari.AgentRunStatus, cause error, markErrorWhenRuntimeUnavailable bool) {
+func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkgariapi.AgentRunStatus, cause error, markErrorWhenRuntimeUnavailable bool) {
 	ctx := context.Background()
 	current, err := s.store.GetAgentRun(ctx, wsName, name)
 	if err != nil {
@@ -850,7 +849,7 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback apia
 		return
 	}
 
-	_ = s.agents.UpdateStatus(ctx, wsName, name, apiari.AgentRunStatus{
+	_ = s.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
 		State:          apiruntime.StatusError,
 		ShimSocketPath: fallback.ShimSocketPath,
 		ShimStateDir:   fallback.ShimStateDir,
@@ -863,7 +862,7 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback apia
 // workspace message before delivery. It encodes sender identity and, when
 // NeedsReply is set, the reply-to address so the receiving agent knows it is
 // expected to respond.
-func buildWorkspaceEnvelope(p apiari.WorkspaceSendParams) string {
+func buildWorkspaceEnvelope(p pkgariapi.WorkspaceSendParams) string {
 	if p.NeedsReply {
 		return "[workspace-message from=" + p.From + " reply-to=" + p.From + " reply-requested=true]\n\n"
 	}

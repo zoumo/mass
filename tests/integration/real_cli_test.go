@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	ari "github.com/zoumo/oar/api/ari"
-	ariclient "github.com/zoumo/oar/pkg/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
+	ariclient "github.com/zoumo/oar/pkg/ari/client"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
@@ -24,7 +24,7 @@ import (
 func setupAgentdTestWithRuntimeClass(
 	t *testing.T,
 	runtimeClassName string,
-	templateSpec ari.AgentSetParams,
+	templateSpec pkgariapi.AgentSetParams,
 ) (context.Context, context.CancelFunc, *ariclient.Client, func()) {
 	t.Helper()
 
@@ -71,7 +71,7 @@ func setupAgentdTestWithRuntimeClass(
 
 	// Register the agent template via agent/set. Ensure the name field is set.
 	templateSpec.Name = runtimeClassName
-	var runtimeResult ari.AgentSetResult
+	var runtimeResult pkgariapi.AgentSetResult
 	if err := client.Call("agent/set", templateSpec, &runtimeResult); err != nil {
 		cancel()
 		client.Close()
@@ -130,7 +130,7 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ariclient.Clie
 
 	// Step 3: agent/prompt — async dispatch; agent startup may take 10-30s for real CLIs
 	t.Log("Step 3: agent/prompt (async — triggers agent startup, may take 10-30s)")
-	var promptResult ari.AgentRunPromptResult
+	var promptResult pkgariapi.AgentRunPromptResult
 	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,
@@ -151,7 +151,7 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ariclient.Clie
 
 	// Step 5: agent/status — verify shimState is non-nil (shim still running)
 	t.Log("Step 5: agent/status")
-	var statusResult ari.AgentRunStatusResult
+	var statusResult pkgariapi.AgentRunStatusResult
 	if err := client.Call("agentrun/status", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,
@@ -214,7 +214,7 @@ func TestRealCLI_GsdPi(t *testing.T) {
 		t.Skip("skipping: ANTHROPIC_API_KEY not set (gsd-pi needs an LLM key to process prompts)")
 	}
 
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", ari.AgentSetParams{
+	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", pkgariapi.AgentSetParams{
 		Command: "bunx",
 		Args:    []string{"pi-acp"},
 		Env: []apiruntime.EnvVar{
@@ -247,7 +247,7 @@ func TestRealCLI_ClaudeCode(t *testing.T) {
 		t.Skipf("skipping: claude-code adapter not found at %s", adapterPath)
 	}
 
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", ari.AgentSetParams{
+	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", pkgariapi.AgentSetParams{
 		Command: "node",
 		Args:    []string{adapterPath},
 		Env: []apiruntime.EnvVar{

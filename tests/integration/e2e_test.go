@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	ari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 )
 
 // TestEndToEndPipeline tests the complete agentd → agent-shim → mockagent lifecycle
@@ -45,7 +45,7 @@ func TestEndToEndPipeline(t *testing.T) {
 
 	// Step 3: agent/prompt (async dispatch)
 	t.Log("Step 3: agent/prompt (async dispatch)")
-	var promptResult ari.AgentRunPromptResult
+	var promptResult pkgariapi.AgentRunPromptResult
 	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      agentName,

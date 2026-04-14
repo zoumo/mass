@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"time"
 
-	apiari "github.com/zoumo/oar/api/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
@@ -46,7 +46,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 		return fmt.Errorf("recovery: list agents: %w", err)
 	}
 
-	var candidates []*apiari.AgentRun
+	var candidates []*pkgariapi.AgentRun
 	for _, a := range allAgents {
 		// Skip terminal states: stopped agents have no shim to recover,
 		// and error agents require explicit restart per the agent lifecycle model.
@@ -88,7 +88,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 					"socket_path", agent.Status.ShimSocketPath,
 					"error", err)
 				// Fail-closed: mark agent as stopped (D012/D029).
-				if tErr := m.agents.UpdateStatus(ctx, ws, name, apiari.AgentRunStatus{
+				if tErr := m.agents.UpdateStatus(ctx, ws, name, pkgariapi.AgentRunStatus{
 					State:        apiruntime.StatusStopped,
 					ErrorMessage: fmt.Sprintf("shim not recovered after daemon restart: %v", err),
 				}); tErr != nil {
@@ -125,7 +125,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 				// Already reconciled by recoverAgent; no additional update needed.
 			} else if currentState == apiruntime.StatusRunning && shimStatus == apiruntime.StatusIdle {
 				// Shim became idle during recovery — update to idle.
-				if aErr := m.agents.UpdateStatus(ctx, ws, name, apiari.AgentRunStatus{
+				if aErr := m.agents.UpdateStatus(ctx, ws, name, pkgariapi.AgentRunStatus{
 					State:          apiruntime.StatusIdle,
 					ShimSocketPath: agent.Status.ShimSocketPath,
 					ShimStateDir:   agent.Status.ShimStateDir,
@@ -142,7 +142,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 
 	// Creating-cleanup pass: agents that were still bootstrapping when the
 	// daemon restarted will never complete — mark them as error.
-	if creatingAgents, err := m.store.ListAgentRuns(ctx, &apiari.AgentRunFilter{State: apiruntime.StatusCreating}); err != nil {
+	if creatingAgents, err := m.store.ListAgentRuns(ctx, &pkgariapi.AgentRunFilter{State: apiruntime.StatusCreating}); err != nil {
 		m.logger.Warn("recovery: failed to list creating agents for cleanup", "error", err)
 	} else {
 		for _, agent := range creatingAgents {
@@ -152,7 +152,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			}
 			m.logger.Warn("recovery: agent stuck in creating, marking error", "agent_key", key)
 			if aErr := m.agents.UpdateStatus(ctx, agent.Metadata.Workspace, agent.Metadata.Name,
-				apiari.AgentRunStatus{
+				pkgariapi.AgentRunStatus{
 					State:        apiruntime.StatusError,
 					ErrorMessage: "agent bootstrap lost: daemon restarted during creating phase",
 				}); aErr != nil {
@@ -176,7 +176,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 
 // recoverAgent attempts to reconnect to a single shim process.
 // Returns the shim's reported apiruntime.Status on success (apiruntime.StatusStopped on failure).
-func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRun) (apiruntime.Status, error) {
+func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.AgentRun) (apiruntime.Status, error) {
 	if agent.Status.ShimSocketPath == "" {
 		return apiruntime.StatusStopped, fmt.Errorf("no socket path persisted for agent %s/%s",
 			agent.Metadata.Workspace, agent.Metadata.Name)
@@ -234,7 +234,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRu
 
 	case status.State.Status == apiruntime.StatusRunning && agent.Status.State == apiruntime.StatusIdle:
 		// Shim is running but DB still says idle — update DB to match shim truth.
-		if err := m.agents.UpdateStatus(ctx, ws, name, apiari.AgentRunStatus{
+		if err := m.agents.UpdateStatus(ctx, ws, name, pkgariapi.AgentRunStatus{
 			State:          apiruntime.StatusRunning,
 			ShimSocketPath: agent.Status.ShimSocketPath,
 			ShimStateDir:   agent.Status.ShimStateDir,
@@ -270,7 +270,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRu
 
 	// Apply RestartPolicy: try_reload attempts ACP session/load to restore
 	// conversation history. always_new (default) starts fresh.
-	if agent.Spec.RestartPolicy == apiari.RestartPolicyTryReload {
+	if agent.Spec.RestartPolicy == pkgariapi.RestartPolicyTryReload {
 		sessionID, readErr := m.readStateSessionID(agent.Status.ShimStateDir)
 		if readErr != nil {
 			logger.Info("try_reload: could not read sessionId from state file, skipping",
@@ -333,7 +333,7 @@ func (m *ProcessManager) watchRecoveredProcess(workspace, name string, shimProc 
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: apiruntime.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped})
 
 	// Close the Done channel LAST to signal all cleanup is complete.
 	close(shimProc.Done)

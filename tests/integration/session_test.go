@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	ari "github.com/zoumo/oar/api/ari"
-	ariclient "github.com/zoumo/oar/pkg/ari"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
+	ariclient "github.com/zoumo/oar/pkg/ari/client"
 )
 
 // testSocketCounter provides unique socket paths for each test.
@@ -76,8 +76,8 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *aricli
 	}
 
 	// Register the mockagent runtime so tests can use runtimeClass="mockagent".
-	var runtimeResult ari.AgentSetResult
-	if err := client.Call("agent/set", ari.AgentSetParams{
+	var runtimeResult pkgariapi.AgentSetResult
+	if err := client.Call("agent/set", pkgariapi.AgentSetParams{
 		Name:    "mockagent",
 		Command: mockagentBin,
 	}, &runtimeResult); err != nil {
@@ -114,7 +114,7 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *aricli
 // phase=="ready". Returns the workspace name. Fatals on timeout or error.
 func createTestWorkspace(t *testing.T, client *ariclient.Client, name string) string {
 	t.Helper()
-	var createResult ari.WorkspaceCreateResult
+	var createResult pkgariapi.WorkspaceCreateResult
 	if err := client.Call("workspace/create", map[string]interface{}{
 		"name": name,
 		"source": map[string]interface{}{
@@ -128,7 +128,7 @@ func createTestWorkspace(t *testing.T, client *ariclient.Client, name string) st
 	// Poll workspace/status until phase=="ready"
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		var statusResult ari.WorkspaceStatusResult
+		var statusResult pkgariapi.WorkspaceStatusResult
 		if err := client.Call("workspace/status", map[string]interface{}{"name": name}, &statusResult); err != nil {
 			t.Logf("workspace/status (%s): %v (retrying)", name, err)
 			time.Sleep(200 * time.Millisecond)
@@ -163,7 +163,7 @@ func waitForAgentState(
 	client *ariclient.Client,
 	workspace, name, wantState string,
 	timeout time.Duration,
-) ari.AgentRunStatusResult {
+) pkgariapi.AgentRunStatusResult {
 	t.Helper()
 	return waitForAgentStateOneOf(t, client, workspace, name, []string{wantState}, timeout)
 }
@@ -177,11 +177,11 @@ func waitForAgentStateOneOf(
 	workspace, name string,
 	wantStates []string,
 	timeout time.Duration,
-) ari.AgentRunStatusResult {
+) pkgariapi.AgentRunStatusResult {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	params := map[string]interface{}{"workspace": workspace, "name": name}
-	var result ari.AgentRunStatusResult
+	var result pkgariapi.AgentRunStatusResult
 	for time.Now().Before(deadline) {
 		if err := client.Call("agentrun/status", params, &result); err != nil {
 			t.Logf("agent/status (%s/%s): %v (retrying)", workspace, name, err)
@@ -202,9 +202,9 @@ func waitForAgentStateOneOf(
 
 // createAgentAndWait calls agent/create and polls until state=="idle".
 // Returns the status result after the agent is ready.
-func createAgentAndWait(t *testing.T, client *ariclient.Client, workspace, name, agentDef string) ari.AgentRunStatusResult {
+func createAgentAndWait(t *testing.T, client *ariclient.Client, workspace, name, agentDef string) pkgariapi.AgentRunStatusResult {
 	t.Helper()
-	var createResult ari.AgentRunCreateResult
+	var createResult pkgariapi.AgentRunCreateResult
 	if err := client.Call("agentrun/create", map[string]interface{}{
 		"workspace": workspace,
 		"name":      name,
@@ -231,7 +231,7 @@ func stopAndDeleteAgent(t *testing.T, client *ariclient.Client, workspace, name 
 	// Poll briefly for stopped/error state before delete (best-effort)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		var st ari.AgentRunStatusResult
+		var st pkgariapi.AgentRunStatusResult
 		if err := client.Call("agentrun/status", map[string]interface{}{
 			"workspace": workspace,
 			"name":      name,
@@ -281,7 +281,7 @@ func TestAgentLifecycle(t *testing.T) {
 
 	// Step 2: agent/prompt → async dispatch; state transitions to running
 	t.Log("Step 2: agent/prompt (async dispatch)")
-	var promptResult ari.AgentRunPromptResult
+	var promptResult pkgariapi.AgentRunPromptResult
 	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-lifecycle",
@@ -320,7 +320,7 @@ func TestAgentLifecycle(t *testing.T) {
 	}
 
 	// Verify agent is gone (status should return error)
-	var verifyStatus ari.AgentRunStatusResult
+	var verifyStatus pkgariapi.AgentRunStatusResult
 	err := client.Call("agentrun/status", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-lifecycle",
@@ -350,7 +350,7 @@ func TestAgentPromptAndStop(t *testing.T) {
 	t.Logf("agent ready: state=%s", status.AgentRun.Status.State)
 
 	// Prompt the agent (async dispatch)
-	var promptResult ari.AgentRunPromptResult
+	var promptResult pkgariapi.AgentRunPromptResult
 	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-ps",
@@ -404,7 +404,7 @@ func TestAgentPromptFromIdle(t *testing.T) {
 	}
 
 	// Prompt immediately from idle state
-	var promptResult ari.AgentRunPromptResult
+	var promptResult pkgariapi.AgentRunPromptResult
 	if err := client.Call("agentrun/prompt", map[string]interface{}{
 		"workspace": wsName,
 		"name":      "agent-auto",
@@ -452,7 +452,7 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 
 	for i, promptText := range prompts {
 		t.Logf("Sending prompt %d/%d: %q", i+1, len(prompts), promptText)
-		var promptResult ari.AgentRunPromptResult
+		var promptResult pkgariapi.AgentRunPromptResult
 		if err := client.Call("agentrun/prompt", map[string]interface{}{
 			"workspace": wsName,
 			"name":      "agent-seq",
