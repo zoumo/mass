@@ -38,7 +38,7 @@ All production callers already migrated in S05. No new wiring introduced — onl
   - Files: `pkg/rpc/server.go`, `pkg/rpc/server_test.go`, `pkg/rpc/server_internal_test.go`, `pkg/agentd/shim_client.go`, `pkg/agentd/shim_client_test.go`, `pkg/agentd/process.go`
   - Verify: make build exits 0. go test ./pkg/agentd/... -count=1 exits 0. rg '"github.com/zoumo/oar/pkg/rpc"' --type go returns zero matches.
 
-- [ ] **T02: Migrate pkg/ari/server_test.go to ariserver API; delete pkg/ari/server.go** `est:45 min`
+- [x] **T02: Migrate pkg/ari/server_test.go to ariserver API; delete pkg/ari/server.go** `est:45 min`
   The 801-line pkg/ari/server_test.go uses ari.New() and ari.Server from the old monolithic pkg/ari/server.go. Migrate its test harness to use the new API. Then delete the old monolith.
 
 ## Steps

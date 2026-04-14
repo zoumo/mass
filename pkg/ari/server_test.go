@@ -22,7 +22,9 @@ import (
 	apiari "github.com/zoumo/oar/api/ari"
 	"github.com/zoumo/oar/pkg/agentd"
 	"github.com/zoumo/oar/pkg/ari"
+	ariserver "github.com/zoumo/oar/pkg/ari/server"
 	"github.com/zoumo/oar/pkg/events"
+	"github.com/zoumo/oar/pkg/jsonrpc"
 	shimclient "github.com/zoumo/oar/pkg/shim/client"
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
@@ -34,7 +36,7 @@ import (
 
 // testEnv holds all components for a running ARI test server.
 type testEnv struct {
-	srv       *ari.Server
+	srv       *jsonrpc.Server
 	client    *ari.Client
 	store     *store.Store
 	processes *agentd.ProcessManager
@@ -70,10 +72,15 @@ func newTestServer(t *testing.T) *testEnv {
 	sockPath := shortSockPath(t)
 	t.Cleanup(func() { _ = os.Remove(sockPath) })
 
-	srv := ari.New(mgr, registry, agents, processes, store, sockPath, tmpDir, slog.Default())
+	svc := ariserver.New(mgr, registry, agents, processes, store, tmpDir, slog.Default())
+	srv := jsonrpc.NewServer(slog.Default())
+	ariserver.Register(srv, svc)
+
+	ln, err := net.Listen("unix", sockPath)
+	require.NoError(t, err)
 
 	serveErr := make(chan error, 1)
-	go func() { serveErr <- srv.Serve() }()
+	go func() { serveErr <- srv.Serve(ln) }()
 
 	// Wait for socket to appear.
 	require.Eventually(t, func() bool {
@@ -86,6 +93,7 @@ func newTestServer(t *testing.T) *testEnv {
 
 	t.Cleanup(func() {
 		_ = client.Close()
+		_ = ln.Close()
 		_ = srv.Shutdown(context.Background())
 		select {
 		case <-serveErr:
