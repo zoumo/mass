@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // makeAgentRun returns a minimal valid AgentRun for test use.
@@ -20,7 +20,7 @@ func makeAgentRun(workspace, name string) *apiari.AgentRun {
 			Agent: "default",
 		},
 		Status: apiari.AgentRunStatus{
-			State: api.StatusIdle,
+			State: apiruntime.StatusIdle,
 		},
 	}
 }
@@ -128,14 +128,14 @@ func TestListAgentRuns_FilterByState(t *testing.T) {
 	s := tempStore(t)
 
 	agentRunning := makeAgentRun("ws", "runner")
-	agentRunning.Status.State = api.StatusRunning
+	agentRunning.Status.State = apiruntime.StatusRunning
 	require.NoError(t, s.CreateAgentRun(t.Context(), agentRunning))
 
 	agentIdle := makeAgentRun("ws", "idler")
-	agentIdle.Status.State = api.StatusIdle
+	agentIdle.Status.State = apiruntime.StatusIdle
 	require.NoError(t, s.CreateAgentRun(t.Context(), agentIdle))
 
-	running, err := s.ListAgentRuns(t.Context(), &apiari.AgentRunFilter{State: api.StatusRunning})
+	running, err := s.ListAgentRuns(t.Context(), &apiari.AgentRunFilter{State: apiruntime.StatusRunning})
 	require.NoError(t, err)
 	require.Len(t, running, 1)
 	require.Equal(t, "runner", running[0].Metadata.Name)
@@ -164,7 +164,7 @@ func TestUpdateAgentRunStatus(t *testing.T) {
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws", "a")))
 
 	newStatus := apiari.AgentRunStatus{
-		State:          api.StatusRunning,
+		State:          apiruntime.StatusRunning,
 		ShimSocketPath: "/tmp/shim.sock",
 		ShimPID:        12345,
 	}
@@ -172,14 +172,14 @@ func TestUpdateAgentRunStatus(t *testing.T) {
 
 	got, err := s.GetAgentRun(t.Context(), "ws", "a")
 	require.NoError(t, err)
-	require.Equal(t, api.StatusRunning, got.Status.State)
+	require.Equal(t, apiruntime.StatusRunning, got.Status.State)
 	require.Equal(t, "/tmp/shim.sock", got.Status.ShimSocketPath)
 	require.Equal(t, 12345, got.Status.ShimPID)
 }
 
 func TestUpdateAgentRunStatus_NotFound(t *testing.T) {
 	s := tempStore(t)
-	err := s.UpdateAgentRunStatus(t.Context(), "ws", "ghost", apiari.AgentRunStatus{State: api.StatusRunning})
+	err := s.UpdateAgentRunStatus(t.Context(), "ws", "ghost", apiari.AgentRunStatus{State: apiruntime.StatusRunning})
 	require.Error(t, err)
 }
 
@@ -189,13 +189,13 @@ func TestTransitionAgentRunState(t *testing.T) {
 	agent.Status.ShimSocketPath = "/tmp/shim.sock"
 	require.NoError(t, s.CreateAgentRun(t.Context(), agent))
 
-	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "reserved", api.StatusIdle, api.StatusRunning)
+	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "reserved", apiruntime.StatusIdle, apiruntime.StatusRunning)
 	require.NoError(t, err)
 	require.True(t, ok)
 
 	got, err := s.GetAgentRun(t.Context(), "ws", "reserved")
 	require.NoError(t, err)
-	require.Equal(t, api.StatusRunning, got.Status.State)
+	require.Equal(t, apiruntime.StatusRunning, got.Status.State)
 	require.Equal(t, "/tmp/shim.sock", got.Status.ShimSocketPath)
 }
 
@@ -203,13 +203,13 @@ func TestTransitionAgentRunState_WrongExpectedState(t *testing.T) {
 	s := tempStore(t)
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws", "busy")))
 
-	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "busy", api.StatusStopped, api.StatusRunning)
+	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "busy", apiruntime.StatusStopped, apiruntime.StatusRunning)
 	require.NoError(t, err)
 	require.False(t, ok)
 
 	got, err := s.GetAgentRun(t.Context(), "ws", "busy")
 	require.NoError(t, err)
-	require.Equal(t, api.StatusIdle, got.Status.State)
+	require.Equal(t, apiruntime.StatusIdle, got.Status.State)
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────

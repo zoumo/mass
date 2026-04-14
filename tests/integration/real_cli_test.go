@@ -15,7 +15,7 @@ import (
 
 	ari "github.com/zoumo/oar/api/ari"
 	ariclient "github.com/zoumo/oar/pkg/ari"
-	"github.com/zoumo/oar/api"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // setupAgentdTestWithRuntimeClass creates a temporary agentd instance and registers
@@ -217,7 +217,7 @@ func TestRealCLI_GsdPi(t *testing.T) {
 	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", ari.AgentSetParams{
 		Command: "bunx",
 		Args:    []string{"pi-acp"},
-		Env: []api.EnvVar{
+		Env: []apiruntime.EnvVar{
 			{Name: "PI_ACP_PI_COMMAND", Value: "gsd"},
 			{Name: "PI_CODING_AGENT_DIR", Value: "/Users/jim/.gsd/agent"},
 		},
@@ -250,7 +250,7 @@ func TestRealCLI_ClaudeCode(t *testing.T) {
 	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", ari.AgentSetParams{
 		Command: "node",
 		Args:    []string{adapterPath},
-		Env: []api.EnvVar{
+		Env: []apiruntime.EnvVar{
 			{Name: "ANTHROPIC_API_KEY", Value: apiKey},
 		},
 	})

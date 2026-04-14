@@ -80,7 +80,7 @@ Two import patterns apply across these nine files:
   - Files: `pkg/agentd/agent.go`, `pkg/agentd/agent_test.go`, `pkg/agentd/recovery.go`, `pkg/agentd/process.go`, `pkg/agentd/process_test.go`, `pkg/agentd/recovery_test.go`, `pkg/agentd/recovery_posture_test.go`, `pkg/agentd/mock_shim_server_test.go`, `pkg/agentd/shim_boundary_test.go`
   - Verify: go build ./pkg/agentd/... 2>&1 | head -20 && rg '"github.com/zoumo/oar/api/runtime"' pkg/agentd/ --type go && echo 'FAIL' || echo 'PASS'
 
-- [ ] **T03: Migrate remaining consumers, delete dead files, verify make build + go test** `est:45 min`
+- [x] **T03: Migrate remaining consumers, delete dead files, verify make build + go test** `est:45 min`
   Complete the migration for the remaining packages (api/ari/, api/shim/, pkg/ari/server/, pkg/store/, tests/integration/), delete the five dead files, and verify the full build + test suite passes.
 
 ### Files to update (Status/EnvVar migration)
