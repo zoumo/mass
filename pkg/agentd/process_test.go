@@ -13,6 +13,7 @@ import (
 
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	"github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/store"
 )
@@ -172,7 +173,7 @@ func TestProcessManagerStart(t *testing.T) {
 	shimProc.StopDrain()
 
 	// Send a Prompt to trigger events (session/prompt).
-	promptResult, err := shimProc.Client.Prompt(ctx, "hello mockagent")
+	promptResult, err := shimProc.Client.Prompt(ctx, &shim.SessionPromptParams{Prompt: "hello mockagent"})
 	if err != nil {
 		t.Fatalf("Prompt RPC: %v", err)
 	}

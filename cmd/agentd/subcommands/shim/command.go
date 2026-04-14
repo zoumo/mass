@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,10 +13,12 @@ import (
 	"github.com/spf13/cobra"
 
 	apiruntime "github.com/zoumo/oar/api/runtime"
+	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/internal/logging"
 	"github.com/zoumo/oar/pkg/events"
-	"github.com/zoumo/oar/pkg/rpc"
+	"github.com/zoumo/oar/pkg/jsonrpc"
 	"github.com/zoumo/oar/pkg/runtime"
+	shimserver "github.com/zoumo/oar/pkg/shim/server"
 	"github.com/zoumo/oar/pkg/spec"
 )
 
@@ -116,14 +119,28 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 	trans.Start()
 	defer trans.Stop()
 
-	srv := rpc.New(mgr, trans, socketPath, logPath, logger)
+	// Build service and register it with a new jsonrpc.Server.
+	svc := shimserver.New(mgr, trans, logPath, logger)
+	srv := jsonrpc.NewServer(logger)
+	apishim.RegisterShimService(srv, svc)
+
+	// Remove stale socket file from a previous crash (K014).
+	_ = os.Remove(socketPath)
+
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		return fmt.Errorf("agent-shim: listen %s: %w", socketPath, err)
+	}
+	defer ln.Close()
+
 	go func() {
-		if err := srv.Serve(); err != nil {
+		if err := srv.Serve(ln); err != nil {
 			logger.Error("rpc server error", "error", err)
 		}
 		cancel()
 	}()
 
 	<-ctx.Done()
+	_ = ln.Close() // ensure srv.Serve returns
 	return srv.Shutdown(context.Background())
 }

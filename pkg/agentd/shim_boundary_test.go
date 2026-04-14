@@ -14,10 +14,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/pkg/events"
+	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
-	
+	"github.com/zoumo/oar/pkg/events"
+	shimclient "github.com/zoumo/oar/pkg/shim/client"
 )
 
 // TestStateChange_CreatingToIdle_UpdatesDB verifies that a runtime/state_change
@@ -68,7 +69,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 
 	// Connect using the production notification handler (D088 boundary).
 	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := DialWithHandler(ctx, socketPath, handler)
+	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
@@ -79,7 +80,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	pm.mu.Unlock()
 
 	// Subscribe — mock server emits the queued notification asynchronously.
-	_, err = client.Subscribe(ctx, nil, nil)
+	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
 	require.NoError(t, err)
 
 	// Wait for the stateChange notification to drive the DB update.
@@ -137,12 +138,12 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 	}
 
 	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := DialWithHandler(ctx, socketPath, handler)
+	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
 
-	_, err = client.Subscribe(ctx, nil, nil)
+	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
 	require.NoError(t, err)
 
 	for i := 0; i < 3; i++ {
@@ -218,7 +219,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	}
 
 	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := DialWithHandler(ctx, socketPath, handler)
+	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
@@ -227,7 +228,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	pm.processes[key] = shimProc
 	pm.mu.Unlock()
 
-	_, err = client.Subscribe(ctx, nil, nil)
+	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
 	require.NoError(t, err)
 
 	// Wait for both stateChange notifications to be processed (final state = idle).
@@ -279,7 +280,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 
 	// Connect using the production handler.
 	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := DialWithHandler(ctx, socketPath, handler)
+	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
@@ -289,7 +290,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	pm.mu.Unlock()
 
 	// Subscribe with no queued notifications.
-	_, err = client.Subscribe(ctx, nil, nil)
+	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
 	require.NoError(t, err)
 
 	// Allow notification delivery goroutines to flush (none should fire).
@@ -346,7 +347,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	}
 
 	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := DialWithHandler(ctx, socketPath, handler)
+	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
@@ -355,7 +356,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	pm.processes[key] = shimProc
 	pm.mu.Unlock()
 
-	_, err = client.Subscribe(ctx, nil, nil)
+	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
 	require.NoError(t, err)
 
 	// Wait for notification to be delivered and dropped.

@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"github.com/zoumo/oar/internal/logging"
 	"github.com/zoumo/oar/pkg/agentd"
 	"github.com/zoumo/oar/pkg/ari"
+	ariserver "github.com/zoumo/oar/pkg/ari/server"
+	"github.com/zoumo/oar/pkg/jsonrpc"
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
 )
@@ -82,7 +85,7 @@ func run(rootPath, logLevel, logFormat string) error {
 	}
 
 	// Initialize metadata store.
-	store, err := store.NewStore(opts.MetaDBPath(), logger)
+	metaStore, err := store.NewStore(opts.MetaDBPath(), logger)
 	if err != nil {
 		return err
 	}
@@ -97,11 +100,11 @@ func run(rootPath, logLevel, logFormat string) error {
 	logger.Info("registry initialized")
 
 	// Create AgentRunManager.
-	agents := agentd.NewAgentRunManager(store, logger)
+	agents := agentd.NewAgentRunManager(metaStore, logger)
 	logger.Info("agent run manager initialized")
 
 	// Create ProcessManager (self-fork or OAR_SHIM_BINARY override).
-	processes := agentd.NewProcessManager(agents, store, opts.SocketPath(), opts.BundleRoot(), logger, logLevel, logFormat)
+	processes := agentd.NewProcessManager(agents, metaStore, opts.SocketPath(), opts.BundleRoot(), logger, logLevel, logFormat)
 	logger.Info("process manager initialized",
 		"socket_path", opts.SocketPath(),
 		"bundle_root", opts.BundleRoot(),
@@ -119,25 +122,36 @@ func run(rootPath, logLevel, logFormat string) error {
 	}
 
 	// Rebuild registry from DB after recovery.
-	if err := registry.RebuildFromDB(store); err != nil {
+	if err := registry.RebuildFromDB(metaStore); err != nil {
 		logger.Warn("registry rebuild failed (non-fatal)", "error", err)
 	} else {
 		logger.Info("registry rebuilt from database")
 	}
 
 	// Initialize workspace manager refcounts from DB.
-	if err := manager.InitRefCounts(store); err != nil {
+	if err := manager.InitRefCounts(metaStore); err != nil {
 		logger.Warn("workspace refcount init failed (non-fatal)", "error", err)
 	}
 
-	// Create ARI Server.
-	srv := ari.New(manager, registry, agents, processes, store, opts.SocketPath(), opts.WorkspaceRoot(), logger)
+	// Create ARI service and wire it to a new jsonrpc.Server.
+	svc := ariserver.New(manager, registry, agents, processes, metaStore, opts.WorkspaceRoot(), logger)
+	srv := jsonrpc.NewServer(logger)
+	ariserver.Register(srv, svc)
 	logger.Info("ARI server created")
+
+	// Remove stale socket file from a previous crash (K014).
+	_ = os.Remove(opts.SocketPath())
+
+	ln, err := net.Listen("unix", opts.SocketPath())
+	if err != nil {
+		return err
+	}
+	defer ln.Close()
 
 	// Start server in goroutine.
 	go func() {
 		logger.Info("starting ARI server", "socket", opts.SocketPath())
-		if err := srv.Serve(); err != nil {
+		if err := srv.Serve(ln); err != nil {
 			logger.Error("server error", "error", err)
 		}
 	}()
@@ -153,13 +167,14 @@ func run(rootPath, logLevel, logFormat string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	_ = ln.Close() // close listener so srv.Serve returns
 	if err := srv.Shutdown(ctx); err != nil {
 		logger.Error("shutdown error", "error", err)
 	}
 
 	// Close metadata store.
 	logger.Info("closing metadata store")
-	if err := store.Close(); err != nil {
+	if err := metaStore.Close(); err != nil {
 		logger.Error("metadata store close error", "error", err)
 	}
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/agentd"
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
@@ -513,7 +514,7 @@ func (s *Server) handleWorkspaceSend(ctx context.Context, conn *jsonrpc2.Conn, r
 	// Fire-and-forget: send prompt without blocking the caller.
 	msg := buildWorkspaceEnvelope(params) + params.Message
 	go func() {
-		if _, err := client.Prompt(context.Background(), msg); err != nil {
+		if _, err := client.Prompt(context.Background(), &apishim.SessionPromptParams{Prompt: msg}); err != nil {
 			s.logger.Warn("workspace/send: prompt delivery failed",
 				"workspace", params.Workspace, "to", params.To, "error", err)
 			s.recordPromptDeliveryFailure(params.Workspace, params.To, agent.Status, err, false)
@@ -777,7 +778,7 @@ func (s *Server) handleAgentRunPrompt(ctx context.Context, conn *jsonrpc2.Conn, 
 	// Fire-and-forget prompt.
 	prompt := params.Prompt
 	go func() {
-		if _, err := client.Prompt(context.Background(), prompt); err != nil {
+		if _, err := client.Prompt(context.Background(), &apishim.SessionPromptParams{Prompt: prompt}); err != nil {
 			s.logger.Warn("agentrun/prompt: prompt delivery failed",
 				"workspace", params.Workspace, "name", params.Name, "error", err)
 			s.recordPromptDeliveryFailure(params.Workspace, params.Name, agent.Status, err, false)

@@ -23,6 +23,7 @@ import (
 
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/agentd"
 	"github.com/zoumo/oar/pkg/jsonrpc"
 	"github.com/zoumo/oar/pkg/store"
@@ -304,7 +305,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendPa
 
 	msg := buildWorkspaceEnvelope(*req) + req.Message
 	go func() {
-		if _, err := client.Prompt(context.Background(), msg); err != nil {
+		if _, err := client.Prompt(context.Background(), &apishim.SessionPromptParams{Prompt: msg}); err != nil {
 			a.logger.Warn("workspace/send: prompt delivery failed",
 				"workspace", req.Workspace, "to", req.To, "error", err)
 			a.recordPromptDeliveryFailure(req.Workspace, req.To, agent.Status, err, false)
@@ -471,7 +472,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *apiari.AgentRunPrompt
 
 	prompt := req.Prompt
 	go func() {
-		if _, err := client.Prompt(context.Background(), prompt); err != nil {
+		if _, err := client.Prompt(context.Background(), &apishim.SessionPromptParams{Prompt: prompt}); err != nil {
 			a.logger.Warn("agentrun/prompt: prompt delivery failed",
 				"workspace", req.Workspace, "name", req.Name, "error", err)
 			a.recordPromptDeliveryFailure(req.Workspace, req.Name, agent.Status, err, false)

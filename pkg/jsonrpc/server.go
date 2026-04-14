@@ -157,7 +157,6 @@ func (h *serverHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *js
 
 	info := &UnaryServerInfo{FullMethod: req.Method}
 	result, err := h.srv.dispatch(ctx, unmarshal, info, method)
-
 	if err != nil {
 		rpcErr := toRPCError(err)
 		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
@@ -180,10 +179,10 @@ func (s *Server) dispatch(ctx context.Context, unmarshal func(any) error, info *
 	// layer because it is the final one to wrap the accumulated inner chain.
 	chain := method
 	for i := range s.interceptors {
-		i := i
+		interceptor := s.interceptors[i]
 		next := chain
 		chain = func(ctx context.Context, u func(any) error) (any, error) {
-			return s.interceptors[i](ctx, u, info, next)
+			return interceptor(ctx, u, info, next)
 		}
 	}
 	return chain(ctx, unmarshal)

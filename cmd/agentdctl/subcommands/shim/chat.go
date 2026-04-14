@@ -551,9 +551,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		// Our tool_call event means the tool was already invoked. Set initial
 		// status to Success to avoid showing "Waiting for tool response...".
 		// The actual status will be overwritten when tool_result arrives.
-		if ti, ok := toolItem.(chat.ToolMessageItem); ok {
-			ti.SetStatus(chat.ToolStatusSuccess)
-		}
+		toolItem.SetStatus(chat.ToolStatusSuccess)
 		m.chat.AppendMessages(toolItem)
 		m.toolItemIDs[pl.ID] = toolItemID
 

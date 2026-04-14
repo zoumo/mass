@@ -11,7 +11,9 @@ import (
 
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
+	shimclient "github.com/zoumo/oar/pkg/shim/client"
 	"github.com/zoumo/oar/pkg/spec"
 )
 
@@ -202,18 +204,19 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRu
 
 	// Connect to the shim socket with the unified notification handler.
 	// Routes session/update → shimProc.Events and runtime/state_change → DB (D088).
-	client, err := DialWithHandler(ctx, agent.Status.ShimSocketPath, m.buildNotifHandler(ws, name, shimProc))
+	client, err := shimclient.DialWithHandler(ctx, agent.Status.ShimSocketPath, shimclient.NotificationHandler(m.buildNotifHandler(ws, name, shimProc)))
 	if err != nil {
 		return api.StatusStopped, fmt.Errorf("connect to shim socket %s: %w", agent.Status.ShimSocketPath, err)
 	}
 	shimProc.Client = client
 
 	// Call runtime/status to get state + recovery.lastSeq.
-	status, err := client.Status(ctx)
+	statusResult, err := client.Status(ctx)
 	if err != nil {
 		_ = client.Close()
 		return api.StatusStopped, fmt.Errorf("runtime/status: %w", err)
 	}
+	status := *statusResult
 	logger.Info("recovery: shim status",
 		"status", status.State.Status,
 		"lastSeq", status.Recovery.LastSeq,
@@ -256,7 +259,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRu
 
 	// Atomic subscribe with backfill.
 	fromSeq := 0
-	subResult, err := client.Subscribe(ctx, nil, &fromSeq)
+	subResult, err := client.Subscribe(ctx, &apishim.SessionSubscribeParams{FromSeq: &fromSeq})
 	if err != nil {
 		_ = client.Close()
 		return api.StatusStopped, fmt.Errorf("session/subscribe fromSeq=%d: %w", fromSeq, err)
@@ -273,7 +276,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRu
 			logger.Info("try_reload: could not read sessionId from state file, skipping",
 				"error", readErr)
 		} else if sessionID != "" {
-			if loadErr := client.Load(ctx, sessionID); loadErr != nil {
+			if loadErr := client.Load(ctx, &apishim.SessionLoadParams{SessionID: sessionID}); loadErr != nil {
 				logger.Info("try_reload: session/load failed, continuing",
 					"session_id", sessionID, "error", loadErr)
 			} else {

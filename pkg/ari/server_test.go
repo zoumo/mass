@@ -23,6 +23,7 @@ import (
 	"github.com/zoumo/oar/pkg/agentd"
 	"github.com/zoumo/oar/pkg/ari"
 	"github.com/zoumo/oar/pkg/events"
+	shimclient "github.com/zoumo/oar/pkg/shim/client"
 	"github.com/zoumo/oar/pkg/store"
 	"github.com/zoumo/oar/pkg/workspace"
 )
@@ -370,7 +371,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		return false
 	}, 2*time.Second, 10*time.Millisecond, "mini shim socket not ready")
 
-	shimClient, err := agentd.Dial(context.Background(), shimSock)
+	shimClient, err := shimclient.Dial(context.Background(), shimSock)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = shimClient.Close() })
 
@@ -649,7 +650,7 @@ func injectMockShim(t *testing.T, env *testEnv, wsName, agentName string) *miniS
 		return false
 	}, 2*time.Second, 10*time.Millisecond, "mini shim socket not ready")
 
-	shimClient, err := agentd.Dial(context.Background(), shimSock)
+	shimClient, err := shimclient.Dial(context.Background(), shimSock)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = shimClient.Close() })
 

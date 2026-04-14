@@ -18,8 +18,9 @@ import (
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
 	apiruntime "github.com/zoumo/oar/api/runtime"
+	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
-	"github.com/zoumo/oar/api/shim"
+	shimclient "github.com/zoumo/oar/pkg/shim/client"
 	"github.com/zoumo/oar/pkg/spec"
 	"github.com/zoumo/oar/pkg/store"
 )
@@ -82,7 +83,7 @@ type ShimProcess struct {
 	SocketPath string
 
 	// Client is the connected ShimClient for RPC communication.
-	Client *ShimClient
+	Client *apishim.ShimClient
 
 	// Cmd is the exec.Cmd for the shim process (for Wait/Kill).
 	Cmd *exec.Cmd
@@ -277,7 +278,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 
 	// 7. Connect ShimClient with the unified notification handler.
 	// Routes session/update → shimProc.Events and runtime/state_change → DB (D088).
-	client, err := DialWithHandler(ctx, socketPath, m.buildNotifHandler(workspace, name, shimProc))
+	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(m.buildNotifHandler(workspace, name, shimProc)))
 	if err != nil {
 		// Kill shim process; leave bundle intact (preserved until agent/delete).
 		_ = m.killShim(shimProc)
@@ -304,7 +305,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	}
 
 	// 8. Subscribe to events (no afterSeq — this is a fresh start).
-	if _, err := client.Subscribe(ctx, nil, nil); err != nil {
+	if _, err := client.Subscribe(ctx, &apishim.SessionSubscribeParams{}); err != nil {
 		// Close client, kill shim; leave bundle intact (preserved until agent/delete).
 		_ = client.Close()
 		_ = m.killShim(shimProc)
@@ -778,36 +779,40 @@ func (m *ProcessManager) State(ctx context.Context, workspace, name string) (api
 		return apiruntime.State{}, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
-	status, err := shimProc.Client.Status(ctx)
+	statusResult, err := shimProc.Client.Status(ctx)
 	if err != nil {
 		return apiruntime.State{}, fmt.Errorf("process: runtime/status for agent %s: %w", key, err)
 	}
 
-	return status.State, nil
+	return statusResult.State, nil
 }
 
 // RuntimeStatus returns the full runtime/status result including recovery
 // metadata for the given agent.
-func (m *ProcessManager) RuntimeStatus(ctx context.Context, workspace, name string) (shim.RuntimeStatusResult, error) {
+func (m *ProcessManager) RuntimeStatus(ctx context.Context, workspace, name string) (apishim.RuntimeStatusResult, error) {
 	key := agentKey(workspace, name)
 	m.mu.RLock()
 	shimProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		return shim.RuntimeStatusResult{}, fmt.Errorf("process: agent %s is not running", key)
+		return apishim.RuntimeStatusResult{}, fmt.Errorf("process: agent %s is not running", key)
 	}
 
 	if shimProc.Client == nil {
-		return shim.RuntimeStatusResult{}, fmt.Errorf("process: agent %s has no client connection", key)
+		return apishim.RuntimeStatusResult{}, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
-	return shimProc.Client.Status(ctx)
+	result, err := shimProc.Client.Status(ctx)
+	if err != nil {
+		return apishim.RuntimeStatusResult{}, err
+	}
+	return *result, nil
 }
 
 // Connect returns the ShimClient for direct RPC access to the shim process.
 // Returns error if the agent is not running.
-func (m *ProcessManager) Connect(ctx context.Context, workspace, name string) (*ShimClient, error) {
+func (m *ProcessManager) Connect(ctx context.Context, workspace, name string) (*apishim.ShimClient, error) {
 	key := agentKey(workspace, name)
 	m.mu.RLock()
 	shimProc, exists := m.processes[key]
