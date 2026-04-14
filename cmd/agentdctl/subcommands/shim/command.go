@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime/debug"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -73,6 +74,12 @@ func dial(socketPath string) (*client, error) {
 }
 
 func (c *client) readLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "\n[readLoop] PANIC: %v\n%s\n", r, debug.Stack())
+		}
+		close(c.notifs)
+	}()
 	for {
 		var msg rpcResponse
 		err := c.dec.Decode(&msg)
@@ -102,7 +109,6 @@ func (c *client) readLoop() {
 			}
 		}
 	}
-	close(c.notifs)
 }
 
 func (c *client) call(method string, params any) (json.RawMessage, error) {
@@ -210,6 +216,11 @@ func isTurnEndNotification(msg rpcResponse) bool {
 func startNotificationPrinter(ctx context.Context, c *client) <-chan struct{} {
 	turnEnd := make(chan struct{}, 16)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "\n[notification printer] PANIC: %v\n%s\n", r, debug.Stack())
+			}
+		}()
 		for {
 			select {
 			case <-ctx.Done():

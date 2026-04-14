@@ -818,3 +818,17 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** CLI cmd package renames require a three-file edit: (1) rename/rewrite the source file, (2) delete any stub file that conflicts, and (3) update main.go in the same pass. Go will refuse to compile if two files in the same package export the same var name (e.g., two files both defining `agentrunCmd`). Always delete the stub before or at the same time as creating the real implementation.
 - **Reference:** M008/S04/T02 — agentrun.go stub deleted, runtime.go deleted, main.go updated atomically.
 - **When:** M008/S04
+
+## K077 — Multiple ARI service interfaces cannot share a single Go struct when method signatures conflict
+
+- **Pattern:** When registering multiple service interfaces on the same jsonrpc.Server, use the adapter pattern (one central struct holding deps, thin unexported wrappers implementing each interface) instead of a single struct implementing all interfaces.
+- **Lesson:** `WorkspaceService.List(ctx) (*WorkspaceListResult, error)` and `AgentService.List(ctx) (*AgentListResult, error)` have the same Go method signature — identical parameters, different return types. Go rejects a single struct that tries to satisfy both. Thin unexported adapters (`workspaceAdapter`, `agentRunAdapter`, `agentAdapter`) each embed `*Service` and resolve the conflict cleanly. A package-level `Register(srv, svc)` function wires all three adapters in one call.
+- **Reference:** M012/S05/T02 — pkg/ari/server/server.go; D112.
+- **When:** M012/S05
+
+## K078 — pkg/jsonrpc Client.notifCh has a pre-existing send-on-closed-channel race in parallel test runs
+
+- **Pattern:** When running `go test ./pkg/agentd/... -count=3`, a `panic: send on closed channel` at `pkg/jsonrpc/client.go:115` appears intermittently. It does not reproduce on a single-count run.
+- **Lesson:** `Client.enqueueNotification` sends directly to `notifCh` without checking if the channel is closed. The sourcegraph/jsonrpc2 `readMessages` goroutine may still be running and invoke the handler after `Close()` closes `notifCh`. This is a pre-existing data race in `pkg/jsonrpc/client.go`, not introduced by S05 code. The fix requires guarding the send with a `select`/`recover`. For now: treat any single-run `go test ./...` passing as the acceptance bar — do not use `-count=3` on the `pkg/agentd` package.
+- **Reference:** M012/S05/T02 (first observed), M012/S05 closer verification.
+- **When:** M012/S05

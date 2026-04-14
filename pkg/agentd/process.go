@@ -129,14 +129,14 @@ func NewProcessManager(agents *AgentRunManager, s *store.Store, socketPath, bund
 // This is the single authoritative handler used by both Start() and recoverAgent().
 // All DB state transitions after bootstrap must flow through here, never via a
 // direct UpdateStatus call in the caller.
-func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *ShimProcess) NotificationHandler {
+func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *ShimProcess) shimclient.NotificationHandler {
 	key := agentKey(workspace, name)
 	logger := m.logger.With("agent_key", key)
 	return func(ctx context.Context, method string, params json.RawMessage) {
 		if method != api.MethodShimEvent {
 			return
 		}
-		ev, err := ParseShimEvent(params)
+		ev, err := shimclient.ParseShimEvent(params)
 		if err != nil {
 			logger.Warn("malformed shim/event notification dropped", "error", err)
 			return

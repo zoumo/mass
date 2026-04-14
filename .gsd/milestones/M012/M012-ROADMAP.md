@@ -10,5 +10,5 @@ Replace three duplicated JSON-RPC implementations with a single transport-agnost
 | S02 | S02 | low | — | ✅ | make build + go test ./... pass; JSON output identical to before |
 | S03 | S03 | high | — | ✅ | make build + go test ./... pass; ARI JSON shape matches updated ari-spec.md |
 | S04 | S04 | medium | — | ✅ | make build passes; interfaces compile cleanly |
-| S05 | S05 | high | — | ⬜ | make build + go test ./... pass; integration tests pass |
-| S06 | Phase 5: Cleanup | low | S05 | ⬜ | make build + go test ./... pass; no references to deleted packages |
+| S05 | S05 | high | — | ✅ | make build + go test ./... pass; integration tests pass |
+| S06 | S06 | low | — | ⬜ | make build + go test ./... pass; no references to deleted packages |

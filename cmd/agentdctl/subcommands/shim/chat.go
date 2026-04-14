@@ -3,6 +3,8 @@ package shim
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"runtime/debug"
 	"strings"
 
 	"charm.land/bubbles/v2/spinner"
@@ -31,7 +33,23 @@ type (
 type (
 	connErrMsg   struct{ err error }
 	promptErrMsg struct{ err error }
+	panicMsg     struct{ err error }
 )
+
+// safeCmd wraps a tea.Cmd with panic recovery. If the inner command panics,
+// the stack trace is printed to stderr and a panicMsg is returned so the TUI
+// can display the error and exit gracefully.
+func safeCmd(cmd tea.Cmd) tea.Cmd {
+	return func() (result tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(os.Stderr, "\n[tea.Cmd] PANIC: %v\n%s\n", r, debug.Stack())
+				result = panicMsg{err: fmt.Errorf("panic: %v", r)}
+			}
+		}()
+		return cmd()
+	}
+}
 
 // stateChangeMsg is sent when the shim reports a runtime/state_change notification.
 type stateChangeMsg struct {
@@ -121,7 +139,7 @@ func (m chatModel) Init() tea.Cmd {
 }
 
 func connectCmd(sock string) tea.Cmd {
-	return func() tea.Msg {
+	return safeCmd(func() tea.Msg {
 		c, err := dial(sock)
 		if err != nil {
 			return connErrMsg{fmt.Errorf("connect: %w", err)}
@@ -131,11 +149,11 @@ func connectCmd(sock string) tea.Cmd {
 			return connErrMsg{fmt.Errorf("session/subscribe: %w", err)}
 		}
 		return connReadyMsg{c: c, notifs: c.notifs}
-	}
+	})
 }
 
 func waitNotif(ch <-chan rpcResponse) tea.Cmd {
-	return func() tea.Msg {
+	return safeCmd(func() tea.Msg {
 		msg, ok := <-ch
 		if !ok {
 			return connClosedMsg{}
@@ -165,27 +183,27 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 			}
 		}
 		return notifMsg{msg}
-	}
+	})
 }
 
 func sendPromptCmd(c *client, text string) tea.Cmd {
-	return func() tea.Msg {
+	return safeCmd(func() tea.Msg {
 		if err := c.send(api.MethodSessionPrompt, map[string]string{"prompt": text}); err != nil {
 			return promptErrMsg{err}
 		}
 		return nil
-	}
+	})
 }
 
 func cancelPromptCmd(c *client) tea.Cmd {
-	return func() tea.Msg {
+	return safeCmd(func() tea.Msg {
 		_, _ = c.call(api.MethodSessionCancel, nil)
 		return nil
-	}
+	})
 }
 
 func fetchStatusCmd(c *client) tea.Cmd {
-	return func() tea.Msg {
+	return safeCmd(func() tea.Msg {
 		result, err := c.call(api.MethodRuntimeStatus, nil)
 		if err != nil {
 			return nil
@@ -197,7 +215,7 @@ func fetchStatusCmd(c *client) tea.Cmd {
 			return nil
 		}
 		return stateChangeMsg{status: status.Status}
-	}
+	})
 }
 
 // ── Update ────────────────────────────────────────────────────────────────────
@@ -228,6 +246,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notifs = msg.notifs
 		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "connected — tab focus · shift+click select text · ctrl+c quit", styleDim))
 		cmds = append(cmds, waitNotif(m.notifs), fetchStatusCmd(m.client))
+
+	case panicMsg:
+		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "fatal: "+msg.err.Error(), styleErr))
+		return m, tea.Quit
 
 	case connErrMsg:
 		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "error: "+msg.err.Error(), styleErr))
@@ -356,7 +378,7 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 
 	case key.Mod&tea.ModCtrl != 0 && key.Code == 'x':
 		// Ctrl+X: explicit cancel of running turn.
-		if m.waiting {
+		if m.waiting && m.client != nil {
 			m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "[canceling…]", styleDim))
 			cmds = append(cmds, cancelPromptCmd(m.client))
 		}
