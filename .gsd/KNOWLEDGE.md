@@ -881,3 +881,18 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** When moving both a set of exported helpers and their callers into the same new sub-package, the callers' imports of the former package are eliminated entirely, not replaced. After mechanical substitution, scan for any remaining `ariX.FunctionName()` calls where the function is now in the same package and strip the qualifier.
 - **Reference:** M013/S02/T02 — pkg/ari/server/server.go, RegisterWorkspaceService et al.
 - **When:** M013/S02
+
+## K086 — Sealed interface pattern (unexported method) breaks cross-package when consumer moves to a new package
+
+- **Pattern:** An interface with an unexported method (e.g., `eventType() string`) is "sealed" — only code in the same package can implement or call it. When a consumer of the interface moves from being in the same package (e.g., `pkg/events/translator.go`) to a different package (e.g., `pkg/shim/server/translator.go`), calls like `ev.eventType()` become illegal cross-package accesses.
+- **Lesson:** Before moving a file that calls unexported interface methods, add an exported bridge function in the package that owns the in
+terface (e.g., `EventTypeOf(ev Event) string` in `pkg/shim/api/event_types.go`). This is the minimal, backward-compatible solution: the sealed property is preserved for implementors while consumers can call the exported accessor. The bridge function belongs in the package that defines the interface, not in the consumer.
+- **Reference:** M013/S04/T02 — EventTypeOf() added to pkg/shim/api/event_types.go; D118.
+- **When:** M013/S04
+
+## K087 — Two-task split for moving a package with a sealed event model: move types first, then move implementation
+
+- **Pattern:** When migrating a package that has both wire types and implementation (translator+log) into different target packages, split the work: (1) copy all types to the new api/ package, update all consumers; (2) move implementation files to the new server/ package, removing the old package. Attempting to do both in one step creates a dependency loop: the implementation needs the types to compile, but the types are still in the old package during the transition.
+- **Lesson:** T01 moved ShimEvent, EventType*/Category* constants and typed event structs into pkg/shim/api, updating all consumers. T02 then moved translator.go and log.go into pkg/shim/server, where it could safely add the apishim.* qualifier. The T01→T02 boundary required a temporary JSON-round-trip bridge in service.go (to handle the type incompatibility), which T02 cleanly removed. The pattern generalizes: for any migration with a "types → impl" dependency, split the tasks at that boundary.
+- **Reference:** M013/S04 T01+T02; legacyEventsToAPI bridge in T01 removed in T02.
+- **When:** M013/S04

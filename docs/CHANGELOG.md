@@ -1,179 +1,286 @@
 # Changelog
 
-> Auto-generated from GSD milestone summaries. Do not edit directly.
-> Last synced: 2026-04-14 after M012
+---
+
+## M013: Package Restructure — Clean api/ Boundary + Event/Runtime Colocation (2026-04-14)
+
+### S01: Runtime-spec consumer migration
+- Migrated all consumers off `api/runtime/` and `api.Status`/`api.EnvVar` to `pkg/runtime-spec/api`
+- Deleted `api/runtime/`, `api/types.go`, and two empty `pkg/agentd/runtimeclass` stubs
+- Applied Pattern A (full replacement) and Pattern B (dual-import for files still needing Method/Category constants)
+- Key files: `pkg/runtime/runtime.go`, `pkg/runtime/client.go`, `pkg/agentd/agent.go`, `pkg/agentd/process.go`, `api/ari/domain.go`, `api/ari/types.go`, `pkg/store/agentrun.go`, `pkg/ari/server/server.go`
+
+### S02: ARI package restructure
+- Established `pkg/ari/api/` (types, domain, methods), `pkg/ari/server/` (service interfaces + registry + dispatch), `pkg/ari/client/` (typed + simple clients)
+- Deleted `api/ari/` directory and `pkg/ari` root-level files (`registry.go`, `client.go`)
+- Migrated all 35+ consumers across 9 groups; moved 3 test files into new sub-packages
+- Key files: `pkg/ari/api/types.go`, `pkg/ari/api/domain.go`, `pkg/ari/api/methods.go`, `pkg/ari/server/service.go`, `pkg/ari/server/registry.go`, `pkg/ari/client/typed.go`, `pkg/ari/client/simple.go`
+
+### S03: Shim package restructure + api/ deletion
+- Created `pkg/shim/api/` (methods, types, service, client) and `pkg/events/constants.go` (EventType*/Category* constants)
+- Migrated all 19 consumer files across 6 groups; deleted `api/shim/`, `api/events.go`, `api/methods.go`, and the `api/` directory root
+- Key files: `pkg/shim/api/methods.go`, `pkg/shim/api/types.go`, `pkg/shim/api/service.go`, `pkg/shim/api/client.go`, `pkg/events/constants.go`, `pkg/agentd/process.go`, `cmd/agentdctl/subcommands/shim/command.go`
+
+### S04: Events impl + ACP runtime migration + final verification
+- Moved `pkg/events/` event wire types into `pkg/shim/api/` (shim_event.go, event_types.go, event_constants.go)
+- Moved translator + log from `pkg/events/` to `pkg/shim/server/`; moved `pkg/runtime/` to `pkg/shim/runtime/acp/`
+- Deleted `pkg/events/` and `pkg/runtime/` packages entirely; added `EventTypeOf()` exported accessor for sealed interface cross-package access
+- Key files: `pkg/shim/api/shim_event.go`, `pkg/shim/api/event_types.go`, `pkg/shim/server/translator.go`, `pkg/shim/server/log.go`, `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/runtime/acp/client.go`
+
+---
 
 ## M012: Codebase Refactor: Service Interface + Unified RPC + Directory Restructure (2026-04-14)
 
-Replaced three duplicated JSON-RPC implementations with a single transport-agnostic `pkg/jsonrpc/` framework, established typed Service Interfaces for ARI and Shim, performed clean-break ARI wire contract convergence, and restructured API packages for clarity and consistency.
-
 ### S01: pkg/jsonrpc/ Transport-Agnostic Framework
-- Built shared JSON-RPC foundation: Server (ServiceDesc + interceptor chain), Client (256-buffer FIFO notification worker), RPCError, Peer; 18 protocol tests
+- Built transport-agnostic JSON-RPC 2.0 server + client replacing three duplicated implementations
+- Bounded 256-entry FIFO notification worker prevents slow handlers blocking response dispatch
 - Key files: `pkg/jsonrpc/server.go`, `pkg/jsonrpc/client.go`, `pkg/jsonrpc/errors.go`, `pkg/jsonrpc/peer.go`
 
-### S02: Phase 2a: Pure Rename/Move
-- `api/spec` → `api/runtime`, `pkg/shimapi` → `api/shim`; 22 files updated; zero wire format changes
+### S02: Pure Rename/Move (api/spec→api/runtime, pkg/shimapi→api/shim)
+- Pure import path migration; created `api/runtime/` and `api/shim/types.go`; deleted `api/spec/` and `pkg/shimapi/`
 - Key files: `api/runtime/config.go`, `api/runtime/state.go`, `api/shim/types.go`
 
-### S03: Phase 2b: ARI Clean-Break Contract Convergence
-- ARI wire format uses Agent/AgentRun/Workspace domain shapes; ARIView() helpers strip internal fields; Info DTOs deleted; ari-spec.md updated
-- Key files: `api/ari/domain.go`, `api/ari/types.go`, `docs/design/agentd/ari-spec.md`
+### S03: ARI Clean-Break Contract Convergence
+- Updated ARI spec with metadata/spec/status domain shapes; added `ARIView()` for sensitive field stripping at API boundary
+- Created `api/ari/domain.go`; deleted `api/meta/`; `ARIView()` preferred over `json:"-"` to preserve bbolt persistence
+- Key files: `api/ari/domain.go`, `api/ari/service.go`, `docs/design/agentd/ari-spec.md`
 
-### S04: Phase 3: Service Interface + Register + Typed Clients
-- WorkspaceService/AgentRunService/AgentService interfaces with Register functions; typed Workspace/AgentRun/Agent/ShimClient clients
+### S04: Service Interface + Register + Typed Clients
+- Defined `WorkspaceService`/`AgentRunService`/`AgentService` interfaces with `Register` functions; added typed `ShimClient` wrapper
 - Key files: `api/ari/service.go`, `api/ari/client.go`, `api/shim/service.go`, `api/shim/client.go`
 
-### S05: Phase 4: Implementation Migration
-- Adapter pattern for pkg/ari/server (resolves WorkspaceService.List vs AgentService.List signature conflict); pkg/ari/client ARIClient; cmd entrypoints + pkg/agentd migrated to typed service interfaces; all 18 packages pass
-- Key files: `pkg/ari/server/server.go`, `pkg/ari/client/client.go`, `pkg/agentd/process.go`, `pkg/agentd/recovery.go`, `cmd/agentd/subcommands/server/command.go`
+### S05: Implementation Migration
+- Migrated four concrete packages and three cmd entrypoints to typed Service Interface contracts
+- Adapter pattern (three thin unexported adapters embedding `*Service`) to handle identical-signature multi-interface constraint
+- Key files: `pkg/ari/server/server.go`, `pkg/shim/server/service.go`, `pkg/ari/client/client.go`, `cmd/agentd/subcommands/server/command.go`
 
-### S06: Phase 5: Cleanup
-- Deleted `pkg/rpc/`, `pkg/agentd/shim_client.go`, `pkg/ari/server.go` monolith; test harness migrated to new API; mock infrastructure extracted to `mock_shim_server_test.go`; all 17 packages pass
-- Key files: DELETED `pkg/rpc/`, `pkg/agentd/shim_client.go`, `pkg/ari/server.go` — new `pkg/agentd/mock_shim_server_test.go`, migrated `pkg/ari/server_test.go`
+### S06: Legacy Cleanup
+- Deleted `pkg/rpc/` (844 lines), `pkg/agentd/shim_client.go`, `pkg/ari/server.go` (1235 lines); extracted shared mock infra to `mock_shim_server_test.go`
+- Key files: `pkg/agentd/mock_shim_server_test.go`, `pkg/ari/server/server_test.go`
 
 ---
 
 ## M011: Reduce Shim Event Translation Overhead (2026-04-12)
 
-ACP event translation now preserves full data fidelity — all 11 SessionUpdate branches translated, 5 new event types added, union types mirror ACP flat wire shape.
+### S01: Full ACP event translation coverage
+- Eliminated silent discard of 5 ACP `SessionUpdate` branches; added 5 new event types and 15+ support types
+- All 11 `translate()` branches covered; `decodeEventPayload` handles 17 types; full ACP field fidelity preserved
+- Key files: `pkg/events/types.go`, `pkg/events/translator.go`, `pkg/events/translate_rich_test.go`, `pkg/events/wire_shape_test.go`
 
-### S01: Core types, translator, and envelope
-- Rewrote `pkg/events/types.go` with 15+ new support types; translate() covers all 11 SessionUpdate branches; 5 new constants in `api/events.go`; design docs updated
-- Key files: `api/events.go`, `pkg/events/types.go`, `pkg/events/translator.go`, `pkg/events/envelope.go`
-
-### S02: Fix and extend tests
-- Fixed 6 broken tests; added 31 new tests covering all 22 plan matrix items; discovered ACP SDK strips `_meta` from ContentBlock union MarshalJSON
+### S02: Test coverage for all 22 plan matrix items
+- Added 31 new tests; documented ACP SDK ContentBlock union `_meta` strip behavior
 - Key files: `pkg/events/translate_rich_test.go`, `pkg/events/wire_shape_test.go`
 
 ---
 
 ## M010: CLI Consolidation: subcommands layout + workspace UX fixes (2026-04-11)
 
-Moved cmd/agentd and cmd/agentdctl into subcommands/ layout and reshaped workspace CLI per review.
+### S01: cmd/agentd subcommands layout
+- Refactored into `subcommands/server`, `subcommands/shim`, `subcommands/workspacemcp`; `main.go` reduced to 8 lines
+- Key files: `cmd/agentd/main.go`, `cmd/agentd/subcommands/root.go`
 
-- S01: cmd/agentd → `subcommands/server`, `subcommands/shim`, `subcommands/workspacemcp`; main.go is 8 lines
-- S02: cmd/agentdctl → `subcommands/{agent,agentrun,daemon,shim,workspace}` with shared cliutil; getClient closure injection; no package globals
-- S03: workspace create split into local/git/empty/-f subcommands; workspace get added; workspace send made positional
-- Key files: `cmd/agentd/main.go`, `cmd/agentdctl/main.go`, `cmd/agentdctl/subcommands/`
+### S02: cmd/agentdctl subcommands layout
+- Refactored into `subcommands/{agent,agentrun,daemon,shim,workspace}` with shared `cliutil`; eliminated package globals
+- Key files: `cmd/agentdctl/main.go`, `cmd/agentdctl/subcommands/root.go`, `cmd/agentdctl/subcommands/cliutil/cliutil.go`
+
+### S03: workspace CLI reshape
+- `create` split into `local/git/empty/-f` subcommands; `workspace get` added; `workspace send` made positional
+- Key files: `cmd/agentdctl/subcommands/workspace/command.go`, `cmd/agentdctl/subcommands/workspace/create/command.go`
 
 ---
 
 ## M009: Simplify ACP Client in Runtime (2026-04-11)
 
-Removed TerminalManager and fs/terminal implementations from pkg/runtime; ACP client now only handles SessionUpdate and RequestPermission.
-
-- Deleted ~900 lines of terminal/fs code; Initialize no longer advertises fs capabilities; mockagent updated
-- Key files: `pkg/runtime/client.go`, `pkg/runtime/runtime.go`
+### S01: Remove TerminalManager + fs/terminal implementations
+- Deleted ~900 lines of terminal and fs code from `pkg/runtime/`; ACP client now only handles `SessionUpdate` and `RequestPermission`
+- `Initialize` no longer advertises fs capabilities; 7 methods return not-supported
+- Key files: `pkg/runtime/client.go`, `pkg/runtime/runtime.go`, `internal/testutil/mockagent/main.go`
 
 ---
 
 ## M008: CLI Consolidation + API Model Rename (2026-04-10)
 
-Consolidated 5 binaries into 2 (agentd + agentdctl), eliminated config.yaml via --root flag, elevated RuntimeClass to DB-persisted AgentTemplate, renamed API model to agent=template / agentrun=running instance.
+### S01: Binary skeleton reorganization
+- Replaced flat flag-based `cmd/agentd/main.go` with cobra tree (`server/shim/workspace-mcp`); inlined old binaries as subcommands
+- Key files: `cmd/agentd/main.go`, `cmd/agentdctl/main.go`, `Makefile`
 
-- S01: Binary skeleton — cobra tree for agentd (server/shim/workspace-mcp); agentdctl shim client; stub agentrun subcommands
-- S02: `--root` config + Runtime entity + self-fork — `Options{Root}` with 5 deterministic path helpers; `meta.Runtime` in bbolt; `forkShim` self-forks via `os.Executable()`; `runtime/*` ARI CRUD
-- S03: CLI grammar + socket validation — agentrun prompt flags; workspace create positional; socket path validated at agentrun/create entry (-32602 on overflow)
-- S04: Three-layer rename — `meta.Runtime→AgentTemplate`, `meta.Agent→AgentRun`; ARI `runtime/*→agent/*`, `agent/*→agentrun/*`; all 8 integration tests pass
-- Key files: `cmd/agentd/`, `cmd/agentdctl/`, `pkg/agentd/options.go`, `pkg/meta/models.go`, `pkg/ari/server.go`
+### S02: --root config + Runtime entity + self-fork
+- Eliminated `config.yaml`; `Options{Root}` derives all paths deterministically; `meta.Runtime` in bbolt `v1/runtimes`; `ProcessManager` self-forks via `os.Executable()`
+- Key files: `pkg/agentd/options.go`, `pkg/meta/runtime.go`
+
+### S03: CLI grammar alignment + socket validation
+- `agentrun prompt` positional flags; `workspace create` positional `<type> <name>`; socket path overflow validated at `agentrun/create` entry (-32602)
+- Key files: `pkg/spec/maxsockpath_darwin.go`, `pkg/spec/maxsockpath_linux.go`
+
+### S04: Cleanup + API rename (agent→AgentTemplate, agentrun→running instance)
+- Three-layer simultaneous rename: meta DB layer, ARI types, ARI server dispatch + CLI; deleted three obsolete cmd directories
+- Key files: `pkg/meta/models.go`, `pkg/ari/types.go`, `pkg/ari/server.go`, `cmd/agentdctl/agent_template.go`, `cmd/agentdctl/agent.go`
 
 ---
 
 ## M007: OAR Platform Terminal State Refactor (2026-04-09)
 
-Replaced SQLite with bbolt, unified to spec.Status single state enum, eliminated Session/Room concepts, unified Workspace as grouping+filesystem, established (workspace,name) agent identity, enforced shim as sole post-bootstrap write authority.
+### S01: Storage + Model Foundation
+- Replaced SQLite/CGo with pure-Go bbolt; deleted Session/Room/AgentState/SessionState; `StatusIdle` replaces `StatusCreated`
+- Key files: `pkg/meta/models.go`, `pkg/meta/store.go`, `pkg/meta/agent.go`, `pkg/meta/workspace.go`, `pkg/spec/state_types.go`
 
-- S01: bbolt store + model foundation; StatusCreated→StatusIdle; Session/Room deleted; pkg/ari/server.go replaced with compilable stub; 37 bbolt unit tests
-- S02: agentd core adaptation — D088 shim write authority boundary via buildNotifHandler; RestartPolicy tryReload/alwaysNew; Subscribe-before-Load ordering invariant
-- S03: ARI handler rewrite — 946-line server; handleAgentCreate async pattern; agentToInfo helper; miniShimServer in ari_test; 22 handler tests
-- S04: CLI + workspace-mcp-server + design docs — room-mcp-server→workspace-mcp-server; ari-spec.md + agentd.md fully rewritten
-- S05: Integration tests — rewrote all integration files; fixed 3 pre-existing bugs in process.go (socket path mismatch, missed idle notification, stale socket cleanup)
-- Key files: `pkg/meta/store.go`, `pkg/agentd/process.go`, `pkg/agentd/recovery.go`, `pkg/ari/server.go`, `cmd/workspace-mcp-server/main.go`, `docs/design/agentd/ari-spec.md`
+### S02: agentd Core Adaptation
+- Enforced shim write authority boundary (`buildNotifHandler`); `RestartPolicy` tryReload/alwaysNew with correct Subscribe-before-Load ordering
+- Key files: `pkg/agentd/process.go`, `pkg/agentd/recovery.go`, `pkg/agentd/shim_boundary_test.go`
+
+### S03: ARI Handler Rewrite
+- Full 946-line JSON-RPC 2.0 server for all `workspace/*` and `agent/*` methods; `agentToInfo` centralizes `AgentInfo` construction; `miniShimServer` for test injection
+- Key files: `pkg/ari/server.go`, `pkg/ari/server_test.go`, `pkg/ari/types.go`
+
+### S04: CLI + workspace-mcp-server + Design Docs
+- Renamed `room-mcp-server` → `workspace-mcp-server`; `room_send` → `workspace_send`; full design doc rewrite
+- Key files: `cmd/workspace-mcp-server/main.go`, `cmd/agentdctl/workspace.go`, `docs/design/agentd/ari-spec.md`, `docs/design/agentd/agentd.md`
+
+### S05: Integration Tests + Final Verification
+- Full integration test suite rewrite for M007 ARI surface; fixed 3 pre-existing bugs (socket path mismatch, missed idle notification, stale socket cleanup)
+- Key files: `tests/integration/session_test.go`, `tests/integration/e2e_test.go`, `tests/integration/restart_test.go`
 
 ---
 
 ## M006: Fix golangci-lint v2 issues (2026-04-09)
 
-Eliminated all 202 golangci-lint v2 issues across 11 linter categories — codebase reports 0 issues.
-
-- S01: gci + gofumpt (56 issues, auto-fixed via `golangci-lint fmt ./...`)
-- S02: unconvert + copyloopvar + ineffassign (24 issues, mostly manual; gocritic --fix adds `errors.As` without `errors` import)
-- S03: misspell + unparam (17 issues; unparam masks multiple findings per function)
-- S04/S05: unused + errorlint — clean no-ops (M005 migration already cleaned these)
-- S06: gocritic (13 active: filepathJoin, importShadow, appendAssign, exitAfterDefer, builtinShadowDecl)
-- S07: testifylint (5 active: require-error guards)
-- Key files: `pkg/agentd/process.go`, `pkg/ari/server.go`, `pkg/workspace/git.go`, `.golangci.yaml`
+### S01–S07: Full lint cleanup (202 → 0 issues)
+- Auto-fixed gci + gofumpt (56 issues via `golangci-lint fmt`); manually fixed unconvert/copyloopvar/ineffassign (24); misspell/unparam (17); gocritic (13 active); testifylint (5 active)
+- S04 (unused) and S05 (errorlint) were clean no-ops — M005 migration had already eliminated targets
+- Key files: `pkg/agentd/process.go`, `pkg/runtime/terminal.go`, `pkg/workspace/git.go`, `.golangci.yaml`
 
 ---
 
 ## M005: agentd Agent Model Refactoring (2026-04-08)
 
-Refactored agentd from session-centric to agent-centric: new agents table (room+name identity), 10-method agent/* ARI surface, async lifecycle, turn-aware event ordering (turnId/streamSeq), SDK-based room-mcp-server, fail-safe daemon recovery.
+### S01: Design Contract First
+- Rewrote all 7 authority docs (`ari-spec.md`, `agentd.md`, `shim-rpc-spec.md`, `room-spec.md`, `contract-convergence.md`); `scripts/verify-m005-s01-contract.sh` as mechanical proof
+- Key files: `docs/design/agentd/ari-spec.md`, `docs/design/runtime/shim-rpc-spec.md`, `scripts/verify-m005-s01-contract.sh`
 
-- S01: Design contract — 7 authority docs updated; contract verifier script; ARI events renamed agent/update + agent/stateChange at orchestrator boundary
-- S02: State machine — AgentState (creating/created/running/stopped/error); paused:warm/paused:cold retired; agents + sessions tables with FK
-- S03: ARI handlers — agent/* surface; async agent/create; handleRoomDelete guards on agent state
-- S04: Async lifecycle — agent/create goroutine; agent/restart; OAR_AGENT_ID / OAR_AGENT_NAME env vars
-- S05: Turn-aware events — turnId/streamSeq/*int; Translator state mutations under mu.Lock
-- S06: room-mcp-server SDK migration — go-sdk/mcp; room_send/room_status tools
-- S07: Recovery + integration tests — recoverSession returns (spec.Status, error); TestAgentdRestartRecovery; kill-all-shims strategy
-- Key files: `pkg/meta/agent.go`, `pkg/agentd/agent.go`, `pkg/ari/server.go`, `pkg/events/envelope.go`, `cmd/room-mcp-server/main.go`, `tests/integration/`
+### S02: Metadata Layer (agents + sessions tables)
+- New `agents` table with `(room, name)` UNIQUE key; `sessions.agent_id` FK; `AgentState` (5 states: creating/created/running/stopped/error); `paused:warm/paused:cold` retired
+- Key files: `pkg/meta/schema.sql`, `pkg/meta/models.go`, `pkg/meta/agent.go`, `pkg/meta/session.go`
+
+### S03: ARI Handler Migration (agent/* + room/*)
+- Full `agent/*` handler set (create/prompt/stop/remove/restart/status/list); `room/delete` auto-deletes stopped agents; `deliverPrompt` shared helper
+- Key files: `pkg/ari/server.go`, `pkg/ari/types.go`
+
+### S04: Async agent/create
+- `agent/create` returns `creating` immediately; background goroutine handles shim bootstrap; workspace refs acquired using linked session ID
+- Key files: `pkg/agentd/agent.go`, `pkg/agentd/process.go`
+
+### S05: Turn-aware event ordering
+- `turnId` assigned at `turn_start`, cleared at `turn_end`; `streamSeq` (`*int`) resets 0 per turn; `runtime/stateChange` excluded from turn ordering
+- Key files: `pkg/events/envelope.go`, `pkg/events/translator.go`, `pkg/rpc/server.go`
+
+### S06: room-mcp-server SDK upgrade
+- Replaced hand-rolled MCP with mcp-go SDK (`server.AddTool` with `json.RawMessage` InputSchema to preserve custom schemas)
+- Key files: `cmd/room-mcp-server/main.go`
+
+### S07: CLI + integration tests
+- `agentdctl agent` and `agentdctl agentrun` subcommands; consolidated integration test helpers; recovery test uses kill-all-shims strategy
+- Key files: `cmd/agentdctl/agent.go`, `cmd/agentdctl/helpers.go`, `tests/integration/`
 
 ---
 
 ## M004: Realized Room Runtime and Routing (2026-04-08)
 
-Turned the Room from design-only contract into working runtime with ARI lifecycle, point-to-point routing via room/send and room-mcp-server, and end-to-end multi-agent integration proof across 3 agents.
+### S01: Room Lifecycle and ARI Surface
+- Converged communication vocabulary (mesh/star/isolated replaces broadcast/direct/hub); `room/create`, `room/status`, `room/delete` ARI handlers; room-existence validation in `session/new`
+- Key files: `pkg/ari/server.go`, `pkg/ari/types.go`, `pkg/meta/models.go`, `pkg/meta/room.go`
 
-- S01: Room lifecycle — room/create, room/status, room/delete; mesh/star/isolated vocabulary; room-existence validation; active-member guards
-- S02: Routing + MCP injection — deliverPrompt helper (shared by session/prompt + room/send); room-mcp-server hand-rolled; MCP injection in generateConfig
-- S03: Multi-agent proof — TestARIMultiAgentRoundTrip (3 agents, bidirectional A↔B + A→C); TestARIRoomTeardownGuards; 47-test ARI suite
-- Key files: `pkg/ari/server.go`, `pkg/meta/room.go`, `pkg/spec/types.go`, `cmd/room-mcp-server/main.go`
+### S02: Routing Engine and MCP Tool Injection
+- `room/send` ARI handler; `deliverPrompt` shared helper; `room-mcp-server` hand-rolled MCP binary; automatic MCP injection in `generateConfig` for room sessions
+- Key files: `cmd/room-mcp-server/main.go`, `pkg/agentd/process.go`, `pkg/spec/types.go`
+
+### S03: End-to-End Multi-Agent Integration Proof
+- `TestARIMultiAgentRoundTrip`: 3 agents, bidirectional A↔B + A→C messaging, full teardown; `TestARIRoomTeardownGuards`: adversarial ordering proof
+- Key files: `pkg/ari/server_test.go`
 
 ---
 
 ## M003: Recovery and Safety Hardening (2026-04-08)
 
-Hardened agentd against daemon restarts: fail-closed recovery posture, truthful shim-vs-DB reconciliation, atomic event resume, damaged-tail tolerance, DB-backed workspace cleanup safety.
+### S01: Fail-Closed Recovery Posture
+- `RecoveryPhase` atomic type (idle/recovering/complete); `recoveryGuard` blocks `session/prompt`+`session/cancel` with JSON-RPC -32001; always transitions to Complete on all exit paths
+- Key files: `pkg/agentd/recovery_posture.go`, `pkg/agentd/recovery.go`
 
-- S01: Recovery posture — atomic `RecoveryPhase` gates prompt/cancel; always transitions to Complete on all exit paths; 12 tests
-- S02: Live shim reconnect — stopped shims fail-closed; state mismatches reconciled; TOCTOU socket race eliminated (unconditional os.Remove)
-- S03: Atomic event resume — SubscribeFromSeq holds Translator mutex during log read + subscription (eliminates History→Subscribe gap); two-pass damaged-tail classification
-- S04: Workspace cleanup safety — workspace/cleanup gates on DB ref_count; Registry.RebuildFromDB + WorkspaceManager.InitRefCounts after restart
-- Key files: `pkg/agentd/recovery.go`, `pkg/events/log.go`, `pkg/events/translator.go`, `pkg/ari/server.go`, `pkg/ari/registry.go`
+### S02: Live Shim Reconnect and Truthful Session Rebuild
+- Shim-vs-DB state reconciliation in `recoverSession`; TOCTOU-free socket cleanup (`os.Remove` unconditional)
+- Key files: `pkg/agentd/recovery.go`, `cmd/agentd/main.go`
+
+### S03: Atomic Event Resume and Damaged-Tail Tolerance
+- `ReadEventLog` rewritten with `bufio.Scanner` + two-pass damaged-tail classification; `Translator.SubscribeFromSeq` holds mutex during log read + subscription
+- Key files: `pkg/events/log.go`, `pkg/events/translator.go`, `pkg/rpc/server.go`
+
+### S04: Reconciled Workspace Ref Truth and Safe Cleanup
+- `handleWorkspaceCleanup` gates on DB `ref_count`; `AcquireWorkspace` called at `session/new`; `Registry.RebuildFromDB` + `WorkspaceManager.InitRefCounts` after restart
+- Key files: `pkg/ari/registry.go`, `pkg/workspace/manager.go`, `pkg/meta/workspace.go`, `cmd/agentd/main.go`
 
 ---
 
 ## M002: Contract Convergence and ACP Runtime Truthfulness (2026-04-07)
 
-Converged all design docs onto one authority map; migrated to clean-break shim protocol (session/* + runtime/*); implemented session config persistence and daemon restart recovery; proven with real CLI integration tests.
+### S01: Design Contract Convergence
+- Produced `docs/design/contract-convergence.md` authority map; `session/new` = config-only bootstrap; contract verifier script + example bundle validation tests as mechanical proof surface
+- Key files: `docs/design/contract-convergence.md`, `docs/design/runtime/shim-rpc-spec.md`, `scripts/verify-m002-s01-contract.sh`
 
-- S01: Design contract — 5 design docs converged onto one authority map; contract verifier script; example bundle tests
-- S02: Protocol migration — PascalCase/$/event shim methods replaced with session/* + runtime/*; events.Envelope with monotonic seq
-- S03: Session recovery persistence — discrete DB columns for hot recovery fields; schema v1→v2 migration; TestAgentdRestartRecovery
-- S04: Real CLI proof — TestRealCLI_GsdPi and TestRealCLI_ClaudeCode exercise full ARI session lifecycle
-- Key files: `docs/design/`, `scripts/verify-m002-s01-contract.sh`, `pkg/agentd/recovery.go`, `pkg/rpc/server.go`, `pkg/meta/schema.sql`
+### S02: Shim-RPC Clean Break
+- Replaced all legacy PascalCase methods + `$/event` with `session/*` + `runtime/*`; `events.Envelope{Method, Seq, Params}` as single live+replay shape; monotonic seq in `Translator`
+- Key files: `pkg/events/envelope.go`, `pkg/events/translator.go`, `pkg/rpc/server.go`, `pkg/agentd/shim_client.go`
+
+### S03: Recovery and Persistence Truth-Source
+- Schema v2 (`bootstrap_config`, `shim_socket_path`, `shim_state_dir`, `shim_pid` columns); `RecoverSessions` startup pass with `SubscribeFromSeq` for gap-free event resume; fail-closed for dead shims
+- Key files: `pkg/meta/schema.sql`, `pkg/meta/session.go`, `pkg/agentd/recovery.go`, `tests/integration/restart_test.go`
+
+### S04: Real CLI Integration Verification
+- Reusable test harness for full ARI session lifecycle with real `gsd-pi` and `claude-code` runtime classes; generous timeouts (30s start, 120s prompt); graceful skip without API keys
+- Key files: `tests/integration/real_cli_test.go`
 
 ---
 
 ## M001-tvc4z0: Phase 2 — agentd Core (2026-04-06)
 
-Built agentd daemon core: ARI JSON-RPC server over Unix socket, session lifecycle (9 methods), ProcessManager with shim forking, SQLite metadata store, RuntimeClass registry, 27 ARI integration tests.
+### S01: Scaffolding + exitCode
+- `agentd` daemon foundation: YAML config, workspace manager init, ARI server bootstrap, graceful shutdown; `ExitCode *int` added to shim state
+- Key files: `cmd/agentd/main.go`, `pkg/agentd/config.go`
 
-- S01: ARI server — Unix socket; SIGTERM/SIGINT graceful shutdown; socket file removal for crash recovery
-- S02: SQLite metadata — WAL mode with foreign keys; embedded schema via go:embed
-- S03: RuntimeClass registry — os.Expand for env substitution; thread-safe registry
-- S04-S08: Session state machine; session/prompt auto-start; 27 integration tests including concurrent sessions and restart recovery foundation
-- Key files: `cmd/agentd/main.go`, `pkg/ari/server.go`, `pkg/agentd/session.go`, `pkg/agentd/process.go`, `pkg/meta/store.go`
+### S02: Metadata Store (SQLite)
+- SQLite WAL mode, FK constraints, embedded schema (`go:embed`); full CRUD for Session/Workspace/Room; optional init for ephemeral mode
+- Key files: `pkg/meta/store.go`, `pkg/meta/schema.sql`, `pkg/meta/session.go`
+
+### S03–S04: RuntimeClass Registry + Session Manager
+- Thread-safe registry with env substitution (`os.Expand`); 5-state session machine (created/running/paused:warm/paused:cold/stopped) with 9 valid transitions
+- Key files: `pkg/agentd/runtimeclass.go`, `pkg/agentd/session.go`
+
+### S05–S06: Process Manager + ARI Service
+- Full session startup: runtimeClass → config.json → bundle → fork shim → socket wait → connect; 9 `session/*` handlers; `session/prompt` auto-starts on `created`
+- Key files: `pkg/agentd/process.go`, `pkg/ari/server.go`, `pkg/ari/types.go`
+
+### S07–S08: agentdctl CLI + Integration Tests
+- 11-command CLI; `pkg/ari/client.go` single-shot RPC client; 8 integration tests proving full `agentd → agent-shim → mockagent` pipeline
+- Key files: `cmd/agentdctl/main.go`, `pkg/ari/client.go`, `tests/integration/`
 
 ---
 
 ## M001-tlbeko: Declarative Workspace Provisioning (2026-04-03)
 
-Workspace Manager prepares workspaces from spec (Git/EmptyDir/Local), executes hooks sequentially with abort-on-failure, tracks references to prevent premature cleanup, exposes ARI JSON-RPC workspace/* methods — 79+ tests pass.
+### S01: Workspace Spec + Git Handler
+- Discriminated union `Source` (git/emptyDir/local) with custom JSON marshaling; `GitHandler` with ref/depth clone; `GitError` structured type with Phase field
+- Key files: `pkg/workspace/spec.go`, `pkg/workspace/git.go`, `pkg/workspace/errors.go`
 
-- S01-S02: Workspace spec — Source discriminated union JSON; GitHandler (shallow clone); EmptyDirHandler; LocalHandler (unmanaged, returns path directly)
-- S03: Hook executor — sequential abort-on-failure; HookError with HookIndex
-- S04: Workspace lifecycle — WorkspaceError with Phase; best-effort teardown cleanup; reference counting (Acquire/Release)
-- S05: ARI integration — workspace/prepare, workspace/list, workspace/cleanup; Registry; 4 integration tests
-- Key files: `pkg/workspace/spec.go`, `pkg/workspace/git.go`, `pkg/workspace/handler.go`, `pkg/workspace/hook.go`, `pkg/workspace/manager.go`, `pkg/ari/server.go`
+### S02: EmptyDir + Local Handlers
+- `EmptyDirHandler` (managed) and `LocalHandler` (unmanaged — returns `source.Local.Path` directly, not targetDir); managed/unmanaged semantics established
+- Key files: `pkg/workspace/emptydir.go`, `pkg/workspace/local.go`, `pkg/workspace/handler.go`
+
+### S03: Hook Execution
+- `HookExecutor` sequential abort-on-failure; `HookError` with Phase/HookIndex; stdout+stderr capture; context cancellation support
+- Key files: `pkg/workspace/hook.go`
+
+### S04: Workspace Lifecycle
+- `WorkspaceManager` Prepare/Cleanup with reference counting (Acquire/Release); best-effort teardown semantics; `WorkspaceError` Phase field
+- Key files: `pkg/workspace/manager.go`
+
+### S05: ARI Workspace Methods
+- `workspace/prepare|list|cleanup` JSON-RPC handlers over Unix socket; UUID workspace IDs; `Registry` with `RefCount=0` cleanup guard
+- Key files: `pkg/ari/server.go`, `pkg/ari/registry.go`, `pkg/ari/types.go`

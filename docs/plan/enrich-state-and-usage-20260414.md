@@ -56,9 +56,6 @@ type State struct {
 // Fields are updated incrementally: each ACP notification overwrites the relevant
 // field(s), leaving others unchanged.
 type SessionState struct {
-    // Title is the human-readable session title (from SessionInfoUpdate).
-    Title *string `json:"title,omitempty"`
-
     // CurrentMode is the agent's current operational mode ID (from CurrentModeUpdate).
     // e.g. "plan", "code", "research"
     CurrentMode *string `json:"currentMode,omitempty"`
@@ -109,7 +106,6 @@ value 是该类型事件的累计数量。
   "bundle": "/var/lib/agentd/bundles/session-abc123",
   "updatedAt": "2026-04-14T10:30:00Z",
   "session": {
-    "title": "Refactor auth module",
     "currentMode": "code",
     "availableCommands": [
       {"name": "create_plan", "description": "Create an execution plan"},
@@ -159,21 +155,19 @@ value 是该类型事件的累计数量。
 
 ### 机制
 
-当 Translator 收到 session_info / config_option / current_mode / available_commands 事件时
-（session_info 只取 title，忽略 updatedAt — 后者由 shim 在 writeState 时自动设置）：
+当 Translator 收到 config_option / current_mode / available_commands 事件时：
 
 1. **照常翻译**为对应的 session category 事件（保持现有行为不变）
 2. **额外更新 state.json** 中的 `Session` 字段 + 刷新 `EventCounts`
 3. **触发一个 `state_change` 事件**，reason 区分来源
 
-usage 事件**不触发 state_change**，只作为 session event 通知出去。
+session_info 和 usage 事件**不触发 state_change 也不更新 state.json**，只作为 session event 通知出去。
 
 ### state_change reason 扩展
 
 现有 reason 值：`"prompt-started"`, `"prompt-completed"`, `"prompt-failed"`, `"process-exited"`, ...
 
 新增：
-- `"session-info-updated"` — session title 变更
 - `"config-updated"` — 配置选项变更
 - `"mode-changed"` — 操作模式切换
 - `"commands-updated"` — 可用命令列表变更
@@ -192,7 +186,7 @@ type StateChangeEvent struct {
 }
 ```
 
-`sessionChanged` 示例值：`["title"]`, `["currentMode"]`, `["configOptions", "availableCommands"]`。
+`sessionChanged` 示例值：`["currentMode"]`, `["configOptions"]`, `["availableCommands"]`。
 这让消费方可以过滤只关心的变更类型，而不需要 diff 整个 state。
 
 ### 实现位置
@@ -218,7 +212,7 @@ Translator 不需要改动（除了 eventCounts 计数逻辑）。
 
 state.json 写入时机（现有 + 新增）:
     status 变更 (creating→idle, idle→running, etc.)     → writeState() 包含 eventCounts
-    session metadata 变更 (info/config/mode/commands)    → writeState() 包含 eventCounts
+    session metadata 变更 (config/mode/commands)          → writeState() 包含 eventCounts
     进程退出                                              → writeState() 包含 eventCounts
 ```
 
