@@ -23,7 +23,7 @@ import (
 
 	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	apishim "github.com/zoumo/oar/api/shim"
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/pkg/agentd"
 	"github.com/zoumo/oar/pkg/jsonrpc"
 	"github.com/zoumo/oar/pkg/store"

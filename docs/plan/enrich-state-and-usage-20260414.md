@@ -13,10 +13,11 @@ ACP 发来的 5 类 metadata 事件（session_info, config_option, current_mode,
 
 ## 目标
 
-1. 扩展 runtime-spec state.json，增加 session 元信息字段
+1. 扩展 runtime-spec state.json，增加 session 元信息字段（不含 usage）
 2. 当这些字段变更时，写入 state.json 并触发统一的 `state_change` 事件
-3. usage 通过 shim RPC 暴露给上层
+3. usage 作为 session event 通知出去，不落盘到 state.json
 4. 清理 file_write / file_read / command 死代码
+5. 维护事件类型计数器，state 变更时一并写入
 
 ---
 
@@ -41,6 +42,10 @@ type State struct {
     // Populated progressively as the agent reports updates via ACP notifications.
     // Nil before the first session metadata arrives.
     Session *SessionState `json:"session,omitempty"`
+
+    // EventCounts tracks the number of events by type.
+    // Updated in memory on every event; flushed to state.json on state changes.
+    EventCounts map[string]int `json:"eventCounts,omitempty"`
 }
 
 // SessionState captures the latest session-level metadata reported by the agent.
@@ -58,34 +63,39 @@ type SessionState struct {
     CurrentMode *string `json:"currentMode,omitempty"`
 
     // AvailableCommands lists the agent's currently available commands (from AvailableCommandsUpdate).
-    // Full replacement on each update.
+    // Full replacement on each update; sorted by Name.
     AvailableCommands []AvailableCommand `json:"availableCommands,omitempty"`
 
     // ConfigOptions lists the agent's configurable options with current values (from ConfigOptionUpdate).
-    // Full replacement on each update.
+    // Full replacement on each update; sorted by ID.
     ConfigOptions []ConfigOption `json:"configOptions,omitempty"`
-
-    // Usage carries the latest token/API usage statistics (from UsageUpdate).
-    Usage *UsageState `json:"usage,omitempty"`
 }
-
-// UsageState carries token usage and optional cost for the session.
-type UsageState struct {
-    Size int    `json:"size"`            // Total context window size (tokens)
-    Used int    `json:"used"`            // Tokens currently used
-    Cost *Cost  `json:"cost,omitempty"`  // Cumulative session cost
-}
-
-// Cost mirrors acp.Cost.
-type Cost struct {
-    Amount   float64 `json:"amount"`
-    Currency string  `json:"currency"`
-}
-
-// AvailableCommand 和 ConfigOption 的类型定义复用 pkg/events/types.go 中现有定义。
-// runtime-spec/api 包需要独立定义（避免 runtime-spec 依赖 events 包），
-// 但 JSON wire shape 保持一致。
 ```
+
+**注意**：usage 不在 state.json 中。usage 是高频变更的度量数据，写入 state.json 会造成不必要的磁盘 IO。
+usage 作为 session category 的 `shim/event` 通知实时推送给订阅方，也写入 event log 供回放。
+
+### 排序约定
+
+- `AvailableCommands` 按 `Name` 字典序排列
+- `ConfigOptions` 按 `ID` 字典序排列
+
+ACP 每次发完整列表，写入前先排序再替换。排序保证：
+1. state.json 的 JSON 输出稳定（相同内容不因顺序产生 diff）
+2. 消费方可以做 binary search 或稳定的 key 定位
+
+### EventCounts — 事件类型计数器
+
+`EventCounts` 是一个 `map[string]int`，key 是事件类型（如 `"text"`, `"tool_call"`, `"state_change"`），
+value 是该类型事件的累计数量。
+
+- **内存维护**：每个事件到达 Translator 时 +1，O(1) 开销
+- **懒写入**：只在 state.json 因其他原因需要写入时（status 变更、session metadata 变更）顺带刷新计数
+- **不单独触发写入**：text/thinking/tool_call 等高频事件只更新内存计数，不写磁盘
+
+用途：
+- 诊断/监控：快速查看 session 产出了多少 tool_call、text chunk 等
+- agentd 恢复后可从 state.json 读取计数作为参考（不是精确值，因为懒写入可能丢失最后几个计数）
 
 ### state.json 示例
 
@@ -101,7 +111,8 @@ type Cost struct {
     "updatedAt": "2026-04-14T10:30:00Z",
     "currentMode": "code",
     "availableCommands": [
-      {"name": "create_plan", "description": "Create an execution plan"}
+      {"name": "create_plan", "description": "Create an execution plan"},
+      {"name": "research_codebase", "description": "Search and analyze code"}
     ],
     "configOptions": [
       {
@@ -114,12 +125,21 @@ type Cost struct {
           {"name": "Sonnet", "value": "sonnet"}
         ]
       }
-    ],
-    "usage": {
-      "size": 200000,
-      "used": 45000,
-      "cost": {"amount": 0.12, "currency": "USD"}
-    }
+    ]
+  },
+  "eventCounts": {
+    "text": 142,
+    "thinking": 28,
+    "tool_call": 15,
+    "tool_result": 15,
+    "turn_start": 3,
+    "turn_end": 3,
+    "state_change": 8,
+    "usage": 6,
+    "session_info": 2,
+    "config_option": 1,
+    "available_commands": 1,
+    "current_mode": 1
   }
 }
 ```
@@ -127,7 +147,9 @@ type Cost struct {
 ### 设计决策
 
 - **`Session` 是可选子结构**：agent 启动后 ACP 通知陆续到达，字段渐进填充。未收到的字段保持 nil/空。
-- **全量替换语义**：`availableCommands` 和 `configOptions` 每次收到事件都全量替换（与 ACP 语义一致，ACP 每次发完整列表）。
+- **全量替换 + 排序语义**：`availableCommands` 和 `configOptions` 每次收到事件都全量替换（与 ACP 语义一致），写入前按唯一 key 排序。
+- **usage 不落盘**：高频度量数据只走内存 + 通知 + event log，不写 state.json。
+- **eventCounts 懒写入**：内存中实时更新，搭便车写入，避免高频磁盘 IO。
 - **runtime-spec/api 包独立定义类型**：不依赖 events 包，保持 runtime-spec 的独立性。JSON wire shape 保持一致。
 
 ---
@@ -136,11 +158,13 @@ type Cost struct {
 
 ### 机制
 
-当 Translator 收到 session_info / config_option / current_mode / available_commands / usage 事件时：
+当 Translator 收到 session_info / config_option / current_mode / available_commands 事件时：
 
 1. **照常翻译**为对应的 session category 事件（保持现有行为不变）
-2. **额外更新 state.json** 中的 `Session` 字段
+2. **额外更新 state.json** 中的 `Session` 字段 + 刷新 `EventCounts`
 3. **触发一个 `state_change` 事件**，reason 区分来源
+
+usage 事件**不触发 state_change**，只作为 session event 通知出去。
 
 ### state_change reason 扩展
 
@@ -151,23 +175,22 @@ type Cost struct {
 - `"config-updated"` — 配置选项变更
 - `"mode-changed"` — 操作模式切换
 - `"commands-updated"` — 可用命令列表变更
-- `"usage-updated"` — usage 统计变更
 
 ### StateChangeEvent 扩展
 
 ```go
 type StateChangeEvent struct {
-    PreviousStatus string `json:"previousStatus"`
-    Status         string `json:"status"`
-    PID            int    `json:"pid,omitempty"`
-    Reason         string `json:"reason,omitempty"`
+    PreviousStatus string   `json:"previousStatus"`
+    Status         string   `json:"status"`
+    PID            int      `json:"pid,omitempty"`
+    Reason         string   `json:"reason,omitempty"`
     // SessionChanged lists which session fields were updated in this state change.
     // Empty for pure lifecycle status changes.
     SessionChanged []string `json:"sessionChanged,omitempty"`
 }
 ```
 
-`sessionChanged` 示例值：`["title"]`, `["currentMode"]`, `["usage"]`, `["configOptions", "availableCommands"]`。
+`sessionChanged` 示例值：`["title"]`, `["currentMode"]`, `["configOptions", "availableCommands"]`。
 这让消费方可以过滤只关心的变更类型，而不需要 diff 整个 state。
 
 ### 实现位置
@@ -177,76 +200,42 @@ type StateChangeEvent struct {
 ```
 ACP SessionNotification
     → Translator.translate() → session event (现有，不变)
-    → Manager 监听 session event → 更新 state.json Session 字段 → 触发 state_change
+    → Translator.translate() → eventCounts++ (内存)
+    → Manager 监听 session metadata event → 更新 state.json Session 字段 + 刷新 EventCounts → 触发 state_change
 ```
 
 Manager 需要新增一个 event consumer 来处理这些 session metadata 事件。
-Translator 不需要改动。
+Translator 不需要改动（除了 eventCounts 计数逻辑）。
+
+### EventCounts 更新流
+
+```
+每个事件到达:
+    Translator.translate()
+        → eventCounts[type]++          (内存，无锁竞争，Translator 单线程)
+
+state.json 写入时机（现有 + 新增）:
+    status 变更 (creating→idle, idle→running, etc.)     → writeState() 包含 eventCounts
+    session metadata 变更 (info/config/mode/commands)    → writeState() 包含 eventCounts
+    进程退出                                              → writeState() 包含 eventCounts
+```
 
 ---
 
-## 改动 3：usage 通过 shim RPC 暴露
+## 改动 3：usage 通知透传
 
-### 方案：扩展 runtime/status response
+usage 不写 state.json，但需要确保上层能实时获取：
 
-在 `runtime/status` 的 response 中，`state` 字段已经包含完整的 state.json 内容。
-因为改动 1 把 usage 加入了 `State.Session.Usage`，所以 `runtime/status` 自动暴露 usage，**不需要新增 RPC 方法**。
+1. **session event 通知** — 已有。usage 事件作为 `shim/event` (category=session, type=usage) 推送给所有 subscriber。现有实现已经做到了。
+2. **event log 持久化** — 已有。usage 事件写入 events.jsonl，断线恢复后可通过 `runtime/history` 回放。
+3. **不触发 state_change** — usage 高频更新，避免 state_change 风暴。
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 4,
-  "result": {
-    "state": {
-      "oarVersion": "0.1.0",
-      "id": "session-abc123",
-      "status": "idle",
-      "pid": 12345,
-      "bundle": "...",
-      "session": {
-        "usage": {
-          "size": 200000,
-          "used": 45000,
-          "cost": {"amount": 0.12, "currency": "USD"}
-        }
-      }
-    },
-    "recovery": {
-      "lastSeq": 41
-    }
-  }
-}
-```
+上层获取 usage 的方式：
+- **实时**：监听 `shim/event` 中 type=usage 的 session event
+- **历史**：`runtime/history` 回放 event log 中的 usage 事件
+- **当前值**：从最近的 usage event 中获取（event log 尾部）
 
-### 实时 usage 推送
-
-usage 变更会通过改动 2 的 `state_change` 事件（reason: `"usage-updated"`）实时推送到所有 subscriber。
-上层通过 `shim/event` notification 就能收到：
-
-```json
-{
-  "method": "shim/event",
-  "params": {
-    "seq": 50,
-    "category": "runtime",
-    "type": "state_change",
-    "content": {
-      "previousStatus": "running",
-      "status": "running",
-      "reason": "usage-updated",
-      "sessionChanged": ["usage"]
-    }
-  }
-}
-```
-
-消费方收到 `state_change` + `sessionChanged` 包含 `"usage"` 后，可以：
-- 直接从 event log 里找最近的 `usage` session event 获取详情
-- 或者调 `runtime/status` 获取最新 state snapshot
-
-### usage 在 session 维度聚合
-
-ACP 的 `UsageUpdate` 本身就是 session 级别的累计值（`size` = context window 总大小，`used` = 已用 tokens，`cost.amount` = 累计费用），直接存入 state 即可，不需要额外聚合。
+**结论**：usage 透传不需要额外代码改动，现有的 Translator + event broadcast + event log 已经覆盖。
 
 ---
 
@@ -265,11 +254,10 @@ ACP 的 `UsageUpdate` 本身就是 session 级别的累计值（`size` = context
 | `api/events.go` | `EventTypeFileWrite`, `EventTypeFileRead`, `EventTypeCommand` 常量 |
 | `pkg/events/types.go` | `FileWriteEvent`, `FileReadEvent`, `CommandEvent` 结构体 |
 | `pkg/events/shim_event.go` | `decodeEventPayload()` 中对应的 case 分支 |
-| `docs/design/runtime/shim-rpc-spec.md` | Typed Event 表格中的 `file_write`, `file_read`, `command` 行 |
+| `docs/design/runtime/shim-rpc-spec.md` | Typed Event 表格中的 `file_write`, `file_read`, `command` 行；`shim/event` Category 列表中的引用 |
 
 ### 不删除
 
-- shim-rpc-spec.md 的 `shim/event` Category 划分列表中提到这些类型 — 需要同步移除
 - 如果未来 ACP 增加 side-channel 事件（如 fs/terminal 权限通知），再按实际 ACP 定义重新加入
 
 ---
@@ -277,19 +265,21 @@ ACP 的 `UsageUpdate` 本身就是 session 级别的累计值（`size` = context
 ## 实现顺序
 
 1. **清理死代码**（改动 4）— 先清理干净，减少噪音
-2. **扩展 runtime-spec state.go**（改动 1）— 定义 SessionState 类型
-3. **Manager 监听 session metadata 事件并写入 state + 触发 state_change**（改动 2）
-4. **更新设计文档**（shim-rpc-spec.md, agent-shim.md）— 反映 state.json 新字段和 state_change reason 扩展
-5. **验证 runtime/status 自动暴露 usage**（改动 3）— 应该是自动的，只需验证
+2. **扩展 runtime-spec state.go**（改动 1）— 定义 SessionState 类型 + EventCounts 字段
+3. **Translator 增加 eventCounts 内存计数**（改动 2 前置）
+4. **Manager 监听 session metadata 事件并写入 state + 触发 state_change**（改动 2）
+5. **更新设计文档**（shim-rpc-spec.md, agent-shim.md）— 反映 state.json 新字段和 state_change reason 扩展
+6. **验证 usage 透传**（改动 3）— 现有实现已覆盖，只需验证
 
 ## 涉及文件
 
 | 文件 | 改动 |
 |------|------|
-| `pkg/runtime-spec/api/state.go` | 新增 SessionState, UsageState, Cost, AvailableCommand, ConfigOption 等类型 |
-| `pkg/runtime/runtime.go` | Manager 新增 session metadata event consumer，更新 state.json |
+| `pkg/runtime-spec/api/state.go` | 新增 SessionState, AvailableCommand, ConfigOption 等类型；新增 EventCounts 字段 |
+| `pkg/events/translator.go` | 新增 eventCounts 内存计数（每个事件 +1） |
+| `pkg/runtime/runtime.go` | Manager 新增 session metadata event consumer，更新 state.json，刷新 EventCounts |
+| `pkg/events/types.go` | StateChangeEvent 增加 SessionChanged 字段；删除 FileWriteEvent/FileReadEvent/CommandEvent |
 | `api/events.go` | 删除 file_write/file_read/command 常量 |
-| `pkg/events/types.go` | 删除 FileWriteEvent/FileReadEvent/CommandEvent |
 | `pkg/events/shim_event.go` | 删除 decodeEventPayload 中对应 case |
 | `docs/design/runtime/shim-rpc-spec.md` | 更新 state.json schema 描述，删除 file_write/file_read/command，扩展 state_change reason |
 | `docs/design/runtime/agent-shim.md` | 提及 session metadata 写入 state 的职责 |

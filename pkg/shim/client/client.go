@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 
-	apishim "github.com/zoumo/oar/api/shim"
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/jsonrpc"
 )

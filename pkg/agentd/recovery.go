@@ -10,7 +10,7 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apishim "github.com/zoumo/oar/api/shim"
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	spec "github.com/zoumo/oar/pkg/runtime-spec"

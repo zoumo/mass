@@ -6,8 +6,7 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
-	"github.com/zoumo/oar/api"
-	apishim "github.com/zoumo/oar/api/shim"
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/jsonrpc"
 	"github.com/zoumo/oar/pkg/runtime"
@@ -90,7 +89,7 @@ func (s *Service) Subscribe(ctx context.Context, req *apishim.SessionSubscribePa
 					if !ok {
 						return
 					}
-					if err := peer.Notify(ctx, api.MethodShimEvent, ev); err != nil {
+					if err := peer.Notify(ctx, apishim.MethodShimEvent, ev); err != nil {
 						return
 					}
 				}
@@ -121,7 +120,7 @@ func (s *Service) Subscribe(ctx context.Context, req *apishim.SessionSubscribePa
 				if ev.Seq <= floor {
 					continue
 				}
-				if err := peer.Notify(ctx, api.MethodShimEvent, ev); err != nil {
+				if err := peer.Notify(ctx, apishim.MethodShimEvent, ev); err != nil {
 					return
 				}
 			}

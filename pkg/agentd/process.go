@@ -15,9 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zoumo/oar/api"
 	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apishim "github.com/zoumo/oar/api/shim"
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	spec "github.com/zoumo/oar/pkg/runtime-spec"
@@ -133,7 +132,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 	key := agentKey(workspace, name)
 	logger := m.logger.With("agent_key", key)
 	return func(ctx context.Context, method string, params json.RawMessage) {
-		if method != api.MethodShimEvent {
+		if method != apishim.MethodShimEvent {
 			return
 		}
 		ev, err := shimclient.ParseShimEvent(params)
@@ -143,7 +142,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 		}
 
 		// Route by category/type.
-		if ev.Category == api.CategoryRuntime && ev.Type == api.EventTypeStateChange {
+		if ev.Category == events.CategoryRuntime && ev.Type == events.EventTypeStateChange {
 			// state_change → update DB agent state.
 			sc, ok := ev.Content.(events.StateChangeEvent)
 			if !ok {

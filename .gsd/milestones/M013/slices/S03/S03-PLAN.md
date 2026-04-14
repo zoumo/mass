@@ -69,7 +69,7 @@ After S03 the api/ directory is gone. All shim protocol types live in pkg/shim/a
   - Files: `pkg/shim/api/types.go`, `pkg/shim/api/service.go`, `pkg/shim/api/client.go`, `pkg/shim/api/methods.go`, `pkg/events/constants.go`
   - Verify: go build ./pkg/shim/api/... && go build ./pkg/events/... && make build
 
-- [ ] **T02: Migrate all consumers + delete api/ directory** `est:1h30m`
+- [x] **T02: Migrate all consumers + delete api/ directory** `est:1h30m`
   Migrate every file that imports api/shim or bare api to the new paths, then delete api/. Apply changes in groups — each group should compile cleanly before moving to the next. Finish with deletion and full suite verification.
 
 Module path: `github.com/zoumo/oar`

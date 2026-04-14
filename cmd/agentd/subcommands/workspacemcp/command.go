@@ -16,7 +16,7 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/oar/api"
+	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
 
 	"github.com/zoumo/oar/internal/logging"
 )
@@ -166,7 +166,7 @@ func workspaceSendHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
 		}
 
 		var result ariWorkspaceSendResult
-		if err := callARI(ctx, cfg.agentdSocket, api.MethodWorkspaceSend, ariParams, &result); err != nil {
+		if err := callARI(ctx, cfg.agentdSocket, pkgariapi.MethodWorkspaceSend, ariParams, &result); err != nil {
 			errMsg := err.Error()
 			var text string
 			if strings.Contains(errMsg, "is busy") || strings.Contains(errMsg, "cancel its current turn") {
@@ -200,7 +200,7 @@ func workspaceStatusHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
 
 		ariParams := ariWorkspaceStatusParams{Name: cfg.workspaceName}
 		var result ariWorkspaceStatusResult
-		if err := callARI(ctx, cfg.agentdSocket, api.MethodWorkspaceStatus, ariParams, &result); err != nil {
+		if err := callARI(ctx, cfg.agentdSocket, pkgariapi.MethodWorkspaceStatus, ariParams, &result); err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("workspace/status failed: %v", err)}},
 				IsError: true,

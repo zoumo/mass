@@ -15,7 +15,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/oar/api"
+	shimapi "github.com/zoumo/oar/pkg/shim/api"
+	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/ndjson"
 )
 
@@ -176,13 +177,13 @@ type textPayload struct {
 
 func printNotification(msg rpcResponse) {
 	switch msg.Method {
-	case api.MethodShimEvent:
+	case shimapi.MethodShimEvent:
 		var ev shimEvent
 		if err := json.Unmarshal(msg.Params, &ev); err != nil {
 			fmt.Fprintf(os.Stderr, "[shim/event parse error: %v]\n", err)
 			return
 		}
-		if ev.Category == "runtime" && ev.Type == api.EventTypeStateChange {
+		if ev.Category == "runtime" && ev.Type == events.EventTypeStateChange {
 			var sc struct {
 				PreviousStatus string `json:"previousStatus"`
 				Status         string `json:"status"`
@@ -203,14 +204,14 @@ func printNotification(msg rpcResponse) {
 }
 
 func isTurnEndNotification(msg rpcResponse) bool {
-	if msg.Method != api.MethodShimEvent {
+	if msg.Method != shimapi.MethodShimEvent {
 		return false
 	}
 	var ev shimEvent
 	if err := json.Unmarshal(msg.Params, &ev); err != nil {
 		return false
 	}
-	return ev.Type == api.EventTypeTurnEnd
+	return ev.Type == events.EventTypeTurnEnd
 }
 
 func startNotificationPrinter(ctx context.Context, c *client) <-chan struct{} {
@@ -251,19 +252,19 @@ func drainTurnEnd(ch <-chan struct{}) {
 
 func printShimEvent(ev shimEvent) {
 	switch ev.Type {
-	case api.EventTypeText:
+	case events.EventTypeText:
 		var p textPayload
 		_ = json.Unmarshal(ev.Content, &p)
 		fmt.Print(p.Text)
-	case api.EventTypeThinking:
+	case events.EventTypeThinking:
 		var p textPayload
 		_ = json.Unmarshal(ev.Content, &p)
 		fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", ev.Seq, p.Text)
-	case api.EventTypeToolCall:
+	case events.EventTypeToolCall:
 		fmt.Fprintf(os.Stderr, "\033[33m[tool_call seq=%d] %s\033[0m\n", ev.Seq, string(ev.Content))
-	case api.EventTypeToolResult:
+	case events.EventTypeToolResult:
 		fmt.Fprintf(os.Stderr, "\033[2m[tool_result seq=%d] %s\033[0m\n", ev.Seq, string(ev.Content))
-	case api.EventTypeTurnEnd:
+	case events.EventTypeTurnEnd:
 		fmt.Println()
 	default:
 		fmt.Fprintf(os.Stderr, "[%s seq=%d] %s\n", ev.Type, ev.Seq, string(ev.Content))
@@ -279,7 +280,7 @@ func runPrompt(sock, text string) error {
 	}
 	defer c.close()
 
-	if _, err := c.call(api.MethodSessionSubscribe, nil); err != nil {
+	if _, err := c.call(shimapi.MethodSessionSubscribe, nil); err != nil {
 		return fmt.Errorf("session/subscribe: %w", err)
 	}
 
@@ -288,7 +289,7 @@ func runPrompt(sock, text string) error {
 	turnEnd := startNotificationPrinter(ctx, c)
 	drainTurnEnd(turnEnd)
 
-	result, err := c.call(api.MethodSessionPrompt, map[string]string{"prompt": text})
+	result, err := c.call(shimapi.MethodSessionPrompt, map[string]string{"prompt": text})
 	if err != nil {
 		return fmt.Errorf("session/prompt: %w", err)
 	}
@@ -331,7 +332,7 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 			defer c.close()
-			result, err := c.call(api.MethodRuntimeStatus, nil)
+			result, err := c.call(shimapi.MethodRuntimeStatus, nil)
 			if err != nil {
 				return err
 			}
@@ -358,7 +359,7 @@ func NewCommand() *cobra.Command {
 			if cmd.Flags().Changed("from-seq") {
 				params["fromSeq"] = fromSeq
 			}
-			result, err := c.call(api.MethodRuntimeHistory, params)
+			result, err := c.call(shimapi.MethodRuntimeHistory, params)
 			if err != nil {
 				return err
 			}
@@ -406,7 +407,7 @@ func NewCommand() *cobra.Command {
 				return err
 			}
 			defer c.close()
-			_, err = c.call(api.MethodRuntimeStop, nil)
+			_, err = c.call(shimapi.MethodRuntimeStop, nil)
 			if err == nil {
 				fmt.Println("stop sent")
 			}

@@ -12,7 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/zoumo/oar/api"
+	shimapi "github.com/zoumo/oar/pkg/shim/api"
+	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/tui/chat"
 	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/anim"
 	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
@@ -144,7 +145,7 @@ func connectCmd(sock string) tea.Cmd {
 		if err != nil {
 			return connErrMsg{fmt.Errorf("connect: %w", err)}
 		}
-		if _, err := c.call(api.MethodSessionSubscribe, nil); err != nil {
+		if _, err := c.call(shimapi.MethodSessionSubscribe, nil); err != nil {
 			c.close()
 			return connErrMsg{fmt.Errorf("session/subscribe: %w", err)}
 		}
@@ -158,17 +159,17 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 		if !ok {
 			return connClosedMsg{}
 		}
-		if msg.Method != api.MethodShimEvent {
+		if msg.Method != shimapi.MethodShimEvent {
 			return notifMsg{msg}
 		}
 		var ev shimEvent
 		if err := json.Unmarshal(msg.Params, &ev); err != nil {
 			return notifMsg{msg}
 		}
-		if ev.Type == api.EventTypeTurnEnd {
+		if ev.Type == events.EventTypeTurnEnd {
 			return turnEndMsg{}
 		}
-		if ev.Category == "runtime" && ev.Type == api.EventTypeStateChange {
+		if ev.Category == "runtime" && ev.Type == events.EventTypeStateChange {
 			var sc struct {
 				PreviousStatus string `json:"previousStatus"`
 				Status         string `json:"status"`
@@ -188,7 +189,7 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 
 func sendPromptCmd(c *client, text string) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		if err := c.send(api.MethodSessionPrompt, map[string]string{"prompt": text}); err != nil {
+		if err := c.send(shimapi.MethodSessionPrompt, map[string]string{"prompt": text}); err != nil {
 			return promptErrMsg{err}
 		}
 		return nil
@@ -197,14 +198,14 @@ func sendPromptCmd(c *client, text string) tea.Cmd {
 
 func cancelPromptCmd(c *client) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		_, _ = c.call(api.MethodSessionCancel, nil)
+		_, _ = c.call(shimapi.MethodSessionCancel, nil)
 		return nil
 	})
 }
 
 func fetchStatusCmd(c *client) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		result, err := c.call(api.MethodRuntimeStatus, nil)
+		result, err := c.call(shimapi.MethodRuntimeStatus, nil)
 		if err != nil {
 			return nil
 		}
@@ -507,7 +508,7 @@ func (m *chatModel) ensureCurrentMsg() tea.Cmd {
 }
 
 func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
-	if msg.Method != api.MethodShimEvent {
+	if msg.Method != shimapi.MethodShimEvent {
 		return nil
 	}
 	var ev shimEvent
@@ -522,7 +523,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch ev.Type {
-	case api.EventTypeUserMessage:
+	case events.EventTypeUserMessage:
 		// User prompt broadcast. Skip if we sent this prompt (already shown).
 		if m.sentPrompt {
 			m.sentPrompt = false
@@ -537,7 +538,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			m.chat.AppendMessages(chat.NewUserMessageItem(&m.sty, userMsg))
 		}
 
-	case api.EventTypeText:
+	case events.EventTypeText:
 		var pl textPayload
 		_ = json.Unmarshal(ev.Content, &pl)
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
@@ -546,7 +547,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.currentMsg.appendText(pl.Text)
 		m.updateCurrentAssistant()
 
-	case api.EventTypeThinking:
+	case events.EventTypeThinking:
 		var pl textPayload
 		_ = json.Unmarshal(ev.Content, &pl)
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
@@ -555,7 +556,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		m.currentMsg.appendThinking(pl.Text)
 		m.updateCurrentAssistant()
 
-	case api.EventTypeToolCall:
+	case events.EventTypeToolCall:
 		var pl toolEventPayload
 		_ = json.Unmarshal(ev.Content, &pl)
 
@@ -591,7 +592,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 			}
 		}
 
-	case api.EventTypeToolResult:
+	case events.EventTypeToolResult:
 		var pl toolEventPayload
 		_ = json.Unmarshal(ev.Content, &pl)
 
@@ -631,7 +632,7 @@ func (m *chatModel) handleNotif(msg rpcResponse) tea.Cmd {
 		}
 		// else: late join — no matching tool_call, skip silently
 
-	case api.EventTypePlan:
+	case events.EventTypePlan:
 		var pl struct {
 			Entries []chat.PlanEntry `json:"entries"`
 		}

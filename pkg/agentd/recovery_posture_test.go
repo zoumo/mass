@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/api/shim"
+	shim "github.com/zoumo/oar/pkg/shim/api"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 

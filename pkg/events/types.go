@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	acp "github.com/coder/acp-go-sdk"
-
-	"github.com/zoumo/oar/api"
 )
 
 // Event is a sealed interface for all typed events produced by the Translator.
@@ -517,7 +515,7 @@ type TextEvent struct {
 	Content *ContentBlock `json:"content,omitempty"`
 }
 
-func (TextEvent) eventType() string { return api.EventTypeText }
+func (TextEvent) eventType() string { return EventTypeText }
 
 // ThinkingEvent carries a streamed thinking/reasoning chunk from the agent.
 type ThinkingEvent struct {
@@ -525,7 +523,7 @@ type ThinkingEvent struct {
 	Content *ContentBlock `json:"content,omitempty"`
 }
 
-func (ThinkingEvent) eventType() string { return api.EventTypeThinking }
+func (ThinkingEvent) eventType() string { return EventTypeThinking }
 
 // ToolCallEvent signals that the agent invoked a tool.
 type ToolCallEvent struct {
@@ -540,7 +538,7 @@ type ToolCallEvent struct {
 	RawOutput any                `json:"rawOutput,omitempty"`
 }
 
-func (ToolCallEvent) eventType() string { return api.EventTypeToolCall }
+func (ToolCallEvent) eventType() string { return EventTypeToolCall }
 
 // ToolResultEvent carries the outcome of a tool invocation.
 type ToolResultEvent struct {
@@ -555,7 +553,7 @@ type ToolResultEvent struct {
 	RawOutput any                `json:"rawOutput,omitempty"`
 }
 
-func (ToolResultEvent) eventType() string { return api.EventTypeToolResult }
+func (ToolResultEvent) eventType() string { return EventTypeToolResult }
 
 // FileWriteEvent reports a file-write side-channel event from the ACP client.
 type FileWriteEvent struct {
@@ -563,7 +561,7 @@ type FileWriteEvent struct {
 	Allowed bool   `json:"allowed"`
 }
 
-func (FileWriteEvent) eventType() string { return api.EventTypeFileWrite }
+func (FileWriteEvent) eventType() string { return EventTypeFileWrite }
 
 // FileReadEvent reports a file-read side-channel event from the ACP client.
 type FileReadEvent struct {
@@ -571,7 +569,7 @@ type FileReadEvent struct {
 	Allowed bool   `json:"allowed"`
 }
 
-func (FileReadEvent) eventType() string { return api.EventTypeFileRead }
+func (FileReadEvent) eventType() string { return EventTypeFileRead }
 
 // CommandEvent reports a shell-command side-channel event from the ACP client.
 type CommandEvent struct {
@@ -579,7 +577,7 @@ type CommandEvent struct {
 	Allowed bool   `json:"allowed"`
 }
 
-func (CommandEvent) eventType() string { return api.EventTypeCommand }
+func (CommandEvent) eventType() string { return EventTypeCommand }
 
 // PlanEvent carries an updated plan from the agent session.
 // Meta is included to preserve the top-level _meta from SessionUpdatePlan.
@@ -589,7 +587,7 @@ type PlanEvent struct {
 	Entries []acp.PlanEntry `json:"entries"`
 }
 
-func (PlanEvent) eventType() string { return api.EventTypePlan }
+func (PlanEvent) eventType() string { return EventTypePlan }
 
 // UserMessageEvent carries a streamed text chunk echoed from the user's prompt.
 // ACP agents echo the incoming prompt back as UserMessageChunk notifications.
@@ -598,26 +596,26 @@ type UserMessageEvent struct {
 	Content *ContentBlock `json:"content,omitempty"`
 }
 
-func (UserMessageEvent) eventType() string { return api.EventTypeUserMessage }
+func (UserMessageEvent) eventType() string { return EventTypeUserMessage }
 
 // TurnStartEvent signals the start of an agent turn.
 type TurnStartEvent struct{}
 
-func (TurnStartEvent) eventType() string { return api.EventTypeTurnStart }
+func (TurnStartEvent) eventType() string { return EventTypeTurnStart }
 
 // TurnEndEvent signals the end of an agent turn with a stop reason.
 type TurnEndEvent struct {
 	StopReason string `json:"stopReason"`
 }
 
-func (TurnEndEvent) eventType() string { return api.EventTypeTurnEnd }
+func (TurnEndEvent) eventType() string { return EventTypeTurnEnd }
 
 // ErrorEvent is emitted when an unknown or malformed event variant is encountered.
 type ErrorEvent struct {
 	Msg string `json:"message"`
 }
 
-func (ErrorEvent) eventType() string { return api.EventTypeError }
+func (ErrorEvent) eventType() string { return EventTypeError }
 
 // ── New event types (previously silently discarded) ───────────────────────────
 
@@ -627,7 +625,7 @@ type AvailableCommandsEvent struct {
 	Commands []AvailableCommand `json:"commands"`
 }
 
-func (AvailableCommandsEvent) eventType() string { return api.EventTypeAvailableCommands }
+func (AvailableCommandsEvent) eventType() string { return EventTypeAvailableCommands }
 
 // CurrentModeEvent carries mode changes.
 type CurrentModeEvent struct {
@@ -635,7 +633,7 @@ type CurrentModeEvent struct {
 	ModeID string         `json:"modeId"`
 }
 
-func (CurrentModeEvent) eventType() string { return api.EventTypeCurrentMode }
+func (CurrentModeEvent) eventType() string { return EventTypeCurrentMode }
 
 // ConfigOptionEvent carries config option changes.
 type ConfigOptionEvent struct {
@@ -643,7 +641,7 @@ type ConfigOptionEvent struct {
 	ConfigOptions []ConfigOption `json:"configOptions"`
 }
 
-func (ConfigOptionEvent) eventType() string { return api.EventTypeConfigOption }
+func (ConfigOptionEvent) eventType() string { return EventTypeConfigOption }
 
 // SessionInfoEvent carries session metadata updates.
 type SessionInfoEvent struct {
@@ -652,7 +650,7 @@ type SessionInfoEvent struct {
 	UpdatedAt *string        `json:"updatedAt,omitempty"`
 }
 
-func (SessionInfoEvent) eventType() string { return api.EventTypeSessionInfo }
+func (SessionInfoEvent) eventType() string { return EventTypeSessionInfo }
 
 // UsageEvent carries token/API usage statistics.
 type UsageEvent struct {
@@ -662,7 +660,7 @@ type UsageEvent struct {
 	Used int            `json:"used"`
 }
 
-func (UsageEvent) eventType() string { return api.EventTypeUsage }
+func (UsageEvent) eventType() string { return EventTypeUsage }
 
 
 // StateChangeEvent carries runtime process lifecycle transitions.
@@ -674,4 +672,4 @@ type StateChangeEvent struct {
 	Reason         string `json:"reason,omitempty"`
 }
 
-func (StateChangeEvent) eventType() string { return api.EventTypeStateChange }
+func (StateChangeEvent) eventType() string { return EventTypeStateChange }

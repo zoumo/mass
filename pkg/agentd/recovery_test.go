@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	"github.com/zoumo/oar/api/shim"
+	shim "github.com/zoumo/oar/pkg/shim/api"
 	spec "github.com/zoumo/oar/pkg/runtime-spec"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	"github.com/zoumo/oar/pkg/store"

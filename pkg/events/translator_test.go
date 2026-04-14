@@ -10,8 +10,6 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/zoumo/oar/api"
 )
 
 func makeNotif(fn func(*acp.SessionUpdate)) acp.SessionNotification {
@@ -34,7 +32,7 @@ func drainShimEvent(t *testing.T, ch <-chan ShimEvent) ShimEvent {
 // sessionContent extracts the typed Event content from a session category ShimEvent.
 func sessionContent(t *testing.T, ev ShimEvent) Event {
 	t.Helper()
-	assert.Equal(t, api.CategorySession, ev.Category, "expected session category event")
+	assert.Equal(t, CategorySession, ev.Category, "expected session category event")
 	require.NotNil(t, ev.Content, "expected non-nil content")
 	return ev.Content
 }
@@ -65,7 +63,7 @@ func TestTranslate_AgentMessageChunk(t *testing.T) {
 	ev := drainShimEvent(t, ch)
 	assert.Equal(t, "run-1", ev.RunID)
 	assert.Equal(t, 0, ev.Seq)
-	assert.Equal(t, api.CategorySession, ev.Category)
+	assert.Equal(t, CategorySession, ev.Category)
 	assert.Equal(t, "text", ev.Type)
 	te, ok := ev.Content.(TextEvent)
 	require.True(t, ok)
@@ -262,8 +260,8 @@ func TestNotifyTurnStartAndEnd(t *testing.T) {
 	second := drainShimEvent(t, ch)
 	assert.Equal(t, 0, first.Seq)
 	assert.Equal(t, 1, second.Seq)
-	assert.Equal(t, api.CategorySession, first.Category)
-	assert.Equal(t, api.CategorySession, second.Category)
+	assert.Equal(t, CategorySession, first.Category)
+	assert.Equal(t, CategorySession, second.Category)
 	assert.Equal(t, "turn_start", first.Type)
 	assert.Equal(t, "turn_end", second.Type)
 	assert.NotEmpty(t, first.TurnID, "turn_start must carry a non-empty TurnID")
@@ -282,7 +280,7 @@ func TestNotifyStateChange(t *testing.T) {
 	tr.NotifyStateChange("created", "running", 1234, "prompt-started")
 
 	ev := drainShimEvent(t, ch)
-	assert.Equal(t, api.CategoryRuntime, ev.Category)
+	assert.Equal(t, CategoryRuntime, ev.Category)
 	assert.Equal(t, "state_change", ev.Type)
 	assert.Equal(t, "run-1", ev.RunID)
 	assert.Equal(t, 0, ev.Seq)
@@ -301,7 +299,7 @@ func TestShimEventRoundTrip(t *testing.T) {
 		SessionID: "acp-xxx",
 		Seq:       7,
 		Time:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		Category:  api.CategorySession,
+		Category:  CategorySession,
 		Type:      "tool_call",
 		TurnID:    "turn-001",
 		StreamSeq: 3,
@@ -332,7 +330,7 @@ func TestShimEventRoundTrip_NoTurnFields(t *testing.T) {
 		RunID:    "run-1",
 		Seq:      0,
 		Time:     time.Now(),
-		Category: api.CategorySession,
+		Category: CategorySession,
 		Type:     "text",
 		Content:  TextEvent{Text: "no turn"},
 	}
@@ -374,7 +372,7 @@ func TestSubscribeFromSeq_BackfillAndLive(t *testing.T) {
 	log1, err := OpenEventLog(logPath)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: at, Category: api.CategorySession, Type: "text", Content: TextEvent{Text: fmt.Sprintf("msg-%d", i)}}
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: at, Category: CategorySession, Type: "text", Content: TextEvent{Text: fmt.Sprintf("msg-%d", i)}}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -457,7 +455,7 @@ func TestTurnAwareShimEvent_TurnIdAssigned(t *testing.T) {
 	// State change after turn_end should not have TurnID.
 	tr.NotifyStateChange("running", "created", 0, "done")
 	scEv := drainShimEvent(t, ch)
-	assert.Equal(t, api.CategoryRuntime, scEv.Category)
+	assert.Equal(t, CategoryRuntime, scEv.Category)
 	assert.Empty(t, scEv.TurnID, "runtime state_change must not carry TurnID")
 }
 
@@ -563,7 +561,7 @@ func TestTurnAwareShimEvent_StateChangeExcludesTurnFields(t *testing.T) {
 	tr.NotifyStateChange("created", "running", 0, "")
 	scEv := drainShimEvent(t, ch)
 
-	assert.Equal(t, api.CategoryRuntime, scEv.Category)
+	assert.Equal(t, CategoryRuntime, scEv.Category)
 	assert.Empty(t, scEv.TurnID, "state_change must not carry TurnID even during active turn")
 	assert.Equal(t, 0, scEv.StreamSeq, "state_change must not carry StreamSeq")
 	assert.Empty(t, scEv.Phase, "state_change must not carry Phase")
@@ -592,7 +590,7 @@ func TestTurnAwareShimEvent_MetadataEventInTurn(t *testing.T) {
 	}}
 	siEv := drainShimEvent(t, ch)
 
-	assert.Equal(t, api.CategorySession, siEv.Category)
+	assert.Equal(t, CategorySession, siEv.Category)
 	assert.Equal(t, "session_info", siEv.Type)
 	assert.Equal(t, tsEv.TurnID, siEv.TurnID, "session_info in active turn must carry TurnID")
 	assert.Greater(t, siEv.StreamSeq, 0, "session_info in active turn must have StreamSeq > 0")
@@ -615,7 +613,7 @@ func TestTurnAwareShimEvent_MetadataEventOutsideTurn(t *testing.T) {
 	}}
 	siEv := drainShimEvent(t, ch)
 
-	assert.Equal(t, api.CategorySession, siEv.Category)
+	assert.Equal(t, CategorySession, siEv.Category)
 	assert.Empty(t, siEv.TurnID, "session_info outside turn must NOT carry TurnID")
 	assert.Equal(t, 0, siEv.StreamSeq, "session_info outside turn must have StreamSeq=0")
 	assert.Empty(t, siEv.Phase, "session_info outside turn must NOT carry Phase")

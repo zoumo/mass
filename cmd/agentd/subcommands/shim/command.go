@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	apishim "github.com/zoumo/oar/api/shim"
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/internal/logging"
 	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/jsonrpc"

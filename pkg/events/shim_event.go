@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/zoumo/oar/api"
 )
 
 // ShimEvent is the unified event structure for both live notifications and
@@ -128,10 +126,10 @@ func (e *ShimEvent) UnmarshalJSON(data []byte) error {
 // CategoryForEvent returns the category string for a given event type.
 // Only state_change returns CategoryRuntime; all other event types return CategorySession.
 func CategoryForEvent(eventType string) string {
-	if eventType == api.EventTypeStateChange {
-		return api.CategoryRuntime
+	if eventType == EventTypeStateChange {
+		return CategoryRuntime
 	}
-	return api.CategorySession
+	return CategorySession
 }
 
 // PhaseForEvent returns the phase string for a given session event type.
@@ -139,9 +137,9 @@ func CategoryForEvent(eventType string) string {
 // runtime category events (state_change) should not call this function.
 func PhaseForEvent(eventType string) string {
 	switch eventType {
-	case api.EventTypeThinking:
+	case EventTypeThinking:
 		return "thinking"
-	case api.EventTypeToolCall, api.EventTypeToolResult:
+	case EventTypeToolCall, EventTypeToolResult:
 		return "tool_call"
 	default:
 		return "acting"
@@ -164,7 +162,7 @@ func NewShimEvent(
 	category := CategoryForEvent(eventType)
 
 	var phase string
-	if turnID != "" && category == api.CategorySession {
+	if turnID != "" && category == CategorySession {
 		phase = PhaseForEvent(eventType)
 	}
 
@@ -177,7 +175,7 @@ func NewShimEvent(
 		Type:      eventType,
 		Content:   ev,
 	}
-	if turnID != "" && category == api.CategorySession {
+	if turnID != "" && category == CategorySession {
 		se.TurnID = turnID
 		se.StreamSeq = streamSeq
 		se.Phase = phase
@@ -289,41 +287,41 @@ func decodeEventPayload(eventType string, payload json.RawMessage) (Event, error
 	}
 
 	switch eventType {
-	case api.EventTypeText:
+	case EventTypeText:
 		return unmarshal(TextEvent{})
-	case api.EventTypeThinking:
+	case EventTypeThinking:
 		return unmarshal(ThinkingEvent{})
-	case api.EventTypeUserMessage:
+	case EventTypeUserMessage:
 		return unmarshal(UserMessageEvent{})
-	case api.EventTypeToolCall:
+	case EventTypeToolCall:
 		return unmarshal(ToolCallEvent{})
-	case api.EventTypeToolResult:
+	case EventTypeToolResult:
 		return unmarshal(ToolResultEvent{})
-	case api.EventTypeFileWrite:
+	case EventTypeFileWrite:
 		return unmarshal(FileWriteEvent{})
-	case api.EventTypeFileRead:
+	case EventTypeFileRead:
 		return unmarshal(FileReadEvent{})
-	case api.EventTypeCommand:
+	case EventTypeCommand:
 		return unmarshal(CommandEvent{})
-	case api.EventTypePlan:
+	case EventTypePlan:
 		return unmarshal(PlanEvent{})
-	case api.EventTypeTurnStart:
+	case EventTypeTurnStart:
 		return unmarshal(TurnStartEvent{})
-	case api.EventTypeTurnEnd:
+	case EventTypeTurnEnd:
 		return unmarshal(TurnEndEvent{})
-	case api.EventTypeError:
+	case EventTypeError:
 		return unmarshal(ErrorEvent{})
-	case api.EventTypeAvailableCommands:
+	case EventTypeAvailableCommands:
 		return unmarshal(AvailableCommandsEvent{})
-	case api.EventTypeCurrentMode:
+	case EventTypeCurrentMode:
 		return unmarshal(CurrentModeEvent{})
-	case api.EventTypeConfigOption:
+	case EventTypeConfigOption:
 		return unmarshal(ConfigOptionEvent{})
-	case api.EventTypeSessionInfo:
+	case EventTypeSessionInfo:
 		return unmarshal(SessionInfoEvent{})
-	case api.EventTypeUsage:
+	case EventTypeUsage:
 		return unmarshal(UsageEvent{})
-	case api.EventTypeStateChange:
+	case EventTypeStateChange:
 		return unmarshal(StateChangeEvent{})
 	default:
 		return nil, fmt.Errorf("events: unknown typed event %q", eventType)

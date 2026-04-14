@@ -7,8 +7,6 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/google/uuid"
-
-	"github.com/zoumo/oar/api"
 )
 
 // Translator drains ACP session notifications, translates each notification
@@ -149,8 +147,8 @@ func (t *Translator) NotifyTurnStart() {
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  api.CategorySession,
-			Type:      api.EventTypeTurnStart,
+			Category:  CategorySession,
+			Type:      EventTypeTurnStart,
 			TurnID:    t.currentTurnId,
 			StreamSeq: t.streamSeq,
 			Phase:     "acting",
@@ -170,8 +168,8 @@ func (t *Translator) NotifyUserPrompt(text string) {
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  api.CategorySession,
-			Type:      api.EventTypeUserMessage,
+			Category:  CategorySession,
+			Type:      EventTypeUserMessage,
 			TurnID:    t.currentTurnId,
 			StreamSeq: t.streamSeq,
 			Phase:     "acting",
@@ -191,8 +189,8 @@ func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  api.CategorySession,
-			Type:      api.EventTypeTurnEnd,
+			Category:  CategorySession,
+			Type:      EventTypeTurnEnd,
 			TurnID:    t.currentTurnId,
 			StreamSeq: t.streamSeq,
 			Phase:     "acting",
@@ -212,8 +210,8 @@ func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, r
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  api.CategoryRuntime,
-			Type:      api.EventTypeStateChange,
+			Category:  CategoryRuntime,
+			Type:      EventTypeStateChange,
 			Content: StateChangeEvent{
 				PreviousStatus: previousStatus,
 				Status:         status,
@@ -253,7 +251,7 @@ func (t *Translator) broadcastSessionEvent(ev Event) {
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  api.CategorySession,
+			Category:  CategorySession,
 			Type:      eventType,
 			Content:   ev,
 		}

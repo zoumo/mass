@@ -14,9 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/api"
 	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apishim "github.com/zoumo/oar/api/shim"
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	shimclient "github.com/zoumo/oar/pkg/shim/client"
@@ -45,7 +44,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	srv, socketPath := newMockShimServer(t)
 	_ = srv // cleanup registered via t.Cleanup in newMockShimServer
 
-	srv.queueNotification(api.MethodShimEvent, map[string]any{
+	srv.queueNotification(apishim.MethodShimEvent, map[string]any{
 		"runId":    "test-run",
 		"seq":      0,
 		"time":     "2026-01-01T00:00:00Z",
@@ -115,7 +114,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		contentBytes, err := json.Marshal(events.TextEvent{Text: fmt.Sprintf("chunk-%d", i)})
 		require.NoError(t, err)
-		srv.queueNotification(api.MethodShimEvent, map[string]any{
+		srv.queueNotification(apishim.MethodShimEvent, map[string]any{
 			"runId":     "test-run",
 			"sessionId": "test-session",
 			"seq":       i,
@@ -185,7 +184,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 
 	// Queue two successive stateChange notifications: idle→running, then running→idle.
 	srv, socketPath := newMockShimServer(t)
-	srv.queueNotification(api.MethodShimEvent, map[string]any{
+	srv.queueNotification(apishim.MethodShimEvent, map[string]any{
 		"runId":    "test-run",
 		"seq":      1,
 		"time":     "2026-01-01T00:00:00Z",
@@ -197,7 +196,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 			"pid":            5678,
 		},
 	})
-	srv.queueNotification(api.MethodShimEvent, map[string]any{
+	srv.queueNotification(apishim.MethodShimEvent, map[string]any{
 		"runId":    "test-run",
 		"seq":      2,
 		"time":     "2026-01-01T00:00:01Z",
@@ -329,7 +328,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	// Queue a malformed stateChange notification (array instead of object).
 	srv, socketPath := newMockShimServer(t)
 	defer srv.close()
-	srv.queueNotification(api.MethodShimEvent, map[string]any{
+	srv.queueNotification(apishim.MethodShimEvent, map[string]any{
 		"runId":    "test-run",
 		"seq":      0,
 		"time":     "2026-01-01T00:00:00Z",

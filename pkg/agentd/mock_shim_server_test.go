@@ -14,7 +14,7 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/stretchr/testify/require"
 
-	apishim "github.com/zoumo/oar/api/shim"
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/pkg/events"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )

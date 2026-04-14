@@ -9,8 +9,6 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/zoumo/oar/api"
 )
 
 func testTime(t *testing.T) time.Time {
@@ -27,8 +25,8 @@ func TestEventLog_AppendAndRead(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 
-	ev0 := ShimEvent{RunID: "run-1", Seq: 0, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "hello"}}
-	ev1 := ShimEvent{RunID: "run-1", Seq: 1, Time: testTime(t), Category: api.CategoryRuntime, Type: "state_change", Content: StateChangeEvent{PreviousStatus: "created", Status: "running", PID: 42, Reason: "prompt-started"}}
+	ev0 := ShimEvent{RunID: "run-1", Seq: 0, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "hello"}}
+	ev1 := ShimEvent{RunID: "run-1", Seq: 1, Time: testTime(t), Category: CategoryRuntime, Type: "state_change", Content: StateChangeEvent{PreviousStatus: "created", Status: "running", PID: 42, Reason: "prompt-started"}}
 
 	require.NoError(t, log.Append(ev0))
 	require.NoError(t, log.Append(ev1))
@@ -60,7 +58,7 @@ func TestEventLog_FromSeq(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
-		ev := ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "x"}}
+		ev := ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "x"}}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -78,7 +76,7 @@ func TestEventLog_SeqContinuesAfterReopen(t *testing.T) {
 	log1, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "a"}}
+		ev := ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "a"}}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -86,7 +84,7 @@ func TestEventLog_SeqContinuesAfterReopen(t *testing.T) {
 	log2, err := OpenEventLog(path)
 	require.NoError(t, err)
 	require.Equal(t, 3, log2.NextSeq())
-	ev3 := ShimEvent{RunID: "run-1", Seq: 3, Time: testTime(t), Category: api.CategoryRuntime, Type: "state_change", Content: StateChangeEvent{PreviousStatus: "running", Status: "created"}}
+	ev3 := ShimEvent{RunID: "run-1", Seq: 3, Time: testTime(t), Category: CategoryRuntime, Type: "state_change", Content: StateChangeEvent{PreviousStatus: "running", Status: "created"}}
 	require.NoError(t, log2.Append(ev3))
 	require.NoError(t, log2.Close())
 
@@ -122,7 +120,7 @@ func TestReadEventLog_DamagedTailReturnsPartial(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "ok"}}
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "ok"}}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -146,7 +144,7 @@ func TestReadEventLog_DamagedTailTolerated(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "v"}}
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "v"}}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -173,7 +171,7 @@ func TestReadEventLog_MidFileCorruptionFails(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "v"}}
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "v"}}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -192,7 +190,7 @@ func TestReadEventLog_MidFileCorruptionFails(t *testing.T) {
 	tmpLog, err := OpenEventLog(tmpPath)
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "after"}}
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "after"}}
 		require.NoError(t, tmpLog.Append(ev))
 	}
 	require.NoError(t, tmpLog.Close())
@@ -215,7 +213,7 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	log1, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "orig"}}
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "orig"}}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -238,7 +236,7 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	require.Equal(t, 4, log2.NextSeq())
 
 	// Append with seq 4 succeeds.
-	ev4 := ShimEvent{RunID: "s1", Seq: 4, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "new"}}
+	ev4 := ShimEvent{RunID: "s1", Seq: 4, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "new"}}
 	require.NoError(t, log2.Append(ev4))
 	require.NoError(t, log2.Close())
 
@@ -267,7 +265,7 @@ func TestEventLog_PartialWriteTruncation(t *testing.T) {
 
 	// Write 2 good entries.
 	for i := 0; i < 2; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "good"}}
+		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "good"}}
 		require.NoError(t, log.Append(ev))
 	}
 
@@ -275,13 +273,13 @@ func TestEventLog_PartialWriteTruncation(t *testing.T) {
 	// before any write, so no partial write in this case). The key invariant
 	// is that after a failed Append, NextSeq is unchanged and the file is
 	// still consistent.
-	wrongSeqEv := ShimEvent{RunID: "s1", Seq: 99, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "bad"}}
+	wrongSeqEv := ShimEvent{RunID: "s1", Seq: 99, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "bad"}}
 	err = log.Append(wrongSeqEv)
 	require.Error(t, err, "wrong seq should be rejected")
 	assert.Equal(t, 2, log.NextSeq(), "nextSeq must not advance after failed append")
 
 	// The log must still be writable after a failed append.
-	goodEv := ShimEvent{RunID: "s1", Seq: 2, Time: testTime(t), Category: api.CategorySession, Type: "text", Content: TextEvent{Text: "after"}}
+	goodEv := ShimEvent{RunID: "s1", Seq: 2, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "after"}}
 	require.NoError(t, log.Append(goodEv))
 	require.NoError(t, log.Close())
 
@@ -316,7 +314,7 @@ func TestEventLog_TranslatorWritesShimEvent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "text", entries[0].Type)
-	assert.Equal(t, api.CategorySession, entries[0].Category)
+	assert.Equal(t, CategorySession, entries[0].Category)
 	assert.Equal(t, "run-1", entries[0].RunID)
 	assert.Equal(t, 0, entries[0].Seq)
 	ev, ok := entries[0].Content.(TextEvent)
