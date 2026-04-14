@@ -10,9 +10,9 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-**M014 in progress.** S01–S06 complete. S07 (runtime/status overlay + doc updates) remains.
+**M014 complete.** All 7 slices (S01–S07) delivered. state.json is now a reliable session capability snapshot with enriched types, safe read-modify-write, real-time EventCounts, ACP bootstrap capture, session metadata hook chain, and Status() overlay.
 
-### Active Milestone
+### Most Recently Completed Milestone
 
 **M014 — Enrich state.json + Session Metadata Pipeline**
 
@@ -24,7 +24,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 | S04 | Translator eventCounts | ✅ done |
 | S05 | ACP bootstrap capabilities capture | ✅ done |
 | S06 | Session metadata hook chain | ✅ done |
-| S07 | runtime/status overlay + doc updates | ⬜ pending (depends S04, S06) |
+| S07 | runtime/status overlay + doc updates | ✅ done |
 
 ### Completed Milestones
 
@@ -40,6 +40,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 | M008 | CLI consolidation + API model rename | 2-binary model (agentd + agentdctl), --root startup, DB-persisted AgentTemplate, resource-first grammar, agent=template/agentrun=instance rename; all 8 integration tests pass |
 | M012 | Codebase Refactor: Service Interface + Unified RPC + Directory Restructure | Typed service interfaces, pkg/jsonrpc unified transport, ARI wire contract convergence, adapter pattern, legacy package cleanup; make build + go test ./... pass with zero legacy references |
 | M013 | Package Restructure: Clean api/ Boundary + Event/Runtime Colocation | api/ deleted; pkg/ari/{api,server,client} + pkg/shim/{api,server,client,runtime/acp} canonical structure; pkg/events + pkg/runtime eliminated; make build + go test ./... + go vet (first-party) all pass |
+| M014 | Enrich state.json + Session Metadata Pipeline | state.json enriched with session, eventCounts, updatedAt; writeState read-modify-write closure pattern; Translator EventCounts tracking; ACP bootstrap capture; session metadata hook chain; Status() overlay; design docs updated |
 
 ### What's Implemented
 
@@ -54,6 +55,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **ACP bootstrap capabilities capture (M014/S05):** Manager.Create() captures InitializeResponse, converts ACP types to runtime-spec/api types via convertInitializeToSession(), writes Session to state.json at bootstrap-complete; synthetic bootstrap-metadata state_change event emitted after Translator.Start() with sessionChanged:["agentInfo","capabilities"]
 - **Session metadata hook chain (M014/S06):** Translator.maybeNotifyMetadata fires for 4 metadata event types → Manager.UpdateSessionMetadata read-modify-writes state.json → state_change emitted with sessionChanged; buildSessionUpdate converts apishim→apiruntime types with sort helpers for deterministic output; command.go wires SetSessionMetadataHook + SetEventCountsFn
 - **Translator eventCounts (M014/S04):** Translator tracks EventCounts in memory; counts flushed to state.json on every write via SetEventCountsFn
+- **Status() EventCounts overlay (M014/S07):** `Service.Status()` overlays Translator's real-time in-memory EventCounts onto state.json snapshot before returning — callers always get authoritative counts even between disk writes
 - **Dead placeholder removal (M014/S01):** EventTypeFileWrite, EventTypeFileRead, EventTypeCommand, and their wire types removed from codebase
 - **api/ directory deleted (M013/S03):** No more `github.com/zoumo/oar/api` import targets
 - **pkg/runtime-spec/api as sole Status/EnvVar home (M013/S01):** api/runtime/ deleted; all consumers use `apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"`
@@ -75,6 +77,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **Session metadata hook chain (M014/S06):** Translator.maybeNotifyMetadata (type-switch on 4 metadata types) → Manager.UpdateSessionMetadata (read-modify-write + state_change emit) → state.json updated; lock order: Translator.mu → release → Manager.mu → release → Translator.mu (D120)
 - **ACP type conversion pattern (M014/S05):** convertInitializeToSession maps ACP SDK types (Implementation, AgentCapabilities) to runtime-spec/api types (AgentInfo, AgentCapabilities) — reusable pattern for future ACP→state.json field mappings
 - **Synthetic metadata event pattern (M014/S05, D124):** idle→idle state_change with reason + sessionChanged for metadata-only events; emitted after trans.Start() so subscribers discover via history backfill (fromSeq=0)
+- **Status() overlay pattern (M014/S07):** Read state from disk, overlay real-time fields from in-memory sources (e.g. Translator.EventCounts()) before returning to caller — ensures callers get authoritative data even between disk writes
 - **pkg/ari tri-split pattern (M013/S02):** api/ for pure types+constants, server/ for interfaces+dispatch, client/ for dial helpers
 - **pkg/shim tri-split pattern (M013/S03+S04):** api/ for pure shim types+service interface+event wire types+method constants, server/ for implementation+translator+eventlog, client/ for dial helper, runtime/acp/ for ACP runtime
 - **Event wire types location (M013/S04):** All event wire types live in `pkg/shim/api`; Translator and EventLog in `pkg/shim/server`
@@ -100,4 +103,4 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - [x] M008: CLI consolidation + API model rename
 - [x] M012: Codebase Refactor: Service Interface + Unified RPC + Directory Restructure
 - [x] M013: Package Restructure: Clean api/ Boundary + Event/Runtime Colocation
-- [ ] M014: Enrich state.json + Session Metadata Pipeline — S01–S06 done; S07 remaining
+- [x] M014: Enrich state.json + Session Metadata Pipeline

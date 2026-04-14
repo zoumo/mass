@@ -14,16 +14,6 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: S02 defined all session metadata types in pkg/runtime-spec/api (SessionState, AgentInfo, AgentCapabilities, AvailableCommand/ConfigOption unions) and extended State struct with Session/EventCounts/UpdatedAt fields. Round-trip test proves WriteState→ReadState fidelity for all variants. Runtime population pending S05/S06.
 - Notes: usage explicitly excluded — high-frequency, event stream only
 
-### R055 — state.json carries eventCounts map updated on every state write; runtime/status overlays real-time in-memory counts from Translator; counts cover all event origins
-- Class: operability
-- Status: active
-- Description: state.json carries eventCounts map updated on every state write; runtime/status overlays real-time in-memory counts from Translator; counts cover all event origins
-- Why it matters: Operators can inspect session productivity at a glance without replaying the event log
-- Source: user
-- Primary owning slice: M014/S04
-- Supporting slices: M014/S03, M014/S07
-- Notes: S04 delivered in-memory eventCounts tracking in Translator.broadcast() with EventCounts() method. Counts cover all event origins routed through broadcast(). Remaining: S07 wires EventCounts() into runtime/status overlay; S06 flushes counts to state.json on every write.
-
 ## Validated
 
 ### R001 — agentd daemon can start with --root flag (no config.yaml) and listen on ARI Unix socket
@@ -393,6 +383,17 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: M014/S03, M014/S04
 - Validation: TestMetadataHookChain_ConfigOption proves full chain: ConfigOptionUpdate ACP notification → Translator.maybeNotifyMetadata → Manager.UpdateSessionMetadata → state.json.session.configOptions written → state_change emitted with reason:"config-updated", sessionChanged:["configOptions"], previousStatus==status (metadata-only). TestSessionMetadataHook_AllFourTypes proves all 4 metadata event types (AvailableCommandsEvent, ConfigOptionEvent, SessionInfoEvent, CurrentModeEvent) fire the hook. TestUpdateSessionMetadata_PreservedByKill proves Kill() preserves configOptions. buildSessionUpdate dispatches all 4 types with correct changed/reason/apply tuples. go test ./pkg/shim/runtime/acp/... ./pkg/shim/server/... passes; make build clean.
 
+### R055 — state.json carries eventCounts map updated on every state write; runtime/status overlays real-time in-memory counts from Translator; counts cover all event origins
+- Class: operability
+- Status: validated
+- Description: state.json carries eventCounts map updated on every state write; runtime/status overlays real-time in-memory counts from Translator; counts cover all event origins
+- Why it matters: Operators can inspect session productivity at a glance without replaying the event log
+- Source: user
+- Primary owning slice: M014/S04
+- Supporting slices: M014/S03, M014/S07
+- Validation: TestStatus_EventCountsOverlay proves Status() returns Translator in-memory counts (not stale state.json); S04 proved EventCounts tracks all event types; S03 proved WriteState flushes counts to disk on every write. Full pipeline validated end-to-end across M014 slices S03-S07.
+- Notes: S04 delivered in-memory eventCounts tracking in Translator.broadcast() with EventCounts() method. Counts cover all event origins routed through broadcast(). Remaining: S07 wires EventCounts() into runtime/status overlay; S06 flushes counts to state.json on every write.
+
 ### R056 — ACP Initialize() response captured and written to state.Session at bootstrap-complete; synthetic state_change(bootstrap-metadata) emitted after Translator.Start() so subscribers get it via history backfill
 - Class: core-capability
 - Status: validated
@@ -626,7 +627,7 @@ This file is the explicit capability and coverage contract for the project.
 | R052 | continuity | validated | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery (7-phase integration test, 4.47s, PASS): agents created pre-restart have identical agentId+room+name post-restart even in error state; RecoverSessions fail-safe marks dead-shim agents as error; creating-cleanup pass handles bootstrap races during restart window |
 | R053 | core-capability | active | M014/S02+S03+S05+S06 | none | S02 defined all session metadata types in pkg/runtime-spec/api (SessionState, AgentInfo, AgentCapabilities, AvailableCommand/ConfigOption unions) and extended State struct with Session/EventCounts/UpdatedAt fields. Round-trip test proves WriteState→ReadState fidelity for all variants. Runtime population pending S05/S06. |
 | R054 | primary-user-loop | validated | M014/S06 | M014/S03, M014/S04 | TestMetadataHookChain_ConfigOption proves full chain: ConfigOptionUpdate ACP notification → Translator.maybeNotifyMetadata → Manager.UpdateSessionMetadata → state.json.session.configOptions written → state_change emitted with reason:"config-updated", sessionChanged:["configOptions"], previousStatus==status (metadata-only). TestSessionMetadataHook_AllFourTypes proves all 4 metadata event types (AvailableCommandsEvent, ConfigOptionEvent, SessionInfoEvent, CurrentModeEvent) fire the hook. TestUpdateSessionMetadata_PreservedByKill proves Kill() preserves configOptions. buildSessionUpdate dispatches all 4 types with correct changed/reason/apply tuples. go test ./pkg/shim/runtime/acp/... ./pkg/shim/server/... passes; make build clean. |
-| R055 | operability | active | M014/S04 | M014/S03, M014/S07 | unmapped |
+| R055 | operability | validated | M014/S04 | M014/S03, M014/S07 | TestStatus_EventCountsOverlay proves Status() returns Translator in-memory counts (not stale state.json); S04 proved EventCounts tracks all event types; S03 proved WriteState flushes counts to disk on every write. Full pipeline validated end-to-end across M014 slices S03-S07. |
 | R056 | core-capability | validated | M014/S05 | M014/S02, M014/S03 | TestCreate_PopulatesSession proves state.json.session.agentInfo.name=="mockagent" and capabilities.loadSession==true after Manager.Create() with populated InitializeResponse. TestNotifyStateChange_WithSessionChanged proves bootstrap-metadata state_change event with sessionChanged:["agentInfo","capabilities"] appears in event log. All tests pass, make build succeeds. |
 | R057 | quality-attribute | validated | M014/S03 | none | TestKill_PreservesSession: Kill() → status==stopped AND Session.AgentInfo.Name=="test-agent" preserved. TestProcessExit_PreservesSession: SIGKILL → status==stopped AND Session preserved. All 7 writeState call sites use closure pattern; zero old-style State literal calls remain. go test ./pkg/shim/runtime/acp/... passes. |
 | R058 | constraint | validated | M014/S01 | none | rg confirms zero references to EventTypeFileWrite/EventTypeFileRead/EventTypeCommand/FileWriteEvent/FileReadEvent/CommandEvent in Go code (exit 1); go test ./pkg/shim/... passes; go build ./pkg/shim/... clean. All constants, structs, decode cases, and test entries removed. |
@@ -635,7 +636,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 2
-- Mapped to slices: 2
-- Validated: 38 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052, R054, R056, R057, R058, R059)
+- Active requirements: 1
+- Mapped to slices: 1
+- Validated: 39 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052, R054, R055, R056, R057, R058, R059)
 - Unmapped active requirements: 0

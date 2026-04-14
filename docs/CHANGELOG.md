@@ -1,4 +1,50 @@
+> Auto-generated. Do not edit directly.
+> Last updated: 2026-04-15 after M014
+
 # Changelog
+
+---
+
+## M014: Enrich state.json + Session Metadata Pipeline (2026-04-15)
+
+### S01: Dead code removal
+- Removed `EventTypeFileWrite`, `EventTypeFileRead`, `EventTypeCommand` constants and `FileWriteEvent`, `FileReadEvent`, `CommandEvent` structs plus all decode/test references
+- Pure deletions — no logic modifications; remaining event type surface accurately reflects ACP output
+- Key files: `pkg/shim/api/event_constants.go`, `pkg/shim/api/event_types.go`, `pkg/shim/api/shim_event.go`
+
+### S02: state.json type definitions
+- Defined all session metadata types (`SessionState`, `AgentInfo`, `AgentCapabilities`, union types with custom MarshalJSON/UnmarshalJSON) in `pkg/runtime-spec/api`
+- Extended `State` with `UpdatedAt`, `Session (*SessionState)`, `EventCounts (map[string]int)` — all with omitempty for backward compat
+- Round-trip tests cover every field variant (Unstructured AvailableCommandInput, Grouped/Ungrouped ConfigSelectOptions, nested SessionForkCapabilities)
+- Key files: `pkg/runtime-spec/api/session.go`, `pkg/runtime-spec/api/state.go`, `pkg/runtime-spec/state_test.go`
+
+### S03: writeState read-modify-write refactor
+- Refactored all 7 writeState call sites to closure pattern `func(*apiruntime.State)` — Kill, process-exit, prompt cycles never clobber Session metadata
+- `UpdatedAt` stamped unconditionally (RFC3339Nano) on every write as a derived field
+- Tests prove Session preservation across Kill() and process-exit; `errors.Is(err, os.ErrNotExist)` guards first-write vs update
+- Key files: `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/runtime/acp/runtime_test.go`
+
+### S04: Translator eventCounts
+- `eventCounts[ev.Type]++` in `broadcast()` after `nextSeq++`, before fan-out — single counting site covering all event origins
+- Fail-closed: log-append failures exit before count increment; `EventCounts()` returns thread-safe map copy
+- Key files: `pkg/shim/server/translator.go`, `pkg/shim/server/translator_test.go`
+
+### S05: ACP bootstrap capabilities capture
+- `convertInitializeToSession()` maps ACP InitializeResponse to `state.json.session` (agentInfo + capabilities) at bootstrap-complete
+- Synthetic `NotifyStateChange("idle","idle",pid,"bootstrap-metadata",["agentInfo","capabilities"])` emitted after `Translator.Start()`
+- `StateChangeEvent.SessionChanged []string` field added for metadata change events
+- Key files: `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/api/event_types.go`, `pkg/shim/server/translator.go`, `cmd/agentd/subcommands/shim/command.go`, `internal/testutil/mockagent/main.go`
+
+### S06: Session metadata hook chain
+- End-to-end pipeline: `Translator.maybeNotifyMetadata` (type-switch gate, 4 ACP types) → `Manager.UpdateSessionMetadata` → state.json + `state_change` event
+- `SetEventCountsFn` injects Translator counts into Manager; EventCounts flushed on every `writeState` call
+- Sort helpers (`sortCommandsByName`, `sortConfigOptionsByID`) ensure deterministic JSON output
+- Key files: `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/server/translator.go`, `cmd/agentd/subcommands/shim/session_update.go`, `cmd/agentd/subcommands/shim/command.go`
+
+### S07: runtime/status overlay + doc updates
+- `Status()` overlays real-time `Translator.EventCounts()` onto state.json snapshot — callers see authoritative counts, not stale disk values
+- Design docs (`shim-rpc-spec.md`, `runtime-spec.md`) updated with full M014 state schema (session, eventCounts, updatedAt, sessionChanged)
+- Key files: `pkg/shim/server/service.go`, `pkg/shim/server/service_test.go`, `docs/design/runtime/shim-rpc-spec.md`, `docs/design/runtime/runtime-spec.md`
 
 ---
 
