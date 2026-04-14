@@ -846,3 +846,10 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** `srv.Serve(ln)` loops on `ln.Accept()`. Calling `srv.Shutdown()` alone does not close the listener, so Accept() never unblocks and the goroutine leaks. Closing the listener first causes an immediate accept error, Serve() returns, and then Shutdown() cleans up any in-flight requests. Pattern: `t.Cleanup(func() { _ = ln.Close(); _ = srv.Shutdown(ctx) })`.
 - **Reference:** M012/S06/T02 — pkg/ari/server_test.go newTestServer cleanup; D114.
 - **When:** M012/S06
+
+## K081 — Sequence pure rename/move slices before contract-change slices in large refactors
+
+- **Pattern:** In a codebase refactor involving both import path changes and wire contract changes, complete all pure renames first before introducing semantic changes.
+- **Lesson:** M012 separated the refactor into S02 (pure rename: api/spec→api/runtime, pkg/shimapi→api/shim) and S03 (ARI wire contract convergence: domain shape changes). Doing S02 first meant that S03 only needed to reason about one dimension of change at a time — if S03 broke a test, the cause was definitely the contract change, not a rename collision. Intermixing renames with semantic changes in a single slice makes debugging exponentially harder. The discipline cost is one extra slice; the payoff is much faster root-cause isolation.
+- **Reference:** M012/S02 + M012/S03 sequencing design.
+- **When:** M012

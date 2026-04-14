@@ -10,9 +10,9 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-**M012 complete — all 6 slices done.** Codebase refactor is complete: typed Service Interfaces (api/shim, api/ari), pkg/jsonrpc unified transport, directory restructure, and cleanup of all legacy packages.
+**M012 complete — all 6 slices done.** Codebase refactor is complete: typed Service Interfaces (api/shim, api/ari), pkg/jsonrpc unified transport, directory restructure, and cleanup of all legacy packages. `make build` + `go test ./... -count=1` both pass across all 17 test packages.
 
-**No active milestone.** M012 was the most recent completed milestone.
+**No active milestone.**
 
 ### Completed Milestones
 
@@ -27,17 +27,6 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 | M007 | Platform terminal state refactor | bbolt storage, unified spec.Status (idle replaces created), (workspace,name) identity, shim write authority, Room/Session elimination; all integration tests pass; 0 lint issues |
 | M008 | CLI consolidation + API model rename | 2-binary model (agentd + agentdctl), --root startup, DB-persisted AgentTemplate, resource-first grammar, agent=template/agentrun=instance rename; all 8 integration tests pass |
 | M012 | Codebase Refactor: Service Interface + Unified RPC + Directory Restructure | Typed service interfaces, pkg/jsonrpc unified transport, ARI wire contract convergence, adapter pattern, legacy package cleanup; make build + go test ./... pass with zero legacy references |
-
-### M012 Status (Complete)
-
-| Slice | Title | Status |
-|-------|-------|--------|
-| S01 | Phase 0: pkg/jsonrpc framework | ✅ complete |
-| S02 | Phase 1: JSON output preservation | ✅ complete |
-| S03 | Phase 2: ARI wire contract convergence | ✅ complete |
-| S04 | Phase 3: Service Interface definitions | ✅ complete |
-| S05 | Phase 4: Implementation Migration | ✅ complete |
-| S06 | Phase 5: Cleanup | ✅ complete |
 
 ### What's Implemented
 
