@@ -2,18 +2,6 @@
 
 This file is the explicit capability and coverage contract for the project.
 
-## Active
-
-### R053 — state.json reflects ACP session metadata — agentInfo, capabilities, availableCommands, configOptions, sessionInfo, currentMode — populated progressively as the agent reports ACP notifications
-- Class: core-capability
-- Status: active
-- Description: state.json reflects ACP session metadata — agentInfo, capabilities, availableCommands, configOptions, sessionInfo, currentMode — populated progressively as the agent reports ACP notifications
-- Why it matters: External consumers (agentd, orchestrators, monitoring) can discover agent capabilities and session state from state.json without subscribing to the event stream
-- Source: user
-- Primary owning slice: M014/S02+S03+S05+S06
-- Validation: S02 defined all session metadata types in pkg/runtime-spec/api (SessionState, AgentInfo, AgentCapabilities, AvailableCommand/ConfigOption unions) and extended State struct with Session/EventCounts/UpdatedAt fields. Round-trip test proves WriteState→ReadState fidelity for all variants. Runtime population pending S05/S06.
-- Notes: usage explicitly excluded — high-frequency, event stream only
-
 ## Validated
 
 ### R001 — agentd daemon can start with --root flag (no config.yaml) and listen on ARI Unix socket
@@ -373,6 +361,16 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: M005/S02, M005/S04
 - Validation: TestAgentdRestartRecovery (7-phase integration test, 4.47s, PASS): agents created pre-restart have identical agentId+room+name post-restart even in error state; RecoverSessions fail-safe marks dead-shim agents as error; creating-cleanup pass handles bootstrap races during restart window
 
+### R053 — state.json reflects ACP session metadata — agentInfo, capabilities, availableCommands, configOptions, sessionInfo, currentMode — populated progressively as the agent reports ACP notifications
+- Class: core-capability
+- Status: validated
+- Description: state.json reflects ACP session metadata — agentInfo, capabilities, availableCommands, configOptions, sessionInfo, currentMode — populated progressively as the agent reports ACP notifications
+- Why it matters: External consumers (agentd, orchestrators, monitoring) can discover agent capabilities and session state from state.json without subscribing to the event stream
+- Source: user
+- Primary owning slice: M014/S02+S03+S05+S06
+- Validation: S02 defined all session metadata types with round-trip JSON fidelity. S05 populates AgentInfo+Capabilities from ACP InitializeResponse at bootstrap-complete. S06 wires configOptions/availableCommands/sessionInfo/currentMode from runtime ACP notifications via session metadata hook chain → state.json. TestCreate_PopulatesSession + TestMetadataHookChain_ConfigOption + TestUpdateSessionMetadata_PreservedByKill prove progressive population and persistence. All 6 metadata fields defined in SessionState; 4 runtime notification types handled by buildSessionUpdate.
+- Notes: usage explicitly excluded — high-frequency, event stream only
+
 ### R054 — Changes to availableCommands, configOptions, sessionInfo, currentMode emit a state_change event with sessionChanged field identifying which fields changed; previousStatus==status (metadata-only)
 - Class: primary-user-loop
 - Status: validated
@@ -625,7 +623,7 @@ This file is the explicit capability and coverage contract for the project.
 | R050 | core-capability | validated | M005/S05 | M005/S01 | M007/S01 validated: go.etcd.io/bbolt is the sole metadata backend. mattn/go-sqlite3 removed from go.mod. schema.sql, session.go, room.go deleted. 37 bbolt store tests pass (agent CRUD, workspace CRUD, nested bucket layout). `rg 'go-sqlite3' --type go` returns zero matches across entire codebase. |
 | R051 | integration | validated | M005/S06 | none | go.mod contains github.com/modelcontextprotocol/go-sdk v0.8.0; go build ./cmd/room-mcp-server exits 0; TestGenerateConfigWithRoomMCPInjection (3 subtests) asserts presence of OAR_AGENT_ID/OAR_AGENT_NAME and absence of deprecated OAR_SESSION_ID/OAR_ROOM_AGENT |
 | R052 | continuity | validated | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery (7-phase integration test, 4.47s, PASS): agents created pre-restart have identical agentId+room+name post-restart even in error state; RecoverSessions fail-safe marks dead-shim agents as error; creating-cleanup pass handles bootstrap races during restart window |
-| R053 | core-capability | active | M014/S02+S03+S05+S06 | none | S02 defined all session metadata types in pkg/runtime-spec/api (SessionState, AgentInfo, AgentCapabilities, AvailableCommand/ConfigOption unions) and extended State struct with Session/EventCounts/UpdatedAt fields. Round-trip test proves WriteState→ReadState fidelity for all variants. Runtime population pending S05/S06. |
+| R053 | core-capability | validated | M014/S02+S03+S05+S06 | none | S02 defined all session metadata types with round-trip JSON fidelity. S05 populates AgentInfo+Capabilities from ACP InitializeResponse at bootstrap-complete. S06 wires configOptions/availableCommands/sessionInfo/currentMode from runtime ACP notifications via session metadata hook chain → state.json. TestCreate_PopulatesSession + TestMetadataHookChain_ConfigOption + TestUpdateSessionMetadata_PreservedByKill prove progressive population and persistence. All 6 metadata fields defined in SessionState; 4 runtime notification types handled by buildSessionUpdate. |
 | R054 | primary-user-loop | validated | M014/S06 | M014/S03, M014/S04 | TestMetadataHookChain_ConfigOption proves full chain: ConfigOptionUpdate ACP notification → Translator.maybeNotifyMetadata → Manager.UpdateSessionMetadata → state.json.session.configOptions written → state_change emitted with reason:"config-updated", sessionChanged:["configOptions"], previousStatus==status (metadata-only). TestSessionMetadataHook_AllFourTypes proves all 4 metadata event types (AvailableCommandsEvent, ConfigOptionEvent, SessionInfoEvent, CurrentModeEvent) fire the hook. TestUpdateSessionMetadata_PreservedByKill proves Kill() preserves configOptions. buildSessionUpdate dispatches all 4 types with correct changed/reason/apply tuples. go test ./pkg/shim/runtime/acp/... ./pkg/shim/server/... passes; make build clean. |
 | R055 | operability | validated | M014/S04 | M014/S03, M014/S07 | TestStatus_EventCountsOverlay proves Status() returns Translator in-memory counts (not stale state.json); S04 proved EventCounts tracks all event types; S03 proved WriteState flushes counts to disk on every write. Full pipeline validated end-to-end across M014 slices S03-S07. |
 | R056 | core-capability | validated | M014/S05 | M014/S02, M014/S03 | TestCreate_PopulatesSession proves state.json.session.agentInfo.name=="mockagent" and capabilities.loadSession==true after Manager.Create() with populated InitializeResponse. TestNotifyStateChange_WithSessionChanged proves bootstrap-metadata state_change event with sessionChanged:["agentInfo","capabilities"] appears in event log. All tests pass, make build succeeds. |
@@ -636,7 +634,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 1
-- Mapped to slices: 1
-- Validated: 39 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052, R054, R055, R056, R057, R058, R059)
+- Active requirements: 0
+- Mapped to slices: 0
+- Validated: 40 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052, R053, R054, R055, R056, R057, R058, R059)
 - Unmapped active requirements: 0
