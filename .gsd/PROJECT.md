@@ -10,7 +10,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-**M014 in progress.** S01 (dead placeholder removal), S02 (state type enrichment), and S03 (writeState read-modify-write refactor) are complete. S04–S07 remain: EventCounts tracking, ACP bootstrap capture, session metadata hook chain, and runtime/status overlay.
+**M014 in progress.** S01–S05 complete. S06 (session metadata hook chain) and S07 (runtime/status overlay + doc updates) remain.
 
 ### Active Milestone
 
@@ -21,8 +21,8 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 | S01 | Dead placeholder removal | ✅ done |
 | S02 | State type enrichment (SessionState, ConfigOption, etc.) | ✅ done |
 | S03 | writeState read-modify-write refactor | ✅ done |
-| S04 | Translator eventCounts | ⬜ pending |
-| S05 | ACP bootstrap capabilities capture | ⬜ pending (depends S02, S03) |
+| S04 | Translator eventCounts | ✅ done |
+| S05 | ACP bootstrap capabilities capture | ✅ done |
 | S06 | Session metadata hook chain | ⬜ pending (depends S03, S04) |
 | S07 | runtime/status overlay + doc updates | ⬜ pending (depends S04, S06) |
 
@@ -51,6 +51,8 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **pkg/shim tri-split (M013/S03+S04):** `pkg/shim/api` (pure shim types + service interface + client + method constants + event wire types + EventType*/Category* constants), `pkg/shim/server` (shim service + Translator + EventLog), `pkg/shim/client` (dial helper), `pkg/shim/runtime/acp` (ACP runtime Manager and client)
 - **writeState read-modify-write closure pattern (M014/S03):** All 7 writeState call sites use `func(*apiruntime.State)` closures; Session/EventCounts never clobbered by lifecycle writes; UpdatedAt stamped unconditionally on every write
 - **State type enrichment (M014/S02):** SessionState, AgentInfo, AgentCapabilities, ConfigOption (with Select variant), AvailableCommand (with Unstructured input), EventCounts — all in pkg/runtime-spec/api/state.go with round-trip JSON fidelity
+- **ACP bootstrap capabilities capture (M014/S05):** Manager.Create() captures InitializeResponse, converts ACP types to runtime-spec/api types via convertInitializeToSession(), writes Session to state.json at bootstrap-complete; synthetic bootstrap-metadata state_change event emitted after Translator.Start() with sessionChanged:["agentInfo","capabilities"]
+- **Translator eventCounts (M014/S04):** Translator tracks EventCounts in memory; counts flushed to state.json on every write
 - **Dead placeholder removal (M014/S01):** EventTypeFileWrite, EventTypeFileRead, EventTypeCommand, and their wire types removed from codebase
 - **api/ directory deleted (M013/S03):** No more `github.com/zoumo/oar/api` import targets
 - **pkg/runtime-spec/api as sole Status/EnvVar home (M013/S01):** api/runtime/ deleted; all consumers use `apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"`
@@ -69,6 +71,8 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **ARI protocol:** JSON-RPC 2.0 over Unix domain socket
 - **OCI-inspired layering:** workspace=rootfs, agent (AgentTemplate)=container definition, agentrun=task/running instance, shim=runc equivalent
 - **writeState closure pattern (M014/S03, D119):** writeState accepts `func(*apiruntime.State)` — reads existing state (or zero on first write), applies closure, stamps UpdatedAt, writes atomically; callers mutate only the fields they care about
+- **ACP type conversion pattern (M014/S05):** convertInitializeToSession maps ACP SDK types (Implementation, AgentCapabilities) to runtime-spec/api types (AgentInfo, AgentCapabilities) — reusable pattern for future ACP→state.json field mappings
+- **Synthetic metadata event pattern (M014/S05, D124):** idle→idle state_change with reason + sessionChanged for metadata-only events; emitted after trans.Start() so subscribers discover via history backfill (fromSeq=0)
 - **pkg/ari tri-split pattern (M013/S02):** api/ for pure types+constants, server/ for interfaces+dispatch, client/ for dial helpers
 - **pkg/shim tri-split pattern (M013/S03+S04):** api/ for pure shim types+service interface+event wire types+method constants, server/ for implementation+translator+eventlog, client/ for dial helper, runtime/acp/ for ACP runtime
 - **Event wire types location (M013/S04):** All event wire types live in `pkg/shim/api`; Translator and EventLog in `pkg/shim/server`
@@ -94,4 +98,4 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - [x] M008: CLI consolidation + API model rename
 - [x] M012: Codebase Refactor: Service Interface + Unified RPC + Directory Restructure
 - [x] M013: Package Restructure: Clean api/ Boundary + Event/Runtime Colocation
-- [ ] M014: Enrich state.json + Session Metadata Pipeline — S01–S03 done; S04–S07 remaining
+- [ ] M014: Enrich state.json + Session Metadata Pipeline — S01–S05 done; S06–S07 remaining

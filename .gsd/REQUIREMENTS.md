@@ -33,15 +33,6 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: M014/S03, M014/S07
 - Notes: S04 delivered in-memory eventCounts tracking in Translator.broadcast() with EventCounts() method. Counts cover all event origins routed through broadcast(). Remaining: S07 wires EventCounts() into runtime/status overlay; S06 flushes counts to state.json on every write.
 
-### R056 — ACP Initialize() response captured and written to state.Session at bootstrap-complete; synthetic state_change(bootstrap-metadata) emitted after Translator.Start() so subscribers get it via history backfill
-- Class: core-capability
-- Status: active
-- Description: ACP Initialize() response captured and written to state.Session at bootstrap-complete; synthetic state_change(bootstrap-metadata) emitted after Translator.Start() so subscribers get it via history backfill
-- Why it matters: Agent identity and capability profile available to consumers from first connection
-- Source: user
-- Primary owning slice: M014/S05
-- Supporting slices: M014/S02, M014/S03
-
 ## Validated
 
 ### R001 — agentd daemon can start with --root flag (no config.yaml) and listen on ARI Unix socket
@@ -401,6 +392,16 @@ This file is the explicit capability and coverage contract for the project.
 - Supporting slices: M005/S02, M005/S04
 - Validation: TestAgentdRestartRecovery (7-phase integration test, 4.47s, PASS): agents created pre-restart have identical agentId+room+name post-restart even in error state; RecoverSessions fail-safe marks dead-shim agents as error; creating-cleanup pass handles bootstrap races during restart window
 
+### R056 — ACP Initialize() response captured and written to state.Session at bootstrap-complete; synthetic state_change(bootstrap-metadata) emitted after Translator.Start() so subscribers get it via history backfill
+- Class: core-capability
+- Status: validated
+- Description: ACP Initialize() response captured and written to state.Session at bootstrap-complete; synthetic state_change(bootstrap-metadata) emitted after Translator.Start() so subscribers get it via history backfill
+- Why it matters: Agent identity and capability profile available to consumers from first connection
+- Source: user
+- Primary owning slice: M014/S05
+- Supporting slices: M014/S02, M014/S03
+- Validation: TestCreate_PopulatesSession proves state.json.session.agentInfo.name=="mockagent" and capabilities.loadSession==true after Manager.Create() with populated InitializeResponse. TestNotifyStateChange_WithSessionChanged proves bootstrap-metadata state_change event with sessionChanged:["agentInfo","capabilities"] appears in event log. All tests pass, make build succeeds.
+
 ### R057 — All state write paths use read-modify-write closure pattern; Session fields and EventCounts never clobbered by status-only lifecycle writes (Kill, process-exit, prompt cycles)
 - Class: quality-attribute
 - Status: validated
@@ -625,7 +626,7 @@ This file is the explicit capability and coverage contract for the project.
 | R053 | core-capability | active | M014/S02+S03+S05+S06 | none | S02 defined all session metadata types in pkg/runtime-spec/api (SessionState, AgentInfo, AgentCapabilities, AvailableCommand/ConfigOption unions) and extended State struct with Session/EventCounts/UpdatedAt fields. Round-trip test proves WriteState→ReadState fidelity for all variants. Runtime population pending S05/S06. |
 | R054 | primary-user-loop | active | M014/S06 | M014/S03, M014/S04 | unmapped |
 | R055 | operability | active | M014/S04 | M014/S03, M014/S07 | unmapped |
-| R056 | core-capability | active | M014/S05 | M014/S02, M014/S03 | unmapped |
+| R056 | core-capability | validated | M014/S05 | M014/S02, M014/S03 | TestCreate_PopulatesSession proves state.json.session.agentInfo.name=="mockagent" and capabilities.loadSession==true after Manager.Create() with populated InitializeResponse. TestNotifyStateChange_WithSessionChanged proves bootstrap-metadata state_change event with sessionChanged:["agentInfo","capabilities"] appears in event log. All tests pass, make build succeeds. |
 | R057 | quality-attribute | validated | M014/S03 | none | TestKill_PreservesSession: Kill() → status==stopped AND Session.AgentInfo.Name=="test-agent" preserved. TestProcessExit_PreservesSession: SIGKILL → status==stopped AND Session preserved. All 7 writeState call sites use closure pattern; zero old-style State literal calls remain. go test ./pkg/shim/runtime/acp/... passes. |
 | R058 | constraint | validated | M014/S01 | none | rg confirms zero references to EventTypeFileWrite/EventTypeFileRead/EventTypeCommand/FileWriteEvent/FileReadEvent/CommandEvent in Go code (exit 1); go test ./pkg/shim/... passes; go build ./pkg/shim/... clean. All constants, structs, decode cases, and test entries removed. |
 | R059 | operability | validated | M014/S03 | none | UpdatedAt stamped unconditionally in writeState() after closure on every write path (line 337 of runtime.go). TestWriteState_SetsUpdatedAt: confirms UpdatedAt non-empty and valid RFC3339Nano after Create and after Kill, with monotonic increase. go test ./pkg/shim/runtime/acp/... passes. |
@@ -633,7 +634,7 @@ This file is the explicit capability and coverage contract for the project.
 
 ## Coverage Summary
 
-- Active requirements: 4
-- Mapped to slices: 4
-- Validated: 36 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052, R057, R058, R059)
+- Active requirements: 3
+- Mapped to slices: 3
+- Validated: 37 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R012, R020, R026, R027, R028, R029, R032, R033, R034, R035, R036, R037, R038, R039, R041, R044, R047, R048, R049, R050, R051, R052, R056, R057, R058, R059)
 - Unmapped active requirements: 0

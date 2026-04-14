@@ -49,6 +49,7 @@ type Manager struct {
 	sessionID       acp.SessionId
 	events          chan acp.SessionNotification
 	stateChangeHook StateChangeHook
+	eventCountsFn   func() map[string]int
 }
 
 // New creates a new Manager. It does not start the agent process.
@@ -67,6 +68,14 @@ func (m *Manager) SetStateChangeHook(hook StateChangeHook) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.stateChangeHook = hook
+}
+
+// SetEventCountsFn registers a function that returns cumulative event counts.
+// The function is called during every state write to flush counts into state.json.
+func (m *Manager) SetEventCountsFn(fn func() map[string]int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.eventCountsFn = fn
 }
 
 // Create starts the agent process and performs the ACP handshake.
@@ -339,12 +348,74 @@ func (m *Manager) writeState(apply func(*apiruntime.State), reason string) error
 	apply(&state)
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 
+	if m.eventCountsFn != nil {
+		state.EventCounts = m.eventCountsFn()
+	}
+
 	if err := spec.WriteState(m.stateDir, state); err != nil {
 		return err
 	}
 	if prevErr == nil && previous.Status != state.Status {
 		m.emitStateChange(previous, state, reason)
 	}
+	return nil
+}
+
+// UpdateSessionMetadata performs a read-modify-write on state.json to update
+// session metadata fields. It always emits a metadata-only state_change event
+// (PreviousStatus == Status, SessionChanged populated) regardless of status
+// transitions.
+//
+// The apply function receives the full State and should mutate only session
+// fields — the caller is responsible for ensuring the mutation is correct.
+//
+// Lock order: m.mu is acquired for the read-modify-write cycle, then released
+// before calling the stateChangeHook (D120).
+func (m *Manager) UpdateSessionMetadata(changed []string, reason string, apply func(*apiruntime.State)) error {
+	m.mu.Lock()
+
+	state, err := spec.ReadState(m.stateDir)
+	if err != nil {
+		m.mu.Unlock()
+		m.logger.Error("UpdateSessionMeta read state failed",
+			"reason", reason, "changed", changed, "error", err)
+		return fmt.Errorf("runtime: read state for %s: %w", reason, err)
+	}
+
+	if state.Session == nil {
+		state.Session = &apiruntime.SessionState{}
+	}
+
+	apply(&state)
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+
+	if m.eventCountsFn != nil {
+		state.EventCounts = m.eventCountsFn()
+	}
+
+	if err := spec.WriteState(m.stateDir, state); err != nil {
+		m.mu.Unlock()
+		m.logger.Error("UpdateSessionMeta write state failed",
+			"reason", reason, "changed", changed, "error", err)
+		return fmt.Errorf("runtime: write state for %s: %w", reason, err)
+	}
+
+	hook := m.stateChangeHook
+	change := StateChange{
+		SessionID:      state.ID,
+		PreviousStatus: state.Status,
+		Status:         state.Status,
+		PID:            state.PID,
+		Reason:         reason,
+		SessionChanged: changed,
+	}
+
+	m.mu.Unlock()
+
+	if hook != nil {
+		hook(change)
+	}
+
 	return nil
 }
 

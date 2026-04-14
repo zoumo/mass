@@ -373,3 +373,152 @@ func (s *RuntimeSuite) TestWriteState_SetsUpdatedAt() {
 	s.True(killTime.After(createTime) || killTime.Equal(createTime),
 		"UpdatedAt after Kill (%s) must be >= after Create (%s)", killTime, createTime)
 }
+
+func (s *RuntimeSuite) TestUpdateSessionMetadata_UpdatesStateJSON() {
+	mgr, stateDir := newManagerWithStateDir(s.T(), newTestConfig("test-update-meta"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	s.Require().NoError(mgr.Create(ctx))
+
+	// Apply configOptions via UpdateSessionMetadata.
+	err := mgr.UpdateSessionMetadata(
+		[]string{"configOptions"},
+		"config-updated",
+		func(state *apiruntime.State) {
+			state.Session.ConfigOptions = []apiruntime.ConfigOption{
+				{Select: &apiruntime.ConfigOptionSelect{
+					ID:           "model",
+					Name:         "Model",
+					CurrentValue: "gpt-4",
+					Options: apiruntime.ConfigSelectOptions{
+						Ungrouped: []apiruntime.ConfigSelectOption{
+							{Name: "GPT-4", Value: "gpt-4"},
+						},
+					},
+				}},
+			}
+		},
+	)
+	s.Require().NoError(err)
+
+	// Verify state.json was updated.
+	state, readErr := spec.ReadState(stateDir)
+	s.Require().NoError(readErr)
+	s.Require().NotNil(state.Session, "Session must be non-nil after UpdateSessionMetadata")
+	s.Require().Len(state.Session.ConfigOptions, 1, "configOptions should have 1 entry")
+	s.Equal("model", state.Session.ConfigOptions[0].Select.ID)
+	s.NotEmpty(state.UpdatedAt, "UpdatedAt must be set")
+
+	s.Require().NoError(mgr.Kill(ctx))
+}
+
+func (s *RuntimeSuite) TestUpdateSessionMetadata_EmitsStateChange() {
+	mgr := newManager(s.T(), newTestConfig("test-meta-hook"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	s.Require().NoError(mgr.Create(ctx))
+
+	// Register stateChangeHook and capture the emitted change.
+	var captured *acpruntime.StateChange
+	mgr.SetStateChangeHook(func(change acpruntime.StateChange) {
+		captured = &change
+	})
+
+	err := mgr.UpdateSessionMetadata(
+		[]string{"configOptions"},
+		"config-updated",
+		func(state *apiruntime.State) {
+			state.Session.ConfigOptions = []apiruntime.ConfigOption{
+				{Select: &apiruntime.ConfigOptionSelect{
+					ID:           "theme",
+					Name:         "Theme",
+					CurrentValue: "dark",
+					Options: apiruntime.ConfigSelectOptions{
+						Ungrouped: []apiruntime.ConfigSelectOption{
+							{Name: "Dark", Value: "dark"},
+						},
+					},
+				}},
+			}
+		},
+	)
+	s.Require().NoError(err)
+
+	// Verify hook was called with metadata-only change.
+	s.Require().NotNil(captured, "stateChangeHook must be called")
+	s.Equal(captured.PreviousStatus, captured.Status, "metadata-only: PreviousStatus == Status")
+	s.Equal("config-updated", captured.Reason)
+	s.Equal([]string{"configOptions"}, captured.SessionChanged)
+
+	s.Require().NoError(mgr.Kill(ctx))
+}
+
+func (s *RuntimeSuite) TestUpdateSessionMetadata_PreservedByKill() {
+	mgr, stateDir := newManagerWithStateDir(s.T(), newTestConfig("test-meta-kill"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	s.Require().NoError(mgr.Create(ctx))
+
+	// Set configOptions via UpdateSessionMetadata.
+	err := mgr.UpdateSessionMetadata(
+		[]string{"configOptions"},
+		"config-updated",
+		func(state *apiruntime.State) {
+			state.Session.ConfigOptions = []apiruntime.ConfigOption{
+				{Select: &apiruntime.ConfigOptionSelect{
+					ID:           "model",
+					Name:         "Model",
+					CurrentValue: "gpt-4",
+					Options: apiruntime.ConfigSelectOptions{
+						Ungrouped: []apiruntime.ConfigSelectOption{
+							{Name: "GPT-4", Value: "gpt-4"},
+						},
+					},
+				}},
+			}
+		},
+	)
+	s.Require().NoError(err)
+
+	// Kill and verify configOptions survive.
+	s.Require().NoError(mgr.Kill(ctx))
+
+	state, readErr := spec.ReadState(stateDir)
+	s.Require().NoError(readErr)
+	s.Equal(apiruntime.StatusStopped, state.Status)
+	s.Require().NotNil(state.Session, "Session must survive Kill()")
+	s.Require().Len(state.Session.ConfigOptions, 1, "configOptions must survive Kill()")
+	s.Equal("model", state.Session.ConfigOptions[0].Select.ID)
+}
+
+func (s *RuntimeSuite) TestWriteState_FlushesEventCounts() {
+	mgr, stateDir := newManagerWithStateDir(s.T(), newTestConfig("test-eventcounts"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	s.Require().NoError(mgr.Create(ctx))
+
+	// Register a mock eventCountsFn.
+	mgr.SetEventCountsFn(func() map[string]int {
+		return map[string]int{
+			"state_change":       3,
+			"agent_message_chunk": 7,
+		}
+	})
+
+	// Trigger writeState via Kill (which calls writeState internally).
+	s.Require().NoError(mgr.Kill(ctx))
+
+	state, readErr := spec.ReadState(stateDir)
+	s.Require().NoError(readErr)
+	s.Require().NotNil(state.EventCounts, "EventCounts must be populated after Kill")
+	s.Equal(3, state.EventCounts["state_change"])
+	s.Equal(7, state.EventCounts["agent_message_chunk"])
+}
