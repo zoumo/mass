@@ -88,7 +88,7 @@ Upstream: S03 writeState closure pattern (all state writes are read-modify-write
   - Files: `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/runtime/acp/runtime_test.go`
   - Verify: go test ./pkg/shim/runtime/acp/... -count=1 -v -run 'TestRuntimeSuite/(TestUpdateSessionMetadata|TestWriteState_FlushesEventCounts)' && go test ./pkg/shim/runtime/acp/... -count=1 && make build
 
-- [ ] **T02: Translator hook + buildSessionUpdate + command.go wiring + integration test** `est:60m`
+- [x] **T02: Translator hook + buildSessionUpdate + command.go wiring + integration test** `est:60m`
   Wire the session metadata hook chain end-to-end: Translator calls hook after broadcasting metadata events, buildSessionUpdate converts shim API event types to runtime-spec state mutations, command.go connects them.
 
 **Context:** T01 added Manager.UpdateSessionMetadata. This task completes the chain:

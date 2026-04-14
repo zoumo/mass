@@ -21,6 +21,11 @@ type Translator struct {
 	in        <-chan acp.SessionNotification
 	log       *EventLog
 
+	// sessionMetadataHook is called after broadcastSessionEvent for metadata
+	// event types (available_commands, config_option, session_info, current_mode).
+	// Set once before Start() via SetSessionMetadataHook — no lock needed.
+	sessionMetadataHook func(apishim.Event)
+
 	mu            sync.Mutex
 	subs          map[int]chan apishim.ShimEvent
 	nextID        int
@@ -57,6 +62,30 @@ func (t *Translator) SetSessionID(id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.sessionID = id
+}
+
+// SetSessionMetadataHook registers a callback that is invoked after
+// broadcastSessionEvent for metadata event types (available_commands,
+// config_option, session_info, current_mode). Must be called before Start();
+// the field is read without a lock in the run goroutine.
+func (t *Translator) SetSessionMetadataHook(hook func(apishim.Event)) {
+	t.sessionMetadataHook = hook
+}
+
+// maybeNotifyMetadata calls sessionMetadataHook for the 4 metadata event types.
+// Called from run() AFTER broadcastSessionEvent returns (Translator.mu released).
+// All other event types are silently ignored.
+func (t *Translator) maybeNotifyMetadata(ev apishim.Event) {
+	if t.sessionMetadataHook == nil {
+		return
+	}
+	switch ev.(type) {
+	case apishim.AvailableCommandsEvent,
+		apishim.ConfigOptionEvent,
+		apishim.SessionInfoEvent,
+		apishim.CurrentModeEvent:
+		t.sessionMetadataHook(ev)
+	}
 }
 
 // Start launches the background fan-out goroutine. Call once.
@@ -255,6 +284,7 @@ func (t *Translator) run() {
 				continue
 			}
 			t.broadcastSessionEvent(ev)
+			t.maybeNotifyMetadata(ev)
 		}
 	}
 }

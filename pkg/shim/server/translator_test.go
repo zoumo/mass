@@ -904,3 +904,136 @@ func TestEventCounts_FailClosedOnAppendFailure(t *testing.T) {
 	// Count must still be 1 — the failed append must NOT increment.
 	assert.Equal(t, 1, tr.EventCounts()["text"], "text count must not increment on failed append")
 }
+
+// TestSessionMetadataHook_ConfigOption verifies that sessionMetadataHook is
+// called with a ConfigOptionEvent when a ConfigOptionUpdate notification arrives.
+func TestSessionMetadataHook_ConfigOption(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("run-1", in, nil)
+	ch, _, _ := tr.Subscribe()
+
+	var captured apishim.Event
+	var hookMu sync.Mutex
+	tr.SetSessionMetadataHook(func(ev apishim.Event) {
+		hookMu.Lock()
+		defer hookMu.Unlock()
+		captured = ev
+	})
+	tr.Start()
+	defer tr.Stop()
+
+	// Inject a ConfigOptionUpdate notification.
+	optValue := acp.SessionConfigValueId("dark")
+	ungrouped := acp.SessionConfigSelectOptionsUngrouped{
+		{Name: "Dark", Value: optValue},
+	}
+	in <- acp.SessionNotification{Update: acp.SessionUpdate{
+		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
+			ConfigOptions: []acp.SessionConfigOption{
+				{Select: &acp.SessionConfigOptionSelect{
+					Id:           "theme",
+					Name:         "Theme",
+					CurrentValue: optValue,
+					Options: acp.SessionConfigSelectOptions{
+						Ungrouped: &ungrouped,
+					},
+				}},
+			},
+		},
+	}}
+
+	// Drain the broadcast event to ensure run() processed the notification.
+	drainShimEvent(t, ch)
+
+	hookMu.Lock()
+	defer hookMu.Unlock()
+	require.NotNil(t, captured, "sessionMetadataHook must be called for config_option")
+	co, ok := captured.(apishim.ConfigOptionEvent)
+	require.True(t, ok, "captured event must be ConfigOptionEvent")
+	require.Len(t, co.ConfigOptions, 1)
+	require.NotNil(t, co.ConfigOptions[0].Select)
+	assert.Equal(t, "theme", co.ConfigOptions[0].Select.ID)
+}
+
+// TestSessionMetadataHook_IgnoresNonMetadata verifies that sessionMetadataHook
+// is NOT called for non-metadata event types like text.
+func TestSessionMetadataHook_IgnoresNonMetadata(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("run-1", in, nil)
+	ch, _, _ := tr.Subscribe()
+
+	hookCalled := false
+	tr.SetSessionMetadataHook(func(ev apishim.Event) {
+		hookCalled = true
+	})
+	tr.Start()
+	defer tr.Stop()
+
+	// Send a text event (non-metadata).
+	in <- makeNotif(func(u *acp.SessionUpdate) {
+		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
+			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}},
+		}
+	})
+	drainShimEvent(t, ch)
+
+	// Give a small window for the hook to fire (it shouldn't).
+	time.Sleep(50 * time.Millisecond)
+	assert.False(t, hookCalled, "sessionMetadataHook must NOT be called for text events")
+}
+
+// TestSessionMetadataHook_AllFourTypes verifies the hook fires for all 4 metadata types.
+func TestSessionMetadataHook_AllFourTypes(t *testing.T) {
+	in := make(chan acp.SessionNotification, 4)
+	tr := NewTranslator("run-1", in, nil)
+	ch, _, _ := tr.Subscribe()
+
+	var mu sync.Mutex
+	var types []string
+	tr.SetSessionMetadataHook(func(ev apishim.Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		types = append(types, apishim.EventTypeOf(ev))
+	})
+	tr.Start()
+	defer tr.Stop()
+
+	// available_commands
+	in <- acp.SessionNotification{Update: acp.SessionUpdate{
+		AvailableCommandsUpdate: &acp.SessionAvailableCommandsUpdate{
+			AvailableCommands: []acp.AvailableCommand{{Name: "test", Description: "test cmd"}},
+		},
+	}}
+	drainShimEvent(t, ch)
+
+	// config_option
+	optValue2 := acp.SessionConfigValueId("v1")
+	ungrouped2 := acp.SessionConfigSelectOptionsUngrouped{{Name: "V1", Value: optValue2}}
+	in <- acp.SessionNotification{Update: acp.SessionUpdate{
+		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
+			ConfigOptions: []acp.SessionConfigOption{
+				{Select: &acp.SessionConfigOptionSelect{Id: "x", Name: "X", CurrentValue: optValue2,
+					Options: acp.SessionConfigSelectOptions{Ungrouped: &ungrouped2}}},
+			},
+		},
+	}}
+	drainShimEvent(t, ch)
+
+	// session_info
+	title := "My Session"
+	in <- acp.SessionNotification{Update: acp.SessionUpdate{
+		SessionInfoUpdate: &acp.SessionSessionInfoUpdate{Title: &title},
+	}}
+	drainShimEvent(t, ch)
+
+	// current_mode
+	modeID := acp.SessionModeId("code")
+	in <- acp.SessionNotification{Update: acp.SessionUpdate{
+		CurrentModeUpdate: &acp.SessionCurrentModeUpdate{CurrentModeId: modeID},
+	}}
+	drainShimEvent(t, ch)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []string{"available_commands", "config_option", "session_info", "current_mode"}, types)
+}

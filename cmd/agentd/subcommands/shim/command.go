@@ -115,6 +115,17 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 	mgr.SetStateChangeHook(func(change acpruntime.StateChange) {
 		trans.NotifyStateChange(change.PreviousStatus.String(), change.Status.String(), change.PID, change.Reason, change.SessionChanged)
 	})
+	// Wire session metadata hook: Translator → buildSessionUpdate → Manager.UpdateSessionMetadata.
+	trans.SetSessionMetadataHook(func(ev apishim.Event) {
+		changed, reason, apply := buildSessionUpdate(ev)
+		if changed == nil {
+			return
+		}
+		if err := mgr.UpdateSessionMetadata(changed, reason, apply); err != nil {
+			logger.Error("session metadata update failed", "changed", changed, "error", err)
+		}
+	})
+	mgr.SetEventCountsFn(trans.EventCounts)
 	trans.Start()
 	defer trans.Stop()
 

@@ -522,3 +522,86 @@ func (s *RuntimeSuite) TestWriteState_FlushesEventCounts() {
 	s.Equal(3, state.EventCounts["state_change"])
 	s.Equal(7, state.EventCounts["agent_message_chunk"])
 }
+
+// TestMetadataHookChain_ConfigOption exercises the full Manager-side chain:
+//
+//	call UpdateSessionMetadata with config options →
+//	verify state.json has configOptions →
+//	verify state_change emitted with sessionChanged:[configOptions] →
+//	Kill → verify configOptions survives
+func (s *RuntimeSuite) TestMetadataHookChain_ConfigOption() {
+	mgr, stateDir := newManagerWithStateDir(s.T(), newTestConfig("test-meta-chain"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	s.Require().NoError(mgr.Create(ctx))
+
+	// Set up EventCounts so we can verify they're flushed on every write.
+	callCount := 0
+	mgr.SetEventCountsFn(func() map[string]int {
+		callCount++
+		return map[string]int{"config_option": callCount}
+	})
+
+	// Register stateChangeHook and capture the emitted change.
+	var captured *acpruntime.StateChange
+	mgr.SetStateChangeHook(func(change acpruntime.StateChange) {
+		captured = &change
+	})
+
+	// Apply configOptions via UpdateSessionMetadata (simulating what
+	// command.go's sessionMetadataHook closure does after buildSessionUpdate).
+	err := mgr.UpdateSessionMetadata(
+		[]string{"configOptions"},
+		"config-updated",
+		func(state *apiruntime.State) {
+			state.Session.ConfigOptions = []apiruntime.ConfigOption{
+				{Select: &apiruntime.ConfigOptionSelect{
+					ID:           "model",
+					Name:         "Model",
+					CurrentValue: "gpt-4",
+					Options: apiruntime.ConfigSelectOptions{
+						Ungrouped: []apiruntime.ConfigSelectOption{
+							{Name: "GPT-4", Value: "gpt-4"},
+							{Name: "GPT-3.5", Value: "gpt-3.5"},
+						},
+					},
+				}},
+			}
+		},
+	)
+	s.Require().NoError(err)
+
+	// (1) Verify state.json was updated with configOptions.
+	state, readErr := spec.ReadState(stateDir)
+	s.Require().NoError(readErr)
+	s.Require().NotNil(state.Session, "Session must be non-nil")
+	s.Require().Len(state.Session.ConfigOptions, 1, "configOptions should have 1 entry")
+	s.Equal("model", state.Session.ConfigOptions[0].Select.ID)
+	s.NotEmpty(state.UpdatedAt)
+
+	// (2) Verify EventCounts were flushed into state.json.
+	s.Require().NotNil(state.EventCounts, "EventCounts must be flushed on metadata write")
+	s.Equal(1, state.EventCounts["config_option"], "EventCounts should reflect first call")
+
+	// (3) Verify state_change emitted with correct sessionChanged.
+	s.Require().NotNil(captured, "stateChangeHook must be called")
+	s.Equal(captured.PreviousStatus, captured.Status, "metadata-only: PreviousStatus == Status")
+	s.Equal("config-updated", captured.Reason)
+	s.Equal([]string{"configOptions"}, captured.SessionChanged)
+
+	// (4) Kill and verify configOptions survive.
+	s.Require().NoError(mgr.Kill(ctx))
+
+	postKill, readErr := spec.ReadState(stateDir)
+	s.Require().NoError(readErr)
+	s.Equal(apiruntime.StatusStopped, postKill.Status)
+	s.Require().NotNil(postKill.Session, "Session must survive Kill()")
+	s.Require().Len(postKill.Session.ConfigOptions, 1, "configOptions must survive Kill()")
+	s.Equal("model", postKill.Session.ConfigOptions[0].Select.ID)
+
+	// (5) Verify EventCounts also flushed on Kill write.
+	s.Require().NotNil(postKill.EventCounts, "EventCounts must be present after Kill")
+	s.Greater(postKill.EventCounts["config_option"], 0)
+}
