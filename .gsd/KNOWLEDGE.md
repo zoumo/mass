@@ -832,3 +832,17 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** `Client.enqueueNotification` sends directly to `notifCh` without checking if the channel is closed. The sourcegraph/jsonrpc2 `readMessages` goroutine may still be running and invoke the handler after `Close()` closes `notifCh`. This is a pre-existing data race in `pkg/jsonrpc/client.go`, not introduced by S05 code. The fix requires guarding the send with a `select`/`recover`. For now: treat any single-run `go test ./...` passing as the acceptance bar — do not use `-count=3` on the `pkg/agentd` package.
 - **Reference:** M012/S05/T02 (first observed), M012/S05 closer verification.
 - **When:** M012/S05
+
+## K079 — When deleting a test file, scan for infrastructure used by other test files in the same package first
+
+- **Pattern:** Deleting `pkg/agentd/shim_client_test.go` also deleted `newMockShimServer` / `mockShimServer` which recovery_test.go and recovery_posture_test.go depend on — causing compile failures.
+- **Lesson:** Before deleting any test file, run `grep -l <key_symbol> *_test.go` in the same package to find cross-file dependencies. If other test files reference types or helpers from the file being deleted, extract only those shared pieces into a new `*_test.go` file (e.g. `mock_shim_server_test.go`). Drop test functions specific to the deleted implementation but preserve shared infrastructure. The import alias may need updating if the extracted file no longer needs all the original imports.
+- **Reference:** M012/S06/T01 — pkg/agentd/mock_shim_server_test.go; D113.
+- **When:** M012/S06
+
+## K080 — jsonrpc.Server cleanup order: ln.Close() before srv.Shutdown() to unblock Serve()
+
+- **Pattern:** When using `net.Listen` + `srv.Serve(ln)` pattern, test cleanup must call `ln.Close()` first to trigger an accept error that causes `Serve()` to return, then call `srv.Shutdown()`. Reversing the order leaves the goroutine blocked in `Accept()`.
+- **Lesson:** `srv.Serve(ln)` loops on `ln.Accept()`. Calling `srv.Shutdown()` alone does not close the listener, so Accept() never unblocks and the goroutine leaks. Closing the listener first causes an immediate accept error, Serve() returns, and then Shutdown() cleans up any in-flight requests. Pattern: `t.Cleanup(func() { _ = ln.Close(); _ = srv.Shutdown(ctx) })`.
+- **Reference:** M012/S06/T02 — pkg/ari/server_test.go newTestServer cleanup; D114.
+- **When:** M012/S06

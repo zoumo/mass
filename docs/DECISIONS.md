@@ -1,101 +1,67 @@
 # Architecture Decisions
 
 > Auto-generated from GSD decision register. Do not edit directly.
-> Last synced: 2026-04-07 (M002/S03)
+> Last synced: 2026-04-14 after M012
 
-## Active Decisions
+## Active
 
-### D002: WorkspaceError structured error type
+| # | When | Scope | Decision | Choice | Rationale | Revisable? |
+|---|------|-------|----------|--------|-----------|------------|
+| D002 | M001-tlbeko/S04/T01 | architecture | WorkspaceError structured error type | WorkspaceError type with Phase field for structured workspace lifecycle failure diagnostics | Workspace operations can fail at multiple phases: prepare-source, prepare-hooks, cleanup-delete. Phase field enables targeted remediation. WorkspaceError implements Unwrap() for errors.Is/errors.As compatibility. | No |
+| D003 | M001-tlbeko/S04/T02 | architecture | Best-effort teardown cleanup semantics | Teardown hook failures logged but cleanup continues; managed directories deleted regardless of hook outcome | Cleanup must be reliable — a failing teardown hook shouldn't leave orphaned workspace directories. Teardown is the final cleanup step and must complete to prevent resource leaks. | No |
+| D012 | M002-q9r6sg planning | architecture | Recovery authority and fail-closed behavior after agentd restart | Live shim state reconciled with persisted metadata; when the two disagree, session is inspectable but operationally blocked | Metadata alone lies after daemon restart, while live-shim-only truth ignores durable identity. Reconciliation plus explicit degraded/blocked posture keeps status readable without letting the runtime guess. | Yes |
+| D018 | M002/S01/T02 | architecture | Runtime bootstrap and identity contract | `session/new` is configuration-only bootstrap; resolved `cwd` is runtime-derived from `agentRoot.path`; OAR sessionId distinct from ACP sessionId | Design docs contradicted each other about whether systemPrompt was a hidden work turn and whether callers supplied cwd directly. Converging on one bootstrap-first contract removes those conflicts. | Yes |
+| D020 | M002/S01/T04 | architecture | Shim runtime control surface and recovery authority split | Clean-break shim surface: session/* for turn control, runtime/* for process/replay control; runtime-spec authoritative for state-dir/socket layout | Aligns shim vocabulary with ARI and runtime docs; removes old dual-source contradiction where legacy PascalCase methods were still normative. | Yes |
+| D026 | M002/S02 | architecture | Shim notifications, replay history, and lifecycle sharing one protocol surface | Canonical `events.Envelope` with `method` + typed `params`; monotonic `seq` in `events.Translator`; runtime state changes wired through post-Create hook | Makes runtime/history replay exact live notification shape; gives session/subscribe(afterSeq) a single sequence authority; preserves bootstrap visibility boundary. | Yes |
+| D032 | M002/S03 planning | architecture | Session recovery config persistence strategy | Discrete columns (shim_socket_path, shim_state_dir, shim_pid) + JSON blob (bootstrap_config) in sessions table; v1→v2 schema migration with isBenignSchemaError | Discrete columns for hot recovery fields enable direct SQL queries without JSON parsing. JSON blob keeps schema stable as config fields evolve. | Yes |
+| D033 | M002/S03 planning | architecture | Recovery failure posture for unreachable shims | Mark sessions as stopped (not degraded) when shim socket connection fails during recovery; continue to next session | A session whose shim is unreachable cannot accept prompts or deliver events — stopped is truthful. Degraded would imply partial functionality that doesn't exist. | Yes |
+| D034 | M002/S03/T02 | architecture | Recovered shim watch mechanism | Use DisconnectNotify channel to watch recovered shims instead of Cmd.Wait() | Recovered shims were forked by the previous daemon instance; the current process has no exec.Cmd handle. DisconnectNotify fires on both clean shutdown and crash. | Yes |
+| D035 | M002/S03/T01 | architecture | Bootstrap config persistence failure handling | Bootstrap config persistence is non-fatal — session continues if the DB persist call fails after shim fork+connect | The session is already running with a live shim; failing the entire session start because metadata persistence failed would be worse than losing recovery capability. | Yes |
+| D039 | M003/S01 planning | architecture | Recovery posture model: daemon-level phase vs per-session recovery info | Two-level model: atomic `RecoveryPhase` on ProcessManager for daemon-wide gating + per-session `RecoveryInfo` on ShimProcess for detailed metadata | Daemon-level phase provides a simple, fast guard for ARI handlers (single atomic read). Per-session RecoveryInfo provides the detailed inspection surface. Separating them avoids coupling handler gating to per-session inspection. | Yes |
+| D040 | M003/S01 planning | architecture | Which ARI methods are blocked vs allowed during daemon recovery phase | Block session/prompt and session/cancel during recovery; allow session/status, session/list, session/stop, session/new, session/remove, all workspace/* | Prompt and cancel are the only methods that deliver work to a shim or interrupt active work — both unsafe during recovery. Stop must remain available for safety. | Yes |
+| D041 | M003/S01/T03 | architecture | Recovery phase transition on systemic ListSessions failure | RecoverSessions always sets phase to RecoveryPhaseComplete on every exit path, including systemic failures | If RecoverSessions leaves the phase as Recovering on error, the daemon would be permanently blocked. Setting Complete on all exit paths ensures fail-closed is time-bounded, not a permanent trap. | Yes |
+| D044 | M003/S03 | architecture | Atomic subscribe-from-seq mechanism to eliminate History→Subscribe event gap | Extend session/subscribe with optional fromSeq; Translator.SubscribeFromSeq holds t.mu during log read + subscription registration | The History→Subscribe gap loses events emitted between the two calls. Holding the Translator mutex during both read and subscription registration guarantees atomicity. | Yes — if production logs grow large |
+| D047 | M003/S03/T02 | architecture | Atomic subscribe-from-seq replaces separate History+Subscribe in recovery | Translator.SubscribeFromSeq holds t.mu during file I/O + subscription registration; recovery uses Subscribe(fromSeq=0) | The History→Subscribe gap allowed events to be assigned between the history read and subscription start. Holding the Translator mutex during both eliminates this gap structurally. | Yes |
+| D048 | M003/S04 planning | architecture | Workspace cleanup safety gate: DB ref_count vs volatile registry RefCount | Gate handleWorkspaceCleanup on DB ref_count (persisted truth) instead of volatile registry.RefCount | After a daemon restart, the in-memory registry is empty — RefCount always 0, so cleanup would incorrectly succeed. DB ref_count survives restarts. Recovery-phase guard added to block cleanup during active recovery. | Yes |
+| D049 | M003/S04/T03 | architecture | Workspace cleanup gates on persisted DB ref_count | handleWorkspaceCleanup checks store.GetWorkspace DB ref_count first; in-memory registry RefCount used only as fallback when store is nil | After daemon restart, in-memory registry is empty, which would allow unsafe cleanup of workspaces with active sessions. DB ref_count is the only trustworthy source after restart. | Yes |
+| D050 | M003/S04/T02 | architecture | Registry and WorkspaceManager refcounts rebuilt from DB after daemon restart | Registry.RebuildFromDB and WorkspaceManager.InitRefCounts called after recovery pass, before ARI server start; failures are non-fatal | After restart, registry and WorkspaceManager are empty. Rebuilding from DB ensures workspace/list, workspace/cleanup, and ref_count-gated operations work correctly. Non-fatal to preserve daemon startup resilience. | Yes |
+| D058 | M004/S02/T02 | architecture | Shared deliverPrompt helper for session/prompt and room/send | Extract deliverPrompt(ctx, sessionID, text) helper from handleSessionPrompt so both paths share the same auto-start → connect → prompt → return flow | room/send needs the same auto-start/connect/prompt logic as session/prompt. The helper centralizes the delivery semantic so future delivery paths can reuse it. | Yes |
+| D060 | M005 | architecture | agent-shim stability posture for M005 refactoring | agent-shim retains existing RPC surface, bundle/state directory model, and single-session-per-shim design; only event ordering enhanced (turnId/streamSeq/phase) | agent-shim's current design is sound. The problem is in agentd's external object model. Changing both layers simultaneously would double migration risk. | Yes |
+| D063 | M005/S04 | architecture | agentrun/create semantics — async with status polling | agentrun/create returns immediately with creating state; background goroutine handles shim startup, ACP bootstrap; caller polls agentrun/status until idle or error | ACP bootstrap takes 10-30 seconds. Synchronous blocking is unacceptable for orchestrator responsiveness. Async create with polling matches standard patterns for long-running resource creation. | Yes |
+| D065 | M005/S01 | architecture | ARI event naming at agentd→orchestrator boundary | ARI events become agent/update and agent/stateChange at the agentd→orchestrator boundary; shim→agentd boundary continues using session/update and runtime/stateChange | Consistency: the entire external ARI surface should use agent/* naming. agentd already sits at the translation boundary, making it the natural place to rename events. | Yes |
+| D066 | M005/S01 | architecture | Where to document agentd directory aggregation strategy | Document agent directory model in agentd.md only, not in runtime-spec.md; runtime-spec stays implementation-agnostic | runtime-spec describes what any OAR runtime implementation must do — it should not prescribe agentd-specific directory strategies. | Yes |
+| D068 | M005/S01/T04 | architecture | Forbidden-pattern matching strategy for contract verifier scripts | Target JSON-block method strings (e.g. `"method": "session/`) rather than plain prose patterns | agentd.md and ari-spec.md legitimately reference session/* in prose. A broad grep would produce false failures. Scoping to JSON method-string format matches only normative examples. | Yes |
+| D082 | M005/S07/T01 | architecture | recoverSession return signature change for agent state reconciliation | Changed recoverSession to return (spec.Status, error) so RecoverSessions can use shim status directly for agent reconciliation | The caller needs the recovered shim's status to decide whether to transition the agent to running or error. Returning status directly from recoverSession keeps the information flow explicit. | Yes |
+| D084 | M007 | architecture | Metadata backend: bbolt replaces SQLite | Replace mattn/go-sqlite3 (CGo) with go.etcd.io/bbolt (pure Go); delete schema.sql and all SQL migration logic; bucket structure: v1/{workspaces/{name}, agents/{workspace}/{name}} | agentd is single-process with low write concurrency — bbolt's single-writer model is not a constraint. Eliminates CGo build dependency. JSON blob model fits KV storage better than relational tables. | No |
+| D085 | M007 | architecture | Single state enum: spec.Status everywhere | Delete meta.AgentState and meta.SessionState; use spec.Status everywhere (creating/idle/running/stopped/error); rename StatusCreated→StatusIdle | Three overlapping state systems caused inconsistency and translation bugs. "created" was semantically ambiguous; "idle" is not. Shim already uses spec.Status — unifying eliminates the agentd translation layer. | No |
+| D086 | M007 | architecture | Workspace replaces Room+Namespace as unified grouping + filesystem resource | Workspace is the single cluster-scoped resource serving as both agent grouping boundary and filesystem working directory; Room, Namespace, and room/* ARI methods deleted | Room spec was orchestrator-owned desired state; realized Room in agentd was a thin projection with no behavioral content beyond grouping. Merging into Workspace removes the conceptual layer. | No |
+| D087 | M007 | architecture | Agent identity model: (workspace, name) pair | All ARI methods identify agents by {workspace, name} pair; no opaque agentId UUID; CLI uses --workspace and --name flags | UUIDs are unstable across stop/restart and not human-meaningful. (workspace, name) provides stable, meaningful identity. Separate --workspace/--name flags match kubectl-style. | No |
+| D088 | M007 | architecture | Shim write authority boundary for post-bootstrap state transitions | After shim bootstrap, agentd NEVER writes idle/running/stopped/error directly; all post-bootstrap state transitions come through runtime/stateChange notifications; DB serves only as fast admission gate | The "guess-then-correct" pattern was the root cause of DB/shim inconsistency on crashes. Making the boundary absolute eliminates the class of bugs. | No |
+| D089 | M007 | architecture | RestartPolicy semantics for recovery after shim death | tryReload reads ACP sessionId from shim state file, calls session/load, falls back silently to alwaysNew on any failure; alwaysNew always starts fresh ACP session | Some ACP runtimes support session/load for conversation continuity; others don't. Per-agent RestartPolicy makes this configurable rather than global. | Yes |
+| D091 | M007/S02 | architecture | session/load shim-side handler scope boundary for tryReload | S02 adds session/load to ShimClient (agentd-side) and implements tryReload/alwaysNew branching in recoverAgent(); shim-side handler deferred to integration scope | S02's acceptance criteria is contract-level (unit tests). The shim-side handler is a runtime integration concern. Deferring keeps S02 scope tightly bounded to pkg/agentd. | Yes |
+| D092 | M007/S02/T01 | architecture | Post-bootstrap DB state updates must flow through runtime/stateChange notifications | Extract buildNotifHandler as package-internal method on ProcessManager; use it in both Start() and recoverAgent(); remove direct UpdateStatus(StatusRunning) from Start() | Enforces D088 shim write authority boundary: the shim is source of truth for runtime state post-bootstrap. The notification handler is now the single path for all post-bootstrap state changes. | Yes |
+| D103 | M008 | architecture | OAR binary consolidation from 5 binaries to 2 (agentd + agentdctl) | agentd (server/shim/workspace-mcp subcommands) + agentdctl (agent/agentrun/workspace/shim resource commands) — remaining 3 cmd/ directories deleted | Single binary deployment is the containerd model. agentd owns all system processes; agentdctl owns all user-facing resource operations. Eliminates binary path resolution issues. | No |
+| D104 | M008 | architecture | agentd server startup mechanism: --root flag replaces config.yaml | --root flag (default /var/run/agentd) derives all paths (socketPath, workspaceRoot, bundleRoot, metaDBPath); config.yaml and ParseConfig() deleted entirely | Single flag startup is simpler, more portable, and eliminates the need to manage a config file. Path derivation is deterministic. Matches containerd --root pattern. | Yes |
+| D105 | M008/S02 | architecture | AgentTemplate storage and lifecycle management | meta.Runtime in v1/runtimes bbolt bucket with SetRuntime (upsert)/GetRuntime/ListRuntimes/DeleteRuntime; ARI methods: agent/set, agent/get, agent/list, agent/delete | Dynamic runtime registration without daemon restart. Persistent across restarts. Enables CLI management. Supersedes static RuntimeClasses map in config.yaml. | Yes |
+| D106 | M008/S02 | architecture | Capabilities struct deleted | agentd.Capabilities, agentd.CapabilitiesConfig, and cfg.RuntimeClasses map all removed; RuntimeClass no longer carries Streaming/SessionLoad/ConcurrentSessions flags | Capabilities were static config-time flags not meaningfully used by the current shim protocol. ACP-level negotiation handled at the shim layer, not by agentd flags. | Yes |
+| D109 | M008/S04 | architecture | API model rename: agent=template definition, agentrun=running instance | ARI: agent/* (set/get/list/delete, template CRUD) + agentrun/* (create/prompt/cancel/stop/delete/restart/list/status/attach, running instance) | Aligns OAR with the containerd Container/Task model. agent as template is durable configuration; agentrun as running instance is ephemeral and workspace-scoped. Eliminates conceptual confusion between runtimeClass, agent, and session. | No |
+| D110 | M008/S04 | architecture | bbolt bucket naming for agent/agentrun model | Fresh start: v1/agents (templates), v1/agentruns (instances); no migration script | No migration script needed at current maturity level. Consistent with M007 approach. agentd is a local daemon; data loss on schema change is acceptable during active development. | Yes |
+| D112 | M012/S05/T02 | architecture | ARI server Service implementing multiple interfaces with conflicting method names | Adapter pattern: central Service holding deps + three thin unexported adapters (workspaceAdapter, agentRunAdapter, agentAdapter) each embedding *Service | WorkspaceService.List(ctx) and AgentService.List(ctx) have identical signatures but different return types; a single Go struct cannot implement both. Adapters keep shared deps in one place. | Yes |
 
-- **When:** M001-tlbeko/S04/T01
-- **Choice:** WorkspaceError type with Phase field for structured workspace lifecycle failure diagnostics
-- **Rationale:** Workspace operations can fail at multiple phases: prepare-source (handler failure), prepare-hooks (setup hook failure), cleanup-delete (directory deletion failure). Phase field enables targeted remediation and agent-friendly error inspection. WorkspaceError implements Unwrap() for errors.Is/errors.As compatibility. Follows GitError/HookError pattern established in earlier slices.
-- **Revisable:** No
+## Superseded
 
-### D003: Best-effort teardown cleanup semantics
-
-- **When:** M001-tlbeko/S04/T02
-- **Choice:** Teardown hook failures logged but cleanup continues; managed directories deleted regardless of hook outcome
-- **Rationale:** Cleanup must be reliable — a failing teardown hook shouldn't leave orphaned workspace directories. Setup hook failures abort preparation because partial state can be safely cleaned up. Teardown is the final cleanup step and must complete to prevent resource leaks. Hook error is logged for diagnostics but cleanup proceeds.
-- **Revisable:** No
-
-### D009: Metadata backend direction during contract convergence
-
-- **When:** M002-ssi4mk
-- **Choice:** Retain SQLite as the metadata backend for M002 and defer any BoltDB or backend-abstraction work to a later dedicated milestone if a concrete limitation appears.
-- **Rationale:** The current model already relies on relational features such as foreign keys, indexes, triggers, and cross-entity bookkeeping. Swapping storage during convergence would add redesign cost without reducing the real model complexity.
-- **Revisable:** Yes
-
-### D012: Recovery authority and fail-closed behavior after agentd restart
-
-- **When:** M002-q9r6sg planning
-- **Choice:** On daemon restart, recovered session truth comes from live shim state reconciled with persisted SQLite metadata; when the two disagree or certainty is incomplete, the session remains inspectable but operationally blocked.
-- **Rationale:** This milestone exists to make restart behavior truthful. Metadata alone lies after daemon restart, while live-shim-only truth ignores durable identity and workspace ownership. Reconciliation plus explicit degraded/blocked posture keeps status readable without letting the runtime guess.
-- **Revisable:** Yes
-
-### D015: Room ownership model during contract convergence
-
-- **When:** M002-ssi4mk/S01 planning
-- **Choice:** Treat Room Spec as orchestrator-owned desired state and ARI `room/*` as realized runtime state maintained by agentd.
-- **Rationale:** The current docs conflict because room-spec says agentd only sees sessions while agentd.md and ari-spec.md already model runtime room objects. A desired-vs-realized split keeps the existing ARI direction without pretending agentd owns orchestration intent.
-- **Revisable:** Yes
-
-### D018: Runtime bootstrap and identity contract for the M002/S01 design rewrite
-
-- **When:** M002/S01/T02
-- **Choice:** Document `session/new` as configuration-only bootstrap, treat resolved `cwd` as a runtime-derived value from `agentRoot.path`, keep OAR `sessionId` distinct from ACP `sessionId`, and explicitly defer durable ID/bootstrap persistence to S03.
-- **Rationale:** The runtime, config, and design docs were contradicting each other about whether `systemPrompt` was a hidden work turn, whether callers supplied cwd directly, and whether OAR and ACP identities were the same object. Converging on one bootstrap-first contract removes those conflicts and leaves the remaining persistence work named instead of implied.
-- **Revisable:** Yes
-
-### D019: Room ownership and room/* API semantics during contract convergence
-
-- **When:** M002/S01/T03
-- **Choice:** Treat the Room Spec as orchestrator-owned desired state and treat ARI room/* as the realized runtime projection maintained by agentd; keep session/new configuration-only and route work through session/prompt.
-- **Rationale:** The design set had conflicting stories about whether agentd only sees sessions or owns room-level semantics. Splitting desired intent from realized runtime state preserves runtime inspection and future routing without claiming agentd owns orchestration policy. Keeping session/new as bootstrap-only prevents Room creation from implying work delivery.
-- **Revisable:** Yes
-
-### D020: Shim runtime control surface and recovery authority split
-
-- **When:** M002/S01/T04
-- **Choice:** Use a clean-break shim surface with session/* for turn control, runtime/* for process/replay control, and keep runtime-spec authoritative for state-dir/socket layout while shim-rpc-spec owns replay/reconnect semantics.
-- **Rationale:** This matches the converged session/new versus session/prompt story, aligns the shim vocabulary with ARI and runtime docs, and removes the old dual-source contradiction where legacy PascalCase methods and $/event notifications were still described as normative.
-- **Revisable:** Yes
-
-### D026: How shim live notifications, replay history, and runtime lifecycle changes share one protocol surface
-
-- **When:** M002/S02
-- **Choice:** Use a canonical `events.Envelope` with `method` plus typed `params`, assign monotonic `seq` in `events.Translator`, and wire runtime state changes through a post-Create hook so bootstrap traffic stays internal.
-- **Rationale:** This makes `runtime/history` replay the exact live notification shape, gives `session/subscribe(afterSeq)` and `runtime/status.recovery.lastSeq` a single sequence authority, and preserves the existing bootstrap visibility boundary by only attaching the state-change hook after `mgr.Create()` succeeds.
-- **Revisable:** Yes
-
-### D032: Session recovery config persistence strategy for S03
-
-- **When:** M002/S03 planning
-- **Choice:** Add discrete columns (shim_socket_path, shim_state_dir, shim_pid) plus a JSON blob column (bootstrap_config) to the sessions table, with a v1→v2 schema migration using ALTER TABLE and isBenignSchemaError for idempotency.
-- **Rationale:** Discrete columns for hot recovery fields (socket path, state dir, PID) enable direct SQL queries during recovery without JSON parsing. The JSON blob for bootstrap_config keeps the schema stable as config fields evolve. The existing isBenignSchemaError pattern handles migration idempotency for existing v1 databases.
-- **Revisable:** Yes
-
-### D033: Recovery failure posture for unreachable shims
-
-- **When:** M002/S03 planning
-- **Choice:** Mark sessions as stopped (not degraded) when shim socket connection fails during recovery. Continue to next session. Log session_id, socket_path, and error for each failure.
-- **Rationale:** Consistent with D012 (fail-closed behavior). A session whose shim is unreachable cannot accept prompts or deliver events, so marking it as stopped is truthful. A degraded state would imply partial functionality that doesn't exist. Continuing to next session ensures one dead shim doesn't block recovery of other sessions.
-- **Revisable:** Yes
-
-### D034: Recovered shim watch mechanism
-
-- **When:** M002/S03/T02
-- **Choice:** Use DisconnectNotify channel to watch recovered shims instead of Cmd.Wait(), since the daemon did not fork them and has no Cmd handle.
-- **Rationale:** Recovered shims were forked by the previous daemon instance; the current process has no exec.Cmd handle. DisconnectNotify fires when the JSONRPC connection drops, which covers both clean shutdown and crash, giving equivalent lifecycle tracking.
-- **Revisable:** Yes
-
-### D035: Bootstrap config persistence failure handling
-
-- **When:** M002/S03/T01
-- **Choice:** Bootstrap config persistence is non-fatal — session continues if the DB persist call fails after shim fork+connect.
-- **Rationale:** The session is already running with a live shim; failing the entire session start because metadata persistence failed would be worse than losing recovery capability. The error is logged for operators to investigate.
-- **Revisable:** Yes
-
-## Superseded Decisions
-
-_None._
+| # | When | Decision | Superseded By |
+|---|------|----------|---------------|
+| D009 | M002-ssi4mk | Metadata backend direction: retain SQLite for M002 | D084 |
+| D015 | M002-ssi4mk/S01 | Room ownership model during contract convergence | D086 |
+| D019 | M002/S01/T03 | Room ownership and room/* API semantics | D086 |
+| D028 | M002/S03 planning | Session recovery config persistence strategy (1st recording) | D032 |
+| D029 | M002/S03 planning | Recovery failure posture for unreachable shims (1st recording) | D033 |
+| D030 | M002/S03 planning | Session recovery config persistence strategy (2nd duplicate) | D032 |
+| D031 | M002/S03 planning | Recovery failure posture for unreachable shims (2nd duplicate) | D033 |
+| D051 | M004 pre-planning | Room record creation mode — explicit vs implicit | D086 |
+| D052 | M004 pre-planning | Inter-agent message routing mechanism via Room MCP injection | D086 |
+| D053 | M004 pre-planning | M004 scope (Room lifecycle + L2 routing) | D086 |
+| D061 | M005 | External object model: agent identified by room+name | D087 |
+| D062 | M005/S02 | Agent state machine design (5 states, paused removed) | D085 |
+| D064 | M005/S02 | Separate agents and sessions tables with FK relationship | D085 |

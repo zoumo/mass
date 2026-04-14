@@ -10,9 +10,9 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-**M012 S05 complete — 5 of 6 slices done.** Codebase refactor to establish typed Service Interfaces (api/shim, api/ari), pkg/jsonrpc unified transport, and directory restructure is nearly complete. S06 (cleanup of legacy packages) remains.
+**M012 complete — all 6 slices done.** Codebase refactor is complete: typed Service Interfaces (api/shim, api/ari), pkg/jsonrpc unified transport, directory restructure, and cleanup of all legacy packages.
 
-**Active milestone: M012** — Codebase Refactor: Service Interface + Unified RPC + Directory Restructure
+**No active milestone.** M012 was the most recent completed milestone.
 
 ### Completed Milestones
 
@@ -26,8 +26,9 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 | M006 | Fix golangci-lint v2 issues | 202 → 0 issues across 11 linter categories; clean lint posture established |
 | M007 | Platform terminal state refactor | bbolt storage, unified spec.Status (idle replaces created), (workspace,name) identity, shim write authority, Room/Session elimination; all integration tests pass; 0 lint issues |
 | M008 | CLI consolidation + API model rename | 2-binary model (agentd + agentdctl), --root startup, DB-persisted AgentTemplate, resource-first grammar, agent=template/agentrun=instance rename; all 8 integration tests pass |
+| M012 | Codebase Refactor: Service Interface + Unified RPC + Directory Restructure | Typed service interfaces, pkg/jsonrpc unified transport, ARI wire contract convergence, adapter pattern, legacy package cleanup; make build + go test ./... pass with zero legacy references |
 
-### M012 Status (Active)
+### M012 Status (Complete)
 
 | Slice | Title | Status |
 |-------|-------|--------|
@@ -36,7 +37,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 | S03 | Phase 2: ARI wire contract convergence | ✅ complete |
 | S04 | Phase 3: Service Interface definitions | ✅ complete |
 | S05 | Phase 4: Implementation Migration | ✅ complete |
-| S06 | Phase 5: Cleanup | ⬜ pending |
+| S06 | Phase 5: Cleanup | ✅ complete |
 
 ### What's Implemented
 
@@ -45,8 +46,8 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - `agentdctl` is a **full-featured CLI**: `agentdctl agent` (template CRUD: apply/get/list/delete) + `agentdctl agentrun` (lifecycle: create/list/status/prompt/stop/delete/restart/attach/cancel) + workspace/daemon/shim commands
 - **ARI surface (final):** `workspace/*` (create/status/list/delete/send) + `agent/*` (set/get/list/delete — AgentTemplate CRUD) + `agentrun/*` (create/prompt/cancel/stop/delete/restart/list/status/attach — running instance lifecycle)
 - **Typed Service Interfaces (M012):** `api/shim.ShimService` interface + `api/ari.WorkspaceService`, `AgentRunService`, `AgentService` interfaces — all implementations satisfy these typed contracts
-- **New typed implementations (M012):** `pkg/shim/server.Service` implements ShimService; `pkg/ari/server.Service` (adapter pattern) implements all three ARI services; `pkg/ari/client.ARIClient` and `pkg/shim/client` are Dial helpers
-- **pkg/jsonrpc unified transport (M012):** Single JSON-RPC transport used by both ARI server and shim server; cmd entrypoints use explicit net.Listen + jsonrpc.Server pattern
+- **Typed implementations (M012):** `pkg/shim/server.Service` implements ShimService; `pkg/ari/server.Service` (adapter pattern) implements all three ARI services; `pkg/ari/client.ARIClient` and `pkg/shim/client` are Dial helpers
+- **pkg/jsonrpc unified transport (M012):** Single JSON-RPC transport used by both ARI server and shim server; cmd entrypoints use explicit net.Listen + jsonrpc.Server pattern; legacy pkg/rpc, pkg/ari/server.go monolith, and pkg/agentd/shim_client.go all deleted
 - **DB-persisted agent templates**: `meta.AgentTemplate` in `v1/agents` bbolt bucket; ARI `agent/set|get|list|delete`; `agentdctl agent apply -f` YAML-based CLI
 - **bbolt metadata store**: `v1/workspaces/{name}` + `v1/agentruns/{workspace}/{name}` + `v1/agents/{name}` bucket layout
 - **Self-fork shim**: `forkShim` uses `os.Executable()` for single-binary deployment; `OAR_SHIM_BINARY` env override for testing
@@ -62,6 +63,8 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **Typed service interface pattern (M012):** api/shim.ShimService + api/ari.*Service interfaces; implementations in pkg/shim/server + pkg/ari/server; Dial helpers in pkg/shim/client + pkg/ari/client
 - **Adapter pattern for conflicting method names (M012):** WorkspaceService.List and AgentService.List have identical Go signatures — use three thin unexported adapter structs embedding *Service (K077, D112)
 - **cmd entrypoint pattern (M012):** net.Listen (explicit lifecycle) + jsonrpc.NewServer + Register(srv, svc) + srv.Serve(ln) in goroutine + srv.Shutdown(ctx) on signal
+- **Test server cleanup order (M012):** ln.Close() then srv.Shutdown(ctx) — closing listener unblocks Accept() so Serve() goroutine exits cleanly (K080, D114)
+- **Test file deletion safety (M012):** Before deleting *_test.go, grep for cross-file dependencies in the same package; extract shared infrastructure to a new file (K079, D113)
 - **bbolt buckets:** `v1/workspaces/{name}`, `v1/agentruns/{workspace}/{name}`, `v1/agents/{name}`
 - **--root derived paths**: Options.SocketPath(), WorkspaceRoot(), BundleRoot(), MetaDBPath() — no config file needed
 - **cobra package main collision avoidance:** wmcp prefix for workspace-mcp types, shim prefix for shim client types, local flag vars scoped inside constructor functions (K068)
@@ -85,4 +88,4 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 - [x] M006 — Fix golangci-lint v2 issues
 - [x] M007 — Platform terminal state refactor
 - [x] M008 — CLI consolidation + API model rename
-- [ ] M012 — Codebase Refactor: Service Interface + Unified RPC + Directory Restructure (S05 complete, S06 pending)
+- [x] M012 — Codebase Refactor: Service Interface + Unified RPC + Directory Restructure
