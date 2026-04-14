@@ -673,3 +673,10 @@ type StateChangeEvent struct {
 }
 
 func (StateChangeEvent) eventType() string { return EventTypeStateChange }
+
+// EventTypeOf returns the event type string for the given Event.
+// This exported accessor allows packages outside pkg/shim/api to retrieve the
+// event type without requiring access to the unexported eventType() method.
+func EventTypeOf(ev Event) string {
+	return ev.eventType()
+}

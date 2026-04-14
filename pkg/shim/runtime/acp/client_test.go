@@ -1,4 +1,4 @@
-package runtime
+package acp
 
 import (
 	"context"
@@ -31,7 +31,7 @@ func newTestManager(policy apiruntime.PermissionPolicy) *Manager {
 	}
 	cfg := apiruntime.Config{
 		OarVersion:  "0.1.0",
-		Metadata:    apiruntime.Metadata{Name: "test-agent"},
+		Metadata: apiruntime.Metadata{Name: "test-agent"},
 		AgentRoot:   apiruntime.AgentRoot{Path: "workspace"},
 		Permissions: policy,
 	}

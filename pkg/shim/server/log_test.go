@@ -1,4 +1,4 @@
-package events
+package server
 
 import (
 	"os"
@@ -9,14 +9,14 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 )
 
 func testTime(t *testing.T) time.Time {
 	t.Helper()
 	return time.Date(2026, time.April, 7, 10, 0, 0, 0, time.UTC)
 }
-
-
 
 func TestEventLog_AppendAndRead(t *testing.T) {
 	dir := t.TempDir()
@@ -25,8 +25,8 @@ func TestEventLog_AppendAndRead(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 
-	ev0 := ShimEvent{RunID: "run-1", Seq: 0, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "hello"}}
-	ev1 := ShimEvent{RunID: "run-1", Seq: 1, Time: testTime(t), Category: CategoryRuntime, Type: "state_change", Content: StateChangeEvent{PreviousStatus: "created", Status: "running", PID: 42, Reason: "prompt-started"}}
+	ev0 := apishim.ShimEvent{RunID: "run-1", Seq: 0, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "hello"}}
+	ev1 := apishim.ShimEvent{RunID: "run-1", Seq: 1, Time: testTime(t), Category: apishim.CategoryRuntime, Type: "state_change", Content: apishim.StateChangeEvent{PreviousStatus: "created", Status: "running", PID: 42, Reason: "prompt-started"}}
 
 	require.NoError(t, log.Append(ev0))
 	require.NoError(t, log.Append(ev1))
@@ -39,12 +39,12 @@ func TestEventLog_AppendAndRead(t *testing.T) {
 	assert.Equal(t, "text", entries[0].Type)
 	assert.Equal(t, 0, entries[0].Seq)
 	assert.Equal(t, "run-1", entries[0].RunID)
-	textEv, ok := entries[0].Content.(TextEvent)
+	textEv, ok := entries[0].Content.(apishim.TextEvent)
 	require.True(t, ok)
 	assert.Equal(t, "hello", textEv.Text)
 
 	assert.Equal(t, "state_change", entries[1].Type)
-	sc, ok := entries[1].Content.(StateChangeEvent)
+	sc, ok := entries[1].Content.(apishim.StateChangeEvent)
 	require.True(t, ok)
 	assert.Equal(t, "created", sc.PreviousStatus)
 	assert.Equal(t, "running", sc.Status)
@@ -58,7 +58,7 @@ func TestEventLog_FromSeq(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
-		ev := ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "x"}}
+		ev := apishim.ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "x"}}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -76,7 +76,7 @@ func TestEventLog_SeqContinuesAfterReopen(t *testing.T) {
 	log1, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "a"}}
+		ev := apishim.ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "a"}}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -84,7 +84,7 @@ func TestEventLog_SeqContinuesAfterReopen(t *testing.T) {
 	log2, err := OpenEventLog(path)
 	require.NoError(t, err)
 	require.Equal(t, 3, log2.NextSeq())
-	ev3 := ShimEvent{RunID: "run-1", Seq: 3, Time: testTime(t), Category: CategoryRuntime, Type: "state_change", Content: StateChangeEvent{PreviousStatus: "running", Status: "created"}}
+	ev3 := apishim.ShimEvent{RunID: "run-1", Seq: 3, Time: testTime(t), Category: apishim.CategoryRuntime, Type: "state_change", Content: apishim.StateChangeEvent{PreviousStatus: "running", Status: "created"}}
 	require.NoError(t, log2.Append(ev3))
 	require.NoError(t, log2.Close())
 
@@ -120,7 +120,7 @@ func TestReadEventLog_DamagedTailReturnsPartial(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "ok"}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "ok"}}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -144,7 +144,7 @@ func TestReadEventLog_DamagedTailTolerated(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "v"}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "v"}}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -171,7 +171,7 @@ func TestReadEventLog_MidFileCorruptionFails(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "v"}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "v"}}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -190,7 +190,7 @@ func TestReadEventLog_MidFileCorruptionFails(t *testing.T) {
 	tmpLog, err := OpenEventLog(tmpPath)
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "after"}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "after"}}
 		require.NoError(t, tmpLog.Append(ev))
 	}
 	require.NoError(t, tmpLog.Close())
@@ -213,7 +213,7 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	log1, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "orig"}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "orig"}}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -236,7 +236,7 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	require.Equal(t, 4, log2.NextSeq())
 
 	// Append with seq 4 succeeds.
-	ev4 := ShimEvent{RunID: "s1", Seq: 4, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "new"}}
+	ev4 := apishim.ShimEvent{RunID: "s1", Seq: 4, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "new"}}
 	require.NoError(t, log2.Append(ev4))
 	require.NoError(t, log2.Close())
 
@@ -265,7 +265,7 @@ func TestEventLog_PartialWriteTruncation(t *testing.T) {
 
 	// Write 2 good entries.
 	for i := 0; i < 2; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "good"}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "good"}}
 		require.NoError(t, log.Append(ev))
 	}
 
@@ -273,13 +273,13 @@ func TestEventLog_PartialWriteTruncation(t *testing.T) {
 	// before any write, so no partial write in this case). The key invariant
 	// is that after a failed Append, NextSeq is unchanged and the file is
 	// still consistent.
-	wrongSeqEv := ShimEvent{RunID: "s1", Seq: 99, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "bad"}}
+	wrongSeqEv := apishim.ShimEvent{RunID: "s1", Seq: 99, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "bad"}}
 	err = log.Append(wrongSeqEv)
 	require.Error(t, err, "wrong seq should be rejected")
 	assert.Equal(t, 2, log.NextSeq(), "nextSeq must not advance after failed append")
 
 	// The log must still be writable after a failed append.
-	goodEv := ShimEvent{RunID: "s1", Seq: 2, Time: testTime(t), Category: CategorySession, Type: "text", Content: TextEvent{Text: "after"}}
+	goodEv := apishim.ShimEvent{RunID: "s1", Seq: 2, Time: testTime(t), Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: "after"}}
 	require.NoError(t, log.Append(goodEv))
 	require.NoError(t, log.Close())
 
@@ -314,10 +314,10 @@ func TestEventLog_TranslatorWritesShimEvent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "text", entries[0].Type)
-	assert.Equal(t, CategorySession, entries[0].Category)
+	assert.Equal(t, apishim.CategorySession, entries[0].Category)
 	assert.Equal(t, "run-1", entries[0].RunID)
 	assert.Equal(t, 0, entries[0].Seq)
-	ev, ok := entries[0].Content.(TextEvent)
+	ev, ok := entries[0].Content.(apishim.TextEvent)
 	require.True(t, ok)
 	assert.Equal(t, "logged", ev.Text)
 }

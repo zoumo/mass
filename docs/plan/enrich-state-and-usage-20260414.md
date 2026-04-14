@@ -38,6 +38,10 @@ type State struct {
     Annotations map[string]string `json:"annotations,omitempty"`
     ExitCode    *int              `json:"exitCode,omitempty"`
 
+    // UpdatedAt is the RFC 3339 timestamp of the last state.json write.
+    // Maintained by the shim — set automatically on every writeState() call.
+    UpdatedAt string `json:"updatedAt,omitempty"`
+
     // Session carries ACP-reported session metadata.
     // Populated progressively as the agent reports updates via ACP notifications.
     // Nil before the first session metadata arrives.
@@ -54,9 +58,6 @@ type State struct {
 type SessionState struct {
     // Title is the human-readable session title (from SessionInfoUpdate).
     Title *string `json:"title,omitempty"`
-
-    // UpdatedAt is the last activity timestamp in RFC 3339 (from SessionInfoUpdate).
-    UpdatedAt *string `json:"updatedAt,omitempty"`
 
     // CurrentMode is the agent's current operational mode ID (from CurrentModeUpdate).
     // e.g. "plan", "code", "research"
@@ -106,9 +107,9 @@ value 是该类型事件的累计数量。
   "status": "idle",
   "pid": 12345,
   "bundle": "/var/lib/agentd/bundles/session-abc123",
+  "updatedAt": "2026-04-14T10:30:00Z",
   "session": {
     "title": "Refactor auth module",
-    "updatedAt": "2026-04-14T10:30:00Z",
     "currentMode": "code",
     "availableCommands": [
       {"name": "create_plan", "description": "Create an execution plan"},
@@ -158,7 +159,8 @@ value 是该类型事件的累计数量。
 
 ### 机制
 
-当 Translator 收到 session_info / config_option / current_mode / available_commands 事件时：
+当 Translator 收到 session_info / config_option / current_mode / available_commands 事件时
+（session_info 只取 title，忽略 updatedAt — 后者由 shim 在 writeState 时自动设置）：
 
 1. **照常翻译**为对应的 session category 事件（保持现有行为不变）
 2. **额外更新 state.json** 中的 `Session` 字段 + 刷新 `EventCounts`
@@ -171,7 +173,7 @@ usage 事件**不触发 state_change**，只作为 session event 通知出去。
 现有 reason 值：`"prompt-started"`, `"prompt-completed"`, `"prompt-failed"`, `"process-exited"`, ...
 
 新增：
-- `"session-info-updated"` — session title/updatedAt 变更
+- `"session-info-updated"` — session title 变更
 - `"config-updated"` — 配置选项变更
 - `"mode-changed"` — 操作模式切换
 - `"commands-updated"` — 可用命令列表变更

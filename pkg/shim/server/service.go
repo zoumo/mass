@@ -2,27 +2,25 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 
 	acp "github.com/coder/acp-go-sdk"
 
+	acpruntime "github.com/zoumo/oar/pkg/shim/runtime/acp"
 	apishim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/jsonrpc"
-	"github.com/zoumo/oar/pkg/runtime"
 )
 
 // Service implements apishim.ShimService.
 type Service struct {
-	mgr     *runtime.Manager
-	trans   *events.Translator
+	mgr     *acpruntime.Manager
+	trans   *Translator
 	logPath string
 	logger  *slog.Logger
 }
 
 // New creates a new Service.
-func New(mgr *runtime.Manager, trans *events.Translator, logPath string, logger *slog.Logger) *Service {
+func New(mgr *acpruntime.Manager, trans *Translator, logPath string, logger *slog.Logger) *Service {
 	return &Service{mgr: mgr, trans: trans, logPath: logPath, logger: logger}
 }
 
@@ -53,7 +51,7 @@ func (s *Service) Cancel(ctx context.Context) error {
 
 func (s *Service) Load(_ context.Context, _ *apishim.SessionLoadParams) error {
 	// session/load is called by agentd during recovery to restore a prior ACP
-	// session. The underlying runtime.Manager does not expose a Load method;
+	// session. The underlying acpruntime.Manager does not expose a Load method;
 	// the shim handles session restoration internally via the ACP client.
 	return nil
 }
@@ -97,11 +95,7 @@ func (s *Service) Subscribe(ctx context.Context, req *apishim.SessionSubscribePa
 			}
 		}()
 
-		apiEntries, convErr := legacyEventsToAPI(entries)
-		if convErr != nil {
-			return nil, jsonrpc.ErrInternal(convErr.Error())
-		}
-		return &apishim.SessionSubscribeResult{NextSeq: nextSeq, Entries: apiEntries}, nil
+		return &apishim.SessionSubscribeResult{NextSeq: nextSeq, Entries: entries}, nil
 	}
 
 	// Legacy path: subscribe without atomic backfill; filter events by floor seq.
@@ -156,18 +150,14 @@ func (s *Service) History(_ context.Context, req *apishim.RuntimeHistoryParams) 
 	if fromSeq < 0 {
 		return nil, jsonrpc.ErrInvalidParams("fromSeq must be >= 0")
 	}
-	entries, err := events.ReadEventLog(s.logPath, fromSeq)
+	entries, err := ReadEventLog(s.logPath, fromSeq)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 	if len(entries) == 0 {
 		return &apishim.RuntimeHistoryResult{Entries: []apishim.ShimEvent{}}, nil
 	}
-	apiEntries, convErr := legacyEventsToAPI(entries)
-	if convErr != nil {
-		return nil, jsonrpc.ErrInternal(convErr.Error())
-	}
-	return &apishim.RuntimeHistoryResult{Entries: apiEntries}, nil
+	return &apishim.RuntimeHistoryResult{Entries: entries}, nil
 }
 
 func (s *Service) Stop(_ context.Context) error {
@@ -175,23 +165,4 @@ func (s *Service) Stop(_ context.Context) error {
 	// reply and triggers Shutdown). The service layer itself has no lifecycle
 	// state to clean up here.
 	return nil
-}
-
-// legacyEventsToAPI converts []events.ShimEvent (from pkg/events log/translator)
-// into []apishim.ShimEvent via JSON round-trip. This bridge exists only until
-// T02 moves translator.go and log.go into pkg/shim/server so they produce
-// apishim.ShimEvent natively.
-func legacyEventsToAPI(src []events.ShimEvent) ([]apishim.ShimEvent, error) {
-	if len(src) == 0 {
-		return nil, nil
-	}
-	b, err := json.Marshal(src)
-	if err != nil {
-		return nil, err
-	}
-	dst := make([]apishim.ShimEvent, 0, len(src))
-	if err := json.Unmarshal(b, &dst); err != nil {
-		return nil, err
-	}
-	return dst, nil
 }

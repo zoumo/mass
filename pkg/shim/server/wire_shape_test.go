@@ -1,4 +1,4 @@
-package events
+package server
 
 import (
 	"encoding/json"
@@ -7,6 +7,8 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 )
 
 // jsonKeys returns the top-level keys of a JSON object, ignoring sessionUpdate.
@@ -34,7 +36,7 @@ func TestWireShape_ContentBlock_Text(t *testing.T) {
 	// OAR preserves _meta (design principle #2). To test structural key layout
 	// alignment (type + required fields), we use inputs without Meta.
 	acpObj := acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}}
-	oarObj := ContentBlock{Text: &TextContent{Text: "hello"}}
+	oarObj := apishim.ContentBlock{Text: &apishim.TextContent{Text: "hello"}}
 	acpKeys := jsonKeys(t, acpObj)
 	oarKeys := jsonKeys(t, oarObj)
 	assert.Equal(t, acpKeys, oarKeys, "ContentBlock text variant structural key layout mismatch")
@@ -47,7 +49,7 @@ func TestWireShape_ContentBlock_Image(t *testing.T) {
 	acpObj := acp.ContentBlock{Image: &acp.ContentBlockImage{
 		Data: "b64", MimeType: "image/png", Uri: &uri,
 	}}
-	oarObj := ContentBlock{Image: &ImageContent{
+	oarObj := apishim.ContentBlock{Image: &apishim.ImageContent{
 		Data: "b64", MimeType: "image/png", URI: &uri,
 	}}
 	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock image variant")
@@ -55,7 +57,7 @@ func TestWireShape_ContentBlock_Image(t *testing.T) {
 
 func TestWireShape_ContentBlock_Audio(t *testing.T) {
 	acpObj := acp.ContentBlock{Audio: &acp.ContentBlockAudio{Data: "d", MimeType: "audio/ogg"}}
-	oarObj := ContentBlock{Audio: &AudioContent{Data: "d", MimeType: "audio/ogg"}}
+	oarObj := apishim.ContentBlock{Audio: &apishim.AudioContent{Data: "d", MimeType: "audio/ogg"}}
 	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock audio variant")
 }
 
@@ -63,7 +65,7 @@ func TestWireShape_ContentBlock_ResourceLink(t *testing.T) {
 	acpObj := acp.ContentBlock{ResourceLink: &acp.ContentBlockResourceLink{
 		Uri: "file:///a", Name: "a",
 	}}
-	oarObj := ContentBlock{ResourceLink: &ResourceLinkContent{URI: "file:///a", Name: "a"}}
+	oarObj := apishim.ContentBlock{ResourceLink: &apishim.ResourceLinkContent{URI: "file:///a", Name: "a"}}
 	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock resource_link variant")
 }
 
@@ -73,8 +75,8 @@ func TestWireShape_ContentBlock_Resource(t *testing.T) {
 			TextResourceContents: &acp.TextResourceContents{Uri: "file:///a", Text: "x"},
 		},
 	}}
-	oarObj := ContentBlock{Resource: &ResourceContent{
-		Resource: EmbeddedResource{TextResource: &TextResourceContents{URI: "file:///a", Text: "x"}},
+	oarObj := apishim.ContentBlock{Resource: &apishim.ResourceContent{
+		Resource: apishim.EmbeddedResource{TextResource: &apishim.TextResourceContents{URI: "file:///a", Text: "x"}},
 	}}
 	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock resource variant")
 }
@@ -85,21 +87,21 @@ func TestWireShape_ToolCallContent_Content(t *testing.T) {
 	acpObj := acp.ToolCallContent{Content: &acp.ToolCallContentContent{
 		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hi"}},
 	}}
-	oarObj := ToolCallContent{Content: &ToolCallContentContent{
-		Content: ContentBlock{Text: &TextContent{Text: "hi"}},
+	oarObj := apishim.ToolCallContent{Content: &apishim.ToolCallContentContent{
+		Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "hi"}},
 	}}
 	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ToolCallContent content variant")
 }
 
 func TestWireShape_ToolCallContent_Diff(t *testing.T) {
 	acpObj := acp.ToolCallContent{Diff: &acp.ToolCallContentDiff{Path: "a.go", NewText: "x"}}
-	oarObj := ToolCallContent{Diff: &ToolCallContentDiff{Path: "a.go", NewText: "x"}}
+	oarObj := apishim.ToolCallContent{Diff: &apishim.ToolCallContentDiff{Path: "a.go", NewText: "x"}}
 	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ToolCallContent diff variant")
 }
 
 func TestWireShape_ToolCallContent_Terminal(t *testing.T) {
 	acpObj := acp.ToolCallContent{Terminal: &acp.ToolCallContentTerminal{TerminalId: "t1"}}
-	oarObj := ToolCallContent{Terminal: &ToolCallContentTerminal{TerminalID: "t1"}}
+	oarObj := apishim.ToolCallContent{Terminal: &apishim.ToolCallContentTerminal{TerminalID: "t1"}}
 	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ToolCallContent terminal variant")
 }
 
@@ -109,8 +111,8 @@ func TestWireShape_AvailableCommandInput_Unstructured(t *testing.T) {
 	acpObj := acp.AvailableCommandInput{
 		Unstructured: &acp.UnstructuredCommandInput{Hint: "flags here"},
 	}
-	oarObj := AvailableCommandInput{
-		Unstructured: &UnstructuredCommandInput{Hint: "flags here"},
+	oarObj := apishim.AvailableCommandInput{
+		Unstructured: &apishim.UnstructuredCommandInput{Hint: "flags here"},
 	}
 	acpKeys := jsonKeys(t, acpObj)
 	oarKeys := jsonKeys(t, oarObj)
@@ -131,9 +133,9 @@ func TestWireShape_ConfigOption_Select_Ungrouped(t *testing.T) {
 		Id: "model", Name: "Model", CurrentValue: "fast",
 		Options: acp.SessionConfigSelectOptions{Ungrouped: &ungrouped},
 	}}
-	oarObj := ConfigOption{Select: &ConfigOptionSelect{
+	oarObj := apishim.ConfigOption{Select: &apishim.ConfigOptionSelect{
 		ID: "model", Name: "Model", CurrentValue: "fast",
-		Options: ConfigSelectOptions{Ungrouped: []ConfigSelectOption{{Name: "fast", Value: "fast"}}},
+		Options: apishim.ConfigSelectOptions{Ungrouped: []apishim.ConfigSelectOption{{Name: "fast", Value: "fast"}}},
 	}}
 
 	acpKeys := jsonKeys(t, acpObj)
@@ -165,10 +167,10 @@ func TestWireShape_ConfigOption_Select_Grouped(t *testing.T) {
 		Id: "model", Name: "Model", CurrentValue: "opt",
 		Options: acp.SessionConfigSelectOptions{Grouped: &grouped},
 	}}
-	oarObj := ConfigOption{Select: &ConfigOptionSelect{
+	oarObj := apishim.ConfigOption{Select: &apishim.ConfigOptionSelect{
 		ID: "model", Name: "Model", CurrentValue: "opt",
-		Options: ConfigSelectOptions{Grouped: []ConfigSelectGroup{
-			{Group: "g1", Name: "Group 1", Options: []ConfigSelectOption{{Name: "opt", Value: "opt"}}},
+		Options: apishim.ConfigSelectOptions{Grouped: []apishim.ConfigSelectGroup{
+			{Group: "g1", Name: "Group 1", Options: []apishim.ConfigSelectOption{{Name: "opt", Value: "opt"}}},
 		}},
 	}}
 
@@ -194,8 +196,8 @@ func TestWireShape_EmbeddedResource_Text(t *testing.T) {
 	acpObj := acp.EmbeddedResourceResource{
 		TextResourceContents: &acp.TextResourceContents{Uri: "file:///a", Text: "hello"},
 	}
-	oarObj := EmbeddedResource{
-		TextResource: &TextResourceContents{URI: "file:///a", Text: "hello"},
+	oarObj := apishim.EmbeddedResource{
+		TextResource: &apishim.TextResourceContents{URI: "file:///a", Text: "hello"},
 	}
 	acpKeys := jsonKeys(t, acpObj)
 	oarKeys := jsonKeys(t, oarObj)
@@ -209,8 +211,8 @@ func TestWireShape_EmbeddedResource_Blob(t *testing.T) {
 	acpObj := acp.EmbeddedResourceResource{
 		BlobResourceContents: &acp.BlobResourceContents{Uri: "file:///img.png", Blob: "b64"},
 	}
-	oarObj := EmbeddedResource{
-		BlobResource: &BlobResourceContents{URI: "file:///img.png", Blob: "b64"},
+	oarObj := apishim.EmbeddedResource{
+		BlobResource: &apishim.BlobResourceContents{URI: "file:///img.png", Blob: "b64"},
 	}
 	acpKeys := jsonKeys(t, acpObj)
 	oarKeys := jsonKeys(t, oarObj)
@@ -223,27 +225,27 @@ func TestWireShape_EmbeddedResource_Blob(t *testing.T) {
 
 func TestWireShape_UnionEmptyVariant_MarshalErrors(t *testing.T) {
 	t.Run("ContentBlock empty", func(t *testing.T) {
-		_, err := json.Marshal(ContentBlock{})
+		_, err := json.Marshal(apishim.ContentBlock{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ContentBlock")
 	})
 	t.Run("ToolCallContent empty", func(t *testing.T) {
-		_, err := json.Marshal(ToolCallContent{})
+		_, err := json.Marshal(apishim.ToolCallContent{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ToolCallContent")
 	})
 	t.Run("EmbeddedResource empty", func(t *testing.T) {
-		_, err := json.Marshal(EmbeddedResource{})
+		_, err := json.Marshal(apishim.EmbeddedResource{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "EmbeddedResource")
 	})
 	t.Run("ConfigOption empty", func(t *testing.T) {
-		_, err := json.Marshal(ConfigOption{})
+		_, err := json.Marshal(apishim.ConfigOption{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ConfigOption")
 	})
 	t.Run("AvailableCommandInput empty", func(t *testing.T) {
-		_, err := json.Marshal(AvailableCommandInput{})
+		_, err := json.Marshal(apishim.AvailableCommandInput{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "AvailableCommandInput")
 	})
@@ -253,9 +255,9 @@ func TestWireShape_UnionEmptyVariant_MarshalErrors(t *testing.T) {
 
 func TestWireShape_UnionMultiVariant_MarshalErrors(t *testing.T) {
 	t.Run("ContentBlock multi-variant", func(t *testing.T) {
-		cb := ContentBlock{
-			Text:  &TextContent{Text: "hello"},
-			Image: &ImageContent{Data: "b64", MimeType: "image/png"},
+		cb := apishim.ContentBlock{
+			Text:  &apishim.TextContent{Text: "hello"},
+			Image: &apishim.ImageContent{Data: "b64", MimeType: "image/png"},
 		}
 		_, err := json.Marshal(cb)
 		require.Error(t, err)
@@ -263,9 +265,9 @@ func TestWireShape_UnionMultiVariant_MarshalErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "multiple")
 	})
 	t.Run("EmbeddedResource multi-variant", func(t *testing.T) {
-		er := EmbeddedResource{
-			TextResource: &TextResourceContents{URI: "file:///a", Text: "x"},
-			BlobResource: &BlobResourceContents{URI: "file:///b", Blob: "y"},
+		er := apishim.EmbeddedResource{
+			TextResource: &apishim.TextResourceContents{URI: "file:///a", Text: "x"},
+			BlobResource: &apishim.BlobResourceContents{URI: "file:///b", Blob: "y"},
 		}
 		_, err := json.Marshal(er)
 		require.Error(t, err)
@@ -273,9 +275,9 @@ func TestWireShape_UnionMultiVariant_MarshalErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "multiple")
 	})
 	t.Run("ToolCallContent multi-variant", func(t *testing.T) {
-		tc := ToolCallContent{
-			Diff:     &ToolCallContentDiff{Path: "a.go", NewText: "x"},
-			Terminal: &ToolCallContentTerminal{TerminalID: "t1"},
+		tc := apishim.ToolCallContent{
+			Diff:     &apishim.ToolCallContentDiff{Path: "a.go", NewText: "x"},
+			Terminal: &apishim.ToolCallContentTerminal{TerminalID: "t1"},
 		}
 		_, err := json.Marshal(tc)
 		require.Error(t, err)
@@ -283,9 +285,9 @@ func TestWireShape_UnionMultiVariant_MarshalErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "multiple")
 	})
 	t.Run("ConfigSelectOptions multi-variant", func(t *testing.T) {
-		cso := ConfigSelectOptions{
-			Ungrouped: []ConfigSelectOption{{Name: "a", Value: "a"}},
-			Grouped:   []ConfigSelectGroup{{Group: "g", Name: "G", Options: nil}},
+		cso := apishim.ConfigSelectOptions{
+			Ungrouped: []apishim.ConfigSelectOption{{Name: "a", Value: "a"}},
+			Grouped:   []apishim.ConfigSelectGroup{{Group: "g", Name: "G", Options: nil}},
 		}
 		_, err := json.Marshal(cso)
 		require.Error(t, err)
@@ -297,7 +299,7 @@ func TestWireShape_UnionMultiVariant_MarshalErrors(t *testing.T) {
 // ── Test 21c: ConfigSelectOptions empty marshal error ────────────────────────
 
 func TestWireShape_ConfigSelectOptions_EmptyMarshalError(t *testing.T) {
-	_, err := json.Marshal(ConfigSelectOptions{})
+	_, err := json.Marshal(apishim.ConfigSelectOptions{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ConfigSelectOptions")
 }
@@ -306,45 +308,45 @@ func TestWireShape_ConfigSelectOptions_EmptyMarshalError(t *testing.T) {
 
 func TestWireShape_UnionUnknownType_UnmarshalErrors(t *testing.T) {
 	t.Run("ContentBlock unknown type", func(t *testing.T) {
-		var cb ContentBlock
+		var cb apishim.ContentBlock
 		err := json.Unmarshal([]byte(`{"type":"video","data":"x"}`), &cb)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ContentBlock")
 		assert.Contains(t, err.Error(), "video")
 	})
 	t.Run("ToolCallContent unknown type", func(t *testing.T) {
-		var tc ToolCallContent
+		var tc apishim.ToolCallContent
 		err := json.Unmarshal([]byte(`{"type":"unknown_variant"}`), &tc)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ToolCallContent")
 	})
 	t.Run("ConfigOption unknown type", func(t *testing.T) {
-		var co ConfigOption
+		var co apishim.ConfigOption
 		err := json.Unmarshal([]byte(`{"type":"checkbox","id":"x"}`), &co)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ConfigOption")
 		assert.Contains(t, err.Error(), "checkbox")
 	})
 	t.Run("EmbeddedResource no matching shape", func(t *testing.T) {
-		var er EmbeddedResource
+		var er apishim.EmbeddedResource
 		err := json.Unmarshal([]byte(`{"uri":"file:///a","unknown":"x"}`), &er)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "EmbeddedResource")
 	})
 	t.Run("AvailableCommandInput no matching variant", func(t *testing.T) {
-		var ai AvailableCommandInput
+		var ai apishim.AvailableCommandInput
 		err := json.Unmarshal([]byte(`{"unknown":"x"}`), &ai)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "AvailableCommandInput")
 	})
 	t.Run("ConfigSelectOptions empty array", func(t *testing.T) {
-		var cso ConfigSelectOptions
+		var cso apishim.ConfigSelectOptions
 		err := json.Unmarshal([]byte(`[]`), &cso)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ConfigSelectOptions")
 	})
 	t.Run("ConfigSelectOptions no matching element shape", func(t *testing.T) {
-		var cso ConfigSelectOptions
+		var cso apishim.ConfigSelectOptions
 		err := json.Unmarshal([]byte(`[{"unknown":"x"}]`), &cso)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ConfigSelectOptions")

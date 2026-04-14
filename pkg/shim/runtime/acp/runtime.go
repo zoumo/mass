@@ -1,8 +1,8 @@
-// Package runtime implements the OAR agent process lifecycle.
+// Package acp implements the OAR agent process lifecycle.
 // It forks/execs the ACP agent, performs the ACP initialize+session/new
 // handshake, persists state.json through lifecycle transitions, and exposes
 // Kill/Delete/GetState operations.
-package runtime
+package acp
 
 import (
 	"context"

@@ -15,9 +15,8 @@ import (
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/internal/logging"
-	"github.com/zoumo/oar/pkg/events"
 	"github.com/zoumo/oar/pkg/jsonrpc"
-	"github.com/zoumo/oar/pkg/runtime"
+	acpruntime "github.com/zoumo/oar/pkg/shim/runtime/acp"
 	shimserver "github.com/zoumo/oar/pkg/shim/server"
 	spec "github.com/zoumo/oar/pkg/runtime-spec"
 )
@@ -92,7 +91,7 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 
 	shimStateDir := spec.StateDir(stateDir, id)
 	socketPath := spec.ShimSocketPath(shimStateDir)
-	mgr := runtime.New(cfg, bundle, shimStateDir, logger)
+	mgr := acpruntime.New(cfg, bundle, shimStateDir, logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer cancel()
@@ -104,16 +103,16 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 	}
 
 	logPath := spec.EventLogPath(shimStateDir)
-	evLog, err := events.OpenEventLog(logPath)
+	evLog, err := shimserver.OpenEventLog(logPath)
 	if err != nil {
 		return fmt.Errorf("agent-shim: open event log: %w", err)
 	}
 	defer evLog.Close()
 
-	trans := events.NewTranslator(id, mgr.Events(), evLog)
+	trans := shimserver.NewTranslator(id, mgr.Events(), evLog)
 	// Inject the ACP session ID now that Create() has completed the handshake.
 	trans.SetSessionID(mgr.SessionID())
-	mgr.SetStateChangeHook(func(change runtime.StateChange) {
+	mgr.SetStateChangeHook(func(change acpruntime.StateChange) {
 		trans.NotifyStateChange(change.PreviousStatus.String(), change.Status.String(), change.PID, change.Reason)
 	})
 	trans.Start()

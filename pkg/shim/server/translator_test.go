@@ -1,4 +1,4 @@
-package events
+package server
 
 import (
 	"fmt"
@@ -10,6 +10,8 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 )
 
 func makeNotif(fn func(*acp.SessionUpdate)) acp.SessionNotification {
@@ -18,26 +20,26 @@ func makeNotif(fn func(*acp.SessionUpdate)) acp.SessionNotification {
 	return n
 }
 
-func drainShimEvent(t *testing.T, ch <-chan ShimEvent) ShimEvent {
+func drainShimEvent(t *testing.T, ch <-chan apishim.ShimEvent) apishim.ShimEvent {
 	t.Helper()
 	select {
 	case ev := <-ch:
 		return ev
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for ShimEvent")
-		return ShimEvent{}
+		return apishim.ShimEvent{}
 	}
 }
 
 // sessionContent extracts the typed Event content from a session category ShimEvent.
-func sessionContent(t *testing.T, ev ShimEvent) Event {
+func sessionContent(t *testing.T, ev apishim.ShimEvent) apishim.Event {
 	t.Helper()
-	assert.Equal(t, CategorySession, ev.Category, "expected session category event")
+	assert.Equal(t, apishim.CategorySession, ev.Category, "expected session category event")
 	require.NotNil(t, ev.Content, "expected non-nil content")
 	return ev.Content
 }
 
-func sendAndDrainShimEvent(t *testing.T, in chan<- acp.SessionNotification, ch <-chan ShimEvent, text string) ShimEvent {
+func sendAndDrainShimEvent(t *testing.T, in chan<- acp.SessionNotification, ch <-chan apishim.ShimEvent, text string) apishim.ShimEvent {
 	t.Helper()
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
@@ -63,9 +65,9 @@ func TestTranslate_AgentMessageChunk(t *testing.T) {
 	ev := drainShimEvent(t, ch)
 	assert.Equal(t, "run-1", ev.RunID)
 	assert.Equal(t, 0, ev.Seq)
-	assert.Equal(t, CategorySession, ev.Category)
+	assert.Equal(t, apishim.CategorySession, ev.Category)
 	assert.Equal(t, "text", ev.Type)
-	te, ok := ev.Content.(TextEvent)
+	te, ok := ev.Content.(apishim.TextEvent)
 	require.True(t, ok)
 	assert.Equal(t, "hello", te.Text)
 	require.NotNil(t, te.Content)
@@ -87,7 +89,7 @@ func TestTranslate_AgentThoughtChunk(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	te, ok := sessionContent(t, ev).(ThinkingEvent)
+	te, ok := sessionContent(t, ev).(apishim.ThinkingEvent)
 	require.True(t, ok)
 	assert.Equal(t, "thinking", te.Text)
 }
@@ -104,9 +106,9 @@ func TestTranslate_ToolCall(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	tc, ok := sessionContent(t, ev).(ToolCallEvent)
+	tc, ok := sessionContent(t, ev).(apishim.ToolCallEvent)
 	require.True(t, ok)
-	assert.Equal(t, ToolCallEvent{ID: "tc-1", Kind: "shell", Title: "run ls"}, tc)
+	assert.Equal(t, apishim.ToolCallEvent{ID: "tc-1", Kind: "shell", Title: "run ls"}, tc)
 }
 
 func TestTranslate_ToolCallUpdate(t *testing.T) {
@@ -122,9 +124,9 @@ func TestTranslate_ToolCallUpdate(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	tr_, ok := sessionContent(t, ev).(ToolResultEvent)
+	tr_, ok := sessionContent(t, ev).(apishim.ToolResultEvent)
 	require.True(t, ok)
-	assert.Equal(t, ToolResultEvent{ID: "tc-1", Status: "completed"}, tr_)
+	assert.Equal(t, apishim.ToolResultEvent{ID: "tc-1", Status: "completed"}, tr_)
 }
 
 func TestTranslate_ToolCallUpdate_NilStatus(t *testing.T) {
@@ -139,9 +141,9 @@ func TestTranslate_ToolCallUpdate_NilStatus(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	tr_, ok := sessionContent(t, ev).(ToolResultEvent)
+	tr_, ok := sessionContent(t, ev).(apishim.ToolResultEvent)
 	require.True(t, ok)
-	assert.Equal(t, ToolResultEvent{ID: "tc-2", Status: "unknown"}, tr_)
+	assert.Equal(t, apishim.ToolResultEvent{ID: "tc-2", Status: "unknown"}, tr_)
 }
 
 func TestTranslate_Plan(t *testing.T) {
@@ -157,7 +159,7 @@ func TestTranslate_Plan(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	pe, ok := sessionContent(t, ev).(PlanEvent)
+	pe, ok := sessionContent(t, ev).(apishim.PlanEvent)
 	require.True(t, ok)
 	assert.Len(t, pe.Entries, 2)
 	assert.Equal(t, "step 1", pe.Entries[0].Content)
@@ -177,7 +179,7 @@ func TestTranslate_UserMessageChunk(t *testing.T) {
 	}}
 
 	ev := drainShimEvent(t, ch)
-	ue, ok := sessionContent(t, ev).(UserMessageEvent)
+	ue, ok := sessionContent(t, ev).(apishim.UserMessageEvent)
 	require.True(t, ok)
 	assert.Equal(t, "hello from user", ue.Text)
 }
@@ -200,9 +202,9 @@ func TestTranslate_PreviouslyIgnoredVariants(t *testing.T) {
 	ev1 := drainShimEvent(t, ch)
 	ev2 := drainShimEvent(t, ch)
 	ev3 := drainShimEvent(t, ch)
-	assert.IsType(t, AvailableCommandsEvent{}, sessionContent(t, ev1))
-	assert.IsType(t, CurrentModeEvent{}, sessionContent(t, ev2))
-	te, ok := sessionContent(t, ev3).(TextEvent)
+	assert.IsType(t, apishim.AvailableCommandsEvent{}, sessionContent(t, ev1))
+	assert.IsType(t, apishim.CurrentModeEvent{}, sessionContent(t, ev2))
+	te, ok := sessionContent(t, ev3).(apishim.TextEvent)
 	require.True(t, ok)
 	assert.Equal(t, "after", te.Text)
 }
@@ -217,9 +219,9 @@ func TestTranslate_UnknownVariant(t *testing.T) {
 	in <- acp.SessionNotification{}
 
 	ev := drainShimEvent(t, ch)
-	ee, ok := sessionContent(t, ev).(ErrorEvent)
+	ee, ok := sessionContent(t, ev).(apishim.ErrorEvent)
 	require.True(t, ok)
-	assert.Equal(t, ErrorEvent{Msg: "unknown session update variant"}, ee)
+	assert.Equal(t, apishim.ErrorEvent{Msg: "unknown session update variant"}, ee)
 }
 
 func TestFanOut_ThreeSubscribers(t *testing.T) {
@@ -237,9 +239,9 @@ func TestFanOut_ThreeSubscribers(t *testing.T) {
 		}
 	})
 
-	for _, ch := range []<-chan ShimEvent{ch1, ch2, ch3} {
+	for _, ch := range []<-chan apishim.ShimEvent{ch1, ch2, ch3} {
 		ev := drainShimEvent(t, ch)
-		te, ok := ev.Content.(TextEvent)
+		te, ok := ev.Content.(apishim.TextEvent)
 		require.True(t, ok)
 		assert.Equal(t, "broadcast", te.Text)
 		require.NotNil(t, te.Content)
@@ -260,8 +262,8 @@ func TestNotifyTurnStartAndEnd(t *testing.T) {
 	second := drainShimEvent(t, ch)
 	assert.Equal(t, 0, first.Seq)
 	assert.Equal(t, 1, second.Seq)
-	assert.Equal(t, CategorySession, first.Category)
-	assert.Equal(t, CategorySession, second.Category)
+	assert.Equal(t, apishim.CategorySession, first.Category)
+	assert.Equal(t, apishim.CategorySession, second.Category)
 	assert.Equal(t, "turn_start", first.Type)
 	assert.Equal(t, "turn_end", second.Type)
 	assert.NotEmpty(t, first.TurnID, "turn_start must carry a non-empty TurnID")
@@ -280,12 +282,12 @@ func TestNotifyStateChange(t *testing.T) {
 	tr.NotifyStateChange("created", "running", 1234, "prompt-started")
 
 	ev := drainShimEvent(t, ch)
-	assert.Equal(t, CategoryRuntime, ev.Category)
+	assert.Equal(t, apishim.CategoryRuntime, ev.Category)
 	assert.Equal(t, "state_change", ev.Type)
 	assert.Equal(t, "run-1", ev.RunID)
 	assert.Equal(t, 0, ev.Seq)
 	assert.Empty(t, ev.TurnID, "state_change must not carry TurnID")
-	sc, ok := ev.Content.(StateChangeEvent)
+	sc, ok := ev.Content.(apishim.StateChangeEvent)
 	require.True(t, ok)
 	assert.Equal(t, "created", sc.PreviousStatus)
 	assert.Equal(t, "running", sc.Status)
@@ -294,22 +296,22 @@ func TestNotifyStateChange(t *testing.T) {
 }
 
 func TestShimEventRoundTrip(t *testing.T) {
-	ev := ShimEvent{
+	ev := apishim.ShimEvent{
 		RunID:     "run-1",
 		SessionID: "acp-xxx",
 		Seq:       7,
 		Time:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		Category:  CategorySession,
+		Category:  apishim.CategorySession,
 		Type:      "tool_call",
 		TurnID:    "turn-001",
 		StreamSeq: 3,
 		Phase:     "tool_call",
-		Content:   ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"},
+		Content:   apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"},
 	}
 	data, err := ev.MarshalJSON()
 	require.NoError(t, err)
 
-	var decoded ShimEvent
+	var decoded apishim.ShimEvent
 	require.NoError(t, decoded.UnmarshalJSON(data))
 	assert.Equal(t, ev.RunID, decoded.RunID)
 	assert.Equal(t, ev.SessionID, decoded.SessionID)
@@ -319,20 +321,20 @@ func TestShimEventRoundTrip(t *testing.T) {
 	assert.Equal(t, ev.TurnID, decoded.TurnID)
 	assert.Equal(t, ev.StreamSeq, decoded.StreamSeq)
 	assert.Equal(t, ev.Phase, decoded.Phase)
-	tc, ok := decoded.Content.(ToolCallEvent)
+	tc, ok := decoded.Content.(apishim.ToolCallEvent)
 	require.True(t, ok)
-	assert.Equal(t, ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"}, tc)
+	assert.Equal(t, apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"}, tc)
 }
 
 func TestShimEventRoundTrip_NoTurnFields(t *testing.T) {
 	// omitempty should suppress empty turn fields.
-	ev := ShimEvent{
+	ev := apishim.ShimEvent{
 		RunID:    "run-1",
 		Seq:      0,
 		Time:     time.Now(),
-		Category: CategorySession,
+		Category: apishim.CategorySession,
 		Type:     "text",
-		Content:  TextEvent{Text: "no turn"},
+		Content:  apishim.TextEvent{Text: "no turn"},
 	}
 	data, err := ev.MarshalJSON()
 	require.NoError(t, err)
@@ -342,25 +344,25 @@ func TestShimEventRoundTrip_NoTurnFields(t *testing.T) {
 
 func TestEventTypes(t *testing.T) {
 	cases := []struct {
-		ev   Event
+		ev   apishim.Event
 		want string
 	}{
-		{TextEvent{Text: "hi"}, "text"},
-		{ThinkingEvent{Text: "hmm"}, "thinking"},
-		{UserMessageEvent{Text: "yo"}, "user_message"},
-		{ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"}, "tool_call"},
-		{ToolResultEvent{ID: "1", Status: "ok"}, "tool_result"},
-		{FileWriteEvent{Path: "/a", Allowed: true}, "file_write"},
-		{FileReadEvent{Path: "/b", Allowed: false}, "file_read"},
-		{CommandEvent{Command: "ls", Allowed: true}, "command"},
-		{PlanEvent{Entries: nil}, "plan"},
-		{TurnStartEvent{}, "turn_start"},
-		{TurnEndEvent{StopReason: "end_turn"}, "turn_end"},
-		{ErrorEvent{Msg: "oops"}, "error"},
-		{StateChangeEvent{PreviousStatus: "idle", Status: "running"}, "state_change"},
+		{apishim.TextEvent{Text: "hi"}, "text"},
+		{apishim.ThinkingEvent{Text: "hmm"}, "thinking"},
+		{apishim.UserMessageEvent{Text: "yo"}, "user_message"},
+		{apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"}, "tool_call"},
+		{apishim.ToolResultEvent{ID: "1", Status: "ok"}, "tool_result"},
+		{apishim.FileWriteEvent{Path: "/a", Allowed: true}, "file_write"},
+		{apishim.FileReadEvent{Path: "/b", Allowed: false}, "file_read"},
+		{apishim.CommandEvent{Command: "ls", Allowed: true}, "command"},
+		{apishim.PlanEvent{Entries: nil}, "plan"},
+		{apishim.TurnStartEvent{}, "turn_start"},
+		{apishim.TurnEndEvent{StopReason: "end_turn"}, "turn_end"},
+		{apishim.ErrorEvent{Msg: "oops"}, "error"},
+		{apishim.StateChangeEvent{PreviousStatus: "idle", Status: "running"}, "state_change"},
 	}
 	for _, tc := range cases {
-		assert.Equal(t, tc.want, tc.ev.eventType(), "wrong eventType for %T", tc.ev)
+		assert.Equal(t, tc.want, apishim.EventTypeOf(tc.ev), "wrong eventType for %T", tc.ev)
 	}
 }
 
@@ -372,7 +374,7 @@ func TestSubscribeFromSeq_BackfillAndLive(t *testing.T) {
 	log1, err := OpenEventLog(logPath)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
-		ev := ShimEvent{RunID: "s1", Seq: i, Time: at, Category: CategorySession, Type: "text", Content: TextEvent{Text: fmt.Sprintf("msg-%d", i)}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: at, Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: fmt.Sprintf("msg-%d", i)}}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -455,7 +457,7 @@ func TestTurnAwareShimEvent_TurnIdAssigned(t *testing.T) {
 	// State change after turn_end should not have TurnID.
 	tr.NotifyStateChange("running", "created", 0, "done")
 	scEv := drainShimEvent(t, ch)
-	assert.Equal(t, CategoryRuntime, scEv.Category)
+	assert.Equal(t, apishim.CategoryRuntime, scEv.Category)
 	assert.Empty(t, scEv.TurnID, "runtime state_change must not carry TurnID")
 }
 
@@ -561,7 +563,7 @@ func TestTurnAwareShimEvent_StateChangeExcludesTurnFields(t *testing.T) {
 	tr.NotifyStateChange("created", "running", 0, "")
 	scEv := drainShimEvent(t, ch)
 
-	assert.Equal(t, CategoryRuntime, scEv.Category)
+	assert.Equal(t, apishim.CategoryRuntime, scEv.Category)
 	assert.Empty(t, scEv.TurnID, "state_change must not carry TurnID even during active turn")
 	assert.Equal(t, 0, scEv.StreamSeq, "state_change must not carry StreamSeq")
 	assert.Empty(t, scEv.Phase, "state_change must not carry Phase")
@@ -590,7 +592,7 @@ func TestTurnAwareShimEvent_MetadataEventInTurn(t *testing.T) {
 	}}
 	siEv := drainShimEvent(t, ch)
 
-	assert.Equal(t, CategorySession, siEv.Category)
+	assert.Equal(t, apishim.CategorySession, siEv.Category)
 	assert.Equal(t, "session_info", siEv.Type)
 	assert.Equal(t, tsEv.TurnID, siEv.TurnID, "session_info in active turn must carry TurnID")
 	assert.Greater(t, siEv.StreamSeq, 0, "session_info in active turn must have StreamSeq > 0")
@@ -613,7 +615,7 @@ func TestTurnAwareShimEvent_MetadataEventOutsideTurn(t *testing.T) {
 	}}
 	siEv := drainShimEvent(t, ch)
 
-	assert.Equal(t, CategorySession, siEv.Category)
+	assert.Equal(t, apishim.CategorySession, siEv.Category)
 	assert.Empty(t, siEv.TurnID, "session_info outside turn must NOT carry TurnID")
 	assert.Equal(t, 0, siEv.StreamSeq, "session_info outside turn must have StreamSeq=0")
 	assert.Empty(t, siEv.Phase, "session_info outside turn must NOT carry Phase")
@@ -703,7 +705,7 @@ func TestConcurrentBroadcast_SeqContinuous(t *testing.T) {
 	}()
 
 	// Drain all events.
-	received := make([]ShimEvent, 0, numEvents)
+	received := make([]apishim.ShimEvent, 0, numEvents)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -750,7 +752,7 @@ func TestTurnAwareShimEvent_ReplayOrdering(t *testing.T) {
 	t1bEv := sendAndDrainShimEvent(t, in, ch, "t1-b")
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
 	te1Ev := drainShimEvent(t, ch)
-	turn1 := []ShimEvent{ts1Ev, t1aEv, t1bEv, te1Ev}
+	turn1 := []apishim.ShimEvent{ts1Ev, t1aEv, t1bEv, te1Ev}
 
 	// Turn 2: turn_start + 1 text event + turn_end.
 	tr.NotifyTurnStart()
@@ -758,7 +760,7 @@ func TestTurnAwareShimEvent_ReplayOrdering(t *testing.T) {
 	t2aEv := sendAndDrainShimEvent(t, in, ch, "t2-a")
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
 	te2Ev := drainShimEvent(t, ch)
-	turn2 := []ShimEvent{ts2Ev, t2aEv, te2Ev}
+	turn2 := []apishim.ShimEvent{ts2Ev, t2aEv, te2Ev}
 
 	// (1) All turn 1 events share a common TurnID.
 	tid1 := turn1[0].TurnID

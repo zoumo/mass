@@ -1,4 +1,4 @@
-package runtime_test
+package acp_test
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	pkgruntime "github.com/zoumo/oar/pkg/runtime"
+	acpruntime "github.com/zoumo/oar/pkg/shim/runtime/acp"
 	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
@@ -26,9 +26,9 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("failed to create temp dir for mock agent binary: " + err.Error())
 	}
-	// Determine repo root: tests run from pkg/runtime/, so go up two levels.
+	// Determine repo root: tests run from pkg/shim/runtime/acp/, so go up four levels.
 	_, filename, _, _ := runtime.Caller(0)
-	repoRoot := filepath.Join(filepath.Dir(filename), "..", "..")
+	repoRoot := filepath.Join(filepath.Dir(filename), "..", "..", "..", "..")
 
 	binPath := filepath.Join(tmpDir, "mockagent")
 	cmd := exec.Command("go", "build", "-o", binPath,
@@ -60,7 +60,7 @@ func TestRuntimeSuite(t *testing.T) {
 func newTestConfig(name string) apiruntime.Config {
 	return apiruntime.Config{
 		OarVersion: "0.1.0",
-		Metadata:   apiruntime.Metadata{Name: name},
+		Metadata: apiruntime.Metadata{Name: name},
 		AgentRoot:  apiruntime.AgentRoot{Path: "workspace"},
 		AcpAgent: apiruntime.AcpAgent{
 			Process: apiruntime.AcpProcess{
@@ -74,7 +74,7 @@ func newTestConfig(name string) apiruntime.Config {
 
 // newManager creates a bundle dir with a workspace subdir and a separate state
 // dir, then returns a Manager wired to both. Dirs are cleaned up via t.Cleanup.
-func newManager(t *testing.T, cfg apiruntime.Config) *pkgruntime.Manager {
+func newManager(t *testing.T, cfg apiruntime.Config) *acpruntime.Manager {
 	t.Helper()
 	bundleDir, err := os.MkdirTemp("", "oad-bundle-")
 	require.NoError(t, err)
@@ -87,7 +87,7 @@ func newManager(t *testing.T, cfg apiruntime.Config) *pkgruntime.Manager {
 		os.RemoveAll(bundleDir)
 		os.RemoveAll(stateDir)
 	})
-	return pkgruntime.New(cfg, bundleDir, stateDir, slog.Default())
+	return acpruntime.New(cfg, bundleDir, stateDir, slog.Default())
 }
 
 func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
@@ -140,7 +140,7 @@ func (s *RuntimeSuite) TestDelete_RemovesStateDir() {
 	// Note: do NOT register cleanup for stateDir — we're testing that Delete() removes it.
 	s.T().Cleanup(func() { os.RemoveAll(bundleDir) })
 
-	mgr := pkgruntime.New(cfg, bundleDir, stateDir, slog.Default())
+	mgr := acpruntime.New(cfg, bundleDir, stateDir, slog.Default())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -191,7 +191,6 @@ drain:
 
 	s.Require().NoError(mgr.Kill(ctx))
 }
-
 
 func (s *RuntimeSuite) TestCancel_SendsCancelToAgent() {
 	mgr := newManager(s.T(), newTestConfig("test-cancel"))

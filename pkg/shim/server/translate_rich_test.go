@@ -1,4 +1,4 @@
-package events
+package server
 
 import (
 	"encoding/json"
@@ -7,6 +7,8 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 )
 
 // ── Test 1: ToolCall full translation ─────────────────────────────────────────
@@ -41,7 +43,7 @@ func TestTranslateRich_ToolCall_FullFields(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ToolCallEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ToolCallEvent)
 	require.True(t, ok)
 	assert.Equal(t, "anthropic", ev.Meta["provider"])
 	assert.Equal(t, "tc-1", ev.ID)
@@ -96,7 +98,7 @@ func TestTranslateRich_ToolCallUpdate_FullFields(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ToolResultEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ToolResultEvent)
 	require.True(t, ok)
 	assert.Equal(t, "v", ev.Meta["k"])
 	assert.Equal(t, "tc-2", ev.ID)
@@ -134,7 +136,7 @@ func TestTranslateRich_ContentBlock_Text(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.TextEvent)
 	require.True(t, ok)
 	assert.Equal(t, "hello", ev.Text) // convenience field preserved
 	require.NotNil(t, ev.Content)
@@ -168,7 +170,7 @@ func TestTranslateRich_ContentBlock_Image(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.TextEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.Image)
@@ -200,7 +202,7 @@ func TestTranslateRich_ContentBlock_Audio(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.TextEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.Audio)
@@ -238,7 +240,7 @@ func TestTranslateRich_ContentBlock_ResourceLink(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.TextEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.ResourceLink)
@@ -282,7 +284,7 @@ func TestTranslateRich_ContentBlock_Resource(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(TextEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.TextEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.Resource)
@@ -335,7 +337,7 @@ func TestTranslateRich_AvailableCommandsUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(AvailableCommandsEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.AvailableCommandsEvent)
 	require.True(t, ok)
 	assert.Equal(t, "agent", ev.Meta["src"])
 	require.Len(t, ev.Commands, 1)
@@ -365,7 +367,7 @@ func TestTranslateRich_CurrentModeUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(CurrentModeEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.CurrentModeEvent)
 	require.True(t, ok)
 	assert.EqualValues(t, 2, ev.Meta["v"])
 	assert.Equal(t, "edit", ev.ModeID)
@@ -404,7 +406,7 @@ func TestTranslateRich_ConfigOptionUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ConfigOptionEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ConfigOptionEvent)
 	require.True(t, ok)
 	assert.True(t, ev.Meta["cfg"].(bool))
 	require.Len(t, ev.ConfigOptions, 1)
@@ -455,7 +457,7 @@ func TestTranslateRich_ConfigOptionUpdate_GroupedOptions(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ConfigOptionEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ConfigOptionEvent)
 	require.True(t, ok)
 	require.Len(t, ev.ConfigOptions, 1)
 	s := ev.ConfigOptions[0].Select
@@ -489,7 +491,7 @@ func TestTranslateRich_SessionInfoUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(SessionInfoEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.SessionInfoEvent)
 	require.True(t, ok)
 	assert.EqualValues(t, 1, ev.Meta["si"])
 	require.NotNil(t, ev.Title)
@@ -509,14 +511,14 @@ func TestTranslateRich_UsageUpdate(t *testing.T) {
 
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.UsageUpdate = &acp.SessionUsageUpdate{
-			Meta:  map[string]any{"u": "yes"},
-			Cost:  &acp.Cost{Amount: 0.042, Currency: "USD"},
-			Size:  8192,
-			Used:  4096,
+			Meta: map[string]any{"u": "yes"},
+			Cost: &acp.Cost{Amount: 0.042, Currency: "USD"},
+			Size: 8192,
+			Used: 4096,
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(UsageEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.UsageEvent)
 	require.True(t, ok)
 	assert.Equal(t, "yes", ev.Meta["u"])
 	require.NotNil(t, ev.Cost)
@@ -548,13 +550,13 @@ func TestTranslateRich_RawInputOutput_RoundTrip(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(ToolCallEvent)
+	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ToolCallEvent)
 	require.True(t, ok)
 
 	// Marshal the event and unmarshal back.
 	b, err := json.Marshal(ev)
 	require.NoError(t, err)
-	var ev2 ToolCallEvent
+	var ev2 apishim.ToolCallEvent
 	require.NoError(t, json.Unmarshal(b, &ev2))
 
 	// RawInput and RawOutput should survive the round-trip.
@@ -574,47 +576,47 @@ func TestTranslateRich_ShimEventDecode_AllEventTypes(t *testing.T) {
 	cases := []struct {
 		name    string
 		evType  string
-		payload Event
+		payload apishim.Event
 	}{
-		{"text", "text", TextEvent{Text: "hi"}},
-		{"thinking", "thinking", ThinkingEvent{Text: "thought"}},
-		{"user_message", "user_message", UserMessageEvent{Text: "user"}},
-		{"tool_call", "tool_call", ToolCallEvent{ID: "1", Kind: "shell", Title: "t"}},
-		{"tool_result", "tool_result", ToolResultEvent{ID: "1", Status: "completed"}},
-		{"file_write", "file_write", FileWriteEvent{Path: "/a", Allowed: true}},
-		{"file_read", "file_read", FileReadEvent{Path: "/b", Allowed: false}},
-		{"command", "command", CommandEvent{Command: "ls", Allowed: true}},
-		{"plan", "plan", PlanEvent{Entries: nil}},
-		{"turn_start", "turn_start", TurnStartEvent{}},
-		{"turn_end", "turn_end", TurnEndEvent{StopReason: "stop"}},
-		{"error", "error", ErrorEvent{Msg: "oops"}},
-		{"available_commands", "available_commands", AvailableCommandsEvent{Commands: nil}},
-		{"current_mode", "current_mode", CurrentModeEvent{ModeID: "edit"}},
-		{"config_option", "config_option", ConfigOptionEvent{ConfigOptions: nil}},
-		{"session_info", "session_info", SessionInfoEvent{}},
-		{"usage", "usage", UsageEvent{Size: 100, Used: 50}},
+		{"text", "text", apishim.TextEvent{Text: "hi"}},
+		{"thinking", "thinking", apishim.ThinkingEvent{Text: "thought"}},
+		{"user_message", "user_message", apishim.UserMessageEvent{Text: "user"}},
+		{"tool_call", "tool_call", apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "t"}},
+		{"tool_result", "tool_result", apishim.ToolResultEvent{ID: "1", Status: "completed"}},
+		{"file_write", "file_write", apishim.FileWriteEvent{Path: "/a", Allowed: true}},
+		{"file_read", "file_read", apishim.FileReadEvent{Path: "/b", Allowed: false}},
+		{"command", "command", apishim.CommandEvent{Command: "ls", Allowed: true}},
+		{"plan", "plan", apishim.PlanEvent{Entries: nil}},
+		{"turn_start", "turn_start", apishim.TurnStartEvent{}},
+		{"turn_end", "turn_end", apishim.TurnEndEvent{StopReason: "stop"}},
+		{"error", "error", apishim.ErrorEvent{Msg: "oops"}},
+		{"available_commands", "available_commands", apishim.AvailableCommandsEvent{Commands: nil}},
+		{"current_mode", "current_mode", apishim.CurrentModeEvent{ModeID: "edit"}},
+		{"config_option", "config_option", apishim.ConfigOptionEvent{ConfigOptions: nil}},
+		{"session_info", "session_info", apishim.SessionInfoEvent{}},
+		{"usage", "usage", apishim.UsageEvent{Size: 100, Used: 50}},
 	}
 
 	// Add state_change to the test cases.
 	cases = append(cases, struct {
 		name    string
 		evType  string
-		payload Event
-	}{"state_change", "state_change", StateChangeEvent{PreviousStatus: "idle", Status: "running"}})
+		payload apishim.Event
+	}{"state_change", "state_change", apishim.StateChangeEvent{PreviousStatus: "idle", Status: "running"}})
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Build a ShimEvent, marshal, unmarshal, verify content type survives.
-			se := ShimEvent{
+			se := apishim.ShimEvent{
 				RunID:    "r1",
 				Seq:      0,
-				Category: CategoryForEvent(tc.evType),
+				Category: apishim.CategoryForEvent(tc.evType),
 				Type:     tc.evType,
 				Content:  tc.payload,
 			}
 			b, err := se.MarshalJSON()
 			require.NoError(t, err, "marshal")
-			var decoded ShimEvent
+			var decoded apishim.ShimEvent
 			require.NoError(t, decoded.UnmarshalJSON(b), "unmarshal")
 			assert.Equal(t, tc.evType, decoded.Type)
 			// The content type should survive round-trip.
@@ -628,9 +630,9 @@ func TestTranslateRich_ShimEventDecode_AllEventTypes(t *testing.T) {
 func TestTranslateRich_ShimEvent_BackwardCompat(t *testing.T) {
 	// ShimEvent JSON with tool_call content.
 	tcJSON := `{"runId":"r1","seq":0,"time":"2026-01-01T00:00:00Z","category":"session","type":"tool_call","content":{"id":"tc-1","kind":"shell","title":"run ls"}}`
-	var se ShimEvent
+	var se apishim.ShimEvent
 	require.NoError(t, json.Unmarshal([]byte(tcJSON), &se))
-	ev, ok := se.Content.(ToolCallEvent)
+	ev, ok := se.Content.(apishim.ToolCallEvent)
 	require.True(t, ok)
 	assert.Equal(t, "tc-1", ev.ID)
 	assert.Equal(t, "shell", ev.Kind)
@@ -638,9 +640,9 @@ func TestTranslateRich_ShimEvent_BackwardCompat(t *testing.T) {
 
 	// ShimEvent JSON with text content.
 	txtJSON := `{"runId":"r1","seq":1,"time":"2026-01-01T00:00:00Z","category":"session","type":"text","content":{"text":"hello"}}`
-	var se2 ShimEvent
+	var se2 apishim.ShimEvent
 	require.NoError(t, json.Unmarshal([]byte(txtJSON), &se2))
-	txt, ok := se2.Content.(TextEvent)
+	txt, ok := se2.Content.(apishim.TextEvent)
 	require.True(t, ok)
 	assert.Equal(t, "hello", txt.Text)
 }

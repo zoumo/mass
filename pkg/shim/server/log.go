@@ -1,4 +1,4 @@
-package events
+package server
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"os"
 	"sync"
 
+	apishim "github.com/zoumo/oar/pkg/shim/api"
 	"github.com/zoumo/oar/pkg/ndjson"
 )
 
@@ -49,7 +50,7 @@ func OpenEventLog(path string) (*EventLog, error) {
 // Partial-write safety: records the current file offset before writing; if
 // Encode/flush fails, truncates the file back to the pre-write offset so that
 // a damaged tail cannot be followed by a subsequent valid write.
-func (l *EventLog) Append(ev ShimEvent) error {
+func (l *EventLog) Append(ev apishim.ShimEvent) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -102,7 +103,7 @@ func (l *EventLog) Close() error {
 // unmarshal as JSON, they are treated as a partial write from a crash —
 // the successfully decoded entries are returned without error. Mid-file
 // corruption (corrupt lines followed by valid lines) still returns an error.
-func ReadEventLog(path string, fromSeq int) ([]ShimEvent, error) {
+func ReadEventLog(path string, fromSeq int) ([]apishim.ShimEvent, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -117,12 +118,12 @@ func ReadEventLog(path string, fromSeq int) ([]ShimEvent, error) {
 	// First pass: collect all non-empty lines.
 	type lineRecord struct {
 		valid bool
-		ev    ShimEvent
+		ev    apishim.ShimEvent
 		err   error // non-nil for invalid lines
 	}
 	var lines []lineRecord
 	for {
-		var e ShimEvent
+		var e apishim.ShimEvent
 		err := dec.Decode(&e)
 		if errors.Is(err, ndjson.ErrInvalidJSON) {
 			lines = append(lines, lineRecord{valid: false, err: err})
@@ -140,7 +141,7 @@ func ReadEventLog(path string, fromSeq int) ([]ShimEvent, error) {
 	// Walk through collected lines. If a corrupt line is followed by any
 	// valid line later, that is mid-file corruption — return an error.
 	// If corrupt lines only appear at the tail, skip them (damaged tail).
-	var entries []ShimEvent
+	var entries []apishim.ShimEvent
 	for i, lr := range lines {
 		if lr.valid {
 			if lr.ev.Seq >= fromSeq {

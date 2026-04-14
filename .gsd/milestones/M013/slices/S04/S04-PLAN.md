@@ -44,7 +44,7 @@ cmd/agentd/subcommands/shim/command.go is the top-level wiring point — it cons
   - Files: `pkg/shim/api/shim_event.go`, `pkg/shim/api/event_types.go`, `pkg/shim/api/event_constants.go`, `pkg/shim/api/types.go`, `pkg/shim/client/client.go`, `pkg/ari/server/server_test.go`, `pkg/agentd/process.go`, `pkg/agentd/recovery.go`, `pkg/agentd/mock_shim_server_test.go`, `pkg/agentd/shim_boundary_test.go`, `pkg/agentd/process_test.go`, `cmd/agentdctl/subcommands/shim/command.go`, `cmd/agentdctl/subcommands/shim/chat.go`
   - Verify: go build ./pkg/shim/api/... && go build ./pkg/agentd/... && go build ./pkg/ari/server/... && go build ./cmd/... && make build
 
-- [ ] **T02: Move translator+log to pkg/shim/server/, runtime to pkg/shim/runtime/acp/, delete pkg/events/ and pkg/runtime/, final verification** `est:2h`
+- [x] **T02: Move translator+log to pkg/shim/server/, runtime to pkg/shim/runtime/acp/, delete pkg/events/ and pkg/runtime/, final verification** `est:2h`
   This task completes the migration by moving the implementation files and deleting the source packages.
 
 **Steps**:
