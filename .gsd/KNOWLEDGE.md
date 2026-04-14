@@ -847,6 +847,20 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Reference:** M012/S06/T02 — pkg/ari/server_test.go newTestServer cleanup; D114.
 - **When:** M012/S06
 
+## K083 — Named type migration cascades: updating an import path changes the Go type identity, forcing all files that pass the type across package boundaries to update together
+
+- **Pattern:** Changing `api.Status` (from `"github.com/zoumo/oar/api"`) to `apiruntime.Status` (from `"github.com/zoumo/oar/pkg/runtime-spec/api"`) changes the named type. Any package that holds or returns the old type — even if it's string-based — will cause a compile error when passed to a function expecting the new type. In M013/S01 this cascade propagated from pkg/runtime → pkg/agentd → api/ari/domain.go → pkg/store/agentrun.go → pkg/ari/server/server.go.
+- **Lesson:** When migrating a named type across packages, plan for cascade: list all packages that transitively hold or return the type (not just those that import the source path). Files in those packages must be migrated in the same build unit. Task-scoping that ignores the cascade leads to out-of-scope early migrations — fine to do, but note them as deviations. A `go build ./...` after each batch quickly reveals remaining cascade dependencies.
+- **Reference:** M013/S01/T01-T02 deviations: api/shim/types.go (pulled into T01), api/ari/domain.go, api/ari/types.go, pkg/store/agentrun.go, pkg/ari/server/server.go (pulled into T02).
+- **When:** M013/S01
+
+## K082 — ripgrep exit code 1 means "no matches found" — verification gates must treat this as PASS for "grep must return zero matches" checks
+
+- **Pattern:** Slice verification gate ran `rg '"github.com/zoumo/oar/api/runtime"' --type go` after all imports were successfully removed. The command returned exit code 1 (no matches = exactly the desired result) but the gate interpreter flagged it as a failure because it expected exit 0.
+- **Lesson:** In shell and ripgrep, exit 0 = matches found, exit 1 = no matches, exit 2 = error. For "must have zero matches" assertions, a gate should be written as `rg PATTERN && echo FAIL || echo PASS` — success is the `||` branch. Alternatively, use `! rg PATTERN` which exits 0 when no matches are found. Never use raw `rg PATTERN; echo "exit: $?"` as a pass/fail gate without accounting for the inverted exit code semantics.
+- **Reference:** M013/S01/T03 — all four grep gates returned exit 1 = all imports gone = correct; verification framework misread this as failure.
+- **When:** M013/S01
+
 ## K081 — Sequence pure rename/move slices before contract-change slices in large refactors
 
 - **Pattern:** In a codebase refactor involving both import path changes and wire contract changes, complete all pure renames first before introducing semantic changes.

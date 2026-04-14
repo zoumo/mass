@@ -10,9 +10,18 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 ## Current State
 
-**M012 complete — all 6 slices done.** Codebase refactor is complete: typed Service Interfaces (api/shim, api/ari), pkg/jsonrpc unified transport, directory restructure, and cleanup of all legacy packages. `make build` + `go test ./... -count=1` both pass across all 17 test packages.
+**M013 active — S01 complete.** Runtime-spec consumer migration done: all api/runtime and api (Status/EnvVar) consumers migrated to pkg/runtime-spec/api; api/runtime/ directory and api/types.go deleted; empty runtimeclass stubs deleted. `make build` + `go test ./...` pass clean. S02 (ARI package restructure) is next.
 
-**No active milestone.**
+### Active Milestone
+
+**M013 — Package Restructure: Clean api/ Boundary + Event/Runtime Colocation**
+
+| Slice | Title | Status |
+|-------|-------|--------|
+| S01 | Runtime-spec consumer migration | ✅ done |
+| S02 | ARI package restructure | ⬜ pending |
+| S03 | Shim package restructure + api/ deletion | ⬜ pending |
+| S04 | Events impl + ACP runtime migration + final verification | ⬜ pending |
 
 ### Completed Milestones
 
@@ -43,6 +52,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **agent-shim** starts ACP agent processes, performs the ACP handshake, exposes `session/*` + `runtime/*` shim RPC surface
 - **spec.Status as sole state enum**: creating/idle/running/stopped/error
 - **Socket path overflow guard**: `ValidateAgentSocketPath` in ProcessManager; early `-32602` at `agentrun/create` entry before any DB write; platform limits in build-tag files
+- **pkg/runtime-spec/api as sole Status/EnvVar home (M013/S01):** api/runtime/ deleted; api/types.go deleted; all consumers use `apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"`
 
 ## Architecture / Key Patterns
 
@@ -54,6 +64,8 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **cmd entrypoint pattern (M012):** net.Listen (explicit lifecycle) + jsonrpc.NewServer + Register(srv, svc) + srv.Serve(ln) in goroutine + srv.Shutdown(ctx) on signal
 - **Test server cleanup order (M012):** ln.Close() then srv.Shutdown(ctx) — closing listener unblocks Accept() so Serve() goroutine exits cleanly (K080, D114)
 - **Test file deletion safety (M012):** Before deleting *_test.go, grep for cross-file dependencies in the same package; extract shared infrastructure to a new file (K079, D113)
+- **Named type cascade migration (M013/S01):** When a Go named type moves packages, migrate all files passing it across package boundaries in the same build wave; compile errors are the dependency map (K083)
+- **Pattern A / Pattern B dual-import (M013/S01):** Files only using Status/EnvVar get 1-for-1 replacement; files also using Method/Category/EventType constants keep bare api import alongside apiruntime
 - **bbolt buckets:** `v1/workspaces/{name}`, `v1/agentruns/{workspace}/{name}`, `v1/agents/{name}`
 - **--root derived paths**: Options.SocketPath(), WorkspaceRoot(), BundleRoot(), MetaDBPath() — no config file needed
 - **cobra package main collision avoidance:** wmcp prefix for workspace-mcp types, shim prefix for shim client types, local flag vars scoped inside constructor functions (K068)
@@ -62,6 +74,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **ari.Client.Call error surfacing**: Wraps RPC errors as plain fmt.Errorf strings — use err.Error() contains check, not errors.As(*jsonrpc2.Error) (K073)
 - **macOS socket path limit**: t.TempDir() paths often exceed 104-byte Unix socket limit; use os.MkdirTemp("/tmp", "oar-*") for socket-sensitive tests (K075)
 - **pkg/jsonrpc notifCh race**: Client.enqueueNotification has a pre-existing send-on-closed-channel race visible under -count=3; single-run go test ./... is the acceptance bar (K078)
+- **rg exit code semantics**: exit 1 = no matches (not a failure); zero-match verification gates must use `! rg PATTERN` (K082)
 
 ## Capability Contract
 
@@ -78,3 +91,4 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 - [x] M007 — Platform terminal state refactor
 - [x] M008 — CLI consolidation + API model rename
 - [x] M012 — Codebase Refactor: Service Interface + Unified RPC + Directory Restructure
+- [ ] M013 — Package Restructure: Clean api/ Boundary + Event/Runtime Colocation (S01 ✅, S02-S04 pending)
