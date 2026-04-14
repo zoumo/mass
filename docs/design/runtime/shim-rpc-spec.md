@@ -192,6 +192,18 @@ In agentd-managed deployments, bundle/state/socket are co-located:
       "bundle": "/var/lib/agentd/bundles/session-abc123",
       "annotations": {
         "org.openagents.task": "PROJ-1234"
+      },
+      "updatedAt": "2026-04-07T10:00:00.123456789Z",
+      "session": {
+        "agentInfo": { "name": "claude-code", "version": "1.0.0" },
+        "capabilities": { "promptCapabilities": { "image": true } }
+      },
+      "eventCounts": {
+        "text": 42,
+        "tool_call": 7,
+        "tool_result": 7,
+        "turn_start": 3,
+        "turn_end": 2
       }
     },
     "recovery": {
@@ -202,6 +214,10 @@ In agentd-managed deployments, bundle/state/socket are co-located:
 ```
 
 `state` 字段的结构与 [runtime-spec.md](runtime-spec.md) 的 State 定义一致。
+
+> **注意**：`runtime/status` 响应中的 `eventCounts` 来自 Translator 内存中的实时累计值，
+> 并非直接读取 state.json 文件。因此在两次 state 持久化之间，`eventCounts` 可能比
+> state.json 中的值更新。这保证了调用方始终获取最准确的事件统计。
 `recovery.lastSeq` 是当前 `events.jsonl` / notification 流中最后一个已分配的序列号。
 
 ### `runtime/history`
@@ -403,6 +419,32 @@ text 事件（turn 内，携带 turn 字段）：
   }
 }
 ```
+
+仅元数据变更的 `state_change`（`previousStatus == status`，`sessionChanged` 列出被更新的 session 字段）：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "shim/event",
+  "params": {
+    "runId": "codex",
+    "sessionId": "acp-xxx",
+    "seq": 40,
+    "time": "2026-04-07T10:00:01Z",
+    "category": "runtime",
+    "type": "state_change",
+    "content": {
+      "previousStatus": "idle",
+      "status": "idle",
+      "sessionChanged": ["configOptions"]
+    }
+  }
+}
+```
+
+> `sessionChanged` 仅在元数据变更（`previousStatus == status`）时出现，列出本次更新涉及的
+> session 子字段。可能的取值：`agentInfo`、`capabilities`、`availableCommands`、
+> `configOptions`、`sessionInfo`、`currentMode`。
 
 ## Notifications
 

@@ -38,7 +38,18 @@ The state of an agent includes the following properties:
 * **`annotations`** (map, OPTIONAL) contains the list of annotations associated with the agent.
   If no annotations were provided then this property MAY either be absent or an empty map.
 
-The state MAY include additional properties.
+The state MAY include additional properties. The following optional fields are
+populated by the shim during runtime:
+
+* **`updatedAt`** (string, OPTIONAL) is the RFC3339Nano timestamp of the last state write.
+  Updated on every `state.json` persist cycle.
+* **`session`** (object, OPTIONAL) contains ACP session metadata populated progressively
+  as the agent reports notifications (e.g. `agentInfo`, `capabilities`, `availableCommands`,
+  `configOptions`, `sessionInfo`, `currentMode`). See Go type `SessionState` for the full
+  structure.
+* **`eventCounts`** (map, OPTIONAL) maps event type strings (e.g. `"text"`, `"tool_call"`)
+  to their cumulative counts. This is a derived field — set on every state write, not
+  independently settable.
 
 ### Comparison with OCI State
 
@@ -64,6 +75,15 @@ The state MAY include additional properties.
   "bundle": "/var/lib/agentd/bundles/my-project-architect",
   "annotations": {
     "org.openagents.task": "PROJ-1234"
+  },
+  "updatedAt": "2026-04-07T10:00:00.123456789Z",
+  "session": {
+    "agentInfo": { "name": "claude-code", "version": "1.0.0" }
+  },
+  "eventCounts": {
+    "text": 42,
+    "tool_call": 7,
+    "turn_start": 3
   }
 }
 ```

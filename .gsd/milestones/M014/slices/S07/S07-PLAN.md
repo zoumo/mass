@@ -64,7 +64,7 @@ It also creates `pkg/shim/server/service_test.go` with a test that proves the ov
   - Files: `pkg/shim/server/service.go`, `pkg/shim/server/service_test.go`
   - Verify: go test ./pkg/shim/server/... -run TestStatus -v -count=1 && make build && go test ./pkg/shim/server/... -count=1
 
-- [ ] **T02: Update design docs to reflect M014 enriched state schema** `est:30m`
+- [x] **T02: Update design docs to reflect M014 enriched state schema** `est:30m`
   ## Description
 
 M014 added `session`, `eventCounts`, and `updatedAt` to state.json and `sessionChanged` to state_change events. The design docs still show the pre-M014 schema. This task updates the normative examples to match the current implementation.
