@@ -867,3 +867,17 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Lesson:** M012 separated the refactor into S02 (pure rename: api/spec→api/runtime, pkg/shimapi→api/shim) and S03 (ARI wire contract convergence: domain shape changes). Doing S02 first meant that S03 only needed to reason about one dimension of change at a time — if S03 broke a test, the cause was definitely the contract change, not a rename collision. Intermixing renames with semantic changes in a single slice makes debugging exponentially harder. The discipline cost is one extra slice; the payoff is much faster root-cause isolation.
 - **Reference:** M012/S02 + M012/S03 sequencing design.
 - **When:** M012
+
+## K084 — When redistributing a package into sub-packages, same-package types need no qualifier in the new sub-package
+
+- **Pattern:** After moving `WorkspaceClient`, `AgentRunClient`, `AgentClient` from `api/ari/client.go` into `pkg/ari/client/typed.go` (package `client`), the companion `client.go` file in the same package (also `package client`) originally accessed them as `pkgariapi.WorkspaceClient`. This caused a type mismatch — the types were defined within the same package, not in `pkg/ari/api`.
+- **Lesson:** When a refactor moves types and a consumer of those types into the same new sub-package, the types are now local and must be used unqualified. The source-level mechanical substitution (replace all `apiari.X` with `pkgariapi.X`) does not account for the fact that some types have *also* moved into the same package. Always check: "does the new source of these types happen to be the package I'm editing right now?" and remove the qualifier if so.
+- **Reference:** M013/S02/T02 — pkg/ari/client/client.go adaptation (WorkspaceClient, AgentRunClient, AgentClient from typed.go).
+- **When:** M013/S02
+
+## K085 — Same-package Register functions need no import after sub-package consolidation
+
+- **Pattern:** `pkg/ari/server/service.go` defines `RegisterWorkspaceService`, `RegisterAgentRunService`, `RegisterAgentService`. When `pkg/ari/server/server.go` was updated to the `server` package, it no longer needed to import an external package to call these functions — they're in the same package. The plan noted moving the calls from qualified to unqualified but it's easy to miss when doing a mechanical import substitution.
+- **Lesson:** When moving both a set of exported helpers and their callers into the same new sub-package, the callers' imports of the former package are eliminated entirely, not replaced. After mechanical substitution, scan for any remaining `ariX.FunctionName()` calls where the function is now in the same package and strip the qualifier.
+- **Reference:** M013/S02/T02 — pkg/ari/server/server.go, RegisterWorkspaceService et al.
+- **When:** M013/S02
