@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	"github.com/zoumo/oar/pkg/store"
 )
 
@@ -28,7 +28,7 @@ func (e *ErrAgentRunNotFound) Error() string {
 type ErrDeleteNotStopped struct {
 	Workspace string
 	Name      string
-	State     api.Status
+	State     apiruntime.Status
 }
 
 func (e *ErrDeleteNotStopped) Error() string {
@@ -66,11 +66,11 @@ func NewAgentRunManager(s *store.Store, logger *slog.Logger) *AgentRunManager {
 }
 
 // Create creates a new agent.
-// Sets default status.State to api.StatusCreating if empty.
+// Sets default status.State to apiruntime.StatusCreating if empty.
 // Returns ErrAgentRunAlreadyExists if the (workspace, name) pair already exists.
 func (m *AgentRunManager) Create(ctx context.Context, agent *apiari.AgentRun) error {
 	if agent.Status.State == "" {
-		agent.Status.State = api.StatusCreating
+		agent.Status.State = apiruntime.StatusCreating
 	}
 
 	m.logger.Info("creating agent",
@@ -157,7 +157,7 @@ func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name stri
 // TransitionState updates an agent state only when the current state matches
 // expected. It returns false when the agent exists but was already in another
 // state. Other status fields are preserved.
-func (m *AgentRunManager) TransitionState(ctx context.Context, workspace, name string, expected, next api.Status) (bool, error) {
+func (m *AgentRunManager) TransitionState(ctx context.Context, workspace, name string, expected, next apiruntime.Status) (bool, error) {
 	m.logger.Info("transitioning agent state",
 		"workspace", workspace,
 		"name", name,
@@ -193,7 +193,7 @@ func (m *AgentRunManager) Delete(ctx context.Context, workspace, name string) er
 	}
 
 	// Only stopped or error agents may be deleted.
-	if current.Status.State != api.StatusStopped && current.Status.State != api.StatusError {
+	if current.Status.State != apiruntime.StatusStopped && current.Status.State != apiruntime.StatusError {
 		m.logger.Warn("delete blocked: agent is still active",
 			"workspace", workspace,
 			"name", name,

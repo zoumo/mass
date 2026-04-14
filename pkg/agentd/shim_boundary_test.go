@@ -14,10 +14,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	shimclient "github.com/zoumo/oar/pkg/shim/client"
 )
 
@@ -37,7 +38,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
 		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
 		Spec:     apiari.AgentRunSpec{Agent: "default"},
-		Status:   apiari.AgentRunStatus{State: api.StatusCreating},
+		Status:   apiari.AgentRunStatus{State: apiruntime.StatusCreating},
 	}))
 
 	// Set up mock shim, queue a creating→idle stateChange notification.
@@ -86,14 +87,14 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	// Wait for the stateChange notification to drive the DB update.
 	require.Eventually(t, func() bool {
 		agent, _ := store.GetAgentRun(ctx, ws, agentName)
-		return agent != nil && agent.Status.State == api.StatusIdle
+		return agent != nil && agent.Status.State == apiruntime.StatusIdle
 	}, 3*time.Second, 50*time.Millisecond,
 		"DB state should become idle after runtime/state_change notification")
 
 	// Confirm final DB state.
 	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusIdle, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusIdle, agent.Status.State,
 		"DB state must reflect the shim-emitted stateChange, not a direct write")
 }
 
@@ -179,7 +180,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
 		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
 		Spec:     apiari.AgentRunSpec{Agent: "default"},
-		Status:   apiari.AgentRunStatus{State: api.StatusIdle},
+		Status:   apiari.AgentRunStatus{State: apiruntime.StatusIdle},
 	}))
 
 	// Queue two successive stateChange notifications: idle→running, then running→idle.
@@ -234,13 +235,13 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	// Wait for both stateChange notifications to be processed (final state = idle).
 	require.Eventually(t, func() bool {
 		agent, _ := store.GetAgentRun(ctx, ws, agentName)
-		return agent != nil && agent.Status.State == api.StatusIdle
+		return agent != nil && agent.Status.State == apiruntime.StatusIdle
 	}, 3*time.Second, 50*time.Millisecond,
 		"DB state should settle at idle after running→idle stateChange notification")
 
 	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusIdle, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusIdle, agent.Status.State,
 		"final DB state must be idle after running→idle stateChange")
 }
 
@@ -262,7 +263,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
 		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
 		Spec:     apiari.AgentRunSpec{Agent: "default"},
-		Status:   apiari.AgentRunStatus{State: api.StatusCreating},
+		Status:   apiari.AgentRunStatus{State: apiruntime.StatusCreating},
 	}))
 
 	// Set up mock shim with NO queued notifications.
@@ -300,10 +301,10 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
 	require.NotNil(t, agent)
-	assert.NotEqual(t, api.StatusRunning, agent.Status.State,
+	assert.NotEqual(t, apiruntime.StatusRunning, agent.Status.State,
 		"Start() must not write StatusRunning directly (D088); "+
 			"state should only change via runtime/state_change notification")
-	assert.Equal(t, api.StatusCreating, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusCreating, agent.Status.State,
 		"without a stateChange notification, DB state must remain StatusCreating")
 }
 
@@ -322,7 +323,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	require.NoError(t, store.CreateAgentRun(ctx, &apiari.AgentRun{
 		Metadata: apiari.ObjectMeta{Workspace: ws, Name: agentName},
 		Spec:     apiari.AgentRunSpec{Agent: "default"},
-		Status:   apiari.AgentRunStatus{State: api.StatusCreating},
+		Status:   apiari.AgentRunStatus{State: apiruntime.StatusCreating},
 	}))
 
 	// Queue a malformed stateChange notification (array instead of object).
@@ -365,6 +366,6 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	// DB state must be unchanged.
 	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusCreating, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusCreating, agent.Status.State,
 		"malformed stateChange must be dropped; DB state must be unchanged")
 }

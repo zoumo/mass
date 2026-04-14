@@ -11,11 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
-	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/api/shim"
-	"github.com/zoumo/oar/pkg/spec"
+	spec "github.com/zoumo/oar/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	"github.com/zoumo/oar/pkg/store"
 )
 
@@ -38,7 +37,7 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *store.Store) {
 
 // createRecoveryTestAgent creates an agent record in the given state with the given socket path.
 // Returns the (workspace, name) pair.
-func createRecoveryTestAgent(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state api.Status, socketPath string) (string, string) {
+func createRecoveryTestAgent(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state apiruntime.Status, socketPath string) (string, string) {
 	t.Helper()
 	agent := &apiari.AgentRun{
 		Metadata: apiari.ObjectMeta{
@@ -74,7 +73,7 @@ func TestRecoverSessions_LiveShim(t *testing.T) {
 		State: apiruntime.State{
 			OarVersion: "0.1.0",
 			ID:         "recovered-agent",
-			Status:     api.StatusRunning,
+			Status:     apiruntime.StatusRunning,
 			Bundle:     "/tmp/test-bundle",
 		},
 		Recovery: shim.RuntimeStatusRecovery{LastSeq: 5},
@@ -82,7 +81,7 @@ func TestRecoverSessions_LiveShim(t *testing.T) {
 	srv.mu.Unlock()
 
 	// Create an agent in "running" state pointing at the mock socket.
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "alpha", api.StatusRunning, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "alpha", apiruntime.StatusRunning, socketPath)
 	key := agentKey(ws, name)
 
 	// Run recovery.
@@ -120,7 +119,7 @@ func TestRecoverSessions_DeadShim(t *testing.T) {
 
 	// Create a "running" agent pointing at a nonexistent socket.
 	deadSocket := "/tmp/nonexistent-shim-" + "dead1" + ".sock"
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "dead-agent", api.StatusRunning, deadSocket)
+	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "dead-agent", apiruntime.StatusRunning, deadSocket)
 
 	// Run recovery.
 	err := pm.RecoverSessions(ctx)
@@ -129,7 +128,7 @@ func TestRecoverSessions_DeadShim(t *testing.T) {
 	// Verify agent was marked stopped.
 	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusStopped, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusStopped, agent.Status.State,
 		"dead shim agent should be marked stopped")
 
 	// Verify the agent is NOT in the processes map.
@@ -159,7 +158,7 @@ func TestRecoverSessions_SkipsStoppedAgents(t *testing.T) {
 	defer cancel()
 
 	// Create a stopped agent.
-	createRecoveryTestAgent(t, ctx, store, "default", "already-stopped", api.StatusStopped, "/tmp/whatever.sock")
+	createRecoveryTestAgent(t, ctx, store, "default", "already-stopped", apiruntime.StatusStopped, "/tmp/whatever.sock")
 
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err)
@@ -179,17 +178,17 @@ func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
 	srv, liveSocketPath := newMockShimServer(t)
 	srv.mu.Lock()
 	srv.statusResult = shim.RuntimeStatusResult{
-		State:    apiruntime.State{Status: api.StatusRunning, ID: "live"},
+		State:    apiruntime.State{Status: apiruntime.StatusRunning, ID: "live"},
 		Recovery: shim.RuntimeStatusRecovery{LastSeq: 2},
 	}
 	srv.mu.Unlock()
 
 	// Create a live agent.
-	liveWS, liveName := createRecoveryTestAgent(t, ctx, store, "default", "live-agent", api.StatusRunning, liveSocketPath)
+	liveWS, liveName := createRecoveryTestAgent(t, ctx, store, "default", "live-agent", apiruntime.StatusRunning, liveSocketPath)
 	liveKey := agentKey(liveWS, liveName)
 
 	// Create a dead agent.
-	deadWS, deadName := createRecoveryTestAgent(t, ctx, store, "default", "dead-agent2", api.StatusRunning,
+	deadWS, deadName := createRecoveryTestAgent(t, ctx, store, "default", "dead-agent2", apiruntime.StatusRunning,
 		"/tmp/dead-shim-dead2.sock")
 	deadKey := agentKey(deadWS, deadName)
 
@@ -204,7 +203,7 @@ func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
 	assert.Nil(t, pm.GetProcess(deadKey), "dead agent should not be in processes map")
 	deadAgent, err := store.GetAgentRun(ctx, deadWS, deadName)
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusStopped, deadAgent.Status.State)
+	assert.Equal(t, apiruntime.StatusStopped, deadAgent.Status.State)
 
 	// Clean up the live mock.
 	srv.close()
@@ -225,7 +224,7 @@ func TestRecoverSessions_NoSocketPath(t *testing.T) {
 	defer cancel()
 
 	// Create a running agent with no socket path.
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "no-socket", api.StatusRunning, "")
+	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "no-socket", apiruntime.StatusRunning, "")
 
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err)
@@ -233,7 +232,7 @@ func TestRecoverSessions_NoSocketPath(t *testing.T) {
 	// Agent should be marked stopped.
 	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusStopped, agent.Status.State)
+	assert.Equal(t, apiruntime.StatusStopped, agent.Status.State)
 }
 
 // TestRecoverSessions_ShimReportsStopped verifies that when a shim reports
@@ -251,13 +250,13 @@ func TestRecoverSessions_ShimReportsStopped(t *testing.T) {
 		State: apiruntime.State{
 			OarVersion: "0.1.0",
 			ID:         "stopped-agent",
-			Status:     api.StatusStopped,
+			Status:     apiruntime.StatusStopped,
 		},
 		Recovery: shim.RuntimeStatusRecovery{LastSeq: 0},
 	}
 	srv.mu.Unlock()
 
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "was-running", api.StatusRunning, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "was-running", apiruntime.StatusRunning, socketPath)
 
 	// Run recovery.
 	err := pm.RecoverSessions(ctx)
@@ -266,7 +265,7 @@ func TestRecoverSessions_ShimReportsStopped(t *testing.T) {
 	// Agent should be marked stopped (fail-closed).
 	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusStopped, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusStopped, agent.Status.State,
 		"shim-reports-stopped agent should be marked stopped in DB")
 
 	// Agent should NOT be in the processes map.
@@ -295,14 +294,14 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 		State: apiruntime.State{
 			OarVersion: "0.1.0",
 			ID:         "reconciled-agent",
-			Status:     api.StatusRunning,
+			Status:     apiruntime.StatusRunning,
 		},
 		Recovery: shim.RuntimeStatusRecovery{LastSeq: 3},
 	}
 	srv.mu.Unlock()
 
 	// Create an "idle" agent pointing at the mock socket.
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "was-idle", api.StatusIdle, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "was-idle", apiruntime.StatusIdle, socketPath)
 	key := agentKey(ws, name)
 
 	// Run recovery.
@@ -312,7 +311,7 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 	// Agent state in DB should now be "running" (reconciled from idle).
 	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusRunning, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusRunning, agent.Status.State,
 		"agent should be transitioned from idle to running")
 
 	// Agent should be in the processes map.
@@ -352,14 +351,14 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 		State: apiruntime.State{
 			OarVersion: "0.1.0",
 			ID:         "mismatched-agent",
-			Status:     api.StatusRunning,
+			Status:     apiruntime.StatusRunning,
 		},
 		Recovery: shim.RuntimeStatusRecovery{LastSeq: 1},
 	}
 	srv.mu.Unlock()
 
 	// DB says "creating" but shim says "running" — mismatch, default branch.
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "creating-agent", api.StatusCreating, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "creating-agent", apiruntime.StatusCreating, socketPath)
 	key := agentKey(ws, name)
 
 	// Run recovery.
@@ -374,7 +373,7 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 	// does not update the DB state.
 	agent, err := store.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusCreating, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusCreating, agent.Status.State,
 		"DB state should remain creating (mismatch only logged, not reconciled)")
 
 	// Mock shim should have been subscribed (recovery completed).
@@ -397,7 +396,7 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 // ────────────────────────────────────────────────────────────────────────────
 
 // createAgentForRecovery creates an agent directly in the store for recovery tests.
-func createAgentForRecovery(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state api.Status) {
+func createAgentForRecovery(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state apiruntime.Status) {
 	t.Helper()
 	agent := &apiari.AgentRun{
 		Metadata: apiari.ObjectMeta{
@@ -423,7 +422,7 @@ func TestRecoverSessions_CreatingAgentMarkedError(t *testing.T) {
 	defer cancel()
 
 	// Create an agent in "creating" state with no socket path.
-	createAgentForRecovery(t, ctx, store, "default", "stuck-creating", api.StatusCreating)
+	createAgentForRecovery(t, ctx, store, "default", "stuck-creating", apiruntime.StatusCreating)
 
 	// Run recovery — no running shims, creating-cleanup fires.
 	require.NoError(t, pm.RecoverSessions(ctx))
@@ -432,7 +431,7 @@ func TestRecoverSessions_CreatingAgentMarkedError(t *testing.T) {
 	agent, err := store.GetAgentRun(ctx, "default", "stuck-creating")
 	require.NoError(t, err)
 	require.NotNil(t, agent)
-	assert.Equal(t, api.StatusError, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusError, agent.Status.State,
 		"agent stuck in creating should be marked error after daemon restart")
 	assert.Contains(t, agent.Status.ErrorMessage, "daemon restarted during creating phase")
 }
@@ -445,7 +444,7 @@ func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
 	defer cancel()
 
 	// Create an error agent.
-	createAgentForRecovery(t, ctx, store, "default", "error-agent", api.StatusError)
+	createAgentForRecovery(t, ctx, store, "default", "error-agent", apiruntime.StatusError)
 
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err)
@@ -456,7 +455,7 @@ func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
 	// The error state should be unchanged.
 	agent, err := store.GetAgentRun(ctx, "default", "error-agent")
 	require.NoError(t, err)
-	assert.Equal(t, api.StatusError, agent.Status.State)
+	assert.Equal(t, apiruntime.StatusError, agent.Status.State)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -479,7 +478,7 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		OarVersion: "0.1.0",
 		ID:         knownSessionID,
-		Status:     api.StatusIdle,
+		Status:     apiruntime.StatusIdle,
 		Bundle:     "/tmp/test-bundle",
 	}))
 
@@ -490,7 +489,7 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 			RestartPolicy: apiari.RestartPolicyTryReload,
 		},
 		Status: apiari.AgentRunStatus{
-			State:          api.StatusIdle,
+			State:          apiruntime.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
 			ShimPID:        99999,
@@ -544,7 +543,7 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		OarVersion: "0.1.0",
 		ID:         "some-session",
-		Status:     api.StatusIdle,
+		Status:     apiruntime.StatusIdle,
 		Bundle:     "/tmp/test-bundle",
 	}))
 
@@ -555,7 +554,7 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 			RestartPolicy: apiari.RestartPolicyTryReload,
 		},
 		Status: apiari.AgentRunStatus{
-			State:          api.StatusIdle,
+			State:          apiruntime.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
 			ShimPID:        99999,
@@ -599,7 +598,7 @@ func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
 			RestartPolicy: apiari.RestartPolicyTryReload,
 		},
 		Status: apiari.AgentRunStatus{
-			State:          api.StatusIdle,
+			State:          apiruntime.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   "/tmp/nonexistent-state-dir-tryreload-test",
 			ShimPID:        99999,
@@ -640,7 +639,7 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		OarVersion: "0.1.0",
 		ID:         "existing-session",
-		Status:     api.StatusIdle,
+		Status:     apiruntime.StatusIdle,
 		Bundle:     "/tmp/test-bundle",
 	}))
 
@@ -651,7 +650,7 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 			RestartPolicy: "", // empty = always_new (default)
 		},
 		Status: apiari.AgentRunStatus{
-			State:          api.StatusIdle,
+			State:          apiruntime.StatusIdle,
 			ShimSocketPath: socketPath,
 			ShimStateDir:   stateDir,
 			ShimPID:        99999,

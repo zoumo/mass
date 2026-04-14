@@ -8,9 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/api"
-	apiruntime "github.com/zoumo/oar/api/runtime"
 	"github.com/zoumo/oar/api/shim"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -90,14 +89,14 @@ func TestRecoverSessions_PhaseTransitions_WithLiveShim(t *testing.T) {
 		State: apiruntime.State{
 			OarVersion: "0.1.0",
 			ID:         "phase-test-agent",
-			Status:     api.StatusRunning,
+			Status:     apiruntime.StatusRunning,
 			Bundle:     "/tmp/test-bundle",
 		},
 		Recovery: shim.RuntimeStatusRecovery{LastSeq: 0},
 	}
 	srv.mu.Unlock()
 
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "phase-test", api.StatusRunning, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "phase-test", apiruntime.StatusRunning, socketPath)
 	key := agentKey(ws, name)
 
 	before := time.Now()
@@ -134,7 +133,7 @@ func TestRecoverSessions_PhaseTransitions_WithDeadShim(t *testing.T) {
 	defer cancel()
 
 	createRecoveryTestAgent(t, ctx, store, "default", "dead-phase-agent",
-		api.StatusRunning, "/tmp/dead-phase-unique.sock")
+		apiruntime.StatusRunning, "/tmp/dead-phase-unique.sock")
 
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err)

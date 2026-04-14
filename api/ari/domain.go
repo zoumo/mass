@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/zoumo/oar/api"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // ObjectMeta holds identity and lifecycle fields common to all stored objects.
@@ -44,7 +44,7 @@ type AgentSpec struct {
 	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variable overrides applied to the process.
-	Env []api.EnvVar `json:"env,omitempty"`
+	Env []apiruntime.EnvVar `json:"env,omitempty"`
 
 	// StartupTimeoutSeconds is the maximum time (in seconds) to wait for the
 	// agent shim to reach idle state. Nil means use the daemon default.
@@ -101,9 +101,9 @@ type AgentRunSpec struct {
 // tagged json:"-" and not exposed via ARI — use agentrun/attach for the socket path.
 type AgentRunStatus struct {
 	// State is the current lifecycle status of the agent.
-	State api.Status `json:"state"`
+	State apiruntime.Status `json:"state"`
 
-	// ErrorMessage is a non-empty error description when State is api.StatusError.
+	// ErrorMessage is a non-empty error description when State is apiruntime.StatusError.
 	ErrorMessage string `json:"errorMessage,omitempty"`
 
 	// ShimSocketPath is the Unix socket path for the shim's RPC endpoint.
@@ -142,7 +142,7 @@ type AgentRunFilter struct {
 	Workspace string
 
 	// State filters by agent status. Empty/zero means all states.
-	State api.Status
+	State apiruntime.Status
 }
 
 // ────────────────────────────────────────────────────────────────────────────

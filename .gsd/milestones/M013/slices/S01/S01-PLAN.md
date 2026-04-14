@@ -39,7 +39,7 @@ Import alias strategy (apply consistently across all five files):
   - Files: `pkg/runtime/runtime.go`, `pkg/runtime/client.go`, `pkg/runtime/runtime_test.go`, `pkg/runtime/client_test.go`, `cmd/agentd/subcommands/shim/command.go`
   - Verify: go build ./pkg/runtime/... ./cmd/agentd/... 2>&1 | head -20 && rg '"github.com/zoumo/oar/api/runtime"' pkg/runtime/ cmd/agentd/ --type go && echo 'FAIL: still has old import' || echo 'PASS: no old imports'
 
-- [ ] **T02: Migrate pkg/agentd/* consumers** `est:45 min`
+- [x] **T02: Migrate pkg/agentd/* consumers** `est:45 min`
   Update all nine pkg/agentd/ files that import api/runtime, api (Status/EnvVar), or pkg/spec.
 
 Two import patterns apply across these nine files:

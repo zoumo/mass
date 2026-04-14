@@ -21,8 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/agentd"
 	"github.com/zoumo/oar/pkg/jsonrpc"
@@ -262,12 +262,12 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendPa
 			"workspace", req.Workspace, "to", req.To)
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.To))
 	}
-	if agent.Status.State == api.StatusError {
+	if agent.Status.State == apiruntime.StatusError {
 		a.logger.Warn("workspace/send: target agent in error state",
 			"workspace", req.Workspace, "to", req.To)
 		return nil, &jsonrpc.RPCError{Code: apiari.CodeRecoveryBlocked, Message: "target agent is in error state"}
 	}
-	if agent.Status.State != api.StatusIdle {
+	if agent.Status.State != apiruntime.StatusIdle {
 		a.logger.Warn("workspace/send: target agent not idle",
 			"workspace", req.Workspace, "to", req.To, "state", agent.Status.State)
 		return nil, &jsonrpc.RPCError{
@@ -276,7 +276,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *apiari.WorkspaceSendPa
 		}
 	}
 
-	reserved, err := a.agents.TransitionState(ctx, req.Workspace, req.To, api.StatusIdle, api.StatusRunning)
+	reserved, err := a.agents.TransitionState(ctx, req.Workspace, req.To, apiruntime.StatusIdle, apiruntime.StatusRunning)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
@@ -371,7 +371,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, req *apiari.AgentRunCreate
 			SystemPrompt:  req.SystemPrompt,
 		},
 		Status: apiari.AgentRunStatus{
-			State: api.StatusCreating,
+			State: apiruntime.StatusCreating,
 		},
 	}
 	if err := a.agents.Create(ctx, agentRun); err != nil {
@@ -393,7 +393,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, req *apiari.AgentRunCreate
 			a.logger.Warn("agentrun/create: shim start failed",
 				"workspace", wsName, "name", agName, "error", err)
 			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, apiari.AgentRunStatus{
-				State:        api.StatusError,
+				State:        apiruntime.StatusError,
 				ErrorMessage: err.Error(),
 			})
 		} else {
@@ -432,7 +432,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *apiari.AgentRunPrompt
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.Name))
 	}
 
-	if agent.Status.State != api.StatusIdle {
+	if agent.Status.State != apiruntime.StatusIdle {
 		a.logger.Warn("agentrun/prompt: agent not in idle state",
 			"workspace", req.Workspace, "name", req.Name, "state", agent.Status.State)
 		return nil, &jsonrpc.RPCError{
@@ -443,7 +443,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *apiari.AgentRunPrompt
 
 	// Reserve the agent run before acknowledging the prompt so a second
 	// prompt/stop/delete cannot observe stale idle while delivery is queued.
-	reserved, err := a.agents.TransitionState(ctx, req.Workspace, req.Name, api.StatusIdle, api.StatusRunning)
+	reserved, err := a.agents.TransitionState(ctx, req.Workspace, req.Name, apiruntime.StatusIdle, apiruntime.StatusRunning)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
@@ -566,10 +566,10 @@ func (a *agentRunAdapter) Restart(ctx context.Context, req *apiari.AgentRunResta
 	}
 
 	// Agents in terminal states have no active shim.
-	needsStop := agent.Status.State != api.StatusStopped && agent.Status.State != api.StatusError
+	needsStop := agent.Status.State != apiruntime.StatusStopped && agent.Status.State != apiruntime.StatusError
 
 	if err := a.agents.UpdateStatus(ctx, req.Workspace, req.Name, apiari.AgentRunStatus{
-		State: api.StatusCreating,
+		State: apiruntime.StatusCreating,
 	}); err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
@@ -585,7 +585,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, req *apiari.AgentRunResta
 			}
 			// Stop() transitions state to "stopped"; re-set to "creating" for Start().
 			if err := a.agents.UpdateStatus(bgCtx, wsName, agName, apiari.AgentRunStatus{
-				State: api.StatusCreating,
+				State: apiruntime.StatusCreating,
 			}); err != nil {
 				a.logger.Warn("agentrun/restart: failed to re-transition to creating",
 					"workspace", wsName, "name", agName, "error", err)
@@ -596,7 +596,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, req *apiari.AgentRunResta
 			a.logger.Warn("agentrun/restart: shim start failed",
 				"workspace", wsName, "name", agName, "error", err)
 			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, apiari.AgentRunStatus{
-				State:        api.StatusError,
+				State:        apiruntime.StatusError,
 				ErrorMessage: err.Error(),
 			})
 		}
@@ -607,7 +607,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, req *apiari.AgentRunResta
 	if err2 != nil || agentUpdated == nil {
 		agentUpdated = &apiari.AgentRun{
 			Metadata: apiari.ObjectMeta{Workspace: req.Workspace, Name: req.Name},
-			Status:   apiari.AgentRunStatus{State: api.StatusCreating},
+			Status:   apiari.AgentRunStatus{State: apiruntime.StatusCreating},
 		}
 	}
 	return &apiari.AgentRunRestartResult{AgentRun: agentUpdated.ARIView()}, nil
@@ -621,7 +621,7 @@ func (a *agentRunAdapter) List(ctx context.Context, req *apiari.AgentRunListPara
 
 	filter := &apiari.AgentRunFilter{
 		Workspace: req.Workspace,
-		State:     api.Status(req.State),
+		State:     apiruntime.Status(req.State),
 	}
 	agentRuns, err := a.agents.List(ctx, filter)
 	if err != nil {
@@ -677,7 +677,7 @@ func (a *agentRunAdapter) Attach(ctx context.Context, req *apiari.AgentRunAttach
 	if agent == nil {
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.Name))
 	}
-	if agent.Status.State != api.StatusIdle && agent.Status.State != api.StatusRunning {
+	if agent.Status.State != apiruntime.StatusIdle && agent.Status.State != apiruntime.StatusRunning {
 		return nil, &jsonrpc.RPCError{
 			Code:    apiari.CodeRecoveryBlocked,
 			Message: fmt.Sprintf("agent not in idle/running state: %s", agent.Status.State),
@@ -817,7 +817,7 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback apia
 		s.logger.Warn("prompt failure: current state lookup failed",
 			"workspace", wsName, "name", name, "error", err)
 	}
-	if current != nil && current.Status.State == api.StatusStopped {
+	if current != nil && current.Status.State == apiruntime.StatusStopped {
 		s.logger.Info("prompt failure: ignored after stop",
 			"workspace", wsName, "name", name, "error", cause)
 		return
@@ -844,14 +844,14 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback apia
 		s.logger.Warn("prompt failure: current state lookup failed",
 			"workspace", wsName, "name", name, "error", err)
 	}
-	if current != nil && current.Status.State == api.StatusStopped {
+	if current != nil && current.Status.State == apiruntime.StatusStopped {
 		s.logger.Info("prompt failure: ignored after stop",
 			"workspace", wsName, "name", name, "error", cause)
 		return
 	}
 
 	_ = s.agents.UpdateStatus(ctx, wsName, name, apiari.AgentRunStatus{
-		State:          api.StatusError,
+		State:          apiruntime.StatusError,
 		ShimSocketPath: fallback.ShimSocketPath,
 		ShimStateDir:   fallback.ShimStateDir,
 		ShimPID:        fallback.ShimPID,

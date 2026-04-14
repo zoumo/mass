@@ -7,7 +7,7 @@ package ari
 import (
 	"encoding/json"
 
-	"github.com/zoumo/oar/api"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -282,7 +282,7 @@ type AgentSetParams struct {
 	Args []string `json:"args,omitempty"`
 
 	// Env is the list of environment variable overrides (optional).
-	Env []api.EnvVar `json:"env,omitempty"`
+	Env []apiruntime.EnvVar `json:"env,omitempty"`
 
 	// StartupTimeoutSeconds is the optional startup timeout in seconds.
 	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`

@@ -10,8 +10,8 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 )
 
 // CreateAgentRun stores a new AgentRun record.
@@ -193,7 +193,7 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 // TransitionAgentRunState updates only Status.State when the current state
 // matches expected. It preserves shim metadata, error text, and bootstrap data.
 // Returns false, nil when the agent exists but is not in the expected state.
-func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next api.Status) (bool, error) {
+func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next apiruntime.Status) (bool, error) {
 	if workspace == "" {
 		return false, fmt.Errorf("store: workspace is required")
 	}

@@ -17,11 +17,11 @@ import (
 
 	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
-	apiruntime "github.com/zoumo/oar/api/runtime"
 	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	spec "github.com/zoumo/oar/pkg/runtime-spec"
 	shimclient "github.com/zoumo/oar/pkg/shim/client"
-	"github.com/zoumo/oar/pkg/spec"
 	"github.com/zoumo/oar/pkg/store"
 )
 
@@ -165,7 +165,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 					"error", err)
 				return
 			}
-			if current != nil && current.Status.State == api.StatusStopped && api.Status(newStatus) != api.StatusStopped {
+			if current != nil && current.Status.State == apiruntime.StatusStopped && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
 				logger.Info("stateChange: dropped stale live state after stop",
 					"agent_key", key,
 					"current", current.Status.State,
@@ -173,7 +173,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 				return
 			}
 			if err := m.agents.UpdateStatus(updateCtx, workspace, name, apiari.AgentRunStatus{
-				State:          api.Status(newStatus),
+				State:          apiruntime.Status(newStatus),
 				ShimSocketPath: shimProc.SocketPath,
 				ShimStateDir:   shimProc.StateDir,
 				ShimPID:        shimProc.PID,
@@ -225,7 +225,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	}
 
 	// Validate agent status - must be "creating" to start.
-	if agent.Status.State != api.StatusCreating {
+	if agent.Status.State != apiruntime.StatusCreating {
 		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.State)
 	}
 
@@ -293,7 +293,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		// Non-fatal: agent can still run, just won't have recovery data.
 	} else {
 		if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, apiari.AgentRunStatus{
-			State:           api.StatusCreating, // keep creating until we transition below
+			State:           apiruntime.StatusCreating, // keep creating until we transition below
 			ShimSocketPath:  socketPath,
 			ShimStateDir:    stateDir,
 			ShimPID:         shimProc.PID,
@@ -320,7 +320,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	// here ensures the DB reflects the actual state even when the notification
 	// was dropped.
 	if statusResult, statusErr := client.Status(ctx); statusErr == nil {
-		if statusResult.State.Status != api.StatusCreating {
+		if statusResult.State.Status != apiruntime.StatusCreating {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := m.agents.UpdateStatus(updateCtx, workspace, name, apiari.AgentRunStatus{
@@ -377,7 +377,7 @@ func (m *ProcessManager) generateConfig(agent *apiari.AgentRun, agentDef *apiari
 		Name:    "workspace",
 		Command: mcpBinary,
 		Args:    mcpArgs,
-		Env: []api.EnvVar{
+		Env: []apiruntime.EnvVar{
 			{Name: "OAR_AGENTD_SOCKET", Value: m.socketPath},
 			{Name: "OAR_WORKSPACE_NAME", Value: agent.Metadata.Workspace},
 			{Name: "OAR_AGENT_NAME", Value: agent.Metadata.Name},
@@ -691,7 +691,7 @@ func (m *ProcessManager) watchProcess(workspace, name string, shimProc *ShimProc
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: api.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: apiruntime.StatusStopped})
 
 	// Bundle directory is intentionally NOT cleaned up here.
 	// It must persist until the agent is explicitly deleted via agent/delete.
@@ -726,8 +726,8 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 			return fmt.Errorf("process: agent %s does not exist", key)
 		}
 		// Agent exists but is not running — transition to stopped if needed.
-		if agent.Status.State != api.StatusStopped {
-			if err := m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: api.StatusStopped}); err != nil {
+		if agent.Status.State != apiruntime.StatusStopped {
+			if err := m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: apiruntime.StatusStopped}); err != nil {
 				return fmt.Errorf("process: transition agent %s to stopped: %w", key, err)
 			}
 		}

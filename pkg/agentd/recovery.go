@@ -9,12 +9,12 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
 	apishim "github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	spec "github.com/zoumo/oar/pkg/runtime-spec"
 	shimclient "github.com/zoumo/oar/pkg/shim/client"
-	"github.com/zoumo/oar/pkg/spec"
 )
 
 // RecoverSessions runs at daemon startup and attempts to reconnect to shim
@@ -50,7 +50,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 	for _, a := range allAgents {
 		// Skip terminal states: stopped agents have no shim to recover,
 		// and error agents require explicit restart per the agent lifecycle model.
-		if a.Status.State != api.StatusStopped && a.Status.State != api.StatusError {
+		if a.Status.State != apiruntime.StatusStopped && a.Status.State != apiruntime.StatusError {
 			candidates = append(candidates, a)
 		}
 	}
@@ -76,7 +76,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			// complete bootstrap — mark them error with a meaningful message
 			// rather than stopped. Non-creating agents are marked stopped
 			// (fail-closed posture per D012/D029).
-			if agent.Status.State == api.StatusCreating {
+			if agent.Status.State == apiruntime.StatusCreating {
 				m.logger.Warn("recovery: creating agent has no live shim, marking error",
 					"agent_key", key, "error", err)
 				// Don't mark stopped here — the creating-cleanup pass handles this below.
@@ -89,7 +89,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 					"error", err)
 				// Fail-closed: mark agent as stopped (D012/D029).
 				if tErr := m.agents.UpdateStatus(ctx, ws, name, apiari.AgentRunStatus{
-					State:        api.StatusStopped,
+					State:        apiruntime.StatusStopped,
 					ErrorMessage: fmt.Sprintf("shim not recovered after daemon restart: %v", err),
 				}); tErr != nil {
 					m.logger.Error("recovery: failed to mark agent stopped",
@@ -121,12 +121,12 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			if currentAgent != nil {
 				currentState = currentAgent.Status.State
 			}
-			if currentState == api.StatusIdle && shimStatus == api.StatusRunning {
+			if currentState == apiruntime.StatusIdle && shimStatus == apiruntime.StatusRunning {
 				// Already reconciled by recoverAgent; no additional update needed.
-			} else if currentState == api.StatusRunning && shimStatus == api.StatusIdle {
+			} else if currentState == apiruntime.StatusRunning && shimStatus == apiruntime.StatusIdle {
 				// Shim became idle during recovery — update to idle.
 				if aErr := m.agents.UpdateStatus(ctx, ws, name, apiari.AgentRunStatus{
-					State:          api.StatusIdle,
+					State:          apiruntime.StatusIdle,
 					ShimSocketPath: agent.Status.ShimSocketPath,
 					ShimStateDir:   agent.Status.ShimStateDir,
 					ShimPID:        agent.Status.ShimPID,
@@ -142,7 +142,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 
 	// Creating-cleanup pass: agents that were still bootstrapping when the
 	// daemon restarted will never complete — mark them as error.
-	if creatingAgents, err := m.store.ListAgentRuns(ctx, &apiari.AgentRunFilter{State: api.StatusCreating}); err != nil {
+	if creatingAgents, err := m.store.ListAgentRuns(ctx, &apiari.AgentRunFilter{State: apiruntime.StatusCreating}); err != nil {
 		m.logger.Warn("recovery: failed to list creating agents for cleanup", "error", err)
 	} else {
 		for _, agent := range creatingAgents {
@@ -153,7 +153,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			m.logger.Warn("recovery: agent stuck in creating, marking error", "agent_key", key)
 			if aErr := m.agents.UpdateStatus(ctx, agent.Metadata.Workspace, agent.Metadata.Name,
 				apiari.AgentRunStatus{
-					State:        api.StatusError,
+					State:        apiruntime.StatusError,
 					ErrorMessage: "agent bootstrap lost: daemon restarted during creating phase",
 				}); aErr != nil {
 				m.logger.Warn("recovery: failed to mark creating agent as error",
@@ -175,10 +175,10 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 }
 
 // recoverAgent attempts to reconnect to a single shim process.
-// Returns the shim's reported api.Status on success (api.StatusStopped on failure).
-func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRun) (api.Status, error) {
+// Returns the shim's reported apiruntime.Status on success (apiruntime.StatusStopped on failure).
+func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRun) (apiruntime.Status, error) {
 	if agent.Status.ShimSocketPath == "" {
-		return api.StatusStopped, fmt.Errorf("no socket path persisted for agent %s/%s",
+		return apiruntime.StatusStopped, fmt.Errorf("no socket path persisted for agent %s/%s",
 			agent.Metadata.Workspace, agent.Metadata.Name)
 	}
 
@@ -206,7 +206,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRu
 	// Routes session/update → shimProc.Events and runtime/state_change → DB (D088).
 	client, err := shimclient.DialWithHandler(ctx, agent.Status.ShimSocketPath, shimclient.NotificationHandler(m.buildNotifHandler(ws, name, shimProc)))
 	if err != nil {
-		return api.StatusStopped, fmt.Errorf("connect to shim socket %s: %w", agent.Status.ShimSocketPath, err)
+		return apiruntime.StatusStopped, fmt.Errorf("connect to shim socket %s: %w", agent.Status.ShimSocketPath, err)
 	}
 	shimProc.Client = client
 
@@ -214,7 +214,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRu
 	statusResult, err := client.Status(ctx)
 	if err != nil {
 		_ = client.Close()
-		return api.StatusStopped, fmt.Errorf("runtime/status: %w", err)
+		return apiruntime.StatusStopped, fmt.Errorf("runtime/status: %w", err)
 	}
 	status := *statusResult
 	logger.Info("recovery: shim status",
@@ -227,15 +227,15 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRu
 
 	// Reconcile shim-reported status against DB agent state.
 	switch {
-	case status.State.Status == api.StatusStopped:
+	case status.State.Status == apiruntime.StatusStopped:
 		// Shim reports stopped — fail-closed.
 		_ = client.Close()
-		return api.StatusStopped, fmt.Errorf("shim reports stopped for agent %s", key)
+		return apiruntime.StatusStopped, fmt.Errorf("shim reports stopped for agent %s", key)
 
-	case status.State.Status == api.StatusRunning && agent.Status.State == api.StatusIdle:
+	case status.State.Status == apiruntime.StatusRunning && agent.Status.State == apiruntime.StatusIdle:
 		// Shim is running but DB still says idle — update DB to match shim truth.
 		if err := m.agents.UpdateStatus(ctx, ws, name, apiari.AgentRunStatus{
-			State:          api.StatusRunning,
+			State:          apiruntime.StatusRunning,
 			ShimSocketPath: agent.Status.ShimSocketPath,
 			ShimStateDir:   agent.Status.ShimStateDir,
 			ShimPID:        agent.Status.ShimPID,
@@ -262,7 +262,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *apiari.AgentRu
 	subResult, err := client.Subscribe(ctx, &apishim.SessionSubscribeParams{FromSeq: &fromSeq})
 	if err != nil {
 		_ = client.Close()
-		return api.StatusStopped, fmt.Errorf("session/subscribe fromSeq=%d: %w", fromSeq, err)
+		return apiruntime.StatusStopped, fmt.Errorf("session/subscribe fromSeq=%d: %w", fromSeq, err)
 	}
 	logger.Info("recovery: atomic subscribe with backfill",
 		"backfill_entries", len(subResult.Entries),
@@ -333,7 +333,7 @@ func (m *ProcessManager) watchRecoveredProcess(workspace, name string, shimProc 
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: api.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, apiari.AgentRunStatus{State: apiruntime.StatusStopped})
 
 	// Close the Done channel LAST to signal all cleanup is complete.
 	close(shimProc.Done)

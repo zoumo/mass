@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
 	"github.com/zoumo/oar/api/shim"
 	"github.com/zoumo/oar/pkg/events"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	"github.com/zoumo/oar/pkg/store"
 )
 
@@ -102,7 +102,7 @@ func TestProcessManagerStart(t *testing.T) {
 			Agent: "mockagent",
 		},
 		Status: apiari.AgentRunStatus{
-			State: api.StatusCreating,
+			State: apiruntime.StatusCreating,
 		},
 	}
 	if err := store.CreateAgentRun(ctx, agent); err != nil {
@@ -138,11 +138,11 @@ func TestProcessManagerStart(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get agent after Start: %v", err)
 		}
-		if updatedAgent.Status.State != api.StatusCreating {
+		if updatedAgent.Status.State != apiruntime.StatusCreating {
 			break
 		}
 	}
-	if updatedAgent.Status.State != api.StatusIdle && updatedAgent.Status.State != api.StatusRunning {
+	if updatedAgent.Status.State != apiruntime.StatusIdle && updatedAgent.Status.State != apiruntime.StatusRunning {
 		t.Errorf("expected agent state 'idle' or 'running' after stateChange notification, got '%s'", updatedAgent.Status.State)
 	}
 
@@ -165,7 +165,7 @@ func TestProcessManagerStart(t *testing.T) {
 	t.Logf("Shim state: ID=%s, Status=%s, PID=%d, Bundle=%s, recovery.lastSeq=%d",
 		state.ID, state.Status, state.PID, state.Bundle, statusResult.Recovery.LastSeq)
 
-	if state.Status != api.StatusIdle && state.Status != api.StatusRunning {
+	if state.Status != apiruntime.StatusIdle && state.Status != apiruntime.StatusRunning {
 		t.Errorf("expected shim status 'idle' or 'running', got '%s'", state.Status)
 	}
 
@@ -239,12 +239,12 @@ done:
 		if err != nil {
 			t.Fatalf("Get agent after shutdown: %v", err)
 		}
-		if finalAgent.Status.State == api.StatusStopped {
+		if finalAgent.Status.State == apiruntime.StatusStopped {
 			break
 		}
 	}
-	if finalAgent == nil || finalAgent.Status.State != api.StatusStopped {
-		got := api.Status("")
+	if finalAgent == nil || finalAgent.Status.State != apiruntime.StatusStopped {
+		got := apiruntime.Status("")
 		if finalAgent != nil {
 			got = finalAgent.Status.State
 		}
@@ -271,7 +271,7 @@ func TestGenerateConfig(t *testing.T) {
 		Spec: apiari.AgentSpec{
 			Command: "/usr/bin/mockagent",
 			Args:    []string{},
-			Env: []api.EnvVar{
+			Env: []apiruntime.EnvVar{
 				{Name: "SOME_VAR", Value: "value"},
 			},
 		},

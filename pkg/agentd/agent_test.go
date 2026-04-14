@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/api"
 	apiari "github.com/zoumo/oar/api/ari"
+	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
 	"github.com/zoumo/oar/pkg/store"
 )
 
@@ -66,7 +66,7 @@ func TestAgentCreate_RoundTrip(t *testing.T) {
 	require.NoError(t, am.Create(ctx, agent), "Create should succeed")
 
 	// Verify default state was applied.
-	assert.Equal(t, api.StatusCreating, agent.Status.State, "default state should be creating")
+	assert.Equal(t, apiruntime.StatusCreating, agent.Status.State, "default state should be creating")
 
 	got, err := am.Get(ctx, "default", "alpha")
 	require.NoError(t, err, "Get should succeed")
@@ -77,7 +77,7 @@ func TestAgentCreate_RoundTrip(t *testing.T) {
 	assert.Equal(t, "default", got.Spec.Agent)
 	assert.Equal(t, "test agent", got.Spec.Description)
 	assert.Equal(t, "you are a test", got.Spec.SystemPrompt)
-	assert.Equal(t, api.StatusCreating, got.Status.State)
+	assert.Equal(t, apiruntime.StatusCreating, got.Status.State)
 	assert.Equal(t, map[string]string{"env": "test"}, got.Metadata.Labels)
 }
 
@@ -110,14 +110,14 @@ func TestAgentList_StateFilter(t *testing.T) {
 	require.NoError(t, am.Create(ctx, a1))
 	require.NoError(t, am.Create(ctx, a2))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", apiari.AgentRunStatus{State: api.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", apiari.AgentRunStatus{State: apiruntime.StatusStopped}))
 
-	stoppedAgents, err := am.List(ctx, &apiari.AgentRunFilter{State: api.StatusStopped})
+	stoppedAgents, err := am.List(ctx, &apiari.AgentRunFilter{State: apiruntime.StatusStopped})
 	require.NoError(t, err)
 	require.Len(t, stoppedAgents, 1)
 	assert.Equal(t, "a1", stoppedAgents[0].Metadata.Name)
 
-	creatingAgents, err := am.List(ctx, &apiari.AgentRunFilter{State: api.StatusCreating})
+	creatingAgents, err := am.List(ctx, &apiari.AgentRunFilter{State: apiruntime.StatusCreating})
 	require.NoError(t, err)
 	require.Len(t, creatingAgents, 1)
 	assert.Equal(t, "a2", creatingAgents[0].Metadata.Name)
@@ -156,12 +156,12 @@ func TestAgentUpdateStatus(t *testing.T) {
 	agent := makeTestAgentRun("ws1", "stateful")
 	require.NoError(t, am.Create(ctx, agent))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", apiari.AgentRunStatus{State: api.StatusRunning}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", apiari.AgentRunStatus{State: apiruntime.StatusRunning}))
 
 	got, err := am.Get(ctx, "ws1", "stateful")
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, api.StatusRunning, got.Status.State)
+	assert.Equal(t, apiruntime.StatusRunning, got.Status.State)
 }
 
 // TestAgentDelete_RequiresStopped tests that a stopped agent can be deleted.
@@ -175,7 +175,7 @@ func TestAgentDelete_RequiresStopped(t *testing.T) {
 	require.NoError(t, am.Create(ctx, agent))
 
 	// Transition to stopped.
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", apiari.AgentRunStatus{State: api.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", apiari.AgentRunStatus{State: apiruntime.StatusStopped}))
 
 	// Delete should succeed.
 	require.NoError(t, am.Delete(ctx, "ws1", "deletable"))
@@ -196,7 +196,7 @@ func TestAgentDelete_AllowsError(t *testing.T) {
 	agent := makeTestAgentRun("ws1", "errored")
 	require.NoError(t, am.Create(ctx, agent))
 	require.NoError(t, am.UpdateStatus(ctx, "ws1", "errored", apiari.AgentRunStatus{
-		State:        api.StatusError,
+		State:        apiruntime.StatusError,
 		ErrorMessage: "boom",
 	}))
 
@@ -225,7 +225,7 @@ func TestAgentDelete_Protected(t *testing.T) {
 	require.ErrorAs(t, err, &notStopped, "error should be ErrDeleteNotStopped")
 	assert.Equal(t, "ws1", notStopped.Workspace)
 	assert.Equal(t, "protected", notStopped.Name)
-	assert.Equal(t, api.StatusCreating, notStopped.State)
+	assert.Equal(t, apiruntime.StatusCreating, notStopped.State)
 }
 
 // TestAgentGet_NotFound tests that Get returns nil,nil for a missing agent.
