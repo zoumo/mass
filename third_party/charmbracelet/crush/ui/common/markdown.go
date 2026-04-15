@@ -2,7 +2,7 @@ package common
 
 import (
 	"charm.land/glamour/v2"
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
 )
 
 // MarkdownRenderer returns a glamour [glamour.TermRenderer] configured with

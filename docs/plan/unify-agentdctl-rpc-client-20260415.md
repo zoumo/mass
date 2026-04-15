@@ -492,7 +492,7 @@ func (c *Client) Close() error {
 
 ### 兼容性
 
-`Client.Call(method, params, result)` 签名不变（除了 context 由内部提供）。如果调用方需要 context 支持，可以改为 `CallContext(ctx, method, params, result)`，但当前 `agentdctl` 的 ARI 调用都是短生命周期，context.Background() 足够。
+`Client.Call(method, params, result)` 签名不变（除了 context 由内部提供）。如果调用方需要 context 支持，可以改为 `CallContext(ctx, method, params, result)`，但当前 `massctl` 的 ARI 调用都是短生命周期，context.Background() 足够。
 
 ---
 
@@ -510,7 +510,7 @@ func (c *Client) Close() error {
 rg "type rpcRequest struct|type rpcResponse struct|type rpcError struct" \
   --glob '!docs/plan/*' --glob '!.gsd/*'
 
-# 确认 pkg/ndjson 仅被需要它的包引用（不再被 agentdctl 引用）
+# 确认 pkg/ndjson 仅被需要它的包引用（不再被 massctl 引用）
 rg "ndjson" --glob '!docs/*' --glob '!.gsd/*' --glob '!pkg/ndjson/*'
 ```
 
@@ -550,7 +550,7 @@ rg "ndjson" --glob '!docs/*' --glob '!.gsd/*' --glob '!pkg/ndjson/*'
 1. `make build` 通过
 2. `go test ./pkg/jsonrpc/... ./pkg/shim/api/... ./pkg/ari/client/... ./cmd/massctl/...` 全部通过
 3. `rg "type rpcRequest struct|type rpcResponse struct|type rpcError struct" --glob '!docs/plan/*' --glob '!.gsd/*'` 无输出
-4. agentdctl shim 的 `state`、`history`、`stop`、`prompt`、`chat` 子命令功能正常
+4. massctl shim 的 `state`、`history`、`stop`、`prompt`、`chat` 子命令功能正常
 5. `pkg/ndjson` 不再被 `cmd/massctl` 直接引用
 
 ## 风险与决策点

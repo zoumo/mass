@@ -1,4 +1,4 @@
-module github.com/zoumo/oar
+module github.com/zoumo/mass
 
 go 1.26.1
 

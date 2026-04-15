@@ -15,7 +15,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/lucasb-eyer/go-colorful"
 
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/csync"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/csync"
 )
 
 const (

@@ -12,7 +12,7 @@ import (
 	"charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/diffview"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/diffview"
 	"github.com/charmbracelet/x/exp/charmtone"
 )
 
