@@ -42,7 +42,7 @@ lessons_learned:
 
 ## What Happened
 
-M002 was a four-slice campaign to make the OAR runtime contract internally consistent and its restart behavior truthful.
+M002 was a four-slice campaign to make the MASS runtime contract internally consistent and its restart behavior truthful.
 
 **S01 — Design contract convergence.** Closed the cross-document contradictions that had made further runtime work unsafe. Produced a single authority map (`docs/design/contract-convergence.md`) that assigns ownership of every design concept to exactly one document. Established that `session/new` is configuration-only bootstrap, `session/prompt` is the work-entry path, Room ownership is split between orchestrator desired state and agentd realized state, and workspace host-impact boundaries are explicit. Left a mechanical two-part proof surface (contract verifier script + example bundle validation test) so future design edits can be checked without prose review.
 

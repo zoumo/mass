@@ -38,7 +38,7 @@ key_files:
 lessons_learned:
   - K023: exec.CommandContext kills process when context cancelled — NEVER use it for long-running daemon processes that should outlive the request. Use exec.Command and manage lifecycle explicitly.
   - K024: JSON-RPC error code semantics — Use CodeInvalidParams for client-provided invalid state, CodeInternalError for server-side failures. Error code choice matters for client debugging.
-  - K025: macOS Unix socket path limitation — 104-char limit on macOS. Use short paths like /tmp/oar-{pid}-{counter}.sock for integration tests, never t.TempDir().
+  - K025: macOS Unix socket path limitation — 104-char limit on macOS. Use short paths like /tmp/mass-{pid}-{counter}.sock for integration tests, never t.TempDir().
   - K026: ARI client serialization — JSON-RPC clients are not thread-safe for concurrent calls. The mutex only protects ID generation. Serialize full request/response cycle or use separate clients.
   - K027: Integration test cleanup with pkill — Tests that spawn processes need aggressive cleanup. Use pkill in cleanup function to ensure clean state for subsequent tests.
 ---

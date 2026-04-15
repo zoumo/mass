@@ -283,7 +283,7 @@ This file is the explicit capability and coverage contract for the project.
 - Class: differentiator
 - Status: validated
 - Description: The project must eventually support a realized Room runtime with explicit ownership, routing, and delivery semantics rather than leaving Room as conflicting partial intent.
-- Why it matters: Multi-agent coordination is a central differentiator for OAR, but it must land on a stable contract.
+- Why it matters: Multi-agent coordination is a central differentiator for MASS, but it must land on a stable contract.
 - Source: user
 - Primary owning slice: M003-c761yf (provisional)
 - Supporting slices: none

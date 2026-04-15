@@ -46,7 +46,7 @@ lessons_learned:
   - Three-layer rename discipline: meta layer → ari types → ari server → CLI must compile as a unit — attempting layer-by-layer leaves the build broken between steps and wastes time debugging phantom import errors
   - cobra inline command literal extraction is a prerequisite for Flags() — you cannot call Flags() on an unaddressable inline literal; always extract to a named var first (K072)
   - ari.Client.Call surfaces RPC errors as plain fmt.Errorf strings, not typed *jsonrpc2.Error — errors.As check will silently never match; use err.Error() contains '-32602' style assertions (K073)
-  - macOS socket path limit (104 bytes) bites t.TempDir() in pkg tests — use os.MkdirTemp('/tmp', 'oar-*') for any test that creates a Unix domain socket; t.TempDir() produces paths in /var/folders/... which routinely exceed the limit (K075)
+  - macOS socket path limit (104 bytes) bites t.TempDir() in pkg tests — use os.MkdirTemp('/tmp', 'mass-*') for any test that creates a Unix domain socket; t.TempDir() produces paths in /var/folders/... which routinely exceed the limit (K075)
   - Self-fork pattern (os.Executable() + 'shim' first arg) is simpler than binary path resolution but requires OAR_SHIM_BINARY escape hatch for test environments where the running binary is a test binary, not the real agentd
   - Deleting stub files from a prior slice (agentrun.go stub from S03) is expected in later slices — the stub's grammar (flags) was intentionally a scaffold that the real implementation superseded with a cleaner positional grammar
   - cobra subcommand collision in shared package main is solved by two complementary patterns: (1) type/function prefixing for inlined source packages, (2) local var scoping inside constructor functions for flag vars — both are needed; using only one leaves half the collision surface unaddressed
@@ -54,7 +54,7 @@ lessons_learned:
 
 # M008: CLI Consolidation + API Model Rename
 
-**Consolidated 5 binaries into 2 (agentd + agentdctl), eliminated config.yaml via --root flag, elevated RuntimeClass to a DB-persisted AgentTemplate entity with full ARI CRUD, adopted resource-first CLI grammar, and renamed the API model to agent=template / agentrun=running instance — aligning OAR with the containerd Container/Task conceptual model.**
+**Consolidated 5 binaries into 2 (agentd + agentdctl), eliminated config.yaml via --root flag, elevated RuntimeClass to a DB-persisted AgentTemplate entity with full ARI CRUD, adopted resource-first CLI grammar, and renamed the API model to agent=template / agentrun=running instance — aligning MASS with the containerd Container/Task conceptual model.**
 
 ## What Happened
 

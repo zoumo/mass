@@ -69,7 +69,7 @@ All success criteria were derived from the "After this" column of each slice in 
 ### S01: Runtime-spec consumer migration
 - ✅ `make build` exits 0 — both agentd and agentdctl produced
 - ✅ `go test ./...` all packages pass
-- ✅ Zero `api/runtime` imports: `rg '"github.com/zoumo/oar/api/runtime"' --type go` → exit 1 (no matches)
+- ✅ Zero `api/runtime` imports: `rg '"github.com/zoumo/mass/api/runtime"' --type go` → exit 1 (no matches)
 - ✅ Zero `api.Status`/`api.EnvVar` bare imports: verified by zero bare `api` import results
 - ✅ `api/runtime/` directory deleted: `test ! -d api/runtime` → pass
 - ✅ `api/types.go` deleted: `test ! -f api/types.go` → pass
@@ -79,14 +79,14 @@ All success criteria were derived from the "After this" column of each slice in 
 - ✅ `make build` + `go test ./...` pass
 - ✅ `pkg/ari/api/` has types.go, domain.go, methods.go: `ls pkg/ari/api/` confirmed
 - ✅ `pkg/ari` root has only api/, server/, client/ subdirs: `ls pkg/ari/` → api client server
-- ✅ Zero `api/ari` imports: `rg '"github.com/zoumo/oar/api/ari"' --type go` → exit 1 (no matches)
-- ✅ Zero bare `pkg/ari` imports: `rg '"github.com/zoumo/oar/pkg/ari"[^/]' --type go` → exit 1 (no matches)
+- ✅ Zero `api/ari` imports: `rg '"github.com/zoumo/mass/api/ari"' --type go` → exit 1 (no matches)
+- ✅ Zero bare `pkg/ari` imports: `rg '"github.com/zoumo/mass/pkg/ari"[^/]' --type go` → exit 1 (no matches)
 
 ### S03: Shim package restructure + api/ deletion
 - ✅ `make build` + `go test ./...` pass
 - ✅ `pkg/shim/api/` has all shim type files: client.go, event_constants.go, event_types.go, methods.go, service.go, shim_event.go, types.go
-- ✅ Zero `api/shim` imports: `rg '"github.com/zoumo/oar/api/shim"' --type go` → exit 1 (no matches)
-- ✅ Zero bare `api` imports: `rg '"github.com/zoumo/oar/api"[^/]' --type go` → exit 1 (no matches)
+- ✅ Zero `api/shim` imports: `rg '"github.com/zoumo/mass/api/shim"' --type go` → exit 1 (no matches)
+- ✅ Zero bare `api` imports: `rg '"github.com/zoumo/mass/api"[^/]' --type go` → exit 1 (no matches)
 - ✅ `api/` directory gone: `test ! -d api` → pass
 
 ### S04: Events impl + ACP runtime migration + final verification

@@ -4,7 +4,7 @@ title: "Reduce Shim Event Translation Overhead"
 status: complete
 completed_at: 2026-04-12T14:43:24.951Z
 key_decisions:
-  - OAR preserves _meta in all ContentBlock variants even though ACP SDK ContentBlock.MarshalJSON strips it in union serialization — data fidelity over perfect wire shape alignment
+  - MASS preserves _meta in all ContentBlock variants even though ACP SDK ContentBlock.MarshalJSON strips it in union serialization — data fidelity over perfect wire shape alignment
   - ConfigSelectOptions uses bare array with grouped-first heuristic (check Group field) for ungrouped/grouped discrimination during unmarshal
   - Shape alignment tests use Meta-free inputs for structural key tests due to ACP SDK _meta strip behavior
 key_files:
@@ -31,7 +31,7 @@ M011 eliminated the over-aggressive ACP event translation in pkg/events/translat
 
 S01 delivered the complete structural implementation: api/events.go gained 5 new constants; types.go was rewritten with 15+ new support types implementing flat ACP wire shape (ContentBlock, ToolCallContent, EmbeddedResource, ConfigOption, AvailableCommandInput unions all with json:"-" variant pointers + custom MarshalJSON/UnmarshalJSON); existing event types enriched with full ACP fields; 5 new event types added; translate() now covers all 11 branches; decodeEventPayload handles 17 types; design docs updated. S02 fixed 6 broken tests and added 31 new tests covering all 22 plan matrix items, including shape alignment tests that discovered ACP SDK's ContentBlock.MarshalJSON selectively strips _meta from union wire shape (documented in code).
 
-Key design note: OAR intentionally preserves _meta in all support types even though ACP SDK's ContentBlock union MarshalJSON omits it — this is the "保留 _meta 扩展点" principle taking precedence over perfect wire shape alignment for extension metadata.
+Key design note: MASS intentionally preserves _meta in all support types even though ACP SDK's ContentBlock union MarshalJSON omits it — this is the "保留 _meta 扩展点" principle taking precedence over perfect wire shape alignment for extension metadata.
 
 ## Success Criteria Results
 

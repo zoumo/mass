@@ -1,6 +1,6 @@
 ---
 id: M007
-title: "OAR Platform Terminal State Refactor"
+title: "MASS Platform Terminal State Refactor"
 status: complete
 completed_at: 2026-04-09T23:21:18.569Z
 key_decisions:
@@ -31,7 +31,7 @@ key_files:
   - pkg/ari/types.go — All Session*/Room* types removed; Workspace/Agent types with (workspace,name) identity
   - cmd/workspace-mcp-server/main.go — workspace_send + workspace_status MCP tools; OAR_WORKSPACE_NAME; self-contained ARI structs
   - cmd/agentdctl/workspace.go — workspace CRUD + send subcommands; parseAgentKey() helper
-  - tests/integration/session_test.go — createTestWorkspace/deleteTestWorkspace/waitForAgentState/waitForAgentStateOneOf helpers; /tmp/oar-<pid>-<counter>.sock pattern
+  - tests/integration/session_test.go — createTestWorkspace/deleteTestWorkspace/waitForAgentState/waitForAgentStateOneOf helpers; /tmp/mass-<pid>-<counter>.sock pattern
   - tests/integration/e2e_test.go — TestEndToEndPipeline full lifecycle test
   - tests/integration/restart_test.go — TestAgentdRestartRecovery 7-phase test
   - docs/design/agentd/ari-spec.md — Full rewrite: workspace/agent model, all methods documented
@@ -48,13 +48,13 @@ lessons_learned:
   - The 'creating-cleanup recovery pass' (scan for StatusCreating agents first, mark StatusError) must run before the shim reconnection pass to avoid incorrect state inheritance
 ---
 
-# M007: OAR Platform Terminal State Refactor
+# M007: MASS Platform Terminal State Refactor
 
-**Cut the entire OAR platform to its terminal state in one clean pass: bbolt replaces SQLite, spec.Status (idle replaces created) becomes the single state enum, Session/Room concepts are eliminated, Workspace unifies grouping and filesystem, Agent identity becomes (workspace,name) with no UUID, shim is the sole post-bootstrap state write authority, and RestartPolicy governs recovery — all verified by 9 passing integration tests and 0 golangci-lint issues.**
+**Cut the entire MASS platform to its terminal state in one clean pass: bbolt replaces SQLite, spec.Status (idle replaces created) becomes the single state enum, Session/Room concepts are eliminated, Workspace unifies grouping and filesystem, Agent identity becomes (workspace,name) with no UUID, shim is the sole post-bootstrap state write authority, and RestartPolicy governs recovery — all verified by 9 passing integration tests and 0 golangci-lint issues.**
 
 ## What Happened
 
-M007 executed a comprehensive, no-compat-layer refactor of the OAR platform across five sequential slices over a single engineering cycle.
+M007 executed a comprehensive, no-compat-layer refactor of the MASS platform across five sequential slices over a single engineering cycle.
 
 **S01 — Storage + Model Foundation** replaced the SQLite/CGo backend with a pure-Go bbolt store, deleted all Session/Room/AgentState/SessionState concepts, and swept every Go package to a green `go build ./...`. The bbolt bucket hierarchy (`v1/workspaces/{name}` and `v1/agents/{workspace}/{name}`) established the composite string identity model. StatusCreated was replaced with StatusIdle ("idle") as the new post-bootstrap state. pkg/ari/server.go was replaced with a compilable 60-line stub to preserve build-green while deferring the full handler rewrite to S03. 37 bbolt unit tests validated the store. An important discovery: spec.StatusIdle had to be added in T01 (earlier than planned) because agent_test.go depended on it.
 
