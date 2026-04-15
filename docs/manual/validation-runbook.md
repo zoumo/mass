@@ -80,7 +80,7 @@ source:
 
 ## 快速启动（massctl up）
 
-`massctl up` 从一个 YAML 配置文件中读取 workspace + agent 描述，一次性调用 agentd RPC 创建全部资源并等待就绪：
+`massctl up` 从一个 YAML 配置文件中读取 workspace + agent 描述，一次性调用 ARI RPC 创建全部资源并等待就绪：
 
 **`bin/e2e/up.yaml`**
 ```yaml
@@ -111,7 +111,7 @@ spec:
 前置步骤（需手动执行一次）：
 
 ```bash
-# 1. 启动 agentd
+# 1. 启动 mass
 ./bin/mass server &
 # 等待 ARI socket 就绪
 
@@ -121,7 +121,7 @@ spec:
 ./bin/massctl agent apply -f bin/e2e/agents/gsd-pi.yaml
 ```
 
-然后执行 `up`，会自动创建 workspace、所有 agent run，并等待全部 idle 后输出 attach socket 路径：
+然后执行 `up`，会自动创建 workspace、所有 agent run，并等待全部 idle 后输出 shim socket 路径：
 
 ```bash
 ./bin/massctl --socket /var/run/mass/ari.sock up -f bin/e2e/up.yaml
@@ -142,7 +142,7 @@ Agent "agentd-e2e"/"claude-code" is idle
 Waiting for agent "agentd-e2e"/"gsd-pi" to be idle...
 Agent "agentd-e2e"/"gsd-pi" is idle
 
-All agents are ready. Attach info:
+All agents are ready. Shim sockets:
   agentd-e2e/codex: /tmp/mass-<PID>/codex.sock
   agentd-e2e/claude-code: /tmp/mass-<PID>/claude-code.sock
   agentd-e2e/gsd-pi: /tmp/mass-<PID>/gsd-pi.sock
@@ -157,7 +157,7 @@ All agents are ready. Attach info:
 1. 启动 `mass server`，等待 ARI socket 就绪
 2. 通过 `massctl agent apply` 注册三个 agent 模板
 3. 通过 `massctl up -f bin/e2e/up.yaml` 创建 workspace + 所有 agent run，等待全部 idle
-4. 通过 `massctl agentrun attach` 获取各 agent 的 shim socket 路径
+4. 通过 `massctl agentrun get` 获取各 agent 的 shim socket 路径（`.status.shim.socketPath`）
 5. 使用 cmux CLI 创建一个 workspace，分裂为三个 pane，分别启动 `massctl shim chat` 连接三个 agent
 
 ```
@@ -291,10 +291,10 @@ ctl agentrun prompt --workspace "$WS" --name gsd-pi --text \
 # 查看所有 agent 状态
 ctl agentrun list --workspace "$WS"
 
-# 查看单个 agent 详细状态
-ctl agentrun status --workspace "$WS" --name codex
-ctl agentrun status --workspace "$WS" --name claude-code
-ctl agentrun status --workspace "$WS" --name gsd-pi
+# 查看单个 agent 详细状态（包含 shim socket 路径）
+ctl agentrun get --workspace "$WS" --name codex
+ctl agentrun get --workspace "$WS" --name claude-code
+ctl agentrun get --workspace "$WS" --name gsd-pi
 
 # 检查 workspace 状态
 ctl workspace get --name "$WS"
@@ -302,11 +302,10 @@ ctl workspace get --name "$WS"
 # 取消正在执行的 prompt
 ctl agentrun cancel --workspace "$WS" --name codex
 
-# 查看 shim 历史事件（需要 shim socket 路径）
-# 先获取 socket 路径
-ctl agentrun attach --workspace "$WS" --name codex
-# 然后用返回的 socketPath 查看历史
-ctl shim --socket <socketPath> history
+# 获取 shim socket 路径（用于 shim 子命令）
+ctl agentrun get --workspace "$WS" --name codex | jq -r '.status.shim.socketPath'
+# 然后用返回的 socketPath 查看状态
+massctl shim --socket <socketPath> state
 ```
 
 ### 清理环境
@@ -340,13 +339,12 @@ ctl workspace delete --name "$WS"
 | 创建 agent run | `massctl agentrun create --workspace <ws> --name <n> --runtime-class <rc>` |
 | 发送 prompt（阻塞等待） | `massctl agentrun prompt --workspace <ws> --name <name> --text '...' --wait` |
 | 发送 prompt（异步） | `massctl agentrun prompt --workspace <ws> --name <name> --text '...'` |
-| 查看 agent 状态 | `massctl agentrun status --workspace <ws> --name <name>` |
+| 查看 agent run 详情 | `massctl agentrun get --workspace <ws> --name <name>` |
 | agent 间消息 | `massctl workspace send --name <ws> --from <a> --to <b> --text '...'` |
 | 取消执行中的 prompt | `massctl agentrun cancel --workspace <ws> --name <name>` |
 | 停止 agent | `massctl agentrun stop --workspace <ws> --name <name>` |
 | 删除 agent | `massctl agentrun delete --workspace <ws> --name <name>` |
 | 交互式 chat | `massctl shim --socket <path> chat` |
 | 查看 shim 状态 | `massctl shim --socket <path> state` |
-| 查看事件历史 | `massctl shim --socket <path> history` |
 
 > 全局参数：`--socket <path>` 指定 ARI socket 路径（默认 `/var/run/mass/ari.sock`）

@@ -663,7 +663,7 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 
 	// Delivered prompt must include the sender envelope and the original message.
 	prompt := shimSrv.receivedPrompts()[0]
-	assert.Contains(t, prompt, "[workspace-message from=sender]")
+	assert.Contains(t, prompt, `<workspace-message from="sender" />`)
 	assert.Contains(t, prompt, "hello")
 }
 
@@ -691,8 +691,7 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 
 	// When needsReply=true the envelope must include reply-to and reply-requested=true.
 	prompt := shimSrv.receivedPrompts()[0]
-	assert.Contains(t, prompt, "reply-to=codex")
-	assert.Contains(t, prompt, "reply-requested=true")
+	assert.Contains(t, prompt, `<workspace-message from="codex" reply-to="codex" reply-requested="true" />`)
 	assert.Contains(t, prompt, "please review")
 }
 

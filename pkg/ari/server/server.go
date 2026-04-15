@@ -269,7 +269,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSen
 		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "target agent is not running"}
 	}
 
-	msg := buildWorkspaceEnvelope(*req) + req.Message
+	msg := req.Message + buildWorkspaceFooter(*req)
 	go func() {
 		if _, err := client.Prompt(context.Background(), &apishim.SessionPromptParams{Prompt: msg}); err != nil {
 			a.logger.Warn("workspace/send: prompt delivery failed",
@@ -786,11 +786,11 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkga
 	})
 }
 
-// buildWorkspaceEnvelope constructs the envelope header prepended to every
+// buildWorkspaceFooter constructs the XML envelope appended to every
 // workspace message before delivery.
-func buildWorkspaceEnvelope(p pkgariapi.WorkspaceSendParams) string {
+func buildWorkspaceFooter(p pkgariapi.WorkspaceSendParams) string {
 	if p.NeedsReply {
-		return "[workspace-message from=" + p.From + " reply-to=" + p.From + " reply-requested=true]\n\n"
+		return "\n\n<workspace-message from=\"" + p.From + "\" reply-to=\"" + p.From + "\" reply-requested=\"true\" />"
 	}
-	return "[workspace-message from=" + p.From + "]\n\n"
+	return "\n\n<workspace-message from=\"" + p.From + "\" />"
 }

@@ -55,7 +55,7 @@ workspace-mcp (claude-code 的 MCP server)
   ▼
 agentd
   │  lookup target shim → codex 的 agent-shim
-  │  inject envelope: [workspace-message from=claude-code reply-requested=true]
+  │  append envelope: <workspace-message from="claude-code" reply-requested="true" />
   ▼
 agent-shim (codex)
   │  deliver as prompt to codex agent process
@@ -89,16 +89,18 @@ codex (receives message, processes, replies via same path in reverse)
 
 ### 信封格式（Envelope）
 
-agentd 在投递消息时会在消息文本前添加信封头：
+mass 在投递消息时会在消息文本**尾部**追加 XML 格式的信封标签：
 
 ```
-[workspace-message from=<sender> reply-to=<sender> reply-requested=<true|false>]
-
 <消息正文>
+
+<workspace-message from="<sender>" reply-to="<sender>" reply-requested="true" />
 ```
 
+- 自闭合 XML 标签，属性值用双引号；
+- 消息正文与 XML 标签间用 `\n\n` 分隔；
+- `reply-to` 和 `reply-requested` 仅在 `needsReply=true` 时出现；
 - `reply-to` 当前硬编码等于 `from`；
-- `reply-requested` 由 `needsReply` 字段决定；
 - 当前不支持 `threadId` 参数。
 
 ### 拒绝条件
