@@ -28,67 +28,19 @@ func jsonKeys(t *testing.T, v any) map[string]bool {
 	return keys
 }
 
-// ── Test 16: ContentBlock JSON shape alignment ────────────────────────────────
+// ContentBlock wire shape tests are removed — ContentBlock is now a direct
+// type alias of acp.ContentBlock, so wire format identity is guaranteed.
 
-func TestWireShape_ContentBlock_Text(t *testing.T) {
-	// Note: ACP SDK ContentBlock.MarshalJSON builds a selective nm map that
-	// intentionally excludes _meta and annotations from the union wire shape.
-	// MASS preserves _meta (design principle #2). To test structural key layout
-	// alignment (type + required fields), we use inputs without Meta.
-	acpObj := acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}}
-	shimObj := apishim.ContentBlock{Text: &apishim.TextContent{Text: "hello"}}
-	acpKeys := jsonKeys(t, acpObj)
-	oarKeys := jsonKeys(t, shimObj)
-	assert.Equal(t, acpKeys, oarKeys, "ContentBlock text variant structural key layout mismatch")
-	assert.True(t, acpKeys["type"], "type discriminator must be present")
-	assert.True(t, acpKeys["text"], "text field must be present")
-}
-
-func TestWireShape_ContentBlock_Image(t *testing.T) {
-	uri := "https://x.com/img.png"
-	acpObj := acp.ContentBlock{Image: &acp.ContentBlockImage{
-		Data: "b64", MimeType: "image/png", Uri: &uri,
-	}}
-	shimObj := apishim.ContentBlock{Image: &apishim.ImageContent{
-		Data: "b64", MimeType: "image/png", URI: &uri,
-	}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ContentBlock image variant")
-}
-
-func TestWireShape_ContentBlock_Audio(t *testing.T) {
-	acpObj := acp.ContentBlock{Audio: &acp.ContentBlockAudio{Data: "d", MimeType: "audio/ogg"}}
-	shimObj := apishim.ContentBlock{Audio: &apishim.AudioContent{Data: "d", MimeType: "audio/ogg"}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ContentBlock audio variant")
-}
-
-func TestWireShape_ContentBlock_ResourceLink(t *testing.T) {
-	acpObj := acp.ContentBlock{ResourceLink: &acp.ContentBlockResourceLink{
-		Uri: "file:///a", Name: "a",
-	}}
-	shimObj := apishim.ContentBlock{ResourceLink: &apishim.ResourceLinkContent{URI: "file:///a", Name: "a"}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ContentBlock resource_link variant")
-}
-
-func TestWireShape_ContentBlock_Resource(t *testing.T) {
-	acpObj := acp.ContentBlock{Resource: &acp.ContentBlockResource{
-		Resource: acp.EmbeddedResourceResource{
-			TextResourceContents: &acp.TextResourceContents{Uri: "file:///a", Text: "x"},
-		},
-	}}
-	shimObj := apishim.ContentBlock{Resource: &apishim.ResourceContent{
-		Resource: apishim.EmbeddedResource{TextResource: &apishim.TextResourceContents{URI: "file:///a", Text: "x"}},
-	}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ContentBlock resource variant")
-}
+// EmbeddedResource wire shape tests are removed — same reason.
 
 // ── Test 17: ToolCallContent JSON shape alignment ─────────────────────────────
 
 func TestWireShape_ToolCallContent_Content(t *testing.T) {
 	acpObj := acp.ToolCallContent{Content: &acp.ToolCallContentContent{
-		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hi"}},
+		Content: acp.TextBlock("hi"),
 	}}
 	shimObj := apishim.ToolCallContent{Content: &apishim.ToolCallContentContent{
-		Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "hi"}},
+		Content: apishim.TextBlock("hi"),
 	}}
 	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ToolCallContent content variant")
 }
@@ -190,54 +142,15 @@ func TestWireShape_ConfigOption_Select_Grouped(t *testing.T) {
 	assert.Contains(t, grp, "options")
 }
 
-// ── Test 20: EmbeddedResource JSON shape alignment ────────────────────────────
-
-func TestWireShape_EmbeddedResource_Text(t *testing.T) {
-	acpObj := acp.EmbeddedResourceResource{
-		TextResourceContents: &acp.TextResourceContents{Uri: "file:///a", Text: "hello"},
-	}
-	shimObj := apishim.EmbeddedResource{
-		TextResource: &apishim.TextResourceContents{URI: "file:///a", Text: "hello"},
-	}
-	acpKeys := jsonKeys(t, acpObj)
-	oarKeys := jsonKeys(t, shimObj)
-	assert.Equal(t, acpKeys, oarKeys, "EmbeddedResource text variant")
-	assert.True(t, acpKeys["text"], "text field must be present")
-	assert.True(t, acpKeys["uri"], "uri field must be present")
-	assert.False(t, acpKeys["type"], "type discriminator must NOT be present")
-}
-
-func TestWireShape_EmbeddedResource_Blob(t *testing.T) {
-	acpObj := acp.EmbeddedResourceResource{
-		BlobResourceContents: &acp.BlobResourceContents{Uri: "file:///img.png", Blob: "b64"},
-	}
-	shimObj := apishim.EmbeddedResource{
-		BlobResource: &apishim.BlobResourceContents{URI: "file:///img.png", Blob: "b64"},
-	}
-	acpKeys := jsonKeys(t, acpObj)
-	oarKeys := jsonKeys(t, shimObj)
-	assert.Equal(t, acpKeys, oarKeys, "EmbeddedResource blob variant")
-	assert.True(t, acpKeys["blob"], "blob field must be present")
-	assert.False(t, acpKeys["type"], "no type discriminator")
-}
-
-// ── Test 21: Union empty variant marshal errors ───────────────────────────────
+// ── Test 21: Union empty variant marshal errors ─────────────────────────────
+// ContentBlock and EmbeddedResource are ACP aliases — ACP does not error on
+// empty unions (returns empty bytes). Only our custom union types are tested.
 
 func TestWireShape_UnionEmptyVariant_MarshalErrors(t *testing.T) {
-	t.Run("ContentBlock empty", func(t *testing.T) {
-		_, err := json.Marshal(apishim.ContentBlock{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ContentBlock")
-	})
 	t.Run("ToolCallContent empty", func(t *testing.T) {
 		_, err := json.Marshal(apishim.ToolCallContent{})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ToolCallContent")
-	})
-	t.Run("EmbeddedResource empty", func(t *testing.T) {
-		_, err := json.Marshal(apishim.EmbeddedResource{})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "EmbeddedResource")
 	})
 	t.Run("ConfigOption empty", func(t *testing.T) {
 		_, err := json.Marshal(apishim.ConfigOption{})
@@ -254,26 +167,6 @@ func TestWireShape_UnionEmptyVariant_MarshalErrors(t *testing.T) {
 // ── Test 21b: Union multi-variant marshal errors ─────────────────────────────
 
 func TestWireShape_UnionMultiVariant_MarshalErrors(t *testing.T) {
-	t.Run("ContentBlock multi-variant", func(t *testing.T) {
-		cb := apishim.ContentBlock{
-			Text:  &apishim.TextContent{Text: "hello"},
-			Image: &apishim.ImageContent{Data: "b64", MimeType: "image/png"},
-		}
-		_, err := json.Marshal(cb)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ContentBlock")
-		assert.Contains(t, err.Error(), "multiple")
-	})
-	t.Run("EmbeddedResource multi-variant", func(t *testing.T) {
-		er := apishim.EmbeddedResource{
-			TextResource: &apishim.TextResourceContents{URI: "file:///a", Text: "x"},
-			BlobResource: &apishim.BlobResourceContents{URI: "file:///b", Blob: "y"},
-		}
-		_, err := json.Marshal(er)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "EmbeddedResource")
-		assert.Contains(t, err.Error(), "multiple")
-	})
 	t.Run("ToolCallContent multi-variant", func(t *testing.T) {
 		tc := apishim.ToolCallContent{
 			Diff:     &apishim.ToolCallContentDiff{Path: "a.go", NewText: "x"},
@@ -305,15 +198,11 @@ func TestWireShape_ConfigSelectOptions_EmptyMarshalError(t *testing.T) {
 }
 
 // ── Test 22: Union unknown type unmarshal errors ──────────────────────────────
+// ContentBlock and EmbeddedResource unmarshal tests removed — ACP's generated
+// UnmarshalJSON uses fallback brute-force matching, so "unknown type" does not
+// always produce an error. Only our custom union types are tested.
 
 func TestWireShape_UnionUnknownType_UnmarshalErrors(t *testing.T) {
-	t.Run("ContentBlock unknown type", func(t *testing.T) {
-		var cb apishim.ContentBlock
-		err := json.Unmarshal([]byte(`{"type":"video","data":"x"}`), &cb)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "ContentBlock")
-		assert.Contains(t, err.Error(), "video")
-	})
 	t.Run("ToolCallContent unknown type", func(t *testing.T) {
 		var tc apishim.ToolCallContent
 		err := json.Unmarshal([]byte(`{"type":"unknown_variant"}`), &tc)
@@ -326,12 +215,6 @@ func TestWireShape_UnionUnknownType_UnmarshalErrors(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ConfigOption")
 		assert.Contains(t, err.Error(), "checkbox")
-	})
-	t.Run("EmbeddedResource no matching shape", func(t *testing.T) {
-		var er apishim.EmbeddedResource
-		err := json.Unmarshal([]byte(`{"uri":"file:///a","unknown":"x"}`), &er)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "EmbeddedResource")
 	})
 	t.Run("AvailableCommandInput no matching variant", func(t *testing.T) {
 		var ai apishim.AvailableCommandInput

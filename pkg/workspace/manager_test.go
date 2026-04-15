@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/pkg/store"
+	"github.com/zoumo/mass/pkg/agentd/store"
 )
 
 // TestWorkspaceErrorStructure verifies WorkspaceError has all required fields.

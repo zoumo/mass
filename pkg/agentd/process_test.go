@@ -14,7 +14,7 @@ import (
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	shim "github.com/zoumo/mass/pkg/shim/api"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	"github.com/zoumo/mass/pkg/store"
+	"github.com/zoumo/mass/pkg/agentd/store"
 )
 
 // TestProcessManagerStart tests the full Start workflow:

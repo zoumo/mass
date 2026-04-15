@@ -1,6 +1,6 @@
 // Package integration_test provides integration tests for runtime lifecycle management.
-// These tests verify the full ARI runtime/* CRUD surface: set, get, list, delete,
-// and that a runtime registered via runtime/set can launch a real agent to idle state.
+// These tests verify the full ARI agent/* CRUD surface: create, get, list, delete,
+// and that an agent registered via agent/create can launch a real agent run to idle state.
 package integration_test
 
 import (
@@ -12,82 +12,82 @@ import (
 // TestRuntimeLifecycle is the S02 acceptance test.
 // It verifies the full chain:
 //
-//	mass server --root → runtime/set (via setupMassTest)
-//	→ runtime/get → runtime/list
-//	→ workspace/create + agent/create → idle state
-//	→ runtime/delete → runtime/get returns error
+//	mass server --root → agent/create (via setupMassTest)
+//	→ agent/get → agent/list
+//	→ workspace/create + agentrun/create → idle state
+//	→ agent/delete → agent/get returns error
 func TestRuntimeLifecycle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
 	// setupMassTest starts mass with --root, waits for socket, and registers
-	// "mockagent" runtime via runtime/set. See session_test.go.
-	_, cancel, client, cleanup := setupMassTest(t)
+	// "mockagent" agent via agent/create. See session_test.go.
+	ctx, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
-	// ── Step 1: runtime/get mockagent → assert name and non-empty command ──────
-	t.Log("Step 1: runtime/get mockagent")
-	var getResult pkgariapi.AgentGetResult
-	if err := client.Call("agent/get", pkgariapi.AgentGetParams{Name: "mockagent"}, &getResult); err != nil {
-		t.Fatalf("runtime/get mockagent: %v", err)
+	// ── Step 1: agent/get mockagent → assert name and non-empty command ──────
+	t.Log("Step 1: agent/get mockagent")
+	var getResult pkgariapi.Agent
+	if err := client.Get(ctx, pkgariapi.ObjectKey{Name: "mockagent"}, &getResult); err != nil {
+		t.Fatalf("agent/get mockagent: %v", err)
 	}
-	if getResult.Agent.Metadata.Name != "mockagent" {
-		t.Errorf("runtime/get: expected name=%q, got %q", "mockagent", getResult.Agent.Metadata.Name)
+	if getResult.Metadata.Name != "mockagent" {
+		t.Errorf("agent/get: expected name=%q, got %q", "mockagent", getResult.Metadata.Name)
 	}
-	if getResult.Agent.Spec.Command == "" {
-		t.Error("runtime/get: expected non-empty command")
+	if getResult.Spec.Command == "" {
+		t.Error("agent/get: expected non-empty command")
 	}
-	t.Logf("runtime/get OK: name=%s command=%s", getResult.Agent.Metadata.Name, getResult.Agent.Spec.Command)
+	t.Logf("agent/get OK: name=%s command=%s", getResult.Metadata.Name, getResult.Spec.Command)
 
-	// ── Step 2: runtime/list → assert 1 entry ─────────────────────────────────
-	t.Log("Step 2: runtime/list")
-	var listResult pkgariapi.AgentListResult
-	if err := client.Call("agent/list", pkgariapi.AgentListParams{}, &listResult); err != nil {
-		t.Fatalf("runtime/list: %v", err)
+	// ── Step 2: agent/list → assert 1 entry ─────────────────────────────────
+	t.Log("Step 2: agent/list")
+	var listResult pkgariapi.AgentList
+	if err := client.List(ctx, &listResult); err != nil {
+		t.Fatalf("agent/list: %v", err)
 	}
-	if len(listResult.Agents) != 1 {
-		t.Errorf("runtime/list: expected 1 runtime, got %d", len(listResult.Agents))
+	if len(listResult.Items) != 1 {
+		t.Errorf("agent/list: expected 1 agent, got %d", len(listResult.Items))
 	} else {
-		t.Logf("runtime/list OK: 1 runtime (%s)", listResult.Agents[0].Metadata.Name)
+		t.Logf("agent/list OK: 1 agent (%s)", listResult.Items[0].Metadata.Name)
 	}
 
-	// ── Step 3: workspace/create + agent/create → poll idle ───────────────────
+	// ── Step 3: workspace/create + agentrun/create → poll idle ───────────────
 	t.Log("Step 3: workspace/create")
 	const wsName = "rt-workspace"
 	const agentName = "rt-agent"
-	createTestWorkspace(t, client, wsName)
+	createTestWorkspace(t, ctx, client, wsName)
 	t.Logf("workspace ready: %s", wsName)
 
-	t.Log("Step 4: agent/create → wait for idle")
-	status := createAgentAndWait(t, client, wsName, agentName, "mockagent")
+	t.Log("Step 4: agentrun/create → wait for idle")
+	ar := createAgentAndWait(t, ctx, client, wsName, agentName, "mockagent")
 
 	// ── Step 4: assert state == idle ──────────────────────────────────────────
-	if status.AgentRun.Status.State != "idle" {
-		t.Errorf("agent/create: expected state=idle, got %s", status.AgentRun.Status.State)
+	if ar.Status.State != "idle" {
+		t.Errorf("agentrun/create: expected state=idle, got %s", ar.Status.State)
 	} else {
-		t.Logf("agent reached idle ✓: workspace=%s name=%s state=%s", wsName, agentName, status.AgentRun.Status.State)
+		t.Logf("agent reached idle: workspace=%s name=%s state=%s", wsName, agentName, ar.Status.State)
 	}
 
-	// Cleanup agent before deleting runtime
-	stopAndDeleteAgent(t, client, wsName, agentName)
-	deleteTestWorkspace(t, client, wsName)
+	// Cleanup agent before deleting agent definition
+	stopAndDeleteAgent(t, ctx, client, wsName, agentName)
+	deleteTestWorkspace(t, ctx, client, wsName)
 
-	// ── Step 5: runtime/delete mockagent → no error ───────────────────────────
-	t.Log("Step 5: runtime/delete mockagent")
-	if err := client.Call("agent/delete", pkgariapi.AgentDeleteParams{Name: "mockagent"}, nil); err != nil {
-		t.Fatalf("runtime/delete mockagent: %v", err)
+	// ── Step 5: agent/delete mockagent → no error ───────────────────────────
+	t.Log("Step 5: agent/delete mockagent")
+	if err := client.Delete(ctx, pkgariapi.ObjectKey{Name: "mockagent"}, &pkgariapi.Agent{}); err != nil {
+		t.Fatalf("agent/delete mockagent: %v", err)
 	}
-	t.Log("runtime/delete OK ✓")
+	t.Log("agent/delete OK")
 
-	// ── Step 6: runtime/get mockagent → expect error response ─────────────────
-	t.Log("Step 6: runtime/get mockagent after delete → expect error")
-	var getAfterDelete pkgariapi.AgentGetResult
-	err := client.Call("agent/get", pkgariapi.AgentGetParams{Name: "mockagent"}, &getAfterDelete)
+	// ── Step 6: agent/get mockagent → expect error response ─────────────────
+	t.Log("Step 6: agent/get mockagent after delete → expect error")
+	var getAfterDelete pkgariapi.Agent
+	err := client.Get(ctx, pkgariapi.ObjectKey{Name: "mockagent"}, &getAfterDelete)
 	if err == nil {
-		t.Error("runtime/get after delete: expected error, got nil")
+		t.Error("agent/get after delete: expected error, got nil")
 	} else {
-		t.Logf("runtime/get after delete returned expected error ✓: %v", err)
+		t.Logf("agent/get after delete returned expected error: %v", err)
 	}
 }

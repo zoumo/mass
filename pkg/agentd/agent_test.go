@@ -13,7 +13,7 @@ import (
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	"github.com/zoumo/mass/pkg/store"
+	"github.com/zoumo/mass/pkg/agentd/store"
 )
 
 // newTestMetaStore creates a file-backed bbolt store in a temp directory.

@@ -216,10 +216,7 @@ func (t *Translator) NotifyUserPrompt(text string) {
 			Type:      apishim.EventTypeUserMessage,
 			TurnID:    t.currentTurnId,
 			StreamSeq: t.streamSeq,
-			Content: apishim.UserMessageEvent{Content: apishim.ContentBlock{
-				Type: apishim.ContentBlockTypeText,
-				Text: &apishim.TextContent{Text: text},
-			}},
+			Content: apishim.UserMessageEvent{Content: apishim.TextBlock(text)},
 		}
 	})
 }
@@ -374,15 +371,15 @@ func translate(n acp.SessionNotification) apishim.Event {
 	switch {
 	case u.AgentMessageChunk != nil:
 		return apishim.AgentMessageEvent{
-			Content: derefContentBlock(convertContentBlock(u.AgentMessageChunk.Content)),
+			Content: u.AgentMessageChunk.Content,
 		}
 	case u.AgentThoughtChunk != nil:
 		return apishim.AgentThinkingEvent{
-			Content: derefContentBlock(convertContentBlock(u.AgentThoughtChunk.Content)),
+			Content: u.AgentThoughtChunk.Content,
 		}
 	case u.UserMessageChunk != nil:
 		return apishim.UserMessageEvent{
-			Content: derefContentBlock(convertContentBlock(u.UserMessageChunk.Content)),
+			Content: u.UserMessageChunk.Content,
 		}
 	case u.ToolCall != nil:
 		tc := u.ToolCall
@@ -450,114 +447,6 @@ func translate(n acp.SessionNotification) apishim.Event {
 	}
 }
 
-// derefContentBlock safely dereferences a *ContentBlock, returning a zero
-// ContentBlock if the pointer is nil.
-func derefContentBlock(cb *apishim.ContentBlock) apishim.ContentBlock {
-	if cb != nil {
-		return *cb
-	}
-	return apishim.ContentBlock{}
-}
-
-// ── Convert: ContentBlock ─────────────────────────────────────────────────────
-
-// convertContentBlock converts an acp.ContentBlock to the MASS mirror type.
-// Returns nil if the block has no active variant.
-func convertContentBlock(cb acp.ContentBlock) *apishim.ContentBlock {
-	switch {
-	case cb.Text != nil:
-		return &apishim.ContentBlock{
-			Type:        apishim.ContentBlockTypeText,
-			Meta:        cb.Text.Meta,
-			Annotations: convertAnnotations(cb.Text.Annotations),
-			Text:        &apishim.TextContent{Text: cb.Text.Text},
-		}
-	case cb.Image != nil:
-		return &apishim.ContentBlock{
-			Type:        apishim.ContentBlockTypeImage,
-			Meta:        cb.Image.Meta,
-			Annotations: convertAnnotations(cb.Image.Annotations),
-			Image: &apishim.ImageContent{
-				Data:     cb.Image.Data,
-				MimeType: cb.Image.MimeType,
-				URI:      cb.Image.Uri,
-			},
-		}
-	case cb.Audio != nil:
-		return &apishim.ContentBlock{
-			Type:        apishim.ContentBlockTypeAudio,
-			Meta:        cb.Audio.Meta,
-			Annotations: convertAnnotations(cb.Audio.Annotations),
-			Audio: &apishim.AudioContent{
-				Data:     cb.Audio.Data,
-				MimeType: cb.Audio.MimeType,
-			},
-		}
-	case cb.ResourceLink != nil:
-		return &apishim.ContentBlock{
-			Type:        apishim.ContentBlockTypeResourceLink,
-			Meta:        cb.ResourceLink.Meta,
-			Annotations: convertAnnotations(cb.ResourceLink.Annotations),
-			ResourceLink: &apishim.ResourceLinkContent{
-				URI:         cb.ResourceLink.Uri,
-				Name:        cb.ResourceLink.Name,
-				Description: cb.ResourceLink.Description,
-				MimeType:    cb.ResourceLink.MimeType,
-				Title:       cb.ResourceLink.Title,
-				Size:        cb.ResourceLink.Size,
-			},
-		}
-	case cb.Resource != nil:
-		return &apishim.ContentBlock{
-			Type:        apishim.ContentBlockTypeResource,
-			Meta:        cb.Resource.Meta,
-			Annotations: convertAnnotations(cb.Resource.Annotations),
-			Resource: &apishim.ResourceContent{
-				Resource: convertEmbeddedResource(cb.Resource.Resource),
-			},
-		}
-	default:
-		return nil
-	}
-}
-
-// convertAnnotations converts *acp.Annotations to *apishim.Annotations.
-func convertAnnotations(a *acp.Annotations) *apishim.Annotations {
-	if a == nil {
-		return nil
-	}
-	ann := &apishim.Annotations{
-		Meta:         a.Meta,
-		LastModified: a.LastModified,
-		Priority:     a.Priority,
-	}
-	for _, r := range a.Audience {
-		ann.Audience = append(ann.Audience, string(r))
-	}
-	return ann
-}
-
-// convertEmbeddedResource converts acp.EmbeddedResourceResource to apishim.EmbeddedResource.
-func convertEmbeddedResource(r acp.EmbeddedResourceResource) apishim.EmbeddedResource {
-	switch {
-	case r.TextResourceContents != nil:
-		return apishim.EmbeddedResource{TextResource: &apishim.TextResourceContents{
-			Meta:     r.TextResourceContents.Meta,
-			URI:      r.TextResourceContents.Uri,
-			MimeType: r.TextResourceContents.MimeType,
-			Text:     r.TextResourceContents.Text,
-		}}
-	case r.BlobResourceContents != nil:
-		return apishim.EmbeddedResource{BlobResource: &apishim.BlobResourceContents{
-			Meta:     r.BlobResourceContents.Meta,
-			URI:      r.BlobResourceContents.Uri,
-			MimeType: r.BlobResourceContents.MimeType,
-			Blob:     r.BlobResourceContents.Blob,
-		}}
-	default:
-		return apishim.EmbeddedResource{}
-	}
-}
 
 // ── Convert: ToolCall content & locations ────────────────────────────────────
 
@@ -572,7 +461,7 @@ func convertToolCallContents(contents []acp.ToolCallContent) []apishim.ToolCallC
 		case c.Content != nil:
 			out = append(out, apishim.ToolCallContent{Content: &apishim.ToolCallContentContent{
 				Meta:    c.Content.Meta,
-				Content: convertContentBlockValue(c.Content.Content),
+				Content: c.Content.Content,
 			}})
 		case c.Diff != nil:
 			out = append(out, apishim.ToolCallContent{Diff: &apishim.ToolCallContentDiff{
@@ -589,15 +478,6 @@ func convertToolCallContents(contents []acp.ToolCallContent) []apishim.ToolCallC
 		}
 	}
 	return out
-}
-
-// convertContentBlockValue converts acp.ContentBlock by value (not pointer).
-func convertContentBlockValue(cb acp.ContentBlock) apishim.ContentBlock {
-	p := convertContentBlock(cb)
-	if p == nil {
-		return apishim.ContentBlock{}
-	}
-	return *p
 }
 
 // convertLocations converts a slice of acp.ToolCallLocation.

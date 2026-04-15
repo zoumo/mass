@@ -2,6 +2,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -34,8 +35,8 @@ func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			var result pkgariapi.AgentRunListResult
-			if err := client.Call(pkgariapi.MethodAgentList, pkgariapi.AgentRunListParams{}, &result); err != nil {
+			var list pkgariapi.AgentList
+			if err := client.List(context.Background(), &list); err != nil {
 				fmt.Println("daemon: not running")
 				fmt.Fprintf(cmd.ErrOrStderr(), "Error: %v\n", err)
 				return nil

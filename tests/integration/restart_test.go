@@ -100,68 +100,62 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	massCmd1 := startMass(t, ctx1, massBin, rootDir, socketPath)
 
-	client1, err := ariclient.NewClient(socketPath)
+	client1, err := ariclient.Dial(ctx1, socketPath)
 	if err != nil {
 		t.Fatalf("ARI client: %v", err)
 	}
 
-	// Register the mockagent runtime so agents can be created with runtimeClass="mockagent".
-	var runtimeResult1 pkgariapi.AgentSetResult
-	if err := client1.Call("agent/set", pkgariapi.AgentSetParams{
-		Name:    "mockagent",
-		Command: mockagentBin,
-	}, &runtimeResult1); err != nil {
-		t.Fatalf("runtime/set (phase 1): %v", err)
+	// Register the mockagent runtime so agents can be created with agent="mockagent".
+	ag := pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "mockagent"},
+		Spec:     pkgariapi.AgentSpec{Command: mockagentBin},
 	}
-	t.Logf("runtime registered (phase 1): name=%s", runtimeResult1.Agent.Metadata.Name)
+	if err := client1.Create(ctx1, &ag); err != nil {
+		t.Fatalf("agent/create (phase 1): %v", err)
+	}
+	t.Logf("runtime registered (phase 1): name=%s", ag.Metadata.Name)
 
 	const wsName = "test-ws"
-	createTestWorkspace(t, client1, wsName)
+	createTestWorkspace(t, ctx1, client1, wsName)
 	t.Logf("workspace ready: %s", wsName)
 
 	// Create agent-A (will have shim killed before restart).
 	t.Log("Creating agent-A")
-	statusA1 := createAgentAndWait(t, client1, wsName, "agent-a", "mockagent")
+	arA1 := createAgentAndWait(t, ctx1, client1, wsName, "agent-a", "mockagent")
 	t.Logf("agent-A: workspace=%s name=%s state=%s",
-		statusA1.AgentRun.Metadata.Workspace, statusA1.AgentRun.Metadata.Name, statusA1.AgentRun.Status.State)
+		arA1.Metadata.Workspace, arA1.Metadata.Name, arA1.Status.State)
 
-	if statusA1.AgentRun.Status.State != "idle" {
-		t.Fatalf("expected agent-A state=idle, got %s", statusA1.AgentRun.Status.State)
+	if arA1.Status.State != "idle" {
+		t.Fatalf("expected agent-A state=idle, got %s", arA1.Status.State)
 	}
 
 	// Create agent-B (will also have shim killed before restart).
 	t.Log("Creating agent-B")
-	statusB1 := createAgentAndWait(t, client1, wsName, "agent-b", "mockagent")
+	arB1 := createAgentAndWait(t, ctx1, client1, wsName, "agent-b", "mockagent")
 	t.Logf("agent-B: workspace=%s name=%s state=%s",
-		statusB1.AgentRun.Metadata.Workspace, statusB1.AgentRun.Metadata.Name, statusB1.AgentRun.Status.State)
+		arB1.Metadata.Workspace, arB1.Metadata.Name, arB1.Status.State)
 
 	// Prompt agent-A to exercise the running state (async dispatch).
 	t.Log("Prompting agent-A before restart")
-	var promptResultA pkgariapi.AgentRunPromptResult
-	if err := client1.Call("agentrun/prompt", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-a",
-		"prompt":    "hello before restart",
-	}, &promptResultA); err != nil {
-		t.Fatalf("agent/prompt A: %v", err)
+	keyA := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-a"}
+	promptResultA, err := client1.AgentRuns().Prompt(ctx1, keyA, "hello before restart")
+	if err != nil {
+		t.Fatalf("agentrun/prompt A: %v", err)
 	}
 	t.Logf("agent-A prompt accepted: %v", promptResultA.Accepted)
 
 	// Prompt agent-B (async dispatch).
 	t.Log("Prompting agent-B before restart")
-	var promptResultB pkgariapi.AgentRunPromptResult
-	if err := client1.Call("agentrun/prompt", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-b",
-		"prompt":    "hello before restart",
-	}, &promptResultB); err != nil {
-		t.Fatalf("agent/prompt B: %v", err)
+	keyB := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-b"}
+	promptResultB, err := client1.AgentRuns().Prompt(ctx1, keyB, "hello before restart")
+	if err != nil {
+		t.Fatalf("agentrun/prompt B: %v", err)
 	}
 	t.Logf("agent-B prompt accepted: %v", promptResultB.Accepted)
 
 	// Verify agent-A is in running (or idle) state before killing agentd.
 	// The mockagent is instant so the turn may complete before we poll.
-	_ = waitForAgentStateOneOf(t, client1, wsName, "agent-a", []string{"running", "idle"}, 10*time.Second)
+	_ = waitForAgentStateOneOf(t, ctx1, client1, wsName, "agent-a", []string{"running", "idle"}, 10*time.Second)
 	t.Log("agent-A is in running/idle state after prompt ✓")
 
 	// =========================================================================
@@ -192,7 +186,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	massCmd2 := startMass(t, ctx2, massBin, rootDir, socketPath)
 	defer stopMass(t, massCmd2, socketPath)
 
-	client2, err := ariclient.NewClient(socketPath)
+	client2, err := ariclient.Dial(ctx2, socketPath)
 	if err != nil {
 		t.Fatalf("ARI client after restart: %v", err)
 	}
@@ -200,14 +194,18 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// Re-register the mockagent runtime on restart (runtimes are persisted in DB,
 	// so this is idempotent — ensures the runtime is available after restart).
-	var runtimeResult2 pkgariapi.AgentSetResult
-	if err := client2.Call("agent/set", pkgariapi.AgentSetParams{
-		Name:    "mockagent",
-		Command: mockagentBin,
-	}, &runtimeResult2); err != nil {
-		t.Fatalf("runtime/set (phase 3): %v", err)
+	ag2 := pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "mockagent"},
+		Spec:     pkgariapi.AgentSpec{Command: mockagentBin},
 	}
-	t.Logf("runtime registered (phase 3): name=%s", runtimeResult2.Agent.Metadata.Name)
+	// Use Update since agent already exists from Phase 1 persistence.
+	if err := client2.Update(ctx2, &ag2); err != nil {
+		// Fallback to Create if update fails (agent might not be persisted).
+		if err2 := client2.Create(ctx2, &ag2); err2 != nil {
+			t.Fatalf("agent register (phase 3): create=%v update=%v", err2, err)
+		}
+	}
+	t.Logf("runtime registered (phase 3): name=%s", ag2.Metadata.Name)
 
 	// Wait for recovery pass to complete (typically 1-2s).
 	t.Log("Waiting for recovery pass to complete...")
@@ -221,51 +219,51 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	// Agent-A should reach a terminal state after recovery — "stopped" per D012/D029
 	// (the recovery code fail-closes dead shims as stopped, not error).
 	terminalStates := []string{"stopped", "error"}
-	statusA2 := waitForAgentStateOneOf(t, client2, wsName, "agent-a", terminalStates, 10*time.Second)
+	arA2 := waitForAgentStateOneOf(t, ctx2, client2, wsName, "agent-a", terminalStates, 10*time.Second)
 
 	// Identity: workspace and name must be preserved.
-	if statusA2.AgentRun.Metadata.Workspace != wsName {
+	if arA2.Metadata.Workspace != wsName {
 		t.Errorf("agent-A workspace changed across restart: expected=%s got=%s",
-			wsName, statusA2.AgentRun.Metadata.Workspace)
+			wsName, arA2.Metadata.Workspace)
 	} else {
-		t.Logf("agent-A workspace preserved ✓: %s", statusA2.AgentRun.Metadata.Workspace)
+		t.Logf("agent-A workspace preserved ✓: %s", arA2.Metadata.Workspace)
 	}
 
-	if statusA2.AgentRun.Metadata.Name != "agent-a" {
+	if arA2.Metadata.Name != "agent-a" {
 		t.Errorf("agent-A name changed across restart: expected=agent-a got=%s",
-			statusA2.AgentRun.Metadata.Name)
+			arA2.Metadata.Name)
 	} else {
-		t.Logf("agent-A name preserved ✓: %s", statusA2.AgentRun.Metadata.Name)
+		t.Logf("agent-A name preserved ✓: %s", arA2.Metadata.Name)
 	}
 
 	t.Logf("agent-A post-restart state=%s (shim killed → fail-closed, identity preserved)",
-		statusA2.AgentRun.Status.State)
+		arA2.Status.State)
 
 	// =========================================================================
 	// Phase 5: Verify agent-B is in a terminal state (dead shim → fail-closed)
 	// =========================================================================
 	t.Log("Phase 5: Verify agent-B is in terminal state (dead shim fail-closed)")
 
-	statusB2 := waitForAgentStateOneOf(t, client2, wsName, "agent-b", terminalStates, 10*time.Second)
-	t.Logf("agent-B post-restart state=%s ✓", statusB2.AgentRun.Status.State)
+	arB2 := waitForAgentStateOneOf(t, ctx2, client2, wsName, "agent-b", terminalStates, 10*time.Second)
+	t.Logf("agent-B post-restart state=%s ✓", arB2.Status.State)
 
 	// =========================================================================
 	// Phase 6: Verify agent list — both agents queryable with identity intact
 	// =========================================================================
 	t.Log("Phase 6: Verify agent list shows both agents in workspace")
 
-	var listResult pkgariapi.AgentRunListResult
-	if err := client2.Call("agentrun/list", map[string]interface{}{"workspace": wsName}, &listResult); err != nil {
-		t.Fatalf("agent/list: %v", err)
+	var listResult pkgariapi.AgentRunList
+	if err := client2.List(ctx2, &listResult, pkgariapi.InWorkspace(wsName)); err != nil {
+		t.Fatalf("agentrun/list: %v", err)
 	}
-	t.Logf("agent/list returned %d agents in workspace %s", len(listResult.AgentRuns), wsName)
+	t.Logf("agentrun/list returned %d agents in workspace %s", len(listResult.Items), wsName)
 
-	if len(listResult.AgentRuns) != 2 {
-		t.Errorf("expected 2 agents in workspace %s, got %d", wsName, len(listResult.AgentRuns))
+	if len(listResult.Items) != 2 {
+		t.Errorf("expected 2 agents in workspace %s, got %d", wsName, len(listResult.Items))
 	}
 
 	agentStates := make(map[string]string) // name → state
-	for _, a := range listResult.AgentRuns {
+	for _, a := range listResult.Items {
 		agentStates[a.Metadata.Name] = string(a.Status.State)
 		t.Logf("  agent: workspace=%s name=%s state=%s", a.Metadata.Workspace, a.Metadata.Name, a.Status.State)
 	}
@@ -282,24 +280,19 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	// =========================================================================
 	t.Log("Phase 7: Cleanup")
 
-	// Agents in terminal state (stopped/error): call agent/stop (idempotent) then delete
+	// Agents in terminal state (stopped/error): call stop (idempotent) then delete
 	for _, agentName := range []string{"agent-a", "agent-b"} {
-		if err := client2.Call("agentrun/stop", map[string]interface{}{
-			"workspace": wsName,
-			"name":      agentName,
-		}, nil); err != nil {
-			t.Logf("agent/stop %s: %v (may already be stopped)", agentName, err)
+		key := pkgariapi.ObjectKey{Workspace: wsName, Name: agentName}
+		if err := client2.AgentRuns().Stop(ctx2, key); err != nil {
+			t.Logf("agentrun/stop %s: %v (may already be stopped)", agentName, err)
 		}
-		if err := client2.Call("agentrun/delete", map[string]interface{}{
-			"workspace": wsName,
-			"name":      agentName,
-		}, nil); err != nil {
-			t.Logf("agent/delete %s: %v (ignored)", agentName, err)
+		if err := client2.Delete(ctx2, key, &pkgariapi.AgentRun{}); err != nil {
+			t.Logf("agentrun/delete %s: %v (ignored)", agentName, err)
 		}
 	}
 
 	// Delete workspace after all agents are removed.
-	if err := client2.Call("workspace/delete", map[string]interface{}{"name": wsName}, nil); err != nil {
+	if err := client2.Delete(ctx2, pkgariapi.ObjectKey{Name: wsName}, &pkgariapi.Workspace{}); err != nil {
 		t.Logf("workspace/delete: %v (ignored)", err)
 	}
 

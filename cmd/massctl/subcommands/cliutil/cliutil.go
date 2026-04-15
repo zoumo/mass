@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"os"
 
-	ariclient "github.com/zoumo/mass/pkg/ari/client"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // ClientFn is a factory for ARI clients, injected by the root command.
-type ClientFn func() (*ariclient.Client, error)
+type ClientFn func() (pkgariapi.Client, error)
 
 // OutputJSON pretty-prints the result as JSON to stdout.
 func OutputJSON(result any) {

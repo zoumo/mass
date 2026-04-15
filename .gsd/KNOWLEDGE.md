@@ -668,7 +668,7 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 ## K055 — workspace/list returns only registry-tracked (ready) workspaces, not all DB phases
 
 - **Pattern:** The ARI `workspace/list` handler calls `Registry.List()` — not `store.ListWorkspaces()`. This means only workspaces in `ready` phase are returned. Workspaces in `pending` or `error` phase are NOT returned by `workspace/list`.
-- **Lesson:** If you need workspaces in all phases, use `workspace/status` with the known name (falls back to DB) or query the store directly. `workspace/list` is intentionally filtered to "ready and usable" workspaces only. This matches the plan spec but is not obvious from the method name.
+- **Lesson:** If you need workspaces in all phases, use `workspace/get` with the known name (falls back to DB) or query the store directly. `workspace/list` is intentionally filtered to "ready and usable" workspaces only. This matches the plan spec but is not obvious from the method name.
 - **Reference:** M007/S03/T01 — pkg/ari/server.go handleWorkspaceList.
 - **When:** M007/S03
 
@@ -868,12 +868,12 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Reference:** M012/S02 + M012/S03 sequencing design.
 - **When:** M012
 
-## K084 — When redistributing a package into sub-packages, same-package types need no qualifier in the new sub-package
+## K084 — [SUPERSEDED by D126] typed.go client types removed in ARI client redesign
 
-- **Pattern:** After moving `WorkspaceClient`, `AgentRunClient`, `AgentClient` from `api/ari/client.go` into `pkg/ari/client/typed.go` (package `client`), the companion `client.go` file in the same package (also `package client`) originally accessed them as `pkgariapi.WorkspaceClient`. This caused a type mismatch — the types were defined within the same package, not in `pkg/ari/api`.
-- **Lesson:** When a refactor moves types and a consumer of those types into the same new sub-package, the types are now local and must be used unqualified. The source-level mechanical substitution (replace all `apiari.X` with `pkgariapi.X`) does not account for the fact that some types have *also* moved into the same package. Always check: "does the new source of these types happen to be the package I'm editing right now?" and remove the qualifier if so.
-- **Reference:** M013/S02/T02 — pkg/ari/client/client.go adaptation (WorkspaceClient, AgentRunClient, AgentClient from typed.go).
-- **When:** M013/S02
+- **Pattern:** The per-resource typed clients (WorkspaceClient, AgentRunClient, AgentClient) in `pkg/ari/client/typed.go` were dead code — zero external callers. They were removed entirely in the controller-runtime style redesign (D126). The new unified Client interface uses type-switched CRUD methods.
+- **Lesson:** Dead-code typed clients accumulated complexity without value. The controller-runtime pattern (single Client, polymorphic CRUD) is simpler and matches established Go patterns.
+- **Reference:** D126 — ARI client redesign.
+- **When:** M015
 
 ## K085 — Same-package Register functions need no import after sub-package consolidation
 

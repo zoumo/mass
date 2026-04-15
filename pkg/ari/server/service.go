@@ -1,5 +1,4 @@
 // Package server contains the ARI protocol service interfaces and Register functions.
-// This file defines the service interfaces and Register functions for the ARI protocol.
 package server
 
 import (
@@ -17,37 +16,36 @@ import (
 
 // WorkspaceService defines workspace management RPC methods.
 type WorkspaceService interface {
-	Create(ctx context.Context, req *pkgariapi.WorkspaceCreateParams) (*pkgariapi.WorkspaceCreateResult, error)
-	Status(ctx context.Context, req *pkgariapi.WorkspaceStatusParams) (*pkgariapi.WorkspaceStatusResult, error)
-	List(ctx context.Context) (*pkgariapi.WorkspaceListResult, error)
-	Delete(ctx context.Context, req *pkgariapi.WorkspaceDeleteParams) error
+	Create(ctx context.Context, ws *pkgariapi.Workspace) (*pkgariapi.Workspace, error)
+	Get(ctx context.Context, name string) (*pkgariapi.Workspace, error)
+	List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.WorkspaceList, error)
+	Delete(ctx context.Context, name string) error
 	Send(ctx context.Context, req *pkgariapi.WorkspaceSendParams) (*pkgariapi.WorkspaceSendResult, error)
 }
 
 // AgentRunService defines agent run lifecycle RPC methods.
 type AgentRunService interface {
-	Create(ctx context.Context, req *pkgariapi.AgentRunCreateParams) (*pkgariapi.AgentRunCreateResult, error)
+	Create(ctx context.Context, ar *pkgariapi.AgentRun) (*pkgariapi.AgentRun, error)
+	Get(ctx context.Context, workspace, name string) (*pkgariapi.AgentRun, error)
+	List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.AgentRunList, error)
+	Delete(ctx context.Context, workspace, name string) error
 	Prompt(ctx context.Context, req *pkgariapi.AgentRunPromptParams) (*pkgariapi.AgentRunPromptResult, error)
-	Cancel(ctx context.Context, req *pkgariapi.AgentRunCancelParams) error
-	Stop(ctx context.Context, req *pkgariapi.AgentRunStopParams) error
-	Delete(ctx context.Context, req *pkgariapi.AgentRunDeleteParams) error
-	Restart(ctx context.Context, req *pkgariapi.AgentRunRestartParams) (*pkgariapi.AgentRunRestartResult, error)
-	List(ctx context.Context, req *pkgariapi.AgentRunListParams) (*pkgariapi.AgentRunListResult, error)
-	Status(ctx context.Context, req *pkgariapi.AgentRunStatusParams) (*pkgariapi.AgentRunStatusResult, error)
-	Attach(ctx context.Context, req *pkgariapi.AgentRunAttachParams) (*pkgariapi.AgentRunAttachResult, error)
+	Cancel(ctx context.Context, workspace, name string) error
+	Stop(ctx context.Context, workspace, name string) error
+	Restart(ctx context.Context, workspace, name string) (*pkgariapi.AgentRun, error)
 }
 
 // AgentService defines agent definition CRUD methods.
-// All return types use the domain Agent type as wire format.
 type AgentService interface {
-	Set(ctx context.Context, req *pkgariapi.AgentSetParams) (*pkgariapi.AgentSetResult, error)
-	Get(ctx context.Context, req *pkgariapi.AgentGetParams) (*pkgariapi.AgentGetResult, error)
-	List(ctx context.Context) (*pkgariapi.AgentListResult, error)
-	Delete(ctx context.Context, req *pkgariapi.AgentDeleteParams) error
+	Create(ctx context.Context, agent *pkgariapi.Agent) (*pkgariapi.Agent, error)
+	Update(ctx context.Context, agent *pkgariapi.Agent) (*pkgariapi.Agent, error)
+	Get(ctx context.Context, name string) (*pkgariapi.Agent, error)
+	List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.AgentList, error)
+	Delete(ctx context.Context, name string) error
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Register functions (参考 ttrpc RegisterXxxService pattern)
+// Register functions
 // ────────────────────────────────────────────────────────────────────────────
 
 // RegisterWorkspaceService registers a WorkspaceService implementation with the server.
@@ -55,28 +53,37 @@ func RegisterWorkspaceService(s *jsonrpc.Server, svc WorkspaceService) {
 	s.RegisterService("workspace", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
 			"create": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.WorkspaceCreateParams
-				if err := unmarshal(&req); err != nil {
+				var ws pkgariapi.Workspace
+				if err := unmarshal(&ws); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return svc.Create(ctx, &req)
+				return svc.Create(ctx, &ws)
 			},
-			"status": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.WorkspaceStatusParams
-				if err := unmarshal(&req); err != nil {
+			"get": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var key pkgariapi.ObjectKey
+				if err := unmarshal(&key); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return svc.Status(ctx, &req)
+				if key.Name == "" {
+					return nil, jsonrpc.ErrInvalidParams("name is required")
+				}
+				return svc.Get(ctx, key.Name)
 			},
 			"list": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				return svc.List(ctx)
+				var opts pkgariapi.ListOptions
+				// list params are optional — ignore unmarshal errors for empty params
+				_ = unmarshal(&opts)
+				return svc.List(ctx, opts)
 			},
 			"delete": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.WorkspaceDeleteParams
-				if err := unmarshal(&req); err != nil {
+				var key pkgariapi.ObjectKey
+				if err := unmarshal(&key); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return nil, svc.Delete(ctx, &req)
+				if key.Name == "" {
+					return nil, jsonrpc.ErrInvalidParams("name is required")
+				}
+				return nil, svc.Delete(ctx, key.Name)
 			},
 			"send": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				var req pkgariapi.WorkspaceSendParams
@@ -94,11 +101,36 @@ func RegisterAgentRunService(s *jsonrpc.Server, svc AgentRunService) {
 	s.RegisterService("agentrun", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
 			"create": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentRunCreateParams
-				if err := unmarshal(&req); err != nil {
+				var ar pkgariapi.AgentRun
+				if err := unmarshal(&ar); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return svc.Create(ctx, &req)
+				return svc.Create(ctx, &ar)
+			},
+			"get": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var key pkgariapi.ObjectKey
+				if err := unmarshal(&key); err != nil {
+					return nil, jsonrpc.ErrInvalidParams(err.Error())
+				}
+				if key.Workspace == "" || key.Name == "" {
+					return nil, jsonrpc.ErrInvalidParams("workspace and name are required")
+				}
+				return svc.Get(ctx, key.Workspace, key.Name)
+			},
+			"list": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var opts pkgariapi.ListOptions
+				_ = unmarshal(&opts)
+				return svc.List(ctx, opts)
+			},
+			"delete": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var key pkgariapi.ObjectKey
+				if err := unmarshal(&key); err != nil {
+					return nil, jsonrpc.ErrInvalidParams(err.Error())
+				}
+				if key.Workspace == "" || key.Name == "" {
+					return nil, jsonrpc.ErrInvalidParams("workspace and name are required")
+				}
+				return nil, svc.Delete(ctx, key.Workspace, key.Name)
 			},
 			"prompt": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				var req pkgariapi.AgentRunPromptParams
@@ -108,53 +140,34 @@ func RegisterAgentRunService(s *jsonrpc.Server, svc AgentRunService) {
 				return svc.Prompt(ctx, &req)
 			},
 			"cancel": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentRunCancelParams
-				if err := unmarshal(&req); err != nil {
+				var key pkgariapi.ObjectKey
+				if err := unmarshal(&key); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return nil, svc.Cancel(ctx, &req)
+				if key.Workspace == "" || key.Name == "" {
+					return nil, jsonrpc.ErrInvalidParams("workspace and name are required")
+				}
+				return nil, svc.Cancel(ctx, key.Workspace, key.Name)
 			},
 			"stop": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentRunStopParams
-				if err := unmarshal(&req); err != nil {
+				var key pkgariapi.ObjectKey
+				if err := unmarshal(&key); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return nil, svc.Stop(ctx, &req)
-			},
-			"delete": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentRunDeleteParams
-				if err := unmarshal(&req); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
+				if key.Workspace == "" || key.Name == "" {
+					return nil, jsonrpc.ErrInvalidParams("workspace and name are required")
 				}
-				return nil, svc.Delete(ctx, &req)
+				return nil, svc.Stop(ctx, key.Workspace, key.Name)
 			},
 			"restart": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentRunRestartParams
-				if err := unmarshal(&req); err != nil {
+				var key pkgariapi.ObjectKey
+				if err := unmarshal(&key); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return svc.Restart(ctx, &req)
-			},
-			"list": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentRunListParams
-				if err := unmarshal(&req); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
+				if key.Workspace == "" || key.Name == "" {
+					return nil, jsonrpc.ErrInvalidParams("workspace and name are required")
 				}
-				return svc.List(ctx, &req)
-			},
-			"status": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentRunStatusParams
-				if err := unmarshal(&req); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.Status(ctx, &req)
-			},
-			"attach": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentRunAttachParams
-				if err := unmarshal(&req); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.Attach(ctx, &req)
+				return svc.Restart(ctx, key.Workspace, key.Name)
 			},
 		},
 	})
@@ -164,36 +177,51 @@ func RegisterAgentRunService(s *jsonrpc.Server, svc AgentRunService) {
 func RegisterAgentService(s *jsonrpc.Server, svc AgentService) {
 	s.RegisterService("agent", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
-			"set": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentSetParams
-				if err := unmarshal(&req); err != nil {
+			"create": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var agent pkgariapi.Agent
+				if err := unmarshal(&agent); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return svc.Set(ctx, &req)
+				return svc.Create(ctx, &agent)
+			},
+			"update": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var agent pkgariapi.Agent
+				if err := unmarshal(&agent); err != nil {
+					return nil, jsonrpc.ErrInvalidParams(err.Error())
+				}
+				return svc.Update(ctx, &agent)
 			},
 			"get": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentGetParams
-				if err := unmarshal(&req); err != nil {
+				var key pkgariapi.ObjectKey
+				if err := unmarshal(&key); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return svc.Get(ctx, &req)
+				if key.Name == "" {
+					return nil, jsonrpc.ErrInvalidParams("name is required")
+				}
+				return svc.Get(ctx, key.Name)
 			},
 			"list": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				return svc.List(ctx)
+				var opts pkgariapi.ListOptions
+				_ = unmarshal(&opts)
+				return svc.List(ctx, opts)
 			},
 			"delete": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentDeleteParams
-				if err := unmarshal(&req); err != nil {
+				var key pkgariapi.ObjectKey
+				if err := unmarshal(&key); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
-				return nil, svc.Delete(ctx, &req)
+				if key.Name == "" {
+					return nil, jsonrpc.ErrInvalidParams("name is required")
+				}
+				return nil, svc.Delete(ctx, key.Name)
 			},
 		},
 	})
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// mapRPCError converts domain errors to *jsonrpc.RPCError for use in handlers.
+// Error helpers
 // ────────────────────────────────────────────────────────────────────────────
 
 // MapRPCError converts an error to a *jsonrpc.RPCError.
@@ -206,18 +234,7 @@ func MapRPCError(err error) error {
 	if rpcErr, ok := err.(*jsonrpc.RPCError); ok {
 		return rpcErr
 	}
-	// Check for recovery blocked sentinel pattern.
-	if isRecoveryBlocked(err) {
-		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
-	}
 	return jsonrpc.ErrInternal(err.Error())
-}
-
-// isRecoveryBlocked is a placeholder for domain-specific error detection.
-// Implementations can use errors.As or message matching.
-func isRecoveryBlocked(err error) bool {
-	_ = err
-	return false
 }
 
 // callRPC is a helper for typed ARI client call patterns.

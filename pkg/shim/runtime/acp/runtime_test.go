@@ -172,7 +172,7 @@ func (s *RuntimeSuite) TestPrompt_ReceivesSessionUpdates() {
 	s.Require().NoError(mgr.Create(ctx))
 
 	resp, err := mgr.Prompt(ctx, []acp.ContentBlock{
-		{Text: &acp.ContentBlockText{Text: "hello"}},
+		acp.TextBlock("hello"),
 	})
 	s.Require().NoError(err)
 	s.Equal(acp.StopReasonEndTurn, resp.StopReason)

@@ -1,6 +1,7 @@
 package create
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -81,13 +82,15 @@ func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.WorkspaceCreateParams{Name: s.Name, Source: srcJSON}
-			var result pkgariapi.WorkspaceCreateResult
-			if err := client.Call(pkgariapi.MethodWorkspaceCreate, params, &result); err != nil {
+			ws := pkgariapi.Workspace{
+				Metadata: pkgariapi.ObjectMeta{Name: s.Name},
+				Spec:     pkgariapi.WorkspaceSpec{Source: srcJSON},
+			}
+			if err := client.Create(context.Background(), &ws); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(ws)
 			return nil
 		},
 	}

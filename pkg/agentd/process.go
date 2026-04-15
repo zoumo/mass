@@ -20,7 +20,7 @@ import (
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	spec "github.com/zoumo/mass/pkg/runtime-spec"
 	shimclient "github.com/zoumo/mass/pkg/shim/client"
-	"github.com/zoumo/mass/pkg/store"
+	"github.com/zoumo/mass/pkg/agentd/store"
 )
 
 // EventHandler is called for each shim/event notification received from the shim.

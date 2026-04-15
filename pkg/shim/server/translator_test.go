@@ -43,7 +43,7 @@ func sendAndDrainShimEvent(t *testing.T, in chan<- acp.SessionNotification, ch <
 	t.Helper()
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: text}},
+			Content: acp.TextBlock(text),
 		}
 	})
 	return drainShimEvent(t, ch)
@@ -58,7 +58,7 @@ func TestTranslate_AgentMessageChunk(t *testing.T) {
 
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}},
+			Content: acp.TextBlock("hello"),
 		}
 	})
 
@@ -82,7 +82,7 @@ func TestTranslate_AgentThoughtChunk(t *testing.T) {
 
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentThoughtChunk = &acp.SessionUpdateAgentThoughtChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "thinking"}},
+			Content: acp.TextBlock("thinking"),
 		}
 	})
 
@@ -173,7 +173,7 @@ func TestTranslate_UserMessageChunk(t *testing.T) {
 
 	in <- acp.SessionNotification{Update: acp.SessionUpdate{
 		UserMessageChunk: &acp.SessionUpdateUserMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello from user"}},
+			Content: acp.TextBlock("hello from user"),
 		},
 	}}
 
@@ -195,7 +195,7 @@ func TestTranslate_PreviouslyIgnoredVariants(t *testing.T) {
 	in <- acp.SessionNotification{Update: acp.SessionUpdate{CurrentModeUpdate: &acp.SessionCurrentModeUpdate{}}}
 	in <- acp.SessionNotification{Update: acp.SessionUpdate{
 		AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "after"}},
+			Content: acp.TextBlock("after"),
 		},
 	}}
 
@@ -236,7 +236,7 @@ func TestFanOut_ThreeSubscribers(t *testing.T) {
 
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "broadcast"}},
+			Content: acp.TextBlock("broadcast"),
 		}
 	})
 
@@ -367,7 +367,7 @@ func TestShimEventRoundTrip_NoTurnFields(t *testing.T) {
 		Time:     time.Now(),
 		Category: apishim.CategorySession,
 		Type:     apishim.EventTypeAgentMessage,
-		Content:  apishim.AgentMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "no turn"}}},
+		Content:  apishim.AgentMessageEvent{Content: apishim.TextBlock("no turn")},
 	}
 	data, err := ev.MarshalJSON()
 	require.NoError(t, err)
@@ -380,9 +380,9 @@ func TestEventTypes(t *testing.T) {
 		ev   apishim.Event
 		want string
 	}{
-		{apishim.AgentMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "hi"}}}, "agent_message"},
-		{apishim.AgentThinkingEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "hmm"}}}, "agent_thinking"},
-		{apishim.UserMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "yo"}}}, "user_message"},
+		{apishim.AgentMessageEvent{Content: apishim.TextBlock("hi")}, "agent_message"},
+		{apishim.AgentThinkingEvent{Content: apishim.TextBlock("hmm")}, "agent_thinking"},
+		{apishim.UserMessageEvent{Content: apishim.TextBlock("yo")}, "user_message"},
 		{apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"}, "tool_call"},
 		{apishim.ToolResultEvent{ID: "1", Status: "ok"}, "tool_result"},
 		{apishim.PlanEvent{Entries: nil}, "plan"},
@@ -404,7 +404,7 @@ func TestSubscribeFromSeq_BackfillAndLive(t *testing.T) {
 	log1, err := OpenEventLog(logPath)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: at, Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Content: apishim.AgentMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: fmt.Sprintf("msg-%d", i)}}}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: at, Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Content: apishim.AgentMessageEvent{Content: apishim.TextBlock(fmt.Sprintf("msg-%d", i))}}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -430,7 +430,7 @@ func TestSubscribeFromSeq_BackfillAndLive(t *testing.T) {
 	// Broadcast a new event — gets seq 5.
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "live"}},
+			Content: acp.TextBlock("live"),
 		}
 	})
 	liveEv := drainShimEvent(t, ch)
@@ -625,7 +625,7 @@ func TestFailClosed_AppendFailureDropsEvent(t *testing.T) {
 	// Send one successful event (seq 0).
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "first"}},
+			Content: acp.TextBlock("first"),
 		}
 	})
 	ev0 := drainShimEvent(t, ch)
@@ -637,7 +637,7 @@ func TestFailClosed_AppendFailureDropsEvent(t *testing.T) {
 	// Send a second event — Append will fail (file closed), so it should be dropped.
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "dropped"}},
+			Content: acp.TextBlock("dropped"),
 		}
 	})
 
@@ -674,7 +674,7 @@ func TestConcurrentBroadcast_SeqContinuous(t *testing.T) {
 		for i := 0; i < numEvents/2; i++ {
 			in <- makeNotif(func(u *acp.SessionUpdate) {
 				u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-					Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "txt"}},
+					Content: acp.TextBlock("txt"),
 				}
 			})
 		}
@@ -843,7 +843,7 @@ func TestEventCounts_FailClosedOnAppendFailure(t *testing.T) {
 	// Send another AgentMessageChunk — should be dropped (fail-closed).
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "dropped"}},
+			Content: acp.TextBlock("dropped"),
 		}
 	})
 
@@ -926,7 +926,7 @@ func TestSessionMetadataHook_IgnoresNonMetadata(t *testing.T) {
 	// Send a text event (non-metadata).
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}},
+			Content: acp.TextBlock("hello"),
 		}
 	})
 	drainShimEvent(t, ch)

@@ -2,6 +2,7 @@
 package subcommands
 
 import (
+	"context"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ import (
 	"github.com/zoumo/mass/cmd/massctl/subcommands/shim"
 	"github.com/zoumo/mass/cmd/massctl/subcommands/up"
 	"github.com/zoumo/mass/cmd/massctl/subcommands/workspace"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
@@ -26,11 +28,11 @@ func NewRootCommand() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&socketPath, "socket", "/var/run/mass/ari.sock", "ARI socket path")
 
-	getClient := func() (*ariclient.Client, error) {
+	getClient := func() (pkgariapi.Client, error) {
 		if socketPath == "" {
 			return nil, os.ErrInvalid
 		}
-		return ariclient.NewClient(socketPath)
+		return ariclient.Dial(context.Background(), socketPath)
 	}
 
 	root.AddCommand(agentrun.NewCommand(cliutil.ClientFn(getClient)))

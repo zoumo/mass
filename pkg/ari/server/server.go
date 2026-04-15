@@ -2,8 +2,8 @@
 //
 // Service holds the shared dependencies. Three unexported adapter types
 // (workspaceAdapter, agentRunAdapter, agentAdapter) wrap *Service and satisfy
-// the pkgariapi.WorkspaceService, pkgariapi.AgentRunService, and pkgariapi.AgentService
-// interfaces respectively. Use Register to wire all three with a jsonrpc.Server.
+// the WorkspaceService, AgentRunService, and AgentService interfaces
+// respectively. Use Register to wire all three with a jsonrpc.Server.
 //
 // NOTE: A single Go struct cannot implement all three interfaces because
 // WorkspaceService.List(ctx) and AgentService.List(ctx) have the same method
@@ -22,13 +22,12 @@ import (
 	"strings"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	apishim "github.com/zoumo/mass/pkg/shim/api"
 	"github.com/zoumo/mass/pkg/agentd"
 	"github.com/zoumo/mass/pkg/jsonrpc"
-	"github.com/zoumo/mass/pkg/store"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
+	"github.com/zoumo/mass/pkg/agentd/store"
 	"github.com/zoumo/mass/pkg/workspace"
-
 )
 
 // Service holds shared dependencies for all ARI handlers.
@@ -69,17 +68,20 @@ func Register(srv *jsonrpc.Server, svc *Service) {
 	RegisterAgentService(srv, &agentAdapter{svc})
 }
 
+// copyVal returns a pointer to a shallow copy of v.
+func copyVal[T any](v T) *T { return &v }
+
 // ────────────────────────────────────────────────────────────────────────────
 // Adapter types
 // ────────────────────────────────────────────────────────────────────────────
 
-// workspaceAdapter adapts *Service to pkgariapi.WorkspaceService.
+// workspaceAdapter adapts *Service to WorkspaceService.
 type workspaceAdapter struct{ *Service }
 
-// agentRunAdapter adapts *Service to pkgariapi.AgentRunService.
+// agentRunAdapter adapts *Service to AgentRunService.
 type agentRunAdapter struct{ *Service }
 
-// agentAdapter adapts *Service to pkgariapi.AgentService.
+// agentAdapter adapts *Service to AgentService.
 type agentAdapter struct{ *Service }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -90,53 +92,39 @@ type agentAdapter struct{ *Service }
 //
 // Creates the workspace record with phase=pending, returns immediately, then
 // prepares the workspace directory asynchronously.
-//
-// Observability: INFO on entry (name, phase:pending); INFO/WARN in goroutine
-// on prepare success (phase:ready, path) or failure (phase:error).
-func (a *workspaceAdapter) Create(ctx context.Context, req *pkgariapi.WorkspaceCreateParams) (*pkgariapi.WorkspaceCreateResult, error) {
-	if req.Name == "" {
+func (a *workspaceAdapter) Create(ctx context.Context, ws *pkgariapi.Workspace) (*pkgariapi.Workspace, error) {
+	if ws.Metadata.Name == "" {
 		return nil, jsonrpc.ErrInvalidParams("name is required")
 	}
 
-	a.logger.Info("workspace/create", "workspace", req.Name, "phase", "pending")
+	a.logger.Info("workspace/create", "workspace", ws.Metadata.Name, "phase", "pending")
 
-	ws := &pkgariapi.Workspace{
-		Metadata: pkgariapi.ObjectMeta{
-			Name:   req.Name,
-			Labels: req.Labels,
-		},
-		Spec: pkgariapi.WorkspaceSpec{
-			Source: req.Source,
-		},
-		Status: pkgariapi.WorkspaceStatus{
-			Phase: pkgariapi.WorkspacePhasePending,
-		},
-	}
+	ws.Status.Phase = pkgariapi.WorkspacePhasePending
 	if err := a.store.CreateWorkspace(ctx, ws); err != nil {
 		if strings.Contains(err.Error(), "already exists") {
-			return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s already exists", req.Name))
+			return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s already exists", ws.Metadata.Name))
 		}
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 
-	result := &pkgariapi.WorkspaceCreateResult{Workspace: ws.ARIView()}
+	result := copyVal(ws.ARIView())
 
 	// Parse source for the Prepare call.
 	var src workspace.Source
-	if len(req.Source) > 0 {
-		if err := json.Unmarshal(req.Source, &src); err != nil {
+	if len(ws.Spec.Source) > 0 {
+		if err := json.Unmarshal(ws.Spec.Source, &src); err != nil {
 			a.logger.Warn("workspace/create: invalid source JSON",
-				"workspace", req.Name, "error", err)
+				"workspace", ws.Metadata.Name, "error", err)
 		}
 	}
 
 	wsSpec := workspace.WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   workspace.WorkspaceMetadata{Name: req.Name},
-		Source:     src,
+		Metadata:    workspace.WorkspaceMetadata{Name: ws.Metadata.Name},
+		Source:      src,
 	}
-	targetDir := filepath.Join(a.baseDir, "workspaces", req.Name)
-	wsName := req.Name
+	targetDir := filepath.Join(a.baseDir, "workspaces", ws.Metadata.Name)
+	wsName := ws.Metadata.Name
 
 	go func() {
 		prepareCtx := context.Background()
@@ -160,49 +148,51 @@ func (a *workspaceAdapter) Create(ctx context.Context, req *pkgariapi.WorkspaceC
 	return result, nil
 }
 
-// Status handles workspace/status.
-func (a *workspaceAdapter) Status(ctx context.Context, req *pkgariapi.WorkspaceStatusParams) (*pkgariapi.WorkspaceStatusResult, error) {
-	a.logger.Info("workspace/status", "workspace", req.Name)
+// Get handles workspace/get.
+func (a *workspaceAdapter) Get(ctx context.Context, name string) (*pkgariapi.Workspace, error) {
+	a.logger.Info("workspace/get", "workspace", name)
 
-	ws, err := a.store.GetWorkspace(ctx, req.Name)
+	ws, err := a.store.GetWorkspace(ctx, name)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 	if ws == nil {
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s not found", req.Name))
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s not found", name))
 	}
 
-	members := a.listWorkspaceMembers(ctx, req.Name)
-	return &pkgariapi.WorkspaceStatusResult{
-		Workspace: ws.ARIView(),
-		Members:   members,
-	}, nil
+	result := ws.ARIView()
+	return &result, nil
 }
 
 // List handles workspace/list.
 //
-// Returns all workspaces from the DB (all phases).
-func (a *workspaceAdapter) List(ctx context.Context) (*pkgariapi.WorkspaceListResult, error) {
+// Returns workspaces matching the optional field selector filter.
+func (a *workspaceAdapter) List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.WorkspaceList, error) {
 	a.logger.Info("workspace/list")
 
-	all, err := a.store.ListWorkspaces(ctx, nil)
+	var filter *pkgariapi.WorkspaceFilter
+	if phase := opts.FieldSelector["phase"]; phase != "" {
+		filter = &pkgariapi.WorkspaceFilter{Phase: pkgariapi.WorkspacePhase(phase)}
+	}
+
+	all, err := a.store.ListWorkspaces(ctx, filter)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
-	workspaces := make([]pkgariapi.Workspace, 0, len(all))
+	items := make([]pkgariapi.Workspace, 0, len(all))
 	for _, ws := range all {
-		workspaces = append(workspaces, ws.ARIView())
+		items = append(items, ws.ARIView())
 	}
-	return &pkgariapi.WorkspaceListResult{Workspaces: workspaces}, nil
+	return &pkgariapi.WorkspaceList{Items: items}, nil
 }
 
 // Delete handles workspace/delete.
 //
 // Rejects deletion if the workspace has active agent runs.
-func (a *workspaceAdapter) Delete(ctx context.Context, req *pkgariapi.WorkspaceDeleteParams) error {
-	a.logger.Info("workspace/delete", "workspace", req.Name)
+func (a *workspaceAdapter) Delete(ctx context.Context, name string) error {
+	a.logger.Info("workspace/delete", "workspace", name)
 
-	if err := a.store.DeleteWorkspace(ctx, req.Name); err != nil {
+	if err := a.store.DeleteWorkspace(ctx, name); err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			return jsonrpc.ErrInvalidParams(err.Error())
 		}
@@ -215,9 +205,6 @@ func (a *workspaceAdapter) Delete(ctx context.Context, req *pkgariapi.WorkspaceD
 //
 // Routes a message from one agent run to another within a workspace via a
 // fire-and-forget ShimClient.Prompt call.
-//
-// Observability: INFO on dispatch (workspace, from, to); WARN on each
-// rejection path with reason.
 func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSendParams) (*pkgariapi.WorkspaceSendResult, error) {
 	if req.Workspace == "" || req.From == "" || req.To == "" || req.Message == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, from, to, and message are required")
@@ -303,57 +290,41 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSen
 // Validates workspace/name/agent, checks workspace phase, creates the agent
 // run record with state=creating, and starts the shim in the background.
 // Returns immediately with state="creating".
-//
-// Observability: INFO on creation; INFO/WARN in goroutine on Start success/failure.
-func (a *agentRunAdapter) Create(ctx context.Context, req *pkgariapi.AgentRunCreateParams) (*pkgariapi.AgentRunCreateResult, error) {
-	if req.Workspace == "" || req.Name == "" || req.Agent == "" {
+func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*pkgariapi.AgentRun, error) {
+	if ar.Metadata.Workspace == "" || ar.Metadata.Name == "" || ar.Spec.Agent == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, name, and agent are required")
 	}
 
-	if err := a.processes.ValidateAgentSocketPath(req.Workspace, req.Name); err != nil {
+	if err := a.processes.ValidateAgentSocketPath(ar.Metadata.Workspace, ar.Metadata.Name); err != nil {
 		return nil, jsonrpc.ErrInvalidParams(err.Error())
 	}
 
-	switch req.RestartPolicy {
+	switch ar.Spec.RestartPolicy {
 	case "", pkgariapi.RestartPolicyTryReload, pkgariapi.RestartPolicyAlwaysNew:
 		// valid
 	default:
 		return nil, jsonrpc.ErrInvalidParams(
-			fmt.Sprintf("invalid restartPolicy %q: must be one of \"try_reload\", \"always_new\"", req.RestartPolicy))
+			fmt.Sprintf("invalid restartPolicy %q: must be one of \"try_reload\", \"always_new\"", ar.Spec.RestartPolicy))
 	}
 
-	a.logger.Info("agentrun/create", "workspace", req.Workspace, "name", req.Name)
+	a.logger.Info("agentrun/create", "workspace", ar.Metadata.Workspace, "name", ar.Metadata.Name)
 
-	ws, err := a.store.GetWorkspace(ctx, req.Workspace)
+	ws, err := a.store.GetWorkspace(ctx, ar.Metadata.Workspace)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 	if ws == nil {
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s not found", req.Workspace))
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s not found", ar.Metadata.Workspace))
 	}
 	if ws.Status.Phase != pkgariapi.WorkspacePhaseReady {
 		return nil, &jsonrpc.RPCError{
 			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("workspace %s is not ready (phase=%s)", req.Workspace, ws.Status.Phase),
+			Message: fmt.Sprintf("workspace %s is not ready (phase=%s)", ar.Metadata.Workspace, ws.Status.Phase),
 		}
 	}
 
-	agentRun := &pkgariapi.AgentRun{
-		Metadata: pkgariapi.ObjectMeta{
-			Name:      req.Name,
-			Workspace: req.Workspace,
-			Labels:    req.Labels,
-		},
-		Spec: pkgariapi.AgentRunSpec{
-			Agent:         req.Agent,
-			RestartPolicy: req.RestartPolicy,
-			SystemPrompt:  req.SystemPrompt,
-		},
-		Status: pkgariapi.AgentRunStatus{
-			State: apiruntime.StatusCreating,
-		},
-	}
-	if err := a.agents.Create(ctx, agentRun); err != nil {
+	ar.Status.State = apiruntime.StatusCreating
+	if err := a.agents.Create(ctx, ar); err != nil {
 		var alreadyExists *agentd.ErrAgentRunAlreadyExists
 		if errors.As(err, &alreadyExists) {
 			return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
@@ -362,10 +333,10 @@ func (a *agentRunAdapter) Create(ctx context.Context, req *pkgariapi.AgentRunCre
 	}
 
 	a.logger.Info("agentrun/create: agent run created, starting shim",
-		"workspace", req.Workspace, "name", req.Name)
+		"workspace", ar.Metadata.Workspace, "name", ar.Metadata.Name)
 
-	wsName := req.Workspace
-	agName := req.Name
+	wsName := ar.Metadata.Workspace
+	agName := ar.Metadata.Name
 	go func() {
 		bgCtx := context.Background()
 		if _, err := a.processes.Start(bgCtx, wsName, agName); err != nil {
@@ -381,15 +352,99 @@ func (a *agentRunAdapter) Create(ctx context.Context, req *pkgariapi.AgentRunCre
 		}
 	}()
 
-	return &pkgariapi.AgentRunCreateResult{AgentRun: agentRun.ARIView()}, nil
+	return copyVal(ar.ARIView()), nil
+}
+
+// Get handles agentrun/get.
+//
+// Returns detailed agent run info with shim runtime state populated in Status.Shim.
+func (a *agentRunAdapter) Get(ctx context.Context, wsName, name string) (*pkgariapi.AgentRun, error) {
+	a.logger.Info("agentrun/get", "workspace", wsName, "name", name)
+
+	agent, err := a.store.GetAgentRun(ctx, wsName, name)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	if agent == nil {
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", wsName, name))
+	}
+
+	result := agent.ARIView()
+
+	// Best-effort: populate Shim runtime state if available.
+	if rts, err := a.processes.RuntimeStatus(ctx, wsName, name); err == nil {
+		st := rts.State
+		socketPath := agent.Status.ShimSocketPath
+		if p := a.processes.GetProcess(wsName + "/" + name); p != nil {
+			socketPath = p.SocketPath
+		}
+		result.Status.Shim = &pkgariapi.ShimStateInfo{
+			Status:     string(st.Status),
+			PID:        agent.Status.ShimPID,
+			Bundle:     st.Bundle,
+			SocketPath: socketPath,
+		}
+	}
+
+	return &result, nil
+}
+
+// List handles agentrun/list.
+//
+// Returns all agent runs matching the optional workspace/state filter.
+func (a *agentRunAdapter) List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.AgentRunList, error) {
+	wsFilter := opts.FieldSelector["workspace"]
+	stFilter := opts.FieldSelector["state"]
+	a.logger.Info("agentrun/list", "workspace", wsFilter, "state", stFilter)
+
+	filter := &pkgariapi.AgentRunFilter{
+		Workspace: wsFilter,
+		State:     apiruntime.Status(stFilter),
+	}
+	agentRuns, err := a.agents.List(ctx, filter)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+
+	items := make([]pkgariapi.AgentRun, 0, len(agentRuns))
+	for _, ag := range agentRuns {
+		items = append(items, ag.ARIView())
+	}
+	return &pkgariapi.AgentRunList{Items: items}, nil
+}
+
+// Delete handles agentrun/delete.
+//
+// Validates agent run is in stopped/error state then deletes from DB.
+func (a *agentRunAdapter) Delete(ctx context.Context, wsName, name string) error {
+	a.logger.Info("agentrun/delete", "workspace", wsName, "name", name)
+
+	if err := a.agents.Delete(ctx, wsName, name); err != nil {
+		var notFound *agentd.ErrAgentRunNotFound
+		if errors.As(err, &notFound) {
+			return jsonrpc.ErrInvalidParams(err.Error())
+		}
+		var notStopped *agentd.ErrDeleteNotStopped
+		if errors.As(err, &notStopped) {
+			return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
+		}
+		return jsonrpc.ErrInternal(err.Error())
+	}
+
+	// Clean up bundle directory (best effort; DB record already deleted).
+	bundlePath := a.processes.BundlePath(wsName, name)
+	if err := os.RemoveAll(bundlePath); err != nil {
+		a.logger.Warn("agentrun/delete: failed to remove bundle",
+			"workspace", wsName, "name", name,
+			"bundle", bundlePath, "error", err)
+	}
+	return nil
 }
 
 // Prompt handles agentrun/prompt.
 //
 // Validates agent run state == idle, transitions to running, connects to shim,
 // and fires the prompt in the background. Returns Accepted:true immediately.
-//
-// Observability: INFO on dispatch; WARN on rejection (bad state, not running).
 func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPromptParams) (*pkgariapi.AgentRunPromptResult, error) {
 	if req.Workspace == "" || req.Name == "" || req.Prompt == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, name, and prompt are required")
@@ -420,8 +475,6 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPro
 		}
 	}
 
-	// Reserve the agent run before acknowledging the prompt so a second
-	// prompt/stop/delete cannot observe stale idle while delivery is queued.
 	reserved, err := a.agents.TransitionState(ctx, req.Workspace, req.Name, apiruntime.StatusIdle, apiruntime.StatusRunning)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
@@ -466,18 +519,18 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPro
 // Cancel handles agentrun/cancel.
 //
 // Connects to the running shim and calls Cancel.
-func (a *agentRunAdapter) Cancel(ctx context.Context, req *pkgariapi.AgentRunCancelParams) error {
-	a.logger.Info("agentrun/cancel", "workspace", req.Workspace, "name", req.Name)
+func (a *agentRunAdapter) Cancel(ctx context.Context, wsName, name string) error {
+	a.logger.Info("agentrun/cancel", "workspace", wsName, "name", name)
 
-	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
+	agent, err := a.store.GetAgentRun(ctx, wsName, name)
 	if err != nil {
 		return jsonrpc.ErrInternal(err.Error())
 	}
 	if agent == nil {
-		return jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.Name))
+		return jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", wsName, name))
 	}
 
-	client, err := a.processes.Connect(ctx, req.Workspace, req.Name)
+	client, err := a.processes.Connect(ctx, wsName, name)
 	if err != nil {
 		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
 	}
@@ -491,40 +544,11 @@ func (a *agentRunAdapter) Cancel(ctx context.Context, req *pkgariapi.AgentRunCan
 // Stop handles agentrun/stop.
 //
 // Calls processes.Stop which sends runtime/stop to the shim and waits.
-func (a *agentRunAdapter) Stop(ctx context.Context, req *pkgariapi.AgentRunStopParams) error {
-	a.logger.Info("agentrun/stop", "workspace", req.Workspace, "name", req.Name)
+func (a *agentRunAdapter) Stop(ctx context.Context, wsName, name string) error {
+	a.logger.Info("agentrun/stop", "workspace", wsName, "name", name)
 
-	if err := a.processes.Stop(ctx, req.Workspace, req.Name); err != nil {
+	if err := a.processes.Stop(ctx, wsName, name); err != nil {
 		return jsonrpc.ErrInternal(err.Error())
-	}
-	return nil
-}
-
-// Delete handles agentrun/delete.
-//
-// Validates agent run is in stopped/error state then deletes from DB.
-// Maps ErrDeleteNotStopped → -32001, ErrAgentRunNotFound → -32602.
-func (a *agentRunAdapter) Delete(ctx context.Context, req *pkgariapi.AgentRunDeleteParams) error {
-	a.logger.Info("agentrun/delete", "workspace", req.Workspace, "name", req.Name)
-
-	if err := a.agents.Delete(ctx, req.Workspace, req.Name); err != nil {
-		var notFound *agentd.ErrAgentRunNotFound
-		if errors.As(err, &notFound) {
-			return jsonrpc.ErrInvalidParams(err.Error())
-		}
-		var notStopped *agentd.ErrDeleteNotStopped
-		if errors.As(err, &notStopped) {
-			return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
-		}
-		return jsonrpc.ErrInternal(err.Error())
-	}
-
-	// Clean up bundle directory (best effort; DB record already deleted).
-	bundlePath := a.processes.BundlePath(req.Workspace, req.Name)
-	if err := os.RemoveAll(bundlePath); err != nil {
-		a.logger.Warn("agentrun/delete: failed to remove bundle",
-			"workspace", req.Workspace, "name", req.Name,
-			"bundle", bundlePath, "error", err)
 	}
 	return nil
 }
@@ -533,48 +557,46 @@ func (a *agentRunAdapter) Delete(ctx context.Context, req *pkgariapi.AgentRunDel
 //
 // Accepts any agent state. Stops the existing shim (if running) then starts a
 // new one. Returns immediately with state="creating".
-func (a *agentRunAdapter) Restart(ctx context.Context, req *pkgariapi.AgentRunRestartParams) (*pkgariapi.AgentRunRestartResult, error) {
-	a.logger.Info("agentrun/restart", "workspace", req.Workspace, "name", req.Name)
+func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pkgariapi.AgentRun, error) {
+	a.logger.Info("agentrun/restart", "workspace", wsName, "name", name)
 
-	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
+	agent, err := a.store.GetAgentRun(ctx, wsName, name)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 	if agent == nil {
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.Name))
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", wsName, name))
 	}
 
 	// Agents in terminal states have no active shim.
 	needsStop := agent.Status.State != apiruntime.StatusStopped && agent.Status.State != apiruntime.StatusError
 
-	if err := a.agents.UpdateStatus(ctx, req.Workspace, req.Name, pkgariapi.AgentRunStatus{
+	if err := a.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
 		State: apiruntime.StatusCreating,
 	}); err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 
-	wsName := req.Workspace
-	agName := req.Name
 	go func() {
 		bgCtx := context.Background()
 		if needsStop {
-			if err := a.processes.Stop(bgCtx, wsName, agName); err != nil {
+			if err := a.processes.Stop(bgCtx, wsName, name); err != nil {
 				a.logger.Warn("agentrun/restart: pre-stop failed, continuing",
-					"workspace", wsName, "name", agName, "error", err)
+					"workspace", wsName, "name", name, "error", err)
 			}
 			// Stop() transitions state to "stopped"; re-set to "creating" for Start().
-			if err := a.agents.UpdateStatus(bgCtx, wsName, agName, pkgariapi.AgentRunStatus{
+			if err := a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
 				State: apiruntime.StatusCreating,
 			}); err != nil {
 				a.logger.Warn("agentrun/restart: failed to re-transition to creating",
-					"workspace", wsName, "name", agName, "error", err)
+					"workspace", wsName, "name", name, "error", err)
 				return
 			}
 		}
-		if _, err := a.processes.Start(bgCtx, wsName, agName); err != nil {
+		if _, err := a.processes.Start(bgCtx, wsName, name); err != nil {
 			a.logger.Warn("agentrun/restart: shim start failed",
-				"workspace", wsName, "name", agName, "error", err)
-			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, pkgariapi.AgentRunStatus{
+				"workspace", wsName, "name", name, "error", err)
+			_ = a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
 				State:        apiruntime.StatusError,
 				ErrorMessage: err.Error(),
 			})
@@ -582,160 +604,108 @@ func (a *agentRunAdapter) Restart(ctx context.Context, req *pkgariapi.AgentRunRe
 	}()
 
 	// Read back updated agent state for the response.
-	agentUpdated, err2 := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
+	agentUpdated, err2 := a.store.GetAgentRun(ctx, wsName, name)
 	if err2 != nil || agentUpdated == nil {
 		agentUpdated = &pkgariapi.AgentRun{
-			Metadata: pkgariapi.ObjectMeta{Workspace: req.Workspace, Name: req.Name},
+			Metadata: pkgariapi.ObjectMeta{Workspace: wsName, Name: name},
 			Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusCreating},
 		}
 	}
-	return &pkgariapi.AgentRunRestartResult{AgentRun: agentUpdated.ARIView()}, nil
-}
-
-// List handles agentrun/list.
-//
-// Returns all agent runs matching the optional workspace/state filter.
-func (a *agentRunAdapter) List(ctx context.Context, req *pkgariapi.AgentRunListParams) (*pkgariapi.AgentRunListResult, error) {
-	a.logger.Info("agentrun/list", "workspace", req.Workspace, "state", req.State)
-
-	filter := &pkgariapi.AgentRunFilter{
-		Workspace: req.Workspace,
-		State:     apiruntime.Status(req.State),
-	}
-	agentRuns, err := a.agents.List(ctx, filter)
-	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-
-	runs := make([]pkgariapi.AgentRun, 0, len(agentRuns))
-	for _, ag := range agentRuns {
-		runs = append(runs, ag.ARIView())
-	}
-	return &pkgariapi.AgentRunListResult{AgentRuns: runs}, nil
-}
-
-// Status handles agentrun/status.
-//
-// Returns detailed agent run info plus optional shim runtime state.
-func (a *agentRunAdapter) Status(ctx context.Context, req *pkgariapi.AgentRunStatusParams) (*pkgariapi.AgentRunStatusResult, error) {
-	a.logger.Info("agentrun/status", "workspace", req.Workspace, "name", req.Name)
-
-	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
-	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if agent == nil {
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.Name))
-	}
-
-	result := &pkgariapi.AgentRunStatusResult{AgentRun: agent.ARIView()}
-
-	// Best-effort: fetch shim runtime state if available.
-	if rts, err := a.processes.RuntimeStatus(ctx, req.Workspace, req.Name); err == nil {
-		st := rts.State
-		result.ShimState = &pkgariapi.ShimStateInfo{
-			Status: string(st.Status),
-			PID:    agent.Status.ShimPID,
-			Bundle: st.Bundle,
-		}
-	}
-	return result, nil
-}
-
-// Attach handles agentrun/attach.
-//
-// Returns the shim's Unix socket path so the caller can connect directly.
-// Agent run must be in idle or running state.
-func (a *agentRunAdapter) Attach(ctx context.Context, req *pkgariapi.AgentRunAttachParams) (*pkgariapi.AgentRunAttachResult, error) {
-	a.logger.Info("agentrun/attach", "workspace", req.Workspace, "name", req.Name)
-
-	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
-	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if agent == nil {
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.Name))
-	}
-	if agent.Status.State != apiruntime.StatusIdle && agent.Status.State != apiruntime.StatusRunning {
-		return nil, &jsonrpc.RPCError{
-			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("agent not in idle/running state: %s", agent.Status.State),
-		}
-	}
-
-	// Try in-memory process map first; fall back to DB-stored socket path.
-	socketPath := agent.Status.ShimSocketPath
-	if p := a.processes.GetProcess(req.Workspace + "/" + req.Name); p != nil {
-		socketPath = p.SocketPath
-	}
-
-	return &pkgariapi.AgentRunAttachResult{SocketPath: socketPath}, nil
+	return copyVal(agentUpdated.ARIView()), nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // AgentService (agentAdapter)
 // ────────────────────────────────────────────────────────────────────────────
 
-// Set handles agent/set.
+// Create handles agent/create.
 //
-// Creates or updates an agent definition in the metadata store.
-//
-// Observability: INFO on success with name and command logged.
-func (a *agentAdapter) Set(ctx context.Context, req *pkgariapi.AgentSetParams) (*pkgariapi.AgentSetResult, error) {
-	if req.Name == "" {
+// Creates a new agent definition. Returns error if the agent already exists.
+func (a *agentAdapter) Create(ctx context.Context, agent *pkgariapi.Agent) (*pkgariapi.Agent, error) {
+	if agent.Metadata.Name == "" {
 		return nil, jsonrpc.ErrInvalidParams("name is required")
 	}
-	if req.Command == "" {
+	if agent.Spec.Command == "" {
 		return nil, jsonrpc.ErrInvalidParams("command is required")
 	}
 
-	a.logger.Info("agent/set", "name", req.Name, "command", req.Command)
+	a.logger.Info("agent/create", "name", agent.Metadata.Name, "command", agent.Spec.Command)
 
-	ag := &pkgariapi.Agent{
-		Metadata: pkgariapi.ObjectMeta{Name: req.Name},
-		Spec: pkgariapi.AgentSpec{
-			Command:               req.Command,
-			Args:                  req.Args,
-			Env:                   req.Env,
-			StartupTimeoutSeconds: req.StartupTimeoutSeconds,
-		},
+	// Check if the agent already exists.
+	existing, err := a.store.GetAgent(ctx, agent.Metadata.Name)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
 	}
-	if err := a.store.SetAgent(ctx, ag); err != nil {
+	if existing != nil {
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s already exists", agent.Metadata.Name))
+	}
+
+	if err := a.store.SetAgent(ctx, agent); err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 
 	// Read back to get server-assigned timestamps.
-	stored, err := a.store.GetAgent(ctx, req.Name)
+	stored, err := a.store.GetAgent(ctx, agent.Metadata.Name)
 	if err != nil || stored == nil {
-		return &pkgariapi.AgentSetResult{Agent: *ag}, nil
+		return agent, nil
 	}
-	return &pkgariapi.AgentSetResult{Agent: *stored}, nil
+	return stored, nil
+}
+
+// Update handles agent/update.
+//
+// Updates an existing agent definition. Returns error if the agent does not exist.
+func (a *agentAdapter) Update(ctx context.Context, agent *pkgariapi.Agent) (*pkgariapi.Agent, error) {
+	if agent.Metadata.Name == "" {
+		return nil, jsonrpc.ErrInvalidParams("name is required")
+	}
+	if agent.Spec.Command == "" {
+		return nil, jsonrpc.ErrInvalidParams("command is required")
+	}
+
+	a.logger.Info("agent/update", "name", agent.Metadata.Name, "command", agent.Spec.Command)
+
+	// Check if the agent exists.
+	existing, err := a.store.GetAgent(ctx, agent.Metadata.Name)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	if existing == nil {
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s not found", agent.Metadata.Name))
+	}
+
+	if err := a.store.SetAgent(ctx, agent); err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+
+	// Read back to get server-assigned timestamps.
+	stored, err := a.store.GetAgent(ctx, agent.Metadata.Name)
+	if err != nil || stored == nil {
+		return agent, nil
+	}
+	return stored, nil
 }
 
 // Get handles agent/get.
 //
-// Returns the agent definition info or InvalidParams if not found.
-func (a *agentAdapter) Get(ctx context.Context, req *pkgariapi.AgentGetParams) (*pkgariapi.AgentGetResult, error) {
-	if req.Name == "" {
-		return nil, jsonrpc.ErrInvalidParams("name is required")
-	}
+// Returns the agent definition or InvalidParams if not found.
+func (a *agentAdapter) Get(ctx context.Context, name string) (*pkgariapi.Agent, error) {
+	a.logger.Info("agent/get", "name", name)
 
-	a.logger.Info("agent/get", "name", req.Name)
-
-	ag, err := a.store.GetAgent(ctx, req.Name)
+	ag, err := a.store.GetAgent(ctx, name)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 	if ag == nil {
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s not found", req.Name))
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s not found", name))
 	}
-	return &pkgariapi.AgentGetResult{Agent: *ag}, nil
+	return ag, nil
 }
 
 // List handles agent/list.
 //
 // Returns all agent definition objects stored in the metadata DB.
-func (a *agentAdapter) List(ctx context.Context) (*pkgariapi.AgentListResult, error) {
+func (a *agentAdapter) List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.AgentList, error) {
 	a.logger.Info("agent/list")
 
 	ags, err := a.store.ListAgents(ctx)
@@ -743,25 +713,19 @@ func (a *agentAdapter) List(ctx context.Context) (*pkgariapi.AgentListResult, er
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 
-	agents := make([]pkgariapi.Agent, 0, len(ags))
+	items := make([]pkgariapi.Agent, 0, len(ags))
 	for _, ag := range ags {
-		agents = append(agents, *ag)
+		items = append(items, *ag)
 	}
-	return &pkgariapi.AgentListResult{Agents: agents}, nil
+	return &pkgariapi.AgentList{Items: items}, nil
 }
 
 // Delete handles agent/delete.
 // No-op if the agent definition does not exist.
-//
-// Observability: INFO on delete with name logged.
-func (a *agentAdapter) Delete(ctx context.Context, req *pkgariapi.AgentDeleteParams) error {
-	if req.Name == "" {
-		return jsonrpc.ErrInvalidParams("name is required")
-	}
+func (a *agentAdapter) Delete(ctx context.Context, name string) error {
+	a.logger.Info("agent/delete", "name", name)
 
-	a.logger.Info("agent/delete", "name", req.Name)
-
-	if err := a.store.DeleteAgent(ctx, req.Name); err != nil {
+	if err := a.store.DeleteAgent(ctx, name); err != nil {
 		return jsonrpc.ErrInternal(err.Error())
 	}
 	return nil
@@ -770,22 +734,6 @@ func (a *agentAdapter) Delete(ctx context.Context, req *pkgariapi.AgentDeletePar
 // ────────────────────────────────────────────────────────────────────────────
 // Shared helpers (on *Service so both adapter families can call them)
 // ────────────────────────────────────────────────────────────────────────────
-
-// listWorkspaceMembers returns all AgentRun domain objects for the given workspace.
-// Returns nil (not an error) if the query fails.
-func (s *Service) listWorkspaceMembers(ctx context.Context, wsName string) []pkgariapi.AgentRun {
-	agentRuns, err := s.agents.List(ctx, &pkgariapi.AgentRunFilter{Workspace: wsName})
-	if err != nil {
-		s.logger.Error("listWorkspaceMembers: list agent runs failed",
-			"workspace", wsName, "err", err)
-		return nil
-	}
-	runs := make([]pkgariapi.AgentRun, 0, len(agentRuns))
-	for _, ag := range agentRuns {
-		runs = append(runs, ag.ARIView())
-	}
-	return runs
-}
 
 // recordPromptDeliveryFailure updates agent run status after a failed prompt
 // delivery, consulting the runtime status to get the authoritative state.
@@ -839,9 +787,7 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkga
 }
 
 // buildWorkspaceEnvelope constructs the envelope header prepended to every
-// workspace message before delivery. It encodes sender identity and, when
-// NeedsReply is set, the reply-to address so the receiving agent knows it is
-// expected to respond.
+// workspace message before delivery.
 func buildWorkspaceEnvelope(p pkgariapi.WorkspaceSendParams) string {
 	if p.NeedsReply {
 		return "[workspace-message from=" + p.From + " reply-to=" + p.From + " reply-requested=true]\n\n"

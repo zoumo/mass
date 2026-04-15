@@ -26,7 +26,7 @@ import (
 	"github.com/zoumo/mass/pkg/jsonrpc"
 	apishim "github.com/zoumo/mass/pkg/shim/api"
 	shimclient "github.com/zoumo/mass/pkg/shim/client"
-	"github.com/zoumo/mass/pkg/store"
+	"github.com/zoumo/mass/pkg/agentd/store"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
@@ -37,7 +37,7 @@ import (
 // testEnv holds all components for a running ARI test server.
 type testEnv struct {
 	srv       *jsonrpc.Server
-	client    *ariclient.Client
+	client    *ariclient.RawClient
 	store     *store.Store
 	processes *agentd.ProcessManager
 	agents    *agentd.AgentRunManager
@@ -87,7 +87,7 @@ func newTestServer(t *testing.T) *testEnv {
 		return err == nil
 	}, 2*time.Second, 10*time.Millisecond, "server socket did not appear")
 
-	client, err := ariclient.NewClient(sockPath)
+	client, err := ariclient.NewRawClient(sockPath)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -111,38 +111,39 @@ func newTestServer(t *testing.T) *testEnv {
 
 // callRaw calls a JSON-RPC method and returns the raw result bytes and error.
 // An RPC error is returned as an error value wrapping the code + message.
-func callRaw(t *testing.T, client *ariclient.Client, method string, params any) (json.RawMessage, error) {
+func callRaw(t *testing.T, client *ariclient.RawClient, method string, params any) (json.RawMessage, error) {
 	t.Helper()
 	var result json.RawMessage
 	err := client.Call(method, params, &result)
 	return result, err
 }
 
-// waitUntilWorkspaceReady polls workspace/status until phase == "ready".
-func waitUntilWorkspaceReady(t *testing.T, client *ariclient.Client, wsName string) {
+// waitUntilWorkspaceReady polls workspace/get until phase == "ready".
+func waitUntilWorkspaceReady(t *testing.T, client *ariclient.RawClient, wsName string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		var res pkgariapi.WorkspaceStatusResult
-		err := client.Call("workspace/status", map[string]string{"name": wsName}, &res)
-		return err == nil && res.Workspace.Status.Phase == "ready"
+		var ws pkgariapi.Workspace
+		err := client.Call("workspace/get", pkgariapi.ObjectKey{Name: wsName}, &ws)
+		return err == nil && ws.Status.Phase == "ready"
 	}, 5*time.Second, 50*time.Millisecond, "workspace %s did not become ready", wsName)
 }
 
 // createAndWaitWorkspace creates a workspace with emptyDir source and polls until ready.
-func createAndWaitWorkspace(t *testing.T, client *ariclient.Client, name string) pkgariapi.WorkspaceStatusResult {
+func createAndWaitWorkspace(t *testing.T, client *ariclient.RawClient, name string) pkgariapi.Workspace {
 	t.Helper()
-	var createResult pkgariapi.WorkspaceCreateResult
-	require.NoError(t, client.Call("workspace/create", map[string]any{
-		"name":   name,
-		"source": json.RawMessage(`{"type":"emptyDir"}`),
-	}, &createResult))
-	assert.Equal(t, pkgariapi.WorkspacePhasePending, createResult.Workspace.Status.Phase)
+	ws := pkgariapi.Workspace{
+		Metadata: pkgariapi.ObjectMeta{Name: name},
+		Spec:     pkgariapi.WorkspaceSpec{Source: json.RawMessage(`{"type":"emptyDir"}`)},
+	}
+	var createResult pkgariapi.Workspace
+	require.NoError(t, client.Call("workspace/create", ws, &createResult))
+	assert.Equal(t, pkgariapi.WorkspacePhasePending, createResult.Status.Phase)
 
 	waitUntilWorkspaceReady(t, client, name)
 
-	var statusResult pkgariapi.WorkspaceStatusResult
-	require.NoError(t, client.Call("workspace/status", map[string]string{"name": name}, &statusResult))
-	return statusResult
+	var getResult pkgariapi.Workspace
+	require.NoError(t, client.Call("workspace/get", pkgariapi.ObjectKey{Name: name}, &getResult))
+	return getResult
 }
 
 // seedAgent inserts a raw agent record directly into the store, bypassing the
@@ -169,57 +170,24 @@ func seedAgent(t *testing.T, store *store.Store, wsName, name string, state apir
 func TestWorkspaceCreatePending(t *testing.T) {
 	env := newTestServer(t)
 
-	var result pkgariapi.WorkspaceCreateResult
-	err := env.client.Call("workspace/create", map[string]any{
-		"name":   "w1",
-		"source": json.RawMessage(`{"type":"emptyDir"}`),
-	}, &result)
-	require.NoError(t, err)
-	assert.Equal(t, "w1", result.Workspace.Metadata.Name)
-	assert.Equal(t, pkgariapi.WorkspacePhasePending, result.Workspace.Status.Phase)
-}
-
-func TestWorkspaceStatusReady(t *testing.T) {
-	env := newTestServer(t)
-
-	statusResult := createAndWaitWorkspace(t, env.client, "w-ready")
-
-	assert.Equal(t, pkgariapi.WorkspacePhaseReady, statusResult.Workspace.Status.Phase)
-	assert.NotEmpty(t, statusResult.Workspace.Status.Path, "ready workspace must have a path")
-}
-
-func TestWorkspaceStatusMembers(t *testing.T) {
-	env := newTestServer(t)
-	createAndWaitWorkspace(t, env.client, "ws-members")
-
-	// Seed two agents directly into the store (bypasses shim start).
-	seedAgent(t, env.store, "ws-members", "checker", apiruntime.StatusIdle)
-	seedAgent(t, env.store, "ws-members", "reviewer", apiruntime.StatusRunning)
-
-	var result pkgariapi.WorkspaceStatusResult
-	require.NoError(t, env.client.Call("workspace/status",
-		map[string]string{"name": "ws-members"}, &result))
-
-	assert.Equal(t, pkgariapi.WorkspacePhaseReady, result.Workspace.Status.Phase)
-	require.Len(t, result.Members, 2)
-
-	names := make([]string, 0, len(result.Members))
-	for _, m := range result.Members {
-		names = append(names, m.Metadata.Name)
+	ws := pkgariapi.Workspace{
+		Metadata: pkgariapi.ObjectMeta{Name: "w1"},
+		Spec:     pkgariapi.WorkspaceSpec{Source: json.RawMessage(`{"type":"emptyDir"}`)},
 	}
-	assert.ElementsMatch(t, []string{"checker", "reviewer"}, names)
+	var result pkgariapi.Workspace
+	err := env.client.Call("workspace/create", ws, &result)
+	require.NoError(t, err)
+	assert.Equal(t, "w1", result.Metadata.Name)
+	assert.Equal(t, pkgariapi.WorkspacePhasePending, result.Status.Phase)
 }
 
-func TestWorkspaceStatusMembersEmpty(t *testing.T) {
+func TestWorkspaceGetReady(t *testing.T) {
 	env := newTestServer(t)
-	createAndWaitWorkspace(t, env.client, "ws-empty")
 
-	var result pkgariapi.WorkspaceStatusResult
-	require.NoError(t, env.client.Call("workspace/status",
-		map[string]string{"name": "ws-empty"}, &result))
+	getResult := createAndWaitWorkspace(t, env.client, "w-ready")
 
-	assert.Equal(t, pkgariapi.WorkspacePhaseReady, result.Workspace.Status.Phase)
-	assert.Empty(t, result.Members)
+	assert.Equal(t, pkgariapi.WorkspacePhaseReady, getResult.Status.Phase)
+	assert.NotEmpty(t, getResult.Status.Path, "ready workspace must have a path")
 }
 
 func TestWorkspaceList(t *testing.T) {
@@ -228,12 +196,12 @@ func TestWorkspaceList(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "wl-1")
 	createAndWaitWorkspace(t, env.client, "wl-2")
 
-	var listResult pkgariapi.WorkspaceListResult
+	var listResult pkgariapi.WorkspaceList
 	require.NoError(t, env.client.Call("workspace/list", nil, &listResult))
-	assert.GreaterOrEqual(t, len(listResult.Workspaces), 2)
+	assert.GreaterOrEqual(t, len(listResult.Items), 2)
 
-	names := make([]string, 0, len(listResult.Workspaces))
-	for _, w := range listResult.Workspaces {
+	names := make([]string, 0, len(listResult.Items))
+	for _, w := range listResult.Items {
 		names = append(names, w.Metadata.Name)
 	}
 	assert.Contains(t, names, "wl-1")
@@ -245,17 +213,17 @@ func TestWorkspaceDelete(t *testing.T) {
 
 	createAndWaitWorkspace(t, env.client, "w-del")
 
-	err := env.client.Call("workspace/delete", map[string]string{"name": "w-del"}, nil)
+	err := env.client.Call("workspace/delete", pkgariapi.ObjectKey{Name: "w-del"}, nil)
 	require.NoError(t, err)
 
-	// After delete: status should return an error (not found → -32602 or phase error).
-	var statusResult pkgariapi.WorkspaceStatusResult
-	statusErr := env.client.Call("workspace/status", map[string]string{"name": "w-del"}, &statusResult)
+	// After delete: get should return an error (not found → -32602 or phase error).
+	var getResult pkgariapi.Workspace
+	getErr := env.client.Call("workspace/get", pkgariapi.ObjectKey{Name: "w-del"}, &getResult)
 	// Either an RPC error (not found) or phase=="error" are acceptable.
-	if statusErr == nil {
-		assert.Equal(t, pkgariapi.WorkspacePhaseError, statusResult.Workspace.Status.Phase)
+	if getErr == nil {
+		assert.Equal(t, pkgariapi.WorkspacePhaseError, getResult.Status.Phase)
 	} else {
-		assert.Contains(t, statusErr.Error(), "-32602")
+		assert.Contains(t, getErr.Error(), "-32602")
 	}
 }
 
@@ -265,7 +233,7 @@ func TestWorkspaceDeleteBlockedByAgent(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "w-blocked")
 	seedAgent(t, env.store, "w-blocked", "blocker", apiruntime.StatusIdle)
 
-	err := env.client.Call("workspace/delete", map[string]string{"name": "w-blocked"}, nil)
+	err := env.client.Call("workspace/delete", pkgariapi.ObjectKey{Name: "w-blocked"}, nil)
 	require.Error(t, err, "workspace/delete must fail when an agent is present")
 }
 
@@ -278,18 +246,18 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "ac-ws")
 
 	// Call via raw to inspect JSON for absence of "agentId".
-	raw, err := callRaw(t, env.client, "agentrun/create", map[string]any{
-		"workspace":    "ac-ws",
-		"name":         "my-agent",
-		"agent": "default",
-	})
+	ar := pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: "ac-ws", Name: "my-agent"},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
+	}
+	raw, err := callRaw(t, env.client, "agentrun/create", ar)
 	require.NoError(t, err)
 
-	var result pkgariapi.AgentRunCreateResult
+	var result pkgariapi.AgentRun
 	require.NoError(t, json.Unmarshal(raw, &result))
-	assert.Equal(t, apiruntime.StatusCreating, result.AgentRun.Status.State)
-	assert.Equal(t, "ac-ws", result.AgentRun.Metadata.Workspace)
-	assert.Equal(t, "my-agent", result.AgentRun.Metadata.Name)
+	assert.Equal(t, apiruntime.StatusCreating, result.Status.State)
+	assert.Equal(t, "ac-ws", result.Metadata.Workspace)
+	assert.Equal(t, "my-agent", result.Metadata.Name)
 
 	// No agentId key in the response JSON.
 	var rawMap map[string]any
@@ -298,26 +266,28 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 	assert.False(t, hasAgentID, "agentId must not appear in agentrun/create response")
 }
 
-func TestAgentListAndStatus(t *testing.T) {
+func TestAgentListAndGet(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "als-ws")
 
 	seedAgent(t, env.store, "als-ws", "agent-idle", apiruntime.StatusIdle)
 	seedAgent(t, env.store, "als-ws", "agent-stopped", apiruntime.StatusStopped)
 
-	var listResult pkgariapi.AgentRunListResult
-	require.NoError(t, env.client.Call("agentrun/list", map[string]string{"workspace": "als-ws"}, &listResult))
-	assert.Len(t, listResult.AgentRuns, 2)
+	var listResult pkgariapi.AgentRunList
+	require.NoError(t, env.client.Call("agentrun/list",
+		pkgariapi.ListOptions{FieldSelector: map[string]string{"workspace": "als-ws"}},
+		&listResult))
+	assert.Len(t, listResult.Items, 2)
 
-	// Verify agentrun/status returns correct state.
-	var statusResult pkgariapi.AgentRunStatusResult
-	require.NoError(t, env.client.Call("agentrun/status", map[string]string{
-		"workspace": "als-ws",
-		"name":      "agent-idle",
-	}, &statusResult))
-	assert.Equal(t, apiruntime.StatusIdle, statusResult.AgentRun.Status.State)
-	assert.Equal(t, "als-ws", statusResult.AgentRun.Metadata.Workspace)
-	assert.Equal(t, "agent-idle", statusResult.AgentRun.Metadata.Name)
+	// Verify agentrun/get returns correct state.
+	var getResult pkgariapi.AgentRun
+	require.NoError(t, env.client.Call("agentrun/get", pkgariapi.ObjectKey{
+		Workspace: "als-ws",
+		Name:      "agent-idle",
+	}, &getResult))
+	assert.Equal(t, apiruntime.StatusIdle, getResult.Status.State)
+	assert.Equal(t, "als-ws", getResult.Metadata.Workspace)
+	assert.Equal(t, "agent-idle", getResult.Metadata.Name)
 }
 
 func TestAgentPromptRejectedForBadState(t *testing.T) {
@@ -329,10 +299,10 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 	seedAgent(t, env.store, "pr-ws", "agent-creating", apiruntime.StatusCreating)
 
 	for _, name := range []string{"agent-stopped", "agent-error", "agent-creating"} {
-		err := env.client.Call("agentrun/prompt", map[string]any{
-			"workspace": "pr-ws",
-			"name":      name,
-			"prompt":    "hello",
+		err := env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
+			Workspace: "pr-ws",
+			Name:      name,
+			Prompt:    "hello",
 		}, nil)
 		require.Error(t, err, "agentrun/prompt for %s must return an error", name)
 		assert.Contains(t, err.Error(), "not in idle state",
@@ -345,10 +315,10 @@ func TestAgentPromptRejectsEmptyPrompt(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "empty-prompt-ws")
 	seedAgent(t, env.store, "empty-prompt-ws", "agent-idle", apiruntime.StatusIdle)
 
-	err := env.client.Call("agentrun/prompt", map[string]any{
-		"workspace": "empty-prompt-ws",
-		"name":      "agent-idle",
-		"prompt":    "",
+	err := env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
+		Workspace: "empty-prompt-ws",
+		Name:      "agent-idle",
+		Prompt:    "",
 	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "-32602")
@@ -391,24 +361,24 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	})
 
 	var result pkgariapi.AgentRunPromptResult
-	require.NoError(t, env.client.Call("agentrun/prompt", map[string]any{
-		"workspace": "reserve-ws",
-		"name":      agentName,
-		"prompt":    "hello",
+	require.NoError(t, env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
+		Workspace: "reserve-ws",
+		Name:      agentName,
+		Prompt:    "hello",
 	}, &result))
 	require.True(t, result.Accepted)
 
-	var status pkgariapi.AgentRunStatusResult
-	require.NoError(t, env.client.Call("agentrun/status", map[string]string{
-		"workspace": "reserve-ws",
-		"name":      agentName,
-	}, &status))
-	assert.Equal(t, apiruntime.StatusRunning, status.AgentRun.Status.State)
+	var getResult pkgariapi.AgentRun
+	require.NoError(t, env.client.Call("agentrun/get", pkgariapi.ObjectKey{
+		Workspace: "reserve-ws",
+		Name:      agentName,
+	}, &getResult))
+	assert.Equal(t, apiruntime.StatusRunning, getResult.Status.State)
 
-	err = env.client.Call("agentrun/prompt", map[string]any{
-		"workspace": "reserve-ws",
-		"name":      agentName,
-		"prompt":    "second",
+	err = env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
+		Workspace: "reserve-ws",
+		Name:      agentName,
+		Prompt:    "second",
 	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not in idle state")
@@ -423,13 +393,13 @@ func TestAgentRunRestartFromIdle(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "restart-idle-ws")
 	seedAgent(t, env.store, "restart-idle-ws", "idle-agent", apiruntime.StatusIdle)
 
-	var result pkgariapi.AgentRunRestartResult
-	err := env.client.Call("agentrun/restart", map[string]string{
-		"workspace": "restart-idle-ws",
-		"name":      "idle-agent",
+	var result pkgariapi.AgentRun
+	err := env.client.Call("agentrun/restart", pkgariapi.ObjectKey{
+		Workspace: "restart-idle-ws",
+		Name:      "idle-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from idle state must succeed")
-	assert.Equal(t, apiruntime.StatusCreating, result.AgentRun.Status.State)
+	assert.Equal(t, apiruntime.StatusCreating, result.Status.State)
 }
 
 func TestAgentRunRestartFromRunning(t *testing.T) {
@@ -437,13 +407,13 @@ func TestAgentRunRestartFromRunning(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "restart-running-ws")
 	seedAgent(t, env.store, "restart-running-ws", "running-agent", apiruntime.StatusRunning)
 
-	var result pkgariapi.AgentRunRestartResult
-	err := env.client.Call("agentrun/restart", map[string]string{
-		"workspace": "restart-running-ws",
-		"name":      "running-agent",
+	var result pkgariapi.AgentRun
+	err := env.client.Call("agentrun/restart", pkgariapi.ObjectKey{
+		Workspace: "restart-running-ws",
+		Name:      "running-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from running state must succeed")
-	assert.Equal(t, apiruntime.StatusCreating, result.AgentRun.Status.State)
+	assert.Equal(t, apiruntime.StatusCreating, result.Status.State)
 }
 
 func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
@@ -452,9 +422,9 @@ func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
 
 	seedAgent(t, env.store, "del-ws", "active-agent", apiruntime.StatusIdle)
 
-	err := env.client.Call("agentrun/delete", map[string]string{
-		"workspace": "del-ws",
-		"name":      "active-agent",
+	err := env.client.Call("agentrun/delete", pkgariapi.ObjectKey{
+		Workspace: "del-ws",
+		Name:      "active-agent",
 	}, nil)
 	require.Error(t, err, "agentrun/delete for non-terminal agent must return an error")
 }
@@ -470,23 +440,24 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 	// exceed 104 bytes (macOS) / 108 bytes (Linux).
 	longName := strings.Repeat("a", 70)
 
-	_, err := callRaw(t, env.client, "agentrun/create", map[string]any{
-		"workspace":    "sock-ws",
-		"name":         longName,
-		"agent": "default",
-	})
+	ar := pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: "sock-ws", Name: longName},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
+	}
+	_, err := callRaw(t, env.client, "agentrun/create", ar)
 	require.Error(t, err, "agentrun/create with too-long name must return an error")
 
-	// ariclient.Client.Call surfaces RPC errors as "rpc error <code>: <msg>" strings;
+	// RawClient.Call surfaces RPC errors as "rpc error <code>: <msg>" strings;
 	// verify the code is -32602 (CodeInvalidParams).
 	assert.Contains(t, err.Error(), "-32602",
 		"error must carry code -32602 (CodeInvalidParams)")
 
 	// No agent record must have been written to DB.
-	var listResult pkgariapi.AgentRunListResult
+	var listResult pkgariapi.AgentRunList
 	require.NoError(t, env.client.Call("agentrun/list",
-		map[string]string{"workspace": "sock-ws"}, &listResult))
-	for _, ag := range listResult.AgentRuns {
+		pkgariapi.ListOptions{FieldSelector: map[string]string{"workspace": "sock-ws"}},
+		&listResult))
+	for _, ag := range listResult.Items {
 		assert.NotEqual(t, longName, ag.Metadata.Name,
 			"agent with too-long name must not appear in agentrun/list")
 	}
@@ -501,12 +472,11 @@ func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
 
 	// Invalid values must be rejected.
 	for _, bad := range []string{"on-failure", "never", "always", "bad-value"} {
-		_, err := callRaw(t, env.client, "agentrun/create", map[string]any{
-			"workspace":     "rp-ws",
-			"name":          "rp-agent-bad",
-			"agent":         "default",
-			"restartPolicy": bad,
-		})
+		ar := pkgariapi.AgentRun{
+			Metadata: pkgariapi.ObjectMeta{Workspace: "rp-ws", Name: "rp-agent-bad"},
+			Spec:     pkgariapi.AgentRunSpec{Agent: "default", RestartPolicy: bad},
+		}
+		_, err := callRaw(t, env.client, "agentrun/create", ar)
 		require.Error(t, err, "restartPolicy=%q must be rejected", bad)
 		assert.Contains(t, err.Error(), "-32602",
 			"restartPolicy=%q must return CodeInvalidParams", bad)
@@ -515,12 +485,11 @@ func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
 	// Valid values must not be rejected at the validation layer.
 	// (The agent goes into "creating" state; shim start will fail in test env — that's OK.)
 	for _, good := range []string{"", "try_reload", "always_new"} {
-		_, err := callRaw(t, env.client, "agentrun/create", map[string]any{
-			"workspace":     "rp-ws",
-			"name":          "rp-agent-" + good,
-			"agent":         "default",
-			"restartPolicy": good,
-		})
+		ar := pkgariapi.AgentRun{
+			Metadata: pkgariapi.ObjectMeta{Workspace: "rp-ws", Name: "rp-agent-" + good},
+			Spec:     pkgariapi.AgentRunSpec{Agent: "default", RestartPolicy: good},
+		}
+		_, err := callRaw(t, env.client, "agentrun/create", ar)
 		// The call may succeed (state=creating) or fail with an internal error
 		// (shim start fails in test env) — but must NOT fail with -32602 for
 		// the restartPolicy field itself.
@@ -680,11 +649,11 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 	shimSrv := injectMockShim(t, env, "send-ws", agentName)
 
 	var sendResult pkgariapi.WorkspaceSendResult
-	require.NoError(t, env.client.Call("workspace/send", map[string]any{
-		"workspace": "send-ws",
-		"from":      "sender",
-		"to":        agentName,
-		"message":   "hello",
+	require.NoError(t, env.client.Call("workspace/send", pkgariapi.WorkspaceSendParams{
+		Workspace: "send-ws",
+		From:      "sender",
+		To:        agentName,
+		Message:   "hello",
 	}, &sendResult))
 	assert.True(t, sendResult.Delivered)
 
@@ -707,12 +676,12 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 	shimSrv := injectMockShim(t, env, "reply-ws", agentName)
 
 	var sendResult pkgariapi.WorkspaceSendResult
-	require.NoError(t, env.client.Call("workspace/send", map[string]any{
-		"workspace":  "reply-ws",
-		"from":       "codex",
-		"to":         agentName,
-		"message":    "please review",
-		"needsReply": true,
+	require.NoError(t, env.client.Call("workspace/send", pkgariapi.WorkspaceSendParams{
+		Workspace:  "reply-ws",
+		From:       "codex",
+		To:         agentName,
+		Message:    "please review",
+		NeedsReply: true,
 	}, &sendResult))
 	assert.True(t, sendResult.Delivered)
 
@@ -732,11 +701,11 @@ func TestWorkspaceSendRejectedForErrorAgent(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "serr-ws")
 	seedAgent(t, env.store, "serr-ws", "err-agent", apiruntime.StatusError)
 
-	err := env.client.Call("workspace/send", map[string]string{
-		"workspace": "serr-ws",
-		"from":      "sender",
-		"to":        "err-agent",
-		"message":   "hi",
+	err := env.client.Call("workspace/send", pkgariapi.WorkspaceSendParams{
+		Workspace: "serr-ws",
+		From:      "sender",
+		To:        "err-agent",
+		Message:   "hi",
 	}, nil)
 	require.Error(t, err, "workspace/send to error-state agent must fail")
 }
@@ -776,23 +745,24 @@ func TestNoAgentIDInResponses(t *testing.T) {
 	seedAgent(t, env.store, "noid-ws", "a2", apiruntime.StatusStopped)
 
 	// agentrun/list
-	listRaw, err := callRaw(t, env.client, "agentrun/list", map[string]string{"workspace": "noid-ws"})
+	listRaw, err := callRaw(t, env.client, "agentrun/list",
+		pkgariapi.ListOptions{FieldSelector: map[string]string{"workspace": "noid-ws"}})
 	require.NoError(t, err)
 	var listMap any
 	require.NoError(t, json.Unmarshal(listRaw, &listMap))
 	assert.False(t, hasAgentIDKey(listMap), "agentrun/list response must not contain agentId")
 
-	// agentrun/status for each agent
+	// agentrun/get for each agent
 	for _, name := range []string{"a1", "a2"} {
-		statusRaw, err := callRaw(t, env.client, "agentrun/status", map[string]string{
-			"workspace": "noid-ws",
-			"name":      name,
+		getRaw, err := callRaw(t, env.client, "agentrun/get", pkgariapi.ObjectKey{
+			Workspace: "noid-ws",
+			Name:      name,
 		})
 		require.NoError(t, err)
-		var statusMap any
-		require.NoError(t, json.Unmarshal(statusRaw, &statusMap))
-		assert.False(t, hasAgentIDKey(statusMap),
-			"agentrun/status response for %s must not contain agentId", name)
+		var getMap any
+		require.NoError(t, json.Unmarshal(getRaw, &getMap))
+		assert.False(t, hasAgentIDKey(getMap),
+			"agentrun/get response for %s must not contain agentId", name)
 	}
 }
 

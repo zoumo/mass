@@ -2,6 +2,7 @@
 package agentrun
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -20,11 +21,10 @@ func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 
 	cmd.AddCommand(newCreateCmd(getClient))
 	cmd.AddCommand(newListCmd(getClient))
-	cmd.AddCommand(newStatusCmd(getClient))
+	cmd.AddCommand(newGetCmd(getClient))
 	cmd.AddCommand(newPromptCmd(getClient))
 	cmd.AddCommand(newStopCmd(getClient))
 	cmd.AddCommand(newDeleteCmd(getClient))
-	cmd.AddCommand(newAttachCmd(getClient))
 	cmd.AddCommand(newCancelCmd(getClient))
 	cmd.AddCommand(newRestartCmd(getClient))
 	return cmd
@@ -32,7 +32,7 @@ func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 
 func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		workspace     string
+		ws            string
 		name          string
 		agent         string
 		restartPolicy string
@@ -49,23 +49,26 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.AgentRunCreateParams{
-				Workspace:     workspace,
-				Name:          name,
-				Agent:         agent,
-				RestartPolicy: restartPolicy,
-				SystemPrompt:  systemPrompt,
+			ar := pkgariapi.AgentRun{
+				Metadata: pkgariapi.ObjectMeta{
+					Workspace: ws,
+					Name:      name,
+				},
+				Spec: pkgariapi.AgentRunSpec{
+					Agent:         agent,
+					RestartPolicy: restartPolicy,
+					SystemPrompt:  systemPrompt,
+				},
 			}
-			var result pkgariapi.AgentRunCreateResult
-			if err := client.Call(pkgariapi.MethodAgentRunCreate, params, &result); err != nil {
+			if err := client.Create(context.Background(), &ar); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(ar)
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace name (required)")
+	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent name within the workspace (required)")
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent definition name (required)")
 	cmd.Flags().StringVar(&restartPolicy, "restart-policy", "", "Restart policy: try_reload, always_new (default: always_new)")
@@ -78,8 +81,8 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		workspace string
-		state     string
+		ws    string
+		state string
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -92,29 +95,35 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.AgentRunListParams{Workspace: workspace, State: state}
-			var result pkgariapi.AgentRunListResult
-			if err := client.Call(pkgariapi.MethodAgentRunList, params, &result); err != nil {
+			var opts []pkgariapi.ListOption
+			if ws != "" {
+				opts = append(opts, pkgariapi.InWorkspace(ws))
+			}
+			if state != "" {
+				opts = append(opts, pkgariapi.WithState(state))
+			}
+			var list pkgariapi.AgentRunList
+			if err := client.List(context.Background(), &list, opts...); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(list)
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Filter by workspace name")
+	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Filter by workspace name")
 	cmd.Flags().StringVar(&state, "state", "", "Filter by state")
 	return cmd
 }
 
-func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
+func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		workspace string
-		name      string
+		ws   string
+		name string
 	)
 	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Get agent run status",
+		Use:   "get",
+		Short: "Get agent run details",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
@@ -123,17 +132,16 @@ func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.AgentRunStatusParams{Workspace: workspace, Name: name}
-			var result pkgariapi.AgentRunStatusResult
-			if err := client.Call(pkgariapi.MethodAgentRunStatus, params, &result); err != nil {
+			var ar pkgariapi.AgentRun
+			if err := client.Get(context.Background(), pkgariapi.ObjectKey{Workspace: ws, Name: name}, &ar); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(ar)
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace name (required)")
+	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent run name (required)")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
@@ -142,10 +150,10 @@ func newStatusCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		workspace string
-		name      string
-		text      string
-		wait      bool
+		ws   string
+		name string
+		text string
+		wait bool
 	)
 	cmd := &cobra.Command{
 		Use:   "prompt",
@@ -158,9 +166,10 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.AgentRunPromptParams{Workspace: workspace, Name: name, Prompt: text}
-			var result pkgariapi.AgentRunPromptResult
-			if err := client.Call(pkgariapi.MethodAgentRunPrompt, params, &result); err != nil {
+			ctx := context.Background()
+			key := pkgariapi.ObjectKey{Workspace: ws, Name: name}
+			result, err := client.AgentRuns().Prompt(ctx, key, text)
+			if err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -171,17 +180,17 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 				observedRunning := true
 				for {
 					time.Sleep(500 * time.Millisecond)
-					var statusResult pkgariapi.AgentRunStatusResult
-					if err := client.Call(pkgariapi.MethodAgentRunStatus, pkgariapi.AgentRunStatusParams{Workspace: workspace, Name: name}, &statusResult); err != nil {
-						fmt.Printf("agentrun/status error: %v\n", err)
+					var ar pkgariapi.AgentRun
+					if err := client.Get(ctx, key, &ar); err != nil {
+						fmt.Printf("agentrun/get error: %v\n", err)
 						break
 					}
-					if statusResult.AgentRun.Status.State == "running" {
+					if ar.Status.State == "running" {
 						observedRunning = true
 						continue
 					}
 					if observedRunning {
-						fmt.Printf("Agent run state: %s\n", statusResult.AgentRun.Status.State)
+						fmt.Printf("Agent run state: %s\n", ar.Status.State)
 						break
 					}
 				}
@@ -189,10 +198,10 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace name (required)")
+	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent run name (required)")
 	cmd.Flags().StringVar(&text, "text", "", "Prompt text (required)")
-	cmd.Flags().BoolVar(&wait, "wait", false, "Poll agentrun/status until state is no longer 'running'")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Poll agentrun/get until state is no longer 'running'")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("text")
@@ -201,8 +210,8 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 func newStopCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		workspace string
-		name      string
+		ws   string
+		name string
 	)
 	cmd := &cobra.Command{
 		Use:   "stop",
@@ -215,15 +224,15 @@ func newStopCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(pkgariapi.MethodAgentRunStop, pkgariapi.AgentRunStopParams{Workspace: workspace, Name: name}, nil); err != nil {
+			if err := client.AgentRuns().Stop(context.Background(), pkgariapi.ObjectKey{Workspace: ws, Name: name}); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			fmt.Printf("Agent run %s stopped\n", fmt.Sprintf("%s/%s", workspace, name))
+			fmt.Printf("Agent run %s/%s stopped\n", ws, name)
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace name (required)")
+	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent run name (required)")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
@@ -232,8 +241,8 @@ func newStopCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		workspace string
-		name      string
+		ws   string
+		name string
 	)
 	cmd := &cobra.Command{
 		Use:   "delete",
@@ -246,48 +255,15 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(pkgariapi.MethodAgentRunDelete, pkgariapi.AgentRunDeleteParams{Workspace: workspace, Name: name}, nil); err != nil {
+			if err := client.Delete(context.Background(), pkgariapi.ObjectKey{Workspace: ws, Name: name}, &pkgariapi.AgentRun{}); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			fmt.Printf("Agent run %s deleted\n", fmt.Sprintf("%s/%s", workspace, name))
+			fmt.Printf("Agent run %s/%s deleted\n", ws, name)
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace name (required)")
-	cmd.Flags().StringVar(&name, "name", "", "Agent run name (required)")
-	_ = cmd.MarkFlagRequired("workspace")
-	_ = cmd.MarkFlagRequired("name")
-	return cmd
-}
-
-func newAttachCmd(getClient cliutil.ClientFn) *cobra.Command {
-	var (
-		workspace string
-		name      string
-	)
-	cmd := &cobra.Command{
-		Use:   "attach",
-		Short: "Get shim socket path for attaching",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer client.Close()
-
-			params := pkgariapi.AgentRunAttachParams{Workspace: workspace, Name: name}
-			var result pkgariapi.AgentRunAttachResult
-			if err := client.Call(pkgariapi.MethodAgentRunAttach, params, &result); err != nil {
-				cliutil.HandleError(err)
-				return nil
-			}
-			cliutil.OutputJSON(result)
-			return nil
-		},
-	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace name (required)")
+	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent run name (required)")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
@@ -296,8 +272,8 @@ func newAttachCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 func newCancelCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		workspace string
-		name      string
+		ws   string
+		name string
 	)
 	cmd := &cobra.Command{
 		Use:   "cancel",
@@ -310,15 +286,15 @@ func newCancelCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(pkgariapi.MethodAgentRunCancel, pkgariapi.AgentRunCancelParams{Workspace: workspace, Name: name}, nil); err != nil {
+			if err := client.AgentRuns().Cancel(context.Background(), pkgariapi.ObjectKey{Workspace: ws, Name: name}); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			fmt.Printf("Agent run %s cancel requested\n", fmt.Sprintf("%s/%s", workspace, name))
+			fmt.Printf("Agent run %s/%s cancel requested\n", ws, name)
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace name (required)")
+	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent run name (required)")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
@@ -327,8 +303,8 @@ func newCancelCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 func newRestartCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		workspace string
-		name      string
+		ws   string
+		name string
 	)
 	cmd := &cobra.Command{
 		Use:   "restart",
@@ -341,9 +317,8 @@ func newRestartCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.AgentRunRestartParams{Workspace: workspace, Name: name}
-			var result pkgariapi.AgentRunRestartResult
-			if err := client.Call(pkgariapi.MethodAgentRunRestart, params, &result); err != nil {
+			result, err := client.AgentRuns().Restart(context.Background(), pkgariapi.ObjectKey{Workspace: ws, Name: name})
+			if err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -351,7 +326,7 @@ func newRestartCmd(getClient cliutil.ClientFn) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "workspace", "w", "", "Workspace name (required)")
+	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent run name (required)")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")

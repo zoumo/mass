@@ -111,7 +111,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 
 	srv, socketPath := newMockShimServer(t)
 	for i := 0; i < 3; i++ {
-		contentBytes, err := json.Marshal(apishim.AgentMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: fmt.Sprintf("chunk-%d", i)}}})
+		contentBytes, err := json.Marshal(apishim.AgentMessageEvent{Content: apishim.TextBlock(fmt.Sprintf("chunk-%d", i))})
 		require.NoError(t, err)
 		srv.queueNotification(apishim.MethodShimEvent, map[string]any{
 			"runId":     "test-run",

@@ -13,281 +13,32 @@ type Event interface {
 	eventType() string
 }
 
-// ── Support types ────────────────────────────────────────────────────────────
+// ── ACP type aliases ─────────────────────────────────────────────────────────
+// ContentBlock and related types are direct aliases of the ACP SDK types.
+// This means we inherit ACP's MarshalJSON/UnmarshalJSON for free.
+// Consumers import these from our package but get the exact ACP types underneath.
 
-// Annotations mirrors acp.Annotations.
-type Annotations struct {
-	Meta         map[string]any `json:"_meta,omitempty"`
-	Audience     []string       `json:"audience,omitempty"`
-	LastModified *string        `json:"lastModified,omitempty"`
-	Priority     *float64       `json:"priority,omitempty"`
-}
+type (
+	ContentBlock             = acp.ContentBlock
+	ContentBlockText         = acp.ContentBlockText
+	ContentBlockImage        = acp.ContentBlockImage
+	ContentBlockAudio        = acp.ContentBlockAudio
+	ContentBlockResourceLink = acp.ContentBlockResourceLink
+	ContentBlockResource     = acp.ContentBlockResource
+	Annotations              = acp.Annotations
+	EmbeddedResource         = acp.EmbeddedResourceResource
+	TextResourceContents     = acp.TextResourceContents
+	BlobResourceContents     = acp.BlobResourceContents
+)
 
-// ── ContentBlock ─────────────────────────────────────────────────────────────
-
-// ContentBlock mirrors acp.ContentBlock — a discriminated union of 5 content types.
-// Common fields (Type, Meta, Annotations) live at this level; variant structs hold
-// only their own specific fields.
-// JSON wire shape is FLAT: {"type":"text","text":"hello","_meta":{...}}
-// Go side uses variant pointers with json:"-" + custom MarshalJSON/UnmarshalJSON.
-type ContentBlock struct {
-	Type        ContentBlockType `json:"-"`
-	Meta        map[string]any   `json:"-"`
-	Annotations *Annotations     `json:"-"`
-
-	Text         *TextContent         `json:"-"`
-	Image        *ImageContent        `json:"-"`
-	Audio        *AudioContent        `json:"-"`
-	ResourceLink *ResourceLinkContent `json:"-"`
-	Resource     *ResourceContent     `json:"-"`
-}
-
-// inferType returns the ContentBlockType implied by whichever variant pointer is set.
-// Returns "" if no variant is set.
-func (c ContentBlock) inferType() ContentBlockType {
-	switch {
-	case c.Text != nil:
-		return ContentBlockTypeText
-	case c.Image != nil:
-		return ContentBlockTypeImage
-	case c.Audio != nil:
-		return ContentBlockTypeAudio
-	case c.ResourceLink != nil:
-		return ContentBlockTypeResourceLink
-	case c.Resource != nil:
-		return ContentBlockTypeResource
-	default:
-		return ""
-	}
-}
-
-func (c ContentBlock) variantCount() int {
-	n := 0
-	if c.Text != nil {
-		n++
-	}
-	if c.Image != nil {
-		n++
-	}
-	if c.Audio != nil {
-		n++
-	}
-	if c.ResourceLink != nil {
-		n++
-	}
-	if c.Resource != nil {
-		n++
-	}
-	return n
-}
-
-func (c ContentBlock) MarshalJSON() ([]byte, error) {
-	if n := c.variantCount(); n > 1 {
-		return nil, fmt.Errorf("events: ContentBlock: multiple variants set (%d)", n)
-	}
-
-	typ := c.Type
-	if typ == "" {
-		typ = c.inferType()
-	}
-	if typ == "" {
-		return nil, fmt.Errorf("events: empty ContentBlock: no type or variant set")
-	}
-
-	// common holds the shared fields embedded in every wire wrapper.
-	type common struct {
-		Type        ContentBlockType `json:"type"`
-		Meta        map[string]any   `json:"_meta,omitempty"`
-		Annotations *Annotations     `json:"annotations,omitempty"`
-	}
-	cm := common{Type: typ, Meta: c.Meta, Annotations: c.Annotations}
-
-	switch typ {
-	case ContentBlockTypeText:
-		if c.Text == nil {
-			return nil, fmt.Errorf("events: ContentBlock type %q but Text is nil", typ)
-		}
-		type w struct {
-			common
-			TextContent
-		}
-		return json.Marshal(w{common: cm, TextContent: *c.Text})
-	case ContentBlockTypeImage:
-		if c.Image == nil {
-			return nil, fmt.Errorf("events: ContentBlock type %q but Image is nil", typ)
-		}
-		type w struct {
-			common
-			ImageContent
-		}
-		return json.Marshal(w{common: cm, ImageContent: *c.Image})
-	case ContentBlockTypeAudio:
-		if c.Audio == nil {
-			return nil, fmt.Errorf("events: ContentBlock type %q but Audio is nil", typ)
-		}
-		type w struct {
-			common
-			AudioContent
-		}
-		return json.Marshal(w{common: cm, AudioContent: *c.Audio})
-	case ContentBlockTypeResourceLink:
-		if c.ResourceLink == nil {
-			return nil, fmt.Errorf("events: ContentBlock type %q but ResourceLink is nil", typ)
-		}
-		type w struct {
-			common
-			ResourceLinkContent
-		}
-		return json.Marshal(w{common: cm, ResourceLinkContent: *c.ResourceLink})
-	case ContentBlockTypeResource:
-		if c.Resource == nil {
-			return nil, fmt.Errorf("events: ContentBlock type %q but Resource is nil", typ)
-		}
-		type w struct {
-			common
-			ResourceContent
-		}
-		return json.Marshal(w{common: cm, ResourceContent: *c.Resource})
-	default:
-		return nil, fmt.Errorf("events: unknown ContentBlock type %q", typ)
-	}
-}
-
-func (c *ContentBlock) UnmarshalJSON(data []byte) error {
-	// Extract common fields first.
-	var raw struct {
-		Type        ContentBlockType `json:"type"`
-		Meta        map[string]any   `json:"_meta,omitempty"`
-		Annotations *Annotations     `json:"annotations,omitempty"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	c.Type = raw.Type
-	c.Meta = raw.Meta
-	c.Annotations = raw.Annotations
-
-	// Dispatch variant unmarshal — variant structs no longer have type/_meta/annotations
-	// tags, so those keys are silently ignored by json.Unmarshal.
-	switch raw.Type {
-	case ContentBlockTypeText:
-		c.Text = &TextContent{}
-		return json.Unmarshal(data, c.Text)
-	case ContentBlockTypeImage:
-		c.Image = &ImageContent{}
-		return json.Unmarshal(data, c.Image)
-	case ContentBlockTypeAudio:
-		c.Audio = &AudioContent{}
-		return json.Unmarshal(data, c.Audio)
-	case ContentBlockTypeResourceLink:
-		c.ResourceLink = &ResourceLinkContent{}
-		return json.Unmarshal(data, c.ResourceLink)
-	case ContentBlockTypeResource:
-		c.Resource = &ResourceContent{}
-		return json.Unmarshal(data, c.Resource)
-	default:
-		return fmt.Errorf("events: unknown ContentBlock type %q", raw.Type)
-	}
-}
-
-// TextContent is the text variant of ContentBlock.
-// Only contains variant-specific fields; Type, Meta, and Annotations live on ContentBlock.
-type TextContent struct {
-	Text string `json:"text"`
-}
-
-// ImageContent is the image variant of ContentBlock.
-type ImageContent struct {
-	Data     string  `json:"data"`
-	MimeType string  `json:"mimeType"`
-	URI      *string `json:"uri,omitempty"`
-}
-
-// AudioContent is the audio variant of ContentBlock.
-type AudioContent struct {
-	Data     string `json:"data"`
-	MimeType string `json:"mimeType"`
-}
-
-// ResourceLinkContent is the resource_link variant of ContentBlock.
-type ResourceLinkContent struct {
-	URI         string  `json:"uri"`
-	Name        string  `json:"name"`
-	Description *string `json:"description,omitempty"`
-	MimeType    *string `json:"mimeType,omitempty"`
-	Title       *string `json:"title,omitempty"`
-	Size        *int    `json:"size,omitempty"`
-}
-
-// ResourceContent is the resource variant of ContentBlock.
-type ResourceContent struct {
-	Resource EmbeddedResource `json:"resource"`
-}
-
-// ── EmbeddedResource ─────────────────────────────────────────────────────────
-
-// EmbeddedResource mirrors acp.EmbeddedResourceResource — union of text/blob variants.
-// JSON wire shape has NO "type" discriminator — discriminated by text/blob field presence.
-type EmbeddedResource struct {
-	TextResource *TextResourceContents `json:"-"`
-	BlobResource *BlobResourceContents `json:"-"`
-}
-
-func (e EmbeddedResource) MarshalJSON() ([]byte, error) {
-	n := 0
-	if e.TextResource != nil {
-		n++
-	}
-	if e.BlobResource != nil {
-		n++
-	}
-	if n == 0 {
-		return nil, fmt.Errorf("events: empty EmbeddedResource: no variant set")
-	}
-	if n > 1 {
-		return nil, fmt.Errorf("events: EmbeddedResource: multiple variants set (%d)", n)
-	}
-	if e.TextResource != nil {
-		return json.Marshal(e.TextResource)
-	}
-	return json.Marshal(e.BlobResource)
-}
-
-func (e *EmbeddedResource) UnmarshalJSON(data []byte) error {
-	var m map[string]json.RawMessage
-	if err := json.Unmarshal(data, &m); err != nil {
-		return err
-	}
-	_, hasText := m["text"]
-	_, hasBlob := m["blob"]
-	_, hasURI := m["uri"]
-	switch {
-	case hasText && hasURI:
-		e.TextResource = &TextResourceContents{}
-		return json.Unmarshal(data, e.TextResource)
-	case hasBlob && hasURI:
-		e.BlobResource = &BlobResourceContents{}
-		return json.Unmarshal(data, e.BlobResource)
-	default:
-		return fmt.Errorf("events: unknown EmbeddedResource shape (has text=%v, blob=%v, uri=%v)", hasText, hasBlob, hasURI)
-	}
-}
-
-// TextResourceContents mirrors acp.TextResourceContents.
-type TextResourceContents struct {
-	Meta     map[string]any `json:"_meta,omitempty"`
-	URI      string         `json:"uri"`
-	MimeType *string        `json:"mimeType,omitempty"`
-	Text     string         `json:"text"`
-}
-
-// BlobResourceContents mirrors acp.BlobResourceContents.
-type BlobResourceContents struct {
-	Meta     map[string]any `json:"_meta,omitempty"`
-	URI      string         `json:"uri"`
-	MimeType *string        `json:"mimeType,omitempty"`
-	Blob     string         `json:"blob"`
-}
+// Helper function aliases — convenience constructors for ContentBlock variants.
+var (
+	TextBlock         = acp.TextBlock
+	ImageBlock        = acp.ImageBlock
+	AudioBlock        = acp.AudioBlock
+	ResourceLinkBlock = acp.ResourceLinkBlock
+	ResourceBlock     = acp.ResourceBlock
+)
 
 // ── ToolCallContent ──────────────────────────────────────────────────────────
 

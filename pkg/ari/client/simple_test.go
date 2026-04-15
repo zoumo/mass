@@ -17,7 +17,7 @@ func TestNewClientSocketMissing(t *testing.T) {
 	// Ensure the file does not exist
 	_ = os.Remove(socketPath)
 
-	client, err := NewClient(socketPath)
+	client, err := NewRawClient(socketPath)
 	if err == nil {
 		client.Close()
 		t.Fatal("expected error for missing socket, got nil")
@@ -48,7 +48,7 @@ func TestNewClientDaemonUnavailable(t *testing.T) {
 	f.Close()
 	defer os.Remove(socketPath)
 
-	client, err := NewClient(socketPath)
+	client, err := NewRawClient(socketPath)
 	if err == nil {
 		client.Close()
 		t.Fatal("expected error for unavailable daemon, got nil")
@@ -90,7 +90,7 @@ func TestCallMalformedResponse(t *testing.T) {
 	// Wait for server to be ready
 	time.Sleep(50 * time.Millisecond)
 
-	client, err := NewClient(socketPath)
+	client, err := NewRawClient(socketPath)
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestCallRpcError(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	client, err := NewClient(socketPath)
+	client, err := NewRawClient(socketPath)
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestCallResponseIdMismatch(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	client, err := NewClient(socketPath)
+	client, err := NewRawClient(socketPath)
 	if err != nil {
 		t.Fatalf("failed to connect: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestNewClientSuccess(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	client, err := NewClient(socketPath)
+	client, err := NewRawClient(socketPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

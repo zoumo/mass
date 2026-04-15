@@ -12,17 +12,17 @@ import (
 )
 
 // TestEndToEndPipeline tests the complete mass → agent-shim → mockagent lifecycle
-// using the workspace/* and agent/* ARI surface.
-// Pipeline: workspace/create → poll ready → agent/create → poll idle →
+// using the workspace/* and agentrun/* ARI surface.
+// Pipeline: workspace/create → poll ready → agentrun/create → poll idle →
 //
-//	agent/prompt → poll running → agent/stop → poll stopped →
-//	agent/delete → workspace/delete
+//	agentrun/prompt → poll running → agentrun/stop → poll stopped →
+//	agentrun/delete → workspace/delete
 func TestEndToEndPipeline(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupMassTest(t)
+	ctx, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
@@ -31,27 +31,24 @@ func TestEndToEndPipeline(t *testing.T) {
 
 	// Step 1: workspace/create → poll until phase=ready
 	t.Log("Step 1: workspace/create → poll until phase=ready")
-	createTestWorkspace(t, client, wsName)
+	createTestWorkspace(t, ctx, client, wsName)
 	t.Log("workspace ready ✓")
 
-	// Step 2: agent/create → poll until state=idle
-	t.Log("Step 2: agent/create → poll until state=idle")
-	agentStatus := createAgentAndWait(t, client, wsName, agentName, "mockagent")
-	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, agentName, agentStatus.AgentRun.Status.State)
-	if agentStatus.AgentRun.Status.State != "idle" {
-		t.Errorf("expected state=idle, got %s", agentStatus.AgentRun.Status.State)
+	// Step 2: agentrun/create → poll until state=idle
+	t.Log("Step 2: agentrun/create → poll until state=idle")
+	ar := createAgentAndWait(t, ctx, client, wsName, agentName, "mockagent")
+	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, agentName, ar.Status.State)
+	if ar.Status.State != "idle" {
+		t.Errorf("expected state=idle, got %s", ar.Status.State)
 	}
 	t.Log("agent state=idle ✓")
 
-	// Step 3: agent/prompt (async dispatch)
-	t.Log("Step 3: agent/prompt (async dispatch)")
-	var promptResult pkgariapi.AgentRunPromptResult
-	if err := client.Call("agentrun/prompt", map[string]interface{}{
-		"workspace": wsName,
-		"name":      agentName,
-		"prompt":    "hello from e2e integration test",
-	}, &promptResult); err != nil {
-		t.Fatalf("agent/prompt failed: %v", err)
+	// Step 3: agentrun/prompt (async dispatch)
+	t.Log("Step 3: agentrun/prompt (async dispatch)")
+	key := pkgariapi.ObjectKey{Workspace: wsName, Name: agentName}
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, "hello from e2e integration test")
+	if err != nil {
+		t.Fatalf("agentrun/prompt failed: %v", err)
 	}
 	t.Logf("prompt accepted: %v", promptResult.Accepted)
 	if !promptResult.Accepted {
@@ -60,35 +57,27 @@ func TestEndToEndPipeline(t *testing.T) {
 
 	// Step 4: poll until state=running or idle (mockagent is instant, turn may complete fast)
 	t.Log("Step 4: verify agent state=running (or idle if turn already completed)")
-	st4 := waitForAgentStateOneOf(t, client, wsName, agentName, []string{"running", "idle"}, 10*time.Second)
-	t.Logf("agent state=%s after prompt ✓", st4.AgentRun.Status.State)
+	st4 := waitForAgentStateOneOf(t, ctx, client, wsName, agentName, []string{"running", "idle"}, 10*time.Second)
+	t.Logf("agent state=%s after prompt ✓", st4.Status.State)
 
-	// Step 5: agent/stop → poll until state=stopped
-	t.Log("Step 5: agent/stop → poll until state=stopped")
-	if err := client.Call("agentrun/stop", map[string]interface{}{
-		"workspace": wsName,
-		"name":      agentName,
-	}, nil); err != nil {
-		t.Fatalf("agent/stop failed: %v", err)
+	// Step 5: agentrun/stop → poll until state=stopped
+	t.Log("Step 5: agentrun/stop → poll until state=stopped")
+	if err := client.AgentRuns().Stop(ctx, key); err != nil {
+		t.Fatalf("agentrun/stop failed: %v", err)
 	}
-	_ = waitForAgentState(t, client, wsName, agentName, "stopped", 10*time.Second)
+	_ = waitForAgentState(t, ctx, client, wsName, agentName, "stopped", 10*time.Second)
 	t.Log("agent state=stopped ✓")
 
-	// Step 6: agent/delete
-	t.Log("Step 6: agent/delete")
-	if err := client.Call("agentrun/delete", map[string]interface{}{
-		"workspace": wsName,
-		"name":      agentName,
-	}, nil); err != nil {
-		t.Fatalf("agent/delete failed: %v", err)
+	// Step 6: agentrun/delete
+	t.Log("Step 6: agentrun/delete")
+	if err := client.Delete(ctx, key, &pkgariapi.AgentRun{}); err != nil {
+		t.Fatalf("agentrun/delete failed: %v", err)
 	}
 	t.Log("agent deleted ✓")
 
 	// Step 7: workspace/delete
 	t.Log("Step 7: workspace/delete")
-	if err := client.Call("workspace/delete", map[string]interface{}{
-		"name": wsName,
-	}, nil); err != nil {
+	if err := client.Delete(ctx, pkgariapi.ObjectKey{Name: wsName}, &pkgariapi.Workspace{}); err != nil {
 		t.Fatalf("workspace/delete failed: %v", err)
 	}
 	t.Log("workspace deleted ✓")

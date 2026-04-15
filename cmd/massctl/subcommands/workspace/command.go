@@ -2,6 +2,7 @@
 package workspace
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -37,12 +38,12 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			var result pkgariapi.WorkspaceListResult
-			if err := client.Call(pkgariapi.MethodWorkspaceList, pkgariapi.WorkspaceListParams{}, &result); err != nil {
+			var list pkgariapi.WorkspaceList
+			if err := client.List(context.Background(), &list); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(list)
 			return nil
 		},
 	}
@@ -52,7 +53,7 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var name string
 	cmd := &cobra.Command{
 		Use:   "get",
-		Short: "Get workspace status",
+		Short: "Get workspace details",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
@@ -61,13 +62,12 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.WorkspaceStatusParams{Name: name}
-			var result pkgariapi.WorkspaceStatusResult
-			if err := client.Call(pkgariapi.MethodWorkspaceStatus, params, &result); err != nil {
+			var ws pkgariapi.Workspace
+			if err := client.Get(context.Background(), pkgariapi.ObjectKey{Name: name}, &ws); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(ws)
 			return nil
 		},
 	}
@@ -89,7 +89,7 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(pkgariapi.MethodWorkspaceDelete, pkgariapi.WorkspaceDeleteParams{Name: name}, nil); err != nil {
+			if err := client.Delete(context.Background(), pkgariapi.ObjectKey{Name: name}, &pkgariapi.Workspace{}); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -104,10 +104,10 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		workspace string
-		from      string
-		to        string
-		text      string
+		ws   string
+		from string
+		to   string
+		text string
 	)
 	cmd := &cobra.Command{
 		Use:   "send",
@@ -120,14 +120,13 @@ func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.WorkspaceSendParams{
-				Workspace: workspace,
+			result, err := client.Workspaces().Send(context.Background(), &pkgariapi.WorkspaceSendParams{
+				Workspace: ws,
 				From:      from,
 				To:        to,
 				Message:   text,
-			}
-			var result pkgariapi.WorkspaceSendResult
-			if err := client.Call(pkgariapi.MethodWorkspaceSend, params, &result); err != nil {
+			})
+			if err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
@@ -135,7 +134,7 @@ func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&workspace, "name", "w", "", "Workspace name (required)")
+	cmd.Flags().StringVarP(&ws, "name", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&from, "from", "", "Sender agent name (required)")
 	cmd.Flags().StringVar(&to, "to", "", "Target agent name (required)")
 	cmd.Flags().StringVar(&text, "text", "", "Message text (required)")

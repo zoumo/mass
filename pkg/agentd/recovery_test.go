@@ -15,7 +15,7 @@ import (
 	shim "github.com/zoumo/mass/pkg/shim/api"
 	spec "github.com/zoumo/mass/pkg/runtime-spec"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	"github.com/zoumo/mass/pkg/store"
+	"github.com/zoumo/mass/pkg/agentd/store"
 )
 
 // setupRecoveryTest creates a ProcessManager backed by a real meta.Store with

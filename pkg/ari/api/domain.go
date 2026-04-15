@@ -11,6 +11,29 @@ import (
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
+// ────────────────────────────────────────────────────────────────────────────
+// Object system (controller-runtime style)
+// ────────────────────────────────────────────────────────────────────────────
+
+// Object is implemented by all ARI domain types (Workspace, AgentRun, Agent).
+type Object interface {
+	GetObjectMeta() *ObjectMeta
+	objectType() string
+}
+
+// ObjectList is implemented by all ARI list types (WorkspaceList, AgentRunList, AgentList).
+type ObjectList interface {
+	objectType() string
+}
+
+// ObjectKey identifies a domain object by scoping namespace and name.
+type ObjectKey struct {
+	// Workspace is the scoping namespace. Empty for global resources (Workspace, Agent).
+	Workspace string `json:"workspace,omitempty"`
+	// Name is the unique name within the scope.
+	Name string `json:"name"`
+}
+
 // ObjectMeta holds identity and lifecycle fields common to all stored objects.
 type ObjectMeta struct {
 	// Name is the unique name within the parent scope.
@@ -63,6 +86,16 @@ type Agent struct {
 	Spec AgentSpec `json:"spec"`
 }
 
+func (a *Agent) GetObjectMeta() *ObjectMeta { return &a.Metadata }
+func (a *Agent) objectType() string          { return "agent" }
+
+// AgentList holds a list of Agent objects.
+type AgentList struct {
+	Items []Agent `json:"items"`
+}
+
+func (l *AgentList) objectType() string { return "agent" }
+
 // ────────────────────────────────────────────────────────────────────────────
 // AgentRun
 // ────────────────────────────────────────────────────────────────────────────
@@ -97,8 +130,9 @@ type AgentRunSpec struct {
 }
 
 // AgentRunStatus holds the observed runtime state of an agent run.
-// Internal fields (shim socket, state dir, PID, bootstrap config) are
-// tagged json:"-" and not exposed via ARI — use agentrun/attach for the socket path.
+// Internal fields (shim socket, state dir, PID, bootstrap config) must be
+// persisted in the store (json tags present) but stripped via ARIView()
+// before sending over the wire.
 type AgentRunStatus struct {
 	// State is the current lifecycle status of the agent.
 	State apiruntime.Status `json:"state"`
@@ -106,20 +140,25 @@ type AgentRunStatus struct {
 	// ErrorMessage is a non-empty error description when State is apiruntime.StatusError.
 	ErrorMessage string `json:"errorMessage,omitempty"`
 
+	// Shim holds the runtime state of the shim process.
+	// Populated in Get responses when the shim is running; nil otherwise.
+	// Contains SocketPath so callers no longer need agentrun/attach.
+	Shim *ShimStateInfo `json:"shim,omitempty"`
+
 	// ShimSocketPath is the Unix socket path for the shim's RPC endpoint.
-	// Persisted in store; not exposed in ARI status responses (use agentrun/attach).
+	// Persisted in store; stripped by ARIView().
 	ShimSocketPath string `json:"shimSocketPath,omitempty"`
 
 	// ShimStateDir is the absolute path to the shim's state directory.
-	// Persisted in store; not exposed in ARI wire responses.
+	// Persisted in store; stripped by ARIView().
 	ShimStateDir string `json:"shimStateDir,omitempty"`
 
 	// ShimPID is the OS process ID of the shim process.
-	// Persisted in store; not exposed in ARI wire responses.
+	// Persisted in store; stripped by ARIView().
 	ShimPID int `json:"shimPid,omitempty"`
 
 	// BootstrapConfig is the JSON-serialized config used to start this agent's shim.
-	// Persisted in store; not exposed in ARI wire responses.
+	// Persisted in store; stripped by ARIView().
 	BootstrapConfig json.RawMessage `json:"bootstrapConfig,omitempty"`
 }
 
@@ -135,6 +174,16 @@ type AgentRun struct {
 	// Status holds the observed runtime state.
 	Status AgentRunStatus `json:"status"`
 }
+
+func (a *AgentRun) GetObjectMeta() *ObjectMeta { return &a.Metadata }
+func (a *AgentRun) objectType() string          { return "agentrun" }
+
+// AgentRunList holds a list of AgentRun objects.
+type AgentRunList struct {
+	Items []AgentRun `json:"items"`
+}
+
+func (l *AgentRunList) objectType() string { return "agentrun" }
 
 // AgentRunFilter defines filter criteria for listing agent runs.
 type AgentRunFilter struct {
@@ -196,6 +245,16 @@ type Workspace struct {
 	Status WorkspaceStatus `json:"status"`
 }
 
+func (w *Workspace) GetObjectMeta() *ObjectMeta { return &w.Metadata }
+func (w *Workspace) objectType() string          { return "workspace" }
+
+// WorkspaceList holds a list of Workspace objects.
+type WorkspaceList struct {
+	Items []Workspace `json:"items"`
+}
+
+func (l *WorkspaceList) objectType() string { return "workspace" }
+
 // WorkspaceFilter defines filter criteria for listing workspaces.
 type WorkspaceFilter struct {
 	// Phase filters by workspace phase. Empty/zero means all phases.
@@ -206,10 +265,7 @@ type WorkspaceFilter struct {
 // ARI view helpers — strip internal-only fields before sending over the wire
 // ────────────────────────────────────────────────────────────────────────────
 
-// ARIView returns an AgentRun with internal-only fields zeroed.
-// Use this when building ARI wire responses (agentrun/status, agentrun/list, etc.).
-// Internal fields (ShimSocketPath, ShimStateDir, ShimPID, BootstrapConfig) are
-// only exposed via the agentrun/attach endpoint.
+// ARIView returns an AgentRun with internal-only fields zeroed for wire transmission.
 func (a AgentRun) ARIView() AgentRun {
 	a.Status.ShimSocketPath = ""
 	a.Status.ShimStateDir = ""

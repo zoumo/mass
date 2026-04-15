@@ -1,6 +1,7 @@
 package create
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/spf13/cobra"
@@ -36,13 +37,15 @@ func newGitCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.WorkspaceCreateParams{Name: name, Source: srcJSON}
-			var result pkgariapi.WorkspaceCreateResult
-			if err := client.Call(pkgariapi.MethodWorkspaceCreate, params, &result); err != nil {
+			ws := pkgariapi.Workspace{
+				Metadata: pkgariapi.ObjectMeta{Name: name},
+				Spec:     pkgariapi.WorkspaceSpec{Source: srcJSON},
+			}
+			if err := client.Create(context.Background(), &ws); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(ws)
 			return nil
 		},
 	}

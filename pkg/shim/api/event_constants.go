@@ -2,17 +2,6 @@ package api
 
 // EventType* and Category* constants — moved from github.com/zoumo/mass/api.
 
-// ContentBlockType identifies the variant of a ContentBlock.
-type ContentBlockType string
-
-const (
-	ContentBlockTypeText         ContentBlockType = "text"
-	ContentBlockTypeImage        ContentBlockType = "image"
-	ContentBlockTypeAudio        ContentBlockType = "audio"
-	ContentBlockTypeResourceLink ContentBlockType = "resource_link"
-	ContentBlockTypeResource     ContentBlockType = "resource"
-)
-
 // Event type identifiers used in shim/event payloads.
 const (
 	EventTypeAgentMessage  = "agent_message"

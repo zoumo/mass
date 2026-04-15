@@ -37,22 +37,22 @@ type ariWorkspaceSendResult struct {
 	Delivered bool `json:"delivered"`
 }
 
-type ariWorkspaceStatusParams struct {
-	Name string `json:"name"`
+// ariAgentRunListResult mirrors the agentrun/list response (Items field).
+type ariAgentRunListResult struct {
+	Items []ariAgentRunItem `json:"items"`
 }
 
-type ariWorkspaceStatusResult struct {
-	Name    string               `json:"name"`
-	Phase   string               `json:"phase"`
-	Path    string               `json:"path,omitempty"`
-	Members []ariWorkspaceMember `json:"members,omitempty"`
-}
-
-type ariWorkspaceMember struct {
-	Workspace    string `json:"workspace"`
-	Name         string `json:"name"`
-	RuntimeClass string `json:"runtimeClass"`
-	State        string `json:"state"`
+type ariAgentRunItem struct {
+	Metadata struct {
+		Workspace string `json:"workspace"`
+		Name      string `json:"name"`
+	} `json:"metadata"`
+	Spec struct {
+		Agent string `json:"agent"`
+	} `json:"spec"`
+	Status struct {
+		State string `json:"state"`
+	} `json:"status"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -198,23 +198,34 @@ func workspaceStatusHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		logger.Info("workspace_status", "workspace", cfg.workspaceName)
 
-		ariParams := ariWorkspaceStatusParams{Name: cfg.workspaceName}
-		var result ariWorkspaceStatusResult
-		if err := callARI(ctx, cfg.massSocket, pkgariapi.MethodWorkspaceStatus, ariParams, &result); err != nil {
+		// workspace/get returns the Workspace object directly.
+		key := pkgariapi.ObjectKey{Name: cfg.workspaceName}
+		var ws pkgariapi.Workspace
+		if err := callARI(ctx, cfg.massSocket, pkgariapi.MethodWorkspaceGet, key, &ws); err != nil {
 			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("workspace/status failed: %v", err)}},
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("workspace/get failed: %v", err)}},
+				IsError: true,
+			}, nil
+		}
+
+		// Fetch workspace members via agentrun/list with workspace filter.
+		listOpts := pkgariapi.ListOptions{FieldSelector: map[string]string{"workspace": cfg.workspaceName}}
+		var members ariAgentRunListResult
+		if err := callARI(ctx, cfg.massSocket, pkgariapi.MethodAgentRunList, listOpts, &members); err != nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("agentrun/list failed: %v", err)}},
 				IsError: true,
 			}, nil
 		}
 
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Workspace: %s (phase: %s)\n", result.Name, result.Phase))
-		if result.Path != "" {
-			sb.WriteString(fmt.Sprintf("Path: %s\n", result.Path))
+		sb.WriteString(fmt.Sprintf("Workspace: %s (phase: %s)\n", ws.Metadata.Name, ws.Status.Phase))
+		if ws.Status.Path != "" {
+			sb.WriteString(fmt.Sprintf("Path: %s\n", ws.Status.Path))
 		}
-		sb.WriteString(fmt.Sprintf("Members (%d):\n", len(result.Members)))
-		for _, m := range result.Members {
-			sb.WriteString(fmt.Sprintf("  - %s [%s] state: %s\n", m.Name, m.RuntimeClass, m.State))
+		sb.WriteString(fmt.Sprintf("Members (%d):\n", len(members.Items)))
+		for _, m := range members.Items {
+			sb.WriteString(fmt.Sprintf("  - %s [%s] state: %s\n", m.Metadata.Name, m.Spec.Agent, m.Status.State))
 		}
 
 		return &mcp.CallToolResult{

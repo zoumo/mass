@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -25,8 +26,8 @@ var testSocketCounter int64
 
 // setupMassTest starts mass daemon and returns context, client, and cleanup function.
 // It uses --root flag path derivation (no config.yaml) and self-fork shim (no MASS_SHIM_BINARY).
-// After the socket is ready it registers the "mockagent" runtime via runtime/set.
-func setupMassTest(t *testing.T) (context.Context, context.CancelFunc, *ariclient.Client, func()) {
+// After the socket is ready it registers the "mockagent" runtime via agent/create.
+func setupMassTest(t *testing.T) (context.Context, context.CancelFunc, pkgariapi.Client, func()) {
 	t.Helper()
 	// Use a short root path under /tmp to avoid macOS 104-char Unix socket path limit (K025).
 	// Socket lands at rootDir/mass.sock which is within the limit.
@@ -69,23 +70,23 @@ func setupMassTest(t *testing.T) (context.Context, context.CancelFunc, *ariclien
 		t.Fatalf("socket not ready: %v", err)
 	}
 
-	client, err := ariclient.NewClient(socketPath)
+	client, err := ariclient.Dial(ctx, socketPath)
 	if err != nil {
 		cancel()
 		t.Fatalf("failed to create ARI client: %v", err)
 	}
 
-	// Register the mockagent runtime so tests can use runtimeClass="mockagent".
-	var runtimeResult pkgariapi.AgentSetResult
-	if err := client.Call("agent/set", pkgariapi.AgentSetParams{
-		Name:    "mockagent",
-		Command: mockagentBin,
-	}, &runtimeResult); err != nil {
+	// Register the mockagent runtime so tests can use agent="mockagent".
+	ag := pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "mockagent"},
+		Spec:     pkgariapi.AgentSpec{Command: mockagentBin},
+	}
+	if err := client.Create(ctx, &ag); err != nil {
 		cancel()
 		client.Close()
 		t.Fatalf("failed to register mockagent runtime: %v", err)
 	}
-	t.Logf("runtime registered: name=%s command=%s", runtimeResult.Agent.Metadata.Name, runtimeResult.Agent.Spec.Command)
+	t.Logf("runtime registered: name=%s command=%s", ag.Metadata.Name, ag.Spec.Command)
 
 	cleanup := func() {
 		client.Close()
@@ -110,35 +111,34 @@ func setupMassTest(t *testing.T) (context.Context, context.CancelFunc, *ariclien
 	return ctx, cancel, client, cleanup
 }
 
-// createTestWorkspace calls workspace/create and polls workspace/status until
+// createTestWorkspace calls workspace/create and polls workspace/get until
 // phase=="ready". Returns the workspace name. Fatals on timeout or error.
-func createTestWorkspace(t *testing.T, client *ariclient.Client, name string) string {
+func createTestWorkspace(t *testing.T, ctx context.Context, client pkgariapi.Client, name string) string {
 	t.Helper()
-	var createResult pkgariapi.WorkspaceCreateResult
-	if err := client.Call("workspace/create", map[string]interface{}{
-		"name": name,
-		"source": map[string]interface{}{
-			"type": "emptyDir",
-		},
-	}, &createResult); err != nil {
+	ws := pkgariapi.Workspace{
+		Metadata: pkgariapi.ObjectMeta{Name: name},
+		Spec:     pkgariapi.WorkspaceSpec{Source: json.RawMessage(`{"type":"emptyDir"}`)},
+	}
+	if err := client.Create(ctx, &ws); err != nil {
 		t.Fatalf("workspace/create (name=%s): %v", name, err)
 	}
-	t.Logf("workspace create dispatched: name=%s phase=%s", createResult.Workspace.Metadata.Name, createResult.Workspace.Status.Phase)
+	t.Logf("workspace create dispatched: name=%s phase=%s", ws.Metadata.Name, ws.Status.Phase)
 
-	// Poll workspace/status until phase=="ready"
+	// Poll workspace/get until phase=="ready"
+	key := pkgariapi.ObjectKey{Name: name}
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		var statusResult pkgariapi.WorkspaceStatusResult
-		if err := client.Call("workspace/status", map[string]interface{}{"name": name}, &statusResult); err != nil {
-			t.Logf("workspace/status (%s): %v (retrying)", name, err)
+		var got pkgariapi.Workspace
+		if err := client.Get(ctx, key, &got); err != nil {
+			t.Logf("workspace/get (%s): %v (retrying)", name, err)
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		if statusResult.Workspace.Status.Phase == "ready" {
+		if got.Status.Phase == pkgariapi.WorkspacePhaseReady {
 			t.Logf("workspace ready: name=%s", name)
 			return name
 		}
-		if statusResult.Workspace.Status.Phase == "error" {
+		if got.Status.Phase == pkgariapi.WorkspacePhaseError {
 			t.Fatalf("workspace %s reached error phase", name)
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -148,106 +148,99 @@ func createTestWorkspace(t *testing.T, client *ariclient.Client, name string) st
 }
 
 // deleteTestWorkspace removes a workspace. Logs but does not fatal on error (best-effort cleanup).
-func deleteTestWorkspace(t *testing.T, client *ariclient.Client, name string) {
+func deleteTestWorkspace(t *testing.T, ctx context.Context, client pkgariapi.Client, name string) {
 	t.Helper()
-	if err := client.Call("workspace/delete", map[string]interface{}{"name": name}, nil); err != nil {
+	if err := client.Delete(ctx, pkgariapi.ObjectKey{Name: name}, &pkgariapi.Workspace{}); err != nil {
 		t.Logf("workspace/delete (name=%s): %v (ignored)", name, err)
 	}
 }
 
-// waitForAgentState polls agent/status every 200ms until the agent reaches
-// the desired state or the timeout expires. Returns the final status result.
+// waitForAgentState polls agentrun/get every 200ms until the agent reaches
+// the desired state or the timeout expires. Returns the final AgentRun.
 // Calls t.Fatalf on timeout.
 func waitForAgentState(
 	t *testing.T,
-	client *ariclient.Client,
+	ctx context.Context,
+	client pkgariapi.Client,
 	workspace, name, wantState string,
 	timeout time.Duration,
-) pkgariapi.AgentRunStatusResult {
+) pkgariapi.AgentRun {
 	t.Helper()
-	return waitForAgentStateOneOf(t, client, workspace, name, []string{wantState}, timeout)
+	return waitForAgentStateOneOf(t, ctx, client, workspace, name, []string{wantState}, timeout)
 }
 
-// waitForAgentStateOneOf polls agent/status until the agent reaches any of
-// the desired states or the timeout expires. Returns the final status result.
+// waitForAgentStateOneOf polls agentrun/get until the agent reaches any of
+// the desired states or the timeout expires. Returns the final AgentRun.
 // Calls t.Fatalf on timeout.
 func waitForAgentStateOneOf(
 	t *testing.T,
-	client *ariclient.Client,
+	ctx context.Context,
+	client pkgariapi.Client,
 	workspace, name string,
 	wantStates []string,
 	timeout time.Duration,
-) pkgariapi.AgentRunStatusResult {
+) pkgariapi.AgentRun {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
-	params := map[string]interface{}{"workspace": workspace, "name": name}
-	var result pkgariapi.AgentRunStatusResult
+	key := pkgariapi.ObjectKey{Workspace: workspace, Name: name}
+	var ar pkgariapi.AgentRun
 	for time.Now().Before(deadline) {
-		if err := client.Call("agentrun/status", params, &result); err != nil {
-			t.Logf("agent/status (%s/%s): %v (retrying)", workspace, name, err)
+		if err := client.Get(ctx, key, &ar); err != nil {
+			t.Logf("agentrun/get (%s/%s): %v (retrying)", workspace, name, err)
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 		for _, want := range wantStates {
-			if string(result.AgentRun.Status.State) == want {
-				return result
+			if string(ar.Status.State) == want {
+				return ar
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("agent %s/%s did not reach state(s) %v within %v (last state: %q)",
-		workspace, name, wantStates, timeout, result.AgentRun.Status.State)
-	return result // unreachable
+		workspace, name, wantStates, timeout, ar.Status.State)
+	return ar // unreachable
 }
 
-// createAgentAndWait calls agent/create and polls until state=="idle".
-// Returns the status result after the agent is ready.
-func createAgentAndWait(t *testing.T, client *ariclient.Client, workspace, name, agentDef string) pkgariapi.AgentRunStatusResult {
+// createAgentAndWait calls agentrun/create and polls until state=="idle".
+// Returns the AgentRun after the agent is ready.
+func createAgentAndWait(t *testing.T, ctx context.Context, client pkgariapi.Client, workspace, name, agentDef string) pkgariapi.AgentRun {
 	t.Helper()
-	var createResult pkgariapi.AgentRunCreateResult
-	if err := client.Call("agentrun/create", map[string]interface{}{
-		"workspace": workspace,
-		"name":      name,
-		"agent":     agentDef,
-	}, &createResult); err != nil {
-		t.Fatalf("agent/create (workspace=%s name=%s): %v", workspace, name, err)
+	ar := pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: workspace, Name: name},
+		Spec:     pkgariapi.AgentRunSpec{Agent: agentDef},
+	}
+	if err := client.Create(ctx, &ar); err != nil {
+		t.Fatalf("agentrun/create (workspace=%s name=%s): %v", workspace, name, err)
 	}
 	t.Logf("agent create dispatched: workspace=%s name=%s state=%s",
-		createResult.AgentRun.Metadata.Workspace, createResult.AgentRun.Metadata.Name, createResult.AgentRun.Status.State)
-	return waitForAgentState(t, client, workspace, name, "idle", 15*time.Second)
+		ar.Metadata.Workspace, ar.Metadata.Name, ar.Status.State)
+	return waitForAgentState(t, ctx, client, workspace, name, "idle", 15*time.Second)
 }
 
 // stopAndDeleteAgent stops and then deletes an agent. Best-effort cleanup —
 // logs but does not fatal on errors. Polls for stopped state before deleting
-// because agent/delete requires state "stopped" or "error".
-func stopAndDeleteAgent(t *testing.T, client *ariclient.Client, workspace, name string) {
+// because agentrun/delete requires state "stopped" or "error".
+func stopAndDeleteAgent(t *testing.T, ctx context.Context, client pkgariapi.Client, workspace, name string) {
 	t.Helper()
-	if err := client.Call("agentrun/stop", map[string]interface{}{
-		"workspace": workspace,
-		"name":      name,
-	}, nil); err != nil {
-		t.Logf("agent/stop (%s/%s): %v (ignored)", workspace, name, err)
+	key := pkgariapi.ObjectKey{Workspace: workspace, Name: name}
+	if err := client.AgentRuns().Stop(ctx, key); err != nil {
+		t.Logf("agentrun/stop (%s/%s): %v (ignored)", workspace, name, err)
 	}
 	// Poll briefly for stopped/error state before delete (best-effort)
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		var st pkgariapi.AgentRunStatusResult
-		if err := client.Call("agentrun/status", map[string]interface{}{
-			"workspace": workspace,
-			"name":      name,
-		}, &st); err != nil {
+		var ar pkgariapi.AgentRun
+		if err := client.Get(ctx, key, &ar); err != nil {
 			break // agent may already be gone
 		}
-		if st.AgentRun.Status.State == "stopped" || st.AgentRun.Status.State == "error" {
+		if ar.Status.State == "stopped" || ar.Status.State == "error" {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if err := client.Call("agentrun/delete", map[string]interface{}{
-		"workspace": workspace,
-		"name":      name,
-	}, nil); err != nil {
-		t.Logf("agent/delete (%s/%s): %v (ignored)", workspace, name, err)
+	if err := client.Delete(ctx, key, &pkgariapi.AgentRun{}); err != nil {
+		t.Logf("agentrun/delete (%s/%s): %v (ignored)", workspace, name, err)
 	}
 }
 
@@ -256,38 +249,35 @@ func stopAndDeleteAgent(t *testing.T, client *ariclient.Client, workspace, name 
 // =============================================================================
 
 // TestAgentLifecycle tests all agent state transitions.
-// Covers: agent/create → state=idle → agent/prompt → state=running → agent/stop → state=stopped → agent/delete
+// Covers: agentrun/create → state=idle → agentrun/prompt → state=running → agentrun/stop → state=stopped → agentrun/delete
 func TestAgentLifecycle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupMassTest(t)
+	ctx, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
 	const wsName = "lifecycle-ws"
-	createTestWorkspace(t, client, wsName)
-	defer deleteTestWorkspace(t, client, wsName)
+	createTestWorkspace(t, ctx, client, wsName)
+	defer deleteTestWorkspace(t, ctx, client, wsName)
 
-	// Step 1: agent/create → state=idle
-	t.Log("Step 1: agent/create → wait for state=idle")
-	status := createAgentAndWait(t, client, wsName, "agent-lifecycle", "mockagent")
-	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, "agent-lifecycle", status.AgentRun.Status.State)
+	// Step 1: agentrun/create → state=idle
+	t.Log("Step 1: agentrun/create → wait for state=idle")
+	ar := createAgentAndWait(t, ctx, client, wsName, "agent-lifecycle", "mockagent")
+	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, "agent-lifecycle", ar.Status.State)
 
-	if status.AgentRun.Status.State != "idle" {
-		t.Errorf("expected state=idle, got %s", status.AgentRun.Status.State)
+	if ar.Status.State != "idle" {
+		t.Errorf("expected state=idle, got %s", ar.Status.State)
 	}
 
-	// Step 2: agent/prompt → async dispatch; state transitions to running
-	t.Log("Step 2: agent/prompt (async dispatch)")
-	var promptResult pkgariapi.AgentRunPromptResult
-	if err := client.Call("agentrun/prompt", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-lifecycle",
-		"prompt":    "test lifecycle prompt",
-	}, &promptResult); err != nil {
-		t.Fatalf("agent/prompt failed: %v", err)
+	// Step 2: agentrun/prompt → async dispatch; state transitions to running
+	t.Log("Step 2: agentrun/prompt (async dispatch)")
+	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-lifecycle"}
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, "test lifecycle prompt")
+	if err != nil {
+		t.Fatalf("agentrun/prompt failed: %v", err)
 	}
 	t.Logf("prompt accepted: %v", promptResult.Accepted)
 	if !promptResult.Accepted {
@@ -296,67 +286,55 @@ func TestAgentLifecycle(t *testing.T) {
 
 	// Step 3: verify agent transitions to running (accept idle — mockagent is instant).
 	t.Log("Step 3: verify agent is running (or already idle) after prompt")
-	_ = waitForAgentStateOneOf(t, client, wsName, "agent-lifecycle", []string{"running", "idle"}, 10*time.Second)
+	_ = waitForAgentStateOneOf(t, ctx, client, wsName, "agent-lifecycle", []string{"running", "idle"}, 10*time.Second)
 	t.Log("agent running/idle ✓")
 
-	// Step 4: agent/stop → state=stopped
-	t.Log("Step 4: agent/stop → state=stopped")
-	if err := client.Call("agentrun/stop", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-lifecycle",
-	}, nil); err != nil {
-		t.Fatalf("agent/stop failed: %v", err)
+	// Step 4: agentrun/stop → state=stopped
+	t.Log("Step 4: agentrun/stop → state=stopped")
+	if err := client.AgentRuns().Stop(ctx, key); err != nil {
+		t.Fatalf("agentrun/stop failed: %v", err)
 	}
-	_ = waitForAgentState(t, client, wsName, "agent-lifecycle", "stopped", 10*time.Second)
+	_ = waitForAgentState(t, ctx, client, wsName, "agent-lifecycle", "stopped", 10*time.Second)
 	t.Log("agent stopped ✓")
 
-	// Step 5: agent/delete
-	t.Log("Step 5: agent/delete")
-	if err := client.Call("agentrun/delete", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-lifecycle",
-	}, nil); err != nil {
-		t.Fatalf("agent/delete failed: %v", err)
+	// Step 5: agentrun/delete
+	t.Log("Step 5: agentrun/delete")
+	if err := client.Delete(ctx, key, &pkgariapi.AgentRun{}); err != nil {
+		t.Fatalf("agentrun/delete failed: %v", err)
 	}
 
-	// Verify agent is gone (status should return error)
-	var verifyStatus pkgariapi.AgentRunStatusResult
-	err := client.Call("agentrun/status", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-lifecycle",
-	}, &verifyStatus)
+	// Verify agent is gone (get should return error)
+	var verifyAR pkgariapi.AgentRun
+	err = client.Get(ctx, key, &verifyAR)
 	if err == nil {
 		t.Error("expected error when getting status of deleted agent")
 	}
-	t.Logf("agent deleted (status check returned expected error: %v)", err)
+	t.Logf("agent deleted (get returned expected error: %v)", err)
 }
 
-// TestAgentPromptAndStop tests agent/prompt followed by agent/stop.
+// TestAgentPromptAndStop tests agentrun/prompt followed by agentrun/stop.
 func TestAgentPromptAndStop(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupMassTest(t)
+	ctx, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
 	const wsName = "prompt-stop-ws"
-	createTestWorkspace(t, client, wsName)
-	defer deleteTestWorkspace(t, client, wsName)
+	createTestWorkspace(t, ctx, client, wsName)
+	defer deleteTestWorkspace(t, ctx, client, wsName)
 
 	// Create agent and wait for idle state
-	status := createAgentAndWait(t, client, wsName, "agent-ps", "mockagent")
-	t.Logf("agent ready: state=%s", status.AgentRun.Status.State)
+	ar := createAgentAndWait(t, ctx, client, wsName, "agent-ps", "mockagent")
+	t.Logf("agent ready: state=%s", ar.Status.State)
 
 	// Prompt the agent (async dispatch)
-	var promptResult pkgariapi.AgentRunPromptResult
-	if err := client.Call("agentrun/prompt", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-ps",
-		"prompt":    "prompt and stop test",
-	}, &promptResult); err != nil {
-		t.Fatalf("agent/prompt failed: %v", err)
+	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-ps"}
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, "prompt and stop test")
+	if err != nil {
+		t.Fatalf("agentrun/prompt failed: %v", err)
 	}
 	t.Logf("prompt accepted: %v", promptResult.Accepted)
 	if !promptResult.Accepted {
@@ -364,21 +342,15 @@ func TestAgentPromptAndStop(t *testing.T) {
 	}
 
 	// Stop the agent (may still be transitioning to running — stop is valid from any live state)
-	if err := client.Call("agentrun/stop", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-ps",
-	}, nil); err != nil {
-		t.Fatalf("agent/stop failed: %v", err)
+	if err := client.AgentRuns().Stop(ctx, key); err != nil {
+		t.Fatalf("agentrun/stop failed: %v", err)
 	}
-	_ = waitForAgentState(t, client, wsName, "agent-ps", "stopped", 10*time.Second)
+	_ = waitForAgentState(t, ctx, client, wsName, "agent-ps", "stopped", 10*time.Second)
 	t.Log("agent stopped ✓")
 
 	// Delete agent
-	if err := client.Call("agentrun/delete", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-ps",
-	}, nil); err != nil {
-		t.Logf("agent/delete: %v (ignored)", err)
+	if err := client.Delete(ctx, key, &pkgariapi.AgentRun{}); err != nil {
+		t.Logf("agentrun/delete: %v (ignored)", err)
 	}
 }
 
@@ -389,28 +361,25 @@ func TestAgentPromptFromIdle(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupMassTest(t)
+	ctx, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
 	const wsName = "autostart-ws"
-	createTestWorkspace(t, client, wsName)
-	defer deleteTestWorkspace(t, client, wsName)
+	createTestWorkspace(t, ctx, client, wsName)
+	defer deleteTestWorkspace(t, ctx, client, wsName)
 
 	// Create agent — should be in state=idle
-	status := createAgentAndWait(t, client, wsName, "agent-auto", "mockagent")
-	if status.AgentRun.Status.State != "idle" {
-		t.Errorf("expected state=idle before first prompt, got %s", status.AgentRun.Status.State)
+	ar := createAgentAndWait(t, ctx, client, wsName, "agent-auto", "mockagent")
+	if ar.Status.State != "idle" {
+		t.Errorf("expected state=idle before first prompt, got %s", ar.Status.State)
 	}
 
 	// Prompt immediately from idle state
-	var promptResult pkgariapi.AgentRunPromptResult
-	if err := client.Call("agentrun/prompt", map[string]interface{}{
-		"workspace": wsName,
-		"name":      "agent-auto",
-		"prompt":    "auto-start prompt",
-	}, &promptResult); err != nil {
-		t.Fatalf("agent/prompt (from idle) failed: %v", err)
+	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-auto"}
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, "auto-start prompt")
+	if err != nil {
+		t.Fatalf("agentrun/prompt (from idle) failed: %v", err)
 	}
 	t.Logf("prompt accepted: %v", promptResult.Accepted)
 	if !promptResult.Accepted {
@@ -418,11 +387,11 @@ func TestAgentPromptFromIdle(t *testing.T) {
 	}
 
 	// Agent should be running (or already idle — mockagent completes instantly).
-	_ = waitForAgentStateOneOf(t, client, wsName, "agent-auto", []string{"running", "idle"}, 10*time.Second)
+	_ = waitForAgentStateOneOf(t, ctx, client, wsName, "agent-auto", []string{"running", "idle"}, 10*time.Second)
 	t.Log("agent running/idle ✓")
 
 	// Cleanup
-	stopAndDeleteAgent(t, client, wsName, "agent-auto")
+	stopAndDeleteAgent(t, ctx, client, wsName, "agent-auto")
 }
 
 // TestMultipleAgentPromptsSequential tests multiple sequential prompts to the same agent.
@@ -432,17 +401,17 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupMassTest(t)
+	ctx, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
 	const wsName = "sequential-ws"
-	createTestWorkspace(t, client, wsName)
-	defer deleteTestWorkspace(t, client, wsName)
+	createTestWorkspace(t, ctx, client, wsName)
+	defer deleteTestWorkspace(t, ctx, client, wsName)
 
 	// Create agent
-	status := createAgentAndWait(t, client, wsName, "agent-seq", "mockagent")
-	t.Logf("agent ready: state=%s", status.AgentRun.Status.State)
+	ar := createAgentAndWait(t, ctx, client, wsName, "agent-seq", "mockagent")
+	t.Logf("agent ready: state=%s", ar.Status.State)
 
 	prompts := []string{
 		"first sequential prompt",
@@ -450,15 +419,12 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 		"third sequential prompt",
 	}
 
+	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-seq"}
 	for i, promptText := range prompts {
 		t.Logf("Sending prompt %d/%d: %q", i+1, len(prompts), promptText)
-		var promptResult pkgariapi.AgentRunPromptResult
-		if err := client.Call("agentrun/prompt", map[string]interface{}{
-			"workspace": wsName,
-			"name":      "agent-seq",
-			"prompt":    promptText,
-		}, &promptResult); err != nil {
-			t.Fatalf("agent/prompt %d failed: %v", i+1, err)
+		promptResult, err := client.AgentRuns().Prompt(ctx, key, promptText)
+		if err != nil {
+			t.Fatalf("agentrun/prompt %d failed: %v", i+1, err)
 		}
 		t.Logf("prompt %d accepted: %v", i+1, promptResult.Accepted)
 		if !promptResult.Accepted {
@@ -466,12 +432,12 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 		}
 
 		// Wait for async turn to complete — agent returns to "idle" when done.
-		_ = waitForAgentState(t, client, wsName, "agent-seq", "idle", 15*time.Second)
+		_ = waitForAgentState(t, ctx, client, wsName, "agent-seq", "idle", 15*time.Second)
 		t.Logf("prompt %d turn completed (agent=idle) ✓", i+1)
 	}
 
 	t.Logf("All %d sequential prompts completed successfully ✓", len(prompts))
 
 	// Cleanup
-	stopAndDeleteAgent(t, client, wsName, "agent-seq")
+	stopAndDeleteAgent(t, ctx, client, wsName, "agent-seq")
 }

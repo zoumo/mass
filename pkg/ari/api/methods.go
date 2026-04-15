@@ -3,7 +3,7 @@ package api
 // ARI workspace methods (orchestrator ↔ mass).
 const (
 	MethodWorkspaceCreate = "workspace/create"
-	MethodWorkspaceStatus = "workspace/status"
+	MethodWorkspaceGet    = "workspace/get"
 	MethodWorkspaceList   = "workspace/list"
 	MethodWorkspaceDelete = "workspace/delete"
 	MethodWorkspaceSend   = "workspace/send"
@@ -18,13 +18,13 @@ const (
 	MethodAgentRunDelete  = "agentrun/delete"
 	MethodAgentRunRestart = "agentrun/restart"
 	MethodAgentRunList    = "agentrun/list"
-	MethodAgentRunStatus  = "agentrun/status"
-	MethodAgentRunAttach  = "agentrun/attach"
+	MethodAgentRunGet     = "agentrun/get"
 )
 
 // ARI agent definition methods.
 const (
-	MethodAgentSet    = "agent/set"
+	MethodAgentCreate = "agent/create"
+	MethodAgentUpdate = "agent/update"
 	MethodAgentGet    = "agent/get"
 	MethodAgentList   = "agent/list"
 	MethodAgentDelete = "agent/delete"

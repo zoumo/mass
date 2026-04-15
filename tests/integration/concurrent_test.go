@@ -19,7 +19,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupMassTest(t)
+	ctx, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
@@ -27,15 +27,15 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 	const numAgents = 3
 
 	// Create shared workspace
-	createTestWorkspace(t, client, wsName)
-	defer deleteTestWorkspace(t, client, wsName)
+	createTestWorkspace(t, ctx, client, wsName)
+	defer deleteTestWorkspace(t, ctx, client, wsName)
 
 	// Create agents and collect their names; all belong to the same workspace
 	agentNames := make([]string, numAgents)
 	for i := 0; i < numAgents; i++ {
 		name := fmt.Sprintf("concurrent-agent-%d", i+1)
 		agentNames[i] = name
-		_ = createAgentAndWait(t, client, wsName, name, "mockagent")
+		_ = createAgentAndWait(t, ctx, client, wsName, name, "mockagent")
 		t.Logf("created agent %d: workspace=%s name=%s", i+1, wsName, name)
 	}
 
@@ -52,13 +52,9 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		go func(idx int, agentName string) {
 			defer wg.Done()
 
-			var promptResult pkgariapi.AgentRunPromptResult
+			key := pkgariapi.ObjectKey{Workspace: wsName, Name: agentName}
 			clientMu.Lock()
-			err := client.Call("agentrun/prompt", map[string]interface{}{
-				"workspace": wsName,
-				"name":      agentName,
-				"prompt":    fmt.Sprintf("concurrent prompt %d", idx+1),
-			}, &promptResult)
+			promptResult, err := client.AgentRuns().Prompt(ctx, key, fmt.Sprintf("concurrent prompt %d", idx+1))
 			clientMu.Unlock()
 
 			if err != nil {
@@ -97,32 +93,28 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 	// Verify each agent is in running state after prompt dispatch
 	t.Log("Verifying all agents are running...")
 	for i, name := range agentNames {
-		var statusResult pkgariapi.AgentRunStatusResult
+		key := pkgariapi.ObjectKey{Workspace: wsName, Name: name}
+		var ar pkgariapi.AgentRun
 		clientMu.Lock()
-		err := client.Call("agentrun/status", map[string]interface{}{
-			"workspace": wsName,
-			"name":      name,
-		}, &statusResult)
+		err := client.Get(ctx, key, &ar)
 		clientMu.Unlock()
 		if err != nil {
-			t.Errorf("agent %d (%s) status failed: %v", i+1, name, err)
+			t.Errorf("agent %d (%s) get failed: %v", i+1, name, err)
 			continue
 		}
 		// Accept running or idle — the mockagent completes turns instantly so
 		// the turn may already be done by the time we poll status.
-		if statusResult.AgentRun.Status.State != "running" && statusResult.AgentRun.Status.State != "idle" {
-			t.Errorf("agent %d (%s): expected state=running or idle, got %s", i+1, name, statusResult.AgentRun.Status.State)
+		if ar.Status.State != "running" && ar.Status.State != "idle" {
+			t.Errorf("agent %d (%s): expected state=running or idle, got %s", i+1, name, ar.Status.State)
 		}
 	}
 
 	// Stop and delete all agents; wait for stopped before delete
 	t.Log("Stopping and deleting all agents...")
 	for i, name := range agentNames {
+		key := pkgariapi.ObjectKey{Workspace: wsName, Name: name}
 		clientMu.Lock()
-		stopErr := client.Call("agentrun/stop", map[string]interface{}{
-			"workspace": wsName,
-			"name":      name,
-		}, nil)
+		stopErr := client.AgentRuns().Stop(ctx, key)
 		clientMu.Unlock()
 		if stopErr != nil {
 			t.Logf("warning: agent %d (%s) stop failed: %v", i+1, name, stopErr)
@@ -131,27 +123,21 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		// Poll for stopped/error state before deleting (serialized)
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
-			var st pkgariapi.AgentRunStatusResult
+			var ar pkgariapi.AgentRun
 			clientMu.Lock()
-			err := client.Call("agentrun/status", map[string]interface{}{
-				"workspace": wsName,
-				"name":      name,
-			}, &st)
+			err := client.Get(ctx, key, &ar)
 			clientMu.Unlock()
 			if err != nil {
 				break
 			}
-			if st.AgentRun.Status.State == "stopped" || st.AgentRun.Status.State == "error" {
+			if ar.Status.State == "stopped" || ar.Status.State == "error" {
 				break
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
 
 		clientMu.Lock()
-		delErr := client.Call("agentrun/delete", map[string]interface{}{
-			"workspace": wsName,
-			"name":      name,
-		}, nil)
+		delErr := client.Delete(ctx, key, &pkgariapi.AgentRun{})
 		clientMu.Unlock()
 		if delErr != nil {
 			t.Logf("warning: agent %d (%s) delete failed: %v", i+1, name, delErr)

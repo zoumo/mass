@@ -2,6 +2,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -53,19 +54,16 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.AgentSetParams{
-				Name:                  ag.Metadata.Name,
-				Command:               ag.Spec.Command,
-				Args:                  ag.Spec.Args,
-				Env:                   ag.Spec.Env,
-				StartupTimeoutSeconds: ag.Spec.StartupTimeoutSeconds,
+			ctx := context.Background()
+
+			// Try create first; if it already exists, update instead.
+			if err := client.Create(ctx, &ag); err != nil {
+				if err := client.Update(ctx, &ag); err != nil {
+					cliutil.HandleError(err)
+					return nil
+				}
 			}
-			var result pkgariapi.AgentSetResult
-			if err := client.Call(pkgariapi.MethodAgentSet, params, &result); err != nil {
-				cliutil.HandleError(err)
-				return nil
-			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(ag)
 			return nil
 		},
 	}
@@ -87,13 +85,12 @@ func newGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			params := pkgariapi.AgentGetParams{Name: name}
-			var result pkgariapi.AgentGetResult
-			if err := client.Call(pkgariapi.MethodAgentGet, params, &result); err != nil {
+			var ag pkgariapi.Agent
+			if err := client.Get(context.Background(), pkgariapi.ObjectKey{Name: name}, &ag); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(ag)
 			return nil
 		},
 	}
@@ -114,12 +111,12 @@ func newListCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			var result pkgariapi.AgentListResult
-			if err := client.Call(pkgariapi.MethodAgentList, pkgariapi.AgentListParams{}, &result); err != nil {
+			var list pkgariapi.AgentList
+			if err := client.List(context.Background(), &list); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}
-			cliutil.OutputJSON(result)
+			cliutil.OutputJSON(list)
 			return nil
 		},
 	}
@@ -138,7 +135,7 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			if err := client.Call(pkgariapi.MethodAgentDelete, pkgariapi.AgentDeleteParams{Name: name}, nil); err != nil {
+			if err := client.Delete(context.Background(), pkgariapi.ObjectKey{Name: name}, &pkgariapi.Agent{}); err != nil {
 				cliutil.HandleError(err)
 				return nil
 			}

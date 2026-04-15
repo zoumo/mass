@@ -19,13 +19,13 @@ import (
 )
 
 // setupMassTestWithRuntimeClass creates a temporary mass instance and registers
-// a custom runtime via runtime/set. Uses --root flag (no config.yaml) and self-fork
+// a custom runtime via agent/create. Uses --root flag (no config.yaml) and self-fork
 // shim (no MASS_SHIM_BINARY).
 func setupMassTestWithRuntimeClass(
 	t *testing.T,
 	runtimeClassName string,
-	templateSpec pkgariapi.AgentSetParams,
-) (context.Context, context.CancelFunc, *ariclient.Client, func()) {
+	spec pkgariapi.AgentSpec,
+) (context.Context, context.CancelFunc, pkgariapi.Client, func()) {
 	t.Helper()
 
 	// Use a short root path under /tmp to avoid macOS 104-char Unix socket path limit (K025).
@@ -62,23 +62,25 @@ func setupMassTestWithRuntimeClass(
 		t.Fatalf("mass socket not ready: %v", err)
 	}
 
-	client, err := ariclient.NewClient(socketPath)
+	client, err := ariclient.Dial(ctx, socketPath)
 	if err != nil {
 		cancel()
 		massCmd.Process.Kill()
 		t.Fatalf("failed to create ARI client: %v", err)
 	}
 
-	// Register the agent template via agent/set. Ensure the name field is set.
-	templateSpec.Name = runtimeClassName
-	var runtimeResult pkgariapi.AgentSetResult
-	if err := client.Call("agent/set", templateSpec, &runtimeResult); err != nil {
+	// Register the agent template via agent/create.
+	ag := pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: runtimeClassName},
+		Spec:     spec,
+	}
+	if err := client.Create(ctx, &ag); err != nil {
 		cancel()
 		client.Close()
 		massCmd.Process.Kill()
 		t.Fatalf("failed to register runtime %q: %v", runtimeClassName, err)
 	}
-	t.Logf("runtime registered: name=%s command=%s", runtimeResult.Agent.Metadata.Name, runtimeResult.Agent.Spec.Command)
+	t.Logf("runtime registered: name=%s command=%s", ag.Metadata.Name, ag.Spec.Command)
 
 	cleanup := func() {
 		client.Close()
@@ -106,9 +108,9 @@ func setupMassTestWithRuntimeClass(
 }
 
 // runRealCLILifecycle exercises the full ARI agent lifecycle against a real
-// CLI runtime: workspace/create → agent/create → agent/prompt → poll idle →
-// agent/status → agent/stop → agent/delete → workspace/delete.
-func runRealCLILifecycle(t *testing.T, _ context.Context, client *ariclient.Client, runtimeClass string) {
+// CLI runtime: workspace/create → agentrun/create → agentrun/prompt → poll idle →
+// agentrun/get → agentrun/stop → agentrun/delete → workspace/delete.
+func runRealCLILifecycle(t *testing.T, ctx context.Context, client pkgariapi.Client, runtimeClass string) {
 	t.Helper()
 
 	wsName := fmt.Sprintf("test-%s", runtimeClass)
@@ -116,27 +118,24 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ariclient.Clie
 
 	// Step 1: workspace/create → poll until ready
 	t.Log("Step 1: workspace/create → poll until ready")
-	createTestWorkspace(t, client, wsName)
+	createTestWorkspace(t, ctx, client, wsName)
 	t.Logf("workspace ready: name=%s", wsName)
 
-	// Step 2: agent/create → poll until idle
-	t.Log("Step 2: agent/create → poll until idle")
-	createResult := createAgentAndWait(t, client, wsName, agentName, runtimeClass)
+	// Step 2: agentrun/create → poll until idle
+	t.Log("Step 2: agentrun/create → poll until idle")
+	ar := createAgentAndWait(t, ctx, client, wsName, agentName, runtimeClass)
 	t.Logf("agent ready: workspace=%s name=%s state=%s",
-		wsName, agentName, createResult.AgentRun.Status.State)
-	if createResult.AgentRun.Status.State != "idle" {
-		t.Fatalf("expected state=idle, got %s", createResult.AgentRun.Status.State)
+		wsName, agentName, ar.Status.State)
+	if ar.Status.State != "idle" {
+		t.Fatalf("expected state=idle, got %s", ar.Status.State)
 	}
 
-	// Step 3: agent/prompt — async dispatch; agent startup may take 10-30s for real CLIs
-	t.Log("Step 3: agent/prompt (async — triggers agent startup, may take 10-30s)")
-	var promptResult pkgariapi.AgentRunPromptResult
-	if err := client.Call("agentrun/prompt", map[string]interface{}{
-		"workspace": wsName,
-		"name":      agentName,
-		"prompt":    "respond with only the word hello",
-	}, &promptResult); err != nil {
-		t.Fatalf("agent/prompt failed: %v", err)
+	// Step 3: agentrun/prompt — async dispatch; agent startup may take 10-30s for real CLIs
+	t.Log("Step 3: agentrun/prompt (async — triggers agent startup, may take 10-30s)")
+	key := pkgariapi.ObjectKey{Workspace: wsName, Name: agentName}
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, "respond with only the word hello")
+	if err != nil {
+		t.Fatalf("agentrun/prompt failed: %v", err)
 	}
 	t.Logf("prompt dispatched: accepted=%v", promptResult.Accepted)
 	if !promptResult.Accepted {
@@ -144,51 +143,39 @@ func runRealCLILifecycle(t *testing.T, _ context.Context, client *ariclient.Clie
 	}
 
 	// Step 4: poll until idle (turn completed) — real LLM calls may take 30-60s
-	t.Log("Step 4: poll agent/status until state=idle (turn completed)")
-	statusAfterTurn := waitForAgentState(t, client, wsName, agentName, "idle", 90*time.Second)
-	t.Logf("turn completed: workspace=%s name=%s state=%s",
-		wsName, agentName, statusAfterTurn.AgentRun.Status.State)
+	t.Log("Step 4: poll agentrun/get until state=idle (turn completed)")
+	_ = waitForAgentState(t, ctx, client, wsName, agentName, "idle", 90*time.Second)
+	t.Logf("turn completed: workspace=%s name=%s", wsName, agentName)
 
-	// Step 5: agent/status — verify shimState is non-nil (shim still running)
-	t.Log("Step 5: agent/status")
-	var statusResult pkgariapi.AgentRunStatusResult
-	if err := client.Call("agentrun/status", map[string]interface{}{
-		"workspace": wsName,
-		"name":      agentName,
-	}, &statusResult); err != nil {
-		t.Fatalf("agent/status failed: %v", err)
+	// Step 5: agentrun/get — verify shim info is populated
+	t.Log("Step 5: agentrun/get")
+	var getAR pkgariapi.AgentRun
+	if err := client.Get(ctx, key, &getAR); err != nil {
+		t.Fatalf("agentrun/get failed: %v", err)
 	}
-	t.Logf("agent status: state=%s", statusResult.AgentRun.Status.State)
-	if statusResult.ShimState != nil {
-		t.Logf("shimState: status=%s pid=%d", statusResult.ShimState.Status, statusResult.ShimState.PID)
+	t.Logf("agent status: state=%s", getAR.Status.State)
+	if getAR.Status.Shim != nil {
+		t.Logf("shimState: status=%s pid=%d", getAR.Status.Shim.Status, getAR.Status.Shim.PID)
 	}
 
-	// Step 6: agent/stop → poll until stopped
-	t.Log("Step 6: agent/stop → poll until stopped")
-	if err := client.Call("agentrun/stop", map[string]interface{}{
-		"workspace": wsName,
-		"name":      agentName,
-	}, nil); err != nil {
-		t.Fatalf("agent/stop failed: %v", err)
+	// Step 6: agentrun/stop → poll until stopped
+	t.Log("Step 6: agentrun/stop → poll until stopped")
+	if err := client.AgentRuns().Stop(ctx, key); err != nil {
+		t.Fatalf("agentrun/stop failed: %v", err)
 	}
-	_ = waitForAgentState(t, client, wsName, agentName, "stopped", 15*time.Second)
+	_ = waitForAgentState(t, ctx, client, wsName, agentName, "stopped", 15*time.Second)
 	t.Log("agent stopped ✓")
 
-	// Step 7: agent/delete
-	t.Log("Step 7: agent/delete")
-	if err := client.Call("agentrun/delete", map[string]interface{}{
-		"workspace": wsName,
-		"name":      agentName,
-	}, nil); err != nil {
-		t.Fatalf("agent/delete failed: %v", err)
+	// Step 7: agentrun/delete
+	t.Log("Step 7: agentrun/delete")
+	if err := client.Delete(ctx, key, &pkgariapi.AgentRun{}); err != nil {
+		t.Fatalf("agentrun/delete failed: %v", err)
 	}
 	t.Log("agent deleted ✓")
 
 	// Step 8: workspace/delete
 	t.Log("Step 8: workspace/delete")
-	if err := client.Call("workspace/delete", map[string]interface{}{
-		"name": wsName,
-	}, nil); err != nil {
+	if err := client.Delete(ctx, pkgariapi.ObjectKey{Name: wsName}, &pkgariapi.Workspace{}); err != nil {
 		t.Logf("warning: workspace/delete failed: %v", err)
 	}
 	t.Log("workspace deleted — lifecycle complete ✓")
@@ -214,7 +201,7 @@ func TestRealCLI_GsdPi(t *testing.T) {
 		t.Skip("skipping: ANTHROPIC_API_KEY not set (gsd-pi needs an LLM key to process prompts)")
 	}
 
-	ctx, cancel, client, cleanup := setupMassTestWithRuntimeClass(t, "gsd-pi", pkgariapi.AgentSetParams{
+	ctx, cancel, client, cleanup := setupMassTestWithRuntimeClass(t, "gsd-pi", pkgariapi.AgentSpec{
 		Command: "bunx",
 		Args:    []string{"pi-acp"},
 		Env: []apiruntime.EnvVar{
@@ -247,7 +234,7 @@ func TestRealCLI_ClaudeCode(t *testing.T) {
 		t.Skipf("skipping: claude-code adapter not found at %s", adapterPath)
 	}
 
-	ctx, cancel, client, cleanup := setupMassTestWithRuntimeClass(t, "claude-code", pkgariapi.AgentSetParams{
+	ctx, cancel, client, cleanup := setupMassTestWithRuntimeClass(t, "claude-code", pkgariapi.AgentSpec{
 		Command: "node",
 		Args:    []string{adapterPath},
 		Env: []apiruntime.EnvVar{
