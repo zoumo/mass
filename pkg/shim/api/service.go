@@ -5,7 +5,7 @@ package api
 import (
 	"context"
 
-	"github.com/zoumo/oar/pkg/jsonrpc"
+	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
 // ShimService defines the Shim JSON-RPC protocol methods.

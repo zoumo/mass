@@ -7,8 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	"github.com/zoumo/oar/pkg/jsonrpc"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
 // ────────────────────────────────────────────────────────────────────────────

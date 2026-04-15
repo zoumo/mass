@@ -14,7 +14,7 @@ type WorkspaceError struct {
 	Phase       string     // "prepare-source", "prepare-hooks", "cleanup-hooks", "cleanup-delete"
 	WorkspaceID string     // Target directory path (workspace identifier)
 	SourceType  SourceType // Source type being processed (git, emptyDir, local)
-	Managed     bool       // Whether workspace is managed by agentd (true for git/emptyDir)
+	Managed     bool       // Whether workspace is managed by mass (true for git/emptyDir)
 	Message     string     // Human-readable error summary
 	Err         error      // Underlying error (GitError, HookError, etc.)
 }

@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	runtimespec "github.com/zoumo/oar/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	runtimespec "github.com/zoumo/mass/pkg/runtime-spec"
 )
 
 type StateSuite struct {
@@ -27,7 +27,7 @@ func (s *StateSuite) TeardownTest() {
 
 func sampleState() apiruntime.State {
 	return apiruntime.State{
-		OarVersion:  "0.1.0",
+		MassVersion:  "0.1.0",
 		ID:          "test-session-123",
 		Status:      apiruntime.StatusIdle,
 		PID:         42,
@@ -50,7 +50,7 @@ func (s *StateSuite) TestWriteReadRoundTrip() {
 	got, err := runtimespec.ReadState(dir)
 	s.Require().NoError(err)
 
-	s.Equal(st.OarVersion, got.OarVersion)
+	s.Equal(st.MassVersion, got.MassVersion)
 	s.Equal(st.ID, got.ID)
 	s.Equal(st.Status, got.Status)
 	s.Equal(st.PID, got.PID)
@@ -196,7 +196,7 @@ func fullSessionState() *apiruntime.SessionState {
 func fullState() apiruntime.State {
 	exitCode := 0
 	return apiruntime.State{
-		OarVersion:  "0.2.0",
+		MassVersion:  "0.2.0",
 		ID:          "full-roundtrip-session",
 		Status:      apiruntime.StatusRunning,
 		PID:         9999,
@@ -228,7 +228,7 @@ func (s *StateSuite) TestFullStateRoundTrip() {
 	s.Require().NoError(err)
 
 	// Top-level scalar & map fields
-	s.Equal(want.OarVersion, got.OarVersion)
+	s.Equal(want.MassVersion, got.MassVersion)
 	s.Equal(want.ID, got.ID)
 	s.Equal(want.Status, got.Status)
 	s.Equal(want.PID, got.PID)

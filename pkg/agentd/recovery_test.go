@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	shim "github.com/zoumo/oar/pkg/shim/api"
-	spec "github.com/zoumo/oar/pkg/runtime-spec"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	"github.com/zoumo/oar/pkg/store"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	shim "github.com/zoumo/mass/pkg/shim/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	"github.com/zoumo/mass/pkg/store"
 )
 
 // setupRecoveryTest creates a ProcessManager backed by a real meta.Store with
@@ -31,7 +31,7 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *store.Store) {
 
 	agents := NewAgentRunManager(store, slog.Default())
 
-	pm := NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
+	pm := NewProcessManager(agents, store, filepath.Join(tmpDir, "mass.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
 	return pm, store
 }
 
@@ -71,7 +71,7 @@ func TestRecoverSessions_LiveShim(t *testing.T) {
 	srv.mu.Lock()
 	srv.statusResult = shim.RuntimeStatusResult{
 		State: apiruntime.State{
-			OarVersion: "0.1.0",
+			MassVersion: "0.1.0",
 			ID:         "recovered-agent",
 			Status:     apiruntime.StatusRunning,
 			Bundle:     "/tmp/test-bundle",
@@ -248,7 +248,7 @@ func TestRecoverSessions_ShimReportsStopped(t *testing.T) {
 	srv.mu.Lock()
 	srv.statusResult = shim.RuntimeStatusResult{
 		State: apiruntime.State{
-			OarVersion: "0.1.0",
+			MassVersion: "0.1.0",
 			ID:         "stopped-agent",
 			Status:     apiruntime.StatusStopped,
 		},
@@ -292,7 +292,7 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 	srv.mu.Lock()
 	srv.statusResult = shim.RuntimeStatusResult{
 		State: apiruntime.State{
-			OarVersion: "0.1.0",
+			MassVersion: "0.1.0",
 			ID:         "reconciled-agent",
 			Status:     apiruntime.StatusRunning,
 		},
@@ -349,7 +349,7 @@ func TestRecoverSessions_ShimMismatchLogsWarning(t *testing.T) {
 	srv.mu.Lock()
 	srv.statusResult = shim.RuntimeStatusResult{
 		State: apiruntime.State{
-			OarVersion: "0.1.0",
+			MassVersion: "0.1.0",
 			ID:         "mismatched-agent",
 			Status:     apiruntime.StatusRunning,
 		},
@@ -476,7 +476,7 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 	stateDir := t.TempDir()
 	const knownSessionID = "reload-session-abc123"
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		ID:         knownSessionID,
 		Status:     apiruntime.StatusIdle,
 		Bundle:     "/tmp/test-bundle",
@@ -541,7 +541,7 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 
 	stateDir := t.TempDir()
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		ID:         "some-session",
 		Status:     apiruntime.StatusIdle,
 		Bundle:     "/tmp/test-bundle",
@@ -637,7 +637,7 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 	// Write a state.json so there's something to load — should be ignored.
 	stateDir := t.TempDir()
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		ID:         "existing-session",
 		Status:     apiruntime.StatusIdle,
 		Bundle:     "/tmp/test-bundle",

@@ -8,14 +8,14 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	runtimespec "github.com/zoumo/oar/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	runtimespec "github.com/zoumo/mass/pkg/runtime-spec"
 )
 
 // validConfig returns a Config that passes all validation rules.
 func validConfig() apiruntime.Config {
 	return apiruntime.Config{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata: apiruntime.Metadata{
 			Name: "test-agent",
 		},
@@ -50,7 +50,7 @@ type ConfigSuite struct {
 
 func (s *ConfigSuite) SetupTest() {
 	var err error
-	s.dir, err = os.MkdirTemp("", "oar-config-test-*")
+	s.dir, err = os.MkdirTemp("", "mass-config-test-*")
 	s.Require().NoError(err)
 }
 
@@ -83,17 +83,17 @@ func (s *ConfigSuite) TestValidateValid() {
 	s.NoError(runtimespec.ValidateConfig(validConfig()))
 }
 
-func (s *ConfigSuite) TestValidateMissingOarVersion() {
+func (s *ConfigSuite) TestValidateMissingMassVersion() {
 	c := validConfig()
-	c.OarVersion = ""
+	c.MassVersion = ""
 	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
-	s.Contains(err.Error(), "oarVersion")
+	s.Contains(err.Error(), "massVersion")
 }
 
 func (s *ConfigSuite) TestValidateUnknownMajorVersion() {
 	c := validConfig()
-	c.OarVersion = "1.0.0" // major == 1, unsupported
+	c.MassVersion = "1.0.0" // major == 1, unsupported
 	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "major")

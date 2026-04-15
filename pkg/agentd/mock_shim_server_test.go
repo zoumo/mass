@@ -14,8 +14,8 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 	"github.com/stretchr/testify/require"
 
-	apishim "github.com/zoumo/oar/pkg/shim/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ func newMockShimServer(t *testing.T) (*mockShimServer, string) {
 		done:     make(chan struct{}),
 		statusResult: apishim.RuntimeStatusResult{
 			State: apiruntime.State{
-				OarVersion: "0.1.0",
+				MassVersion: "0.1.0",
 				ID:         "test-session",
 				Status:     apiruntime.StatusIdle,
 				Bundle:     "/tmp/test-bundle",

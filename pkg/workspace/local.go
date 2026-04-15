@@ -1,6 +1,6 @@
 // Package workspace implements workspace preparation handlers.
 // This file defines the LocalHandler implementation for validating local
-// directory sources as part of OAR workspace preparation.
+// directory sources as part of MASS workspace preparation.
 package workspace
 
 import (
@@ -13,7 +13,7 @@ import (
 // It validates that the source.Local.Path exists and is a directory.
 // Unlike GitHandler and EmptyDirHandler, LocalHandler does NOT create or
 // manage directories - it returns source.Local.Path directly because
-// local workspaces are unmanaged by agentd.
+// local workspaces are unmanaged by mass.
 type LocalHandler struct{}
 
 // NewLocalHandler creates a new LocalHandler.
@@ -23,7 +23,7 @@ func NewLocalHandler() *LocalHandler {
 
 // Prepare validates that source.Local.Path exists and is a directory.
 // It returns source.Local.Path directly (NOT targetDir) because local
-// workspaces are unmanaged - agentd doesn't create or delete them.
+// workspaces are unmanaged - mass doesn't create or delete them.
 //
 // Error handling:
 //   - type mismatch: returns error with "cannot handle source type" message
@@ -58,6 +58,6 @@ func (h *LocalHandler) Prepare(ctx context.Context, source Source, targetDir str
 	}
 
 	// CRITICAL: Return source.Local.Path (NOT targetDir).
-	// Local workspaces are unmanaged - agentd doesn't create or delete them.
+	// Local workspaces are unmanaged - mass doesn't create or delete them.
 	return localPath, nil
 }

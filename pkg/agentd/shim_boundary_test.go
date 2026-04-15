@@ -14,10 +14,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apishim "github.com/zoumo/oar/pkg/shim/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	shimclient "github.com/zoumo/oar/pkg/shim/client"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	shimclient "github.com/zoumo/mass/pkg/shim/client"
 )
 
 // TestStateChange_CreatingToIdle_UpdatesDB verifies that a runtime/state_change

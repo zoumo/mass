@@ -10,8 +10,8 @@ import (
 	"os"
 	"sync"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	"github.com/zoumo/oar/pkg/store"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	"github.com/zoumo/mass/pkg/store"
 )
 
 // WorkspaceManager orchestrates workspace lifecycle operations.
@@ -60,8 +60,8 @@ func NewWorkspaceManager() *WorkspaceManager {
 //   - Hook failure: for managed workspaces, cleans up partial state via os.RemoveAll;
 //     returns WorkspaceError with Phase="prepare-hooks"
 //
-// Managed workspaces (git, emptyDir) are created by agentd and can be cleaned up
-// on failure. Local workspaces are unmanaged - agentd doesn't create or delete them.
+// Managed workspaces (git, emptyDir) are created by mass and can be cleaned up
+// on failure. Local workspaces are unmanaged - mass doesn't create or delete them.
 func (m *WorkspaceManager) Prepare(ctx context.Context, spec WorkspaceSpec, targetDir string) (workspacePath string, err error) {
 	// Validate spec.
 	if err := ValidateWorkspaceSpec(spec); err != nil {
@@ -234,9 +234,9 @@ func (m *WorkspaceManager) InitRefCounts(s *store.Store) error {
 	return nil
 }
 
-// isManaged returns true for source types that agentd creates and manages.
-// Git and emptyDir sources create managed directories that agentd can clean up.
-// Local sources reference existing directories that agentd does NOT manage.
+// isManaged returns true for source types that mass creates and manages.
+// Git and emptyDir sources create managed directories that mass can clean up.
+// Local sources reference existing directories that mass does NOT manage.
 func isManaged(source Source) bool {
 	switch source.Type {
 	case SourceTypeGit, SourceTypeEmptyDir:

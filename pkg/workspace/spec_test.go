@@ -6,13 +6,13 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/oar/pkg/workspace"
+	"github.com/zoumo/mass/pkg/workspace"
 )
 
 // validWorkspaceSpec returns a WorkspaceSpec that passes all validation rules.
 func validWorkspaceSpec() workspace.WorkspaceSpec {
 	return workspace.WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata: workspace.WorkspaceMetadata{
 			Name: "test-workspace",
 		},
@@ -34,7 +34,7 @@ type SpecSuite struct {
 
 func (s *SpecSuite) TestParseValid() {
 	data := []byte(`{
-		"oarVersion": "0.1.0",
+		"massVersion": "0.1.0",
 		"metadata": {"name": "test-workspace"},
 		"source": {"type": "git", "url": "https://github.com/org/project.git"}
 	}`)
@@ -54,7 +54,7 @@ func (s *SpecSuite) TestParseMalformedJSON() {
 
 func (s *SpecSuite) TestParseGitSource() {
 	data := []byte(`{
-		"oarVersion": "0.1.0",
+		"massVersion": "0.1.0",
 		"metadata": {"name": "git-project"},
 		"source": {
 			"type": "git",
@@ -73,7 +73,7 @@ func (s *SpecSuite) TestParseGitSource() {
 
 func (s *SpecSuite) TestParseEmptyDirSource() {
 	data := []byte(`{
-		"oarVersion": "0.1.0",
+		"massVersion": "0.1.0",
 		"metadata": {"name": "empty-project"},
 		"source": {"type": "emptyDir"}
 	}`)
@@ -84,7 +84,7 @@ func (s *SpecSuite) TestParseEmptyDirSource() {
 
 func (s *SpecSuite) TestParseLocalSource() {
 	data := []byte(`{
-		"oarVersion": "0.1.0",
+		"massVersion": "0.1.0",
 		"metadata": {"name": "local-project"},
 		"source": {"type": "local", "path": "/home/user/project"}
 	}`)
@@ -96,7 +96,7 @@ func (s *SpecSuite) TestParseLocalSource() {
 
 func (s *SpecSuite) TestParseHooks() {
 	data := []byte(`{
-		"oarVersion": "0.1.0",
+		"massVersion": "0.1.0",
 		"metadata": {"name": "with-hooks"},
 		"source": {"type": "git", "url": "https://github.com/org/repo.git"},
 		"hooks": {
@@ -120,7 +120,7 @@ func (s *SpecSuite) TestParseHooks() {
 
 func (s *SpecSuite) TestParseUnknownSourceType() {
 	data := []byte(`{
-		"oarVersion": "0.1.0",
+		"massVersion": "0.1.0",
 		"metadata": {"name": "bad-source"},
 		"source": {"type": "invalid"}
 	}`)
@@ -131,7 +131,7 @@ func (s *SpecSuite) TestParseUnknownSourceType() {
 
 func (s *SpecSuite) TestMarshalGitSource() {
 	spec := workspace.WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   workspace.WorkspaceMetadata{Name: "git-project"},
 		Source: workspace.Source{
 			Type: workspace.SourceTypeGit,
@@ -148,7 +148,7 @@ func (s *SpecSuite) TestMarshalGitSource() {
 	// Unmarshal to verify round-trip.
 	var parsed workspace.WorkspaceSpec
 	s.Require().NoError(json.Unmarshal(data, &parsed))
-	s.Equal(spec.OarVersion, parsed.OarVersion)
+	s.Equal(spec.MassVersion, parsed.MassVersion)
 	s.Equal(spec.Metadata.Name, parsed.Metadata.Name)
 	s.Equal(spec.Source.Type, parsed.Source.Type)
 	s.Equal(spec.Source.Git.URL, parsed.Source.Git.URL)
@@ -158,7 +158,7 @@ func (s *SpecSuite) TestMarshalGitSource() {
 
 func (s *SpecSuite) TestMarshalEmptyDirSource() {
 	spec := workspace.WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   workspace.WorkspaceMetadata{Name: "empty-project"},
 		Source: workspace.Source{
 			Type: workspace.SourceTypeEmptyDir,
@@ -182,7 +182,7 @@ func (s *SpecSuite) TestMarshalEmptyDirSource() {
 
 func (s *SpecSuite) TestMarshalLocalSource() {
 	spec := workspace.WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   workspace.WorkspaceMetadata{Name: "local-project"},
 		Source: workspace.Source{
 			Type: workspace.SourceTypeLocal,
@@ -205,17 +205,17 @@ func (s *SpecSuite) TestValidateValid() {
 	s.NoError(workspace.ValidateWorkspaceSpec(validWorkspaceSpec()))
 }
 
-func (s *SpecSuite) TestValidateMissingOarVersion() {
+func (s *SpecSuite) TestValidateMissingMassVersion() {
 	spec := validWorkspaceSpec()
-	spec.OarVersion = ""
+	spec.MassVersion = ""
 	err := workspace.ValidateWorkspaceSpec(spec)
 	s.Require().Error(err)
-	s.Contains(err.Error(), "oarVersion")
+	s.Contains(err.Error(), "massVersion")
 }
 
 func (s *SpecSuite) TestValidateUnknownMajorVersion() {
 	spec := validWorkspaceSpec()
-	spec.OarVersion = "1.0.0" // major == 1, unsupported
+	spec.MassVersion = "1.0.0" // major == 1, unsupported
 	err := workspace.ValidateWorkspaceSpec(spec)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "major")
@@ -223,7 +223,7 @@ func (s *SpecSuite) TestValidateUnknownMajorVersion() {
 
 func (s *SpecSuite) TestValidateInvalidSemVer() {
 	spec := validWorkspaceSpec()
-	spec.OarVersion = "not-semver"
+	spec.MassVersion = "not-semver"
 	err := workspace.ValidateWorkspaceSpec(spec)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "SemVer")
@@ -359,7 +359,7 @@ func (s *SpecSuite) TestSourceTypeString() {
 func (s *SpecSuite) TestParseCompleteExample() {
 	// Test the full Go project example from the design doc.
 	data := []byte(`{
-		"oarVersion": "0.1.0",
+		"massVersion": "0.1.0",
 		"metadata": {
 			"name": "backend-service",
 			"annotations": {
@@ -397,7 +397,7 @@ func (s *SpecSuite) TestParseCompleteExample() {
 func (s *SpecSuite) TestParseNoHooks() {
 	// Test Git project without hooks.
 	data := []byte(`{
-		"oarVersion": "0.1.0",
+		"massVersion": "0.1.0",
 		"metadata": {"name": "simple-project"},
 		"source": {"type": "git", "url": "https://github.com/org/simple.git"}
 	}`)

@@ -1,4 +1,4 @@
-// Package store provides metadata persistence for OAR agent and workspace records.
+// Package store provides metadata persistence for MASS agent and workspace records.
 // This file defines Workspace CRUD methods.
 package store
 
@@ -10,7 +10,7 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // CreateWorkspace stores a new Workspace record.

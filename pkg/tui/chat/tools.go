@@ -9,10 +9,10 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/stringext"
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/anim"
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/common"
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/stringext"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/anim"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/common"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
 )
 
 // responseContextHeight limits the number of lines displayed in tool output.

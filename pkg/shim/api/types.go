@@ -4,7 +4,7 @@
 package api
 
 import (
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -22,7 +22,7 @@ type SessionPromptResult struct {
 }
 
 // SessionLoadParams is the JSON body for the "session/load" RPC method.
-// The shim server exposes this for try_reload restart policy; agentd calls it
+// The shim server exposes this for try_reload restart policy; mass calls it
 // during recovery to restore a prior ACP session.
 type SessionLoadParams struct {
 	SessionID string `json:"sessionId"`

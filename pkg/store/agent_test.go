@@ -5,8 +5,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // makeAgent returns a minimal valid Agent for test use.

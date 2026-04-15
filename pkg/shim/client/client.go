@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/json"
 
-	apishim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/jsonrpc"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
+	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
 // NotificationHandler handles inbound shim/event notifications.

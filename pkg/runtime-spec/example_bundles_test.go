@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	runtimespec "github.com/zoumo/oar/pkg/runtime-spec"
+	runtimespec "github.com/zoumo/mass/pkg/runtime-spec"
 )
 
 func TestExampleBundlesAreValid(t *testing.T) {

@@ -15,12 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apishim "github.com/zoumo/oar/pkg/shim/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	spec "github.com/zoumo/oar/pkg/runtime-spec"
-	shimclient "github.com/zoumo/oar/pkg/shim/client"
-	"github.com/zoumo/oar/pkg/store"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
+	shimclient "github.com/zoumo/mass/pkg/shim/client"
+	"github.com/zoumo/mass/pkg/store"
 )
 
 // EventHandler is called for each shim/event notification received from the shim.
@@ -42,7 +42,7 @@ func agentKey(workspace, name string) string {
 //   - Agent status transitions
 //   - Runtime entity resolution from DB
 //   - Bundle creation (config.json + workspace symlink)
-//   - Shim process fork/exec (self-fork or OAR_SHIM_BINARY override)
+//   - Shim process fork/exec (self-fork or MASS_SHIM_BINARY override)
 //   - ShimClient connection and event subscription
 type ProcessManager struct {
 	agents     *AgentRunManager
@@ -107,7 +107,7 @@ type ShimProcess struct {
 
 // NewProcessManager creates a new ProcessManager.
 func NewProcessManager(agents *AgentRunManager, s *store.Store, socketPath, bundleRoot string, logger *slog.Logger, logLevel, logFormat string) *ProcessManager {
-	logger = logger.With("component", "agentd.process")
+	logger = logger.With("component", "mass.process")
 	return &ProcessManager{
 		agents:     agents,
 		store:      s,
@@ -198,7 +198,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 //  2. Resolve Agent definition from DB store via GetAgent
 //  3. Generate config.json
 //  4. Create bundle directory with workspace symlink
-//  5. Fork agent-shim process (self-fork or OAR_SHIM_BINARY override)
+//  5. Fork agent-shim process (self-fork or MASS_SHIM_BINARY override)
 //  6. Wait for socket to appear
 //  7. Connect ShimClient with the unified notification handler (D088)
 //  8. Subscribe to events
@@ -349,7 +349,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	return shimProc, nil
 }
 
-// generateConfig creates the OAR Runtime config.json for this agent.
+// generateConfig creates the MASS Runtime config.json for this agent.
 func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkgariapi.Agent) apiruntime.Config {
 	// Build environment variables in KEY=VALUE format from the Agent definition.
 	env := make([]string, 0, len(agentDef.Spec.Env))
@@ -365,7 +365,7 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 	annotations["agent"] = agentDef.Metadata.Name
 
 	// Compute the bundle/state directory (same formula as createBundle) so we
-	// can pass OAR_STATE_DIR to the workspace-mcp-server before the directory
+	// can pass MASS_STATE_DIR to the workspace-mcp-server before the directory
 	// is actually created.
 	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
 
@@ -376,17 +376,17 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 		Command: mcpBinary,
 		Args:    mcpArgs,
 		Env: []apiruntime.EnvVar{
-			{Name: "OAR_AGENTD_SOCKET", Value: m.socketPath},
-			{Name: "OAR_WORKSPACE_NAME", Value: agent.Metadata.Workspace},
-			{Name: "OAR_AGENT_NAME", Value: agent.Metadata.Name},
-			{Name: "OAR_STATE_DIR", Value: stateDir},
-			{Name: "OAR_LOG_LEVEL", Value: m.logLevel},
-			{Name: "OAR_LOG_FORMAT", Value: m.logFormat},
+			{Name: "MASS_SOCKET", Value: m.socketPath},
+			{Name: "MASS_WORKSPACE_NAME", Value: agent.Metadata.Workspace},
+			{Name: "MASS_AGENT_NAME", Value: agent.Metadata.Name},
+			{Name: "MASS_STATE_DIR", Value: stateDir},
+			{Name: "MASS_LOG_LEVEL", Value: m.logLevel},
+			{Name: "MASS_LOG_FORMAT", Value: m.logFormat},
 		},
 	}
 
 	return apiruntime.Config{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata: apiruntime.Metadata{
 			Name:        agent.Metadata.Name,
 			Annotations: annotations,
@@ -415,7 +415,7 @@ func (m *ProcessManager) workspaceMcpCommand() (string, []string) {
 	self, err := os.Executable()
 	if err != nil {
 		m.logger.Error("os.Executable failed for workspace-mcp, falling back to PATH", "error", err)
-		return "agentd", []string{"workspace-mcp"}
+		return "mass", []string{"workspace-mcp"}
 	}
 	return self, []string{"workspace-mcp"}
 }
@@ -479,9 +479,9 @@ func (m *ProcessManager) createBundle(agent *pkgariapi.AgentRun, cfg apiruntime.
 	return bundlePath, stateDir, socketPath, nil
 }
 
-// forkShim forks the agent-shim process using self-fork or OAR_SHIM_BINARY override.
+// forkShim forks the agent-shim process using self-fork or MASS_SHIM_BINARY override.
 // Self-fork: uses os.Executable() to re-invoke the daemon with "shim" as the first arg.
-// Override: if OAR_SHIM_BINARY is set, that binary is used instead.
+// Override: if MASS_SHIM_BINARY is set, that binary is used instead.
 //
 // Note: We intentionally do NOT use exec.CommandContext here because the shim
 // process should run independently of the request context that initiated Start.
@@ -491,7 +491,7 @@ func (m *ProcessManager) forkShim(agent *pkgariapi.AgentRun, bundlePath, stateDi
 	var shimBinary string
 	var usingOverride bool
 
-	if envPath := os.Getenv("OAR_SHIM_BINARY"); envPath != "" {
+	if envPath := os.Getenv("MASS_SHIM_BINARY"); envPath != "" {
 		shimBinary = envPath
 		usingOverride = true
 	} else {
@@ -505,7 +505,7 @@ func (m *ProcessManager) forkShim(agent *pkgariapi.AgentRun, bundlePath, stateDi
 	}
 
 	if usingOverride {
-		m.logger.Info("forkShim: using OAR_SHIM_BINARY override", "shim_binary", shimBinary)
+		m.logger.Info("forkShim: using MASS_SHIM_BINARY override", "shim_binary", shimBinary)
 	} else {
 		m.logger.Info("forkShim: using self-fork", "shim_binary", shimBinary)
 	}
@@ -543,8 +543,8 @@ func (m *ProcessManager) forkShim(agent *pkgariapi.AgentRun, bundlePath, stateDi
 	// Create exec.Cmd WITHOUT tying to the request context.
 	cmd := exec.Command(shimBinary, args...)
 	cmd.Env = append(os.Environ(),
-		"OAR_LOG_LEVEL="+m.logLevel,
-		"OAR_LOG_FORMAT="+m.logFormat,
+		"MASS_LOG_LEVEL="+m.logLevel,
+		"MASS_LOG_FORMAT="+m.logFormat,
 	)
 	cmd.Stderr = os.Stderr // always pipe stderr for debugging
 	cmd.Stdout = nil       // discard stdout (shim logs to stderr via slog)

@@ -1,4 +1,4 @@
-// Package store provides metadata persistence for OAR agent and workspace records.
+// Package store provides metadata persistence for MASS agent and workspace records.
 // It uses bbolt (pure Go embedded key-value store) for persistence.
 package store
 

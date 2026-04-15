@@ -1,4 +1,4 @@
-// Package workspace defines the OAR Workspace Specification types.
+// Package workspace defines the MASS Workspace Specification types.
 // These types model workspace.json (the workspace preparation configuration) and
 // mirror the schema defined in docs/design/workspace/workspace-spec.md.
 package workspace
@@ -8,12 +8,12 @@ import (
 	"fmt"
 )
 
-// WorkspaceSpec is the top-level OAR Workspace Specification structure.
+// WorkspaceSpec is the top-level MASS Workspace Specification structure.
 // It describes how to prepare an agent's working environment.
 type WorkspaceSpec struct {
-	// OarVersion is the version of the OAR Workspace Specification (SemVer).
+	// MassVersion is the version of the MASS Workspace Specification (SemVer).
 	// Consumers MUST reject unknown major versions.
-	OarVersion string `json:"oarVersion"`
+	MassVersion string `json:"massVersion"`
 
 	// Metadata describes the identity of this workspace.
 	Metadata WorkspaceMetadata `json:"metadata"`
@@ -106,7 +106,7 @@ type GitSource struct {
 }
 
 // EmptyDirSource describes an empty directory source.
-// No fields — agentd creates an empty managed directory.
+// No fields — mass creates an empty managed directory.
 type EmptyDirSource struct{}
 
 // LocalSource describes a local directory source.
@@ -227,25 +227,25 @@ func ParseWorkspaceSpec(data []byte) (WorkspaceSpec, error) {
 	return spec, nil
 }
 
-// ValidateWorkspaceSpec checks that spec satisfies the OAR Workspace Specification
+// ValidateWorkspaceSpec checks that spec satisfies the MASS Workspace Specification
 // validation rules:
-//   - oarVersion must be non-empty and have major version == 0
+//   - massVersion must be non-empty and have major version == 0
 //   - metadata.name must be non-empty
 //   - source.type must be a recognized SourceType value
 //   - source.git.url must be non-empty when type == "git"
 //   - source.local.path must be non-empty and absolute when type == "local"
 //   - hooks.setup and hooks.teardown commands must be non-empty
 func ValidateWorkspaceSpec(spec WorkspaceSpec) error {
-	// Validate oarVersion.
-	if spec.OarVersion == "" {
-		return fmt.Errorf("workspace: oarVersion is required")
+	// Validate massVersion.
+	if spec.MassVersion == "" {
+		return fmt.Errorf("workspace: massVersion is required")
 	}
-	major, err := parseMajor(spec.OarVersion)
+	major, err := parseMajor(spec.MassVersion)
 	if err != nil {
-		return fmt.Errorf("workspace: oarVersion %q is not a valid SemVer: %w", spec.OarVersion, err)
+		return fmt.Errorf("workspace: massVersion %q is not a valid SemVer: %w", spec.MassVersion, err)
 	}
 	if major != 0 {
-		return fmt.Errorf("workspace: unsupported oarVersion major %d (only 0.x.x is supported)", major)
+		return fmt.Errorf("workspace: unsupported massVersion major %d (only 0.x.x is supported)", major)
 	}
 
 	// Validate metadata.name.

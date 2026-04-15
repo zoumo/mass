@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/pkg/jsonrpc"
+	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
 // rawServer is a minimal jsonrpc2 handler for client-side tests.

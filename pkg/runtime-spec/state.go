@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 const (
@@ -27,8 +27,8 @@ func EventLogPath(stateDir string) string {
 }
 
 // ShimSocketPath returns the Unix socket path for the agent-shim RPC server.
-// The socket lives inside the state dir so agentd can discover all running
-// shims by scanning /run/agentd/shim/*/agent-shim.sock after a restart.
+// The socket lives inside the state dir so mass can discover all running
+// shims by scanning /run/mass/shim/*/agent-shim.sock after a restart.
 func ShimSocketPath(stateDir string) string {
 	return filepath.Join(stateDir, shimSocketFile)
 }

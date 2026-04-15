@@ -1,6 +1,6 @@
 // Package workspace implements workspace preparation handlers.
 // This file defines the GitHandler implementation for cloning git repositories
-// as part of OAR workspace preparation.
+// as part of MASS workspace preparation.
 package workspace
 
 import (

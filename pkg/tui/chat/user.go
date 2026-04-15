@@ -5,8 +5,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/common"
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/common"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
 )
 
 // UserMessageItem represents a user message in the chat UI.

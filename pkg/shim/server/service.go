@@ -6,9 +6,9 @@ import (
 
 	acp "github.com/coder/acp-go-sdk"
 
-	acpruntime "github.com/zoumo/oar/pkg/shim/runtime/acp"
-	apishim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/jsonrpc"
+	acpruntime "github.com/zoumo/mass/pkg/shim/runtime/acp"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
+	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
 // Service implements apishim.ShimService.
@@ -50,7 +50,7 @@ func (s *Service) Cancel(ctx context.Context) error {
 }
 
 func (s *Service) Load(_ context.Context, _ *apishim.SessionLoadParams) error {
-	// session/load is called by agentd during recovery to restore a prior ACP
+	// session/load is called by mass during recovery to restore a prior ACP
 	// session. The underlying acpruntime.Manager does not expose a Load method;
 	// the shim handles session restoration internally via the ACP client.
 	return nil

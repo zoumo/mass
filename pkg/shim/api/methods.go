@@ -1,6 +1,6 @@
 package api
 
-// Shim RPC methods (agent-shim ↔ agentd).
+// Shim RPC methods (agent-shim ↔ mass).
 const (
 	MethodSessionPrompt    = "session/prompt"
 	MethodSessionCancel    = "session/cancel"

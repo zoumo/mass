@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // ParseConfig reads and unmarshals config.json from bundlePath.
@@ -26,24 +26,24 @@ func ParseConfig(bundlePath string) (apiruntime.Config, error) {
 	return c, nil
 }
 
-// ValidateConfig checks that c satisfies the OAR Runtime Specification
+// ValidateConfig checks that c satisfies the MASS Runtime Specification
 // validation rules:
-//   - oarVersion must be non-empty and have major version == 0
+//   - massVersion must be non-empty and have major version == 0
 //   - metadata.name must be non-empty
 //   - agentRoot.path must be non-empty and must not be an absolute path
 //   - acpAgent.process.command must be non-empty
 //   - permissions must be a known PermissionPolicy value (or empty, which
 //     defaults to ApproveAll)
 func ValidateConfig(c apiruntime.Config) error {
-	if c.OarVersion == "" {
-		return fmt.Errorf("spec: oarVersion is required")
+	if c.MassVersion == "" {
+		return fmt.Errorf("spec: massVersion is required")
 	}
-	major, err := parseMajor(c.OarVersion)
+	major, err := parseMajor(c.MassVersion)
 	if err != nil {
-		return fmt.Errorf("spec: oarVersion %q is not a valid SemVer: %w", c.OarVersion, err)
+		return fmt.Errorf("spec: massVersion %q is not a valid SemVer: %w", c.MassVersion, err)
 	}
 	if major != 0 {
-		return fmt.Errorf("spec: unsupported oarVersion major %d (only 0.x.x is supported)", major)
+		return fmt.Errorf("spec: unsupported massVersion major %d (only 0.x.x is supported)", major)
 	}
 	if c.Metadata.Name == "" {
 		return fmt.Errorf("spec: metadata.name is required")

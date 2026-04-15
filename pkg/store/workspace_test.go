@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // makeWorkspace returns a minimal valid Workspace for test use.

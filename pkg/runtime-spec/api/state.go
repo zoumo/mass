@@ -1,12 +1,12 @@
-// Package api defines the OAR Runtime Specification types.
+// Package api defines the MASS Runtime Specification types.
 // This file contains the State types written to state.json by agent-shim.
 package api
 
 // State is the runtime state of an agent instance, written to state.json.
 // Mirrors the OCI runtime state structure.
 type State struct {
-	// OarVersion is the OAR Runtime Spec version this state complies with.
-	OarVersion string `json:"oarVersion"`
+	// MassVersion is the MASS Runtime Spec version this state complies with.
+	MassVersion string `json:"massVersion"`
 
 	// ID is the agent's unique session ID.
 	ID string `json:"id"`

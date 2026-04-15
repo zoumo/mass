@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zoumo/oar/third_party/charmbracelet/crush/ui/styles"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
 )
 
 func TestGenericPrettyName(t *testing.T) {

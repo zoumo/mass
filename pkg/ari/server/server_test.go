@@ -18,16 +18,16 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	"github.com/zoumo/oar/pkg/agentd"
-	ariclient "github.com/zoumo/oar/pkg/ari/client"
-	ariserver "github.com/zoumo/oar/pkg/ari/server"
-	"github.com/zoumo/oar/pkg/jsonrpc"
-	apishim "github.com/zoumo/oar/pkg/shim/api"
-	shimclient "github.com/zoumo/oar/pkg/shim/client"
-	"github.com/zoumo/oar/pkg/store"
-	"github.com/zoumo/oar/pkg/workspace"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	"github.com/zoumo/mass/pkg/agentd"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
+	ariserver "github.com/zoumo/mass/pkg/ari/server"
+	"github.com/zoumo/mass/pkg/jsonrpc"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
+	shimclient "github.com/zoumo/mass/pkg/shim/client"
+	"github.com/zoumo/mass/pkg/store"
+	"github.com/zoumo/mass/pkg/workspace"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -44,10 +44,10 @@ type testEnv struct {
 }
 
 // shortSockPath returns a process-unique Unix socket path safe for macOS.
-// macOS has a 104-char limit; /tmp/oar-<pid>-ari.sock is well within that.
+// macOS has a 104-char limit; /tmp/mass-<pid>-ari.sock is well within that.
 func shortSockPath(t *testing.T) string {
 	t.Helper()
-	return fmt.Sprintf("/tmp/oar-%d-%d-ari.sock", os.Getpid(), time.Now().UnixNano()%100000)
+	return fmt.Sprintf("/tmp/mass-%d-%d-ari.sock", os.Getpid(), time.Now().UnixNano()%100000)
 }
 
 // newTestServer creates a full ARI test server and returns the env.
@@ -55,7 +55,7 @@ func shortSockPath(t *testing.T) string {
 func newTestServer(t *testing.T) *testEnv {
 	t.Helper()
 
-	tmpDir, err := os.MkdirTemp("/tmp", "oar-ari-*")
+	tmpDir, err := os.MkdirTemp("/tmp", "mass-ari-*")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	dbPath := filepath.Join(tmpDir, "test.db")
@@ -67,7 +67,7 @@ func newTestServer(t *testing.T) *testEnv {
 	registry := ariserver.NewRegistry()
 
 	agents := agentd.NewAgentRunManager(store, slog.Default())
-	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "agentd.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
+	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "mass.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
 
 	sockPath := shortSockPath(t)
 	t.Cleanup(func() { _ = os.Remove(sockPath) })
@@ -549,7 +549,7 @@ type miniShimServer struct {
 
 func newMiniShimServer(t *testing.T) (*miniShimServer, string) {
 	t.Helper()
-	sockPath := fmt.Sprintf("/tmp/oar-mini-shim-%d-%d.sock", os.Getpid(), time.Now().UnixNano()%100000)
+	sockPath := fmt.Sprintf("/tmp/mass-mini-shim-%d-%d.sock", os.Getpid(), time.Now().UnixNano()%100000)
 	_ = os.Remove(sockPath)
 
 	ln, err := net.Listen("unix", sockPath)

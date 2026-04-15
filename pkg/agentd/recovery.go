@@ -9,11 +9,11 @@ import (
 	"log/slog"
 	"time"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apishim "github.com/zoumo/oar/pkg/shim/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	spec "github.com/zoumo/oar/pkg/runtime-spec"
-	shimclient "github.com/zoumo/oar/pkg/shim/client"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
+	shimclient "github.com/zoumo/mass/pkg/shim/client"
 )
 
 // RecoverSessions runs at daemon startup and attempts to reconnect to shim

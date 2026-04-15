@@ -1,4 +1,4 @@
-// Package acp implements the OAR agent process lifecycle.
+// Package acp implements the MASS agent process lifecycle.
 // It forks/execs the ACP agent, performs the ACP initialize+session/new
 // handshake, persists state.json through lifecycle transitions, and exposes
 // Kill/Delete/GetState operations.
@@ -19,8 +19,8 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	spec "github.com/zoumo/oar/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
 )
 
 // StateChange describes an externally visible runtime lifecycle transition.
@@ -90,7 +90,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	}
 
 	if err := m.writeState(func(s *apiruntime.State) {
-		s.OarVersion = m.cfg.OarVersion
+		s.MassVersion = m.cfg.MassVersion
 		s.ID = m.cfg.Metadata.Name
 		s.Status = apiruntime.StatusCreating
 		s.Bundle = m.bundleDir
@@ -130,7 +130,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		if handshakeErr != nil {
 			_ = cmd.Process.Kill()
 			_ = m.writeState(func(s *apiruntime.State) {
-				s.OarVersion = m.cfg.OarVersion
+				s.MassVersion = m.cfg.MassVersion
 				s.ID = m.cfg.Metadata.Name
 				s.Status = apiruntime.StatusStopped
 				s.Bundle = m.bundleDir
@@ -177,7 +177,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	}
 
 	if err := m.writeState(func(s *apiruntime.State) {
-		s.OarVersion = m.cfg.OarVersion
+		s.MassVersion = m.cfg.MassVersion
 		s.ID = m.cfg.Metadata.Name
 		s.Status = apiruntime.StatusIdle
 		s.PID = cmd.Process.Pid
@@ -192,7 +192,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	go func() {
 		_ = cmd.Wait()
 		_ = m.writeState(func(s *apiruntime.State) {
-			s.OarVersion = m.cfg.OarVersion
+			s.MassVersion = m.cfg.MassVersion
 			s.ID = m.cfg.Metadata.Name
 			s.Status = apiruntime.StatusStopped
 			s.Bundle = m.bundleDir
@@ -230,7 +230,7 @@ func (m *Manager) Kill(ctx context.Context) error {
 	}
 
 	return m.writeState(func(s *apiruntime.State) {
-		s.OarVersion = m.cfg.OarVersion
+		s.MassVersion = m.cfg.MassVersion
 		s.ID = m.cfg.Metadata.Name
 		s.Status = apiruntime.StatusStopped
 		s.Bundle = m.bundleDir

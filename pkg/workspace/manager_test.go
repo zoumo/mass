@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	"github.com/zoumo/oar/pkg/store"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	"github.com/zoumo/mass/pkg/store"
 )
 
 // TestWorkspaceErrorStructure verifies WorkspaceError has all required fields.
@@ -193,7 +193,7 @@ func TestWorkspaceManagerPrepareGitSource(t *testing.T) {
 
 		// Use a small, fast repository for testing.
 		spec := WorkspaceSpec{
-			OarVersion: "0.1.0",
+			MassVersion: "0.1.0",
 			Metadata:   WorkspaceMetadata{Name: "test-git-workspace"},
 			Source: Source{
 				Type: SourceTypeGit,
@@ -232,7 +232,7 @@ func TestWorkspaceManagerPrepareGitSource(t *testing.T) {
 
 		// Spec missing required git URL.
 		spec := WorkspaceSpec{
-			OarVersion: "0.1.0",
+			MassVersion: "0.1.0",
 			Metadata:   WorkspaceMetadata{Name: "invalid-git"},
 			Source: Source{
 				Type: SourceTypeGit,
@@ -268,7 +268,7 @@ func TestWorkspaceManagerPrepareEmptyDirSource(t *testing.T) {
 	targetDir := filepath.Join(parentDir, "empty-workspace")
 
 	spec := WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   WorkspaceMetadata{Name: "test-empty-workspace"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
@@ -311,7 +311,7 @@ func TestWorkspaceManagerPrepareLocalSource(t *testing.T) {
 	localDir := t.TempDir()
 
 	spec := WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   WorkspaceMetadata{Name: "test-local-workspace"},
 		Source: Source{
 			Type:  SourceTypeLocal,
@@ -352,18 +352,18 @@ func TestWorkspaceManagerPrepareInvalidSpec(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "missing oarVersion",
+			name: "missing massVersion",
 			spec: WorkspaceSpec{
-				OarVersion: "",
+				MassVersion: "",
 				Metadata:   WorkspaceMetadata{Name: "test"},
 				Source:     Source{Type: SourceTypeEmptyDir},
 			},
-			wantErr: "oarVersion is required",
+			wantErr: "massVersion is required",
 		},
 		{
 			name: "missing metadata.name",
 			spec: WorkspaceSpec{
-				OarVersion: "0.1.0",
+				MassVersion: "0.1.0",
 				Metadata:   WorkspaceMetadata{Name: ""},
 				Source:     Source{Type: SourceTypeEmptyDir},
 			},
@@ -372,7 +372,7 @@ func TestWorkspaceManagerPrepareInvalidSpec(t *testing.T) {
 		{
 			name: "invalid source type",
 			spec: WorkspaceSpec{
-				OarVersion: "0.1.0",
+				MassVersion: "0.1.0",
 				Metadata:   WorkspaceMetadata{Name: "test"},
 				Source:     Source{Type: SourceType("invalid")},
 			},
@@ -381,11 +381,11 @@ func TestWorkspaceManagerPrepareInvalidSpec(t *testing.T) {
 		{
 			name: "unsupported major version",
 			spec: WorkspaceSpec{
-				OarVersion: "1.0.0",
+				MassVersion: "1.0.0",
 				Metadata:   WorkspaceMetadata{Name: "test"},
 				Source:     Source{Type: SourceTypeEmptyDir},
 			},
-			wantErr: "unsupported oarVersion major",
+			wantErr: "unsupported massVersion major",
 		},
 	}
 
@@ -425,7 +425,7 @@ func TestWorkspaceManagerPrepareHookFailureCleanup(t *testing.T) {
 
 		// Create a hook that will fail.
 		spec := WorkspaceSpec{
-			OarVersion: "0.1.0",
+			MassVersion: "0.1.0",
 			Metadata:   WorkspaceMetadata{Name: "hook-fail-test"},
 			Source: Source{
 				Type:     SourceTypeEmptyDir,
@@ -484,7 +484,7 @@ func TestWorkspaceManagerPrepareHookFailureCleanup(t *testing.T) {
 		}
 
 		spec := WorkspaceSpec{
-			OarVersion: "0.1.0",
+			MassVersion: "0.1.0",
 			Metadata:   WorkspaceMetadata{Name: "local-hook-fail"},
 			Source: Source{
 				Type:  SourceTypeLocal,
@@ -683,7 +683,7 @@ func TestWorkspaceManagerLifecycleGit(t *testing.T) {
 
 	// Use a small, fast repository for testing.
 	spec := WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   WorkspaceMetadata{Name: "test-git-lifecycle"},
 		Source: Source{
 			Type: SourceTypeGit,
@@ -740,7 +740,7 @@ func TestWorkspaceManagerLifecycleEmptyDir(t *testing.T) {
 	targetDir := filepath.Join(parentDir, "empty-workspace")
 
 	spec := WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   WorkspaceMetadata{Name: "test-emptydir-lifecycle"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
@@ -788,7 +788,7 @@ func TestWorkspaceManagerLifecycleLocal(t *testing.T) {
 	}
 
 	spec := WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   WorkspaceMetadata{Name: "test-local-lifecycle"},
 		Source: Source{
 			Type:  SourceTypeLocal,
@@ -835,7 +835,7 @@ func TestWorkspaceManagerReferenceCounting(t *testing.T) {
 	targetDir := filepath.Join(parentDir, "refcount-workspace")
 
 	spec := WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   WorkspaceMetadata{Name: "test-refcount"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
@@ -907,7 +907,7 @@ func TestWorkspaceManagerCleanupHookFailure(t *testing.T) {
 
 	// Setup spec with failing teardown hook.
 	spec := WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   WorkspaceMetadata{Name: "test-cleanup-hook-fail"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
@@ -951,7 +951,7 @@ func TestWorkspaceManagerPrepareHookFailureCleanupManaged(t *testing.T) {
 
 	// Setup spec with failing setup hook.
 	spec := WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   WorkspaceMetadata{Name: "test-prepare-hook-fail-managed"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
@@ -1007,7 +1007,7 @@ func TestWorkspaceManagerMultipleSessions(t *testing.T) {
 	targetDir := filepath.Join(parentDir, "multi-session-workspace")
 
 	spec := WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   WorkspaceMetadata{Name: "test-multi-session"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apishim "github.com/zoumo/oar/pkg/shim/api"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
 )
 
 // jsonKeys returns the top-level keys of a JSON object, ignoring sessionUpdate.
@@ -33,12 +33,12 @@ func jsonKeys(t *testing.T, v any) map[string]bool {
 func TestWireShape_ContentBlock_Text(t *testing.T) {
 	// Note: ACP SDK ContentBlock.MarshalJSON builds a selective nm map that
 	// intentionally excludes _meta and annotations from the union wire shape.
-	// OAR preserves _meta (design principle #2). To test structural key layout
+	// MASS preserves _meta (design principle #2). To test structural key layout
 	// alignment (type + required fields), we use inputs without Meta.
 	acpObj := acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hello"}}
-	oarObj := apishim.ContentBlock{Text: &apishim.TextContent{Text: "hello"}}
+	shimObj := apishim.ContentBlock{Text: &apishim.TextContent{Text: "hello"}}
 	acpKeys := jsonKeys(t, acpObj)
-	oarKeys := jsonKeys(t, oarObj)
+	oarKeys := jsonKeys(t, shimObj)
 	assert.Equal(t, acpKeys, oarKeys, "ContentBlock text variant structural key layout mismatch")
 	assert.True(t, acpKeys["type"], "type discriminator must be present")
 	assert.True(t, acpKeys["text"], "text field must be present")
@@ -49,24 +49,24 @@ func TestWireShape_ContentBlock_Image(t *testing.T) {
 	acpObj := acp.ContentBlock{Image: &acp.ContentBlockImage{
 		Data: "b64", MimeType: "image/png", Uri: &uri,
 	}}
-	oarObj := apishim.ContentBlock{Image: &apishim.ImageContent{
+	shimObj := apishim.ContentBlock{Image: &apishim.ImageContent{
 		Data: "b64", MimeType: "image/png", URI: &uri,
 	}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock image variant")
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ContentBlock image variant")
 }
 
 func TestWireShape_ContentBlock_Audio(t *testing.T) {
 	acpObj := acp.ContentBlock{Audio: &acp.ContentBlockAudio{Data: "d", MimeType: "audio/ogg"}}
-	oarObj := apishim.ContentBlock{Audio: &apishim.AudioContent{Data: "d", MimeType: "audio/ogg"}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock audio variant")
+	shimObj := apishim.ContentBlock{Audio: &apishim.AudioContent{Data: "d", MimeType: "audio/ogg"}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ContentBlock audio variant")
 }
 
 func TestWireShape_ContentBlock_ResourceLink(t *testing.T) {
 	acpObj := acp.ContentBlock{ResourceLink: &acp.ContentBlockResourceLink{
 		Uri: "file:///a", Name: "a",
 	}}
-	oarObj := apishim.ContentBlock{ResourceLink: &apishim.ResourceLinkContent{URI: "file:///a", Name: "a"}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock resource_link variant")
+	shimObj := apishim.ContentBlock{ResourceLink: &apishim.ResourceLinkContent{URI: "file:///a", Name: "a"}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ContentBlock resource_link variant")
 }
 
 func TestWireShape_ContentBlock_Resource(t *testing.T) {
@@ -75,10 +75,10 @@ func TestWireShape_ContentBlock_Resource(t *testing.T) {
 			TextResourceContents: &acp.TextResourceContents{Uri: "file:///a", Text: "x"},
 		},
 	}}
-	oarObj := apishim.ContentBlock{Resource: &apishim.ResourceContent{
+	shimObj := apishim.ContentBlock{Resource: &apishim.ResourceContent{
 		Resource: apishim.EmbeddedResource{TextResource: &apishim.TextResourceContents{URI: "file:///a", Text: "x"}},
 	}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ContentBlock resource variant")
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ContentBlock resource variant")
 }
 
 // ── Test 17: ToolCallContent JSON shape alignment ─────────────────────────────
@@ -87,22 +87,22 @@ func TestWireShape_ToolCallContent_Content(t *testing.T) {
 	acpObj := acp.ToolCallContent{Content: &acp.ToolCallContentContent{
 		Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hi"}},
 	}}
-	oarObj := apishim.ToolCallContent{Content: &apishim.ToolCallContentContent{
+	shimObj := apishim.ToolCallContent{Content: &apishim.ToolCallContentContent{
 		Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "hi"}},
 	}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ToolCallContent content variant")
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ToolCallContent content variant")
 }
 
 func TestWireShape_ToolCallContent_Diff(t *testing.T) {
 	acpObj := acp.ToolCallContent{Diff: &acp.ToolCallContentDiff{Path: "a.go", NewText: "x"}}
-	oarObj := apishim.ToolCallContent{Diff: &apishim.ToolCallContentDiff{Path: "a.go", NewText: "x"}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ToolCallContent diff variant")
+	shimObj := apishim.ToolCallContent{Diff: &apishim.ToolCallContentDiff{Path: "a.go", NewText: "x"}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ToolCallContent diff variant")
 }
 
 func TestWireShape_ToolCallContent_Terminal(t *testing.T) {
 	acpObj := acp.ToolCallContent{Terminal: &acp.ToolCallContentTerminal{TerminalId: "t1"}}
-	oarObj := apishim.ToolCallContent{Terminal: &apishim.ToolCallContentTerminal{TerminalID: "t1"}}
-	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, oarObj), "ToolCallContent terminal variant")
+	shimObj := apishim.ToolCallContent{Terminal: &apishim.ToolCallContentTerminal{TerminalID: "t1"}}
+	assert.Equal(t, jsonKeys(t, acpObj), jsonKeys(t, shimObj), "ToolCallContent terminal variant")
 }
 
 // ── Test 18: AvailableCommandInput JSON shape alignment ───────────────────────
@@ -111,11 +111,11 @@ func TestWireShape_AvailableCommandInput_Unstructured(t *testing.T) {
 	acpObj := acp.AvailableCommandInput{
 		Unstructured: &acp.UnstructuredCommandInput{Hint: "flags here"},
 	}
-	oarObj := apishim.AvailableCommandInput{
+	shimObj := apishim.AvailableCommandInput{
 		Unstructured: &apishim.UnstructuredCommandInput{Hint: "flags here"},
 	}
 	acpKeys := jsonKeys(t, acpObj)
-	oarKeys := jsonKeys(t, oarObj)
+	oarKeys := jsonKeys(t, shimObj)
 	assert.Equal(t, acpKeys, oarKeys, "AvailableCommandInput unstructured variant")
 	// Must be flat {"hint":"..."} — no type field, no nesting.
 	assert.True(t, acpKeys["hint"], "hint field must be present")
@@ -133,13 +133,13 @@ func TestWireShape_ConfigOption_Select_Ungrouped(t *testing.T) {
 		Id: "model", Name: "Model", CurrentValue: "fast",
 		Options: acp.SessionConfigSelectOptions{Ungrouped: &ungrouped},
 	}}
-	oarObj := apishim.ConfigOption{Select: &apishim.ConfigOptionSelect{
+	shimObj := apishim.ConfigOption{Select: &apishim.ConfigOptionSelect{
 		ID: "model", Name: "Model", CurrentValue: "fast",
 		Options: apishim.ConfigSelectOptions{Ungrouped: []apishim.ConfigSelectOption{{Name: "fast", Value: "fast"}}},
 	}}
 
 	acpKeys := jsonKeys(t, acpObj)
-	oarKeys := jsonKeys(t, oarObj)
+	oarKeys := jsonKeys(t, shimObj)
 	assert.Equal(t, acpKeys, oarKeys, "ConfigOption select variant top-level keys")
 	assert.True(t, acpKeys["type"], "type discriminator must be present")
 	assert.True(t, acpKeys["id"])
@@ -152,7 +152,7 @@ func TestWireShape_ConfigOption_Select_Ungrouped(t *testing.T) {
 	var acpOpts []json.RawMessage
 	require.NoError(t, json.Unmarshal(acpMap["options"], &acpOpts), "options must be bare array")
 
-	oarOptJSON, _ := json.Marshal(oarObj)
+	oarOptJSON, _ := json.Marshal(shimObj)
 	var oarMap map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(oarOptJSON, &oarMap))
 	var oarOpts []json.RawMessage
@@ -167,7 +167,7 @@ func TestWireShape_ConfigOption_Select_Grouped(t *testing.T) {
 		Id: "model", Name: "Model", CurrentValue: "opt",
 		Options: acp.SessionConfigSelectOptions{Grouped: &grouped},
 	}}
-	oarObj := apishim.ConfigOption{Select: &apishim.ConfigOptionSelect{
+	shimObj := apishim.ConfigOption{Select: &apishim.ConfigOptionSelect{
 		ID: "model", Name: "Model", CurrentValue: "opt",
 		Options: apishim.ConfigSelectOptions{Grouped: []apishim.ConfigSelectGroup{
 			{Group: "g1", Name: "Group 1", Options: []apishim.ConfigSelectOption{{Name: "opt", Value: "opt"}}},
@@ -175,7 +175,7 @@ func TestWireShape_ConfigOption_Select_Grouped(t *testing.T) {
 	}}
 
 	acpKeys := jsonKeys(t, acpObj)
-	oarKeys := jsonKeys(t, oarObj)
+	oarKeys := jsonKeys(t, shimObj)
 	assert.Equal(t, acpKeys, oarKeys, "ConfigOption select+grouped top-level keys")
 
 	// options must be bare array of group objects.
@@ -196,11 +196,11 @@ func TestWireShape_EmbeddedResource_Text(t *testing.T) {
 	acpObj := acp.EmbeddedResourceResource{
 		TextResourceContents: &acp.TextResourceContents{Uri: "file:///a", Text: "hello"},
 	}
-	oarObj := apishim.EmbeddedResource{
+	shimObj := apishim.EmbeddedResource{
 		TextResource: &apishim.TextResourceContents{URI: "file:///a", Text: "hello"},
 	}
 	acpKeys := jsonKeys(t, acpObj)
-	oarKeys := jsonKeys(t, oarObj)
+	oarKeys := jsonKeys(t, shimObj)
 	assert.Equal(t, acpKeys, oarKeys, "EmbeddedResource text variant")
 	assert.True(t, acpKeys["text"], "text field must be present")
 	assert.True(t, acpKeys["uri"], "uri field must be present")
@@ -211,11 +211,11 @@ func TestWireShape_EmbeddedResource_Blob(t *testing.T) {
 	acpObj := acp.EmbeddedResourceResource{
 		BlobResourceContents: &acp.BlobResourceContents{Uri: "file:///img.png", Blob: "b64"},
 	}
-	oarObj := apishim.EmbeddedResource{
+	shimObj := apishim.EmbeddedResource{
 		BlobResource: &apishim.BlobResourceContents{URI: "file:///img.png", Blob: "b64"},
 	}
 	acpKeys := jsonKeys(t, acpObj)
-	oarKeys := jsonKeys(t, oarObj)
+	oarKeys := jsonKeys(t, shimObj)
 	assert.Equal(t, acpKeys, oarKeys, "EmbeddedResource blob variant")
 	assert.True(t, acpKeys["blob"], "blob field must be present")
 	assert.False(t, acpKeys["type"], "no type discriminator")

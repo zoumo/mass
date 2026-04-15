@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	"github.com/zoumo/oar/pkg/store"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	"github.com/zoumo/mass/pkg/store"
 )
 
 // newTestMetaStore creates a file-backed bbolt store in a temp directory.

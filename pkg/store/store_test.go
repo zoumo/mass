@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/zoumo/oar/pkg/store"
+	"github.com/zoumo/mass/pkg/store"
 )
 
 // tempStore creates a Store backed by a temporary file.

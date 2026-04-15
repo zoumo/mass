@@ -1,5 +1,5 @@
 // Package api contains the ARI protocol types.
-// This file defines the domain/store types used internally by agentd and
+// This file defines the domain/store types used internally by mass and
 // as ARI wire format (metadata/spec/status shape). These are the types
 // returned by ARI methods — internal-only fields are tagged json:"-".
 package api
@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"time"
 
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // ObjectMeta holds identity and lifecycle fields common to all stored objects.

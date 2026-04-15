@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // newTestManager builds a Manager with no agent process — just enough to
@@ -30,7 +30,7 @@ func newTestManager(policy apiruntime.PermissionPolicy) *Manager {
 		panic("newTestManager: MkdirTemp stateDir: " + err.Error())
 	}
 	cfg := apiruntime.Config{
-		OarVersion:  "0.1.0",
+		MassVersion:  "0.1.0",
 		Metadata: apiruntime.Metadata{Name: "test-agent"},
 		AgentRoot:   apiruntime.AgentRoot{Path: "workspace"},
 		Permissions: policy,

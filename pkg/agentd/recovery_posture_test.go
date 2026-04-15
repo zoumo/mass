@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	shim "github.com/zoumo/oar/pkg/shim/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	shim "github.com/zoumo/mass/pkg/shim/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -87,7 +87,7 @@ func TestRecoverSessions_PhaseTransitions_WithLiveShim(t *testing.T) {
 	srv.mu.Lock()
 	srv.statusResult = shim.RuntimeStatusResult{
 		State: apiruntime.State{
-			OarVersion: "0.1.0",
+			MassVersion: "0.1.0",
 			ID:         "phase-test-agent",
 			Status:     apiruntime.StatusRunning,
 			Bundle:     "/tmp/test-bundle",

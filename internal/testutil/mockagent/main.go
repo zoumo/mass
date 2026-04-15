@@ -52,10 +52,10 @@ func (a *mockAgent) NewSession(_ context.Context, _ acp.NewSessionRequest) (acp.
 }
 
 func (a *mockAgent) Prompt(ctx context.Context, p acp.PromptRequest) (acp.PromptResponse, error) {
-	if chunksRaw := os.Getenv("OAR_MOCKAGENT_CHUNKS"); chunksRaw != "" {
+	if chunksRaw := os.Getenv("MASS_MOCKAGENT_CHUNKS"); chunksRaw != "" {
 		chunks, err := strconv.Atoi(chunksRaw)
 		if err != nil {
-			return acp.PromptResponse{}, fmt.Errorf("invalid OAR_MOCKAGENT_CHUNKS: %w", err)
+			return acp.PromptResponse{}, fmt.Errorf("invalid MASS_MOCKAGENT_CHUNKS: %w", err)
 		}
 		for i := 0; i < chunks; i++ {
 			_ = a.conn.SessionUpdate(ctx, acp.SessionNotification{

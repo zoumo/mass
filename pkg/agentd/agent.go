@@ -8,9 +8,9 @@ import (
 	"log/slog"
 	"strings"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	"github.com/zoumo/oar/pkg/store"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	"github.com/zoumo/mass/pkg/store"
 )
 
 // ErrAgentRunNotFound is returned when an agent does not exist.
@@ -20,7 +20,7 @@ type ErrAgentRunNotFound struct {
 }
 
 func (e *ErrAgentRunNotFound) Error() string {
-	return fmt.Sprintf("agentd: agent %s/%s not found", e.Workspace, e.Name)
+	return fmt.Sprintf("mass: agent %s/%s not found", e.Workspace, e.Name)
 }
 
 // ErrDeleteNotStopped is returned when attempting to delete an agent that is
@@ -32,7 +32,7 @@ type ErrDeleteNotStopped struct {
 }
 
 func (e *ErrDeleteNotStopped) Error() string {
-	return fmt.Sprintf("agentd: cannot delete agent run %s/%s in state %s (agent run must be stopped or error first)",
+	return fmt.Sprintf("mass: cannot delete agent run %s/%s in state %s (agent run must be stopped or error first)",
 		e.Workspace, e.Name, e.State)
 }
 
@@ -43,7 +43,7 @@ type ErrAgentRunAlreadyExists struct {
 }
 
 func (e *ErrAgentRunAlreadyExists) Error() string {
-	return fmt.Sprintf("agentd: agent with workspace=%s name=%s already exists", e.Workspace, e.Name)
+	return fmt.Sprintf("mass: agent with workspace=%s name=%s already exists", e.Workspace, e.Name)
 }
 
 // AgentRunManager manages agent lifecycle.
@@ -56,9 +56,9 @@ type AgentRunManager struct {
 }
 
 // NewAgentRunManager creates a new AgentRunManager wrapping the provided store.
-// The logger is configured with component=agentd.agent for observability.
+// The logger is configured with component=mass.agent for observability.
 func NewAgentRunManager(s *store.Store, logger *slog.Logger) *AgentRunManager {
-	logger = logger.With("component", "agentd.agent")
+	logger = logger.With("component", "mass.agent")
 	return &AgentRunManager{
 		store:  s,
 		logger: logger,
@@ -89,7 +89,7 @@ func (m *AgentRunManager) Create(ctx context.Context, agent *pkgariapi.AgentRun)
 			"workspace", agent.Metadata.Workspace,
 			"name", agent.Metadata.Name,
 			"error", err)
-		return fmt.Errorf("agentd: failed to create agent: %w", err)
+		return fmt.Errorf("mass: failed to create agent: %w", err)
 	}
 
 	m.logger.Info("agent created",
@@ -105,7 +105,7 @@ func (m *AgentRunManager) Create(ctx context.Context, agent *pkgariapi.AgentRun)
 func (m *AgentRunManager) Get(ctx context.Context, workspace, name string) (*pkgariapi.AgentRun, error) {
 	agent, err := m.store.GetAgentRun(ctx, workspace, name)
 	if err != nil {
-		return nil, fmt.Errorf("agentd: failed to get agent: %w", err)
+		return nil, fmt.Errorf("mass: failed to get agent: %w", err)
 	}
 	return agent, nil
 }
@@ -122,7 +122,7 @@ func (m *AgentRunManager) GetByWorkspaceName(ctx context.Context, workspace, nam
 func (m *AgentRunManager) List(ctx context.Context, filter *pkgariapi.AgentRunFilter) ([]*pkgariapi.AgentRun, error) {
 	agents, err := m.store.ListAgentRuns(ctx, filter)
 	if err != nil {
-		return nil, fmt.Errorf("agentd: failed to list agents: %w", err)
+		return nil, fmt.Errorf("mass: failed to list agents: %w", err)
 	}
 	return agents, nil
 }
@@ -143,7 +143,7 @@ func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name stri
 			"workspace", workspace,
 			"name", name,
 			"error", err)
-		return fmt.Errorf("agentd: failed to update agent status: %w", err)
+		return fmt.Errorf("mass: failed to update agent status: %w", err)
 	}
 
 	m.logger.Info("agent status updated",
@@ -175,7 +175,7 @@ func (m *AgentRunManager) TransitionState(ctx context.Context, workspace, name s
 			"from", expected,
 			"to", next,
 			"error", err)
-		return false, fmt.Errorf("agentd: failed to transition agent state: %w", err)
+		return false, fmt.Errorf("mass: failed to transition agent state: %w", err)
 	}
 	return ok, nil
 }
@@ -186,7 +186,7 @@ func (m *AgentRunManager) TransitionState(ctx context.Context, workspace, name s
 func (m *AgentRunManager) Delete(ctx context.Context, workspace, name string) error {
 	current, err := m.store.GetAgentRun(ctx, workspace, name)
 	if err != nil {
-		return fmt.Errorf("agentd: failed to get agent for deletion: %w", err)
+		return fmt.Errorf("mass: failed to get agent for deletion: %w", err)
 	}
 	if current == nil {
 		return &ErrAgentRunNotFound{Workspace: workspace, Name: name}
@@ -215,7 +215,7 @@ func (m *AgentRunManager) Delete(ctx context.Context, workspace, name string) er
 			"workspace", workspace,
 			"name", name,
 			"error", err)
-		return fmt.Errorf("agentd: failed to delete agent: %w", err)
+		return fmt.Errorf("mass: failed to delete agent: %w", err)
 	}
 
 	m.logger.Info("agent deleted", "workspace", workspace, "name", name)

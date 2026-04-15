@@ -1,6 +1,6 @@
 // Package workspace implements workspace preparation handlers.
 // This file defines the EmptyDirHandler implementation for creating empty
-// directories as part of OAR workspace preparation.
+// directories as part of MASS workspace preparation.
 package workspace
 
 import (

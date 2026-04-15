@@ -1,4 +1,4 @@
-// Package workspace defines the OAR Workspace Specification types and handlers.
+// Package workspace defines the MASS Workspace Specification types and handlers.
 package workspace
 
 import "context"

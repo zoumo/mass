@@ -6,7 +6,7 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // acpClient implements acp.Client on behalf of Manager.

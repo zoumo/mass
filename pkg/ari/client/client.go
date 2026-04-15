@@ -5,7 +5,7 @@ package client
 import (
 	"context"
 
-	"github.com/zoumo/oar/pkg/jsonrpc"
+	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
 // ARIClient bundles all three typed ARI clients: workspace, agentrun, and agent.

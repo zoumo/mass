@@ -15,9 +15,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	acpruntime "github.com/zoumo/oar/pkg/shim/runtime/acp"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	spec "github.com/zoumo/oar/pkg/runtime-spec"
+	acpruntime "github.com/zoumo/mass/pkg/shim/runtime/acp"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
 )
 
 var mockAgentBin string
@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 
 	binPath := filepath.Join(tmpDir, "mockagent")
 	cmd := exec.Command("go", "build", "-o", binPath,
-		"github.com/zoumo/oar/internal/testutil/mockagent")
+		"github.com/zoumo/mass/internal/testutil/mockagent")
 	cmd.Dir = repoRoot
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
@@ -60,7 +60,7 @@ func TestRuntimeSuite(t *testing.T) {
 // The caller is responsible for creating the bundle dir and workspace subdir.
 func newTestConfig(name string) apiruntime.Config {
 	return apiruntime.Config{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata: apiruntime.Metadata{Name: name},
 		AgentRoot:  apiruntime.AgentRoot{Path: "workspace"},
 		AcpAgent: apiruntime.AcpAgent{

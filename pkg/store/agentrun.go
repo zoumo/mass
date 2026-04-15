@@ -1,4 +1,4 @@
-// Package store provides metadata persistence for OAR agent and workspace records.
+// Package store provides metadata persistence for MASS agent and workspace records.
 // This file defines AgentRun CRUD methods.
 package store
 
@@ -10,8 +10,8 @@ import (
 
 	bolt "go.etcd.io/bbolt"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // CreateAgentRun stores a new AgentRun record.

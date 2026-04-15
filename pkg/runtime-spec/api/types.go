@@ -1,4 +1,4 @@
-// Package api contains pure API type definitions shared across OAR packages.
+// Package api contains pure API type definitions shared across MASS packages.
 // It has no external dependencies — only the Go standard library.
 package api
 

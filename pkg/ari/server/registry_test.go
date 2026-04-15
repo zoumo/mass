@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	"github.com/zoumo/oar/pkg/store"
-	"github.com/zoumo/oar/pkg/workspace"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	"github.com/zoumo/mass/pkg/store"
+	"github.com/zoumo/mass/pkg/workspace"
 )
 
 // TestRegistryRebuildFromDB verifies that RebuildFromDB loads ready workspaces

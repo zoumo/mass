@@ -1,6 +1,6 @@
 // Package workspace implements workspace preparation handlers.
 // This file defines the HookExecutor implementation for executing workspace
-// lifecycle hooks (setup and teardown) as part of OAR workspace preparation.
+// lifecycle hooks (setup and teardown) as part of MASS workspace preparation.
 package workspace
 
 import (

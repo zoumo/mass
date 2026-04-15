@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	shim "github.com/zoumo/oar/pkg/shim/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	"github.com/zoumo/oar/pkg/store"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	shim "github.com/zoumo/mass/pkg/shim/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	"github.com/zoumo/mass/pkg/store"
 )
 
 // TestProcessManagerStart tests the full Start workflow:
@@ -26,15 +26,15 @@ func TestProcessManagerStart(t *testing.T) {
 	shimBinary := findShimBinary(t)
 	mockagentBinary := findMockagentBinary(t)
 
-	// Set OAR_SHIM_BINARY env var so ProcessManager finds the shim binary.
-	t.Setenv("OAR_SHIM_BINARY", shimBinary)
+	// Set MASS_SHIM_BINARY env var so ProcessManager finds the shim binary.
+	t.Setenv("MASS_SHIM_BINARY", shimBinary)
 
 	// Setup test environment.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Create temp directories.
-	tmpDir, err := os.MkdirTemp("/tmp", "oar-pm-*")
+	tmpDir, err := os.MkdirTemp("/tmp", "mass-pm-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestProcessManagerStart(t *testing.T) {
 		t.Fatalf("SetAgent: %v", err)
 	}
 
-	socketPath := filepath.Join(tmpDir, "agentd.sock")
+	socketPath := filepath.Join(tmpDir, "mass.sock")
 
 	// Create AgentManager and ProcessManager.
 	agentMgr := NewAgentRunManager(store, slog.Default())
@@ -113,7 +113,7 @@ func TestProcessManagerStart(t *testing.T) {
 	if err != nil {
 		key := agentKey(agentWorkspace, agentName)
 		// Print state directory content for debugging.
-		stateDirPath := filepath.Join(os.TempDir(), "agentd-shim", key)
+		stateDirPath := filepath.Join(os.TempDir(), "mass-shim", key)
 		t.Logf("State directory %s contents:", stateDirPath)
 		if entries, readErr := os.ReadDir(stateDirPath); readErr == nil {
 			for _, entry := range entries {
@@ -263,7 +263,7 @@ done:
 // TestGenerateConfig verifies that generateConfig produces correct config from an Agent.
 func TestGenerateConfig(t *testing.T) {
 	pm := &ProcessManager{
-		socketPath: "/tmp/test-agentd.sock",
+		socketPath: "/tmp/test-mass.sock",
 	}
 	rc := &pkgariapi.Agent{
 		Metadata: pkgariapi.ObjectMeta{Name: "mockagent"},
@@ -344,20 +344,20 @@ func TestGenerateConfig(t *testing.T) {
 	})
 }
 
-// findShimBinary finds the agentd binary for testing (it contains the shim subcommand).
+// findShimBinary finds the mass binary for testing (it contains the shim subcommand).
 func findShimBinary(t *testing.T) string {
 	projectRoot := findProjectRoot(t)
-	builtPath := filepath.Join(projectRoot, "bin", "agentd")
+	builtPath := filepath.Join(projectRoot, "bin", "mass")
 
 	binDir := filepath.Join(projectRoot, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bin dir: %v", err)
 	}
 
-	cmd := exec.Command("go", "build", "-o", builtPath, "./cmd/agentd")
+	cmd := exec.Command("go", "build", "-o", builtPath, "./cmd/mass")
 	cmd.Dir = projectRoot
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("build agentd: %v", err)
+		t.Fatalf("build mass: %v", err)
 	}
 
 	return builtPath

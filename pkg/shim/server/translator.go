@@ -8,7 +8,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/google/uuid"
 
-	apishim "github.com/zoumo/oar/pkg/shim/api"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
 )
 
 // Translator drains ACP session notifications, translates each notification
@@ -466,7 +466,7 @@ func safeBlockText(cb acp.ContentBlock) string {
 
 // ── Convert: ContentBlock ─────────────────────────────────────────────────────
 
-// convertContentBlock converts an acp.ContentBlock to the OAR mirror type.
+// convertContentBlock converts an acp.ContentBlock to the MASS mirror type.
 // Returns nil if the block has no active variant.
 func convertContentBlock(cb acp.ContentBlock) *apishim.ContentBlock {
 	switch {

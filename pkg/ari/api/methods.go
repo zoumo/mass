@@ -1,6 +1,6 @@
 package api
 
-// ARI workspace methods (orchestrator ↔ agentd).
+// ARI workspace methods (orchestrator ↔ mass).
 const (
 	MethodWorkspaceCreate = "workspace/create"
 	MethodWorkspaceStatus = "workspace/status"

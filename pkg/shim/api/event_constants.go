@@ -1,6 +1,6 @@
 package api
 
-// EventType* and Category* constants — moved from github.com/zoumo/oar/api.
+// EventType* and Category* constants — moved from github.com/zoumo/mass/api.
 
 // Event type identifiers used in shim/event payloads.
 const (

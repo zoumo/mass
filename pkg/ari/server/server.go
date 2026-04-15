@@ -21,13 +21,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
-	apishim "github.com/zoumo/oar/pkg/shim/api"
-	"github.com/zoumo/oar/pkg/agentd"
-	"github.com/zoumo/oar/pkg/jsonrpc"
-	"github.com/zoumo/oar/pkg/store"
-	"github.com/zoumo/oar/pkg/workspace"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	apishim "github.com/zoumo/mass/pkg/shim/api"
+	"github.com/zoumo/mass/pkg/agentd"
+	"github.com/zoumo/mass/pkg/jsonrpc"
+	"github.com/zoumo/mass/pkg/store"
+	"github.com/zoumo/mass/pkg/workspace"
 
 )
 
@@ -134,7 +134,7 @@ func (a *workspaceAdapter) Create(ctx context.Context, req *pkgariapi.WorkspaceC
 	}
 
 	wsSpec := workspace.WorkspaceSpec{
-		OarVersion: "0.1.0",
+		MassVersion: "0.1.0",
 		Metadata:   workspace.WorkspaceMetadata{Name: req.Name},
 		Source:     src,
 	}
