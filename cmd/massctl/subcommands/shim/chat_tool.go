@@ -75,10 +75,6 @@ func buildResultContent(blocks []shimapi.ToolCallContent, status string, rawOutp
 		}
 	}
 
-	// Last resort: status string.
-	if status != "" {
-		return status
-	}
 	return ""
 }
 
