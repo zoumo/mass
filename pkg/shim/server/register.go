@@ -13,22 +13,19 @@ type ShimService interface {
 	Prompt(ctx context.Context, req *apishim.SessionPromptParams) (*apishim.SessionPromptResult, error)
 	Cancel(ctx context.Context) error
 	Load(ctx context.Context, req *apishim.SessionLoadParams) error
-	// Subscribe registers for live event streaming. The handler uses
-	// jsonrpc.PeerFromContext(ctx) to obtain the Peer and send notifications:
-	//   - peer.Notify(ctx, api.MethodShimEvent, event) for each live event
+	// WatchEvent implements K8s List-Watch style event subscription.
+	// When FromSeq is nil, only live events are streamed.
+	// When FromSeq is set, historical events are replayed via shim/event
+	// notifications first (two-phase lockless replay), then live events follow.
+	//
+	// The handler uses jsonrpc.PeerFromContext(ctx) to obtain the Peer:
+	//   - peer.Notify(ctx, "shim/event", event) for replay + live events
 	//   - <-peer.DisconnectNotify() to detect client disconnect and unsubscribe
 	//
-	// Implementation constraints:
-	// 1. Atomic backfill: SubscribeFromSeq reads history + registers live subscription
-	//    under a single lock to prevent gaps.
-	// 2. Legacy afterSeq: subscription registered first, then events with seq <= afterSeq
-	//    are filtered.
-	// 3. Event push: via peer.Notify(ctx, "shim/event", shimEvent) — serialized with responses.
-	// 4. Disconnect unsubscribe: <-peer.DisconnectNotify() triggers cleanup + goroutine exit.
-	// 5. Slow client: peer.Notify returning error → unsubscribe + exit.
-	Subscribe(ctx context.Context, req *apishim.SessionSubscribeParams) (*apishim.SessionSubscribeResult, error)
+	// Channel overflow: slow subscribers are evicted (channel closed + removed).
+	// Clients reconnect with fromSeq=lastReceivedSeq+1 to resume.
+	WatchEvent(ctx context.Context, req *apishim.SessionWatchEventParams) (*apishim.SessionWatchEventResult, error)
 	Status(ctx context.Context) (*apishim.RuntimeStatusResult, error)
-	History(ctx context.Context, req *apishim.RuntimeHistoryParams) (*apishim.RuntimeHistoryResult, error)
 	Stop(ctx context.Context) error
 }
 
@@ -53,14 +50,14 @@ func RegisterShimService(s *jsonrpc.Server, svc ShimService) {
 				}
 				return nil, svc.Load(ctx, &req)
 			},
-			"subscribe": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req apishim.SessionSubscribeParams
-				// params are optional for subscribe
+			"watch_event": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var req apishim.SessionWatchEventParams
+				// params are optional for watch_event
 				if err := unmarshal(&req); err != nil {
 					// ignore unmarshal errors for missing params
-					req = apishim.SessionSubscribeParams{}
+					req = apishim.SessionWatchEventParams{}
 				}
-				return svc.Subscribe(ctx, &req)
+				return svc.WatchEvent(ctx, &req)
 			},
 		},
 	})
@@ -68,13 +65,6 @@ func RegisterShimService(s *jsonrpc.Server, svc ShimService) {
 		Methods: map[string]jsonrpc.Method{
 			"status": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				return svc.Status(ctx)
-			},
-			"history": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req apishim.RuntimeHistoryParams
-				if err := unmarshal(&req); err != nil {
-					req = apishim.RuntimeHistoryParams{}
-				}
-				return svc.History(ctx, &req)
 			},
 			"stop": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				return nil, svc.Stop(ctx)

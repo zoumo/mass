@@ -302,12 +302,12 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		}
 	}
 
-	// 8. Subscribe to events (no afterSeq — this is a fresh start).
-	if _, err := client.Subscribe(ctx, &apishim.SessionSubscribeParams{}); err != nil {
+	// 8. Watch events (live-only — this is a fresh start).
+	if _, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{}); err != nil {
 		// Close client, kill shim; leave bundle intact (preserved until agent/delete).
 		_ = client.Close()
 		_ = m.killShim(shimProc)
-		return nil, fmt.Errorf("process: subscribe events: agent=%s: %w", key, err)
+		return nil, fmt.Errorf("process: watch_event: agent=%s: %w", key, err)
 	}
 
 	// 8b. Bootstrap state from shim's current runtime status.

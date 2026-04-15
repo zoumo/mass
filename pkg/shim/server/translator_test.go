@@ -1,7 +1,6 @@
 package server
 
 import (
-	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -393,66 +392,6 @@ func TestEventTypes(t *testing.T) {
 	for _, tc := range cases {
 		assert.Equal(t, tc.want, apishim.EventTypeOf(tc.ev), "wrong eventType for %T", tc.ev)
 	}
-}
-
-func TestSubscribeFromSeq_BackfillAndLive(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "events.jsonl")
-
-	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	log1, err := OpenEventLog(logPath)
-	require.NoError(t, err)
-	for i := 0; i < 5; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: at, Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock(fmt.Sprintf("msg-%d", i)))}
-		require.NoError(t, log1.Append(ev))
-	}
-	require.NoError(t, log1.Close())
-
-	log2, err := OpenEventLog(logPath)
-	require.NoError(t, err)
-	defer log2.Close()
-
-	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, log2)
-	tr.Start()
-	defer tr.Stop()
-
-	// SubscribeFromSeq(logPath, 2) should return 3 backfill entries (seq 2,3,4).
-	entries, ch, _, nextSeq, err := tr.SubscribeFromSeq(logPath, 2)
-	require.NoError(t, err)
-	require.Len(t, entries, 3)
-	for i, e := range entries {
-		assert.Equal(t, i+2, e.Seq, "backfill entry %d has wrong seq", i)
-	}
-	assert.Equal(t, 5, nextSeq)
-
-	// Broadcast a new event — gets seq 5.
-	in <- makeNotif(func(u *acp.SessionUpdate) {
-		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.TextBlock("live"),
-		}
-	})
-	liveEv := drainShimEvent(t, ch)
-	assert.Equal(t, 5, liveEv.Seq, "live event should have seq 5, no gap after backfill end at seq 4")
-}
-
-func TestSubscribeFromSeq_EmptyLog(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "nonexistent.jsonl")
-
-	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil)
-	tr.Start()
-	defer tr.Stop()
-
-	entries, ch, _, nextSeq, err := tr.SubscribeFromSeq(logPath, 0)
-	require.NoError(t, err)
-	assert.Empty(t, entries)
-	assert.Equal(t, 0, nextSeq)
-
-	tr.NotifyTurnStart()
-	liveEv := drainShimEvent(t, ch)
-	assert.Equal(t, 0, liveEv.Seq)
 }
 
 // TestTurnAwareShimEvent_TurnIdAssigned verifies that all session events

@@ -124,8 +124,8 @@ func runPrompt(sock, text string) error {
 	}
 	defer sc.Close()
 
-	if _, err := sc.Subscribe(ctx, nil); err != nil {
-		return fmt.Errorf("session/subscribe: %w", err)
+	if _, err := sc.WatchEvent(ctx, nil); err != nil {
+		return fmt.Errorf("session/watch_event: %w", err)
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -181,33 +181,6 @@ func NewCommand() *cobra.Command {
 			return enc.Encode(result)
 		},
 	})
-
-	var fromSeq int
-	historyCmd := &cobra.Command{
-		Use:   "history",
-		Short: "Print replayable event history (runtime/history)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			sc, err := dialShim(cmd.Context(), socket)
-			if err != nil {
-				return err
-			}
-			defer sc.Close()
-			params := &shimapi.RuntimeHistoryParams{}
-			if cmd.Flags().Changed("from-seq") {
-				params.FromSeq = &fromSeq
-			}
-			result, err := sc.History(cmd.Context(), params)
-			if err != nil {
-				return err
-			}
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetIndent("", "  ")
-			return enc.Encode(result)
-		},
-	}
-	historyCmd.Flags().IntVar(&fromSeq, "from-seq", 0, "Return history from this sequence number")
-	cmd.AddCommand(historyCmd)
 
 	var promptText string
 	promptCmd := &cobra.Command{

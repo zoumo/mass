@@ -28,30 +28,19 @@ type SessionLoadParams struct {
 	SessionID string `json:"sessionId"`
 }
 
-// SessionSubscribeParams is the JSON body for the "session/subscribe" method.
-type SessionSubscribeParams struct {
-	AfterSeq *int `json:"afterSeq,omitempty"`
-	FromSeq  *int `json:"fromSeq,omitempty"`
-}
-
-// SessionSubscribeResult is returned by "session/subscribe".
-type SessionSubscribeResult struct {
-	NextSeq int                `json:"nextSeq"`
-	Entries []ShimEvent `json:"entries,omitempty"`
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// runtime/* wire types
-// ────────────────────────────────────────────────────────────────────────────
-
-// RuntimeHistoryParams is the JSON body for the "runtime/history" method.
-type RuntimeHistoryParams struct {
+// SessionWatchEventParams is the JSON body for the "session/watch_event" method.
+// When FromSeq is nil, only live events are streamed (watch from HEAD).
+// When FromSeq is set, historical events from that seq are replayed first via
+// shim/event notifications, followed by live events (K8s List-Watch pattern).
+type SessionWatchEventParams struct {
 	FromSeq *int `json:"fromSeq,omitempty"`
 }
 
-// RuntimeHistoryResult is returned by "runtime/history".
-type RuntimeHistoryResult struct {
-	Entries []ShimEvent `json:"entries"`
+// SessionWatchEventResult is returned by "session/watch_event".
+// NextSeq is the sequence number boundary at subscription time — for diagnostics
+// only. Clients should track the last received event seq for reconnection.
+type SessionWatchEventResult struct {
+	NextSeq int `json:"nextSeq"`
 }
 
 // RuntimeStatusRecovery holds recovery metadata from the shim's durable log.

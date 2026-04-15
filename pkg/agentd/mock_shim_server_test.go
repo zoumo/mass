@@ -33,7 +33,6 @@ type mockShimServer struct {
 	mu                sync.Mutex
 	statusResult      apishim.RuntimeStatusResult
 	promptResult      apishim.SessionPromptResult
-	historyEntries    []apishim.ShimEvent
 	subscribed        bool
 	liveNotifications []shimNotif // queued to emit after subscribe
 
@@ -135,12 +134,10 @@ func (h *mockShimHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *
 		h.handleCancel(ctx, conn, req)
 	case "session/load":
 		h.handleLoad(ctx, conn, req)
-	case "session/subscribe":
-		h.handleSubscribe(ctx, conn, req)
+	case "session/watch_event":
+		h.handleWatchEvent(ctx, conn, req)
 	case "runtime/status":
 		h.handleStatus(ctx, conn, req)
-	case "runtime/history":
-		h.handleHistory(ctx, conn, req)
 	case "runtime/stop":
 		h.handleStop(ctx, conn, req)
 	default:
@@ -184,31 +181,16 @@ func (h *mockShimHandler) handleLoad(ctx context.Context, conn *jsonrpc2.Conn, r
 	_ = conn.Reply(ctx, req.ID, nil)
 }
 
-func (h *mockShimHandler) handleSubscribe(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	// Parse params to check for fromSeq.
-	var params apishim.SessionSubscribeParams
-	if req.Params != nil {
-		_ = json.Unmarshal(*req.Params, &params)
-	}
-
+func (h *mockShimHandler) handleWatchEvent(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	h.srv.mu.Lock()
 	h.srv.subscribed = true
 	notifs := make([]shimNotif, len(h.srv.liveNotifications))
 	copy(notifs, h.srv.liveNotifications)
-
-	// When fromSeq is present, return backfill entries from historyEntries.
-	var result apishim.SessionSubscribeResult
-	if params.FromSeq != nil {
-		// Return all history entries (mock always stores them in order).
-		result.Entries = make([]apishim.ShimEvent, len(h.srv.historyEntries))
-		copy(result.Entries, h.srv.historyEntries)
-		result.NextSeq = len(result.Entries)
-	}
 	h.srv.mu.Unlock()
 
-	_ = conn.Reply(ctx, req.ID, result)
+	_ = conn.Reply(ctx, req.ID, apishim.SessionWatchEventResult{NextSeq: 0})
 
-	// Emit queued notifications.
+	// Emit queued notifications asynchronously.
 	go func() {
 		for _, n := range notifs {
 			_ = conn.Notify(ctx, n.method, n.params)
@@ -221,14 +203,6 @@ func (h *mockShimHandler) handleStatus(ctx context.Context, conn *jsonrpc2.Conn,
 	result := h.srv.statusResult
 	h.srv.mu.Unlock()
 	_ = conn.Reply(ctx, req.ID, result)
-}
-
-func (h *mockShimHandler) handleHistory(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	h.srv.mu.Lock()
-	entries := make([]apishim.ShimEvent, len(h.srv.historyEntries))
-	copy(entries, h.srv.historyEntries)
-	h.srv.mu.Unlock()
-	_ = conn.Reply(ctx, req.ID, apishim.RuntimeHistoryResult{Entries: entries})
 }
 
 func (h *mockShimHandler) handleStop(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {

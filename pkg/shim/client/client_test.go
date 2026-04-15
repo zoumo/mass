@@ -30,14 +30,11 @@ func (s *stubShimService) Cancel(_ context.Context) error { return nil }
 func (s *stubShimService) Load(_ context.Context, _ *apishim.SessionLoadParams) error {
 	return nil
 }
-func (s *stubShimService) Subscribe(_ context.Context, _ *apishim.SessionSubscribeParams) (*apishim.SessionSubscribeResult, error) {
-	return &apishim.SessionSubscribeResult{NextSeq: 0}, nil
+func (s *stubShimService) WatchEvent(_ context.Context, _ *apishim.SessionWatchEventParams) (*apishim.SessionWatchEventResult, error) {
+	return &apishim.SessionWatchEventResult{NextSeq: 0}, nil
 }
 func (s *stubShimService) Status(_ context.Context) (*apishim.RuntimeStatusResult, error) {
 	return &apishim.RuntimeStatusResult{}, nil
-}
-func (s *stubShimService) History(_ context.Context, _ *apishim.RuntimeHistoryParams) (*apishim.RuntimeHistoryResult, error) {
-	return &apishim.RuntimeHistoryResult{Entries: []apishim.ShimEvent{}}, nil
 }
 func (s *stubShimService) Stop(_ context.Context) error { return nil }
 
@@ -123,28 +120,16 @@ func TestShimClient_Status(t *testing.T) {
 	assert.NotNil(t, result)
 }
 
-func TestShimClient_Subscribe(t *testing.T) {
+func TestShimClient_WatchEvent(t *testing.T) {
 	sockPath := startTestServer(t, &stubShimService{})
 
 	sc, err := shimclient.Dial(context.Background(), sockPath)
 	require.NoError(t, err)
 	defer sc.Close()
 
-	result, err := sc.Subscribe(context.Background(), &apishim.SessionSubscribeParams{})
+	result, err := sc.WatchEvent(context.Background(), &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.NextSeq)
-}
-
-func TestShimClient_History(t *testing.T) {
-	sockPath := startTestServer(t, &stubShimService{})
-
-	sc, err := shimclient.Dial(context.Background(), sockPath)
-	require.NoError(t, err)
-	defer sc.Close()
-
-	result, err := sc.History(context.Background(), &apishim.RuntimeHistoryParams{})
-	require.NoError(t, err)
-	assert.Empty(t, result.Entries)
 }
 
 func TestShimClient_Stop(t *testing.T) {

@@ -149,9 +149,9 @@ func connectCmd(sock string) tea.Cmd {
 		if err != nil {
 			return connErrMsg{fmt.Errorf("connect: %w", err)}
 		}
-		if _, err := sc.Subscribe(ctx, nil); err != nil {
+		if _, err := sc.WatchEvent(ctx, nil); err != nil {
 			sc.Close()
-			return connErrMsg{fmt.Errorf("session/subscribe: %w", err)}
+			return connErrMsg{fmt.Errorf("session/watch_event: %w", err)}
 		}
 		return connReadyMsg{sc: sc, notifs: notifs}
 	})

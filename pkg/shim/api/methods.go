@@ -5,10 +5,9 @@ const (
 	MethodSessionPrompt    = "session/prompt"
 	MethodSessionCancel    = "session/cancel"
 	MethodSessionLoad      = "session/load"
-	MethodSessionSubscribe = "session/subscribe"
-	MethodRuntimeStatus    = "runtime/status"
-	MethodRuntimeHistory   = "runtime/history"
-	MethodRuntimeStop      = "runtime/stop"
+	MethodSessionWatchEvent = "session/watch_event"
+	MethodRuntimeStatus     = "runtime/status"
+	MethodRuntimeStop       = "runtime/stop"
 )
 
 // Shim notification methods.

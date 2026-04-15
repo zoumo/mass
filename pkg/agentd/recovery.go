@@ -256,16 +256,15 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 		}
 	}
 
-	// Atomic subscribe with backfill.
+	// Watch events with full replay (K8s List-Watch: fromSeq=0).
 	fromSeq := 0
-	subResult, err := client.Subscribe(ctx, &apishim.SessionSubscribeParams{FromSeq: &fromSeq})
+	watchResult, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{FromSeq: &fromSeq})
 	if err != nil {
 		_ = client.Close()
-		return apiruntime.StatusStopped, fmt.Errorf("session/subscribe fromSeq=%d: %w", fromSeq, err)
+		return apiruntime.StatusStopped, fmt.Errorf("session/watch_event fromSeq=%d: %w", fromSeq, err)
 	}
-	logger.Info("recovery: atomic subscribe with backfill",
-		"backfill_entries", len(subResult.Entries),
-		"next_seq", subResult.NextSeq)
+	logger.Info("recovery: watch_event with replay",
+		"next_seq", watchResult.NextSeq)
 
 	// Apply RestartPolicy: try_reload attempts ACP session/load to restore
 	// conversation history. always_new (default) starts fresh.

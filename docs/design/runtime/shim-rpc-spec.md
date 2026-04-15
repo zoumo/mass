@@ -25,7 +25,7 @@
 2. **ACP 不穿透** —— agent-shim 是唯一理解 ACP 的组件；上层只看到翻译后的
    runtime/session 语义。
 3. **重连可证实** —— 断线恢复依赖 socket 发现、`runtime/status` 状态检查、
-   `runtime/history` 历史补齐、`session/subscribe` 恢复 live 流。
+   `session/watch_event` 一步完成历史补齐 + live 流恢复。
 4. **一个序列空间** —— live notification 与历史回放共享单调递增 `seq`，
    使断线补齐、去重、诊断有可比对依据。
 5. **payload not content** —— ShimEvent envelope 使用 `payload` 字段携带事件数据，
@@ -50,14 +50,13 @@ In agentd-managed deployments, bundle/state/socket are co-located:
 1. 使用已持久化的 AgentRun 元数据（`ShimSocketPath`）找到 socket；
 2. 连接每个 shim socket；
 3. 调用 `runtime/status` 获取当前 runtime truth 与 `lastSeq`；
-4. 调用 `runtime/history`，从调用方最后成功处理的 `seq + 1` 开始补齐；
-5. 调用 `session/subscribe`，传入 `afterSeq =` 已成功处理的最后一个序列号，恢复 live 流。
+4. 调用 `session/watch_event(fromSeq=0)` 完成历史 replay + live 流恢复。
 
 **规范要求**：
 
-- `runtime/history` 返回的记录必须与 live notification 共享同一个 `seq` 空间；
-- `session/subscribe(afterSeq)` 建立后，shim 只能投递 `seq > afterSeq` 的 live `shim/event` notification；
-- 调用方负责按 `seq` 去重；shim 不负责跨连接去重状态。
+- `session/watch_event` 的历史 replay 与 live notification 共享同一个 `seq` 空间；
+- 历史事件通过 `shim/event` notification 流式推送（非 response body），避免大 payload；
+- 调用方通过追踪收到事件的 `seq` 实现断线重连（K8s reflector 模式）。
 
 ## 方法
 
@@ -122,47 +121,56 @@ In agentd-managed deployments, bundle/state/socket are co-located:
 }
 ```
 
-### `session/subscribe`
+### `session/watch_event`
 
-建立 live notification 订阅。
-订阅成功后，shim 会在同一连接上异步发送 `shim/event` notification。
+建立 K8s List-Watch 风格的事件订阅。历史事件和 live 事件统一通过
+`shim/event` notification 流式推送，response body 只含 `nextSeq`。
 
 **Request**:
 
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": 3,
-  "method": "session/subscribe",
-  "params": {
-    "afterSeq": 41
+  “jsonrpc”: “2.0”,
+  “id”: 3,
+  “method”: “session/watch_event”,
+  “params”: {
+    “fromSeq”: 0
   }
 }
 ```
 
-`afterSeq` 为 OPTIONAL：
+`fromSeq` 为 OPTIONAL：
 
-- 省略时，表示”从当前 head 之后的 live 流开始”；
-- 指定时，表示”只接收 `seq > afterSeq` 的 live notification”。
-
-此外也支持 `fromSeq`（OPTIONAL）参数：当指定时，shim 在建立订阅前先返回
-`seq >= fromSeq` 的历史 entries（原子 backfill），然后继续投递 live notification。
-这允许调用方在一次调用中完成断线补齐和恢复 live 流。
+- 省略时，表示 live-only：从当前 head 之后开始推送 live 事件；
+- 指定为 `0` 时，表示全量 replay + live（类比 K8s List + Watch）；
+- 指定为 `N` 时，表示从 seq N 开始 replay + live（类比 K8s Watch from resourceVersion）。
 
 **Response**:
 
 ```json
 {
-  "jsonrpc": "2.0",
-  "id": 3,
-  "result": {
-    "nextSeq": 42
+  “jsonrpc”: “2.0”,
+  “id”: 3,
+  “result”: {
+    “nextSeq”: 42
   }
 }
 ```
 
-`nextSeq` 表示订阅建立后下一条可能投递的序列号下界。
-它用于辅助调用方校验 recovery 流程是否从正确边界恢复。
+`nextSeq` 表示订阅建立时下一条可能分配的序列号。调用方可用于诊断，
+但**不应**依赖 `nextSeq` 驱动重连——重连 seq 应来自客户端实际收到的
+最后一个事件的 `seq + 1`（K8s reflector 模式）。
+
+**说明**：
+
+- **两阶段无锁 replay**：shim 先在 Translator mutex 下注册 subscriber channel（O(1)），
+  然后在后台 goroutine 中无锁读取 event log 文件，将 `seq < nextSeq` 的历史事件
+  通过 `shim/event` notification 流式推送给客户端。随后切换到 live 事件流，
+  跳过 `seq < nextSeq` 的重复事件。这保证了无 gap、无 dup、无大 payload。
+- **Channel 溢出容错（K8s 模型）**：subscriber channel buffer = 1024。当 channel 满时，
+  shim 关闭该 subscriber 的 channel 并移除订阅（类比 K8s 410 Gone）。
+  客户端检测到断连后，用最后收到的 `event.seq + 1` 作为 `fromSeq` 重连，
+  replay 补齐丢失的事件段，无缝恢复 live 流。
 
 ### `runtime/status`
 
@@ -221,65 +229,6 @@ In agentd-managed deployments, bundle/state/socket are co-located:
 > 并非直接读取 state.json 文件。因此在两次 state 持久化之间，`eventCounts` 可能比
 > state.json 中的值更新。这保证了调用方始终获取最准确的事件统计。
 `recovery.lastSeq` 是当前 `events.jsonl` / notification 流中最后一个已分配的序列号。
-
-### `runtime/history`
-
-读取历史 notification 记录，用于断线补齐或诊断。
-
-**Request**:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 5,
-  "method": "runtime/history",
-  "params": {
-    "fromSeq": 39
-  }
-}
-```
-
-`fromSeq` 为 OPTIONAL，默认 `0`。
-返回结果中的每一项都使用和 live notification 相同的 envelope。
-
-**Response**:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 5,
-  "result": {
-    "entries": [
-      {
-        "runId": "codex",
-        "sessionId": "acp-xxx",
-        "seq": 39,
-        "time": "2026-04-07T10:00:00Z",
-        "category": "runtime",
-        "type": "state_change",
-        "payload": {
-          "previousStatus": "idle",
-          "status": "running",
-          "pid": 12345
-        }
-      },
-      {
-        "runId": "codex",
-        "sessionId": "acp-xxx",
-        "seq": 40,
-        "time": "2026-04-07T10:00:01Z",
-        "category": "session",
-        "type": "agent_message",
-        "turnId": "turn-001",
-        "payload": {
-          "status": "streaming",
-          "content": { "type": "text", "text": "I found the auth handler." }
-        }
-      }
-    ]
-  }
-}
-```
 
 ### `runtime/stop`
 
@@ -569,9 +518,8 @@ agent-shim ↔ agent:   ACP over stdio                                ← 内部
 |------|------|------|------|
 | `session/prompt` | 请求 / 响应 | 是（直到 turn 结束） | 发送一个工作 turn |
 | `session/cancel` | 请求 / 响应 | 否 | 取消当前 turn |
-| `session/subscribe` | 请求 / 响应 + 异步 notification | 否 | 恢复或建立 live `shim/event` 流 |
+| `session/watch_event` | 请求 / 响应 + 异步 notification | 否 | K8s List-Watch 风格：replay + live `shim/event` 流 |
 | `runtime/status` | 请求 / 响应 | 否 | 查询 runtime truth 与恢复边界 |
-| `runtime/history` | 请求 / 响应 | 否 | 回放历史（ShimEvent 格式） |
 | `runtime/stop` | 请求 / 响应 | 否 | 停止 runtime 与 shim |
 | `shim/event` | notification（异步） | — | 统一 notification：session events + state_change |
 

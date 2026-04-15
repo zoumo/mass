@@ -79,7 +79,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	pm.mu.Unlock()
 
 	// Subscribe — mock server emits the queued notification asynchronously.
-	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
+	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
 
 	// Wait for the stateChange notification to drive the DB update.
@@ -140,7 +140,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
 
-	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
+	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
 
 	for i := 0; i < 3; i++ {
@@ -226,7 +226,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	pm.processes[key] = shimProc
 	pm.mu.Unlock()
 
-	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
+	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
 
 	// Wait for both stateChange notifications to be processed (final state = idle).
@@ -288,7 +288,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	pm.mu.Unlock()
 
 	// Subscribe with no queued notifications.
-	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
+	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
 
 	// Allow notification delivery goroutines to flush (none should fire).
@@ -354,7 +354,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	pm.processes[key] = shimProc
 	pm.mu.Unlock()
 
-	_, err = client.Subscribe(ctx, &apishim.SessionSubscribeParams{})
+	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
 
 	// Wait for notification to be delivered and dropped.

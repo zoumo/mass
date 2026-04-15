@@ -59,9 +59,13 @@ func (c *ShimClient) Load(ctx context.Context, req *apishim.SessionLoadParams) e
 	return c.c.Call(ctx, apishim.MethodSessionLoad, req, nil)
 }
 
-func (c *ShimClient) Subscribe(ctx context.Context, req *apishim.SessionSubscribeParams) (*apishim.SessionSubscribeResult, error) {
-	var result apishim.SessionSubscribeResult
-	if err := c.c.Call(ctx, apishim.MethodSessionSubscribe, req, &result); err != nil {
+// WatchEvent starts a K8s List-Watch style event subscription.
+// When req is nil or FromSeq is nil, only live events are streamed.
+// When FromSeq is set, historical events are replayed via shim/event
+// notifications first, followed by live events.
+func (c *ShimClient) WatchEvent(ctx context.Context, req *apishim.SessionWatchEventParams) (*apishim.SessionWatchEventResult, error) {
+	var result apishim.SessionWatchEventResult
+	if err := c.c.Call(ctx, apishim.MethodSessionWatchEvent, req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -70,14 +74,6 @@ func (c *ShimClient) Subscribe(ctx context.Context, req *apishim.SessionSubscrib
 func (c *ShimClient) Status(ctx context.Context) (*apishim.RuntimeStatusResult, error) {
 	var result apishim.RuntimeStatusResult
 	if err := c.c.Call(ctx, apishim.MethodRuntimeStatus, nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-func (c *ShimClient) History(ctx context.Context, req *apishim.RuntimeHistoryParams) (*apishim.RuntimeHistoryResult, error) {
-	var result apishim.RuntimeHistoryResult
-	if err := c.c.Call(ctx, apishim.MethodRuntimeHistory, req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

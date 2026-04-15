@@ -56,54 +56,29 @@ func (s *Service) Load(_ context.Context, _ *apishim.SessionLoadParams) error {
 	return nil
 }
 
-func (s *Service) Subscribe(ctx context.Context, req *apishim.SessionSubscribeParams) (*apishim.SessionSubscribeResult, error) {
+// WatchEvent implements session/watch_event (K8s List-Watch pattern).
+// When FromSeq is nil, only live events are streamed.
+// When FromSeq is set, historical events are replayed via shim/event
+// notifications first, then live events follow — no large response payload.
+func (s *Service) WatchEvent(ctx context.Context, req *apishim.SessionWatchEventParams) (*apishim.SessionWatchEventResult, error) {
 	peer := jsonrpc.PeerFromContext(ctx)
 	if peer == nil {
 		return nil, jsonrpc.ErrInternal("no peer in context")
 	}
 
-	if req.AfterSeq != nil && *req.AfterSeq < 0 {
-		return nil, jsonrpc.ErrInvalidParams("afterSeq must be >= 0")
-	}
 	if req.FromSeq != nil && *req.FromSeq < 0 {
 		return nil, jsonrpc.ErrInvalidParams("fromSeq must be >= 0")
 	}
 
-	// Atomic path: read history + register live subscription under a single
-	// lock hold to prevent gaps between the two operations.
 	if req.FromSeq != nil {
-		entries, ch, subID, nextSeq, err := s.trans.SubscribeFromSeq(s.logPath, *req.FromSeq)
-		if err != nil {
-			return nil, jsonrpc.ErrInternal(err.Error())
-		}
-
-		go func() {
-			defer s.trans.Unsubscribe(subID)
-			disconnect := peer.DisconnectNotify()
-			for {
-				select {
-				case <-disconnect:
-					return
-				case ev, ok := <-ch:
-					if !ok {
-						return
-					}
-					if err := peer.Notify(ctx, apishim.MethodShimEvent, ev); err != nil {
-						return
-					}
-				}
-			}
-		}()
-
-		return &apishim.SessionSubscribeResult{NextSeq: nextSeq, Entries: entries}, nil
+		return s.watchWithReplay(ctx, peer, *req.FromSeq)
 	}
+	return s.watchLiveOnly(ctx, peer)
+}
 
-	// Legacy path: subscribe without atomic backfill; filter events by floor seq.
+// watchLiveOnly subscribes to live events only (no replay).
+func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer) (*apishim.SessionWatchEventResult, error) {
 	ch, subID, nextSeq := s.trans.Subscribe()
-	floor := nextSeq - 1
-	if req.AfterSeq != nil {
-		floor = *req.AfterSeq
-	}
 
 	go func() {
 		defer s.trans.Unsubscribe(subID)
@@ -116,8 +91,65 @@ func (s *Service) Subscribe(ctx context.Context, req *apishim.SessionSubscribePa
 				if !ok {
 					return
 				}
-				if ev.Seq <= floor {
-					continue
+				if err := peer.Notify(ctx, apishim.MethodShimEvent, ev); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	return &apishim.SessionWatchEventResult{NextSeq: nextSeq}, nil
+}
+
+// watchWithReplay implements two-phase lockless replay:
+//
+// Phase 1 (under Translator mutex, O(1)): register subscriber channel.
+// Phase 2 (background goroutine, NO mutex): read event log, stream history
+// events via shim/event notifications, then switch to live events.
+//
+// Dedup guarantee: history events with seq < nextSeq are sent from file,
+// live events with seq < nextSeq are skipped. broadcast() does log-before-fanout
+// under the same mutex, so the file contains all seq < nextSeq at subscribe time.
+func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, fromSeq int) (*apishim.SessionWatchEventResult, error) {
+	// Phase 1: register subscriber under mutex (O(1)).
+	ch, subID, nextSeq := s.trans.Subscribe()
+
+	// Phase 2: replay + live in background goroutine.
+	go func() {
+		defer s.trans.Unsubscribe(subID)
+		disconnect := peer.DisconnectNotify()
+
+		// Replay historical events from event log (no mutex held).
+		entries, err := ReadEventLog(s.logPath, fromSeq)
+		if err != nil {
+			s.logger.Error("watch_event: replay read failed", "fromSeq", fromSeq, "error", err)
+			return
+		}
+		for _, entry := range entries {
+			if entry.Seq >= nextSeq {
+				break // remaining entries will come from live channel
+			}
+			select {
+			case <-disconnect:
+				return
+			default:
+			}
+			if err := peer.Notify(ctx, apishim.MethodShimEvent, entry); err != nil {
+				return
+			}
+		}
+
+		// Switch to live events, dedup overlap.
+		for {
+			select {
+			case <-disconnect:
+				return
+			case ev, ok := <-ch:
+				if !ok {
+					return
+				}
+				if ev.Seq < nextSeq {
+					continue // dedup: already sent from file
 				}
 				if err := peer.Notify(ctx, apishim.MethodShimEvent, ev); err != nil {
 					return
@@ -126,7 +158,7 @@ func (s *Service) Subscribe(ctx context.Context, req *apishim.SessionSubscribePa
 		}
 	}()
 
-	return &apishim.SessionSubscribeResult{NextSeq: nextSeq}, nil
+	return &apishim.SessionWatchEventResult{NextSeq: nextSeq}, nil
 }
 
 func (s *Service) Status(_ context.Context) (*apishim.RuntimeStatusResult, error) {
@@ -145,23 +177,6 @@ func (s *Service) Status(_ context.Context) (*apishim.RuntimeStatusResult, error
 	}, nil
 }
 
-func (s *Service) History(_ context.Context, req *apishim.RuntimeHistoryParams) (*apishim.RuntimeHistoryResult, error) {
-	fromSeq := 0
-	if req.FromSeq != nil {
-		fromSeq = *req.FromSeq
-	}
-	if fromSeq < 0 {
-		return nil, jsonrpc.ErrInvalidParams("fromSeq must be >= 0")
-	}
-	entries, err := ReadEventLog(s.logPath, fromSeq)
-	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if len(entries) == 0 {
-		return &apishim.RuntimeHistoryResult{Entries: []apishim.ShimEvent{}}, nil
-	}
-	return &apishim.RuntimeHistoryResult{Entries: entries}, nil
-}
 
 func (s *Service) Stop(_ context.Context) error {
 	// Stop signals are handled by the transport layer (the caller detects the

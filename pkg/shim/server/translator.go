@@ -115,37 +115,9 @@ func (t *Translator) Subscribe() (<-chan apishim.ShimEvent, int, int) {
 
 	id := t.nextID
 	t.nextID++
-	ch := make(chan apishim.ShimEvent, 64)
+	ch := make(chan apishim.ShimEvent, 1024)
 	t.subs[id] = ch
 	return ch, id, t.nextSeq
-}
-
-// SubscribeFromSeq atomically reads history from logPath starting at fromSeq
-// and registers a live subscription, all under the Translator's mutex.
-// This eliminates the event gap between separate History and Subscribe calls.
-//
-// Returns (backfill entries, subscription channel, subscription ID, nextSeq, error).
-//
-// Intended for recovery/startup only — holds the mutex during file I/O.
-// Do not use in hot paths where event broadcasting latency matters.
-func (t *Translator) SubscribeFromSeq(logPath string, fromSeq int) ([]apishim.ShimEvent, <-chan apishim.ShimEvent, int, int, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	entries, err := ReadEventLog(logPath, fromSeq)
-	if err != nil {
-		return nil, nil, 0, 0, err
-	}
-	if entries == nil {
-		entries = []apishim.ShimEvent{}
-	}
-
-	id := t.nextID
-	t.nextID++
-	ch := make(chan apishim.ShimEvent, 64)
-	t.subs[id] = ch
-
-	return entries, ch, id, t.nextSeq, nil
 }
 
 // Unsubscribe removes a subscriber and closes its channel.
@@ -391,11 +363,16 @@ func (t *Translator) broadcast(build func(seq int, at time.Time) apishim.ShimEve
 
 	// Fan-out while holding the lock so Stop() cannot close channels concurrently.
 	// Sends are non-blocking (buffered channel + default case), so no deadlock risk.
-	for _, ch := range t.subs {
+	// Slow subscribers are evicted (K8s-style): close channel + remove from map.
+	// The client detects the disconnect and reconnects with fromSeq=lastSeq+1.
+	for id, ch := range t.subs {
 		select {
 		case ch <- ev:
 		default:
-			// Slow subscriber — drop rather than block fan-out.
+			slog.Warn("events: slow subscriber evicted (channel full)",
+				"subID", id, "seq", ev.Seq, "type", ev.Type)
+			close(ch)
+			delete(t.subs, id)
 		}
 	}
 	t.mu.Unlock()
