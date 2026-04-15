@@ -122,7 +122,6 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 			"type":      "text",
 			"turnId":    turnID,
 			"streamSeq": i,
-			"phase":     "acting",
 			"content":   json.RawMessage(contentBytes),
 		})
 	}

@@ -21,7 +21,6 @@ import (
 //	  "type":      "text",
 //	  "turnId":    "turn-001",     // omitempty — session events inside active turn only
 //	  "streamSeq": 3,              // omitempty — same scope as turnId
-//	  "phase":     "acting",       // omitempty — same scope as turnId
 //	  "content":   { "text": "..." }
 //	}
 type ShimEvent struct {
@@ -35,7 +34,6 @@ type ShimEvent struct {
 	// Turn-aware ordering fields (session events only, within active turn).
 	TurnID    string `json:"turnId,omitempty"`
 	StreamSeq int    `json:"streamSeq,omitempty"`
-	Phase     string `json:"phase,omitempty"`
 
 	// Content is the typed event payload (TextEvent, StateChangeEvent, etc.).
 	Content Event `json:"-"`
@@ -52,7 +50,6 @@ func (e ShimEvent) MarshalJSON() ([]byte, error) {
 		Type      string          `json:"type"`
 		TurnID    string          `json:"turnId,omitempty"`
 		StreamSeq int             `json:"streamSeq,omitempty"`
-		Phase     string          `json:"phase,omitempty"`
 		Content   json.RawMessage `json:"content"`
 	}
 
@@ -76,7 +73,6 @@ func (e ShimEvent) MarshalJSON() ([]byte, error) {
 		Type:      e.Type,
 		TurnID:    e.TurnID,
 		StreamSeq: e.StreamSeq,
-		Phase:     e.Phase,
 		Content:   contentBytes,
 	})
 }
@@ -93,7 +89,6 @@ func (e *ShimEvent) UnmarshalJSON(data []byte) error {
 		Type      string          `json:"type"`
 		TurnID    string          `json:"turnId,omitempty"`
 		StreamSeq int             `json:"streamSeq,omitempty"`
-		Phase     string          `json:"phase,omitempty"`
 		Content   json.RawMessage `json:"content"`
 	}
 
@@ -110,7 +105,6 @@ func (e *ShimEvent) UnmarshalJSON(data []byte) error {
 	e.Type = w.Type
 	e.TurnID = w.TurnID
 	e.StreamSeq = w.StreamSeq
-	e.Phase = w.Phase
 
 	if len(w.Content) > 0 && string(w.Content) != "null" {
 		ev, err := decodeEventPayload(w.Type, w.Content)
@@ -132,24 +126,10 @@ func CategoryForEvent(eventType string) string {
 	return CategorySession
 }
 
-// PhaseForEvent returns the phase string for a given session event type.
-// thinking → "thinking", tool_call/tool_result → "tool_call", others → "acting".
-// runtime category events (state_change) should not call this function.
-func PhaseForEvent(eventType string) string {
-	switch eventType {
-	case EventTypeThinking:
-		return "thinking"
-	case EventTypeToolCall, EventTypeToolResult:
-		return "tool_call"
-	default:
-		return "acting"
-	}
-}
-
 // NewShimEvent constructs a ShimEvent with the given fields.
-// turnID, streamSeq, and phase should only be set for session category events
+// turnID and streamSeq should only be set for session category events
 // inside an active turn. For runtime events or out-of-turn session events,
-// pass empty turnID (streamSeq and phase will be ignored when turnID is empty).
+// pass empty turnID (streamSeq will be ignored when turnID is empty).
 func NewShimEvent(
 	runID, sessionID string,
 	seq int,
@@ -160,11 +140,6 @@ func NewShimEvent(
 ) ShimEvent {
 	eventType := ev.eventType()
 	category := CategoryForEvent(eventType)
-
-	var phase string
-	if turnID != "" && category == CategorySession {
-		phase = PhaseForEvent(eventType)
-	}
 
 	se := ShimEvent{
 		RunID:     runID,
@@ -178,7 +153,6 @@ func NewShimEvent(
 	if turnID != "" && category == CategorySession {
 		se.TurnID = turnID
 		se.StreamSeq = streamSeq
-		se.Phase = phase
 	}
 	return se
 }

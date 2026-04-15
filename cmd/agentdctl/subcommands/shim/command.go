@@ -166,7 +166,6 @@ type shimEvent struct {
 	Type      string          `json:"type"`
 	TurnID    string          `json:"turnId,omitempty"`
 	StreamSeq int             `json:"streamSeq,omitempty"`
-	Phase     string          `json:"phase,omitempty"`
 	Content   json.RawMessage `json:"content"`
 }
 

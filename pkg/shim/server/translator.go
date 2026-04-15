@@ -196,7 +196,6 @@ func (t *Translator) NotifyTurnStart() {
 			Type:      apishim.EventTypeTurnStart,
 			TurnID:    t.currentTurnId,
 			StreamSeq: t.streamSeq,
-			Phase:     "acting",
 			Content:   apishim.TurnStartEvent{},
 		}
 	})
@@ -217,7 +216,6 @@ func (t *Translator) NotifyUserPrompt(text string) {
 			Type:      apishim.EventTypeUserMessage,
 			TurnID:    t.currentTurnId,
 			StreamSeq: t.streamSeq,
-			Phase:     "acting",
 			Content:   apishim.UserMessageEvent{Text: text},
 		}
 	})
@@ -238,7 +236,6 @@ func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 			Type:      apishim.EventTypeTurnEnd,
 			TurnID:    t.currentTurnId,
 			StreamSeq: t.streamSeq,
-			Phase:     "acting",
 			Content:   apishim.TurnEndEvent{StopReason: string(reason)},
 		}
 		t.currentTurnId = "" // Clear AFTER using — turn_end event carries the turnId
@@ -290,7 +287,7 @@ func (t *Translator) run() {
 }
 
 // broadcastSessionEvent builds and broadcasts a session category ShimEvent.
-// Turn metadata (TurnID/StreamSeq/Phase) is applied to all session events
+// Turn metadata (TurnID/StreamSeq) is applied to all session events
 // when an active turn exists.
 func (t *Translator) broadcastSessionEvent(ev apishim.Event) {
 	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
@@ -309,7 +306,6 @@ func (t *Translator) broadcastSessionEvent(ev apishim.Event) {
 			t.streamSeq++
 			se.TurnID = t.currentTurnId
 			se.StreamSeq = t.streamSeq
-			se.Phase = apishim.PhaseForEvent(eventType)
 		}
 		return se
 	})

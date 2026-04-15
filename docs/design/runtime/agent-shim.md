@@ -27,7 +27,7 @@ agent 进程（claude-acp / pi-acp / gemini / ...）
 shim 提供 `session/*` + `runtime/*` RPC surface（request/response，clean-break 实现已对齐）、bundle/state 共置和单 AgentRun 单 shim 进程设计。
 
 agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent/*` 管理 Agent CRUD。shim RPC 的 `session/*` + `runtime/*` 是内部协议，不暴露给外部调用方。
-**统一 notification surface**：live notification 统一为 `shim/event`，携带 `runId`、`sessionId`、`seq`、`category`、`type`、`turnId`（turn 内 session events）、`streamSeq`、`phase`、`content` 顶层字段。
+**统一 notification surface**：live notification 统一为 `shim/event`，携带 `runId`、`sessionId`、`seq`、`category`、`type`、`turnId`（turn 内 session events）、`streamSeq`、`content` 顶层字段。
 详见 [shim-rpc-spec.md](shim-rpc-spec.md) 中的"Turn-Aware Event Ordering"章节。
 
 ## 与规范文档的分工

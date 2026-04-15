@@ -339,7 +339,6 @@ func TestShimEventRoundTrip(t *testing.T) {
 		Type:      "tool_call",
 		TurnID:    "turn-001",
 		StreamSeq: 3,
-		Phase:     "tool_call",
 		Content:   apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"},
 	}
 	data, err := ev.MarshalJSON()
@@ -354,7 +353,6 @@ func TestShimEventRoundTrip(t *testing.T) {
 	assert.Equal(t, ev.Type, decoded.Type)
 	assert.Equal(t, ev.TurnID, decoded.TurnID)
 	assert.Equal(t, ev.StreamSeq, decoded.StreamSeq)
-	assert.Equal(t, ev.Phase, decoded.Phase)
 	tc, ok := decoded.Content.(apishim.ToolCallEvent)
 	require.True(t, ok)
 	assert.Equal(t, apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"}, tc)
@@ -540,44 +538,6 @@ func TestTurnAwareShimEvent_StreamSeqResetsPerTurn(t *testing.T) {
 	assert.NotEqual(t, ts1.TurnID, ts2.TurnID, "turn 2 must have a different TurnID")
 }
 
-// TestTurnAwareShimEvent_PhaseMapping verifies the Phase field is set correctly.
-func TestTurnAwareShimEvent_PhaseMapping(t *testing.T) {
-	in := make(chan acp.SessionNotification, 4)
-	tr := NewTranslator("run-1", in, nil)
-	ch, _, _ := tr.Subscribe()
-	tr.Start()
-	defer tr.Stop()
-
-	tr.NotifyTurnStart()
-	tsEv := drainShimEvent(t, ch)
-	assert.Equal(t, "acting", tsEv.Phase)
-
-	// Send a thinking event.
-	in <- makeNotif(func(u *acp.SessionUpdate) {
-		u.AgentThoughtChunk = &acp.SessionUpdateAgentThoughtChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "hmm"}},
-		}
-	})
-	thinkEv := drainShimEvent(t, ch)
-	assert.Equal(t, "thinking", thinkEv.Phase)
-
-	// Send a tool_call.
-	in <- makeNotif(func(u *acp.SessionUpdate) {
-		u.ToolCall = &acp.SessionUpdateToolCall{ToolCallId: "tc-1", Kind: "shell", Title: "ls"}
-	})
-	toolEv := drainShimEvent(t, ch)
-	assert.Equal(t, "tool_call", toolEv.Phase)
-
-	// Send a text event.
-	in <- makeNotif(func(u *acp.SessionUpdate) {
-		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
-			Content: acp.ContentBlock{Text: &acp.ContentBlockText{Text: "done"}},
-		}
-	})
-	textEv := drainShimEvent(t, ch)
-	assert.Equal(t, "acting", textEv.Phase)
-}
-
 // TestTurnAwareShimEvent_StateChangeExcludesTurnFields verifies that state_change
 // events emitted during an active turn do not carry turn fields.
 func TestTurnAwareShimEvent_StateChangeExcludesTurnFields(t *testing.T) {
@@ -597,14 +557,13 @@ func TestTurnAwareShimEvent_StateChangeExcludesTurnFields(t *testing.T) {
 	assert.Equal(t, apishim.CategoryRuntime, scEv.Category)
 	assert.Empty(t, scEv.TurnID, "state_change must not carry TurnID even during active turn")
 	assert.Equal(t, 0, scEv.StreamSeq, "state_change must not carry StreamSeq")
-	assert.Empty(t, scEv.Phase, "state_change must not carry Phase")
 
 	// Seq must increment correctly.
 	assert.Equal(t, tsEv.Seq+1, scEv.Seq, "state_change seq must follow turn_start seq")
 }
 
 // TestTurnAwareShimEvent_MetadataEventInTurn verifies that session metadata events
-// (session_info, usage, etc.) carry TurnID/StreamSeq/Phase when inside an active turn.
+// (session_info, usage, etc.) carry TurnID/StreamSeq when inside an active turn.
 func TestTurnAwareShimEvent_MetadataEventInTurn(t *testing.T) {
 	in := make(chan acp.SessionNotification, 2)
 	tr := NewTranslator("run-1", in, nil)
@@ -627,11 +586,10 @@ func TestTurnAwareShimEvent_MetadataEventInTurn(t *testing.T) {
 	assert.Equal(t, "session_info", siEv.Type)
 	assert.Equal(t, tsEv.TurnID, siEv.TurnID, "session_info in active turn must carry TurnID")
 	assert.Greater(t, siEv.StreamSeq, 0, "session_info in active turn must have StreamSeq > 0")
-	assert.Equal(t, "acting", siEv.Phase)
 }
 
 // TestTurnAwareShimEvent_MetadataEventOutsideTurn verifies that session metadata events
-// do NOT carry TurnID/StreamSeq/Phase when outside an active turn.
+// do NOT carry TurnID/StreamSeq when outside an active turn.
 func TestTurnAwareShimEvent_MetadataEventOutsideTurn(t *testing.T) {
 	in := make(chan acp.SessionNotification, 2)
 	tr := NewTranslator("run-1", in, nil)
@@ -649,7 +607,6 @@ func TestTurnAwareShimEvent_MetadataEventOutsideTurn(t *testing.T) {
 	assert.Equal(t, apishim.CategorySession, siEv.Category)
 	assert.Empty(t, siEv.TurnID, "session_info outside turn must NOT carry TurnID")
 	assert.Equal(t, 0, siEv.StreamSeq, "session_info outside turn must have StreamSeq=0")
-	assert.Empty(t, siEv.Phase, "session_info outside turn must NOT carry Phase")
 }
 
 // TestFailClosed_AppendFailureDropsEvent verifies that if EventLog.Append fails,
