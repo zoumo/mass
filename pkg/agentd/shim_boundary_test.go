@@ -111,7 +111,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 
 	srv, socketPath := newMockShimServer(t)
 	for i := 0; i < 3; i++ {
-		contentBytes, err := json.Marshal(apishim.TextEvent{Text: fmt.Sprintf("chunk-%d", i)})
+		contentBytes, err := json.Marshal(apishim.AgentMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: fmt.Sprintf("chunk-%d", i)}}})
 		require.NoError(t, err)
 		srv.queueNotification(apishim.MethodShimEvent, map[string]any{
 			"runId":     "test-run",
@@ -119,7 +119,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 			"seq":       i,
 			"time":      "2026-01-01T00:00:00Z",
 			"category":  "session",
-			"type":      "text",
+			"type":      "agent_message",
 			"turnId":    turnID,
 			"streamSeq": i,
 			"content":   json.RawMessage(contentBytes),
@@ -154,10 +154,11 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 
 		require.Equal(t, i, update.Seq)
 		require.Equal(t, turnID, update.TurnID)
-		require.Equal(t, "text", update.Type)
-		payload, ok := update.Content.(apishim.TextEvent)
+		require.Equal(t, apishim.EventTypeAgentMessage, update.Type)
+		payload, ok := update.Content.(apishim.AgentMessageEvent)
 		require.True(t, ok)
-		require.Equal(t, fmt.Sprintf("chunk-%d", i), payload.Text)
+		require.NotNil(t, payload.Content.Text)
+		require.Equal(t, fmt.Sprintf("chunk-%d", i), payload.Content.Text.Text)
 	}
 }
 

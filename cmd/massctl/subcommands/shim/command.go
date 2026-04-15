@@ -13,15 +13,16 @@ import (
 
 	"github.com/zoumo/mass/pkg/jsonrpc"
 	shimapi "github.com/zoumo/mass/pkg/shim/api"
+	shimclient "github.com/zoumo/mass/pkg/shim/client"
 )
 
 // dialShim connects to a shim Unix socket and returns a typed ShimClient.
-func dialShim(ctx context.Context, socketPath string, opts ...jsonrpc.ClientOption) (*shimapi.ShimClient, error) {
+func dialShim(ctx context.Context, socketPath string, opts ...jsonrpc.ClientOption) (*shimclient.ShimClient, error) {
 	c, err := jsonrpc.Dial(ctx, "unix", socketPath, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", socketPath, err)
 	}
-	return shimapi.NewShimClient(c), nil
+	return shimclient.NewShimClient(c), nil
 }
 
 // ── Notification printing ──────────────────────────────────────────────────
@@ -90,10 +91,10 @@ func drainTurnEnd(ch <-chan struct{}) {
 
 func printShimEvent(ev shimapi.ShimEvent) {
 	switch pl := ev.Content.(type) {
-	case shimapi.TextEvent:
-		fmt.Print(pl.Text)
-	case shimapi.ThinkingEvent:
-		fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", ev.Seq, pl.Text)
+	case shimapi.AgentMessageEvent:
+		fmt.Print(contentBlockText(pl.Content))
+	case shimapi.AgentThinkingEvent:
+		fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", ev.Seq, contentBlockText(pl.Content))
 	case shimapi.ToolCallEvent:
 		content, _ := json.Marshal(pl)
 		fmt.Fprintf(os.Stderr, "\033[33m[tool_call seq=%d] %s\033[0m\n", ev.Seq, content)

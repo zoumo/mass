@@ -139,7 +139,7 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string) error {
 	// Build service and register it with a new jsonrpc.Server.
 	svc := shimserver.New(mgr, trans, logPath, logger)
 	srv := jsonrpc.NewServer(logger)
-	apishim.RegisterShimService(srv, svc)
+	shimserver.RegisterShimService(srv, svc)
 
 	// Remove stale socket file from a previous crash (K014).
 	_ = os.Remove(socketPath)

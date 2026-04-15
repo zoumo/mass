@@ -15,6 +15,7 @@ import (
 
 	"github.com/zoumo/mass/pkg/jsonrpc"
 	shimapi "github.com/zoumo/mass/pkg/shim/api"
+	shimclient "github.com/zoumo/mass/pkg/shim/client"
 	"github.com/zoumo/mass/pkg/tui/chat"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/anim"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
@@ -27,7 +28,7 @@ type (
 	turnEndMsg    struct{}
 	connClosedMsg struct{}
 	connReadyMsg struct {
-		sc     *shimapi.ShimClient
+		sc     *shimclient.ShimClient
 		notifs <-chan jsonrpc.NotificationMsg
 	}
 )
@@ -79,7 +80,7 @@ type chatModel struct {
 	sty     styles.Styles
 
 	sock   string
-	client *shimapi.ShimClient
+	client *shimclient.ShimClient
 	notifs <-chan jsonrpc.NotificationMsg
 
 	// Streaming state.
@@ -192,14 +193,14 @@ func waitNotif(ch <-chan jsonrpc.NotificationMsg) tea.Cmd {
 
 // watchDisconnect returns a tea.Cmd that blocks until the shim connection
 // drops, then emits connClosedMsg.
-func watchDisconnect(sc *shimapi.ShimClient) tea.Cmd {
+func watchDisconnect(sc *shimclient.ShimClient) tea.Cmd {
 	return func() tea.Msg {
 		<-sc.DisconnectNotify()
 		return connClosedMsg{}
 	}
 }
 
-func sendPromptCmd(sc *shimapi.ShimClient, text string) tea.Cmd {
+func sendPromptCmd(sc *shimclient.ShimClient, text string) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		if err := sc.SendPrompt(context.Background(), &shimapi.SessionPromptParams{Prompt: text}); err != nil {
 			return promptErrMsg{err}
@@ -208,14 +209,14 @@ func sendPromptCmd(sc *shimapi.ShimClient, text string) tea.Cmd {
 	})
 }
 
-func cancelPromptCmd(sc *shimapi.ShimClient) tea.Cmd {
+func cancelPromptCmd(sc *shimclient.ShimClient) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		_ = sc.Cancel(context.Background())
 		return nil
 	})
 }
 
-func fetchStatusCmd(sc *shimapi.ShimClient) tea.Cmd {
+func fetchStatusCmd(sc *shimclient.ShimClient) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		result, err := sc.Status(context.Background())
 		if err != nil {
@@ -528,25 +529,25 @@ func (m *chatModel) handleNotif(ev shimapi.ShimEvent) tea.Cmd {
 			m.sentPrompt = false
 			break
 		}
-		if pl.Text != "" {
+		if text := contentBlockText(pl.Content); text != "" {
 			userMsg := newShimMessage(m.nextID("user"), chat.RoleUser)
-			userMsg.text = pl.Text
+			userMsg.text = text
 			userMsg.finished = true
 			m.chat.AppendMessages(chat.NewUserMessageItem(&m.sty, userMsg))
 		}
 
-	case shimapi.TextEvent:
+	case shimapi.AgentMessageEvent:
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.currentMsg.appendText(pl.Text)
+		m.currentMsg.appendText(contentBlockText(pl.Content))
 		m.updateCurrentAssistant()
 
-	case shimapi.ThinkingEvent:
+	case shimapi.AgentThinkingEvent:
 		if cmd := m.ensureCurrentMsg(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		m.currentMsg.appendThinking(pl.Text)
+		m.currentMsg.appendThinking(contentBlockText(pl.Content))
 		m.updateCurrentAssistant()
 
 	case shimapi.ToolCallEvent:
@@ -714,6 +715,14 @@ func (m chatModel) renderHelp() string {
 	}
 	keys = append(keys, "shift+click select text", "ctrl+c quit")
 	return styleHelp.Render(" " + strings.Join(keys, " · "))
+}
+
+// contentBlockText extracts the text string from a ContentBlock for display.
+func contentBlockText(cb shimapi.ContentBlock) string {
+	if cb.Text != nil {
+		return cb.Text.Text
+	}
+	return ""
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────

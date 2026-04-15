@@ -81,7 +81,7 @@ type ShimProcess struct {
 	SocketPath string
 
 	// Client is the connected ShimClient for RPC communication.
-	Client *apishim.ShimClient
+	Client *shimclient.ShimClient
 
 	// Cmd is the exec.Cmd for the shim process (for Wait/Kill).
 	Cmd *exec.Cmd
@@ -810,7 +810,7 @@ func (m *ProcessManager) RuntimeStatus(ctx context.Context, workspace, name stri
 
 // Connect returns the ShimClient for direct RPC access to the shim process.
 // Returns error if the agent is not running.
-func (m *ProcessManager) Connect(ctx context.Context, workspace, name string) (*apishim.ShimClient, error) {
+func (m *ProcessManager) Connect(ctx context.Context, workspace, name string) (*shimclient.ShimClient, error) {
 	key := agentKey(workspace, name)
 	m.mu.RLock()
 	shimProc, exists := m.processes[key]

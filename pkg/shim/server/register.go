@@ -1,19 +1,18 @@
-// Package api contains the Shim RPC protocol types and service interfaces.
-// This file defines the ShimService interface and RegisterShimService function.
-package api
+package server
 
 import (
 	"context"
 
+	apishim "github.com/zoumo/mass/pkg/shim/api"
 	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
 // ShimService defines the Shim JSON-RPC protocol methods.
 // These are the methods exposed by agent-shim over a Unix socket.
 type ShimService interface {
-	Prompt(ctx context.Context, req *SessionPromptParams) (*SessionPromptResult, error)
+	Prompt(ctx context.Context, req *apishim.SessionPromptParams) (*apishim.SessionPromptResult, error)
 	Cancel(ctx context.Context) error
-	Load(ctx context.Context, req *SessionLoadParams) error
+	Load(ctx context.Context, req *apishim.SessionLoadParams) error
 	// Subscribe registers for live event streaming. The handler uses
 	// jsonrpc.PeerFromContext(ctx) to obtain the Peer and send notifications:
 	//   - peer.Notify(ctx, api.MethodShimEvent, event) for each live event
@@ -27,9 +26,9 @@ type ShimService interface {
 	// 3. Event push: via peer.Notify(ctx, "shim/event", shimEvent) — serialized with responses.
 	// 4. Disconnect unsubscribe: <-peer.DisconnectNotify() triggers cleanup + goroutine exit.
 	// 5. Slow client: peer.Notify returning error → unsubscribe + exit.
-	Subscribe(ctx context.Context, req *SessionSubscribeParams) (*SessionSubscribeResult, error)
-	Status(ctx context.Context) (*RuntimeStatusResult, error)
-	History(ctx context.Context, req *RuntimeHistoryParams) (*RuntimeHistoryResult, error)
+	Subscribe(ctx context.Context, req *apishim.SessionSubscribeParams) (*apishim.SessionSubscribeResult, error)
+	Status(ctx context.Context) (*apishim.RuntimeStatusResult, error)
+	History(ctx context.Context, req *apishim.RuntimeHistoryParams) (*apishim.RuntimeHistoryResult, error)
 	Stop(ctx context.Context) error
 }
 
@@ -38,7 +37,7 @@ func RegisterShimService(s *jsonrpc.Server, svc ShimService) {
 	s.RegisterService("session", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
 			"prompt": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req SessionPromptParams
+				var req apishim.SessionPromptParams
 				if err := unmarshal(&req); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
@@ -48,18 +47,18 @@ func RegisterShimService(s *jsonrpc.Server, svc ShimService) {
 				return nil, svc.Cancel(ctx)
 			},
 			"load": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req SessionLoadParams
+				var req apishim.SessionLoadParams
 				if err := unmarshal(&req); err != nil {
 					return nil, jsonrpc.ErrInvalidParams(err.Error())
 				}
 				return nil, svc.Load(ctx, &req)
 			},
 			"subscribe": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req SessionSubscribeParams
+				var req apishim.SessionSubscribeParams
 				// params are optional for subscribe
 				if err := unmarshal(&req); err != nil {
 					// ignore unmarshal errors for missing params
-					req = SessionSubscribeParams{}
+					req = apishim.SessionSubscribeParams{}
 				}
 				return svc.Subscribe(ctx, &req)
 			},
@@ -71,9 +70,9 @@ func RegisterShimService(s *jsonrpc.Server, svc ShimService) {
 				return svc.Status(ctx)
 			},
 			"history": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req RuntimeHistoryParams
+				var req apishim.RuntimeHistoryParams
 				if err := unmarshal(&req); err != nil {
-					req = RuntimeHistoryParams{}
+					req = apishim.RuntimeHistoryParams{}
 				}
 				return svc.History(ctx, &req)
 			},

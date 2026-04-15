@@ -26,14 +26,39 @@ type Annotations struct {
 // ── ContentBlock ─────────────────────────────────────────────────────────────
 
 // ContentBlock mirrors acp.ContentBlock — a discriminated union of 5 content types.
+// Common fields (Type, Meta, Annotations) live at this level; variant structs hold
+// only their own specific fields.
 // JSON wire shape is FLAT: {"type":"text","text":"hello","_meta":{...}}
 // Go side uses variant pointers with json:"-" + custom MarshalJSON/UnmarshalJSON.
 type ContentBlock struct {
+	Type        ContentBlockType `json:"-"`
+	Meta        map[string]any   `json:"-"`
+	Annotations *Annotations     `json:"-"`
+
 	Text         *TextContent         `json:"-"`
 	Image        *ImageContent        `json:"-"`
 	Audio        *AudioContent        `json:"-"`
 	ResourceLink *ResourceLinkContent `json:"-"`
 	Resource     *ResourceContent     `json:"-"`
+}
+
+// inferType returns the ContentBlockType implied by whichever variant pointer is set.
+// Returns "" if no variant is set.
+func (c ContentBlock) inferType() ContentBlockType {
+	switch {
+	case c.Text != nil:
+		return ContentBlockTypeText
+	case c.Image != nil:
+		return ContentBlockTypeImage
+	case c.Audio != nil:
+		return ContentBlockTypeAudio
+	case c.ResourceLink != nil:
+		return ContentBlockTypeResourceLink
+	case c.Resource != nil:
+		return ContentBlockTypeResource
+	default:
+		return ""
+	}
 }
 
 func (c ContentBlock) variantCount() int {
@@ -57,68 +82,107 @@ func (c ContentBlock) variantCount() int {
 }
 
 func (c ContentBlock) MarshalJSON() ([]byte, error) {
-	n := c.variantCount()
-	if n == 0 {
-		return nil, fmt.Errorf("events: empty ContentBlock: no variant set")
-	}
-	if n > 1 {
+	if n := c.variantCount(); n > 1 {
 		return nil, fmt.Errorf("events: ContentBlock: multiple variants set (%d)", n)
 	}
-	switch {
-	case c.Text != nil:
-		type wrapper struct {
-			Type string `json:"type"`
+
+	typ := c.Type
+	if typ == "" {
+		typ = c.inferType()
+	}
+	if typ == "" {
+		return nil, fmt.Errorf("events: empty ContentBlock: no type or variant set")
+	}
+
+	// common holds the shared fields embedded in every wire wrapper.
+	type common struct {
+		Type        ContentBlockType `json:"type"`
+		Meta        map[string]any   `json:"_meta,omitempty"`
+		Annotations *Annotations     `json:"annotations,omitempty"`
+	}
+	cm := common{Type: typ, Meta: c.Meta, Annotations: c.Annotations}
+
+	switch typ {
+	case ContentBlockTypeText:
+		if c.Text == nil {
+			return nil, fmt.Errorf("events: ContentBlock type %q but Text is nil", typ)
+		}
+		type w struct {
+			common
 			TextContent
 		}
-		return json.Marshal(wrapper{Type: "text", TextContent: *c.Text})
-	case c.Image != nil:
-		type wrapper struct {
-			Type string `json:"type"`
+		return json.Marshal(w{common: cm, TextContent: *c.Text})
+	case ContentBlockTypeImage:
+		if c.Image == nil {
+			return nil, fmt.Errorf("events: ContentBlock type %q but Image is nil", typ)
+		}
+		type w struct {
+			common
 			ImageContent
 		}
-		return json.Marshal(wrapper{Type: "image", ImageContent: *c.Image})
-	case c.Audio != nil:
-		type wrapper struct {
-			Type string `json:"type"`
+		return json.Marshal(w{common: cm, ImageContent: *c.Image})
+	case ContentBlockTypeAudio:
+		if c.Audio == nil {
+			return nil, fmt.Errorf("events: ContentBlock type %q but Audio is nil", typ)
+		}
+		type w struct {
+			common
 			AudioContent
 		}
-		return json.Marshal(wrapper{Type: "audio", AudioContent: *c.Audio})
-	case c.ResourceLink != nil:
-		type wrapper struct {
-			Type string `json:"type"`
+		return json.Marshal(w{common: cm, AudioContent: *c.Audio})
+	case ContentBlockTypeResourceLink:
+		if c.ResourceLink == nil {
+			return nil, fmt.Errorf("events: ContentBlock type %q but ResourceLink is nil", typ)
+		}
+		type w struct {
+			common
 			ResourceLinkContent
 		}
-		return json.Marshal(wrapper{Type: "resource_link", ResourceLinkContent: *c.ResourceLink})
-	default: // c.Resource != nil (guaranteed by n==1 check above)
-		type wrapper struct {
-			Type string `json:"type"`
+		return json.Marshal(w{common: cm, ResourceLinkContent: *c.ResourceLink})
+	case ContentBlockTypeResource:
+		if c.Resource == nil {
+			return nil, fmt.Errorf("events: ContentBlock type %q but Resource is nil", typ)
+		}
+		type w struct {
+			common
 			ResourceContent
 		}
-		return json.Marshal(wrapper{Type: "resource", ResourceContent: *c.Resource})
+		return json.Marshal(w{common: cm, ResourceContent: *c.Resource})
+	default:
+		return nil, fmt.Errorf("events: unknown ContentBlock type %q", typ)
 	}
 }
 
 func (c *ContentBlock) UnmarshalJSON(data []byte) error {
+	// Extract common fields first.
 	var raw struct {
-		Type string `json:"type"`
+		Type        ContentBlockType `json:"type"`
+		Meta        map[string]any   `json:"_meta,omitempty"`
+		Annotations *Annotations     `json:"annotations,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+	c.Type = raw.Type
+	c.Meta = raw.Meta
+	c.Annotations = raw.Annotations
+
+	// Dispatch variant unmarshal — variant structs no longer have type/_meta/annotations
+	// tags, so those keys are silently ignored by json.Unmarshal.
 	switch raw.Type {
-	case "text":
+	case ContentBlockTypeText:
 		c.Text = &TextContent{}
 		return json.Unmarshal(data, c.Text)
-	case "image":
+	case ContentBlockTypeImage:
 		c.Image = &ImageContent{}
 		return json.Unmarshal(data, c.Image)
-	case "audio":
+	case ContentBlockTypeAudio:
 		c.Audio = &AudioContent{}
 		return json.Unmarshal(data, c.Audio)
-	case "resource_link":
+	case ContentBlockTypeResourceLink:
 		c.ResourceLink = &ResourceLinkContent{}
 		return json.Unmarshal(data, c.ResourceLink)
-	case "resource":
+	case ContentBlockTypeResource:
 		c.Resource = &ResourceContent{}
 		return json.Unmarshal(data, c.Resource)
 	default:
@@ -127,47 +191,37 @@ func (c *ContentBlock) UnmarshalJSON(data []byte) error {
 }
 
 // TextContent is the text variant of ContentBlock.
-// JSON fields match acp.ContentBlockText (minus the "type" discriminator which is handled by ContentBlock).
+// Only contains variant-specific fields; Type, Meta, and Annotations live on ContentBlock.
 type TextContent struct {
-	Meta        map[string]any `json:"_meta,omitempty"`
-	Text        string         `json:"text"`
-	Annotations *Annotations   `json:"annotations,omitempty"`
+	Text string `json:"text"`
 }
 
 // ImageContent is the image variant of ContentBlock.
 type ImageContent struct {
-	Meta        map[string]any `json:"_meta,omitempty"`
-	Data        string         `json:"data"`
-	MimeType    string         `json:"mimeType"`
-	URI         *string        `json:"uri,omitempty"`
-	Annotations *Annotations   `json:"annotations,omitempty"`
+	Data     string  `json:"data"`
+	MimeType string  `json:"mimeType"`
+	URI      *string `json:"uri,omitempty"`
 }
 
 // AudioContent is the audio variant of ContentBlock.
 type AudioContent struct {
-	Meta        map[string]any `json:"_meta,omitempty"`
-	Data        string         `json:"data"`
-	MimeType    string         `json:"mimeType"`
-	Annotations *Annotations   `json:"annotations,omitempty"`
+	Data     string `json:"data"`
+	MimeType string `json:"mimeType"`
 }
 
 // ResourceLinkContent is the resource_link variant of ContentBlock.
 type ResourceLinkContent struct {
-	Meta        map[string]any `json:"_meta,omitempty"`
-	URI         string         `json:"uri"`
-	Name        string         `json:"name"`
-	Description *string        `json:"description,omitempty"`
-	MimeType    *string        `json:"mimeType,omitempty"`
-	Title       *string        `json:"title,omitempty"`
-	Size        *int           `json:"size,omitempty"`
-	Annotations *Annotations   `json:"annotations,omitempty"`
+	URI         string  `json:"uri"`
+	Name        string  `json:"name"`
+	Description *string `json:"description,omitempty"`
+	MimeType    *string `json:"mimeType,omitempty"`
+	Title       *string `json:"title,omitempty"`
+	Size        *int    `json:"size,omitempty"`
 }
 
 // ResourceContent is the resource variant of ContentBlock.
 type ResourceContent struct {
-	Meta        map[string]any   `json:"_meta,omitempty"`
-	Resource    EmbeddedResource `json:"resource"`
-	Annotations *Annotations     `json:"annotations,omitempty"`
+	Resource EmbeddedResource `json:"resource"`
 }
 
 // ── EmbeddedResource ─────────────────────────────────────────────────────────
@@ -508,22 +562,19 @@ type Cost struct {
 
 // ── Core event types ──────────────────────────────────────────────────────────
 
-// TextEvent carries a streamed text chunk from the agent.
-// Text is the convenience field for backward compatibility; Content carries full data.
-type TextEvent struct {
-	Text    string        `json:"text"`
-	Content *ContentBlock `json:"content,omitempty"`
+// AgentMessageEvent carries a streamed content chunk from the agent.
+type AgentMessageEvent struct {
+	Content ContentBlock `json:"content"`
 }
 
-func (TextEvent) eventType() string { return EventTypeText }
+func (AgentMessageEvent) eventType() string { return EventTypeAgentMessage }
 
-// ThinkingEvent carries a streamed thinking/reasoning chunk from the agent.
-type ThinkingEvent struct {
-	Text    string        `json:"text"`
-	Content *ContentBlock `json:"content,omitempty"`
+// AgentThinkingEvent carries a streamed thinking/reasoning chunk from the agent.
+type AgentThinkingEvent struct {
+	Content ContentBlock `json:"content"`
 }
 
-func (ThinkingEvent) eventType() string { return EventTypeThinking }
+func (AgentThinkingEvent) eventType() string { return EventTypeAgentThinking }
 
 // ToolCallEvent signals that the agent invoked a tool.
 type ToolCallEvent struct {
@@ -565,11 +616,9 @@ type PlanEvent struct {
 
 func (PlanEvent) eventType() string { return EventTypePlan }
 
-// UserMessageEvent carries a streamed text chunk echoed from the user's prompt.
-// ACP agents echo the incoming prompt back as UserMessageChunk notifications.
+// UserMessageEvent carries a streamed content chunk echoed from the user's prompt.
 type UserMessageEvent struct {
-	Text    string        `json:"text"`
-	Content *ContentBlock `json:"content,omitempty"`
+	Content ContentBlock `json:"content"`
 }
 
 func (UserMessageEvent) eventType() string { return EventTypeUserMessage }

@@ -199,7 +199,7 @@ In agentd-managed deployments, bundle/state/socket are co-located:
         "capabilities": { "promptCapabilities": { "image": true } }
       },
       "eventCounts": {
-        "text": 42,
+        "agent_message": 42,
         "tool_call": 7,
         "tool_result": 7,
         "turn_start": 3,
@@ -267,11 +267,11 @@ In agentd-managed deployments, bundle/state/socket are co-located:
         "seq": 40,
         "time": "2026-04-07T10:00:01Z",
         "category": "session",
-        "type": "text",
+        "type": "agent_message",
         "turnId": "turn-001",
         "streamSeq": 3,
         "content": {
-          "text": "I found the auth handler."
+          "content": { "type": "text", "text": "I found the auth handler." }
         }
       }
     ]
@@ -363,11 +363,11 @@ text 事件（turn 内，携带 turn 字段）：
     "seq": 42,
     "time": "2026-04-07T10:00:02Z",
     "category": "session",
-    "type": "text",
+    "type": "agent_message",
     "turnId": "turn-001",
     "streamSeq": 3,
     "content": {
-      "text": "Refactoring the auth module..."
+      "content": { "type": "text", "text": "Refactoring the auth module..." }
     }
   }
 }
@@ -466,11 +466,11 @@ text 事件（turn 内，携带 turn 字段）：
     "seq": 40,
     "time": "2026-04-07T10:00:01Z",
     "category": "session",
-    "type": "text",
+    "type": "agent_message",
     "turnId": "turn-001",
     "streamSeq": 2,
     "content": {
-      "text": "I found the auth handler."
+      "content": { "type": "text", "text": "I found the auth handler." }
     }
   }
 }
@@ -482,9 +482,9 @@ text 事件（turn 内，携带 turn 字段）：
 
 | type | payload 字段 | 说明 |
 |------|-------------|------|
-| `text` | `text: string`, `content?: ContentBlock` | agent 输出的文本片段；`content` 携带完整 ACP ContentBlock |
-| `thinking` | `text: string`, `content?: ContentBlock` | agent 思考 / 推理片段；`content` 携带完整 ACP ContentBlock |
-| `user_message` | `text: string`, `content?: ContentBlock` | 用户输入被 runtime 接收的回显 |
+| `agent_message` | `content: ContentBlock` | agent 输出片段；`content` 携带完整 ACP ContentBlock（text/image/audio/resource_link/resource） |
+| `agent_thinking` | `content: ContentBlock` | agent 思考 / 推理片段；`content` 携带完整 ACP ContentBlock |
+| `user_message` | `content: ContentBlock` | 用户输入被 runtime 接收的回显；`content` 携带完整 ACP ContentBlock |
 | `tool_call` | `id`, `kind`, `title`, `status`, `content[]`, `locations[]`, `rawInput`, `rawOutput`, `_meta` | tool 调用开始（完整 ACP 字段） |
 | `tool_result` | `id`, `status`, `kind`, `title`, `content[]`, `locations[]`, `rawInput`, `rawOutput`, `_meta` | tool 调用完成 / 失败（完整 ACP 字段） |
 | `file_write` | `path: string`, `allowed: bool` | 文件写入及权限结果 |

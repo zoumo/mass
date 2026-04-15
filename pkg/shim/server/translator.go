@@ -216,7 +216,10 @@ func (t *Translator) NotifyUserPrompt(text string) {
 			Type:      apishim.EventTypeUserMessage,
 			TurnID:    t.currentTurnId,
 			StreamSeq: t.streamSeq,
-			Content:   apishim.UserMessageEvent{Text: text},
+			Content: apishim.UserMessageEvent{Content: apishim.ContentBlock{
+				Type: apishim.ContentBlockTypeText,
+				Text: &apishim.TextContent{Text: text},
+			}},
 		}
 	})
 }
@@ -370,22 +373,16 @@ func translate(n acp.SessionNotification) apishim.Event {
 	u := n.Update
 	switch {
 	case u.AgentMessageChunk != nil:
-		c := u.AgentMessageChunk
-		return apishim.TextEvent{
-			Text:    safeBlockText(c.Content),
-			Content: convertContentBlock(c.Content),
+		return apishim.AgentMessageEvent{
+			Content: derefContentBlock(convertContentBlock(u.AgentMessageChunk.Content)),
 		}
 	case u.AgentThoughtChunk != nil:
-		c := u.AgentThoughtChunk
-		return apishim.ThinkingEvent{
-			Text:    safeBlockText(c.Content),
-			Content: convertContentBlock(c.Content),
+		return apishim.AgentThinkingEvent{
+			Content: derefContentBlock(convertContentBlock(u.AgentThoughtChunk.Content)),
 		}
 	case u.UserMessageChunk != nil:
-		c := u.UserMessageChunk
 		return apishim.UserMessageEvent{
-			Text:    safeBlockText(c.Content),
-			Content: convertContentBlock(c.Content),
+			Content: derefContentBlock(convertContentBlock(u.UserMessageChunk.Content)),
 		}
 	case u.ToolCall != nil:
 		tc := u.ToolCall
@@ -453,15 +450,13 @@ func translate(n acp.SessionNotification) apishim.Event {
 	}
 }
 
-// ── Helper: text extraction ───────────────────────────────────────────────────
-
-// safeBlockText extracts the text string from a ContentBlock, returning ""
-// if the Text variant is nil.
-func safeBlockText(cb acp.ContentBlock) string {
-	if cb.Text != nil {
-		return cb.Text.Text
+// derefContentBlock safely dereferences a *ContentBlock, returning a zero
+// ContentBlock if the pointer is nil.
+func derefContentBlock(cb *apishim.ContentBlock) apishim.ContentBlock {
+	if cb != nil {
+		return *cb
 	}
-	return ""
+	return apishim.ContentBlock{}
 }
 
 // ── Convert: ContentBlock ─────────────────────────────────────────────────────
@@ -471,43 +466,56 @@ func safeBlockText(cb acp.ContentBlock) string {
 func convertContentBlock(cb acp.ContentBlock) *apishim.ContentBlock {
 	switch {
 	case cb.Text != nil:
-		return &apishim.ContentBlock{Text: &apishim.TextContent{
+		return &apishim.ContentBlock{
+			Type:        apishim.ContentBlockTypeText,
 			Meta:        cb.Text.Meta,
-			Text:        cb.Text.Text,
 			Annotations: convertAnnotations(cb.Text.Annotations),
-		}}
+			Text:        &apishim.TextContent{Text: cb.Text.Text},
+		}
 	case cb.Image != nil:
-		return &apishim.ContentBlock{Image: &apishim.ImageContent{
+		return &apishim.ContentBlock{
+			Type:        apishim.ContentBlockTypeImage,
 			Meta:        cb.Image.Meta,
-			Data:        cb.Image.Data,
-			MimeType:    cb.Image.MimeType,
-			URI:         cb.Image.Uri,
 			Annotations: convertAnnotations(cb.Image.Annotations),
-		}}
+			Image: &apishim.ImageContent{
+				Data:     cb.Image.Data,
+				MimeType: cb.Image.MimeType,
+				URI:      cb.Image.Uri,
+			},
+		}
 	case cb.Audio != nil:
-		return &apishim.ContentBlock{Audio: &apishim.AudioContent{
+		return &apishim.ContentBlock{
+			Type:        apishim.ContentBlockTypeAudio,
 			Meta:        cb.Audio.Meta,
-			Data:        cb.Audio.Data,
-			MimeType:    cb.Audio.MimeType,
 			Annotations: convertAnnotations(cb.Audio.Annotations),
-		}}
+			Audio: &apishim.AudioContent{
+				Data:     cb.Audio.Data,
+				MimeType: cb.Audio.MimeType,
+			},
+		}
 	case cb.ResourceLink != nil:
-		return &apishim.ContentBlock{ResourceLink: &apishim.ResourceLinkContent{
+		return &apishim.ContentBlock{
+			Type:        apishim.ContentBlockTypeResourceLink,
 			Meta:        cb.ResourceLink.Meta,
-			URI:         cb.ResourceLink.Uri,
-			Name:        cb.ResourceLink.Name,
-			Description: cb.ResourceLink.Description,
-			MimeType:    cb.ResourceLink.MimeType,
-			Title:       cb.ResourceLink.Title,
-			Size:        cb.ResourceLink.Size,
 			Annotations: convertAnnotations(cb.ResourceLink.Annotations),
-		}}
+			ResourceLink: &apishim.ResourceLinkContent{
+				URI:         cb.ResourceLink.Uri,
+				Name:        cb.ResourceLink.Name,
+				Description: cb.ResourceLink.Description,
+				MimeType:    cb.ResourceLink.MimeType,
+				Title:       cb.ResourceLink.Title,
+				Size:        cb.ResourceLink.Size,
+			},
+		}
 	case cb.Resource != nil:
-		return &apishim.ContentBlock{Resource: &apishim.ResourceContent{
+		return &apishim.ContentBlock{
+			Type:        apishim.ContentBlockTypeResource,
 			Meta:        cb.Resource.Meta,
-			Resource:    convertEmbeddedResource(cb.Resource.Resource),
 			Annotations: convertAnnotations(cb.Resource.Annotations),
-		}}
+			Resource: &apishim.ResourceContent{
+				Resource: convertEmbeddedResource(cb.Resource.Resource),
+			},
+		}
 	default:
 		return nil
 	}

@@ -11,7 +11,7 @@ import (
 	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
-// Service implements apishim.ShimService.
+// Service implements ShimService.
 type Service struct {
 	mgr     *acpruntime.Manager
 	trans   *Translator

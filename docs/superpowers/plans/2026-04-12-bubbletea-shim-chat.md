@@ -459,14 +459,14 @@ func (m *chatModel) handleNotif(msg rpcResponse) {
 		return
 	}
 	switch p.Event.Type {
-	case "text":
+	case "agent_message":
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 		// Append text to the last "Agent: " line
 		if len(m.lines) > 0 {
 			m.lines[len(m.lines)-1] += styleText.Render(pl.Text)
 		}
-	case "thinking":
+	case "agent_thinking":
 		var pl textPayload
 		_ = json.Unmarshal(p.Event.Payload, &pl)
 		m.lines = append(m.lines, styleThinking.Render("  · "+pl.Text))

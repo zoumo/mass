@@ -35,7 +35,7 @@ type ShimEvent struct {
 	TurnID    string `json:"turnId,omitempty"`
 	StreamSeq int    `json:"streamSeq,omitempty"`
 
-	// Content is the typed event payload (TextEvent, StateChangeEvent, etc.).
+	// Content is the typed event payload (AgentMessageEvent, StateChangeEvent, etc.).
 	Content Event `json:"-"`
 }
 
@@ -165,12 +165,12 @@ func decodeEventPayload(eventType string, payload json.RawMessage) (Event, error
 			return dst, nil
 		}
 		switch v := dst.(type) {
-		case TextEvent:
+		case AgentMessageEvent:
 			if err := json.Unmarshal(payload, &v); err != nil {
 				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
 			}
 			return v, nil
-		case ThinkingEvent:
+		case AgentThinkingEvent:
 			if err := json.Unmarshal(payload, &v); err != nil {
 				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
 			}
@@ -246,10 +246,10 @@ func decodeEventPayload(eventType string, payload json.RawMessage) (Event, error
 	}
 
 	switch eventType {
-	case EventTypeText:
-		return unmarshal(TextEvent{})
-	case EventTypeThinking:
-		return unmarshal(ThinkingEvent{})
+	case EventTypeAgentMessage:
+		return unmarshal(AgentMessageEvent{})
+	case EventTypeAgentThinking:
+		return unmarshal(AgentThinkingEvent{})
 	case EventTypeUserMessage:
 		return unmarshal(UserMessageEvent{})
 	case EventTypeToolCall:

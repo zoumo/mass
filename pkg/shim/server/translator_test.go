@@ -66,11 +66,9 @@ func TestTranslate_AgentMessageChunk(t *testing.T) {
 	assert.Equal(t, "run-1", ev.RunID)
 	assert.Equal(t, 0, ev.Seq)
 	assert.Equal(t, apishim.CategorySession, ev.Category)
-	assert.Equal(t, "text", ev.Type)
-	te, ok := ev.Content.(apishim.TextEvent)
+	assert.Equal(t, apishim.EventTypeAgentMessage, ev.Type)
+	te, ok := ev.Content.(apishim.AgentMessageEvent)
 	require.True(t, ok)
-	assert.Equal(t, "hello", te.Text)
-	require.NotNil(t, te.Content)
 	require.NotNil(t, te.Content.Text)
 	assert.Equal(t, "hello", te.Content.Text.Text)
 }
@@ -89,9 +87,10 @@ func TestTranslate_AgentThoughtChunk(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	te, ok := sessionContent(t, ev).(apishim.ThinkingEvent)
+	te, ok := sessionContent(t, ev).(apishim.AgentThinkingEvent)
 	require.True(t, ok)
-	assert.Equal(t, "thinking", te.Text)
+	require.NotNil(t, te.Content.Text)
+	assert.Equal(t, "thinking", te.Content.Text.Text)
 }
 
 func TestTranslate_ToolCall(t *testing.T) {
@@ -181,7 +180,8 @@ func TestTranslate_UserMessageChunk(t *testing.T) {
 	ev := drainShimEvent(t, ch)
 	ue, ok := sessionContent(t, ev).(apishim.UserMessageEvent)
 	require.True(t, ok)
-	assert.Equal(t, "hello from user", ue.Text)
+	require.NotNil(t, ue.Content.Text)
+	assert.Equal(t, "hello from user", ue.Content.Text.Text)
 }
 
 func TestTranslate_PreviouslyIgnoredVariants(t *testing.T) {
@@ -204,9 +204,10 @@ func TestTranslate_PreviouslyIgnoredVariants(t *testing.T) {
 	ev3 := drainShimEvent(t, ch)
 	assert.IsType(t, apishim.AvailableCommandsEvent{}, sessionContent(t, ev1))
 	assert.IsType(t, apishim.CurrentModeEvent{}, sessionContent(t, ev2))
-	te, ok := sessionContent(t, ev3).(apishim.TextEvent)
+	te, ok := sessionContent(t, ev3).(apishim.AgentMessageEvent)
 	require.True(t, ok)
-	assert.Equal(t, "after", te.Text)
+	require.NotNil(t, te.Content.Text)
+	assert.Equal(t, "after", te.Content.Text.Text)
 }
 
 func TestTranslate_UnknownVariant(t *testing.T) {
@@ -241,10 +242,10 @@ func TestFanOut_ThreeSubscribers(t *testing.T) {
 
 	for _, ch := range []<-chan apishim.ShimEvent{ch1, ch2, ch3} {
 		ev := drainShimEvent(t, ch)
-		te, ok := ev.Content.(apishim.TextEvent)
+		te, ok := ev.Content.(apishim.AgentMessageEvent)
 		require.True(t, ok)
-		assert.Equal(t, "broadcast", te.Text)
-		require.NotNil(t, te.Content)
+		require.NotNil(t, te.Content.Text)
+		assert.Equal(t, "broadcast", te.Content.Text.Text)
 	}
 }
 
@@ -365,8 +366,8 @@ func TestShimEventRoundTrip_NoTurnFields(t *testing.T) {
 		Seq:      0,
 		Time:     time.Now(),
 		Category: apishim.CategorySession,
-		Type:     "text",
-		Content:  apishim.TextEvent{Text: "no turn"},
+		Type:     apishim.EventTypeAgentMessage,
+		Content:  apishim.AgentMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "no turn"}}},
 	}
 	data, err := ev.MarshalJSON()
 	require.NoError(t, err)
@@ -379,9 +380,9 @@ func TestEventTypes(t *testing.T) {
 		ev   apishim.Event
 		want string
 	}{
-		{apishim.TextEvent{Text: "hi"}, "text"},
-		{apishim.ThinkingEvent{Text: "hmm"}, "thinking"},
-		{apishim.UserMessageEvent{Text: "yo"}, "user_message"},
+		{apishim.AgentMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "hi"}}}, "agent_message"},
+		{apishim.AgentThinkingEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "hmm"}}}, "agent_thinking"},
+		{apishim.UserMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: "yo"}}}, "user_message"},
 		{apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"}, "tool_call"},
 		{apishim.ToolResultEvent{ID: "1", Status: "ok"}, "tool_result"},
 		{apishim.PlanEvent{Entries: nil}, "plan"},
@@ -403,7 +404,7 @@ func TestSubscribeFromSeq_BackfillAndLive(t *testing.T) {
 	log1, err := OpenEventLog(logPath)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: at, Category: apishim.CategorySession, Type: "text", Content: apishim.TextEvent{Text: fmt.Sprintf("msg-%d", i)}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: at, Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Content: apishim.AgentMessageEvent{Content: apishim.ContentBlock{Text: &apishim.TextContent{Text: fmt.Sprintf("msg-%d", i)}}}}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -453,10 +454,6 @@ func TestSubscribeFromSeq_EmptyLog(t *testing.T) {
 	tr.NotifyTurnStart()
 	liveEv := drainShimEvent(t, ch)
 	assert.Equal(t, 0, liveEv.Seq)
-}
-
-func TestSafeBlockText_NilText(t *testing.T) {
-	assert.Empty(t, safeBlockText(acp.ContentBlock{}))
 }
 
 // TestTurnAwareShimEvent_TurnIdAssigned verifies that all session events
@@ -814,7 +811,7 @@ func TestEventCounts_PromptTurn(t *testing.T) {
 	counts := tr.EventCounts()
 	assert.Equal(t, 1, counts["turn_start"], "turn_start count")
 	assert.Equal(t, 1, counts["user_message"], "user_message count")
-	assert.Equal(t, 2, counts["text"], "text count")
+	assert.Equal(t, 2, counts["agent_message"], "text count")
 	assert.Equal(t, 1, counts["tool_call"], "tool_call count")
 	assert.Equal(t, 1, counts["turn_end"], "turn_end count")
 	assert.Equal(t, 1, counts["state_change"], "state_change count")
@@ -838,7 +835,7 @@ func TestEventCounts_FailClosedOnAppendFailure(t *testing.T) {
 
 	// Send one successful AgentMessageChunk → count should be 1.
 	sendAndDrainShimEvent(t, in, ch, "ok")
-	assert.Equal(t, 1, tr.EventCounts()["text"], "text count after successful event")
+	assert.Equal(t, 1, tr.EventCounts()["agent_message"], "agent_message count after successful event")
 
 	// Close the event log file to force Append failures.
 	require.NoError(t, evLog.Close())
@@ -859,7 +856,7 @@ func TestEventCounts_FailClosedOnAppendFailure(t *testing.T) {
 	}
 
 	// Count must still be 1 — the failed append must NOT increment.
-	assert.Equal(t, 1, tr.EventCounts()["text"], "text count must not increment on failed append")
+	assert.Equal(t, 1, tr.EventCounts()["agent_message"], "agent_message count must not increment on failed append")
 }
 
 // TestSessionMetadataHook_ConfigOption verifies that sessionMetadataHook is

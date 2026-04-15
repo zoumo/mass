@@ -47,7 +47,7 @@ populated by the shim during runtime:
   as the agent reports notifications (e.g. `agentInfo`, `capabilities`, `availableCommands`,
   `configOptions`, `sessionInfo`, `currentMode`). See Go type `SessionState` for the full
   structure.
-* **`eventCounts`** (map, OPTIONAL) maps event type strings (e.g. `"text"`, `"tool_call"`)
+* **`eventCounts`** (map, OPTIONAL) maps event type strings (e.g. `"agent_message"`, `"tool_call"`)
   to their cumulative counts. This is a derived field — set on every state write, not
   independently settable.
 
@@ -81,7 +81,7 @@ populated by the shim during runtime:
     "agentInfo": { "name": "claude-code", "version": "1.0.0" }
   },
   "eventCounts": {
-    "text": 42,
+    "agent_message": 42,
     "tool_call": 7,
     "turn_start": 3
   }
@@ -386,8 +386,8 @@ Runtime 必须产出结构化的 typed event stream，供上层消费。
 
 | 事件类型 | 来源 | 说明 |
 |---------|------|------|
-| `ThinkingEvent` | ACP `thought_message_chunk` | Agent 的推理/思考过程 |
-| `TextEvent` | ACP `agent_message_chunk` | Agent 的回复文本片段 |
+| `AgentThinkingEvent` | ACP `thought_message_chunk` | Agent 的推理/思考过程 |
+| `AgentMessageEvent` | ACP `agent_message_chunk` | Agent 的回复文本片段 |
 | `ToolCallEvent` | ACP `tool_call` | 工具调用开始 |
 | `ToolResultEvent` | ACP `tool_call_update` | 工具调用完成/失败 |
 | `FileWriteEvent` | ACP `fs/write_text_file` (runtime 处理后) | 文件写入操作及结果 |
