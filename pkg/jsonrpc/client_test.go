@@ -476,3 +476,74 @@ func (h *captureRequestHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn,
 	}
 	h.ch <- reqCapture{conn: conn, req: req}
 }
+
+func TestClient_WithNotificationChannel(t *testing.T) {
+	srv := newRawServer()
+	ch := make(chan jsonrpc.NotificationMsg, 4)
+	_, connCh := wireRawServerCaptureConn(t, srv, jsonrpc.WithNotificationChannel(ch))
+	serverConn := <-connCh
+
+	_ = serverConn.Notify(context.Background(), "events/a", map[string]int{"x": 1})
+	_ = serverConn.Notify(context.Background(), "events/b", map[string]int{"x": 2})
+
+	got := collectN(t, ch, 2, 5*time.Second)
+	assert.Equal(t, "events/a", got[0].Method)
+	assert.Equal(t, "events/b", got[1].Method)
+
+	var p struct{ X int }
+	require.NoError(t, json.Unmarshal(got[0].Params, &p))
+	assert.Equal(t, 1, p.X)
+}
+
+func TestClient_WithNotificationChannelOrder(t *testing.T) {
+	srv := newRawServer()
+	const n = 50
+	ch := make(chan jsonrpc.NotificationMsg, n+4)
+	_, connCh := wireRawServerCaptureConn(t, srv, jsonrpc.WithNotificationChannel(ch))
+	serverConn := <-connCh
+
+	for i := range n {
+		_ = serverConn.Notify(context.Background(), "seq/tick", map[string]int{"Seq": i})
+	}
+
+	got := collectN(t, ch, n, 5*time.Second)
+	for i, msg := range got {
+		var p struct{ Seq int }
+		require.NoError(t, json.Unmarshal(msg.Params, &p))
+		assert.Equal(t, i, p.Seq, "notification %d out of order", i)
+	}
+}
+
+func TestClient_WithNotificationChannelAndHandlerPanics(t *testing.T) {
+	assert.Panics(t, func() {
+		srvConn, cliConn := net.Pipe()
+		defer srvConn.Close()
+		defer cliConn.Close()
+		jsonrpc.NewClient(cliConn,
+			jsonrpc.WithNotificationHandler(func(context.Context, string, json.RawMessage) {}),
+			jsonrpc.WithNotificationChannel(make(chan jsonrpc.NotificationMsg, 1)),
+		)
+	})
+}
+
+func TestClient_CallAsync(t *testing.T) {
+	srv := newRawServer()
+	srv.on("svc/long", func(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+		// Simulate a long-running method.
+		time.Sleep(100 * time.Millisecond)
+		_ = conn.Reply(ctx, req.ID, "done")
+	})
+
+	client := wireRawServer(t, srv)
+
+	// CallAsync should return immediately.
+	start := time.Now()
+	err := client.CallAsync(context.Background(), "svc/long", nil)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.Less(t, elapsed, 50*time.Millisecond, "CallAsync should return immediately")
+
+	// Wait for the background call to complete.
+	time.Sleep(200 * time.Millisecond)
+}

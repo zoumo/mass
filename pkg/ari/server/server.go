@@ -35,7 +35,6 @@ import (
 // Use Register to wire it with a jsonrpc.Server.
 type Service struct {
 	manager   *workspace.WorkspaceManager
-	registry  *Registry
 	agents    *agentd.AgentRunManager
 	processes *agentd.ProcessManager
 	store     *store.Store
@@ -47,7 +46,6 @@ type Service struct {
 // Call Register to attach it to a jsonrpc.Server.
 func New(
 	manager *workspace.WorkspaceManager,
-	registry *Registry,
 	agents *agentd.AgentRunManager,
 	processes *agentd.ProcessManager,
 	s *store.Store,
@@ -56,7 +54,6 @@ func New(
 ) *Service {
 	return &Service{
 		manager:   manager,
-		registry:  registry,
 		agents:    agents,
 		processes: processes,
 		store:     s,
@@ -158,30 +155,14 @@ func (a *workspaceAdapter) Create(ctx context.Context, req *pkgariapi.WorkspaceC
 			Phase: pkgariapi.WorkspacePhaseReady,
 			Path:  path,
 		})
-		a.registry.Add(wsName, wsName, path, wsSpec)
 	}()
 
 	return result, nil
 }
 
 // Status handles workspace/status.
-//
-// Fast path: in-memory registry for ready workspaces. Fallback: DB for
-// workspaces still in pending/error phase.
 func (a *workspaceAdapter) Status(ctx context.Context, req *pkgariapi.WorkspaceStatusParams) (*pkgariapi.WorkspaceStatusResult, error) {
 	a.logger.Info("workspace/status", "workspace", req.Name)
-
-	if wm := a.registry.Get(req.Name); wm != nil {
-		members := a.listWorkspaceMembers(ctx, req.Name)
-		wsObj := pkgariapi.Workspace{
-			Metadata: pkgariapi.ObjectMeta{Name: wm.Name},
-			Status:   pkgariapi.WorkspaceStatus{Phase: pkgariapi.WorkspacePhase(wm.Status), Path: wm.Path},
-		}
-		return &pkgariapi.WorkspaceStatusResult{
-			Workspace: wsObj.ARIView(),
-			Members:   members,
-		}, nil
-	}
 
 	ws, err := a.store.GetWorkspace(ctx, req.Name)
 	if err != nil {
@@ -200,17 +181,17 @@ func (a *workspaceAdapter) Status(ctx context.Context, req *pkgariapi.WorkspaceS
 
 // List handles workspace/list.
 //
-// Returns all workspaces in the in-memory registry (ready workspaces only).
+// Returns all workspaces from the DB (all phases).
 func (a *workspaceAdapter) List(ctx context.Context) (*pkgariapi.WorkspaceListResult, error) {
 	a.logger.Info("workspace/list")
 
-	metas := a.registry.List()
-	workspaces := make([]pkgariapi.Workspace, 0, len(metas))
-	for _, m := range metas {
-		workspaces = append(workspaces, pkgariapi.Workspace{
-			Metadata: pkgariapi.ObjectMeta{Name: m.Name},
-			Status:   pkgariapi.WorkspaceStatus{Phase: pkgariapi.WorkspacePhase(m.Status), Path: m.Path},
-		})
+	all, err := a.store.ListWorkspaces(ctx, nil)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	workspaces := make([]pkgariapi.Workspace, 0, len(all))
+	for _, ws := range all {
+		workspaces = append(workspaces, ws.ARIView())
 	}
 	return &pkgariapi.WorkspaceListResult{Workspaces: workspaces}, nil
 }
@@ -227,7 +208,6 @@ func (a *workspaceAdapter) Delete(ctx context.Context, req *pkgariapi.WorkspaceD
 		}
 		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
 	}
-	a.registry.Remove(req.Name)
 	return nil
 }
 

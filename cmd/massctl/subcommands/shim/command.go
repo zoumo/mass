@@ -5,188 +5,50 @@ package shim
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net"
 	"os"
 	"runtime/debug"
-	"sync"
 
 	"github.com/spf13/cobra"
 
+	"github.com/zoumo/mass/pkg/jsonrpc"
 	shimapi "github.com/zoumo/mass/pkg/shim/api"
-	"github.com/zoumo/mass/pkg/ndjson"
 )
 
-// ── JSON-RPC wire types ────────────────────────────────────────────────────
-
-type rpcRequest struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      *int   `json:"id,omitempty"`
-	Method  string `json:"method"`
-	Params  any    `json:"params,omitempty"`
-}
-
-type rpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      *int            `json:"id,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// ── Client ────────────────────────────────────────────────────────────────
-
-type client struct {
-	conn net.Conn
-	dec  *ndjson.Reader
-	enc  *json.Encoder
-	mu   sync.Mutex
-
-	nextID    int
-	pending   map[int]chan rpcResponse
-	pendingMu sync.Mutex
-
-	notifs chan rpcResponse
-}
-
-func dial(socketPath string) (*client, error) {
-	conn, err := net.Dial("unix", socketPath)
+// dialShim connects to a shim Unix socket and returns a typed ShimClient.
+func dialShim(ctx context.Context, socketPath string, opts ...jsonrpc.ClientOption) (*shimapi.ShimClient, error) {
+	c, err := jsonrpc.Dial(ctx, "unix", socketPath, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", socketPath, err)
 	}
-	c := &client{
-		conn:    conn,
-		dec:     ndjson.NewReader(conn),
-		enc:     json.NewEncoder(conn),
-		pending: make(map[int]chan rpcResponse),
-		notifs:  make(chan rpcResponse, 1024),
-	}
-	go c.readLoop()
-	return c, nil
+	return shimapi.NewShimClient(c), nil
 }
-
-func (c *client) readLoop() {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "\n[readLoop] PANIC: %v\n%s\n", r, debug.Stack())
-		}
-		close(c.notifs)
-	}()
-	for {
-		var msg rpcResponse
-		err := c.dec.Decode(&msg)
-		if errors.Is(err, ndjson.ErrInvalidJSON) {
-			fmt.Fprintf(os.Stderr, "\n[readLoop] skipping non-JSON line: %v\n", err)
-			continue
-		}
-		if err != nil {
-			if err != io.EOF {
-				fmt.Fprintf(os.Stderr, "\n[readLoop] read error: %v\n", err)
-			} else {
-				fmt.Fprintf(os.Stderr, "\n[readLoop] EOF — server closed connection\n")
-			}
-			break
-		}
-		if msg.ID == nil && msg.Method != "" {
-			if len(c.notifs) == cap(c.notifs) {
-				fmt.Fprintf(os.Stderr, "\n[readLoop] notifs channel full (%d), dropping message: %s\n", cap(c.notifs), msg.Method)
-			}
-			c.notifs <- msg
-		} else if msg.ID != nil {
-			c.pendingMu.Lock()
-			ch, ok := c.pending[*msg.ID]
-			c.pendingMu.Unlock()
-			if ok {
-				ch <- msg
-			}
-		}
-	}
-}
-
-func (c *client) call(method string, params any) (json.RawMessage, error) {
-	c.mu.Lock()
-	id := c.nextID
-	c.nextID++
-	c.mu.Unlock()
-
-	ch := make(chan rpcResponse, 1)
-	c.pendingMu.Lock()
-	c.pending[id] = ch
-	c.pendingMu.Unlock()
-	defer func() {
-		c.pendingMu.Lock()
-		delete(c.pending, id)
-		c.pendingMu.Unlock()
-	}()
-
-	req := rpcRequest{JSONRPC: "2.0", ID: &id, Method: method, Params: params}
-	c.mu.Lock()
-	err := c.enc.Encode(req)
-	c.mu.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("send: %w", err)
-	}
-	resp := <-ch
-	if resp.Error != nil {
-		return nil, fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
-	}
-	return resp.Result, nil
-}
-
-// send sends a request without waiting for a response. Safe for concurrent use.
-func (c *client) send(method string, params any) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	id := c.nextID
-	c.nextID++
-	req := rpcRequest{JSONRPC: "2.0", ID: &id, Method: method, Params: params}
-	return c.enc.Encode(req)
-}
-
-func (c *client) close() { _ = c.conn.Close() }
 
 // ── Notification printing ──────────────────────────────────────────────────
 
-func printNotification(msg rpcResponse) {
-	switch msg.Method {
-	case shimapi.MethodShimEvent:
-		var ev shimapi.ShimEvent
-		if err := json.Unmarshal(msg.Params, &ev); err != nil {
-			fmt.Fprintf(os.Stderr, "[shim/event parse error: %v]\n", err)
-			return
-		}
-		if sc, ok := ev.Content.(shimapi.StateChangeEvent); ok {
-			fmt.Fprintf(os.Stderr, "\033[2m[stateChange seq=%d] %s → %s pid=%d reason=%q\033[0m\n",
-				ev.Seq, sc.PreviousStatus, sc.Status, sc.PID, sc.Reason)
-			return
-		}
-		printShimEvent(ev)
-
-	default:
-		fmt.Fprintf(os.Stderr, "[unknown notification: %s] %s\n", msg.Method, string(msg.Params))
-	}
-}
-
-func isTurnEndNotification(msg rpcResponse) bool {
+// parseNotification parses a jsonrpc.NotificationMsg into a ShimEvent.
+// Returns nil if the notification is not a shim event or cannot be parsed.
+func parseNotification(msg jsonrpc.NotificationMsg) *shimapi.ShimEvent {
 	if msg.Method != shimapi.MethodShimEvent {
-		return false
+		return nil
 	}
 	var ev shimapi.ShimEvent
 	if err := json.Unmarshal(msg.Params, &ev); err != nil {
-		return false
+		return nil
 	}
-	return ev.Type == shimapi.EventTypeTurnEnd
+	return &ev
 }
 
-func startNotificationPrinter(ctx context.Context, c *client) <-chan struct{} {
+func printNotification(ev shimapi.ShimEvent) {
+	if sc, ok := ev.Content.(shimapi.StateChangeEvent); ok {
+		fmt.Fprintf(os.Stderr, "\033[2m[stateChange seq=%d] %s → %s pid=%d reason=%q\033[0m\n",
+			ev.Seq, sc.PreviousStatus, sc.Status, sc.PID, sc.Reason)
+		return
+	}
+	printShimEvent(ev)
+}
+
+func startNotificationPrinter(ctx context.Context, notifs <-chan jsonrpc.NotificationMsg) <-chan struct{} {
 	turnEnd := make(chan struct{}, 16)
 	go func() {
 		defer func() {
@@ -198,12 +60,16 @@ func startNotificationPrinter(ctx context.Context, c *client) <-chan struct{} {
 			select {
 			case <-ctx.Done():
 				return
-			case msg, ok := <-c.notifs:
+			case msg, ok := <-notifs:
 				if !ok {
 					return
 				}
-				printNotification(msg)
-				if isTurnEndNotification(msg) {
+				ev := parseNotification(msg)
+				if ev == nil {
+					continue
+				}
+				printNotification(*ev)
+				if ev.Type == shimapi.EventTypeTurnEnd {
 					turnEnd <- struct{}{}
 				}
 			}
@@ -245,33 +111,32 @@ func printShimEvent(ev shimapi.ShimEvent) {
 // ── Prompt / chat helpers ──────────────────────────────────────────────────
 
 func runPrompt(sock, text string) error {
-	c, err := dial(sock)
+	notifs := make(chan jsonrpc.NotificationMsg, 1024)
+	ctx := context.Background()
+
+	sc, err := dialShim(ctx, sock, jsonrpc.WithNotificationChannel(notifs))
 	if err != nil {
 		return err
 	}
-	defer c.close()
+	defer sc.Close()
 
-	if _, err := c.call(shimapi.MethodSessionSubscribe, nil); err != nil {
+	if _, err := sc.Subscribe(ctx, nil); err != nil {
 		return fmt.Errorf("session/subscribe: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	turnEnd := startNotificationPrinter(ctx, c)
+	turnEnd := startNotificationPrinter(ctx, notifs)
 	drainTurnEnd(turnEnd)
 
-	result, err := c.call(shimapi.MethodSessionPrompt, map[string]string{"prompt": text})
+	result, err := sc.Prompt(ctx, &shimapi.SessionPromptParams{Prompt: text})
 	if err != nil {
 		return fmt.Errorf("session/prompt: %w", err)
 	}
 	<-turnEnd
 
-	var pr struct {
-		StopReason string `json:"stopReason"`
-	}
-	_ = json.Unmarshal(result, &pr)
-	if pr.StopReason != "" {
-		fmt.Fprintf(os.Stderr, "\n[stop: %s]\n", pr.StopReason)
+	if result.StopReason != "" {
+		fmt.Fprintf(os.Stderr, "\n[stop: %s]\n", result.StopReason)
 	}
 	return nil
 }
@@ -298,20 +163,18 @@ func NewCommand() *cobra.Command {
 		Short: "Print agent state and recovery metadata (runtime/status)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, err := dial(socket)
+			sc, err := dialShim(cmd.Context(), socket)
 			if err != nil {
 				return err
 			}
-			defer c.close()
-			result, err := c.call(shimapi.MethodRuntimeStatus, nil)
+			defer sc.Close()
+			result, err := sc.Status(cmd.Context())
 			if err != nil {
 				return err
 			}
-			var pretty any
-			_ = json.Unmarshal(result, &pretty)
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			return enc.Encode(pretty)
+			return enc.Encode(result)
 		},
 	})
 
@@ -321,24 +184,22 @@ func NewCommand() *cobra.Command {
 		Short: "Print replayable event history (runtime/history)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, err := dial(socket)
+			sc, err := dialShim(cmd.Context(), socket)
 			if err != nil {
 				return err
 			}
-			defer c.close()
-			params := map[string]any{}
+			defer sc.Close()
+			params := &shimapi.RuntimeHistoryParams{}
 			if cmd.Flags().Changed("from-seq") {
-				params["fromSeq"] = fromSeq
+				params.FromSeq = &fromSeq
 			}
-			result, err := c.call(shimapi.MethodRuntimeHistory, params)
+			result, err := sc.History(cmd.Context(), params)
 			if err != nil {
 				return err
 			}
-			var pretty any
-			_ = json.Unmarshal(result, &pretty)
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			return enc.Encode(pretty)
+			return enc.Encode(result)
 		},
 	}
 	historyCmd.Flags().IntVar(&fromSeq, "from-seq", 0, "Return history from this sequence number")
@@ -373,12 +234,12 @@ func NewCommand() *cobra.Command {
 		Short: "Gracefully shut down the agent (runtime/stop)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			c, err := dial(socket)
+			sc, err := dialShim(cmd.Context(), socket)
 			if err != nil {
 				return err
 			}
-			defer c.close()
-			_, err = c.call(shimapi.MethodRuntimeStop, nil)
+			defer sc.Close()
+			err = sc.Stop(cmd.Context())
 			if err == nil {
 				fmt.Println("stop sent")
 			}

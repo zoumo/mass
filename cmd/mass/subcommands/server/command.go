@@ -94,10 +94,6 @@ func run(rootPath, logLevel, logFormat string) error {
 	manager := workspace.NewWorkspaceManager()
 	logger.Info("workspace manager initialized")
 
-	// Create Registry.
-	registry := ariserver.NewRegistry()
-	logger.Info("registry initialized")
-
 	// Create AgentRunManager.
 	agents := agentd.NewAgentRunManager(metaStore, logger)
 	logger.Info("agent run manager initialized")
@@ -120,20 +116,13 @@ func run(rootPath, logLevel, logFormat string) error {
 		recoverCancel()
 	}
 
-	// Rebuild registry from DB after recovery.
-	if err := registry.RebuildFromDB(metaStore); err != nil {
-		logger.Warn("registry rebuild failed (non-fatal)", "error", err)
-	} else {
-		logger.Info("registry rebuilt from database")
-	}
-
 	// Initialize workspace manager refcounts from DB.
 	if err := manager.InitRefCounts(metaStore); err != nil {
 		logger.Warn("workspace refcount init failed (non-fatal)", "error", err)
 	}
 
 	// Create ARI service and wire it to a new jsonrpc.Server.
-	svc := ariserver.New(manager, registry, agents, processes, metaStore, opts.WorkspaceRoot(), logger)
+	svc := ariserver.New(manager, agents, processes, metaStore, opts.WorkspaceRoot(), logger)
 	srv := jsonrpc.NewServer(logger)
 	ariserver.Register(srv, svc)
 	logger.Info("ARI server created")

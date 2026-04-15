@@ -1,6 +1,7 @@
 package shim
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/zoumo/mass/pkg/jsonrpc"
 	shimapi "github.com/zoumo/mass/pkg/shim/api"
 	"github.com/zoumo/mass/pkg/tui/chat"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/anim"
@@ -24,9 +26,9 @@ type (
 	notifMsg      struct{ ev shimapi.ShimEvent }
 	turnEndMsg    struct{}
 	connClosedMsg struct{}
-	connReadyMsg  struct {
-		c      *client
-		notifs <-chan rpcResponse
+	connReadyMsg struct {
+		sc     *shimapi.ShimClient
+		notifs <-chan jsonrpc.NotificationMsg
 	}
 )
 
@@ -77,8 +79,8 @@ type chatModel struct {
 	sty     styles.Styles
 
 	sock   string
-	client *client
-	notifs <-chan rpcResponse
+	client *shimapi.ShimClient
+	notifs <-chan jsonrpc.NotificationMsg
 
 	// Streaming state.
 	currentMsg   *shimMessage // mutable message being streamed
@@ -140,19 +142,21 @@ func (m chatModel) Init() tea.Cmd {
 
 func connectCmd(sock string) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		c, err := dial(sock)
+		notifs := make(chan jsonrpc.NotificationMsg, 1024)
+		ctx := context.Background()
+		sc, err := dialShim(ctx, sock, jsonrpc.WithNotificationChannel(notifs))
 		if err != nil {
 			return connErrMsg{fmt.Errorf("connect: %w", err)}
 		}
-		if _, err := c.call(shimapi.MethodSessionSubscribe, nil); err != nil {
-			c.close()
+		if _, err := sc.Subscribe(ctx, nil); err != nil {
+			sc.Close()
 			return connErrMsg{fmt.Errorf("session/subscribe: %w", err)}
 		}
-		return connReadyMsg{c: c, notifs: c.notifs}
+		return connReadyMsg{sc: sc, notifs: notifs}
 	})
 }
 
-func waitNotif(ch <-chan rpcResponse) tea.Cmd {
+func waitNotif(ch <-chan jsonrpc.NotificationMsg) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		msg, ok := <-ch
 		if !ok {
@@ -186,35 +190,38 @@ func waitNotif(ch <-chan rpcResponse) tea.Cmd {
 	})
 }
 
-func sendPromptCmd(c *client, text string) tea.Cmd {
+// watchDisconnect returns a tea.Cmd that blocks until the shim connection
+// drops, then emits connClosedMsg.
+func watchDisconnect(sc *shimapi.ShimClient) tea.Cmd {
+	return func() tea.Msg {
+		<-sc.DisconnectNotify()
+		return connClosedMsg{}
+	}
+}
+
+func sendPromptCmd(sc *shimapi.ShimClient, text string) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		if err := c.send(shimapi.MethodSessionPrompt, map[string]string{"prompt": text}); err != nil {
+		if err := sc.SendPrompt(context.Background(), &shimapi.SessionPromptParams{Prompt: text}); err != nil {
 			return promptErrMsg{err}
 		}
 		return nil
 	})
 }
 
-func cancelPromptCmd(c *client) tea.Cmd {
+func cancelPromptCmd(sc *shimapi.ShimClient) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		_, _ = c.call(shimapi.MethodSessionCancel, nil)
+		_ = sc.Cancel(context.Background())
 		return nil
 	})
 }
 
-func fetchStatusCmd(c *client) tea.Cmd {
+func fetchStatusCmd(sc *shimapi.ShimClient) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		result, err := c.call(shimapi.MethodRuntimeStatus, nil)
+		result, err := sc.Status(context.Background())
 		if err != nil {
 			return nil
 		}
-		var status struct {
-			Status string `json:"status"`
-		}
-		if err := json.Unmarshal(result, &status); err != nil {
-			return nil
-		}
-		return stateChangeMsg{status: status.Status}
+		return stateChangeMsg{status: string(result.State.Status)}
 	})
 }
 
@@ -242,10 +249,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case connReadyMsg:
-		m.client = msg.c
+		m.client = msg.sc
 		m.notifs = msg.notifs
 		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "connected — tab focus · shift+click select text · ctrl+c quit", styleDim))
-		cmds = append(cmds, waitNotif(m.notifs), fetchStatusCmd(m.client))
+		cmds = append(cmds, waitNotif(m.notifs), fetchStatusCmd(m.client), watchDisconnect(m.client))
 
 	case panicMsg:
 		m.chat.AppendMessages(chat.NewSystemItem(m.nextID("sys"), "fatal: "+msg.err.Error(), styleErr))
@@ -351,7 +358,7 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 	switch {
 	case key.Mod&tea.ModCtrl != 0 && key.Code == 'c':
 		if m.client != nil {
-			m.client.close()
+			m.client.Close()
 		}
 		cmds = append(cmds, tea.Quit)
 		return cmds

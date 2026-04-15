@@ -11,13 +11,30 @@ import (
 // NotificationHandler handles inbound server-side notifications.
 type NotificationHandler func(ctx context.Context, method string, params json.RawMessage)
 
+// NotificationMsg is a channel-friendly notification envelope.
+type NotificationMsg struct {
+	Method string
+	Params json.RawMessage
+}
+
 // ClientOption configures a Client.
 type ClientOption func(*Client)
 
 // WithNotificationHandler registers a handler for inbound notifications.
+// Mutually exclusive with WithNotificationChannel.
 func WithNotificationHandler(h NotificationHandler) ClientOption {
 	return func(c *Client) {
 		c.notifHandler = h
+	}
+}
+
+// WithNotificationChannel registers a channel for inbound notifications.
+// The notification worker goroutine writes to this channel; if the channel
+// is full, the write blocks (backpressure).
+// Mutually exclusive with WithNotificationHandler.
+func WithNotificationChannel(ch chan<- NotificationMsg) ClientOption {
+	return func(c *Client) {
+		c.notifChanOut = ch
 	}
 }
 
@@ -37,11 +54,13 @@ type notificationMsg struct {
 type Client struct {
 	conn         *jsonrpc2.Conn
 	notifHandler NotificationHandler
+	notifChanOut chan<- NotificationMsg // caller-provided channel (WithNotificationChannel)
 	notifCh      chan notificationMsg
 	workerDone   chan struct{}
 }
 
 // NewClient wraps an existing net.Conn and returns a Client.
+// Panics if both WithNotificationHandler and WithNotificationChannel are set.
 func NewClient(nc net.Conn, opts ...ClientOption) *Client {
 	c := &Client{
 		notifCh:    make(chan notificationMsg, 256),
@@ -49,6 +68,9 @@ func NewClient(nc net.Conn, opts ...ClientOption) *Client {
 	}
 	for _, opt := range opts {
 		opt(c)
+	}
+	if c.notifHandler != nil && c.notifChanOut != nil {
+		panic("jsonrpc: WithNotificationHandler and WithNotificationChannel are mutually exclusive")
 	}
 
 	ctx := context.Background()
@@ -80,6 +102,15 @@ func (c *Client) Notify(ctx context.Context, method string, params any) error {
 	return c.conn.Notify(ctx, method, params)
 }
 
+// CallAsync sends a JSON-RPC request with an ID but does not wait for
+// the response. The response is silently discarded when it arrives.
+// Use this for long-running RPC methods where the caller monitors
+// progress through notifications instead of waiting for the response.
+func (c *Client) CallAsync(ctx context.Context, method string, params any) error {
+	go func() { _ = c.conn.Call(ctx, method, params, nil) }()
+	return nil
+}
+
 // Close closes the underlying connection and drains the notification worker.
 func (c *Client) Close() error {
 	err := c.conn.Close()
@@ -98,11 +129,18 @@ func (c *Client) DisconnectNotify() <-chan struct{} {
 	return c.conn.DisconnectNotify()
 }
 
-// notifWorker drains notifCh and calls the user NotificationHandler serially (FIFO).
+// notifWorker drains notifCh and delivers notifications via either
+// the registered handler callback or the caller-provided channel (FIFO).
 func (c *Client) notifWorker() {
 	defer close(c.workerDone)
 	for msg := range c.notifCh {
-		if c.notifHandler != nil {
+		switch {
+		case c.notifChanOut != nil:
+			c.notifChanOut <- NotificationMsg{
+				Method: msg.method,
+				Params: msg.params,
+			}
+		case c.notifHandler != nil:
 			c.notifHandler(msg.ctx, msg.method, msg.params)
 		}
 	}

@@ -10,7 +10,7 @@ import (
 	"sync"
 
 	apishim "github.com/zoumo/mass/pkg/shim/api"
-	"github.com/zoumo/mass/pkg/ndjson"
+	"github.com/zoumo/mass/pkg/jsonrpc/ndjson"
 )
 
 // EventLog appends replayable ShimEvent records to a JSONL file.

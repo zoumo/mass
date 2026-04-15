@@ -41,6 +41,14 @@ func (c *ShimClient) Prompt(ctx context.Context, req *SessionPromptParams) (*Ses
 	return &result, nil
 }
 
+// SendPrompt sends a session/prompt request without waiting for the response.
+// The caller should monitor the notification stream for turn progress and
+// turn_end events. Use this for interactive/TUI scenarios where blocking
+// until turn completion is not desired.
+func (c *ShimClient) SendPrompt(ctx context.Context, req *SessionPromptParams) error {
+	return c.c.CallAsync(ctx, MethodSessionPrompt, req)
+}
+
 func (c *ShimClient) Cancel(ctx context.Context) error {
 	return c.c.Call(ctx, MethodSessionCancel, nil, nil)
 }

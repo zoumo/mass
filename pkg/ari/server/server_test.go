@@ -64,7 +64,6 @@ func newTestServer(t *testing.T) *testEnv {
 	t.Cleanup(func() { _ = store.Close() })
 
 	mgr := workspace.NewWorkspaceManager()
-	registry := ariserver.NewRegistry()
 
 	agents := agentd.NewAgentRunManager(store, slog.Default())
 	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "mass.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
@@ -72,7 +71,7 @@ func newTestServer(t *testing.T) *testEnv {
 	sockPath := shortSockPath(t)
 	t.Cleanup(func() { _ = os.Remove(sockPath) })
 
-	svc := ariserver.New(mgr, registry, agents, processes, store, tmpDir, slog.Default())
+	svc := ariserver.New(mgr, agents, processes, store, tmpDir, slog.Default())
 	srv := jsonrpc.NewServer(slog.Default())
 	ariserver.Register(srv, svc)
 
