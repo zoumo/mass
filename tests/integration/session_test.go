@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	ariclient "github.com/zoumo/oar/pkg/ari/client"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
 // testSocketCounter provides unique socket paths for each test.
@@ -23,30 +23,30 @@ var testSocketCounter int64
 // Shared Helpers
 // =============================================================================
 
-// setupAgentdTest starts agentd daemon and returns context, client, and cleanup function.
-// It uses --root flag path derivation (no config.yaml) and self-fork shim (no OAR_SHIM_BINARY).
+// setupMassTest starts mass daemon and returns context, client, and cleanup function.
+// It uses --root flag path derivation (no config.yaml) and self-fork shim (no MASS_SHIM_BINARY).
 // After the socket is ready it registers the "mockagent" runtime via runtime/set.
-func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *ariclient.Client, func()) {
+func setupMassTest(t *testing.T) (context.Context, context.CancelFunc, *ariclient.Client, func()) {
 	t.Helper()
 	// Use a short root path under /tmp to avoid macOS 104-char Unix socket path limit (K025).
-	// Socket lands at rootDir/agentd.sock which is within the limit.
+	// Socket lands at rootDir/mass.sock which is within the limit.
 	counter := atomic.AddInt64(&testSocketCounter, 1)
-	rootDir := fmt.Sprintf("/tmp/oar-%d-%d", os.Getpid(), counter)
-	socketPath := filepath.Join(rootDir, "agentd.sock")
+	rootDir := fmt.Sprintf("/tmp/mass-%d-%d", os.Getpid(), counter)
+	socketPath := filepath.Join(rootDir, "mass.sock")
 
 	// Remove any leftover socket from a prior run.
 	os.Remove(socketPath)
 
-	agentdBin, err := filepath.Abs("../../bin/agentd")
+	massBin, err := filepath.Abs("../../bin/mass")
 	if err != nil {
-		t.Fatalf("failed to get agentd path: %v", err)
+		t.Fatalf("failed to get mass path: %v", err)
 	}
 	mockagentBin, err := filepath.Abs("../../bin/mockagent")
 	if err != nil {
 		t.Fatalf("failed to get mockagent path: %v", err)
 	}
 
-	for _, bin := range []string{agentdBin, mockagentBin} {
+	for _, bin := range []string{massBin, mockagentBin} {
 		if _, err := os.Stat(bin); os.IsNotExist(err) {
 			t.Fatalf("binary not found: %s (run: make build)", bin)
 		}
@@ -54,15 +54,15 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *aricli
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 
-	agentdCmd := exec.CommandContext(ctx, agentdBin, "server", "--root", rootDir)
-	agentdCmd.Stdout = os.Stdout
-	agentdCmd.Stderr = os.Stderr
+	massCmd := exec.CommandContext(ctx, massBin, "server", "--root", rootDir)
+	massCmd.Stdout = os.Stdout
+	massCmd.Stderr = os.Stderr
 
-	if err := agentdCmd.Start(); err != nil {
+	if err := massCmd.Start(); err != nil {
 		cancel()
-		t.Fatalf("failed to start agentd: %v", err)
+		t.Fatalf("failed to start mass: %v", err)
 	}
-	t.Logf("agentd started with PID %d (root=%s)", agentdCmd.Process.Pid, rootDir)
+	t.Logf("mass started with PID %d (root=%s)", massCmd.Process.Pid, rootDir)
 
 	if err := waitForSocket(socketPath, 10*time.Second); err != nil {
 		cancel()
@@ -89,17 +89,17 @@ func setupAgentdTest(t *testing.T) (context.Context, context.CancelFunc, *aricli
 
 	cleanup := func() {
 		client.Close()
-		if agentdCmd.Process != nil {
-			_ = agentdCmd.Process.Signal(os.Interrupt)
+		if massCmd.Process != nil {
+			_ = massCmd.Process.Signal(os.Interrupt)
 			done := make(chan error, 1)
-			go func() { done <- agentdCmd.Wait() }()
+			go func() { done <- massCmd.Wait() }()
 			select {
 			case <-done:
 			case <-time.After(5 * time.Second):
-				_ = agentdCmd.Process.Kill()
+				_ = massCmd.Process.Kill()
 				<-done
 			}
-			t.Log("agentd stopped")
+			t.Log("mass stopped")
 		}
 		exec.Command("pkill", "-f", rootDir).Run()
 		os.Remove(socketPath)
@@ -262,7 +262,7 @@ func TestAgentLifecycle(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupAgentdTest(t)
+	_, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
@@ -337,7 +337,7 @@ func TestAgentPromptAndStop(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupAgentdTest(t)
+	_, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
@@ -389,7 +389,7 @@ func TestAgentPromptFromIdle(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupAgentdTest(t)
+	_, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
@@ -432,7 +432,7 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupAgentdTest(t)
+	_, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 

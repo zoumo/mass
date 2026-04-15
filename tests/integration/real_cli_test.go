@@ -13,15 +13,15 @@ import (
 	"testing"
 	"time"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	ariclient "github.com/zoumo/oar/pkg/ari/client"
-	apiruntime "github.com/zoumo/oar/pkg/runtime-spec/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
-// setupAgentdTestWithRuntimeClass creates a temporary agentd instance and registers
+// setupMassTestWithRuntimeClass creates a temporary mass instance and registers
 // a custom runtime via runtime/set. Uses --root flag (no config.yaml) and self-fork
-// shim (no OAR_SHIM_BINARY).
-func setupAgentdTestWithRuntimeClass(
+// shim (no MASS_SHIM_BINARY).
+func setupMassTestWithRuntimeClass(
 	t *testing.T,
 	runtimeClassName string,
 	templateSpec pkgariapi.AgentSetParams,
@@ -30,42 +30,42 @@ func setupAgentdTestWithRuntimeClass(
 
 	// Use a short root path under /tmp to avoid macOS 104-char Unix socket path limit (K025).
 	counter := atomic.AddInt64(&testSocketCounter, 1)
-	rootDir := fmt.Sprintf("/tmp/oar-%d-%d", os.Getpid(), counter)
-	socketPath := filepath.Join(rootDir, "agentd.sock")
+	rootDir := fmt.Sprintf("/tmp/mass-%d-%d", os.Getpid(), counter)
+	socketPath := filepath.Join(rootDir, "mass.sock")
 
 	os.Remove(socketPath)
 
-	agentdBin, err := filepath.Abs("../../bin/agentd")
+	massBin, err := filepath.Abs("../../bin/mass")
 	if err != nil {
-		t.Fatalf("failed to get agentd path: %v", err)
+		t.Fatalf("failed to get mass path: %v", err)
 	}
 
-	if _, err := os.Stat(agentdBin); os.IsNotExist(err) {
-		t.Fatalf("binary not found: %s (run: make build)", agentdBin)
+	if _, err := os.Stat(massBin); os.IsNotExist(err) {
+		t.Fatalf("binary not found: %s (run: make build)", massBin)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 
-	agentdCmd := exec.CommandContext(ctx, agentdBin, "server", "--root", rootDir)
-	agentdCmd.Stdout = os.Stdout
-	agentdCmd.Stderr = os.Stderr
+	massCmd := exec.CommandContext(ctx, massBin, "server", "--root", rootDir)
+	massCmd.Stdout = os.Stdout
+	massCmd.Stderr = os.Stderr
 
-	if err := agentdCmd.Start(); err != nil {
+	if err := massCmd.Start(); err != nil {
 		cancel()
-		t.Fatalf("failed to start agentd: %v", err)
+		t.Fatalf("failed to start mass: %v", err)
 	}
-	t.Logf("agentd started with PID %d (root=%s)", agentdCmd.Process.Pid, rootDir)
+	t.Logf("mass started with PID %d (root=%s)", massCmd.Process.Pid, rootDir)
 
 	if err := waitForSocket(socketPath, 10*time.Second); err != nil {
 		cancel()
-		agentdCmd.Process.Kill()
-		t.Fatalf("agentd socket not ready: %v", err)
+		massCmd.Process.Kill()
+		t.Fatalf("mass socket not ready: %v", err)
 	}
 
 	client, err := ariclient.NewClient(socketPath)
 	if err != nil {
 		cancel()
-		agentdCmd.Process.Kill()
+		massCmd.Process.Kill()
 		t.Fatalf("failed to create ARI client: %v", err)
 	}
 
@@ -75,24 +75,24 @@ func setupAgentdTestWithRuntimeClass(
 	if err := client.Call("agent/set", templateSpec, &runtimeResult); err != nil {
 		cancel()
 		client.Close()
-		agentdCmd.Process.Kill()
+		massCmd.Process.Kill()
 		t.Fatalf("failed to register runtime %q: %v", runtimeClassName, err)
 	}
 	t.Logf("runtime registered: name=%s command=%s", runtimeResult.Agent.Metadata.Name, runtimeResult.Agent.Spec.Command)
 
 	cleanup := func() {
 		client.Close()
-		if agentdCmd.Process != nil {
-			_ = agentdCmd.Process.Signal(os.Interrupt)
+		if massCmd.Process != nil {
+			_ = massCmd.Process.Signal(os.Interrupt)
 			done := make(chan error, 1)
-			go func() { done <- agentdCmd.Wait() }()
+			go func() { done <- massCmd.Wait() }()
 			select {
 			case <-done:
 			case <-time.After(5 * time.Second):
-				_ = agentdCmd.Process.Kill()
+				_ = massCmd.Process.Kill()
 				<-done
 			}
-			t.Log("agentd stopped")
+			t.Log("mass stopped")
 		}
 		exec.Command("pkill", "-f", rootDir).Run()
 		os.Remove(socketPath)
@@ -214,7 +214,7 @@ func TestRealCLI_GsdPi(t *testing.T) {
 		t.Skip("skipping: ANTHROPIC_API_KEY not set (gsd-pi needs an LLM key to process prompts)")
 	}
 
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "gsd-pi", pkgariapi.AgentSetParams{
+	ctx, cancel, client, cleanup := setupMassTestWithRuntimeClass(t, "gsd-pi", pkgariapi.AgentSetParams{
 		Command: "bunx",
 		Args:    []string{"pi-acp"},
 		Env: []apiruntime.EnvVar{
@@ -247,7 +247,7 @@ func TestRealCLI_ClaudeCode(t *testing.T) {
 		t.Skipf("skipping: claude-code adapter not found at %s", adapterPath)
 	}
 
-	ctx, cancel, client, cleanup := setupAgentdTestWithRuntimeClass(t, "claude-code", pkgariapi.AgentSetParams{
+	ctx, cancel, client, cleanup := setupMassTestWithRuntimeClass(t, "claude-code", pkgariapi.AgentSetParams{
 		Command: "node",
 		Args:    []string{adapterPath},
 		Env: []apiruntime.EnvVar{

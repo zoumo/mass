@@ -1,5 +1,5 @@
-// Package integration_test provides end-to-end integration tests for the agentd daemon.
-// These tests verify the complete pipeline: agentd → agent-shim → mockagent.
+// Package integration_test provides end-to-end integration tests for the mass daemon.
+// These tests verify the complete pipeline: mass → agent-shim → mockagent.
 package integration_test
 
 import (
@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
-// TestEndToEndPipeline tests the complete agentd → agent-shim → mockagent lifecycle
+// TestEndToEndPipeline tests the complete mass → agent-shim → mockagent lifecycle
 // using the workspace/* and agent/* ARI surface.
 // Pipeline: workspace/create → poll ready → agent/create → poll idle →
 //
@@ -22,7 +22,7 @@ func TestEndToEndPipeline(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupAgentdTest(t)
+	_, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 

@@ -1,4 +1,4 @@
-// Package integration_test provides integration tests for agentd restart recovery.
+// Package integration_test provides integration tests for mass restart recovery.
 // These tests verify that agent identity (workspace+name) survives daemon restart,
 // that dead shims are fail-closed to a terminal state (stopped per D012/D029), and
 // that the recovery reconciliation works end-to-end.
@@ -14,22 +14,22 @@ import (
 	"testing"
 	"time"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
-	ariclient "github.com/zoumo/oar/pkg/ari/client"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
-// startAgentd launches agentd with --root rootDir, waits for the socket,
+// startMass launches mass with --root rootDir, waits for the socket,
 // and returns the Cmd. Caller is responsible for cleanup.
-func startAgentd(t *testing.T, ctx context.Context, agentdBin, rootDir, socketPath string) *exec.Cmd {
+func startMass(t *testing.T, ctx context.Context, massBin, rootDir, socketPath string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, agentdBin, "server", "--root", rootDir)
+	cmd := exec.CommandContext(ctx, massBin, "server", "--root", rootDir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("failed to start agentd: %v", err)
+		t.Fatalf("failed to start mass: %v", err)
 	}
-	t.Logf("agentd started with PID %d (root=%s)", cmd.Process.Pid, rootDir)
+	t.Logf("mass started with PID %d (root=%s)", cmd.Process.Pid, rootDir)
 
 	if err := waitForSocket(socketPath, 10*time.Second); err != nil {
 		t.Fatalf("socket not ready: %v", err)
@@ -37,8 +37,8 @@ func startAgentd(t *testing.T, ctx context.Context, agentdBin, rootDir, socketPa
 	return cmd
 }
 
-// stopAgentd gracefully kills agentd with SIGINT and waits for exit.
-func stopAgentd(t *testing.T, cmd *exec.Cmd, socketPath string) {
+// stopMass gracefully kills mass with SIGINT and waits for exit.
+func stopMass(t *testing.T, cmd *exec.Cmd, socketPath string) {
 	t.Helper()
 	if cmd.Process != nil {
 		_ = cmd.Process.Signal(os.Interrupt)
@@ -50,7 +50,7 @@ func stopAgentd(t *testing.T, cmd *exec.Cmd, socketPath string) {
 			_ = cmd.Process.Kill()
 			<-done
 		}
-		t.Log("agentd stopped")
+		t.Log("mass stopped")
 	}
 	exec.Command("pkill", "-f", filepath.Dir(socketPath)).Run()
 	os.Remove(socketPath)
@@ -59,7 +59,7 @@ func stopAgentd(t *testing.T, cmd *exec.Cmd, socketPath string) {
 // TestAgentdRestartRecovery proves that agent identity (workspace+name) survives
 // daemon restart and that dead shims are fail-closed to "error" state.
 //
-// Strategy: kill ALL agent-shim and mockagent processes after stopping agentd,
+// Strategy: kill ALL agent-shim and mockagent processes after stopping mass,
 // so both agents have dead shims on restart → both should be marked error.
 func TestAgentdRestartRecovery(t *testing.T) {
 	if testing.Short() {
@@ -68,15 +68,15 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	// ── Setup ──────────────────────────────────────────────────────────────
 	// Use a persistent rootDir under /tmp so the metaDB survives the restart.
-	// Socket lands at rootDir/agentd.sock which is within the 104-char macOS limit (K025).
+	// Socket lands at rootDir/mass.sock which is within the 104-char macOS limit (K025).
 	counter := atomic.AddInt64(&testSocketCounter, 1)
-	rootDir := fmt.Sprintf("/tmp/oar-restart-%d-%d", os.Getpid(), counter)
-	socketPath := filepath.Join(rootDir, "agentd.sock")
+	rootDir := fmt.Sprintf("/tmp/mass-restart-%d-%d", os.Getpid(), counter)
+	socketPath := filepath.Join(rootDir, "mass.sock")
 
-	agentdBin, _ := filepath.Abs("../../bin/agentd")
+	massBin, _ := filepath.Abs("../../bin/mass")
 	mockagentBin, _ := filepath.Abs("../../bin/mockagent")
 
-	for _, bin := range []string{agentdBin, mockagentBin} {
+	for _, bin := range []string{massBin, mockagentBin} {
 		if _, err := os.Stat(bin); os.IsNotExist(err) {
 			t.Fatalf("binary not found: %s (run: make build)", bin)
 		}
@@ -91,14 +91,14 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	}()
 
 	// =========================================================================
-	// Phase 1: Start agentd, create workspace, create agent-A and agent-B
+	// Phase 1: Start mass, create workspace, create agent-A and agent-B
 	// =========================================================================
-	t.Log("Phase 1: Start agentd, create workspace, create agent-A and agent-B")
+	t.Log("Phase 1: Start mass, create workspace, create agent-A and agent-B")
 
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel1()
 
-	agentdCmd1 := startAgentd(t, ctx1, agentdBin, rootDir, socketPath)
+	massCmd1 := startMass(t, ctx1, massBin, rootDir, socketPath)
 
 	client1, err := ariclient.NewClient(socketPath)
 	if err != nil {
@@ -165,12 +165,12 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	t.Log("agent-A is in running/idle state after prompt ✓")
 
 	// =========================================================================
-	// Phase 2: Stop agentd, kill ALL shim and runtime processes
+	// Phase 2: Stop mass, kill ALL shim and runtime processes
 	// =========================================================================
-	t.Log("Phase 2: Stop agentd and kill all agent-shim + mockagent processes")
+	t.Log("Phase 2: Stop mass and kill all agent-shim + mockagent processes")
 
 	client1.Close()
-	stopAgentd(t, agentdCmd1, socketPath)
+	stopMass(t, massCmd1, socketPath)
 
 	// Kill all agent-shim and mockagent processes so BOTH agents will have dead
 	// shims on restart → both should be marked error by reconciliation.
@@ -182,15 +182,15 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// =========================================================================
-	// Phase 3: Restart agentd with same config+metaDB
+	// Phase 3: Restart mass with same config+metaDB
 	// =========================================================================
-	t.Log("Phase 3: Restart agentd with same config — recovery pass should mark both agents error")
+	t.Log("Phase 3: Restart mass with same config — recovery pass should mark both agents error")
 
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel2()
 
-	agentdCmd2 := startAgentd(t, ctx2, agentdBin, rootDir, socketPath)
-	defer stopAgentd(t, agentdCmd2, socketPath)
+	massCmd2 := startMass(t, ctx2, massBin, rootDir, socketPath)
+	defer stopMass(t, massCmd2, socketPath)
 
 	client2, err := ariclient.NewClient(socketPath)
 	if err != nil {

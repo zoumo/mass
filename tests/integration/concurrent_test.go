@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // TestMultipleConcurrentAgents tests that multiple agents can run concurrently
@@ -19,7 +19,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	_, cancel, client, cleanup := setupAgentdTest(t)
+	_, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 

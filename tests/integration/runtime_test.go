@@ -6,13 +6,13 @@ package integration_test
 import (
 	"testing"
 
-	pkgariapi "github.com/zoumo/oar/pkg/ari/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // TestRuntimeLifecycle is the S02 acceptance test.
 // It verifies the full chain:
 //
-//	agentd server --root → runtime/set (via setupAgentdTest)
+//	mass server --root → runtime/set (via setupMassTest)
 //	→ runtime/get → runtime/list
 //	→ workspace/create + agent/create → idle state
 //	→ runtime/delete → runtime/get returns error
@@ -21,9 +21,9 @@ func TestRuntimeLifecycle(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	// setupAgentdTest starts agentd with --root, waits for socket, and registers
+	// setupMassTest starts mass with --root, waits for socket, and registers
 	// "mockagent" runtime via runtime/set. See session_test.go.
-	_, cancel, client, cleanup := setupAgentdTest(t)
+	_, cancel, client, cleanup := setupMassTest(t)
 	defer cleanup()
 	defer cancel()
 
