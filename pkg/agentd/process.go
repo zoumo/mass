@@ -143,7 +143,7 @@ func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *Shi
 		// Route by category/type.
 		if ev.Category == apishim.CategoryRuntime && ev.Type == apishim.EventTypeStateChange {
 			// state_change → update DB agent state.
-			sc, ok := ev.Content.(apishim.StateChangeEvent)
+			sc, ok := ev.Payload.(apishim.StateChangeEvent)
 			if !ok {
 				logger.Warn("stateChange: content type assertion failed", "agent_key", key)
 				return

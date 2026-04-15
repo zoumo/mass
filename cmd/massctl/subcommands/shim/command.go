@@ -41,7 +41,7 @@ func parseNotification(msg jsonrpc.NotificationMsg) *shimapi.ShimEvent {
 }
 
 func printNotification(ev shimapi.ShimEvent) {
-	if sc, ok := ev.Content.(shimapi.StateChangeEvent); ok {
+	if sc, ok := ev.Payload.(shimapi.StateChangeEvent); ok {
 		fmt.Fprintf(os.Stderr, "\033[2m[stateChange seq=%d] %s → %s pid=%d reason=%q\033[0m\n",
 			ev.Seq, sc.PreviousStatus, sc.Status, sc.PID, sc.Reason)
 		return
@@ -90,11 +90,14 @@ func drainTurnEnd(ch <-chan struct{}) {
 }
 
 func printShimEvent(ev shimapi.ShimEvent) {
-	switch pl := ev.Content.(type) {
-	case shimapi.AgentMessageEvent:
-		fmt.Print(contentBlockText(pl.Content))
-	case shimapi.AgentThinkingEvent:
-		fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", ev.Seq, contentBlockText(pl.Content))
+	switch pl := ev.Payload.(type) {
+	case shimapi.ContentEvent:
+		switch ev.Type {
+		case shimapi.EventTypeAgentMessage:
+			fmt.Print(contentBlockText(pl.Content))
+		case shimapi.EventTypeAgentThinking:
+			fmt.Fprintf(os.Stderr, "\033[2m[thinking seq=%d] %s\033[0m\n", ev.Seq, contentBlockText(pl.Content))
+		}
 	case shimapi.ToolCallEvent:
 		content, _ := json.Marshal(pl)
 		fmt.Fprintf(os.Stderr, "\033[33m[tool_call seq=%d] %s\033[0m\n", ev.Seq, content)
@@ -104,7 +107,7 @@ func printShimEvent(ev shimapi.ShimEvent) {
 	case shimapi.TurnEndEvent:
 		fmt.Println()
 	default:
-		content, _ := json.Marshal(ev.Content)
+		content, _ := json.Marshal(ev.Payload)
 		fmt.Fprintf(os.Stderr, "[%s seq=%d] %s\n", ev.Type, ev.Seq, content)
 	}
 }

@@ -43,7 +43,7 @@ func TestTranslateRich_ToolCall_FullFields(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ToolCallEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ToolCallEvent)
 	require.True(t, ok)
 	assert.Equal(t, "anthropic", ev.Meta["provider"])
 	assert.Equal(t, "tc-1", ev.ID)
@@ -98,7 +98,7 @@ func TestTranslateRich_ToolCallUpdate_FullFields(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ToolResultEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ToolResultEvent)
 	require.True(t, ok)
 	assert.Equal(t, "v", ev.Meta["k"])
 	assert.Equal(t, "tc-2", ev.ID)
@@ -136,7 +136,7 @@ func TestTranslateRich_ContentBlock_Text(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.AgentMessageEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content.Text)
 	assert.Equal(t, "llm", ev.Content.Text.Meta["src"])
@@ -168,7 +168,7 @@ func TestTranslateRich_ContentBlock_Image(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.AgentMessageEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.Image)
@@ -200,7 +200,7 @@ func TestTranslateRich_ContentBlock_Audio(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.AgentMessageEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.Audio)
@@ -238,7 +238,7 @@ func TestTranslateRich_ContentBlock_ResourceLink(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.AgentMessageEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.ResourceLink)
@@ -282,7 +282,7 @@ func TestTranslateRich_ContentBlock_Resource(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.AgentMessageEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, ev.Content)
 	require.NotNil(t, ev.Content.Resource)
@@ -323,7 +323,7 @@ func TestTranslateRich_AvailableCommandsUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.AvailableCommandsEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.AvailableCommandsEvent)
 	require.True(t, ok)
 	assert.Equal(t, "agent", ev.Meta["src"])
 	require.Len(t, ev.Commands, 1)
@@ -353,7 +353,7 @@ func TestTranslateRich_CurrentModeUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.CurrentModeEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.CurrentModeEvent)
 	require.True(t, ok)
 	assert.EqualValues(t, 2, ev.Meta["v"])
 	assert.Equal(t, "edit", ev.ModeID)
@@ -392,7 +392,7 @@ func TestTranslateRich_ConfigOptionUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ConfigOptionEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ConfigOptionEvent)
 	require.True(t, ok)
 	assert.True(t, ev.Meta["cfg"].(bool))
 	require.Len(t, ev.ConfigOptions, 1)
@@ -443,7 +443,7 @@ func TestTranslateRich_ConfigOptionUpdate_GroupedOptions(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ConfigOptionEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ConfigOptionEvent)
 	require.True(t, ok)
 	require.Len(t, ev.ConfigOptions, 1)
 	s := ev.ConfigOptions[0].Select
@@ -477,7 +477,7 @@ func TestTranslateRich_SessionInfoUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.SessionInfoEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.SessionInfoEvent)
 	require.True(t, ok)
 	assert.EqualValues(t, 1, ev.Meta["si"])
 	require.NotNil(t, ev.Title)
@@ -504,7 +504,7 @@ func TestTranslateRich_UsageUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.UsageEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.UsageEvent)
 	require.True(t, ok)
 	assert.Equal(t, "yes", ev.Meta["u"])
 	require.NotNil(t, ev.Cost)
@@ -536,7 +536,7 @@ func TestTranslateRich_RawInputOutput_RoundTrip(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionContent(t, drainShimEvent(t, ch)).(apishim.ToolCallEvent)
+	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ToolCallEvent)
 	require.True(t, ok)
 
 	// Marshal the event and unmarshal back.
@@ -564,9 +564,9 @@ func TestTranslateRich_ShimEventDecode_AllEventTypes(t *testing.T) {
 		evType  string
 		payload apishim.Event
 	}{
-		{"agent_message", "agent_message", apishim.AgentMessageEvent{Content: apishim.TextBlock("hi")}},
-		{"agent_thinking", "agent_thinking", apishim.AgentThinkingEvent{Content: apishim.TextBlock("thought")}},
-		{"user_message", "user_message", apishim.UserMessageEvent{Content: apishim.TextBlock("user")}},
+		{"agent_message", "agent_message", apishim.NewContentEvent("agent_message", "", apishim.TextBlock("hi"))},
+		{"agent_thinking", "agent_thinking", apishim.NewContentEvent("agent_thinking", "", apishim.TextBlock("thought"))},
+		{"user_message", "user_message", apishim.NewContentEvent("user_message", "", apishim.TextBlock("user"))},
 		{"tool_call", "tool_call", apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "t"}},
 		{"tool_result", "tool_result", apishim.ToolResultEvent{ID: "1", Status: "completed"}},
 		{"plan", "plan", apishim.PlanEvent{Entries: nil}},
@@ -595,7 +595,7 @@ func TestTranslateRich_ShimEventDecode_AllEventTypes(t *testing.T) {
 				Seq:      0,
 				Category: apishim.CategoryForEvent(tc.evType),
 				Type:     tc.evType,
-				Content:  tc.payload,
+				Payload:  tc.payload,
 			}
 			b, err := se.MarshalJSON()
 			require.NoError(t, err, "marshal")
@@ -603,7 +603,7 @@ func TestTranslateRich_ShimEventDecode_AllEventTypes(t *testing.T) {
 			require.NoError(t, decoded.UnmarshalJSON(b), "unmarshal")
 			assert.Equal(t, tc.evType, decoded.Type)
 			// The content type should survive round-trip.
-			assert.IsType(t, tc.payload, decoded.Content, "content type mismatch")
+			assert.IsType(t, tc.payload, decoded.Payload, "payload type mismatch")
 		})
 	}
 }
@@ -611,21 +611,21 @@ func TestTranslateRich_ShimEventDecode_AllEventTypes(t *testing.T) {
 // ── Test 15: ShimEvent backward compatibility ─────────────────────────────────
 
 func TestTranslateRich_ShimEvent_BackwardCompat(t *testing.T) {
-	// ShimEvent JSON with tool_call content.
-	tcJSON := `{"runId":"r1","seq":0,"time":"2026-01-01T00:00:00Z","category":"session","type":"tool_call","content":{"id":"tc-1","kind":"shell","title":"run ls"}}`
+	// ShimEvent JSON with tool_call payload.
+	tcJSON := `{"runId":"r1","seq":0,"time":"2026-01-01T00:00:00Z","category":"session","type":"tool_call","payload":{"id":"tc-1","kind":"shell","title":"run ls"}}`
 	var se apishim.ShimEvent
 	require.NoError(t, json.Unmarshal([]byte(tcJSON), &se))
-	ev, ok := se.Content.(apishim.ToolCallEvent)
+	ev, ok := se.Payload.(apishim.ToolCallEvent)
 	require.True(t, ok)
 	assert.Equal(t, "tc-1", ev.ID)
 	assert.Equal(t, "shell", ev.Kind)
 	assert.Equal(t, "run ls", ev.Title)
 
-	// ShimEvent JSON with agent_message content.
-	txtJSON := `{"runId":"r1","seq":1,"time":"2026-01-01T00:00:00Z","category":"session","type":"agent_message","content":{"content":{"type":"text","text":"hello"}}}`
+	// ShimEvent JSON with agent_message payload.
+	txtJSON := `{"runId":"r1","seq":1,"time":"2026-01-01T00:00:00Z","category":"session","type":"agent_message","payload":{"content":{"type":"text","text":"hello"}}}`
 	var se2 apishim.ShimEvent
 	require.NoError(t, json.Unmarshal([]byte(txtJSON), &se2))
-	txt, ok := se2.Content.(apishim.AgentMessageEvent)
+	txt, ok := se2.Payload.(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, txt.Content.Text)
 	assert.Equal(t, "hello", txt.Content.Text.Text)

@@ -386,22 +386,27 @@ Runtime 必须产出结构化的 typed event stream，供上层消费。
 
 | 事件类型 | 来源 | 说明 |
 |---------|------|------|
-| `AgentThinkingEvent` | ACP `thought_message_chunk` | Agent 的推理/思考过程 |
-| `AgentMessageEvent` | ACP `agent_message_chunk` | Agent 的回复文本片段 |
-| `ToolCallEvent` | ACP `tool_call` | 工具调用开始 |
-| `ToolResultEvent` | ACP `tool_call_update` | 工具调用完成/失败 |
-| `FileWriteEvent` | ACP `fs/write_text_file` (runtime 处理后) | 文件写入操作及结果 |
-| `FileReadEvent` | ACP `fs/read_text_file` (runtime 处理后) | 文件读取操作及结果 |
-| `CommandEvent` | ACP `terminal/*` (runtime 处理后) | Shell 命令执行及输出 |
-| `PlanEvent` | ACP `plan` / `plan_update` | Agent 执行计划及状态更新 |
-| `TurnStartEvent` | prompt 开始处理 | 标记一个 turn 的开始 |
-| `TurnEndEvent` | ACP prompt_response | 标记一个 turn 的结束 |
-| `ErrorEvent` | ACP 错误或进程异常 | 错误信息 |
-| `AvailableCommandsEvent` | ACP `available_commands_update` | 可用命令/工具列表更新 |
-| `CurrentModeEvent` | ACP `current_mode_update` | 当前操作模式变更 |
-| `ConfigOptionEvent` | ACP `config_option_update` | 配置选项变更 |
-| `SessionInfoEvent` | ACP `session_info_update` | 会话元数据更新 |
-| `UsageEvent` | ACP `usage_update` | Token/API 用量和费用统计 |
+| `agent_thinking` | ACP `thought_message_chunk` | Agent 的推理/思考过程 |
+| `agent_message` | ACP `agent_message_chunk` | Agent 的回复文本片段 |
+| `user_message` | ACP `user_message_chunk` / `session/prompt` | 用户输入回显 |
+| `tool_call` | ACP `tool_call` | 工具调用开始 |
+| `tool_result` | ACP `tool_call_update` | 工具调用完成/失败 |
+| `file_write` | ACP `fs/write_text_file` (runtime 处理后) | 文件写入操作及结果 |
+| `file_read` | ACP `fs/read_text_file` (runtime 处理后) | 文件读取操作及结果 |
+| `command` | ACP `terminal/*` (runtime 处理后) | Shell 命令执行及输出 |
+| `plan` | ACP `plan` / `plan_update` | Agent 执行计划及状态更新 |
+| `turn_start` | prompt 开始处理 | 标记一个 turn 的开始 |
+| `turn_end` | ACP prompt_response | 标记一个 turn 的结束 |
+| `error` | ACP 错误或进程异常 | 错误信息 |
+| `available_commands` | ACP `available_commands_update` | 可用命令/工具列表更新 |
+| `current_mode` | ACP `current_mode_update` | 当前操作模式变更 |
+| `config_option` | ACP `config_option_update` | 配置选项变更 |
+| `session_info` | ACP `session_info_update` | 会话元数据更新 |
+| `usage` | ACP `usage_update` | Token/API 用量和费用统计 |
+
+> **Content Block Streaming**：`agent_message`、`agent_thinking`、`user_message` 三种事件
+> 携带 `status` 字段（`start` / `streaming` / `end`）标识 content block 生命周期。
+> 详见 [shim-rpc-spec.md § Content Block Streaming](shim-rpc-spec.md#content-block-streaming)。
 
 > **Payload 保留策略**：所有事件类型完整保留 ACP 原始字段（包括 `_meta`），
 > JSON wire shape 与 ACP SDK marshal 结果一致，仅省略 `sessionUpdate` 鉴别器字段。

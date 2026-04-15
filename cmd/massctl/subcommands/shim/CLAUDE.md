@@ -48,6 +48,29 @@ shim chat 可以随时连接到正在运行的 agent。这意味着：
 - **非 JSON 容错**：遇到非 JSON 行时 skip 并 log warning，不中断连接
 - **流状态可恢复**：`json.Decoder` 遇到非 JSON 后流位置损坏无法恢复，`ReadBytes` 按行边界切分，天然可以跳过坏行
 
+## waitNotif 必须内部循环
+
+`waitNotif` 使用 `for` 循环处理无效消息（非 shim 通知、解析失败），**绝不能返回 nil**。
+原因：返回 nil 的 tea.Cmd 不会触发 Bubbletea 的 Update，导致 waitNotif 不会被重新调度，
+**整个通知链永久断裂**。
+
+```go
+// ✓ 正确：循环跳过无效消息
+for {
+    msg, ok := <-ch
+    if !ok { return connClosedMsg{} }
+    if msg.Method != shimapi.MethodShimEvent {
+        continue // 不返回 nil！
+    }
+    // ... process ...
+}
+
+// ✗ 错误：返回 nil 会断链
+if msg.Method != shimapi.MethodShimEvent {
+    return nil // BUG: 链断了，后续所有事件丢失
+}
+```
+
 ## 状态栏
 
 底部等待区域显示实时 agent 状态：
@@ -95,17 +118,26 @@ shim chat 可以随时连接到正在运行的 agent。这意味着：
 - `SetStatus(ToolStatusSuccess)` — 防止 `toolEarlyStateContent` 显示 "Waiting for tool response..."
 
 ```
-tool_call{id, kind, title}
+tool_call{id, kind, title, content?, rawOutput?}
     → finish current assistant msg
     → create ToolMessageItem (Finished=true, status=Success)
+    → if content/rawOutput present: pre-populate ToolResult for immediate display
     → track toolItemIDs[id] = itemID
     → create new AssistantMessageItem for post-tool text
 
-tool_result{id, status}
+tool_result{id, status, content?, rawOutput?}
     → lookup toolItemIDs[id]
-    → found: update ToolMessageItem status (success/error)
+    → found: update ToolMessageItem status (success/error) + result content
     → not found (late join): skip silently
 ```
+
+### 结果内容提取优先级
+
+`buildResultContent` 按以下顺序提取工具结果：
+
+1. **结构化 Content blocks** — Text 取全文，Diff 取 path + newText，Terminal 取 ID
+2. **RawOutput** — fallback，支持 string/JSON 任意类型
+3. **Status 字符串** — 最后兜底
 
 ## user_message 事件
 
@@ -138,5 +170,6 @@ case connClosedMsg:  // 不需要（连接已断）
 - 不要忘记在创建 AssistantMessageItem 后调用 `StartAnimation()` + 处理 `anim.StepMsg`
 - 不要忘记 `ensureCurrentMsg()` —— 中途接入时第一个 text/thinking 可能没有 currentMsg
 - **不要在任何消费 notifs 的 case 中遗漏 `waitNotif` 重新调度** —— 会导致整个通知流中断
+- **不要在 `waitNotif` 内部返回 nil** —— 会导致 Bubbletea 跳过 Update，通知链永久断裂
 - **不要给 tool item 设 ToolStatusRunning** —— 我们的 tool_call 是已执行通知，Running 会显示 "Waiting for tool response..."
 - **不要设 ToolCall.Finished=false** —— 会触发 isSpinning()=true，显示乱码动画字符

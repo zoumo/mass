@@ -32,3 +32,10 @@ const (
 	// CategoryRuntime covers runtime/process lifecycle events (state_change).
 	CategoryRuntime = "runtime"
 )
+
+// Content block streaming status values.
+const (
+	BlockStatusStart     = "start"
+	BlockStatusStreaming  = "streaming"
+	BlockStatusEnd       = "end"
+)

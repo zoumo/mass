@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	shimapi "github.com/zoumo/mass/pkg/shim/api"
+	"github.com/zoumo/mass/pkg/tui/chat"
 )
 
 // buildInput creates a JSON string for the tool's Input field,
@@ -38,10 +39,12 @@ func buildInput(title string, locations []shimapi.ToolCallLocation) string {
 }
 
 // buildResultContent extracts a displayable string from tool result content blocks.
-func buildResultContent(blocks []shimapi.ToolCallContent, status string) string {
+// Diff blocks are skipped here — they are handled separately by extractDiff
+// for structured DiffView rendering. Text and terminal blocks are extracted
+// as plain strings. RawOutput is used as a fallback.
+func buildResultContent(blocks []shimapi.ToolCallContent, status string, rawOutput any) string {
 	var parts []string
 
-	// Extract text from content blocks.
 	for _, block := range blocks {
 		switch {
 		case block.Content != nil:
@@ -49,6 +52,8 @@ func buildResultContent(blocks []shimapi.ToolCallContent, status string) string 
 				parts = append(parts, block.Content.Content.Text.Text)
 			}
 		case block.Diff != nil:
+			// Diff blocks are rendered via DiffView (see extractDiff).
+			// Include a minimal fallback for Content string only.
 			if block.Diff.Path != "" {
 				parts = append(parts, "diff: "+block.Diff.Path)
 			}
@@ -63,9 +68,51 @@ func buildResultContent(blocks []shimapi.ToolCallContent, status string) string 
 		return strings.Join(parts, "\n")
 	}
 
-	// Fallback to status.
+	// Fallback: use rawOutput if no structured content.
+	if rawOutput != nil {
+		if s := formatRawOutput(rawOutput); s != "" {
+			return s
+		}
+	}
+
+	// Last resort: status string.
 	if status != "" {
 		return status
 	}
 	return ""
+}
+
+// extractDiff finds the first diff block from content and returns structured data
+// for DiffView rendering. Returns nil if no diff block is present.
+func extractDiff(blocks []shimapi.ToolCallContent) *chat.ToolResultDiff {
+	for _, block := range blocks {
+		if block.Diff != nil && (block.Diff.Path != "" || block.Diff.NewText != "") {
+			oldText := ""
+			if block.Diff.OldText != nil {
+				oldText = *block.Diff.OldText
+			}
+			return &chat.ToolResultDiff{
+				Path:    block.Diff.Path,
+				OldText: oldText,
+				NewText: block.Diff.NewText,
+			}
+		}
+	}
+	return nil
+}
+
+// formatRawOutput converts a raw output value to a displayable string.
+func formatRawOutput(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case nil:
+		return ""
+	default:
+		b, err := json.MarshalIndent(val, "", "  ")
+		if err != nil {
+			return fmt.Sprintf("%v", val)
+		}
+		return string(b)
+	}
 }

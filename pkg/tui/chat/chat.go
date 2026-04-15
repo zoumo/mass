@@ -75,6 +75,7 @@ func (m *Chat) SetMessages(msgs ...MessageItem) {
 }
 
 // AppendMessages appends new message items to the chat list.
+// When follow mode is active, the view auto-scrolls to show new items.
 func (m *Chat) AppendMessages(msgs ...MessageItem) {
 	items := make([]list.Item, len(msgs))
 	indexOffset := m.list.Len()
@@ -83,6 +84,9 @@ func (m *Chat) AppendMessages(msgs ...MessageItem) {
 		items[i] = msg
 	}
 	m.list.AppendItems(items...)
+	if m.follow {
+		m.ScrollToBottom()
+	}
 }
 
 // Animate animates items in the chat list. Only propagates animation messages

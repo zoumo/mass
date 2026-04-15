@@ -26,15 +26,15 @@ type Translator struct {
 	// Set once before Start() via SetSessionMetadataHook — no lock needed.
 	sessionMetadataHook func(apishim.Event)
 
-	mu            sync.Mutex
-	subs          map[int]chan apishim.ShimEvent
-	nextID        int
-	nextSeq       int
-	done          chan struct{}
-	once          sync.Once
-	currentTurnId string
-	streamSeq     int
-	eventCounts   map[string]int
+	mu               sync.Mutex
+	subs             map[int]chan apishim.ShimEvent
+	nextID           int
+	nextSeq          int
+	done             chan struct{}
+	once             sync.Once
+	currentTurnId    string
+	currentBlockType string // event type of currently open content block ("" = none)
+	eventCounts      map[string]int
 }
 
 // NewTranslator creates a Translator that reads from in.
@@ -179,14 +179,12 @@ func (t *Translator) LastSeq() int {
 }
 
 // NotifyTurnStart broadcasts a turn_start ShimEvent.
-// The new turnId and initial streamSeq are assigned atomically inside the
-// broadcast callback, which runs under mu.Lock.
+// The new turnId is assigned atomically inside the broadcast callback,
+// which runs under mu.Lock.
 func (t *Translator) NotifyTurnStart() {
 	newTurnID := uuid.New().String()
 	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
-		// Runs under mu.Lock — safe to mutate turn state here.
 		t.currentTurnId = newTurnID
-		t.streamSeq = 0
 		return apishim.ShimEvent{
 			RunID:     t.runID,
 			SessionID: t.sessionID,
@@ -195,8 +193,7 @@ func (t *Translator) NotifyTurnStart() {
 			Category:  apishim.CategorySession,
 			Type:      apishim.EventTypeTurnStart,
 			TurnID:    t.currentTurnId,
-			StreamSeq: t.streamSeq,
-			Content:   apishim.TurnStartEvent{},
+			Payload:   apishim.TurnStartEvent{},
 		}
 	})
 }
@@ -206,7 +203,6 @@ func (t *Translator) NotifyTurnStart() {
 // This must be called after NotifyTurnStart and before mgr.Prompt.
 func (t *Translator) NotifyUserPrompt(text string) {
 	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
-		t.streamSeq++
 		return apishim.ShimEvent{
 			RunID:     t.runID,
 			SessionID: t.sessionID,
@@ -215,18 +211,18 @@ func (t *Translator) NotifyUserPrompt(text string) {
 			Category:  apishim.CategorySession,
 			Type:      apishim.EventTypeUserMessage,
 			TurnID:    t.currentTurnId,
-			StreamSeq: t.streamSeq,
-			Content: apishim.UserMessageEvent{Content: apishim.TextBlock(text)},
+			Payload:   apishim.NewContentEvent(apishim.EventTypeUserMessage, apishim.BlockStatusStart, apishim.TextBlock(text)),
 		}
 	})
 }
 
 // NotifyTurnEnd broadcasts a turn_end ShimEvent.
+// Closes any open content block first, then emits turn_end.
 // The current turnId is included in the event and cleared AFTER use so the
 // turn_end event itself carries the identifier.
 func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
+	t.closeOpenBlock()
 	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
-		t.streamSeq++
 		se := apishim.ShimEvent{
 			RunID:     t.runID,
 			SessionID: t.sessionID,
@@ -235,10 +231,9 @@ func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 			Category:  apishim.CategorySession,
 			Type:      apishim.EventTypeTurnEnd,
 			TurnID:    t.currentTurnId,
-			StreamSeq: t.streamSeq,
-			Content:   apishim.TurnEndEvent{StopReason: string(reason)},
+			Payload:   apishim.TurnEndEvent{StopReason: string(reason)},
 		}
-		t.currentTurnId = "" // Clear AFTER using — turn_end event carries the turnId
+		t.currentTurnId = ""
 		return se
 	})
 }
@@ -256,7 +251,7 @@ func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, r
 			Time:      at,
 			Category:  apishim.CategoryRuntime,
 			Type:      apishim.EventTypeStateChange,
-			Content: apishim.StateChangeEvent{
+			Payload: apishim.StateChangeEvent{
 				PreviousStatus: previousStatus,
 				Status:         status,
 				PID:            pid,
@@ -280,15 +275,60 @@ func (t *Translator) run() {
 			if ev == nil {
 				continue
 			}
+
+			if isContentEvent(ev) {
+				evType := apishim.EventTypeOf(ev)
+				if t.currentBlockType == "" {
+					ev = setContentStatus(ev, apishim.BlockStatusStart)
+					t.currentBlockType = evType
+				} else if t.currentBlockType != evType {
+					t.closeOpenBlock()
+					ev = setContentStatus(ev, apishim.BlockStatusStart)
+					t.currentBlockType = evType
+				} else {
+					ev = setContentStatus(ev, apishim.BlockStatusStreaming)
+				}
+			} else {
+				t.closeOpenBlock()
+			}
+
 			t.broadcastSessionEvent(ev)
 			t.maybeNotifyMetadata(ev)
 		}
 	}
 }
 
+// isContentEvent returns true for content block event types.
+func isContentEvent(ev apishim.Event) bool {
+	_, ok := ev.(apishim.ContentEvent)
+	return ok
+}
+
+// setContentStatus sets the Status field on a ContentEvent.
+func setContentStatus(ev apishim.Event, status string) apishim.Event {
+	if ce, ok := ev.(apishim.ContentEvent); ok {
+		ce.Status = status
+		return ce
+	}
+	return ev
+}
+
+// emitBlockEnd broadcasts a synthetic "end" event for the given content block type.
+func (t *Translator) emitBlockEnd(eventType string) {
+	ev := apishim.NewContentEvent(eventType, apishim.BlockStatusEnd, apishim.ContentBlock{})
+	t.broadcastSessionEvent(ev)
+}
+
+// closeOpenBlock closes the currently open content block, if any.
+func (t *Translator) closeOpenBlock() {
+	if t.currentBlockType != "" {
+		t.emitBlockEnd(t.currentBlockType)
+		t.currentBlockType = ""
+	}
+}
+
 // broadcastSessionEvent builds and broadcasts a session category ShimEvent.
-// Turn metadata (TurnID/StreamSeq) is applied to all session events
-// when an active turn exists.
+// TurnID is applied to all session events when an active turn exists.
 func (t *Translator) broadcastSessionEvent(ev apishim.Event) {
 	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
 		eventType := apishim.EventTypeOf(ev)
@@ -299,13 +339,10 @@ func (t *Translator) broadcastSessionEvent(ev apishim.Event) {
 			Time:      at,
 			Category:  apishim.CategorySession,
 			Type:      eventType,
-			Content:   ev,
+			Payload:   ev,
 		}
-		// Apply turn metadata to all session events when inside an active turn.
 		if t.currentTurnId != "" {
-			t.streamSeq++
 			se.TurnID = t.currentTurnId
-			se.StreamSeq = t.streamSeq
 		}
 		return se
 	})
@@ -370,17 +407,11 @@ func translate(n acp.SessionNotification) apishim.Event {
 	u := n.Update
 	switch {
 	case u.AgentMessageChunk != nil:
-		return apishim.AgentMessageEvent{
-			Content: u.AgentMessageChunk.Content,
-		}
+		return apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", u.AgentMessageChunk.Content)
 	case u.AgentThoughtChunk != nil:
-		return apishim.AgentThinkingEvent{
-			Content: u.AgentThoughtChunk.Content,
-		}
+		return apishim.NewContentEvent(apishim.EventTypeAgentThinking, "", u.AgentThoughtChunk.Content)
 	case u.UserMessageChunk != nil:
-		return apishim.UserMessageEvent{
-			Content: u.UserMessageChunk.Content,
-		}
+		return apishim.NewContentEvent(apishim.EventTypeUserMessage, "", u.UserMessageChunk.Content)
 	case u.ToolCall != nil:
 		tc := u.ToolCall
 		return apishim.ToolCallEvent{

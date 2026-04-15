@@ -12,6 +12,7 @@ import (
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/stringext"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/anim"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/common"
+	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/diffview"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
 )
 
@@ -104,9 +105,12 @@ func (o *ToolRenderOpts) HasResult() bool {
 	return o.Result != nil
 }
 
-// HasEmptyResult returns true if the result is nil or has empty content.
+// HasEmptyResult returns true if the result is nil or has no displayable content.
 func (o *ToolRenderOpts) HasEmptyResult() bool {
-	return o.Result == nil || o.Result.Content == ""
+	if o.Result == nil {
+		return true
+	}
+	return o.Result.Content == "" && o.Result.Diff == nil
 }
 
 // ToolRenderer represents an interface for rendering tool calls.
@@ -477,6 +481,36 @@ func toolHeader(sty *styles.Styles, status ToolStatus, name string, width int, n
 	remainingWidth := width - prefixWidth
 	paramsStr := toolParamList(sty, params, remainingWidth)
 	return prefix + paramsStr
+}
+
+// toolOutputDiffContent renders a file diff using the DiffView component.
+func toolOutputDiffContent(sty *styles.Styles, diff *ToolResultDiff, width int, expanded bool) string {
+	dv := diffview.New().
+		Before(diff.Path, diff.OldText).
+		After(diff.Path, diff.NewText).
+		Style(sty.Diff).
+		Width(width).
+		LineNumbers(true)
+
+	if !expanded {
+		dv.Height(responseContextHeight)
+	}
+
+	rendered := dv.String()
+	if rendered == "" {
+		return ""
+	}
+
+	// Count total lines to show truncation hint.
+	totalLines := strings.Count(rendered, "\n") + 1
+	if !expanded && totalLines >= responseContextHeight {
+		truncMsg := sty.Tool.DiffTruncation.
+			Width(width).
+			Render(fmt.Sprintf(assistantMessageTruncateFormat, totalLines-responseContextHeight))
+		return sty.Tool.Body.Render(rendered + "\n" + truncMsg)
+	}
+
+	return sty.Tool.Body.Render(rendered)
 }
 
 // toolOutputPlainContent renders plain text with optional expansion support.

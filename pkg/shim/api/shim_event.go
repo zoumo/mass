@@ -31,12 +31,11 @@ type ShimEvent struct {
 	Category  string    `json:"category"`
 	Type      string    `json:"type"`
 
-	// Turn-aware ordering fields (session events only, within active turn).
-	TurnID    string `json:"turnId,omitempty"`
-	StreamSeq int    `json:"streamSeq,omitempty"`
+	// Turn-aware ordering field (session events only, within active turn).
+	TurnID string `json:"turnId,omitempty"`
 
-	// Content is the typed event payload (AgentMessageEvent, StateChangeEvent, etc.).
-	Content Event `json:"-"`
+	// Payload is the typed event payload (ContentEvent, StateChangeEvent, etc.).
+	Payload Event `json:"-"`
 }
 
 // MarshalJSON serialises ShimEvent to the flat JSON wire shape.
@@ -49,19 +48,18 @@ func (e ShimEvent) MarshalJSON() ([]byte, error) {
 		Category  string          `json:"category"`
 		Type      string          `json:"type"`
 		TurnID    string          `json:"turnId,omitempty"`
-		StreamSeq int             `json:"streamSeq,omitempty"`
-		Content   json.RawMessage `json:"content"`
+		Payload   json.RawMessage `json:"payload"`
 	}
 
-	var contentBytes json.RawMessage
-	if e.Content != nil {
-		b, err := json.Marshal(e.Content)
+	var payloadBytes json.RawMessage
+	if e.Payload != nil {
+		b, err := json.Marshal(e.Payload)
 		if err != nil {
-			return nil, fmt.Errorf("events: marshal shim event content: %w", err)
+			return nil, fmt.Errorf("events: marshal shim event payload: %w", err)
 		}
-		contentBytes = b
+		payloadBytes = b
 	} else {
-		contentBytes = json.RawMessage("{}")
+		payloadBytes = json.RawMessage("{}")
 	}
 
 	return json.Marshal(wire{
@@ -72,13 +70,12 @@ func (e ShimEvent) MarshalJSON() ([]byte, error) {
 		Category:  e.Category,
 		Type:      e.Type,
 		TurnID:    e.TurnID,
-		StreamSeq: e.StreamSeq,
-		Content:   contentBytes,
+		Payload:   payloadBytes,
 	})
 }
 
 // UnmarshalJSON deserialises a ShimEvent from the flat JSON wire shape.
-// It uses decodeEventPayload to reconstruct the typed Content.
+// It uses decodeEventPayload to reconstruct the typed Payload.
 func (e *ShimEvent) UnmarshalJSON(data []byte) error {
 	type wire struct {
 		RunID     string          `json:"runId"`
@@ -88,8 +85,7 @@ func (e *ShimEvent) UnmarshalJSON(data []byte) error {
 		Category  string          `json:"category"`
 		Type      string          `json:"type"`
 		TurnID    string          `json:"turnId,omitempty"`
-		StreamSeq int             `json:"streamSeq,omitempty"`
-		Content   json.RawMessage `json:"content"`
+		Payload   json.RawMessage `json:"payload"`
 	}
 
 	var w wire
@@ -104,14 +100,13 @@ func (e *ShimEvent) UnmarshalJSON(data []byte) error {
 	e.Category = w.Category
 	e.Type = w.Type
 	e.TurnID = w.TurnID
-	e.StreamSeq = w.StreamSeq
 
-	if len(w.Content) > 0 && string(w.Content) != "null" {
-		ev, err := decodeEventPayload(w.Type, w.Content)
+	if len(w.Payload) > 0 && string(w.Payload) != "null" {
+		ev, err := decodeEventPayload(w.Type, w.Payload)
 		if err != nil {
-			return fmt.Errorf("events: decode shim event content (type=%q): %w", w.Type, err)
+			return fmt.Errorf("events: decode shim event payload (type=%q): %w", w.Type, err)
 		}
-		e.Content = ev
+		e.Payload = ev
 	}
 
 	return nil
@@ -127,16 +122,14 @@ func CategoryForEvent(eventType string) string {
 }
 
 // NewShimEvent constructs a ShimEvent with the given fields.
-// turnID and streamSeq should only be set for session category events
-// inside an active turn. For runtime events or out-of-turn session events,
-// pass empty turnID (streamSeq will be ignored when turnID is empty).
+// turnID should only be set for session category events inside an active turn.
+// For runtime events or out-of-turn session events, pass empty turnID.
 func NewShimEvent(
 	runID, sessionID string,
 	seq int,
 	at time.Time,
 	ev Event,
 	turnID string,
-	streamSeq int,
 ) ShimEvent {
 	eventType := ev.eventType()
 	category := CategoryForEvent(eventType)
@@ -148,11 +141,10 @@ func NewShimEvent(
 		Time:      at,
 		Category:  category,
 		Type:      eventType,
-		Content:   ev,
+		Payload:   ev,
 	}
 	if turnID != "" && category == CategorySession {
 		se.TurnID = turnID
-		se.StreamSeq = streamSeq
 	}
 	return se
 }
@@ -160,122 +152,77 @@ func NewShimEvent(
 // decodeEventPayload decodes a JSON payload into the appropriate typed Event
 // given the event type string.
 func decodeEventPayload(eventType string, payload json.RawMessage) (Event, error) {
-	unmarshal := func(dst Event) (Event, error) {
-		if len(payload) == 0 || string(payload) == "null" {
-			return dst, nil
-		}
-		switch v := dst.(type) {
-		case AgentMessageEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case AgentThinkingEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case UserMessageEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case ToolCallEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case ToolResultEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case PlanEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case TurnStartEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case TurnEndEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case ErrorEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case AvailableCommandsEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case CurrentModeEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case ConfigOptionEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case SessionInfoEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case UsageEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		case StateChangeEvent:
-			if err := json.Unmarshal(payload, &v); err != nil {
-				return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
-			}
-			return v, nil
-		default:
-			return nil, fmt.Errorf("events: unknown typed event %q", eventType)
-		}
+	if len(payload) == 0 || string(payload) == "null" {
+		return nil, nil
 	}
 
+	var dst Event
 	switch eventType {
-	case EventTypeAgentMessage:
-		return unmarshal(AgentMessageEvent{})
-	case EventTypeAgentThinking:
-		return unmarshal(AgentThinkingEvent{})
-	case EventTypeUserMessage:
-		return unmarshal(UserMessageEvent{})
+	case EventTypeAgentMessage, EventTypeAgentThinking, EventTypeUserMessage:
+		var ce ContentEvent
+		if err := json.Unmarshal(payload, &ce); err != nil {
+			return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
+		}
+		ce.typ = eventType
+		return ce, nil
 	case EventTypeToolCall:
-		return unmarshal(ToolCallEvent{})
+		dst = &ToolCallEvent{}
 	case EventTypeToolResult:
-		return unmarshal(ToolResultEvent{})
+		dst = &ToolResultEvent{}
 	case EventTypePlan:
-		return unmarshal(PlanEvent{})
+		dst = &PlanEvent{}
 	case EventTypeTurnStart:
-		return unmarshal(TurnStartEvent{})
+		dst = &TurnStartEvent{}
 	case EventTypeTurnEnd:
-		return unmarshal(TurnEndEvent{})
+		dst = &TurnEndEvent{}
 	case EventTypeError:
-		return unmarshal(ErrorEvent{})
+		dst = &ErrorEvent{}
 	case EventTypeAvailableCommands:
-		return unmarshal(AvailableCommandsEvent{})
+		dst = &AvailableCommandsEvent{}
 	case EventTypeCurrentMode:
-		return unmarshal(CurrentModeEvent{})
+		dst = &CurrentModeEvent{}
 	case EventTypeConfigOption:
-		return unmarshal(ConfigOptionEvent{})
+		dst = &ConfigOptionEvent{}
 	case EventTypeSessionInfo:
-		return unmarshal(SessionInfoEvent{})
+		dst = &SessionInfoEvent{}
 	case EventTypeUsage:
-		return unmarshal(UsageEvent{})
+		dst = &UsageEvent{}
 	case EventTypeStateChange:
-		return unmarshal(StateChangeEvent{})
+		dst = &StateChangeEvent{}
+	default:
+		return nil, fmt.Errorf("events: unknown typed event %q", eventType)
+	}
+
+	if err := json.Unmarshal(payload, dst); err != nil {
+		return nil, fmt.Errorf("events: decode %s payload: %w", eventType, err)
+	}
+
+	// Dereference pointer to return value type (Event interface implementations are value receivers).
+	switch v := dst.(type) {
+	case *ToolCallEvent:
+		return *v, nil
+	case *ToolResultEvent:
+		return *v, nil
+	case *PlanEvent:
+		return *v, nil
+	case *TurnStartEvent:
+		return *v, nil
+	case *TurnEndEvent:
+		return *v, nil
+	case *ErrorEvent:
+		return *v, nil
+	case *AvailableCommandsEvent:
+		return *v, nil
+	case *CurrentModeEvent:
+		return *v, nil
+	case *ConfigOptionEvent:
+		return *v, nil
+	case *SessionInfoEvent:
+		return *v, nil
+	case *UsageEvent:
+		return *v, nil
+	case *StateChangeEvent:
+		return *v, nil
 	default:
 		return nil, fmt.Errorf("events: unknown typed event %q", eventType)
 	}

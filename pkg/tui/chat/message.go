@@ -59,6 +59,17 @@ type ToolResult struct {
 	MIMEType   string `json:"mime_type"`
 	Metadata   string `json:"metadata"`
 	IsError    bool   `json:"is_error"`
+
+	// Diff holds structured diff data for file-change tool results.
+	// When set, the rendering layer uses DiffView instead of plain text.
+	Diff *ToolResultDiff `json:"-"`
+}
+
+// ToolResultDiff holds the before/after content for rendering a file diff.
+type ToolResultDiff struct {
+	Path    string // file path
+	OldText string // content before the change (empty for new files)
+	NewText string // content after the change
 }
 
 // FinishPart contains metadata about why a message finished.

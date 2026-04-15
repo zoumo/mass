@@ -31,12 +31,12 @@ func drainShimEvent(t *testing.T, ch <-chan apishim.ShimEvent) apishim.ShimEvent
 	}
 }
 
-// sessionContent extracts the typed Event content from a session category ShimEvent.
-func sessionContent(t *testing.T, ev apishim.ShimEvent) apishim.Event {
+// sessionPayload extracts the typed Event content from a session category ShimEvent.
+func sessionPayload(t *testing.T, ev apishim.ShimEvent) apishim.Event {
 	t.Helper()
 	assert.Equal(t, apishim.CategorySession, ev.Category, "expected session category event")
-	require.NotNil(t, ev.Content, "expected non-nil content")
-	return ev.Content
+	require.NotNil(t, ev.Payload, "expected non-nil payload")
+	return ev.Payload
 }
 
 func sendAndDrainShimEvent(t *testing.T, in chan<- acp.SessionNotification, ch <-chan apishim.ShimEvent, text string) apishim.ShimEvent {
@@ -67,7 +67,7 @@ func TestTranslate_AgentMessageChunk(t *testing.T) {
 	assert.Equal(t, 0, ev.Seq)
 	assert.Equal(t, apishim.CategorySession, ev.Category)
 	assert.Equal(t, apishim.EventTypeAgentMessage, ev.Type)
-	te, ok := ev.Content.(apishim.AgentMessageEvent)
+	te, ok := ev.Payload.(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, te.Content.Text)
 	assert.Equal(t, "hello", te.Content.Text.Text)
@@ -87,7 +87,7 @@ func TestTranslate_AgentThoughtChunk(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	te, ok := sessionContent(t, ev).(apishim.AgentThinkingEvent)
+	te, ok := sessionPayload(t, ev).(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, te.Content.Text)
 	assert.Equal(t, "thinking", te.Content.Text.Text)
@@ -105,7 +105,7 @@ func TestTranslate_ToolCall(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	tc, ok := sessionContent(t, ev).(apishim.ToolCallEvent)
+	tc, ok := sessionPayload(t, ev).(apishim.ToolCallEvent)
 	require.True(t, ok)
 	assert.Equal(t, apishim.ToolCallEvent{ID: "tc-1", Kind: "shell", Title: "run ls"}, tc)
 }
@@ -123,7 +123,7 @@ func TestTranslate_ToolCallUpdate(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	tr_, ok := sessionContent(t, ev).(apishim.ToolResultEvent)
+	tr_, ok := sessionPayload(t, ev).(apishim.ToolResultEvent)
 	require.True(t, ok)
 	assert.Equal(t, apishim.ToolResultEvent{ID: "tc-1", Status: "completed"}, tr_)
 }
@@ -140,7 +140,7 @@ func TestTranslate_ToolCallUpdate_NilStatus(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	tr_, ok := sessionContent(t, ev).(apishim.ToolResultEvent)
+	tr_, ok := sessionPayload(t, ev).(apishim.ToolResultEvent)
 	require.True(t, ok)
 	assert.Equal(t, apishim.ToolResultEvent{ID: "tc-2", Status: "unknown"}, tr_)
 }
@@ -158,7 +158,7 @@ func TestTranslate_Plan(t *testing.T) {
 	})
 
 	ev := drainShimEvent(t, ch)
-	pe, ok := sessionContent(t, ev).(apishim.PlanEvent)
+	pe, ok := sessionPayload(t, ev).(apishim.PlanEvent)
 	require.True(t, ok)
 	assert.Len(t, pe.Entries, 2)
 	assert.Equal(t, "step 1", pe.Entries[0].Content)
@@ -178,7 +178,7 @@ func TestTranslate_UserMessageChunk(t *testing.T) {
 	}}
 
 	ev := drainShimEvent(t, ch)
-	ue, ok := sessionContent(t, ev).(apishim.UserMessageEvent)
+	ue, ok := sessionPayload(t, ev).(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, ue.Content.Text)
 	assert.Equal(t, "hello from user", ue.Content.Text.Text)
@@ -202,9 +202,9 @@ func TestTranslate_PreviouslyIgnoredVariants(t *testing.T) {
 	ev1 := drainShimEvent(t, ch)
 	ev2 := drainShimEvent(t, ch)
 	ev3 := drainShimEvent(t, ch)
-	assert.IsType(t, apishim.AvailableCommandsEvent{}, sessionContent(t, ev1))
-	assert.IsType(t, apishim.CurrentModeEvent{}, sessionContent(t, ev2))
-	te, ok := sessionContent(t, ev3).(apishim.AgentMessageEvent)
+	assert.IsType(t, apishim.AvailableCommandsEvent{}, sessionPayload(t, ev1))
+	assert.IsType(t, apishim.CurrentModeEvent{}, sessionPayload(t, ev2))
+	te, ok := sessionPayload(t, ev3).(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, te.Content.Text)
 	assert.Equal(t, "after", te.Content.Text.Text)
@@ -220,7 +220,7 @@ func TestTranslate_UnknownVariant(t *testing.T) {
 	in <- acp.SessionNotification{}
 
 	ev := drainShimEvent(t, ch)
-	ee, ok := sessionContent(t, ev).(apishim.ErrorEvent)
+	ee, ok := sessionPayload(t, ev).(apishim.ErrorEvent)
 	require.True(t, ok)
 	assert.Equal(t, apishim.ErrorEvent{Msg: "unknown session update variant"}, ee)
 }
@@ -242,7 +242,7 @@ func TestFanOut_ThreeSubscribers(t *testing.T) {
 
 	for _, ch := range []<-chan apishim.ShimEvent{ch1, ch2, ch3} {
 		ev := drainShimEvent(t, ch)
-		te, ok := ev.Content.(apishim.AgentMessageEvent)
+		te, ok := ev.Payload.(apishim.ContentEvent)
 		require.True(t, ok)
 		require.NotNil(t, te.Content.Text)
 		assert.Equal(t, "broadcast", te.Content.Text.Text)
@@ -288,7 +288,7 @@ func TestNotifyStateChange(t *testing.T) {
 	assert.Equal(t, "run-1", ev.RunID)
 	assert.Equal(t, 0, ev.Seq)
 	assert.Empty(t, ev.TurnID, "state_change must not carry TurnID")
-	sc, ok := ev.Content.(apishim.StateChangeEvent)
+	sc, ok := ev.Payload.(apishim.StateChangeEvent)
 	require.True(t, ok)
 	assert.Equal(t, "created", sc.PreviousStatus)
 	assert.Equal(t, "running", sc.Status)
@@ -319,7 +319,7 @@ func TestNotifyStateChange_WithSessionChanged(t *testing.T) {
 	assert.Equal(t, "state_change", entry.Type)
 	assert.Equal(t, apishim.CategoryRuntime, entry.Category)
 
-	sc, ok := entry.Content.(apishim.StateChangeEvent)
+	sc, ok := entry.Payload.(apishim.StateChangeEvent)
 	require.True(t, ok)
 	assert.Equal(t, "bootstrap-metadata", sc.Reason)
 	assert.Equal(t, []string{"agentInfo", "capabilities"}, sc.SessionChanged)
@@ -339,8 +339,8 @@ func TestShimEventRoundTrip(t *testing.T) {
 		Category:  apishim.CategorySession,
 		Type:      "tool_call",
 		TurnID:    "turn-001",
-		StreamSeq: 3,
-		Content:   apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"},
+		
+		Payload:   apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"},
 	}
 	data, err := ev.MarshalJSON()
 	require.NoError(t, err)
@@ -353,8 +353,7 @@ func TestShimEventRoundTrip(t *testing.T) {
 	assert.Equal(t, ev.Category, decoded.Category)
 	assert.Equal(t, ev.Type, decoded.Type)
 	assert.Equal(t, ev.TurnID, decoded.TurnID)
-	assert.Equal(t, ev.StreamSeq, decoded.StreamSeq)
-	tc, ok := decoded.Content.(apishim.ToolCallEvent)
+	tc, ok := decoded.Payload.(apishim.ToolCallEvent)
 	require.True(t, ok)
 	assert.Equal(t, apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"}, tc)
 }
@@ -367,7 +366,7 @@ func TestShimEventRoundTrip_NoTurnFields(t *testing.T) {
 		Time:     time.Now(),
 		Category: apishim.CategorySession,
 		Type:     apishim.EventTypeAgentMessage,
-		Content:  apishim.AgentMessageEvent{Content: apishim.TextBlock("no turn")},
+		Payload:  apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("no turn")),
 	}
 	data, err := ev.MarshalJSON()
 	require.NoError(t, err)
@@ -380,9 +379,9 @@ func TestEventTypes(t *testing.T) {
 		ev   apishim.Event
 		want string
 	}{
-		{apishim.AgentMessageEvent{Content: apishim.TextBlock("hi")}, "agent_message"},
-		{apishim.AgentThinkingEvent{Content: apishim.TextBlock("hmm")}, "agent_thinking"},
-		{apishim.UserMessageEvent{Content: apishim.TextBlock("yo")}, "user_message"},
+		{apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("hi")), "agent_message"},
+		{apishim.NewContentEvent(apishim.EventTypeAgentThinking, "", apishim.TextBlock("hmm")), "agent_thinking"},
+		{apishim.NewContentEvent(apishim.EventTypeUserMessage, "", apishim.TextBlock("yo")), "user_message"},
 		{apishim.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"}, "tool_call"},
 		{apishim.ToolResultEvent{ID: "1", Status: "ok"}, "tool_result"},
 		{apishim.PlanEvent{Entries: nil}, "plan"},
@@ -404,7 +403,7 @@ func TestSubscribeFromSeq_BackfillAndLive(t *testing.T) {
 	log1, err := OpenEventLog(logPath)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: at, Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Content: apishim.AgentMessageEvent{Content: apishim.TextBlock(fmt.Sprintf("msg-%d", i))}}
+		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: at, Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock(fmt.Sprintf("msg-%d", i)))}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -473,11 +472,14 @@ func TestTurnAwareShimEvent_TurnIdAssigned(t *testing.T) {
 	txt2Ev := sendAndDrainShimEvent(t, in, ch, "world")
 
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
-	teEv := drainShimEvent(t, ch)
+	blockEndEv := drainShimEvent(t, ch) // synthetic agent_message{end}
+	teEv := drainShimEvent(t, ch)       // turn_end
 
 	require.NotEmpty(t, tsEv.TurnID)
 	assert.Equal(t, tsEv.TurnID, txt1Ev.TurnID, "text event 1 must carry TurnID")
 	assert.Equal(t, tsEv.TurnID, txt2Ev.TurnID, "text event 2 must carry TurnID")
+	assert.Equal(t, apishim.EventTypeAgentMessage, blockEndEv.Type, "synthetic end must be agent_message")
+	assert.Equal(t, tsEv.TurnID, blockEndEv.TurnID, "synthetic end must carry TurnID")
 	assert.Equal(t, tsEv.TurnID, teEv.TurnID, "turn_end must carry same TurnID")
 
 	// State change after turn_end should not have TurnID.
@@ -487,34 +489,9 @@ func TestTurnAwareShimEvent_TurnIdAssigned(t *testing.T) {
 	assert.Empty(t, scEv.TurnID, "runtime state_change must not carry TurnID")
 }
 
-// TestTurnAwareShimEvent_StreamSeq verifies StreamSeq increments within a turn.
-func TestTurnAwareShimEvent_StreamSeq(t *testing.T) {
-	in := make(chan acp.SessionNotification, 4)
-	tr := NewTranslator("run-1", in, nil)
-	ch, _, _ := tr.Subscribe()
-	tr.Start()
-	defer tr.Stop()
-
-	tr.NotifyTurnStart()
-	tsEv := drainShimEvent(t, ch)
-	assert.Equal(t, 0, tsEv.StreamSeq, "turn_start must have StreamSeq=0")
-
-	txt1Ev := sendAndDrainShimEvent(t, in, ch, "a")
-	txt2Ev := sendAndDrainShimEvent(t, in, ch, "b")
-
-	assert.Equal(t, 1, txt1Ev.StreamSeq, "first text event StreamSeq")
-	assert.Equal(t, 2, txt2Ev.StreamSeq, "second text event StreamSeq")
-
-	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
-	teEv := drainShimEvent(t, ch)
-	assert.Equal(t, 3, teEv.StreamSeq, "turn_end StreamSeq")
-	// turn_end itself DOES carry the TurnID (cleared after the event is built).
-	assert.NotEmpty(t, teEv.TurnID, "turn_end event itself must carry TurnID")
-}
-
-// TestTurnAwareShimEvent_StreamSeqResetsPerTurn verifies that StreamSeq resets to 0
-// at the start of a new turn.
-func TestTurnAwareShimEvent_StreamSeqResetsPerTurn(t *testing.T) {
+// TestTurnAwareShimEvent_TurnIDChangesPerTurn verifies that TurnID changes
+// between consecutive turns.
+func TestTurnAwareShimEvent_TurnIDChangesPerTurn(t *testing.T) {
 	in := make(chan acp.SessionNotification, 8)
 	tr := NewTranslator("run-1", in, nil)
 	ch, _, _ := tr.Subscribe()
@@ -526,12 +503,12 @@ func TestTurnAwareShimEvent_StreamSeqResetsPerTurn(t *testing.T) {
 	ts1 := drainShimEvent(t, ch)
 	sendAndDrainShimEvent(t, in, ch, "turn1")
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
-	drainShimEvent(t, ch)
+	drainShimEvent(t, ch) // turn_end
+	drainShimEvent(t, ch) // synthetic content end
 
-	// Turn 2 — StreamSeq must reset to 0.
+	// Turn 2 — TurnID must differ.
 	tr.NotifyTurnStart()
 	ts2 := drainShimEvent(t, ch)
-	assert.Equal(t, 0, ts2.StreamSeq, "turn 2 must reset StreamSeq to 0")
 	assert.NotEqual(t, ts1.TurnID, ts2.TurnID, "turn 2 must have a different TurnID")
 }
 
@@ -553,14 +530,13 @@ func TestTurnAwareShimEvent_StateChangeExcludesTurnFields(t *testing.T) {
 
 	assert.Equal(t, apishim.CategoryRuntime, scEv.Category)
 	assert.Empty(t, scEv.TurnID, "state_change must not carry TurnID even during active turn")
-	assert.Equal(t, 0, scEv.StreamSeq, "state_change must not carry StreamSeq")
 
 	// Seq must increment correctly.
 	assert.Equal(t, tsEv.Seq+1, scEv.Seq, "state_change seq must follow turn_start seq")
 }
 
 // TestTurnAwareShimEvent_MetadataEventInTurn verifies that session metadata events
-// (session_info, usage, etc.) carry TurnID/StreamSeq when inside an active turn.
+// (session_info, usage, etc.) carry TurnID when inside an active turn.
 func TestTurnAwareShimEvent_MetadataEventInTurn(t *testing.T) {
 	in := make(chan acp.SessionNotification, 2)
 	tr := NewTranslator("run-1", in, nil)
@@ -582,11 +558,10 @@ func TestTurnAwareShimEvent_MetadataEventInTurn(t *testing.T) {
 	assert.Equal(t, apishim.CategorySession, siEv.Category)
 	assert.Equal(t, "session_info", siEv.Type)
 	assert.Equal(t, tsEv.TurnID, siEv.TurnID, "session_info in active turn must carry TurnID")
-	assert.Greater(t, siEv.StreamSeq, 0, "session_info in active turn must have StreamSeq > 0")
 }
 
 // TestTurnAwareShimEvent_MetadataEventOutsideTurn verifies that session metadata events
-// do NOT carry TurnID/StreamSeq when outside an active turn.
+// do NOT carry TurnID when outside an active turn.
 func TestTurnAwareShimEvent_MetadataEventOutsideTurn(t *testing.T) {
 	in := make(chan acp.SessionNotification, 2)
 	tr := NewTranslator("run-1", in, nil)
@@ -603,7 +578,6 @@ func TestTurnAwareShimEvent_MetadataEventOutsideTurn(t *testing.T) {
 
 	assert.Equal(t, apishim.CategorySession, siEv.Category)
 	assert.Empty(t, siEv.TurnID, "session_info outside turn must NOT carry TurnID")
-	assert.Equal(t, 0, siEv.StreamSeq, "session_info outside turn must have StreamSeq=0")
 }
 
 // TestFailClosed_AppendFailureDropsEvent verifies that if EventLog.Append fails,
@@ -730,22 +704,24 @@ func TestTurnAwareShimEvent_ReplayOrdering(t *testing.T) {
 	tr.Start()
 	defer tr.Stop()
 
-	// Turn 1: turn_start + 2 text events + turn_end.
+	// Turn 1: turn_start + 2 text events + synthetic block end + turn_end.
 	tr.NotifyTurnStart()
 	ts1Ev := drainShimEvent(t, ch)
 	t1aEv := sendAndDrainShimEvent(t, in, ch, "t1-a")
 	t1bEv := sendAndDrainShimEvent(t, in, ch, "t1-b")
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
-	te1Ev := drainShimEvent(t, ch)
-	turn1 := []apishim.ShimEvent{ts1Ev, t1aEv, t1bEv, te1Ev}
+	t1EndEv := drainShimEvent(t, ch) // synthetic agent_message{end}
+	te1Ev := drainShimEvent(t, ch)   // turn_end
+	turn1 := []apishim.ShimEvent{ts1Ev, t1aEv, t1bEv, t1EndEv, te1Ev}
 
-	// Turn 2: turn_start + 1 text event + turn_end.
+	// Turn 2: turn_start + 1 text event + synthetic block end + turn_end.
 	tr.NotifyTurnStart()
 	ts2Ev := drainShimEvent(t, ch)
 	t2aEv := sendAndDrainShimEvent(t, in, ch, "t2-a")
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
-	te2Ev := drainShimEvent(t, ch)
-	turn2 := []apishim.ShimEvent{ts2Ev, t2aEv, te2Ev}
+	t2EndEv := drainShimEvent(t, ch) // synthetic agent_message{end}
+	te2Ev := drainShimEvent(t, ch)   // turn_end
+	turn2 := []apishim.ShimEvent{ts2Ev, t2aEv, t2EndEv, te2Ev}
 
 	// (1) All turn 1 events share a common TurnID.
 	tid1 := turn1[0].TurnID
@@ -768,9 +744,8 @@ func TestTurnAwareShimEvent_ReplayOrdering(t *testing.T) {
 		assert.Equal(t, all[i-1].Seq+1, all[i].Seq, "global seq must be monotonic at position %d", i)
 	}
 
-	// (4) StreamSeq resets in turn 2.
-	assert.Equal(t, 0, ts1Ev.StreamSeq, "turn 1 start StreamSeq")
-	assert.Equal(t, 0, ts2Ev.StreamSeq, "turn 2 start StreamSeq must reset to 0")
+	// (4) TurnID differs between turns.
+	assert.NotEqual(t, ts1Ev.TurnID, ts2Ev.TurnID, "turn 1 and turn 2 must have different TurnIDs")
 }
 
 // TestEventCounts_PromptTurn verifies that EventCounts() returns correct
@@ -794,11 +769,12 @@ func TestEventCounts_PromptTurn(t *testing.T) {
 	sendAndDrainShimEvent(t, in, ch, "chunk-1")
 	sendAndDrainShimEvent(t, in, ch, "chunk-2")
 
-	// 1 tool_call
+	// 1 tool_call (triggers synthetic agent_message{end} before tool_call)
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.ToolCall = &acp.SessionUpdateToolCall{ToolCallId: "tc-1", Kind: "shell", Title: "ls"}
 	})
-	drainShimEvent(t, ch)
+	drainShimEvent(t, ch) // synthetic agent_message{end}
+	drainShimEvent(t, ch) // tool_call
 
 	// turn_end
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
@@ -811,7 +787,7 @@ func TestEventCounts_PromptTurn(t *testing.T) {
 	counts := tr.EventCounts()
 	assert.Equal(t, 1, counts["turn_start"], "turn_start count")
 	assert.Equal(t, 1, counts["user_message"], "user_message count")
-	assert.Equal(t, 2, counts["agent_message"], "text count")
+	assert.Equal(t, 3, counts["agent_message"], "agent_message count (start+streaming+synthetic end)")
 	assert.Equal(t, 1, counts["tool_call"], "tool_call count")
 	assert.Equal(t, 1, counts["turn_end"], "turn_end count")
 	assert.Equal(t, 1, counts["state_change"], "state_change count")

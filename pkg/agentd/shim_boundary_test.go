@@ -49,7 +49,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 		"time":     "2026-01-01T00:00:00Z",
 		"category": "runtime",
 		"type":     "state_change",
-		"content": map[string]any{
+		"payload": map[string]any{
 			"previousStatus": "creating",
 			"status":         "idle",
 			"pid":            1234,
@@ -111,7 +111,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 
 	srv, socketPath := newMockShimServer(t)
 	for i := 0; i < 3; i++ {
-		contentBytes, err := json.Marshal(apishim.AgentMessageEvent{Content: apishim.TextBlock(fmt.Sprintf("chunk-%d", i))})
+		contentBytes, err := json.Marshal(apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock(fmt.Sprintf("chunk-%d", i))))
 		require.NoError(t, err)
 		srv.queueNotification(apishim.MethodShimEvent, map[string]any{
 			"runId":     "test-run",
@@ -121,8 +121,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 			"category":  "session",
 			"type":      "agent_message",
 			"turnId":    turnID,
-			"streamSeq": i,
-			"content":   json.RawMessage(contentBytes),
+			"payload":   json.RawMessage(contentBytes),
 		})
 	}
 
@@ -155,7 +154,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 		require.Equal(t, i, update.Seq)
 		require.Equal(t, turnID, update.TurnID)
 		require.Equal(t, apishim.EventTypeAgentMessage, update.Type)
-		payload, ok := update.Content.(apishim.AgentMessageEvent)
+		payload, ok := update.Payload.(apishim.ContentEvent)
 		require.True(t, ok)
 		require.NotNil(t, payload.Content.Text)
 		require.Equal(t, fmt.Sprintf("chunk-%d", i), payload.Content.Text.Text)
@@ -189,7 +188,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 		"time":     "2026-01-01T00:00:00Z",
 		"category": "runtime",
 		"type":     "state_change",
-		"content": map[string]any{
+		"payload": map[string]any{
 			"previousStatus": "idle",
 			"status":         "running",
 			"pid":            5678,
@@ -201,7 +200,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 		"time":     "2026-01-01T00:00:01Z",
 		"category": "runtime",
 		"type":     "state_change",
-		"content": map[string]any{
+		"payload": map[string]any{
 			"previousStatus": "running",
 			"status":         "idle",
 			"pid":            5678,
@@ -333,7 +332,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 		"time":     "2026-01-01T00:00:00Z",
 		"category": "runtime",
 		"type":     "state_change",
-		"content":  []any{"this", "is", "not", "a", "stateChange"},
+		"payload":  []any{"this", "is", "not", "a", "stateChange"},
 	})
 
 	shimProc := &ShimProcess{

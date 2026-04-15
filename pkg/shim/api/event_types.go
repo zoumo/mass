@@ -313,19 +313,21 @@ type Cost struct {
 
 // ── Core event types ──────────────────────────────────────────────────────────
 
-// AgentMessageEvent carries a streamed content chunk from the agent.
-type AgentMessageEvent struct {
+// ContentEvent carries a streamed content chunk — used for agent_message,
+// agent_thinking, and user_message event types. The wire type is determined
+// by the internal typ field, set via NewContentEvent.
+type ContentEvent struct {
+	Status  string       `json:"status"`
 	Content ContentBlock `json:"content"`
+	typ     string
 }
 
-func (AgentMessageEvent) eventType() string { return EventTypeAgentMessage }
+func (e ContentEvent) eventType() string { return e.typ }
 
-// AgentThinkingEvent carries a streamed thinking/reasoning chunk from the agent.
-type AgentThinkingEvent struct {
-	Content ContentBlock `json:"content"`
+// NewContentEvent constructs a ContentEvent with the given event type, status, and content.
+func NewContentEvent(eventType, status string, content ContentBlock) ContentEvent {
+	return ContentEvent{typ: eventType, Status: status, Content: content}
 }
-
-func (AgentThinkingEvent) eventType() string { return EventTypeAgentThinking }
 
 // ToolCallEvent signals that the agent invoked a tool.
 type ToolCallEvent struct {
@@ -367,12 +369,6 @@ type PlanEvent struct {
 
 func (PlanEvent) eventType() string { return EventTypePlan }
 
-// UserMessageEvent carries a streamed content chunk echoed from the user's prompt.
-type UserMessageEvent struct {
-	Content ContentBlock `json:"content"`
-}
-
-func (UserMessageEvent) eventType() string { return EventTypeUserMessage }
 
 // TurnStartEvent signals the start of an agent turn.
 type TurnStartEvent struct{}

@@ -63,11 +63,17 @@ func (g *GenericToolRenderContext) RenderTool(sty *styles.Styles, width int, opt
 		return joinToolParts(header, earlyState)
 	}
 
-	if !opts.HasResult() || opts.Result.Content == "" {
+	if !opts.HasResult() || opts.HasEmptyResult() {
 		return header
 	}
 
 	bodyWidth := cappedWidth - toolBodyLeftPaddingTotal
+
+	// Handle diff data using DiffView.
+	if opts.Result.Diff != nil {
+		body := toolOutputDiffContent(sty, opts.Result.Diff, bodyWidth, opts.ExpandedContent)
+		return joinToolParts(header, body)
+	}
 
 	// Handle image data.
 	if opts.Result.Data != "" && strings.HasPrefix(opts.Result.MIMEType, "image/") {

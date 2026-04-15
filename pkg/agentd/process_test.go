@@ -192,10 +192,10 @@ func TestProcessManagerStart(t *testing.T) {
 			eventCount++
 			t.Logf("Received event #%d: seq=%d type=%s category=%s",
 				eventCount, update.Seq, update.Type, update.Category)
-			if _, ok := update.Content.(shim.AgentMessageEvent); ok {
-				t.Logf("AgentMessageEvent received")
+			if _, ok := update.Payload.(shim.ContentEvent); ok {
+				t.Logf("ContentEvent received")
 			}
-			if _, ok := update.Content.(shim.TurnEndEvent); ok {
+			if _, ok := update.Payload.(shim.TurnEndEvent); ok {
 				t.Logf("TurnEndEvent received, prompt complete")
 				goto done
 			}

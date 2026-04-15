@@ -159,35 +159,40 @@ func connectCmd(sock string) tea.Cmd {
 
 func waitNotif(ch <-chan jsonrpc.NotificationMsg) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		msg, ok := <-ch
-		if !ok {
-			return connClosedMsg{}
-		}
-		if msg.Method != shimapi.MethodShimEvent {
-			return nil // skip non-shim notifications
-		}
-		// Fast-path: extract type before full parse so turn_end is never
-		// missed even if decodeEventPayload fails on an unknown event type.
-		var peek struct {
-			Type string `json:"type"`
-		}
-		_ = json.Unmarshal(msg.Params, &peek)
-		if peek.Type == shimapi.EventTypeTurnEnd {
-			return turnEndMsg{}
-		}
-
-		var ev shimapi.ShimEvent
-		if err := json.Unmarshal(msg.Params, &ev); err != nil {
-			return nil // skip unparseable event
-		}
-		if sc, ok := ev.Content.(shimapi.StateChangeEvent); ok {
-			return stateChangeMsg{
-				previous: sc.PreviousStatus,
-				status:   sc.Status,
-				reason:   sc.Reason,
+		// Loop until we get a valid shim event or the channel closes.
+		// Returning nil from a tea.Cmd causes Bubbletea to skip Update,
+		// which would break the notification chain permanently.
+		for {
+			msg, ok := <-ch
+			if !ok {
+				return connClosedMsg{}
 			}
+			if msg.Method != shimapi.MethodShimEvent {
+				continue // skip non-shim notifications
+			}
+			// Fast-path: extract type before full parse so turn_end is never
+			// missed even if decodeEventPayload fails on an unknown event type.
+			var peek struct {
+				Type string `json:"type"`
+			}
+			_ = json.Unmarshal(msg.Params, &peek)
+			if peek.Type == shimapi.EventTypeTurnEnd {
+				return turnEndMsg{}
+			}
+
+			var ev shimapi.ShimEvent
+			if err := json.Unmarshal(msg.Params, &ev); err != nil {
+				continue // skip unparseable event
+			}
+			if sc, ok := ev.Payload.(shimapi.StateChangeEvent); ok {
+				return stateChangeMsg{
+					previous: sc.PreviousStatus,
+					status:   sc.Status,
+					reason:   sc.Reason,
+				}
+			}
+			return notifMsg{ev: ev}
 		}
-		return notifMsg{ev: ev}
 	})
 }
 
@@ -417,15 +422,7 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 
 	switch {
 	case key.Code == tea.KeyEnter && key.Mod&tea.ModShift != 0:
-		// Shift+Enter: newline (terminal must support modifier reporting).
-		if !m.waiting {
-			var taCmd tea.Cmd
-			m.input, taCmd = m.input.Update(tea.KeyPressMsg(key))
-			cmds = append(cmds, taCmd)
-		}
-
-	case key.Mod&tea.ModCtrl != 0 && key.Code == 'j':
-		// Ctrl+J: newline (works in all terminals, fallback for Shift+Enter).
+		// Shift+Enter: insert newline.
 		if !m.waiting {
 			m.input.InsertRune('\n')
 		}
@@ -522,33 +519,36 @@ func (m *chatModel) handleNotif(ev shimapi.ShimEvent) tea.Cmd {
 
 	var cmds []tea.Cmd
 
-	switch pl := ev.Content.(type) {
-	case shimapi.UserMessageEvent:
-		// User prompt broadcast. Skip if we sent this prompt (already shown).
-		if m.sentPrompt {
-			m.sentPrompt = false
-			break
-		}
-		if text := contentBlockText(pl.Content); text != "" {
-			userMsg := newShimMessage(m.nextID("user"), chat.RoleUser)
-			userMsg.text = text
-			userMsg.finished = true
-			m.chat.AppendMessages(chat.NewUserMessageItem(&m.sty, userMsg))
-		}
+	switch pl := ev.Payload.(type) {
+	case shimapi.ContentEvent:
+		switch ev.Type {
+		case shimapi.EventTypeUserMessage:
+			// User prompt broadcast. Skip if we sent this prompt (already shown).
+			if m.sentPrompt {
+				m.sentPrompt = false
+				break
+			}
+			if text := contentBlockText(pl.Content); text != "" {
+				userMsg := newShimMessage(m.nextID("user"), chat.RoleUser)
+				userMsg.text = text
+				userMsg.finished = true
+				m.chat.AppendMessages(chat.NewUserMessageItem(&m.sty, userMsg))
+			}
 
-	case shimapi.AgentMessageEvent:
-		if cmd := m.ensureCurrentMsg(); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-		m.currentMsg.appendText(contentBlockText(pl.Content))
-		m.updateCurrentAssistant()
+		case shimapi.EventTypeAgentMessage:
+			if cmd := m.ensureCurrentMsg(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			m.currentMsg.appendText(contentBlockText(pl.Content))
+			m.updateCurrentAssistant()
 
-	case shimapi.AgentThinkingEvent:
-		if cmd := m.ensureCurrentMsg(); cmd != nil {
-			cmds = append(cmds, cmd)
+		case shimapi.EventTypeAgentThinking:
+			if cmd := m.ensureCurrentMsg(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			m.currentMsg.appendThinking(contentBlockText(pl.Content))
+			m.updateCurrentAssistant()
 		}
-		m.currentMsg.appendThinking(contentBlockText(pl.Content))
-		m.updateCurrentAssistant()
 
 	case shimapi.ToolCallEvent:
 		// Finish current assistant text before tool.
@@ -561,7 +561,18 @@ func (m *chatModel) handleNotif(ev shimapi.ShimEvent) tea.Cmd {
 		toolItemID := m.nextID("tc")
 		input := buildInput(pl.Title, pl.Locations)
 		tc := chat.ToolCall{ID: pl.ID, Name: pl.Kind, Input: input, Finished: true}
-		toolItem := chat.NewToolMessageItem(&m.sty, toolItemID, tc, nil, false)
+
+		// ToolCallEvent's Content/RawOutput carry the tool's execution result.
+		// Pre-populate the result so it displays immediately without waiting
+		// for the separate ToolResultEvent (which may add/override later).
+		var initResult *chat.ToolResult
+		resultContent := buildResultContent(pl.Content, pl.Status, pl.RawOutput)
+		diffData := extractDiff(pl.Content)
+		if resultContent != "" || diffData != nil {
+			initResult = &chat.ToolResult{ToolCallID: pl.ID, Content: resultContent, Diff: diffData}
+		}
+
+		toolItem := chat.NewToolMessageItem(&m.sty, toolItemID, tc, initResult, false)
 		// Our tool_call event means the tool was already invoked. Set initial
 		// status to Success to avoid showing "Waiting for tool response...".
 		// The actual status will be overwritten when tool_result arrives.
@@ -590,7 +601,7 @@ func (m *chatModel) handleNotif(ev shimapi.ShimEvent) tea.Cmd {
 		}
 
 		// Build result content from event data.
-		resultContent := buildResultContent(pl.Content, pl.Status)
+		resultContent := buildResultContent(pl.Content, pl.Status, pl.RawOutput)
 
 		// Find the matching tool call item and update its status.
 		if itemID, ok := m.toolItemIDs[pl.ID]; ok {
@@ -611,6 +622,7 @@ func (m *chatModel) handleNotif(ev shimapi.ShimEvent) tea.Cmd {
 					ti.SetResult(&chat.ToolResult{
 						ToolCallID: pl.ID,
 						Content:    resultContent,
+						Diff:       extractDiff(pl.Content),
 					})
 				}
 			}
@@ -711,7 +723,7 @@ func (m chatModel) renderHelp() string {
 	if m.chatFocused {
 		keys = append(keys, "j/k scroll", "d/u half-page", "g/G top/bottom", "tab editor", "esc back")
 	} else {
-		keys = append(keys, "enter send", "ctrl+j newline", "tab chat", "ctrl+x cancel")
+		keys = append(keys, "enter send", "shift+enter newline", "tab chat", "ctrl+x cancel")
 	}
 	keys = append(keys, "shift+click select text", "ctrl+c quit")
 	return styleHelp.Render(" " + strings.Join(keys, " · "))
