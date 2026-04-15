@@ -6,12 +6,12 @@ This file is the slice-level authority map for the design set. It names which do
 
 | Contract topic | Primary authority | Supporting docs | Current implementation note |
 |---|---|---|---|
-| Bundle schema and bootstrap inputs | `docs/design/runtime/config-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/design.md`, `docs/design/agentd/ari-spec.md` | `agentrun/create` is async bootstrap; `agentrun/prompt` is the work-entry path. |
-| Runtime lifecycle and state model | `docs/design/runtime/runtime-spec.md` | `docs/design/runtime/design.md`, `docs/design/agentd/agentd.md`, `docs/design/agentd/ari-spec.md` | AgentRun is the external API object; shim session is the internal runtime realization. AgentRun identity, ACP session identity, and runtime process state remain explicitly distinct. |
-| Workspace preparation and host-impact rules | `docs/design/workspace/workspace-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/agentd/ari-spec.md` | local workspace, hook execution, env precedence, and shared workspace semantics must tell one safety story. |
-| Agent configuration CRUD | `docs/design/agentd/ari-spec.md` | `docs/design/agentd/agentd.md` | `agent/*` methods manage Agent records (set/get/list/delete). No runtime process is involved. |
-| AgentRun lifecycle (running instances) | `docs/design/agentd/ari-spec.md` | `docs/design/agentd/agentd.md`, `docs/design/runtime/agent-shim.md` | ARI exposes `agentrun/*` methods for the lifecycle of running agent instances. Workspace-scoped message routing is via `workspace/send`. |
-| Shim control, replay, and reconnect contract | `docs/design/runtime/shim-rpc-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/agent-shim.md`, `docs/design/agentd/agentd.md` | The clean-break shim surface: request/response is `session/*` + `runtime/*` (internal); notification surface is `shim/event`. runtime-spec owns state-dir / socket layout, shim-rpc-spec owns recovery method semantics. |
+| Bundle schema and bootstrap inputs | `docs/design/runtime/config-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/design.md`, `docs/design/mass/ari-spec.md` | `agentrun/create` is async bootstrap; `agentrun/prompt` is the work-entry path. |
+| Runtime lifecycle and state model | `docs/design/runtime/runtime-spec.md` | `docs/design/runtime/design.md`, `docs/design/mass/agentd.md`, `docs/design/mass/ari-spec.md` | AgentRun is the external API object; shim session is the internal runtime realization. AgentRun identity, ACP session identity, and runtime process state remain explicitly distinct. |
+| Workspace preparation and host-impact rules | `docs/design/workspace/workspace-spec.md` | `docs/design/mass/agentd.md`, `docs/design/mass/ari-spec.md` | local workspace, hook execution, env precedence, and shared workspace semantics must tell one safety story. |
+| Agent configuration CRUD | `docs/design/mass/ari-spec.md` | `docs/design/mass/agentd.md` | `agent/*` methods manage Agent records (set/get/list/delete). No runtime process is involved. |
+| AgentRun lifecycle (running instances) | `docs/design/mass/ari-spec.md` | `docs/design/mass/agentd.md`, `docs/design/runtime/agent-shim.md` | ARI exposes `agentrun/*` methods for the lifecycle of running agent instances. Workspace-scoped message routing is via `workspace/send`. |
+| Shim control, replay, and reconnect contract | `docs/design/runtime/shim-rpc-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/agent-shim.md`, `docs/design/mass/agentd.md` | The clean-break shim surface: request/response is `session/*` + `runtime/*` (internal); notification surface is `shim/event`. runtime-spec owns state-dir / socket layout, shim-rpc-spec owns recovery method semantics. |
 
 ## Current Implementation Vocabulary
 
@@ -49,7 +49,7 @@ Invariant wording:
 - `agentrun/create` is async configuration-only bootstrap.
 - `agentrun/prompt` carries work.
 - AgentRun identity = `workspace` + `name` (stable external key).
-- OAR AgentRun identity is not ACP session identity.
+- MASS AgentRun identity is not ACP session identity.
 - `systemPrompt` is bootstrap configuration, not a hidden work turn.
 - The shim request/response surface (`session/*` + `runtime/*`) is UNCHANGED; it remains an internal agentd↔shim protocol. The notification surface is unified as `shim/event`.
 
@@ -77,7 +77,7 @@ The `paused:warm` / `paused:cold` states do not exist in the current state machi
 The design set now names these boundaries explicitly:
 
 - **local workspace**: a host path attachment that must be validated and canonicalized before use and must remain outside agentd-managed deletion.
-- **hook execution**: host commands executed by agentd around workspace lifecycle, with observable failure reporting and host-side effects.
+- **hook execution**: host commands executed by mass around workspace lifecycle, with observable failure reporting and host-side effects.
 - **env precedence**: inherited daemon/host environment → Agent definition env → (no AgentRun-level env override in current implementation). Workspace hooks are outside this chain.
 - **shared workspace**: multiple AgentRuns may intentionally share one workspace name; this implies shared filesystem visibility and shared write risk, not per-agent isolation.
 - **capability posture**: ACP remains the inner protocol. ARI exposes only the curated control surface using `agentrun/*` and `workspace/*` methods; raw ACP client duties stay behind the shim boundary.
@@ -112,7 +112,7 @@ Currently persisted in `AgentRunStatus`:
 
 Still gaps (future work):
 
-- OAR runtime ID ↔ ACP `sessionId` mapping (restart diagnostics);
+- MASS runtime ID ↔ ACP `sessionId` mapping (restart diagnostics);
 - hook stdout/stderr output persistence (currently not returned via ARI);
 - AgentRun-level env override (currently no such field in `agentrun/create`);
 - ARI-level event fanout to ARI clients (currently events are consumed via shim `session/subscribe` only).

@@ -1,11 +1,11 @@
-# OAR Runtime Spec — Design Rationale
+# MASS Runtime Spec — Design Rationale
 
 ## Architecture Reference
 
 OCI Runtime Spec defines `config.json` — a portable, standardized container runtime description.
 It covers process, rootfs, mounts, hooks, and platform-specific settings (namespaces, cgroups, seccomp).
 
-OAR Runtime Spec serves the same purpose for Agents: standardized description of an Agent instance's runtime configuration.
+MASS Runtime Spec serves the same purpose for Agents: standardized description of an Agent instance's runtime configuration.
 The key difference is scope — an Agent is a process, not a sandbox.
 We strip all kernel isolation concerns and add Agent-native concerns.
 
@@ -22,13 +22,13 @@ User writes Pod Spec (runtimeClassName: kata, image: nginx)
   → runc reads config.json, starts container process
 ```
 
-OAR config.json follows the same pattern:
+MASS config.json follows the same pattern:
 
 ```
 ARI client sends bootstrap request (runtimeClass: claude, systemPrompt: "...")
   → agentd resolves runtimeClass → finds handler config (command, args, env)
   → agentd merges runtimeClass config + request params
-  → agentd generates config.json (concrete bootstrap + process launch params)
+  → mass generates config.json (concrete bootstrap + process launch params)
   → agent-shim reads config.json, starts agent process, completes bootstrap
   → later ARI `agentrun/prompt` delivers work
 ```
@@ -40,7 +40,7 @@ This is the same as OCI config.json not containing `runtimeClassName` but direct
 
 ## Why `acpAgent`
 
-The field name explicitly includes "acp", indicating that OAR Runtime Spec **only supports ACP protocol agents**.
+The field name explicitly includes "acp", indicating that MASS Runtime Spec **only supports ACP protocol agents**.
 ACP (Agent Communication Protocol) is the only agent communication protocol standard we support.
 This means:
 
@@ -52,7 +52,7 @@ This means:
 ## Bootstrap Phases
 
 OCI config.json puts all information in the `process` field.
-OAR Runtime Spec splits information into bootstrap phases,
+MASS Runtime Spec splits information into bootstrap phases,
 corresponding to how agent-shim consumes config.json during `create`:
 
 ```
@@ -81,7 +81,7 @@ Corresponding execution flow:
 4. Expose `idle` only after bootstrap is complete
 
 **Why no task/prompt in config.json**: Runtime Spec only describes how to create and initialize an agent,
-not what task to assign it. `session/new` establishes OAR session configuration.
+not what task to assign it. `session/new` establishes MASS session configuration.
 Later work enters through ARI `agentrun/prompt` after the runtime reaches `idle`.
 This keeps creation (bootstrap) separate from execution (user work turn).
 
@@ -98,12 +98,12 @@ One startup story is normative across the runtime docs:
 
 ## State Mapping
 
-The contract needs an explicit authority table so the design set stops collapsing OAR identity,
+The contract needs an explicit authority table so the design set stops collapsing MASS identity,
 process state, and ACP identity into one concept.
 
 | Concern | Authority | Identifier / State | Notes |
 |---|---|---|---|
-| OAR runtime object | agentd + runtime | AgentRun `(workspace, name)`; runtime `status` = `creating`/`idle`/`running`/`stopped`/`error` | Names the runtime instance exposed through ARI and runtime state.json. |
+| MASS runtime object | agentd + runtime | AgentRun `(workspace, name)`; runtime `status` = `creating`/`idle`/`running`/`stopped`/`error` | Names the runtime instance exposed through ARI and runtime state.json. |
 | agentd AgentRun lifecycle | agentd | `creating` / `idle` / `running` / `stopped` / `error` | AgentRun lifecycle state around the runtime process. |
 | Host process | runtime / shim | PID + process status | Operational signal for whether the agent process is alive. |
 | ACP peer session | ACP peer + shim | ACP `sessionId` | Inner protocol identity, distinct from AgentRun identity. |
@@ -118,9 +118,9 @@ The important split is:
 
 ### What We Kept from OCI
 
-| OCI Field | OAR Equivalent | Rationale |
+| OCI Field | MASS Equivalent | Rationale |
 |-----------|---------------|-----------|
-| `ociVersion` | `oarVersion` | Spec version control |
+| `ociVersion` | `massVersion` | Spec version control |
 | `process` | `acpAgent` | Every workload needs "how to run" |
 | `annotations` | `metadata.annotations` | Arbitrary KV metadata is universally useful |
 
@@ -141,16 +141,16 @@ OCI's `root.path` is a relative path inside the bundle pointing to the container
 containerd prepares the rootfs (via the snapshotter), places it at `root.path` inside the bundle,
 then hands the bundle to runc. runc reads `root.path`, resolves it, and uses it as the container's `/`.
 
-OAR follows the same pattern:
+MASS follows the same pattern:
 
-| Step | OCI (containerd + runc) | OAR (agentd + agent-shim) |
+| Step | OCI (containerd + runc) | MASS (agentd + agent-shim) |
 |------|------------------------|------------------------|
 | Prepare working filesystem | snapshotter unpacks image layers → rootfs | Workspace Manager clones git / creates emptyDir |
 | Place in bundle | rootfs written at `root.path` inside bundle | symlink at `agentRoot.path` points to workspace dir |
 | Read and resolve | runc: `filepath.Join(bundleDir, root.path)` | agent-shim: `filepath.Join(bundleDir, agentRoot.path)` + `EvalSymlinks` |
 | Use as working dir | container's root filesystem | agent's `cmd.Dir` + ACP `session/new cwd` |
 
-Key difference: OCI rootfs is per-container (isolated). OAR workspace is shared — multiple
+Key difference: OCI rootfs is per-container (isolated). MASS workspace is shared — multiple
 agents in a Room share the same workspace directory, with agentd creating a symlink in
 each agent's bundle pointing to the same underlying directory.
 
@@ -158,7 +158,7 @@ When multiple agents in a Room share the same workspace, this mirrors the Pod mo
 multiple containers joining the same namespace to share resources:
 
 ```
-OCI Pod (shared namespace):          OAR Room (shared workspace):
+OCI Pod (shared namespace):          MASS Room (shared workspace):
 
   container-1 ─┐                       agent-1 bundle/workspace ─┐
   container-2 ─┤── network ns          agent-2 bundle/workspace ─┤──► /var/lib/agentd/workspaces/ws-abc/
@@ -167,19 +167,19 @@ OCI Pod (shared namespace):          OAR Room (shared workspace):
 
 ### What We Added for Agents
 
-| OAR Field | Why Needed |
+| MASS Field | Why Needed |
 |-----------|-----------|
-| `acpAgent.systemPrompt` | Agent role definition and capability constraints. Populated by agentd from runtimeClass config + ARI request |
-| `acpAgent.process` | ACP agent process launch parameters. Populated by agentd from runtimeClass config |
+| `acpAgent.systemPrompt` | Agent role definition and capability constraints. Populated by mass from runtimeClass config + ARI request |
+| `acpAgent.process` | ACP agent process launch parameters. Populated by mass from runtimeClass config |
 | `acpAgent.session` | ACP `session/new` parameters (mcpServers). Guides agent-shim on how to initialize ACP session |
 
 ### Field Mapping
 
-| OCI config.json | OAR config.json | Notes |
+| OCI config.json | MASS config.json | Notes |
 |----------------|-----------------|-------|
 | `process.args` — what binary to run | `acpAgent.process.command/args` — which ACP agent to run | Generated by upper layer, consumed by runtime |
 | `process.env` — process env vars | `acpAgent.process.env` — process env vars | Same |
-| `process.cwd` — working directory | derived from `agentRoot.path` at runtime | OCI sets process cwd directly. OAR derives it: `filepath.Join(bundleDir, agentRoot.path)` + `EvalSymlinks` |
+| `process.cwd` — working directory | derived from `agentRoot.path` at runtime | OCI sets process cwd directly. MASS derives it: `filepath.Join(bundleDir, agentRoot.path)` + `EvalSymlinks` |
 | `root.path` — relative path to rootfs in bundle | `agentRoot.path` — relative path to workspace link in bundle | Same concept: relative path inside bundle, resolved by runtime |
 | — | `acpAgent.systemPrompt` — agent role definition | Agent-specific, core identity attribute |
 | — | `acpAgent.session.mcpServers` — MCP service list | Agent-specific, defined by ACP protocol |
@@ -188,13 +188,13 @@ OCI Pod (shared namespace):          OAR Room (shared workspace):
 ## Where is runtimeClass
 
 `agent` is a parameter from ARI request → agentd, not in the Runtime Spec.
-agentd is responsible for resolving `agent` into concrete values in `acpAgent` fields.
+mass is responsible for resolving `agent` into concrete values in `acpAgent` fields.
 
 ```
 runtimeClass location:
 
   K8s:     Pod Spec → runtimeClassName: kata    (not in OCI config.json)
-  OAR:     ARI request → runtimeClass: claude   (not in OAR config.json)
+  MASS:     ARI request → runtimeClass: claude   (not in MASS config.json)
 
 runtimeClass resolution:
 
@@ -205,11 +205,11 @@ runtimeClass resolution:
               → generates config.json: acpAgent.process.command = "npx", ...
 ```
 
-See [agentd documentation](../agentd/agentd.md) for detailed runtimeClass configuration.
+See [agentd documentation](../mass/mass.md) for detailed runtimeClass configuration.
 
 ## config.json Generation Flow
 
-Runtime Spec (config.json) is not hand-written. It is generated by agentd when creating a session.
+Runtime Spec (config.json) is not hand-written. It is generated by mass when creating a session.
 
 ```
 ARI request → agentd:
@@ -230,9 +230,9 @@ agentd looks up runtimeClass config:
 agentd resolves workspace path:
   workspaceId: "ws-abc123" → path: "/home/user/project"
 
-agentd generates config.json:
+mass generates config.json:
   {
-    "oarVersion": "0.1.0",
+    "massVersion": "0.1.0",
     "metadata": { "name": "session-abc123" },
     "agentRoot": { "path": "workspace" },       ← relative path; agentd symlinks bundle/workspace → ws path
     "acpAgent": {
@@ -254,7 +254,7 @@ agentd generates config.json:
   }
 
 agentd prepares bundle: writes config.json, symlinks bundle/workspace → /var/lib/agentd/workspaces/ws-abc/
-agentd writes config.json to bundle directory → agent-shim --bundle <path>
+mass writes config.json to bundle directory → agent-shim --bundle <path>
 ```
 
 This corresponds exactly to how containerd generates OCI config.json:
@@ -287,7 +287,7 @@ The following fields are durably persisted in `AgentRunStatus` and available for
 
 | Field / Mapping | Why it matters |
 |---|---|
-| OAR AgentRun identity ↔ ACP `sessionId` mapping | Recovery and diagnostics need to know which inner ACP session belongs to which outer AgentRun. |
+| MASS AgentRun identity ↔ ACP `sessionId` mapping | Recovery and diagnostics need to know which inner ACP session belongs to which outer AgentRun. |
 | Resolved `cwd` | The runtime derives it from `agentRoot.path`, but recovery/debugging often needs the final canonical host path. |
 | Last known runtime/process state transition metadata | Operators need timestamps, exit details, and failure phase data to understand why an agent stopped or failed bootstrap. |
 | Hook stdout/stderr output | Workspace preparation hook output is not currently returned through ARI. |

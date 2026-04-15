@@ -1,11 +1,11 @@
 > Auto-generated. Do not edit directly.
 > Last updated: 2026-04-15 after M014
 
-# Architecture: Open Agent Runtime (OAR)
+# Architecture: Multi-Agent Supervision System (MASS)
 
 ## System Overview
 
-OAR is a daemon-based runtime for managing AI agents on a single host. The core process (`agentd`) owns agent lifecycle, workspace provisioning, and message routing. An agent is identified by a stable `(workspace, name)` pair rather than an opaque UUID. Each running agent has one associated _session_ (internal runtime instance) backed by a child `agent-shim` process that speaks the ACP protocol. An orchestrator (or CLI) drives agentd exclusively through its ARI JSON-RPC 2.0 socket.
+MASS is a daemon-based runtime for managing AI agents on a single host. The core process (`mass`) owns agent lifecycle, workspace provisioning, and message routing. An agent is identified by a stable `(workspace, name)` pair rather than an opaque UUID. Each running agent has one associated _session_ (internal runtime instance) backed by a child `agent-shim` process that speaks the ACP protocol. An orchestrator (or CLI) drives agentd exclusively through its ARI JSON-RPC 2.0 socket.
 
 ### Key design axioms (post-M014)
 - **api/ subdirectories contain only pure types** (struct/const/enum). Interfaces and functions live in `server/` or `client/` packages.
@@ -21,7 +21,7 @@ OAR is a daemon-based runtime for managing AI agents on a single host. The core 
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Orchestrator / agentdctl CLI                                        │
+│ Orchestrator / massctl CLI                                        │
 │  ARI JSON-RPC 2.0 over Unix socket                                  │
 └────────────────────────────┬────────────────────────────────────────┘
                              │
@@ -84,14 +84,14 @@ OAR is a daemon-based runtime for managing AI agents on a single host. The core 
 | `pkg/workspace/` | Workspace provisioning: Git/EmptyDir/Local, hooks, ref-counting |
 | `pkg/ndjson/` | NDJSON streaming (shared, not shim-specific) |
 | `pkg/spec/` | Build-tag socket path limits, runtime spec helpers |
-| `cmd/agentdctl/` | Management CLI (cobra, resource-first grammar) |
+| `cmd/massctl/` | Management CLI (cobra, resource-first grammar) |
 
 ### Binaries produced
 
 | Binary | Purpose |
 |--------|---------|
-| `bin/agentd` | Main daemon + `agentd shim` self-fork entrypoint + `agentd workspace-mcp` |
-| `bin/agentdctl` | Management CLI (workspace, agent, agentrun, runtime, shim subcommands) |
+| `bin/mass` | Main daemon + `mass shim` self-fork entrypoint + `mass workspace-mcp` |
+| `bin/massctl` | Management CLI (workspace, agent, agentrun, runtime, shim subcommands) |
 
 ---
 
@@ -165,7 +165,7 @@ runtime/status → Status()
 ## Key Constraints
 
 1. **Unix socket path limit**: 104 bytes (macOS) / 108 bytes (Linux). Socket path overflow is validated at `agentrun/create` entry with JSON-RPC -32602 before any DB write.
-2. **Shim self-fork**: `agentd shim` is the shim entrypoint — `os.Executable()` self-fork with `OAR_SHIM_BINARY` env override for tests.
+2. **Shim self-fork**: `mass shim` is the shim entrypoint — `os.Executable()` self-fork with `MASS_SHIM_BINARY` env override for tests.
 3. **ON DELETE SET NULL**: `sessions.agent_id` FK uses `ON DELETE SET NULL` — session lookup must happen _before_ agent deletion, not after.
 4. **Workspace ref_count safety**: `workspace/cleanup` gates on persisted DB `ref_count`, never on volatile in-memory `RefCount`. Recovery guard blocks cleanup during active recovery.
 5. **Mutex + file I/O in recovery only**: `Translator.SubscribeFromSeq` holds mutex during log read + subscription registration. This is acceptable at startup/recovery (shim idle) but must not be used in hot paths.
@@ -193,7 +193,7 @@ runtime/status → Status()
 | Event log format | NDJSON (`pkg/ndjson/`, `pkg/shim/server/log.go`) |
 | Testing | Standard `go test`, mockagent binary (`internal/testutil/mockagent/`) |
 | Lint | `golangci-lint v2` (0 issues enforced) |
-| Build | `make build` → `bin/agentd` + `bin/agentdctl` |
+| Build | `make build` → `bin/mass` + `bin/massctl` |
 
 ---
 
@@ -231,7 +231,7 @@ cmd/
     subcommands/
       shim/         command.go (bootstrap wiring, synthetic events),
                     session_update.go (buildSessionUpdate, convert helpers)
-  agentdctl/        management CLI
+  massctl/        management CLI
 internal/
   testutil/mockagent/  mock ACP agent for integration tests
 ```

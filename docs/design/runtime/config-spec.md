@@ -8,16 +8,16 @@
 
 ## 规范版本
 
-* **`oarVersion`** (string, REQUIRED) 必须符合 [SemVer v2.0.0][semver] 格式，
-  指定该 bundle 所遵循的 OAR Runtime Specification 版本。
-  OAR Runtime Specification 遵循语义化版本控制，在主版本内保持向前和向后兼容。
+* **`massVersion`** (string, REQUIRED) 必须符合 [SemVer v2.0.0][semver] 格式，
+  指定该 bundle 所遵循的 MASS Runtime Specification 版本。
+  MASS Runtime Specification 遵循语义化版本控制，在主版本内保持向前和向后兼容。
   消费方必须拒绝未知的主版本号。
 
 ### 示例
 
 ```json
 {
-  "oarVersion": "0.1.0"
+  "massVersion": "0.1.0"
 }
 ```
 
@@ -67,7 +67,7 @@
 
   **与 OCI `root` 的对比**：
 
-  | OCI | OAR |
+  | OCI | MASS |
   |-----|-----|
   | `root.path` — relative path to rootfs inside the bundle | `agentRoot.path` — relative path to workspace link inside the bundle |
   | containerd prepares rootfs (via snapshotter), places it in the bundle | agentd's Workspace Manager prepares the workspace directory, symlinks it into the bundle |
@@ -93,7 +93,7 @@ Bundle directory layout after agentd prepares it:
 
 ```
 /var/lib/agentd/bundles/session-abc123/
-├── config.json                ← agentd writes
+├── config.json                ← mass writes
 └── workspace -> /var/lib/agentd/workspaces/ws-def456/   ← agentd symlinks
 ```
 
@@ -177,7 +177,7 @@ that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
   伪装成独立的外部工作 turn。
 
   如果 ACP 协议未来添加新的 `session/new` 参数，将直接在此处扩展。
-  这确保 OAR Runtime Spec 与 ACP 协议保持对齐。
+  这确保 MASS Runtime Spec 与 ACP 协议保持对齐。
 
 #### McpServer
 
@@ -270,7 +270,7 @@ agentd 生成的完整 config.json（runtimeClass "claude" 解析后）：
 
 ```json
 {
-  "oarVersion": "0.1.0",
+  "massVersion": "0.1.0",
 
   "metadata": {
     "name": "auth-refactor",
@@ -315,7 +315,7 @@ runtimeClass "gemini" 解析后：
 
 ```json
 {
-  "oarVersion": "0.1.0",
+  "massVersion": "0.1.0",
 
   "metadata": {
     "name": "code-reviewer"
@@ -340,7 +340,7 @@ runtimeClass "gemini" 解析后：
 
 ```json
 {
-  "oarVersion": "0.1.0",
+  "massVersion": "0.1.0",
   "metadata": { "name": "quick-task" },
   "agentRoot": { "path": "workspace" },
   "acpAgent": {

@@ -65,7 +65,7 @@
 ### S03: Shim package restructure + api/ deletion
 - Created `pkg/shim/api/` (methods, types, service, client) and `pkg/events/constants.go` (EventType*/Category* constants)
 - Migrated all 19 consumer files across 6 groups; deleted `api/shim/`, `api/events.go`, `api/methods.go`, and the `api/` directory root
-- Key files: `pkg/shim/api/methods.go`, `pkg/shim/api/types.go`, `pkg/shim/api/service.go`, `pkg/shim/api/client.go`, `pkg/events/constants.go`, `pkg/agentd/process.go`, `cmd/agentdctl/subcommands/shim/command.go`
+- Key files: `pkg/shim/api/methods.go`, `pkg/shim/api/types.go`, `pkg/shim/api/service.go`, `pkg/shim/api/client.go`, `pkg/events/constants.go`, `pkg/agentd/process.go`, `cmd/massctl/subcommands/shim/command.go`
 
 ### S04: Events impl + ACP runtime migration + final verification
 - Moved `pkg/events/` event wire types into `pkg/shim/api/` (shim_event.go, event_types.go, event_constants.go)
@@ -89,7 +89,7 @@
 ### S03: ARI Clean-Break Contract Convergence
 - Updated ARI spec with metadata/spec/status domain shapes; added `ARIView()` for sensitive field stripping at API boundary
 - Created `api/ari/domain.go`; deleted `api/meta/`; `ARIView()` preferred over `json:"-"` to preserve bbolt persistence
-- Key files: `api/ari/domain.go`, `api/ari/service.go`, `docs/design/agentd/ari-spec.md`
+- Key files: `api/ari/domain.go`, `api/ari/service.go`, `docs/design/mass/ari-spec.md`
 
 ### S04: Service Interface + Register + Typed Clients
 - Defined `WorkspaceService`/`AgentRunService`/`AgentService` interfaces with `Register` functions; added typed `ShimClient` wrapper
@@ -125,13 +125,13 @@
 - Refactored into `subcommands/server`, `subcommands/shim`, `subcommands/workspacemcp`; `main.go` reduced to 8 lines
 - Key files: `cmd/agentd/main.go`, `cmd/agentd/subcommands/root.go`
 
-### S02: cmd/agentdctl subcommands layout
+### S02: cmd/massctl subcommands layout
 - Refactored into `subcommands/{agent,agentrun,daemon,shim,workspace}` with shared `cliutil`; eliminated package globals
-- Key files: `cmd/agentdctl/main.go`, `cmd/agentdctl/subcommands/root.go`, `cmd/agentdctl/subcommands/cliutil/cliutil.go`
+- Key files: `cmd/massctl/main.go`, `cmd/massctl/subcommands/root.go`, `cmd/massctl/subcommands/cliutil/cliutil.go`
 
 ### S03: workspace CLI reshape
 - `create` split into `local/git/empty/-f` subcommands; `workspace get` added; `workspace send` made positional
-- Key files: `cmd/agentdctl/subcommands/workspace/command.go`, `cmd/agentdctl/subcommands/workspace/create/command.go`
+- Key files: `cmd/massctl/subcommands/workspace/command.go`, `cmd/massctl/subcommands/workspace/create/command.go`
 
 ---
 
@@ -148,7 +148,7 @@
 
 ### S01: Binary skeleton reorganization
 - Replaced flat flag-based `cmd/agentd/main.go` with cobra tree (`server/shim/workspace-mcp`); inlined old binaries as subcommands
-- Key files: `cmd/agentd/main.go`, `cmd/agentdctl/main.go`, `Makefile`
+- Key files: `cmd/agentd/main.go`, `cmd/massctl/main.go`, `Makefile`
 
 ### S02: --root config + Runtime entity + self-fork
 - Eliminated `config.yaml`; `Options{Root}` derives all paths deterministically; `meta.Runtime` in bbolt `v1/runtimes`; `ProcessManager` self-forks via `os.Executable()`
@@ -160,11 +160,11 @@
 
 ### S04: Cleanup + API rename (agent→AgentTemplate, agentrun→running instance)
 - Three-layer simultaneous rename: meta DB layer, ARI types, ARI server dispatch + CLI; deleted three obsolete cmd directories
-- Key files: `pkg/meta/models.go`, `pkg/ari/types.go`, `pkg/ari/server.go`, `cmd/agentdctl/agent_template.go`, `cmd/agentdctl/agent.go`
+- Key files: `pkg/meta/models.go`, `pkg/ari/types.go`, `pkg/ari/server.go`, `cmd/massctl/agent_template.go`, `cmd/massctl/agent.go`
 
 ---
 
-## M007: OAR Platform Terminal State Refactor (2026-04-09)
+## M007: MASS Platform Terminal State Refactor (2026-04-09)
 
 ### S01: Storage + Model Foundation
 - Replaced SQLite/CGo with pure-Go bbolt; deleted Session/Room/AgentState/SessionState; `StatusIdle` replaces `StatusCreated`
@@ -180,7 +180,7 @@
 
 ### S04: CLI + workspace-mcp-server + Design Docs
 - Renamed `room-mcp-server` → `workspace-mcp-server`; `room_send` → `workspace_send`; full design doc rewrite
-- Key files: `cmd/workspace-mcp-server/main.go`, `cmd/agentdctl/workspace.go`, `docs/design/agentd/ari-spec.md`, `docs/design/agentd/agentd.md`
+- Key files: `cmd/workspace-mcp-server/main.go`, `cmd/massctl/workspace.go`, `docs/design/mass/ari-spec.md`, `docs/design/mass/agentd.md`
 
 ### S05: Integration Tests + Final Verification
 - Full integration test suite rewrite for M007 ARI surface; fixed 3 pre-existing bugs (socket path mismatch, missed idle notification, stale socket cleanup)
@@ -201,7 +201,7 @@
 
 ### S01: Design Contract First
 - Rewrote all 7 authority docs (`ari-spec.md`, `agentd.md`, `shim-rpc-spec.md`, `room-spec.md`, `contract-convergence.md`); `scripts/verify-m005-s01-contract.sh` as mechanical proof
-- Key files: `docs/design/agentd/ari-spec.md`, `docs/design/runtime/shim-rpc-spec.md`, `scripts/verify-m005-s01-contract.sh`
+- Key files: `docs/design/mass/ari-spec.md`, `docs/design/runtime/shim-rpc-spec.md`, `scripts/verify-m005-s01-contract.sh`
 
 ### S02: Metadata Layer (agents + sessions tables)
 - New `agents` table with `(room, name)` UNIQUE key; `sessions.agent_id` FK; `AgentState` (5 states: creating/created/running/stopped/error); `paused:warm/paused:cold` retired
@@ -224,8 +224,8 @@
 - Key files: `cmd/room-mcp-server/main.go`
 
 ### S07: CLI + integration tests
-- `agentdctl agent` and `agentdctl agentrun` subcommands; consolidated integration test helpers; recovery test uses kill-all-shims strategy
-- Key files: `cmd/agentdctl/agent.go`, `cmd/agentdctl/helpers.go`, `tests/integration/`
+- `massctl agent` and `massctl agentrun` subcommands; consolidated integration test helpers; recovery test uses kill-all-shims strategy
+- Key files: `cmd/massctl/agent.go`, `cmd/massctl/helpers.go`, `tests/integration/`
 
 ---
 
@@ -288,7 +288,7 @@
 ## M001-tvc4z0: Phase 2 — agentd Core (2026-04-06)
 
 ### S01: Scaffolding + exitCode
-- `agentd` daemon foundation: YAML config, workspace manager init, ARI server bootstrap, graceful shutdown; `ExitCode *int` added to shim state
+- `mass` daemon foundation: YAML config, workspace manager init, ARI server bootstrap, graceful shutdown; `ExitCode *int` added to shim state
 - Key files: `cmd/agentd/main.go`, `pkg/agentd/config.go`
 
 ### S02: Metadata Store (SQLite)
@@ -303,9 +303,9 @@
 - Full session startup: runtimeClass → config.json → bundle → fork shim → socket wait → connect; 9 `session/*` handlers; `session/prompt` auto-starts on `created`
 - Key files: `pkg/agentd/process.go`, `pkg/ari/server.go`, `pkg/ari/types.go`
 
-### S07–S08: agentdctl CLI + Integration Tests
-- 11-command CLI; `pkg/ari/client.go` single-shot RPC client; 8 integration tests proving full `agentd → agent-shim → mockagent` pipeline
-- Key files: `cmd/agentdctl/main.go`, `pkg/ari/client.go`, `tests/integration/`
+### S07–S08: massctl CLI + Integration Tests
+- 11-command CLI; `pkg/ari/client.go` single-shot RPC client; 8 integration tests proving full `mass → agent-shim → mockagent` pipeline
+- Key files: `cmd/massctl/main.go`, `pkg/ari/client.go`, `tests/integration/`
 
 ---
 

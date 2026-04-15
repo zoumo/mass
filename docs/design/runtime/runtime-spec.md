@@ -1,8 +1,8 @@
-# OAR Runtime Specification
+# MASS Runtime Specification
 
 ## 概述
 
-本文档定义 OAR Runtime 的规范部分——agent 的状态模型、bundle 格式、
+本文档定义 MASS Runtime 的规范部分——agent 的状态模型、bundle 格式、
 生命周期状态机、操作语义，以及文件系统布局约定。
 
 这些规范是**实现无关**的——任何符合此规范的 runtime 实现（无论是直接集成
@@ -12,10 +12,10 @@
 
 The state of an agent includes the following properties:
 
-* **`oarVersion`** (string, REQUIRED) is the version of the OAR Runtime Specification
+* **`massVersion`** (string, REQUIRED) is the version of the MASS Runtime Specification
   with which the state complies.
-* **`id`** (string, REQUIRED) is the OAR runtime object's ID.
-  In agentd deployments this is the OAR `sessionId`, and it MUST be unique across all agents on this host.
+* **`id`** (string, REQUIRED) is the MASS runtime object's ID.
+  In agentd deployments this is the MASS `sessionId`, and it MUST be unique across all agents on this host.
   It is distinct from any ACP `sessionId` created inside the agent protocol session.
 * **`status`** (string, REQUIRED) is the runtime state of the agent.
   The value MAY be one of:
@@ -53,9 +53,9 @@ populated by the shim during runtime:
 
 ### Comparison with OCI State
 
-| OCI state.json | OAR state.json | Notes |
+| OCI state.json | MASS state.json | Notes |
 |---------------|----------------|-------|
-| `ociVersion` | `oarVersion` | Same |
+| `ociVersion` | `massVersion` | Same |
 | `id` | `id` | Same |
 | `status` | `status` | Same pattern: creating/idle/running/stopped/error |
 | `pid` | `pid` | Same |
@@ -68,7 +68,7 @@ populated by the shim during runtime:
 
 ```json
 {
-  "oarVersion": "0.1.0",
+  "massVersion": "0.1.0",
   "id": "my-project-architect",
   "status": "idle",
   "pid": 12345,
@@ -104,14 +104,14 @@ In agentd-managed deployments, bundle, state, and socket are co-located under th
 
 ```
 <bundleRoot>/<workspace>-<name>/      ← bundle dir (bundle field in state.json)
-├── config.json                       ← agentd writes (OAR Runtime Spec)
+├── config.json                       ← mass writes (MASS Runtime Spec)
 ├── workspace -> <workspace-dir>      ← agentd symlinks to workspace directory
 ├── state.json                        ← shim writes
 ├── agent-shim.sock                   ← shim creates (Unix domain socket)
 └── events.jsonl                      ← shim appends
 ```
 
-When running `agentd shim` in standalone mode, the default state directory is `<cwd>`.
+When running `mass shim` in standalone mode, the default state directory is `<cwd>`.
 
 agentd persists `ShimSocketPath` and `ShimStateDir` in AgentRun metadata,
 so recovery uses persisted metadata rather than filesystem scanning.
@@ -130,11 +130,11 @@ agentd MUST prepare the following before invoking the runtime:
 * **`workspace`** (symlink at `agentRoot.path`, REQUIRED) — a symbolic link at the
   path named by `config.json`'s `agentRoot.path` (typically `"workspace"`), pointing
   to the workspace directory prepared by the Workspace Manager.
-  agentd creates this symlink — the runtime only reads it.
+  mass creates this symlink — the runtime only reads it.
 
 ```
 <bundle-dir>/
-├── config.json       ← agentd writes (OAR Runtime Spec)
+├── config.json       ← mass writes (MASS Runtime Spec)
 └── workspace -> /var/lib/agentd/workspaces/ws-abc123/   ← agentd symlinks
 ```
 
@@ -148,29 +148,29 @@ OCI's `root.path` is a relative path inside the bundle pointing to the container
 rootfs. containerd (via the snapshotter) prepares the rootfs and places it at that
 path before handing the bundle to runc.
 
-OAR follows the same pattern: `agentRoot.path` is a relative path inside the bundle.
+MASS follows the same pattern: `agentRoot.path` is a relative path inside the bundle.
 agentd's Workspace Manager prepares the workspace directory and creates a symlink at
 `agentRoot.path` inside the bundle. The runtime reads and resolves the path — it never
 creates or modifies the workspace directory.
 
-The key difference: OCI rootfs is isolated per container. OAR workspace is shared —
+The key difference: OCI rootfs is isolated per container. MASS workspace is shared —
 multiple AgentRuns sharing a workspace each have their own bundle, but their `agentRoot.path`
 symlinks all point to the same underlying workspace directory.
 
 ### Bundle Lifecycle
 
-agentd is responsible for creating bundle directories and preparing their contents:
+mass is responsible for creating bundle directories and preparing their contents:
 
 1. Workspace Manager prepares the workspace directory (git clone / emptyDir / local).
-2. agentd creates the bundle directory.
-3. agentd writes `config.json` with `agentRoot.path = "workspace"`.
-4. agentd creates the symlink: `bundle/workspace → <workspace-dir>`.
+2. mass creates the bundle directory.
+3. mass writes `config.json` with `agentRoot.path = "workspace"`.
+4. mass creates the symlink: `bundle/workspace → <workspace-dir>`.
 5. agentd invokes the runtime's `create` operation with the bundle path.
 6. The runtime reads `config.json`, resolves `agentRoot.path` → canonical absolute path, starts agent.
 
 This mirrors OCI's bundle concept:
 containerd creates the bundle directory + rootfs → runc reads config.json from it.
-agentd creates the bundle directory + workspace symlink → the runtime reads config.json from it.
+mass creates the bundle directory + workspace symlink → the runtime reads config.json from it.
 
 ## Lifecycle
 
@@ -204,7 +204,7 @@ to when it ceases to exist.
 9. The agent MUST be destroyed by undoing the steps performed during the create phase (step 2).
 
 **Key difference from OCI**: In OCI, `create` sets up the environment but does NOT
-run the user program — that happens at `start`. In OAR, `create` both starts the
+run the user program — that happens at `start`. In MASS, `create` both starts the
 process and completes ACP initialization, because ACP is the runtime's core protocol.
 If ACP handshake fails, the agent instance is not considered successfully created.
 The `start` operation is currently a no-op, reserved for future use.
@@ -238,9 +238,9 @@ The `start` operation is currently a no-op, reserved for future use.
 ## State Mapping and Identity Authority
 
 The design set uses the following cross-layer mapping. `status` in this document is the
-runtime-owned state, not the agentd session state, and not the ACP peer's session identifier.
+runtime-owned state, not the mass daemon session state, and not the ACP peer's session identifier.
 
-| OAR runtime `status` | agentd AgentRun state | Process status | ACP `sessionId` authority | Notes |
+| MASS runtime `status` | agentd AgentRun state | Process status | ACP `sessionId` authority | Notes |
 |---|---|---|---|---|
 | `creating` | `creating` — bootstrap in progress | process may be absent or starting | none yet, or not yet durable | agentd has allocated the AgentRun identity, but ACP bootstrap is not complete. |
 | `idle` | `idle` | running | ACP peer may now return its own `sessionId`; it is subordinate protocol state | Runtime bootstrap is complete and the agent is ready to receive prompts. |
@@ -250,7 +250,7 @@ runtime-owned state, not the agentd session state, and not the ACP peer's sessio
 
 Identity authority stays split:
 
-- AgentRun identity `(workspace, name)` is allocated and owned by agentd/ARI and names the runtime object.
+- AgentRun identity `(workspace, name)` is allocated and owned by mass/ARI and names the runtime object.
 - ACP `sessionId` is allocated by the ACP peer during bootstrap and only identifies the inner protocol session.
 - Implementations MUST NOT imply that the two identifiers are equal, interchangeable, or durably mirrored unless later persistence work explicitly records that mapping.
 
@@ -338,7 +338,7 @@ The runtime reads `config.json` from the bundle directory. Fields:
 
 ```json
 {
-  "oarVersion": "0.1.0",
+  "massVersion": "0.1.0",
   "metadata": { "name": "session-abc123" },
   "agentRoot": { "path": "workspace" },
   "acpAgent": {

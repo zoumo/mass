@@ -1,4 +1,4 @@
-# OAR Development Roadmap
+# MASS Development Roadmap
 
 ## Current Implementation Status
 
@@ -12,7 +12,7 @@ Implemented:
   api/spec/          — API types in api/spec: Config, State, PermissionPolicy, ACP types
   api/ari/           — ARI JSON-RPC wire types: all Params/Result/Info types for workspace/*, agent/*,
                        agentrun/* methods, plus CodeRecoveryBlocked error code constant
-  pkg/spec           — OAR Runtime Spec I/O: config parsing, state file read/write; types in api/spec
+  pkg/spec           — MASS Runtime Spec I/O: config parsing, state file read/write; types in api/spec
   pkg/runtime        — agent process lifecycle, ACP handshake, permissions
   pkg/events         — Typed event stream, EventLog (JSONL), ACP→Event translator
   pkg/rpc            — JSON-RPC 2.0 server over Unix socket (shim RPC: session/* + runtime/*)
@@ -22,9 +22,9 @@ Implemented:
   pkg/agentd         — agentd subsystems: Agent Manager, Process Manager, RuntimeClass Registry,
                        Recovery (shim reconnect on daemon restart), recovery posture gating
   pkg/ari            — ARI JSON-RPC server: workspace/*, agent/*, agentrun/* method handlers,
-                       ARI client for agentdctl
+                       ARI client for massctl
   cmd/agentd         — agentd binary with server/shim/workspacemcp subcommands
-  cmd/agentdctl      — agentdctl CLI: workspace/agent/agentrun/daemon/shim/agenttemplate subcommands
+  cmd/massctl      — massctl CLI: workspace/agent/agentrun/daemon/shim/agenttemplate subcommands
   tests/integration  — End-to-end integration tests: session lifecycle, restart/recovery,
                        concurrent sessions, real CLI tests
 ```
@@ -63,7 +63,7 @@ Live notifications: `shim/event` (unified — replaces `session/update` + `runti
 | **ARI-level event fanout** | Streaming `session/update` events directly to ARI clients without requiring shim socket connection. |
 | **AgentRun-level env override** | `agentrun/create` has no `env` field; only Agent definition env is used. |
 | **Hook output via ARI** | Workspace hook stdout/stderr is captured but not returned through `workspace/status`. |
-| **OAR runtime ID ↔ ACP sessionId mapping** | Restart diagnostics: record which inner ACP session belongs to which AgentRun. |
+| **MASS runtime ID ↔ ACP sessionId mapping** | Restart diagnostics: record which inner ACP session belongs to which AgentRun. |
 | **Event log rotation** | Currently unbounded append to `events.jsonl`. |
 | **Cold pause / warm pause** | Lifecycle states beyond `idle`/`running`/`stopped` for session hibernation. |
 | **Agent definition `description` / `capabilities`** | Agent capability discovery via `workspace/status` members. |
@@ -73,7 +73,7 @@ Live notifications: `shim/event` (unified — replaces `session/update` + `runti
 ## Architecture Layers
 
 ```
-Layer 3 — External Caller (outside OAR scope)
+Layer 3 — External Caller (outside MASS scope)
     decides desired state, calls ARI
 
 Layer 2 — agentd + ARI  [implemented]

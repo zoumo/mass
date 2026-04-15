@@ -1,24 +1,24 @@
-# Open Agent Runtime (OAR) — 设计规范 v2
+# Multi-Agent Supervision System (MASS) — 设计规范 v2
 
-## 什么是 OAR
+## 什么是 MASS
 
-OAR（Open Agent Runtime）是一套用于管理 AI 编码 Agent 的标准和组件。
+MASS（Multi-Agent Supervision System）是一套用于管理 AI 编码 Agent 的标准和组件。
 它直接借鉴了 OCI（Open Container Initiative）生态的架构思想，
 将相同的关注点分离原则应用到 Agent 领域。
 
 ```text
-OCI（容器世界）                       OAR（Agent 世界）
+OCI（容器世界）                       MASS（Agent 世界）
 ─────────────────────                ─────────────────────
-Open Container Initiative       →    Open Agent Runtime
-OCI Runtime Spec                →    OAR Runtime Spec
-OCI Image Spec                  →    OAR Workspace Spec
+Open Container Initiative       →    Multi-Agent Supervision System
+OCI Runtime Spec                →    MASS Runtime Spec
+OCI Image Spec                  →    MASS Workspace Spec
 runc + containerd-shim          →    agent-shim（合并，无独立 runa）
 containerd                      →    agentd
 CRI (Container Runtime Interface) →  ARI (Agent Runtime Interface)
 Pod                             →    Room（future work，尚未实现）
 Container（外部对象）             →    Agent definition（模板）/ AgentRun（运行实例）
 Image / rootfs                  →    Workspace
-crictl                          →    agentdctl
+crictl                          →    massctl
 ```
 
 ## 为什么对标 OCI
@@ -28,8 +28,8 @@ Agent 面临着同样的分层关切：
 
 | 关切 | 容器方案 | Agent 方案 |
 |------|---------|-----------|
-| "运行什么" | OCI Runtime Spec (config.json) | OAR Runtime Spec (config.json) |
-| "准备什么环境" | OCI Image Spec (layers → rootfs) | OAR Workspace Spec (source + hooks → workdir) |
+| "运行什么" | OCI Runtime Spec (config.json) | MASS Runtime Spec (config.json) |
+| "准备什么环境" | OCI Image Spec (layers → rootfs) | MASS Workspace Spec (source + hooks → workdir) |
 | "底层执行 + 协议适配" | runc + containerd-shim | agent-shim（合并，无独立 runa） |
 | "高层管理" | containerd | agentd（Agent CRUD + AgentRun 生命周期 + Workspace Manager） |
 | "管理接口" | CRI (kubelet → containerd) | ARI (external caller → agentd) |
@@ -53,7 +53,7 @@ Agent 面临着同样的分层关切：
 
 ```text
 ┌ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┐
-  External Caller (ARI Client)            outside OAR scope
+  External Caller (ARI Client)            outside MASS scope
 │                                                                 │
    调用: ARI (workspace/*, agent/*, agentrun/*)
 │  决策: 准备哪些 workspace、创建哪些 AgentRun                     │
@@ -88,13 +88,13 @@ Agent 面临着同样的分层关切：
 │  └──────┬───────┘  └──────┴───────┘  └──────┬───────┘          │
 │         │                 │                 │                    │
 │         └─────────────────┼─────────────────┘                    │
-│                           │ workspace-mcp → agentd → target shim │
+│                           │ workspace-mcp → mass → target shim │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ## 当前实现状态
 
-已实现（`cmd/agentd`、`cmd/agentdctl`、相关包）：
+已实现（`cmd/agentd`、`cmd/massctl`、相关包）：
 
 - `workspace/*` — workspace 生命周期管理（create/status/list/delete/send）
 - `agent/*` — Agent CRUD（set/get/list/delete）
@@ -141,18 +141,18 @@ Agent 面临着同样的分层关切：
 
 | 文档 | 类型 | 内容 |
 |------|------|------|
-| [runtime/runtime-spec.md](./runtime/runtime-spec.md) | 规范 | OAR Runtime Spec — state、bundle、lifecycle、operations、typed events |
+| [runtime/runtime-spec.md](./runtime/runtime-spec.md) | 规范 | MASS Runtime Spec — state、bundle、lifecycle、operations、typed events |
 | [runtime/config-spec.md](./runtime/config-spec.md) | 规范 | Config Spec — config.json schema（对标 OCI config.md） |
 | [runtime/shim-rpc-spec.md](./runtime/shim-rpc-spec.md) | 规范 | Shim RPC Spec — clean-break `session/*` + `runtime/*` request/response surface、`shim/event` notification、回放与重连语义 |
 | [runtime/agent-shim.md](./runtime/agent-shim.md) | 组件 | agent-shim — 组件职责、ACP 边界、runtime truth、实现状态（描述性，不重新定义协议） |
 | [runtime/design.md](./runtime/design.md) | 设计 | 设计思路 — OCI 对标分析、架构决策、config.json 生成流程 |
-| [runtime/why-no-runa.md](./runtime/why-no-runa.md) | 设计 | 为什么 OAR 没有 runa — agent 场景下独立运行时 CLI 不成立的原因 |
+| [runtime/why-no-runa.md](./runtime/why-no-runa.md) | 设计 | 为什么 MASS 没有 runa — agent 场景下独立运行时 CLI 不成立的原因 |
 
 ### workspace/ — Workspace Spec（对标 OCI Image Spec）
 
 | 文档 | 类型 | 内容 |
 |------|------|------|
-| [workspace/workspace-spec.md](./workspace/workspace-spec.md) | 规范 | OAR Workspace Spec — 如何准备 agent 的工作环境（对标 OCI Image Spec） |
+| [workspace/workspace-spec.md](./workspace/workspace-spec.md) | 规范 | MASS Workspace Spec — 如何准备 agent 的工作环境（对标 OCI Image Spec） |
 | [workspace/communication.md](./workspace/communication.md) | 设计 | Agent 间通信 — 已实现 workspace/send v0 + future Task/Inbox 设计提案 |
 
 ### agentd/ — Layer 2: 多 agent 管理（对标 containerd + CRI）
@@ -161,5 +161,5 @@ Agent 面临着同样的分层关切：
 
 | 文档 | 类型 | 内容 |
 |------|------|------|
-| [agentd/ari-spec.md](./agentd/ari-spec.md) | 规范 | ARI — Agent Runtime Interface；`workspace/*`、`agent/*` Agent CRUD、`agentrun/*` AgentRun 生命周期 |
-| [agentd/agentd.md](./agentd/agentd.md) | 组件 | agentd — agent 运行时守护进程；Workspace Manager、Agent Manager、Agent Manager、Process Manager |
+| [mass/ari-spec.md](./mass/ari-spec.md) | 规范 | ARI — Agent Runtime Interface；`workspace/*`、`agent/*` Agent CRUD、`agentrun/*` AgentRun 生命周期 |
+| [mass/mass.md](./mass/mass.md) | 组件 | agentd — agent 运行时守护进程；Workspace Manager、Agent Manager、Agent Manager、Process Manager |

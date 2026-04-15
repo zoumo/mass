@@ -1,4 +1,4 @@
-# Design: Bubbletea TUI for `agentdctl shim chat`
+# Design: Bubbletea TUI for `massctl shim chat`
 
 **Date**: 2026-04-12  
 **Scope**: Replace `runChat()` implementation with a bubbletea TUI; no changes to RPC layer.
@@ -25,7 +25,7 @@
 ## File Layout
 
 ```
-cmd/agentdctl/subcommands/shim/
+cmd/massctl/subcommands/shim/
   command.go      — existing; runChat() delegates to runChatTUI() or runChatPlain()
   chat.go         — NEW: bubbletea model, messages, Update/View logic
   chat_plain.go   — NEW: existing bufio REPL, renamed from the inline runChat() body
@@ -177,4 +177,4 @@ func runChat(sock string) error {
 
 ## Testing
 
-Manual smoke test via `agentdctl shim chat --socket <path>`. No unit tests in this change — the bubbletea `teatest` library can be added in a follow-up if needed.
+Manual smoke test via `massctl shim chat --socket <path>`. No unit tests in this change — the bubbletea `teatest` library can be added in a follow-up if needed.

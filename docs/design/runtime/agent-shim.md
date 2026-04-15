@@ -2,11 +2,11 @@
 
 ## 定位
 
-agent-shim 是 OAR Runtime 的参考实现边界：
+agent-shim 是 MASS Runtime 的参考实现边界：
 它读取 bundle、启动 agent 进程、持有 stdio、完成 ACP bootstrap，
 并对外暴露 shim RPC。
 
-它对标 containerd-shim，但在 OAR 里同时吸收了独立 `runc` 不再成立后留下的职责。
+它对标 containerd-shim，但在 MASS 里同时吸收了独立 `runc` 不再成立后留下的职责。
 相关原因见 [why-no-runa.md](why-no-runa.md)。
 
 每个 AgentRun（运行实例）对应一个独立的 agent-shim 进程。
@@ -44,7 +44,7 @@ agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent
 
 ## 架构参照
 
-| containerd 生态 | OAR 生态 | 说明 |
+| containerd 生态 | MASS 生态 | 说明 |
 |----------------|----------|------|
 | containerd | agentd | 高层守护进程，可重启 |
 | containerd-shim | agent-shim | 中间层，独立进程，生命周期与单个 workload 绑定 |
@@ -114,7 +114,7 @@ runtime/stop         优雅停止 runtime
 
 ## 权威边界
 
-agent-shim 处在 OAR runtime design set 的 authority split 中间：
+agent-shim 处在 MASS runtime design set 的 authority split 中间：
 
 | 关切 | authority | agent-shim 的角色 |
 |------|-----------|-------------------|
@@ -130,7 +130,7 @@ agent-shim 处在 OAR runtime design set 的 authority split 中间：
 agent-shim 的核心价值不是“把 ACP 暴露给 agentd”，而是“把 ACP 封装掉”。
 
 ```text
-agentd ↔ agent-shim:  session/* + runtime/* + typed notifications
+mass ↔ agent-shim:  session/* + runtime/* + typed notifications
 agent-shim ↔ agent:   ACP over stdio
 ```
 

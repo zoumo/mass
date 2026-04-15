@@ -1,6 +1,6 @@
 # agentd — runtime realization daemon
 
-agentd is the daemon that realizes already-decided runtime objects.
+mass is the daemon that realizes already-decided runtime objects.
 It owns workspaces, Agents, AgentRuns, process supervision, and exposes the ARI control surface.
 It does **not** own external scheduling intent.
 
@@ -49,7 +49,7 @@ An Agent definition is a named runtime configuration template with the following
 - optional `startupTimeoutSeconds` — bootstrap timeout.
 
 There is no runtime process associated with an Agent definition.
-When an AgentRun is created, the Process Manager looks up the Agent definition named by `agentrun/create.agent` and uses its `command`, `args`, and `env` to generate the OAR Runtime Spec `config.json`.
+When an AgentRun is created, the Process Manager looks up the Agent definition named by `agentrun/create.agent` and uses its `command`, `args`, and `env` to generate the MASS Runtime Spec `config.json`.
 Agents are managed via `agent/set`, `agent/get`, `agent/list`, `agent/delete`.
 
 ### Agent Manager
@@ -207,7 +207,7 @@ Rejection conditions:
 
 ## Recovery and Persistence Posture
 
-agentd is authoritative for realized runtime metadata.
+mass is authoritative for realized runtime metadata.
 After restart, AgentRun identity (`workspace` + `name`) is the recovery key.
 
 Persisted recovery state:
@@ -287,11 +287,11 @@ For each AgentRun, agentd stores bundle, state, and socket co-located under the 
 
 ```
 <bundleRoot>/<workspace>-<name>/
-├── config.json          ← agentd writes (OAR Runtime Spec)
+├── config.json          ← mass writes (MASS Runtime Spec)
 ├── workspace -> <path>  ← agentd symlinks to the workspace directory
 ├── state.json           ← shim writes
 ├── agent-shim.sock      ← shim creates (Unix domain socket)
 └── events.jsonl         ← shim appends
 ```
 
-`ShimSocketPath` and `ShimStateDir` are persisted in the AgentRun metadata so agentd can reconnect after restart without scanning the filesystem.
+`ShimSocketPath` and `ShimStateDir` are persisted in the AgentRun metadata so mass can reconnect after restart without scanning the filesystem.

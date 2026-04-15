@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the `runChat()` plain REPL in `agentdctl shim chat` with a bubbletea TUI that splits conversation history from the input field, shows a spinner while waiting, and color-codes event types.
+**Goal:** Replace the `runChat()` plain REPL in `massctl shim chat` with a bubbletea TUI that splits conversation history from the input field, shows a spinner while waiting, and color-codes event types.
 
 **Architecture:** Add two new files (`chat.go` for the TUI model, `chat_plain.go` for the existing fallback), modify `command.go` only to delegate `runChat()` to one of them based on `isatty`. All RPC/client code is untouched.
 
@@ -14,9 +14,9 @@
 
 | File | Action | Responsibility |
 |------|--------|----------------|
-| `cmd/agentdctl/subcommands/shim/command.go` | Modify | `runChat()` → dispatch to TUI or plain |
-| `cmd/agentdctl/subcommands/shim/chat_plain.go` | Create | Plain bufio REPL (moved from command.go) |
-| `cmd/agentdctl/subcommands/shim/chat.go` | Create | Bubbletea model + Update + View |
+| `cmd/massctl/subcommands/shim/command.go` | Modify | `runChat()` → dispatch to TUI or plain |
+| `cmd/massctl/subcommands/shim/chat_plain.go` | Create | Plain bufio REPL (moved from command.go) |
+| `cmd/massctl/subcommands/shim/chat.go` | Create | Bubbletea model + Update + View |
 | `go.mod` / `go.sum` | Modify | Add four new dependencies |
 
 ---
@@ -56,8 +56,8 @@ git commit -m "chore: add bubbletea, bubbles, lipgloss, go-isatty dependencies"
 ## Task 2: Extract plain REPL to `chat_plain.go`
 
 **Files:**
-- Create: `cmd/agentdctl/subcommands/shim/chat_plain.go`
-- Modify: `cmd/agentdctl/subcommands/shim/command.go`
+- Create: `cmd/massctl/subcommands/shim/chat_plain.go`
+- Modify: `cmd/massctl/subcommands/shim/command.go`
 
 Move the existing `runChat()` body into a new function `runChatPlain()` in its own file. This preserves the fallback path before any TUI code is written.
 
@@ -92,7 +92,7 @@ func runChatPlain(sock string) error {
 	turnEnd := startNotificationPrinter(ctx, c)
 
 	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Println("agentdctl shim chat — type your message, 'exit' to quit")
+	fmt.Println("massctl shim chat — type your message, 'exit' to quit")
 	for {
 		fmt.Print("\n> ")
 		if !scanner.Scan() {
@@ -170,8 +170,8 @@ Expected: builds cleanly.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add cmd/agentdctl/subcommands/shim/chat_plain.go \
-        cmd/agentdctl/subcommands/shim/command.go
+git add cmd/massctl/subcommands/shim/chat_plain.go \
+        cmd/massctl/subcommands/shim/command.go
 git commit -m "refactor(shim): extract plain REPL to chat_plain.go"
 ```
 
@@ -180,7 +180,7 @@ git commit -m "refactor(shim): extract plain REPL to chat_plain.go"
 ## Task 3: Implement `chat.go` — model, messages, Init
 
 **Files:**
-- Create: `cmd/agentdctl/subcommands/shim/chat.go`
+- Create: `cmd/massctl/subcommands/shim/chat.go`
 
 - [ ] **Step 1: Create `chat.go` with model struct and tea messages**
 
@@ -287,7 +287,7 @@ func connectCmd(sock string) tea.Cmd {
 - [ ] **Step 2: Build check**
 
 ```bash
-cd /Users/jim/code/zoumo/open-agent-runtime && go build ./cmd/agentdctl/...
+cd /Users/jim/code/zoumo/open-agent-runtime && go build ./cmd/massctl/...
 ```
 
 Expected: compiles (model exists, Update/View not yet present — add stubs):
@@ -308,7 +308,7 @@ func runChatTUI(sock string) error {
 - [ ] **Step 3: Build check again**
 
 ```bash
-go build ./cmd/agentdctl/...
+go build ./cmd/massctl/...
 ```
 
 Expected: clean compile.
@@ -318,7 +318,7 @@ Expected: clean compile.
 ## Task 4: Implement `Update()`
 
 **Files:**
-- Modify: `cmd/agentdctl/subcommands/shim/chat.go`
+- Modify: `cmd/massctl/subcommands/shim/chat.go`
 
 Replace the stub `Update()` with the full implementation.
 
@@ -492,7 +492,7 @@ func (m *chatModel) rebuildViewport() {
 - [ ] **Step 2: Build check**
 
 ```bash
-go build ./cmd/agentdctl/...
+go build ./cmd/massctl/...
 ```
 
 Expected: clean compile.
@@ -502,7 +502,7 @@ Expected: clean compile.
 ## Task 5: Implement `View()`
 
 **Files:**
-- Modify: `cmd/agentdctl/subcommands/shim/chat.go`
+- Modify: `cmd/massctl/subcommands/shim/chat.go`
 
 Replace the stub `View()` with the full render.
 
@@ -533,7 +533,7 @@ func (m chatModel) View() string {
 - [ ] **Step 2: Build check**
 
 ```bash
-go build ./cmd/agentdctl/...
+go build ./cmd/massctl/...
 ```
 
 Expected: clean compile.
@@ -543,8 +543,8 @@ Expected: clean compile.
 ## Task 6: Wire isatty dispatch in `command.go` and update `runChatTUI`
 
 **Files:**
-- Modify: `cmd/agentdctl/subcommands/shim/command.go`
-- Modify: `cmd/agentdctl/subcommands/shim/chat.go` (finalize `runChatTUI`)
+- Modify: `cmd/massctl/subcommands/shim/command.go`
+- Modify: `cmd/massctl/subcommands/shim/chat.go` (finalize `runChatTUI`)
 
 - [ ] **Step 1: Update `runChat()` in `command.go`**
 
@@ -594,11 +594,11 @@ Expected: binary builds cleanly.
 - [ ] **Step 4: Commit everything**
 
 ```bash
-git add cmd/agentdctl/subcommands/shim/chat.go \
-        cmd/agentdctl/subcommands/shim/chat_plain.go \
-        cmd/agentdctl/subcommands/shim/command.go \
+git add cmd/massctl/subcommands/shim/chat.go \
+        cmd/massctl/subcommands/shim/chat_plain.go \
+        cmd/massctl/subcommands/shim/command.go \
         go.mod go.sum
-git commit -m "feat(shim): bubbletea TUI for agentdctl shim chat"
+git commit -m "feat(shim): bubbletea TUI for massctl shim chat"
 ```
 
 ---
@@ -609,12 +609,12 @@ Manual verification — no automated test needed per spec.
 
 - [ ] **Step 1: Start a test agent and get its socket path**
 
-Using the existing `agentdctl` e2e setup or any running `agentd` instance. The socket path will be something like `/tmp/oar-e2e-XXXXX/bundles/ws-agent/shim.sock`.
+Using the existing `massctl` e2e setup or any running `mass` instance. The socket path will be something like `/tmp/mass-e2e-XXXXX/bundles/ws-agent/shim.sock`.
 
 - [ ] **Step 2: Run chat in TUI mode (TTY)**
 
 ```bash
-./bin/agentd-ctl shim chat --socket <socket-path>
+./bin/mass-ctl shim chat --socket <socket-path>
 ```
 
 Verify:
@@ -629,7 +629,7 @@ Verify:
 - [ ] **Step 3: Run in plain mode (non-TTY)**
 
 ```bash
-echo "hello" | ./bin/agentd-ctl shim chat --socket <socket-path>
+echo "hello" | ./bin/mass-ctl shim chat --socket <socket-path>
 ```
 
 Verify: falls back to the plain REPL output (no TUI).

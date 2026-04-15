@@ -1,6 +1,6 @@
 # ARI — Agent Runtime Interface
 
-ARI is the local control API between an external caller and agentd.
+ARI is the local control API between an external caller and mass.
 It is a runtime API for **realized objects**. It does not replace the caller's desired-state contracts.
 
 ## Desired vs Realized
@@ -13,12 +13,12 @@ It is a runtime API for **realized objects**. It does not replace the caller's d
 | Work execution | external caller policy | `agentrun/prompt` in ARI |
 
 ARI exposes what callers ask agentd to realize and observe.
-It must not smuggle desired-state ownership into agentd.
+It must not smuggle desired-state ownership into mass.
 
 ## Transport
 
 - protocol: JSON-RPC 2.0 over Unix domain socket
-- default path: `/run/agentd/agentd.sock`
+- default path: `/run/mass/mass.sock`
 
 ## Identity
 
@@ -542,12 +542,12 @@ Configuration is read from environment variables:
 
 | Variable | Required | Meaning |
 |---|---|---|
-| `OAR_AGENTD_SOCKET` | yes | Path to agentd's Unix socket |
-| `OAR_WORKSPACE_NAME` | yes | The workspace this server instance belongs to |
-| `OAR_AGENT_NAME` | no | The agent name for sender identification |
-| `OAR_STATE_DIR` | no | State directory for log output |
-| `OAR_LOG_LEVEL` | no | Log level (debug, info, warn, error); defaults to `info` |
-| `OAR_LOG_FORMAT` | no | Log format (pretty, text, json); defaults to `pretty` |
+| `MASS_SOCKET` | yes | Path to mass's Unix socket |
+| `MASS_WORKSPACE_NAME` | yes | The workspace this server instance belongs to |
+| `MASS_AGENT_NAME` | no | The agent name for sender identification |
+| `MASS_STATE_DIR` | no | State directory for log output |
+| `MASS_LOG_LEVEL` | no | Log level (debug, info, warn, error); defaults to `info` |
+| `MASS_LOG_FORMAT` | no | Log format (pretty, text, json); defaults to `pretty` |
 
 ## Capability Posture
 

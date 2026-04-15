@@ -15,7 +15,7 @@
 - [Who - 谁在做](#who---谁在做)
 - [How - 怎么做](#how---怎么做)
 - [How Well - 做得怎么样](#how-well---做得怎么样)
-- [对 OAR 的启示](#对-oai-的启示)
+- [对 MASS 的启示](#对-oai-的启示)
 - [参考链接](#参考链接)
 
 ---
@@ -442,15 +442,15 @@ read | edit | delete | move | search | execute | think | fetch | other
 
 ---
 
-## 对 OAR 的启示
+## 对 MASS 的启示
 
-### OAR 中的 ACP 使用现状
+### MASS 中的 ACP 使用现状
 
-OAR v2 架构中，agent-shim 作为 ACP Client 与 Agent 进程通过 stdio JSON-RPC 通信。这与 Agent Client Protocol 的传输方式一致（stdio + JSON-RPC 2.0），但消息格式和语义有差异。
+MASS v2 架构中，agent-shim 作为 ACP Client 与 Agent 进程通过 stdio JSON-RPC 通信。这与 Agent Client Protocol 的传输方式一致（stdio + JSON-RPC 2.0），但消息格式和语义有差异。
 
 ### 对照分析
 
-| 维度 | OAR 当前设计 | Agent Client Protocol |
+| 维度 | MASS 当前设计 | Agent Client Protocol |
 |---|---|---|
 | 传输 | stdio JSON-RPC 2.0 | stdio JSON-RPC 2.0 (一致) |
 | 会话管理 | `session/new`, `session/load` | `session/new`, `session/load` (高度相似) |
@@ -465,19 +465,19 @@ OAR v2 架构中，agent-shim 作为 ACP Client 与 Agent 进程通过 stdio JSO
 
 ### 关键启示
 
-1. **OAR 的 Agent 通信层与 ACP 高度对齐** -- 传输方式、核心消息、会话模型基本一致，说明 OAR 的设计方向符合行业趋势
+1. **MASS 的 Agent 通信层与 ACP 高度对齐** -- 传输方式、核心消息、会话模型基本一致，说明 MASS 的设计方向符合行业趋势
 
-2. **ACP 的能力协商机制值得借鉴** -- `initialize` 阶段的双向能力交换，比 OAR 当前的静态配置更灵活
+2. **ACP 的能力协商机制值得借鉴** -- `initialize` 阶段的双向能力交换，比 MASS 当前的静态配置更灵活
 
-3. **ACP 的细粒度权限模型** -- `request_permission` 允许逐操作请求许可，比 OAR 的三级策略（approve-all/reads/deny-all）更精细
+3. **ACP 的细粒度权限模型** -- `request_permission` 允许逐操作请求许可，比 MASS 的三级策略（approve-all/reads/deny-all）更精细
 
 4. **ACP 的流式事件分类** -- `session/update` 中区分 message_chunk、thought_chunk、tool_call、plan 等类型，对 UI 展示更友好
 
-5. **ACP 的终端操作更细粒度** -- 分离了 create/output/wait/kill/release，比 OAR 的单一 `terminal/execute` 更适合长时间运行的命令
+5. **ACP 的终端操作更细粒度** -- 分离了 create/output/wait/kill/release，比 MASS 的单一 `terminal/execute` 更适合长时间运行的命令
 
-6. **ACP 的 MCP 集成模式** -- Agent 直接连接 MCP Server 的模式与 OAR 一致，验证了这个设计方向
+6. **ACP 的 MCP 集成模式** -- Agent 直接连接 MCP Server 的模式与 MASS 一致，验证了这个设计方向
 
-7. **ACP 30+ Agent 采纳** -- 说明这套协议已经被广泛验证，OAR 如果对齐 ACP 规范可以直接复用整个 Agent 生态
+7. **ACP 30+ Agent 采纳** -- 说明这套协议已经被广泛验证，MASS 如果对齐 ACP 规范可以直接复用整个 Agent 生态
 
 ---
 

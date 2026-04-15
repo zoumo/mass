@@ -185,7 +185,7 @@ In agentd-managed deployments, bundle/state/socket are co-located:
   "id": 4,
   "result": {
     "state": {
-      "oarVersion": "0.1.0",
+      "massVersion": "0.1.0",
       "id": "session-abc123",
       "status": "idle",
       "pid": 12345,
@@ -511,7 +511,7 @@ text 事件（turn 内，携带 turn 字段）：
 shim RPC 与 ACP 的边界如下：
 
 ```text
-agentd ↔ agent-shim:  session/* + runtime/* + typed notifications   ← 本规范定义
+mass ↔ agent-shim:  session/* + runtime/* + typed notifications   ← 本规范定义
 agent-shim ↔ agent:   ACP over stdio                                ← 内部实现细节
 ```
 

@@ -24,7 +24,7 @@ human → claude-code [round-1-proposal]
 
 ## 前置条件
 
-- 已编译 `agentd` 和 `agentdctl`（`make build`）
+- 已编译 `mass` 和 `massctl`（`make build`）
 - 已安装 [cmux](https://github.com/manaflow-ai/cmux)（`brew tap manaflow-ai/cmux && brew install --cask cmux`）
 - 已安装 `bunx`（Node.js 环境）
 - 所需的 ACP adapter npm 包可被 `bunx` 访问
@@ -78,9 +78,9 @@ source:
 
 > 注意：`source.path` 必须为绝对路径，请根据实际项目位置修改。
 
-## 快速启动（agentdctl up）
+## 快速启动（massctl up）
 
-`agentdctl up` 从一个 YAML 配置文件中读取 workspace + agent 描述，一次性调用 agentd RPC 创建全部资源并等待就绪：
+`massctl up` 从一个 YAML 配置文件中读取 workspace + agent 描述，一次性调用 agentd RPC 创建全部资源并等待就绪：
 
 **`bin/e2e/up.yaml`**
 ```yaml
@@ -112,19 +112,19 @@ spec:
 
 ```bash
 # 1. 启动 agentd
-./bin/agentd server &
+./bin/mass server &
 # 等待 ARI socket 就绪
 
 # 2. 注册 agent 模板
-./bin/agentdctl agent apply -f bin/e2e/agents/codex.yaml
-./bin/agentdctl agent apply -f bin/e2e/agents/claude.yaml
-./bin/agentdctl agent apply -f bin/e2e/agents/gsd-pi.yaml
+./bin/massctl agent apply -f bin/e2e/agents/codex.yaml
+./bin/massctl agent apply -f bin/e2e/agents/claude.yaml
+./bin/massctl agent apply -f bin/e2e/agents/gsd-pi.yaml
 ```
 
 然后执行 `up`，会自动创建 workspace、所有 agent run，并等待全部 idle 后输出 attach socket 路径：
 
 ```bash
-./bin/agentdctl --socket /var/run/agentd/ari.sock up -f bin/e2e/up.yaml
+./bin/massctl --socket /var/run/mass/ari.sock up -f bin/e2e/up.yaml
 ```
 
 示例输出：
@@ -143,9 +143,9 @@ Waiting for agent "agentd-e2e"/"gsd-pi" to be idle...
 Agent "agentd-e2e"/"gsd-pi" is idle
 
 All agents are ready. Attach info:
-  agentd-e2e/codex: /tmp/oar-<PID>/codex.sock
-  agentd-e2e/claude-code: /tmp/oar-<PID>/claude-code.sock
-  agentd-e2e/gsd-pi: /tmp/oar-<PID>/gsd-pi.sock
+  agentd-e2e/codex: /tmp/mass-<PID>/codex.sock
+  agentd-e2e/claude-code: /tmp/mass-<PID>/claude-code.sock
+  agentd-e2e/gsd-pi: /tmp/mass-<PID>/gsd-pi.sock
 ```
 
 ## 一键启动脚本
@@ -154,11 +154,11 @@ All agents are ready. Attach info:
 
 脚本执行流程：
 
-1. 启动 `agentd server`，等待 ARI socket 就绪
-2. 通过 `agentdctl agent apply` 注册三个 agent 模板
-3. 通过 `agentdctl up -f bin/e2e/up.yaml` 创建 workspace + 所有 agent run，等待全部 idle
-4. 通过 `agentdctl agentrun attach` 获取各 agent 的 shim socket 路径
-5. 使用 cmux CLI 创建一个 workspace，分裂为三个 pane，分别启动 `agentdctl shim chat` 连接三个 agent
+1. 启动 `mass server`，等待 ARI socket 就绪
+2. 通过 `massctl agent apply` 注册三个 agent 模板
+3. 通过 `massctl up -f bin/e2e/up.yaml` 创建 workspace + 所有 agent run，等待全部 idle
+4. 通过 `massctl agentrun attach` 获取各 agent 的 shim socket 路径
+5. 使用 cmux CLI 创建一个 workspace，分裂为三个 pane，分别启动 `massctl shim chat` 连接三个 agent
 
 ```
 ┌──────────────────────┬──────────────────────┐
@@ -174,20 +174,20 @@ All agents are ready. Attach info:
 
 ```bash
 # 创建 cmux workspace
-cmux new-workspace --name "oar-e2e" --cwd "$PROJECT_ROOT"
+cmux new-workspace --name "mass-e2e" --cwd "$PROJECT_ROOT"
 
 # 初始 surface 连接 codex
-cmux send "agentdctl shim --socket '$CODEX_SOCK' chat"
+cmux send "massctl shim --socket '$CODEX_SOCK' chat"
 cmux send-key Enter
 
 # 右侧分裂连接 claude-code
 cmux new-split right
-cmux send --surface "$SPLIT1" "agentdctl shim --socket '$CLAUDE_SOCK' chat"
+cmux send --surface "$SPLIT1" "massctl shim --socket '$CLAUDE_SOCK' chat"
 cmux send-key --surface "$SPLIT1" Enter
 
 # 右侧下方分裂连接 gsd-pi
 cmux new-split down --surface "$SPLIT1"
-cmux send --surface "$SPLIT2" "agentdctl shim --socket '$GSDPI_SOCK' chat"
+cmux send --surface "$SPLIT2" "massctl shim --socket '$GSDPI_SOCK' chat"
 cmux send-key --surface "$SPLIT2" Enter
 ```
 
@@ -196,9 +196,9 @@ cmux send-key --surface "$SPLIT2" Enter
 以下命令假设环境已通过 `setup.sh` 启动。在另一个终端中复制 `setup.sh` 输出的环境变量（fish shell）：
 
 ```fish
-set -x SOCKET /tmp/oar-e2e-<PID>/agentd.sock
+set -x SOCKET /tmp/mass-e2e-<PID>/mass.sock
 set -x WS agentd-e2e
-alias ctl './bin/agentdctl --socket $SOCKET'
+alias ctl './bin/massctl --socket $SOCKET'
 ```
 
 > `setup.sh` 会输出实际的 PID 值，直接复制粘贴即可。
@@ -332,21 +332,21 @@ ctl workspace delete --name "$WS"
 
 | 操作 | 命令 |
 |---|---|
-| **一键创建 workspace+agents** | `agentdctl up -f <config.yaml>` |
-| 注册 agent 模板 | `agentdctl agent apply -f <file.yaml>` |
-| 查看 agent 模板 | `agentdctl agent list` |
-| 创建本地 workspace | `agentdctl workspace create local --name <name> --path <abs-path>` |
-| 查看 workspace 状态 | `agentdctl workspace get --name <name>` |
-| 创建 agent run | `agentdctl agentrun create --workspace <ws> --name <n> --runtime-class <rc>` |
-| 发送 prompt（阻塞等待） | `agentdctl agentrun prompt --workspace <ws> --name <name> --text '...' --wait` |
-| 发送 prompt（异步） | `agentdctl agentrun prompt --workspace <ws> --name <name> --text '...'` |
-| 查看 agent 状态 | `agentdctl agentrun status --workspace <ws> --name <name>` |
-| agent 间消息 | `agentdctl workspace send --name <ws> --from <a> --to <b> --text '...'` |
-| 取消执行中的 prompt | `agentdctl agentrun cancel --workspace <ws> --name <name>` |
-| 停止 agent | `agentdctl agentrun stop --workspace <ws> --name <name>` |
-| 删除 agent | `agentdctl agentrun delete --workspace <ws> --name <name>` |
-| 交互式 chat | `agentdctl shim --socket <path> chat` |
-| 查看 shim 状态 | `agentdctl shim --socket <path> state` |
-| 查看事件历史 | `agentdctl shim --socket <path> history` |
+| **一键创建 workspace+agents** | `massctl up -f <config.yaml>` |
+| 注册 agent 模板 | `massctl agent apply -f <file.yaml>` |
+| 查看 agent 模板 | `massctl agent list` |
+| 创建本地 workspace | `massctl workspace create local --name <name> --path <abs-path>` |
+| 查看 workspace 状态 | `massctl workspace get --name <name>` |
+| 创建 agent run | `massctl agentrun create --workspace <ws> --name <n> --runtime-class <rc>` |
+| 发送 prompt（阻塞等待） | `massctl agentrun prompt --workspace <ws> --name <name> --text '...' --wait` |
+| 发送 prompt（异步） | `massctl agentrun prompt --workspace <ws> --name <name> --text '...'` |
+| 查看 agent 状态 | `massctl agentrun status --workspace <ws> --name <name>` |
+| agent 间消息 | `massctl workspace send --name <ws> --from <a> --to <b> --text '...'` |
+| 取消执行中的 prompt | `massctl agentrun cancel --workspace <ws> --name <name>` |
+| 停止 agent | `massctl agentrun stop --workspace <ws> --name <name>` |
+| 删除 agent | `massctl agentrun delete --workspace <ws> --name <name>` |
+| 交互式 chat | `massctl shim --socket <path> chat` |
+| 查看 shim 状态 | `massctl shim --socket <path> state` |
+| 查看事件历史 | `massctl shim --socket <path> history` |
 
-> 全局参数：`--socket <path>` 指定 ARI socket 路径（默认 `/var/run/agentd/ari.sock`）
+> 全局参数：`--socket <path>` 指定 ARI socket 路径（默认 `/var/run/mass/ari.sock`）

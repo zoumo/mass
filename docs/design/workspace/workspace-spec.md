@@ -1,4 +1,4 @@
-# OAR Workspace Spec
+# MASS Workspace Spec
 
 The Workspace Spec declares how agentd should prepare a working directory for one or more AgentRuns.
 It is the authority for **workspace identity, source preparation, hook lifecycle, and host-impact boundary rules**.
@@ -7,7 +7,7 @@ It is the authority for **workspace identity, source preparation, hook lifecycle
 
 ```json
 {
-  "oarVersion": "0.1.0",
+  "massVersion": "0.1.0",
   "metadata": {},
   "source": {},
   "hooks": {}
@@ -38,7 +38,7 @@ It is the authority for **workspace identity, source preparation, hook lifecycle
 | `ref` | string | no | branch, tag, or commit SHA; default is repo default branch |
 | `depth` | int | no | shallow clone depth; `0` or omitted means full clone |
 
-Git and `emptyDir` workspaces are **agentd-managed**: agentd creates them under its workspace root and may delete them during cleanup.
+Git and `emptyDir` workspaces are **agentd-managed**: mass creates them under its workspace root and may delete them during cleanup.
 
 ### `emptyDir` source
 
@@ -54,7 +54,7 @@ Git and `emptyDir` workspaces are **agentd-managed**: agentd creates them under 
 |---|---|---|---|
 | `type` | string | yes | `emptyDir` |
 
-agentd creates a new empty managed directory for the workspace.
+mass creates a new empty managed directory for the workspace.
 
 ### Local source
 
@@ -72,7 +72,7 @@ agentd creates a new empty managed directory for the workspace.
 | `type` | string | yes | `local` |
 | `path` | string | yes | absolute host path to an existing directory |
 
-A `local` workspace is **not** created or deleted by agentd. It is an attachment to an already-existing host directory.
+A `local` workspace is **not** created or deleted by mass. It is an attachment to an already-existing host directory.
 
 ## `hooks`
 
@@ -107,7 +107,7 @@ Hooks let agentd run host commands around workspace lifecycle transitions.
 
 Hooks execute in array order with the workspace directory as `cwd`.
 Any `setup` hook failure fails workspace preparation.
-`teardown` hook behavior and cleanup reporting are owned by agentd's workspace lifecycle contract.
+`teardown` hook behavior and cleanup reporting are owned by mass's workspace lifecycle contract.
 
 ## Host-Impact Boundary Rules
 
@@ -126,14 +126,14 @@ This is the design-set authority for the phrase **local workspace**.
 
 ### 2. Hook execution
 
-Workspace hooks are **host commands executed by agentd**.
+Workspace hooks are **host commands executed by mass**.
 They are not sandboxed by the Workspace Spec.
 That means:
 
 - a hook may mutate files in the workspace;
 - a hook may start or stop host-side services;
 - hook failure aborts workspace preparation (for `setup` hooks) and the error is returned to the ARI caller;
-- hook stdout/stderr is captured by agentd but is **not** currently returned through `workspace/status` — this is a future work gap;
+- hook stdout/stderr is captured by mass but is **not** currently returned through `workspace/status` — this is a future work gap;
 - hook execution happens before or after agent work, not inside an agent turn.
 
 This is the design-set authority for the phrase **hook execution**.
@@ -165,7 +165,7 @@ This is the design-set authority for the phrase **shared workspace**.
 
 ### 5. Cleanup ownership
 
-Managed workspaces (`git`, `emptyDir`) are created and eventually deleted by agentd under workspace-manager rules.
+Managed workspaces (`git`, `emptyDir`) are created and eventually deleted by mass under workspace-manager rules.
 Unmanaged local workspaces are detached, not deleted.
 Any teardown hook may still run against either kind of workspace because hooks are host-impact actions, not ownership markers.
 
@@ -190,7 +190,7 @@ Cleanup:
 
 ```json
 {
-  "oarVersion": "0.1.0",
+  "massVersion": "0.1.0",
   "metadata": {
     "name": "backend-service"
   },

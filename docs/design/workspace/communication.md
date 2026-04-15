@@ -33,14 +33,14 @@ ProcessManager 在生成 `config.json` 时将 workspace-mcp 写入 `acpAgent.ses
   "command": "agentd",
   "args": ["workspace-mcp"],
   "env": [
-    { "name": "OAR_AGENTD_SOCKET", "value": "<agentd unix socket path>" },
-    { "name": "OAR_WORKSPACE_NAME", "value": "<workspace name>" },
-    { "name": "OAR_AGENT_NAME", "value": "<agent name>" }
+    { "name": "MASS_SOCKET", "value": "<agentd unix socket path>" },
+    { "name": "MASS_WORKSPACE_NAME", "value": "<workspace name>" },
+    { "name": "MASS_AGENT_NAME", "value": "<agent name>" }
   ]
 }
 ```
 
-agent-shim 启动时读取 `config.json`，fork/exec workspace-mcp 子进程。workspace-mcp 通过 `OAR_AGENTD_SOCKET` 连接回 agentd 发起 ARI 调用。
+agent-shim 启动时读取 `config.json`，fork/exec workspace-mcp 子进程。workspace-mcp 通过 `MASS_SOCKET` 连接回 agentd 发起 ARI 调用。
 
 ### 消息路由数据流
 
@@ -192,10 +192,10 @@ workspace-mcp-server 拟新增以下工具：
 
 ## 附录：与 A2A 协议的对比
 
-| A2A 概念 | OAR 对应 | 差异 |
+| A2A 概念 | MASS 对应 | 差异 |
 |----------|---------|------|
-| Task（8 个状态） | WorkspaceTask（5 个状态，提案） | OAR 不需要 INPUT_REQUIRED / AUTH_REQUIRED / REJECTED |
-| contextId | threadId（提案） | OAR 的 thread 更轻量，只是字符串标记 |
-| Agent Card | workspace_status（已实现） | OAR 在 workspace 范围内发现，不需要独立的 well-known URL |
-| Push Notification | auto-reply + inbox delivery（提案） | OAR 使用 prompt 投递而非 HTTP webhook |
-| Artifact | task result 纯文本（提案） | OAR 暂不需要结构化产物 |
+| Task（8 个状态） | WorkspaceTask（5 个状态，提案） | MASS 不需要 INPUT_REQUIRED / AUTH_REQUIRED / REJECTED |
+| contextId | threadId（提案） | MASS 的 thread 更轻量，只是字符串标记 |
+| Agent Card | workspace_status（已实现） | MASS 在 workspace 范围内发现，不需要独立的 well-known URL |
+| Push Notification | auto-reply + inbox delivery（提案） | MASS 使用 prompt 投递而非 HTTP webhook |
+| Artifact | task result 纯文本（提案） | MASS 暂不需要结构化产物 |
