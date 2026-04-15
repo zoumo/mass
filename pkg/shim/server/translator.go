@@ -286,8 +286,11 @@ func setContentStatus(ev apishim.Event, status string) apishim.Event {
 }
 
 // emitBlockEnd broadcasts a synthetic "end" event for the given content block type.
+// Uses TextBlock("") instead of zero-valued ContentBlock{} because acp.ContentBlock
+// requires exactly one variant set — zero-valued blocks fail JSON marshaling,
+// causing log.Append to drop the event silently (fail-closed).
 func (t *Translator) emitBlockEnd(eventType string) {
-	ev := apishim.NewContentEvent(eventType, apishim.BlockStatusEnd, apishim.ContentBlock{})
+	ev := apishim.NewContentEvent(eventType, apishim.BlockStatusEnd, apishim.TextBlock(""))
 	t.broadcastSessionEvent(ev)
 }
 

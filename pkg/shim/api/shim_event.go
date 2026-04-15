@@ -20,8 +20,7 @@ import (
 //	  "category":  "session",      // "session" | "runtime"
 //	  "type":      "text",
 //	  "turnId":    "turn-001",     // omitempty — session events inside active turn only
-//	  "streamSeq": 3,              // omitempty — same scope as turnId
-//	  "content":   { "text": "..." }
+//	  "payload":   { "text": "..." }
 //	}
 type ShimEvent struct {
 	RunID     string    `json:"runId"`
