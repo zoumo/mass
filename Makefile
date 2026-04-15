@@ -1,14 +1,14 @@
 BIN_DIR := bin
 
-.PHONY: build clean agentd agentdctl
+.PHONY: build clean mass massctl
 
-build: agentd agentdctl
+build: mass massctl
 
-agentd:
-	go build -o $(BIN_DIR)/agentd ./cmd/agentd
+mass:
+	go build -o $(BIN_DIR)/mass ./cmd/mass
 
-agentdctl:
-	go build -o $(BIN_DIR)/agentdctl ./cmd/agentdctl
+massctl:
+	go build -o $(BIN_DIR)/massctl ./cmd/massctl
 
 clean:
 	rm -rf $(BIN_DIR)
