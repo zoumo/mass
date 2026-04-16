@@ -1,4 +1,4 @@
-package up
+package compose
 
 import (
 	"testing"
@@ -9,7 +9,7 @@ import (
 
 func TestParseConfig_LocalWorkspace(t *testing.T) {
 	input := `
-kind: workspace-up
+kind: workspace-compose
 metadata:
   name: mass-e2e
 spec:
@@ -31,7 +31,7 @@ spec:
 	cfg, err := parseConfig([]byte(input))
 	require.NoError(t, err)
 
-	assert.Equal(t, "workspace-up", cfg.Kind)
+	assert.Equal(t, "workspace-compose", cfg.Kind)
 	assert.Equal(t, "mass-e2e", cfg.Metadata.Name)
 	assert.Equal(t, "local", cfg.Spec.Source.Type)
 	assert.Equal(t, "/tmp/myproject", cfg.Spec.Source.Path)
@@ -50,7 +50,7 @@ spec:
 
 func TestParseConfig_GitWorkspace(t *testing.T) {
 	input := `
-kind: workspace-up
+kind: workspace-compose
 metadata:
   name: my-ws
 spec:
@@ -70,7 +70,7 @@ spec:
 
 func TestParseConfig_EmptyDirWorkspace(t *testing.T) {
 	input := `
-kind: workspace-up
+kind: workspace-compose
 metadata:
   name: scratch
 spec:
@@ -112,7 +112,7 @@ spec:
 
 func TestParseConfig_MissingMetadataName(t *testing.T) {
 	input := `
-kind: workspace-up
+kind: workspace-compose
 metadata:
   name: ""
 spec:
@@ -126,7 +126,7 @@ spec:
 
 func TestParseConfig_MissingAgentMetadataName(t *testing.T) {
 	input := `
-kind: workspace-up
+kind: workspace-compose
 metadata:
   name: ws
 spec:
@@ -144,7 +144,7 @@ spec:
 
 func TestParseConfig_MissingAgentSpecAgent(t *testing.T) {
 	input := `
-kind: workspace-up
+kind: workspace-compose
 metadata:
   name: ws
 spec:

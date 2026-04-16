@@ -93,10 +93,10 @@ while true; do
 done
 ```
 
-或使用 `massctl up` 一次性创建 workspace + 所有 AgentRun：
+或使用 `massctl compose` 一次性创建 workspace + 所有 AgentRun：
 
 ```bash
-massctl up -f workspace-up.yaml
+massctl compose -f workspace-compose.yaml
 ```
 
 ### 第三步：创建 AgentRun
@@ -210,7 +210,7 @@ while [ $round -le $MAX_ROUNDS ]; do
   # Wait for reviewer to finish
   wait_for_idle ws reviewer
 
-  # Check reviewer's response (via shim events or agent output convention)
+  # Check reviewer's response (vian agent-run events or agent output convention)
   # If approved, break
   # If rejected, designer will receive feedback via workspace_send and auto-iterate
   
@@ -301,7 +301,7 @@ wait_for_idle() {
 Workspace 配置 lifecycle hooks，当 agent 状态变化时 agentd 自动执行注册的命令。
 
 ```yaml
-# workspace-up.yaml
+# workspace-compose.yaml
 spec:
   hooks:
     agentrun:
@@ -344,7 +344,7 @@ massctl agentrun watch --workspace ws
 | `massctl agent apply -f <file>` | 注册 agent 定义 |
 | `massctl workspace create --name <ws> --source-type local --source-path <path>` | 创建 workspace |
 | `massctl workspace get --name <ws> -o json` | 查询 workspace 状态 |
-| `massctl up -f <file>` | 一次性创建 workspace + agents |
+| `massctl compose -f <file>` | 一次性创建 workspace + agents |
 | `massctl agentrun create --workspace <ws> --name <name> --agent <def>` | 启动 agent |
 | `massctl agentrun get --workspace <ws> --name <name> -o json` | 查询 agent 状态 |
 | `massctl agentrun list --workspace <ws> -o json` | 列出所有 agent |
@@ -381,10 +381,10 @@ massctl agentrun watch --workspace ws
 
 **不推荐**：orchestrator 中转每条消息（A 的输出 → orchestrator → B 的输入）。这增加了延迟和复杂度。
 
-### 2. 使用 workspace-up 简化 bootstrap
+### 2. 使用 workspace-compose 简化 bootstrap
 
 ```yaml
-kind: workspace-up
+kind: workspace-compose
 meta
   name: my-project
 spec:
@@ -407,7 +407,7 @@ spec:
 ```
 
 ```bash
-massctl up -f workspace-up.yaml
+massctl compose -f workspace-compose.yaml
 ```
 
 ### 3. 在 system prompt 中定义协作协议

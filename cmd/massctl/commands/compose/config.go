@@ -1,5 +1,5 @@
-// Package up implements the "massctl up" subcommand for declarative workspace setup.
-package up
+// Package compose implements the "massctl compose" subcommand for declarative workspace setup.
+package compose
 
 import (
 	"fmt"
@@ -7,12 +7,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the top-level document for `massctl up`.
-// kind must be "workspace-up".
+// Config is the top-level document for `massctl compose`.
+// kind must be "workspace-compose".
 type Config struct {
-	Kind     string         `yaml:"kind"`
-	Metadata ConfigMetadata `yaml:"metadata"`
-	Spec     WorkspaceUpSpec `yaml:"spec"`
+	Kind     string               `yaml:"kind"`
+	Metadata ConfigMetadata       `yaml:"metadata"`
+	Spec     WorkspaceComposeSpec `yaml:"spec"`
 }
 
 // ConfigMetadata holds the workspace name (and future labels/annotations).
@@ -20,8 +20,8 @@ type ConfigMetadata struct {
 	Name string `yaml:"name"`
 }
 
-// WorkspaceUpSpec describes the workspace source and the agent runs to create.
-type WorkspaceUpSpec struct {
+// WorkspaceComposeSpec describes the workspace source and the agent runs to create.
+type WorkspaceComposeSpec struct {
 	Source   SourceConfig      `yaml:"source"`
 	Agents   []AgentRunEntry   `yaml:"agents"`
 }
@@ -67,8 +67,8 @@ func parseConfig(data []byte) (Config, error) {
 }
 
 func validateConfig(cfg Config) error {
-	if cfg.Kind != "workspace-up" {
-		return fmt.Errorf("kind must be %q, got %q", "workspace-up", cfg.Kind)
+	if cfg.Kind != "workspace-compose" {
+		return fmt.Errorf("kind must be %q, got %q", "workspace-compose", cfg.Kind)
 	}
 	if cfg.Metadata.Name == "" {
 		return fmt.Errorf("metadata.name is required")

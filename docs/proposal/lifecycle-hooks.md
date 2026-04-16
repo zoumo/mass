@@ -71,10 +71,10 @@ AgentRun lifecycle hooks 配置在 **Workspace 层级**，因为：
 }
 ```
 
-对应 workspace-up YAML 格式：
+对应 workspace-compose YAML 格式：
 
 ```yaml
-kind: workspace-up
+kind: workspace-compose
 metadata:
   name: my-project
 spec:

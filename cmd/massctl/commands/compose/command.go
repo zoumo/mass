@@ -1,4 +1,4 @@
-package up
+package compose
 
 import (
 	"context"
@@ -10,22 +10,22 @@ import (
 	"github.com/spf13/cobra"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
-// NewCommand returns the "up" cobra command.
+// NewCommand returns the "compose" cobra command.
 func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 	var file string
 	cmd := &cobra.Command{
-		Use:   "up",
+		Use:   "compose",
 		Short: "Create workspace and agent runs from a declarative config file",
-		Long: `up reads a workspace-up YAML file and creates the workspace and all agent runs.
+		Long: `compose reads a workspace-compose YAML file and creates the workspace and all agent runs.
 It waits for the workspace to be ready and each agent to reach idle state,
-then prints the shim socket path for each agent.
+then prints the run socket path for each agent.
 
-Example config (kind: workspace-up):
-  kind: workspace-up
+Example config (kind: workspace-compose):
+  kind: workspace-compose
   meta
     name: mass-e2e
   spec:
@@ -37,7 +37,7 @@ Example config (kind: workspace-up):
           name: codex
         spec:
           agent: codex
-      - metadata:
+      - meta
           name: claude-code
         spec:
           agent: claude`,
@@ -84,7 +84,7 @@ Example config (kind: workspace-up):
 			return nil
 		},
 	}
-	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to workspace-up YAML file (required)")
+	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to workspace-compose YAML file (required)")
 	_ = cmd.MarkFlagRequired("file")
 	return cmd
 }
@@ -172,8 +172,8 @@ func printSocketInfo(ctx context.Context, client pkgariapi.Client, wsName, agNam
 		fmt.Printf("  %s/%s: (get failed: %v)\n", wsName, agName, err)
 		return
 	}
-	if ar.Status.Shim != nil && ar.Status.Shim.SocketPath != "" {
-		fmt.Printf("  %s/%s: %s\n", wsName, agName, ar.Status.Shim.SocketPath)
+	if ar.Status.Run != nil && ar.Status.Run.SocketPath != "" {
+		fmt.Printf("  %s/%s: %s\n", wsName, agName, ar.Status.Run.SocketPath)
 	} else {
 		fmt.Printf("  %s/%s: (no socket info)\n", wsName, agName)
 	}
