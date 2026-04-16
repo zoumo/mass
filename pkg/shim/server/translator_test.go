@@ -19,26 +19,25 @@ func makeNotif(fn func(*acp.SessionUpdate)) acp.SessionNotification {
 	return n
 }
 
-func drainShimEvent(t *testing.T, ch <-chan apishim.ShimEvent) apishim.ShimEvent {
+func drainShimEvent(t *testing.T, ch <-chan apishim.AgentRunEvent) apishim.AgentRunEvent {
 	t.Helper()
 	select {
 	case ev := <-ch:
 		return ev
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for ShimEvent")
-		return apishim.ShimEvent{}
+		return apishim.AgentRunEvent{}
 	}
 }
 
-// sessionPayload extracts the typed Event content from a session category ShimEvent.
-func sessionPayload(t *testing.T, ev apishim.ShimEvent) apishim.Event {
+// sessionPayload extracts the typed Event content from an AgentRunEvent.
+func sessionPayload(t *testing.T, ev apishim.AgentRunEvent) apishim.Event {
 	t.Helper()
-	assert.Equal(t, apishim.CategorySession, ev.Category, "expected session category event")
 	require.NotNil(t, ev.Payload, "expected non-nil payload")
 	return ev.Payload
 }
 
-func sendAndDrainShimEvent(t *testing.T, in chan<- acp.SessionNotification, ch <-chan apishim.ShimEvent, text string) apishim.ShimEvent {
+func sendAndDrainShimEvent(t *testing.T, in chan<- acp.SessionNotification, ch <-chan apishim.AgentRunEvent, text string) apishim.AgentRunEvent {
 	t.Helper()
 	in <- makeNotif(func(u *acp.SessionUpdate) {
 		u.AgentMessageChunk = &acp.SessionUpdateAgentMessageChunk{
@@ -64,7 +63,6 @@ func TestTranslate_AgentMessageChunk(t *testing.T) {
 	ev := drainShimEvent(t, ch)
 	assert.Equal(t, "run-1", ev.RunID)
 	assert.Equal(t, 0, ev.Seq)
-	assert.Equal(t, apishim.CategorySession, ev.Category)
 	assert.Equal(t, apishim.EventTypeAgentMessage, ev.Type)
 	te, ok := ev.Payload.(apishim.ContentEvent)
 	require.True(t, ok)
@@ -201,8 +199,12 @@ func TestTranslate_PreviouslyIgnoredVariants(t *testing.T) {
 	ev1 := drainShimEvent(t, ch)
 	ev2 := drainShimEvent(t, ch)
 	ev3 := drainShimEvent(t, ch)
-	assert.IsType(t, apishim.AvailableCommandsEvent{}, sessionPayload(t, ev1))
-	assert.IsType(t, apishim.CurrentModeEvent{}, sessionPayload(t, ev2))
+	ru1, ok := sessionPayload(t, ev1).(apishim.RuntimeUpdateEvent)
+	require.True(t, ok, "expected RuntimeUpdateEvent")
+	assert.NotNil(t, ru1.AvailableCommands)
+	ru2, ok := sessionPayload(t, ev2).(apishim.RuntimeUpdateEvent)
+	require.True(t, ok, "expected RuntimeUpdateEvent")
+	assert.NotNil(t, ru2.CurrentMode)
 	te, ok := sessionPayload(t, ev3).(apishim.ContentEvent)
 	require.True(t, ok)
 	require.NotNil(t, te.Content.Text)
@@ -239,7 +241,7 @@ func TestFanOut_ThreeSubscribers(t *testing.T) {
 		}
 	})
 
-	for _, ch := range []<-chan apishim.ShimEvent{ch1, ch2, ch3} {
+	for _, ch := range []<-chan apishim.AgentRunEvent{ch1, ch2, ch3} {
 		ev := drainShimEvent(t, ch)
 		te, ok := ev.Payload.(apishim.ContentEvent)
 		require.True(t, ok)
@@ -262,8 +264,6 @@ func TestNotifyTurnStartAndEnd(t *testing.T) {
 	second := drainShimEvent(t, ch)
 	assert.Equal(t, 0, first.Seq)
 	assert.Equal(t, 1, second.Seq)
-	assert.Equal(t, apishim.CategorySession, first.Category)
-	assert.Equal(t, apishim.CategorySession, second.Category)
 	assert.Equal(t, "turn_start", first.Type)
 	assert.Equal(t, "turn_end", second.Type)
 	assert.NotEmpty(t, first.TurnID, "turn_start must carry a non-empty TurnID")
@@ -282,17 +282,17 @@ func TestNotifyStateChange(t *testing.T) {
 	tr.NotifyStateChange("created", "running", 1234, "prompt-started", nil)
 
 	ev := drainShimEvent(t, ch)
-	assert.Equal(t, apishim.CategoryRuntime, ev.Category)
-	assert.Equal(t, "state_change", ev.Type)
+	assert.Equal(t, apishim.EventTypeRuntimeUpdate, ev.Type)
 	assert.Equal(t, "run-1", ev.RunID)
 	assert.Equal(t, 0, ev.Seq)
-	assert.Empty(t, ev.TurnID, "state_change must not carry TurnID")
-	sc, ok := ev.Payload.(apishim.StateChangeEvent)
+	assert.Empty(t, ev.TurnID, "runtime_update must not carry TurnID")
+	ru, ok := ev.Payload.(apishim.RuntimeUpdateEvent)
 	require.True(t, ok)
-	assert.Equal(t, "created", sc.PreviousStatus)
-	assert.Equal(t, "running", sc.Status)
-	assert.Equal(t, 1234, sc.PID)
-	assert.Equal(t, "prompt-started", sc.Reason)
+	require.NotNil(t, ru.Status)
+	assert.Equal(t, "created", ru.Status.PreviousStatus)
+	assert.Equal(t, "running", ru.Status.Status)
+	assert.Equal(t, 1234, ru.Status.PID)
+	assert.Equal(t, "prompt-started", ru.Status.Reason)
 }
 
 func TestNotifyStateChange_WithSessionChanged(t *testing.T) {
@@ -315,27 +315,26 @@ func TestNotifyStateChange_WithSessionChanged(t *testing.T) {
 	require.Len(t, entries, 1)
 
 	entry := entries[0]
-	assert.Equal(t, "state_change", entry.Type)
-	assert.Equal(t, apishim.CategoryRuntime, entry.Category)
+	assert.Equal(t, apishim.EventTypeRuntimeUpdate, entry.Type)
 
-	sc, ok := entry.Payload.(apishim.StateChangeEvent)
+	ru, ok := entry.Payload.(apishim.RuntimeUpdateEvent)
 	require.True(t, ok)
-	assert.Equal(t, "bootstrap-metadata", sc.Reason)
-	assert.Equal(t, []string{"agentInfo", "capabilities"}, sc.SessionChanged)
-	assert.Equal(t, "idle", sc.PreviousStatus)
-	assert.Equal(t, "idle", sc.Status)
-	assert.Equal(t, 42, sc.PID)
+	require.NotNil(t, ru.Status)
+	assert.Equal(t, "bootstrap-metadata", ru.Status.Reason)
+	assert.Equal(t, []string{"agentInfo", "capabilities"}, ru.Status.SessionChanged)
+	assert.Equal(t, "idle", ru.Status.PreviousStatus)
+	assert.Equal(t, "idle", ru.Status.Status)
+	assert.Equal(t, 42, ru.Status.PID)
 
 	tr.Stop()
 }
 
 func TestShimEventRoundTrip(t *testing.T) {
-	ev := apishim.ShimEvent{
+	ev := apishim.AgentRunEvent{
 		RunID:     "run-1",
 		SessionID: "acp-xxx",
 		Seq:       7,
 		Time:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		Category:  apishim.CategorySession,
 		Type:      "tool_call",
 		TurnID:    "turn-001",
 		
@@ -344,12 +343,11 @@ func TestShimEventRoundTrip(t *testing.T) {
 	data, err := ev.MarshalJSON()
 	require.NoError(t, err)
 
-	var decoded apishim.ShimEvent
+	var decoded apishim.AgentRunEvent
 	require.NoError(t, decoded.UnmarshalJSON(data))
 	assert.Equal(t, ev.RunID, decoded.RunID)
 	assert.Equal(t, ev.SessionID, decoded.SessionID)
 	assert.Equal(t, ev.Seq, decoded.Seq)
-	assert.Equal(t, ev.Category, decoded.Category)
 	assert.Equal(t, ev.Type, decoded.Type)
 	assert.Equal(t, ev.TurnID, decoded.TurnID)
 	tc, ok := decoded.Payload.(apishim.ToolCallEvent)
@@ -359,11 +357,10 @@ func TestShimEventRoundTrip(t *testing.T) {
 
 func TestShimEventRoundTrip_NoTurnFields(t *testing.T) {
 	// omitempty should suppress empty turn fields.
-	ev := apishim.ShimEvent{
+	ev := apishim.AgentRunEvent{
 		RunID:    "run-1",
 		Seq:      0,
 		Time:     time.Now(),
-		Category: apishim.CategorySession,
 		Type:     apishim.EventTypeAgentMessage,
 		Payload:  apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("no turn")),
 	}
@@ -387,7 +384,7 @@ func TestEventTypes(t *testing.T) {
 		{apishim.TurnStartEvent{}, "turn_start"},
 		{apishim.TurnEndEvent{StopReason: "end_turn"}, "turn_end"},
 		{apishim.ErrorEvent{Msg: "oops"}, "error"},
-		{apishim.StateChangeEvent{PreviousStatus: "idle", Status: "running"}, "state_change"},
+		{apishim.RuntimeUpdateEvent{Status: &apishim.RuntimeStatus{PreviousStatus: "idle", Status: "running"}}, "runtime_update"},
 	}
 	for _, tc := range cases {
 		assert.Equal(t, tc.want, apishim.EventTypeOf(tc.ev), "wrong eventType for %T", tc.ev)
@@ -424,8 +421,7 @@ func TestTurnAwareShimEvent_TurnIdAssigned(t *testing.T) {
 	// State change after turn_end should not have TurnID.
 	tr.NotifyStateChange("running", "created", 0, "done", nil)
 	scEv := drainShimEvent(t, ch)
-	assert.Equal(t, apishim.CategoryRuntime, scEv.Category)
-	assert.Empty(t, scEv.TurnID, "runtime state_change must not carry TurnID")
+	assert.Empty(t, scEv.TurnID, "runtime_update must not carry TurnID")
 }
 
 // TestTurnAwareShimEvent_TurnIDChangesPerTurn verifies that TurnID changes
@@ -467,8 +463,7 @@ func TestTurnAwareShimEvent_StateChangeExcludesTurnFields(t *testing.T) {
 	tr.NotifyStateChange("created", "running", 0, "", nil)
 	scEv := drainShimEvent(t, ch)
 
-	assert.Equal(t, apishim.CategoryRuntime, scEv.Category)
-	assert.Empty(t, scEv.TurnID, "state_change must not carry TurnID even during active turn")
+	assert.Empty(t, scEv.TurnID, "runtime_update must not carry TurnID even during active turn")
 
 	// Seq must increment correctly.
 	assert.Equal(t, tsEv.Seq+1, scEv.Seq, "state_change seq must follow turn_start seq")
@@ -494,9 +489,8 @@ func TestTurnAwareShimEvent_MetadataEventInTurn(t *testing.T) {
 	}}
 	siEv := drainShimEvent(t, ch)
 
-	assert.Equal(t, apishim.CategorySession, siEv.Category)
-	assert.Equal(t, "session_info", siEv.Type)
-	assert.Equal(t, tsEv.TurnID, siEv.TurnID, "session_info in active turn must carry TurnID")
+	assert.Equal(t, apishim.EventTypeRuntimeUpdate, siEv.Type)
+	assert.Empty(t, siEv.TurnID, "runtime_update must not carry TurnID")
 }
 
 // TestTurnAwareShimEvent_MetadataEventOutsideTurn verifies that session metadata events
@@ -515,8 +509,8 @@ func TestTurnAwareShimEvent_MetadataEventOutsideTurn(t *testing.T) {
 	}}
 	siEv := drainShimEvent(t, ch)
 
-	assert.Equal(t, apishim.CategorySession, siEv.Category)
-	assert.Empty(t, siEv.TurnID, "session_info outside turn must NOT carry TurnID")
+	assert.Equal(t, apishim.EventTypeRuntimeUpdate, siEv.Type)
+	assert.Empty(t, siEv.TurnID, "runtime_update outside turn must NOT carry TurnID")
 }
 
 // TestFailClosed_AppendFailureDropsEvent verifies that if EventLog.Append fails,
@@ -603,7 +597,7 @@ func TestConcurrentBroadcast_SeqContinuous(t *testing.T) {
 	}()
 
 	// Drain all events.
-	received := make([]apishim.ShimEvent, 0, numEvents)
+	received := make([]apishim.AgentRunEvent, 0, numEvents)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -651,7 +645,7 @@ func TestTurnAwareShimEvent_ReplayOrdering(t *testing.T) {
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
 	t1EndEv := drainShimEvent(t, ch) // synthetic agent_message{end}
 	te1Ev := drainShimEvent(t, ch)   // turn_end
-	turn1 := []apishim.ShimEvent{ts1Ev, t1aEv, t1bEv, t1EndEv, te1Ev}
+	turn1 := []apishim.AgentRunEvent{ts1Ev, t1aEv, t1bEv, t1EndEv, te1Ev}
 
 	// Turn 2: turn_start + 1 text event + synthetic block end + turn_end.
 	tr.NotifyTurnStart()
@@ -660,7 +654,7 @@ func TestTurnAwareShimEvent_ReplayOrdering(t *testing.T) {
 	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
 	t2EndEv := drainShimEvent(t, ch) // synthetic agent_message{end}
 	te2Ev := drainShimEvent(t, ch)   // turn_end
-	turn2 := []apishim.ShimEvent{ts2Ev, t2aEv, t2EndEv, te2Ev}
+	turn2 := []apishim.AgentRunEvent{ts2Ev, t2aEv, t2EndEv, te2Ev}
 
 	// (1) All turn 1 events share a common TurnID.
 	tid1 := turn1[0].TurnID
@@ -729,7 +723,7 @@ func TestEventCounts_PromptTurn(t *testing.T) {
 	assert.Equal(t, 3, counts["agent_message"], "agent_message count (start+streaming+synthetic end)")
 	assert.Equal(t, 1, counts["tool_call"], "tool_call count")
 	assert.Equal(t, 1, counts["turn_end"], "turn_end count")
-	assert.Equal(t, 1, counts["state_change"], "state_change count")
+	assert.Equal(t, 1, counts["runtime_update"], "runtime_update count")
 }
 
 // TestEventCounts_FailClosedOnAppendFailure verifies that eventCounts are NOT
@@ -817,11 +811,12 @@ func TestSessionMetadataHook_ConfigOption(t *testing.T) {
 	hookMu.Lock()
 	defer hookMu.Unlock()
 	require.NotNil(t, captured, "sessionMetadataHook must be called for config_option")
-	co, ok := captured.(apishim.ConfigOptionEvent)
-	require.True(t, ok, "captured event must be ConfigOptionEvent")
-	require.Len(t, co.ConfigOptions, 1)
-	require.NotNil(t, co.ConfigOptions[0].Select)
-	assert.Equal(t, "theme", co.ConfigOptions[0].Select.ID)
+	ru, ok := captured.(apishim.RuntimeUpdateEvent)
+	require.True(t, ok, "captured event must be RuntimeUpdateEvent")
+	require.NotNil(t, ru.ConfigOptions)
+	require.Len(t, ru.ConfigOptions.Options, 1)
+	require.NotNil(t, ru.ConfigOptions.Options[0].Select)
+	assert.Equal(t, "theme", ru.ConfigOptions.Options[0].Select.ID)
 }
 
 // TestSessionMetadataHook_IgnoresNonMetadata verifies that sessionMetadataHook
@@ -904,5 +899,5 @@ func TestSessionMetadataHook_AllFourTypes(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	assert.Equal(t, []string{"available_commands", "config_option", "session_info", "current_mode"}, types)
+	assert.Equal(t, []string{"runtime_update", "runtime_update", "runtime_update", "runtime_update"}, types)
 }

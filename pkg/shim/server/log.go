@@ -13,7 +13,7 @@ import (
 	"github.com/zoumo/mass/pkg/jsonrpc/ndjson"
 )
 
-// EventLog appends replayable ShimEvent records to a JSONL file.
+// EventLog appends replayable AgentRunEvent records to a JSONL file.
 // It is safe for concurrent use.
 //
 // Partial-write safety: Append records the file offset before each write and
@@ -50,7 +50,7 @@ func OpenEventLog(path string) (*EventLog, error) {
 // Partial-write safety: records the current file offset before writing; if
 // Encode/flush fails, truncates the file back to the pre-write offset so that
 // a damaged tail cannot be followed by a subsequent valid write.
-func (l *EventLog) Append(ev apishim.ShimEvent) error {
+func (l *EventLog) Append(ev apishim.AgentRunEvent) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -96,14 +96,14 @@ func (l *EventLog) Close() error {
 	return l.f.Close()
 }
 
-// ReadEventLog reads all ShimEvent records from path starting at fromSeq.
+// ReadEventLog reads all AgentRunEvent records from path starting at fromSeq.
 // Returns an empty slice (not an error) if the file does not exist yet.
 //
 // Damaged-tail tolerance: if the last non-empty line(s) in the file fail to
 // unmarshal as JSON, they are treated as a partial write from a crash —
 // the successfully decoded entries are returned without error. Mid-file
 // corruption (corrupt lines followed by valid lines) still returns an error.
-func ReadEventLog(path string, fromSeq int) ([]apishim.ShimEvent, error) {
+func ReadEventLog(path string, fromSeq int) ([]apishim.AgentRunEvent, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -118,12 +118,12 @@ func ReadEventLog(path string, fromSeq int) ([]apishim.ShimEvent, error) {
 	// First pass: collect all non-empty lines.
 	type lineRecord struct {
 		valid bool
-		ev    apishim.ShimEvent
+		ev    apishim.AgentRunEvent
 		err   error // non-nil for invalid lines
 	}
 	var lines []lineRecord
 	for {
-		var e apishim.ShimEvent
+		var e apishim.AgentRunEvent
 		err := dec.Decode(&e)
 		if errors.Is(err, ndjson.ErrInvalidJSON) {
 			lines = append(lines, lineRecord{valid: false, err: err})
@@ -141,7 +141,7 @@ func ReadEventLog(path string, fromSeq int) ([]apishim.ShimEvent, error) {
 	// Walk through collected lines. If a corrupt line is followed by any
 	// valid line later, that is mid-file corruption — return an error.
 	// If corrupt lines only appear at the tail, skip them (damaged tail).
-	var entries []apishim.ShimEvent
+	var entries []apishim.AgentRunEvent
 	for i, lr := range lines {
 		if lr.valid {
 			if lr.ev.Seq >= fromSeq {

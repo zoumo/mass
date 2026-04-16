@@ -57,6 +57,6 @@ func TestStatus_EventCountsOverlay(t *testing.T) {
 	assert.NotContains(t, result.State.EventCounts, "stale_event",
 		"stale EventCounts from state.json should be replaced by Translator memory")
 	// Sanity: the overlay must contain the event type that was broadcast.
-	assert.Equal(t, 2, expected["state_change"],
-		"Translator should have counted 2 state_change events")
+	assert.Equal(t, 2, expected["runtime_update"],
+		"Translator should have counted 2 runtime_update events")
 }

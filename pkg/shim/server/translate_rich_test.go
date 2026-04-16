@@ -323,8 +323,10 @@ func TestTranslateRich_AvailableCommandsUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.AvailableCommandsEvent)
+	ru, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.RuntimeUpdateEvent)
 	require.True(t, ok)
+	require.NotNil(t, ru.AvailableCommands)
+	ev := *ru.AvailableCommands
 	assert.Equal(t, "agent", ev.Meta["src"])
 	require.Len(t, ev.Commands, 1)
 	cmd := ev.Commands[0]
@@ -353,8 +355,10 @@ func TestTranslateRich_CurrentModeUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.CurrentModeEvent)
+	ru, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.RuntimeUpdateEvent)
 	require.True(t, ok)
+	require.NotNil(t, ru.CurrentMode)
+	ev := *ru.CurrentMode
 	assert.EqualValues(t, 2, ev.Meta["v"])
 	assert.Equal(t, "edit", ev.ModeID)
 }
@@ -392,11 +396,13 @@ func TestTranslateRich_ConfigOptionUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ConfigOptionEvent)
+	ru, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.RuntimeUpdateEvent)
 	require.True(t, ok)
+	require.NotNil(t, ru.ConfigOptions)
+	ev := *ru.ConfigOptions
 	assert.True(t, ev.Meta["cfg"].(bool))
-	require.Len(t, ev.ConfigOptions, 1)
-	opt := ev.ConfigOptions[0]
+	require.Len(t, ev.Options, 1)
+	opt := ev.Options[0]
 	require.NotNil(t, opt.Select)
 	s := opt.Select
 	assert.EqualValues(t, 1, s.Meta["s"])
@@ -443,10 +449,12 @@ func TestTranslateRich_ConfigOptionUpdate_GroupedOptions(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.ConfigOptionEvent)
+	ru, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.RuntimeUpdateEvent)
 	require.True(t, ok)
-	require.Len(t, ev.ConfigOptions, 1)
-	s := ev.ConfigOptions[0].Select
+	require.NotNil(t, ru.ConfigOptions)
+	ev := *ru.ConfigOptions
+	require.Len(t, ev.Options, 1)
+	s := ev.Options[0].Select
 	require.NotNil(t, s)
 	require.NotNil(t, s.Options.Grouped)
 	require.Len(t, s.Options.Grouped, 1)
@@ -477,8 +485,10 @@ func TestTranslateRich_SessionInfoUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.SessionInfoEvent)
+	ru, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.RuntimeUpdateEvent)
 	require.True(t, ok)
+	require.NotNil(t, ru.SessionInfo)
+	ev := *ru.SessionInfo
 	assert.EqualValues(t, 1, ev.Meta["si"])
 	require.NotNil(t, ev.Title)
 	assert.Equal(t, "My Session", *ev.Title)
@@ -504,8 +514,10 @@ func TestTranslateRich_UsageUpdate(t *testing.T) {
 		}
 	})
 
-	ev, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.UsageEvent)
+	ru, ok := sessionPayload(t, drainShimEvent(t, ch)).(apishim.RuntimeUpdateEvent)
 	require.True(t, ok)
+	require.NotNil(t, ru.Usage)
+	ev := *ru.Usage
 	assert.Equal(t, "yes", ev.Meta["u"])
 	require.NotNil(t, ev.Cost)
 	assert.InDelta(t, 0.042, ev.Cost.Amount, 0.0001)
@@ -556,9 +568,9 @@ func TestTranslateRich_RawInputOutput_RoundTrip(t *testing.T) {
 	assert.InDelta(t, 0, ro["exit_code"], 0.001)
 }
 
-// ── Test 14: ShimEvent decode all 18 event types ─────────────────────────────
+// ── Test 14: AgentRunEvent decode all event types ──────────────────────────
 
-func TestTranslateRich_ShimEventDecode_AllEventTypes(t *testing.T) {
+func TestTranslateRich_AgentRunEventDecode_AllEventTypes(t *testing.T) {
 	cases := []struct {
 		name    string
 		evType  string
@@ -573,47 +585,33 @@ func TestTranslateRich_ShimEventDecode_AllEventTypes(t *testing.T) {
 		{"turn_start", "turn_start", apishim.TurnStartEvent{}},
 		{"turn_end", "turn_end", apishim.TurnEndEvent{StopReason: "stop"}},
 		{"error", "error", apishim.ErrorEvent{Msg: "oops"}},
-		{"available_commands", "available_commands", apishim.AvailableCommandsEvent{Commands: nil}},
-		{"current_mode", "current_mode", apishim.CurrentModeEvent{ModeID: "edit"}},
-		{"config_option", "config_option", apishim.ConfigOptionEvent{ConfigOptions: nil}},
-		{"session_info", "session_info", apishim.SessionInfoEvent{}},
-		{"usage", "usage", apishim.UsageEvent{Size: 100, Used: 50}},
+		{"runtime_update", "runtime_update", apishim.RuntimeUpdateEvent{Status: &apishim.RuntimeStatus{PreviousStatus: "idle", Status: "running"}}},
 	}
-
-	// Add state_change to the test cases.
-	cases = append(cases, struct {
-		name    string
-		evType  string
-		payload apishim.Event
-	}{"state_change", "state_change", apishim.StateChangeEvent{PreviousStatus: "idle", Status: "running"}})
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// Build a ShimEvent, marshal, unmarshal, verify content type survives.
-			se := apishim.ShimEvent{
-				RunID:    "r1",
-				Seq:      0,
-				Category: apishim.CategoryForEvent(tc.evType),
-				Type:     tc.evType,
-				Payload:  tc.payload,
+			se := apishim.AgentRunEvent{
+				RunID:   "r1",
+				Seq:     0,
+				Type:    tc.evType,
+				Payload: tc.payload,
 			}
 			b, err := se.MarshalJSON()
 			require.NoError(t, err, "marshal")
-			var decoded apishim.ShimEvent
+			var decoded apishim.AgentRunEvent
 			require.NoError(t, decoded.UnmarshalJSON(b), "unmarshal")
 			assert.Equal(t, tc.evType, decoded.Type)
-			// The content type should survive round-trip.
 			assert.IsType(t, tc.payload, decoded.Payload, "payload type mismatch")
 		})
 	}
 }
 
-// ── Test 15: ShimEvent backward compatibility ─────────────────────────────────
+// ── Test 15: AgentRunEvent backward compatibility ─────────────────────────────
 
-func TestTranslateRich_ShimEvent_BackwardCompat(t *testing.T) {
-	// ShimEvent JSON with tool_call payload.
-	tcJSON := `{"runId":"r1","seq":0,"time":"2026-01-01T00:00:00Z","category":"session","type":"tool_call","payload":{"id":"tc-1","kind":"shell","title":"run ls"}}`
-	var se apishim.ShimEvent
+func TestTranslateRich_AgentRunEvent_BackwardCompat(t *testing.T) {
+	// AgentRunEvent JSON with tool_call payload.
+	tcJSON := `{"runId":"r1","seq":0,"time":"2026-01-01T00:00:00Z","type":"tool_call","payload":{"id":"tc-1","kind":"shell","title":"run ls"}}`
+	var se apishim.AgentRunEvent
 	require.NoError(t, json.Unmarshal([]byte(tcJSON), &se))
 	ev, ok := se.Payload.(apishim.ToolCallEvent)
 	require.True(t, ok)
@@ -621,9 +619,9 @@ func TestTranslateRich_ShimEvent_BackwardCompat(t *testing.T) {
 	assert.Equal(t, "shell", ev.Kind)
 	assert.Equal(t, "run ls", ev.Title)
 
-	// ShimEvent JSON with agent_message payload.
-	txtJSON := `{"runId":"r1","seq":1,"time":"2026-01-01T00:00:00Z","category":"session","type":"agent_message","payload":{"content":{"type":"text","text":"hello"}}}`
-	var se2 apishim.ShimEvent
+	// AgentRunEvent JSON with agent_message payload.
+	txtJSON := `{"runId":"r1","seq":1,"time":"2026-01-01T00:00:00Z","type":"agent_message","payload":{"content":{"type":"text","text":"hello"}}}`
+	var se2 apishim.AgentRunEvent
 	require.NoError(t, json.Unmarshal([]byte(txtJSON), &se2))
 	txt, ok := se2.Payload.(apishim.ContentEvent)
 	require.True(t, ok)

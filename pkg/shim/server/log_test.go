@@ -25,8 +25,8 @@ func TestEventLog_AppendAndRead(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 
-	ev0 := apishim.ShimEvent{RunID: "run-1", Seq: 0, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("hello"))}
-	ev1 := apishim.ShimEvent{RunID: "run-1", Seq: 1, Time: testTime(t), Category: apishim.CategoryRuntime, Type: "state_change", Payload: apishim.StateChangeEvent{PreviousStatus: "created", Status: "running", PID: 42, Reason: "prompt-started"}}
+	ev0 := apishim.AgentRunEvent{RunID: "run-1", Seq: 0, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("hello"))}
+	ev1 := apishim.AgentRunEvent{RunID: "run-1", Seq: 1, Time: testTime(t), Type: apishim.EventTypeRuntimeUpdate, Payload: apishim.RuntimeUpdateEvent{Status: &apishim.RuntimeStatus{PreviousStatus: "created", Status: "running", PID: 42, Reason: "prompt-started"}}}
 
 	require.NoError(t, log.Append(ev0))
 	require.NoError(t, log.Append(ev1))
@@ -44,12 +44,13 @@ func TestEventLog_AppendAndRead(t *testing.T) {
 	require.NotNil(t, textEv.Content.Text)
 	assert.Equal(t, "hello", textEv.Content.Text.Text)
 
-	assert.Equal(t, "state_change", entries[1].Type)
-	sc, ok := entries[1].Payload.(apishim.StateChangeEvent)
+	assert.Equal(t, apishim.EventTypeRuntimeUpdate, entries[1].Type)
+	ru, ok := entries[1].Payload.(apishim.RuntimeUpdateEvent)
 	require.True(t, ok)
-	assert.Equal(t, "created", sc.PreviousStatus)
-	assert.Equal(t, "running", sc.Status)
-	assert.Equal(t, 42, sc.PID)
+	require.NotNil(t, ru.Status)
+	assert.Equal(t, "created", ru.Status.PreviousStatus)
+	assert.Equal(t, "running", ru.Status.Status)
+	assert.Equal(t, 42, ru.Status.PID)
 }
 
 func TestEventLog_FromSeq(t *testing.T) {
@@ -59,7 +60,7 @@ func TestEventLog_FromSeq(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 5; i++ {
-		ev := apishim.ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("x"))}
+		ev := apishim.AgentRunEvent{RunID: "run-1", Seq: i, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("x"))}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -77,7 +78,7 @@ func TestEventLog_SeqContinuesAfterReopen(t *testing.T) {
 	log1, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := apishim.ShimEvent{RunID: "run-1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("a"))}
+		ev := apishim.AgentRunEvent{RunID: "run-1", Seq: i, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("a"))}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -85,7 +86,7 @@ func TestEventLog_SeqContinuesAfterReopen(t *testing.T) {
 	log2, err := OpenEventLog(path)
 	require.NoError(t, err)
 	require.Equal(t, 3, log2.NextSeq())
-	ev3 := apishim.ShimEvent{RunID: "run-1", Seq: 3, Time: testTime(t), Category: apishim.CategoryRuntime, Type: "state_change", Payload: apishim.StateChangeEvent{PreviousStatus: "running", Status: "created"}}
+	ev3 := apishim.AgentRunEvent{RunID: "run-1", Seq: 3, Time: testTime(t), Type: apishim.EventTypeRuntimeUpdate, Payload: apishim.RuntimeUpdateEvent{Status: &apishim.RuntimeStatus{PreviousStatus: "running", Status: "created"}}}
 	require.NoError(t, log2.Append(ev3))
 	require.NoError(t, log2.Close())
 
@@ -121,7 +122,7 @@ func TestReadEventLog_DamagedTailReturnsPartial(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("ok"))}
+		ev := apishim.AgentRunEvent{RunID: "s1", Seq: i, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("ok"))}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -145,7 +146,7 @@ func TestReadEventLog_DamagedTailTolerated(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("v"))}
+		ev := apishim.AgentRunEvent{RunID: "s1", Seq: i, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("v"))}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -172,7 +173,7 @@ func TestReadEventLog_MidFileCorruptionFails(t *testing.T) {
 	log, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("v"))}
+		ev := apishim.AgentRunEvent{RunID: "s1", Seq: i, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("v"))}
 		require.NoError(t, log.Append(ev))
 	}
 	require.NoError(t, log.Close())
@@ -191,7 +192,7 @@ func TestReadEventLog_MidFileCorruptionFails(t *testing.T) {
 	tmpLog, err := OpenEventLog(tmpPath)
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("after"))}
+		ev := apishim.AgentRunEvent{RunID: "s1", Seq: i, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("after"))}
 		require.NoError(t, tmpLog.Append(ev))
 	}
 	require.NoError(t, tmpLog.Close())
@@ -214,7 +215,7 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	log1, err := OpenEventLog(path)
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("orig"))}
+		ev := apishim.AgentRunEvent{RunID: "s1", Seq: i, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("orig"))}
 		require.NoError(t, log1.Append(ev))
 	}
 	require.NoError(t, log1.Close())
@@ -237,7 +238,7 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	require.Equal(t, 4, log2.NextSeq())
 
 	// Append with seq 4 succeeds.
-	ev4 := apishim.ShimEvent{RunID: "s1", Seq: 4, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("new"))}
+	ev4 := apishim.AgentRunEvent{RunID: "s1", Seq: 4, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("new"))}
 	require.NoError(t, log2.Append(ev4))
 	require.NoError(t, log2.Close())
 
@@ -266,7 +267,7 @@ func TestEventLog_PartialWriteTruncation(t *testing.T) {
 
 	// Write 2 good entries.
 	for i := 0; i < 2; i++ {
-		ev := apishim.ShimEvent{RunID: "s1", Seq: i, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("good"))}
+		ev := apishim.AgentRunEvent{RunID: "s1", Seq: i, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("good"))}
 		require.NoError(t, log.Append(ev))
 	}
 
@@ -274,13 +275,13 @@ func TestEventLog_PartialWriteTruncation(t *testing.T) {
 	// before any write, so no partial write in this case). The key invariant
 	// is that after a failed Append, NextSeq is unchanged and the file is
 	// still consistent.
-	wrongSeqEv := apishim.ShimEvent{RunID: "s1", Seq: 99, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("bad"))}
+	wrongSeqEv := apishim.AgentRunEvent{RunID: "s1", Seq: 99, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("bad"))}
 	err = log.Append(wrongSeqEv)
 	require.Error(t, err, "wrong seq should be rejected")
 	assert.Equal(t, 2, log.NextSeq(), "nextSeq must not advance after failed append")
 
 	// The log must still be writable after a failed append.
-	goodEv := apishim.ShimEvent{RunID: "s1", Seq: 2, Time: testTime(t), Category: apishim.CategorySession, Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("after"))}
+	goodEv := apishim.AgentRunEvent{RunID: "s1", Seq: 2, Time: testTime(t), Type: apishim.EventTypeAgentMessage, Payload: apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock("after"))}
 	require.NoError(t, log.Append(goodEv))
 	require.NoError(t, log.Close())
 
@@ -315,7 +316,6 @@ func TestEventLog_TranslatorWritesShimEvent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, apishim.EventTypeAgentMessage, entries[0].Type)
-	assert.Equal(t, apishim.CategorySession, entries[0].Category)
 	assert.Equal(t, "run-1", entries[0].RunID)
 	assert.Equal(t, 0, entries[0].Seq)
 	ev, ok := entries[0].Payload.(apishim.ContentEvent)

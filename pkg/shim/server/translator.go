@@ -12,8 +12,8 @@ import (
 )
 
 // Translator drains ACP session notifications, translates each notification
-// into a ShimEvent, and fans the result out to all registered subscriber
-// channels. If log is non-nil, every ShimEvent is also appended to the JSONL
+// into an AgentRunEvent, and fans the result out to all registered subscriber
+// channels. If log is non-nil, every AgentRunEvent is also appended to the JSONL
 // event log for durable history (log-before-fanout under mutex).
 type Translator struct {
 	runID     string
@@ -21,13 +21,13 @@ type Translator struct {
 	in        <-chan acp.SessionNotification
 	log       *EventLog
 
-	// sessionMetadataHook is called after broadcastSessionEvent for metadata
-	// event types (available_commands, config_option, session_info, current_mode).
-	// Set once before Start() via SetSessionMetadataHook — no lock needed.
+	// sessionMetadataHook is called after broadcastEvent for runtime_update
+	// events that carry metadata fields (availableCommands, configOptions,
+	// sessionInfo, currentMode). Set once before Start() — no lock needed.
 	sessionMetadataHook func(apishim.Event)
 
 	mu               sync.Mutex
-	subs             map[int]chan apishim.ShimEvent
+	subs             map[int]chan apishim.AgentRunEvent
 	nextID           int
 	nextSeq          int
 	done             chan struct{}
@@ -49,7 +49,7 @@ func NewTranslator(runID string, in <-chan acp.SessionNotification, log *EventLo
 		runID:       runID,
 		in:          in,
 		log:         log,
-		subs:        make(map[int]chan apishim.ShimEvent),
+		subs:        make(map[int]chan apishim.AgentRunEvent),
 		nextSeq:     nextSeq,
 		done:        make(chan struct{}),
 		eventCounts: make(map[string]int),
@@ -72,18 +72,19 @@ func (t *Translator) SetSessionMetadataHook(hook func(apishim.Event)) {
 	t.sessionMetadataHook = hook
 }
 
-// maybeNotifyMetadata calls sessionMetadataHook for the 4 metadata event types.
-// Called from run() AFTER broadcastSessionEvent returns (Translator.mu released).
-// All other event types are silently ignored.
+// maybeNotifyMetadata calls sessionMetadataHook for runtime_update events
+// that carry metadata fields (availableCommands, configOptions, sessionInfo,
+// currentMode). Called from run() AFTER broadcastEvent returns.
 func (t *Translator) maybeNotifyMetadata(ev apishim.Event) {
 	if t.sessionMetadataHook == nil {
 		return
 	}
-	switch ev.(type) {
-	case apishim.AvailableCommandsEvent,
-		apishim.ConfigOptionEvent,
-		apishim.SessionInfoEvent,
-		apishim.CurrentModeEvent:
+	ru, ok := ev.(apishim.RuntimeUpdateEvent)
+	if !ok {
+		return
+	}
+	if ru.AvailableCommands != nil || ru.ConfigOptions != nil ||
+		ru.SessionInfo != nil || ru.CurrentMode != nil {
 		t.sessionMetadataHook(ev)
 	}
 }
@@ -106,16 +107,16 @@ func (t *Translator) Stop() {
 	})
 }
 
-// Subscribe returns a buffered channel that will receive translated ShimEvents,
+// Subscribe returns a buffered channel that will receive translated AgentRunEvents,
 // along with a subscription ID and the next sequence number that could be
 // assigned after the subscription is established.
-func (t *Translator) Subscribe() (<-chan apishim.ShimEvent, int, int) {
+func (t *Translator) Subscribe() (<-chan apishim.AgentRunEvent, int, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	id := t.nextID
 	t.nextID++
-	ch := make(chan apishim.ShimEvent, 1024)
+	ch := make(chan apishim.AgentRunEvent, 1024)
 	t.subs[id] = ch
 	return ch, id, t.nextSeq
 }
@@ -150,19 +151,18 @@ func (t *Translator) LastSeq() int {
 	return t.nextSeq - 1
 }
 
-// NotifyTurnStart broadcasts a turn_start ShimEvent.
+// NotifyTurnStart broadcasts a turn_start AgentRunEvent.
 // The new turnId is assigned atomically inside the broadcast callback,
 // which runs under mu.Lock.
 func (t *Translator) NotifyTurnStart() {
 	newTurnID := uuid.New().String()
-	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
+	t.broadcast(func(seq int, at time.Time) apishim.AgentRunEvent {
 		t.currentTurnId = newTurnID
-		return apishim.ShimEvent{
+		return apishim.AgentRunEvent{
 			RunID:     t.runID,
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  apishim.CategorySession,
 			Type:      apishim.EventTypeTurnStart,
 			TurnID:    t.currentTurnId,
 			Payload:   apishim.TurnStartEvent{},
@@ -170,17 +170,16 @@ func (t *Translator) NotifyTurnStart() {
 	})
 }
 
-// NotifyUserPrompt broadcasts a user_message ShimEvent so that all subscribers
-// (including late-joining chat clients) see the user's prompt.
+// NotifyUserPrompt broadcasts a user_message AgentRunEvent so that all
+// subscribers (including late-joining chat clients) see the user's prompt.
 // This must be called after NotifyTurnStart and before mgr.Prompt.
 func (t *Translator) NotifyUserPrompt(text string) {
-	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
-		return apishim.ShimEvent{
+	t.broadcast(func(seq int, at time.Time) apishim.AgentRunEvent {
+		return apishim.AgentRunEvent{
 			RunID:     t.runID,
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  apishim.CategorySession,
 			Type:      apishim.EventTypeUserMessage,
 			TurnID:    t.currentTurnId,
 			Payload:   apishim.NewContentEvent(apishim.EventTypeUserMessage, apishim.BlockStatusStart, apishim.TextBlock(text)),
@@ -188,47 +187,47 @@ func (t *Translator) NotifyUserPrompt(text string) {
 	})
 }
 
-// NotifyTurnEnd broadcasts a turn_end ShimEvent.
+// NotifyTurnEnd broadcasts a turn_end AgentRunEvent.
 // Closes any open content block first, then emits turn_end.
 // The current turnId is included in the event and cleared AFTER use so the
 // turn_end event itself carries the identifier.
 func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 	t.closeOpenBlock()
-	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
-		se := apishim.ShimEvent{
+	t.broadcast(func(seq int, at time.Time) apishim.AgentRunEvent {
+		ae := apishim.AgentRunEvent{
 			RunID:     t.runID,
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  apishim.CategorySession,
 			Type:      apishim.EventTypeTurnEnd,
 			TurnID:    t.currentTurnId,
 			Payload:   apishim.TurnEndEvent{StopReason: string(reason)},
 		}
 		t.currentTurnId = ""
-		return se
+		return ae
 	})
 }
 
-// NotifyStateChange broadcasts a runtime category state_change ShimEvent.
-// Runtime events never carry turn fields.
+// NotifyStateChange broadcasts a runtime_update AgentRunEvent with Status field.
+// Runtime update events never carry turn fields.
 // sessionChanged lists state sections that were updated (e.g. ["agentInfo","capabilities"]
 // for the synthetic bootstrap-metadata event). Pass nil for lifecycle-only transitions.
 func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, reason string, sessionChanged []string) {
-	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
-		return apishim.ShimEvent{
+	t.broadcast(func(seq int, at time.Time) apishim.AgentRunEvent {
+		return apishim.AgentRunEvent{
 			RunID:     t.runID,
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  apishim.CategoryRuntime,
-			Type:      apishim.EventTypeStateChange,
-			Payload: apishim.StateChangeEvent{
-				PreviousStatus: previousStatus,
-				Status:         status,
-				PID:            pid,
-				Reason:         reason,
-				SessionChanged: sessionChanged,
+			Type:      apishim.EventTypeRuntimeUpdate,
+			Payload: apishim.RuntimeUpdateEvent{
+				Status: &apishim.RuntimeStatus{
+					PreviousStatus: previousStatus,
+					Status:         status,
+					PID:            pid,
+					Reason:         reason,
+					SessionChanged: sessionChanged,
+				},
 			},
 		}
 	})
@@ -264,7 +263,7 @@ func (t *Translator) run() {
 				t.closeOpenBlock()
 			}
 
-			t.broadcastSessionEvent(ev)
+			t.broadcastEvent(ev)
 			t.maybeNotifyMetadata(ev)
 		}
 	}
@@ -291,7 +290,7 @@ func setContentStatus(ev apishim.Event, status string) apishim.Event {
 // causing log.Append to drop the event silently (fail-closed).
 func (t *Translator) emitBlockEnd(eventType string) {
 	ev := apishim.NewContentEvent(eventType, apishim.BlockStatusEnd, apishim.TextBlock(""))
-	t.broadcastSessionEvent(ev)
+	t.broadcastEvent(ev)
 }
 
 // closeOpenBlock closes the currently open content block, if any.
@@ -302,24 +301,23 @@ func (t *Translator) closeOpenBlock() {
 	}
 }
 
-// broadcastSessionEvent builds and broadcasts a session category ShimEvent.
-// TurnID is applied to all session events when an active turn exists.
-func (t *Translator) broadcastSessionEvent(ev apishim.Event) {
-	t.broadcast(func(seq int, at time.Time) apishim.ShimEvent {
+// broadcastEvent builds and broadcasts an AgentRunEvent.
+// TurnID is applied to all events except runtime_update when an active turn exists.
+func (t *Translator) broadcastEvent(ev apishim.Event) {
+	t.broadcast(func(seq int, at time.Time) apishim.AgentRunEvent {
 		eventType := apishim.EventTypeOf(ev)
-		se := apishim.ShimEvent{
+		ae := apishim.AgentRunEvent{
 			RunID:     t.runID,
 			SessionID: t.sessionID,
 			Seq:       seq,
 			Time:      at,
-			Category:  apishim.CategorySession,
 			Type:      eventType,
 			Payload:   ev,
 		}
-		if t.currentTurnId != "" {
-			se.TurnID = t.currentTurnId
+		if t.currentTurnId != "" && eventType != apishim.EventTypeRuntimeUpdate {
+			ae.TurnID = t.currentTurnId
 		}
-		return se
+		return ae
 	})
 }
 
@@ -333,7 +331,7 @@ func (t *Translator) broadcastSessionEvent(ev apishim.Event) {
 // nextSeq is NOT incremented. The next event reuses the same seq number.
 // This preserves seq continuity for the history/live recovery invariant.
 // Append failures are logged as structured errors for monitoring.
-func (t *Translator) broadcast(build func(seq int, at time.Time) apishim.ShimEvent) {
+func (t *Translator) broadcast(build func(seq int, at time.Time) apishim.AgentRunEvent) {
 	t.mu.Lock()
 
 	// If the translator is stopped, channels may already be closed — bail out.
@@ -352,7 +350,6 @@ func (t *Translator) broadcast(build func(seq int, at time.Time) apishim.ShimEve
 			slog.Error("events: log append failed, event dropped",
 				"seq", t.nextSeq,
 				"type", ev.Type,
-				"category", ev.Category,
 				"error", err,
 			)
 			// fail-closed: do NOT increment nextSeq, do NOT fan-out
@@ -422,36 +419,46 @@ func translate(n acp.SessionNotification) apishim.Event {
 		return apishim.PlanEvent{Meta: u.Plan.Meta, Entries: u.Plan.Entries}
 	case u.AvailableCommandsUpdate != nil:
 		ac := u.AvailableCommandsUpdate
-		return apishim.AvailableCommandsEvent{
-			Meta:     ac.Meta,
-			Commands: convertCommands(ac.AvailableCommands),
+		return apishim.RuntimeUpdateEvent{
+			AvailableCommands: &apishim.AvailableCommandsEvent{
+				Meta:     ac.Meta,
+				Commands: convertCommands(ac.AvailableCommands),
+			},
 		}
 	case u.CurrentModeUpdate != nil:
 		cm := u.CurrentModeUpdate
-		return apishim.CurrentModeEvent{
-			Meta:   cm.Meta,
-			ModeID: string(cm.CurrentModeId),
+		return apishim.RuntimeUpdateEvent{
+			CurrentMode: &apishim.CurrentModeEvent{
+				Meta:   cm.Meta,
+				ModeID: string(cm.CurrentModeId),
+			},
 		}
 	case u.ConfigOptionUpdate != nil:
 		co := u.ConfigOptionUpdate
-		return apishim.ConfigOptionEvent{
-			Meta:          co.Meta,
-			ConfigOptions: convertConfigOptions(co.ConfigOptions),
+		return apishim.RuntimeUpdateEvent{
+			ConfigOptions: &apishim.ConfigOptionEvent{
+				Meta:    co.Meta,
+				Options: convertConfigOptions(co.ConfigOptions),
+			},
 		}
 	case u.SessionInfoUpdate != nil:
 		si := u.SessionInfoUpdate
-		return apishim.SessionInfoEvent{
-			Meta:      si.Meta,
-			Title:     si.Title,
-			UpdatedAt: si.UpdatedAt,
+		return apishim.RuntimeUpdateEvent{
+			SessionInfo: &apishim.SessionInfoEvent{
+				Meta:      si.Meta,
+				Title:     si.Title,
+				UpdatedAt: si.UpdatedAt,
+			},
 		}
 	case u.UsageUpdate != nil:
 		uu := u.UsageUpdate
-		return apishim.UsageEvent{
-			Meta: uu.Meta,
-			Cost: convertCost(uu.Cost),
-			Size: uu.Size,
-			Used: uu.Used,
+		return apishim.RuntimeUpdateEvent{
+			Usage: &apishim.UsageEvent{
+				Meta: uu.Meta,
+				Cost: convertCost(uu.Cost),
+				Size: uu.Size,
+				Used: uu.Used,
+			},
 		}
 	default:
 		return apishim.ErrorEvent{Msg: "unknown session update variant"}

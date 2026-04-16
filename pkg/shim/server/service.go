@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"sync/atomic"
 
 	acp "github.com/coder/acp-go-sdk"
 
@@ -10,6 +12,16 @@ import (
 	apishim "github.com/zoumo/mass/pkg/shim/api"
 	"github.com/zoumo/mass/pkg/jsonrpc"
 )
+
+// watchIDCounter is a process-global monotonic counter for generating unique
+// watch stream identifiers. Each session/watch_event call gets a unique watchID
+// so that a single connection can carry multiple independent watch streams.
+var watchIDCounter atomic.Int64
+
+// nextWatchID returns a unique watch stream identifier (e.g. "w1", "w2", ...).
+func nextWatchID() string {
+	return fmt.Sprintf("w%d", watchIDCounter.Add(1))
+}
 
 // Service implements ShimService.
 type Service struct {
@@ -56,9 +68,9 @@ func (s *Service) Load(_ context.Context, _ *apishim.SessionLoadParams) error {
 	return nil
 }
 
-// WatchEvent implements session/watch_event (K8s List-Watch pattern).
+// WatchEvent implements runtime/watch_event (K8s List-Watch pattern).
 // When FromSeq is nil, only live events are streamed.
-// When FromSeq is set, historical events are replayed via shim/event
+// When FromSeq is set, historical events are replayed via runtime/event_update
 // notifications first, then live events follow — no large response payload.
 func (s *Service) WatchEvent(ctx context.Context, req *apishim.SessionWatchEventParams) (*apishim.SessionWatchEventResult, error) {
 	peer := jsonrpc.PeerFromContext(ctx)
@@ -77,8 +89,17 @@ func (s *Service) WatchEvent(ctx context.Context, req *apishim.SessionWatchEvent
 }
 
 // watchLiveOnly subscribes to live events only (no replay).
+// Each watch stream gets a unique watchID set on every notification, allowing
+// the client to demux when multiple watch streams share one connection.
+//
+// Slow consumer handling (K8s-style eviction):
+// When the Translator's subscriber channel buffer fills up, Translator.broadcast()
+// closes the channel and removes the subscriber. This goroutine detects the
+// channel close (ok=false), calls peer.Close() to force-disconnect the client,
+// which triggers the client to reconnect with fromSeq=lastReceivedSeq+1.
 func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer) (*apishim.SessionWatchEventResult, error) {
 	ch, subID, nextSeq := s.trans.Subscribe()
+	watchID := nextWatchID()
 
 	go func() {
 		defer s.trans.Unsubscribe(subID)
@@ -89,16 +110,24 @@ func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer) (*apish
 				return
 			case ev, ok := <-ch:
 				if !ok {
+					// Subscriber evicted by Translator (channel full, K8s-style).
+					// Close the peer connection to propagate disconnect to client,
+					// triggering re-dial + WatchEvent(fromSeq=lastSeq+1).
+					slog.Warn("watch: subscriber evicted by translator, closing peer",
+						"watchID", watchID, "reason", "channel_full")
+					peer.Close()
 					return
 				}
-				if err := peer.Notify(ctx, apishim.MethodShimEvent, ev); err != nil {
+				// Stamp watchID on each event for client-side demux.
+				ev.WatchID = watchID
+				if err := peer.Notify(ctx, apishim.MethodRuntimeEventUpdate, ev); err != nil {
 					return
 				}
 			}
 		}
 	}()
 
-	return &apishim.SessionWatchEventResult{NextSeq: nextSeq}, nil
+	return &apishim.SessionWatchEventResult{WatchID: watchID, NextSeq: nextSeq}, nil
 }
 
 // watchWithReplay implements two-phase lockless replay:
@@ -110,9 +139,16 @@ func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer) (*apish
 // Dedup guarantee: history events with seq < nextSeq are sent from file,
 // live events with seq < nextSeq are skipped. broadcast() does log-before-fanout
 // under the same mutex, so the file contains all seq < nextSeq at subscribe time.
+//
+// Each event is stamped with watchID for client-side demux (same as watchLiveOnly).
+// Replay events also carry watchID so the client can filter consistently.
+//
+// Slow consumer handling: same as watchLiveOnly — Translator eviction triggers
+// peer.Close() to propagate disconnect for client-side reconnection.
 func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, fromSeq int) (*apishim.SessionWatchEventResult, error) {
 	// Phase 1: register subscriber under mutex (O(1)).
 	ch, subID, nextSeq := s.trans.Subscribe()
+	watchID := nextWatchID()
 
 	// Phase 2: replay + live in background goroutine.
 	go func() {
@@ -134,7 +170,9 @@ func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, fromS
 				return
 			default:
 			}
-			if err := peer.Notify(ctx, apishim.MethodShimEvent, entry); err != nil {
+			// Stamp watchID on replay events for consistent client-side filtering.
+			entry.WatchID = watchID
+			if err := peer.Notify(ctx, apishim.MethodRuntimeEventUpdate, entry); err != nil {
 				return
 			}
 		}
@@ -146,19 +184,25 @@ func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, fromS
 				return
 			case ev, ok := <-ch:
 				if !ok {
+					// Subscriber evicted by Translator (channel full, K8s-style).
+					slog.Warn("watch: subscriber evicted by translator, closing peer",
+						"watchID", watchID, "reason", "channel_full")
+					peer.Close()
 					return
 				}
 				if ev.Seq < nextSeq {
 					continue // dedup: already sent from file
 				}
-				if err := peer.Notify(ctx, apishim.MethodShimEvent, ev); err != nil {
+				// Stamp watchID on each live event for client-side demux.
+				ev.WatchID = watchID
+				if err := peer.Notify(ctx, apishim.MethodRuntimeEventUpdate, ev); err != nil {
 					return
 				}
 			}
 		}
 	}()
 
-	return &apishim.SessionWatchEventResult{NextSeq: nextSeq}, nil
+	return &apishim.SessionWatchEventResult{WatchID: watchID, NextSeq: nextSeq}, nil
 }
 
 func (s *Service) Status(_ context.Context) (*apishim.RuntimeStatusResult, error) {
@@ -177,6 +221,16 @@ func (s *Service) Status(_ context.Context) (*apishim.RuntimeStatusResult, error
 	}, nil
 }
 
+
+func (s *Service) SetModel(ctx context.Context, req *apishim.SessionSetModelParams) (*apishim.SessionSetModelResult, error) {
+	if req.ModelID == "" {
+		return nil, jsonrpc.ErrInvalidParams("missing modelId")
+	}
+	if err := s.mgr.SetModel(ctx, req.ModelID); err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	return &apishim.SessionSetModelResult{}, nil
+}
 
 func (s *Service) Stop(_ context.Context) error {
 	// Stop signals are handled by the transport layer (the caller detects the
