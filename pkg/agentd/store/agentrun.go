@@ -191,7 +191,7 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 }
 
 // TransitionAgentRunState updates only Status.State when the current state
-// matches expected. It preserves shim metadata, error text, and bootstrap data.
+// matches expected. It preserves run metadata, error text, and bootstrap data.
 // Returns false, nil when the agent exists but is not in the expected state.
 func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next apiruntime.Status) (bool, error) {
 	if workspace == "" {

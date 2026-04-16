@@ -11,7 +11,7 @@ This file is the slice-level authority map for the design set. It names which do
 | Workspace preparation and host-impact rules | `docs/design/workspace/workspace-spec.md` | `docs/design/mass/agentd.md`, `docs/design/mass/ari-spec.md` | local workspace, hook execution, env precedence, and shared workspace semantics must tell one safety story. |
 | Agent configuration CRUD | `docs/design/mass/ari-spec.md` | `docs/design/mass/agentd.md` | `agent/*` methods manage Agent records (create/update/get/list/delete). No runtime process is involved. |
 | AgentRun lifecycle (running instances) | `docs/design/mass/ari-spec.md` | `docs/design/mass/agentd.md`, `docs/design/runtime/agent-shim.md` | ARI exposes `agentrun/*` methods for the lifecycle of running agent instances. Workspace-scoped message routing is via `workspace/send`. |
-| Shim control, replay, and reconnect contract | `docs/design/runtime/shim-rpc-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/agent-shim.md`, `docs/design/mass/agentd.md` | The clean-break shim surface: request/response is `session/*` + `runtime/*` (internal); notification surface is `shim/event`. runtime-spec owns state-dir / socket layout, shim-rpc-spec owns recovery method semantics. |
+| Shim control, replay, and reconnect contract | `docs/design/runtime/run-rpc-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/agent-shim.md`, `docs/design/mass/mass.md` | The clean-break shim surface: request/response is `session/*` + `runtime/*` (internal); notification surface is `runtime/event_update`. runtime-spec owns state-dir / socket layout, run-rpc-spec owns recovery method semantics. |
 
 ## Current Implementation Vocabulary
 
@@ -51,7 +51,7 @@ Invariant wording:
 - AgentRun identity = `workspace` + `name` (stable external key).
 - MASS AgentRun identity is not ACP session identity.
 - `systemPrompt` is bootstrap configuration, not a hidden work turn.
-- The shim request/response surface (`session/*` + `runtime/*`) is UNCHANGED; it remains an internal agentd↔shim protocol. The notification surface is unified as `shim/event`.
+- The shim request/response surface (`session/*` + `runtime/*`) is UNCHANGED; it remains an internal agentd↔shim protocol. The notification surface is unified as `runtime/event_update`.
 
 ## AgentRun State Machine
 
@@ -97,8 +97,8 @@ The design set now names these boundaries explicitly:
 The shim-facing design set is converged on the following target (fully implemented):
 
 - the normative shim method surface is `session/prompt`, `session/cancel`, `session/watch_event`, `session/load`, `session/set_model`, `runtime/status`, and `runtime/stop` (internal agentd↔shim protocol);
-- the normative live notification surface is `shim/event` (internal);
-- socket path and state-dir layout are owned by `runtime-spec.md`, while replay / reconnect semantics are owned by `shim-rpc-spec.md`;
+- the normative live notification surface is `runtime/event_update` (internal);
+- socket path and state-dir layout are owned by `runtime-spec.md`, while replay / reconnect semantics are owned by `run-rpc-spec.md`;
 - `agent-shim.md` is descriptive only: it explains component responsibilities and the ACP boundary, but it does not redefine method names or recovery rules;
 - any remaining references to legacy PascalCase methods or `$/event` in planning docs or historical notes are implementation lag artifacts, not current API contract.
 

@@ -28,12 +28,12 @@ shim 提供 `session/*` + `runtime/*` RPC surface（request/response，clean-bre
 
 agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent/*` 管理 Agent CRUD。shim RPC 的 `session/*` + `runtime/*` 是内部协议，不暴露给外部调用方。
 **统一 notification surface**：live notification 统一为 `runtime/event_update`，携带 `runId`、`sessionId`、`seq`、`type`、`turnId`（turn 内事件）、`payload` 顶层字段。事件类型包括核心流式事件和 `runtime_update`（合并进程状态与 session 元数据）。
-详见 [shim-rpc-spec.md](shim-rpc-spec.md) 中的"Turn-Aware Event Ordering"章节。
+详见 [run-rpc-spec.md](run-rpc-spec.md) 中的"Turn-Aware Event Ordering"章节。
 
 ## 与规范文档的分工
 
 - [runtime-spec.md](runtime-spec.md) 定义 runtime 状态、bundle、state dir 与 socket 路径；
-- [shim-rpc-spec.md](shim-rpc-spec.md) 定义对上的规范 surface、notification 名、回放 / 恢复语义；
+- [run-rpc-spec.md](run-rpc-spec.md) 定义对上的规范 surface、notification 名、回放 / 恢复语义；
 - 本文档只解释 **agent-shim 这个组件为什么存在、拥有哪些职责、边界在哪里**。
 
 也就是说：
@@ -90,7 +90,7 @@ agent-shim 是 agent 进程唯一的 ACP client，负责：
 ### 角色 2：Runtime Session Server（朝上）
 
 agent-shim 对上暴露的是 **runtime/session 语义**，不是 raw ACP。
-规范 surface 由 [shim-rpc-spec.md](shim-rpc-spec.md) 定义：
+规范 surface 由 [run-rpc-spec.md](run-rpc-spec.md) 定义：
 
 ```text
 session/prompt       发送一个工作 turn
@@ -162,7 +162,7 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 4. `runtime/watch_event` 一步完成历史补齐 + live 流恢复。
 
 **重要**：socket 路径、state dir 布局、`events.jsonl` 的存在本身，由 runtime-spec authority 定义；
-恢复方法名与顺序，由 shim-rpc-spec authority 定义；
+恢复方法名与顺序，由 run-rpc-spec authority 定义；
 本文档只是解释为什么 agent-shim 必须提供这类能力。
 
 ## 为什么需要独立 shim
@@ -178,7 +178,7 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 
 当前实现已对齐 clean-break contract：
 
-- request/response surface 是 `session/*` + `runtime/*`（`pkg/rpc/server.go`、`pkg/agentd/shim_client.go` 已实现）；
+- request/response surface 是 `session/*` + `runtime/*`（已实现）；
 - notification surface 是 `runtime/event_update`（统一替代原 `session/update` + `runtime/state_change`）；
 - recovery story 通过 `runtime/status` / `runtime/watch_event` 闭合；
 - ACP 继续留在 shim 内部；

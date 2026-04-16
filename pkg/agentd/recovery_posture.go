@@ -23,7 +23,7 @@ const (
 	RecoveryPhaseIdle RecoveryPhase = 0
 
 	// RecoveryPhaseRecovering means the daemon is actively reconnecting to
-	// surviving shim processes. Operational actions (prompt, cancel) MUST be
+	// surviving agent-run processes. Operational actions (prompt, cancel) MUST be
 	// refused while this phase is active (fail-closed posture).
 	RecoveryPhaseRecovering RecoveryPhase = 1
 
@@ -60,7 +60,7 @@ const (
 	RecoveryOutcomePending RecoveryOutcome = "pending"
 
 	// RecoveryOutcomeRecovered means the session was successfully
-	// reconnected to its surviving shim process.
+	// reconnected to its surviving agent-run process.
 	RecoveryOutcomeRecovered RecoveryOutcome = "recovered"
 
 	// RecoveryOutcomeFailed means the session could not be recovered and
@@ -69,7 +69,7 @@ const (
 )
 
 // RecoveryInfo captures the result of a recovery attempt for a single session.
-// It is stored on ShimProcess and surfaced through ARI session/status.
+// It is stored on RunProcess and surfaced through ARI session/status.
 type RecoveryInfo struct {
 	// Recovered indicates whether the session was successfully recovered
 	// during the last daemon restart.

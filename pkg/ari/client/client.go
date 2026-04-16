@@ -135,7 +135,7 @@ func (c *ariClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pkg
 
 type agentRunOps struct{ c *jsonrpc.Client }
 
-func (o *agentRunOps) Prompt(ctx context.Context, key pkgariapi.ObjectKey, prompt string) (*pkgariapi.AgentRunPromptResult, error) {
+func (o *agentRunOps) Prompt(ctx context.Context, key pkgariapi.ObjectKey, prompt []pkgariapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
 	req := pkgariapi.AgentRunPromptParams{
 		Workspace: key.Workspace,
 		Name:      key.Name,

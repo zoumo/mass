@@ -48,16 +48,16 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: S04 tests pass (12 SessionManager tests). CRUD operations work. State machine validates 9 valid transitions (created→running, created→stopped, running→paused:warm, running→stopped, paused:warm→running, paused:warm→paused:cold, paused:warm→stopped, paused:cold→running, paused:cold→stopped). Delete protection blocks running/paused:warm sessions.
 - Notes: Label-based filtering, prevent Delete on running sessions
 
-### R005 — Process Manager can fork agent-shim, connect to shim socket, subscribe to events, and manage process lifecycle (Start/Stop/State/Connect)
+### R005 — Process Manager can fork agent-run, connect to agent-run socket, subscribe to events, and manage process lifecycle (Start/Stop/State/Connect)
 - Class: core-capability
 - Status: validated
-- Description: Process Manager can fork agent-shim, connect to shim socket, subscribe to events, and manage process lifecycle (Start/Stop/State/Connect)
-- Why it matters: Enables actual agent execution through shim layer
+- Description: Process Manager can fork agent-run, connect to agent-run socket, subscribe to events, and manage process lifecycle (Start/Stop/State/Connect)
+- Why it matters: Enables actual agent execution through agent-run layer
 - Source: execution
 - Primary owning slice: M001-tvc4z0/S05
 - Supporting slices: none
-- Validation: S05 tests pass. ProcessManager.Start forks shim, connects socket, subscribes events. ProcessManager.Stop gracefully shuts down with Shutdown RPC + 10s wait + kill. ShimClient provides RPC communication. Integration tests verify full lifecycle with mockagent.
-- Notes: Start workflow: resolve runtimeClass → generate config.json → create bundle → fork shim → connect socket → subscribe events
+- Validation: S05 tests pass. ProcessManager.Start forks agent-run, connects socket, subscribes events. ProcessManager.Stop gracefully shuts down with Shutdown RPC + 10s wait + kill. Client provides RPC communication. Integration tests verify full lifecycle with mockagent.
+- Notes: Start workflow: resolve runtimeClass → generate config.json → create bundle → fork agent-run → connect socket → subscribe events
 
 ### R006 — ARI JSON-RPC server exposes session/* methods (new/prompt/cancel/stop/remove/list/status/attach/detach)
 - Class: integration
@@ -79,12 +79,12 @@ This file is the explicit capability and coverage contract for the project.
 - Primary owning slice: M001-tvc4z0/S07
 - Supporting slices: none
 - Validation: M008/S01+S04: agentdctl CLI fully consolidated. `agentdctl agent` (apply/get/list/delete template CRUD) + `agentdctl agentrun` (create/list/status/prompt/stop/delete/restart/attach/cancel lifecycle) + `agentdctl workspace` + `agentdctl shim` + `agentdctl daemon`. Resource-first grammar matches kubectl/containerd model. All subcommands verified via --help and integration tests.
-- Notes: Extends agent-shim-cli or separate agentdctl binary
+- Notes: Extends agent-run-cli or separate agentdctl binary
 
-### R008 — Full pipeline agentd → agent-shim → mockagent works: create → prompt → stop → remove
+### R008 — Full pipeline agentd → agent-run → mockagent works: create → prompt → stop → remove
 - Class: integration
 - Status: validated
-- Description: Full pipeline agentd → agent-shim → mockagent works: create → prompt → stop → remove
+- Description: Full pipeline agentd → agent-run → mockagent works: create → prompt → stop → remove
 - Why it matters: Proves the assembled system works end-to-end
 - Source: execution
 - Primary owning slice: M001-tvc4z0/S08
@@ -213,15 +213,15 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close.
 - Notes: S03 still owns durable persistence of bootstrap/recovery state, but the design meaning is now singular and validated.
 
-### R034 — The shim surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
+### R034 — The agent-run surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
 - Class: integration
 - Status: validated
-- Description: The shim surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
+- Description: The agent-run surface must stop carrying the legacy PascalCase / `$/event` contract and expose one clean-break protocol aligned with the converged design.
 - Why it matters: The current split naming and event model adds protocol drift exactly where ACP compatibility matters most.
 - Source: user
 - Primary owning slice: M002-ssi4mk/S02
 - Supporting slices: none
-- Validation: S02 replaced all legacy PascalCase shim methods and `$/event` notifications with the clean-break `session/*` + `runtime/*` surface. No-legacy-name grep gate passes: `! rg '"Prompt"|"Cancel"|"Subscribe"|"GetState"|"GetHistory"|"Shutdown"|"$/event"'` in non-test sources across pkg/rpc, pkg/agentd, pkg/ari, cmd/agent-shim-cli returns zero matches. Full test suite passes. D027 records the validation decision.
+- Validation: S02 replaced all legacy PascalCase shim methods and `$/event` notifications with the clean-break `session/*` + `runtime/*` surface. No-legacy-name grep gate passes: `! rg '"Prompt"|"Cancel"|"Subscribe"|"GetState"|"GetHistory"|"Shutdown"|"$/event"'` in non-test sources across pkg/rpc, pkg/agentd, pkg/ari, cmd/agent-run-cli returns zero matches. Full test suite passes. D027 records the validation decision.
 - Notes: No backward-compatibility burden is required for obsolete names or event shapes.
 
 ### R035 — Runtime event recovery must offer a single resume path that closes the current gap between history replay and live subscription.
@@ -232,7 +232,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: user
 - Primary owning slice: M002-q9r6sg/S03
 - Supporting slices: M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02
-- Validation: M003/S03 upgraded the resume path: Translator.SubscribeFromSeq reads log + registers subscription under a single mutex hold, eliminating the History→Subscribe gap structurally. RecoverSession now uses atomic Subscribe(fromSeq=0) instead of separate History+Subscribe calls. Proven by TestSubscribeFromSeq_BackfillAndLive (contiguous seq, no gap), TestShimClientSubscribeFromSeq, and full recovery test suite.
+- Validation: M003/S03 upgraded the resume path: Translator.SubscribeFromSeq reads log + registers subscription under a single mutex hold, eliminating the History→Subscribe gap structurally. RecoverSession now uses atomic Subscribe(fromSeq=0) instead of separate History+Subscribe calls. Proven by TestSubscribeFromSeq_BackfillAndLive (contiguous seq, no gap), TestClientSubscribeFromSeq, and full recovery test suite.
 - Notes: Recovery hardening ownership moved to M002-q9r6sg for atomic resume and damaged-tail tolerance beyond the M002 baseline. M003/S03 completed the structural fix.
 
 ### R036 — The runtime must preserve enough session configuration and identity to rebuild truthful state after restart or reconnect.
@@ -243,7 +243,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: inferred
 - Primary owning slice: M002-q9r6sg/S02
 - Supporting slices: M002-ssi4mk/S03, M002-q9r6sg/S01
-- Validation: TestAgentdRestartRecovery proves bootstrap_config, socket_path, state_dir, PID persist in schema v2. RecoverSessions rebuilds truthful state: live shim reconnected, dead shim marked stopped.
+- Validation: TestAgentdRestartRecovery proves bootstrap_config, socket_path, state_dir, PID persist in schema v2. RecoverSessions rebuilds truthful state: live agent-run reconnected, dead agent-run marked stopped.
 - Notes: Truthful restart/state rebuild now completes in M002-q9r6sg through live reconnect and explicit recovery posture.
 
 ### R037 — Workspace identity, reuse rules, cleanup boundaries, and shared access expectations must be explicit in both design and implementation direction.
@@ -298,7 +298,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: inferred
 - Primary owning slice: M007/S02
 - Supporting slices: M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04
-- Validation: S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real shim binary.
+- Validation: S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real agent-run binary.
 - Notes: Covered by M007: RestartPolicy+tryReload (S02), shim state authority (S02), CLI hardening (S04), integration test completeness (S05). Cross-client hardening (Codex) remains deferred per D014.
 
 ### R047 — agentd exposes agent/* ARI methods as external surface; session/* is removed. Agent identified by (workspace, name) pair — no opaque UUID.
@@ -379,7 +379,7 @@ This file is the explicit capability and coverage contract for the project.
 - Source: user
 - Primary owning slice: M014/S06
 - Supporting slices: M014/S03, M014/S04
-- Validation: TestMetadataHookChain_ConfigOption proves full chain: ConfigOptionUpdate ACP notification → Translator.maybeNotifyMetadata → Manager.UpdateSessionMetadata → state.json.session.configOptions written → state_change emitted with reason:"config-updated", sessionChanged:["configOptions"], previousStatus==status (metadata-only). TestSessionMetadataHook_AllFourTypes proves all 4 metadata event types (AvailableCommandsEvent, ConfigOptionEvent, SessionInfoEvent, CurrentModeEvent) fire the hook. TestUpdateSessionMetadata_PreservedByKill proves Kill() preserves configOptions. buildSessionUpdate dispatches all 4 types with correct changed/reason/apply tuples. go test ./pkg/shim/runtime/acp/... ./pkg/shim/server/... passes; make build clean.
+- Validation: TestMetadataHookChain_ConfigOption proves full chain: ConfigOptionUpdate ACP notification → Translator.maybeNotifyMetadata → Manager.UpdateSessionMetadata → state.json.session.configOptions written → state_change emitted with reason:"config-updated", sessionChanged:["configOptions"], previousStatus==status (metadata-only). TestSessionMetadataHook_AllFourTypes proves all 4 metadata event types (AvailableCommandsEvent, ConfigOptionEvent, SessionInfoEvent, CurrentModeEvent) fire the hook. TestUpdateSessionMetadata_PreservedByKill proves Kill() preserves configOptions. buildSessionUpdate dispatches all 4 types with correct changed/reason/apply tuples. go test ./pkg/agentrun/runtime/acp/... ./pkg/agentrun/server/... passes; make build clean.
 
 ### R055 — state.json carries eventCounts map updated on every state write; runtime/status overlays real-time in-memory counts from Translator; counts cover all event origins
 - Class: operability
@@ -409,16 +409,16 @@ This file is the explicit capability and coverage contract for the project.
 - Why it matters: Stopping or restarting an agent must not erase the capability metadata accumulated during the session
 - Source: user
 - Primary owning slice: M014/S03
-- Validation: TestKill_PreservesSession: Kill() → status==stopped AND Session.AgentInfo.Name=="test-agent" preserved. TestProcessExit_PreservesSession: SIGKILL → status==stopped AND Session preserved. All 7 writeState call sites use closure pattern; zero old-style State literal calls remain. go test ./pkg/shim/runtime/acp/... passes.
+- Validation: TestKill_PreservesSession: Kill() → status==stopped AND Session.AgentInfo.Name=="test-agent" preserved. TestProcessExit_PreservesSession: SIGKILL → status==stopped AND Session preserved. All 7 writeState call sites use closure pattern; zero old-style State literal calls remain. go test ./pkg/agentrun/runtime/acp/... passes.
 
-### R058 — EventTypeFileWrite, EventTypeFileRead, EventTypeCommand constants; FileWriteEvent, FileReadEvent, CommandEvent types; and decode cases removed from pkg/shim/api; no production code references them
+### R058 — EventTypeFileWrite, EventTypeFileRead, EventTypeCommand constants; FileWriteEvent, FileReadEvent, CommandEvent types; and decode cases removed from pkg/agentrun/api; no production code references them
 - Class: constraint
 - Status: validated
-- Description: EventTypeFileWrite, EventTypeFileRead, EventTypeCommand constants; FileWriteEvent, FileReadEvent, CommandEvent types; and decode cases removed from pkg/shim/api; no production code references them
+- Description: EventTypeFileWrite, EventTypeFileRead, EventTypeCommand constants; FileWriteEvent, FileReadEvent, CommandEvent types; and decode cases removed from pkg/agentrun/api; no production code references them
 - Why it matters: Eliminates misleading API surface that never had an ACP source and could confuse protocol consumers
 - Source: user
 - Primary owning slice: M014/S01
-- Validation: rg confirms zero references to EventTypeFileWrite/EventTypeFileRead/EventTypeCommand/FileWriteEvent/FileReadEvent/CommandEvent in Go code (exit 1); go test ./pkg/shim/... passes; go build ./pkg/shim/... clean. All constants, structs, decode cases, and test entries removed.
+- Validation: rg confirms zero references to EventTypeFileWrite/EventTypeFileRead/EventTypeCommand/FileWriteEvent/FileReadEvent/CommandEvent in Go code (exit 1); go test ./pkg/agentrun/... passes; go build ./pkg/agentrun/... clean. All constants, structs, decode cases, and test entries removed.
 
 ### R059 — state.json carries updatedAt RFC3339Nano timestamp set uniformly in writeState() and UpdateSessionMetadata() before every spec.WriteState() call
 - Class: operability
@@ -427,7 +427,7 @@ This file is the explicit capability and coverage contract for the project.
 - Why it matters: Operators can determine staleness of state.json without filesystem mtime heuristics
 - Source: inferred
 - Primary owning slice: M014/S03
-- Validation: UpdatedAt stamped unconditionally in writeState() after closure on every write path (line 337 of runtime.go). TestWriteState_SetsUpdatedAt: confirms UpdatedAt non-empty and valid RFC3339Nano after Create and after Kill, with monotonic increase. go test ./pkg/shim/runtime/acp/... passes.
+- Validation: UpdatedAt stamped unconditionally in writeState() after closure on every write path (line 337 of runtime.go). TestWriteState_SetsUpdatedAt: confirms UpdatedAt non-empty and valid RFC3339Nano after Create and after Kill, with monotonic increase. go test ./pkg/agentrun/runtime/acp/... passes.
 
 ## Deferred
 
@@ -582,7 +582,7 @@ This file is the explicit capability and coverage contract for the project.
 | R002 | core-capability | validated | M001-tvc4z0/S03 | none | M008/S04: meta.AgentTemplate (renamed from Runtime) stored in v1/agents bbolt bucket. ARI agent/set|get|list|delete handlers wired and verified. agentdctl agent apply/get/list/delete CLI functional. Integration tests (TestAgentTemplateLifecycle, TestEndToEndPipeline) confirm full chain: agent/set → agentrun/create → idle state. Old runtime/* ARI surface fully removed — rg 'runtime/' pkg/ari/server.go returns zero non-comment dispatch matches. |
 | R003 | core-capability | validated | M001-tvc4z0/S02 | none | S02 tests pass (26 unit tests + 2 integration tests). SQLite metadata store with WAL mode, foreign keys, embedded schema. CRUD operations for Session, Workspace, Room. Transaction support via BeginTx. Daemon lifecycle integration verified. |
 | R004 | core-capability | validated | M001-tvc4z0/S04 | none | S04 tests pass (12 SessionManager tests). CRUD operations work. State machine validates 9 valid transitions (created→running, created→stopped, running→paused:warm, running→stopped, paused:warm→running, paused:warm→paused:cold, paused:warm→stopped, paused:cold→running, paused:cold→stopped). Delete protection blocks running/paused:warm sessions. |
-| R005 | core-capability | validated | M001-tvc4z0/S05 | none | S05 tests pass. ProcessManager.Start forks shim, connects socket, subscribes events. ProcessManager.Stop gracefully shuts down with Shutdown RPC + 10s wait + kill. ShimClient provides RPC communication. Integration tests verify full lifecycle with mockagent. |
+| R005 | core-capability | validated | M001-tvc4z0/S05 | none | S05 tests pass. ProcessManager.Start forks agent-run, connects socket, subscribes events. ProcessManager.Stop gracefully shuts down with Shutdown RPC + 10s wait + kill. Client provides RPC communication. Integration tests verify full lifecycle with mockagent. |
 | R006 | integration | validated | M001-tvc4z0/S06 | none | S06 tests pass (27 ARI tests including 10 session tests). All 9 session/* methods implemented: new/prompt/cancel/stop/remove/list/status/attach/detach. Auto-start on prompt. Error handling with JSON-RPC error codes. Integration tests verify over Unix socket. |
 | R007 | admin/support | validated | M001-tvc4z0/S07 | none | M008/S01+S04: agentdctl CLI fully consolidated. `agentdctl agent` (apply/get/list/delete template CRUD) + `agentdctl agentrun` (create/list/status/prompt/stop/delete/restart/attach/cancel lifecycle) + `agentdctl workspace` + `agentdctl shim` + `agentdctl daemon`. Resource-first grammar matches kubectl/containerd model. All subcommands verified via --help and integration tests. |
 | R008 | integration | validated | M001-tvc4z0/S08 | none | S08 Integration Tests: 8 tests pass — TestEndToEndPipeline (full lifecycle), TestSessionLifecycle (state machine), TestSessionPromptStoppedSession (error handling), TestSessionRemoveRunningSession (protected deletion), TestSessionList (listing), TestAgentdRestartRecovery (restart test reveals reconnection not yet implemented), TestMultipleConcurrentSessions (concurrent sessions), TestConcurrentPromptsSameSession (concurrent prompts same session) |
@@ -604,9 +604,9 @@ This file is the explicit capability and coverage contract for the project.
 | R031 | anti-feature | out-of-scope | none | none | n/a |
 | R032 | core-capability | validated | M002-ssi4mk/S01 | none | M002/S01 final verifier passed: `bash scripts/verify-m002-s01-contract.sh`; bundle proof passed: `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1`. The design set now defines one non-conflicting contract across Room, Session, Runtime, Workspace, and shim recovery semantics. |
 | R033 | integration | validated | M002-ssi4mk/S01 | M002-ssi4mk/S02 | T02 converged `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, and bootstrap semantics across runtime-spec, config-spec, design.md, and contract-convergence.md. Final slice verifier passed at S01 close. |
-| R034 | integration | validated | M002-ssi4mk/S02 | none | S02 replaced all legacy PascalCase shim methods and `$/event` notifications with the clean-break `session/*` + `runtime/*` surface. No-legacy-name grep gate passes: `! rg '"Prompt"|"Cancel"|"Subscribe"|"GetState"|"GetHistory"|"Shutdown"|"$/event"'` in non-test sources across pkg/rpc, pkg/agentd, pkg/ari, cmd/agent-shim-cli returns zero matches. Full test suite passes. D027 records the validation decision. |
-| R035 | continuity | validated | M002-q9r6sg/S03 | M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02 | M003/S03 upgraded the resume path: Translator.SubscribeFromSeq reads log + registers subscription under a single mutex hold, eliminating the History→Subscribe gap structurally. RecoverSession now uses atomic Subscribe(fromSeq=0) instead of separate History+Subscribe calls. Proven by TestSubscribeFromSeq_BackfillAndLive (contiguous seq, no gap), TestShimClientSubscribeFromSeq, and full recovery test suite. |
-| R036 | continuity | validated | M002-q9r6sg/S02 | M002-ssi4mk/S03, M002-q9r6sg/S01 | TestAgentdRestartRecovery proves bootstrap_config, socket_path, state_dir, PID persist in schema v2. RecoverSessions rebuilds truthful state: live shim reconnected, dead shim marked stopped. |
+| R034 | integration | validated | M002-ssi4mk/S02 | none | S02 replaced all legacy PascalCase shim methods and `$/event` notifications with the clean-break `session/*` + `runtime/*` surface. No-legacy-name grep gate passes: `! rg '"Prompt"|"Cancel"|"Subscribe"|"GetState"|"GetHistory"|"Shutdown"|"$/event"'` in non-test sources across pkg/rpc, pkg/agentd, pkg/ari, cmd/agent-run-cli returns zero matches. Full test suite passes. D027 records the validation decision. |
+| R035 | continuity | validated | M002-q9r6sg/S03 | M002-ssi4mk/S02, M002-ssi4mk/S03, M002-q9r6sg/S02 | M003/S03 upgraded the resume path: Translator.SubscribeFromSeq reads log + registers subscription under a single mutex hold, eliminating the History→Subscribe gap structurally. RecoverSession now uses atomic Subscribe(fromSeq=0) instead of separate History+Subscribe calls. Proven by TestSubscribeFromSeq_BackfillAndLive (contiguous seq, no gap), TestClientSubscribeFromSeq, and full recovery test suite. |
+| R036 | continuity | validated | M002-q9r6sg/S02 | M002-ssi4mk/S03, M002-q9r6sg/S01 | TestAgentdRestartRecovery proves bootstrap_config, socket_path, state_dir, PID persist in schema v2. RecoverSessions rebuilds truthful state: live agent-run reconnected, dead agent-run marked stopped. |
 | R037 | core-capability | validated | M002-q9r6sg/S04 | M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S03 | S04 implemented DB-backed ref_count as cleanup gate (store.GetWorkspace ref_count check in handleWorkspaceCleanup), recovery-phase guard blocking cleanup during recovery, Registry.RebuildFromDB for workspace identity persistence across restarts, and WorkspaceManager.InitRefCounts for refcount consistency. 7 integration tests prove: ref_count increments on session/new (TestARISessionNewAcquiresWorkspaceRef), decrements on session/remove (TestARISessionRemoveReleasesWorkspaceRef), Source spec persisted (TestARIWorkspacePrepareSourcePersisted), cleanup blocked by DB refs (TestARIWorkspaceCleanupBlockedByDBRefCount), cleanup blocked during recovery (TestARIWorkspaceCleanupBlockedDuringRecovery), registry rebuild from DB (TestRegistryRebuildFromDB), and manager refcount init (TestWorkspaceManagerInitRefCounts). |
 | R038 | compliance/security | validated | M002-q9r6sg/S01 | M002-ssi4mk/S03, M002-q9r6sg/S02, M002-q9r6sg/S04 | T03 documented explicit host-impact rules for local workspace attachment, hooks, env precedence, and shared workspace reuse across the authoritative design docs. Final slice verifier passed with these boundary rules in place. |
 | R039 | integration | validated | M002-ssi4mk/S04 | none | S04 created TestRealCLI_GsdPi and TestRealCLI_ClaudeCode exercising full ARI session lifecycle with real runtime class configs. Tests skip gracefully when ANTHROPIC_API_KEY is absent. Timeout infrastructure (start=30s, prompt=120s, waitForSocket=20s) tuned for real CLI startup. The setupAgentdTestWithRuntimeClass helper proves the converged contract supports arbitrary runtime classes beyond mockagent. |
@@ -614,7 +614,7 @@ This file is the explicit capability and coverage contract for the project.
 | R041 | differentiator | validated | M003-c761yf (provisional) | none | Fully realized in M004: room/create, room/status, room/delete ARI handlers (ownership); room/send with target resolution and sender attribution (routing); deliverPrompt helper with auto-start semantics (delivery). Proven by TestARIMultiAgentRoundTrip — 3-agent bidirectional messaging end-to-end. |
 | R042 | constraint | deferred | none | none | unmapped |
 | R043 | constraint | deferred | none | none | unmapped |
-| R044 | quality-attribute | validated | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real shim binary. |
+| R044 | quality-attribute | validated | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real agent-run binary. |
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
 | R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | M007/S03 validated: Full ARI JSON-RPC surface (workspace/* + agent/* handlers) implemented in pkg/ari/server.go with (workspace,name) identity throughout. 22 handler tests in pkg/ari/server_test.go cover workspace/create→agent/create→agent/prompt→agent/stop lifecycle. TestNoAgentIDInResponses confirms no agentId field in any response. ari-spec.md documents all 5 workspace/* and 9 agent/* methods with workspace+name params. golangci-lint passes 0 issues. |
@@ -624,12 +624,12 @@ This file is the explicit capability and coverage contract for the project.
 | R051 | integration | validated | M005/S06 | none | go.mod contains github.com/modelcontextprotocol/go-sdk v0.8.0; go build ./cmd/room-mcp-server exits 0; TestGenerateConfigWithRoomMCPInjection (3 subtests) asserts presence of OAR_AGENT_ID/OAR_AGENT_NAME and absence of deprecated OAR_SESSION_ID/OAR_ROOM_AGENT |
 | R052 | continuity | validated | M005/S07 | M005/S02, M005/S04 | TestAgentdRestartRecovery (7-phase integration test, 4.47s, PASS): agents created pre-restart have identical agentId+room+name post-restart even in error state; RecoverSessions fail-safe marks dead-shim agents as error; creating-cleanup pass handles bootstrap races during restart window |
 | R053 | core-capability | validated | M014/S02+S03+S05+S06 | none | S02 defined all session metadata types with round-trip JSON fidelity. S05 populates AgentInfo+Capabilities from ACP InitializeResponse at bootstrap-complete. S06 wires configOptions/availableCommands/sessionInfo/currentMode from runtime ACP notifications via session metadata hook chain → state.json. TestCreate_PopulatesSession + TestMetadataHookChain_ConfigOption + TestUpdateSessionMetadata_PreservedByKill prove progressive population and persistence. All 6 metadata fields defined in SessionState; 4 runtime notification types handled by buildSessionUpdate. |
-| R054 | primary-user-loop | validated | M014/S06 | M014/S03, M014/S04 | TestMetadataHookChain_ConfigOption proves full chain: ConfigOptionUpdate ACP notification → Translator.maybeNotifyMetadata → Manager.UpdateSessionMetadata → state.json.session.configOptions written → state_change emitted with reason:"config-updated", sessionChanged:["configOptions"], previousStatus==status (metadata-only). TestSessionMetadataHook_AllFourTypes proves all 4 metadata event types (AvailableCommandsEvent, ConfigOptionEvent, SessionInfoEvent, CurrentModeEvent) fire the hook. TestUpdateSessionMetadata_PreservedByKill proves Kill() preserves configOptions. buildSessionUpdate dispatches all 4 types with correct changed/reason/apply tuples. go test ./pkg/shim/runtime/acp/... ./pkg/shim/server/... passes; make build clean. |
+| R054 | primary-user-loop | validated | M014/S06 | M014/S03, M014/S04 | TestMetadataHookChain_ConfigOption proves full chain: ConfigOptionUpdate ACP notification → Translator.maybeNotifyMetadata → Manager.UpdateSessionMetadata → state.json.session.configOptions written → state_change emitted with reason:"config-updated", sessionChanged:["configOptions"], previousStatus==status (metadata-only). TestSessionMetadataHook_AllFourTypes proves all 4 metadata event types (AvailableCommandsEvent, ConfigOptionEvent, SessionInfoEvent, CurrentModeEvent) fire the hook. TestUpdateSessionMetadata_PreservedByKill proves Kill() preserves configOptions. buildSessionUpdate dispatches all 4 types with correct changed/reason/apply tuples. go test ./pkg/agentrun/runtime/acp/... ./pkg/agentrun/server/... passes; make build clean. |
 | R055 | operability | validated | M014/S04 | M014/S03, M014/S07 | TestStatus_EventCountsOverlay proves Status() returns Translator in-memory counts (not stale state.json); S04 proved EventCounts tracks all event types; S03 proved WriteState flushes counts to disk on every write. Full pipeline validated end-to-end across M014 slices S03-S07. |
 | R056 | core-capability | validated | M014/S05 | M014/S02, M014/S03 | TestCreate_PopulatesSession proves state.json.session.agentInfo.name=="mockagent" and capabilities.loadSession==true after Manager.Create() with populated InitializeResponse. TestNotifyStateChange_WithSessionChanged proves bootstrap-metadata state_change event with sessionChanged:["agentInfo","capabilities"] appears in event log. All tests pass, make build succeeds. |
-| R057 | quality-attribute | validated | M014/S03 | none | TestKill_PreservesSession: Kill() → status==stopped AND Session.AgentInfo.Name=="test-agent" preserved. TestProcessExit_PreservesSession: SIGKILL → status==stopped AND Session preserved. All 7 writeState call sites use closure pattern; zero old-style State literal calls remain. go test ./pkg/shim/runtime/acp/... passes. |
-| R058 | constraint | validated | M014/S01 | none | rg confirms zero references to EventTypeFileWrite/EventTypeFileRead/EventTypeCommand/FileWriteEvent/FileReadEvent/CommandEvent in Go code (exit 1); go test ./pkg/shim/... passes; go build ./pkg/shim/... clean. All constants, structs, decode cases, and test entries removed. |
-| R059 | operability | validated | M014/S03 | none | UpdatedAt stamped unconditionally in writeState() after closure on every write path (line 337 of runtime.go). TestWriteState_SetsUpdatedAt: confirms UpdatedAt non-empty and valid RFC3339Nano after Create and after Kill, with monotonic increase. go test ./pkg/shim/runtime/acp/... passes. |
+| R057 | quality-attribute | validated | M014/S03 | none | TestKill_PreservesSession: Kill() → status==stopped AND Session.AgentInfo.Name=="test-agent" preserved. TestProcessExit_PreservesSession: SIGKILL → status==stopped AND Session preserved. All 7 writeState call sites use closure pattern; zero old-style State literal calls remain. go test ./pkg/agentrun/runtime/acp/... passes. |
+| R058 | constraint | validated | M014/S01 | none | rg confirms zero references to EventTypeFileWrite/EventTypeFileRead/EventTypeCommand/FileWriteEvent/FileReadEvent/CommandEvent in Go code (exit 1); go test ./pkg/agentrun/... passes; go build ./pkg/agentrun/... clean. All constants, structs, decode cases, and test entries removed. |
+| R059 | operability | validated | M014/S03 | none | UpdatedAt stamped unconditionally in writeState() after closure on every write path (line 337 of runtime.go). TestWriteState_SetsUpdatedAt: confirms UpdatedAt non-empty and valid RFC3339Nano after Create and after Kill, with monotonic increase. go test ./pkg/agentrun/runtime/acp/... passes. |
 | R060 | anti-feature | out-of-scope | none | none | unmapped |
 
 ## Coverage Summary

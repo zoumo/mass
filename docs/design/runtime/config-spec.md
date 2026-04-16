@@ -59,7 +59,7 @@
     Typically `"workspace"`, which agentd symlinks to the actual workspace path
     that the Workspace Manager prepared.
 
-  agent-shim resolves this path at `create` time:
+  agent-run resolves this path at `create` time:
   1. Joins the bundle directory with `agentRoot.path` to get an absolute path.
   2. Calls `EvalSymlinks` to follow any symlink — producing a canonical path.
   3. Uses the resolved path as both `cmd.Dir` (agent process working directory)
@@ -71,11 +71,11 @@
   |-----|-----|
   | `root.path` — relative path to rootfs inside the bundle | `agentRoot.path` — relative path to workspace link inside the bundle |
   | containerd prepares rootfs (via snapshotter), places it in the bundle | agentd's Workspace Manager prepares the workspace directory, symlinks it into the bundle |
-  | runc reads `root.path`, resolves it, uses it as the container's `/` | agent-shim reads `agentRoot.path`, resolves it, uses it as the agent's cwd |
+  | runc reads `root.path`, resolves it, uses it as the container's `/` | agent-run reads `agentRoot.path`, resolves it, uses it as the agent's cwd |
   | rootfs is isolated per container | workspace is shared across AgentRuns in the same workspace |
 
   Key difference from the old `workspace` field: the path is **relative**, not absolute.
-  The absolute path is never stored in config.json — it is derived by agent-shim at runtime
+  The absolute path is never stored in config.json — it is derived by agent-run at runtime
   by joining with the bundle directory and resolving symlinks. This keeps config.json
   portable within the bundle and mirrors how OCI treats `root.path`.
 
@@ -97,7 +97,7 @@ Bundle directory layout after agentd prepares it:
 └── workspace -> /var/lib/agentd/workspaces/ws-def456/   ← agentd symlinks
 ```
 
-agent-shim resolves `workspace` → `/var/lib/agentd/workspaces/ws-def456/` and uses
+agent-run resolves `workspace` → `/var/lib/agentd/workspaces/ws-def456/` and uses
 that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
 
 ## ACP Agent
@@ -240,7 +240,7 @@ stdio MCP server：
 
 ## Permissions
 
-* **`permissions`** (string, OPTIONAL) 指定 agent-shim 处理 agent 发起的
+* **`permissions`** (string, OPTIONAL) 指定 agent-run 处理 agent 发起的
   `fs/*` / `terminal/*` 请求时的权限策略。
   默认值为 `"approve_all"`。
 

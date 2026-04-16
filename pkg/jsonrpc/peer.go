@@ -12,7 +12,7 @@ const peerKey contextKey = 0
 
 // Peer represents the remote side of a JSON-RPC connection.
 // Injected into handler context by the framework for each request.
-// Enables server-initiated notifications (e.g., shim event streaming).
+// Enables server-initiated notifications (e.g., agent-run event streaming).
 type Peer struct {
 	conn *jsonrpc2.Conn
 }

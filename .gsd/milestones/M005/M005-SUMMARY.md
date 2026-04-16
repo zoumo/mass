@@ -4,10 +4,10 @@ title: "agentd Agent Model Refactoring"
 status: complete
 completed_at: 2026-04-08T22:25:44.066Z
 key_decisions:
-  - D060 — agent-shim stability: shim retains existing session/*+runtime/* RPC surface; only event ordering (turnId/streamSeq/phase) was enhanced. Prevents shim protocol churn while enabling agent model convergence.
+  - D060 — agent-run stability: shim retains existing session/*+runtime/* RPC surface; only event ordering (turnId/streamSeq/phase) was enhanced. Prevents agent-run protocol churn while enabling agent model convergence.
   - D061 — agent replaces session as external API primary across all 7 authority documents and all ARI dispatch cases. Session is now internal-only runtime concept.
   - D062 — 5-state agent state machine: creating/created/running/stopped/error. paused:warm/paused:cold retired — they never had a stable production implementation and confused the model.
-  - D063 — async agent/create: returns creating immediately, background goroutine bootstraps shim, caller polls agent/status for created/error. Prevents request-context timeout from killing long shim startup.
+  - D063 — async agent/create: returns creating immediately, background goroutine bootstraps agent-run, caller polls agent/status for created/error. Prevents request-context timeout from killing long agent-run startup.
   - D064 — separate agents and sessions tables: agents is the external identity table (room+name UNIQUE), sessions is the internal runtime instance table (agent_id FK). Clean separation enables independent lifecycle management.
   - D065 — ARI events renamed at agentd→orchestrator boundary: agent/update and agent/stateChange replace session/* events. Boundary translation pattern established.
   - D066 — turnId assigned at turn_start, cleared after turn_end; streamSeq resets to 0 per turn; runtime/stateChange excluded from turn ordering; seq retained as global dedup key.
@@ -22,7 +22,7 @@ key_decisions:
 key_files:
   - docs/design/agentd/ari-spec.md
   - docs/design/agentd/agentd.md
-  - docs/design/runtime/shim-rpc-spec.md
+  - docs/design/runtime/run-rpc-spec.md
   - docs/design/orchestrator/room-spec.md
   - docs/design/contract-convergence.md
   - scripts/verify-m005-s01-contract.sh
@@ -79,7 +79,7 @@ lessons_learned:
 
 M005 executed a complete external model rewrite of agentd from session-centric to agent-centric, touching every layer of the stack across 7 slices over the course of one day.
 
-**S01 — Design Contract** rewrote all 7 authority documents to establish agent as the stable external identity and session as internal implementation detail. The slice produced a runnable contract verifier (scripts/verify-m005-s01-contract.sh) that confirmed zero contradictions across ari-spec.md, agentd.md, shim-rpc-spec.md, agent-shim.md, room-spec.md, contract-convergence.md, and README.md. Key decisions crystallized here: D060 (shim stability — retain session/* RPC surface unchanged), D061 (agent replaces session as external primary), D062 (5-state machine: creating/created/running/stopped/error), D063 (async create returns creating immediately), D066 (turnId/streamSeq/phase semantics).
+**S01 — Design Contract** rewrote all 7 authority documents to establish agent as the stable external identity and session as internal implementation detail. The slice produced a runnable contract verifier (scripts/verify-m005-s01-contract.sh) that confirmed zero contradictions across ari-spec.md, agentd.md, run-rpc-spec.md, agent-run.md, room-spec.md, contract-convergence.md, and README.md. Key decisions crystallized here: D060 (shim stability — retain session/* RPC surface unchanged), D061 (agent replaces session as external primary), D062 (5-state machine: creating/created/running/stopped/error), D063 (async create returns creating immediately), D066 (turnId/streamSeq/phase semantics).
 
 **S02 — Schema & State Machine** laid the storage foundation: meta.Agent struct and AgentState type, agents table (schema v3) with UNIQUE(room,name) constraint, sessions.agent_id FK (schema v4), and converged SessionManager validTransitions that explicitly reject paused:warm/paused:cold. 102 tests pass; rg for paused:* in production Go returns exit 1.
 
@@ -109,7 +109,7 @@ All 12 success criteria verified:
 `pkg/meta/models.go` defines AgentStateCreating/Created/Running/Stopped/Error. `rg 'PausedWarm|PausedCold|paused:warm|paused:cold' --type go` returns exit 1 (zero matches in production Go).
 
 ### SC04 — async agent/create returns creating immediately; background bootstrap transitions to created/error ✅
-`TestARIAgentCreateAsync` (PASS) — create returns creating → poll status → transitions to created. `TestARIAgentCreateAsyncErrorState` (PASS) — invalid runtimeClass transitions agent to error with non-empty ErrorMessage. Both use real mockagent shim.
+`TestARIAgentCreateAsync` (PASS) — create returns creating → poll status → transitions to created. `TestARIAgentCreateAsyncErrorState` (PASS) — invalid runtimeClass transitions agent to error with non-empty ErrorMessage. Both use real mockagent agent-run.
 
 ### SC05 — agent/restart fully implemented (not MethodNotFound stub) ✅
 `TestARIAgentRestartAsync` (PASS, 0.45s) — full lifecycle: create → poll → prompt → stop → restart → poll → prompt → stop → delete.
@@ -144,7 +144,7 @@ S01 ✅ (4/4 tasks), S02 ✅ (2/2 tasks), S03 ✅ (3/3 tasks), S04 ✅ (3/3 task
 All 7 S##-SUMMARY.md files present and populated with verification_result: passed. All UAT.md files present.
 
 ### Cross-slice integration points verified ✅
-S01→S02 (5-state model, agents table matches spec), S01→S03 (10 agent/* methods match ari-spec.md), S01→S05 (turnId/streamSeq/phase implementation matches shim-rpc-spec.md), S02→S03 (AgentManager wraps meta.Store CRUD), S03→S04 (async lifecycle refactors S03 handlers), S03→S06 (room handlers use agents table via GetAgentByRoomName), S04→S06 (deprecated env vars removed per S04 deferred cleanup), S01-S06→S07 (RecoverSessions uses AgentManager; integration tests use full agent/* surface).
+S01→S02 (5-state model, agents table matches spec), S01→S03 (10 agent/* methods match ari-spec.md), S01→S05 (turnId/streamSeq/phase implementation matches run-rpc-spec.md), S02→S03 (AgentManager wraps meta.Store CRUD), S03→S04 (async lifecycle refactors S03 handlers), S03→S06 (room handlers use agents table via GetAgentByRoomName), S04→S06 (deprecated env vars removed per S04 deferred cleanup), S01-S06→S07 (RecoverSessions uses AgentManager; integration tests use full agent/* surface).
 
 ### Code changes exist ✅
 40 non-.gsd files changed (2697 insertions, 4194 deletions). Build is clean.
@@ -189,7 +189,7 @@ M005-VALIDATION.md written with verdict: pass, all 12 success criteria marked PA
 
 **Minor cleanup (low priority):**
 - Remove `handleSessionRemove` dead code from `pkg/ari/server.go` (no dispatch case routes to it; the two `paused:warm` comment references inside it are the only remaining paused:* mentions in the codebase)
-- Populate the `Phase` field on `SessionUpdateParams` once agent-shim or Translator gains phase awareness (e.g. thinking/tool_call phases within a turn)
+- Populate the `Phase` field on `SessionUpdateParams` once agent-run or Translator gains phase awareness (e.g. thinking/tool_call phases within a turn)
 - Implement `agent/detach` (currently a no-op stub)
 
 **Future milestone:**

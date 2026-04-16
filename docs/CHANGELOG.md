@@ -10,7 +10,7 @@
 ### S01: Dead code removal
 - Removed `EventTypeFileWrite`, `EventTypeFileRead`, `EventTypeCommand` constants and `FileWriteEvent`, `FileReadEvent`, `CommandEvent` structs plus all decode/test references
 - Pure deletions — no logic modifications; remaining event type surface accurately reflects ACP output
-- Key files: `pkg/shim/api/event_constants.go`, `pkg/shim/api/event_types.go`, `pkg/shim/api/shim_event.go`
+- Key files: `pkg/agentrun/api/event_constants.go`, `pkg/agentrun/api/event_types.go`, `pkg/agentrun/api/shim_event.go`
 
 ### S02: state.json type definitions
 - Defined all session metadata types (`SessionState`, `AgentInfo`, `AgentCapabilities`, union types with custom MarshalJSON/UnmarshalJSON) in `pkg/runtime-spec/api`
@@ -22,29 +22,29 @@
 - Refactored all 7 writeState call sites to closure pattern `func(*apiruntime.State)` — Kill, process-exit, prompt cycles never clobber Session metadata
 - `UpdatedAt` stamped unconditionally (RFC3339Nano) on every write as a derived field
 - Tests prove Session preservation across Kill() and process-exit; `errors.Is(err, os.ErrNotExist)` guards first-write vs update
-- Key files: `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/runtime/acp/runtime_test.go`
+- Key files: `pkg/agentrun/runtime/acp/runtime.go`, `pkg/agentrun/runtime/acp/runtime_test.go`
 
 ### S04: Translator eventCounts
 - `eventCounts[ev.Type]++` in `broadcast()` after `nextSeq++`, before fan-out — single counting site covering all event origins
 - Fail-closed: log-append failures exit before count increment; `EventCounts()` returns thread-safe map copy
-- Key files: `pkg/shim/server/translator.go`, `pkg/shim/server/translator_test.go`
+- Key files: `pkg/agentrun/server/translator.go`, `pkg/agentrun/server/translator_test.go`
 
 ### S05: ACP bootstrap capabilities capture
 - `convertInitializeToSession()` maps ACP InitializeResponse to `state.json.session` (agentInfo + capabilities) at bootstrap-complete
 - Synthetic `NotifyStateChange("idle","idle",pid,"bootstrap-metadata",["agentInfo","capabilities"])` emitted after `Translator.Start()`
 - `StateChangeEvent.SessionChanged []string` field added for metadata change events
-- Key files: `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/api/event_types.go`, `pkg/shim/server/translator.go`, `cmd/agentd/subcommands/shim/command.go`, `internal/testutil/mockagent/main.go`
+- Key files: `pkg/agentrun/runtime/acp/runtime.go`, `pkg/agentrun/api/event_types.go`, `pkg/agentrun/server/translator.go`, `cmd/mass/commands/run/command.go`, `internal/testutil/mockagent/main.go`
 
 ### S06: Session metadata hook chain
 - End-to-end pipeline: `Translator.maybeNotifyMetadata` (type-switch gate, 4 ACP types) → `Manager.UpdateSessionMetadata` → state.json + `state_change` event
 - `SetEventCountsFn` injects Translator counts into Manager; EventCounts flushed on every `writeState` call
 - Sort helpers (`sortCommandsByName`, `sortConfigOptionsByID`) ensure deterministic JSON output
-- Key files: `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/server/translator.go`, `cmd/agentd/subcommands/shim/session_update.go`, `cmd/agentd/subcommands/shim/command.go`
+- Key files: `pkg/agentrun/runtime/acp/runtime.go`, `pkg/agentrun/server/translator.go`, `cmd/mass/commands/run/session_update.go`, `cmd/mass/commands/run/command.go`
 
 ### S07: runtime/status overlay + doc updates
 - `Status()` overlays real-time `Translator.EventCounts()` onto state.json snapshot — callers see authoritative counts, not stale disk values
-- Design docs (`shim-rpc-spec.md`, `runtime-spec.md`) updated with full M014 state schema (session, eventCounts, updatedAt, sessionChanged)
-- Key files: `pkg/shim/server/service.go`, `pkg/shim/server/service_test.go`, `docs/design/runtime/shim-rpc-spec.md`, `docs/design/runtime/runtime-spec.md`
+- Design docs (`run-rpc-spec.md`, `runtime-spec.md`) updated with full M014 state schema (session, eventCounts, updatedAt, sessionChanged)
+- Key files: `pkg/agentrun/server/service.go`, `pkg/agentrun/server/service_test.go`, `docs/design/runtime/run-rpc-spec.md`, `docs/design/runtime/runtime-spec.md`
 
 ---
 
@@ -63,15 +63,15 @@
 - Key files: `pkg/ari/api/types.go`, `pkg/ari/api/domain.go`, `pkg/ari/api/methods.go`, `pkg/ari/server/service.go`, `pkg/ari/server/registry.go`, `pkg/ari/client/typed.go`, `pkg/ari/client/simple.go`
 
 ### S03: Shim package restructure + api/ deletion
-- Created `pkg/shim/api/` (methods, types, service, client) and `pkg/events/constants.go` (EventType*/Category* constants)
+- Created `pkg/agentrun/api/` (methods, types, service, client) and `pkg/events/constants.go` (EventType*/Category* constants)
 - Migrated all 19 consumer files across 6 groups; deleted `api/shim/`, `api/events.go`, `api/methods.go`, and the `api/` directory root
-- Key files: `pkg/shim/api/methods.go`, `pkg/shim/api/types.go`, `pkg/shim/api/service.go`, `pkg/shim/api/client.go`, `pkg/events/constants.go`, `pkg/agentd/process.go`, `cmd/massctl/subcommands/shim/command.go`
+- Key files: `pkg/agentrun/api/methods.go`, `pkg/agentrun/api/types.go`, `pkg/agentrun/api/service.go`, `pkg/agentrun/api/client.go`, `pkg/events/constants.go`, `pkg/agentd/process.go`, `cmd/massctl/commands/agentrun/command.go`
 
 ### S04: Events impl + ACP runtime migration + final verification
-- Moved `pkg/events/` event wire types into `pkg/shim/api/` (shim_event.go, event_types.go, event_constants.go)
-- Moved translator + log from `pkg/events/` to `pkg/shim/server/`; moved `pkg/runtime/` to `pkg/shim/runtime/acp/`
+- Moved `pkg/events/` event wire types into `pkg/agentrun/api/` (shim_event.go, event_types.go, event_constants.go)
+- Moved translator + log from `pkg/events/` to `pkg/agentrun/server/`; moved `pkg/runtime/` to `pkg/agentrun/runtime/acp/`
 - Deleted `pkg/events/` and `pkg/runtime/` packages entirely; added `EventTypeOf()` exported accessor for sealed interface cross-package access
-- Key files: `pkg/shim/api/shim_event.go`, `pkg/shim/api/event_types.go`, `pkg/shim/server/translator.go`, `pkg/shim/server/log.go`, `pkg/shim/runtime/acp/runtime.go`, `pkg/shim/runtime/acp/client.go`
+- Key files: `pkg/agentrun/api/shim_event.go`, `pkg/agentrun/api/event_types.go`, `pkg/agentrun/server/translator.go`, `pkg/agentrun/server/log.go`, `pkg/agentrun/runtime/acp/runtime.go`, `pkg/agentrun/runtime/acp/client.go`
 
 ---
 
@@ -98,7 +98,7 @@
 ### S05: Implementation Migration
 - Migrated four concrete packages and three cmd entrypoints to typed Service Interface contracts
 - Adapter pattern (three thin unexported adapters embedding `*Service`) to handle identical-signature multi-interface constraint
-- Key files: `pkg/ari/server/server.go`, `pkg/shim/server/service.go`, `pkg/ari/client/client.go`, `cmd/agentd/subcommands/server/command.go`
+- Key files: `pkg/ari/server/server.go`, `pkg/agentrun/server/service.go`, `pkg/ari/client/client.go`, `cmd/mass/commands/server/command.go`
 
 ### S06: Legacy Cleanup
 - Deleted `pkg/rpc/` (844 lines), `pkg/agentd/shim_client.go`, `pkg/ari/server.go` (1235 lines); extracted shared mock infra to `mock_shim_server_test.go`
@@ -123,15 +123,15 @@
 
 ### S01: cmd/agentd subcommands layout
 - Refactored into `subcommands/server`, `subcommands/shim`, `subcommands/workspacemcp`; `main.go` reduced to 8 lines
-- Key files: `cmd/agentd/main.go`, `cmd/agentd/subcommands/root.go`
+- Key files: `cmd/mass/main.go`, `cmd/mass/commands/root.go`
 
 ### S02: cmd/massctl subcommands layout
 - Refactored into `subcommands/{agent,agentrun,daemon,shim,workspace}` with shared `cliutil`; eliminated package globals
-- Key files: `cmd/massctl/main.go`, `cmd/massctl/subcommands/root.go`, `cmd/massctl/subcommands/cliutil/cliutil.go`
+- Key files: `cmd/massctl/main.go`, `cmd/massctl/commands/root.go`, `cmd/massctl/commands/cliutil/cliutil.go`
 
 ### S03: workspace CLI reshape
 - `create` split into `local/git/empty/-f` subcommands; `workspace get` added; `workspace send` made positional
-- Key files: `cmd/massctl/subcommands/workspace/command.go`, `cmd/massctl/subcommands/workspace/create/command.go`
+- Key files: `cmd/massctl/commands/workspace/command.go`, `cmd/massctl/commands/workspace/create/command.go`
 
 ---
 
@@ -147,8 +147,8 @@
 ## M008: CLI Consolidation + API Model Rename (2026-04-10)
 
 ### S01: Binary skeleton reorganization
-- Replaced flat flag-based `cmd/agentd/main.go` with cobra tree (`server/shim/workspace-mcp`); inlined old binaries as subcommands
-- Key files: `cmd/agentd/main.go`, `cmd/massctl/main.go`, `Makefile`
+- Replaced flat flag-based `cmd/mass/main.go` with cobra tree (`server/shim/workspace-mcp`); inlined old binaries as subcommands
+- Key files: `cmd/mass/main.go`, `cmd/massctl/main.go`, `Makefile`
 
 ### S02: --root config + Runtime entity + self-fork
 - Eliminated `config.yaml`; `Options{Root}` derives all paths deterministically; `meta.Runtime` in bbolt `v1/runtimes`; `ProcessManager` self-forks via `os.Executable()`
@@ -200,8 +200,8 @@
 ## M005: agentd Agent Model Refactoring (2026-04-08)
 
 ### S01: Design Contract First
-- Rewrote all 7 authority docs (`ari-spec.md`, `agentd.md`, `shim-rpc-spec.md`, `room-spec.md`, `contract-convergence.md`); `scripts/verify-m005-s01-contract.sh` as mechanical proof
-- Key files: `docs/design/mass/ari-spec.md`, `docs/design/runtime/shim-rpc-spec.md`, `scripts/verify-m005-s01-contract.sh`
+- Rewrote all 7 authority docs (`ari-spec.md`, `agentd.md`, `run-rpc-spec.md`, `room-spec.md`, `contract-convergence.md`); `scripts/verify-m005-s01-contract.sh` as mechanical proof
+- Key files: `docs/design/mass/ari-spec.md`, `docs/design/runtime/run-rpc-spec.md`, `scripts/verify-m005-s01-contract.sh`
 
 ### S02: Metadata Layer (agents + sessions tables)
 - New `agents` table with `(room, name)` UNIQUE key; `sessions.agent_id` FK; `AgentState` (5 states: creating/created/running/stopped/error); `paused:warm/paused:cold` retired
@@ -253,7 +253,7 @@
 
 ### S02: Live Shim Reconnect and Truthful Session Rebuild
 - Shim-vs-DB state reconciliation in `recoverSession`; TOCTOU-free socket cleanup (`os.Remove` unconditional)
-- Key files: `pkg/agentd/recovery.go`, `cmd/agentd/main.go`
+- Key files: `pkg/agentd/recovery.go`, `cmd/mass/main.go`
 
 ### S03: Atomic Event Resume and Damaged-Tail Tolerance
 - `ReadEventLog` rewritten with `bufio.Scanner` + two-pass damaged-tail classification; `Translator.SubscribeFromSeq` holds mutex during log read + subscription
@@ -261,7 +261,7 @@
 
 ### S04: Reconciled Workspace Ref Truth and Safe Cleanup
 - `handleWorkspaceCleanup` gates on DB `ref_count`; `AcquireWorkspace` called at `session/new`; `Registry.RebuildFromDB` + `WorkspaceManager.InitRefCounts` after restart
-- Key files: `pkg/ari/registry.go`, `pkg/workspace/manager.go`, `pkg/meta/workspace.go`, `cmd/agentd/main.go`
+- Key files: `pkg/ari/registry.go`, `pkg/workspace/manager.go`, `pkg/meta/workspace.go`, `cmd/mass/main.go`
 
 ---
 
@@ -269,7 +269,7 @@
 
 ### S01: Design Contract Convergence
 - Produced `docs/design/contract-convergence.md` authority map; `session/new` = config-only bootstrap; contract verifier script + example bundle validation tests as mechanical proof surface
-- Key files: `docs/design/contract-convergence.md`, `docs/design/runtime/shim-rpc-spec.md`, `scripts/verify-m002-s01-contract.sh`
+- Key files: `docs/design/contract-convergence.md`, `docs/design/runtime/run-rpc-spec.md`, `scripts/verify-m002-s01-contract.sh`
 
 ### S02: Shim-RPC Clean Break
 - Replaced all legacy PascalCase methods + `$/event` with `session/*` + `runtime/*`; `events.Envelope{Method, Seq, Params}` as single live+replay shape; monotonic seq in `Translator`
@@ -289,7 +289,7 @@
 
 ### S01: Scaffolding + exitCode
 - `mass` daemon foundation: YAML config, workspace manager init, ARI server bootstrap, graceful shutdown; `ExitCode *int` added to shim state
-- Key files: `cmd/agentd/main.go`, `pkg/agentd/config.go`
+- Key files: `cmd/mass/main.go`, `pkg/agentd/config.go`
 
 ### S02: Metadata Store (SQLite)
 - SQLite WAL mode, FK constraints, embedded schema (`go:embed`); full CRUD for Session/Workspace/Room; optional init for ephemeral mode

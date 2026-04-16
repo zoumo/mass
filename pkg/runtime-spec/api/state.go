@@ -1,5 +1,5 @@
 // Package api defines the MASS Runtime Specification types.
-// This file contains the State types written to state.json by agent-shim.
+// This file contains the State types written to state.json by agent-run.
 package api
 
 // State is the runtime state of an agent instance, written to state.json.

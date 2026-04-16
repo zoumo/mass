@@ -157,7 +157,7 @@ func (c *Client) DisconnectNotify() <-chan struct{} {
 // matching the given method are delivered to the returned channel.
 //
 // This implements the K8s Watch pattern at the JSON-RPC transport layer:
-// callers like WatchEvent() subscribe to "shim/event" notifications and
+// callers like WatchEvent() subscribe to "runtime/event_update" notifications and
 // receive a dedicated channel, instead of relying on a single global handler
 // registered at Dial time.
 //

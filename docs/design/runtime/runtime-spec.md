@@ -125,7 +125,7 @@ In agentd-managed deployments, bundle, state, and socket are co-located under th
 └── events.jsonl                      ← shim appends
 ```
 
-When running `mass shim` in standalone mode, the default state directory is `<cwd>`.
+When running `mass run` in standalone mode, the default state directory is `<cwd>`.
 
 agentd persists `ShimSocketPath` and `ShimStateDir` in AgentRun metadata,
 so recovery uses persisted metadata rather than filesystem scanning.
@@ -413,7 +413,7 @@ Runtime 必须产出结构化的 typed event stream，供上层消费。
 
 > **Content Block Streaming**：`agent_message`、`agent_thinking`、`user_message` 三种事件
 > 携带 `status` 字段（`start` / `streaming` / `end`）标识 content block 生命周期。
-> 详见 [shim-rpc-spec.md § Content Block Streaming](shim-rpc-spec.md#content-block-streaming)。
+> 详见 [run-rpc-spec.md § Content Block Streaming](run-rpc-spec.md#content-block-streaming)。
 
 > **Payload 保留策略**：所有事件类型完整保留 ACP 原始字段（包括 `_meta`），
 > JSON wire shape 与 ACP SDK marshal 结果一致，仅省略 `sessionUpdate` 鉴别器字段。

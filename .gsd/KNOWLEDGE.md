@@ -164,9 +164,9 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 ## K023 — exec.CommandContext kills process when context cancelled
 
 - **Pattern:** NEVER use exec.CommandContext for long-running daemon processes that should outlive the request that started them. When the context is cancelled, Go kills the process immediately.
-- **Gotcha:** In ProcessManager.forkShim, using `exec.CommandContext(ctx, shimBinary, args...)` tied the shim process to the request context. When the caller cancelled the context after Start() returned (normal pattern for request-scoped operations), Go killed the shim process immediately. This caused "signal: killed" errors and all prompt operations to fail.
+- **Gotcha:** In ProcessManager.forkRun, using `exec.CommandContext(ctx, shimBinary, args...)` tied the agent-run process to the request context. When the caller cancelled the context after Start() returned (normal pattern for request-scoped operations), Go killed the agent-run process immediately. This caused "signal: killed" errors and all prompt operations to fail.
 - **Lesson:** Use `exec.Command` (not CommandContext) for processes that should run independently of the request lifecycle. The process lifecycle should be managed explicitly via Process.Kill() or cmd.Process.Signal() in a cleanup/shutdown path, not tied to a request context that gets cancelled.
-- **Reference:** pkg/agentd/process.go forkShim function
+- **Reference:** pkg/agentd/process.go forkRun function
 - **When:** M001-tvc4z0/S06
 
 ## K024 — JSON-RPC error code semantics for client vs server errors
@@ -197,8 +197,8 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K027 — Integration test cleanup with pkill for orphaned processes
 
-- **Pattern:** Integration tests that fork subprocesses (agentd, agent-shim, mockagent) need robust cleanup to handle test failures that leave orphan processes. The cleanup function should use pkill to terminate any leftover processes matching the binary names.
-- **Implementation:** In test cleanup: `exec.Command("pkill", "-f", "agent-shim").Run(); exec.Command("pkill", "-f", "mockagent").Run()`. This ensures clean state for subsequent tests even if a test panicked or failed mid-execution.
+- **Pattern:** Integration tests that fork subprocesses (agentd, agent-run, mockagent) need robust cleanup to handle test failures that leave orphan processes. The cleanup function should use pkill to terminate any leftover processes matching the binary names.
+- **Implementation:** In test cleanup: `exec.Command("pkill", "-f", "agent-run").Run(); exec.Command("pkill", "-f", "mockagent").Run()`. This ensures clean state for subsequent tests even if a test panicked or failed mid-execution.
 - **Lesson:** Integration tests that spawn processes need aggressive cleanup. Process isolation (t.TempDir) alone isn't sufficient — test failures can leave processes running. pkill in cleanup ensures subsequent tests start clean. Ignore pkill errors (process might not exist).
 - **Reference:** tests/integration/session_test.go cleanup function
 - **When:** M001-tvc4z0/S08/T02
@@ -206,17 +206,17 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 ## K028 — Shim process must run independently of request context
 
 - **Pattern:** Long-running daemon processes that should outlive the request that started them must NOT use exec.CommandContext. Use exec.Command instead and manage lifecycle explicitly.
-- **Gotcha:** ProcessManager.forkShim was using `exec.CommandContext(ctx, shimBinary, args...)` which tied the shim process to the request context. When the caller cancelled the context after Start() returned (normal pattern for request-scoped operations), Go killed the shim process immediately. This caused "signal: killed" errors and all prompt operations to fail.
+- **Gotcha:** ProcessManager.forkRun was using `exec.CommandContext(ctx, shimBinary, args...)` which tied the agent-run process to the request context. When the caller cancelled the context after Start() returned (normal pattern for request-scoped operations), Go killed the agent-run process immediately. This caused "signal: killed" errors and all prompt operations to fail.
 - **Lesson:** The context in exec.CommandContext is for cancellation propagation, not just timeout. When context is cancelled, Go sends SIGKILL to the process. For daemon-style processes that should survive beyond the initiating request, use exec.Command and manage lifecycle via explicit Stop/Shutdown methods.
-- **Reference:** pkg/agentd/process.go forkShim function
+- **Reference:** pkg/agentd/process.go forkRun function
 - **When:** M001-tvc4z0/S06/T02
 
 ## K029 — Shim protocol authority is split on purpose
 
-- **Pattern:** `docs/design/runtime/shim-rpc-spec.md` is the sole normative owner of shim method names, notification names, and replay/reconnect semantics. `docs/design/runtime/runtime-spec.md` owns socket path and state-dir layout. `docs/design/runtime/agent-shim.md` is descriptive only.
-- **Gotcha:** Letting `agent-shim.md` or implementation-lag notes restate current protocol details reintroduces dual-source contract drift, especially around the retired PascalCase / `$/event` surface.
+- **Pattern:** `docs/design/runtime/run-rpc-spec.md` is the sole normative owner of agent-run method names, notification names, and replay/reconnect semantics. `docs/design/runtime/runtime-spec.md` owns socket path and state-dir layout. `docs/design/runtime/agent-run.md` is descriptive only.
+- **Gotcha:** Letting `agent-run.md` or implementation-lag notes restate current protocol details reintroduces dual-source contract drift, especially around the retired PascalCase / `$/event` surface.
 - **Lesson:** When changing shim-facing docs or implementation, check `docs/design/contract-convergence.md` first, update the single authority doc for the concept you are touching, and keep other docs referential rather than parallel.
-- **Reference:** docs/design/contract-convergence.md; docs/design/runtime/shim-rpc-spec.md; docs/design/runtime/runtime-spec.md; docs/design/runtime/agent-shim.md
+- **Reference:** docs/design/contract-convergence.md; docs/design/runtime/run-rpc-spec.md; docs/design/runtime/runtime-spec.md; docs/design/runtime/agent-run.md
 - **When:** M002/S01/T04
 
 ## K030 — Contract convergence has a two-part proof surface
@@ -229,7 +229,7 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K031 — Recovered shims need DisconnectNotify, not Cmd.Wait
 
-- **Pattern:** When agentd reconnects to a shim it did not fork (recovery after restart), the process has no `exec.Cmd` handle. Use the JSONRPC `DisconnectNotify()` channel to detect when the shim goes away instead of `Cmd.Wait()`.
+- **Pattern:** When agentd reconnects to an agent-run it did not fork (recovery after restart), the process has no `exec.Cmd` handle. Use the JSONRPC `DisconnectNotify()` channel to detect when the agent-run goes away instead of `Cmd.Wait()`.
 - **Gotcha:** Calling `Cmd.Wait()` on a nil Cmd panics. The `watchProcess` goroutine used for freshly-forked shims assumes a Cmd handle exists. Recovered shims need a separate `watchRecoveredProcess` goroutine.
 - **Lesson:** When designing process lifecycle watchers, always account for the "adopted process" case where you reconnected to something you didn't spawn.
 - **Reference:** pkg/agentd/recovery.go watchRecoveredProcess
@@ -291,9 +291,9 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K038 — Shim-vs-DB state reconciliation uses string comparison, not shared enums
 
-- **Pattern:** The shim reports status using `spec.Status` (creating/created/running/stopped) while the DB stores `meta.SessionState` (created/running/paused:warm/paused:cold/stopped). These are different types with overlapping but non-identical value sets.
+- **Pattern:** The agent-run reports status using `spec.Status` (creating/created/running/stopped) while the DB stores `meta.SessionState` (created/running/paused:warm/paused:cold/stopped). These are different types with overlapping but non-identical value sets.
 - **Gotcha:** You cannot use `==` between the two types directly. The reconciliation in `recoverSession` converts both to strings for comparison, with explicit switch cases for the actionable states (stopped → fail-close, running+created → transition).
-- **Lesson:** When comparing state across system boundaries (shim process vs DB), prefer an explicit switch on the authoritative side (shim) and handle each case individually, rather than trying to build a mapping table. The "other mismatch" catch-all is important for states like paused:warm that exist only on one side.
+- **Lesson:** When comparing state across system boundaries (agent-run process vs DB), prefer an explicit switch on the authoritative side (agent-run) and handle each case individually, rather than trying to build a mapping table. The "other mismatch" catch-all is important for states like paused:warm that exist only on one side.
 - **Reference:** pkg/agentd/recovery.go reconciliation block between Status() and History() calls
 - **When:** M003/S02/T01
 
@@ -341,7 +341,7 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Pattern:** Use an atomic daemon-wide phase (single int32 compare) for fast guards in RPC handlers, combined with per-entity metadata structs for detailed inspection on demand. The guard is a single atomic read in the hot path; metadata is only assembled when a specific status/inspect call is made.
 - **Gotcha:** If you only use per-entity metadata for gating, you must iterate all entities on every guarded call. If you only use the daemon-wide phase, you can't tell callers which specific entity is recovering.
 - **Lesson:** Separate the "should I block?" question (atomic phase) from the "what's the recovery detail?" question (per-entity metadata). They have different performance profiles and different consumers.
-- **Reference:** pkg/agentd/recovery_posture.go (RecoveryPhase), pkg/agentd/process.go (RecoveryInfo on ShimProcess)
+- **Reference:** pkg/agentd/recovery_posture.go (RecoveryPhase), pkg/agentd/process.go (RecoveryInfo on RunProcess)
 - **When:** M003/S01
 
 ## K015 — Always exit blocking states on every code path
@@ -354,7 +354,7 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K016 — Shim truth wins over DB truth in recovery
 
-- **Pattern:** During daemon recovery, the running shim process is ground truth for liveness. If the shim reports "running" but the DB says "created", update the DB to match the shim. If the DB state machine rejects the transition, log and proceed — the shim is still alive and reachable.
+- **Pattern:** During daemon recovery, the running agent-run process is ground truth for liveness. If the agent-run reports "running" but the DB says "created", update the DB to match the agent-run. If the DB state machine rejects the transition, log and proceed — the agent-run is still alive and reachable.
 - **Gotcha:** Failing recovery because the DB state machine rejects an edge-case transition would leave a live, reachable shim permanently disconnected.
 - **Lesson:** In recovery, the process that's actually running is more trustworthy than a record that may have been written during a previous daemon's crash window. Reconcile toward liveness, not toward historical DB state.
 - **Reference:** pkg/agentd/recovery.go recoverSession reconciliation switch (D042)
@@ -402,16 +402,16 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K022 — Contract verifier scripts: scope forbidden patterns to JSON method strings, not prose
 
-- **Pattern:** When a design doc legitimately references deprecated method names in explanatory prose (e.g., "the shim continues to use session/*"), a naive grep-based forbidden-pattern check will false-fail. Scope forbidden patterns to JSON method-string format (`"method": "session/new"`) rather than bare strings.
-- **Gotcha:** agentd.md and ari-spec.md explicitly describe the shim-internal boundary using the old session/* names — exactly what the forbidden-pattern check needs to *not* flag. Broad patterns fire on the very explanation text that makes the doc correct.
+- **Pattern:** When a design doc legitimately references deprecated method names in explanatory prose (e.g., "the agent-run continues to use session/*"), a naive grep-based forbidden-pattern check will false-fail. Scope forbidden patterns to JSON method-string format (`"method": "session/new"`) rather than bare strings.
+- **Gotcha:** agentd.md and ari-spec.md explicitly describe the agent-run-internal boundary using the old session/* names — exactly what the forbidden-pattern check needs to *not* flag. Broad patterns fire on the very explanation text that makes the doc correct.
 - **Lesson:** Write forbidden patterns to match the form that would be harmful in production code or normative examples (JSON key-value), not the form that appears in explanatory prose. The M005/S01 verifier uses extended-regex `"method":\s*"session/` to achieve this.
 - **Reference:** scripts/verify-m005-s01-contract.sh (D068), modeled on verify-m002-s01-contract.sh
 - **When:** M005/S01
 
-## K023 — agent/event boundaries: translate at the perimeter, not in the shim
+## K023 — agent/event boundaries: translate at the perimeter, not in the agent-run
 
-- **Pattern:** When renaming an external protocol surface (session/* → agent/*), do the translation at the outermost perimeter (agentd→orchestrator boundary), not in intermediate layers. The shim retains its existing surface; agentd translates event names as they cross the ARI surface.
-- **Gotcha:** If you rename session/* inside the shim to match the new external surface, you create a version-skew window where shim and agentd use different names for the same events during deployment. You also break other consumers of the shim surface.
+- **Pattern:** When renaming an external protocol surface (session/* → agent/*), do the translation at the outermost perimeter (agentd→orchestrator boundary), not in intermediate layers. The agent-run retains its existing surface; agentd translates event names as they cross the ARI surface.
+- **Gotcha:** If you rename session/* inside the agent-run to match the new external surface, you create a version-skew window where shim and agentd use different names for the same events during deployment. You also break other consumers of the agent-run surface.
 - **Lesson:** Keep translation at the boundary that faces the changing consumer (orchestrator). Inner layers (shim→agentd) remain stable and can be evolved independently. This is the "translate at the perimeter" pattern (D065).
 - **Reference:** docs/design/agentd/ari-spec.md, agent/update and agent/stateChange (D065)
 - **When:** M005/S01
@@ -564,8 +564,8 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 - **Pattern:** The `unparam` linter reports only **one** unused parameter per function per linter run. If a function has two unused parameters, the second is hidden until the first is removed and the linter is re-run.
 - **Gotcha:** A task plan targeting a single `unparam` finding may actually require two (or more) removals. Always re-run `golangci-lint run ./... 2>&1 | grep unparam` after each fix to confirm no additional parameters surfaced.
-- **Example:** `forkShim(ctx context.Context, session *meta.Session, rc *RuntimeClass, ...)` — `ctx` was reported; after removing it, `rc` appeared. Both were unused because `RuntimeClass` was consumed upstream by `generateConfig`/`createBundle`, not inside `forkShim`.
-- **Reference:** M006/S03/T01 — pkg/agentd/process.go forkShim
+- **Example:** `forkRun(ctx context.Context, session *meta.Session, rc *RuntimeClass, ...)` — `ctx` was reported; after removing it, `rc` appeared. Both were unused because `RuntimeClass` was consumed upstream by `generateConfig`/`createBundle`, not inside `forkRun`.
+- **Reference:** M006/S03/T01 — pkg/agentd/process.go forkRun
 - **When:** M006/S03
 
 ## K042 — golangci-lint `unused` dead-code: earlier slices may pre-apply changes
@@ -646,21 +646,21 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K052 — recovery.go: agents in "creating" state at daemon restart should be marked StatusError, not StatusStopped
 
-- **Pattern:** An agent caught in `StatusCreating` at daemon restart means the shim fork never completed. The correct recovery posture is to mark it `StatusError` with message "daemon restarted during creating phase" — NOT stopped. Stopped implies a normal lifecycle termination.
+- **Pattern:** An agent caught in `StatusCreating` at daemon restart means the agent-run fork never completed. The correct recovery posture is to mark it `StatusError` with message "daemon restarted during creating phase" — NOT stopped. Stopped implies a normal lifecycle termination.
 - **Lesson:** StatusStopped means "ran and completed". StatusError means "something went wrong and it is not recoverable without operator intervention". An agent that never bootstrapped is in the error category.
 - **Reference:** M007/S01/T03 — pkg/agentd/recovery.go creating-cleanup pass.
 - **When:** M007/S01
 
 ## K053 — buildNotifHandler: extract shared notification handler to avoid duplicate Start()/recoverAgent() closures
 
-- **Pattern:** Both `Start()` and `recoverAgent()` in `process.go` need identical notification dispatch logic (session/update → shimProc.Events, runtime/stateChange → DB state update). Instead of duplicating the closure inline, extract a `buildNotifHandler(workspace, name string, shimProc *ShimProcess) func(method string, params json.RawMessage)` method on ProcessManager.
+- **Pattern:** Both `Start()` and `recoverAgent()` in `process.go` need identical notification dispatch logic (session/update → agent-runProc.Events, runtime/stateChange → DB state update). Instead of duplicating the closure inline, extract a `buildNotifHandler(workspace, name string, shimProc *RunProcess) func(method string, params json.RawMessage)` method on ProcessManager.
 - **Lesson:** The extracted method is package-internal (lowercase receiver call), making it testable directly without going through the full Start() pipeline. Tests can build the handler standalone and inject notifications directly via mockShimServer.
 - **Reference:** M007/S02/T01 — pkg/agentd/process.go buildNotifHandler.
 - **When:** M007/S02
 
 ## K054 — tryReload block must come AFTER atomic Subscribe, not before
 
-- **Pattern:** In `recoverAgent()`, the `session/load` call for tryReload is placed AFTER the atomic Subscribe call (which establishes the live stateChange notification subscription). The ordering matters: session/load signals the shim to restore conversation context, and the shim may emit a stateChange notification immediately in response. If Subscribe hasn't fired yet, that notification is missed.
+- **Pattern:** In `recoverAgent()`, the `session/load` call for tryReload is placed AFTER the atomic Subscribe call (which establishes the live stateChange notification subscription). The ordering matters: session/load signals the agent-run to restore conversation context, and the agent-run may emit a stateChange notification immediately in response. If Subscribe hasn't fired yet, that notification is missed.
 - **Lesson:** The correct order is: Status check → reconcile DB → Subscribe (atomic backfill + live sub) → tryReload (if applicable). Placing tryReload before Subscribe risks losing the stateChange notification that follows it.
 - **Reference:** M007/S02/T02 — pkg/agentd/recovery.go recoverAgent().
 - **When:** M007/S02
@@ -672,10 +672,10 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Reference:** M007/S03/T01 — pkg/ari/server.go handleWorkspaceList.
 - **When:** M007/S03
 
-## K056 — InjectProcess is the test injection point for workspace/send and agent/prompt tests requiring a live shim
+## K056 — InjectProcess is the test injection point for workspace/send and agent/prompt tests requiring a live agent-run
 
-- **Pattern:** `ProcessManager.InjectProcess(key string, proc *ShimProcess)` locks `mu` and inserts the ShimProcess directly into the processes map, bypassing `Start()`. Use the `agentKey(workspace, name)` helper to compute the key. The injected `*ShimProcess` needs a valid `SocketPath` — point it at an in-process Unix socket served by a miniShimServer.
-- **Lesson:** This is the correct test injection surface for any handler that calls `processes.Connect()`. Without InjectProcess, workspace/send and agent/prompt tests require a real shim binary. With it, tests can verify the full JSON-RPC dispatch path in-process.
+- **Pattern:** `ProcessManager.InjectProcess(key string, proc *RunProcess)` locks `mu` and inserts the RunProcess directly into the processes map, bypassing `Start()`. Use the `agentKey(workspace, name)` helper to compute the key. The injected `*RunProcess` needs a valid `SocketPath` — point it at an in-process Unix socket served by a miniShimServer.
+- **Lesson:** This is the correct test injection surface for any handler that calls `processes.Connect()`. Without InjectProcess, workspace/send and agent/prompt tests require a real agent-run binary. With it, tests can verify the full JSON-RPC dispatch path in-process.
 - **Reference:** M007/S03/T02 — pkg/agentd/process.go InjectProcess; pkg/ari/server_test.go TestWorkspaceSendDelivered.
 - **When:** M007/S03
 
@@ -702,15 +702,15 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K060 — shim --id must be workspace-name (hyphen), not workspace/name (slash) — socket path mismatch
 
-- **Pattern:** `pkg/agentd/process.go` forkShim passes `filepath.Base(stateDir)` as `--id` to the agent-shim. `stateDir` is computed as `workspace-name` (hyphen-joined). Passing the raw `agentKey` (`workspace/name`, slash-separated) instead makes the shim socket land at a different path than agentd expects.
-- **Lesson:** The shim resolves its socket path as `filepath.Join(flagStateDir, flagID, "agent-shim.sock")`. If `--id` contains a slash, it creates a nested subdirectory that doesn't match agentd's `waitForSocket` path. Always pass `filepath.Base(stateDir)` (the hyphenated leaf) — not the composite agentKey — when forking the shim.
-- **Reference:** M007/S05/T02 — pkg/agentd/process.go forkShim; D101.
+- **Pattern:** `pkg/agentd/process.go` forkRun passes `filepath.Base(stateDir)` as `--id` to the agent-run. `stateDir` is computed as `workspace-name` (hyphen-joined). Passing the raw `agentKey` (`workspace/name`, slash-separated) instead makes the agent-run socket land at a different path than agentd expects.
+- **Lesson:** The agent-run resolves its socket path as `filepath.Join(flagStateDir, flagID, "agent-run.sock")`. If `--id` contains a slash, it creates a nested subdirectory that doesn't match agentd's `waitForSocket` path. Always pass `filepath.Base(stateDir)` (the hyphenated leaf) — not the composite agentKey — when forking the agent-run.
+- **Reference:** M007/S05/T02 — pkg/agentd/process.go forkRun; D101.
 - **When:** M007/S05
 
-## K061 — bootstrap agentd state from shim status after Subscribe, not from stateChange hook
+## K061 — bootstrap agentd state from agent-run status after Subscribe, not from stateChange hook
 
-- **Pattern:** When agentd calls `shimClient.Subscribe()` and then immediately sets a stateChange hook on the shim (via `shimClient.SetStateChangeHook`), the hook is registered *after* `shimClient.Create()` returns. The creating→idle stateChange fires while the hook is nil and is silently dropped.
-- **Lesson:** After Subscribe(), call `shimClient.Status()` to read the current runtime state. If status reports `"idle"` (or any non-creating state), write it to the DB directly as a bootstrap sync. This avoids restructuring the shim startup sequence and handles the case where mockagent completes the ACP handshake in <1ms. The `waitForAgentStateOneOf` helper pattern in integration tests also exists because of this: poll for idle-or-other rather than waiting for a specific notification.
+- **Pattern:** When agentd calls `shimClient.Subscribe()` and then immediately sets a stateChange hook on the agent-run (via `shimClient.SetStateChangeHook`), the hook is registered *after* `shimClient.Create()` returns. The creating→idle stateChange fires while the hook is nil and is silently dropped.
+- **Lesson:** After Subscribe(), call `shimClient.Status()` to read the current runtime state. If status reports `"idle"` (or any non-creating state), write it to the DB directly as a bootstrap sync. This avoids restructuring the agent-run startup sequence and handles the case where mockagent completes the ACP handshake in <1ms. The `waitForAgentStateOneOf` helper pattern in integration tests also exists because of this: poll for idle-or-other rather than waiting for a specific notification.
 - **Reference:** M007/S05/T02 — pkg/agentd/process.go Start(); D102.
 - **When:** M007/S05
 
@@ -723,14 +723,14 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K063 — stale socket files from previous test runs cause bind failures; remove before fork
 
-- **Pattern:** `forkShim` in `process.go` now calls `os.Remove(socketPath)` before forking. If a previous test crashed without cleanup, the old socket file remains and the new shim fails to bind.
-- **Lesson:** Always remove the target socket file before forking the shim. The remove is idempotent (ignore ENOENT). Without this, flaky tests occur when prior runs leave stale sockets — not on the first run, but unpredictably on subsequent CI runs if the temp dir is reused.
-- **Reference:** M007/S05/T02 — pkg/agentd/process.go forkShim.
+- **Pattern:** `forkRun` in `process.go` now calls `os.Remove(socketPath)` before forking. If a previous test crashed without cleanup, the old socket file remains and the new shim fails to bind.
+- **Lesson:** Always remove the target socket file before forking the agent-run. The remove is idempotent (ignore ENOENT). Without this, flaky tests occur when prior runs leave stale sockets — not on the first run, but unpredictably on subsequent CI runs if the temp dir is reused.
+- **Reference:** M007/S05/T02 — pkg/agentd/process.go forkRun.
 - **When:** M007/S05
 
 ## K064 — tryReload Subscribe-before-Load ordering is a correctness invariant
 
-- **Pattern:** In `recoverAgent()`, the `Subscribe()` call on the shim client must be established *before* the `session/load` call (tryReload path). The notification channel must be open before the load triggers a stateChange from the shim.
+- **Pattern:** In `recoverAgent()`, the `Subscribe()` call on the agent-run client must be established *before* the `session/load` call (tryReload path). The notification channel must be open before the load triggers a stateChange from the agent-run.
 - **Lesson:** If session/load fires before Subscribe, the immediate stateChange notification (creating→idle) arrives before the notification handler is registered and is silently dropped. The agent stays in an incorrect state in the DB. Subscribe first, load second — this is a correctness invariant for the tryReload path. D089 documents this ordering decision.
 - **Reference:** M007/S02/T02 — pkg/agentd/recovery.go recoverAgent(); D089.
 - **When:** M007/S02
@@ -758,16 +758,16 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K068 — Package collision avoidance when inlining multiple source commands into one cobra main package
 
-- **Pattern:** When migrating multiple independent `main` packages into a single cobra `package main` as subcommands, prefix all types, functions, and package-level vars from each source package with a distinguishing short prefix (e.g. `wmcp` for workspace-mcp, `shim` for shim client). Scope flag variables as locals inside the `newXyzCmd()` constructor, not as package-level `var`.
+- **Pattern:** When migrating multiple independent `main` packages into a single cobra `package main` as subcommands, prefix all types, functions, and package-level vars from each source package with a distinguishing short prefix (e.g. `wmcp` for workspace-mcp, `run` for agent-run client). Scope flag variables as locals inside the `newXyzCmd()` constructor, not as package-level `var`.
 - **Lesson:** Multiple inlined mains share a single namespace. Without prefixing, identically-named types (`Config`, `Client`, `conn`) collide. Without local flag scoping, two subcommands that both register `--socket` or `--bundle` will overwrite each other's package-level `var` at `init()` time. Local scoping + prefix is the zero-ambiguity pattern.
-- **Reference:** M008/S01/T01 — cmd/agentd/shim.go (shim flags local), cmd/agentd/workspacemcp.go (wmcp prefix); M008/S01/T02 — cmd/agentdctl/shim.go (shim-prefixed client types).
+- **Reference:** M008/S01/T01 — cmd/agentd/agent-run.go (shim flags local), cmd/agentd/workspacemcp.go (wmcp prefix); M008/S01/T02 — cmd/agentdctl/agent-run.go (shim-prefixed client types).
 - **When:** M008/S01
 
 ## K069 — Self-fork (os.Executable) requires OAR_SHIM_BINARY env override for integration tests
 
-- **Pattern:** After the binary consolidation in S02, `forkShim` uses `os.Executable()` for self-fork by default. However, `go test` runs the test binary, not `bin/agentd`. Integration tests that fork a shim require `OAR_SHIM_BINARY=/path/to/bin/agent-shim` to override the default self-fork path.
-- **Lesson:** `os.Executable()` in a test binary returns the test binary path, which cannot handle the `shim` subcommand. Integration tests must set `OAR_SHIM_BINARY` (or the setupAgentdTest helper must ensure agentd binary is used, not the test binary). The override env var is intentionally retained even post-consolidation as an escape hatch for exactly this scenario.
-- **Reference:** M008/S02/T02 — pkg/agentd/process.go forkShim(); M008/S02/T03 — tests/integration/session_test.go setupAgentdTest; D107.
+- **Pattern:** After the binary consolidation in S02, `forkRun` uses `os.Executable()` for self-fork by default. However, `go test` runs the test binary, not `bin/agentd`. Integration tests that fork an agent-run require `OAR_SHIM_BINARY=/path/to/bin/agent-run` to override the default self-fork path.
+- **Lesson:** `os.Executable()` in a test binary returns the test binary path, which cannot handle the `run` subcommand. Integration tests must set `OAR_SHIM_BINARY` (or the setupAgentdTest helper must ensure agentd binary is used, not the test binary). The override env var is intentionally retained even post-consolidation as an escape hatch for exactly this scenario.
+- **Reference:** M008/S02/T02 — pkg/agentd/process.go forkRun(); M008/S02/T03 — tests/integration/session_test.go setupAgentdTest; D107.
 - **When:** M008/S02
 
 ## K070 — bbolt -run TestRuntime filter too narrow; use -run Runtime
@@ -807,8 +807,8 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K075 — macOS t.TempDir() paths frequently exceed 104-byte Unix socket limit
 
-- **Pattern:** `t.TempDir()` on macOS returns paths of the form `/var/folders/v7/hcm12_5x49lf7szbrsz4p_p80000gp/T/TestFunctionName123456789/001/` — typically 80-90+ characters. Adding a workspace-agent bundle path (e.g., `bundles/ws-agent/agent-shim.sock`) easily pushes past 104. Tests that call agentrun/create or ProcessManager.Start with a bundle root derived from t.TempDir() will produce "socket path too long" failures on macOS but not Linux.
-- **Lesson:** Use `os.MkdirTemp("/tmp", "mass-*")` for tests that exercise socket-path-sensitive code (ProcessManager.Start, agentrun/create). `/tmp/mass-XXXXX/bundles/ws-ag/agent-shim.sock` is 47 bytes — well within limit. Register `t.Cleanup(func() { os.RemoveAll(dir) })` for cleanup. Tests that already use `/tmp` prefix (integration tests) are immune.
+- **Pattern:** `t.TempDir()` on macOS returns paths of the form `/var/folders/v7/hcm12_5x49lf7szbrsz4p_p80000gp/T/TestFunctionName123456789/001/` — typically 80-90+ characters. Adding a workspace-agent bundle path (e.g., `bundles/ws-agent/agent-run.sock`) easily pushes past 104. Tests that call agentrun/create or ProcessManager.Start with a bundle root derived from t.TempDir() will produce "socket path too long" failures on macOS but not Linux.
+- **Lesson:** Use `os.MkdirTemp("/tmp", "mass-*")` for tests that exercise socket-path-sensitive code (ProcessManager.Start, agentrun/create). `/tmp/mass-XXXXX/bundles/ws-ag/agent-run.sock` is 47 bytes — well within limit. Register `t.Cleanup(func() { os.RemoveAll(dir) })` for cleanup. Tests that already use `/tmp` prefix (integration tests) are immune.
 - **Reference:** M008/S04/T01 — TestAgentCreateReturnsCreating + TestProcessManagerStart pre-existing macOS failures; D111 socket path validation.
 - **When:** M008/S04
 
@@ -836,8 +836,8 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 ## K079 — When deleting a test file, scan for infrastructure used by other test files in the same package first
 
 - **Pattern:** Deleting `pkg/agentd/shim_client_test.go` also deleted `newMockShimServer` / `mockShimServer` which recovery_test.go and recovery_posture_test.go depend on — causing compile failures.
-- **Lesson:** Before deleting any test file, run `grep -l <key_symbol> *_test.go` in the same package to find cross-file dependencies. If other test files reference types or helpers from the file being deleted, extract only those shared pieces into a new `*_test.go` file (e.g. `mock_shim_server_test.go`). Drop test functions specific to the deleted implementation but preserve shared infrastructure. The import alias may need updating if the extracted file no longer needs all the original imports.
-- **Reference:** M012/S06/T01 — pkg/agentd/mock_shim_server_test.go; D113.
+- **Lesson:** Before deleting any test file, run `grep -l <key_symbol> *_test.go` in the same package to find cross-file dependencies. If other test files reference types or helpers from the file being deleted, extract only those shared pieces into a new `*_test.go` file (e.g. `mock_run_server_test.go`). Drop test functions specific to the deleted implementation but preserve shared infrastructure. The import alias may need updating if the extracted file no longer needs all the original imports.
+- **Reference:** M012/S06/T01 — pkg/agentd/mock_run_server_test.go; D113.
 - **When:** M012/S06
 
 ## K080 — jsonrpc.Server cleanup order: ln.Close() before srv.Shutdown() to unblock Serve()
@@ -864,7 +864,7 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 ## K081 — Sequence pure rename/move slices before contract-change slices in large refactors
 
 - **Pattern:** In a codebase refactor involving both import path changes and wire contract changes, complete all pure renames first before introducing semantic changes.
-- **Lesson:** M012 separated the refactor into S02 (pure rename: api/spec→api/runtime, pkg/shimapi→api/shim) and S03 (ARI wire contract convergence: domain shape changes). Doing S02 first meant that S03 only needed to reason about one dimension of change at a time — if S03 broke a test, the cause was definitely the contract change, not a rename collision. Intermixing renames with semantic changes in a single slice makes debugging exponentially harder. The discipline cost is one extra slice; the payoff is much faster root-cause isolation.
+- **Lesson:** M012 separated the refactor into S02 (pure rename: api/spec→api/runtime, pkg/agentrunapi→api/agent-run) and S03 (ARI wire contract convergence: domain shape changes). Doing S02 first meant that S03 only needed to reason about one dimension of change at a time — if S03 broke a test, the cause was definitely the contract change, not a rename collision. Intermixing renames with semantic changes in a single slice makes debugging exponentially harder. The discipline cost is one extra slice; the payoff is much faster root-cause isolation.
 - **Reference:** M012/S02 + M012/S03 sequencing design.
 - **When:** M012
 
@@ -884,16 +884,16 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K086 — Sealed interface pattern (unexported method) breaks cross-package when consumer moves to a new package
 
-- **Pattern:** An interface with an unexported method (e.g., `eventType() string`) is "sealed" — only code in the same package can implement or call it. When a consumer of the interface moves from being in the same package (e.g., `pkg/events/translator.go`) to a different package (e.g., `pkg/shim/server/translator.go`), calls like `ev.eventType()` become illegal cross-package accesses.
+- **Pattern:** An interface with an unexported method (e.g., `eventType() string`) is "sealed" — only code in the same package can implement or call it. When a consumer of the interface moves from being in the same package (e.g., `pkg/events/translator.go`) to a different package (e.g., `pkg/agentrun/server/translator.go`), calls like `ev.eventType()` become illegal cross-package accesses.
 - **Lesson:** Before moving a file that calls unexported interface methods, add an exported bridge function in the package that owns the in
-terface (e.g., `EventTypeOf(ev Event) string` in `pkg/shim/api/event_types.go`). This is the minimal, backward-compatible solution: the sealed property is preserved for implementors while consumers can call the exported accessor. The bridge function belongs in the package that defines the interface, not in the consumer.
-- **Reference:** M013/S04/T02 — EventTypeOf() added to pkg/shim/api/event_types.go; D118.
+terface (e.g., `EventTypeOf(ev Event) string` in `pkg/agentrun/api/event_types.go`). This is the minimal, backward-compatible solution: the sealed property is preserved for implementors while consumers can call the exported accessor. The bridge function belongs in the package that defines the interface, not in the consumer.
+- **Reference:** M013/S04/T02 — EventTypeOf() added to pkg/agentrun/api/event_types.go; D118.
 - **When:** M013/S04
 
 ## K087 — Two-task split for moving a package with a sealed event model: move types first, then move implementation
 
 - **Pattern:** When migrating a package that has both wire types and implementation (translator+log) into different target packages, split the work: (1) copy all types to the new api/ package, update all consumers; (2) move implementation files to the new server/ package, removing the old package. Attempting to do both in one step creates a dependency loop: the implementation needs the types to compile, but the types are still in the old package during the transition.
-- **Lesson:** T01 moved ShimEvent, EventType*/Category* constants and typed event structs into pkg/shim/api, updating all consumers. T02 then moved translator.go and log.go into pkg/shim/server, where it could safely add the apishim.* qualifier. The T01→T02 boundary required a temporary JSON-round-trip bridge in service.go (to handle the type incompatibility), which T02 cleanly removed. The pattern generalizes: for any migration with a "types → impl" dependency, split the tasks at that boundary.
+- **Lesson:** T01 moved ShimEvent, EventType*/Category* constants and typed event structs into pkg/agentrun/api, updating all consumers. T02 then moved translator.go and log.go into pkg/agentrun/server, where it could safely add the apiagent-run.* qualifier. The T01→T02 boundary required a temporary JSON-round-trip bridge in service.go (to handle the type incompatibility), which T02 cleanly removed. The pattern generalizes: for any migration with a "types → impl" dependency, split the tasks at that boundary.
 - **Reference:** M013/S04 T01+T02; legacyEventsToAPI bridge in T01 removed in T02.
 - **When:** M013/S04
 
@@ -906,5 +906,5 @@ terface (e.g., `EventTypeOf(ev Event) string` in `pkg/shim/api/event_types.go`).
 ## K082 — Session metadata hook chain: Translator → Manager lock-free handoff
 
 - **Rule:** The session metadata hook chain (Translator.maybeNotifyMetadata → Manager.UpdateSessionMetadata) relies on the hook being called AFTER Translator.mu is released (post-broadcastSessionEvent). Manager.UpdateSessionMetadata acquires its own m.mu, then releases before calling the stateChangeHook (which re-enters Translator.mu via NotifyStateChange). This 3-step lock dance (Translator.mu → release → Manager.mu → release → Translator.mu) avoids deadlock. If you add a new hook call site inside Translator, always place it after the lock is released. Use `maybeNotifyMetadata` as a type-switch gate — only the 4 metadata event types pass through; everything else is silently ignored.
-- **Scope:** pkg/shim/server, pkg/shim/runtime/acp
+- **Scope:** pkg/agentrun/server, pkg/agentrun/runtime/acp
 - **When:** M014/S06

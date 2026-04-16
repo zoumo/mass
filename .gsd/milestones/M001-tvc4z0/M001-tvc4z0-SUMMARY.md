@@ -11,8 +11,8 @@ key_decisions:
   - D010: SQLite WAL journal mode with foreign keys — Better concurrency (readers don't block writers) and data integrity enforcement.
   - D011: Embedded SQL schema with go:embed — Single-binary deployment without external schema files.
   - Env substitution at registry creation time — os.Expand resolves ${VAR} patterns once at startup for consistent resolved values.
-  - session/prompt auto-start behavior — session/prompt automatically starts shim process when session.State == 'created', simplifying CLI UX.
-  - exec.Command (not CommandContext) for shim processes — Shim must run independently of request context; lifecycle managed by Stop/watchProcess.
+  - session/prompt auto-start behavior — session/prompt automatically starts agent-run process when session.State == 'created', simplifying CLI UX.
+  - exec.Command (not CommandContext) for agent-run processes — Shim must run independently of request context; lifecycle managed by Stop/watchProcess.
 key_files:
   - cmd/agentd/main.go
   - cmd/agentdctl/main.go
@@ -45,14 +45,14 @@ lessons_learned:
 
 # M001-tvc4z0: Phase 2 — agentd Core
 
-**Built agentd daemon with session/process management, ARI service, CLI, and 8 integration tests proving full agentd → agent-shim → mockagent pipeline works end-to-end**
+**Built agentd daemon with session/process management, ARI service, CLI, and 8 integration tests proving full agentd → agent-run → mockagent pipeline works end-to-end**
 
 ## What Happened
 
-Milestone M001-tvc4z0 delivered Phase 2 of the Open Agent Runtime architecture, transitioning from single-agent management (Phase 1 agent-shim layer) to multi-agent management through the agentd daemon.
+Milestone M001-tvc4z0 delivered Phase 2 of the Open Agent Runtime architecture, transitioning from single-agent management (Phase 1 agent-run layer) to multi-agent management through the agentd daemon.
 
 **S01: Scaffolding + Phase 1.3 exitCode**
-Established agentd daemon foundation: YAML config parsing (Socket, WorkspaceRoot, MetaDB fields), workspace manager and registry initialization, ARI server bootstrap, and graceful shutdown with SIGTERM/SIGINT handling. Added ExitCode field to shim State/GetStateResult — pointer type (*int) with omitempty because exit code only exists after process exits.
+Established agentd daemon foundation: YAML config parsing (Socket, WorkspaceRoot, MetaDB fields), workspace manager and registry initialization, ARI server bootstrap, and graceful shutdown with SIGTERM/SIGINT handling. Added ExitCode field to agent-run State/GetStateResult — pointer type (*int) with omitempty because exit code only exists after process exits.
 
 **S02: Metadata Store (SQLite)**
 Implemented SQLite-based metadata store with WAL journal mode, foreign key constraints, and embedded schema (go:embed). Full CRUD operations for Session, Workspace, Room entities with transaction support (BeginTx). Reference counting pattern for workspace acquisition/release. Optional initialization enables ephemeral daemon mode.
@@ -64,7 +64,7 @@ Created RuntimeClassRegistry with thread-safe Get/List methods (sync.RWMutex). E
 Implemented SessionManager with CRUD operations and state machine validation. Five session states: created, running, paused:warm, paused:cold, stopped. Nine valid transitions defined in declarative transition table. Delete protection blocks removal of running and paused:warm sessions. Custom error types (ErrInvalidTransition, ErrDeleteProtected) with context.
 
 **S05: Process Manager**
-Built ProcessManager orchestrating full session startup: resolve runtimeClass → generate config.json → create bundle → fork shim → wait for socket → connect ShimClient → subscribe events. Critical bug fix: Changed from exec.CommandContext to exec.Command so shim process runs independently of request context. Stop method: Shutdown RPC → wait for exit (10s timeout) → kill if needed.
+Built ProcessManager orchestrating full session startup: resolve runtimeClass → generate config.json → create bundle → fork agent-run → wait for socket → connect Client → subscribe events. Critical bug fix: Changed from exec.CommandContext to exec.Command so agent-run process runs independently of request context. Stop method: Shutdown RPC → wait for exit (10s timeout) → kill if needed.
 
 **S06: ARI Service**
 Extended ARI JSON-RPC server with 9 session/* handlers (new/prompt/cancel/stop/remove/list/status/attach/detach). session/prompt auto-starts shim if state==created. Error handling with appropriate JSON-RPC codes (InvalidParams for client errors, InternalError for system failures). 27 ARI tests pass including 10 session tests.
@@ -73,9 +73,9 @@ Extended ARI JSON-RPC server with 9 session/* handlers (new/prompt/cancel/stop/r
 Built CLI tool with spf13/cobra: 11 subcommands (7 session, 3 workspace, 1 daemon). Created pkg/ari/client.go — simplified JSON-RPC client for single-shot RPC calls over Unix sockets. Type-specific flag validation before RPC calls. Pretty-printed JSON output.
 
 **S08: Integration Tests**
-Created 8 integration tests proving full pipeline agentd → agent-shim → mockagent works end-to-end. Tests cover: full lifecycle (TestEndToEndPipeline), state machine transitions (TestSessionLifecycle), error handling (TestSessionPromptStoppedSession, TestSessionRemoveRunningSession), listing (TestSessionList), restart behavior (TestAgentdRestartRecovery reveals reconnection not yet implemented), concurrent sessions (TestMultipleConcurrentSessions, TestConcurrentPromptsSameSession).
+Created 8 integration tests proving full pipeline agentd → agent-run → mockagent works end-to-end. Tests cover: full lifecycle (TestEndToEndPipeline), state machine transitions (TestSessionLifecycle), error handling (TestSessionPromptStoppedSession, TestSessionRemoveRunningSession), listing (TestSessionList), restart behavior (TestAgentdRestartRecovery reveals reconnection not yet implemented), concurrent sessions (TestMultipleConcurrentSessions, TestConcurrentPromptsSameSession).
 
-**Discovery**: Restart recovery (shim socket reconnection after agentd restart) is future work. Session metadata persists, shim process survives, but agentd cannot reconnect to existing shim sockets on restart.
+**Discovery**: Restart recovery (agent-run socket reconnection after agentd restart) is future work. Session metadata persists, agent-run process survives, but agentd cannot reconnect to existing agent-run sockets on restart.
 
 ## Success Criteria Results
 
@@ -95,9 +95,9 @@ Created 8 integration tests proving full pipeline agentd → agent-shim → mock
 **Status**: ✅ PASSED  
 **Evidence**: S04 implementation verified. pkg/agentd/session.go provides SessionManager with CRUD and state machine. Five states (created, running, paused:warm, paused:cold, stopped), nine valid transitions defined in declarative table. 12 tests pass covering CRUD round-trips, valid/invalid transitions, delete protection.
 
-### Success Criterion 5: Process Manager with shim lifecycle
+### Success Criterion 5: Process Manager with agent-run lifecycle
 **Status**: ✅ PASSED  
-**Evidence**: S05 implementation verified. pkg/agentd/process.go provides ProcessManager with Start/Stop/State/Connect methods. Start workflow: resolve runtimeClass → generate config → create bundle → fork shim → wait for socket → connect client → subscribe events. Stop: Shutdown RPC → wait 10s → kill if needed. Tests verify full lifecycle with mockagent.
+**Evidence**: S05 implementation verified. pkg/agentd/process.go provides ProcessManager with Start/Stop/State/Connect methods. Start workflow: resolve runtimeClass → generate config → create bundle → fork agent-run → wait for socket → connect client → subscribe events. Stop: Shutdown RPC → wait 10s → kill if needed. Tests verify full lifecycle with mockagent.
 
 ### Success Criterion 6: ARI JSON-RPC server with session/* methods
 **Status**: ✅ PASSED  
@@ -129,7 +129,7 @@ All slices have SUMMARY.md and UAT.md files:
 
 ### Integration tests pass
 All 8 integration tests pass (verified by running `go test ./tests/integration/... -v`):
-- TestEndToEndPipeline (0.17s) — Full agentd → shim → mockagent lifecycle
+- TestEndToEndPipeline (0.17s) — Full agentd → agent-run → mockagent lifecycle
 - TestSessionLifecycle (0.23s) — State machine created → running → stopped
 - TestSessionPromptStoppedSession (0.23s) — Error handling for invalid operations
 - TestSessionRemoveRunningSession (0.25s) — Protected deletion semantics
@@ -143,7 +143,7 @@ TestEndToEndPipeline proves full pipeline integration:
 1. agentd daemon startup with config
 2. workspace/prepare creates workspace
 3. session/new creates session with state=created
-4. session/prompt auto-starts shim, returns response
+4. session/prompt auto-starts agent-run, returns response
 5. session/status verifies running state
 6. session/stop stops shim gracefully
 7. session/remove deletes session
@@ -175,7 +175,7 @@ TestEndToEndPipeline proves full pipeline integration:
 ### R005 → validated
 **Previous status**: active  
 **New status**: validated  
-**Evidence**: S05 tests pass. ProcessManager.Start forks shim, connects socket, subscribes events. ProcessManager.Stop gracefully shuts down. ShimClient provides RPC communication. mockagent responds to prompts. Integration tests verify full lifecycle.
+**Evidence**: S05 tests pass. ProcessManager.Start forks agent-run, connects socket, subscribes events. ProcessManager.Stop gracefully shuts down. Client provides RPC communication. mockagent responds to prompts. Integration tests verify full lifecycle.
 
 ### R006 → validated
 **Previous status**: active  
@@ -189,14 +189,14 @@ TestEndToEndPipeline proves full pipeline integration:
 
 ### R008 → remains validated
 **Status**: validated (already)  
-**Evidence**: S08 integration tests pass (8 tests). Full pipeline agentd → agent-shim → mockagent works: TestEndToEndPipeline proves complete lifecycle from create to cleanup.
+**Evidence**: S08 integration tests pass (8 tests). Full pipeline agentd → agent-run → mockagent works: TestEndToEndPipeline proves complete lifecycle from create to cleanup.
 
 ## Deviations
 
-None. All 8 slices completed as planned. The only notable discovery was that restart recovery (shim socket reconnection after agentd restart) is not yet implemented — this was documented in S08/T03 as future work, not a blocker.
+None. All 8 slices completed as planned. The only notable discovery was that restart recovery (agent-run socket reconnection after agentd restart) is not yet implemented — this was documented in S08/T03 as future work, not a blocker.
 
 ## Follow-ups
 
-1. Restart recovery — Shim socket reconnection after agentd restart (documented in S08/T03). Session metadata persists in SQLite, shim process survives agentd exit, but agentd cannot reconnect to existing shim sockets. Future implementation needs socket discovery in /tmp/agentd-shim/{sessionId}/ and reconnect logic.
+1. Restart recovery — Shim socket reconnection after agentd restart (documented in S08/T03). Session metadata persists in SQLite, agent-run process survives agentd exit, but agentd cannot reconnect to existing agent-run sockets. Future implementation needs socket discovery in /tmp/agentd-shim/{sessionId}/ and reconnect logic.
 
 2. Session label filtering — session/list does not support label filtering. The meta.SessionFilter struct only supports State, WorkspaceID, Room, and HasRoom filters.

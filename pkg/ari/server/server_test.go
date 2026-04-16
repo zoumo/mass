@@ -24,8 +24,8 @@ import (
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 	ariserver "github.com/zoumo/mass/pkg/ari/server"
 	"github.com/zoumo/mass/pkg/jsonrpc"
-	apishim "github.com/zoumo/mass/pkg/shim/api"
-	shimclient "github.com/zoumo/mass/pkg/shim/client"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 	"github.com/zoumo/mass/pkg/agentd/store"
 	"github.com/zoumo/mass/pkg/workspace"
 )
@@ -147,7 +147,7 @@ func createAndWaitWorkspace(t *testing.T, client *ariclient.RawClient, name stri
 }
 
 // seedAgent inserts a raw agent record directly into the store, bypassing the
-// background shim start. Used to prime DB state for handler-only tests.
+// background agent-run start. Used to prime DB state for handler-only tests.
 func seedAgent(t *testing.T, store *store.Store, wsName, name string, state apiruntime.Status) {
 	t.Helper()
 	err := store.CreateAgentRun(context.Background(), &pkgariapi.AgentRun{
@@ -302,7 +302,7 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 		err := env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 			Workspace: "pr-ws",
 			Name:      name,
-			Prompt:    "hello",
+			Prompt:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello")},
 		}, nil)
 		require.Error(t, err, "agentrun/prompt for %s must return an error", name)
 		assert.Contains(t, err.Error(), "not in idle state",
@@ -318,7 +318,6 @@ func TestAgentPromptRejectsEmptyPrompt(t *testing.T) {
 	err := env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 		Workspace: "empty-prompt-ws",
 		Name:      "agent-idle",
-		Prompt:    "",
 	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "-32602")
@@ -336,27 +335,27 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	agentName := "agent-reserve"
 	seedAgent(t, env.store, "reserve-ws", agentName, apiruntime.StatusIdle)
 
-	shimSrv, shimSock := newMiniShimServer(t)
-	_ = shimSrv
+	runSrv, runSock := newMiniRunServer(t)
+	_ = runSrv
 
 	require.Eventually(t, func() bool {
-		c, err := net.Dial("unix", shimSock)
+		c, err := net.Dial("unix", runSock)
 		if err == nil {
 			_ = c.Close()
 			return true
 		}
 		return false
-	}, 2*time.Second, 10*time.Millisecond, "mini shim socket not ready")
+	}, 2*time.Second, 10*time.Millisecond, "mini agent-run socket not ready")
 
-	shimClient, err := shimclient.Dial(context.Background(), shimSock)
+	runClient, err := runclient.Dial(context.Background(), runSock)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = shimClient.Close() })
+	t.Cleanup(func() { _ = runClient.Close() })
 
-	env.processes.InjectProcess("reserve-ws/"+agentName, &agentd.ShimProcess{
+	env.processes.InjectProcess("reserve-ws/"+agentName, &agentd.RunProcess{
 		AgentKey:   "reserve-ws/" + agentName,
-		SocketPath: shimSock,
-		Client:     shimClient,
-		Events:     make(chan apishim.AgentRunEvent, 1024),
+		SocketPath: runSock,
+		Client:     runClient,
+		Events:     make(chan runapi.AgentRunEvent, 1024),
 		Done:       make(chan struct{}),
 	})
 
@@ -364,7 +363,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	require.NoError(t, env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 		Workspace: "reserve-ws",
 		Name:      agentName,
-		Prompt:    "hello",
+		Prompt:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello")},
 	}, &result))
 	require.True(t, result.Accepted)
 
@@ -378,7 +377,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	err = env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 		Workspace: "reserve-ws",
 		Name:      agentName,
-		Prompt:    "second",
+		Prompt:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("second")},
 	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not in idle state")
@@ -483,7 +482,7 @@ func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
 	}
 
 	// Valid values must not be rejected at the validation layer.
-	// (The agent goes into "creating" state; shim start will fail in test env — that's OK.)
+	// (The agent goes into "creating" state; agent-run start will fail in test env — that's OK.)
 	for _, good := range []string{"", "try_reload", "always_new"} {
 		ar := pkgariapi.AgentRun{
 			Metadata: pkgariapi.ObjectMeta{Workspace: "rp-ws", Name: "rp-agent-" + good},
@@ -491,7 +490,7 @@ func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
 		}
 		_, err := callRaw(t, env.client, "agentrun/create", ar)
 		// The call may succeed (state=creating) or fail with an internal error
-		// (shim start fails in test env) — but must NOT fail with -32602 for
+		// (agent-run start fails in test env) — but must NOT fail with -32602 for
 		// the restartPolicy field itself.
 		if err != nil {
 			assert.NotContains(t, err.Error(), "invalid restartPolicy",
@@ -501,12 +500,12 @@ func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Mock shim for workspace/send and agentrun/prompt delivery tests
+// Mock agent-run for workspace/send and agentrun/prompt delivery tests
 // ────────────────────────────────────────────────────────────────────────────
 
-// miniShimServer is a lightweight in-process shim that accepts session/prompt
+// miniRunServer is a lightweight in-process agent-run that accepts session/prompt
 // and records received prompts. Used to verify workspace/send delivery.
-type miniShimServer struct {
+type miniRunServer struct {
 	listener net.Listener
 	done     chan struct{}
 	once     sync.Once
@@ -515,15 +514,15 @@ type miniShimServer struct {
 	prompts []string
 }
 
-func newMiniShimServer(t *testing.T) (*miniShimServer, string) {
+func newMiniRunServer(t *testing.T) (*miniRunServer, string) {
 	t.Helper()
-	sockPath := fmt.Sprintf("/tmp/mass-mini-shim-%d-%d.sock", os.Getpid(), time.Now().UnixNano()%100000)
+	sockPath := fmt.Sprintf("/tmp/mass-mini-run-%d-%d.sock", os.Getpid(), time.Now().UnixNano()%100000)
 	_ = os.Remove(sockPath)
 
 	ln, err := net.Listen("unix", sockPath)
 	require.NoError(t, err)
 
-	s := &miniShimServer{
+	s := &miniRunServer{
 		listener: ln,
 		done:     make(chan struct{}),
 	}
@@ -537,7 +536,7 @@ func newMiniShimServer(t *testing.T) (*miniShimServer, string) {
 	return s, sockPath
 }
 
-func (s *miniShimServer) serve() {
+func (s *miniRunServer) serve() {
 	for {
 		nc, err := s.listener.Accept()
 		if err != nil {
@@ -551,19 +550,19 @@ func (s *miniShimServer) serve() {
 	}
 }
 
-func (s *miniShimServer) handleConn(nc net.Conn) {
+func (s *miniRunServer) handleConn(nc net.Conn) {
 	stream := jsonrpc2.NewPlainObjectStream(nc)
-	h := jsonrpc2.AsyncHandler(&miniShimHandler{srv: s})
+	h := jsonrpc2.AsyncHandler(&miniRunHandler{srv: s})
 	conn := jsonrpc2.NewConn(context.Background(), stream, h)
 	<-conn.DisconnectNotify()
 }
 
-func (s *miniShimServer) close() {
+func (s *miniRunServer) close() {
 	s.once.Do(func() { close(s.done) })
 	_ = s.listener.Close()
 }
 
-func (s *miniShimServer) receivedPrompts() []string {
+func (s *miniRunServer) receivedPrompts() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := make([]string, len(s.prompts))
@@ -571,24 +570,31 @@ func (s *miniShimServer) receivedPrompts() []string {
 	return cp
 }
 
-type miniShimHandler struct {
-	srv *miniShimServer
+type miniRunHandler struct {
+	srv *miniRunServer
 }
 
-func (h *miniShimHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+func (h *miniRunHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
 	if req.Notif {
 		return
 	}
 	switch req.Method {
 	case "session/prompt":
 		var params struct {
-			Prompt string `json:"prompt"`
+			Prompt []runapi.ContentBlock `json:"prompt"`
 		}
 		if req.Params != nil {
 			_ = json.Unmarshal(*req.Params, &params)
 		}
+		// Extract all text from content blocks for assertion convenience.
+		var parts []string
+		for _, b := range params.Prompt {
+			if b.Text != nil {
+				parts = append(parts, b.Text.Text)
+			}
+		}
 		h.srv.mu.Lock()
-		h.srv.prompts = append(h.srv.prompts, params.Prompt)
+		h.srv.prompts = append(h.srv.prompts, strings.Join(parts, "\n"))
 		h.srv.mu.Unlock()
 		_ = conn.Reply(ctx, req.ID, map[string]string{"stopReason": "end_turn"})
 	case "session/subscribe":
@@ -610,34 +616,34 @@ func (h *miniShimHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *
 // workspace/send tests
 // ────────────────────────────────────────────────────────────────────────────
 
-// injectMockShim starts a mini shim server, waits for it to be ready, and
+// injectMockRun starts a mini agent-run server, waits for it to be ready, and
 // injects it into the process manager under "wsName/agentName".
-// Returns the shim server so callers can inspect received prompts.
-func injectMockShim(t *testing.T, env *testEnv, wsName, agentName string) *miniShimServer {
+// Returns the agent-run server so callers can inspect received prompts.
+func injectMockRun(t *testing.T, env *testEnv, wsName, agentName string) *miniRunServer {
 	t.Helper()
-	shimSrv, shimSock := newMiniShimServer(t)
+	runSrv, runSock := newMiniRunServer(t)
 
 	require.Eventually(t, func() bool {
-		c, err := net.Dial("unix", shimSock)
+		c, err := net.Dial("unix", runSock)
 		if err == nil {
 			_ = c.Close()
 			return true
 		}
 		return false
-	}, 2*time.Second, 10*time.Millisecond, "mini shim socket not ready")
+	}, 2*time.Second, 10*time.Millisecond, "mini agent-run socket not ready")
 
-	shimClient, err := shimclient.Dial(context.Background(), shimSock)
+	runClient, err := runclient.Dial(context.Background(), runSock)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = shimClient.Close() })
+	t.Cleanup(func() { _ = runClient.Close() })
 
-	env.processes.InjectProcess(wsName+"/"+agentName, &agentd.ShimProcess{
+	env.processes.InjectProcess(wsName+"/"+agentName, &agentd.RunProcess{
 		AgentKey:   wsName + "/" + agentName,
-		SocketPath: shimSock,
-		Client:     shimClient,
-		Events:     make(chan apishim.AgentRunEvent, 1024),
+		SocketPath: runSock,
+		Client:     runClient,
+		Events:     make(chan runapi.AgentRunEvent, 1024),
 		Done:       make(chan struct{}),
 	})
-	return shimSrv
+	return runSrv
 }
 
 func TestWorkspaceSendDelivered(t *testing.T) {
@@ -646,23 +652,23 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 
 	agentName := "recv-agent"
 	seedAgent(t, env.store, "send-ws", agentName, apiruntime.StatusIdle)
-	shimSrv := injectMockShim(t, env, "send-ws", agentName)
+	runSrv := injectMockRun(t, env, "send-ws", agentName)
 
 	var sendResult pkgariapi.WorkspaceSendResult
 	require.NoError(t, env.client.Call("workspace/send", pkgariapi.WorkspaceSendParams{
 		Workspace: "send-ws",
 		From:      "sender",
 		To:        agentName,
-		Message:   "hello",
+		Message:   []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello")},
 	}, &sendResult))
 	assert.True(t, sendResult.Delivered)
 
 	require.Eventually(t, func() bool {
-		return len(shimSrv.receivedPrompts()) >= 1
-	}, 2*time.Second, 20*time.Millisecond, "mock shim did not receive prompt")
+		return len(runSrv.receivedPrompts()) >= 1
+	}, 2*time.Second, 20*time.Millisecond, "mock agent-run did not receive prompt")
 
 	// Delivered prompt must include the sender envelope and the original message.
-	prompt := shimSrv.receivedPrompts()[0]
+	prompt := runSrv.receivedPrompts()[0]
 	assert.Contains(t, prompt, `<workspace-message from="sender" />`)
 	assert.Contains(t, prompt, "hello")
 }
@@ -673,24 +679,24 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 
 	agentName := "reply-agent"
 	seedAgent(t, env.store, "reply-ws", agentName, apiruntime.StatusIdle)
-	shimSrv := injectMockShim(t, env, "reply-ws", agentName)
+	runSrv := injectMockRun(t, env, "reply-ws", agentName)
 
 	var sendResult pkgariapi.WorkspaceSendResult
 	require.NoError(t, env.client.Call("workspace/send", pkgariapi.WorkspaceSendParams{
 		Workspace:  "reply-ws",
 		From:       "codex",
 		To:         agentName,
-		Message:    "please review",
+		Message:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("please review")},
 		NeedsReply: true,
 	}, &sendResult))
 	assert.True(t, sendResult.Delivered)
 
 	require.Eventually(t, func() bool {
-		return len(shimSrv.receivedPrompts()) >= 1
-	}, 2*time.Second, 20*time.Millisecond, "mock shim did not receive prompt")
+		return len(runSrv.receivedPrompts()) >= 1
+	}, 2*time.Second, 20*time.Millisecond, "mock agent-run did not receive prompt")
 
 	// When needsReply=true the envelope must include reply-to and reply-requested=true.
-	prompt := shimSrv.receivedPrompts()[0]
+	prompt := runSrv.receivedPrompts()[0]
 	assert.Contains(t, prompt, `<workspace-message from="codex" reply-to="codex" reply-requested="true" />`)
 	assert.Contains(t, prompt, "please review")
 }
@@ -704,7 +710,7 @@ func TestWorkspaceSendRejectedForErrorAgent(t *testing.T) {
 		Workspace: "serr-ws",
 		From:      "sender",
 		To:        "err-agent",
-		Message:   "hi",
+		Message:   []pkgariapi.ContentBlock{pkgariapi.TextBlock("hi")},
 	}, nil)
 	require.Error(t, err, "workspace/send to error-state agent must fail")
 }

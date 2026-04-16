@@ -120,7 +120,7 @@ Agent 面临着同样的分层关切：
 对于 shim 边界，当前 authoritative 读取顺序是：
 
 1. [runtime/runtime-spec.md](./runtime/runtime-spec.md) — runtime 状态模型、bundle、state dir、socket 路径；
-2. [runtime/shim-rpc-spec.md](./runtime/shim-rpc-spec.md) — clean-break `session/*` + `runtime/*` surface、notification、recovery / replay；
+2. [runtime/run-rpc-spec.md](./runtime/run-rpc-spec.md) — clean-break `session/*` + `runtime/*` surface、notification、recovery / replay；
 3. [runtime/agent-shim.md](./runtime/agent-shim.md) — 组件职责与 ACP 边界；
 4. [contract-convergence.md](./contract-convergence.md) — 跨层不变量与实现滞后说明。
 
@@ -143,7 +143,7 @@ Agent 面临着同样的分层关切：
 |------|------|------|
 | [runtime/runtime-spec.md](./runtime/runtime-spec.md) | 规范 | MASS Runtime Spec — state、bundle、lifecycle、operations、typed events |
 | [runtime/config-spec.md](./runtime/config-spec.md) | 规范 | Config Spec — config.json schema（对标 OCI config.md） |
-| [runtime/shim-rpc-spec.md](./runtime/shim-rpc-spec.md) | 规范 | Shim RPC Spec — clean-break `session/*` + `runtime/*` request/response surface、`shim/event` notification、回放与重连语义 |
+| [runtime/run-rpc-spec.md](./runtime/run-rpc-spec.md) | 规范 | Run RPC Spec — clean-break `session/*` + `runtime/*` request/response surface、`runtime/event_update` notification、回放与重连语义 |
 | [runtime/agent-shim.md](./runtime/agent-shim.md) | 组件 | agent-shim — 组件职责、ACP 边界、runtime truth、实现状态（描述性，不重新定义协议） |
 | [runtime/design.md](./runtime/design.md) | 设计 | 设计思路 — OCI 对标分析、架构决策、config.json 生成流程 |
 | [runtime/why-no-runa.md](./runtime/why-no-runa.md) | 设计 | 为什么 MASS 没有 runa — agent 场景下独立运行时 CLI 不成立的原因 |

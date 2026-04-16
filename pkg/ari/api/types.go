@@ -5,6 +5,19 @@
 // and supplementary wire types.
 package api
 
+import acp "github.com/coder/acp-go-sdk"
+
+// ContentBlock is an ACP content block (text, image, audio, resource, resource-link).
+// Re-exported here so ARI callers don't need to import the agentrun/api or acp-go-sdk packages.
+type ContentBlock = acp.ContentBlock
+
+// Convenience constructors for common content block types.
+var (
+	TextBlock  = acp.TextBlock
+	ImageBlock = acp.ImageBlock
+	AudioBlock = acp.AudioBlock
+)
+
 // ────────────────────────────────────────────────────────────────────────────
 // Custom JSON-RPC Error Codes
 // ────────────────────────────────────────────────────────────────────────────
@@ -74,25 +87,25 @@ func WithLabels(labels map[string]string) ListOption {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Shim State
+// Run State
 // ────────────────────────────────────────────────────────────────────────────
 
-// ShimStateInfo describes the runtime state of a shim process.
-// Populated in AgentRun.Status.Shim when the shim is running.
-type ShimStateInfo struct {
-	// Status is the shim process lifecycle status.
+// RunStateInfo describes the runtime state of an agent-run process.
+// Populated in AgentRun.Status.Run when the agent-run is running.
+type RunStateInfo struct {
+	// Status is the agent-run process lifecycle status.
 	Status string `json:"status"`
 
-	// PID is the OS process ID of the shim process.
+	// PID is the OS process ID of the agent-run process.
 	PID int `json:"pid,omitempty"`
 
 	// Bundle is the absolute path to the agent's bundle directory.
 	Bundle string `json:"bundle"`
 
-	// SocketPath is the Unix domain socket path for the shim's RPC endpoint.
+	// SocketPath is the Unix domain socket path for the agent-run.s RPC endpoint.
 	SocketPath string `json:"socketPath,omitempty"`
 
-	// ExitCode is the OS exit code of the shim process.
+	// ExitCode is the OS exit code of the agent-run process.
 	// Only populated after the process has exited.
 	ExitCode *int `json:"exitCode,omitempty"`
 }
@@ -109,13 +122,13 @@ type AgentRunPromptParams struct {
 	// Name is the agent run name (required).
 	Name string `json:"name"`
 
-	// Prompt is the text prompt to deliver (required).
-	Prompt string `json:"prompt"`
+	// Prompt is an array of ACP ContentBlocks (text, image, audio, etc.) (required).
+	Prompt []ContentBlock `json:"prompt"`
 }
 
 // AgentRunPromptResult is the response result for agentrun/prompt method.
 type AgentRunPromptResult struct {
-	// Accepted is true when the prompt was dispatched to the agent's shim.
+	// Accepted is true when the prompt was dispatched to the agent-run.
 	Accepted bool `json:"accepted"`
 }
 
@@ -131,8 +144,8 @@ type WorkspaceSendParams struct {
 	// To is the recipient agent name (required).
 	To string `json:"to"`
 
-	// Message is the text to send (required).
-	Message string `json:"message"`
+	// Message is an array of ACP ContentBlocks to send (required).
+	Message []ContentBlock `json:"message"`
 
 	// NeedsReply indicates whether the sender expects a reply via workspace message.
 	// When true, the delivered prompt includes reply-to and reply-requested=true headers.
@@ -141,6 +154,6 @@ type WorkspaceSendParams struct {
 
 // WorkspaceSendResult is the response result for workspace/send method.
 type WorkspaceSendResult struct {
-	// Delivered is true when the message was dispatched to the target shim.
+	// Delivered is true when the message was dispatched to the target agent-run.
 	Delivered bool `json:"delivered"`
 }

@@ -12,7 +12,7 @@ import (
 const (
 	stateFile      = "state.json"
 	eventLogFile   = "events.jsonl"
-	shimSocketFile = "agent-shim.sock"
+	runSocketFile = "agent-run.sock"
 )
 
 // StateDir returns the directory used to persist state for the agent identified
@@ -26,16 +26,16 @@ func EventLogPath(stateDir string) string {
 	return filepath.Join(stateDir, eventLogFile)
 }
 
-// ShimSocketPath returns the Unix socket path for the agent-shim RPC server.
+// RunSocketPath returns the Unix socket path for the agent-run RPC server.
 // The socket lives inside the state dir so mass can discover all running
-// shims by scanning /run/mass/shim/*/agent-shim.sock after a restart.
-func ShimSocketPath(stateDir string) string {
-	return filepath.Join(stateDir, shimSocketFile)
+// agent-runs by scanning /run/mass/agentrun/*/agent-run.sock after a restart.
+func RunSocketPath(stateDir string) string {
+	return filepath.Join(stateDir, runSocketFile)
 }
 
-// ValidateShimSocketPath checks that the socket path does not exceed the OS
+// ValidateRunSocketPath checks that the socket path does not exceed the OS
 // limit for Unix domain socket paths (104 bytes on macOS, 108 on Linux).
-func ValidateShimSocketPath(socketPath string) error {
+func ValidateRunSocketPath(socketPath string) error {
 	if len(socketPath) > maxUnixSocketPath {
 		return fmt.Errorf("spec: socket path too long (%d bytes, max %d): %s — shorten the bundle root or agent name",
 			len(socketPath), maxUnixSocketPath, socketPath)

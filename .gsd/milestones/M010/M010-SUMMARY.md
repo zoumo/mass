@@ -23,7 +23,7 @@ lessons_learned:
 
 ## What Happened
 
-Three slices. S01: cmd/agentd refactored into subcommands/server, subcommands/shim, subcommands/workspacemcp — main.go is now 8 lines. S02: cmd/agentdctl refactored into subcommands/{agent,agentrun,daemon,shim,workspace} with shared cliutil package and getClient closure injection from root — eliminated package globals. S03: workspace command reshaped per review — create split into local/git/empty/-f subcommands, workspace get added, workspace send made positional, emptyDir removed from help.
+Three slices. S01: cmd/agentd refactored into subcommands/server, subcommands/agent-run, subcommands/workspacemcp — main.go is now 8 lines. S02: cmd/agentdctl refactored into subcommands/{agent,agentrun,daemon,agent-run,workspace} with shared cliutil package and getClient closure injection from root — eliminated package globals. S03: workspace command reshaped per review — create split into local/git/empty/-f subcommands, workspace get added, workspace send made positional, emptyDir removed from help.
 
 ## Success Criteria Results
 

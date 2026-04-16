@@ -8,19 +8,19 @@ key_decisions:
   - D120: Session metadata hook chain — Translator.sessionMetadataHook after broadcast, not Manager as second ACP consumer (preserves single-consumer invariant)
   - D121: Single eventCounts counting site in broadcast() — covers all event origins, fail-closed on append failure
   - D122: updatedAt and eventCounts are derived fields — never trigger independent state_change (prevents infinite recursion)
-  - D123: runtime-spec/api types self-contained — no import of pkg/shim/api; MarshalJSON copied with 'state:' error prefix
+  - D123: runtime-spec/api types self-contained — no import of pkg/agentrun/api; MarshalJSON copied with 'state:' error prefix
   - D124: Bootstrap capabilities signaled via synthetic idle→idle state_change after Translator.Start() — subscribers discover via history backfill
 key_files:
   - pkg/runtime-spec/api/session.go — All session metadata types (SessionState, AgentInfo, AgentCapabilities, union types)
   - pkg/runtime-spec/api/state.go — State struct extended with UpdatedAt, Session, EventCounts
-  - pkg/shim/runtime/acp/runtime.go — writeState closure pattern, convertInitializeToSession, UpdateSessionMetadata, SetEventCountsFn
-  - pkg/shim/server/translator.go — eventCounts tracking, EventCounts(), SetSessionMetadataHook, maybeNotifyMetadata
+  - pkg/agentrun/runtime/acp/runtime.go — writeState closure pattern, convertInitializeToSession, UpdateSessionMetadata, SetEventCountsFn
+  - pkg/agentrun/server/translator.go — eventCounts tracking, EventCounts(), SetSessionMetadataHook, maybeNotifyMetadata
   - cmd/agentd/subcommands/shim/session_update.go — buildSessionUpdate, sort helpers, type-switch conversion for 4 metadata types
   - cmd/agentd/subcommands/shim/command.go — Wiring: SetSessionMetadataHook, SetEventCountsFn, synthetic bootstrap-metadata event
-  - pkg/shim/api/event_types.go — StateChangeEvent.SessionChanged field; dead types removed
-  - pkg/shim/server/service.go — Status() EventCounts overlay
-  - pkg/shim/runtime/acp/runtime_test.go — 9 integration tests including Session preservation, metadata hook chain
-  - pkg/shim/server/translator_test.go — EventCounts, SessionMetadataHook, metadata event routing tests
+  - pkg/agentrun/api/event_types.go — StateChangeEvent.SessionChanged field; dead types removed
+  - pkg/agentrun/server/service.go — Status() EventCounts overlay
+  - pkg/agentrun/runtime/acp/runtime_test.go — 9 integration tests including Session preservation, metadata hook chain
+  - pkg/agentrun/server/translator_test.go — EventCounts, SessionMetadataHook, metadata event routing tests
 lessons_learned:
   - errors.Is(err, os.ErrNotExist) is required when ReadState wraps errors with fmt.Errorf — os.IsNotExist doesn't unwrap (K081)
   - Closure-based state mutation (writeState pattern) is the cleanest way to protect existing fields from lifecycle writes that only care about status
@@ -51,7 +51,7 @@ M014 delivered the session metadata pipeline across 7 slices (S01–S07), transf
 
 **S06 — Session metadata hook chain.** Wired the end-to-end pipeline: Translator.maybeNotifyMetadata (type-switch on 4 ACP notification types) → Manager.UpdateSessionMetadata (read-modify-write + state_change) → state.json updated with sessionChanged field. Lock order: Translator.mu → release → Manager.mu → release (no nesting). buildSessionUpdate converts apishim→apiruntime types with sort helpers for deterministic output. EventCounts flushed on every writeState call via SetEventCountsFn. command.go wires everything together.
 
-**S07 — Status() overlay + doc updates.** `Service.Status()` overlays Translator's real-time in-memory EventCounts onto the state.json snapshot before returning — callers always get authoritative counts. Design docs (shim-rpc-spec.md, runtime-spec.md) updated with enriched state schema examples.
+**S07 — Status() overlay + doc updates.** `Service.Status()` overlays Translator's real-time in-memory EventCounts onto the state.json snapshot before returning — callers always get authoritative counts. Design docs (run-rpc-spec.md, runtime-spec.md) updated with enriched state schema examples.
 
 Total: 19 non-GSD source files changed, +1613/-163 lines. 12 tasks across 7 slices, zero replans, zero blockers.
 
@@ -59,13 +59,13 @@ Total: 19 non-GSD source files changed, +1613/-163 lines. 12 tasks across 7 slic
 
 The roadmap defined success criteria per-slice via "After this" acceptance tests. All verified:
 
-- **S01** ✅ `rg 'EventTypeFileWrite|EventTypeFileRead|EventTypeCommand|FileWriteEvent|FileReadEvent|CommandEvent' --type go --glob '!docs/plan/*'` returns exit 1 (zero matches). `go test ./pkg/shim/...` passes.
+- **S01** ✅ `rg 'EventTypeFileWrite|EventTypeFileRead|EventTypeCommand|FileWriteEvent|FileReadEvent|CommandEvent' --type go --glob '!docs/plan/*'` returns exit 1 (zero matches). `go test ./pkg/agentrun/...` passes.
 - **S02** ✅ `TestFullStateRoundTrip` proves WriteState→ReadState round-trip with full SessionState including ConfigOption Select variant + AvailableCommandInput Unstructured. EventCounts and UpdatedAt survive round-trip. `TestStateRoundTripNilSession` and `TestStateRoundTripEmptyEventCounts` pass.
 - **S03** ✅ `TestKill_PreservesSession` proves Kill() → status==stopped AND Session still present. `TestProcessExit_PreservesSession` proves external SIGKILL preserves Session. `TestWriteState_SetsUpdatedAt` proves non-empty valid RFC3339Nano on every write with monotonic increase.
 - **S04** ✅ `TestEventCounts_PromptTurn` exercises a full turn and verifies per-type counts (text, tool_call, turn_start, turn_end, user_message, state_change). `TestEventCounts_FailClosedOnAppendFailure` proves counts stay at 0 on failed append.
 - **S05** ✅ `TestCreate_PopulatesSession` proves state.json.session.agentInfo.name=="mockagent", capabilities.loadSession==true from mock InitializeResponse. `TestNotifyStateChange_WithSessionChanged` proves bootstrap-metadata event with sessionChanged:["agentInfo","capabilities"] appears in event log.
 - **S06** ✅ `TestMetadataHookChain_ConfigOption` proves full chain: ConfigOptionUpdate → state.json.session.configOptions updated → state_change with reason:config-updated and sessionChanged:["configOptions"]. `TestUpdateSessionMetadata_PreservedByKill` proves Kill() preserves configOptions.
-- **S07** ✅ `TestStatus_EventCountsOverlay` proves Status() returns Translator's real-time EventCounts, not stale state.json values. `make build` + `go test ./pkg/shim/... ./pkg/runtime-spec/...` all pass.
+- **S07** ✅ `TestStatus_EventCountsOverlay` proves Status() returns Translator's real-time EventCounts, not stale state.json values. `make build` + `go test ./pkg/agentrun/... ./pkg/runtime-spec/...` all pass.
 
 ## Definition of Done Results
 
@@ -73,9 +73,9 @@ The roadmap defined success criteria per-slice via "After this" acceptance tests
 - ✅ All 12 tasks complete (S01:1, S02:2, S03:2, S04:1, S05:2, S06:2, S07:2)
 - ✅ All slice summaries exist on disk (S01–S07 all have S##-SUMMARY.md)
 - ✅ `make build` succeeds — agentd + agentdctl compile cleanly
-- ✅ `go test ./pkg/shim/... ./pkg/runtime-spec/...` — all tests pass (0 failures)
+- ✅ `go test ./pkg/agentrun/... ./pkg/runtime-spec/...` — all tests pass (0 failures)
 - ✅ Cross-slice integration verified: S03's closure pattern proven to preserve S05/S06 session writes through Kill/exit; S04's EventCounts flushed via S06's SetEventCountsFn; S07's overlay reads S04's in-memory counts correctly
-- ✅ Design docs updated (runtime-spec.md, shim-rpc-spec.md) to reflect enriched schema
+- ✅ Design docs updated (runtime-spec.md, run-rpc-spec.md) to reflect enriched schema
 
 ## Requirement Outcomes
 

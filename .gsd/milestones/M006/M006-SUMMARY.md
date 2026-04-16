@@ -54,7 +54,7 @@ M006 was a systematic lint-cleanup milestone targeting the full golangci-lint v2
 
 **S02 — unconvert + copyloopvar + ineffassign (24 issues, mostly manual):** A key discovery: `golangci-lint --fix` did not auto-apply unconvert or ineffassign fixes as assumed. All 22 unconvert occurrences (redundant `int64()` and `json.RawMessage()` casts) were removed manually via targeted perl substitutions. The `--fix` run also triggered gocritic rewrites that introduced 5 compilation errors by adding `errors.As()` rewrites without adding the `"errors"` import — all repaired immediately.
 
-**S03 — misspell + unparam (17 issues):** The unparam linter reported one unused parameter per function per pass — both `ctx context.Context` and `rc *RuntimeClass` in `forkShim` were unused and removed in sequence once the masking was discovered.
+**S03 — misspell + unparam (17 issues):** The unparam linter reported one unused parameter per function per pass — both `ctx context.Context` and `rc *RuntimeClass` in `forkRun` were unused and removed in sequence once the masking was discovered.
 
 **S04 — unused dead code (12 issues):** Clean no-op. All 12 targeted symbols (mutex field, 10 session handler methods, test helper) were already absent — removed by M005's session→agent migration. Zero edits needed.
 
@@ -111,7 +111,7 @@ The milestone provides a clean lint baseline for future milestones: any new code
 
 ## Deviations
 
-S01: Formatter touched 67 files vs ~20 in the plan — expected, correct repo-wide scope. S02: `--fix` did not auto-apply unconvert/ineffassign; all required manual edits. `--fix` also introduced 5 compilation errors via gocritic rewrites (missing imports) that needed repair. S03: unparam reported two unused parameters in forkShim (ctx, rc) vs one in the plan — the second was masked. S04: All 12 symbols already absent — clean no-op, zero file edits. S05: All 17 errorlint issues already absent — clean no-op, zero file edits. S06: filepathJoin fix used os.TempDir() instead of three-arg split (which gocritic still flags). S07: Fixed one collateral gci finding in pkg/runtime/terminal.go that was outside the testifylint task scope but required for 0-issues goal.
+S01: Formatter touched 67 files vs ~20 in the plan — expected, correct repo-wide scope. S02: `--fix` did not auto-apply unconvert/ineffassign; all required manual edits. `--fix` also introduced 5 compilation errors via gocritic rewrites (missing imports) that needed repair. S03: unparam reported two unused parameters in forkRun (ctx, rc) vs one in the plan — the second was masked. S04: All 12 symbols already absent — clean no-op, zero file edits. S05: All 17 errorlint issues already absent — clean no-op, zero file edits. S06: filepathJoin fix used os.TempDir() instead of three-arg split (which gocritic still flags). S07: Fixed one collateral gci finding in pkg/runtime/terminal.go that was outside the testifylint task scope but required for 0-issues goal.
 
 ## Follow-ups
 

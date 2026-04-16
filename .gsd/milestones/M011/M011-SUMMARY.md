@@ -15,7 +15,7 @@ key_files:
   - pkg/events/translate_rich_test.go
   - pkg/events/wire_shape_test.go
   - docs/design/runtime/runtime-spec.md
-  - docs/design/runtime/shim-rpc-spec.md
+  - docs/design/runtime/run-rpc-spec.md
 lessons_learned:
   - ACP SDK codegen for ContentBlock union deliberately creates a selective nm map that strips _meta and annotations — inspect MarshalJSON implementations before assuming struct tags drive wire shape
   - Test matrix items in plan docs translate directly to isolated test functions; naming them T01-style makes coverage auditing simple

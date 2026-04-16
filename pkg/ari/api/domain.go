@@ -70,7 +70,7 @@ type AgentSpec struct {
 	Env []apiruntime.EnvVar `json:"env,omitempty"`
 
 	// StartupTimeoutSeconds is the maximum time (in seconds) to wait for the
-	// agent shim to reach idle state. Nil means use the daemon default.
+	// agent-run to reach idle state. Nil means use the daemon default.
 	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
 }
 
@@ -130,7 +130,7 @@ type AgentRunSpec struct {
 }
 
 // AgentRunStatus holds the observed runtime state of an agent run.
-// Internal fields (shim socket, state dir, PID, bootstrap config) must be
+// Internal fields (run socket, state dir, PID, bootstrap config) must be
 // persisted in the store (json tags present) but stripped via ARIView()
 // before sending over the wire.
 type AgentRunStatus struct {
@@ -140,24 +140,24 @@ type AgentRunStatus struct {
 	// ErrorMessage is a non-empty error description when State is apiruntime.StatusError.
 	ErrorMessage string `json:"errorMessage,omitempty"`
 
-	// Shim holds the runtime state of the shim process.
-	// Populated in Get responses when the shim is running; nil otherwise.
+	// Run holds the runtime state of the agent-run process.
+	// Populated in Get responses when the agent-run is running; nil otherwise.
 	// Contains SocketPath so callers no longer need agentrun/attach.
-	Shim *ShimStateInfo `json:"shim,omitempty"`
+	Run *RunStateInfo `json:"run,omitempty"`
 
-	// ShimSocketPath is the Unix socket path for the shim's RPC endpoint.
+	// RunSocketPath is the Unix socket path for the agent-run's RPC endpoint.
 	// Persisted in store; stripped by ARIView().
-	ShimSocketPath string `json:"shimSocketPath,omitempty"`
+	RunSocketPath string `json:"runSocketPath,omitempty"`
 
-	// ShimStateDir is the absolute path to the shim's state directory.
+	// RunStateDir is the absolute path to the agent-run's state directory.
 	// Persisted in store; stripped by ARIView().
-	ShimStateDir string `json:"shimStateDir,omitempty"`
+	RunStateDir string `json:"runStateDir,omitempty"`
 
-	// ShimPID is the OS process ID of the shim process.
+	// RunPID is the OS process ID of the agent-run process.
 	// Persisted in store; stripped by ARIView().
-	ShimPID int `json:"shimPid,omitempty"`
+	RunPID int `json:"runPid,omitempty"`
 
-	// BootstrapConfig is the JSON-serialized config used to start this agent's shim.
+	// BootstrapConfig is the JSON-serialized config used to start this agent run.
 	// Persisted in store; stripped by ARIView().
 	BootstrapConfig json.RawMessage `json:"bootstrapConfig,omitempty"`
 }
@@ -267,9 +267,9 @@ type WorkspaceFilter struct {
 
 // ARIView returns an AgentRun with internal-only fields zeroed for wire transmission.
 func (a AgentRun) ARIView() AgentRun {
-	a.Status.ShimSocketPath = ""
-	a.Status.ShimStateDir = ""
-	a.Status.ShimPID = 0
+	a.Status.RunSocketPath = ""
+	a.Status.RunStateDir = ""
+	a.Status.RunPID = 0
 	a.Status.BootstrapConfig = nil
 	return a
 }

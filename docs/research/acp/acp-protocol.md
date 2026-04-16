@@ -446,7 +446,7 @@ read | edit | delete | move | search | execute | think | fetch | other
 
 ### MASS 中的 ACP 使用现状
 
-MASS v2 架构中，agent-shim 作为 ACP Client 与 Agent 进程通过 stdio JSON-RPC 通信。这与 Agent Client Protocol 的传输方式一致（stdio + JSON-RPC 2.0），但消息格式和语义有差异。
+MASS v2 架构中，agent-run 作为 ACP Client 与 Agent 进程通过 stdio JSON-RPC 通信。这与 Agent Client Protocol 的传输方式一致（stdio + JSON-RPC 2.0），但消息格式和语义有差异。
 
 ### 对照分析
 
@@ -458,7 +458,7 @@ MASS v2 架构中，agent-shim 作为 ACP Client 与 Agent 进程通过 stdio JS
 | 文件操作 | `fs/read_text_file`, `fs/write_text_file` | `fs/read_text_file`, `fs/write_text_file` (一致) |
 | 终端操作 | `terminal/execute` | `terminal/create`, `terminal/output`, `terminal/kill` 等 (更细粒度) |
 | 取消 | `session/cancel` | `session/cancel` (一致) |
-| 权限 | agent-shim 策略 (approve-all/reads/deny-all) | `session/request_permission` (更细粒度，per-operation) |
+| 权限 | agent-run 策略 (approve-all/reads/deny-all) | `session/request_permission` (更细粒度，per-operation) |
 | 能力协商 | 无明确机制 | `initialize` 阶段双向能力交换 |
 | MCP 集成 | `session/new` 传 mcpServers | `session/new` 传 mcpServers (一致) |
 | 流式事件 | `session/update` | `session/update` 含多种事件类型 (message_chunk, tool_call, plan...) |

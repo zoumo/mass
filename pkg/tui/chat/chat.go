@@ -1,5 +1,5 @@
 // Package chat provides an interactive chat TUI that communicates with
-// a running agent-shim over its Unix socket JSON-RPC interface.
+// a running agent-run over its Unix socket JSON-RPC interface.
 package chat
 
 import (
@@ -14,8 +14,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	shimapi "github.com/zoumo/mass/pkg/shim/api"
-	shimclient "github.com/zoumo/mass/pkg/shim/client"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 	"github.com/zoumo/mass/pkg/tui/component"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/anim"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
@@ -24,12 +24,12 @@ import (
 // ── Tea messages ──────────────────────────────────────────────────────────────
 
 type (
-	notifMsg      struct{ ev shimapi.AgentRunEvent }
+	notifMsg      struct{ ev runapi.AgentRunEvent }
 	turnEndMsg    struct{}
 	connClosedMsg struct{}
 	connReadyMsg struct {
-		sc      *shimclient.ShimClient
-		watcher *shimclient.Watcher
+		sc      *runclient.Client
+		watcher *runclient.Watcher
 	}
 )
 
@@ -54,7 +54,7 @@ func safeCmd(cmd tea.Cmd) tea.Cmd {
 	}
 }
 
-// stateChangeMsg is sent when the shim reports a runtime_update event with Status.
+// stateChangeMsg is sent when the agent-run reports a runtime_update event with Status.
 type stateChangeMsg struct {
 	previous string
 	status   string
@@ -80,8 +80,8 @@ type chatModel struct {
 	sty     styles.Styles
 
 	sock    string
-	client  *shimclient.ShimClient
-	watcher *shimclient.Watcher
+	client  *runclient.Client
+	watcher *runclient.Watcher
 
 	// Streaming state.
 	currentMsg   *StreamingMessage // mutable message being streamed
@@ -144,7 +144,7 @@ func (m chatModel) Init() tea.Cmd {
 func connectCmd(sock string) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		ctx := context.Background()
-		sc, err := shimclient.Dial(ctx, sock)
+		sc, err := runclient.Dial(ctx, sock)
 		if err != nil {
 			return connErrMsg{fmt.Errorf("connect: %w", err)}
 		}
@@ -167,7 +167,7 @@ func connectCmd(sock string) tea.Cmd {
 // Bubbletea notification chain — see CLAUDE.md "waitNotif 必须内部循环").
 // When ResultChan closes (connection lost, slow consumer eviction, or explicit
 // Stop()), connClosedMsg is returned.
-func waitNotif(w *shimclient.Watcher) tea.Cmd {
+func waitNotif(w *runclient.Watcher) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		for {
 			ev, ok := <-w.ResultChan()
@@ -175,12 +175,12 @@ func waitNotif(w *shimclient.Watcher) tea.Cmd {
 				return connClosedMsg{}
 			}
 			// turn_end → dedicated message so Update can finalize the assistant.
-			if ev.Type == shimapi.EventTypeTurnEnd {
+			if ev.Type == runapi.EventTypeTurnEnd {
 				return turnEndMsg{}
 			}
 			// runtime_update with Status → dedicated message for status bar updates.
-			if ev.Type == shimapi.EventTypeRuntimeUpdate {
-				if ru, ok := ev.Payload.(shimapi.RuntimeUpdateEvent); ok && ru.Status != nil {
+			if ev.Type == runapi.EventTypeRuntimeUpdate {
+				if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok && ru.Status != nil {
 					return stateChangeMsg{
 						previous: ru.Status.PreviousStatus,
 						status:   ru.Status.Status,
@@ -193,32 +193,34 @@ func waitNotif(w *shimclient.Watcher) tea.Cmd {
 	})
 }
 
-// watchDisconnect returns a tea.Cmd that blocks until the shim connection
+// watchDisconnect returns a tea.Cmd that blocks until the agent-run connection
 // drops, then emits connClosedMsg.
-func watchDisconnect(sc *shimclient.ShimClient) tea.Cmd {
+func watchDisconnect(sc *runclient.Client) tea.Cmd {
 	return func() tea.Msg {
 		<-sc.DisconnectNotify()
 		return connClosedMsg{}
 	}
 }
 
-func sendPromptCmd(sc *shimclient.ShimClient, text string) tea.Cmd {
+func sendPromptCmd(sc *runclient.Client, text string) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		if err := sc.SendPrompt(context.Background(), &shimapi.SessionPromptParams{Prompt: text}); err != nil {
+		if err := sc.SendPrompt(context.Background(), &runapi.SessionPromptParams{
+			Prompt: []runapi.ContentBlock{runapi.TextBlock(text)},
+		}); err != nil {
 			return promptErrMsg{err}
 		}
 		return nil
 	})
 }
 
-func cancelPromptCmd(sc *shimclient.ShimClient) tea.Cmd {
+func cancelPromptCmd(sc *runclient.Client) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		_ = sc.Cancel(context.Background())
 		return nil
 	})
 }
 
-func fetchStatusCmd(sc *shimclient.ShimClient) tea.Cmd {
+func fetchStatusCmd(sc *runclient.Client) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		result, err := sc.Status(context.Background())
 		if err != nil {
@@ -493,7 +495,7 @@ func (m *chatModel) updateCurrentAssistant() {
 }
 
 // ensureCurrentMsg creates an assistant message if we don't have one yet.
-// This happens when we connect to a shim mid-turn (late join).
+// This happens when we connect to an agent-run mid-turn (late join).
 func (m *chatModel) ensureCurrentMsg() tea.Cmd {
 	if m.currentMsg != nil {
 		return nil
@@ -510,25 +512,25 @@ func (m *chatModel) ensureCurrentMsg() tea.Cmd {
 }
 
 // contentBlockText extracts the text string from a ContentBlock for display.
-func contentBlockText(cb shimapi.ContentBlock) string {
+func contentBlockText(cb runapi.ContentBlock) string {
 	if cb.Text != nil {
 		return cb.Text.Text
 	}
 	return ""
 }
 
-func (m *chatModel) handleNotif(ev shimapi.AgentRunEvent) tea.Cmd {
+func (m *chatModel) handleNotif(ev runapi.AgentRunEvent) tea.Cmd {
 	// runtime_update events are handled by waitNotif; skip here.
-	if ev.Type == shimapi.EventTypeRuntimeUpdate {
+	if ev.Type == runapi.EventTypeRuntimeUpdate {
 		return nil
 	}
 
 	var cmds []tea.Cmd
 
 	switch pl := ev.Payload.(type) {
-	case shimapi.ContentEvent:
+	case runapi.ContentEvent:
 		switch ev.Type {
-		case shimapi.EventTypeUserMessage:
+		case runapi.EventTypeUserMessage:
 			// User prompt broadcast. Skip if we sent this prompt (already shown).
 			if m.sentPrompt {
 				m.sentPrompt = false
@@ -539,14 +541,14 @@ func (m *chatModel) handleNotif(ev shimapi.AgentRunEvent) tea.Cmd {
 				m.chat.AppendMessages(component.NewUserMessageItem(&m.sty, userMsg))
 			}
 
-		case shimapi.EventTypeAgentMessage:
+		case runapi.EventTypeAgentMessage:
 			if cmd := m.ensureCurrentMsg(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			m.currentMsg.AppendText(contentBlockText(pl.Content))
 			m.updateCurrentAssistant()
 
-		case shimapi.EventTypeAgentThinking:
+		case runapi.EventTypeAgentThinking:
 			if cmd := m.ensureCurrentMsg(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
@@ -554,7 +556,7 @@ func (m *chatModel) handleNotif(ev shimapi.AgentRunEvent) tea.Cmd {
 			m.updateCurrentAssistant()
 		}
 
-	case shimapi.ToolCallEvent:
+	case runapi.ToolCallEvent:
 		// Finish current assistant text before tool.
 		if m.currentMsg != nil {
 			m.currentMsg.Finish(component.FinishReasonToolUse)
@@ -602,7 +604,7 @@ func (m *chatModel) handleNotif(ev shimapi.AgentRunEvent) tea.Cmd {
 			}
 		}
 
-	case shimapi.ToolResultEvent:
+	case runapi.ToolResultEvent:
 		// Find the matching tool call item and merge updates.
 		// ACP sends multiple tool_result events per tool (metadata, intermediate,
 		// completed). Only update fields when the new event carries actual data
@@ -653,7 +655,7 @@ func (m *chatModel) handleNotif(ev shimapi.AgentRunEvent) tea.Cmd {
 			m.chat.ScrollToBottom()
 		}
 
-	case shimapi.PlanEvent:
+	case runapi.PlanEvent:
 		if len(pl.Entries) > 0 {
 			chatEntries := make([]component.PlanEntry, len(pl.Entries))
 			for i, e := range pl.Entries {
@@ -752,7 +754,7 @@ func (m chatModel) renderHelp() string {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-// RunChatTUI launches the interactive chat TUI connected to the given shim socket.
+// RunChatTUI launches the interactive chat TUI connected to the given agent-run socket.
 func RunChatTUI(sock string) error {
 	p := tea.NewProgram(newChatModel(sock))
 	_, err := p.Run()

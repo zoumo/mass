@@ -17,8 +17,6 @@ coverage/
 # ── Generated slides ──
 docs/design_slides/
 
-.gsd/mcp.json
-.gsd/CODEBASE.md
 # ── GSD runtime state (auto-generated) ──
 .gsd/auto.lock
 .gsd/completed-units.json
@@ -44,6 +42,8 @@ docs/design_slides/
 .gsd/milestones/**/*-PRE-EXEC-VERIFY.json
 .gsd/milestones/**/anchors/
 .gsd-id
+.gsd/mcp.json
+.gsd/CODEBASE.md
 
 # ── Tool output ──
 graphify-out/

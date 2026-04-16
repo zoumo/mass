@@ -9,11 +9,11 @@ MASS is a daemon-based runtime for managing AI agents on a single host. The core
 
 ### Key design axioms (post-M014)
 - **api/ subdirectories contain only pure types** (struct/const/enum). Interfaces and functions live in `server/` or `client/` packages.
-- **Shim is the sole post-bootstrap state write authority.** After bootstrap, agentd never writes `idle/running/stopped/error` directly — all transitions flow through `runtime/stateChange` shim notifications.
+- **Shim is the sole post-bootstrap state write authority.** After bootstrap, agentd never writes `idle/running/stopped/error` directly — all transitions flow through `runtime/event_update` shim notifications.
 - **Restart truthfulness.** Persisted bbolt metadata + live shim reconnection provides restart recovery. In-memory refcounts are rebuilt from DB; volatile in-memory state is never used as the cleanup safety gate.
 - **Fail-closed recovery posture.** `session/prompt` and `session/cancel` are blocked during the recovery window; reads and stops are always available.
 - **state.json is a reliable session capability snapshot.** `agentInfo`, `capabilities`, `availableCommands`, `configOptions`, `sessionInfo`, `currentMode` are populated from ACP notifications; `eventCounts` tracks all event types; `updatedAt` is stamped on every write. `writeState` uses read-modify-write closures so Kill/exit never clobbers session metadata.
-- **Metadata changes emit state_change events.** Each metadata-only change (config_option, available_commands, session_info, current_mode) emits exactly one `state_change` event with a `sessionChanged` field. `updatedAt` and `eventCounts` are derived fields that never independently trigger events.
+- **Metadata changes emit runtime_update events.** Each metadata-only change (config_option, available_commands, session_info, current_mode) emits exactly one `runtime_update` event with a `sessionChanged` field. `updatedAt` and `eventCounts` are derived fields that never independently trigger events.
 
 ---
 
@@ -26,7 +26,7 @@ MASS is a daemon-based runtime for managing AI agents on a single host. The core
 └────────────────────────────┬────────────────────────────────────────┘
                              │
 ┌────────────────────────────▼────────────────────────────────────────┐
-│ agentd  (cmd/agentd)                                                │
+│ agentd  (cmd/mass)                                                  │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │ pkg/ari/server/  — ARI service (WorkspaceService,            │   │
@@ -47,7 +47,7 @@ MASS is a daemon-based runtime for managing AI agents on a single host. The core
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │ pkg/meta/        — bbolt store, Agent, Workspace, Runtime    │   │
+│  │ pkg/agentd/store/ — bbolt store, Agent, Workspace, Runtime   │   │
 │  │                    CRUD; composite key (workspace/name)      │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                     │
@@ -58,15 +58,13 @@ MASS is a daemon-based runtime for managing AI agents on a single host. The core
 └────────────────────────────┬────────────────────────────────────────┘
                              │  Unix socket per session
                    ┌─────────▼──────────┐
-                   │  agent-shim        │  (self-fork of agentd binary)
-                   │  pkg/shim/         │
-                   │   server/  — ShimService impl, Translator,     │
+                   │  agent-run         │  (self-fork of mass binary)
+                   │  pkg/agentrun/     │
+                   │   server/  — service impl, Translator,         │
                    │              EventLog, session metadata hooks   │
-                   │   client/  — Dial, ShimClient typed wrapper    │
+                   │   client/  — Dial, typed client wrapper        │
                    │   api/     — wire types, methods, event types  │
                    │   runtime/ — ACP runtime (acp/ subpackage)     │
-                   │              Manager with writeState closure,  │
-                   │              UpdateSessionMetadata, EventCounts │
                    └─────────┬──────────┘
                              │  ACP JSON-RPC
                    ┌─────────▼──────────┐
@@ -82,16 +80,15 @@ MASS is a daemon-based runtime for managing AI agents on a single host. The core
 |---------|------|
 | `pkg/runtime-spec/api/` | Pure types: `Status`, `EnvVar`, runtime config/state, `SessionState` + all session metadata sub-types (`AgentInfo`, `AgentCapabilities`, `AvailableCommand`, `ConfigOption`, etc.) |
 | `pkg/workspace/` | Workspace provisioning: Git/EmptyDir/Local, hooks, ref-counting |
-| `pkg/ndjson/` | NDJSON streaming (shared, not shim-specific) |
-| `pkg/spec/` | Build-tag socket path limits, runtime spec helpers |
+| `pkg/jsonrpc/ndjson/` | NDJSON streaming (shared) |
 | `cmd/massctl/` | Management CLI (cobra, resource-first grammar) |
 
 ### Binaries produced
 
 | Binary | Purpose |
 |--------|---------|
-| `bin/mass` | Main daemon + `mass shim` self-fork entrypoint + `mass workspace-mcp` |
-| `bin/massctl` | Management CLI (workspace, agent, agentrun, runtime, shim subcommands) |
+| `bin/mass` | Main daemon + `mass run` self-fork entrypoint + `mass workspace-mcp` |
+| `bin/massctl` | Management CLI (workspace, agent, agentrun, compose, daemon subcommands) |
 
 ---
 
@@ -105,7 +102,7 @@ orchestrator → agentrun/create
   goroutine: allocate session, generate config.json, fork shim
              wait for shim Unix socket
              connect ShimClient, subscribe events
-             shim bootstraps ACP → stateChange(idle)
+             shim bootstraps ACP → runtime_update(idle)
              agentd DB update: status=idle
 orchestrator → agentrun/status (poll until idle or error)
 ```
@@ -119,7 +116,7 @@ orchestrator → agentrun/prompt
           shim → ACP agent process
           ACP events → Translator → Envelope (seq, turnId, streamSeq)
           live subscribers receive agent/update events
-          stateChange(running→idle) on completion
+          runtime_update(running→idle) on completion
   → returns stopReason
 ```
 
@@ -137,7 +134,7 @@ agentd start → RecoverSessions()
 
 ### Event ordering
 
-Events carry `seq` (global monotonic dedup key), `turnId` (assigned at `turn_start`, cleared at `turn_end`), and `streamSeq` (resets 0 per turn). `runtime/stateChange` events are seq-only (not turn-ordered). Replay uses `(turnId, streamSeq)` within a turn, `seq` across turns.
+Events carry `seq` (global monotonic dedup key), `turnId` (assigned at `turn_start`, cleared at `turn_end`), and `streamSeq` (resets 0 per turn). `runtime/event_update` events are seq-only (not turn-ordered). Replay uses `(turnId, streamSeq)` within a turn, `seq` across turns.
 
 ### Session metadata pipeline (post-M014)
 
@@ -153,7 +150,7 @@ ACP agent → SessionNotification (config_option, available_commands, etc.)
     → Manager.UpdateSessionMetadata(changed, reason, apply)
       → read-modify-write state.json under Manager.mu
       → flush EventCounts
-      → emit state_change with sessionChanged field
+      → emit runtime_update with sessionChanged field
 runtime/status → Status()
   → read state.json from disk
   → overlay real-time EventCounts from Translator memory
@@ -165,17 +162,17 @@ runtime/status → Status()
 ## Key Constraints
 
 1. **Unix socket path limit**: 104 bytes (macOS) / 108 bytes (Linux). Socket path overflow is validated at `agentrun/create` entry with JSON-RPC -32602 before any DB write.
-2. **Shim self-fork**: `mass shim` is the shim entrypoint — `os.Executable()` self-fork with `MASS_SHIM_BINARY` env override for tests.
+2. **Agent-run self-fork**: `mass run` is the agent-run entrypoint — `os.Executable()` self-fork with `MASS_SHIM_BINARY` env override for tests.
 3. **ON DELETE SET NULL**: `sessions.agent_id` FK uses `ON DELETE SET NULL` — session lookup must happen _before_ agent deletion, not after.
 4. **Workspace ref_count safety**: `workspace/cleanup` gates on persisted DB `ref_count`, never on volatile in-memory `RefCount`. Recovery guard blocks cleanup during active recovery.
 5. **Mutex + file I/O in recovery only**: `Translator.SubscribeFromSeq` holds mutex during log read + subscription registration. This is acceptable at startup/recovery (shim idle) but must not be used in hot paths.
 6. **Damaged-tail tolerance**: `ReadEventLog` uses two-pass line classification — corrupt-at-tail (crash mode) is skipped; mid-file corruption errors.
 7. **JSON omitempty + zero int**: `StreamSeq` is `*int` (pointer), not `int` — `int(0)` with `omitempty` is silently dropped; `*int(0)` is preserved.
 8. **api/ subdirectory rule**: `api/` packages contain only `struct`, `const`, `enum`. No interfaces, no functions — those go to `server/` or `client/`.
-9. **runtime-spec/api independence**: `pkg/runtime-spec/api` must NOT import `pkg/shim/api`. Union types are copied with `state:` error prefixes, not shared.
+9. **runtime-spec/api independence**: `pkg/runtime-spec/api` must NOT import `pkg/agentrun/api`. Union types are copied with `state:` error prefixes, not shared.
 10. **writeState closure invariant**: All state.json mutations go through `func(*apiruntime.State)` closures — never construct State literals directly. `UpdatedAt` and `EventCounts` are derived fields stamped after the closure runs.
 11. **Lock order for metadata pipeline**: `Translator.mu → release → Manager.mu → release → Translator.mu` (via NotifyStateChange). No nested lock acquisition.
-12. **EventCounts recursion guard**: `updatedAt` and `eventCounts` never appear in `sessionChanged` and never cause independent `state_change` emission (avoids infinite recursion).
+12. **EventCounts recursion guard**: `updatedAt` and `eventCounts` never appear in `sessionChanged` and never cause independent `runtime_update` emission (avoids infinite recursion).
 
 ---
 
@@ -190,48 +187,49 @@ runtime/status → Status()
 | Shim ↔ agentd | Custom JSON-RPC 2.0 over Unix socket (`session/*`, `runtime/*` methods) |
 | CLI | `spf13/cobra` (resource-first grammar) |
 | UUID generation | `github.com/google/uuid` (workspace IDs) |
-| Event log format | NDJSON (`pkg/ndjson/`, `pkg/shim/server/log.go`) |
+| Event log format | NDJSON (`pkg/jsonrpc/ndjson/`) |
 | Testing | Standard `go test`, mockagent binary (`internal/testutil/mockagent/`) |
 | Lint | `golangci-lint v2` (0 issues enforced) |
 | Build | `make build` → `bin/mass` + `bin/massctl` |
 
 ---
 
-## Package Layout (post-M014)
+## Package Layout
 
 ```
 pkg/
   jsonrpc/          transport-agnostic JSON-RPC 2.0 server + client
+    ndjson/         NDJSON streaming utility
   ari/
     api/            ARI wire types, domain models, method constants
     server/         ARI service interfaces, Registry, dispatch
     client/         typed ARIClient + simple Client
-  shim/
-    api/            shim wire types, service interface, client wrapper,
-                    method constants, event types + constants
-    server/         ShimService impl, Translator (eventCounts,
-                    sessionMetadataHook, maybeNotifyMetadata),
-                    EventLog + tests
-    client/         Dial + ShimClient typed wrapper
+  agentrun/
+    api/            wire types, method constants, event types + constants
+    server/         service impl, Translator, EventLog
+    client/         Dial, typed client wrapper, Watcher
     runtime/
-      acp/          ACP runtime Manager (writeState closure,
-                    UpdateSessionMetadata, SetEventCountsFn,
-                    convertInitializeToSession)
+      acp/          ACP runtime Manager
   runtime-spec/
     api/            Status, EnvVar, runtime config/state (pure types),
                     SessionState, AgentInfo, AgentCapabilities,
                     AvailableCommand, ConfigOption, SessionInfo
-  agentd/           ProcessManager, recovery, session lifecycle
+  agentd/           ProcessManager, recovery, bbolt metadata store
   workspace/        WorkspaceManager, Git/EmptyDir/Local handlers, hooks
-  meta/             bbolt store, Agent, Workspace, AgentRun, Runtime CRUD
-  spec/             socket path limits (build tags), spec helpers
-  ndjson/           NDJSON streaming utility
+  tui/              Terminal UI components
 cmd/
-  agentd/           main daemon + shim + workspace-mcp subcommands
-    subcommands/
-      shim/         command.go (bootstrap wiring, synthetic events),
-                    session_update.go (buildSessionUpdate, convert helpers)
-  massctl/        management CLI
+  mass/             main daemon + run + workspace-mcp subcommands
+    commands/
+      run/          agent-run bootstrap wiring
+      server/       daemon server
+      workspacemcp/ workspace MCP server
+  massctl/          management CLI
+    commands/
+      agentrun/     agentrun chat/debug
+      agent/        agent CRUD
+      workspace/    workspace management
+      compose/      multi-agent compose
+      daemon/       daemon control
 internal/
   testutil/mockagent/  mock ACP agent for integration tests
 ```

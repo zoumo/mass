@@ -4,27 +4,27 @@ title: "CLI Consolidation + API Model Rename"
 status: complete
 completed_at: 2026-04-10T18:24:25.704Z
 key_decisions:
-  - D103: Binary consolidation (5→2 binaries) — agentd cobra tree (server/shim/workspace-mcp) + agentdctl resource commands (agent/agentrun/workspace/shim); eliminates binary path resolution issues
+  - D103: Binary consolidation (5→2 binaries) — agentd cobra tree (server/shim/workspace-mcp) + agentdctl resource commands (agent/agentrun/workspace/agent-run); eliminates binary path resolution issues
   - D104: --root flag replaces config.yaml entirely; Options struct derives all 5 paths deterministically — matches containerd --root pattern
   - D105: meta.Runtime in v1/runtimes bbolt bucket with full ARI CRUD — dynamic runtime registration without daemon restart, persistent across restarts
-  - D106: Capabilities struct deleted — not used by current shim protocol layer; ACP-level negotiation handled at shim layer
+  - D106: Capabilities struct deleted — not used by current agent-run protocol layer; ACP-level negotiation handled at agent-run layer
   - D107: ProcessManager self-fork via os.Executable(); OAR_SHIM_BINARY env override retained for testing and custom deployments
-  - D108: RuntimeSpec.Env as []EnvVar (slice, ordered) throughout; conversion to key=value strings only at forkShim call site
+  - D108: RuntimeSpec.Env as []EnvVar (slice, ordered) throughout; conversion to key=value strings only at forkRun call site
   - D109: API model rename: agent=template definition (AgentTemplate CRUD), agentrun=running instance (lifecycle) — aligns with containerd Container/Task model
   - D110: Fresh-start bbolt bucket rename (v1/runtimes→v1/agents for templates, v1/agents→v1/agentruns for instances) — no migration script at current maturity
   - D111: Socket path overflow validated at agentrun/create entry with -32602; platform limits in build-tag files (darwin:104, linux:108)
   - Three-layer rename discipline (meta → ari types → ari server + CLI) must compile as a unit — never layer-by-layer (K074)
-  - cobra package main collision avoidance: wmcp prefix for workspace-mcp types, shim prefix for shim client types, local flag var scoping (K068)
+  - cobra package main collision avoidance: wmcp prefix for workspace-mcp types, shim prefix for agent-run client types, local flag var scoping (K068)
   - runtimeApplySpec local YAML struct keeps pkg/ari types free of yaml tags (K071)
   - ari.Client.Call wraps RPC errors as fmt.Errorf strings — use err.Error() contains check, not errors.As(*jsonrpc2.Error) (K073)
 key_files:
   - cmd/agentd/main.go
   - cmd/agentd/server.go
-  - cmd/agentd/shim.go
+  - cmd/agentd/agent-run.go
   - cmd/agentd/workspacemcp.go
   - cmd/agentdctl/agent_template.go
   - cmd/agentdctl/agent.go
-  - cmd/agentdctl/shim.go
+  - cmd/agentdctl/agent-run.go
   - cmd/agentdctl/workspace.go
   - cmd/agentdctl/main.go
   - Makefile
@@ -61,16 +61,16 @@ lessons_learned:
 M008 executed as four sequential slices, each building on the prior slice's foundation without pre-existing dependencies between slices.
 
 **S01 — Binary Skeleton Reorganization**
-Replaced the flat flag-based cmd/agentd/main.go with a proper cobra tree (server/shim/workspace-mcp subcommands). Inlined cmd/agent-shim/main.go as `agentd shim` (shim-prefixed types, locally scoped flags). Inlined cmd/workspace-mcp-server/main.go as `agentd workspace-mcp` (wmcp-prefixed types). Extended cmd/agentdctl with a full shim client (shimCmd with state/history/prompt/chat/stop) and 9-stub agentrun subcommands. Replaced the wildcard Makefile with explicit agentd+agentdctl targets. Result: clean cobra tree, go build ./... and go vet ./... both exit 0.
+Replaced the flat flag-based cmd/agentd/main.go with a proper cobra tree (server/shim/workspace-mcp subcommands). Inlined cmd/agent-run/main.go as `agentd shim` (shim-prefixed types, locally scoped flags). Inlined cmd/workspace-mcp-server/main.go as `agentd workspace-mcp` (wmcp-prefixed types). Extended cmd/agentdctl with a full shim client (shimCmd with state/history/prompt/chat/stop) and 9-stub agentrun subcommands. Replaced the wildcard Makefile with explicit agentd+agentdctl targets. Result: clean cobra tree, go build ./... and go vet ./... both exit 0.
 
 **S02 — --root Config + Runtime Entity + Self-Fork**
-Eliminated config.yaml entirely. Created pkg/agentd/options.go with Options{Root string} and five deterministic path helpers (SocketPath, WorkspaceRoot, BundleRoot, MetaDBPath) — the single source of truth for the agentd directory layout. Created pkg/meta/runtime.go with RuntimeSpec + Runtime entity and four CRUD methods. Deleted pkg/agentd/config.go (Config, ParseConfig, RuntimeClassRegistry, Capabilities — all gone). Wired ProcessManager to resolve runtimes from the meta.Store at process-start time. Switched forkShim from a binary-path resolver to os.Executable() self-fork with OAR_SHIM_BINARY env override. Added runtime/* ARI CRUD (set/get/list/delete) with agentdctl runtime subcommand. Rewrote all integration test fixtures to use --root + runtime/set pattern. Created TestRuntimeLifecycle acceptance test (passes in 1.4s).
+Eliminated config.yaml entirely. Created pkg/agentd/options.go with Options{Root string} and five deterministic path helpers (SocketPath, WorkspaceRoot, BundleRoot, MetaDBPath) — the single source of truth for the agentd directory layout. Created pkg/meta/runtime.go with RuntimeSpec + Runtime entity and four CRUD methods. Deleted pkg/agentd/config.go (Config, ParseConfig, RuntimeClassRegistry, Capabilities — all gone). Wired ProcessManager to resolve runtimes from the meta.Store at process-start time. Switched forkRun from a binary-path resolver to os.Executable() self-fork with OAR_SHIM_BINARY env override. Added runtime/* ARI CRUD (set/get/list/delete) with agentdctl runtime subcommand. Rewrote all integration test fixtures to use --root + runtime/set pattern. Created TestRuntimeLifecycle acceptance test (passes in 1.4s).
 
 **S03 — CLI Grammar Alignment + Socket Validation**
 Two targeted grammar fixes: (1) extracted agentrun prompt's anonymous inline cobra literal into a named promptCmd variable, added -w/--workspace and --text flags; (2) removed --type/--name flags from workspace create, added cobra.ExactArgs(2) with positional <type> <name> grammar. Extracted maxUnixSocketPath constant from pkg/spec/state.go into build-tag files (maxsockpath_darwin.go: 104, maxsockpath_linux.go: 108). Added ValidateAgentSocketPath side-effect-free method to ProcessManager. Wired early -32602 guard in handleAgentCreate before any DB write. TestAgentCreateSocketPathTooLong confirms guard fires on 70-char name with no DB record written.
 
 **S04 — Cleanup + API Rename (agent/agentrun) + Integration Tests**
-Three obsolete cmd directories deleted (agent-shim, agent-shim-cli, workspace-mcp-server). Three-layer simultaneous rename: meta DB layer (Runtime→AgentTemplate, Agent→AgentRun; bbolt buckets: v1/runtimes→v1/agents for templates, v1/agents→v1/agentruns for instances); ARI types.go (all 14 Runtime* types → AgentTemplate*, all 16 Agent* types → AgentRun*); ARI server dispatch (runtime/set|get|list|delete → agent/set|get|list|delete; agent/create|prompt|... → agentrun/create|prompt|...); CLI (runtime.go→agent_template.go with Use:"agent", agent.go rewritten as agentrunCmd with Use:"agentrun"). Deleted stub agentrun.go and old runtime.go. All 8 integration tests pass (22s). rg 'runtime/' pkg/ari/server.go returns zero non-comment dispatch matches.
+Three obsolete cmd directories deleted (agent-run, agent-run-cli, workspace-mcp-server). Three-layer simultaneous rename: meta DB layer (Runtime→AgentTemplate, Agent→AgentRun; bbolt buckets: v1/runtimes→v1/agents for templates, v1/agents→v1/agentruns for instances); ARI types.go (all 14 Runtime* types → AgentTemplate*, all 16 Agent* types → AgentRun*); ARI server dispatch (runtime/set|get|list|delete → agent/set|get|list|delete; agent/create|prompt|... → agentrun/create|prompt|...); CLI (runtime.go→agent_template.go with Use:"agent", agent.go rewritten as agentrunCmd with Use:"agentrun"). Deleted stub agentrun.go and old runtime.go. All 8 integration tests pass (22s). rg 'runtime/' pkg/ari/server.go returns zero non-comment dispatch matches.
 
 **Final state:** 37 files changed from the pre-M008 baseline (4dbb6e9). Two binaries produced by `make build`. All integration tests green. ARI surface: workspace/* + agent/* + agentrun/* only.
 
@@ -93,7 +93,7 @@ Three obsolete cmd directories deleted (agent-shim, agent-shim-cli, workspace-mc
 - ✅ agentrun/create with >90-char combined name returns -32602 with clear error (TestAgentCreateSocketPathTooLong: PASS)
 
 ## S04 Success Criteria
-- ✅ cmd/agent-shim/, cmd/agent-shim-cli/, cmd/workspace-mcp-server/ absent (confirmed: `ls cmd/` = agentd + agentdctl only)
+- ✅ cmd/agent-run/, cmd/agent-run-cli/, cmd/workspace-mcp-server/ absent (confirmed: `ls cmd/` = agentd + agentdctl only)
 - ✅ `go test ./tests/integration/...` passes without config.yaml (8/8 pass, 11.4s, no config.yaml in any fixture)
 - ✅ `rg 'runtime/' pkg/ari/` returns zero ARI dispatch matches (two remaining hits are a comment and a test mock, not ARI methods)
 - ✅ ARI surface is workspace/* + agent/* + agentrun/* (confirmed via grep of server.go case statements)
@@ -124,7 +124,7 @@ Three obsolete cmd directories deleted (agent-shim, agent-shim-cli, workspace-mc
 
 ## Deviations
 
-["S03 established -w/--workspace flag grammar for agentrun prompt; S04 replaced this stub with a real implementation using positional <workspace/name> grammar (slash-separated, kubectl-style) — this is a forward evolution, not a regression", "S02 slice acceptance criteria reference 'agentdctl runtime apply' — this command was renamed to 'agentdctl agent apply' in S04 as part of the API rename; behavior is identical", "rg 'runtime/' pkg/ari/ returns two non-zero matches: a comment in server.go ('Calls processes.Stop which sends runtime/stop to the shim') and a test mock handler in server_test.go ('case runtime/status') — both are shim-layer RPC references, not ARI dispatch methods; this satisfies the spirit of the zero-matches criterion"]
+["S03 established -w/--workspace flag grammar for agentrun prompt; S04 replaced this stub with a real implementation using positional <workspace/name> grammar (slash-separated, kubectl-style) — this is a forward evolution, not a regression", "S02 slice acceptance criteria reference 'agentdctl runtime apply' — this command was renamed to 'agentdctl agent apply' in S04 as part of the API rename; behavior is identical", "rg 'runtime/' pkg/ari/ returns two non-zero matches: a comment in server.go ('Calls processes.Stop which sends runtime/stop to the agent-run') and a test mock handler in server_test.go ('case runtime/status') — both are shim-layer RPC references, not ARI dispatch methods; this satisfies the spirit of the zero-matches criterion"]
 
 ## Follow-ups
 

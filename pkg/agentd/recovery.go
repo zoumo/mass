@@ -1,6 +1,6 @@
 // Package agentd implements the agent daemon that manages agent runtime lifecycle.
 // This file implements the RecoverAgents startup pass that reconnects to
-// live shims after a daemon restart.
+// live agent-runs after a daemon restart.
 package agentd
 
 import (
@@ -10,22 +10,22 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	apishim "github.com/zoumo/mass/pkg/shim/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	spec "github.com/zoumo/mass/pkg/runtime-spec"
-	shimclient "github.com/zoumo/mass/pkg/shim/client"
+	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 )
 
-// RecoverSessions runs at daemon startup and attempts to reconnect to shim
+// RecoverSessions runs at daemon startup and attempts to reconnect to agent-run
 // processes that survived a daemon restart. For each non-terminal agent in
 // the meta store it:
 //
-//  1. Reads the persisted shim_socket_path from the DB.
-//  2. Tries Dial to connect to the shim socket.
+//  1. Reads the persisted run_socket_path from the DB.
+//  2. Tries Dial to connect to the agent-run socket.
 //  3. On connect failure → marks the agent stopped (fail-closed per D012/D029).
 //  4. Calls runtime/status to get state + recovery.lastSeq.
 //  5. Calls runtime/watch_event(fromSeq=0) — atomic backfill + live subscription.
-//  6. Builds a ShimProcess struct and registers it in the processes map.
+//  6. Builds a RunProcess struct and registers it in the processes map.
 //  7. Starts a watchRecoveredProcess goroutine for the recovered agent.
 //
 // Returns nil on success (even if individual agents fail to recover).
@@ -47,7 +47,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 
 	var candidates []*pkgariapi.AgentRun
 	for _, a := range allAgents {
-		// Skip terminal states: stopped agents have no shim to recover,
+		// Skip terminal states: stopped agents have no agent-run to recover,
 		// and error agents require explicit restart per the agent lifecycle model.
 		if a.Status.State != apiruntime.StatusStopped && a.Status.State != apiruntime.StatusError {
 			candidates = append(candidates, a)
@@ -68,7 +68,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 		name := agent.Metadata.Name
 		key := agentKey(ws, name)
 
-		shimStatus, err := m.recoverAgent(ctx, agent)
+		runStatus, err := m.recoverAgent(ctx, agent)
 		if err != nil {
 			failed++
 			// Agents stuck in "creating" when the daemon restarted will never
@@ -76,7 +76,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			// rather than stopped. Non-creating agents are marked stopped
 			// (fail-closed posture per D012/D029).
 			if agent.Status.State == apiruntime.StatusCreating {
-				m.logger.Warn("recovery: creating agent has no live shim, marking error",
+				m.logger.Warn("recovery: creating agent has no live agent-run, marking error",
 					"agent_key", key, "error", err)
 				// Don't mark stopped here — the creating-cleanup pass handles this below.
 				// Skip the stopped transition so the creating-cleanup pass can apply
@@ -84,12 +84,12 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			} else {
 				m.logger.Warn("recovery: agent failed, marking stopped",
 					"agent_key", key,
-					"socket_path", agent.Status.ShimSocketPath,
+					"socket_path", agent.Status.RunSocketPath,
 					"error", err)
 				// Fail-closed: mark agent as stopped (D012/D029).
 				if tErr := m.agents.UpdateStatus(ctx, ws, name, pkgariapi.AgentRunStatus{
 					State:        apiruntime.StatusStopped,
-					ErrorMessage: fmt.Sprintf("shim not recovered after daemon restart: %v", err),
+					ErrorMessage: fmt.Sprintf("agent-run not recovered after daemon restart: %v", err),
 				}); tErr != nil {
 					m.logger.Error("recovery: failed to mark agent stopped",
 						"agent_key", key,
@@ -106,29 +106,29 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			})
 			m.logger.Info("recovery: agent recovered",
 				"agent_key", key,
-				"socket_path", agent.Status.ShimSocketPath)
+				"socket_path", agent.Status.RunSocketPath)
 			recoveredAgentIDs[key] = true
 
 			// recoverAgent already reconciles state internally (idle→running etc.).
 			// Only apply the outer reconciliation for states where recoverAgent
 			// confirmed a clear running/idle status that differs from the DB state.
-			// For mismatch cases (e.g., DB=creating, shim=running), recoverAgent
-			// logs a warning and returns the shim status without changing the DB —
+			// For mismatch cases (e.g., DB=creating, agent-run=running), recoverAgent
+			// logs a warning and returns the agent-run status without changing the DB —
 			// we preserve the DB state here to match that contract.
 			currentAgent, _ := m.store.GetAgentRun(ctx, ws, name)
 			currentState := agent.Status.State // initial state before recoverAgent
 			if currentAgent != nil {
 				currentState = currentAgent.Status.State
 			}
-			if currentState == apiruntime.StatusIdle && shimStatus == apiruntime.StatusRunning {
+			if currentState == apiruntime.StatusIdle && runStatus == apiruntime.StatusRunning {
 				// Already reconciled by recoverAgent; no additional update needed.
-			} else if currentState == apiruntime.StatusRunning && shimStatus == apiruntime.StatusIdle {
-				// Shim became idle during recovery — update to idle.
+			} else if currentState == apiruntime.StatusRunning && runStatus == apiruntime.StatusIdle {
+				// Agent-run became idle during recovery — update to idle.
 				if aErr := m.agents.UpdateStatus(ctx, ws, name, pkgariapi.AgentRunStatus{
 					State:          apiruntime.StatusIdle,
-					ShimSocketPath: agent.Status.ShimSocketPath,
-					ShimStateDir:   agent.Status.ShimStateDir,
-					ShimPID:        agent.Status.ShimPID,
+					RunSocketPath: agent.Status.RunSocketPath,
+					RunStateDir:   agent.Status.RunStateDir,
+					RunPID:        agent.Status.RunPID,
 				}); aErr != nil {
 					m.logger.Warn("recovery: failed to reconcile running→idle",
 						"agent_key", key, "error", aErr)
@@ -173,10 +173,10 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 	return nil
 }
 
-// recoverAgent attempts to reconnect to a single shim process.
-// Returns the shim's reported apiruntime.Status on success (apiruntime.StatusStopped on failure).
+// recoverAgent attempts to reconnect to a single agent-run process.
+// Returns the agent-run's reported apiruntime.Status on success (apiruntime.StatusStopped on failure).
 func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.AgentRun) (apiruntime.Status, error) {
-	if agent.Status.ShimSocketPath == "" {
+	if agent.Status.RunSocketPath == "" {
 		return apiruntime.StatusStopped, fmt.Errorf("no socket path persisted for agent %s/%s",
 			agent.Metadata.Workspace, agent.Metadata.Name)
 	}
@@ -186,27 +186,27 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	key := agentKey(ws, name)
 	logger := m.logger.With("agent_key", key)
 
-	// Create the ShimProcess struct up-front so the notification handler can
+	// Create the RunProcess struct up-front so the notification handler can
 	// route events into its Events channel.
-	shimProc := &ShimProcess{
+	runProc := &RunProcess{
 		AgentKey:   key,
-		PID:        agent.Status.ShimPID,
+		PID:        agent.Status.RunPID,
 		BundlePath: "", // not needed for recovered agents
-		StateDir:   agent.Status.ShimStateDir,
-		SocketPath: agent.Status.ShimSocketPath,
-		Events:     make(chan apishim.AgentRunEvent, 100),
+		StateDir:   agent.Status.RunStateDir,
+		SocketPath: agent.Status.RunSocketPath,
+		Events:     make(chan runapi.AgentRunEvent, 100),
 		Done:       make(chan struct{}),
 		stopDrain:  make(chan struct{}),
 		// Cmd is nil for recovered agents — we didn't fork the process.
 	}
-	go shimProc.drainEvents()
+	go runProc.drainEvents()
 
-	// Connect to the shim socket (plain Dial, event routing via Watcher).
-	client, err := shimclient.Dial(ctx, agent.Status.ShimSocketPath)
+	// Connect to the agent-run socket (plain Dial, event routing via Watcher).
+	client, err := runclient.Dial(ctx, agent.Status.RunSocketPath)
 	if err != nil {
-		return apiruntime.StatusStopped, fmt.Errorf("connect to shim socket %s: %w", agent.Status.ShimSocketPath, err)
+		return apiruntime.StatusStopped, fmt.Errorf("connect to agent-run socket %s: %w", agent.Status.RunSocketPath, err)
 	}
-	shimProc.Client = client
+	runProc.Client = client
 
 	// Call runtime/status to get state + recovery.lastSeq.
 	statusResult, err := client.Status(ctx)
@@ -215,7 +215,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 		return apiruntime.StatusStopped, fmt.Errorf("runtime/status: %w", err)
 	}
 	status := *statusResult
-	logger.Info("recovery: shim status",
+	logger.Info("recovery: agent-run status",
 		"status", status.State.Status,
 		"lastSeq", status.Recovery.LastSeq,
 		slog.Group("state",
@@ -223,34 +223,34 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 			"pid", status.State.PID,
 		))
 
-	// Reconcile shim-reported status against DB agent state.
+	// Reconcile agent-run-reported status against DB agent state.
 	switch {
 	case status.State.Status == apiruntime.StatusStopped:
-		// Shim reports stopped — fail-closed.
+		// Agent-run reports stopped — fail-closed.
 		_ = client.Close()
-		return apiruntime.StatusStopped, fmt.Errorf("shim reports stopped for agent %s", key)
+		return apiruntime.StatusStopped, fmt.Errorf("agent-run reports stopped for agent %s", key)
 
 	case status.State.Status == apiruntime.StatusRunning && agent.Status.State == apiruntime.StatusIdle:
-		// Shim is running but DB still says idle — update DB to match shim truth.
+		// Agent-run is running but DB still says idle — update DB to match agent-run truth.
 		if err := m.agents.UpdateStatus(ctx, ws, name, pkgariapi.AgentRunStatus{
 			State:          apiruntime.StatusRunning,
-			ShimSocketPath: agent.Status.ShimSocketPath,
-			ShimStateDir:   agent.Status.ShimStateDir,
-			ShimPID:        agent.Status.ShimPID,
+			RunSocketPath: agent.Status.RunSocketPath,
+			RunStateDir:   agent.Status.RunStateDir,
+			RunPID:        agent.Status.RunPID,
 		}); err != nil {
 			logger.Warn("recovery: failed to reconcile agent state idle→running (proceeding)",
 				"error", err)
 		} else {
-			logger.Info("recovery: reconciled agent state idle→running to match shim")
+			logger.Info("recovery: reconciled agent state idle→running to match agent-run")
 		}
 
 	default:
-		// For any other mismatch, log and proceed — the shim is alive.
-		shimStatus := string(status.State.Status)
+		// For any other mismatch, log and proceed — the agent-run is alive.
+		runStatus := string(status.State.Status)
 		dbState := string(agent.Status.State)
-		if shimStatus != dbState {
-			logger.Warn("recovery: shim status differs from DB state (proceeding)",
-				"shim_status", shimStatus,
+		if runStatus != dbState {
+			logger.Warn("recovery: agent-run status differs from DB state (proceeding)",
+				"run_status", runStatus,
 				"db_state", dbState)
 		}
 	}
@@ -258,27 +258,27 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	// Watch events with full replay (K8s List-Watch: fromSeq=0).
 	// WatchEvent returns a Watcher; events are consumed by startEventConsumer.
 	fromSeq := 0
-	watcher, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{FromSeq: &fromSeq})
+	watcher, err := client.WatchEvent(ctx, &runapi.SessionWatchEventParams{FromSeq: &fromSeq})
 	if err != nil {
 		_ = client.Close()
 		return apiruntime.StatusStopped, fmt.Errorf("session/watch_event fromSeq=%d: %w", fromSeq, err)
 	}
-	shimProc.Watcher = watcher
+	runProc.Watcher = watcher
 	logger.Info("recovery: watch_event with replay",
 		"next_seq", watcher.NextSeq())
 
 	// Start the event consumer goroutine (routes runtime_update/Status → DB, others → Events).
-	m.startEventConsumer(ws, name, shimProc)
+	m.startEventConsumer(ws, name, runProc)
 
 	// Apply RestartPolicy: try_reload attempts ACP session/load to restore
 	// conversation history. always_new (default) starts fresh.
 	if agent.Spec.RestartPolicy == pkgariapi.RestartPolicyTryReload {
-		sessionID, readErr := m.readStateSessionID(agent.Status.ShimStateDir)
+		sessionID, readErr := m.readStateSessionID(agent.Status.RunStateDir)
 		if readErr != nil {
 			logger.Info("try_reload: could not read sessionId from state file, skipping",
 				"error", readErr)
 		} else if sessionID != "" {
-			if loadErr := client.Load(ctx, &apishim.SessionLoadParams{SessionID: sessionID}); loadErr != nil {
+			if loadErr := client.Load(ctx, &runapi.SessionLoadParams{SessionID: sessionID}); loadErr != nil {
 				logger.Info("try_reload: session/load failed, continuing",
 					"session_id", sessionID, "error", loadErr)
 			} else {
@@ -291,18 +291,18 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 
 	// Register in processes map.
 	m.mu.Lock()
-	m.processes[key] = shimProc
+	m.processes[key] = runProc
 	m.mu.Unlock()
 
 	// Start watchRecoveredProcess goroutine.
-	go m.watchRecoveredProcess(ws, name, shimProc)
+	go m.watchRecoveredProcess(ws, name, runProc)
 
 	return status.State.Status, nil
 }
 
 // readStateSessionID reads the ACP session ID from the state.json in stateDir.
 // Returns ("", error) if the file is missing or unreadable, ("", nil) if the
-// file exists but ID is empty (e.g. shim wrote state before ACP handshake).
+// file exists but ID is empty (e.g. agent-run wrote state before ACP handshake).
 func (m *ProcessManager) readStateSessionID(stateDir string) (string, error) {
 	if stateDir == "" {
 		return "", fmt.Errorf("no state dir")
@@ -314,18 +314,18 @@ func (m *ProcessManager) readStateSessionID(stateDir string) (string, error) {
 	return state.ID, nil
 }
 
-// watchRecoveredProcess watches a recovered shim that we didn't fork.
+// watchRecoveredProcess watches a recovered agent-run that we didn't fork.
 // Since we don't have a Cmd to Wait() on, we use the client's DisconnectNotify
-// channel to detect when the shim connection is lost.
-func (m *ProcessManager) watchRecoveredProcess(workspace, name string, shimProc *ShimProcess) {
+// channel to detect when the agent-run connection is lost.
+func (m *ProcessManager) watchRecoveredProcess(workspace, name string, runProc *RunProcess) {
 	// Wait for connection loss.
-	<-shimProc.Client.DisconnectNotify()
+	<-runProc.Client.DisconnectNotify()
 
-	key := shimProc.AgentKey
-	m.logger.Info("recovered shim disconnected", "agent_key", key)
+	key := runProc.AgentKey
+	m.logger.Info("recovered agent-run disconnected", "agent_key", key)
 
 	// Close the Events channel.
-	close(shimProc.Events)
+	close(runProc.Events)
 
 	// Remove from processes map.
 	m.mu.Lock()
@@ -338,5 +338,5 @@ func (m *ProcessManager) watchRecoveredProcess(workspace, name string, shimProc 
 	_ = m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped})
 
 	// Close the Done channel LAST to signal all cleanup is complete.
-	close(shimProc.Done)
+	close(runProc.Done)
 }

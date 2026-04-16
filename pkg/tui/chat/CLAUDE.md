@@ -3,15 +3,15 @@
 ## 架构
 
 ```
-shim RPC client (chat.go)
+agent-run RPC client (chat.go)
     │
     ├── readLoop → c.notifs channel (所有通知)
     │
     ▼
 waitNotif (tea.Cmd)
     │
-    ├── session/update    → notifMsg     → handleNotif()
-    ├── runtime/state_change → stateChangeMsg → 更新状态栏
+    ├── runtime/event_update → notifMsg     → handleNotif()
+    ├── runtime_update (含 Status) → stateChangeMsg → 更新状态栏
     ├── turn_end event    → turnEndMsg
     └── channel closed    → connClosedMsg
     │
@@ -50,7 +50,7 @@ chat 可以随时连接到正在运行的 agent。这意味着：
 
 ## waitNotif 必须内部循环
 
-`waitNotif` 使用 `for` 循环处理无效消息（非 shim 通知、解析失败），**绝不能返回 nil**。
+`waitNotif` 使用 `for` 循环处理无效消息（非 agent-run 通知、解析失败），**绝不能返回 nil**。
 原因：返回 nil 的 tea.Cmd 不会触发 Bubbletea 的 Update，导致 waitNotif 不会被重新调度，
 **整个通知链永久断裂**。
 
@@ -59,14 +59,14 @@ chat 可以随时连接到正在运行的 agent。这意味着：
 for {
     msg, ok := <-ch
     if !ok { return connClosedMsg{} }
-    if msg.Method != shimapi.MethodShimEvent {
+    if msg.Method != runapi.MethodRuntimeEventUpdate {
         continue // 不返回 nil！
     }
     // ... process ...
 }
 
 // ✗ 错误：返回 nil 会断链
-if msg.Method != shimapi.MethodShimEvent {
+if msg.Method != runapi.MethodRuntimeEventUpdate {
     return nil // BUG: 链断了，后续所有事件丢失
 }
 ```
@@ -82,7 +82,7 @@ if msg.Method != shimapi.MethodShimEvent {
 
 状态来源：
 1. 连接时 `runtime/status` RPC 查询初始状态
-2. 之后通过 `runtime/state_change` 通知实时更新
+2. 之后通过 `runtime_update`（含 Status）通知实时更新
 
 ## 键盘操作
 

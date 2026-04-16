@@ -7,14 +7,14 @@ key_decisions:
   - D008/collaborative: Clean break to session/* + runtime/* — no legacy compatibility preserved
   - D009/collaborative: Retain SQLite metadata backend; defer BoltDB/abstraction to later milestone
   - D010/collaborative: Use gsd-pi and claude-code as required real ACP validation surfaces
-  - D012/collaborative: Recovery authority from live shim state reconciled with persisted SQLite metadata; fail-closed when uncertain
+  - D012/collaborative: Recovery authority from live agent-run state reconciled with persisted SQLite metadata; fail-closed when uncertain
   - D026/agent: events.Envelope with monotonic seq as single live+replay notification shape
   - D028-D033/agent: Schema v2 with discrete recovery columns + JSON blob for bootstrap_config; ALTER TABLE + isBenignSchemaError for idempotent migration
   - D034/agent: Recovered shims watched via DisconnectNotify, not Cmd.Wait
   - D035/agent: Bootstrap config persistence is non-fatal — session continues if persist fails
 key_files:
   - docs/design/contract-convergence.md — cross-doc authority map
-  - docs/design/runtime/shim-rpc-spec.md — authoritative clean-break shim protocol
+  - docs/design/runtime/run-rpc-spec.md — authoritative clean-break agent-run protocol
   - docs/design/runtime/runtime-spec.md — bootstrap-first runtime contract
   - scripts/verify-m002-s01-contract.sh — mechanical design proof surface
   - pkg/events/envelope.go — canonical Envelope type for live+replay
@@ -38,7 +38,7 @@ lessons_learned:
 
 # M002: Contract Convergence and ACP Runtime Truthfulness
 
-**Converged the runtime design contract onto one authority map, replaced all legacy shim protocol surface with clean-break session/* + runtime/* methods, landed durable restart recovery with proven event continuity, and validated the assembled contract against real CLI agents.**
+**Converged the runtime design contract onto one authority map, replaced all legacy agent-run protocol surface with clean-break session/* + runtime/* methods, landed durable restart recovery with proven event continuity, and validated the assembled contract against real CLI agents.**
 
 ## What Happened
 
@@ -46,9 +46,9 @@ M002 was a four-slice campaign to make the MASS runtime contract internally cons
 
 **S01 — Design contract convergence.** Closed the cross-document contradictions that had made further runtime work unsafe. Produced a single authority map (`docs/design/contract-convergence.md`) that assigns ownership of every design concept to exactly one document. Established that `session/new` is configuration-only bootstrap, `session/prompt` is the work-entry path, Room ownership is split between orchestrator desired state and agentd realized state, and workspace host-impact boundaries are explicit. Left a mechanical two-part proof surface (contract verifier script + example bundle validation test) so future design edits can be checked without prose review.
 
-**S02 — shim-rpc clean break.** Replaced every legacy PascalCase method and `$/event` notification with the clean-break `session/*` + `runtime/*` surface across pkg/rpc, pkg/agentd, pkg/ari, and cmd/agent-shim-cli. Introduced `events.Envelope{Method, Seq, Params}` as the single canonical shape for both live notifications and history replay, with monotonic seq assigned by `events.Translator`. Added `ShimClient.RuntimeStatus()` exposing `recovery.lastSeq` for reconnect gap detection. The no-legacy-name grep gate proved zero residual legacy names in non-test source.
+**S02 — shim-rpc clean break.** Replaced every legacy PascalCase method and `$/event` notification with the clean-break `session/*` + `runtime/*` surface across pkg/rpc, pkg/agentd, pkg/ari, and cmd/agent-run-cli. Introduced `events.Envelope{Method, Seq, Params}` as the single canonical shape for both live notifications and history replay, with monotonic seq assigned by `events.Translator`. Added `Client.RuntimeStatus()` exposing `recovery.lastSeq` for reconnect gap detection. The no-legacy-name grep gate proved zero residual legacy names in non-test source.
 
-**S03 — Recovery and persistence truth-source.** Extended the sessions table to schema v2 with `bootstrap_config`, `shim_socket_path`, `shim_state_dir`, and `shim_pid` columns. Built `RecoverSessions` startup pass in `pkg/agentd/recovery.go` that lists non-terminal sessions, reconnects to live shims via `runtime/status` → `runtime/history` → `session/subscribe`, and marks unreachable shims as stopped (fail-closed). The integration test `TestAgentdRestartRecovery` proves 8 events with contiguous sequence [0-7] across daemon restart with zero gaps, validating both R035 (event continuity) and R036 (config persistence).
+**S03 — Recovery and persistence truth-source.** Extended the sessions table to schema v2 with `bootstrap_config`, `shim_socket_path`, `shim_state_dir`, and `shim_pid` columns. Built `RecoverSessions` startup pass in `pkg/agentd/recovery.go` that lists non-terminal sessions, reconnects to live agent-runs via `runtime/status` → `runtime/history` → `session/subscribe`, and marks unreachable shims as stopped (fail-closed). The integration test `TestAgentdRestartRecovery` proves 8 events with contiguous sequence [0-7] across daemon restart with zero gaps, validating both R035 (event continuity) and R036 (config persistence).
 
 **S04 — Real CLI integration verification.** Created a reusable test harness (`setupAgentdTestWithRuntimeClass` + `runRealCLILifecycle`) exercising the full ARI session lifecycle — workspace/prepare → session/new → session/prompt → session/status → session/stop → session/remove → workspace/cleanup — with real gsd-pi and claude-code runtime class configurations. Timeout infrastructure was tuned for real CLI startup and LLM call latencies (start=30s, prompt=120s). Tests skip gracefully when prerequisites (API keys, binaries) are missing, keeping CI green.
 
@@ -59,8 +59,8 @@ Across all four slices, the milestone moved the project from contradictory desig
 The roadmap did not define explicit success criteria (Vision was TBD). Verification is based on each slice's delivered objectives:
 
 - ✅ **Design contract convergence** — `docs/design/contract-convergence.md` authority map exists; `bash scripts/verify-m002-s01-contract.sh` passes; `go test ./pkg/spec -run TestExampleBundlesAreValid -count=1` passes. Cross-doc contradictions eliminated.
-- ✅ **Clean-break shim protocol** — All legacy PascalCase/`$/event` names removed from non-test source (rg gate: zero matches across pkg/rpc, pkg/agentd, pkg/ari, cmd/agent-shim-cli). All affected packages compile and pass tests.
-- ✅ **Durable recovery truth** — `TestAgentdRestartRecovery` proves event continuity (seq [0-7], zero gaps) and config persistence (bootstrap_config, socket_path, state_dir, PID survive restart). RecoverSessions reconnects live shims and marks dead shims stopped.
+- ✅ **Clean-break agent-run protocol** — All legacy PascalCase/`$/event` names removed from non-test source (rg gate: zero matches across pkg/rpc, pkg/agentd, pkg/ari, cmd/agent-run-cli). All affected packages compile and pass tests.
+- ✅ **Durable recovery truth** — `TestAgentdRestartRecovery` proves event continuity (seq [0-7], zero gaps) and config persistence (bootstrap_config, socket_path, state_dir, PID survive restart). RecoverSessions reconnects live agent-runs and marks dead agent-runs stopped.
 - ✅ **Real CLI integration** — `TestRealCLI_GsdPi` and `TestRealCLI_ClaudeCode` exercise full ARI lifecycle with real runtime class configs. Tests compile and execute (skip when prerequisites absent).
 - ✅ **All unit and integration tests pass** — pkg/events, pkg/rpc, pkg/agentd, pkg/ari, pkg/runtime, pkg/meta all pass. TestAgentdRestartRecovery passes (2.92s).
 
@@ -80,7 +80,7 @@ The roadmap did not define explicit success criteria (Vision was TBD). Verificat
 | R033 | `agentRoot.path`, resolved `cwd`, `session/new`, `systemPrompt`, bootstrap have one authoritative meaning. Final verifier passed. |
 | R034 | All legacy PascalCase / `$/event` names removed from non-test source. Grep gate: zero matches. Full test suite passes. |
 | R035 | TestAgentdRestartRecovery Phase 6: 8 events with contiguous seq [0-7], zero gaps across restart. |
-| R036 | TestAgentdRestartRecovery: bootstrap_config, socket_path, state_dir, PID persist; live shim reconnected, dead shim marked stopped. |
+| R036 | TestAgentdRestartRecovery: bootstrap_config, socket_path, state_dir, PID persist; live agent-run reconnected, dead agent-run marked stopped. |
 | R038 | Explicit host-impact boundary rules for workspaces, hooks, env, shared access documented in authoritative design set. Final verifier passed. |
 | R039 | TestRealCLI_GsdPi and TestRealCLI_ClaudeCode exercise full ARI lifecycle with real runtime class configs. |
 
@@ -100,7 +100,7 @@ The roadmap did not define explicit success criteria (Vision was TBD). Verificat
 ## Deviations
 
 - The roadmap was planned with minimal metadata (Vision: TBD, no explicit success criteria or definition of done sections). Verification was based on slice-delivered objectives rather than formal criteria.
-- S02/T03 required zero ARI source changes — a positive deviation, as the shim client migration in T02 was already complete.
+- S02/T03 required zero ARI source changes — a positive deviation, as the agent-run client migration in T02 was already complete.
 - S03/T03 verify command referenced wrong mockagent path (cmd/mockagent vs internal/testutil/mockagent).
 - S03/T02 added 3 extra test cases beyond the 3 specified in the plan.
 - Some duplicate decisions were recorded (D028-D033 contain duplicates of D029/D030/D031 recovery posture decisions).

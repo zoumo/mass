@@ -3,7 +3,7 @@
 本文档面向所有通过 `runtime/watch_event` 消费 AgentRunEvent 事件流的第三方 UI 或事件消费方。
 它描述每种事件的语义、字段读取方式、状态管理策略，以及 late-join（中途接入）场景下的容错模式。
 
-> **参考实现**：`pkg/tui/chat/chat.go`（TUI chat client）是目前最完整的事件消费方参考。
+> **参考实现**：TUI chat client 是目前最完整的事件消费方参考。
 
 ---
 
@@ -139,7 +139,7 @@ status == "end"：
 
 ### 4.5 `user_message` 去重
 
-如果消费方自身发送了 prompt（通过 `session/prompt`），shim 会广播一条 `user_message` 事件。
+如果消费方自身发送了 prompt（通过 `session/prompt`），会广播一条 `user_message` 事件。
 消费方需要用一个 `sentPrompt` flag 去重：
 
 ```
@@ -460,7 +460,7 @@ Late join 是指消费方在 agent 已经运行中途才连接。这是常见场
 
 ### 完整恢复（fromSeq=0）
 
-如果需要完整历史，使用 `fromSeq=0` 订阅。shim 会先 replay 所有历史事件，
+如果需要完整历史，使用 `fromSeq=0` 订阅。会先 replay 所有历史事件，
 然后无缝切换到 live 流。消费方可以正常处理所有事件，效果等同于从头开始连接。
 
 ---

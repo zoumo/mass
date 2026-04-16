@@ -165,16 +165,16 @@ func TestUpdateAgentRunStatus(t *testing.T) {
 
 	newStatus := pkgariapi.AgentRunStatus{
 		State:          apiruntime.StatusRunning,
-		ShimSocketPath: "/tmp/shim.sock",
-		ShimPID:        12345,
+		RunSocketPath: "/tmp/run.sock",
+		RunPID:        12345,
 	}
 	require.NoError(t, s.UpdateAgentRunStatus(t.Context(), "ws", "a", newStatus))
 
 	got, err := s.GetAgentRun(t.Context(), "ws", "a")
 	require.NoError(t, err)
 	require.Equal(t, apiruntime.StatusRunning, got.Status.State)
-	require.Equal(t, "/tmp/shim.sock", got.Status.ShimSocketPath)
-	require.Equal(t, 12345, got.Status.ShimPID)
+	require.Equal(t, "/tmp/run.sock", got.Status.RunSocketPath)
+	require.Equal(t, 12345, got.Status.RunPID)
 }
 
 func TestUpdateAgentRunStatus_NotFound(t *testing.T) {
@@ -186,7 +186,7 @@ func TestUpdateAgentRunStatus_NotFound(t *testing.T) {
 func TestTransitionAgentRunState(t *testing.T) {
 	s := tempStore(t)
 	agent := makeAgentRun("ws", "reserved")
-	agent.Status.ShimSocketPath = "/tmp/shim.sock"
+	agent.Status.RunSocketPath = "/tmp/run.sock"
 	require.NoError(t, s.CreateAgentRun(t.Context(), agent))
 
 	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "reserved", apiruntime.StatusIdle, apiruntime.StatusRunning)
@@ -196,7 +196,7 @@ func TestTransitionAgentRunState(t *testing.T) {
 	got, err := s.GetAgentRun(t.Context(), "ws", "reserved")
 	require.NoError(t, err)
 	require.Equal(t, apiruntime.StatusRunning, got.Status.State)
-	require.Equal(t, "/tmp/shim.sock", got.Status.ShimSocketPath)
+	require.Equal(t, "/tmp/run.sock", got.Status.RunSocketPath)
 }
 
 func TestTransitionAgentRunState_WrongExpectedState(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	shim "github.com/zoumo/mass/pkg/shim/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
@@ -74,25 +74,25 @@ func TestRecoverSessions_PhaseTransitions_NoCandidates(t *testing.T) {
 		"should be complete after recovery with no candidates")
 }
 
-// TestRecoverSessions_PhaseTransitions_WithLiveShim verifies the recovery
+// TestRecoverSessions_PhaseTransitions_WithLiveRun verifies the recovery
 // phase reaches Complete after recovering a live agent, and that per-agent
-// RecoveryInfo is populated on the recovered ShimProcess.
-func TestRecoverSessions_PhaseTransitions_WithLiveShim(t *testing.T) {
+// RecoveryInfo is populated on the recovered RunProcess.
+func TestRecoverSessions_PhaseTransitions_WithLiveRun(t *testing.T) {
 	pm, store := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Start a mock shim server.
-	srv, socketPath := newMockShimServer(t)
+	// Start a mock agent-run server.
+	srv, socketPath := newMockRunServer(t)
 	srv.mu.Lock()
-	srv.statusResult = shim.RuntimeStatusResult{
+	srv.statusResult = runapi.RuntimeStatusResult{
 		State: apiruntime.State{
 			MassVersion: "0.1.0",
 			ID:         "phase-test-agent",
 			Status:     apiruntime.StatusRunning,
 			Bundle:     "/tmp/test-bundle",
 		},
-		Recovery: shim.RuntimeStatusRecovery{LastSeq: 0},
+		Recovery: runapi.RuntimeStatusRecovery{LastSeq: 0},
 	}
 	srv.mu.Unlock()
 
@@ -107,27 +107,27 @@ func TestRecoverSessions_PhaseTransitions_WithLiveShim(t *testing.T) {
 	assert.Equal(t, RecoveryPhaseComplete, pm.GetRecoveryPhase())
 
 	// Per-agent RecoveryInfo should be populated.
-	shimProc := pm.GetProcess(key)
-	require.NotNil(t, shimProc, "agent should be in processes map")
-	require.NotNil(t, shimProc.Recovery, "RecoveryInfo should be set")
-	assert.True(t, shimProc.Recovery.Recovered)
-	assert.Equal(t, RecoveryOutcomeRecovered, shimProc.Recovery.Outcome)
-	assert.NotNil(t, shimProc.Recovery.RecoveredAt)
-	assert.False(t, shimProc.Recovery.RecoveredAt.Before(before),
+	runProc := pm.GetProcess(key)
+	require.NotNil(t, runProc, "agent should be in processes map")
+	require.NotNil(t, runProc.Recovery, "RecoveryInfo should be set")
+	assert.True(t, runProc.Recovery.Recovered)
+	assert.Equal(t, RecoveryOutcomeRecovered, runProc.Recovery.Outcome)
+	assert.NotNil(t, runProc.Recovery.RecoveredAt)
+	assert.False(t, runProc.Recovery.RecoveredAt.Before(before),
 		"RecoveredAt should be at or after test start time")
 
 	// Cleanup.
 	srv.close()
 	select {
-	case <-shimProc.Done:
+	case <-runProc.Done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout waiting for recovered process cleanup")
 	}
 }
 
-// TestRecoverSessions_PhaseTransitions_WithDeadShim verifies the recovery
+// TestRecoverSessions_PhaseTransitions_WithDeadRun verifies the recovery
 // phase reaches Complete even when all agents fail to recover.
-func TestRecoverSessions_PhaseTransitions_WithDeadShim(t *testing.T) {
+func TestRecoverSessions_PhaseTransitions_WithDeadRun(t *testing.T) {
 	pm, store := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

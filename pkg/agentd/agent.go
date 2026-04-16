@@ -127,7 +127,7 @@ func (m *AgentRunManager) List(ctx context.Context, filter *pkgariapi.AgentRunFi
 	return agents, nil
 }
 
-// UpdateStatus updates an agent's status (state + optional shim metadata).
+// UpdateStatus updates an agent's status (state + optional run metadata).
 // Returns ErrAgentRunNotFound if the agent does not exist.
 func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name string, status pkgariapi.AgentRunStatus) error {
 	m.logger.Info("updating agent status",

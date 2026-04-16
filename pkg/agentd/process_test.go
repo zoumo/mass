@@ -12,22 +12,22 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	shim "github.com/zoumo/mass/pkg/shim/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	"github.com/zoumo/mass/pkg/agentd/store"
 )
 
 // TestProcessManagerStart tests the full Start workflow:
 // get AgentRun → resolve Agent definition from DB → generate config.json → create bundle
-// → fork agent-shim → wait for socket → connect ShimClient → subscribe events
+// → fork agent-run → wait for socket → connect Client → subscribe events
 // → transition agent status to "running".
 func TestProcessManagerStart(t *testing.T) {
 	// Build and find binaries.
-	shimBinary := findShimBinary(t)
+	runBinary := findRunBinary(t)
 	mockagentBinary := findMockagentBinary(t)
 
-	// Set MASS_SHIM_BINARY env var so ProcessManager finds the shim binary.
-	t.Setenv("MASS_SHIM_BINARY", shimBinary)
+	// Set MASS_RUN_BINARY env var so ProcessManager finds the run binary.
+	t.Setenv("MASS_RUN_BINARY", runBinary)
 
 	// Setup test environment.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -109,11 +109,11 @@ func TestProcessManagerStart(t *testing.T) {
 	}
 
 	// Call ProcessManager.Start.
-	shimProc, err := procMgr.Start(ctx, agentWorkspace, agentName)
+	runProc, err := procMgr.Start(ctx, agentWorkspace, agentName)
 	if err != nil {
 		key := agentKey(agentWorkspace, agentName)
 		// Print state directory content for debugging.
-		stateDirPath := filepath.Join(os.TempDir(), "mass-shim", key)
+		stateDirPath := filepath.Join(os.TempDir(), "mass-run", key)
 		t.Logf("State directory %s contents:", stateDirPath)
 		if entries, readErr := os.ReadDir(stateDirPath); readErr == nil {
 			for _, entry := range entries {
@@ -130,7 +130,7 @@ func TestProcessManagerStart(t *testing.T) {
 
 	// Verify agent status transitions to idle/running via runtime/state_change
 	// notification (D088 — direct StatusRunning write removed from Start).
-	// Poll until the shim emits its first stateChange notification.
+	// Poll until the agent-run emits its first stateChange notification.
 	var updatedAgent *pkgariapi.AgentRun
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
 		updatedAgent, err = agentMgr.Get(ctx, agentWorkspace, agentName)
@@ -146,33 +146,33 @@ func TestProcessManagerStart(t *testing.T) {
 	}
 
 	// Verify PID > 0.
-	if shimProc.PID <= 0 {
-		t.Errorf("expected PID > 0, got PID=%d", shimProc.PID)
+	if runProc.PID <= 0 {
+		t.Errorf("expected PID > 0, got PID=%d", runProc.PID)
 	}
 
-	// Verify ShimClient is connected.
-	if shimProc.Client == nil {
-		t.Fatal("expected ShimClient to be connected, got nil")
+	// Verify Client is connected.
+	if runProc.Client == nil {
+		t.Fatal("expected Client to be connected, got nil")
 	}
 
-	// Verify shim state via runtime/status RPC.
-	statusResult, err := shimProc.Client.Status(ctx)
+	// Verify agent-run state via runtime/status RPC.
+	statusResult, err := runProc.Client.Status(ctx)
 	if err != nil {
 		t.Fatalf("runtime/status RPC: %v", err)
 	}
 	state := statusResult.State
-	t.Logf("Shim state: ID=%s, Status=%s, PID=%d, Bundle=%s, recovery.lastSeq=%d",
+	t.Logf("Agent-run state: ID=%s, Status=%s, PID=%d, Bundle=%s, recovery.lastSeq=%d",
 		state.ID, state.Status, state.PID, state.Bundle, statusResult.Recovery.LastSeq)
 
 	if state.Status != apiruntime.StatusIdle && state.Status != apiruntime.StatusRunning {
-		t.Errorf("expected shim status 'idle' or 'running', got '%s'", state.Status)
+		t.Errorf("expected agent-run status 'idle' or 'running', got '%s'", state.Status)
 	}
 
 	// Stop the default drain goroutine so the test can read events.
-	shimProc.StopDrain()
+	runProc.StopDrain()
 
 	// Send a Prompt to trigger events (session/prompt).
-	promptResult, err := shimProc.Client.Prompt(ctx, &shim.SessionPromptParams{Prompt: "hello mockagent"})
+	promptResult, err := runProc.Client.Prompt(ctx, &runapi.SessionPromptParams{Prompt: []runapi.ContentBlock{runapi.TextBlock("hello mockagent")}})
 	if err != nil {
 		t.Fatalf("Prompt RPC: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestProcessManagerStart(t *testing.T) {
 
 	for {
 		select {
-		case update, ok := <-shimProc.Events:
+		case update, ok := <-runProc.Events:
 			if !ok {
 				t.Log("Events channel closed")
 				goto done
@@ -192,10 +192,10 @@ func TestProcessManagerStart(t *testing.T) {
 			eventCount++
 			t.Logf("Received event #%d: seq=%d type=%s",
 				eventCount, update.Seq, update.Type)
-			if _, ok := update.Payload.(shim.ContentEvent); ok {
+			if _, ok := update.Payload.(runapi.ContentEvent); ok {
 				t.Logf("ContentEvent received")
 			}
-			if _, ok := update.Payload.(shim.TurnEndEvent); ok {
+			if _, ok := update.Payload.(runapi.TurnEndEvent); ok {
 				t.Logf("TurnEndEvent received, prompt complete")
 				goto done
 			}
@@ -214,21 +214,21 @@ done:
 		t.Logf("Received %d events total", eventCount)
 	}
 
-	// Clean up: stop the shim (runtime/stop).
+	// Clean up: stop the agent-run (runtime/stop).
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stopCancel()
 
-	if err := shimProc.Client.Stop(stopCtx); err != nil {
+	if err := runProc.Client.Stop(stopCtx); err != nil {
 		t.Logf("runtime/stop RPC (non-fatal): %v", err)
 	}
 
-	// Wait for shim process to exit.
+	// Wait for agent-run process to exit.
 	select {
-	case <-shimProc.Done:
-		t.Log("Shim process exited gracefully")
+	case <-runProc.Done:
+		t.Log("Agent-run process exited gracefully")
 	case <-time.After(3 * time.Second):
-		t.Log("Timeout waiting for shim exit, killing process")
-		_ = shimProc.Cmd.Process.Kill()
+		t.Log("Timeout waiting for agent-run exit, killing process")
+		_ = runProc.Cmd.Process.Kill()
 	}
 
 	// Verify agent status transitioned to "stopped".
@@ -251,7 +251,7 @@ done:
 	}
 
 	// Stop leaves the bundle on disk; explicit agent deletion owns bundle cleanup.
-	if _, err := os.Stat(shimProc.BundlePath); err != nil {
+	if _, err := os.Stat(runProc.BundlePath); err != nil {
 		t.Errorf("expected bundle directory to remain after stop, got %v", err)
 	}
 
@@ -344,8 +344,8 @@ func TestGenerateConfig(t *testing.T) {
 	})
 }
 
-// findShimBinary finds the mass binary for testing (it contains the shim subcommand).
-func findShimBinary(t *testing.T) string {
+// findRunBinary finds the mass binary for testing (it contains the run subcommand).
+func findRunBinary(t *testing.T) string {
 	projectRoot := findProjectRoot(t)
 	builtPath := filepath.Join(projectRoot, "bin", "mass")
 

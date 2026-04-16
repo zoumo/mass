@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	shimapi "github.com/zoumo/mass/pkg/shim/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	"github.com/zoumo/mass/pkg/tui/component"
 )
 
@@ -37,7 +37,7 @@ func ToolDisplayTitle(kind, title string) string {
 
 // BuildInput creates a JSON string for the tool's Input field,
 // extracting title and locations for display.
-func BuildInput(title string, locations []shimapi.ToolCallLocation) string {
+func BuildInput(title string, locations []runapi.ToolCallLocation) string {
 	params := make(map[string]any)
 	if title != "" {
 		params["title"] = title
@@ -68,7 +68,7 @@ func BuildInput(title string, locations []shimapi.ToolCallLocation) string {
 // Diff blocks are skipped here — they are handled separately by ExtractDiff
 // for structured DiffView rendering. Text and terminal blocks are extracted
 // as plain strings. RawOutput is used as a fallback.
-func BuildResultContent(blocks []shimapi.ToolCallContent, status string, rawOutput any) string {
+func BuildResultContent(blocks []runapi.ToolCallContent, status string, rawOutput any) string {
 	var parts []string
 
 	for _, block := range blocks {
@@ -106,7 +106,7 @@ func BuildResultContent(blocks []shimapi.ToolCallContent, status string, rawOutp
 
 // ExtractDiff finds the first diff block from content and returns structured data
 // for DiffView rendering. Returns nil if no diff block is present.
-func ExtractDiff(blocks []shimapi.ToolCallContent) *component.ToolResultDiff {
+func ExtractDiff(blocks []runapi.ToolCallContent) *component.ToolResultDiff {
 	for _, block := range blocks {
 		if block.Diff != nil && (block.Diff.Path != "" || block.Diff.NewText != "") {
 			oldText := ""

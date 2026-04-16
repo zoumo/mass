@@ -25,7 +25,7 @@ import (
 	"github.com/zoumo/mass/pkg/agentd"
 	"github.com/zoumo/mass/pkg/jsonrpc"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	apishim "github.com/zoumo/mass/pkg/shim/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	"github.com/zoumo/mass/pkg/agentd/store"
 	"github.com/zoumo/mass/pkg/workspace"
 )
@@ -204,9 +204,9 @@ func (a *workspaceAdapter) Delete(ctx context.Context, name string) error {
 // Send handles workspace/send.
 //
 // Routes a message from one agent run to another within a workspace via a
-// fire-and-forget ShimClient.Prompt call.
+// fire-and-forget Client.Prompt call.
 func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSendParams) (*pkgariapi.WorkspaceSendResult, error) {
-	if req.Workspace == "" || req.From == "" || req.To == "" || req.Message == "" {
+	if req.Workspace == "" || req.From == "" || req.To == "" || len(req.Message) == 0 {
 		return nil, jsonrpc.ErrInvalidParams("workspace, from, to, and message are required")
 	}
 
@@ -269,9 +269,11 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSen
 		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "target agent is not running"}
 	}
 
-	msg := req.Message + buildWorkspaceFooter(*req)
+	blocks := make([]runapi.ContentBlock, len(req.Message), len(req.Message)+1)
+	copy(blocks, req.Message)
+	blocks = append(blocks, runapi.TextBlock(buildWorkspaceFooter(*req)))
 	go func() {
-		if _, err := client.Prompt(context.Background(), &apishim.SessionPromptParams{Prompt: msg}); err != nil {
+		if _, err := client.Prompt(context.Background(), &runapi.SessionPromptParams{Prompt: blocks}); err != nil {
 			a.logger.Warn("workspace/send: prompt delivery failed",
 				"workspace", req.Workspace, "to", req.To, "error", err)
 			a.recordPromptDeliveryFailure(req.Workspace, req.To, agent.Status, err, false)
@@ -288,7 +290,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSen
 // Create handles agentrun/create.
 //
 // Validates workspace/name/agent, checks workspace phase, creates the agent
-// run record with state=creating, and starts the shim in the background.
+// run record with state=creating, and starts the agent-run in the background.
 // Returns immediately with state="creating".
 func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*pkgariapi.AgentRun, error) {
 	if ar.Metadata.Workspace == "" || ar.Metadata.Name == "" || ar.Spec.Agent == "" {
@@ -332,7 +334,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 
-	a.logger.Info("agentrun/create: agent run created, starting shim",
+	a.logger.Info("agentrun/create: agent run created, starting agent-run",
 		"workspace", ar.Metadata.Workspace, "name", ar.Metadata.Name)
 
 	wsName := ar.Metadata.Workspace
@@ -340,14 +342,14 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 	go func() {
 		bgCtx := context.Background()
 		if _, err := a.processes.Start(bgCtx, wsName, agName); err != nil {
-			a.logger.Warn("agentrun/create: shim start failed",
+			a.logger.Warn("agentrun/create: agent-run start failed",
 				"workspace", wsName, "name", agName, "error", err)
 			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, pkgariapi.AgentRunStatus{
 				State:        apiruntime.StatusError,
 				ErrorMessage: err.Error(),
 			})
 		} else {
-			a.logger.Info("agentrun/create: shim started",
+			a.logger.Info("agentrun/create: agent-run started",
 				"workspace", wsName, "name", agName)
 		}
 	}()
@@ -357,7 +359,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 
 // Get handles agentrun/get.
 //
-// Returns detailed agent run info with shim runtime state populated in Status.Shim.
+// Returns detailed agent run info with agent-run runtime state populated in Status.Run.
 func (a *agentRunAdapter) Get(ctx context.Context, wsName, name string) (*pkgariapi.AgentRun, error) {
 	a.logger.Info("agentrun/get", "workspace", wsName, "name", name)
 
@@ -371,16 +373,16 @@ func (a *agentRunAdapter) Get(ctx context.Context, wsName, name string) (*pkgari
 
 	result := agent.ARIView()
 
-	// Best-effort: populate Shim runtime state if available.
+	// Best-effort: populate agent-run runtime state if available.
 	if rts, err := a.processes.RuntimeStatus(ctx, wsName, name); err == nil {
 		st := rts.State
-		socketPath := agent.Status.ShimSocketPath
+		socketPath := agent.Status.RunSocketPath
 		if p := a.processes.GetProcess(wsName + "/" + name); p != nil {
 			socketPath = p.SocketPath
 		}
-		result.Status.Shim = &pkgariapi.ShimStateInfo{
+		result.Status.Run = &pkgariapi.RunStateInfo{
 			Status:     string(st.Status),
-			PID:        agent.Status.ShimPID,
+			PID:        agent.Status.RunPID,
 			Bundle:     st.Bundle,
 			SocketPath: socketPath,
 		}
@@ -443,10 +445,10 @@ func (a *agentRunAdapter) Delete(ctx context.Context, wsName, name string) error
 
 // Prompt handles agentrun/prompt.
 //
-// Validates agent run state == idle, transitions to running, connects to shim,
+// Validates agent run state == idle, transitions to running, connects to agent-run,
 // and fires the prompt in the background. Returns Accepted:true immediately.
 func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPromptParams) (*pkgariapi.AgentRunPromptResult, error) {
-	if req.Workspace == "" || req.Name == "" || req.Prompt == "" {
+	if req.Workspace == "" || req.Name == "" || len(req.Prompt) == 0 {
 		return nil, jsonrpc.ErrInvalidParams("workspace, name, and prompt are required")
 	}
 
@@ -504,7 +506,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPro
 
 	prompt := req.Prompt
 	go func() {
-		if _, err := client.Prompt(context.Background(), &apishim.SessionPromptParams{Prompt: prompt}); err != nil {
+		if _, err := client.Prompt(context.Background(), &runapi.SessionPromptParams{Prompt: prompt}); err != nil {
 			a.logger.Warn("agentrun/prompt: prompt delivery failed",
 				"workspace", req.Workspace, "name", req.Name, "error", err)
 			a.recordPromptDeliveryFailure(req.Workspace, req.Name, agent.Status, err, false)
@@ -518,7 +520,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPro
 
 // Cancel handles agentrun/cancel.
 //
-// Connects to the running shim and calls Cancel.
+// Connects to the running agent-run and calls Cancel.
 func (a *agentRunAdapter) Cancel(ctx context.Context, wsName, name string) error {
 	a.logger.Info("agentrun/cancel", "workspace", wsName, "name", name)
 
@@ -543,7 +545,7 @@ func (a *agentRunAdapter) Cancel(ctx context.Context, wsName, name string) error
 
 // Stop handles agentrun/stop.
 //
-// Calls processes.Stop which sends runtime/stop to the shim and waits.
+// Calls processes.Stop which sends runtime/stop to the agent-run and waits.
 func (a *agentRunAdapter) Stop(ctx context.Context, wsName, name string) error {
 	a.logger.Info("agentrun/stop", "workspace", wsName, "name", name)
 
@@ -555,7 +557,7 @@ func (a *agentRunAdapter) Stop(ctx context.Context, wsName, name string) error {
 
 // Restart handles agentrun/restart.
 //
-// Accepts any agent state. Stops the existing shim (if running) then starts a
+// Accepts any agent state. Stops the existing agent-run (if running) then starts a
 // new one. Returns immediately with state="creating".
 func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pkgariapi.AgentRun, error) {
 	a.logger.Info("agentrun/restart", "workspace", wsName, "name", name)
@@ -568,7 +570,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", wsName, name))
 	}
 
-	// Agents in terminal states have no active shim.
+	// Agents in terminal states have no active agent-run.
 	needsStop := agent.Status.State != apiruntime.StatusStopped && agent.Status.State != apiruntime.StatusError
 
 	if err := a.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
@@ -594,7 +596,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 			}
 		}
 		if _, err := a.processes.Start(bgCtx, wsName, name); err != nil {
-			a.logger.Warn("agentrun/restart: shim start failed",
+			a.logger.Warn("agentrun/restart: agent-run start failed",
 				"workspace", wsName, "name", name, "error", err)
 			_ = a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
 				State:        apiruntime.StatusError,
@@ -779,9 +781,9 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkga
 
 	_ = s.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
 		State:          apiruntime.StatusError,
-		ShimSocketPath: fallback.ShimSocketPath,
-		ShimStateDir:   fallback.ShimStateDir,
-		ShimPID:        fallback.ShimPID,
+		RunSocketPath: fallback.RunSocketPath,
+		RunStateDir:   fallback.RunStateDir,
+		RunPID:        fallback.RunPID,
 		ErrorMessage:   cause.Error(),
 	})
 }

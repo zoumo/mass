@@ -7,7 +7,7 @@ key_decisions:
   - D039: Two-level recovery model — atomic RecoveryPhase for daemon-wide gating + per-session RecoveryInfo for inspection
   - D040: Block session/prompt and session/cancel during recovery; allow status/list/stop/attach/detach
   - D041: RecoverSessions always transitions to Complete on all exit paths to prevent permanent recovery-blocked state
-  - D042: ErrInvalidTransition from Transition() logged at Warn — transition edge cases don't block reconnecting to a live shim
+  - D042: ErrInvalidTransition from Transition() logged at Warn — transition edge cases don't block reconnecting to a live agent-run
   - D043: Unconditional os.Remove for TOCTOU-free socket cleanup
   - D044: Atomic subscribe-from-seq mechanism extends session/subscribe with optional fromSeq parameter
   - D045: Damaged-tail tolerance via bufio.Scanner + per-line json.Unmarshal replacing json.Decoder
@@ -19,10 +19,10 @@ key_decisions:
 key_files:
   - pkg/agentd/recovery_posture.go — RecoveryPhase type, RecoveryInfo struct, phase constants
   - pkg/agentd/recovery_posture_test.go — 6 unit tests for phase tracking and IsRecovering semantics
-  - pkg/agentd/recovery.go — recoverSession with shim-vs-DB reconciliation and atomic Subscribe(fromSeq=0)
+  - pkg/agentd/recovery.go — recoverSession with agent-run-vs-DB reconciliation and atomic Subscribe(fromSeq=0)
   - pkg/agentd/recovery_test.go — 9 tests including reconciliation paths (stopped, created→running, mismatch)
   - pkg/agentd/shim_client.go — Extended Subscribe with fromSeq parameter
-  - pkg/agentd/shim_client_test.go — TestShimClientSubscribeFromSeq
+  - pkg/agentd/shim_client_test.go — TestClientSubscribeFromSeq
   - pkg/agentd/process.go — recoveryPhase atomic field, SetRecoveryPhase/GetRecoveryPhase/IsRecovering methods
   - pkg/ari/server.go — recoveryGuard helper, guards on prompt/cancel/cleanup, RecoveryInfo in session/status
   - pkg/ari/server_test.go — 36 tests including recovery guard and workspace ref_count tests
@@ -85,7 +85,7 @@ All test suites pass: pkg/agentd (7.8s), pkg/ari (6.5s), pkg/events (2.0s), pkg/
 - **All slice summaries exist** ✅ — S01-SUMMARY.md, S02-SUMMARY.md, S03-SUMMARY.md, S04-SUMMARY.md all present on disk
 - **Cross-slice integration verified** ✅ — S01 recovery posture used by S04 cleanup guard; S03 atomic subscribe replaces S02's recovery flow; full test suite passes with zero regressions
 - **Code changes verified** ✅ — All key files exist with M003-specific code (RecoveryPhase, recoveryGuard, SubscribeFromSeq, RebuildFromDB, InitRefCounts)
-- **Full build clean** ✅ — `go build ./cmd/agentd/... ./cmd/agent-shim/... ./pkg/...` exits 0
+- **Full build clean** ✅ — `go build ./cmd/agentd/... ./cmd/agent-run/... ./pkg/...` exits 0
 - **Full vet clean** ✅ — `go vet` across all affected packages exits 0
 - **Full test suite passes** ✅ — All 6 packages pass with zero failures
 
@@ -93,7 +93,7 @@ All test suites pass: pkg/agentd (7.8s), pkg/ari (6.5s), pkg/events (2.0s), pkg/
 
 ### R035 (continuity) — Runtime event recovery single resume path
 **Status: validated → validated (evidence strengthened)**
-M003/S03 upgraded the resume path from Status→History→Subscribe to atomic Status→Subscribe(fromSeq=0). Translator.SubscribeFromSeq holds the broadcast mutex during both log read and subscription registration, structurally eliminating the event gap. Proven by TestSubscribeFromSeq_BackfillAndLive, TestShimClientSubscribeFromSeq, and the full recovery test suite. Previous M002 validation was based on the three-step approach; M003 made it structurally gap-free.
+M003/S03 upgraded the resume path from Status→History→Subscribe to atomic Status→Subscribe(fromSeq=0). Translator.SubscribeFromSeq holds the broadcast mutex during both log read and subscription registration, structurally eliminating the event gap. Proven by TestSubscribeFromSeq_BackfillAndLive, TestClientSubscribeFromSeq, and the full recovery test suite. Previous M002 validation was based on the three-step approach; M003 made it structurally gap-free.
 
 ### R037 (core-capability) — Workspace identity, reuse, cleanup boundaries
 **Status: validated → validated (evidence strengthened)**
@@ -114,7 +114,7 @@ M003 addressed the recovery posture portion (S01: fail-closed phase tracking), s
 ## Follow-ups
 
 - Recovery only proven with mockagent — real CLI restart recovery tests needed
-- `runtime/history` RPC and `ShimClient.History` are no longer used by recovery — consider deprecating or removing
+- `runtime/history` RPC and `Client.History` are no longer used by recovery — consider deprecating or removing
 - Registry rebuild does not verify on-disk workspace path existence — stale workspace detection could be added
 - Cross-client hardening (multiple ARI clients interacting with same sessions) remains untested
 - SubscribeFromSeq performs file I/O under Translator mutex — if production logs grow large enough that recovery reads take >10ms, consider a lock-free approach with pending-writes buffer

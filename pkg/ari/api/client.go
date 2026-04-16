@@ -40,8 +40,8 @@ type Client interface {
 
 // AgentRunOps provides non-CRUD operations on agent runs.
 type AgentRunOps interface {
-	// Prompt sends a text prompt to an agent run.
-	Prompt(ctx context.Context, key ObjectKey, prompt string) (*AgentRunPromptResult, error)
+	// Prompt sends a multimodal prompt ([]ContentBlock) to an agent run.
+	Prompt(ctx context.Context, key ObjectKey, prompt []ContentBlock) (*AgentRunPromptResult, error)
 
 	// Cancel cancels the current turn of an agent run.
 	Cancel(ctx context.Context, key ObjectKey) error

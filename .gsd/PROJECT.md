@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Multi-Agent Supervision System (MASS) is a layered runtime for headless coding agents. It manages ACP-speaking agent processes through `mass` (daemon), `mass shim` (inlined shim subcommand), and a future orchestrator layer for multi-agent coordination. Modeled after containerd/runc: spec-driven, layered, single-binary operational model.
+Multi-Agent Supervision System (MASS) is a layered runtime for headless coding agents. It manages ACP-speaking agent processes through `mass` (daemon), `mass run` (inlined shim subcommand), and a future orchestrator layer for multi-agent coordination. Modeled after containerd/runc: spec-driven, layered, single-binary operational model.
 
 ## Core Value
 
@@ -30,7 +30,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 
 | Milestone | Title | Summary |
 |-----------|-------|---------|
-| M001 | Core runtime foundation | agent-shim, agentd, ARI socket, workspace, metadata store, ACP handshake |
+| M001 | Core runtime foundation | agent-run, agentd, ARI socket, workspace, metadata store, ACP handshake |
 | M002 | Contract convergence | ARI client/server contract alignment, JSON-RPC lifecycle |
 | M003 | Recovery hardening | Fail-closed recovery, shim-vs-DB reconciliation, atomic event resume, workspace cleanup |
 | M004 | Room runtime | mesh/star/isolated room modes, room/send, room-mcp-server |
@@ -39,17 +39,17 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 | M007 | Platform terminal state refactor | bbolt storage, unified spec.Status (idle replaces created), (workspace,name) identity, shim write authority, Room/Session elimination; all integration tests pass; 0 lint issues |
 | M008 | CLI consolidation + API model rename | 2-binary model (mass + agentdctl), --root startup, DB-persisted AgentTemplate, resource-first grammar, agent=template/agentrun=instance rename; all 8 integration tests pass |
 | M012 | Codebase Refactor: Service Interface + Unified RPC + Directory Restructure | Typed service interfaces, pkg/jsonrpc unified transport, ARI wire contract convergence, adapter pattern, legacy package cleanup; make build + go test ./... pass with zero legacy references |
-| M013 | Package Restructure: Clean api/ Boundary + Event/Runtime Colocation | api/ deleted; pkg/ari/{api,server,client} + pkg/shim/{api,server,client,runtime/acp} canonical structure; pkg/events + pkg/runtime eliminated; make build + go test ./... + go vet (first-party) all pass |
+| M013 | Package Restructure: Clean api/ Boundary + Event/Runtime Colocation | api/ deleted; pkg/ari/{api,server,client} + pkg/agentrun/{api,server,client,runtime/acp} canonical structure; pkg/events + pkg/runtime eliminated; make build + go test ./... + go vet (first-party) all pass |
 | M014 | Enrich state.json + Session Metadata Pipeline | state.json enriched with session, eventCounts, updatedAt; writeState read-modify-write closure pattern; Translator EventCounts tracking; ACP bootstrap capture; session metadata hook chain; Status() overlay; design docs updated |
 
 ### What's Implemented
 
 - `mass` manages agents with **(workspace, name)** identity (no UUID), async lifecycle, fail-closed recovery
-- `mass` is a **cobra tree**: `mass server` (daemon, --root flag, no config.yaml), `mass shim` (inlined from agent-shim), `mass workspace-mcp` (inlined from workspace-mcp-server)
+- `mass` is a **cobra tree**: `mass server` (daemon, --root flag, no config.yaml), `mass run` (inlined from agent-run), `mass workspace-mcp` (inlined from workspace-mcp-server)
 - `massctl` is a **full-featured CLI**: `massctl agent` (template CRUD: apply/get/list/delete) + `massctl agentrun` (lifecycle: create/list/status/prompt/stop/delete/restart/attach/cancel) + workspace/daemon/shim commands
 - **ARI surface (final):** `workspace/*` (create/status/list/delete/send) + `agent/*` (set/get/list/delete — AgentTemplate CRUD) + `agentrun/*` (create/prompt/cancel/stop/delete/restart/list/status/attach — running instance lifecycle)
 - **pkg/ari tri-split (M013/S02):** `pkg/ari/api` (pure types + ARI method constants), `pkg/ari/server` (interfaces, Registry, RPC dispatch), `pkg/ari/client` (typed ARIClient + simple Client); api/ari/ directory deleted
-- **pkg/shim tri-split (M013/S03+S04):** `pkg/shim/api` (pure shim types + service interface + client + method constants + event wire types + EventType*/Category* constants), `pkg/shim/server` (shim service + Translator + EventLog), `pkg/shim/client` (dial helper), `pkg/shim/runtime/acp` (ACP runtime Manager and client)
+- **pkg/agentrun tri-split (M013/S03+S04):** `pkg/agentrun/api` (pure shim types + service interface + client + method constants + event wire types + EventType*/Category* constants), `pkg/agentrun/server` (shim service + Translator + EventLog), `pkg/agentrun/client` (dial helper), `pkg/agentrun/runtime/acp` (ACP runtime Manager and client)
 - **writeState read-modify-write closure pattern (M014/S03):** All 7 writeState call sites use `func(*apiruntime.State)` closures; Session/EventCounts never clobbered by lifecycle writes; UpdatedAt stamped unconditionally on every write
 - **State type enrichment (M014/S02):** SessionState, AgentInfo, AgentCapabilities, ConfigOption (with Select variant), AvailableCommand (with Unstructured input), EventCounts — all in pkg/runtime-spec/api/state.go with round-trip JSON fidelity
 - **ACP bootstrap capabilities capture (M014/S05):** Manager.Create() captures InitializeResponse, converts ACP types to runtime-spec/api types via convertInitializeToSession(), writes Session to state.json at bootstrap-complete; synthetic bootstrap-metadata state_change event emitted after Translator.Start() with sessionChanged:["agentInfo","capabilities"]
@@ -59,12 +59,12 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **Dead placeholder removal (M014/S01):** EventTypeFileWrite, EventTypeFileRead, EventTypeCommand, and their wire types removed from codebase
 - **api/ directory deleted (M013/S03):** No more `github.com/zoumo/mass/api` import targets
 - **pkg/runtime-spec/api as sole Status/EnvVar home (M013/S01):** api/runtime/ deleted; all consumers use `apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"`
-- **Typed Service Interfaces (M012):** ShimService interface in pkg/shim/api + ARI service interfaces in pkg/ari/server — all implementations satisfy typed contracts
+- **Typed Service Interfaces (M012):** Handler interface in pkg/agentrun/api + ARI service interfaces in pkg/ari/server — all implementations satisfy typed contracts
 - **pkg/jsonrpc unified transport (M012):** Single JSON-RPC transport used by both ARI server and shim server; legacy pkg/rpc, pkg/ari/server.go monolith, and pkg/agentd/shim_client.go all deleted
 - **DB-persisted agent templates**: `meta.AgentTemplate` in `v1/agents` bbolt bucket; ARI `agent/set|get|list|delete`; `massctl agent apply -f` YAML-based CLI
 - **bbolt metadata store**: `v1/workspaces/{name}` + `v1/agentruns/{workspace}/{name}` + `v1/agents/{name}` bucket layout
-- **Self-fork shim**: `forkShim` uses `os.Executable()` for single-binary deployment; `OAR_SHIM_BINARY` env override for testing
-- **agent-shim** starts ACP agent processes, performs the ACP handshake, exposes `session/*` + `runtime/*` shim RPC surface
+- **Self-fork agent-run**: `forkRun` uses `os.Executable()` for single-binary deployment; `OAR_SHIM_BINARY` env override for testing
+- **agent-run** starts ACP agent processes, performs the ACP handshake, exposes `session/*` + `runtime/*` run RPC surface
 - **spec.Status as sole state enum**: creating/idle/running/stopped/error
 - **Socket path overflow guard**: `ValidateAgentSocketPath` in ProcessManager; early `-32602` at `agentrun/create` entry before any DB write; platform limits in build-tag files
 
@@ -79,10 +79,10 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **Synthetic metadata event pattern (M014/S05, D124):** idle→idle state_change with reason + sessionChanged for metadata-only events; emitted after trans.Start() so subscribers discover via history backfill (fromSeq=0)
 - **Status() overlay pattern (M014/S07):** Read state from disk, overlay real-time fields from in-memory sources (e.g. Translator.EventCounts()) before returning to caller — ensures callers get authoritative data even between disk writes
 - **pkg/ari tri-split pattern (M013/S02):** api/ for pure types+constants, server/ for interfaces+dispatch, client/ for dial helpers
-- **pkg/shim tri-split pattern (M013/S03+S04):** api/ for pure shim types+service interface+event wire types+method constants, server/ for implementation+translator+eventlog, client/ for dial helper, runtime/acp/ for ACP runtime
-- **Event wire types location (M013/S04):** All event wire types live in `pkg/shim/api`; Translator and EventLog in `pkg/shim/server`
-- **Sealed interface cross-package accessor (M013/S04, D118):** EventTypeOf(ev Event) in pkg/shim/api/event_types.go
-- **Typed service interface pattern (M012):** pkg/shim/api.ShimService + pkg/ari/server.*Service interfaces
+- **pkg/agentrun tri-split pattern (M013/S03+S04):** api/ for pure shim types+service interface+event wire types+method constants, server/ for implementation+translator+eventlog, client/ for dial helper, runtime/acp/ for ACP runtime
+- **Event wire types location (M013/S04):** All event wire types live in `pkg/agentrun/api`; Translator and EventLog in `pkg/agentrun/server`
+- **Sealed interface cross-package accessor (M013/S04, D118):** EventTypeOf(ev Event) in pkg/agentrun/api/event_types.go
+- **Typed service interface pattern (M012):** pkg/agentrun/api.Handler + pkg/ari/server.*Service interfaces
 - **Adapter pattern for conflicting method names (M012):** Three thin unexported adapter structs for WorkspaceService.List and AgentService.List (K077, D112)
 - **errors.Is vs os.IsNotExist (K081):** spec.ReadState wraps with fmt.Errorf — must use errors.Is(err, os.ErrNotExist), not os.IsNotExist
 - **bbolt buckets:** `v1/workspaces/{name}`, `v1/agentruns/{workspace}/{name}`, `v1/agents/{name}`
