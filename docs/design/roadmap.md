@@ -39,7 +39,7 @@ Implemented:
 
 ### Shim RPC Surface (Implemented)
 
-Production shim server registers: `session/prompt`, `session/cancel`, `session/watch_event`, `session/load`, `session/set_model`, `session/models`, `runtime/status`, `runtime/stop`.
+Production shim server registers: `session/prompt`, `session/cancel`, `session/watch_event`, `session/load`, `session/set_model`, `runtime/status`, `runtime/stop`.
 
 Live notifications: `shim/event` (unified — replaces `session/update` + `runtime/state_change`).
 

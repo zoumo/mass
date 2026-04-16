@@ -171,7 +171,7 @@
 - Key files: `pkg/meta/models.go`, `pkg/meta/store.go`, `pkg/meta/agent.go`, `pkg/meta/workspace.go`, `pkg/spec/state_types.go`
 
 ### S02: agentd Core Adaptation
-- Enforced shim write authority boundary (`buildNotifHandler`); `RestartPolicy` tryReload/alwaysNew with correct Subscribe-before-Load ordering
+- Enforced shim write authority boundary (`startEventConsumer`); `RestartPolicy` tryReload/alwaysNew with correct Subscribe-before-Load ordering
 - Key files: `pkg/agentd/process.go`, `pkg/agentd/recovery.go`, `pkg/agentd/shim_boundary_test.go`
 
 ### S03: ARI Handler Rewrite

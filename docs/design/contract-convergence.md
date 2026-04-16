@@ -96,7 +96,7 @@ The design set now names these boundaries explicitly:
 
 The shim-facing design set is converged on the following target (fully implemented):
 
-- the normative shim method surface is `session/prompt`, `session/cancel`, `session/watch_event`, `session/load`, `session/set_model`, `session/models`, `runtime/status`, and `runtime/stop` (internal agentd↔shim protocol);
+- the normative shim method surface is `session/prompt`, `session/cancel`, `session/watch_event`, `session/load`, `session/set_model`, `runtime/status`, and `runtime/stop` (internal agentd↔shim protocol);
 - the normative live notification surface is `shim/event` (internal);
 - socket path and state-dir layout are owned by `runtime-spec.md`, while replay / reconnect semantics are owned by `shim-rpc-spec.md`;
 - `agent-shim.md` is descriptive only: it explains component responsibilities and the ACP boundary, but it does not redefine method names or recovery rules;

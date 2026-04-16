@@ -27,7 +27,7 @@ agent 进程（claude-acp / pi-acp / gemini / ...）
 shim 提供 `session/*` + `runtime/*` RPC surface（request/response，clean-break 实现已对齐）、bundle/state 共置和单 AgentRun 单 shim 进程设计。
 
 agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent/*` 管理 Agent CRUD。shim RPC 的 `session/*` + `runtime/*` 是内部协议，不暴露给外部调用方。
-**统一 notification surface**：live notification 统一为 `shim/event`，携带 `runId`、`sessionId`、`seq`、`category`、`type`、`turnId`（turn 内 session events）、`streamSeq`、`content` 顶层字段。
+**统一 notification surface**：live notification 统一为 `runtime/event_update`，携带 `runId`、`sessionId`、`seq`、`type`、`turnId`（turn 内事件）、`payload` 顶层字段。事件类型包括核心流式事件和 `runtime_update`（合并进程状态与 session 元数据）。
 详见 [shim-rpc-spec.md](shim-rpc-spec.md) 中的"Turn-Aware Event Ordering"章节。
 
 ## 与规范文档的分工
@@ -95,17 +95,16 @@ agent-shim 对上暴露的是 **runtime/session 语义**，不是 raw ACP。
 ```text
 session/prompt       发送一个工作 turn
 session/cancel       取消当前 turn
-session/watch_event  K8s List-Watch 风格事件订阅（replay + live）
+runtime/watch_event  K8s List-Watch 风格事件订阅（replay + live）
 session/load         恢复已有 ACP session（try_reload 策略）
 session/set_model    切换当前模型
-session/models       查询可用模型列表
 runtime/status       查询 runtime truth 与恢复边界
 runtime/stop         优雅停止 runtime
 ```
 
 对上暴露的 live notification 也是 shim 自己的 surface：
 
-- `shim/event`（统一 notification，包含 session category 和 runtime category 事件）
+- `runtime/event_update`（统一 notification，包含核心流式事件和 `runtime_update` 事件）
 
 这层 API 让 agentd 只关心：
 
@@ -139,7 +138,7 @@ agent-shim ↔ agent:   ACP over stdio
 这意味着：
 
 - agentd 不需要理解 ACP 事件名、握手细节或客户端职责；
-- shim 把底层协议翻译成上层能消费的 `shim/event` notification（session category + runtime category）；
+- shim 把底层协议翻译成上层能消费的 `runtime/event_update` notification；
 - 若未来某个 agent 不走 ACP，只要 shim 继续维持相同的对上 surface，
   上层 contract 仍然成立。
 
@@ -160,7 +159,7 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 1. 发现 shim socket；
 2. 连接；
 3. `runtime/status` 获取当前 runtime truth 与 `lastSeq`；
-4. `session/watch_event` 一步完成历史补齐 + live 流恢复。
+4. `runtime/watch_event` 一步完成历史补齐 + live 流恢复。
 
 **重要**：socket 路径、state dir 布局、`events.jsonl` 的存在本身，由 runtime-spec authority 定义；
 恢复方法名与顺序，由 shim-rpc-spec authority 定义；
@@ -180,7 +179,7 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 当前实现已对齐 clean-break contract：
 
 - request/response surface 是 `session/*` + `runtime/*`（`pkg/rpc/server.go`、`pkg/agentd/shim_client.go` 已实现）；
-- notification surface 是 `shim/event`（统一替代原 `session/update` + `runtime/state_change`）；
-- recovery story 通过 `runtime/status` / `session/watch_event` 闭合；
+- notification surface 是 `runtime/event_update`（统一替代原 `session/update` + `runtime/state_change`）；
+- recovery story 通过 `runtime/status` / `runtime/watch_event` 闭合；
 - ACP 继续留在 shim 内部；
 - `session/load` 在 `ShimClient` 中作为可失败的恢复尝试（用于 `try_reload` restart policy）；该调用允许失败并 fallback。
