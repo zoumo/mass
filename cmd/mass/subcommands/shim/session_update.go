@@ -7,33 +7,71 @@ import (
 	apishim "github.com/zoumo/mass/pkg/shim/api"
 )
 
-// buildSessionUpdate converts a shim API metadata event into the inputs needed
-// for Manager.UpdateSessionMetadata: the list of changed session fields, a
+// buildSessionUpdate converts a RuntimeUpdateEvent into the inputs needed
+// for Manager.UpdateSessionMeta the list of changed session fields, a
 // reason string, and an apply function that mutates *State.
 //
-// Returns nil changed if the event is not a metadata type.
+// A single RuntimeUpdateEvent can carry multiple metadata fields; the returned
+// apply function handles all non-nil fields in one pass.
+// Returns nil changed if the event carries no metadata fields.
 func buildSessionUpdate(ev apishim.Event) (changed []string, reason string, apply func(*apiruntime.State)) {
-	switch e := ev.(type) {
-	case apishim.AvailableCommandsEvent:
-		return []string{"availableCommands"}, "commands-updated", func(st *apiruntime.State) {
+	ru, ok := ev.(apishim.RuntimeUpdateEvent)
+	if !ok {
+		return nil, "", nil
+	}
+
+	var fields []string
+	var reasons []string
+	var appliers []func(*apiruntime.State)
+
+	if ru.AvailableCommands != nil {
+		fields = append(fields, "availableCommands")
+		reasons = append(reasons, "commands-updated")
+		e := ru.AvailableCommands
+		appliers = append(appliers, func(st *apiruntime.State) {
 			st.Session.AvailableCommands = convertToStateCommands(e.Commands)
 			sortCommandsByName(st.Session.AvailableCommands)
-		}
-	case apishim.ConfigOptionEvent:
-		return []string{"configOptions"}, "config-updated", func(st *apiruntime.State) {
-			st.Session.ConfigOptions = convertToStateConfigOptions(e.ConfigOptions)
+		})
+	}
+	if ru.ConfigOptions != nil {
+		fields = append(fields, "configOptions")
+		reasons = append(reasons, "config-updated")
+		e := ru.ConfigOptions
+		appliers = append(appliers, func(st *apiruntime.State) {
+			st.Session.ConfigOptions = convertToStateConfigOptions(e.Options)
 			sortConfigOptionsByID(st.Session.ConfigOptions)
-		}
-	case apishim.SessionInfoEvent:
-		return []string{"sessionInfo"}, "session-info-updated", func(st *apiruntime.State) {
+		})
+	}
+	if ru.SessionInfo != nil {
+		fields = append(fields, "sessionInfo")
+		reasons = append(reasons, "session-info-updated")
+		e := *ru.SessionInfo
+		appliers = append(appliers, func(st *apiruntime.State) {
 			st.Session.SessionInfo = convertToStateSessionInfo(e)
-		}
-	case apishim.CurrentModeEvent:
-		return []string{"currentMode"}, "mode-updated", func(st *apiruntime.State) {
+		})
+	}
+	if ru.CurrentMode != nil {
+		fields = append(fields, "currentMode")
+		reasons = append(reasons, "mode-updated")
+		e := *ru.CurrentMode
+		appliers = append(appliers, func(st *apiruntime.State) {
 			st.Session.CurrentMode = convertToStateCurrentMode(e)
-		}
-	default:
+		})
+	}
+
+	if len(fields) == 0 {
 		return nil, "", nil
+	}
+
+	reason = reasons[0]
+	if len(reasons) > 1 {
+		reason = "metadata-updated"
+	}
+
+	return fields, reason, func(st *apiruntime.State) {
+		for _, fn := range appliers {
+			fn(st)
+		}
 	}
 }
 

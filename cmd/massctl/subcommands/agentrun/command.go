@@ -27,6 +27,7 @@ func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 	cmd.AddCommand(newDeleteCmd(getClient))
 	cmd.AddCommand(newCancelCmd(getClient))
 	cmd.AddCommand(newRestartCmd(getClient))
+	cmd.AddCommand(newChatCmd(getClient))
 	return cmd
 }
 
