@@ -591,7 +591,7 @@ Transition rules:
 Events are not streamed directly over the ARI connection. Instead:
 
 - `agentrun/get` returns `status.shim.socketPath` — the shim's Unix socket path.
-- Callers connect directly to the shim socket and call `session/subscribe` to receive `session/update` and `runtime/state_change` notifications.
+- Callers connect directly to the shim socket and call `session/watch_event` to receive `shim/event` notifications.
 - See [shim-rpc-spec.md](../runtime/shim-rpc-spec.md) for the full notification surface.
 
 ## Error Codes
@@ -657,7 +657,6 @@ The ARI contract intentionally exposes less than raw ACP:
 
 The following are target gaps, not current capabilities:
 
-- **Room methods** (`room/*`): shared-workspace group management, messaging bus. Not implemented.
-- **ARI-level event fanout**: pushing `session/update` events directly to ARI clients without requiring shim socket connection.
+- **Event streaming**: callers obtain the shim socket path via `agentrun/get` and connect directly to the shim to consume `shim/event` notifications. ARI does not provide event passthrough.
 - **AgentRun env override**: `agentrun/create` currently has no `env` field; only Agent definition env is used.
 - **Hook output in workspace/get**: workspace preparation hook stdout/stderr is not currently returned.

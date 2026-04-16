@@ -172,6 +172,97 @@ In agentd-managed deployments, bundle/state/socket are co-located:
   客户端检测到断连后，用最后收到的 `event.seq + 1` 作为 `fromSeq` 重连，
   replay 补齐丢失的事件段，无缝恢复 live 流。
 
+### `session/load`
+
+尝试恢复/加载已有的 ACP session。用于 `try_reload` restart policy，允许失败并 fallback 到 `always_new`。
+
+**Request**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "session/load",
+  "params": {
+    "sessionId": "acp-session-abc123"
+  }
+}
+```
+
+**Response**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "result": null
+}
+```
+
+**说明**：
+
+- 成功表示 ACP session 已恢复，agent 可继续工作；
+- 失败不是致命错误——调用方应 fallback 到 `always_new` 策略建立全新 session；
+- 此方法仅在 restart / recovery 路径中使用，不用于正常 prompt 流程。
+
+### `session/set_model`
+
+切换 agent 当前使用的模型。
+
+**Request**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "session/set_model",
+  "params": {
+    "modelId": "claude-sonnet"
+  }
+}
+```
+
+**Response**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "result": {}
+}
+```
+
+### `session/models`
+
+查询可用模型列表和当前选中的模型。
+
+**Request**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "method": "session/models",
+  "params": null
+}
+```
+
+**Response**:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 9,
+  "result": {
+    "availableModels": [
+      { "modelId": "claude-sonnet", "name": "Claude Sonnet" },
+      { "modelId": "claude-opus", "name": "Claude Opus", "description": "Most capable model" }
+    ],
+    "currentModelId": "claude-sonnet"
+  }
+}
+```
+
 ### `runtime/status`
 
 返回当前 runtime truth 与回放所需的最小恢复元数据。
@@ -398,7 +489,7 @@ content 事件（turn 内，携带 turn 字段和 block status）：
 
 **Category 划分**：
 - `session`：所有 ACP SessionUpdate 翻译产出的事件（text, thinking, tool_call, tool_result,
-  file_write, file_read, command, plan, user_message, turn_start, turn_end, error,
+  plan, user_message, turn_start, turn_end, error,
   session_info, config_option, available_commands, current_mode, usage）
 - `runtime`：仅 `state_change`（runtime 进程自身产生的生命周期事件）
 
@@ -433,9 +524,6 @@ content 事件（turn 内，携带 turn 字段和 block status）：
 | `user_message` | `status: string`, `content: ContentBlock` | 用户输入回显，携带 content block streaming status |
 | `tool_call` | `id`, `kind`, `title`, `status`, `content[]`, `locations[]`, `rawInput`, `rawOutput`, `_meta` | tool 调用开始（完整 ACP 字段） |
 | `tool_result` | `id`, `status`, `kind`, `title`, `content[]`, `locations[]`, `rawInput`, `rawOutput`, `_meta` | tool 调用完成 / 失败（完整 ACP 字段） |
-| `file_write` | `path: string`, `allowed: bool` | 文件写入及权限结果 |
-| `file_read` | `path: string`, `allowed: bool` | 文件读取及权限结果 |
-| `command` | `command: string`, `allowed: bool` | shell / terminal 操作及权限结果 |
 | `plan` | `entries: PlanEntry[]`, `_meta?` | 执行计划更新 |
 | `turn_start` | _(empty)_ | 一个 turn 开始 |
 | `turn_end` | `stopReason: string` | 一个 turn 结束 |
@@ -519,6 +607,9 @@ agent-shim ↔ agent:   ACP over stdio                                ← 内部
 | `session/prompt` | 请求 / 响应 | 是（直到 turn 结束） | 发送一个工作 turn |
 | `session/cancel` | 请求 / 响应 | 否 | 取消当前 turn |
 | `session/watch_event` | 请求 / 响应 + 异步 notification | 否 | K8s List-Watch 风格：replay + live `shim/event` 流 |
+| `session/load` | 请求 / 响应 | 否 | 尝试加载已有 ACP session（try_reload 策略） |
+| `session/set_model` | 请求 / 响应 | 否 | 切换 agent 使用的模型 |
+| `session/models` | 请求 / 响应 | 否 | 查询可用模型列表 |
 | `runtime/status` | 请求 / 响应 | 否 | 查询 runtime truth 与恢复边界 |
 | `runtime/stop` | 请求 / 响应 | 否 | 停止 runtime 与 shim |
 | `shim/event` | notification（异步） | — | 统一 notification：session events + state_change |

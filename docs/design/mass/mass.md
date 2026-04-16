@@ -50,7 +50,7 @@ An Agent definition is a named runtime configuration template with the following
 
 There is no runtime process associated with an Agent definition.
 When an AgentRun is created, the Process Manager looks up the Agent definition named by `agentrun/create.agent` and uses its `command`, `args`, and `env` to generate the MASS Runtime Spec `config.json`.
-Agents are managed via `agent/set`, `agent/get`, `agent/list`, `agent/delete`.
+Agents are managed via `agent/create`, `agent/update`, `agent/get`, `agent/list`, `agent/delete`.
 
 ### Agent Manager
 
@@ -77,7 +77,7 @@ It owns:
 - typed event subscription;
 - recovery on daemon restart.
 
-Session-level concerns (shim socket path, PID, bundle directory) are tracked directly by Process Manager and surfaced through `agentrun/status` via `shimState`.
+Session-level concerns (shim socket path, PID, bundle directory) are tracked directly by Process Manager and surfaced through `agentrun/get` via `shimState`.
 
 ## AgentRun Identity
 
@@ -122,13 +122,13 @@ Transition rules:
 The converged bootstrap story for AgentRun creation:
 
 1. `workspace/create` is called; agentd prepares the workspace asynchronously.
-2. Caller polls `workspace/status` until `phase: "ready"`.
+2. Caller polls `workspace/get` until `phase: "ready"`.
 3. `agentrun/create` is called with `workspace` + `name` + `agent`.
 4. agentd validates the workspace is ready, writes AgentRun metadata with `state: "creating"`, and starts the shim in a background goroutine.
 5. The shim materializes the bundle, resolves `cwd`, and completes ACP bootstrap.
 6. On success: AgentRun transitions to `idle`. On failure: AgentRun transitions to `error`.
 7. Actual work arrives later through `agentrun/prompt`.
-8. Callers poll `agentrun/status` until state transitions out of `creating`.
+8. Callers poll `agentrun/get` until state transitions out of `creating`.
 
 `agentrun/create` returns immediately with `state: "creating"`.
 It does **not** wait for bootstrap to complete.
@@ -142,7 +142,7 @@ The response is:
 { "workspace": "my-project", "name": "architect", "state": "creating" }
 ```
 
-The caller polls `agentrun/status` to determine when the agent is ready:
+The caller polls `agentrun/get` to determine when the agent is ready:
 
 ```json
 { "agent": { "workspace": "my-project", "name": "architect", "state": "idle", ... } }
@@ -174,7 +174,7 @@ Agents already in `error` may be deleted directly because they are already non-o
 1. Validates agent is `stopped` or `error`.
 2. Transitions agent to `creating`.
 3. Triggers background re-bootstrap using existing AgentRun metadata.
-4. Caller polls `agentrun/status` until `idle` or `error`.
+4. Caller polls `agentrun/get` until `idle` or `error`.
 
 Restart preserves `workspace`, `name`, and bootstrap configuration.
 It does not create a new AgentRun identity.
@@ -186,7 +186,7 @@ It does not create a new AgentRun identity.
 - the AgentRun record still exists;
 - the current runtime instance is no longer trustworthy;
 - callers must not route new work to the agent until it is restarted;
-- the primary operator actions are `agentrun/status`, `agentrun/restart`, or `agentrun/delete`.
+- the primary operator actions are `agentrun/get`, `agentrun/restart`, or `agentrun/delete`.
 
 Operational consequences:
 
@@ -225,7 +225,7 @@ On daemon restart:
 
 AgentRuns in `creating` state at daemon restart are marked `error` ("daemon restarted during creating phase") — they never completed bootstrap.
 
-External callers never see internal shim process details beyond what `agentrun/status` surfaces in `shimState`.
+External callers never see internal shim process details beyond what `agentrun/get` surfaces in `shimState`.
 
 ## Runtime Bootstrap Flow
 
@@ -235,7 +235,7 @@ ARI client
   <- { name, phase: "pending" }
 
 ARI client
-  -> workspace/status(name)          # poll until phase == "ready"
+  -> workspace/get(name)              # poll until phase == "ready"
   <- { name, phase: "ready", path }
 
 ARI client
@@ -247,7 +247,7 @@ agentd (background)
   -> reach bootstrap-complete / idle state (agentRun.state = "idle")
 
 ARI client
-  -> agentrun/status(workspace, name)   # poll until state != "creating"
+  -> agentrun/get(workspace, name)      # poll until state != "creating"
   <- { agent: { workspace, name, state: "idle", ... } }
 
 ARI client

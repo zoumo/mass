@@ -133,7 +133,7 @@ That means:
 - a hook may mutate files in the workspace;
 - a hook may start or stop host-side services;
 - hook failure aborts workspace preparation (for `setup` hooks) and the error is returned to the ARI caller;
-- hook stdout/stderr is captured by mass but is **not** currently returned through `workspace/status` — this is a future work gap;
+- hook stdout/stderr is captured by mass but is **not** currently returned through `workspace/get` — this is a future work gap;
 - hook execution happens before or after agent work, not inside an agent turn.
 
 This is the design-set authority for the phrase **hook execution**.

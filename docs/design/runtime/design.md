@@ -128,7 +128,7 @@ The important split is:
 
 | OCI Field | Why Not Needed |
 |-----------|---------------|
-| `root` | Replaced by `agentRoot`. Same concept (relative path in bundle pointing to working filesystem), but workspace is shared across agents in a Room rather than isolated per agent |
+| `root` | Replaced by `agentRoot`. Same concept (relative path in bundle pointing to working filesystem), but workspace is shared across agents in a workspace rather than isolated per agent |
 | `mounts` | No filesystem layering. agentd's Workspace Manager prepares the workspace directory and symlinks it into the bundle; agent-shim resolves the symlink and uses the canonical path |
 | `linux.namespaces` | Agents don't need kernel-level isolation |
 | `linux.resources` | Agents don't need cgroup constraints |
@@ -151,14 +151,14 @@ MASS follows the same pattern:
 | Use as working dir | container's root filesystem | agent's `cmd.Dir` + ACP `session/new cwd` |
 
 Key difference: OCI rootfs is per-container (isolated). MASS workspace is shared — multiple
-agents in a Room share the same workspace directory, with agentd creating a symlink in
+agents in a workspace share the same workspace directory, with agentd creating a symlink in
 each agent's bundle pointing to the same underlying directory.
 
-When multiple agents in a Room share the same workspace, this mirrors the Pod model in Kubernetes —
+When multiple agents in a workspace share the same directory, this mirrors the Pod model in Kubernetes —
 multiple containers joining the same namespace to share resources:
 
 ```
-OCI Pod (shared namespace):          MASS Room (shared workspace):
+OCI Pod (shared namespace):          MASS Workspace (shared directory):
 
   container-1 ─┐                       agent-1 bundle/workspace ─┐
   container-2 ─┤── network ns          agent-2 bundle/workspace ─┤──► /var/lib/agentd/workspaces/ws-abc/

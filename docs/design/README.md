@@ -15,7 +15,7 @@ OCI Image Spec                  →    MASS Workspace Spec
 runc + containerd-shim          →    agent-shim（合并，无独立 runa）
 containerd                      →    agentd
 CRI (Container Runtime Interface) →  ARI (Agent Runtime Interface)
-Pod                             →    Room（future work，尚未实现）
+Pod                             →    Workspace（共享工作目录）
 Container（外部对象）             →    Agent definition（模板）/ AgentRun（运行实例）
 Image / rootfs                  →    Workspace
 crictl                          →    massctl
@@ -33,7 +33,7 @@ Agent 面临着同样的分层关切：
 | "底层执行 + 协议适配" | runc + containerd-shim | agent-shim（合并，无独立 runa） |
 | "高层管理" | containerd | agentd（Agent CRUD + AgentRun 生命周期 + Workspace Manager） |
 | "管理接口" | CRI (kubelet → containerd) | ARI (external caller → agentd) |
-| "协同调度组" | Pod（共享 network/IPC namespace） | Room（共享 workspace、消息总线）— **future work** |
+| "协同调度组" | Pod（共享 network/IPC namespace） | Workspace（共享工作目录、`workspace/send` 消息路由） |
 
 通过遵循这套经过验证的分层架构，每个组件都有清晰、有界的职责。
 规范是契约；组件是可替换的实现。
@@ -96,18 +96,17 @@ Agent 面临着同样的分层关切：
 
 已实现（`cmd/agentd`、`cmd/massctl`、相关包）：
 
-- `workspace/*` — workspace 生命周期管理（create/status/list/delete/send）
-- `agent/*` — Agent CRUD（set/get/list/delete）
-- `agentrun/*` — AgentRun 生命周期（create/prompt/cancel/stop/delete/restart/list/status/attach）
+- `workspace/*` — workspace 生命周期管理（create/get/list/delete/send）
+- `agent/*` — Agent CRUD（create/update/get/list/delete）
+- `agentrun/*` — AgentRun 生命周期（create/prompt/cancel/stop/delete/restart/list/get）
 - agentd 重启后的 shim reconnect 和 recovery
 - bbolt-based metadata persistence
 - workspace-mcp-server（`agentd workspacemcp` 子命令）
 
 尚未实现（future work）：
 
-- **Room**：共享 workspace 的 group 管理与消息总线（无 `room/*` ARI 方法）
 - **workspace task/inbox**：结构化任务委派和排队交付
-- **ARI-level event fanout**：直接向 ARI 客户端推送事件流
+- **Event streaming**：调用方通过 `agentrun/get` 获取 shim socket 路径后直连消费事件，ARI 层不做事件透传
 - **AgentRun 级 env override**：`agentrun/create` 当前无 `env` 字段
 - **Hook output persistence**：workspace hook stdout/stderr 不通过 ARI 返回
 
@@ -136,6 +135,7 @@ Agent 面临着同样的分层关切：
 |------|------|------|
 | [contract-convergence.md](./contract-convergence.md) | authority map | 跨文档 authority、收敛不变量、实现滞后说明 |
 | [roadmap.md](./roadmap.md) | 规划 | Development Roadmap — 当前实现状态与未来规划 |
+| [orchestration-guide.md](./orchestration-guide.md) | 指南 | 外部调用方如何使用 MASS 编排多 Agent 工作流 — 使用模式、最佳实践、示例 |
 
 ### runtime/ — Layer 1: 单 agent 进程（对标 runc + containerd-shim）
 
@@ -163,3 +163,4 @@ Agent 面临着同样的分层关切：
 |------|------|------|
 | [mass/ari-spec.md](./mass/ari-spec.md) | 规范 | ARI — Agent Runtime Interface；`workspace/*`、`agent/*` Agent CRUD、`agentrun/*` AgentRun 生命周期 |
 | [mass/mass.md](./mass/mass.md) | 组件 | agentd — agent 运行时守护进程；Workspace Manager、Agent Manager、Agent Manager、Process Manager |
+| [mass/lifecycle-hooks.md](./mass/lifecycle-hooks.md) | 设计提案 | AgentRun Lifecycle Hooks — workspace 级别的 agent 状态变化通知机制 |

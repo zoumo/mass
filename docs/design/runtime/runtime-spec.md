@@ -47,6 +47,14 @@ populated by the shim during runtime:
   as the agent reports notifications (e.g. `agentInfo`, `capabilities`, `availableCommands`,
   `configOptions`, `sessionInfo`, `currentMode`). See Go type `SessionState` for the full
   structure.
+  * **`models`** (object, OPTIONAL) contains model switching state populated when
+    the agent supports model selection.
+    * **`availableModels`** ([]ModelInfo) list of available models.
+    * **`currentModelId`** (string) the currently selected model ID.
+  * ModelInfo structure:
+    * **`modelId`** (string, REQUIRED) unique model identifier.
+    * **`name`** (string, REQUIRED) display name.
+    * **`description`** (string, OPTIONAL) model description.
 * **`eventCounts`** (map, OPTIONAL) maps event type strings (e.g. `"agent_message"`, `"tool_call"`)
   to their cumulative counts. This is a derived field — set on every state write, not
   independently settable.
@@ -78,7 +86,13 @@ populated by the shim during runtime:
   },
   "updatedAt": "2026-04-07T10:00:00.123456789Z",
   "session": {
-    "agentInfo": { "name": "claude-code", "version": "1.0.0" }
+    "agentInfo": { "name": "claude-code", "version": "1.0.0" },
+    "models": {
+      "availableModels": [
+        { "modelId": "claude-sonnet", "name": "Claude Sonnet" }
+      ],
+      "currentModelId": "claude-sonnet"
+    }
   },
   "eventCounts": {
     "agent_message": 42,
@@ -391,9 +405,6 @@ Runtime 必须产出结构化的 typed event stream，供上层消费。
 | `user_message` | ACP `user_message_chunk` / `session/prompt` | 用户输入回显 |
 | `tool_call` | ACP `tool_call` | 工具调用开始 |
 | `tool_result` | ACP `tool_call_update` | 工具调用完成/失败 |
-| `file_write` | ACP `fs/write_text_file` (runtime 处理后) | 文件写入操作及结果 |
-| `file_read` | ACP `fs/read_text_file` (runtime 处理后) | 文件读取操作及结果 |
-| `command` | ACP `terminal/*` (runtime 处理后) | Shell 命令执行及输出 |
 | `plan` | ACP `plan` / `plan_update` | Agent 执行计划及状态更新 |
 | `turn_start` | prompt 开始处理 | 标记一个 turn 的开始 |
 | `turn_end` | ACP prompt_response | 标记一个 turn 的结束 |

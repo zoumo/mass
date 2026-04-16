@@ -20,7 +20,7 @@ workspace-mcp-server 提供两个 MCP tool：
 | MCP Tool | 对应 ARI 方法 | 功能 |
 |----------|--------------|------|
 | `workspace_send` | `workspace/send` | 向 workspace 内另一个 agent 发送消息 |
-| `workspace_status` | `workspace/status` | 查询 workspace 成员与状态 |
+| `workspace_status` | `workspace/get` | 查询 workspace 成员与状态 |
 
 ### 注入方式
 

@@ -33,13 +33,13 @@ Implemented:
 
 | Group | Methods |
 |---|---|
-| `workspace/*` | `workspace/create`, `workspace/status`, `workspace/list`, `workspace/delete`, `workspace/send` |
-| `agent/*` | `agent/set`, `agent/get`, `agent/list`, `agent/delete` (Agent CRUD) |
-| `agentrun/*` | `agentrun/create`, `agentrun/prompt`, `agentrun/cancel`, `agentrun/stop`, `agentrun/delete`, `agentrun/restart`, `agentrun/list`, `agentrun/status`, `agentrun/attach` |
+| `workspace/*` | `workspace/create`, `workspace/get`, `workspace/list`, `workspace/delete`, `workspace/send` |
+| `agent/*` | `agent/create`, `agent/update`, `agent/get`, `agent/list`, `agent/delete` (Agent CRUD) |
+| `agentrun/*` | `agentrun/create`, `agentrun/prompt`, `agentrun/cancel`, `agentrun/stop`, `agentrun/delete`, `agentrun/restart`, `agentrun/list`, `agentrun/get` |
 
 ### Shim RPC Surface (Implemented)
 
-Production shim server registers: `session/prompt`, `session/cancel`, `session/subscribe`, `runtime/status`, `runtime/history`, `runtime/stop`.
+Production shim server registers: `session/prompt`, `session/cancel`, `session/watch_event`, `session/load`, `session/set_model`, `session/models`, `runtime/status`, `runtime/stop`.
 
 Live notifications: `shim/event` (unified — replaces `session/update` + `runtime/state_change`).
 
@@ -52,21 +52,19 @@ Live notifications: `shim/event` (unified — replaces `session/update` + `runti
 | Area | Gap |
 |---|---|
 | Terminal operations | `terminal/execute`, `terminal/read_output`, `terminal/set_timeout` stub in `pkg/runtime/client.go` — not yet wired |
-| `session/load` (warm resume) | agentd client calls it in `try_reload` recovery policy; production shim server does not register it yet — calls return `MethodNotFound` |
 
 ### Future Work
 
 | Area | Description |
 |---|---|
-| **Room** | Shared-workspace group management and messaging bus (`room/*` ARI methods). Not implemented; no `pkg/agentd/room`, no room-spec. |
 | **workspace task/inbox** | Structured task delegation (`workspace/taskCreate` etc.), auto-reply, Inbox queuing. Not implemented. |
-| **ARI-level event fanout** | Streaming `session/update` events directly to ARI clients without requiring shim socket connection. |
+| **Event streaming** | Callers obtain the shim socket path via `agentrun/get` and connect directly to the shim to consume `shim/event` notifications. ARI does not provide event passthrough. |
 | **AgentRun-level env override** | `agentrun/create` has no `env` field; only Agent definition env is used. |
-| **Hook output via ARI** | Workspace hook stdout/stderr is captured but not returned through `workspace/status`. |
+| **Hook output via ARI** | Workspace hook stdout/stderr is captured but not returned through `workspace/get`. |
 | **MASS runtime ID ↔ ACP sessionId mapping** | Restart diagnostics: record which inner ACP session belongs to which AgentRun. |
 | **Event log rotation** | Currently unbounded append to `events.jsonl`. |
 | **Cold pause / warm pause** | Lifecycle states beyond `idle`/`running`/`stopped` for session hibernation. |
-| **Agent definition `description` / `capabilities`** | Agent capability discovery via `workspace/status` members. |
+| **Agent definition `description` / `capabilities`** | Agent capability discovery via `workspace/get` members. |
 
 ---
 

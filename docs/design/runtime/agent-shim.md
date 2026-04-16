@@ -95,9 +95,11 @@ agent-shim 对上暴露的是 **runtime/session 语义**，不是 raw ACP。
 ```text
 session/prompt       发送一个工作 turn
 session/cancel       取消当前 turn
-session/subscribe    恢复 / 建立 live notification 流
+session/watch_event  K8s List-Watch 风格事件订阅（replay + live）
+session/load         恢复已有 ACP session（try_reload 策略）
+session/set_model    切换当前模型
+session/models       查询可用模型列表
 runtime/status       查询 runtime truth 与恢复边界
-runtime/history      回放历史 notification
 runtime/stop         优雅停止 runtime
 ```
 
@@ -158,8 +160,7 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 1. 发现 shim socket；
 2. 连接；
 3. `runtime/status` 获取当前 runtime truth 与 `lastSeq`；
-4. `runtime/history` 补齐断线期间错过的 notification；
-5. `session/subscribe` 恢复 live 流。
+4. `session/watch_event` 一步完成历史补齐 + live 流恢复。
 
 **重要**：socket 路径、state dir 布局、`events.jsonl` 的存在本身，由 runtime-spec authority 定义；
 恢复方法名与顺序，由 shim-rpc-spec authority 定义；
@@ -180,6 +181,6 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 
 - request/response surface 是 `session/*` + `runtime/*`（`pkg/rpc/server.go`、`pkg/agentd/shim_client.go` 已实现）；
 - notification surface 是 `shim/event`（统一替代原 `session/update` + `runtime/state_change`）；
-- recovery story 通过 `runtime/status` / `runtime/history` / `session/subscribe` 闭合；
+- recovery story 通过 `runtime/status` / `session/watch_event` 闭合；
 - ACP 继续留在 shim 内部；
-- `session/load` 在 `ShimClient` 中作为可失败的恢复尝试（用于 `try_reload` restart policy）；该调用允许失败并 fallback。当前生产 shim RPC server（`pkg/rpc/server.go`）尚未注册 `session/load`，调用会返回 `MethodNotFound`；生产 shim 实现此方法是 future work。
+- `session/load` 在 `ShimClient` 中作为可失败的恢复尝试（用于 `try_reload` restart policy）；该调用允许失败并 fallback。
