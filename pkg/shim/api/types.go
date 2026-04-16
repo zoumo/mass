@@ -37,16 +37,28 @@ type SessionWatchEventParams struct {
 }
 
 // SessionWatchEventResult is returned by "session/watch_event".
+// WatchID is an opaque identifier assigned by the server for this watch stream.
+// The client uses it to demux notifications when multiple watch streams share
+// one connection (each shim/event notification carries the originating WatchID).
 // NextSeq is the sequence number boundary at subscription time — for diagnostics
 // only. Clients should track the last received event seq for reconnection.
 type SessionWatchEventResult struct {
-	NextSeq int `json:"nextSeq"`
+	WatchID string `json:"watchId"`
+	NextSeq int    `json:"nextSeq"`
 }
 
 // RuntimeStatusRecovery holds recovery metadata from the shim's durable log.
 type RuntimeStatusRecovery struct {
 	LastSeq int `json:"lastSeq"`
 }
+
+// SessionSetModelParams is the JSON body for "session/set_model".
+type SessionSetModelParams struct {
+	ModelID string `json:"modelId"`
+}
+
+// SessionSetModelResult is returned by "session/set_model".
+type SessionSetModelResult struct{}
 
 // RuntimeStatusResult is returned by "runtime/status".
 type RuntimeStatusResult struct {

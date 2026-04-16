@@ -5,14 +5,15 @@ const (
 	MethodSessionPrompt    = "session/prompt"
 	MethodSessionCancel    = "session/cancel"
 	MethodSessionLoad      = "session/load"
-	MethodSessionWatchEvent = "session/watch_event"
+	MethodRuntimeWatchEvent = "runtime/watch_event"
+	MethodSessionSetModel   = "session/set_model"
 	MethodRuntimeStatus     = "runtime/status"
 	MethodRuntimeStop       = "runtime/stop"
 )
 
 // Shim notification methods.
 const (
-	// MethodShimEvent is the unified notification method for all shim events.
+	// MethodRuntimeEventUpdate is the unified notification method for all runtime events.
 	// It replaces the former session/update and runtime/state_change notifications.
-	MethodShimEvent = "shim/event"
+	MethodRuntimeEventUpdate = "runtime/event_update"
 )

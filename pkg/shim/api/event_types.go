@@ -389,7 +389,7 @@ type ErrorEvent struct {
 
 func (ErrorEvent) eventType() string { return EventTypeError }
 
-// ── New event types (previously silently discarded) ───────────────────────────
+// ── Metadata / runtime event types (merged into RuntimeUpdateEvent) ──────────
 
 // AvailableCommandsEvent carries the current list of available commands/tools.
 type AvailableCommandsEvent struct {
@@ -397,23 +397,17 @@ type AvailableCommandsEvent struct {
 	Commands []AvailableCommand `json:"commands"`
 }
 
-func (AvailableCommandsEvent) eventType() string { return EventTypeAvailableCommands }
-
 // CurrentModeEvent carries mode changes.
 type CurrentModeEvent struct {
 	Meta   map[string]any `json:"_meta,omitempty"`
 	ModeID string         `json:"modeId"`
 }
 
-func (CurrentModeEvent) eventType() string { return EventTypeCurrentMode }
-
 // ConfigOptionEvent carries config option changes.
 type ConfigOptionEvent struct {
-	Meta          map[string]any `json:"_meta,omitempty"`
-	ConfigOptions []ConfigOption `json:"configOptions"`
+	Meta    map[string]any `json:"_meta,omitempty"`
+	Options []ConfigOption `json:"options"`
 }
-
-func (ConfigOptionEvent) eventType() string { return EventTypeConfigOption }
 
 // SessionInfoEvent carries session metadata updates.
 type SessionInfoEvent struct {
@@ -421,8 +415,6 @@ type SessionInfoEvent struct {
 	Title     *string        `json:"title,omitempty"`
 	UpdatedAt *string        `json:"updatedAt,omitempty"`
 }
-
-func (SessionInfoEvent) eventType() string { return EventTypeSessionInfo }
 
 // UsageEvent carries token/API usage statistics.
 type UsageEvent struct {
@@ -432,12 +424,8 @@ type UsageEvent struct {
 	Used int            `json:"used"`
 }
 
-func (UsageEvent) eventType() string { return EventTypeUsage }
-
-
-// StateChangeEvent carries runtime process lifecycle transitions.
-// This is a runtime category event, not a session event.
-type StateChangeEvent struct {
+// RuntimeStatus carries runtime process lifecycle transitions.
+type RuntimeStatus struct {
 	PreviousStatus string   `json:"previousStatus"`
 	Status         string   `json:"status"`
 	PID            int      `json:"pid,omitempty"`
@@ -445,7 +433,19 @@ type StateChangeEvent struct {
 	SessionChanged []string `json:"sessionChanged,omitempty"`
 }
 
-func (StateChangeEvent) eventType() string { return EventTypeStateChange }
+// RuntimeUpdateEvent is the merged event type for runtime status changes
+// and session metadata updates. All fields are optional pointers — nil means
+// "not updated", non-nil means "updated" (empty value = cleared).
+type RuntimeUpdateEvent struct {
+	Status            *RuntimeStatus          `json:"status,omitempty"`
+	AvailableCommands *AvailableCommandsEvent `json:"availableCommands,omitempty"`
+	CurrentMode       *CurrentModeEvent       `json:"currentMode,omitempty"`
+	ConfigOptions     *ConfigOptionEvent      `json:"configOptions,omitempty"`
+	SessionInfo       *SessionInfoEvent       `json:"sessionInfo,omitempty"`
+	Usage             *UsageEvent             `json:"usage,omitempty"`
+}
+
+func (RuntimeUpdateEvent) eventType() string { return EventTypeRuntimeUpdate }
 
 // EventTypeOf returns the event type string for the given Event.
 // This exported accessor allows packages outside pkg/shim/api to retrieve the

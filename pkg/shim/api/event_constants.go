@@ -1,8 +1,8 @@
 package api
 
-// EventType* and Category* constants — moved from github.com/zoumo/mass/api.
+// EventType* constants — moved from github.com/zoumo/mass/api.
 
-// Event type identifiers used in shim/event payloads.
+// Event type identifiers used in runtime/event_update payloads.
 const (
 	EventTypeAgentMessage  = "agent_message"
 	EventTypeAgentThinking = "agent_thinking"
@@ -14,23 +14,10 @@ const (
 	EventTypeTurnEnd     = "turn_end"
 	EventTypeError       = "error"
 
-	// New event types mirroring previously discarded ACP SessionUpdate branches.
-	EventTypeAvailableCommands = "available_commands"
-	EventTypeCurrentMode       = "current_mode"
-	EventTypeConfigOption      = "config_option"
-	EventTypeSessionInfo       = "session_info"
-	EventTypeUsage             = "usage"
-
-	// EventTypeStateChange is a runtime category event for process lifecycle transitions.
-	EventTypeStateChange = "state_change"
-)
-
-// Event category identifiers for ShimEvent.Category.
-const (
-	// CategorySession covers all ACP SessionUpdate translated events.
-	CategorySession = "session"
-	// CategoryRuntime covers runtime/process lifecycle events (state_change).
-	CategoryRuntime = "runtime"
+	// EventTypeRuntimeUpdate is the merged event type for runtime status changes
+	// and session metadata updates (replaces state_change, available_commands,
+	// current_mode, config_option, session_info, usage).
+	EventTypeRuntimeUpdate = "runtime_update"
 )
 
 // Content block streaming status values.
