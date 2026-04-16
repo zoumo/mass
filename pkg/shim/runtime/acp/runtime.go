@@ -48,6 +48,7 @@ type Manager struct {
 	conn            *acp.ClientSideConnection
 	sessionID       acp.SessionId
 	events          chan acp.SessionNotification
+	models          *acp.SessionModelState // from session/new response
 	stateChangeHook StateChangeHook
 	eventCountsFn   func() map[string]int
 }
@@ -163,6 +164,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	m.sessionID = sessionResp.SessionId
+	m.models = sessionResp.Models
 	m.mu.Unlock()
 
 	if m.cfg.AcpAgent.SystemPrompt != "" {
@@ -184,6 +186,9 @@ func (m *Manager) Create(ctx context.Context) error {
 		s.Bundle = m.bundleDir
 		s.Annotations = m.cfg.Metadata.Annotations
 		s.Session = convertInitializeToSession(initResp)
+		if sessionResp.Models != nil {
+			s.Session.Models = convertModels(sessionResp.Models)
+		}
 	}, "bootstrap-complete"); err != nil {
 		handshakeErr = err
 		return fmt.Errorf("runtime: write created state: %w", err)
@@ -308,6 +313,42 @@ func (m *Manager) Cancel(ctx context.Context) error {
 	if err := conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID}); err != nil {
 		return fmt.Errorf("runtime: cancel: %w", err)
 	}
+	return nil
+}
+
+// SetModel switches the agent to a different model via ACP session/set_model.
+func (m *Manager) SetModel(ctx context.Context, modelID string) error {
+	m.mu.Lock()
+	conn := m.conn
+	sessionID := m.sessionID
+	m.mu.Unlock()
+
+	if conn == nil {
+		return fmt.Errorf("runtime: agent not started")
+	}
+
+	_, err := conn.UnstableSetSessionModel(ctx, acp.UnstableSetSessionModelRequest{
+		SessionId: sessionID,
+		ModelId:   acp.UnstableModelId(modelID),
+	})
+	if err != nil {
+		return fmt.Errorf("runtime: set model: %w", err)
+	}
+
+	// Update in-memory models state.
+	m.mu.Lock()
+	if m.models != nil {
+		m.models.CurrentModelId = acp.ModelId(modelID) //nolint:gosec // ModelId is string
+	}
+	m.mu.Unlock()
+
+	// Persist updated currentModelId to state.json.
+	_ = m.writeState(func(s *apiruntime.State) {
+		if s.Session != nil && s.Session.Models != nil {
+			s.Session.Models.CurrentModelId = modelID
+		}
+	}, "set-model")
+
 	return nil
 }
 
@@ -467,6 +508,25 @@ func convertInitializeToSession(resp acp.InitializeResponse) *apiruntime.Session
 	}
 
 	return session
+}
+
+// convertModels maps acp.SessionModelState to the runtime-spec mirror type.
+func convertModels(m *acp.SessionModelState) *apiruntime.SessionModelState {
+	if m == nil {
+		return nil
+	}
+	models := make([]apiruntime.ModelInfo, len(m.AvailableModels))
+	for i, mi := range m.AvailableModels {
+		models[i] = apiruntime.ModelInfo{
+			ModelId:     string(mi.ModelId),
+			Name:        mi.Name,
+			Description: mi.Description,
+		}
+	}
+	return &apiruntime.SessionModelState{
+		AvailableModels: models,
+		CurrentModelId:  string(m.CurrentModelId),
+	}
 }
 
 // convertMcpServers maps apiruntime.McpServer slice to acp.McpServer slice.

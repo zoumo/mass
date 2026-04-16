@@ -20,6 +20,7 @@ type SessionState struct {
 	ConfigOptions     []ConfigOption     `json:"configOptions,omitempty"`
 	SessionInfo       *SessionInfo       `json:"sessionInfo,omitempty"`
 	CurrentMode       *string            `json:"currentMode,omitempty"`
+	Models            *SessionModelState `json:"models,omitempty"`
 }
 
 // ── Simple session types (no custom marshal) ─────────────────────────────────
@@ -236,4 +237,20 @@ type ConfigSelectGroup struct {
 	Group   string               `json:"group"`
 	Name    string               `json:"name"`
 	Options []ConfigSelectOption `json:"options"`
+}
+
+// ── Model types ─────────────────────────────────────────────────────────────
+
+// SessionModelState mirrors acp.SessionModelState — model availability and
+// current selection reported by the agent.
+type SessionModelState struct {
+	AvailableModels []ModelInfo `json:"availableModels"`
+	CurrentModelId  string     `json:"currentModelId"`
+}
+
+// ModelInfo mirrors acp.ModelInfo — identity of a single model.
+type ModelInfo struct {
+	ModelId     string  `json:"modelId"`
+	Name        string  `json:"name"`
+	Description *string `json:"description,omitempty"`
 }
