@@ -1,4 +1,4 @@
-package chat
+package component
 
 import (
 	"fmt"
@@ -39,6 +39,7 @@ type ToolMessageItem interface {
 
 	ToolCall() ToolCall
 	SetToolCall(tc ToolCall)
+	Result() *ToolResult
 	SetResult(res *ToolResult)
 	MessageID() string
 	SetMessageID(id string)
@@ -308,6 +309,10 @@ func (t *baseToolMessageItem) SetToolCall(tc ToolCall) {
 }
 
 // SetResult sets the tool result associated with this message item.
+func (t *baseToolMessageItem) Result() *ToolResult {
+	return t.result
+}
+
 func (t *baseToolMessageItem) SetResult(res *ToolResult) {
 	t.result = res
 	t.clearCache()
@@ -514,6 +519,8 @@ func toolOutputDiffContent(sty *styles.Styles, diff *ToolResultDiff, width int, 
 }
 
 // toolOutputPlainContent renders plain text with optional expansion support.
+// Uses the same gutter + code-line layout as toolOutputCodeContent (blank
+// gutter instead of line numbers) so that all tool output aligns consistently.
 func toolOutputPlainContent(sty *styles.Styles, content string, width int, expanded bool) string {
 	content = stringext.NormalizeSpace(content)
 	lines := strings.Split(content, "\n")
@@ -523,22 +530,29 @@ func toolOutputPlainContent(sty *styles.Styles, content string, width int, expan
 		maxLines = len(lines) // Show all
 	}
 
+	displayCount := len(lines)
+	if displayCount > maxLines {
+		displayCount = maxLines
+	}
+	maxDigits := getDigits(displayCount)
+	gutter := strings.Repeat(" ", maxDigits)
+	codeWidth := width - maxDigits
+
 	var out []string
 	for i, ln := range lines {
 		if i >= maxLines {
 			break
 		}
-		ln = " " + ln
-		if lipgloss.Width(ln) > width {
-			ln = ansi.Truncate(ln, width, "...")
-		}
-		out = append(out, sty.Tool.ContentLine.Width(width).Render(ln))
+		ln = ansi.Truncate(ln, codeWidth-sty.Tool.ContentCodeLine.GetHorizontalPadding(), "...")
+		gutterPart := sty.Tool.ContentLineNumber.Render(gutter)
+		linePart := sty.Tool.ContentCodeLine.Width(codeWidth).Render(ln)
+		out = append(out, lipgloss.JoinHorizontal(lipgloss.Left, gutterPart, linePart))
 	}
 
 	wasTruncated := len(lines) > responseContextHeight
 
 	if !expanded && wasTruncated {
-		out = append(out, sty.Tool.ContentTruncation.
+		out = append(out, sty.Tool.ContentCodeTruncation.
 			Width(width).
 			Render(fmt.Sprintf(assistantMessageTruncateFormat, len(lines)-responseContextHeight)))
 	}
@@ -569,8 +583,7 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 	maxDigits := getDigits(maxLineNumber)
 	numFmt := fmt.Sprintf("%%%dd", maxDigits)
 
-	bodyWidth := width - toolBodyLeftPaddingTotal
-	codeWidth := bodyWidth - maxDigits
+	codeWidth := width - maxDigits
 
 	var out []string
 	for i, ln := range highlightedLines {
@@ -589,7 +602,7 @@ func toolOutputCodeContent(sty *styles.Styles, path, content string, offset, wid
 		)
 	}
 
-	return sty.Tool.Body.Render(strings.Join(out, "\n"))
+	return strings.Join(out, "\n")
 }
 
 // toolOutputImageContent renders image data with size info.

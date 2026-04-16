@@ -1,4 +1,4 @@
-# pkg/tui/chat — 设计约定
+# pkg/tui/component — 设计约定
 
 ## 来源
 
@@ -39,14 +39,14 @@ return (isThinking || !isFinished) && !hasContent && !hasThinking && !hasToolCal
 
 ```go
 // 创建时
-item := chat.NewAssistantMessageItem(&sty, msg)
+item := component.NewAssistantMessageItem(&sty, msg)
 if a, ok := item.(*chat.AssistantMessageItem); ok {
     cmd = a.StartAnimation()  // 返回的 cmd 必须传给 tea
 }
 
 // Update 中
 case anim.StepMsg:
-    cmd = chat.Animate(msg)   // 转发给 chat 管理可见性优化
+    cmd = component.Animate(msg)   // 转发给 chat 管理可见性优化
 ```
 
 ### 渲染缓存（cachedMessageItem）
@@ -62,15 +62,15 @@ case anim.StepMsg:
 - `AppendMessages` 时如果 `follow=true` → 自动 `ScrollToBottom()`
 - `SetSize` 时如果已经在底部 → 自动保持
 
-### Message 接口与 shimMessage
+### Message 接口与 StreamingMessage
 
-`Message` 是只读接口，但 `shimMessage`（在 shim 包中）是可变实现。流式更新模式：
+`Message` 是只读接口，但 `StreamingMessage`（在 `pkg/tui/chat` 中）是可变实现。流式更新模式：
 
-1. 创建 `shimMessage`（空内容）
+1. 创建 `StreamingMessage`（空内容）
 2. 创建 `AssistantMessageItem(msg)` 并加入 chat
-3. 每次 token 到达 → 修改 `shimMessage` 字段 → 调用 `item.SetMessage(shimMessage)` 触发重渲染
+3. 每次 token 到达 → 修改 `StreamingMessage` 字段 → 调用 `item.SetMessage(msg)` 触发重渲染
 
-**不要在 pkg/tui/chat 中直接修改 Message 内容**——这是调用方的职责。
+**不要在 pkg/tui/component 中直接修改 Message 内容**——这是调用方的职责。
 
 ## 已知问题
 

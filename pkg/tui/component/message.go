@@ -1,10 +1,10 @@
-// Package chat provides a chat UI component replicating charmbracelet/crush's
+// Package component provides chat UI components replicating charmbracelet/crush's
 // internal/ui/chat rendering layer.
 //
 // Instead of depending on crush's internal/message package, this package defines
 // its own Message interface containing only the methods that the rendering code
 // actually calls.
-package chat
+package component
 
 import "time"
 

@@ -1,4 +1,4 @@
-package chat
+package component
 
 import (
 	tea "charm.land/bubbletea/v2"
@@ -49,8 +49,11 @@ func (m *Chat) Render() string {
 // SetSize sets the size of the chat view port.
 func (m *Chat) SetSize(width, height int) {
 	m.list.SetSize(width, height)
-	// Anchor to bottom if we were at the bottom.
-	if m.AtBottom() {
+	// Anchor to bottom if we were already at the bottom.
+	// Skip when the list is empty: AtBottom() returns true for an empty list,
+	// but calling ScrollToBottom() would set follow=true and auto-scroll
+	// future AppendMessages calls.
+	if m.list.Len() > 0 && m.AtBottom() {
 		m.ScrollToBottom()
 	}
 }
