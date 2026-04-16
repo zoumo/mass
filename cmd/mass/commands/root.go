@@ -1,12 +1,12 @@
-// Package subcommands assembles the mass cobra command tree.
-package subcommands
+// Package commands assembles the mass cobra command tree.
+package commands
 
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/mass/cmd/mass/subcommands/server"
-	"github.com/zoumo/mass/cmd/mass/subcommands/shim"
-	"github.com/zoumo/mass/cmd/mass/subcommands/workspacemcp"
+	"github.com/zoumo/mass/cmd/mass/commands/server"
+	"github.com/zoumo/mass/cmd/mass/commands/run"
+	"github.com/zoumo/mass/cmd/mass/commands/workspacemcp"
 )
 
 // NewRootCommand returns the mass root cobra command.
@@ -18,7 +18,7 @@ func NewRootCommand() *cobra.Command {
 		SilenceUsage: true,
 	}
 	cmd.AddCommand(server.NewCommand())
-	cmd.AddCommand(shim.NewCommand())
+	cmd.AddCommand(run.NewCommand())
 	cmd.AddCommand(workspacemcp.NewCommand())
 	return cmd
 }

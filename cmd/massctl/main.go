@@ -4,11 +4,11 @@ package main
 import (
 	"os"
 
-	"github.com/zoumo/mass/cmd/massctl/subcommands"
+	"github.com/zoumo/mass/cmd/massctl/commands"
 )
 
 func main() {
-	if err := subcommands.NewRootCommand().Execute(); err != nil {
+	if err := commands.NewRootCommand().Execute(); err != nil {
 		os.Exit(1)
 	}
 }

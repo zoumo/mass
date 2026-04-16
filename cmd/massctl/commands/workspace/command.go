@@ -8,8 +8,8 @@ import (
 	"github.com/spf13/cobra"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/workspace/create"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/workspace/create"
 )
 
 // NewCommand returns the "workspace" cobra command.
@@ -124,7 +124,7 @@ func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 				Workspace: ws,
 				From:      from,
 				To:        to,
-				Message:   text,
+				Message:   []pkgariapi.ContentBlock{pkgariapi.TextBlock(text)},
 			})
 			if err != nil {
 				cliutil.HandleError(err)

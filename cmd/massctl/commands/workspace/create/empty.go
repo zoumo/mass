@@ -3,35 +3,25 @@ package create
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
-func newLocalCmd(getClient cliutil.ClientFn) *cobra.Command {
-	var (
-		name string
-		path string
-	)
+func newEmptyCmd(getClient cliutil.ClientFn) *cobra.Command {
+	var name string
 	cmd := &cobra.Command{
-		Use:   "local",
-		Short: "Create a workspace from a local directory",
+		Use:   "empty",
+		Short: "Create an empty directory workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if path == "" {
-				return fmt.Errorf("--path is required")
-			}
-			src := workspace.Source{
-				Type:  workspace.SourceTypeLocal,
-				Local: workspace.LocalSource{Path: path},
-			}
+			src := workspace.Source{Type: workspace.SourceTypeEmptyDir}
 			srcJSON, err := json.Marshal(src)
 			if err != nil {
-				return fmt.Errorf("marshal source: %w", err)
+				return nil
 			}
 			client, err := getClient()
 			if err != nil {
@@ -52,8 +42,6 @@ func newLocalCmd(getClient cliutil.ClientFn) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Workspace name (required)")
-	cmd.Flags().StringVar(&path, "path", "", "Local directory path (required)")
 	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("path")
 	return cmd
 }

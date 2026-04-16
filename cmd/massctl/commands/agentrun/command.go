@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 )
 
 // NewCommand returns the "agentrun" cobra command.
@@ -28,6 +28,7 @@ func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 	cmd.AddCommand(newCancelCmd(getClient))
 	cmd.AddCommand(newRestartCmd(getClient))
 	cmd.AddCommand(newChatCmd(getClient))
+	cmd.AddCommand(newDebugCmd())
 	return cmd
 }
 
@@ -169,7 +170,7 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			ctx := context.Background()
 			key := pkgariapi.ObjectKey{Workspace: ws, Name: name}
-			result, err := client.AgentRuns().Prompt(ctx, key, text)
+			result, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock(text)})
 			if err != nil {
 				cliutil.HandleError(err)
 				return nil

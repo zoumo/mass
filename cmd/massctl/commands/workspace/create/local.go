@@ -3,33 +3,35 @@ package create
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
-func newGitCmd(getClient cliutil.ClientFn) *cobra.Command {
+func newLocalCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		name  string
-		url   string
-		ref   string
-		depth int
+		name string
+		path string
 	)
 	cmd := &cobra.Command{
-		Use:   "git",
-		Short: "Create a workspace by cloning a git repository",
+		Use:   "local",
+		Short: "Create a workspace from a local directory",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if path == "" {
+				return fmt.Errorf("--path is required")
+			}
 			src := workspace.Source{
-				Type: workspace.SourceTypeGit,
-				Git:  workspace.GitSource{URL: url, Ref: ref, Depth: depth},
+				Type:  workspace.SourceTypeLocal,
+				Local: workspace.LocalSource{Path: path},
 			}
 			srcJSON, err := json.Marshal(src)
 			if err != nil {
-				return nil
+				return fmt.Errorf("marshal source: %w", err)
 			}
 			client, err := getClient()
 			if err != nil {
@@ -50,10 +52,8 @@ func newGitCmd(getClient cliutil.ClientFn) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Workspace name (required)")
-	cmd.Flags().StringVar(&url, "url", "", "Git repository URL (required)")
+	cmd.Flags().StringVar(&path, "path", "", "Local directory path (required)")
 	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("url")
-	cmd.Flags().StringVar(&ref, "ref", "", "Git reference (branch, tag, or commit)")
-	cmd.Flags().IntVar(&depth, "depth", 0, "Shallow clone depth (0 = full clone)")
+	_ = cmd.MarkFlagRequired("path")
 	return cmd
 }

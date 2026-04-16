@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 )
 
 // NewCommand returns the "daemon" cobra command.

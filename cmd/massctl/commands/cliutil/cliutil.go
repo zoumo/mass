@@ -1,4 +1,4 @@
-// Package cliutil provides shared helpers for massctl subcommands.
+// Package cliutil provides shared helpers for massctl commands.
 package cliutil
 
 import (

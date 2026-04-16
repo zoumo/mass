@@ -7,18 +7,26 @@ import (
 	"github.com/spf13/cobra"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
-func newEmptyCmd(getClient cliutil.ClientFn) *cobra.Command {
-	var name string
+func newGitCmd(getClient cliutil.ClientFn) *cobra.Command {
+	var (
+		name  string
+		url   string
+		ref   string
+		depth int
+	)
 	cmd := &cobra.Command{
-		Use:   "empty",
-		Short: "Create an empty directory workspace",
+		Use:   "git",
+		Short: "Create a workspace by cloning a git repository",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			src := workspace.Source{Type: workspace.SourceTypeEmptyDir}
+			src := workspace.Source{
+				Type: workspace.SourceTypeGit,
+				Git:  workspace.GitSource{URL: url, Ref: ref, Depth: depth},
+			}
 			srcJSON, err := json.Marshal(src)
 			if err != nil {
 				return nil
@@ -42,6 +50,10 @@ func newEmptyCmd(getClient cliutil.ClientFn) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Workspace name (required)")
+	cmd.Flags().StringVar(&url, "url", "", "Git repository URL (required)")
 	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("url")
+	cmd.Flags().StringVar(&ref, "ref", "", "Git reference (branch, tag, or commit)")
+	cmd.Flags().IntVar(&depth, "depth", 0, "Shallow clone depth (0 = full clone)")
 	return cmd
 }

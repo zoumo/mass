@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	"github.com/zoumo/mass/pkg/tui/chat"
 )
 
@@ -18,7 +18,7 @@ func newChatCmd(getClient cliutil.ClientFn) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "chat",
-		Short: "Interactive chat with a running agent (resolves shim socket via ARI)",
+		Short: "Interactive chat with a running agent (resolves run socket via ARI)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, err := getClient()
@@ -33,11 +33,11 @@ func newChatCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			client.Close()
 
-			if ar.Status.Shim == nil || ar.Status.Shim.SocketPath == "" {
-				return fmt.Errorf("agent run %s/%s has no shim socket (state: %s)", ws, name, ar.Status.State)
+			if ar.Status.Run == nil || ar.Status.Run.SocketPath == "" {
+				return fmt.Errorf("agent run %s/%s has no run socket (state: %s)", ws, name, ar.Status.State)
 			}
 
-			return chat.RunChatTUI(ar.Status.Shim.SocketPath)
+			return chat.RunChatTUI(ar.Status.Run.SocketPath)
 		},
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")

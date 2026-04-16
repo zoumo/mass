@@ -1,6 +1,4 @@
-// Package shim provides commands for direct communication with a running
-// agent-shim over its Unix socket JSON-RPC interface.
-package shim
+package agentrun
 
 import (
 	"context"
@@ -11,27 +9,27 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/pkg/jsonrpc"
-	shimclient "github.com/zoumo/mass/pkg/shim/client"
+	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 )
 
-// dialShim connects to a shim Unix socket and returns a typed ShimClient.
-func dialShim(ctx context.Context, socketPath string, opts ...jsonrpc.ClientOption) (*shimclient.ShimClient, error) {
-	c, err := jsonrpc.Dial(ctx, "unix", socketPath, opts...)
+// dialDirect connects to an agent-run Unix socket and returns a typed Client.
+func dialDirect(ctx context.Context, socketPath string) (*runclient.Client, error) {
+	c, err := jsonrpc.Dial(ctx, "unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("connect %s: %w", socketPath, err)
 	}
-	return shimclient.NewShimClient(c), nil
+	return runclient.New(c), nil
 }
 
-// NewCommand returns the "shim" cobra command.
-func NewCommand() *cobra.Command {
+// newDebugCmd returns the "debug" subcommand for direct agent-run socket communication.
+func newDebugCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "shim",
-		Short: "Direct communication with a running agent-shim over its Unix socket",
+		Use:   "debug",
+		Short: "Direct communication with a running agent-run over its Unix socket",
 	}
 
 	var socket string
-	cmd.PersistentFlags().StringVar(&socket, "socket", "", "Unix socket path for the shim (required)")
+	cmd.PersistentFlags().StringVar(&socket, "socket", "", "Unix socket path for the agent-run (required)")
 	_ = cmd.MarkPersistentFlagRequired("socket")
 
 	cmd.AddCommand(&cobra.Command{
@@ -39,7 +37,7 @@ func NewCommand() *cobra.Command {
 		Short: "Print agent state and recovery metadata (runtime/status)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			sc, err := dialShim(cmd.Context(), socket)
+			sc, err := dialDirect(cmd.Context(), socket)
 			if err != nil {
 				return err
 			}
@@ -59,7 +57,7 @@ func NewCommand() *cobra.Command {
 		Short: "Gracefully shut down the agent (runtime/stop)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			sc, err := dialShim(cmd.Context(), socket)
+			sc, err := dialDirect(cmd.Context(), socket)
 			if err != nil {
 				return err
 			}

@@ -4,7 +4,7 @@ package create
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 )
 
 // NewCommand returns the "workspace create" cobra command group.

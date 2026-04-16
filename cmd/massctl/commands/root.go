@@ -1,5 +1,5 @@
-// Package subcommands assembles the massctl cobra command tree.
-package subcommands
+// Package commands assembles the massctl cobra command tree.
+package commands
 
 import (
 	"context"
@@ -7,13 +7,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/mass/cmd/massctl/subcommands/agent"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/agentrun"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/cliutil"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/daemon"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/shim"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/up"
-	"github.com/zoumo/mass/cmd/massctl/subcommands/workspace"
+	"github.com/zoumo/mass/cmd/massctl/commands/agent"
+	"github.com/zoumo/mass/cmd/massctl/commands/agentrun"
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
+	"github.com/zoumo/mass/cmd/massctl/commands/daemon"
+	"github.com/zoumo/mass/cmd/massctl/commands/compose"
+	"github.com/zoumo/mass/cmd/massctl/commands/workspace"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
@@ -39,7 +38,6 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(agent.NewCommand(cliutil.ClientFn(getClient)))
 	root.AddCommand(workspace.NewCommand(cliutil.ClientFn(getClient)))
 	root.AddCommand(daemon.NewCommand(cliutil.ClientFn(getClient)))
-	root.AddCommand(shim.NewCommand())
-	root.AddCommand(up.NewCommand(cliutil.ClientFn(getClient)))
+	root.AddCommand(compose.NewCommand(cliutil.ClientFn(getClient)))
 	return root
 }
