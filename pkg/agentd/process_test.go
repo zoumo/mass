@@ -190,8 +190,8 @@ func TestProcessManagerStart(t *testing.T) {
 				goto done
 			}
 			eventCount++
-			t.Logf("Received event #%d: seq=%d type=%s category=%s",
-				eventCount, update.Seq, update.Type, update.Category)
+			t.Logf("Received event #%d: seq=%d type=%s",
+				eventCount, update.Seq, update.Type)
 			if _, ok := update.Payload.(shim.ContentEvent); ok {
 				t.Logf("ContentEvent received")
 			}

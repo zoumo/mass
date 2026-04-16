@@ -23,9 +23,9 @@ import (
 	"github.com/zoumo/mass/pkg/agentd/store"
 )
 
-// EventHandler is called for each shim/event notification received from the shim.
+// EventHandler is called for each runtime/event_update notification received from the shim.
 // Handlers must be registered before calling Subscribe.
-type EventHandler func(ctx context.Context, update apishim.ShimEvent)
+type EventHandler func(ctx context.Context, update apishim.AgentRunEvent)
 
 // agentKey returns the composite map key for an agent: workspace+"/"+name.
 // This matches the bbolt key path convention used by the meta store.
@@ -83,12 +83,17 @@ type ShimProcess struct {
 	// Client is the connected ShimClient for RPC communication.
 	Client *shimclient.ShimClient
 
+	// Watcher is the K8s-style event watcher returned by WatchEvent().
+	// The event consumer goroutine reads from Watcher.ResultChan() and
+	// routes events to DB updates (state_change) or the Events channel.
+	Watcher *shimclient.Watcher
+
 	// Cmd is the exec.Cmd for the shim process (for Wait/Kill).
 	Cmd *exec.Cmd
 
-	// Events is a channel receiving ordered ShimEvents from the shim.
+	// Events is a channel receiving ordered AgentRunEvents from the shim.
 	// A default drain goroutine consumes events when no external reader is active.
-	Events chan apishim.ShimEvent
+	Events chan apishim.AgentRunEvent
 
 	// Done is closed when the shim process exits and all cleanup is complete.
 	Done chan struct{}
@@ -120,76 +125,79 @@ func NewProcessManager(agents *AgentRunManager, s *store.Store, socketPath, bund
 	}
 }
 
-// buildNotifHandler returns a NotificationHandler that:
-//   - routes session/update params to shimProc.Events (async, non-blocking), and
-//   - handles runtime/state_change notifications by updating DB agent state (D088).
+// startEventConsumer launches a goroutine that reads from the Watcher's
+// ResultChan and routes events:
+//   - runtime_update with Status → DB agent state update (D088)
+//   - all other events → shimProc.Events channel for external consumers
 //
-// This is the single authoritative handler used by both Start() and recoverAgent().
-// All DB state transitions after bootstrap must flow through here, never via a
-// direct UpdateStatus call in the caller.
-func (m *ProcessManager) buildNotifHandler(workspace, name string, shimProc *ShimProcess) shimclient.NotificationHandler {
+// This replaces the old global NotificationHandler pattern. Events are already
+// deserialized by the Watcher, so no JSON parsing is needed here.
+//
+// The goroutine exits when the Watcher's ResultChan closes (connection lost,
+// slow consumer eviction, or explicit Stop()). This is the single authoritative
+// event consumer — all DB state transitions after bootstrap flow through here.
+func (m *ProcessManager) startEventConsumer(workspace, name string, shimProc *ShimProcess) {
 	key := agentKey(workspace, name)
 	logger := m.logger.With("agent_key", key)
-	return func(ctx context.Context, method string, params json.RawMessage) {
-		if method != apishim.MethodShimEvent {
-			return
-		}
-		ev, err := shimclient.ParseShimEvent(params)
-		if err != nil {
-			logger.Warn("malformed shim/event notification dropped", "error", err)
-			return
-		}
 
-		// Route by category/type.
-		if ev.Category == apishim.CategoryRuntime && ev.Type == apishim.EventTypeStateChange {
-			// state_change → update DB agent state.
-			sc, ok := ev.Payload.(apishim.StateChangeEvent)
-			if !ok {
-				logger.Warn("stateChange: content type assertion failed", "agent_key", key)
-				return
-			}
-			prevStatus := sc.PreviousStatus
-			newStatus := sc.Status
-			logger.Info("stateChange: updating DB state",
-				"agent_key", key,
-				"prev", prevStatus,
-				"new", newStatus)
-			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			current, err := m.agents.Get(updateCtx, workspace, name)
-			if err != nil {
-				logger.Warn("stateChange: failed to read DB state",
+	go func() {
+		for ev := range shimProc.Watcher.ResultChan() {
+			// Route runtime_update events with Status to DB state updates.
+			if ev.Type == apishim.EventTypeRuntimeUpdate {
+				ru, ok := ev.Payload.(apishim.RuntimeUpdateEvent)
+				if !ok || ru.Status == nil {
+					// runtime_update without Status (e.g. metadata-only) → forward to Events.
+					select {
+					case shimProc.Events <- ev:
+					default:
+					}
+					continue
+				}
+				prevStatus := ru.Status.PreviousStatus
+				newStatus := ru.Status.Status
+				logger.Info("stateChange: updating DB state",
 					"agent_key", key,
-					"error", err)
-				return
-			}
-			if current != nil && current.Status.State == apiruntime.StatusStopped && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
-				logger.Info("stateChange: dropped stale live state after stop",
-					"agent_key", key,
-					"current", current.Status.State,
+					"prev", prevStatus,
 					"new", newStatus)
-				return
+				updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				current, err := m.agents.Get(updateCtx, workspace, name)
+				if err != nil {
+					logger.Warn("stateChange: failed to read DB state",
+						"agent_key", key,
+						"error", err)
+					cancel()
+					continue
+				}
+				if current != nil && current.Status.State == apiruntime.StatusStopped && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
+					logger.Info("stateChange: dropped stale live state after stop",
+						"agent_key", key,
+						"current", current.Status.State,
+						"new", newStatus)
+					cancel()
+					continue
+				}
+				if err := m.agents.UpdateStatus(updateCtx, workspace, name, pkgariapi.AgentRunStatus{
+					State:          apiruntime.Status(newStatus),
+					ShimSocketPath: shimProc.SocketPath,
+					ShimStateDir:   shimProc.StateDir,
+					ShimPID:        shimProc.PID,
+				}); err != nil {
+					logger.Warn("stateChange: failed to update DB state",
+						"agent_key", key,
+						"error", err)
+				}
+				cancel()
+				continue
 			}
-			if err := m.agents.UpdateStatus(updateCtx, workspace, name, pkgariapi.AgentRunStatus{
-				State:          apiruntime.Status(newStatus),
-				ShimSocketPath: shimProc.SocketPath,
-				ShimStateDir:   shimProc.StateDir,
-				ShimPID:        shimProc.PID,
-			}); err != nil {
-				logger.Warn("stateChange: failed to update DB state",
-					"agent_key", key,
-					"error", err)
-			}
-			return
-		}
 
-		// All other events → push to the Events channel for external consumers.
-		select {
-		case shimProc.Events <- ev:
-		default:
-			// No consumer is draining Events; drop silently to avoid log spam.
+			// All other events → push to the Events channel for external consumers.
+			select {
+			case shimProc.Events <- ev:
+			default:
+				// No consumer is draining Events; drop silently to avoid log spam.
+			}
 		}
-	}
+	}()
 }
 
 // Start creates and starts a shim process for the given agent.
@@ -274,9 +282,9 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 		return nil, fmt.Errorf("process: wait for socket: %w", err)
 	}
 
-	// 7. Connect ShimClient with the unified notification handler.
-	// Routes session/update → shimProc.Events and runtime/state_change → DB (D088).
-	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(m.buildNotifHandler(workspace, name, shimProc)))
+	// 7. Connect ShimClient (plain Dial, no global handler).
+	// Event routing is handled by the Watcher + startEventConsumer goroutine.
+	client, err := shimclient.Dial(ctx, socketPath)
 	if err != nil {
 		// Kill shim process; leave bundle intact (preserved until agent/delete).
 		_ = m.killShim(shimProc)
@@ -303,12 +311,19 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Sh
 	}
 
 	// 8. Watch events (live-only — this is a fresh start).
-	if _, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{}); err != nil {
+	// WatchEvent returns a Watcher with a typed event channel (K8s Watch pattern).
+	watcher, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
+	if err != nil {
 		// Close client, kill shim; leave bundle intact (preserved until agent/delete).
 		_ = client.Close()
 		_ = m.killShim(shimProc)
 		return nil, fmt.Errorf("process: watch_event: agent=%s: %w", key, err)
 	}
+	shimProc.Watcher = watcher
+
+	// Start the event consumer goroutine that routes Watcher events to
+	// DB state updates (state_change) and shimProc.Events (session events).
+	m.startEventConsumer(workspace, name, shimProc)
 
 	// 8b. Bootstrap state from shim's current runtime status.
 	// The shim's Create() may have already transitioned creating→idle before
@@ -560,7 +575,7 @@ func (m *ProcessManager) forkShim(agent *pkgariapi.AgentRun, bundlePath, stateDi
 		AgentKey:  key,
 		PID:       cmd.Process.Pid,
 		Cmd:       cmd,
-		Events:    make(chan apishim.ShimEvent, 1024), // buffered for async delivery
+		Events:    make(chan apishim.AgentRunEvent, 1024), // buffered for async delivery
 		Done:      make(chan struct{}),
 		stopDrain: make(chan struct{}),
 	}

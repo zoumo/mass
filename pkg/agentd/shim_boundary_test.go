@@ -43,16 +43,17 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	srv, socketPath := newMockShimServer(t)
 	_ = srv // cleanup registered via t.Cleanup in newMockShimServer
 
-	srv.queueNotification(apishim.MethodShimEvent, map[string]any{
-		"runId":    "test-run",
-		"seq":      0,
-		"time":     "2026-01-01T00:00:00Z",
-		"category": "runtime",
-		"type":     "state_change",
+	srv.queueNotification(apishim.MethodRuntimeEventUpdate, map[string]any{
+		"runId": "test-run",
+		"seq":   0,
+		"time":  "2026-01-01T00:00:00Z",
+		"type":  "runtime_update",
 		"payload": map[string]any{
-			"previousStatus": "creating",
-			"status":         "idle",
-			"pid":            1234,
+			"status": map[string]any{
+				"previousStatus": "creating",
+				"status":         "idle",
+				"pid":            1234,
+			},
 		},
 	})
 
@@ -62,25 +63,26 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 		PID:        1234,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan apishim.ShimEvent, 1024),
+		Events:     make(chan apishim.AgentRunEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
-	// Connect using the production notification handler (D088 boundary).
-	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
+	// Connect using plain Dial + WatchEvent + startEventConsumer (D088 boundary).
+	client, err := shimclient.Dial(ctx, socketPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
 
-	// Register shimProc in the processes map (as Start() does after DialWithHandler).
+	// Register shimProc in the processes map (as Start() does after Dial).
 	pm.mu.Lock()
 	pm.processes[key] = shimProc
 	pm.mu.Unlock()
 
-	// Subscribe — mock server emits the queued notification asynchronously.
-	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
+	// Watch events — mock server emits the queued notification asynchronously.
+	watcher, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
+	shimProc.Watcher = watcher
+	pm.startEventConsumer(ws, agentName, shimProc)
 
 	// Wait for the stateChange notification to drive the DB update.
 	require.Eventually(t, func() bool {
@@ -98,7 +100,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 
 // TestSessionUpdate_DeliversOrderedParams verifies that session/update
 // notifications keep their ordering metadata all the way through the
-// production buildNotifHandler into ShimProcess.Events.
+// production startEventConsumer into ShimProcess.Events.
 func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 	pm, _ := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -113,12 +115,11 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		contentBytes, err := json.Marshal(apishim.NewContentEvent(apishim.EventTypeAgentMessage, "", apishim.TextBlock(fmt.Sprintf("chunk-%d", i))))
 		require.NoError(t, err)
-		srv.queueNotification(apishim.MethodShimEvent, map[string]any{
+		srv.queueNotification(apishim.MethodRuntimeEventUpdate, map[string]any{
 			"runId":     "test-run",
 			"sessionId": "test-session",
 			"seq":       i,
 			"time":      "2026-01-01T00:00:00Z",
-			"category":  "session",
 			"type":      "agent_message",
 			"turnId":    turnID,
 			"payload":   json.RawMessage(contentBytes),
@@ -130,21 +131,22 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 		PID:        1234,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan apishim.ShimEvent, 1024),
+		Events:     make(chan apishim.AgentRunEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
-	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
+	client, err := shimclient.Dial(ctx, socketPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
 
-	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
+	watcher, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
+	shimProc.Watcher = watcher
+	pm.startEventConsumer(ws, agentName, shimProc)
 
 	for i := 0; i < 3; i++ {
-		var update apishim.ShimEvent
+		var update apishim.AgentRunEvent
 		select {
 		case update = <-shimProc.Events:
 		case <-time.After(2 * time.Second):
@@ -182,28 +184,30 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 
 	// Queue two successive stateChange notifications: idle→running, then running→idle.
 	srv, socketPath := newMockShimServer(t)
-	srv.queueNotification(apishim.MethodShimEvent, map[string]any{
-		"runId":    "test-run",
-		"seq":      1,
-		"time":     "2026-01-01T00:00:00Z",
-		"category": "runtime",
-		"type":     "state_change",
+	srv.queueNotification(apishim.MethodRuntimeEventUpdate, map[string]any{
+		"runId": "test-run",
+		"seq":   1,
+		"time":  "2026-01-01T00:00:00Z",
+		"type":  "runtime_update",
 		"payload": map[string]any{
-			"previousStatus": "idle",
-			"status":         "running",
-			"pid":            5678,
+			"status": map[string]any{
+				"previousStatus": "idle",
+				"status":         "running",
+				"pid":            5678,
+			},
 		},
 	})
-	srv.queueNotification(apishim.MethodShimEvent, map[string]any{
-		"runId":    "test-run",
-		"seq":      2,
-		"time":     "2026-01-01T00:00:01Z",
-		"category": "runtime",
-		"type":     "state_change",
+	srv.queueNotification(apishim.MethodRuntimeEventUpdate, map[string]any{
+		"runId": "test-run",
+		"seq":   2,
+		"time":  "2026-01-01T00:00:01Z",
+		"type":  "runtime_update",
 		"payload": map[string]any{
-			"previousStatus": "running",
-			"status":         "idle",
-			"pid":            5678,
+			"status": map[string]any{
+				"previousStatus": "running",
+				"status":         "idle",
+				"pid":            5678,
+			},
 		},
 	})
 
@@ -212,12 +216,11 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 		PID:        5678,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan apishim.ShimEvent, 1024),
+		Events:     make(chan apishim.AgentRunEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
-	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
+	client, err := shimclient.Dial(ctx, socketPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
@@ -226,8 +229,10 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	pm.processes[key] = shimProc
 	pm.mu.Unlock()
 
-	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
+	watcher, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
+	shimProc.Watcher = watcher
+	pm.startEventConsumer(ws, agentName, shimProc)
 
 	// Wait for both stateChange notifications to be processed (final state = idle).
 	require.Eventually(t, func() bool {
@@ -272,13 +277,12 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 		PID:        0,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan apishim.ShimEvent, 1024),
+		Events:     make(chan apishim.AgentRunEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
-	// Connect using the production handler.
-	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
+	// Connect using plain Dial + WatchEvent + startEventConsumer.
+	client, err := shimclient.Dial(ctx, socketPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
@@ -287,9 +291,11 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	pm.processes[key] = shimProc
 	pm.mu.Unlock()
 
-	// Subscribe with no queued notifications.
-	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
+	// Watch with no queued notifications.
+	watcher, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
+	shimProc.Watcher = watcher
+	pm.startEventConsumer(ws, agentName, shimProc)
 
 	// Allow notification delivery goroutines to flush (none should fire).
 	time.Sleep(100 * time.Millisecond)
@@ -326,13 +332,12 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	// Queue a malformed stateChange notification (array instead of object).
 	srv, socketPath := newMockShimServer(t)
 	defer srv.close()
-	srv.queueNotification(apishim.MethodShimEvent, map[string]any{
-		"runId":    "test-run",
-		"seq":      0,
-		"time":     "2026-01-01T00:00:00Z",
-		"category": "runtime",
-		"type":     "state_change",
-		"payload":  []any{"this", "is", "not", "a", "stateChange"},
+	srv.queueNotification(apishim.MethodRuntimeEventUpdate, map[string]any{
+		"runId":   "test-run",
+		"seq":     0,
+		"time":    "2026-01-01T00:00:00Z",
+		"type":    "runtime_update",
+		"payload": []any{"this", "is", "not", "a", "RuntimeUpdateEvent"},
 	})
 
 	shimProc := &ShimProcess{
@@ -340,12 +345,11 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 		PID:        0,
 		SocketPath: socketPath,
 		StateDir:   "/tmp/shim-state-" + agentName,
-		Events:     make(chan apishim.ShimEvent, 1024),
+		Events:     make(chan apishim.AgentRunEvent, 1024),
 		Done:       make(chan struct{}),
 	}
 
-	handler := pm.buildNotifHandler(ws, agentName, shimProc)
-	client, err := shimclient.DialWithHandler(ctx, socketPath, shimclient.NotificationHandler(handler))
+	client, err := shimclient.Dial(ctx, socketPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = client.Close() })
 	shimProc.Client = client
@@ -354,8 +358,10 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	pm.processes[key] = shimProc
 	pm.mu.Unlock()
 
-	_, err = client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
+	watcher, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
+	shimProc.Watcher = watcher
+	pm.startEventConsumer(ws, agentName, shimProc)
 
 	// Wait for notification to be delivered and dropped.
 	time.Sleep(150 * time.Millisecond)

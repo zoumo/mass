@@ -21,10 +21,10 @@ import (
 // the meta store it:
 //
 //  1. Reads the persisted shim_socket_path from the DB.
-//  2. Tries DialWithHandler to connect to the shim socket.
+//  2. Tries Dial to connect to the shim socket.
 //  3. On connect failure → marks the agent stopped (fail-closed per D012/D029).
 //  4. Calls runtime/status to get state + recovery.lastSeq.
-//  5. Calls session/subscribe(fromSeq=0) — atomic backfill + live subscription.
+//  5. Calls runtime/watch_event(fromSeq=0) — atomic backfill + live subscription.
 //  6. Builds a ShimProcess struct and registers it in the processes map.
 //  7. Starts a watchRecoveredProcess goroutine for the recovered agent.
 //
@@ -194,16 +194,15 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 		BundlePath: "", // not needed for recovered agents
 		StateDir:   agent.Status.ShimStateDir,
 		SocketPath: agent.Status.ShimSocketPath,
-		Events:     make(chan apishim.ShimEvent, 100),
+		Events:     make(chan apishim.AgentRunEvent, 100),
 		Done:       make(chan struct{}),
 		stopDrain:  make(chan struct{}),
 		// Cmd is nil for recovered agents — we didn't fork the process.
 	}
 	go shimProc.drainEvents()
 
-	// Connect to the shim socket with the unified notification handler.
-	// Routes session/update → shimProc.Events and runtime/state_change → DB (D088).
-	client, err := shimclient.DialWithHandler(ctx, agent.Status.ShimSocketPath, shimclient.NotificationHandler(m.buildNotifHandler(ws, name, shimProc)))
+	// Connect to the shim socket (plain Dial, event routing via Watcher).
+	client, err := shimclient.Dial(ctx, agent.Status.ShimSocketPath)
 	if err != nil {
 		return apiruntime.StatusStopped, fmt.Errorf("connect to shim socket %s: %w", agent.Status.ShimSocketPath, err)
 	}
@@ -257,14 +256,19 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	}
 
 	// Watch events with full replay (K8s List-Watch: fromSeq=0).
+	// WatchEvent returns a Watcher; events are consumed by startEventConsumer.
 	fromSeq := 0
-	watchResult, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{FromSeq: &fromSeq})
+	watcher, err := client.WatchEvent(ctx, &apishim.SessionWatchEventParams{FromSeq: &fromSeq})
 	if err != nil {
 		_ = client.Close()
 		return apiruntime.StatusStopped, fmt.Errorf("session/watch_event fromSeq=%d: %w", fromSeq, err)
 	}
+	shimProc.Watcher = watcher
 	logger.Info("recovery: watch_event with replay",
-		"next_seq", watchResult.NextSeq)
+		"next_seq", watcher.NextSeq())
+
+	// Start the event consumer goroutine (routes runtime_update/Status → DB, others → Events).
+	m.startEventConsumer(ws, name, shimProc)
 
 	// Apply RestartPolicy: try_reload attempts ACP session/load to restore
 	// conversation history. always_new (default) starts fresh.

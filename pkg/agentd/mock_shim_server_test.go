@@ -134,7 +134,7 @@ func (h *mockShimHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *
 		h.handleCancel(ctx, conn, req)
 	case "session/load":
 		h.handleLoad(ctx, conn, req)
-	case "session/watch_event":
+	case "runtime/watch_event":
 		h.handleWatchEvent(ctx, conn, req)
 	case "runtime/status":
 		h.handleStatus(ctx, conn, req)
@@ -182,17 +182,24 @@ func (h *mockShimHandler) handleLoad(ctx context.Context, conn *jsonrpc2.Conn, r
 }
 
 func (h *mockShimHandler) handleWatchEvent(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	// Fixed watchID for the mock — client-side Watcher filters by this value.
+	const watchID = "mock-watch-1"
+
 	h.srv.mu.Lock()
 	h.srv.subscribed = true
 	notifs := make([]shimNotif, len(h.srv.liveNotifications))
 	copy(notifs, h.srv.liveNotifications)
 	h.srv.mu.Unlock()
 
-	_ = conn.Reply(ctx, req.ID, apishim.SessionWatchEventResult{NextSeq: 0})
+	_ = conn.Reply(ctx, req.ID, apishim.SessionWatchEventResult{WatchID: watchID, NextSeq: 0})
 
-	// Emit queued notifications asynchronously.
+	// Emit queued notifications asynchronously, stamping each with the watchID
+	// so the client-side Watcher filter can match them.
 	go func() {
 		for _, n := range notifs {
+			if m, ok := n.params.(map[string]any); ok {
+				m["watchId"] = watchID
+			}
 			_ = conn.Notify(ctx, n.method, n.params)
 		}
 	}()

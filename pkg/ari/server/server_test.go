@@ -356,7 +356,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		AgentKey:   "reserve-ws/" + agentName,
 		SocketPath: shimSock,
 		Client:     shimClient,
-		Events:     make(chan apishim.ShimEvent, 1024),
+		Events:     make(chan apishim.AgentRunEvent, 1024),
 		Done:       make(chan struct{}),
 	})
 
@@ -634,7 +634,7 @@ func injectMockShim(t *testing.T, env *testEnv, wsName, agentName string) *miniS
 		AgentKey:   wsName + "/" + agentName,
 		SocketPath: shimSock,
 		Client:     shimClient,
-		Events:     make(chan apishim.ShimEvent, 1024),
+		Events:     make(chan apishim.AgentRunEvent, 1024),
 		Done:       make(chan struct{}),
 	})
 	return shimSrv
