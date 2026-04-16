@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -31,10 +32,13 @@ func (s *stubShimService) Load(_ context.Context, _ *apishim.SessionLoadParams) 
 	return nil
 }
 func (s *stubShimService) WatchEvent(_ context.Context, _ *apishim.SessionWatchEventParams) (*apishim.SessionWatchEventResult, error) {
-	return &apishim.SessionWatchEventResult{NextSeq: 0}, nil
+	return &apishim.SessionWatchEventResult{WatchID: "stub-w1", NextSeq: 0}, nil
 }
 func (s *stubShimService) Status(_ context.Context) (*apishim.RuntimeStatusResult, error) {
 	return &apishim.RuntimeStatusResult{}, nil
+}
+func (s *stubShimService) SetModel(_ context.Context, _ *apishim.SessionSetModelParams) (*apishim.SessionSetModelResult, error) {
+	return &apishim.SessionSetModelResult{}, nil
 }
 func (s *stubShimService) Stop(_ context.Context) error { return nil }
 
@@ -42,7 +46,8 @@ func (s *stubShimService) Stop(_ context.Context) error { return nil }
 func startTestServer(t *testing.T, svc shimserver.ShimService) string {
 	t.Helper()
 
-	sockPath := filepath.Join(os.TempDir(), "shim-client-test-"+t.Name()+".sock")
+	// Short path to avoid macOS's 104-char Unix socket path limit.
+	sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("shim-ct-%d.sock", time.Now().UnixNano()))
 	_ = os.Remove(sockPath)
 
 	srv := jsonrpc.NewServer(nil)
@@ -127,9 +132,11 @@ func TestShimClient_WatchEvent(t *testing.T) {
 	require.NoError(t, err)
 	defer sc.Close()
 
-	result, err := sc.WatchEvent(context.Background(), &apishim.SessionWatchEventParams{})
+	watcher, err := sc.WatchEvent(context.Background(), &apishim.SessionWatchEventParams{})
 	require.NoError(t, err)
-	assert.Equal(t, 0, result.NextSeq)
+	defer watcher.Stop()
+	assert.Equal(t, 0, watcher.NextSeq())
+	assert.NotEmpty(t, watcher.WatchID())
 }
 
 func TestShimClient_Stop(t *testing.T) {
@@ -143,8 +150,8 @@ func TestShimClient_Stop(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestParseShimEvent(t *testing.T) {
-	ev := apishim.ShimEvent{
+func TestParseAgentRunEvent(t *testing.T) {
+	ev := apishim.AgentRunEvent{
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		Seq:       0,
@@ -153,7 +160,7 @@ func TestParseShimEvent(t *testing.T) {
 	raw, err := json.Marshal(ev)
 	require.NoError(t, err)
 
-	parsed, err := shimclient.ParseShimEvent(raw)
+	parsed, err := shimclient.ParseAgentRunEvent(raw)
 	require.NoError(t, err)
 	assert.Equal(t, "run-1", parsed.RunID)
 	assert.Equal(t, "sess-1", parsed.SessionID)
@@ -161,24 +168,18 @@ func TestParseShimEvent(t *testing.T) {
 	assert.Equal(t, apishim.EventTypeAgentMessage, parsed.Type)
 }
 
-func TestDialWithHandler(t *testing.T) {
+func TestShimClient_WatchEvent_WatcherStopIdempotent(t *testing.T) {
 	sockPath := startTestServer(t, &stubShimService{})
 
-	received := make(chan struct{}, 1)
-	handler := func(_ context.Context, method string, _ json.RawMessage) {
-		if method == apishim.MethodShimEvent {
-			select {
-			case received <- struct{}{}:
-			default:
-			}
-		}
-	}
-
-	sc, err := shimclient.DialWithHandler(context.Background(), sockPath, handler)
+	sc, err := shimclient.Dial(context.Background(), sockPath)
 	require.NoError(t, err)
 	defer sc.Close()
 
-	// Verify connection works.
-	_, err = sc.Status(context.Background())
-	assert.NoError(t, err)
+	watcher, err := sc.WatchEvent(context.Background(), &apishim.SessionWatchEventParams{})
+	require.NoError(t, err)
+
+	// Stop should be idempotent — calling multiple times should not panic.
+	watcher.Stop()
+	watcher.Stop()
+	watcher.Stop()
 }

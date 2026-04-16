@@ -1,5 +1,5 @@
 // Package client provides a typed ShimClient and Dial helpers for connecting
-// to shim Unix sockets backed by pkg/jsonrpc.
+// to agent-shim Unix sockets backed by pkg/jsonrpc.
 package client
 
 import (
@@ -59,16 +59,37 @@ func (c *ShimClient) Load(ctx context.Context, req *apishim.SessionLoadParams) e
 	return c.c.Call(ctx, apishim.MethodSessionLoad, req, nil)
 }
 
-// WatchEvent starts a K8s List-Watch style event subscription.
-// When req is nil or FromSeq is nil, only live events are streamed.
-// When FromSeq is set, historical events are replayed via shim/event
-// notifications first, followed by live events.
-func (c *ShimClient) WatchEvent(ctx context.Context, req *apishim.SessionWatchEventParams) (*apishim.SessionWatchEventResult, error) {
+// WatchEvent starts a K8s List-Watch style event subscription and returns a
+// Watcher that delivers typed AgentRunEvent values through ResultChan().
+//
+// This replaces the old pattern of registering a global notification handler
+// at Dial time. Each WatchEvent call creates an independent watch stream with
+// its own watchID, allowing multiple concurrent watchers on a single connection.
+//
+// Usage:
+//
+//	watcher, err := client.WatchEvent(ctx, &shimapi.SessionWatchEventParams{FromSeq: &fromSeq})
+//	if err != nil { ... }
+//	defer watcher.Stop()
+//	for ev := range watcher.ResultChan() { ... }
+//
+// When the connection drops (server evicts slow consumer, network failure, etc.),
+// ResultChan() is closed. The consumer should reconnect:
+//
+//	client, _ = shimclient.Dial(ctx, socketPath)
+//	watcher, _ = client.WatchEvent(ctx, &shimapi.SessionWatchEventParams{FromSeq: &lastSeq})
+func (c *ShimClient) WatchEvent(ctx context.Context, req *apishim.SessionWatchEventParams) (*Watcher, error) {
 	var result apishim.SessionWatchEventResult
-	if err := c.c.Call(ctx, apishim.MethodSessionWatchEvent, req, &result); err != nil {
+	if err := c.c.Call(ctx, apishim.MethodRuntimeWatchEvent, req, &result); err != nil {
 		return nil, err
 	}
-	return &result, nil
+
+	// Subscribe to runtime/event_update notifications at the jsonrpc transport layer.
+	// The Subscribe channel receives ALL runtime/event_update notifications on this
+	// connection; the Watcher's filter goroutine demuxes by watchID.
+	notifCh, unsub := c.c.Subscribe(apishim.MethodRuntimeEventUpdate, 1024)
+
+	return newWatcher(result.WatchID, result.NextSeq, notifCh, unsub), nil
 }
 
 func (c *ShimClient) Status(ctx context.Context) (*apishim.RuntimeStatusResult, error) {
@@ -79,12 +100,17 @@ func (c *ShimClient) Status(ctx context.Context) (*apishim.RuntimeStatusResult, 
 	return &result, nil
 }
 
+func (c *ShimClient) SetModel(ctx context.Context, req *apishim.SessionSetModelParams) (*apishim.SessionSetModelResult, error) {
+	var result apishim.SessionSetModelResult
+	if err := c.c.Call(ctx, apishim.MethodSessionSetModel, req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 func (c *ShimClient) Stop(ctx context.Context) error {
 	return c.c.Call(ctx, apishim.MethodRuntimeStop, nil, nil)
 }
-
-// NotificationHandler handles inbound shim/event notifications.
-type NotificationHandler func(ctx context.Context, method string, params json.RawMessage)
 
 // Dial connects to a shim socket and returns a typed ShimClient.
 func Dial(ctx context.Context, socketPath string, opts ...jsonrpc.DialOption) (*ShimClient, error) {
@@ -95,18 +121,12 @@ func Dial(ctx context.Context, socketPath string, opts ...jsonrpc.DialOption) (*
 	return NewShimClient(c), nil
 }
 
-// DialWithHandler connects to a shim socket and registers an event
-// notification handler that is called for every inbound shim/event push.
-func DialWithHandler(ctx context.Context, socketPath string, handler NotificationHandler) (*ShimClient, error) {
-	return Dial(ctx, socketPath, jsonrpc.WithNotificationHandler(jsonrpc.NotificationHandler(handler)))
-}
-
-// ParseShimEvent unmarshals a raw shim/event notification params payload into
-// a typed ShimEvent.
-func ParseShimEvent(params json.RawMessage) (apishim.ShimEvent, error) {
-	var ev apishim.ShimEvent
+// ParseAgentRunEvent unmarshals a raw runtime/event_update notification params
+// payload into a typed AgentRunEvent.
+func ParseAgentRunEvent(params json.RawMessage) (apishim.AgentRunEvent, error) {
+	var ev apishim.AgentRunEvent
 	if err := json.Unmarshal(params, &ev); err != nil {
-		return apishim.ShimEvent{}, err
+		return apishim.AgentRunEvent{}, err
 	}
 	return ev, nil
 }

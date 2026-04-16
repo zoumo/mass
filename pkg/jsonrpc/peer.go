@@ -35,6 +35,15 @@ func (p *Peer) DisconnectNotify() <-chan struct{} {
 	return p.conn.DisconnectNotify()
 }
 
+// Close closes the peer's underlying connection. This is used by server-side
+// watch goroutines to force-disconnect a slow consumer (K8s-style eviction):
+// the Translator closes the subscriber channel when its buffer is full, the
+// Service goroutine detects this and calls peer.Close() to propagate the
+// disconnect to the client, triggering reconnection with fromSeq.
+func (p *Peer) Close() error {
+	return p.conn.Close()
+}
+
 func newPeer(conn *jsonrpc2.Conn) *Peer {
 	return &Peer{conn: conn}
 }
