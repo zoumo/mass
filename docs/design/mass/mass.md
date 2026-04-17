@@ -290,7 +290,7 @@ For each AgentRun, agentd stores bundle, state, and socket co-located under the 
 ├── config.json          ← mass writes (MASS Runtime Spec)
 ├── workspace -> <path>  ← agentd symlinks to the workspace directory
 ├── state.json           ← shim writes
-├── agent-shim.sock      ← shim creates (Unix domain socket)
+├── agent-run.sock      ← shim creates (Unix domain socket)
 └── events.jsonl         ← shim appends
 ```
 

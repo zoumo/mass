@@ -2,12 +2,12 @@
 
 ## 概述
 
-本文档定义 agent-shim 对上暴露的 **shim RPC 目标契约**。
+本文档定义 agent-run 对上暴露的 **shim RPC 目标契约**。
 它是 agentd 与单个 runtime session 之间的本地控制面：
 
 - `session/*` 负责 turn 级控制与订阅；
 - `runtime/*` 负责进程真相、历史回放与停止；
-- ACP 保持为 agent-shim 内部实现细节，不直接暴露给 agentd。
+- ACP 保持为 agent-run 内部实现细节，不直接暴露给 agentd。
 
 **协议**：JSON-RPC 2.0 over Unix socket
 
@@ -15,14 +15,14 @@
 
 - [runtime-spec.md](runtime-spec.md) 负责 runtime 状态模型、state dir 布局、socket 路径约定；
 - 本文档负责 shim RPC 方法名、notification 名、回放 / 重连语义；
-- [agent-shim.md](agent-shim.md) 只描述组件职责与边界，不重复定义规范字段。
+- [agent-run.md](agent-run.md) 只描述组件职责与边界，不重复定义规范字段。
 
 ## 设计原则
 
 1. **clean-break surface** —— request/response surface 统一使用 `session/*` + `runtime/*`；
    notification surface 统一使用 `runtime/event_update`，不再把 legacy PascalCase 方法或 `$/event`
    notification 当作当前契约。
-2. **ACP 不穿透** —— agent-shim 是唯一理解 ACP 的组件；上层只看到翻译后的
+2. **ACP 不穿透** —— agent-run 是唯一理解 ACP 的组件；上层只看到翻译后的
    runtime/session 语义。
 3. **重连可证实** —— 断线恢复依赖 socket 发现、`runtime/status` 状态检查、
    `runtime/watch_event` 一步完成历史补齐 + live 流恢复。
@@ -41,7 +41,7 @@ In agentd-managed deployments, bundle/state/socket are co-located:
 ├── config.json
 ├── workspace -> <workspace-dir>
 ├── state.json
-├── agent-shim.sock
+├── agent-run.sock
 └── events.jsonl
 ```
 
@@ -98,7 +98,7 @@ In agentd-managed deployments, bundle/state/socket are co-located:
 
 ### `session/cancel`
 
-取消当前活跃 turn。agent-shim 将此翻译为内部 ACP `session/cancel` 或等价控制。
+取消当前活跃 turn。agent-run 将此翻译为内部 ACP `session/cancel` 或等价控制。
 
 **Request**:
 
@@ -579,8 +579,8 @@ turn_end        {stopReason: "end_turn"}
 shim RPC 与 ACP 的边界如下：
 
 ```text
-mass ↔ agent-shim:  session/* + runtime/* + typed notifications   ← 本规范定义
-agent-shim ↔ agent:   ACP over stdio                                ← 内部实现细节
+mass ↔ agent-run:  session/* + runtime/* + typed notifications   ← 本规范定义
+agent-run ↔ agent:   ACP over stdio                                ← 内部实现细节
 ```
 
 因此：

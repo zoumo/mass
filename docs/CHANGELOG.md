@@ -304,7 +304,7 @@
 - Key files: `pkg/agentd/process.go`, `pkg/ari/server.go`, `pkg/ari/types.go`
 
 ### S07–S08: massctl CLI + Integration Tests
-- 11-command CLI; `pkg/ari/client.go` single-shot RPC client; 8 integration tests proving full `mass → agent-shim → mockagent` pipeline
+- 11-command CLI; `pkg/ari/client.go` single-shot RPC client; 8 integration tests proving full `mass → agent-run → mockagent` pipeline
 - Key files: `cmd/massctl/main.go`, `pkg/ari/client.go`, `tests/integration/`
 
 ---

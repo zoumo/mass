@@ -11,7 +11,7 @@
 
 ## 通信协议 — MCP 路由架构
 
-Agent 间通信通过 workspace-mcp-server 实现。agentd 为每个 agent-shim 进程注入一个 workspace-mcp 实例，作为 MCP stdio server 运行在 agent 的进程树中。
+Agent 间通信通过 workspace-mcp-server 实现。agentd 为每个 agent-run 进程注入一个 workspace-mcp 实例，作为 MCP stdio server 运行在 agent 的进程树中。
 
 ### MCP 工具
 
@@ -40,7 +40,7 @@ ProcessManager 在生成 `config.json` 时将 workspace-mcp 写入 `acpAgent.ses
 }
 ```
 
-agent-shim 启动时读取 `config.json`，fork/exec workspace-mcp 子进程。workspace-mcp 通过 `MASS_SOCKET` 连接回 agentd 发起 ARI 调用。
+agent-run 启动时读取 `config.json`，fork/exec workspace-mcp 子进程。workspace-mcp 通过 `MASS_SOCKET` 连接回 agentd 发起 ARI 调用。
 
 ### 消息路由数据流
 
@@ -54,10 +54,10 @@ workspace-mcp (claude-code 的 MCP server)
   │  ARI call: workspace/send(workspace="agentd-e2e", from="claude-code", to="codex", message=...)
   ▼
 agentd
-  │  lookup target shim → codex 的 agent-shim
+  │  lookup target shim → codex 的 agent-run
   │  append envelope: <workspace-message from="claude-code" reply-requested="true" />
   ▼
-agent-shim (codex)
+agent-run (codex)
   │  deliver as prompt to codex agent process
   ▼
 codex (receives message, processes, replies via same path in reverse)

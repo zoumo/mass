@@ -1,21 +1,21 @@
-# agent-shim
+# agent-run
 
 ## 定位
 
-agent-shim 是 MASS Runtime 的参考实现边界：
+agent-run 是 MASS Runtime 的参考实现边界：
 它读取 bundle、启动 agent 进程、持有 stdio、完成 ACP bootstrap，
 并对外暴露 shim RPC。
 
 它对标 containerd-shim，但在 MASS 里同时吸收了独立 `runc` 不再成立后留下的职责。
 相关原因见 [why-no-runa.md](why-no-runa.md)。
 
-每个 AgentRun（运行实例）对应一个独立的 agent-shim 进程。
+每个 AgentRun（运行实例）对应一个独立的 agent-run 进程。
 
 ```text
 agentd（可重启）
    │  shim RPC: session/* + runtime/*
    ▼
-agent-shim（每个 AgentRun 一个，独立存活）
+agent-run（每个 AgentRun 一个，独立存活）
    │  ACP over stdio
    ▼
 agent 进程（claude-acp / pi-acp / gemini / ...）
@@ -23,7 +23,7 @@ agent 进程（claude-acp / pi-acp / gemini / ...）
 
 ## shim RPC 稳定性声明
 
-**agent-shim 保持现有 RPC 边界。**
+**agent-run 保持现有 RPC 边界。**
 shim 提供 `session/*` + `runtime/*` RPC surface（request/response，clean-break 实现已对齐）、bundle/state 共置和单 AgentRun 单 shim 进程设计。
 
 agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent/*` 管理 Agent CRUD。shim RPC 的 `session/*` + `runtime/*` 是内部协议，不暴露给外部调用方。
@@ -34,7 +34,7 @@ agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent
 
 - [runtime-spec.md](runtime-spec.md) 定义 runtime 状态、bundle、state dir 与 socket 路径；
 - [run-rpc-spec.md](run-rpc-spec.md) 定义对上的规范 surface、notification 名、回放 / 恢复语义；
-- 本文档只解释 **agent-shim 这个组件为什么存在、拥有哪些职责、边界在哪里**。
+- 本文档只解释 **agent-run 这个组件为什么存在、拥有哪些职责、边界在哪里**。
 
 也就是说：
 
@@ -47,22 +47,22 @@ agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent
 | containerd 生态 | MASS 生态 | 说明 |
 |----------------|----------|------|
 | containerd | agentd | 高层守护进程，可重启 |
-| containerd-shim | agent-shim | 中间层，独立进程，生命周期与单个 workload 绑定 |
-| runc | — | agent 不需要内核隔离，fork/exec 责任吸收到 agent-shim |
+| containerd-shim | agent-run | 中间层，独立进程，生命周期与单个 workload 绑定 |
+| runc | — | agent 不需要内核隔离，fork/exec 责任吸收到 agent-run |
 | 容器进程 | agent 进程 | 工作负载 |
 | ttrpc over Unix socket | JSON-RPC 2.0 over Unix socket | shim 控制协议 |
 
-**agent-shim = fork/exec + stdio 持有 + ACP client + runtime truth exporter**
+**agent-run = fork/exec + stdio 持有 + ACP client + runtime truth exporter**
 
 ## 进程模型
 
-agentd 为每个 AgentRun fork/exec 一个 agent-shim：
+agentd 为每个 AgentRun fork/exec 一个 agent-run：
 
 ```text
-agentd fork/exec agent-shim --bundle <bundle-dir> --socket <socket-path>
+agentd fork/exec agent-run --bundle <bundle-dir> --socket <socket-path>
 ```
 
-agent-shim 内部的职责序列是：
+agent-run 内部的职责序列是：
 
 1. 读取 bundle/config.json；
 2. 解析并解析（resolve）`agentRoot.path`，得到 canonical `cwd`；
@@ -77,7 +77,7 @@ agent-shim 内部的职责序列是：
 
 ### 角色 1：ACP Client（朝下）
 
-agent-shim 是 agent 进程唯一的 ACP client，负责：
+agent-run 是 agent 进程唯一的 ACP client，负责：
 
 - 完成 ACP `initialize` 握手；
 - 用 resolved `cwd` 和 `acpAgent.session` 建立 bootstrap session；
@@ -89,7 +89,7 @@ agent-shim 是 agent 进程唯一的 ACP client，负责：
 
 ### 角色 2：Runtime Session Server（朝上）
 
-agent-shim 对上暴露的是 **runtime/session 语义**，不是 raw ACP。
+agent-run 对上暴露的是 **runtime/session 语义**，不是 raw ACP。
 规范 surface 由 [run-rpc-spec.md](run-rpc-spec.md) 定义：
 
 ```text
@@ -115,24 +115,24 @@ runtime/stop         优雅停止 runtime
 
 ## 权威边界
 
-agent-shim 处在 MASS runtime design set 的 authority split 中间：
+agent-run 处在 MASS runtime design set 的 authority split 中间：
 
-| 关切 | authority | agent-shim 的角色 |
+| 关切 | authority | agent-run 的角色 |
 |------|-----------|-------------------|
 | AgentRun identity `(workspace, name)` | agentd / ARI | 读取外部分配结果，不重新定义 |
 | process truth、runtime status、runtime-local failure | runtime / shim | 直接拥有并对上暴露 |
 | ACP `sessionId` 与 ACP 协议细节 | ACP peer + shim | 内部维护，不让上层越过 shim 边界 |
 | desired scheduling intent | external caller | 不拥有 |
 
-因此，agent-shim 负责的是 **runtime-local truth**，不是外部调度策略。
+因此，agent-run 负责的是 **runtime-local truth**，不是外部调度策略。
 
 ## ACP 是实现细节，typed notifications 才是契约
 
-agent-shim 的核心价值不是“把 ACP 暴露给 agentd”，而是“把 ACP 封装掉”。
+agent-run 的核心价值不是“把 ACP 暴露给 agentd”，而是“把 ACP 封装掉”。
 
 ```text
-mass ↔ agent-shim:  session/* + runtime/* + typed notifications
-agent-shim ↔ agent:   ACP over stdio
+mass ↔ agent-run:  session/* + runtime/* + typed notifications
+agent-run ↔ agent:   ACP over stdio
 ```
 
 这意味着：
@@ -149,9 +149,9 @@ agent-shim ↔ agent:   ACP over stdio
 ```text
 agentd 重启
     │
-    ├── agent-shim 1（my-project-architect）→ 继续存活
-    ├── agent-shim 2（my-project-coder）→ 继续存活
-    └── agent-shim 3（my-project-reviewer）→ 继续存活
+    ├── agent-run 1（my-project-architect）→ 继续存活
+    ├── agent-run 2（my-project-coder）→ 继续存活
+    └── agent-run 3（my-project-reviewer）→ 继续存活
 ```
 
 agentd 恢复后，不需要重新理解 ACP，只需要：
@@ -163,7 +163,7 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 
 **重要**：socket 路径、state dir 布局、`events.jsonl` 的存在本身，由 runtime-spec authority 定义；
 恢复方法名与顺序，由 run-rpc-spec authority 定义；
-本文档只是解释为什么 agent-shim 必须提供这类能力。
+本文档只是解释为什么 agent-run 必须提供这类能力。
 
 ## 为什么需要独立 shim
 

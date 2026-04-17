@@ -10,8 +10,8 @@ This file is the slice-level authority map for the design set. It names which do
 | Runtime lifecycle and state model | `docs/design/runtime/runtime-spec.md` | `docs/design/runtime/design.md`, `docs/design/mass/agentd.md`, `docs/design/mass/ari-spec.md` | AgentRun is the external API object; shim session is the internal runtime realization. AgentRun identity, ACP session identity, and runtime process state remain explicitly distinct. |
 | Workspace preparation and host-impact rules | `docs/design/workspace/workspace-spec.md` | `docs/design/mass/agentd.md`, `docs/design/mass/ari-spec.md` | local workspace, hook execution, env precedence, and shared workspace semantics must tell one safety story. |
 | Agent configuration CRUD | `docs/design/mass/ari-spec.md` | `docs/design/mass/agentd.md` | `agent/*` methods manage Agent records (create/update/get/list/delete). No runtime process is involved. |
-| AgentRun lifecycle (running instances) | `docs/design/mass/ari-spec.md` | `docs/design/mass/agentd.md`, `docs/design/runtime/agent-shim.md` | ARI exposes `agentrun/*` methods for the lifecycle of running agent instances. Workspace-scoped message routing is via `workspace/send`. |
-| Shim control, replay, and reconnect contract | `docs/design/runtime/run-rpc-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/agent-shim.md`, `docs/design/mass/mass.md` | The clean-break shim surface: request/response is `session/*` + `runtime/*` (internal); notification surface is `runtime/event_update`. runtime-spec owns state-dir / socket layout, run-rpc-spec owns recovery method semantics. |
+| AgentRun lifecycle (running instances) | `docs/design/mass/ari-spec.md` | `docs/design/mass/agentd.md`, `docs/design/runtime/agent-run.md` | ARI exposes `agentrun/*` methods for the lifecycle of running agent instances. Workspace-scoped message routing is via `workspace/send`. |
+| Shim control, replay, and reconnect contract | `docs/design/runtime/run-rpc-spec.md` | `docs/design/runtime/runtime-spec.md`, `docs/design/runtime/agent-run.md`, `docs/design/mass/mass.md` | The clean-break shim surface: request/response is `session/*` + `runtime/*` (internal); notification surface is `runtime/event_update`. runtime-spec owns state-dir / socket layout, run-rpc-spec owns recovery method semantics. |
 
 ## Current Implementation Vocabulary
 
@@ -22,7 +22,7 @@ Use these terms consistently across all design documents:
 | **Agent definition** | A reusable named configuration record (`name`, `command`, `args`, `env`, `startupTimeoutSeconds`). Selected by `agentrun/create.agent` using its name. Managed via `agent/*` ARI methods. No runtime process. |
 | **AgentRun** | A running (or stopped) instance of an agent. Identified by `(workspace, name)`. Managed via `agentrun/*` ARI methods. Has a shim process. |
 | **Workspace** | A prepared working directory (git / emptyDir / local). Managed via `workspace/*` ARI methods. |
-| **shim session** | The internal ACP session managed by agent-shim. Uses `session/*` + `runtime/*` RPC. Not exposed externally. |
+| **shim session** | The internal ACP session managed by agent-run. Uses `session/*` + `runtime/*` RPC. Not exposed externally. |
 
 ## ARI Boundary
 
@@ -99,7 +99,7 @@ The shim-facing design set is converged on the following target (fully implement
 - the normative shim method surface is `session/prompt`, `session/cancel`, `session/watch_event`, `session/load`, `session/set_model`, `runtime/status`, and `runtime/stop` (internal agentd↔shim protocol);
 - the normative live notification surface is `runtime/event_update` (internal);
 - socket path and state-dir layout are owned by `runtime-spec.md`, while replay / reconnect semantics are owned by `run-rpc-spec.md`;
-- `agent-shim.md` is descriptive only: it explains component responsibilities and the ACP boundary, but it does not redefine method names or recovery rules;
+- `agent-run.md` is descriptive only: it explains component responsibilities and the ACP boundary, but it does not redefine method names or recovery rules;
 - any remaining references to legacy PascalCase methods or `$/event` in planning docs or historical notes are implementation lag artifacts, not current API contract.
 
 ## Durable State — What Is and Is Not Persisted

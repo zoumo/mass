@@ -12,7 +12,7 @@ OCI（容器世界）                       MASS（Agent 世界）
 Open Container Initiative       →    Multi-Agent Supervision System
 OCI Runtime Spec                →    MASS Runtime Spec
 OCI Image Spec                  →    MASS Workspace Spec
-runc + containerd-shim          →    agent-shim（合并，无独立 runa）
+runc + containerd-shim          →    agent-run（合并，无独立 runa）
 containerd                      →    agentd
 CRI (Container Runtime Interface) →  ARI (Agent Runtime Interface)
 Pod                             →    Workspace（共享工作目录）
@@ -30,7 +30,7 @@ Agent 面临着同样的分层关切：
 |------|---------|-----------|
 | "运行什么" | OCI Runtime Spec (config.json) | MASS Runtime Spec (config.json) |
 | "准备什么环境" | OCI Image Spec (layers → rootfs) | MASS Workspace Spec (source + hooks → workdir) |
-| "底层执行 + 协议适配" | runc + containerd-shim | agent-shim（合并，无独立 runa） |
+| "底层执行 + 协议适配" | runc + containerd-shim | agent-run（合并，无独立 runa） |
 | "高层管理" | containerd | agentd（Agent CRUD + AgentRun 生命周期 + Workspace Manager） |
 | "管理接口" | CRI (kubelet → containerd) | ARI (external caller → agentd) |
 | "协同调度组" | Pod（共享 network/IPC namespace） | Workspace（共享工作目录、`workspace/send` 消息路由） |
@@ -45,7 +45,7 @@ Agent 面临着同样的分层关切：
    不涉及 namespace、cgroups、seccomp、pivot_root。Agent 是进程，不是沙箱。
 3. **面向 Agent 的原生关切** — 聚焦 Agent 真正需要的：workspace 准备、
    协议通信（ACP）、技能/知识注入、Agent 间通信。
-4. **分层分离** — 每层只做一件事。agent-shim 运行进程并持有 ACP。agentd 管理生命周期。
+4. **分层分离** — 每层只做一件事。agent-run 运行进程并持有 ACP。agentd 管理生命周期。
    外部调用方决定运行什么。Spec 是各层之间的粘合剂。
 5. **简单优先** — 为当前需求设计。扩展点存在但保持空白，直到真实需求出现。
 
@@ -83,7 +83,7 @@ Agent 面临着同样的分层关切：
 │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
 │         │ ACP stdio       │ ACP stdio       │ ACP stdio        │
 │  ┌──────┴───────┐  ┌──────┴───────┐  ┌──────┴───────┐          │
-│  │  agent-shim  │  │  agent-shim  │  │  agent-shim  │          │
+│  │  agent-run  │  │  agent-run  │  │  agent-run  │          │
 │  │+workspace-mcp│  │+workspace-mcp│  │+workspace-mcp│          │
 │  └──────┬───────┘  └──────┴───────┘  └──────┬───────┘          │
 │         │                 │                 │                    │
@@ -121,7 +121,7 @@ Agent 面临着同样的分层关切：
 
 1. [runtime/runtime-spec.md](./runtime/runtime-spec.md) — runtime 状态模型、bundle、state dir、socket 路径；
 2. [runtime/run-rpc-spec.md](./runtime/run-rpc-spec.md) — clean-break `session/*` + `runtime/*` surface、notification、recovery / replay；
-3. [runtime/agent-shim.md](./runtime/agent-shim.md) — 组件职责与 ACP 边界；
+3. [runtime/agent-run.md](./runtime/agent-run.md) — 组件职责与 ACP 边界；
 4. [contract-convergence.md](./contract-convergence.md) — 跨层不变量与实现滞后说明。
 
 ## 文档索引
@@ -144,7 +144,7 @@ Agent 面临着同样的分层关切：
 | [runtime/runtime-spec.md](./runtime/runtime-spec.md) | 规范 | MASS Runtime Spec — state、bundle、lifecycle、operations、typed events |
 | [runtime/config-spec.md](./runtime/config-spec.md) | 规范 | Config Spec — config.json schema（对标 OCI config.md） |
 | [runtime/run-rpc-spec.md](./runtime/run-rpc-spec.md) | 规范 | Run RPC Spec — clean-break `session/*` + `runtime/*` request/response surface、`runtime/event_update` notification、回放与重连语义 |
-| [runtime/agent-shim.md](./runtime/agent-shim.md) | 组件 | agent-shim — 组件职责、ACP 边界、runtime truth、实现状态（描述性，不重新定义协议） |
+| [runtime/agent-run.md](./runtime/agent-run.md) | 组件 | agent-run — 组件职责、ACP 边界、runtime truth、实现状态（描述性，不重新定义协议） |
 | [runtime/design.md](./runtime/design.md) | 设计 | 设计思路 — OCI 对标分析、架构决策、config.json 生成流程 |
 | [runtime/why-no-runa.md](./runtime/why-no-runa.md) | 设计 | 为什么 MASS 没有 runa — agent 场景下独立运行时 CLI 不成立的原因 |
 

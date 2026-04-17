@@ -5,7 +5,7 @@
 
 ## System Overview
 
-MASS is a daemon-based runtime for managing AI agents on a single host. The core process (`mass`) owns agent lifecycle, workspace provisioning, and message routing. An agent is identified by a stable `(workspace, name)` pair rather than an opaque UUID. Each running agent has one associated _session_ (internal runtime instance) backed by a child `agent-shim` process that speaks the ACP protocol. An orchestrator (or CLI) drives agentd exclusively through its ARI JSON-RPC 2.0 socket.
+MASS is a daemon-based runtime for managing AI agents on a single host. The core process (`mass`) owns agent lifecycle, workspace provisioning, and message routing. An agent is identified by a stable `(workspace, name)` pair rather than an opaque UUID. Each running agent has one associated _session_ (internal runtime instance) backed by a child `agent-run` process that speaks the ACP protocol. An orchestrator (or CLI) drives agentd exclusively through its ARI JSON-RPC 2.0 socket.
 
 ### Key design axioms (post-M014)
 - **api/ subdirectories contain only pure types** (struct/const/enum). Interfaces and functions live in `server/` or `client/` packages.

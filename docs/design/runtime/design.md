@@ -29,13 +29,13 @@ ARI client sends bootstrap request (runtimeClass: claude, systemPrompt: "...")
   → agentd resolves runtimeClass → finds handler config (command, args, env)
   → agentd merges runtimeClass config + request params
   → mass generates config.json (concrete bootstrap + process launch params)
-  → agent-shim reads config.json, starts agent process, completes bootstrap
+  → agent-run reads config.json, starts agent process, completes bootstrap
   → later ARI `agentrun/prompt` delivers work
 ```
 
 **Core principle**: Runtime Spec is a **concrete, resolved** runtime description.
 It does not contain abstract references (like `agent: "claude"`),
-but rather information directly executable by agent-shim (like `acpAgent.process.command: "npx"`).
+but rather information directly executable by agent-run (like `acpAgent.process.command: "npx"`).
 This is the same as OCI config.json not containing `runtimeClassName` but directly containing `process.args`.
 
 ## Why `acpAgent`
@@ -44,7 +44,7 @@ The field name explicitly includes "acp", indicating that MASS Runtime Spec **on
 ACP (Agent Communication Protocol) is the only agent communication protocol standard we support.
 This means:
 
-- agent-shim communicates with agent processes via ACP protocol (stdio JSON-RPC)
+- agent-run communicates with agent processes via ACP protocol (stdio JSON-RPC)
 - `acpAgent.session` maps to the ACP `session/new` fields that are part of bootstrap configuration
 - `acpAgent.systemPrompt` is also bootstrap configuration, even when ACP compatibility requires the runtime to translate it internally
 - If non-ACP protocol agents need support in the future, new top-level fields would be required
@@ -53,7 +53,7 @@ This means:
 
 OCI config.json puts all information in the `process` field.
 MASS Runtime Spec splits information into bootstrap phases,
-corresponding to how agent-shim consumes config.json during `create`:
+corresponding to how agent-run consumes config.json during `create`:
 
 ```
 Phase 1 — acpAgent.process: start the process
@@ -91,8 +91,8 @@ One startup story is normative across the runtime docs:
 
 1. ARI `agentrun/create` allocates the AgentRun identity `(workspace, name)` and supplies bootstrap configuration.
 2. agentd resolves runtimeClass (from Agent definition), workspace, env, permission policy, and bundle contents.
-3. agent-shim reads `config.json`, resolves `agentRoot.path` to the canonical host `cwd`, and starts the process.
-4. agent-shim completes ACP bootstrap using resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt`.
+3. agent-run reads `config.json`, resolves `agentRoot.path` to the canonical host `cwd`, and starts the process.
+4. agent-run completes ACP bootstrap using resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt`.
 5. Only after bootstrap succeeds does the runtime expose `idle`.
 6. External work later arrives through ARI `agentrun/prompt`.
 
@@ -129,7 +129,7 @@ The important split is:
 | OCI Field | Why Not Needed |
 |-----------|---------------|
 | `root` | Replaced by `agentRoot`. Same concept (relative path in bundle pointing to working filesystem), but workspace is shared across agents in a workspace rather than isolated per agent |
-| `mounts` | No filesystem layering. agentd's Workspace Manager prepares the workspace directory and symlinks it into the bundle; agent-shim resolves the symlink and uses the canonical path |
+| `mounts` | No filesystem layering. agentd's Workspace Manager prepares the workspace directory and symlinks it into the bundle; agent-run resolves the symlink and uses the canonical path |
 | `linux.namespaces` | Agents don't need kernel-level isolation |
 | `linux.resources` | Agents don't need cgroup constraints |
 | `linux.seccomp` | Agents don't need syscall filtering |
@@ -143,11 +143,11 @@ then hands the bundle to runc. runc reads `root.path`, resolves it, and uses it 
 
 MASS follows the same pattern:
 
-| Step | OCI (containerd + runc) | MASS (agentd + agent-shim) |
+| Step | OCI (containerd + runc) | MASS (agentd + agent-run) |
 |------|------------------------|------------------------|
 | Prepare working filesystem | snapshotter unpacks image layers → rootfs | Workspace Manager clones git / creates emptyDir |
 | Place in bundle | rootfs written at `root.path` inside bundle | symlink at `agentRoot.path` points to workspace dir |
-| Read and resolve | runc: `filepath.Join(bundleDir, root.path)` | agent-shim: `filepath.Join(bundleDir, agentRoot.path)` + `EvalSymlinks` |
+| Read and resolve | runc: `filepath.Join(bundleDir, root.path)` | agent-run: `filepath.Join(bundleDir, agentRoot.path)` + `EvalSymlinks` |
 | Use as working dir | container's root filesystem | agent's `cmd.Dir` + ACP `session/new cwd` |
 
 Key difference: OCI rootfs is per-container (isolated). MASS workspace is shared — multiple
@@ -171,7 +171,7 @@ OCI Pod (shared namespace):          MASS Workspace (shared directory):
 |-----------|-----------|
 | `acpAgent.systemPrompt` | Agent role definition and capability constraints. Populated by mass from runtimeClass config + ARI request |
 | `acpAgent.process` | ACP agent process launch parameters. Populated by mass from runtimeClass config |
-| `acpAgent.session` | ACP `session/new` parameters (mcpServers). Guides agent-shim on how to initialize ACP session |
+| `acpAgent.session` | ACP `session/new` parameters (mcpServers). Guides agent-run on how to initialize ACP session |
 
 ### Field Mapping
 
@@ -254,7 +254,7 @@ mass generates config.json:
   }
 
 agentd prepares bundle: writes config.json, symlinks bundle/workspace → /var/lib/agentd/workspaces/ws-abc/
-mass writes config.json to bundle directory → agent-shim --bundle <path>
+mass writes config.json to bundle directory → agent-run --bundle <path>
 ```
 
 This corresponds exactly to how containerd generates OCI config.json:
@@ -266,7 +266,7 @@ This corresponds exactly to how containerd generates OCI config.json:
 | 3. Extract runtime info | image config → process.args, env | Agent definition → acpAgent.process |
 | 4. Merge user config | Pod Spec overrides → env, mounts | request inputs → systemPrompt, mcpServers |
 | 5. Generate config | Write config.json to bundle directory | Write config.json to bundle directory |
-| 6. Invoke runtime | runc create --bundle \<path\> | agent-shim --bundle \<path\> |
+| 6. Invoke runtime | runc create --bundle \<path\> | agent-run --bundle \<path\> |
 | 7. Deliver work | exec / attach after create | ARI `agentrun/prompt` after runtime reaches `idle` |
 
 ## Durable State
