@@ -7,55 +7,20 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/sourcegraph/jsonrpc2"
 	"github.com/spf13/cobra"
 
 	"github.com/charmbracelet/x/term"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 
 	"github.com/zoumo/mass/internal/logging"
 )
-
-// ────────────────────────────────────────────────────────────────────────────
-// ARI types (matching pkg/ari/types.go)
-// ────────────────────────────────────────────────────────────────────────────
-
-type ariWorkspaceSendParams struct {
-	Workspace  string `json:"workspace"`
-	From       string `json:"from"`
-	To         string `json:"to"`
-	Message    string `json:"message"`
-	NeedsReply bool   `json:"needsReply,omitempty"`
-}
-
-type ariWorkspaceSendResult struct {
-	Delivered bool `json:"delivered"`
-}
-
-// ariAgentRunListResult mirrors the agentrun/list response (Items field).
-type ariAgentRunListResult struct {
-	Items []ariAgentRunItem `json:"items"`
-}
-
-type ariAgentRunItem struct {
-	Metadata struct {
-		Workspace string `json:"workspace"`
-		Name      string `json:"name"`
-	} `json:"metadata"`
-	Spec struct {
-		Agent string `json:"agent"`
-	} `json:"spec"`
-	Status struct {
-		State string `json:"state"`
-	} `json:"status"`
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Environment configuration
@@ -80,28 +45,6 @@ func loadConfig() (config, error) {
 		return c, fmt.Errorf("MASS_WORKSPACE_NAME is required")
 	}
 	return c, nil
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// ARI client helper
-// ────────────────────────────────────────────────────────────────────────────
-
-type nullHandler struct{}
-
-func (nullHandler) Handle(context.Context, *jsonrpc2.Conn, *jsonrpc2.Request) {}
-
-func callARI(ctx context.Context, socketPath, method string, params, result interface{}) error {
-	nc, err := net.Dial("unix", socketPath)
-	if err != nil {
-		return fmt.Errorf("dial mass: %w", err)
-	}
-	defer nc.Close()
-
-	stream := jsonrpc2.NewPlainObjectStream(nc)
-	conn := jsonrpc2.NewConn(ctx, stream, jsonrpc2.AsyncHandler(nullHandler{}))
-	defer conn.Close()
-
-	return conn.Call(ctx, method, params, result)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -137,7 +80,7 @@ var workspaceStatusSchema = json.RawMessage(`{
 // Tool handlers
 // ────────────────────────────────────────────────────────────────────────────
 
-func workspaceSendHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
+func workspaceSendHandler(cfg config, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var input struct {
 			TargetAgent string `json:"targetAgent"`
@@ -159,16 +102,14 @@ func workspaceSendHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
 
 		logger.Info("workspace_send", "target", input.TargetAgent, "needsReply", input.NeedsReply)
 
-		ariParams := ariWorkspaceSendParams{
+		result, err := client.Workspaces().Send(ctx, &pkgariapi.WorkspaceSendParams{
 			Workspace:  cfg.workspaceName,
 			From:       cfg.agentName,
 			To:         input.TargetAgent,
-			Message:    input.Message,
+			Message:    []pkgariapi.ContentBlock{pkgariapi.TextBlock(input.Message)},
 			NeedsReply: input.NeedsReply,
-		}
-
-		var result ariWorkspaceSendResult
-		if err := callARI(ctx, cfg.massSocket, pkgariapi.MethodWorkspaceSend, ariParams, &result); err != nil {
+		})
+		if err != nil {
 			errMsg := err.Error()
 			var text string
 			if strings.Contains(errMsg, "is busy") || strings.Contains(errMsg, "cancel its current turn") {
@@ -196,14 +137,13 @@ func workspaceSendHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
 	}
 }
 
-func workspaceStatusHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
+func workspaceStatusHandler(cfg config, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		logger.Info("workspace_status", "workspace", cfg.workspaceName)
 
-		// workspace/get returns the Workspace object directly.
-		key := pkgariapi.ObjectKey{Name: cfg.workspaceName}
+		// Fetch workspace details.
 		var ws pkgariapi.Workspace
-		if err := callARI(ctx, cfg.massSocket, pkgariapi.MethodWorkspaceGet, key, &ws); err != nil {
+		if err := client.Get(ctx, pkgariapi.ObjectKey{Name: cfg.workspaceName}, &ws); err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("workspace/get failed: %v", err)}},
 				IsError: true,
@@ -211,9 +151,8 @@ func workspaceStatusHandler(cfg config, logger *slog.Logger) mcp.ToolHandler {
 		}
 
 		// Fetch workspace members via agentrun/list with workspace filter.
-		listOpts := pkgariapi.ListOptions{FieldSelector: map[string]string{"workspace": cfg.workspaceName}}
-		var members ariAgentRunListResult
-		if err := callARI(ctx, cfg.massSocket, pkgariapi.MethodAgentRunList, listOpts, &members); err != nil {
+		var members pkgariapi.AgentRunList
+		if err := client.List(ctx, &members, pkgariapi.InWorkspace(cfg.workspaceName)); err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("agentrun/list failed: %v", err)}},
 				IsError: true,
@@ -293,21 +232,28 @@ func run() error {
 
 	logger.Info("starting", "workspace", cfg.workspaceName, "agent", cfg.agentName)
 
+	// Connect to ARI server (persistent connection).
+	ctx := context.Background()
+	client, err := ariclient.Dial(ctx, cfg.massSocket)
+	if err != nil {
+		return fmt.Errorf("dial ARI: %w", err)
+	}
+	defer client.Close()
+
 	server := mcp.NewServer(&mcp.Implementation{Name: "workspace-mcp-server", Version: "0.1.0"}, nil)
 
 	server.AddTool(&mcp.Tool{
 		Name:        "workspace_send",
 		Description: "Send a message to another agent in the current workspace",
 		InputSchema: workspaceSendSchema,
-	}, workspaceSendHandler(cfg, logger))
+	}, workspaceSendHandler(cfg, client, logger))
 
 	server.AddTool(&mcp.Tool{
 		Name:        "workspace_status",
 		Description: "Get the current workspace membership and status",
 		InputSchema: workspaceStatusSchema,
-	}, workspaceStatusHandler(cfg, logger))
+	}, workspaceStatusHandler(cfg, client, logger))
 
-	ctx := context.Background()
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		logger.Error("server exited", "error", err)
 	}

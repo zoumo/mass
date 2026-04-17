@@ -1,25 +1,14 @@
 package agentrun
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/mass/pkg/jsonrpc"
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 )
-
-// dialDirect connects to an agent-run Unix socket and returns a typed Client.
-func dialDirect(ctx context.Context, socketPath string) (*runclient.Client, error) {
-	c, err := jsonrpc.Dial(ctx, "unix", socketPath)
-	if err != nil {
-		return nil, fmt.Errorf("connect %s: %w", socketPath, err)
-	}
-	return runclient.New(c), nil
-}
 
 // newDebugCmd returns the "debug" subcommand for direct agent-run socket communication.
 func newDebugCmd() *cobra.Command {
@@ -37,7 +26,7 @@ func newDebugCmd() *cobra.Command {
 		Short: "Print agent state and recovery metadata (runtime/status)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			sc, err := dialDirect(cmd.Context(), socket)
+			sc, err := runclient.Dial(cmd.Context(), socket)
 			if err != nil {
 				return err
 			}
@@ -57,7 +46,7 @@ func newDebugCmd() *cobra.Command {
 		Short: "Gracefully shut down the agent (runtime/stop)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			sc, err := dialDirect(cmd.Context(), socket)
+			sc, err := runclient.Dial(cmd.Context(), socket)
 			if err != nil {
 				return err
 			}
