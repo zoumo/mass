@@ -100,7 +100,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: write creating state: %w", err)
 	}
 
-	proc := m.cfg.AcpAgent.Process
+	proc := m.cfg.Process
 	//nolint:gosec // command comes from trusted config
 	cmd := exec.CommandContext(ctx, proc.Command, proc.Args...)
 	cmd.Env = mergeEnv(os.Environ(), proc.Env)
@@ -148,7 +148,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: acp initialize: %w", handshakeErr)
 	}
 
-	mcpServers := convertMcpServers(m.cfg.AcpAgent.Session.McpServers)
+	mcpServers := convertMcpServers(m.cfg.Session.McpServers)
 	newSessionReq := acp.NewSessionRequest{
 		Cwd:        workDir,
 		McpServers: mcpServers,
@@ -167,10 +167,10 @@ func (m *Manager) Create(ctx context.Context) error {
 	m.models = sessionResp.Models
 	m.mu.Unlock()
 
-	if m.cfg.AcpAgent.SystemPrompt != "" {
+	if m.cfg.Session.SystemPrompt != "" {
 		_, err = conn.Prompt(ctx, acp.PromptRequest{
 			SessionId: m.sessionID,
-			Prompt:    []acp.ContentBlock{acp.TextBlock(m.cfg.AcpAgent.SystemPrompt)},
+			Prompt:    []acp.ContentBlock{acp.TextBlock(m.cfg.Session.SystemPrompt)},
 		})
 		if err != nil {
 			handshakeErr = err

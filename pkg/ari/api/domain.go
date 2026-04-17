@@ -60,7 +60,11 @@ type ObjectMeta struct {
 
 // AgentSpec describes how to launch an agent process for this named agent definition.
 type AgentSpec struct {
-	// Command is the ACP agent executable.
+	// ClientProtocol selects the communication protocol adapter.
+	// Default: "acp".
+	ClientProtocol apiruntime.ClientProtocol `json:"clientProtocol,omitempty"`
+
+	// Command is the agent executable.
 	Command string `json:"command"`
 
 	// Args are the command-line arguments passed to Command.

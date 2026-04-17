@@ -292,16 +292,16 @@ func TestGenerateConfig(t *testing.T) {
 		if cfg.Metadata.Name != "my-agent" {
 			t.Errorf("expected Name=my-agent, got %q", cfg.Metadata.Name)
 		}
-		if cfg.AcpAgent.SystemPrompt != "you are helpful" {
-			t.Errorf("expected SystemPrompt='you are helpful', got %q", cfg.AcpAgent.SystemPrompt)
+		if cfg.Session.SystemPrompt != "you are helpful" {
+			t.Errorf("expected SystemPrompt='you are helpful', got %q", cfg.Session.SystemPrompt)
 		}
-		if cfg.AcpAgent.Process.Command != "/usr/bin/mockagent" {
-			t.Errorf("expected Command=/usr/bin/mockagent, got %q", cfg.AcpAgent.Process.Command)
+		if cfg.Process.Command != "/usr/bin/mockagent" {
+			t.Errorf("expected Command=/usr/bin/mockagent, got %q", cfg.Process.Command)
 		}
-		if len(cfg.AcpAgent.Session.McpServers) != 1 {
-			t.Errorf("expected 1 MCP server, got %d", len(cfg.AcpAgent.Session.McpServers))
-		} else if cfg.AcpAgent.Session.McpServers[0].Name != "workspace" {
-			t.Errorf("expected workspace MCP server, got %q", cfg.AcpAgent.Session.McpServers[0].Name)
+		if len(cfg.Session.McpServers) != 1 {
+			t.Errorf("expected 1 MCP server, got %d", len(cfg.Session.McpServers))
+		} else if cfg.Session.McpServers[0].Name != "workspace" {
+			t.Errorf("expected workspace MCP server, got %q", cfg.Session.McpServers[0].Name)
 		}
 		// Verify annotations include runtimeClass.
 		if cfg.Metadata.Annotations["agent"] != "mockagent" {
@@ -313,7 +313,7 @@ func TestGenerateConfig(t *testing.T) {
 		}
 		// Verify env var.
 		found := false
-		for _, e := range cfg.AcpAgent.Process.Env {
+		for _, e := range cfg.Process.Env {
 			if e == "SOME_VAR=value" {
 				found = true
 				break
@@ -336,8 +336,8 @@ func TestGenerateConfig(t *testing.T) {
 		}
 
 		cfg := pm.generateConfig(agent, rc)
-		if cfg.AcpAgent.SystemPrompt != "" {
-			t.Errorf("expected empty SystemPrompt, got %q", cfg.AcpAgent.SystemPrompt)
+		if cfg.Session.SystemPrompt != "" {
+			t.Errorf("expected empty SystemPrompt, got %q", cfg.Session.SystemPrompt)
 		}
 	})
 }

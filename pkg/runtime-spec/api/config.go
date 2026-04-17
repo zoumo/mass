@@ -21,12 +21,18 @@ type Config struct {
 	// directory and linking it into the bundle before handing the bundle to agent-run.
 	AgentRoot AgentRoot `json:"agentRoot"`
 
-	// AcpAgent describes the ACP agent's complete runtime configuration.
-	AcpAgent AcpAgent `json:"acpAgent"`
+	// ClientProtocol specifies the communication protocol between agent-run
+	// and the agent process. Determines how bootstrap, prompt, and event
+	// streaming are handled.
+	ClientProtocol ClientProtocol `json:"clientProtocol"`
 
-	// Permissions specifies the policy for handling agent-initiated fs/* and
-	// terminal/* requests. Defaults to ApproveAll.
-	Permissions PermissionPolicy `json:"permissions,omitempty"`
+	// Process specifies how to launch the agent process (fork/exec params).
+	// Shared across all client protocols.
+	Process Process `json:"process"`
+
+	// Session specifies session-level configuration: system prompt,
+	// permissions, and MCP servers. Delivery method depends on ClientProtocol.
+	Session Session `json:"session,omitempty"`
 }
 
 // AgentRoot specifies the agent's root working directory within the bundle.
@@ -49,23 +55,28 @@ type Metadata struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
-// AcpAgent describes the ACP agent's complete runtime configuration.
-// The field name explicitly includes "acp" — this spec only supports ACP agents.
-type AcpAgent struct {
-	// SystemPrompt is the agent's role definition and capability constraints.
-	// Passed to ACP session/new as the systemPrompt parameter.
-	SystemPrompt string `json:"systemPrompt,omitempty"`
+// ClientProtocol specifies the communication protocol between agent-run
+// and the agent process.
+type ClientProtocol string
 
-	// Process specifies how to start the ACP agent process (fork/exec params).
-	Process AcpProcess `json:"process"`
+const (
+	// ClientProtocolACP communicates via ACP protocol over stdio.
+	ClientProtocolACP ClientProtocol = "acp"
+)
 
-	// Session specifies ACP session/new parameters (mcpServers).
-	Session AcpSession `json:"session,omitempty"`
+// IsValid reports whether p is a known ClientProtocol value.
+func (p ClientProtocol) IsValid() bool {
+	switch p {
+	case ClientProtocolACP:
+		return true
+	}
+	return false
 }
 
-// AcpProcess specifies how to launch the ACP agent process.
-type AcpProcess struct {
-	// Command is the ACP agent executable (analogous to OCI process.args[0]).
+// Process specifies how to launch an agent process.
+// Shared across all client protocols.
+type Process struct {
+	// Command is the agent executable (analogous to OCI process.args[0]).
 	Command string `json:"command"`
 
 	// Args are the command-line arguments passed to Command.
@@ -79,11 +90,19 @@ type AcpProcess struct {
 	Env []string `json:"env,omitempty"`
 }
 
-// AcpSession specifies ACP session/new parameters.
-// Fields align with the ACP protocol's NewSessionRequest.
-type AcpSession struct {
+// Session specifies session-level configuration.
+// Shared across all client protocols; delivery method depends on ClientProtocol.
+type Session struct {
+	// SystemPrompt is the agent's role definition and capability constraints.
+	// How it is delivered depends on ClientProtocol:
+	//   - ACP: via session/new or first prompt (ACP bootstrap)
+	SystemPrompt string `json:"systemPrompt,omitempty"`
+
+	// Permissions controls how agent-run handles agent-initiated
+	// fs/* and terminal/* requests. Default: ApproveAll.
+	Permissions PermissionPolicy `json:"permissions,omitempty"`
+
 	// McpServers is the list of MCP services available to the agent.
-	// Corresponds to ACP session/new mcpServers parameter.
 	McpServers []McpServer `json:"mcpServers,omitempty"`
 }
 

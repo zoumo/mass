@@ -6,10 +6,11 @@
   "agentRoot": {
     "path": "workspace"
   },
-  "acpAgent": {
-    "process": {
-      "command": "mockagent"
-    }
+  "clientProtocol": "acp",
+  "process": {
+    "command": "mockagent"
   },
-  "permissions": "approve_all"
+  "session": {
+    "permissions": "approve_all"
+  }
 }

@@ -31,9 +31,10 @@ func ParseConfig(bundlePath string) (apiruntime.Config, error) {
 //   - massVersion must be non-empty and have major version == 0
 //   - metadata.name must be non-empty
 //   - agentRoot.path must be non-empty and must not be an absolute path
-//   - acpAgent.process.command must be non-empty
-//   - permissions must be a known PermissionPolicy value (or empty, which
-//     defaults to ApproveAll)
+//   - clientProtocol must be a known ClientProtocol value
+//   - process.command must be non-empty
+//   - session.permissions must be a known PermissionPolicy value (or empty,
+//     which defaults to ApproveAll)
 func ValidateConfig(c apiruntime.Config) error {
 	if c.MassVersion == "" {
 		return fmt.Errorf("spec: massVersion is required")
@@ -54,12 +55,15 @@ func ValidateConfig(c apiruntime.Config) error {
 	if filepath.IsAbs(c.AgentRoot.Path) {
 		return fmt.Errorf("spec: agentRoot.path must be a relative path, got %q", c.AgentRoot.Path)
 	}
-	if c.AcpAgent.Process.Command == "" {
-		return fmt.Errorf("spec: acpAgent.process.command is required")
+	if !c.ClientProtocol.IsValid() {
+		return fmt.Errorf("spec: unknown clientProtocol %q (valid: acp)", c.ClientProtocol)
+	}
+	if c.Process.Command == "" {
+		return fmt.Errorf("spec: process.command is required")
 	}
 	// Empty permissions defaults to ApproveAll — treat as valid.
-	if c.Permissions != "" && !c.Permissions.IsValid() {
-		return fmt.Errorf("spec: unknown permissions value %q (valid: approve_all, approve_reads, deny_all)", c.Permissions)
+	if c.Session.Permissions != "" && !c.Session.Permissions.IsValid() {
+		return fmt.Errorf("spec: unknown session.permissions value %q (valid: approve_all, approve_reads, deny_all)", c.Session.Permissions)
 	}
 	return nil
 }
@@ -70,7 +74,7 @@ func ValidateConfig(c apiruntime.Config) error {
 //  2. filepath.Join with agentRoot.path — produce the candidate path
 //  3. filepath.EvalSymlinks — follow any symlink, returning the real path
 //
-// The result is used as cmd.Dir and as the ACP session/new cwd parameter.
+// The result is used as cmd.Dir and as the agent working directory.
 func ResolveAgentRoot(bundleDir string, cfg apiruntime.Config) (string, error) {
 	absBundleDir, err := filepath.Abs(bundleDir)
 	if err != nil {

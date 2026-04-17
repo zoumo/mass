@@ -74,8 +74,8 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string, logCfg *l
 		return err
 	}
 	if cmd.Flag("permissions").Changed {
-		cfg.Permissions = apiruntime.PermissionPolicy(permissions)
-		if !cfg.Permissions.IsValid() {
+		cfg.Session.Permissions = apiruntime.PermissionPolicy(permissions)
+		if !cfg.Session.Permissions.IsValid() {
 			return fmt.Errorf("invalid --permissions value %q: must be one of approve_all, approve_reads, deny_all", permissions)
 		}
 	}

@@ -19,13 +19,14 @@ func validConfig() apiruntime.Config {
 		Metadata: apiruntime.Metadata{
 			Name: "test-agent",
 		},
-		AgentRoot: apiruntime.AgentRoot{Path: "workspace"},
-		AcpAgent: apiruntime.AcpAgent{
-			Process: apiruntime.AcpProcess{
-				Command: "/usr/bin/agent",
-			},
+		AgentRoot:      apiruntime.AgentRoot{Path: "workspace"},
+		ClientProtocol: apiruntime.ClientProtocolACP,
+		Process: apiruntime.Process{
+			Command: "/usr/bin/agent",
 		},
-		Permissions: apiruntime.ApproveAll,
+		Session: apiruntime.Session{
+			Permissions: apiruntime.ApproveAll,
+		},
 	}
 }
 
@@ -63,7 +64,7 @@ func (s *ConfigSuite) TestParseValid() {
 	c, err := runtimespec.ParseConfig(s.dir)
 	s.Require().NoError(err)
 	s.Equal("test-agent", c.Metadata.Name)
-	s.Equal("/usr/bin/agent", c.AcpAgent.Process.Command)
+	s.Equal("/usr/bin/agent", c.Process.Command)
 }
 
 func (s *ConfigSuite) TestParseMissingFile() {
@@ -107,9 +108,17 @@ func (s *ConfigSuite) TestValidateMissingMetadataName() {
 	s.Contains(err.Error(), "metadata.name")
 }
 
+func (s *ConfigSuite) TestValidateInvalidClientProtocol() {
+	c := validConfig()
+	c.ClientProtocol = "unknown"
+	err := runtimespec.ValidateConfig(c)
+	s.Require().Error(err)
+	s.Contains(err.Error(), "clientProtocol")
+}
+
 func (s *ConfigSuite) TestValidateMissingCommand() {
 	c := validConfig()
-	c.AcpAgent.Process.Command = ""
+	c.Process.Command = ""
 	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "command")
@@ -173,7 +182,7 @@ func (s *ConfigSuite) TestResolveAgentRoot_NonExistent() {
 
 func (s *ConfigSuite) TestValidateInvalidPermissions() {
 	c := validConfig()
-	c.Permissions = apiruntime.PermissionPolicy("bad-policy")
+	c.Session.Permissions = apiruntime.PermissionPolicy("bad-policy")
 	err := runtimespec.ValidateConfig(c)
 	s.Require().Error(err)
 	s.Contains(err.Error(), "permissions")
@@ -181,7 +190,7 @@ func (s *ConfigSuite) TestValidateInvalidPermissions() {
 
 func (s *ConfigSuite) TestValidateEmptyPermissionsDefault() {
 	c := validConfig()
-	c.Permissions = "" // omitted — should default to valid
+	c.Session.Permissions = "" // omitted — should default to valid
 	s.NoError(runtimespec.ValidateConfig(c))
 }
 

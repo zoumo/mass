@@ -50,12 +50,13 @@ func setupAgentRun(t *testing.T) (context.Context, *runclient.Client, func()) {
 		MassVersion: "0.1.0",
 		Metadata:    apiruntime.Metadata{Name: agentID},
 		AgentRoot:   apiruntime.AgentRoot{Path: "workspace"},
-		AcpAgent: apiruntime.AcpAgent{
-			Process: apiruntime.AcpProcess{
-				Command: mockagentBin,
-			},
+		ClientProtocol: apiruntime.ClientProtocolACP,
+		Process: apiruntime.Process{
+			Command: mockagentBin,
 		},
-		Permissions: apiruntime.ApproveAll,
+		Session: apiruntime.Session{
+			Permissions: apiruntime.ApproveAll,
+		},
 	}
 	cfgData, err := json.Marshal(cfg)
 	if err != nil {

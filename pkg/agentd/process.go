@@ -413,18 +413,17 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 		AgentRoot: apiruntime.AgentRoot{
 			Path: "workspace", // symlink to actual workspace
 		},
-		AcpAgent: apiruntime.AcpAgent{
-			SystemPrompt: agent.Spec.SystemPrompt,
-			Process: apiruntime.AcpProcess{
-				Command: agentDef.Spec.Command,
-				Args:    agentDef.Spec.Args,
-				Env:     env,
-			},
-			Session: apiruntime.AcpSession{
-				McpServers: []apiruntime.McpServer{workspaceMcp},
-			},
+		ClientProtocol: apiruntime.ClientProtocolACP,
+		Process: apiruntime.Process{
+			Command: agentDef.Spec.Command,
+			Args:    agentDef.Spec.Args,
+			Env:     env,
 		},
-		Permissions: apiruntime.ApproveAll,
+		Session: apiruntime.Session{
+			SystemPrompt: agent.Spec.SystemPrompt,
+			Permissions:  apiruntime.ApproveAll,
+			McpServers:   []apiruntime.McpServer{workspaceMcp},
+		},
 	}
 }
 

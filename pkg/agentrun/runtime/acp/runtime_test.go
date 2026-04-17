@@ -63,13 +63,14 @@ func newTestConfig(name string) apiruntime.Config {
 		MassVersion: "0.1.0",
 		Metadata:    apiruntime.Metadata{Name: name},
 		AgentRoot:   apiruntime.AgentRoot{Path: "workspace"},
-		AcpAgent: apiruntime.AcpAgent{
-			Process: apiruntime.AcpProcess{
-				Command: mockAgentBin,
-				Args:    []string{},
-			},
+		ClientProtocol: apiruntime.ClientProtocolACP,
+		Process: apiruntime.Process{
+			Command: mockAgentBin,
+			Args:    []string{},
 		},
-		Permissions: apiruntime.ApproveAll,
+		Session: apiruntime.Session{
+			Permissions: apiruntime.ApproveAll,
+		},
 	}
 }
 
@@ -219,7 +220,7 @@ func (s *RuntimeSuite) TestCancel_SendsCancelToAgent() {
 
 func (s *RuntimeSuite) TestCreate_FailsWithBadCommand() {
 	cfg := newTestConfig("test-bad-cmd")
-	cfg.AcpAgent.Process.Command = "/nonexistent/agent/binary"
+	cfg.Process.Command = "/nonexistent/agent/binary"
 	mgr := newManager(s.T(), cfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

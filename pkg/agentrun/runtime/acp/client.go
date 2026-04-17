@@ -38,7 +38,7 @@ func (c *acpClient) SessionUpdate(_ context.Context, n acp.SessionNotification) 
 // The response must include a valid Outcome with Selected + OptionId;
 // an empty Outcome is treated as denial by ACP agents.
 func (c *acpClient) RequestPermission(_ context.Context, req acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
-	switch c.mgr.cfg.Permissions {
+	switch c.mgr.cfg.Session.Permissions {
 	case apiruntime.DenyAll:
 		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: deny_all policy blocks all operations")
 	case apiruntime.ApproveReads:
@@ -63,7 +63,7 @@ func (c *acpClient) RequestPermission(_ context.Context, req acp.RequestPermissi
 		}, nil
 	default:
 		// Unknown permission policy: fail closed to prevent silent permission escalation.
-		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: unknown permission policy %q", c.mgr.cfg.Permissions)
+		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: unknown permission policy %q", c.mgr.cfg.Session.Permissions)
 	}
 }
 
