@@ -28,6 +28,7 @@ func NewChat() *Chat {
 	c := &Chat{
 		idInxMap:         make(map[string]int),
 		pausedAnimations: make(map[string]struct{}),
+		follow:           true,
 	}
 	l := list.NewList()
 	l.SetGap(1)

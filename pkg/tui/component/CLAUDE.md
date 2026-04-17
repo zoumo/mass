@@ -55,7 +55,7 @@ case anim.StepMsg:
 
 ### Follow 模式
 
-- `follow=false` 初始状态
+- `follow=true` 初始状态（新创建的 chat 自动跟随）
 - `ScrollToBottom()` → `follow=true`
 - `ScrollBy(负数)` → `follow=false`
 - `ScrollBy(正数)` 且到底 → `follow=true`

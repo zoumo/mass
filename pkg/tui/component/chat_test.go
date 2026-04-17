@@ -35,9 +35,9 @@ func TestNewChat(t *testing.T) {
 	if c.Len() != 0 {
 		t.Fatalf("new chat should be empty, got %d", c.Len())
 	}
-	// Follow mode is false initially — only enabled by ScrollToBottom.
-	if c.Follow() {
-		t.Fatal("new chat should NOT start in follow mode")
+	// Follow mode starts true — new chat auto-follows new messages.
+	if !c.Follow() {
+		t.Fatal("new chat should start in follow mode")
 	}
 }
 
@@ -200,6 +200,64 @@ func TestFollow_ScrollDownToBottomRe_enables(t *testing.T) {
 
 	if !c.Follow() {
 		t.Fatal("scrolling down to bottom should re-enable follow")
+	}
+}
+
+func TestFollow_AppendAutoScrollsWhenFollowing(t *testing.T) {
+	c := NewChat()
+	c.SetSize(80, 5)
+
+	// follow=true by default, AppendMessages should auto-scroll to bottom.
+	c.AppendMessages(makeItems(20)...)
+
+	if !c.AtBottom() {
+		t.Fatal("AppendMessages should auto-scroll to bottom when follow is true")
+	}
+	if !c.Follow() {
+		t.Fatal("follow should remain true after auto-scroll")
+	}
+}
+
+func TestFollow_AppendNoScrollWhenNotFollowing(t *testing.T) {
+	c := NewChat()
+	c.SetSize(80, 5)
+	c.AppendMessages(makeItems(20)...)
+
+	c.ScrollToTop() // disable follow
+
+	c.AppendMessages(testMsgItem{id: "new", text: "new message"})
+
+	if c.AtBottom() {
+		t.Fatal("should NOT auto-scroll when follow is disabled")
+	}
+}
+
+func TestFollow_ScrollUpThenBackToBottom(t *testing.T) {
+	c := NewChat()
+	c.SetSize(80, 5)
+	c.AppendMessages(makeItems(20)...)
+
+	// Start at bottom (follow=true from init + AppendMessages auto-scroll).
+	if !c.Follow() {
+		t.Fatal("precondition: should be following")
+	}
+
+	// Scroll up — disable follow.
+	c.ScrollBy(-10)
+	if c.Follow() {
+		t.Fatal("scrolling up should disable follow")
+	}
+
+	// Scroll back down to bottom — re-enable follow.
+	c.ScrollBy(100) // overshoot ensures we reach bottom
+	if !c.Follow() {
+		t.Fatal("scrolling back to bottom should re-enable follow")
+	}
+
+	// New messages should auto-scroll again.
+	c.AppendMessages(testMsgItem{id: "extra", text: "extra message"})
+	if !c.AtBottom() {
+		t.Fatal("new messages should auto-scroll after follow re-enabled")
 	}
 }
 
