@@ -4,9 +4,9 @@ package agentd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
@@ -79,7 +79,7 @@ func (m *AgentRunManager) Create(ctx context.Context, agent *pkgariapi.AgentRun)
 		"state", agent.Status.State)
 
 	if err := m.store.CreateAgentRun(ctx, agent); err != nil {
-		if strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, store.ErrAlreadyExists) {
 			return &ErrAgentRunAlreadyExists{
 				Workspace: agent.Metadata.Workspace,
 				Name:      agent.Metadata.Name,
@@ -136,7 +136,7 @@ func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name stri
 		"state", status.State)
 
 	if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, status); err != nil {
-		if strings.Contains(err.Error(), "does not exist") {
+		if errors.Is(err, store.ErrNotFound) {
 			return &ErrAgentRunNotFound{Workspace: workspace, Name: name}
 		}
 		m.logger.Error("failed to update agent status",
@@ -166,7 +166,7 @@ func (m *AgentRunManager) TransitionState(ctx context.Context, workspace, name s
 
 	ok, err := m.store.TransitionAgentRunState(ctx, workspace, name, expected, next)
 	if err != nil {
-		if strings.Contains(err.Error(), "does not exist") {
+		if errors.Is(err, store.ErrNotFound) {
 			return false, &ErrAgentRunNotFound{Workspace: workspace, Name: name}
 		}
 		m.logger.Error("failed to transition agent state",

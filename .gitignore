@@ -47,6 +47,7 @@ docs/design_slides/
 
 # ── Tool output ──
 graphify-out/
+.graphify_*.json
 .graphify_python
 .playwright-mcp/
 .bg-shell/

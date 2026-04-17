@@ -15,12 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	runapi "github.com/zoumo/mass/pkg/agentrun/api"
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	spec "github.com/zoumo/mass/pkg/runtime-spec"
-	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 	"github.com/zoumo/mass/pkg/agentd/store"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	runclient "github.com/zoumo/mass/pkg/agentrun/client"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // EventHandler is called for each runtime/event_update notification received from the agent-run.
@@ -468,7 +468,9 @@ func (m *ProcessManager) createBundle(agent *pkgariapi.AgentRun, cfg apiruntime.
 
 	// Look up the workspace to get its filesystem path.
 	wsName := agent.Metadata.Workspace
-	workspace, err := m.store.GetWorkspace(context.Background(), wsName)
+	wsCtx, wsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer wsCancel()
+	workspace, err := m.store.GetWorkspace(wsCtx, wsName)
 	if err != nil {
 		_ = os.RemoveAll(bundlePath)
 		return "", "", "", fmt.Errorf("get workspace %s: %w", wsName, err)

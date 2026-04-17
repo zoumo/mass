@@ -1,0 +1,166 @@
+package api_test
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+)
+
+// ── ContentBlock round-trip (ACP SDK type re-export) ─────────────────────────
+
+func TestContentBlock_TextBlock_RoundTrip(t *testing.T) {
+	block := pkgariapi.TextBlock("hello world")
+	data, err := json.Marshal(block)
+	require.NoError(t, err)
+
+	var decoded pkgariapi.ContentBlock
+	require.NoError(t, json.Unmarshal(data, &decoded))
+
+	require.NotNil(t, decoded.Text, "should decode as text content")
+	assert.Equal(t, "hello world", decoded.Text.Text)
+}
+
+func TestContentBlock_ImageBlock_RoundTrip(t *testing.T) {
+	block := pkgariapi.ImageBlock("aGVsbG8=", "image/png")
+	data, err := json.Marshal(block)
+	require.NoError(t, err)
+
+	var decoded pkgariapi.ContentBlock
+	require.NoError(t, json.Unmarshal(data, &decoded))
+
+	require.NotNil(t, decoded.Image, "should decode as image content")
+	assert.Equal(t, "aGVsbG8=", decoded.Image.Data)
+	assert.Equal(t, "image/png", decoded.Image.MimeType)
+}
+
+// ── AgentRunPromptParams round-trip ──────────────────────────────────────────
+
+func TestAgentRunPromptParams_RoundTrip(t *testing.T) {
+	params := pkgariapi.AgentRunPromptParams{
+		Workspace: "ws1",
+		Name:      "agent-1",
+		Prompt:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("what is 2+2?")},
+	}
+	data, err := json.Marshal(params)
+	require.NoError(t, err)
+
+	var decoded pkgariapi.AgentRunPromptParams
+	require.NoError(t, json.Unmarshal(data, &decoded))
+
+	assert.Equal(t, "ws1", decoded.Workspace)
+	assert.Equal(t, "agent-1", decoded.Name)
+	require.Len(t, decoded.Prompt, 1)
+	require.NotNil(t, decoded.Prompt[0].Text)
+	assert.Equal(t, "what is 2+2?", decoded.Prompt[0].Text.Text)
+}
+
+// ── WorkspaceSendParams round-trip ───────────────────────────────────────────
+
+func TestWorkspaceSendParams_RoundTrip(t *testing.T) {
+	params := pkgariapi.WorkspaceSendParams{
+		Workspace:  "ws1",
+		From:       "claude",
+		To:         "codex",
+		Message:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello codex")},
+		NeedsReply: true,
+	}
+	data, err := json.Marshal(params)
+	require.NoError(t, err)
+
+	var decoded pkgariapi.WorkspaceSendParams
+	require.NoError(t, json.Unmarshal(data, &decoded))
+
+	assert.Equal(t, "ws1", decoded.Workspace)
+	assert.Equal(t, "claude", decoded.From)
+	assert.Equal(t, "codex", decoded.To)
+	assert.True(t, decoded.NeedsReply)
+	require.Len(t, decoded.Message, 1)
+	require.NotNil(t, decoded.Message[0].Text)
+	assert.Equal(t, "hello codex", decoded.Message[0].Text.Text)
+}
+
+// ── Domain type JSON tests ───────────────────────────────────────────────────
+
+func TestAgentRun_ARIView_StripsInternalFields(t *testing.T) {
+	ar := pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Name: "agent-1", Workspace: "ws1"},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
+		Status: pkgariapi.AgentRunStatus{
+			State:           "idle",
+			RunSocketPath:   "/tmp/test.sock",
+			RunStateDir:     "/tmp/statedir",
+			RunPID:          42,
+			BootstrapConfig: json.RawMessage(`{"foo":"bar"}`),
+		},
+	}
+
+	view := ar.ARIView()
+	assert.Empty(t, view.Status.RunSocketPath, "ARIView should strip RunSocketPath")
+	assert.Empty(t, view.Status.RunStateDir, "ARIView should strip RunStateDir")
+	assert.Zero(t, view.Status.RunPID, "ARIView should strip RunPID")
+	assert.Nil(t, view.Status.BootstrapConfig, "ARIView should strip BootstrapConfig")
+
+	// Verify JSON serialization of the view has no internal fields
+	data, err := json.Marshal(view)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "runSocketPath")
+	assert.NotContains(t, string(data), "runStateDir")
+	assert.NotContains(t, string(data), "runPid")
+	assert.NotContains(t, string(data), "bootstrapConfig")
+}
+
+func TestWorkspace_ARIView_StripsHooks(t *testing.T) {
+	ws := pkgariapi.Workspace{
+		Metadata: pkgariapi.ObjectMeta{Name: "ws1"},
+		Spec: pkgariapi.WorkspaceSpec{
+			Source: json.RawMessage(`{"type":"emptyDir"}`),
+			Hooks:  json.RawMessage(`[{"phase":"post-create","command":"echo hi"}]`),
+		},
+		Status: pkgariapi.WorkspaceStatus{Phase: pkgariapi.WorkspacePhaseReady},
+	}
+
+	view := ws.ARIView()
+	assert.Nil(t, view.Spec.Hooks, "ARIView should strip Hooks")
+
+	data, err := json.Marshal(view)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "hooks")
+}
+
+func TestObjectMeta_JSON_RoundTrip(t *testing.T) {
+	now := time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC)
+	meta := pkgariapi.ObjectMeta{
+		Name:      "test",
+		Workspace: "ws1",
+		Labels:    map[string]string{"env": "dev"},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	data, err := json.Marshal(meta)
+	require.NoError(t, err)
+
+	var decoded pkgariapi.ObjectMeta
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.Equal(t, "test", decoded.Name)
+	assert.Equal(t, "ws1", decoded.Workspace)
+	assert.Equal(t, "dev", decoded.Labels["env"])
+	assert.True(t, now.Equal(decoded.CreatedAt))
+}
+
+// ── ListOptions ──────────────────────────────────────────────────────────────
+
+func TestListOptions_FunctionalOptions(t *testing.T) {
+	opts := pkgariapi.ApplyListOptions(
+		pkgariapi.InWorkspace("ws1"),
+		pkgariapi.WithState("idle"),
+		pkgariapi.WithLabels(map[string]string{"team": "infra"}),
+	)
+	assert.Equal(t, "ws1", opts.FieldSelector["workspace"])
+	assert.Equal(t, "idle", opts.FieldSelector["state"])
+	assert.Equal(t, "infra", opts.Labels["team"])
+}

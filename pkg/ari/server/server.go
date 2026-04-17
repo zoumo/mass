@@ -19,14 +19,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
+	"time"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/agentd"
+	"github.com/zoumo/mass/pkg/agentd/store"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/jsonrpc"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	runapi "github.com/zoumo/mass/pkg/agentrun/api"
-	"github.com/zoumo/mass/pkg/agentd/store"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
@@ -101,7 +101,7 @@ func (a *workspaceAdapter) Create(ctx context.Context, ws *pkgariapi.Workspace) 
 
 	ws.Status.Phase = pkgariapi.WorkspacePhasePending
 	if err := a.store.CreateWorkspace(ctx, ws); err != nil {
-		if strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, store.ErrAlreadyExists) {
 			return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s already exists", ws.Metadata.Name))
 		}
 		return nil, jsonrpc.ErrInternal(err.Error())
@@ -193,7 +193,7 @@ func (a *workspaceAdapter) Delete(ctx context.Context, name string) error {
 	a.logger.Info("workspace/delete", "workspace", name)
 
 	if err := a.store.DeleteWorkspace(ctx, name); err != nil {
-		if strings.Contains(err.Error(), "does not exist") {
+		if errors.Is(err, store.ErrNotFound) {
 			return jsonrpc.ErrInvalidParams(err.Error())
 		}
 		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
@@ -740,7 +740,8 @@ func (a *agentAdapter) Delete(ctx context.Context, name string) error {
 // recordPromptDeliveryFailure updates agent run status after a failed prompt
 // delivery, consulting the runtime status to get the authoritative state.
 func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkgariapi.AgentRunStatus, cause error, markErrorWhenRuntimeUnavailable bool) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	current, err := s.store.GetAgentRun(ctx, wsName, name)
 	if err != nil {
 		s.logger.Warn("prompt failure: current state lookup failed",

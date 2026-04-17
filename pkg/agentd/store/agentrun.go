@@ -43,8 +43,7 @@ func (s *Store) CreateAgentRun(_ context.Context, agent *pkgariapi.AgentRun) err
 		}
 		key := []byte(agent.Metadata.Name)
 		if existing := wb.Get(key); existing != nil {
-			return fmt.Errorf("store: agent %s/%s already exists",
-				agent.Metadata.Workspace, agent.Metadata.Name)
+			return &ResourceError{Op: "create", Resource: "agent", Key: agent.Metadata.Workspace + "/" + agent.Metadata.Name, Err: ErrAlreadyExists}
 		}
 		data, err := json.Marshal(agent)
 		if err != nil {
@@ -167,7 +166,7 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 		key := []byte(name)
 		data := wb.Get(key)
 		if data == nil {
-			return fmt.Errorf("store: agent %s/%s does not exist", workspace, name)
+			return &ResourceError{Op: "update", Resource: "agent", Key: workspace + "/" + name, Err: ErrNotFound}
 		}
 		var agent pkgariapi.AgentRun
 		if err := json.Unmarshal(data, &agent); err != nil {
@@ -210,7 +209,7 @@ func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name strin
 		key := []byte(name)
 		data := wb.Get(key)
 		if data == nil {
-			return fmt.Errorf("store: agent %s/%s does not exist", workspace, name)
+			return &ResourceError{Op: "transition", Resource: "agent", Key: workspace + "/" + name, Err: ErrNotFound}
 		}
 		var agent pkgariapi.AgentRun
 		if err := json.Unmarshal(data, &agent); err != nil {
@@ -259,7 +258,7 @@ func (s *Store) DeleteAgentRun(_ context.Context, workspace, name string) error 
 		}
 		key := []byte(name)
 		if wb.Get(key) == nil {
-			return fmt.Errorf("store: agent %s/%s does not exist", workspace, name)
+			return &ResourceError{Op: "delete", Resource: "agent", Key: workspace + "/" + name, Err: ErrNotFound}
 		}
 		if err := wb.Delete(key); err != nil {
 			return fmt.Errorf("store: delete agent %s/%s: %w", workspace, name, err)

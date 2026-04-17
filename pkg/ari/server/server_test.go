@@ -237,6 +237,31 @@ func TestWorkspaceDeleteBlockedByAgent(t *testing.T) {
 	require.Error(t, err, "workspace/delete must fail when an agent is present")
 }
 
+func TestWorkspaceCreateDuplicate(t *testing.T) {
+	env := newTestServer(t)
+
+	ws := pkgariapi.Workspace{
+		Metadata: pkgariapi.ObjectMeta{Name: "dup-ws"},
+		Spec:     pkgariapi.WorkspaceSpec{Source: json.RawMessage(`{"type":"emptyDir"}`)},
+	}
+	var result pkgariapi.Workspace
+	require.NoError(t, env.client.Call("workspace/create", ws, &result))
+
+	// Second create of the same workspace should fail with InvalidParams (-32602).
+	err := env.client.Call("workspace/create", ws, &result)
+	require.Error(t, err, "duplicate workspace/create should fail")
+	assert.Contains(t, err.Error(), "-32602", "error code should be InvalidParams")
+	assert.Contains(t, err.Error(), "already exists")
+}
+
+func TestWorkspaceDeleteNotFound(t *testing.T) {
+	env := newTestServer(t)
+
+	err := env.client.Call("workspace/delete", pkgariapi.ObjectKey{Name: "no-such-ws"}, nil)
+	require.Error(t, err, "deleting non-existent workspace should fail")
+	assert.Contains(t, err.Error(), "-32602", "error code should be InvalidParams")
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Agent tests
 // ────────────────────────────────────────────────────────────────────────────

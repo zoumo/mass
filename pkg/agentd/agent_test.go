@@ -273,3 +273,36 @@ func TestAgentCreate_AlreadyExists(t *testing.T) {
 	assert.Equal(t, "ws1", alreadyExists.Workspace)
 	assert.Equal(t, "dup", alreadyExists.Name)
 }
+
+// TestAgentUpdateStatus_NotFound tests that UpdateStatus returns ErrAgentRunNotFound for a missing agent.
+func TestAgentUpdateStatus_NotFound(t *testing.T) {
+	t.Parallel()
+
+	am := newTestAgentManager(t)
+	ctx := context.Background()
+
+	err := am.UpdateStatus(ctx, "ws1", "ghost", pkgariapi.AgentRunStatus{State: apiruntime.StatusRunning})
+	require.Error(t, err, "UpdateStatus of missing agent should fail")
+
+	var notFound *ErrAgentRunNotFound
+	require.ErrorAs(t, err, &notFound, "error should be ErrAgentRunNotFound")
+	assert.Equal(t, "ws1", notFound.Workspace)
+	assert.Equal(t, "ghost", notFound.Name)
+}
+
+// TestAgentTransitionState_NotFound tests that TransitionState returns ErrAgentRunNotFound for a missing agent.
+func TestAgentTransitionState_NotFound(t *testing.T) {
+	t.Parallel()
+
+	am := newTestAgentManager(t)
+	ctx := context.Background()
+
+	ok, err := am.TransitionState(ctx, "ws1", "phantom", apiruntime.StatusIdle, apiruntime.StatusRunning)
+	require.Error(t, err, "TransitionState of missing agent should fail")
+	assert.False(t, ok)
+
+	var notFound *ErrAgentRunNotFound
+	require.ErrorAs(t, err, &notFound, "error should be ErrAgentRunNotFound")
+	assert.Equal(t, "ws1", notFound.Workspace)
+	assert.Equal(t, "phantom", notFound.Name)
+}

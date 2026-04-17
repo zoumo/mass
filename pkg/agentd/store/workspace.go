@@ -35,7 +35,7 @@ func (s *Store) CreateWorkspace(_ context.Context, ws *pkgariapi.Workspace) erro
 		b := workspacesBucket(tx)
 		key := []byte(ws.Metadata.Name)
 		if existing := b.Get(key); existing != nil {
-			return fmt.Errorf("store: workspace %s already exists", ws.Metadata.Name)
+			return &ResourceError{Op: "create", Resource: "workspace", Key: ws.Metadata.Name, Err: ErrAlreadyExists}
 		}
 		data, err := json.Marshal(ws)
 		if err != nil {
@@ -112,7 +112,7 @@ func (s *Store) UpdateWorkspaceStatus(_ context.Context, name string, status pkg
 		key := []byte(name)
 		data := b.Get(key)
 		if data == nil {
-			return fmt.Errorf("store: workspace %s does not exist", name)
+			return &ResourceError{Op: "update", Resource: "workspace", Key: name, Err: ErrNotFound}
 		}
 		var ws pkgariapi.Workspace
 		if err := json.Unmarshal(data, &ws); err != nil {
@@ -145,7 +145,7 @@ func (s *Store) DeleteWorkspace(_ context.Context, name string) error {
 		// Check workspace exists.
 		b := workspacesBucket(tx)
 		if b.Get([]byte(name)) == nil {
-			return fmt.Errorf("store: workspace %s does not exist", name)
+			return &ResourceError{Op: "delete", Resource: "workspace", Key: name, Err: ErrNotFound}
 		}
 
 		// Refuse deletion if agentRuns sub-bucket is non-empty.
