@@ -164,7 +164,7 @@ func TestUpdateAgentRunStatus(t *testing.T) {
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws", "a")))
 
 	newStatus := pkgariapi.AgentRunStatus{
-		State:          apiruntime.StatusRunning,
+		State:         apiruntime.StatusRunning,
 		RunSocketPath: "/tmp/run.sock",
 		RunPID:        12345,
 	}

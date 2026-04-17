@@ -132,7 +132,7 @@ func (s *SpecSuite) TestParseUnknownSourceType() {
 func (s *SpecSuite) TestMarshalGitSource() {
 	spec := workspace.WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   workspace.WorkspaceMetadata{Name: "git-project"},
+		Metadata:    workspace.WorkspaceMetadata{Name: "git-project"},
 		Source: workspace.Source{
 			Type: workspace.SourceTypeGit,
 			Git: workspace.GitSource{
@@ -159,7 +159,7 @@ func (s *SpecSuite) TestMarshalGitSource() {
 func (s *SpecSuite) TestMarshalEmptyDirSource() {
 	spec := workspace.WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   workspace.WorkspaceMetadata{Name: "empty-project"},
+		Metadata:    workspace.WorkspaceMetadata{Name: "empty-project"},
 		Source: workspace.Source{
 			Type: workspace.SourceTypeEmptyDir,
 		},
@@ -183,7 +183,7 @@ func (s *SpecSuite) TestMarshalEmptyDirSource() {
 func (s *SpecSuite) TestMarshalLocalSource() {
 	spec := workspace.WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   workspace.WorkspaceMetadata{Name: "local-project"},
+		Metadata:    workspace.WorkspaceMetadata{Name: "local-project"},
 		Source: workspace.Source{
 			Type: workspace.SourceTypeLocal,
 			Local: workspace.LocalSource{

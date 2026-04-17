@@ -22,8 +22,8 @@ type ConfigMetadata struct {
 
 // WorkspaceComposeSpec describes the workspace source and the agent runs to create.
 type WorkspaceComposeSpec struct {
-	Source   SourceConfig      `yaml:"source"`
-	Agents   []AgentRunEntry   `yaml:"agents"`
+	Source SourceConfig    `yaml:"source"`
+	Agents []AgentRunEntry `yaml:"agents"`
 }
 
 // SourceConfig describes the workspace source (local, git, or emptyDir).

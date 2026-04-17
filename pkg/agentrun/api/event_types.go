@@ -220,12 +220,12 @@ func (c *ConfigOption) UnmarshalJSON(data []byte) error {
 
 // ConfigOptionSelect mirrors acp.SessionConfigOptionSelect.
 type ConfigOptionSelect struct {
-	Meta         map[string]any     `json:"_meta,omitempty"`
-	ID           string             `json:"id"`
-	Name         string             `json:"name"`
-	CurrentValue string             `json:"currentValue"`
-	Description  *string            `json:"description,omitempty"`
-	Category     *string            `json:"category,omitempty"`
+	Meta         map[string]any      `json:"_meta,omitempty"`
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	CurrentValue string              `json:"currentValue"`
+	Description  *string             `json:"description,omitempty"`
+	Category     *string             `json:"category,omitempty"`
 	Options      ConfigSelectOptions `json:"options"`
 }
 
@@ -368,7 +368,6 @@ type PlanEvent struct {
 }
 
 func (PlanEvent) eventType() string { return EventTypePlan }
-
 
 // TurnStartEvent signals the start of an agent turn.
 type TurnStartEvent struct{}

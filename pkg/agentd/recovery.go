@@ -9,11 +9,11 @@ import (
 	"log/slog"
 	"time"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	spec "github.com/zoumo/mass/pkg/runtime-spec"
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // RecoverSessions runs at daemon startup and attempts to reconnect to agent-run
@@ -125,7 +125,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			} else if currentState == apiruntime.StatusRunning && runStatus == apiruntime.StatusIdle {
 				// Agent-run became idle during recovery — update to idle.
 				if aErr := m.agents.UpdateStatus(ctx, ws, name, pkgariapi.AgentRunStatus{
-					State:          apiruntime.StatusIdle,
+					State:         apiruntime.StatusIdle,
 					RunSocketPath: agent.Status.RunSocketPath,
 					RunStateDir:   agent.Status.RunStateDir,
 					RunPID:        agent.Status.RunPID,
@@ -233,7 +233,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	case status.State.Status == apiruntime.StatusRunning && agent.Status.State == apiruntime.StatusIdle:
 		// Agent-run is running but DB still says idle — update DB to match agent-run truth.
 		if err := m.agents.UpdateStatus(ctx, ws, name, pkgariapi.AgentRunStatus{
-			State:          apiruntime.StatusRunning,
+			State:         apiruntime.StatusRunning,
 			RunSocketPath: agent.Status.RunSocketPath,
 			RunStateDir:   agent.Status.RunStateDir,
 			RunPID:        agent.Status.RunPID,

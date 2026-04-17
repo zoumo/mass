@@ -16,9 +16,9 @@ import (
 
 	"github.com/zoumo/mass/internal/logging"
 	"github.com/zoumo/mass/pkg/agentd"
+	"github.com/zoumo/mass/pkg/agentd/store"
 	ariserver "github.com/zoumo/mass/pkg/ari/server"
 	"github.com/zoumo/mass/pkg/jsonrpc"
-	"github.com/zoumo/mass/pkg/agentd/store"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 

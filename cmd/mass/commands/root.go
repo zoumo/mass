@@ -4,8 +4,8 @@ package commands
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/mass/cmd/mass/commands/server"
 	"github.com/zoumo/mass/cmd/mass/commands/run"
+	"github.com/zoumo/mass/cmd/mass/commands/server"
 	"github.com/zoumo/mass/cmd/mass/commands/workspacemcp"
 )
 

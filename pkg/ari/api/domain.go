@@ -87,7 +87,7 @@ type Agent struct {
 }
 
 func (a *Agent) GetObjectMeta() *ObjectMeta { return &a.Metadata }
-func (a *Agent) objectType() string          { return "agent" }
+func (a *Agent) objectType() string         { return "agent" }
 
 // AgentList holds a list of Agent objects.
 type AgentList struct {
@@ -176,7 +176,7 @@ type AgentRun struct {
 }
 
 func (a *AgentRun) GetObjectMeta() *ObjectMeta { return &a.Metadata }
-func (a *AgentRun) objectType() string          { return "agentrun" }
+func (a *AgentRun) objectType() string         { return "agentrun" }
 
 // AgentRunList holds a list of AgentRun objects.
 type AgentRunList struct {
@@ -246,7 +246,7 @@ type Workspace struct {
 }
 
 func (w *Workspace) GetObjectMeta() *ObjectMeta { return &w.Metadata }
-func (w *Workspace) objectType() string          { return "workspace" }
+func (w *Workspace) objectType() string         { return "workspace" }
 
 // WorkspaceList holds a list of Workspace objects.
 type WorkspaceList struct {

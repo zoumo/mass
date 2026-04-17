@@ -224,7 +224,6 @@ func (s *Service) Status(_ context.Context) (*runapi.RuntimeStatusResult, error)
 	}, nil
 }
 
-
 func (s *Service) SetModel(ctx context.Context, req *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error) {
 	if req.ModelID == "" {
 		return nil, jsonrpc.ErrInvalidParams("missing modelId")

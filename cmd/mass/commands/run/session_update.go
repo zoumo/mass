@@ -3,8 +3,8 @@ package run
 import (
 	"sort"
 
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // buildSessionUpdate converts a RuntimeUpdateEvent into the inputs needed

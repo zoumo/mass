@@ -88,9 +88,9 @@ func TestRecoverSessions_PhaseTransitions_WithLiveRun(t *testing.T) {
 	srv.statusResult = runapi.RuntimeStatusResult{
 		State: apiruntime.State{
 			MassVersion: "0.1.0",
-			ID:         "phase-test-agent",
-			Status:     apiruntime.StatusRunning,
-			Bundle:     "/tmp/test-bundle",
+			ID:          "phase-test-agent",
+			Status:      apiruntime.StatusRunning,
+			Bundle:      "/tmp/test-bundle",
 		},
 		Recovery: runapi.RuntimeStatusRecovery{LastSeq: 0},
 	}

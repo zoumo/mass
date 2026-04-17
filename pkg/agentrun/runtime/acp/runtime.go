@@ -19,8 +19,8 @@ import (
 
 	"github.com/coder/acp-go-sdk"
 
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	spec "github.com/zoumo/mass/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // StateChange describes an externally visible runtime lifecycle transition.

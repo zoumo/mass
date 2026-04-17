@@ -11,10 +11,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
+	"github.com/zoumo/mass/internal/logging"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
-
-	"github.com/zoumo/mass/internal/logging"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -164,9 +163,9 @@ func NewCommand() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "workspace-mcp",
-		Short: "Run the workspace MCP server (stdio transport)",
-		Long:  `workspace-mcp exposes workspace_send and workspace_status MCP tools over stdio.`,
+		Use:          "workspace-mcp",
+		Short:        "Run the workspace MCP server (stdio transport)",
+		Long:         `workspace-mcp exposes workspace_send and workspace_status MCP tools over stdio.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(socket, workspace, agent, &logCfg)

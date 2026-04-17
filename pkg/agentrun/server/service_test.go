@@ -9,9 +9,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	spec "github.com/zoumo/mass/pkg/runtime-spec"
 	acpruntime "github.com/zoumo/mass/pkg/agentrun/runtime/acp"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 func TestStatus_EventCountsOverlay(t *testing.T) {
@@ -20,7 +20,7 @@ func TestStatus_EventCountsOverlay(t *testing.T) {
 
 	// 2. Write a state.json with stale EventCounts to simulate a previous state write.
 	staleState := apiruntime.State{
-		MassVersion:  "0.1.0",
+		MassVersion: "0.1.0",
 		ID:          "test-session",
 		Status:      apiruntime.StatusRunning,
 		Bundle:      "/tmp/fake-bundle",

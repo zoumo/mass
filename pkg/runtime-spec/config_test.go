@@ -8,8 +8,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	runtimespec "github.com/zoumo/mass/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // validConfig returns a Config that passes all validation rules.

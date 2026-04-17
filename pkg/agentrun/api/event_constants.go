@@ -6,13 +6,13 @@ package api
 const (
 	EventTypeAgentMessage  = "agent_message"
 	EventTypeAgentThinking = "agent_thinking"
-	EventTypeToolCall    = "tool_call"
-	EventTypeToolResult  = "tool_result"
-	EventTypePlan        = "plan"
-	EventTypeUserMessage = "user_message"
-	EventTypeTurnStart   = "turn_start"
-	EventTypeTurnEnd     = "turn_end"
-	EventTypeError       = "error"
+	EventTypeToolCall      = "tool_call"
+	EventTypeToolResult    = "tool_result"
+	EventTypePlan          = "plan"
+	EventTypeUserMessage   = "user_message"
+	EventTypeTurnStart     = "turn_start"
+	EventTypeTurnEnd       = "turn_end"
+	EventTypeError         = "error"
 
 	// EventTypeRuntimeUpdate is the merged event type for runtime status changes
 	// and session metadata updates (replaces state_change, available_commands,
@@ -23,6 +23,6 @@ const (
 // Content block streaming status values.
 const (
 	BlockStatusStart     = "start"
-	BlockStatusStreaming  = "streaming"
+	BlockStatusStreaming = "streaming"
 	BlockStatusEnd       = "end"
 )

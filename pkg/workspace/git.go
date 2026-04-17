@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -68,6 +69,9 @@ func (h *GitHandler) Prepare(ctx context.Context, source Source, targetDir strin
 	// Set working directory to the parent of targetDir so git can create targetDir inside it.
 	// If targetDir is "/tmp/work/repo", we run from "/tmp/work" so git creates "repo" there.
 	cloneCmd.Dir = filepath.Dir(targetDir)
+	// Disable interactive credential prompts so git fails fast instead of
+	// blocking on password input for unreachable/private repos.
+	cloneCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 
 	if err := cloneCmd.Run(); err != nil {
 		// Check for context cancellation first.

@@ -63,9 +63,9 @@ func newMockRunServer(t *testing.T) (*mockRunServer, string) {
 		statusResult: runapi.RuntimeStatusResult{
 			State: apiruntime.State{
 				MassVersion: "0.1.0",
-				ID:         "test-session",
-				Status:     apiruntime.StatusIdle,
-				Bundle:     "/tmp/test-bundle",
+				ID:          "test-session",
+				Status:      apiruntime.StatusIdle,
+				Bundle:      "/tmp/test-bundle",
 			},
 			Recovery: runapi.RuntimeStatusRecovery{LastSeq: -1},
 		},

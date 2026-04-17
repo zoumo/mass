@@ -30,8 +30,8 @@ func newTestManager(policy apiruntime.PermissionPolicy) *Manager {
 		panic("newTestManager: MkdirTemp stateDir: " + err.Error())
 	}
 	cfg := apiruntime.Config{
-		MassVersion:  "0.1.0",
-		Metadata: apiruntime.Metadata{Name: "test-agent"},
+		MassVersion: "0.1.0",
+		Metadata:    apiruntime.Metadata{Name: "test-agent"},
 		AgentRoot:   apiruntime.AgentRoot{Path: "workspace"},
 		Permissions: policy,
 	}

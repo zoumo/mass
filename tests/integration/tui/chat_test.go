@@ -20,15 +20,14 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	"github.com/zoumo/mass/pkg/tui/chat"
 	"github.com/zoumo/mass/pkg/tui/component"
 	"github.com/zoumo/mass/tests/integration/testutil"
-
-	"charm.land/lipgloss/v2"
-
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
 )
 
@@ -398,4 +397,3 @@ func TestChatComponentRendering(t *testing.T) {
 	t.Logf("Rendered output (%d chars):\n%s", len(rendered), rendered)
 	t.Log("Component rendering verified ✓")
 }
-

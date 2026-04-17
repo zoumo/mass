@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	runtimespec "github.com/zoumo/mass/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 type StateSuite struct {
@@ -27,7 +27,7 @@ func (s *StateSuite) TeardownTest() {
 
 func sampleState() apiruntime.State {
 	return apiruntime.State{
-		MassVersion:  "0.1.0",
+		MassVersion: "0.1.0",
 		ID:          "test-session-123",
 		Status:      apiruntime.StatusIdle,
 		PID:         42,
@@ -196,7 +196,7 @@ func fullSessionState() *apiruntime.SessionState {
 func fullState() apiruntime.State {
 	exitCode := 0
 	return apiruntime.State{
-		MassVersion:  "0.2.0",
+		MassVersion: "0.2.0",
 		ID:          "full-roundtrip-session",
 		Status:      apiruntime.StatusRunning,
 		PID:         9999,

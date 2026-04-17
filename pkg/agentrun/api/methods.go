@@ -2,9 +2,9 @@ package api
 
 // Run RPC methods (agent-run ↔ mass).
 const (
-	MethodSessionPrompt    = "session/prompt"
-	MethodSessionCancel    = "session/cancel"
-	MethodSessionLoad      = "session/load"
+	MethodSessionPrompt     = "session/prompt"
+	MethodSessionCancel     = "session/cancel"
+	MethodSessionLoad       = "session/load"
 	MethodRuntimeWatchEvent = "runtime/watch_event"
 	MethodSessionSetModel   = "session/set_model"
 	MethodRuntimeStatus     = "runtime/status"

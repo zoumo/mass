@@ -15,8 +15,8 @@ import (
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
-	"github.com/zoumo/mass/pkg/jsonrpc"
 	runserver "github.com/zoumo/mass/pkg/agentrun/server"
+	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
 // stubRunService is a minimal Handler for testing client round-trips.
@@ -31,12 +31,15 @@ func (s *stubRunService) Cancel(_ context.Context) error { return nil }
 func (s *stubRunService) Load(_ context.Context, _ *runapi.SessionLoadParams) error {
 	return nil
 }
+
 func (s *stubRunService) WatchEvent(_ context.Context, _ *runapi.SessionWatchEventParams) (*runapi.SessionWatchEventResult, error) {
 	return &runapi.SessionWatchEventResult{WatchID: "stub-w1", NextSeq: 0}, nil
 }
+
 func (s *stubRunService) Status(_ context.Context) (*runapi.RuntimeStatusResult, error) {
 	return &runapi.RuntimeStatusResult{}, nil
 }
+
 func (s *stubRunService) SetModel(_ context.Context, _ *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error) {
 	return &runapi.SessionSetModelResult{}, nil
 }

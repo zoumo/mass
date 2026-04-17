@@ -7,9 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	"github.com/zoumo/mass/cmd/massctl/commands/workspace/create"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // NewCommand returns the "workspace" cobra command.

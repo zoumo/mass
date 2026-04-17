@@ -245,7 +245,7 @@ type ConfigSelectGroup struct {
 // current selection reported by the agent.
 type SessionModelState struct {
 	AvailableModels []ModelInfo `json:"availableModels"`
-	CurrentModelId  string     `json:"currentModelId"`
+	CurrentModelId  string      `json:"currentModelId"`
 }
 
 // ModelInfo mirrors acp.ModelInfo — identity of a single model.

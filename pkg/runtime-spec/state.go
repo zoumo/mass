@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	stateFile      = "state.json"
-	eventLogFile   = "events.jsonl"
+	stateFile     = "state.json"
+	eventLogFile  = "events.jsonl"
 	runSocketFile = "agent-run.sock"
 )
 

@@ -3,6 +3,10 @@ BIN_DIR := bin
 # Auto-discover commands: each subdirectory under cmd/ with a main.go is a command
 COMMANDS := $(notdir $(patsubst %/main.go,%,$(wildcard cmd/*/main.go)))
 
+
+.PHONY: build
+fast-build: $(COMMANDS)
+
 .PHONY: build
 build: test $(COMMANDS)
 

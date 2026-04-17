@@ -476,7 +476,6 @@ func translate(n acp.SessionNotification) runapi.Event {
 	}
 }
 
-
 // ── Convert: ToolCall content & locations ────────────────────────────────────
 
 // convertToolCallContents converts a slice of acp.ToolCallContent.

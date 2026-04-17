@@ -28,7 +28,7 @@ type (
 	notifMsg      struct{ ev runapi.AgentRunEvent }
 	turnEndMsg    struct{}
 	connClosedMsg struct{}
-	connReadyMsg struct {
+	connReadyMsg  struct {
 		sc      *runclient.Client
 		watcher *runclient.Watcher
 	}

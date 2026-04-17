@@ -9,10 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 )
 
 // NewCommand returns the "agentrun" cobra command.

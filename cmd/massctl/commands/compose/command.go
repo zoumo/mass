@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 

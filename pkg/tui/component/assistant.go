@@ -13,8 +13,10 @@ import (
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
 )
 
-const assistantMessageTruncateFormat = "... (%d lines hidden) [click or space to expand]"
-const maxCollapsedThinkingHeight = 10
+const (
+	assistantMessageTruncateFormat = "... (%d lines hidden) [click or space to expand]"
+	maxCollapsedThinkingHeight     = 10
+)
 
 // AssistantMessageItem represents an assistant message in the chat UI.
 type AssistantMessageItem struct {
@@ -114,8 +116,8 @@ func (a *AssistantMessageItem) Render(width int) string {
 	}
 
 	return RenderBlock(BlockConfig{
-		Border: &BorderConfig{Char: "▌", Color: a.sty.Primary},
-		Body:   body,
+		Border:      &BorderConfig{Char: "▌", Color: a.sty.Primary},
+		Body:        body,
 		Detail:      detail,
 		DetailStyle: &thinkingFaint,
 	})

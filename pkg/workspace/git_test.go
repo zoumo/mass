@@ -556,7 +556,7 @@ func TestGitHandlerIntegration(t *testing.T) {
 			Git:  GitSource{URL: "https://github.com/nonexistent/repo.git"},
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		_, err := h.Prepare(ctx, source, repoDir)
@@ -567,9 +567,6 @@ func TestGitHandlerIntegration(t *testing.T) {
 		// Verify it's a GitError with phase "clone".
 		var gitErr *GitError
 		if !errors.As(err, &gitErr) {
-			if errors.Is(err, context.DeadlineExceeded) {
-				t.Skip("skipping: git clone timed out (network issue)")
-			}
 			t.Fatalf("expected GitError, got %T: %v", err, err)
 		}
 
