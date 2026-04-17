@@ -307,10 +307,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 		return nil, jsonrpc.ErrInvalidParams(err.Error())
 	}
 
-	switch ar.Spec.RestartPolicy {
-	case "", pkgariapi.RestartPolicyTryReload, pkgariapi.RestartPolicyAlwaysNew:
-		// valid
-	default:
+	if !ar.Spec.RestartPolicy.IsValid() {
 		return nil, jsonrpc.ErrInvalidParams(
 			fmt.Sprintf("invalid restartPolicy %q: must be one of \"try_reload\", \"always_new\"", ar.Spec.RestartPolicy))
 	}

@@ -396,12 +396,27 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
 	logFile := filepath.Join(stateDir, "workspace-mcp-server.log")
 
+	// Auto-inject workspace MCP server, then merge caller-specified extras.
+	// Caller entries override auto-injected entries with the same name.
 	mcpBinary, mcpArgs := m.workspaceMcpCommand(agent.Metadata.Workspace, agent.Metadata.Name, logFile)
 	workspaceMcp := apiruntime.McpServer{
 		Type:    "stdio",
 		Name:    "workspace",
 		Command: mcpBinary,
 		Args:    mcpArgs,
+	}
+	mcpServers := mergeMcpServers([]apiruntime.McpServer{workspaceMcp}, agent.Spec.McpServers)
+
+	// ClientProtocol from AgentSpec, default to ACP.
+	protocol := agentDef.Spec.ClientProtocol
+	if protocol == "" {
+		protocol = apiruntime.ClientProtocolACP
+	}
+
+	// Permissions from AgentRunSpec, default to ApproveAll.
+	permissions := agent.Spec.Permissions
+	if permissions == "" {
+		permissions = apiruntime.ApproveAll
 	}
 
 	return apiruntime.Config{
@@ -413,7 +428,7 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 		AgentRoot: apiruntime.AgentRoot{
 			Path: "workspace", // symlink to actual workspace
 		},
-		ClientProtocol: apiruntime.ClientProtocolACP,
+		ClientProtocol: protocol,
 		Process: apiruntime.Process{
 			Command: agentDef.Spec.Command,
 			Args:    agentDef.Spec.Args,
@@ -421,10 +436,46 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 		},
 		Session: apiruntime.Session{
 			SystemPrompt: agent.Spec.SystemPrompt,
-			Permissions:  apiruntime.ApproveAll,
-			McpServers:   []apiruntime.McpServer{workspaceMcp},
+			Permissions:  permissions,
+			McpServers:   mcpServers,
 		},
 	}
+}
+
+// mergeMcpServers merges base and override MCP server lists, deduplicating by Name.
+// Entries in overrides with the same Name as a base entry replace the base entry.
+// Order: base entries (possibly replaced) first, then new override entries.
+func mergeMcpServers(base, overrides []apiruntime.McpServer) []apiruntime.McpServer {
+	if len(overrides) == 0 {
+		return base
+	}
+	overrideMap := make(map[string]apiruntime.McpServer, len(overrides))
+	for _, s := range overrides {
+		if s.Name != "" {
+			overrideMap[s.Name] = s
+		}
+	}
+	// Replace base entries that have an override.
+	result := make([]apiruntime.McpServer, 0, len(base)+len(overrides))
+	seen := make(map[string]bool, len(base))
+	for _, s := range base {
+		if ov, ok := overrideMap[s.Name]; ok {
+			result = append(result, ov)
+			seen[s.Name] = true
+		} else {
+			result = append(result, s)
+			if s.Name != "" {
+				seen[s.Name] = true
+			}
+		}
+	}
+	// Append new override entries not already in base.
+	for _, s := range overrides {
+		if s.Name == "" || !seen[s.Name] {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 // workspaceMcpCommand returns the command and args for the workspace MCP server.

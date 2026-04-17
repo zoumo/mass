@@ -133,11 +133,7 @@ func createAgentRun(ctx context.Context, client pkgariapi.Client, wsName string,
 			Workspace: wsName,
 			Name:      a.Metadata.Name,
 		},
-		Spec: pkgariapi.AgentRunSpec{
-			Agent:         a.Spec.Agent,
-			RestartPolicy: a.Spec.RestartPolicy,
-			SystemPrompt:  a.Spec.SystemPrompt,
-		},
+		Spec: a.Spec,
 	}
 	if err := client.Create(ctx, &ar); err != nil {
 		return fmt.Errorf("agentrun/create %q: %w", a.Metadata.Name, err)

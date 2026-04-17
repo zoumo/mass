@@ -495,7 +495,7 @@ func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "rp-ws")
 
 	// Invalid values must be rejected.
-	for _, bad := range []string{"on-failure", "never", "always", "bad-value"} {
+	for _, bad := range []pkgariapi.RestartPolicy{"on-failure", "never", "always", "bad-value"} {
 		ar := pkgariapi.AgentRun{
 			Metadata: pkgariapi.ObjectMeta{Workspace: "rp-ws", Name: "rp-agent-bad"},
 			Spec:     pkgariapi.AgentRunSpec{Agent: "default", RestartPolicy: bad},
@@ -508,9 +508,9 @@ func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
 
 	// Valid values must not be rejected at the validation layer.
 	// (The agent goes into "creating" state; agent-run start will fail in test env — that's OK.)
-	for _, good := range []string{"", "try_reload", "always_new"} {
+	for _, good := range []pkgariapi.RestartPolicy{"", "try_reload", "always_new"} {
 		ar := pkgariapi.AgentRun{
-			Metadata: pkgariapi.ObjectMeta{Workspace: "rp-ws", Name: "rp-agent-" + good},
+			Metadata: pkgariapi.ObjectMeta{Workspace: "rp-ws", Name: "rp-agent-" + string(good)},
 			Spec:     pkgariapi.AgentRunSpec{Agent: "default", RestartPolicy: good},
 		}
 		_, err := callRaw(t, env.client, "agentrun/create", ar)

@@ -13,6 +13,7 @@ import (
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // NewCommand returns the "agentrun" cobra command.
@@ -42,6 +43,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 		agent         string
 		restartPolicy string
 		systemPrompt  string
+		permissions   string
 	)
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -61,8 +63,9 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 				},
 				Spec: pkgariapi.AgentRunSpec{
 					Agent:         agent,
-					RestartPolicy: restartPolicy,
 					SystemPrompt:  systemPrompt,
+					Permissions:   apiruntime.PermissionPolicy(permissions),
+					RestartPolicy: pkgariapi.RestartPolicy(restartPolicy),
 				},
 			}
 			if err := client.Create(context.Background(), &ar); err != nil {
@@ -78,6 +81,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent definition name (required)")
 	cmd.Flags().StringVar(&restartPolicy, "restart-policy", "", "Restart policy: try_reload, always_new (default: always_new)")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "System prompt for the agent run")
+	cmd.Flags().StringVar(&permissions, "permissions", "", "Permission policy: approve_all, approve_reads, deny_all (default: approve_all)")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("agent")

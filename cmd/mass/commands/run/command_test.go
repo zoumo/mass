@@ -19,8 +19,9 @@ func TestRunRejectsInvalidPermissions(t *testing.T) {
 		"massVersion": "0.1.0",
 		"metadata": {"name": "test-agent"},
 		"agentRoot": {"path": "workspace"},
-		"acpAgent": {"process": {"command": "/bin/echo"}},
-		"permissions": "approve_all"
+		"clientProtocol": "acp",
+		"process": {"command": "/bin/echo"},
+		"session": {"permissions": "approve_all"}
 	}`
 	require.NoError(t, os.WriteFile(filepath.Join(bundleDir, "config.json"), []byte(configJSON), 0o600))
 

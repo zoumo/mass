@@ -4,54 +4,50 @@ package compose
 import (
 	"fmt"
 
-	"gopkg.in/yaml.v3"
+	"sigs.k8s.io/yaml"
+
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // Config is the top-level document for `massctl compose`.
 // kind must be "workspace-compose".
+// All structs use json tags — sigs.k8s.io/yaml unmarshals YAML via json tags.
 type Config struct {
-	Kind     string               `yaml:"kind"`
-	Metadata ConfigMetadata       `yaml:"metadata"`
-	Spec     WorkspaceComposeSpec `yaml:"spec"`
+	Kind     string               `json:"kind"`
+	Metadata ConfigMetadata       `json:"metadata"`
+	Spec     WorkspaceComposeSpec `json:"spec"`
 }
 
 // ConfigMetadata holds the workspace name (and future labels/annotations).
 type ConfigMetadata struct {
-	Name string `yaml:"name"`
+	Name string `json:"name"`
 }
 
 // WorkspaceComposeSpec describes the workspace source and the agent runs to create.
 type WorkspaceComposeSpec struct {
-	Source SourceConfig    `yaml:"source"`
-	Agents []AgentRunEntry `yaml:"agents"`
+	Source SourceConfig    `json:"source"`
+	Agents []AgentRunEntry `json:"agents"`
 }
 
 // SourceConfig describes the workspace source (local, git, or emptyDir).
 type SourceConfig struct {
-	Type string `yaml:"type"`
+	Type string `json:"type"`
 	// local
-	Path string `yaml:"path,omitempty"`
+	Path string `json:"path,omitempty"`
 	// git
-	URL string `yaml:"url,omitempty"`
-	Ref string `yaml:"ref,omitempty"`
+	URL string `json:"url,omitempty"`
+	Ref string `json:"ref,omitempty"`
 }
 
 // AgentRunEntry describes a single agent run following the metadata/spec pattern.
 type AgentRunEntry struct {
-	Metadata AgentRunMetadata `yaml:"metadata"`
-	Spec     AgentRunSpec     `yaml:"spec"`
+	Metadata AgentRunMetadata     `json:"metadata"`
+	Spec     pkgariapi.AgentRunSpec `json:"spec"`
 }
 
 // AgentRunMetadata holds the agent run's name within the workspace.
 type AgentRunMetadata struct {
-	Name string `yaml:"name"`
-}
-
-// AgentRunSpec describes the desired agent run configuration.
-type AgentRunSpec struct {
-	Agent         string `yaml:"agent"`
-	RestartPolicy string `yaml:"restartPolicy,omitempty"`
-	SystemPrompt  string `yaml:"systemPrompt,omitempty"`
+	Name string `json:"name"`
 }
 
 // parseConfig parses and validates YAML bytes into a Config.
