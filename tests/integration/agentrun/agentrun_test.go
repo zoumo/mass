@@ -115,7 +115,6 @@ func setupAgentRun(t *testing.T) (context.Context, *runclient.Client, func()) {
 			}
 		}
 		cancel()
-		exec.Command("pkill", "-f", "mockagent").Run()
 	}
 
 	return ctx, client, cleanup

@@ -31,8 +31,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	defer func() {
 		os.Remove(socketPath)
 		os.RemoveAll(rootDir)
-		exec.Command("pkill", "-f", rootDir).Run()
-		exec.Command("pkill", "-f", "mockagent").Run()
+		_ = exec.Command("pkill", "-f", rootDir).Run()
 	}()
 
 	// =========================================================================
@@ -104,9 +103,10 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	client1.Close()
 	testutil.StopMass(t, massCmd1, socketPath)
 
-	exec.Command("pkill", "-9", "-f", "agent-run").Run()
-	exec.Command("pkill", "-9", "-f", "mockagent").Run()
-	t.Log("killed all agent-run and mockagent processes")
+	// Kill only processes belonging to this test's root directory to avoid
+	// disrupting parallel test packages.
+	_ = exec.Command("pkill", "-9", "-f", rootDir).Run()
+	t.Log("killed agent-run and mockagent processes for this test")
 
 	time.Sleep(500 * time.Millisecond)
 

@@ -98,38 +98,46 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 		}
 	}
 
+	// Stop all agents in parallel to avoid sequential 10s timeouts exhausting
+	// the 60s context under heavy CPU load from parallel test packages.
 	t.Log("Stopping and deleting all agents...")
+	var stopWg sync.WaitGroup
 	for i, name := range agentNames {
-		key := pkgariapi.ObjectKey{Workspace: wsName, Name: name}
-		clientMu.Lock()
-		stopErr := client.AgentRuns().Stop(ctx, key)
-		clientMu.Unlock()
-		if stopErr != nil {
-			t.Logf("warning: agent %d (%s) stop failed: %v", i+1, name, stopErr)
-		}
-
-		deadline := time.Now().Add(10 * time.Second)
-		for time.Now().Before(deadline) {
-			var ar pkgariapi.AgentRun
+		stopWg.Add(1)
+		go func(idx int, agentName string) {
+			defer stopWg.Done()
+			key := pkgariapi.ObjectKey{Workspace: wsName, Name: agentName}
 			clientMu.Lock()
-			err := client.Get(ctx, key, &ar)
+			stopErr := client.AgentRuns().Stop(ctx, key)
 			clientMu.Unlock()
-			if err != nil {
-				break
+			if stopErr != nil {
+				t.Logf("warning: agent %d (%s) stop failed: %v", idx+1, agentName, stopErr)
 			}
-			if ar.Status.State == "stopped" || ar.Status.State == "error" {
-				break
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
 
-		clientMu.Lock()
-		delErr := client.Delete(ctx, key, &pkgariapi.AgentRun{})
-		clientMu.Unlock()
-		if delErr != nil {
-			t.Logf("warning: agent %d (%s) delete failed: %v", i+1, name, delErr)
-		}
+			deadline := time.Now().Add(10 * time.Second)
+			for time.Now().Before(deadline) {
+				var ar pkgariapi.AgentRun
+				clientMu.Lock()
+				err := client.Get(ctx, key, &ar)
+				clientMu.Unlock()
+				if err != nil {
+					break
+				}
+				if ar.Status.State == "stopped" || ar.Status.State == "error" {
+					break
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
+
+			clientMu.Lock()
+			delErr := client.Delete(ctx, key, &pkgariapi.AgentRun{})
+			clientMu.Unlock()
+			if delErr != nil {
+				t.Logf("warning: agent %d (%s) delete failed: %v", idx+1, agentName, delErr)
+			}
+		}(i, name)
 	}
+	stopWg.Wait()
 
 	t.Log("Multiple concurrent agents test completed successfully! ✓")
 }

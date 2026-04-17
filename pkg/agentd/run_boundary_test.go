@@ -85,10 +85,11 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	pm.startEventConsumer(ws, agentName, runProc)
 
 	// Wait for the stateChange notification to drive the DB update.
+	// Use 5s timeout to tolerate CPU contention when running in parallel with other packages.
 	require.Eventually(t, func() bool {
 		agent, _ := store.GetAgentRun(ctx, ws, agentName)
 		return agent != nil && agent.Status.State == apiruntime.StatusIdle
-	}, 3*time.Second, 50*time.Millisecond,
+	}, 5*time.Second, 50*time.Millisecond,
 		"DB state should become idle after runtime/state_change notification")
 
 	// Confirm final DB state.

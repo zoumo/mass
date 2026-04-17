@@ -45,11 +45,19 @@ func TestRuntimeLifecycle(t *testing.T) {
 	if err := client.List(ctx, &listResult); err != nil {
 		t.Fatalf("agent/list: %v", err)
 	}
-	if len(listResult.Items) != 1 {
-		t.Errorf("agent/list: expected 1 agent, got %d", len(listResult.Items))
-	} else {
-		t.Logf("agent/list OK: 1 agent (%s)", listResult.Items[0].Metadata.Name)
+	// Built-in agents (claude, codex, gsd-pi) are seeded on startup,
+	// so we expect at least mockagent to be present.
+	found := false
+	for _, ag := range listResult.Items {
+		if ag.Metadata.Name == "mockagent" {
+			found = true
+			break
+		}
 	}
+	if !found {
+		t.Error("agent/list: mockagent not found in list")
+	}
+	t.Logf("agent/list OK: %d agents (includes built-ins)", len(listResult.Items))
 
 	// ── Step 3: workspace/create + agentrun/create → poll idle ───────────────
 	t.Log("Step 3: workspace/create")

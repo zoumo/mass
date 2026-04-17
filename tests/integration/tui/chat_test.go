@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
@@ -40,7 +41,13 @@ func setupAgentRunForTUI(t *testing.T) (context.Context, *runclient.Client, stri
 	mockagentBin := testutil.MockagentBinPath(t)
 
 	bundleDir := t.TempDir()
-	stateBaseDir := t.TempDir()
+	// Use /tmp for stateBaseDir to keep Unix socket path under macOS 104-byte limit.
+	// t.TempDir() paths (via $TMPDIR) are too long on macOS.
+	stateBaseDir, err := os.MkdirTemp("/tmp", "mass-tui-*")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(stateBaseDir) })
 	agentID := fmt.Sprintf("tui-test-%d", testutil.NewSocketCounter())
 
 	wsDir := filepath.Join(bundleDir, "workspace")
@@ -113,7 +120,6 @@ func setupAgentRunForTUI(t *testing.T) (context.Context, *runclient.Client, stri
 			}
 		}
 		cancel()
-		exec.Command("pkill", "-f", "mockagent").Run()
 	}
 
 	return ctx, client, socketPath, cleanup
@@ -213,19 +219,20 @@ collectLoop:
 		a.SetMessage(assistantMsg)
 	}
 
-	// Set size and render.
+	// Set size and render. Strip ANSI codes for plain-text matching.
 	chatView.SetSize(80, 24)
 	rendered := chatView.Render()
+	plain := ansi.Strip(rendered)
 	t.Logf("Rendered chat:\n%s", rendered)
 
 	// Verify: user message should appear.
-	if !strings.Contains(rendered, "hello from tui test") {
+	if !strings.Contains(plain, "hello from tui test") {
 		t.Error("rendered output missing user message text")
 	}
 
 	// Verify: assistant response from mockagent should appear.
 	// mockagent responds with "mock response".
-	if !strings.Contains(rendered, "mock response") {
+	if !strings.Contains(plain, "mock response") {
 		t.Error("rendered output missing assistant response text 'mock response'")
 	}
 
@@ -375,17 +382,19 @@ func TestChatComponentRendering(t *testing.T) {
 	// Add system message.
 	chatView.AppendMessages(component.NewSystemItem("s1", "connected", lipgloss.NewStyle().Faint(true)))
 
-	// Set size and render.
+	// Set size and render. Strip ANSI escape codes so plain-text matching works
+	// even when styles inject color sequences mid-word.
 	chatView.SetSize(80, 40)
 	rendered := chatView.Render()
+	plain := ansi.Strip(rendered)
 
 	// Verify user message renders.
-	if !strings.Contains(rendered, "What is 2+2?") {
+	if !strings.Contains(plain, "What is 2+2?") {
 		t.Error("rendered output missing user message")
 	}
 
 	// Verify assistant message renders.
-	if !strings.Contains(rendered, "The answer is 4.") {
+	if !strings.Contains(plain, "The answer is 4.") {
 		t.Error("rendered output missing assistant response")
 	}
 

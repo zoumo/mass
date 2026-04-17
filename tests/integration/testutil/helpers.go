@@ -97,7 +97,6 @@ func SetupMassTest(t *testing.T) (context.Context, context.CancelFunc, pkgariapi
 		_ = exec.Command("pkill", "-f", rootDir).Run()
 		os.Remove(socketPath)
 		os.RemoveAll(rootDir)
-		_ = exec.Command("pkill", "-f", "mockagent").Run()
 	}
 
 	return ctx, cancel, client, cleanup
