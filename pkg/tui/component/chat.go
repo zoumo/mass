@@ -424,6 +424,31 @@ func (m *Chat) ToggleExpandedSelectedItem() {
 	}
 }
 
+// HandleMouseClick handles a mouse click at the given viewport-relative
+// coordinates. If the click lands on an expandable tool item, it selects
+// the item and toggles its expanded state.
+func (m *Chat) HandleMouseClick(x, y int) {
+	idx, itemY := m.list.ItemIndexAtPosition(x, y)
+	if idx < 0 {
+		return
+	}
+	m.list.SetSelected(idx)
+
+	item := m.list.ItemAt(idx)
+	if item == nil {
+		return
+	}
+
+	// Toggle expansion on click.
+	if expandable, ok := item.(Expandable); ok {
+		expandable.ToggleExpanded()
+		if m.AtBottom() {
+			m.ScrollToBottom()
+		}
+	}
+	_ = itemY
+}
+
 // HandleKeyMsg handles key events for the chat component.
 func (m *Chat) HandleKeyMsg(key tea.KeyMsg) (bool, tea.Cmd) {
 	if m.list.Focused() {

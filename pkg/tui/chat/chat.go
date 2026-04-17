@@ -325,6 +325,12 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, spinCmd = m.spinner.Update(msg)
 		cmds = append(cmds, spinCmd)
 
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		if mouse.Button == tea.MouseLeft && mouse.Mod&tea.ModShift == 0 {
+			m.chat.HandleMouseClick(mouse.X, mouse.Y)
+		}
+
 	case tea.MouseWheelMsg:
 		mouse := msg.Mouse()
 		switch mouse.Button {
@@ -373,6 +379,8 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		if m.chatFocused {
 			m.input.Blur()
 			m.chat.Focus()
+			// Auto-select last visible item so space/enter can interact.
+			m.chat.SelectLastInView()
 		} else {
 			m.chat.Blur()
 			cmds = append(cmds, m.input.Focus())
@@ -400,15 +408,17 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 	if m.chatFocused {
 		switch {
 		case key.Code == 'j' || key.Code == tea.KeyDown:
-			m.chat.ScrollBy(1)
+			m.chat.SelectNext()
+			m.chat.ScrollToSelected()
 		case key.Code == 'k' || key.Code == tea.KeyUp:
-			m.chat.ScrollBy(-1)
+			m.chat.SelectPrev()
+			m.chat.ScrollToSelected()
 		case key.Code == 'd':
 			m.chat.ScrollBy(m.chat.Height() / 2)
 		case key.Code == 'u':
 			m.chat.ScrollBy(-m.chat.Height() / 2)
-		case key.Code == ' ':
-			// Space toggles expand on selected tool item, or scrolls if not expandable.
+		case key.Code == ' ' || key.Code == tea.KeyEnter:
+			// Space/Enter toggles expand on selected tool item.
 			m.chat.ToggleExpandedSelectedItem()
 		case key.Code == 'f' || key.Code == tea.KeyPgDown:
 			m.chat.ScrollBy(m.chat.Height())
@@ -744,7 +754,7 @@ func (m chatModel) renderStatusLine() string {
 func (m chatModel) renderHelp() string {
 	var keys []string
 	if m.chatFocused {
-		keys = append(keys, "j/k scroll", "d/u half-page", "g/G top/bottom", "tab editor", "esc back")
+		keys = append(keys, "j/k select", "space expand", "d/u half-page", "g/G top/bottom", "tab editor", "esc back")
 	} else {
 		keys = append(keys, "enter send", "shift+enter newline", "tab chat", "ctrl+x cancel")
 	}
