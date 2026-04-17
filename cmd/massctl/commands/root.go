@@ -10,8 +10,8 @@ import (
 	"github.com/zoumo/mass/cmd/massctl/commands/agent"
 	"github.com/zoumo/mass/cmd/massctl/commands/agentrun"
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
-	"github.com/zoumo/mass/cmd/massctl/commands/daemon"
 	"github.com/zoumo/mass/cmd/massctl/commands/compose"
+	"github.com/zoumo/mass/cmd/massctl/commands/daemon"
 	"github.com/zoumo/mass/cmd/massctl/commands/workspace"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
@@ -25,7 +25,7 @@ func NewRootCommand() *cobra.Command {
 		Use:   "massctl",
 		Short: "CLI for mass daemon management",
 	}
-	root.PersistentFlags().StringVar(&socketPath, "socket", "/var/run/mass/ari.sock", "ARI socket path")
+	root.PersistentFlags().StringVar(&socketPath, "socket", "/var/run/mass/mass.sock", "ARI socket path")
 
 	getClient := func() (pkgariapi.Client, error) {
 		if socketPath == "" {

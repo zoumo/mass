@@ -124,7 +124,7 @@ spec:
 然后执行 `up`，会自动创建 workspace、所有 agent run，并等待全部 idle 后输出 shim socket 路径：
 
 ```bash
-./bin/massctl --socket /var/run/mass/ari.sock up -f bin/e2e/up.yaml
+./bin/massctl --socket /var/run/mass/mass.sock up -f bin/e2e/up.yaml
 ```
 
 示例输出：
@@ -347,4 +347,4 @@ ctl workspace delete --name "$WS"
 | 交互式 chat | `massctl shim --socket <path> chat` |
 | 查看 shim 状态 | `massctl shim --socket <path> state` |
 
-> 全局参数：`--socket <path>` 指定 ARI socket 路径（默认 `/var/run/mass/ari.sock`）
+> 全局参数：`--socket <path>` 指定 ARI socket 路径（默认 `/var/run/mass/mass.sock`）

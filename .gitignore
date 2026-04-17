@@ -1,9 +1,9 @@
 # ── Binaries ──
-/bin/
+/bin/*
 /dist/
 ./mockagent
-./agentd
-./agentdctl
+./mass
+./massctl
 
 # ── Scripts (auto-generated) ──
 scripts/verify-*

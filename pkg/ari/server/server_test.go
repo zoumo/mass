@@ -18,15 +18,15 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	"github.com/zoumo/mass/pkg/agentd"
+	"github.com/zoumo/mass/pkg/agentd/store"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	runclient "github.com/zoumo/mass/pkg/agentrun/client"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 	ariserver "github.com/zoumo/mass/pkg/ari/server"
 	"github.com/zoumo/mass/pkg/jsonrpc"
-	runapi "github.com/zoumo/mass/pkg/agentrun/api"
-	runclient "github.com/zoumo/mass/pkg/agentrun/client"
-	"github.com/zoumo/mass/pkg/agentd/store"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
@@ -44,10 +44,10 @@ type testEnv struct {
 }
 
 // shortSockPath returns a process-unique Unix socket path safe for macOS.
-// macOS has a 104-char limit; /tmp/mass-<pid>-ari.sock is well within that.
+// macOS has a 104-char limit; /tmp/mass-<pid>-mass.sock is well within that.
 func shortSockPath(t *testing.T) string {
 	t.Helper()
-	return fmt.Sprintf("/tmp/mass-%d-%d-ari.sock", os.Getpid(), time.Now().UnixNano()%100000)
+	return fmt.Sprintf("/tmp/mass-%d-%d-mass.sock", os.Getpid(), time.Now().UnixNano()%100000)
 }
 
 // newTestServer creates a full ARI test server and returns the env.
