@@ -35,19 +35,22 @@ ARI client sends bootstrap request (runtimeClass: claude, systemPrompt: "...")
 
 **Core principle**: Runtime Spec is a **concrete, resolved** runtime description.
 It does not contain abstract references (like `agent: "claude"`),
-but rather information directly executable by agent-run (like `acpAgent.process.command: "npx"`).
+but rather information directly executable by agent-run (like `process.command: "npx"`).
 This is the same as OCI config.json not containing `runtimeClassName` but directly containing `process.args`.
 
-## Why `acpAgent`
+## Why `clientProtocol` + `process` + `session`
 
-The field name explicitly includes "acp", indicating that MASS Runtime Spec **only supports ACP protocol agents**.
-ACP (Agent Communication Protocol) is the only agent communication protocol standard we support.
+Runtime Spec uses protocol-agnostic top-level fields rather than nesting everything under a protocol-specific key:
+
+- `clientProtocol` declares which communication protocol agent-run uses with the agent process (currently only `"acp"`)
+- `process` specifies fork/exec parameters (command, args, env) — shared across all protocols
+- `session` specifies session-level bootstrap configuration (systemPrompt, permissions, mcpServers) — shared across all protocols, delivery method depends on `clientProtocol`
+
 This means:
 
-- agent-run communicates with agent processes via ACP protocol (stdio JSON-RPC)
-- `acpAgent.session` maps to the ACP `session/new` fields that are part of bootstrap configuration
-- `acpAgent.systemPrompt` is also bootstrap configuration, even when ACP compatibility requires the runtime to translate it internally
-- If non-ACP protocol agents need support in the future, new top-level fields would be required
+- Adding a new protocol requires only a new `clientProtocol` value, not a new top-level struct
+- `process` and `session` are protocol-agnostic; how they are delivered is the runtime's concern
+- agent-run reads `clientProtocol` to determine the bootstrap and communication strategy
 
 ## Bootstrap Phases
 
@@ -56,7 +59,7 @@ MASS Runtime Spec splits information into bootstrap phases,
 corresponding to how agent-run consumes config.json during `create`:
 
 ```
-Phase 1 — acpAgent.process: start the process
+Phase 1 — process: start the process
   command: "npx"                                 ← fork/exec executable
   args: ["-y", "@anthropic-ai/claude-code-acp"]  ← command-line arguments
   env: ["ANTHROPIC_API_KEY=xxx"]                 ← process environment variables
@@ -65,8 +68,9 @@ Phase 2 — agentRoot.path: resolve the canonical working directory
   agentRoot.path: "workspace"                    ← bundle-relative path
   resolved cwd: "/var/lib/agentd/workspaces/ws-abc" ← runtime-derived host path
 
-Phase 3 — acpAgent.systemPrompt + acpAgent.session: establish ACP bootstrap configuration
+Phase 3 — session: establish bootstrap configuration (delivery depends on clientProtocol)
   systemPrompt: "You are a backend engineer"     ← agent role constraints
+  permissions: "approve_all"                     ← permission policy
   mcpServers: [...]                              ← available MCP services
 ```
 
@@ -75,9 +79,9 @@ The runtime derives it by joining the bundle directory with `agentRoot.path`
 and calling `EvalSymlinks`; callers do not supply an absolute `cwd` field.
 
 Corresponding execution flow:
-1. Read `acpAgent.process` + `agentRoot.path` → resolve workspace path and start the process (`cmd.Dir = resolved cwd`)
-2. Complete ACP `initialize`
-3. Establish ACP bootstrap configuration from resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt`
+1. Read `process` + `agentRoot.path` → resolve workspace path and start the process (`cmd.Dir = resolved cwd`)
+2. Complete protocol handshake (e.g. ACP `initialize`)
+3. Establish bootstrap configuration from resolved `cwd` and `session` fields, using the method dictated by `clientProtocol`
 4. Expose `idle` only after bootstrap is complete
 
 **Why no task/prompt in config.json**: Runtime Spec only describes how to create and initialize an agent,
@@ -92,7 +96,7 @@ One startup story is normative across the runtime docs:
 1. ARI `agentrun/create` allocates the AgentRun identity `(workspace, name)` and supplies bootstrap configuration.
 2. agentd resolves runtimeClass (from Agent definition), workspace, env, permission policy, and bundle contents.
 3. agent-run reads `config.json`, resolves `agentRoot.path` to the canonical host `cwd`, and starts the process.
-4. agent-run completes ACP bootstrap using resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt`.
+4. agent-run completes bootstrap using resolved `cwd` and `session` fields, via the method dictated by `clientProtocol`.
 5. Only after bootstrap succeeds does the runtime expose `idle`.
 6. External work later arrives through ARI `agentrun/prompt`.
 
@@ -121,7 +125,7 @@ The important split is:
 | OCI Field | MASS Equivalent | Rationale |
 |-----------|---------------|-----------|
 | `ociVersion` | `massVersion` | Spec version control |
-| `process` | `acpAgent` | Every workload needs "how to run" |
+| `process` | `clientProtocol` + `process` + `session` | Every workload needs "how to run" |
 | `annotations` | `metadata.annotations` | Arbitrary KV metadata is universally useful |
 
 ### What We Dropped from OCI
@@ -169,26 +173,28 @@ OCI Pod (shared namespace):          MASS Workspace (shared directory):
 
 | MASS Field | Why Needed |
 |-----------|-----------|
-| `acpAgent.systemPrompt` | Agent role definition and capability constraints. Populated by mass from runtimeClass config + ARI request |
-| `acpAgent.process` | ACP agent process launch parameters. Populated by mass from runtimeClass config |
-| `acpAgent.session` | ACP `session/new` parameters (mcpServers). Guides agent-run on how to initialize ACP session |
+| `clientProtocol` | Declares which communication protocol agent-run uses with the agent process (e.g. `"acp"`) |
+| `process` | Agent process launch parameters (command, args, env). Populated by mass from runtimeClass config |
+| `session` | Session-level bootstrap configuration (systemPrompt, permissions, mcpServers). Delivery method depends on `clientProtocol` |
 
 ### Field Mapping
 
 | OCI config.json | MASS config.json | Notes |
 |----------------|-----------------|-------|
-| `process.args` — what binary to run | `acpAgent.process.command/args` — which ACP agent to run | Generated by upper layer, consumed by runtime |
-| `process.env` — process env vars | `acpAgent.process.env` — process env vars | Same |
+| `process.args` — what binary to run | `process.command/args` — which agent to run | Generated by upper layer, consumed by runtime |
+| `process.env` — process env vars | `process.env` — process env vars | Same |
 | `process.cwd` — working directory | derived from `agentRoot.path` at runtime | OCI sets process cwd directly. MASS derives it: `filepath.Join(bundleDir, agentRoot.path)` + `EvalSymlinks` |
 | `root.path` — relative path to rootfs in bundle | `agentRoot.path` — relative path to workspace link in bundle | Same concept: relative path inside bundle, resolved by runtime |
-| — | `acpAgent.systemPrompt` — agent role definition | Agent-specific, core identity attribute |
-| — | `acpAgent.session.mcpServers` — MCP service list | Agent-specific, defined by ACP protocol |
+| — | `session.systemPrompt` — agent role definition | Agent-specific, core identity attribute |
+| — | `session.permissions` — permission policy | Controls fs/terminal request handling |
+| — | `session.mcpServers` — MCP service list | Agent-specific, merged by name dedup |
+| — | `clientProtocol` — communication protocol | Determines bootstrap and streaming method |
 | Does not contain `runtimeClassName` | Does not contain `agent` | Abstract references stay in upper layer, not in spec |
 
 ## Where is runtimeClass
 
 `agent` is a parameter from ARI request → agentd, not in the Runtime Spec.
-mass is responsible for resolving `agent` into concrete values in `acpAgent` fields.
+mass is responsible for resolving `agent` into concrete values in `clientProtocol`, `process`, and `session` fields.
 
 ```
 runtimeClass location:
@@ -201,8 +207,8 @@ runtimeClass resolution:
   containerd: kata → { runtime_type: "io.containerd.kata.v2" }
               → generates config.json: process.args = [...]
 
-  agentd:     claude → { command: "npx", args: [...], env: {...} }
-              → generates config.json: acpAgent.process.command = "npx", ...
+  agentd:     claude → { clientProtocol: "acp", command: "npx", args: [...], env: {...} }
+              → generates config.json: process.command = "npx", clientProtocol = "acp", ...
 ```
 
 See [agentd documentation](../mass/mass.md) for detailed runtimeClass configuration.
@@ -216,12 +222,13 @@ ARI request → agentd:
   {
     agent: "claude",
     systemPrompt: "You are a backend engineer",
-    env: ["GITHUB_TOKEN=${GITHUB_TOKEN}"],
+    permissions: "approve_all",
     mcpServers: [{ type: "http", url: "http://localhost:3000/mcp" }]
   }
 
-agentd looks up runtimeClass config:
+agentd looks up runtimeClass config (Agent definition):
   claude:
+    clientProtocol: "acp"
     command: "npx"
     args: ["-y", "@anthropic-ai/claude-code-acp"]
     env:
@@ -234,22 +241,23 @@ mass generates config.json:
   {
     "massVersion": "0.1.0",
     "metadata": { "name": "session-abc123" },
-    "agentRoot": { "path": "workspace" },       ← relative path; agentd symlinks bundle/workspace → ws path
-    "acpAgent": {
-      "systemPrompt": "You are a backend engineer",  ← from ARI request
-      "process": {
-        "command": "npx",                           ← from runtimeClass config
-        "args": ["-y", "@anthropic-ai/claude-code-acp"],
-        "env": [
-          "ANTHROPIC_API_KEY=sk-ant-xxx",            ← from runtimeClass config
-          "GITHUB_TOKEN=ghp_xxx"                     ← from ARI request
-        ]
-      },
-      "session": {
-        "mcpServers": [                              ← from ARI request
-          { "type": "http", "url": "http://localhost:3000/mcp" }
-        ]
-      }
+    "agentRoot": { "path": "workspace" },          ← relative path; agentd symlinks bundle/workspace → ws path
+    "clientProtocol": "acp",                        ← from Agent definition (AgentSpec)
+    "process": {
+      "command": "npx",                             ← from Agent definition
+      "args": ["-y", "@anthropic-ai/claude-code-acp"],
+      "env": [
+        "ANTHROPIC_API_KEY=sk-ant-xxx",              ← from Agent definition
+        "GITHUB_TOKEN=ghp_xxx"                       ← from ARI request env
+      ]
+    },
+    "session": {
+      "systemPrompt": "You are a backend engineer",  ← from ARI request (AgentRunSpec)
+      "permissions": "approve_all",                   ← from ARI request (AgentRunSpec), default approve_all
+      "mcpServers": [                                 ← auto-injected workspace MCP + ARI request, merged by name
+        { "type": "stdio", "name": "workspace", ... },
+        { "type": "http", "url": "http://localhost:3000/mcp" }
+      ]
     }
   }
 
@@ -263,8 +271,8 @@ This corresponds exactly to how containerd generates OCI config.json:
 |------|-----------|--------|
 | 1. Receive request | CRI CreateContainer (image + runtimeClassName) | ARI `agentrun/create` (runtimeClass + bootstrap config) |
 | 2. Resolve type | runtimeClassName → handler config | runtimeClass → Agent definition config |
-| 3. Extract runtime info | image config → process.args, env | Agent definition → acpAgent.process |
-| 4. Merge user config | Pod Spec overrides → env, mounts | request inputs → systemPrompt, mcpServers |
+| 3. Extract runtime info | image config → process.args, env | Agent definition → clientProtocol, process |
+| 4. Merge user config | Pod Spec overrides → env, mounts | request inputs → systemPrompt, permissions, mcpServers |
 | 5. Generate config | Write config.json to bundle directory | Write config.json to bundle directory |
 | 6. Invoke runtime | runc create --bundle \<path\> | agent-run --bundle \<path\> |
 | 7. Deliver work | exec / attach after create | ARI `agentrun/prompt` after runtime reaches `idle` |

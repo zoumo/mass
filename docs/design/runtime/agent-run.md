@@ -66,9 +66,9 @@ agent-run 内部的职责序列是：
 
 1. 读取 bundle/config.json；
 2. 解析并解析（resolve）`agentRoot.path`，得到 canonical `cwd`；
-3. fork/exec agent 进程（`acpAgent.process.command + args + env`）；
-4. 持有 agent 的 stdin/stdout，并作为唯一 ACP client 完成 `initialize`；
-5. 建立 ACP bootstrap（resolved `cwd`、`acpAgent.session`、`acpAgent.systemPrompt` 的兼容实现）；
+3. fork/exec agent 进程（`process.command + args + env`）；
+4. 持有 agent 的 stdin/stdout，根据 `clientProtocol` 完成协议握手（如 ACP `initialize`）；
+5. 使用 `clientProtocol` 指定的方式建立 bootstrap（resolved `cwd` + `session` 字段）；
 6. 写入 runtime state 与事件日志；
 7. 在 shim socket 上提供对外控制与恢复能力；
 8. 持续监督 agent 进程，必要时执行 stop / cleanup 流程。
@@ -80,8 +80,8 @@ agent-run 内部的职责序列是：
 agent-run 是 agent 进程唯一的 ACP client，负责：
 
 - 完成 ACP `initialize` 握手；
-- 用 resolved `cwd` 和 `acpAgent.session` 建立 bootstrap session；
-- 将 `acpAgent.systemPrompt` 落实为创建期 bootstrap 语义，而不是外部工作 turn；
+- 用 resolved `cwd` 和 `session` 字段建立 bootstrap session；
+- 将 `session.systemPrompt` 落实为创建期 bootstrap 语义，而不是外部工作 turn；
 - 转发工作 turn；
 - 处理 agent 发起的 `fs/*` / `terminal/*` 请求（按 permission posture）；
 - 在需要时执行 `session/load` 或等价恢复步骤；
