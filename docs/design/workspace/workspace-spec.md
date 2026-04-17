@@ -10,9 +10,18 @@ It is the authority for **workspace identity, source preparation, hook lifecycle
   "massVersion": "0.1.0",
   "metadata": {},
   "source": {},
-  "hooks": {}
+  "hooks": {},
+  "prepareTimeoutSeconds": 300
 }
 ```
+
+| Field | Type | Required | Default | Meaning |
+|---|---|---|---|---|
+| `massVersion` | string | yes | — | Spec version (SemVer, major must be 0) |
+| `metadata` | object | yes | — | Workspace identity |
+| `source` | object | yes | — | Where the code comes from |
+| `hooks` | object | no | — | Lifecycle hooks (setup/teardown) |
+| `prepareTimeoutSeconds` | int | no | `300` | Max seconds for workspace preparation (source + setup hooks). Prevents unbounded git clones or long-running setup hooks from blocking indefinitely. |
 
 ## `source`
 

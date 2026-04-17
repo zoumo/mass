@@ -127,7 +127,13 @@ func (a *workspaceAdapter) Create(ctx context.Context, ws *pkgariapi.Workspace) 
 	wsName := ws.Metadata.Name
 
 	go func() {
-		prepareCtx := context.Background()
+		const defaultPrepareTimeout = 300 * time.Second
+		prepareTimeout := defaultPrepareTimeout
+		if wsSpec.PrepareTimeoutSeconds != nil {
+			prepareTimeout = time.Duration(*wsSpec.PrepareTimeoutSeconds) * time.Second
+		}
+		prepareCtx, cancel := context.WithTimeout(context.Background(), prepareTimeout)
+		defer cancel()
 		path, err := a.manager.Prepare(prepareCtx, wsSpec, targetDir)
 		if err != nil {
 			a.logger.Warn("workspace/create: prepare failed",
@@ -781,11 +787,11 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkga
 	}
 
 	_ = s.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
-		State:          apiruntime.StatusError,
+		State:         apiruntime.StatusError,
 		RunSocketPath: fallback.RunSocketPath,
 		RunStateDir:   fallback.RunStateDir,
 		RunPID:        fallback.RunPID,
-		ErrorMessage:   cause.Error(),
+		ErrorMessage:  cause.Error(),
 	})
 }
 

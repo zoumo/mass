@@ -25,6 +25,11 @@ type WorkspaceSpec struct {
 	// Hooks specifies workspace lifecycle hooks (setup and teardown).
 	// Optional — hooks are not required for basic workspace preparation.
 	Hooks Hooks `json:"hooks,omitempty"`
+
+	// PrepareTimeoutSeconds is the maximum time (in seconds) allowed for
+	// workspace preparation (source realization + setup hooks).
+	// Optional — defaults to 300 (5 minutes) when omitted.
+	PrepareTimeoutSeconds *int `json:"prepareTimeoutSeconds,omitempty"`
 }
 
 // WorkspaceMetadata describes the identity of a workspace.

@@ -181,7 +181,7 @@ func (m *ProcessManager) startEventConsumer(workspace, name string, runProc *Run
 					continue
 				}
 				if err := m.agents.UpdateStatus(updateCtx, workspace, name, pkgariapi.AgentRunStatus{
-					State:          apiruntime.Status(newStatus),
+					State:         apiruntime.Status(newStatus),
 					RunSocketPath: runProc.SocketPath,
 					RunStateDir:   runProc.StateDir,
 					RunPID:        runProc.PID,
@@ -280,7 +280,14 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 	}()
 
 	// 6. Wait for socket to appear (poll with timeout).
-	if err := m.waitForSocket(ctx, socketPath, runProc); err != nil {
+	// Use Agent definition's startupTimeoutSeconds if configured.
+	waitCtx := ctx
+	if agentDef.Spec.StartupTimeoutSeconds != nil {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, time.Duration(*agentDef.Spec.StartupTimeoutSeconds)*time.Second)
+		defer cancel()
+	}
+	if err := m.waitForSocket(waitCtx, socketPath, runProc); err != nil {
 		// Kill agent-run process; leave bundle intact (preserved until agent/delete).
 		_ = m.killRun(runProc)
 		return nil, fmt.Errorf("process: wait for socket: %w", err)
@@ -304,9 +311,9 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 	} else {
 		if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{
 			State:           apiruntime.StatusCreating, // keep creating until we transition below
-			RunSocketPath:  socketPath,
-			RunStateDir:    stateDir,
-			RunPID:         runProc.PID,
+			RunSocketPath:   socketPath,
+			RunStateDir:     stateDir,
+			RunPID:          runProc.PID,
 			BootstrapConfig: bootstrapJSON,
 		}); err != nil {
 			m.logger.Error("failed to persist bootstrap config", "agent_key", key, "error", err)
@@ -341,7 +348,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := m.agents.UpdateStatus(updateCtx, workspace, name, pkgariapi.AgentRunStatus{
-				State:          statusResult.State.Status,
+				State:         statusResult.State.Status,
 				RunSocketPath: socketPath,
 				RunStateDir:   stateDir,
 				RunPID:        runProc.PID,
@@ -605,14 +612,21 @@ func (sp *RunProcess) StopDrain() {
 	}
 }
 
-// waitForSocket waits for the agent-run.s RPC socket to appear.
-// Polls with a 90s timeout — real CLI runtimes (gsd-pi, claude-code) need
+// defaultStartupTimeout is the fallback timeout when Agent definition does not
+// specify startupTimeoutSeconds. Real CLI runtimes (gsd-pi, claude-code) need
 // bunx package resolution + process startup which can take 30-60s on cold cache.
+const defaultStartupTimeout = 90 * time.Second
+
+// waitForSocket waits for the agent-run RPC socket to appear.
+// Uses the context deadline if present (set from Agent.Spec.StartupTimeoutSeconds),
+// otherwise falls back to defaultStartupTimeout.
 // Returns early if the agent-run process exits before the socket appears.
 func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string, runProc *RunProcess) error {
-	timeout := 90 * time.Second
-
-	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	deadline, hasDeadline := ctx.Deadline()
+	if !hasDeadline {
+		deadline = start.Add(defaultStartupTimeout)
+	}
 	for {
 		// Check if socket exists and is connectable.
 		if _, err := os.Stat(socketPath); err == nil {
@@ -632,7 +646,7 @@ func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string, r
 
 		// Check if timeout expired.
 		if time.Now().After(deadline) {
-			return fmt.Errorf("socket %s not ready after %v", socketPath, timeout)
+			return fmt.Errorf("socket %s not ready after %v", socketPath, time.Since(start).Truncate(time.Second))
 		}
 
 		// Check if context canceled.
