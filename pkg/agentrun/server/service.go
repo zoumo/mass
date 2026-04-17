@@ -47,6 +47,9 @@ func (s *Service) Prompt(ctx context.Context, req *runapi.SessionPromptParams) (
 	if err == nil {
 		stopReason = string(resp.StopReason)
 	}
+	if err != nil {
+		s.trans.NotifyError(err.Error())
+	}
 	s.trans.NotifyTurnEnd(acp.StopReason(stopReason))
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())

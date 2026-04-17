@@ -192,6 +192,12 @@ func (t *Translator) NotifyUserPrompt(blocks []runapi.ContentBlock) {
 	}
 }
 
+// NotifyError broadcasts an error event into the event stream so that
+// watchers/subscribers see the error — not just the direct RPC caller.
+func (t *Translator) NotifyError(msg string) {
+	t.broadcastEvent(runapi.ErrorEvent{Msg: msg})
+}
+
 // NotifyTurnEnd broadcasts a turn_end AgentRunEvent.
 // Closes any open content block first, then emits turn_end.
 // The current turnId is included in the event and cleared AFTER use so the
