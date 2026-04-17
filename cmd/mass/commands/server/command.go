@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -86,6 +87,11 @@ func run(rootPath string, logCfg *logging.LogConfig) error {
 		return err
 	}
 	logger.Info("metadata store initialized", "path", opts.MetaDBPath())
+
+	// Seed built-in agent definitions (skip existing).
+	if err := agentd.EnsureBuiltinAgents(context.Background(), metaStore, logger); err != nil {
+		return fmt.Errorf("seed builtin agents: %w", err)
+	}
 
 	// Create WorkspaceManager.
 	manager := workspace.NewWorkspaceManager()
