@@ -277,9 +277,10 @@ func TestAtBottom_ManyItems(t *testing.T) {
 	c := NewChat()
 	c.SetSize(80, 5)
 	c.AppendMessages(makeItems(20)...)
+	c.ScrollToTop() // move away from bottom (follow mode auto-scrolled)
 
 	if c.AtBottom() {
-		t.Fatal("should NOT be at bottom with 20 items in 5-line viewport")
+		t.Fatal("should NOT be at bottom with 20 items in 5-line viewport after scrolling to top")
 	}
 }
 

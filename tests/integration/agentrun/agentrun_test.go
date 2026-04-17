@@ -29,8 +29,14 @@ func setupAgentRun(t *testing.T) (context.Context, *runclient.Client, func()) {
 	mockagentBin := testutil.MockagentBinPath(t)
 
 	// Create temp dirs for bundle and state.
+	// Use /tmp for stateBaseDir to keep Unix socket path under macOS 104-byte limit.
+	// t.TempDir() paths (via $TMPDIR) are too long on macOS.
 	bundleDir := t.TempDir()
-	stateBaseDir := t.TempDir()
+	stateBaseDir, err := os.MkdirTemp("/tmp", "mass-run-*")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(stateBaseDir) })
 	agentID := fmt.Sprintf("test-agent-%d", testutil.NewSocketCounter())
 
 	// Create workspace dir inside bundle.
@@ -146,7 +152,7 @@ func TestAgentRunPromptAndEvents(t *testing.T) {
 	var events []runapi.AgentRunEvent
 	timeout := time.After(15 * time.Second)
 
-	collectLoop:
+collectLoop:
 	for {
 		select {
 		case ev, ok := <-watcher.ResultChan():
