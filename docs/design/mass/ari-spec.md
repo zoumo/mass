@@ -161,6 +161,20 @@ Supported field selectors by resource type:
 - **Workspace**: `phase`
 - **AgentRun**: `workspace`, `state`
 
+### ContentBlock
+
+ContentBlock is an ACP-compatible content block used in `workspace/send` and `agentrun/prompt`. It is a discriminated union keyed by `type`:
+
+```json
+// text content
+{ "type": "text", "text": "Hello, world" }
+
+// image content
+{ "type": "image", "data": "<base64>", "mimeType": "image/png" }
+```
+
+The Go implementation re-exports `acp.ContentBlock` from the ACP SDK. All existing callers (Go client, massctl CLI, workspace MCP server) construct ContentBlocks via the `TextBlock(text)` helper.
+
 ## Workspace Methods
 
 ### `workspace/create`
@@ -274,7 +288,7 @@ This is a fire-and-forget delivery: `delivered: true` means the message was disp
 | `workspace` | string | yes | Workspace name |
 | `from` | string | yes | Sender agent name |
 | `to` | string | yes | Recipient agent name |
-| `message` | string | yes | Message text to deliver |
+| `message` | ContentBlock[] | yes | Message content (array of ACP ContentBlocks — text, image, audio, etc.) |
 | `needsReply` | bool | no | Envelope hint indicating a reply is expected |
 
 **Result:** `{delivered: true}`
@@ -444,7 +458,13 @@ Deliver a prompt turn to an AgentRun.
 Rejected when the agent is in `creating`, `stopped`, or `error` state.
 Only accepted when state is `idle`.
 
-**Params:** `{workspace, name, prompt}`
+**Params:**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `workspace` | string | yes | Workspace name |
+| `name` | string | yes | AgentRun name |
+| `prompt` | ContentBlock[] | yes | Prompt content (array of ACP ContentBlocks — text, image, audio, etc.) |
 
 **Result:** `{accepted: true}`
 
@@ -611,16 +631,16 @@ It exposes two MCP tools that wrap ARI calls:
 - `workspace_status` — calls `workspace/get` for workspace state and `agentrun/list` (with workspace filter) for member agents
 - `workspace_send` — calls `workspace/send`
 
-Configuration is read from environment variables:
+Configuration is passed via CLI flags:
 
-| Variable | Required | Meaning |
+| Flag | Required | Meaning |
 |---|---|---|
-| `MASS_SOCKET` | yes | Path to mass's Unix socket |
-| `MASS_WORKSPACE_NAME` | yes | The workspace this server instance belongs to |
-| `MASS_AGENT_NAME` | no | The agent name for sender identification |
-| `MASS_STATE_DIR` | no | State directory for log output |
-| `MASS_LOG_LEVEL` | no | Log level (debug, info, warn, error); defaults to `info` |
-| `MASS_LOG_FORMAT` | no | Log format (pretty, text, json); defaults to `pretty` |
+| `--socket` | yes | Path to mass's Unix socket |
+| `--workspace` | yes | The workspace this server instance belongs to |
+| `--agent` | no | The agent name for sender identification |
+| `--log-file` | no | Log file path |
+| `--log-level` | no | Log level (debug, info, warn, error); defaults to `info` |
+| `--log-format` | no | Log format (pretty, text, json); defaults to `pretty` |
 
 ## Capability Posture
 
@@ -648,7 +668,7 @@ The ARI contract intentionally exposes less than raw ACP:
 | `agentrun/get` | ObjectKey `{workspace, name}` | AgentRun (with `status.shim`) |
 | `agentrun/list` | ListOptions (optional) | `{items: AgentRun[]}` |
 | `agentrun/delete` | ObjectKey `{workspace, name}` | — |
-| `agentrun/prompt` | `{workspace, name, prompt}` | `{accepted}` |
+| `agentrun/prompt` | `{workspace, name, prompt: ContentBlock[]}` | `{accepted}` |
 | `agentrun/cancel` | ObjectKey `{workspace, name}` | — |
 | `agentrun/stop` | ObjectKey `{workspace, name}` | — |
 | `agentrun/restart` | ObjectKey `{workspace, name}` | AgentRun |

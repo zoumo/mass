@@ -380,8 +380,11 @@ func (m *Manager) done() <-chan struct{} {
 }
 
 func (m *Manager) writeState(apply func(*apiruntime.State), reason string) error {
+	m.mu.Lock()
+
 	previous, prevErr := spec.ReadState(m.stateDir)
 	if prevErr != nil && !errors.Is(prevErr, os.ErrNotExist) {
+		m.mu.Unlock()
 		return fmt.Errorf("runtime: read state for %s: %w", reason, prevErr)
 	}
 
@@ -394,10 +397,24 @@ func (m *Manager) writeState(apply func(*apiruntime.State), reason string) error
 	}
 
 	if err := spec.WriteState(m.stateDir, state); err != nil {
+		m.mu.Unlock()
 		return err
 	}
-	if prevErr == nil && previous.Status != state.Status {
-		m.emitStateChange(previous, state, reason)
+
+	statusChanged := prevErr == nil && previous.Status != state.Status
+	hook := m.stateChangeHook
+	change := StateChange{
+		SessionID:      state.ID,
+		PreviousStatus: previous.Status,
+		Status:         state.Status,
+		PID:            state.PID,
+		Reason:         reason,
+	}
+
+	m.mu.Unlock()
+
+	if statusChanged && hook != nil {
+		hook(change)
 	}
 	return nil
 }
@@ -458,22 +475,6 @@ func (m *Manager) UpdateSessionMetadata(changed []string, reason string, apply f
 	}
 
 	return nil
-}
-
-func (m *Manager) emitStateChange(previous, current apiruntime.State, reason string) {
-	m.mu.Lock()
-	hook := m.stateChangeHook
-	m.mu.Unlock()
-	if hook == nil {
-		return
-	}
-	hook(StateChange{
-		SessionID:      current.ID,
-		PreviousStatus: previous.Status,
-		Status:         current.Status,
-		PID:            current.PID,
-		Reason:         reason,
-	})
 }
 
 // convertInitializeToSession maps an ACP InitializeResponse to the runtime-spec

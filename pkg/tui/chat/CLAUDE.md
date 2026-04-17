@@ -81,8 +81,12 @@ if msg.Method != runapi.MethodRuntimeEventUpdate {
 - `● stopped` (灰色) — agent stopped
 
 状态来源：
-1. 连接时 `runtime/status` RPC 查询初始状态
-2. 之后通过 `runtime_update`（含 Status）通知实时更新
+1. 连接时 `runtime/status` RPC 查询初始状态 → 返回 `initialStatusMsg`（不触发 waitNotif 重调度）
+2. 之后通过 `runtime_update`（含 Status）通知实时更新 → 返回 `stateChangeMsg`（触发 waitNotif 重调度）
+
+**关键：** `fetchStatusCmd` 必须返回 `initialStatusMsg` 而非 `stateChangeMsg`。
+如果返回 `stateChangeMsg`，其 handler 会调 `waitNotif(m.watcher)` 产生第二条通知链，
+两个 goroutine 竞争同一个 channel → 随机事件丢失。
 
 ## 键盘操作
 
@@ -172,3 +176,5 @@ case connClosedMsg:  // 不需要（连接已断）
 - **不要在 `waitNotif` 内部返回 nil** —— 会导致 Bubbletea 跳过 Update，通知链永久断裂
 - **不要给 tool item 设 ToolStatusRunning** —— 我们的 tool_call 是已执行通知，Running 会显示 "Waiting for tool response..."
 - **不要设 ToolCall.Finished=false** —— 会触发 isSpinning()=true，显示乱码动画字符
+- **不要让 `fetchStatusCmd` 返回 `stateChangeMsg`** —— 必须用 `initialStatusMsg`，否则产生双 waitNotif 链
+- **不要用 `ScrollBy()` / `ScrollToBottom()` 等非 Animate 方法** —— 会导致翻页后动画冻结，必须用 `*AndAnimate` 变体

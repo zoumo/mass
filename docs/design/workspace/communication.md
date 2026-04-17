@@ -30,17 +30,12 @@ ProcessManager 在生成 `config.json` 时将 workspace-mcp 写入 `acpAgent.ses
 {
   "type": "stdio",
   "name": "workspace",
-  "command": "agentd",
-  "args": ["workspace-mcp"],
-  "env": [
-    { "name": "MASS_SOCKET", "value": "<agentd unix socket path>" },
-    { "name": "MASS_WORKSPACE_NAME", "value": "<workspace name>" },
-    { "name": "MASS_AGENT_NAME", "value": "<agent name>" }
-  ]
+  "command": "mass",
+  "args": ["workspace-mcp", "--socket", "<mass unix socket path>", "--workspace", "<workspace name>", "--agent", "<agent name>"]
 }
 ```
 
-agent-run 启动时读取 `config.json`，fork/exec workspace-mcp 子进程。workspace-mcp 通过 `MASS_SOCKET` 连接回 agentd 发起 ARI 调用。
+agent-run 启动时读取 `config.json`，fork/exec workspace-mcp 子进程。workspace-mcp 通过 `--socket` 指定的 Unix socket 连接回 mass 发起 ARI 调用。
 
 ### 消息路由数据流
 
@@ -82,7 +77,7 @@ codex (receives message, processes, replies via same path in reverse)
 | `workspace` | string | 是 | workspace 名称 |
 | `from` | string | 是 | 发送者 agent name |
 | `to` | string | 是 | 接收者 agent name |
-| `message` | string | 是 | 消息文本 |
+| `message` | ContentBlock[] | 是 | 消息内容（ACP ContentBlock 数组 — text, image, audio 等） |
 | `needsReply` | bool | 否 | 信封提示，表示期望接收方回复 |
 
 **结果**：`{delivered: true}`

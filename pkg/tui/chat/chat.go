@@ -16,6 +16,7 @@ import (
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	"github.com/zoumo/mass/pkg/tui/component"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/anim"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
@@ -59,6 +60,13 @@ type stateChangeMsg struct {
 	previous string
 	status   string
 	reason   string
+}
+
+// initialStatusMsg is sent by fetchStatusCmd. It is a separate type from
+// stateChangeMsg to prevent fetchStatusCmd from spawning a duplicate waitNotif
+// chain — only stateChangeMsg (from the event stream) re-schedules waitNotif.
+type initialStatusMsg struct {
+	status string
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -226,7 +234,7 @@ func fetchStatusCmd(sc *runclient.Client) tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		return stateChangeMsg{status: string(result.State.Status)}
+		return initialStatusMsg{status: string(result.State.Status)}
 	})
 }
 
@@ -281,7 +289,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case turnEndMsg:
 		if m.currentMsg != nil {
 			m.currentMsg.Finish(component.FinishReasonEndTurn)
-			m.updateCurrentAssistant()
+			if cmd := m.updateCurrentAssistant(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 		m.currentMsg = nil
 		m.currentMsgID = ""
@@ -293,7 +303,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.chat.AppendMessages(component.NewSystemItem(m.nextID("sys"), "error: "+msg.err.Error(), styleErr))
 		if m.currentMsg != nil {
 			m.currentMsg.Finish(component.FinishReasonError)
-			m.updateCurrentAssistant()
+			if cmd := m.updateCurrentAssistant(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 		m.currentMsg = nil
 		m.currentMsgID = ""
@@ -303,16 +315,25 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case stateChangeMsg:
 		m.agentStatus = msg.status
-		if msg.status == "running" && !m.waiting {
+		if msg.status == string(apiruntime.StatusRunning) && !m.waiting {
 			m.waiting = true
 			m.input.Blur()
 		}
-		if msg.status == "idle" && m.waiting {
+		if msg.status == string(apiruntime.StatusIdle) && m.waiting {
 			m.waiting = false
 			m.chatFocused = false
 			cmds = append(cmds, m.input.Focus())
 		}
 		cmds = append(cmds, waitNotif(m.watcher)) // keep the notification chain alive
+
+	case initialStatusMsg:
+		// Initial status from fetchStatusCmd — update status bar but do NOT
+		// re-schedule waitNotif (that would create a duplicate chain).
+		m.agentStatus = msg.status
+		if msg.status == string(apiruntime.StatusRunning) && !m.waiting {
+			m.waiting = true
+			m.input.Blur()
+		}
 
 	case anim.StepMsg:
 		// Forward animation ticks to the chat (for spinner animations).
@@ -335,9 +356,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		mouse := msg.Mouse()
 		switch mouse.Button {
 		case tea.MouseWheelUp:
-			m.chat.ScrollBy(-3)
+			cmds = append(cmds, m.chat.ScrollByAndAnimate(-3))
 		case tea.MouseWheelDown:
-			m.chat.ScrollBy(3)
+			cmds = append(cmds, m.chat.ScrollByAndAnimate(3))
 		}
 
 	case tea.PasteMsg:
@@ -409,25 +430,25 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		switch {
 		case key.Code == 'j' || key.Code == tea.KeyDown:
 			m.chat.SelectNext()
-			m.chat.ScrollToSelected()
+			cmds = append(cmds, m.chat.ScrollToSelectedAndAnimate())
 		case key.Code == 'k' || key.Code == tea.KeyUp:
 			m.chat.SelectPrev()
-			m.chat.ScrollToSelected()
+			cmds = append(cmds, m.chat.ScrollToSelectedAndAnimate())
 		case key.Code == 'd':
-			m.chat.ScrollBy(m.chat.Height() / 2)
+			cmds = append(cmds, m.chat.ScrollByAndAnimate(m.chat.Height()/2))
 		case key.Code == 'u':
-			m.chat.ScrollBy(-m.chat.Height() / 2)
+			cmds = append(cmds, m.chat.ScrollByAndAnimate(-m.chat.Height()/2))
 		case key.Code == ' ' || key.Code == tea.KeyEnter:
 			// Space/Enter toggles expand on selected tool item.
 			m.chat.ToggleExpandedSelectedItem()
 		case key.Code == 'f' || key.Code == tea.KeyPgDown:
-			m.chat.ScrollBy(m.chat.Height())
+			cmds = append(cmds, m.chat.ScrollByAndAnimate(m.chat.Height()))
 		case key.Code == 'b' || key.Code == tea.KeyPgUp:
-			m.chat.ScrollBy(-m.chat.Height())
+			cmds = append(cmds, m.chat.ScrollByAndAnimate(-m.chat.Height()))
 		case key.Code == 'g' || key.Code == tea.KeyHome:
-			m.chat.ScrollToTop()
+			cmds = append(cmds, m.chat.ScrollToTopAndAnimate())
 		case key.Code == 'G' || key.Code == tea.KeyEnd:
-			m.chat.ScrollToBottom()
+			cmds = append(cmds, m.chat.ScrollToBottomAndAnimate())
 		}
 		return cmds
 	}
@@ -472,10 +493,10 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		cmds = append(cmds, sendPromptCmd(m.client, text))
 
 	case key.Code == tea.KeyPgUp:
-		m.chat.ScrollBy(-m.chat.Height())
+		cmds = append(cmds, m.chat.ScrollByAndAnimate(-m.chat.Height()))
 
 	case key.Code == tea.KeyPgDown:
-		m.chat.ScrollBy(m.chat.Height())
+		cmds = append(cmds, m.chat.ScrollByAndAnimate(m.chat.Height()))
 
 	default:
 		if !m.waiting {
@@ -488,20 +509,21 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 	return cmds
 }
 
-func (m *chatModel) updateCurrentAssistant() {
+func (m *chatModel) updateCurrentAssistant() tea.Cmd {
 	if m.currentMsgID == "" {
-		return
+		return nil
 	}
 	item := m.chat.MessageItem(m.currentMsgID)
 	if item == nil {
-		return
+		return nil
 	}
 	if a, ok := item.(*component.AssistantMessageItem); ok {
 		a.SetMessage(m.currentMsg)
 	}
 	if m.chat.Follow() {
-		m.chat.ScrollToBottom()
+		return m.chat.ScrollToBottomAndAnimate()
 	}
+	return nil
 }
 
 // ensureCurrentMsg creates an assistant message if we don't have one yet.
@@ -556,21 +578,27 @@ func (m *chatModel) handleNotif(ev runapi.AgentRunEvent) tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 			m.currentMsg.AppendText(contentBlockText(pl.Content))
-			m.updateCurrentAssistant()
+			if cmd := m.updateCurrentAssistant(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 
 		case runapi.EventTypeAgentThinking:
 			if cmd := m.ensureCurrentMsg(); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 			m.currentMsg.AppendThinking(contentBlockText(pl.Content))
-			m.updateCurrentAssistant()
+			if cmd := m.updateCurrentAssistant(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 
 	case runapi.ToolCallEvent:
 		// Finish current assistant text before tool.
 		if m.currentMsg != nil {
 			m.currentMsg.Finish(component.FinishReasonToolUse)
-			m.updateCurrentAssistant()
+			if cmd := m.updateCurrentAssistant(); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
 		}
 
 		// Build input from event data for display.
@@ -662,7 +690,7 @@ func (m *chatModel) handleNotif(ev runapi.AgentRunEvent) tea.Cmd {
 			}
 		}
 		if m.chat.Follow() {
-			m.chat.ScrollToBottom()
+			cmds = append(cmds, m.chat.ScrollToBottomAndAnimate())
 		}
 
 	case runapi.PlanEvent:
@@ -724,13 +752,13 @@ func (m chatModel) renderStatusLine() string {
 
 	var styled string
 	switch status {
-	case "running":
+	case string(apiruntime.StatusRunning):
 		styled = styleStatusRunning.Render("● running")
-	case "idle":
+	case string(apiruntime.StatusIdle):
 		styled = styleStatusIdle.Render("● idle")
-	case "error":
+	case string(apiruntime.StatusError):
 		styled = styleStatusError.Render("● error")
-	case "stopped":
+	case string(apiruntime.StatusStopped):
 		styled = styleStatusStopped.Render("● stopped")
 	default:
 		styled = styleDim.Render("● " + status)
@@ -738,13 +766,13 @@ func (m chatModel) renderStatusLine() string {
 
 	hint := ""
 	switch status {
-	case "running":
+	case string(apiruntime.StatusRunning):
 		hint = styleDim.Render(" — ctrl+x to cancel")
-	case "idle":
+	case string(apiruntime.StatusIdle):
 		hint = styleDim.Render(" — ready for input")
-	case "error":
+	case string(apiruntime.StatusError):
 		hint = styleDim.Render(" — agent error, check logs")
-	case "stopped":
+	case string(apiruntime.StatusStopped):
 		hint = styleDim.Render(" — agent stopped")
 	}
 
