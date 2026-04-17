@@ -4,10 +4,13 @@ package agentrun
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 )
@@ -170,40 +173,80 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			ctx := context.Background()
 			key := pkgariapi.ObjectKey{Workspace: ws, Name: name}
-			result, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock(text)})
-			if err != nil {
-				cliutil.HandleError(err)
+
+			if !wait {
+				result, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock(text)})
+				if err != nil {
+					cliutil.HandleError(err)
+					return nil
+				}
+				cliutil.OutputJSON(result)
 				return nil
 			}
-			cliutil.OutputJSON(result)
 
-			if wait && result.Accepted {
-				fmt.Println("Waiting for agent run to finish processing...")
-				observedRunning := true
-				for {
-					time.Sleep(500 * time.Millisecond)
-					var ar pkgariapi.AgentRun
-					if err := client.Get(ctx, key, &ar); err != nil {
-						fmt.Printf("agentrun/get error: %v\n", err)
-						break
+			// --wait mode: get socket path, connect directly, watch events,
+			// send prompt, collect agent_message until turn_end.
+
+			// Resolve the agent-run socket path via ARI.
+			var ar pkgariapi.AgentRun
+			if err := client.Get(ctx, key, &ar); err != nil {
+				return fmt.Errorf("agentrun/get: %w", err)
+			}
+			if ar.Status.Run == nil || ar.Status.Run.SocketPath == "" {
+				return fmt.Errorf("agent run %s/%s has no run socket (state: %s)", ws, name, ar.Status.State)
+			}
+
+			// Connect to the agent-run process directly.
+			runClient, err := runclient.Dial(ctx, ar.Status.Run.SocketPath)
+			if err != nil {
+				return fmt.Errorf("dial agent-run: %w", err)
+			}
+			defer runClient.Close()
+
+			// Start watching events before sending prompt to avoid missing any.
+			watcher, err := runClient.WatchEvent(ctx, nil)
+			if err != nil {
+				return fmt.Errorf("watch_event: %w", err)
+			}
+			defer watcher.Stop()
+
+			// Send prompt (fire-and-forget).
+			if err := runClient.SendPrompt(ctx, &runapi.SessionPromptParams{
+				Prompt: []runapi.ContentBlock{runapi.TextBlock(text)},
+			}); err != nil {
+				return fmt.Errorf("send_prompt: %w", err)
+			}
+
+			// Collect agent_message text until turn_end.
+			var parts []string
+			timeout := time.After(5 * time.Minute)
+			for {
+				select {
+				case ev, ok := <-watcher.ResultChan():
+					if !ok {
+						return fmt.Errorf("event stream closed before turn_end")
 					}
-					if ar.Status.State == "running" {
-						observedRunning = true
-						continue
+					if ev.Type == runapi.EventTypeTurnEnd {
+						fmt.Println(strings.Join(parts, ""))
+						return nil
 					}
-					if observedRunning {
-						fmt.Printf("Agent run state: %s\n", ar.Status.State)
-						break
+					if ev.Type == runapi.EventTypeAgentMessage {
+						if ce, ok := ev.Payload.(runapi.ContentEvent); ok && ce.Content.Text != nil {
+							parts = append(parts, ce.Content.Text.Text)
+						}
 					}
+				case <-timeout:
+					return fmt.Errorf("timeout waiting for turn_end")
+				case <-ctx.Done():
+					return ctx.Err()
 				}
 			}
-			return nil
 		},
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent run name (required)")
 	cmd.Flags().StringVar(&text, "text", "", "Prompt text (required)")
-	cmd.Flags().BoolVar(&wait, "wait", false, "Poll agentrun/get until state is no longer 'running'")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for turn to complete and print agent response")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("text")
