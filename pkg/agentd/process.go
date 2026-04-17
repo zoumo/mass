@@ -42,7 +42,7 @@ func agentKey(workspace, name string) string {
 //   - Agent status transitions
 //   - Runtime entity resolution from DB
 //   - Bundle creation (config.json + workspace symlink)
-//   - Agent-run process fork/exec (self-fork or MASS_RUN_BINARY override)
+//   - Agent-run process fork/exec (self-fork)
 //   - Client connection and event subscription
 type ProcessManager struct {
 	agents     *AgentRunManager
@@ -51,6 +51,10 @@ type ProcessManager struct {
 	bundleRoot string
 	logLevel   string // propagated to agent-run and workspace-mcp child processes
 	logFormat  string // propagated to agent-run and workspace-mcp child processes
+
+	// RunBinary overrides the agent-run binary path for testing.
+	// When empty (default), forkRun uses os.Executable() (self-fork).
+	RunBinary string
 
 	mu        sync.RWMutex
 	processes map[string]*RunProcess // agentKey (workspace+"/"+name) -> RunProcess
@@ -206,7 +210,7 @@ func (m *ProcessManager) startEventConsumer(workspace, name string, runProc *Run
 //  2. Resolve Agent definition from DB store via GetAgent
 //  3. Generate config.json
 //  4. Create bundle directory with workspace symlink
-//  5. Fork agent-run process (self-fork or MASS_RUN_BINARY override)
+//  5. Fork agent-run process (self-fork)
 //  6. Wait for socket to appear
 //  7. Connect Client with the unified notification handler (D088)
 //  8. Subscribe to events
@@ -380,24 +384,17 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 	annotations["agent"] = agentDef.Metadata.Name
 
 	// Compute the bundle/state directory (same formula as createBundle) so we
-	// can pass MASS_STATE_DIR to the workspace-mcp-server before the directory
+	// can pass --log-file to the workspace-mcp-server before the directory
 	// is actually created.
 	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
+	logFile := filepath.Join(stateDir, "workspace-mcp-server.log")
 
-	mcpBinary, mcpArgs := m.workspaceMcpCommand()
+	mcpBinary, mcpArgs := m.workspaceMcpCommand(agent.Metadata.Workspace, agent.Metadata.Name, logFile)
 	workspaceMcp := apiruntime.McpServer{
 		Type:    "stdio",
 		Name:    "workspace",
 		Command: mcpBinary,
 		Args:    mcpArgs,
-		Env: []apiruntime.EnvVar{
-			{Name: "MASS_SOCKET", Value: m.socketPath},
-			{Name: "MASS_WORKSPACE_NAME", Value: agent.Metadata.Workspace},
-			{Name: "MASS_AGENT_NAME", Value: agent.Metadata.Name},
-			{Name: "MASS_STATE_DIR", Value: stateDir},
-			{Name: "MASS_LOG_LEVEL", Value: m.logLevel},
-			{Name: "MASS_LOG_FORMAT", Value: m.logFormat},
-		},
 	}
 
 	return apiruntime.Config{
@@ -426,13 +423,22 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 
 // workspaceMcpCommand returns the command and args for the workspace MCP server.
 // Uses self-fork: os.Executable() + "workspace-mcp" subcommand (same pattern as agent-run).
-func (m *ProcessManager) workspaceMcpCommand() (string, []string) {
+func (m *ProcessManager) workspaceMcpCommand(workspace, agent, logFile string) (string, []string) {
 	self, err := os.Executable()
 	if err != nil {
 		m.logger.Error("os.Executable failed for workspace-mcp, falling back to PATH", "error", err)
-		return "mass", []string{"workspace-mcp"}
+		self = "mass"
 	}
-	return self, []string{"workspace-mcp"}
+	args := []string{
+		"workspace-mcp",
+		"--socket", m.socketPath,
+		"--workspace", workspace,
+		"--agent", agent,
+		"--log-file", logFile,
+		"--log-level", m.logLevel,
+		"--log-format", m.logFormat,
+	}
+	return self, args
 }
 
 // createBundle creates the bundle directory and writes config.json.
@@ -494,36 +500,23 @@ func (m *ProcessManager) createBundle(agent *pkgariapi.AgentRun, cfg apiruntime.
 	return bundlePath, stateDir, socketPath, nil
 }
 
-// forkRun forks the agent-run process using self-fork or MASS_RUN_BINARY override.
-// Self-fork: uses os.Executable() to re-invoke the daemon with "run" as the first arg.
-// Override: if MASS_RUN_BINARY is set, that binary is used instead.
+// forkRun forks the agent-run process via self-fork.
+// Uses os.Executable() to re-invoke the daemon with "run" as the first arg.
 //
 // Note: We intentionally do NOT use exec.CommandContext here because the agent-run
 // process should run independently of the request context that initiated Start.
 // Using CommandContext would kill the agent-run when the request context is canceled.
 // The agent-run process lifecycle is managed by ProcessManager.Stop and watchProcess.
 func (m *ProcessManager) forkRun(agent *pkgariapi.AgentRun, bundlePath, stateDir string) (*RunProcess, error) {
-	var runBinary string
-	var usingOverride bool
-
-	if envPath := os.Getenv("MASS_RUN_BINARY"); envPath != "" {
-		runBinary = envPath
-		usingOverride = true
-	} else {
-		// Self-fork: use the current executable.
-		self, err := os.Executable()
+	runBinary := m.RunBinary
+	if runBinary == "" {
+		var err error
+		runBinary, err = os.Executable()
 		if err != nil {
 			return nil, fmt.Errorf("os.Executable: %w", err)
 		}
-		runBinary = self
-		usingOverride = false
 	}
-
-	if usingOverride {
-		m.logger.Info("forkRun: using MASS_RUN_BINARY override", "run_binary", runBinary)
-	} else {
-		m.logger.Info("forkRun: using self-fork", "run_binary", runBinary)
-	}
+	m.logger.Info("forkRun: using self-fork", "run_binary", runBinary)
 
 	// Create state directory before starting agent-run.
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {

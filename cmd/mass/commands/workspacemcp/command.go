@@ -5,47 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
-
-	"github.com/charmbracelet/x/term"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 
 	"github.com/zoumo/mass/internal/logging"
 )
-
-// ────────────────────────────────────────────────────────────────────────────
-// Environment configuration
-// ────────────────────────────────────────────────────────────────────────────
-
-type config struct {
-	massSocket    string // MASS_SOCKET
-	workspaceName string // MASS_WORKSPACE_NAME
-	agentName     string // MASS_AGENT_NAME
-}
-
-func loadConfig() (config, error) {
-	c := config{
-		massSocket:    os.Getenv("MASS_SOCKET"),
-		workspaceName: os.Getenv("MASS_WORKSPACE_NAME"),
-		agentName:     os.Getenv("MASS_AGENT_NAME"),
-	}
-	if c.massSocket == "" {
-		return c, fmt.Errorf("MASS_SOCKET is required")
-	}
-	if c.workspaceName == "" {
-		return c, fmt.Errorf("MASS_WORKSPACE_NAME is required")
-	}
-	return c, nil
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Tool schemas
@@ -80,7 +50,12 @@ var workspaceStatusSchema = json.RawMessage(`{
 // Tool handlers
 // ────────────────────────────────────────────────────────────────────────────
 
-func workspaceSendHandler(cfg config, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
+type handlerConfig struct {
+	workspaceName string
+	agentName     string
+}
+
+func workspaceSendHandler(cfg handlerConfig, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var input struct {
 			TargetAgent string `json:"targetAgent"`
@@ -137,7 +112,7 @@ func workspaceSendHandler(cfg config, client pkgariapi.Client, logger *slog.Logg
 	}
 }
 
-func workspaceStatusHandler(cfg config, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
+func workspaceStatusHandler(cfg handlerConfig, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		logger.Info("workspace_status", "workspace", cfg.workspaceName)
 
@@ -181,64 +156,55 @@ func workspaceStatusHandler(cfg config, client pkgariapi.Client, logger *slog.Lo
 
 // NewCommand returns the "workspace-mcp" cobra command.
 func NewCommand() *cobra.Command {
-	return &cobra.Command{
+	var (
+		socket    string
+		workspace string
+		agent     string
+		logCfg    logging.LogConfig
+	)
+
+	cmd := &cobra.Command{
 		Use:   "workspace-mcp",
 		Short: "Run the workspace MCP server (stdio transport)",
-		Long: `workspace-mcp exposes workspace_send and workspace_status MCP tools over stdio.
-Reads MASS_SOCKET, MASS_WORKSPACE_NAME, and MASS_AGENT_NAME from the environment.`,
+		Long:  `workspace-mcp exposes workspace_send and workspace_status MCP tools over stdio.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run()
+			return run(socket, workspace, agent, &logCfg)
 		},
 	}
+
+	cmd.Flags().StringVar(&socket, "socket", "", "Unix socket path for the MASS daemon (required)")
+	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace name (required)")
+	cmd.Flags().StringVar(&agent, "agent", "", "Agent name within the workspace")
+	logCfg.AddFlags(cmd.Flags())
+
+	_ = cmd.MarkFlagRequired("socket")
+	_ = cmd.MarkFlagRequired("workspace")
+	return cmd
 }
 
-func run() error {
-	// Determine log output target.
-	var w io.Writer = os.Stderr
-	if stateDir := os.Getenv("MASS_STATE_DIR"); stateDir != "" {
-		logPath := filepath.Join(stateDir, "workspace-mcp-server.log")
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			// Cannot open log file; warn on stderr and continue with stderr.
-			fmt.Fprintf(os.Stderr, "workspace-mcp-server: failed to open log file %s: %v, falling back to stderr\n", logPath, err)
-		} else {
-			w = f
-			defer f.Close()
-		}
-	}
-
-	// Initialize slog from env (inherited from mass daemon via generateConfig).
-	logLevel := os.Getenv("MASS_LOG_LEVEL")
-	logFormat := os.Getenv("MASS_LOG_FORMAT")
-	level, err := logging.ParseLevel(logLevel)
+func run(socket, workspace, agent string, logCfg *logging.LogConfig) error {
+	logger, logCleanup, err := logCfg.Build()
 	if err != nil {
-		level = slog.LevelInfo
+		return fmt.Errorf("build logger: %w", err)
 	}
-	if logFormat == "" || logFormat == "auto" {
-		logFormat = "text" // default to text: workspace-mcp typically writes to file
-		if f, ok := w.(*os.File); ok && term.IsTerminal(f.Fd()) {
-			logFormat = "pretty"
-		}
-	}
-	handler := logging.NewHandler(logFormat, level, w)
-	logger := slog.New(handler)
+	defer logCleanup()
 	slog.SetDefault(logger)
 
-	cfg, err := loadConfig()
-	if err != nil {
-		return fmt.Errorf("configuration error: %w", err)
-	}
-
-	logger.Info("starting", "workspace", cfg.workspaceName, "agent", cfg.agentName)
+	logger.Info("starting", "workspace", workspace, "agent", agent)
 
 	// Connect to ARI server (persistent connection).
 	ctx := context.Background()
-	client, err := ariclient.Dial(ctx, cfg.massSocket)
+	client, err := ariclient.Dial(ctx, socket)
 	if err != nil {
 		return fmt.Errorf("dial ARI: %w", err)
 	}
 	defer client.Close()
+
+	cfg := handlerConfig{
+		workspaceName: workspace,
+		agentName:     agent,
+	}
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "workspace-mcp-server", Version: "0.1.0"}, nil)
 

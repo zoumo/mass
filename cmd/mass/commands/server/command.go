@@ -101,7 +101,7 @@ func run(rootPath string, logCfg *logging.LogConfig) error {
 	agents := agentd.NewAgentRunManager(metaStore, logger)
 	logger.Info("agent run manager initialized")
 
-	// Create ProcessManager (self-fork or MASS_RUN_BINARY override).
+	// Create ProcessManager (self-fork).
 	processes := agentd.NewProcessManager(agents, metaStore, opts.SocketPath(), opts.BundleRoot(), logger, logCfg.Level, logCfg.Format)
 	logger.Info("process manager initialized",
 		"socket_path", opts.SocketPath(),

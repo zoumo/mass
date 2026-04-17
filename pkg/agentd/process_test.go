@@ -26,9 +26,6 @@ func TestProcessManagerStart(t *testing.T) {
 	runBinary := findRunBinary(t)
 	mockagentBinary := findMockagentBinary(t)
 
-	// Set MASS_RUN_BINARY env var so ProcessManager finds the run binary.
-	t.Setenv("MASS_RUN_BINARY", runBinary)
-
 	// Setup test environment.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -72,6 +69,7 @@ func TestProcessManagerStart(t *testing.T) {
 	// Create AgentManager and ProcessManager.
 	agentMgr := NewAgentRunManager(store, slog.Default())
 	procMgr := NewProcessManager(agentMgr, store, socketPath, bundleRoot, slog.Default(), "info", "pretty")
+	procMgr.RunBinary = runBinary
 
 	// Create a workspace with a ready path.
 	workspacePath := filepath.Join(workspaceRoot, "test-workspace")
