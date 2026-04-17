@@ -1,7 +1,7 @@
 # 配置规范
 
 本配置文件包含对 agent 执行[标准操作](runtime-spec.md#操作)所需的元数据，
-包括 ACP agent 进程的启动方式、环境变量注入、ACP 会话参数等。
+包括 agent 进程的启动方式、环境变量注入、会话参数等。
 
 本文档定义了规范的权威 schema。
 设计思路详见[设计文档](design.md)。
@@ -28,7 +28,7 @@
   * **`name`** (string, REQUIRED) 是该 agent 实例的名称。
     这是实例名（如 "auth-refactor-agent"），
     而非 agent 类型名（如 "claude"）。
-    Agent 类型信息体现在 `acpAgent.process` 的具体值中。
+    Agent 类型信息体现在 `process` 的具体值中。
     这与 OCI 一致 —— config.json 描述的是一个具体的容器实例，而非镜像。
 
   * **`annotations`** (map[string]string, OPTIONAL) 包含任意元数据。
@@ -62,8 +62,8 @@
   agent-run resolves this path at `create` time:
   1. Joins the bundle directory with `agentRoot.path` to get an absolute path.
   2. Calls `EvalSymlinks` to follow any symlink — producing a canonical path.
-  3. Uses the resolved path as both `cmd.Dir` (agent process working directory)
-     and the `cwd` parameter of ACP `session/new`.
+  3. Uses the resolved path as `cmd.Dir` (agent process working directory)
+     and passes it to the protocol-specific bootstrap (e.g., ACP `session/new cwd`).
 
   **与 OCI `root` 的对比**：
 
@@ -98,39 +98,37 @@ Bundle directory layout after agentd prepares it:
 ```
 
 agent-run resolves `workspace` → `/var/lib/agentd/workspaces/ws-def456/` and uses
-that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
+that canonical path as the agent process working directory.
 
-## ACP Agent
+## Client Protocol
 
-* **`acpAgent`** (object, REQUIRED) 描述 ACP agent 的完整运行时配置。
-  字段名中显式包含 "acp"，表明本规范仅支持 [ACP 协议][acp] agent。
+* **`clientProtocol`** (string, REQUIRED) 指定 agent-run 与 agent 进程之间的通信协议。
+  决定了 bootstrap 握手、prompt 投递、事件流的处理方式。
 
-  包含三个部分：
-  - `systemPrompt` —— agent 的角色定义和能力约束（来自 runtimeClass 配置 + 编排器请求）
-  - `process` —— 如何启动 agent 进程（来自 runtimeClass 配置）
-  - `session` —— ACP `session/new` 参数（来自 runtimeClass 配置 + 编排器请求）
+  当前支持的取值：
 
-### System Prompt
+  | 值 | 说明 |
+  |------|------|
+  | `"acp"` | 通过 stdio 上的 [ACP 协议][acp] 通信。执行 ACP initialize 握手 → session/new → prompt |
 
-* **`acpAgent.systemPrompt`** (string, OPTIONAL) 是 agent 的角色定义和能力约束。
-  它属于 session bootstrap 配置，而不是外部工作 turn。
-  Runtime 在 `Create` 阶段必须先落实这份 bootstrap 语义，再对外暴露可接收
-  `session/prompt` 的 `idle` 状态。
+  此字段为枚举类型，未来可扩展支持其他 agent 协议（如原生 CLI 协议）。
+  新增协议只需在此枚举中添加新值，并在 agent-run 内部实现对应的 Protocol 适配器。
 
-  当前 ACP v0.6.3 的 `NewSessionRequest` 还没有 `systemPrompt` 字段，
-  因此 runtime 需要在内部把该字段翻译为 ACP 兼容的 bootstrap 流程。
-  这个兼容步骤属于创建期的内部 session 建立，不改变上层看到的
-  “`session/new` 负责配置、`session/prompt` 负责工作” 合约。
+### 示例
 
-  这是 agent 的核心身份属性，与 `process`（如何启动）和 `session`（会话资源）平级。
+```json
+{
+  "clientProtocol": "acp"
+}
+```
 
-### Process
+## Process
 
-* **`acpAgent.process`** (object, REQUIRED) 指定如何启动 ACP agent 进程。
+* **`process`** (object, REQUIRED) 指定如何启动 agent 进程。
   运行时使用这些字段进行 fork/exec。
-  这些字段通常由 agentd 从 runtimeClass 配置中填充。
+  此配置与 `clientProtocol` 无关——所有协议共享相同的进程启动方式。
 
-  * **`command`** (string, REQUIRED) 是 ACP agent 可执行文件。
+  * **`command`** (string, REQUIRED) 是 agent 可执行文件。
     类似于 OCI 的 `process.args[0]`。
 
   * **`args`** (array of strings, OPTIONAL) 是命令行参数。
@@ -143,41 +141,75 @@ that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
     确保 agent 进程始终拥有完整的系统环境（`PATH`、`HOME` 等），
     同时 config.json 中指定的变量优先级更高。
 
-#### 示例
+### 示例
 
 ```json
 {
-  "acpAgent": {
-    "process": {
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/claude-code-acp"],
-      "env": [
-        "ANTHROPIC_API_KEY=sk-ant-xxx",
-        "GITHUB_TOKEN=ghp_xxx"
-      ]
-    }
+  "process": {
+    "command": "npx",
+    "args": ["-y", "@anthropic-ai/claude-code-acp"],
+    "env": [
+      "ANTHROPIC_API_KEY=sk-ant-xxx",
+      "GITHUB_TOKEN=ghp_xxx"
+    ]
   }
 }
 ```
 
-### Session
+## Session
 
-* **`acpAgent.session`** (object, OPTIONAL) 指定 ACP bootstrap 所需的会话参数。
-  在启动进程并完成 ACP `initialize` 握手后，
-  runtime 使用这些字段建立 ACP session，并在同一 bootstrap 过程中落实
-  `acpAgent.systemPrompt` 语义。
+* **`session`** (object, OPTIONAL) 指定会话级配置，包括系统提示、权限策略和 MCP 服务。
+  这些配置在 bootstrap 阶段生效，具体投递方式由 `clientProtocol` 决定。
 
-  字段定义与 [ACP 协议规范][acp] 的 `NewSessionRequest` 对齐：
+### System Prompt
 
-  * **`mcpServers`** (array of McpServer, OPTIONAL) 是 agent 可用的 MCP 服务列表。
-    对应 ACP `session/new` 的 `mcpServers` 参数。默认为 `[]`。
+* **`session.systemPrompt`** (string, OPTIONAL) 是 agent 的角色定义和能力约束。
+  它属于 session bootstrap 配置，而不是外部工作 turn。
+  Runtime 在 `Create` 阶段必须先落实这份 bootstrap 语义，再对外暴露
+  `idle` 状态。
 
-  注意：resolved `cwd` 由 runtime 通过解析 `agentRoot.path`（相对于 bundle 目录）得到，
-  `systemPrompt` 作为 bootstrap 配置与这里的字段一起生效，但不要求在 config.json 中
-  伪装成独立的外部工作 turn。
+  投递方式取决于 `clientProtocol`：
 
-  如果 ACP 协议未来添加新的 `session/new` 参数，将直接在此处扩展。
-  这确保 MASS Runtime Spec 与 ACP 协议保持对齐。
+  | clientProtocol | systemPrompt 投递方式 |
+  |----------------|----------------------|
+  | `acp` | 通过 ACP bootstrap 流程（session/new 或首条 prompt） |
+
+  未来新增协议时，需在此表中补充对应的投递方式。
+
+  这是 agent 的核心身份属性，与 `process`（如何启动）平级。
+
+### Permissions
+
+* **`session.permissions`** (string, OPTIONAL) 指定 agent-run 处理 agent 发起的
+  `fs/*` / `terminal/*` 请求时的权限策略。
+  默认值为 `"approve_all"`。
+
+  取值：
+
+  | 值 | 行为 |
+  |------|------|
+  | `"approve_all"` | 所有 fs/terminal 操作自动批准 |
+  | `"approve_reads"` | 只读操作批准，写操作返回 deny |
+  | `"deny_all"` | 所有操作返回 deny |
+
+  策略在 session 创建时确定，运行时不可更改。
+  不支持权限模型的 `clientProtocol` 会忽略此字段。
+
+### MCP Servers
+
+* **`session.mcpServers`** (array of McpServer, OPTIONAL) 是 agent 可用的 MCP 服务列表。
+  默认为 `[]`。
+
+  注入方式取决于 `clientProtocol`：
+
+  | clientProtocol | MCP 注入方式 |
+  |----------------|-------------|
+  | `acp` | 通过 ACP session/new 的 mcpServers 参数 |
+
+  未来新增协议时，需在此表中补充对应的注入方式。
+
+  注意：agentd 在创建每个 AgentRun 时，会自动注入一个名为 `workspace` 的 stdio MCP server，
+  提供 `workspace_status` 和 `workspace_send` 工具。该 server 无需在 config.json 中显式声明。
 
 #### McpServer
 
@@ -196,24 +228,19 @@ that canonical path for both `cmd.Dir` and ACP `session/new cwd`.
   * **`args`** ([]string, REQUIRED) 是命令行参数。必须显式指定为数组，不会做 shell 拆分。
   * **`env`** ([]EnvVar, REQUIRED) 是额外环境变量。格式为 `[{"name": "KEY", "value": "VALUE"}]`。
 
-注意：agentd 在创建每个 AgentRun 时，会自动注入一个名为 `workspace` 的 stdio MCP server，
-提供 `workspace_status` 和 `workspace_send` 工具。该 server 无需在 config.json 中显式声明。
-
 #### 示例
 
 HTTP MCP server：
 
 ```json
 {
-  "acpAgent": {
-    "session": {
-      "mcpServers": [
-        {
-          "type": "http",
-          "url": "http://localhost:3000/mcp"
-        }
-      ]
-    }
+  "session": {
+    "mcpServers": [
+      {
+        "type": "http",
+        "url": "http://localhost:3000/mcp"
+      }
+    ]
   }
 }
 ```
@@ -222,49 +249,23 @@ stdio MCP server：
 
 ```json
 {
-  "acpAgent": {
-    "session": {
-      "mcpServers": [
-        {
-          "type": "stdio",
-          "name": "my-tool",
-          "command": "/usr/local/bin/my-mcp-server",
-          "args": ["--port", "0"],
-          "env": [{"name": "API_KEY", "value": "xxx"}]
-        }
-      ]
-    }
+  "session": {
+    "mcpServers": [
+      {
+        "type": "stdio",
+        "name": "my-tool",
+        "command": "/usr/local/bin/my-mcp-server",
+        "args": ["--port", "0"],
+        "env": [{"name": "API_KEY", "value": "xxx"}]
+      }
+    ]
   }
-}
-```
-
-## Permissions
-
-* **`permissions`** (string, OPTIONAL) 指定 agent-run 处理 agent 发起的
-  `fs/*` / `terminal/*` 请求时的权限策略。
-  默认值为 `"approve_all"`。
-
-  取值：
-
-  | 值 | 行为 |
-  |------|------|
-  | `"approve_all"` | 所有 fs/terminal 操作自动批准 |
-  | `"approve_reads"` | 只读操作批准，写操作返回 deny |
-  | `"deny_all"` | 所有操作返回 deny |
-
-  策略在 session 创建时确定，运行时不可更改。
-
-### 示例
-
-```json
-{
-  "permissions": "approve_all"
 }
 ```
 
 ## 完整示例
 
-### 带角色设定的 Agent
+### 带角色设定的 ACP Agent
 
 agentd 生成的完整 config.json（runtimeClass "claude" 解析后）：
 
@@ -283,58 +284,31 @@ agentd 生成的完整 config.json（runtimeClass "claude" 解析后）：
     "path": "workspace"
   },
 
-  "acpAgent": {
+  "clientProtocol": "acp",
+
+  "process": {
+    "command": "npx",
+    "args": ["-y", "@anthropic-ai/claude-code-acp"],
+    "env": [
+      "ANTHROPIC_API_KEY=sk-ant-xxx",
+      "GITHUB_TOKEN=ghp_xxx"
+    ]
+  },
+
+  "session": {
     "systemPrompt": "你是专注于安全和认证系统的高级后端工程师。请遵循项目的编码规范。",
-    "process": {
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/claude-code-acp"],
-      "env": [
-        "ANTHROPIC_API_KEY=sk-ant-xxx",
-        "GITHUB_TOKEN=ghp_xxx"
-      ]
-    },
-    "session": {
-      "mcpServers": [
-        {
-          "type": "http",
-          "url": "http://localhost:3000/mcp"
-        }
-      ]
-    }
-  },
-
-  "permissions": "approve_all"
-}
-```
-
-启动后，agent 等待编排器通过 ARI `agentrun/prompt` 发送任务。
-
-### 空闲 Agent（workspace 成员）
-
-runtimeClass "gemini" 解析后：
-
-```json
-{
-  "massVersion": "0.1.0",
-
-  "metadata": {
-    "name": "code-reviewer"
-  },
-
-  "agentRoot": {
-    "path": "workspace"
-  },
-
-  "acpAgent": {
-    "systemPrompt": "你是代码审查专家，负责检查代码变更的正确性、安全性和风格。",
-    "process": {
-      "command": "gemini"
-    }
+    "permissions": "approve_all",
+    "mcpServers": [
+      {
+        "type": "http",
+        "url": "http://localhost:3000/mcp"
+      }
+    ]
   }
 }
 ```
 
-启动后，agent 等待 workspace 中其他 agent 的审查请求（通过 `workspace/send` 或 ARI `agentrun/prompt`）。
+启动后，agent 等待编排器通过 ARI `agentrun/prompt` 发送任务。
 
 ### 最小配置
 
@@ -343,11 +317,10 @@ runtimeClass "gemini" 解析后：
   "massVersion": "0.1.0",
   "metadata": { "name": "quick-task" },
   "agentRoot": { "path": "workspace" },
-  "acpAgent": {
-    "process": {
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/claude-code-acp"]
-    }
+  "clientProtocol": "acp",
+  "process": {
+    "command": "npx",
+    "args": ["-y", "@anthropic-ai/claude-code-acp"]
   }
 }
 ```
@@ -356,11 +329,7 @@ runtimeClass "gemini" 解析后：
 
 本规范有意保持精简。已知的未来扩展点：
 
-- `acpAgent.process.user` —— 以特定用户身份运行 agent（agentd 以 root 运行时可能需要）
-- `acpAgent.session.*` —— 随 ACP 协议 `session/new` 演进自动扩展（注意：`systemPrompt` 和 `cwd` 已提升到更高层级）
-- `hooks` —— 如果 agent 产生基础设施级别的准备需求（如本地模型的 GPU 分配）
-- `resources` —— 如果需要资源限制
-- `isolation` —— 如果需要沙箱支持
+- 新 `clientProtocol` 值 —— 随新 agent 协议的支持添加
 
 这些字段已预留但尚未定义，将在真实需求出现时添加。
 

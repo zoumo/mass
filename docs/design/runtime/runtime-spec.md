@@ -16,13 +16,13 @@ The state of an agent includes the following properties:
   with which the state complies.
 * **`id`** (string, REQUIRED) is the MASS runtime object's ID.
   In agentd deployments this is the MASS `sessionId`, and it MUST be unique across all agents on this host.
-  It is distinct from any ACP `sessionId` created inside the agent protocol session.
+  It is distinct from any protocol-level session ID created inside the agent protocol session (e.g., ACP `sessionId`).
 * **`status`** (string, REQUIRED) is the runtime state of the agent.
   The value MAY be one of:
 
   * `creating`: the agent is being created (step 2 in the [lifecycle](#lifecycle))
   * `idle`: the runtime has finished the [create operation](#create),
-    the agent process is running, the ACP session has been established,
+    the agent process is running, the protocol session has been established,
     and the agent is ready to receive prompts
   * `running`: the agent is executing a prompt (processing a `session/prompt`)
   * `stopped`: the agent process has exited (step 7 in the [lifecycle](#lifecycle))
@@ -43,7 +43,7 @@ populated by the shim during runtime:
 
 * **`updatedAt`** (string, OPTIONAL) is the RFC3339Nano timestamp of the last state write.
   Updated on every `state.json` persist cycle.
-* **`session`** (object, OPTIONAL) contains ACP session metadata populated progressively
+* **`session`** (object, OPTIONAL) contains agent session metadata populated progressively
   as the agent reports notifications (e.g. `agentInfo`, `capabilities`, `availableCommands`,
   `configOptions`, `sessionInfo`, `currentMode`). See Go type `SessionState` for the full
   structure.
@@ -154,7 +154,8 @@ agentd MUST prepare the following before invoking the runtime:
 
 The runtime resolves `agentRoot.path` at `create` time by joining the bundle directory
 with the path and calling `EvalSymlinks`, yielding the canonical absolute path.
-This resolved path is used as `cmd.Dir` and as the ACP `session/new cwd` parameter.
+This resolved path is used as `cmd.Dir` and as the agent working directory
+(e.g., ACP `session/new cwd` parameter, or CLI `--cwd` argument).
 
 ### agentRoot as OCI root analogy
 
@@ -196,21 +197,24 @@ to when it ceases to exist.
 2. The agent's runtime environment MUST be created according to the configuration
    in [`config.json`](config-spec.md). If the runtime is unable to create the environment,
    it MUST [generate an error](#errors).
-3. The runtime MUST start the agent process using `acpAgent.process`
+3. The runtime MUST start the agent process using `process` config
    (command, args, env) via fork/exec.
-4. The runtime MUST complete the ACP `initialize` handshake via stdio JSON-RPC.
+4. The runtime MUST complete the protocol-specific handshake determined by `clientProtocol`.
+   For example, ACP performs `initialize` via stdio JSON-RPC; Claude Code uses CLI arguments.
    If the handshake fails, the runtime MUST [generate an error](#errors),
    kill the process, and continue the lifecycle at step 8.
-5. If `acpAgent.session` is present, the runtime MUST establish ACP bootstrap configuration
-   using the resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt` values.
-   For ACP v0.6.3, `session/new` carries the resolved `cwd` plus
-   `acpAgent.session.mcpServers`; any compatibility exchange required to realize
-   `systemPrompt` happens inside `create` before the runtime transitions to `idle`.
+5. If `session` config is present, the runtime MUST establish bootstrap configuration
+   using the resolved `cwd` and `session` values (systemPrompt, mcpServers, permissions).
+   The delivery method depends on `clientProtocol`:
+   - ACP: `session/new` carries the resolved `cwd` plus `mcpServers`; compatibility
+     exchange for `systemPrompt` happens inside `create`
+   - Claude Code: system prompt via `--system-prompt` CLI argument
+   - Others: protocol-specific mechanism
    This bootstrap work is internal session establishment, not an external user turn.
    If session creation fails, the runtime MUST [generate an error](#errors),
    kill the process, and continue the lifecycle at step 8.
 6. The agent is now in `idle` state — process is running,
-   ACP bootstrap is complete, and the agent is ready to receive prompts.
+   protocol bootstrap is complete, and the agent is ready to receive prompts.
 7. The agent process exits.
    This MAY happen due to error, the runtime's [`kill`](#kill) operation being invoked,
    or the process terminating on its own.
@@ -219,8 +223,8 @@ to when it ceases to exist.
 
 **Key difference from OCI**: In OCI, `create` sets up the environment but does NOT
 run the user program — that happens at `start`. In MASS, `create` both starts the
-process and completes ACP initialization, because ACP is the runtime's core protocol.
-If ACP handshake fails, the agent instance is not considered successfully created.
+process and completes the protocol handshake (determined by `clientProtocol`).
+If the handshake fails, the agent instance is not considered successfully created.
 The `start` operation is currently a no-op, reserved for future use.
 
 ### Lifecycle Diagram
@@ -232,7 +236,7 @@ The `start` operation is currently a no-op, reserved for future use.
       ┌──────────┐
       │ creating  │
       └────┬──────┘
-           │ process started + ACP initialized + session established
+           │ process started + protocol initialized + session established
            ▼
       ┌──────────┐          session/prompt           ┌──────────┐
       │  idle     │ ──────────────────────────────► │ running   │
@@ -254,18 +258,18 @@ The `start` operation is currently a no-op, reserved for future use.
 The design set uses the following cross-layer mapping. `status` in this document is the
 runtime-owned state, not the mass daemon session state, and not the ACP peer's session identifier.
 
-| MASS runtime `status` | agentd AgentRun state | Process status | ACP `sessionId` authority | Notes |
+| MASS runtime `status` | agentd AgentRun state | Process status | Protocol session ID authority | Notes |
 |---|---|---|---|---|
-| `creating` | `creating` — bootstrap in progress | process may be absent or starting | none yet, or not yet durable | agentd has allocated the AgentRun identity, but ACP bootstrap is not complete. |
-| `idle` | `idle` | running | ACP peer may now return its own `sessionId`; it is subordinate protocol state | Runtime bootstrap is complete and the agent is ready to receive prompts. |
-| `running` | `running` | running | same ACP `sessionId` established during bootstrap | External work is flowing through `agentrun/prompt`. |
-| `stopped` | `stopped` | stopped or exited | last known ACP `sessionId` is historical only | Process has exited; runtime state is terminal until delete. |
-| `error` | `error` | stopped or absent | last known ACP `sessionId` is historical only | Unrecoverable failure; agent must be restarted or deleted. |
+| `creating` | `creating` — bootstrap in progress | process may be absent or starting | none yet, or not yet durable | agentd has allocated the AgentRun identity, but protocol bootstrap is not complete. |
+| `idle` | `idle` | running | Protocol peer may now return its own session ID; it is subordinate protocol state | Runtime bootstrap is complete and the agent is ready to receive prompts. |
+| `running` | `running` | running | same session ID established during bootstrap | External work is flowing through `agentrun/prompt`. |
+| `stopped` | `stopped` | stopped or exited | last known session ID is historical only | Process has exited; runtime state is terminal until delete. |
+| `error` | `error` | stopped or absent | last known session ID is historical only | Unrecoverable failure; agent must be restarted or deleted. |
 
 Identity authority stays split:
 
 - AgentRun identity `(workspace, name)` is allocated and owned by mass/ARI and names the runtime object.
-- ACP `sessionId` is allocated by the ACP peer during bootstrap and only identifies the inner protocol session.
+- Protocol session ID (e.g., ACP `sessionId`) is allocated by the agent peer during bootstrap and only identifies the inner protocol session.
 - Implementations MUST NOT imply that the two identifiers are equal, interchangeable, or durably mirrored unless later persistence work explicitly records that mapping.
 
 ## Errors
@@ -303,9 +307,9 @@ and a new agent MUST NOT be created.
 This operation MUST create a new agent by:
 1. Reading [`config.json`](config-spec.md) from the bundle directory
 2. Resolving the agent root: `filepath.Join(bundleDir, agentRoot.path)` + `EvalSymlinks` → canonical absolute path
-3. Starting the agent process using `acpAgent.process` (fork/exec, with `cmd.Dir` set to the resolved path)
-4. Completing ACP `initialize` handshake (stdio JSON-RPC)
-5. Establishing ACP bootstrap configuration from the resolved `cwd`, `acpAgent.session`, and `acpAgent.systemPrompt`
+3. Starting the agent process using `process` config (fork/exec, with `cmd.Dir` set to the resolved path)
+4. Completing the protocol-specific handshake determined by `clientProtocol`
+5. Establishing session bootstrap configuration from the resolved `cwd` and `session` config (systemPrompt, mcpServers, permissions)
 6. Writing state.json
 
 Any changes made to the [`config.json`](config-spec.md) file after this operation
@@ -320,7 +324,7 @@ Attempting to `start` an agent that is not [`idle`](#state) MUST have no effect
 on the agent and MUST [generate an error](#errors).
 
 In the current specification, `create` already starts the agent process and
-establishes the ACP session. `start` is a no-op, reserved for future use
+establishes the protocol session. `start` is a no-op, reserved for future use
 and for API compatibility with OCI's create/start separation.
 
 ### Kill
@@ -355,33 +359,33 @@ The runtime reads `config.json` from the bundle directory. Fields:
   "massVersion": "0.1.0",
   "metadata": { "name": "session-abc123" },
   "agentRoot": { "path": "workspace" },
-  "acpAgent": {
-    "systemPrompt": "你是后端工程师",
-    "process": {
-      "command": "npx",
-      "args": ["-y", "@anthropic-ai/claude-code-acp"],
-      "env": ["ANTHROPIC_API_KEY=sk-ant-xxx"]
-    },
-    "session": {
-      "mcpServers": [
-        { "type": "http", "url": "http://localhost:3000/mcp" }
-      ]
-    }
+  "clientProtocol": "acp",
+  "process": {
+    "command": "npx",
+    "args": ["-y", "@anthropic-ai/claude-code-acp"],
+    "env": ["ANTHROPIC_API_KEY=sk-ant-xxx"]
   },
-  "permissions": "approve_all"
+  "session": {
+    "systemPrompt": "你是后端工程师",
+    "permissions": "approve_all",
+    "mcpServers": [
+      { "type": "http", "url": "http://localhost:3000/mcp" }
+    ]
+  }
 }
 ```
 
-* `agentRoot.path` → 相对路径，runtime 在 create 时解析为绝对路径（EvalSymlinks），用作 cmd.Dir 和 ACP session/new cwd
-* `acpAgent.process` → fork/exec agent 进程
-* `acpAgent.systemPrompt` + `acpAgent.session` → ACP bootstrap 配置；`session/new` 承载 resolved cwd 与 session 字段，兼容性转换必须在对外暴露 `idle` 状态前完成
-* `permissions` → fs/terminal 权限策略
+* `agentRoot.path` → 相对路径，runtime 在 create 时解析为绝对路径（EvalSymlinks），用作 cmd.Dir 和 agent 工作目录
+* `clientProtocol` → 选择 agent-run 与 agent 进程之间的通信协议，默认 `"acp"`
+* `process` → fork/exec agent 进程（所有协议共享）
+* `session.systemPrompt` + `session.mcpServers` → 会话 bootstrap 配置，投递方式由 `clientProtocol` 决定
+* `session.permissions` → fs/terminal 权限策略
 
 详见 [config.md](config-spec.md)。
 
 ## fs / terminal 权限策略
 
-agent 会向 runtime（ACP client）发起 `fs/*` / `terminal/*` 请求。
+agent 会向 runtime 发起 `fs/*` / `terminal/*` 请求。
 runtime 按创建时指定的权限策略处理：
 
 | 策略 | 行为 |
@@ -390,7 +394,8 @@ runtime 按创建时指定的权限策略处理：
 | `approve_reads` | 只读操作批准，写操作返回 deny |
 | `deny_all` | 所有操作返回 deny |
 
-策略通过 config.json 的 `permissions` 字段指定，运行时不可更改。
+策略通过 config.json 的 `session.permissions` 字段指定，运行时不可更改。
+不支持权限模型的 `clientProtocol` 会忽略此字段。
 
 ## Typed Event Stream
 
@@ -398,27 +403,27 @@ Runtime 必须产出结构化的 typed event stream，供上层消费。
 
 ### 事件类型
 
-| 事件类型 | 来源 | 说明 |
-|---------|------|------|
-| `agent_thinking` | ACP `thought_message_chunk` | Agent 的推理/思考过程 |
-| `agent_message` | ACP `agent_message_chunk` | Agent 的回复文本片段 |
-| `user_message` | ACP `user_message_chunk` / `session/prompt` | 用户输入回显 |
-| `tool_call` | ACP `tool_call` | 工具调用开始 |
-| `tool_result` | ACP `tool_call_update` | 工具调用完成/失败 |
-| `plan` | ACP `plan` / `plan_update` | Agent 执行计划及状态更新 |
-| `turn_start` | prompt 开始处理 | 标记一个 turn 的开始 |
-| `turn_end` | ACP prompt_response | 标记一个 turn 的结束 |
-| `error` | ACP 错误或进程异常 | 错误信息 |
-| `runtime_update` | ACP metadata updates / 进程状态变更 | 运行时状态与 session 元数据更新（status, availableCommands, currentMode, configOptions, sessionInfo, usage） |
+| 事件类型 | 来源（协议无关） | ACP 对应 | 说明 |
+|---------|----------------|---------|------|
+| `agent_thinking` | agent 思考通知 | `thought_message_chunk` | Agent 的推理/思考过程 |
+| `agent_message` | agent 消息通知 | `agent_message_chunk` | Agent 的回复文本片段 |
+| `user_message` | prompt 回显 | `user_message_chunk` / `session/prompt` | 用户输入回显 |
+| `tool_call` | 工具调用通知 | `tool_call` | 工具调用开始 |
+| `tool_result` | 工具结果通知 | `tool_call_update` | 工具调用完成/失败 |
+| `plan` | 计划通知 | `plan` / `plan_update` | Agent 执行计划及状态更新 |
+| `turn_start` | prompt 开始处理 | — | 标记一个 turn 的开始 |
+| `turn_end` | prompt 完成 | prompt_response | 标记一个 turn 的结束 |
+| `error` | 错误或进程异常 | ACP 错误 | 错误信息 |
+| `runtime_update` | 元数据更新 / 进程状态变更 | metadata updates | 运行时状态与 session 元数据更新（status, availableCommands, currentMode, configOptions, sessionInfo, usage） |
 
 > **Content Block Streaming**：`agent_message`、`agent_thinking`、`user_message` 三种事件
 > 携带 `status` 字段（`start` / `streaming` / `end`）标识 content block 生命周期。
 > 详见 [run-rpc-spec.md § Content Block Streaming](run-rpc-spec.md#content-block-streaming)。
 
-> **Payload 保留策略**：所有事件类型完整保留 ACP 原始字段（包括 `_meta`），
-> JSON wire shape 与 ACP SDK marshal 结果一致，仅省略 `sessionUpdate` 鉴别器字段。
-> union 类型（如 `ContentBlock`、`ToolCallContent`）使用 flat JSON shape + `type` 鉴别器，
-> 与 ACP SDK wire format 一致。
+> **Payload 保留策略**：事件 payload 尽可能保留协议原始字段（包括 `_meta`）。
+> 对于 ACP 协议，JSON wire shape 与 ACP SDK marshal 结果一致，仅省略 `sessionUpdate` 鉴别器字段。
+> 其他协议的翻译器负责将原生事件映射到上述统一事件类型。
+> union 类型（如 `ContentBlock`、`ToolCallContent`）使用 flat JSON shape + `type` 鉴别器。
 
 ### 事件持久化
 
@@ -427,17 +432,21 @@ Runtime MUST 将 typed events 追加写入 state dir 下的 `events.jsonl`，
 
 ## Agent 进程分类
 
-runtime 启动 agent 进程后，从自身角度看所有 agent 都说 ACP over stdio，
-是否经过 wrapper 是透明的：
+runtime 启动 agent 进程后，根据 `clientProtocol` 选择对应的协议适配器通信。
+不同 agent 使用不同的原生协议：
 
 ```
-# 原生 ACP agent — 直接对接
-runtime → ACP stdio → gemini（原生 ACP）
+# ACP agent — 通过 ACP 协议通信（clientProtocol: "acp"）
+runtime → ACP stdio → agent（原生 ACP 或 ACP wrapper）
 
-# ACP wrapper — 协议翻译后对接（对 runtime 透明）
-runtime → ACP stdio → claude-acp → Claude Code 原生协议
-runtime → ACP stdio → pi-acp     → pi RPC → GSD
-runtime → ACP stdio → codex-acp  → Codex 原生协议
+# Claude Code — 通过原生 JSON-RPC 协议通信（clientProtocol: "claude-code"）
+runtime → Claude Code JSON-RPC stdio → claude
+
+# Codex — 通过 Codex 原生协议通信（clientProtocol: "codex"）
+runtime → Codex stdio → codex
 ```
 
-wrapper 是否存在是 runtimeClass 配置的细节，runtime 不感知。
+每种 `clientProtocol` 对应一个 Protocol 适配器实现，负责：
+- Bootstrap 握手（如 ACP initialize、Claude Code CLI 参数注入）
+- Prompt 投递
+- 事件翻译为统一的 RuntimeEvent
