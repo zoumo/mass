@@ -471,6 +471,9 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		m.input.Reset()
 		m.input.Blur()
 
+		// Re-enable follow mode so the user sees their message and the response.
+		m.chat.ScrollToBottom()
+
 		userMsg := NewFinishedStreamingMessage(m.nextID("user"), component.RoleUser, text)
 		m.chat.AppendMessages(component.NewUserMessageItem(&m.sty, userMsg))
 
