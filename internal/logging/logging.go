@@ -64,7 +64,7 @@ func (c *LogConfig) Build() (*slog.Logger, func(), error) {
 // resolveFormat resolves "auto" to a concrete format based on whether the
 // writer is a terminal. Non-"auto" values pass through unchanged.
 func resolveFormat(format string, w io.Writer) string {
-	if strings.ToLower(format) != "auto" {
+	if !strings.EqualFold(format, "auto") {
 		return format
 	}
 	if f, ok := w.(*os.File); ok && term.IsTerminal(f.Fd()) {

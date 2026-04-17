@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // ── mock AgentRunOps ─────────────────────────────────────────────────────────
@@ -115,7 +115,7 @@ func (m *mockClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pk
 func (m *mockClient) AgentRuns() pkgariapi.AgentRunOps   { return m.agentRunOps }
 func (m *mockClient) Workspaces() pkgariapi.WorkspaceOps { return m.workspaceOps }
 func (m *mockClient) Close() error                       { return nil }
-func (m *mockClient) DisconnectNotify() <-chan struct{}   { return make(chan struct{}) }
+func (m *mockClient) DisconnectNotify() <-chan struct{}  { return make(chan struct{}) }
 
 // clientFn returns a cliutil.ClientFn that always returns mc.
 func clientFn(mc *mockClient) cliutil.ClientFn {
@@ -241,10 +241,10 @@ func TestDeleteSuccess(t *testing.T) {
 }
 
 func TestCancelSuccess(t *testing.T) {
-	var cancelled bool
+	var canceled bool
 	mc := newMockClient()
 	mc.agentRunOps.cancelFn = func(_ context.Context, key pkgariapi.ObjectKey) error {
-		cancelled = true
+		canceled = true
 		return nil
 	}
 
@@ -255,7 +255,7 @@ func TestCancelSuccess(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err)
-	assert.True(t, cancelled, "Cancel should have been called")
+	assert.True(t, canceled, "Cancel should have been called")
 }
 
 func TestRestartSuccess(t *testing.T) {

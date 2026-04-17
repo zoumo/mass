@@ -144,7 +144,6 @@ func TestClient_ConcurrentCall(t *testing.T) {
 
 	wg.Add(concurrency)
 	for i := range concurrency {
-		i := i
 		go func() {
 			defer wg.Done()
 			var r map[string]int
@@ -352,7 +351,7 @@ func TestClient_ContextCancel(t *testing.T) {
 
 	select {
 	case err := <-callDone:
-		assert.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, err, context.Canceled)
 	case <-time.After(3 * time.Second):
 		t.Fatal("canceled call did not return")
 	}
@@ -426,7 +425,6 @@ func TestClient_ResponseOutOfOrder(t *testing.T) {
 	}
 	resultsCh := make(chan callResult, 3)
 	for i := range 3 {
-		i := i
 		go func() {
 			var r string
 			err := client.Call(context.Background(), "svc/get", map[string]int{"n": i}, &r)

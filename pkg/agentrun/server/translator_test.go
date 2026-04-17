@@ -337,8 +337,8 @@ func TestEventRoundTrip(t *testing.T) {
 		Time:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		Type:      "tool_call",
 		TurnID:    "turn-001",
-		
-		Payload:   runapi.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"},
+
+		Payload: runapi.ToolCallEvent{ID: "1", Kind: "shell", Title: "ls"},
 	}
 	data, err := ev.MarshalJSON()
 	require.NoError(t, err)
@@ -358,11 +358,11 @@ func TestEventRoundTrip(t *testing.T) {
 func TestEventRoundTrip_NoTurnFields(t *testing.T) {
 	// omitempty should suppress empty turn fields.
 	ev := runapi.AgentRunEvent{
-		RunID:    "run-1",
-		Seq:      0,
-		Time:     time.Now(),
-		Type:     runapi.EventTypeAgentMessage,
-		Payload:  runapi.NewContentEvent(runapi.EventTypeAgentMessage, "", runapi.TextBlock("no turn")),
+		RunID:   "run-1",
+		Seq:     0,
+		Time:    time.Now(),
+		Type:    runapi.EventTypeAgentMessage,
+		Payload: runapi.NewContentEvent(runapi.EventTypeAgentMessage, "", runapi.TextBlock("no turn")),
 	}
 	data, err := ev.MarshalJSON()
 	require.NoError(t, err)
@@ -672,7 +672,8 @@ func TestTurnAwareEvent_ReplayOrdering(t *testing.T) {
 	}
 
 	// (3) Global seq is strictly monotonic across both turns.
-	all := append(turn1, turn2...)
+	all := append([]runapi.AgentRunEvent{}, turn1...)
+	all = append(all, turn2...)
 	for i := 1; i < len(all); i++ {
 		assert.Equal(t, all[i-1].Seq+1, all[i].Seq, "global seq must be monotonic at position %d", i)
 	}
@@ -876,8 +877,10 @@ func TestSessionMetadataHook_AllFourTypes(t *testing.T) {
 	in <- acp.SessionNotification{Update: acp.SessionUpdate{
 		ConfigOptionUpdate: &acp.SessionConfigOptionUpdate{
 			ConfigOptions: []acp.SessionConfigOption{
-				{Select: &acp.SessionConfigOptionSelect{Id: "x", Name: "X", CurrentValue: optValue2,
-					Options: acp.SessionConfigSelectOptions{Ungrouped: &ungrouped2}}},
+				{Select: &acp.SessionConfigOptionSelect{
+					Id: "x", Name: "X", CurrentValue: optValue2,
+					Options: acp.SessionConfigSelectOptions{Ungrouped: &ungrouped2},
+				}},
 			},
 		},
 	}}

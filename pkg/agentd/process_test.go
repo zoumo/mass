@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
-	runapi "github.com/zoumo/mass/pkg/agentrun/api"
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	"github.com/zoumo/mass/pkg/agentd/store"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // TestProcessManagerStart tests the full Start workflow:
@@ -47,14 +47,14 @@ func TestProcessManagerStart(t *testing.T) {
 	}
 
 	// Create meta store.
-	store, err := store.NewStore(dbPath, slog.Default())
+	metaStore, err := store.NewStore(dbPath, slog.Default())
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
-	defer store.Close()
+	defer metaStore.Close()
 
 	// Persist runtime record for "mockagent" to the DB store.
-	if err := store.SetAgent(ctx, &pkgariapi.Agent{
+	if err := metaStore.SetAgent(ctx, &pkgariapi.Agent{
 		Metadata: pkgariapi.ObjectMeta{Name: "mockagent"},
 		Spec: pkgariapi.AgentSpec{
 			Command: mockagentBinary,
@@ -67,8 +67,8 @@ func TestProcessManagerStart(t *testing.T) {
 	socketPath := filepath.Join(tmpDir, "mass.sock")
 
 	// Create AgentManager and ProcessManager.
-	agentMgr := NewAgentRunManager(store, slog.Default())
-	procMgr := NewProcessManager(agentMgr, store, socketPath, bundleRoot, slog.Default(), "info", "pretty")
+	agentMgr := NewAgentRunManager(metaStore, slog.Default())
+	procMgr := NewProcessManager(agentMgr, metaStore, socketPath, bundleRoot, slog.Default(), "info", "pretty")
 	procMgr.RunBinary = runBinary
 
 	// Create a workspace with a ready path.
@@ -83,7 +83,7 @@ func TestProcessManagerStart(t *testing.T) {
 			Path:  workspacePath,
 		},
 	}
-	if err := store.CreateWorkspace(ctx, ws); err != nil {
+	if err := metaStore.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("CreateWorkspace: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestProcessManagerStart(t *testing.T) {
 			State: apiruntime.StatusCreating,
 		},
 	}
-	if err := store.CreateAgentRun(ctx, agent); err != nil {
+	if err := metaStore.CreateAgentRun(ctx, agent); err != nil {
 		t.Fatalf("CreateAgentRun: %v", err)
 	}
 
@@ -282,7 +282,7 @@ func TestGenerateConfig(t *testing.T) {
 				Labels:    map[string]string{"team": "platform"},
 			},
 			Spec: pkgariapi.AgentRunSpec{
-				Agent: "mockagent",
+				Agent:        "mockagent",
 				SystemPrompt: "you are helpful",
 			},
 		}

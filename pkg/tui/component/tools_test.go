@@ -58,7 +58,7 @@ func TestToolMessageItem_StatusUpdate(t *testing.T) {
 	tc := ToolCall{ID: "tc-1", Name: "Read", Input: `{"path":"main.go"}`, Finished: true}
 	item := NewToolMessageItem(&sty, "item-1", tc, nil, false)
 
-	ti := item.(ToolMessageItem)
+	ti, _ := item.(ToolMessageItem)
 	ti.SetStatus(ToolStatusSuccess)
 	if ti.Status() != ToolStatusSuccess {
 		t.Fatalf("expected ToolStatusSuccess, got %d", ti.Status())

@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/pkg/agentd/store"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	"github.com/zoumo/mass/pkg/agentd/store"
 )
 
 // newTestMetaStore creates a file-backed bbolt store in a temp directory.
@@ -21,22 +21,22 @@ import (
 func newTestMetaStore(t *testing.T) *store.Store {
 	t.Helper()
 
-	store, err := store.NewStore(filepath.Join(t.TempDir(), "meta.db"), slog.Default())
+	metaStore, err := store.NewStore(filepath.Join(t.TempDir(), "meta.db"), slog.Default())
 	require.NoError(t, err, "NewStore should succeed")
-	require.NotNil(t, store, "Store should not be nil")
+	require.NotNil(t, metaStore, "Store should not be nil")
 
 	t.Cleanup(func() {
-		_ = store.Close()
+		_ = metaStore.Close()
 	})
 
-	return store
+	return metaStore
 }
 
 // newTestAgentManager creates an AgentRunManager with a temp bbolt store.
 func newTestAgentManager(t *testing.T) *AgentRunManager {
 	t.Helper()
-	store := newTestMetaStore(t)
-	return NewAgentRunManager(store, slog.Default())
+	metaStore := newTestMetaStore(t)
+	return NewAgentRunManager(metaStore, slog.Default())
 }
 
 // makeTestAgentRun builds a minimal valid Agent struct using the new model.
@@ -48,7 +48,7 @@ func makeTestAgentRun(workspace, name string) *pkgariapi.AgentRun {
 			Labels:    map[string]string{"env": "test"},
 		},
 		Spec: pkgariapi.AgentRunSpec{
-			Agent: "default",
+			Agent:        "default",
 			Description:  "test agent",
 			SystemPrompt: "you are a test",
 		},

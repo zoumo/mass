@@ -1,7 +1,6 @@
 package ndjson_test
 
 import (
-	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -58,10 +57,10 @@ func TestDecode_InvalidLineReturnsError(t *testing.T) {
 	// Second line: invalid — returns error but stream is still usable
 	err := r.Decode(&m)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ndjson.ErrInvalidJSON))
+	require.ErrorIs(t, err, ndjson.ErrInvalidJSON)
 
 	var lineErr *ndjson.InvalidLineError
-	require.True(t, errors.As(err, &lineErr))
+	require.ErrorAs(t, err, &lineErr)
 	assert.Equal(t, []byte("this is not json"), lineErr.Line)
 
 	// Third line: valid — stream recovered
@@ -91,7 +90,7 @@ garbage`
 
 	err := r.Decode(&m)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ndjson.ErrInvalidJSON))
+	require.ErrorIs(t, err, ndjson.ErrInvalidJSON)
 }
 
 func TestDecode_LargeLine(t *testing.T) {

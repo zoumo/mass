@@ -141,7 +141,7 @@ func (c *Client) Close() error {
 	// Close notifCh so the worker drains and exits.
 	// Guard against double-close with a recover.
 	func() {
-		defer func() { recover() }() //nolint:revive
+		defer func() { _ = recover() }() //nolint:revive
 		close(c.notifCh)
 	}()
 	<-c.workerDone

@@ -3,6 +3,7 @@ package jsonrpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -52,7 +53,6 @@ type Server struct {
 	interceptors []Interceptor
 	logger       *slog.Logger
 
-	mu   sync.Mutex
 	done chan struct{}
 	once sync.Once
 }
@@ -191,7 +191,8 @@ func (s *Server) dispatch(ctx context.Context, unmarshal func(any) error, info *
 // toRPCError converts a Go error to *RPCError.
 // *RPCError is used as-is; others become InternalError.
 func toRPCError(err error) *RPCError {
-	if rpcErr, ok := err.(*RPCError); ok {
+	var rpcErr *RPCError
+	if errors.As(err, &rpcErr) {
 		return rpcErr
 	}
 	return ErrInternal(err.Error())

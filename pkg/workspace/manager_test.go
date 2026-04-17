@@ -13,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/agentd/store"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // TestWorkspaceErrorStructure verifies WorkspaceError has all required fields.
@@ -194,7 +194,7 @@ func TestWorkspaceManagerPrepareGitSource(t *testing.T) {
 		// Use a small, fast repository for testing.
 		spec := WorkspaceSpec{
 			MassVersion: "0.1.0",
-			Metadata:   WorkspaceMetadata{Name: "test-git-workspace"},
+			Metadata:    WorkspaceMetadata{Name: "test-git-workspace"},
 			Source: Source{
 				Type: SourceTypeGit,
 				Git:  GitSource{URL: "https://github.com/octocat/Hello-World.git", Depth: 1},
@@ -233,7 +233,7 @@ func TestWorkspaceManagerPrepareGitSource(t *testing.T) {
 		// Spec missing required git URL.
 		spec := WorkspaceSpec{
 			MassVersion: "0.1.0",
-			Metadata:   WorkspaceMetadata{Name: "invalid-git"},
+			Metadata:    WorkspaceMetadata{Name: "invalid-git"},
 			Source: Source{
 				Type: SourceTypeGit,
 				Git:  GitSource{URL: ""}, // Missing required URL
@@ -269,7 +269,7 @@ func TestWorkspaceManagerPrepareEmptyDirSource(t *testing.T) {
 
 	spec := WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   WorkspaceMetadata{Name: "test-empty-workspace"},
+		Metadata:    WorkspaceMetadata{Name: "test-empty-workspace"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
 			EmptyDir: EmptyDirSource{},
@@ -312,7 +312,7 @@ func TestWorkspaceManagerPrepareLocalSource(t *testing.T) {
 
 	spec := WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   WorkspaceMetadata{Name: "test-local-workspace"},
+		Metadata:    WorkspaceMetadata{Name: "test-local-workspace"},
 		Source: Source{
 			Type:  SourceTypeLocal,
 			Local: LocalSource{Path: localDir},
@@ -355,8 +355,8 @@ func TestWorkspaceManagerPrepareInvalidSpec(t *testing.T) {
 			name: "missing massVersion",
 			spec: WorkspaceSpec{
 				MassVersion: "",
-				Metadata:   WorkspaceMetadata{Name: "test"},
-				Source:     Source{Type: SourceTypeEmptyDir},
+				Metadata:    WorkspaceMetadata{Name: "test"},
+				Source:      Source{Type: SourceTypeEmptyDir},
 			},
 			wantErr: "massVersion is required",
 		},
@@ -364,8 +364,8 @@ func TestWorkspaceManagerPrepareInvalidSpec(t *testing.T) {
 			name: "missing metadata.name",
 			spec: WorkspaceSpec{
 				MassVersion: "0.1.0",
-				Metadata:   WorkspaceMetadata{Name: ""},
-				Source:     Source{Type: SourceTypeEmptyDir},
+				Metadata:    WorkspaceMetadata{Name: ""},
+				Source:      Source{Type: SourceTypeEmptyDir},
 			},
 			wantErr: "metadata.name is required",
 		},
@@ -373,8 +373,8 @@ func TestWorkspaceManagerPrepareInvalidSpec(t *testing.T) {
 			name: "invalid source type",
 			spec: WorkspaceSpec{
 				MassVersion: "0.1.0",
-				Metadata:   WorkspaceMetadata{Name: "test"},
-				Source:     Source{Type: SourceType("invalid")},
+				Metadata:    WorkspaceMetadata{Name: "test"},
+				Source:      Source{Type: SourceType("invalid")},
 			},
 			wantErr: "source.type",
 		},
@@ -382,8 +382,8 @@ func TestWorkspaceManagerPrepareInvalidSpec(t *testing.T) {
 			name: "unsupported major version",
 			spec: WorkspaceSpec{
 				MassVersion: "1.0.0",
-				Metadata:   WorkspaceMetadata{Name: "test"},
-				Source:     Source{Type: SourceTypeEmptyDir},
+				Metadata:    WorkspaceMetadata{Name: "test"},
+				Source:      Source{Type: SourceTypeEmptyDir},
 			},
 			wantErr: "unsupported massVersion major",
 		},
@@ -426,7 +426,7 @@ func TestWorkspaceManagerPrepareHookFailureCleanup(t *testing.T) {
 		// Create a hook that will fail.
 		spec := WorkspaceSpec{
 			MassVersion: "0.1.0",
-			Metadata:   WorkspaceMetadata{Name: "hook-fail-test"},
+			Metadata:    WorkspaceMetadata{Name: "hook-fail-test"},
 			Source: Source{
 				Type:     SourceTypeEmptyDir,
 				EmptyDir: EmptyDirSource{},
@@ -485,7 +485,7 @@ func TestWorkspaceManagerPrepareHookFailureCleanup(t *testing.T) {
 
 		spec := WorkspaceSpec{
 			MassVersion: "0.1.0",
-			Metadata:   WorkspaceMetadata{Name: "local-hook-fail"},
+			Metadata:    WorkspaceMetadata{Name: "local-hook-fail"},
 			Source: Source{
 				Type:  SourceTypeLocal,
 				Local: LocalSource{Path: localDir},
@@ -684,7 +684,7 @@ func TestWorkspaceManagerLifecycleGit(t *testing.T) {
 	// Use a small, fast repository for testing.
 	spec := WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   WorkspaceMetadata{Name: "test-git-lifecycle"},
+		Metadata:    WorkspaceMetadata{Name: "test-git-lifecycle"},
 		Source: Source{
 			Type: SourceTypeGit,
 			Git:  GitSource{URL: "https://github.com/octocat/Hello-World.git", Depth: 1},
@@ -741,7 +741,7 @@ func TestWorkspaceManagerLifecycleEmptyDir(t *testing.T) {
 
 	spec := WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   WorkspaceMetadata{Name: "test-emptydir-lifecycle"},
+		Metadata:    WorkspaceMetadata{Name: "test-emptydir-lifecycle"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
 			EmptyDir: EmptyDirSource{},
@@ -789,7 +789,7 @@ func TestWorkspaceManagerLifecycleLocal(t *testing.T) {
 
 	spec := WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   WorkspaceMetadata{Name: "test-local-lifecycle"},
+		Metadata:    WorkspaceMetadata{Name: "test-local-lifecycle"},
 		Source: Source{
 			Type:  SourceTypeLocal,
 			Local: LocalSource{Path: localDir},
@@ -836,7 +836,7 @@ func TestWorkspaceManagerReferenceCounting(t *testing.T) {
 
 	spec := WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   WorkspaceMetadata{Name: "test-refcount"},
+		Metadata:    WorkspaceMetadata{Name: "test-refcount"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
 			EmptyDir: EmptyDirSource{},
@@ -908,7 +908,7 @@ func TestWorkspaceManagerCleanupHookFailure(t *testing.T) {
 	// Setup spec with failing teardown hook.
 	spec := WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   WorkspaceMetadata{Name: "test-cleanup-hook-fail"},
+		Metadata:    WorkspaceMetadata{Name: "test-cleanup-hook-fail"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
 			EmptyDir: EmptyDirSource{},
@@ -952,7 +952,7 @@ func TestWorkspaceManagerPrepareHookFailureCleanupManaged(t *testing.T) {
 	// Setup spec with failing setup hook.
 	spec := WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   WorkspaceMetadata{Name: "test-prepare-hook-fail-managed"},
+		Metadata:    WorkspaceMetadata{Name: "test-prepare-hook-fail-managed"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
 			EmptyDir: EmptyDirSource{},
@@ -1008,7 +1008,7 @@ func TestWorkspaceManagerMultipleSessions(t *testing.T) {
 
 	spec := WorkspaceSpec{
 		MassVersion: "0.1.0",
-		Metadata:   WorkspaceMetadata{Name: "test-multi-session"},
+		Metadata:    WorkspaceMetadata{Name: "test-multi-session"},
 		Source: Source{
 			Type:     SourceTypeEmptyDir,
 			EmptyDir: EmptyDirSource{},
@@ -1077,11 +1077,11 @@ func TestWorkspaceManagerMultipleSessions(t *testing.T) {
 // InitRefCounts pre-registers paths at count=0 so cleanup logic works correctly.
 func TestWorkspaceManagerInitRefCounts(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	store, err := store.NewStore(dbPath, slog.Default())
+	metaStore, err := store.NewStore(dbPath, slog.Default())
 	if err != nil {
 		t.Fatalf("NewStore failed: %v", err)
 	}
-	defer store.Close()
+	defer metaStore.Close()
 
 	ctx := context.Background()
 
@@ -1093,7 +1093,7 @@ func TestWorkspaceManagerInitRefCounts(t *testing.T) {
 		Spec:     pkgariapi.WorkspaceSpec{Source: srcJSON},
 		Status:   pkgariapi.WorkspaceStatus{Phase: pkgariapi.WorkspacePhaseReady, Path: "/var/workspaces/ws-ready-a"},
 	}
-	if err := store.CreateWorkspace(ctx, ws1); err != nil {
+	if err := metaStore.CreateWorkspace(ctx, ws1); err != nil {
 		t.Fatalf("CreateWorkspace ws-ready-a: %v", err)
 	}
 
@@ -1103,7 +1103,7 @@ func TestWorkspaceManagerInitRefCounts(t *testing.T) {
 		Spec:     pkgariapi.WorkspaceSpec{Source: srcJSON},
 		Status:   pkgariapi.WorkspaceStatus{Phase: pkgariapi.WorkspacePhaseReady, Path: "/var/workspaces/ws-ready-b"},
 	}
-	if err := store.CreateWorkspace(ctx, ws2); err != nil {
+	if err := metaStore.CreateWorkspace(ctx, ws2); err != nil {
 		t.Fatalf("CreateWorkspace ws-ready-b: %v", err)
 	}
 
@@ -1112,13 +1112,13 @@ func TestWorkspaceManagerInitRefCounts(t *testing.T) {
 		Metadata: pkgariapi.ObjectMeta{Name: "ws-pending"},
 		Status:   pkgariapi.WorkspaceStatus{Phase: pkgariapi.WorkspacePhasePending},
 	}
-	if err := store.CreateWorkspace(ctx, ws3); err != nil {
+	if err := metaStore.CreateWorkspace(ctx, ws3); err != nil {
 		t.Fatalf("CreateWorkspace ws-pending: %v", err)
 	}
 
 	// Init refcounts from DB.
 	m := NewWorkspaceManager()
-	if err := m.InitRefCounts(store); err != nil {
+	if err := m.InitRefCounts(metaStore); err != nil {
 		t.Fatalf("InitRefCounts failed: %v", err)
 	}
 

@@ -94,10 +94,10 @@ func SetupMassTest(t *testing.T) (context.Context, context.CancelFunc, pkgariapi
 			}
 			t.Log("mass stopped")
 		}
-		exec.Command("pkill", "-f", rootDir).Run()
+		_ = exec.Command("pkill", "-f", rootDir).Run()
 		os.Remove(socketPath)
 		os.RemoveAll(rootDir)
-		exec.Command("pkill", "-f", "mockagent").Run()
+		_ = exec.Command("pkill", "-f", "mockagent").Run()
 	}
 
 	return ctx, cancel, client, cleanup
@@ -140,14 +140,14 @@ func SetupMassTestWithRuntimeClass(
 
 	if err := WaitForSocket(socketPath, 10*time.Second); err != nil {
 		cancel()
-		massCmd.Process.Kill()
+		_ = massCmd.Process.Kill()
 		t.Fatalf("mass socket not ready: %v", err)
 	}
 
 	client, err := ariclient.Dial(ctx, socketPath)
 	if err != nil {
 		cancel()
-		massCmd.Process.Kill()
+		_ = massCmd.Process.Kill()
 		t.Fatalf("failed to create ARI client: %v", err)
 	}
 
@@ -158,7 +158,7 @@ func SetupMassTestWithRuntimeClass(
 	if err := client.Create(ctx, &ag); err != nil {
 		cancel()
 		client.Close()
-		massCmd.Process.Kill()
+		_ = massCmd.Process.Kill()
 		t.Fatalf("failed to register runtime %q: %v", runtimeClassName, err)
 	}
 	t.Logf("runtime registered: name=%s command=%s", ag.Metadata.Name, ag.Spec.Command)
@@ -177,7 +177,7 @@ func SetupMassTestWithRuntimeClass(
 			}
 			t.Log("mass stopped")
 		}
-		exec.Command("pkill", "-f", rootDir).Run()
+		_ = exec.Command("pkill", "-f", rootDir).Run()
 		os.Remove(socketPath)
 		os.RemoveAll(rootDir)
 	}
@@ -356,7 +356,7 @@ func StopMass(t *testing.T, cmd *exec.Cmd, socketPath string) {
 		}
 		t.Log("mass stopped")
 	}
-	exec.Command("pkill", "-f", filepath.Dir(socketPath)).Run()
+	_ = exec.Command("pkill", "-f", filepath.Dir(socketPath)).Run()
 	os.Remove(socketPath)
 }
 

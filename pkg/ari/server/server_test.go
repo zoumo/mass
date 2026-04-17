@@ -59,19 +59,19 @@ func newTestServer(t *testing.T) *testEnv {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	dbPath := filepath.Join(tmpDir, "test.db")
-	store, err := store.NewStore(dbPath, slog.Default())
+	metaStore, err := store.NewStore(dbPath, slog.Default())
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = metaStore.Close() })
 
 	mgr := workspace.NewWorkspaceManager()
 
-	agents := agentd.NewAgentRunManager(store, slog.Default())
-	processes := agentd.NewProcessManager(agents, store, filepath.Join(tmpDir, "mass.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
+	agents := agentd.NewAgentRunManager(metaStore, slog.Default())
+	processes := agentd.NewProcessManager(agents, metaStore, filepath.Join(tmpDir, "mass.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
 
 	sockPath := shortSockPath(t)
 	t.Cleanup(func() { _ = os.Remove(sockPath) })
 
-	svc := ariserver.New(mgr, agents, processes, store, tmpDir, slog.Default())
+	svc := ariserver.New(mgr, agents, processes, metaStore, tmpDir, slog.Default())
 	srv := jsonrpc.NewServer(slog.Default())
 	ariserver.Register(srv, svc)
 
@@ -103,7 +103,7 @@ func newTestServer(t *testing.T) *testEnv {
 	return &testEnv{
 		srv:       srv,
 		client:    client,
-		store:     store,
+		store:     metaStore,
 		processes: processes,
 		agents:    agents,
 	}
@@ -148,9 +148,9 @@ func createAndWaitWorkspace(t *testing.T, client *ariclient.RawClient, name stri
 
 // seedAgent inserts a raw agent record directly into the store, bypassing the
 // background agent-run start. Used to prime DB state for handler-only tests.
-func seedAgent(t *testing.T, store *store.Store, wsName, name string, state apiruntime.Status) {
+func seedAgent(t *testing.T, metaStore *store.Store, wsName, name string, state apiruntime.Status) {
 	t.Helper()
-	err := store.CreateAgentRun(context.Background(), &pkgariapi.AgentRun{
+	err := metaStore.CreateAgentRun(context.Background(), &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{
 			Name:      name,
 			Workspace: wsName,

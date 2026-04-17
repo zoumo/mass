@@ -16,8 +16,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	acpruntime "github.com/zoumo/mass/pkg/agentrun/runtime/acp"
-	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	spec "github.com/zoumo/mass/pkg/runtime-spec"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 var mockAgentBin string
@@ -61,8 +61,8 @@ func TestRuntimeSuite(t *testing.T) {
 func newTestConfig(name string) apiruntime.Config {
 	return apiruntime.Config{
 		MassVersion: "0.1.0",
-		Metadata: apiruntime.Metadata{Name: name},
-		AgentRoot:  apiruntime.AgentRoot{Path: "workspace"},
+		Metadata:    apiruntime.Metadata{Name: name},
+		AgentRoot:   apiruntime.AgentRoot{Path: "workspace"},
 		AcpAgent: apiruntime.AcpAgent{
 			Process: apiruntime.AcpProcess{
 				Command: mockAgentBin,
@@ -508,7 +508,7 @@ func (s *RuntimeSuite) TestWriteState_FlushesEventCounts() {
 	// Register a mock eventCountsFn.
 	mgr.SetEventCountsFn(func() map[string]int {
 		return map[string]int{
-			"state_change":       3,
+			"state_change":        3,
 			"agent_message_chunk": 7,
 		}
 	})
@@ -603,5 +603,5 @@ func (s *RuntimeSuite) TestMetadataHookChain_ConfigOption() {
 
 	// (5) Verify EventCounts also flushed on Kill write.
 	s.Require().NotNil(postKill.EventCounts, "EventCounts must be present after Kill")
-	s.Greater(postKill.EventCounts["config_option"], 0)
+	s.Positive(postKill.EventCounts["config_option"])
 }

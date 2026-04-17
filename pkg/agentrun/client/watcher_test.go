@@ -208,7 +208,7 @@ func TestWatcher_SlowConsumer_DropsEvent(t *testing.T) {
 done:
 	assert.LessOrEqual(t, received, 256,
 		"received events must not exceed result channel buffer size")
-	assert.Greater(t, received, 0,
+	assert.Positive(t, received,
 		"at least some events should be delivered")
 	t.Logf("delivered %d/%d events (dropped %d)", received, total, total-received)
 }

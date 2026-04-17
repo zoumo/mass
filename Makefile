@@ -1,30 +1,39 @@
 BIN_DIR := bin
 
-.PHONY: build clean mass massctl test lint coverage
+# Auto-discover commands: each subdirectory under cmd/ with a main.go is a command
+COMMANDS := $(notdir $(patsubst %/main.go,%,$(wildcard cmd/*/main.go)))
 
-build: mass massctl
+.PHONY: build
+build: test $(COMMANDS)
 
-mass:
-	go build -o $(BIN_DIR)/mass ./cmd/mass
+.PHONY: $(COMMANDS)
+$(COMMANDS):
+	go build -o $(BIN_DIR)/$@ ./cmd/$@
 
-massctl:
-	go build -o $(BIN_DIR)/massctl ./cmd/massctl
-
-test:
+.PHONY: test
+test: fmt lint
 	go test ./...
 
-GOLANGCI_LINT ?= $(shell find "$${HOME}/.local/share/mise/installs/golangci-lint" -name golangci-lint -type f 2>/dev/null | head -1)
-ifeq ($(GOLANGCI_LINT),)
-GOLANGCI_LINT := golangci-lint
-endif
+GOLANGCI_LINT_VERSION ?= v2.11.4
+GOLANGCI_LINT := $(shell go env GOBIN)/golangci-lint
 
-lint:
+.PHONY: fmt
+fmt: $(GOLANGCI_LINT)
+	$(GOLANGCI_LINT) fmt ./...
+
+.PHONY: lint
+lint: $(GOLANGCI_LINT)
 	$(GOLANGCI_LINT) run ./...
 
+$(GOLANGCI_LINT):
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+
+.PHONY: coverage
 coverage:
 	go test -coverprofile=coverage.out ./...
 	@echo "Coverage report written to coverage.out"
 	@go tool cover -func=coverage.out | tail -1
 
+.PHONY: clean
 clean:
 	rm -rf $(BIN_DIR) coverage.out

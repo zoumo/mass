@@ -11,11 +11,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	"github.com/zoumo/mass/pkg/agentd/store"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	spec "github.com/zoumo/mass/pkg/runtime-spec"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
-	"github.com/zoumo/mass/pkg/agentd/store"
 )
 
 // setupRecoveryTest creates a ProcessManager backed by a real meta.Store with
@@ -25,19 +25,19 @@ func setupRecoveryTest(t *testing.T) (*ProcessManager, *store.Store) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "meta.db")
 
-	store, err := store.NewStore(dbPath, slog.Default())
+	metaStore, err := store.NewStore(dbPath, slog.Default())
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = metaStore.Close() })
 
-	agents := NewAgentRunManager(store, slog.Default())
+	agents := NewAgentRunManager(metaStore, slog.Default())
 
-	pm := NewProcessManager(agents, store, filepath.Join(tmpDir, "mass.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
-	return pm, store
+	pm := NewProcessManager(agents, metaStore, filepath.Join(tmpDir, "mass.sock"), filepath.Join(tmpDir, "bundles"), slog.Default(), "info", "pretty")
+	return pm, metaStore
 }
 
 // createRecoveryTestAgent creates an agent record in the given state with the given socket path.
 // Returns the (workspace, name) pair.
-func createRecoveryTestAgent(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state apiruntime.Status, socketPath string) (string, string) {
+func createRecoveryTestAgent(t *testing.T, ctx context.Context, metaStore *store.Store, workspace, name string, state apiruntime.Status, socketPath string) (string, string) {
 	t.Helper()
 	agent := &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{
@@ -48,13 +48,13 @@ func createRecoveryTestAgent(t *testing.T, ctx context.Context, store *store.Sto
 			Agent: "default",
 		},
 		Status: pkgariapi.AgentRunStatus{
-			State:          state,
+			State:         state,
 			RunSocketPath: socketPath,
 			RunStateDir:   "/tmp/run-state-" + name,
 			RunPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgentRun(ctx, agent))
+	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
 	return workspace, name
 }
 
@@ -62,7 +62,7 @@ func createRecoveryTestAgent(t *testing.T, ctx context.Context, store *store.Sto
 // is recovered: the agent-run client is connected, status/subscribe are called,
 // and the agent is registered in the processes map.
 func TestRecoverSessions_LiveRun(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -72,16 +72,16 @@ func TestRecoverSessions_LiveRun(t *testing.T) {
 	srv.statusResult = runapi.RuntimeStatusResult{
 		State: apiruntime.State{
 			MassVersion: "0.1.0",
-			ID:         "recovered-agent",
-			Status:     apiruntime.StatusRunning,
-			Bundle:     "/tmp/test-bundle",
+			ID:          "recovered-agent",
+			Status:      apiruntime.StatusRunning,
+			Bundle:      "/tmp/test-bundle",
 		},
 		Recovery: runapi.RuntimeStatusRecovery{LastSeq: 5},
 	}
 	srv.mu.Unlock()
 
 	// Create an agent in "running" state pointing at the mock socket.
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "alpha", apiruntime.StatusRunning, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, metaStore, "default", "alpha", apiruntime.StatusRunning, socketPath)
 	key := agentKey(ws, name)
 
 	// Run recovery.
@@ -113,20 +113,20 @@ func TestRecoverSessions_LiveRun(t *testing.T) {
 // TestRecoverSessions_DeadRun verifies that when the agent-run socket is
 // unreachable, the agent is marked stopped (fail-closed).
 func TestRecoverSessions_DeadRun(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// Create a "running" agent pointing at a nonexistent socket.
 	deadSocket := "/tmp/nonexistent-run-" + "dead1" + ".sock"
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "dead-agent", apiruntime.StatusRunning, deadSocket)
+	ws, name := createRecoveryTestAgent(t, ctx, metaStore, "default", "dead-agent", apiruntime.StatusRunning, deadSocket)
 
 	// Run recovery.
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err, "RecoverSessions should not return error for individual failures")
 
 	// Verify agent was marked stopped.
-	agent, err := store.GetAgentRun(ctx, ws, name)
+	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, apiruntime.StatusStopped, agent.Status.State,
 		"dead agent-run agent should be marked stopped")
@@ -153,12 +153,12 @@ func TestRecoverSessions_NoAgents(t *testing.T) {
 // TestRecoverSessions_SkipsStoppedAgents verifies that already-stopped
 // agents are not included in the recovery pass.
 func TestRecoverSessions_SkipsStoppedAgents(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Create a stopped agent.
-	createRecoveryTestAgent(t, ctx, store, "default", "already-stopped", apiruntime.StatusStopped, "/tmp/whatever.sock")
+	createRecoveryTestAgent(t, ctx, metaStore, "default", "already-stopped", apiruntime.StatusStopped, "/tmp/whatever.sock")
 
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err)
@@ -170,7 +170,7 @@ func TestRecoverSessions_SkipsStoppedAgents(t *testing.T) {
 // TestRecoverSessions_MixedLiveAndDead verifies correct handling when some
 // agents have live agent-runs and others have dead ones.
 func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -184,11 +184,11 @@ func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
 	srv.mu.Unlock()
 
 	// Create a live agent.
-	liveWS, liveName := createRecoveryTestAgent(t, ctx, store, "default", "live-agent", apiruntime.StatusRunning, liveSocketPath)
+	liveWS, liveName := createRecoveryTestAgent(t, ctx, metaStore, "default", "live-agent", apiruntime.StatusRunning, liveSocketPath)
 	liveKey := agentKey(liveWS, liveName)
 
 	// Create a dead agent.
-	deadWS, deadName := createRecoveryTestAgent(t, ctx, store, "default", "dead-agent2", apiruntime.StatusRunning,
+	deadWS, deadName := createRecoveryTestAgent(t, ctx, metaStore, "default", "dead-agent2", apiruntime.StatusRunning,
 		"/tmp/dead-run-dead2.sock")
 	deadKey := agentKey(deadWS, deadName)
 
@@ -201,7 +201,7 @@ func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
 
 	// Dead agent should be marked stopped and not in processes map.
 	assert.Nil(t, pm.GetProcess(deadKey), "dead agent should not be in processes map")
-	deadAgent, err := store.GetAgentRun(ctx, deadWS, deadName)
+	deadAgent, err := metaStore.GetAgentRun(ctx, deadWS, deadName)
 	require.NoError(t, err)
 	assert.Equal(t, apiruntime.StatusStopped, deadAgent.Status.State)
 
@@ -219,18 +219,18 @@ func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
 // TestRecoverSessions_NoSocketPath verifies that an agent with an empty
 // socket path is marked stopped (it cannot be recovered).
 func TestRecoverSessions_NoSocketPath(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Create a running agent with no socket path.
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "no-socket", apiruntime.StatusRunning, "")
+	ws, name := createRecoveryTestAgent(t, ctx, metaStore, "default", "no-socket", apiruntime.StatusRunning, "")
 
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err)
 
 	// Agent should be marked stopped.
-	agent, err := store.GetAgentRun(ctx, ws, name)
+	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, apiruntime.StatusStopped, agent.Status.State)
 }
@@ -239,7 +239,7 @@ func TestRecoverSessions_NoSocketPath(t *testing.T) {
 // stopped (but DB still says running), the agent is fail-closed: marked
 // stopped in DB, not placed in the processes map.
 func TestRecoverSessions_RunReportsStopped(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -249,21 +249,21 @@ func TestRecoverSessions_RunReportsStopped(t *testing.T) {
 	srv.statusResult = runapi.RuntimeStatusResult{
 		State: apiruntime.State{
 			MassVersion: "0.1.0",
-			ID:         "stopped-agent",
-			Status:     apiruntime.StatusStopped,
+			ID:          "stopped-agent",
+			Status:      apiruntime.StatusStopped,
 		},
 		Recovery: runapi.RuntimeStatusRecovery{LastSeq: 0},
 	}
 	srv.mu.Unlock()
 
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "was-running", apiruntime.StatusRunning, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, metaStore, "default", "was-running", apiruntime.StatusRunning, socketPath)
 
 	// Run recovery.
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err)
 
 	// Agent should be marked stopped (fail-closed).
-	agent, err := store.GetAgentRun(ctx, ws, name)
+	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, apiruntime.StatusStopped, agent.Status.State,
 		"run-reports-stopped agent should be marked stopped in DB")
@@ -283,7 +283,7 @@ func TestRecoverSessions_RunReportsStopped(t *testing.T) {
 // "idle" but the agent-run reports "running", the reconciliation logic transitions
 // the DB to running.
 func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -293,15 +293,15 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 	srv.statusResult = runapi.RuntimeStatusResult{
 		State: apiruntime.State{
 			MassVersion: "0.1.0",
-			ID:         "reconciled-agent",
-			Status:     apiruntime.StatusRunning,
+			ID:          "reconciled-agent",
+			Status:      apiruntime.StatusRunning,
 		},
 		Recovery: runapi.RuntimeStatusRecovery{LastSeq: 3},
 	}
 	srv.mu.Unlock()
 
 	// Create an "idle" agent pointing at the mock socket.
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "was-idle", apiruntime.StatusIdle, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, metaStore, "default", "was-idle", apiruntime.StatusIdle, socketPath)
 	key := agentKey(ws, name)
 
 	// Run recovery.
@@ -309,7 +309,7 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 	require.NoError(t, err)
 
 	// Agent state in DB should now be "running" (reconciled from idle).
-	agent, err := store.GetAgentRun(ctx, ws, name)
+	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, apiruntime.StatusRunning, agent.Status.State,
 		"agent should be transitioned from idle to running")
@@ -340,7 +340,7 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 // recovery proceeds: the agent is placed in the processes map and subscribed,
 // but the DB state is NOT changed.
 func TestRecoverSessions_RunMismatchLogsWarning(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -350,15 +350,15 @@ func TestRecoverSessions_RunMismatchLogsWarning(t *testing.T) {
 	srv.statusResult = runapi.RuntimeStatusResult{
 		State: apiruntime.State{
 			MassVersion: "0.1.0",
-			ID:         "mismatched-agent",
-			Status:     apiruntime.StatusRunning,
+			ID:          "mismatched-agent",
+			Status:      apiruntime.StatusRunning,
 		},
 		Recovery: runapi.RuntimeStatusRecovery{LastSeq: 1},
 	}
 	srv.mu.Unlock()
 
 	// DB says "creating" but agent-run says "running" — mismatch, default branch.
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "creating-agent", apiruntime.StatusCreating, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, metaStore, "default", "creating-agent", apiruntime.StatusCreating, socketPath)
 	key := agentKey(ws, name)
 
 	// Run recovery.
@@ -371,7 +371,7 @@ func TestRecoverSessions_RunMismatchLogsWarning(t *testing.T) {
 
 	// DB state should remain "creating" — the default branch logs but
 	// does not update the DB state.
-	agent, err := store.GetAgentRun(ctx, ws, name)
+	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
 	assert.Equal(t, apiruntime.StatusCreating, agent.Status.State,
 		"DB state should remain creating (mismatch only logged, not reconciled)")
@@ -396,7 +396,7 @@ func TestRecoverSessions_RunMismatchLogsWarning(t *testing.T) {
 // ────────────────────────────────────────────────────────────────────────────
 
 // createAgentForRecovery creates an agent directly in the store for recovery tests.
-func createAgentForRecovery(t *testing.T, ctx context.Context, store *store.Store, workspace, name string, state apiruntime.Status) {
+func createAgentForRecovery(t *testing.T, ctx context.Context, metaStore *store.Store, workspace, name string, state apiruntime.Status) {
 	t.Helper()
 	agent := &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{
@@ -410,25 +410,25 @@ func createAgentForRecovery(t *testing.T, ctx context.Context, store *store.Stor
 			State: state,
 		},
 	}
-	require.NoError(t, store.CreateAgentRun(ctx, agent))
+	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
 }
 
 // TestRecoverSessions_CreatingAgentMarkedError verifies that an agent stuck in
 // StatusCreating (with no live agent-run) is transitioned to StatusError
 // by the creating-cleanup pass.
 func TestRecoverSessions_CreatingAgentMarkedError(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	// Create an agent in "creating" state with no socket path.
-	createAgentForRecovery(t, ctx, store, "default", "stuck-creating", apiruntime.StatusCreating)
+	createAgentForRecovery(t, ctx, metaStore, "default", "stuck-creating", apiruntime.StatusCreating)
 
 	// Run recovery — no running agent-runs, creating-cleanup fires.
 	require.NoError(t, pm.RecoverSessions(ctx))
 
 	// Agent should be in error state.
-	agent, err := store.GetAgentRun(ctx, "default", "stuck-creating")
+	agent, err := metaStore.GetAgentRun(ctx, "default", "stuck-creating")
 	require.NoError(t, err)
 	require.NotNil(t, agent)
 	assert.Equal(t, apiruntime.StatusError, agent.Status.State,
@@ -439,12 +439,12 @@ func TestRecoverSessions_CreatingAgentMarkedError(t *testing.T) {
 // TestRecoverSessions_SkipsErrorAgents verifies that error-state agents are
 // not included in the recovery pass.
 func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	// Create an error agent.
-	createAgentForRecovery(t, ctx, store, "default", "error-agent", apiruntime.StatusError)
+	createAgentForRecovery(t, ctx, metaStore, "default", "error-agent", apiruntime.StatusError)
 
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err)
@@ -453,7 +453,7 @@ func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
 	assert.Empty(t, pm.ListProcesses())
 
 	// The error state should be unchanged.
-	agent, err := store.GetAgentRun(ctx, "default", "error-agent")
+	agent, err := metaStore.GetAgentRun(ctx, "default", "error-agent")
 	require.NoError(t, err)
 	assert.Equal(t, apiruntime.StatusError, agent.Status.State)
 }
@@ -466,7 +466,7 @@ func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
 // RestartPolicy=try_reload calls session/load on the agent-run with the sessionId
 // read from the persisted state.json.
 func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -477,25 +477,25 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 	const knownSessionID = "reload-session-abc123"
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		MassVersion: "0.1.0",
-		ID:         knownSessionID,
-		Status:     apiruntime.StatusIdle,
-		Bundle:     "/tmp/test-bundle",
+		ID:          knownSessionID,
+		Status:      apiruntime.StatusIdle,
+		Bundle:      "/tmp/test-bundle",
 	}))
 
 	agent := &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "tryreload-agent"},
 		Spec: pkgariapi.AgentRunSpec{
-			Agent: "default",
+			Agent:         "default",
 			RestartPolicy: pkgariapi.RestartPolicyTryReload,
 		},
 		Status: pkgariapi.AgentRunStatus{
-			State:          apiruntime.StatusIdle,
+			State:         apiruntime.StatusIdle,
 			RunSocketPath: socketPath,
 			RunStateDir:   stateDir,
 			RunPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgentRun(ctx, agent))
+	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
 	key := agentKey("default", "tryreload-agent")
 
 	require.NoError(t, pm.RecoverSessions(ctx))
@@ -528,7 +528,7 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 // returns an error for session/load, recoverAgent still succeeds and the agent
 // is placed in the processes map (graceful fallback).
 func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -542,25 +542,25 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 	stateDir := t.TempDir()
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		MassVersion: "0.1.0",
-		ID:         "some-session",
-		Status:     apiruntime.StatusIdle,
-		Bundle:     "/tmp/test-bundle",
+		ID:          "some-session",
+		Status:      apiruntime.StatusIdle,
+		Bundle:      "/tmp/test-bundle",
 	}))
 
 	agent := &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "tryreload-fallback"},
 		Spec: pkgariapi.AgentRunSpec{
-			Agent: "default",
+			Agent:         "default",
 			RestartPolicy: pkgariapi.RestartPolicyTryReload,
 		},
 		Status: pkgariapi.AgentRunStatus{
-			State:          apiruntime.StatusIdle,
+			State:         apiruntime.StatusIdle,
 			RunSocketPath: socketPath,
 			RunStateDir:   stateDir,
 			RunPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgentRun(ctx, agent))
+	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
 	key := agentKey("default", "tryreload-fallback")
 
 	// RecoverSessions must succeed even though session/load returned an error.
@@ -585,7 +585,7 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 // RunStateDir points to a nonexistent path, recoverAgent proceeds without
 // panicking and the agent is placed in the processes map.
 func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -594,17 +594,17 @@ func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
 	agent := &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "tryreload-nostate"},
 		Spec: pkgariapi.AgentRunSpec{
-			Agent: "default",
+			Agent:         "default",
 			RestartPolicy: pkgariapi.RestartPolicyTryReload,
 		},
 		Status: pkgariapi.AgentRunStatus{
-			State:          apiruntime.StatusIdle,
+			State:         apiruntime.StatusIdle,
 			RunSocketPath: socketPath,
 			RunStateDir:   "/tmp/nonexistent-state-dir-tryreload-test",
 			RunPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgentRun(ctx, agent))
+	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
 	key := agentKey("default", "tryreload-nostate")
 
 	// Must not panic; must succeed.
@@ -628,7 +628,7 @@ func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
 // TestRecovery_AlwaysNew_SkipsSessionLoad verifies that an agent with
 // RestartPolicy="" (default/always_new) does NOT call session/load on the agent-run.
 func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
-	pm, store := setupRecoveryTest(t)
+	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -638,25 +638,25 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 	stateDir := t.TempDir()
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		MassVersion: "0.1.0",
-		ID:         "existing-session",
-		Status:     apiruntime.StatusIdle,
-		Bundle:     "/tmp/test-bundle",
+		ID:          "existing-session",
+		Status:      apiruntime.StatusIdle,
+		Bundle:      "/tmp/test-bundle",
 	}))
 
 	agent := &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
 		Spec: pkgariapi.AgentRunSpec{
-			Agent: "default",
+			Agent:         "default",
 			RestartPolicy: "", // empty = always_new (default)
 		},
 		Status: pkgariapi.AgentRunStatus{
-			State:          apiruntime.StatusIdle,
+			State:         apiruntime.StatusIdle,
 			RunSocketPath: socketPath,
 			RunStateDir:   stateDir,
 			RunPID:        99999,
 		},
 	}
-	require.NoError(t, store.CreateAgentRun(ctx, agent))
+	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
 	key := agentKey("default", "alwaysnew-agent")
 
 	require.NoError(t, pm.RecoverSessions(ctx))

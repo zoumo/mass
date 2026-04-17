@@ -3,8 +3,7 @@ package server
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
+	"errors"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/jsonrpc"
@@ -231,26 +230,9 @@ func MapRPCError(err error) error {
 	if err == nil {
 		return nil
 	}
-	if rpcErr, ok := err.(*jsonrpc.RPCError); ok {
+	var rpcErr *jsonrpc.RPCError
+	if errors.As(err, &rpcErr) {
 		return rpcErr
 	}
 	return jsonrpc.ErrInternal(err.Error())
-}
-
-// callRPC is a helper for typed ARI client call patterns.
-func callRPC[T any](c *jsonrpc.Client, ctx context.Context, method string, params any) (*T, error) {
-	var result T
-	if err := c.Call(ctx, method, params, &result); err != nil {
-		return nil, fmt.Errorf("ari: %s: %w", method, err)
-	}
-	return &result, nil
-}
-
-// callRPCRaw performs an RPC call with JSON result decoded into dst.
-func callRPCRaw(c *jsonrpc.Client, ctx context.Context, method string, params any, dst any) error {
-	if dst == nil {
-		var raw json.RawMessage
-		return c.Call(ctx, method, params, &raw)
-	}
-	return c.Call(ctx, method, params, dst)
 }

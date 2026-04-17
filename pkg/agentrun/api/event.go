@@ -41,7 +41,7 @@ type AgentRunEvent struct {
 	Payload Event `json:"-"`
 }
 
-// MarshalJSON serialises AgentRunEvent to the flat JSON wire shape.
+// MarshalJSON serializes AgentRunEvent to the flat JSON wire shape.
 // WatchID is included when non-empty (transport-only, not in event log).
 func (e AgentRunEvent) MarshalJSON() ([]byte, error) {
 	type wire struct {

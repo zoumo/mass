@@ -67,7 +67,7 @@ func (l *EventLog) Append(ev runapi.AgentRunEvent) error {
 	if err := l.enc.Encode(ev); err != nil {
 		// Truncate back to the pre-write offset to remove any partial write.
 		if truncErr := l.f.Truncate(offset); truncErr != nil {
-			return fmt.Errorf("events: write log entry failed and truncate also failed (original: %w, truncate: %v)", err, truncErr)
+			return fmt.Errorf("events: write log entry failed and truncate also failed (original: %w, truncate: %w)", err, truncErr)
 		}
 		return fmt.Errorf("events: write log entry: %w", err)
 	}
@@ -130,7 +130,7 @@ func ReadEventLog(path string, fromSeq int) ([]runapi.AgentRunEvent, error) {
 			continue
 		}
 		if err != nil {
-			if err != io.EOF {
+			if !errors.Is(err, io.EOF) {
 				return nil, fmt.Errorf("events: read log %s: %w", path, err)
 			}
 			break
@@ -152,7 +152,7 @@ func ReadEventLog(path string, fromSeq int) ([]runapi.AgentRunEvent, error) {
 		// Corrupt line — check if any valid line follows.
 		for j := i + 1; j < len(lines); j++ {
 			if lines[j].valid {
-				return nil, fmt.Errorf("events: mid-file corruption at line %d: %v", i+1, lr.err)
+				return nil, fmt.Errorf("events: mid-file corruption at line %d: %w", i+1, lr.err)
 			}
 		}
 		// No valid lines follow — damaged tail. Log and break.
