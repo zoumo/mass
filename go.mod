@@ -18,6 +18,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/coder/acp-go-sdk v0.6.4-0.20260227160919-584abe6abe22
 	github.com/google/uuid v1.6.0
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/lmittmann/tint v1.1.3
 	github.com/lucasb-eyer/go-colorful v1.4.0
 	github.com/modelcontextprotocol/go-sdk v0.8.0

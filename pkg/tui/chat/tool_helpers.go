@@ -64,10 +64,34 @@ func BuildInput(title string, locations []runapi.ToolCallLocation) string {
 	return string(b)
 }
 
+// maxToolResultBytes is the maximum size of tool result content stored in
+// memory for TUI display. Results exceeding this limit are truncated to
+// head + tail, preserving the beginning (context) and end (exit codes,
+// errors). This does not affect the event log (events.jsonl) which retains
+// the full content.
+const maxToolResultBytes = 4096
+
+// truncateToolResult truncates content that exceeds maxToolResultBytes,
+// keeping the first and last halves so both context and tail (errors, exit
+// codes) are visible.
+func truncateToolResult(content string) string {
+	if len(content) <= maxToolResultBytes {
+		return content
+	}
+	half := maxToolResultBytes / 2
+	head := content[:half]
+	tail := content[len(content)-half:]
+	hidden := len(content) - maxToolResultBytes
+	return head + fmt.Sprintf("\n\n... (%d bytes truncated) ...\n\n", hidden) + tail
+}
+
 // BuildResultContent extracts a displayable string from tool result content blocks.
 // Diff blocks are skipped here — they are handled separately by ExtractDiff
 // for structured DiffView rendering. Text and terminal blocks are extracted
 // as plain strings. RawOutput is used as a fallback.
+//
+// The returned string is truncated to maxToolResultBytes to bound TUI memory
+// usage in long sessions. The full content is preserved in events.jsonl.
 func BuildResultContent(blocks []runapi.ToolCallContent, status string, rawOutput any) string {
 	var parts []string
 
@@ -91,13 +115,13 @@ func BuildResultContent(blocks []runapi.ToolCallContent, status string, rawOutpu
 	}
 
 	if len(parts) > 0 {
-		return strings.Join(parts, "\n")
+		return truncateToolResult(strings.Join(parts, "\n"))
 	}
 
 	// Fallback: use rawOutput if no structured content.
 	if rawOutput != nil {
 		if s := FormatRawOutput(rawOutput); s != "" {
-			return s
+			return truncateToolResult(s)
 		}
 	}
 

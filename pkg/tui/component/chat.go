@@ -2,10 +2,16 @@ package component
 
 import (
 	tea "charm.land/bubbletea/v2"
+	lru "github.com/hashicorp/golang-lru/v2"
 
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/anim"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/list"
 )
+
+// renderCacheCapacity is the maximum number of items whose render cache is
+// kept in memory. When the LRU evicts an item, its per-item render cache is
+// cleared so memory does not grow unbounded in long sessions.
+const renderCacheCapacity = 100
 
 // Chat represents the chat UI model that handles chat interactions and
 // messages. It mirrors crush's model/chat.go but without mouse selection.
@@ -17,6 +23,11 @@ type Chat struct {
 	// being scrolled out of view. When items become visible again, their
 	// animations are restarted.
 	pausedAnimations map[string]struct{}
+
+	// renderLRU tracks recently rendered (visible) item IDs. When an item is
+	// evicted from the LRU (capacity exceeded), its per-item render cache is
+	// cleared to bound memory in long sessions.
+	renderLRU *lru.Cache[string, struct{}]
 
 	// follow is a flag to indicate whether the view should auto-scroll to
 	// bottom on new messages.
@@ -30,11 +41,42 @@ func NewChat() *Chat {
 		pausedAnimations: make(map[string]struct{}),
 		follow:           true,
 	}
+	c.renderLRU, _ = lru.NewWithEvict(renderCacheCapacity, func(key string, _ struct{}) {
+		// When an item is evicted from the LRU, clear its render cache to
+		// free the ANSI string memory. The cache will be rebuilt on-demand if
+		// the user scrolls back to this item.
+		if idx, ok := c.idInxMap[key]; ok {
+			if cc, ok := c.list.ItemAt(idx).(cacheClearable); ok {
+				cc.clearCache()
+			}
+		}
+	})
 	l := list.NewList()
 	l.SetGap(1)
 	l.RegisterRenderCallback(list.FocusedRenderCallback(l))
 	c.list = l
 	return c
+}
+
+// cacheClearable is implemented by items that have a render cache that can be
+// cleared (e.g. cachedMessageItem). Used by the LRU eviction callback.
+type cacheClearable interface {
+	clearCache()
+}
+
+// touchVisibleCaches marks all currently visible items as recently used in the
+// render LRU. This should be called after any scroll or append operation so
+// that off-screen items eventually get evicted and their render caches freed.
+func (m *Chat) touchVisibleCaches() {
+	if m.renderLRU == nil || m.list.Len() == 0 {
+		return
+	}
+	startIdx, endIdx := m.list.VisibleItemIndices()
+	for i := startIdx; i <= endIdx; i++ {
+		if item, ok := m.list.ItemAt(i).(Identifiable); ok {
+			m.renderLRU.Add(item.ID(), struct{}{})
+		}
+	}
 }
 
 // Height returns the height of the chat view port.
@@ -57,6 +99,7 @@ func (m *Chat) SetSize(width, height int) {
 	if m.list.Len() > 0 && m.AtBottom() {
 		m.ScrollToBottom()
 	}
+	m.touchVisibleCaches()
 }
 
 // Len returns the number of items in the chat list.
@@ -91,6 +134,7 @@ func (m *Chat) AppendMessages(msgs ...MessageItem) {
 	if m.follow {
 		m.ScrollToBottom()
 	}
+	m.touchVisibleCaches()
 }
 
 // Animate animates items in the chat list. Only propagates animation messages
@@ -194,30 +238,35 @@ func (m *Chat) Follow() bool {
 func (m *Chat) ScrollToBottom() {
 	m.list.ScrollToBottom()
 	m.follow = true
+	m.touchVisibleCaches()
 }
 
 // ScrollToTop scrolls the chat view to the top.
 func (m *Chat) ScrollToTop() {
 	m.list.ScrollToTop()
 	m.follow = false
+	m.touchVisibleCaches()
 }
 
 // ScrollBy scrolls the chat view by the given number of line deltas.
 func (m *Chat) ScrollBy(lines int) {
 	m.list.ScrollBy(lines)
 	m.follow = lines > 0 && m.AtBottom()
+	m.touchVisibleCaches()
 }
 
 // ScrollToSelected scrolls the chat view to the selected item.
 func (m *Chat) ScrollToSelected() {
 	m.list.ScrollToSelected()
 	m.follow = m.AtBottom()
+	m.touchVisibleCaches()
 }
 
 // ScrollToIndex scrolls the chat view to the item at the given index.
 func (m *Chat) ScrollToIndex(index int) {
 	m.list.ScrollToIndex(index)
 	m.follow = m.AtBottom()
+	m.touchVisibleCaches()
 }
 
 // ScrollToTopAndAnimate scrolls the chat view to the top and returns a command to restart
