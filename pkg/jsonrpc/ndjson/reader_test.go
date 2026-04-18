@@ -115,3 +115,51 @@ func TestDecode_WhitespaceOnlyInput(t *testing.T) {
 	var m msg
 	assert.ErrorIs(t, r.Decode(&m), io.EOF)
 }
+
+func TestInvalidLineError_Error(t *testing.T) {
+	input := "not-json\n"
+	r := ndjson.NewReader(strings.NewReader(input))
+	var m msg
+	err := r.Decode(&m)
+	require.Error(t, err)
+
+	var lineErr *ndjson.InvalidLineError
+	require.ErrorAs(t, err, &lineErr)
+
+	errMsg := lineErr.Error()
+	assert.Contains(t, errMsg, "ndjson: invalid JSON line")
+	assert.Contains(t, errMsg, "not-json")
+}
+
+func TestInvalidLineError_Error_Truncation(t *testing.T) {
+	// Line longer than 200 chars gets truncated in Error() output.
+	longLine := strings.Repeat("x", 300)
+	input := longLine + "\n"
+	r := ndjson.NewReader(strings.NewReader(input))
+	var m msg
+	err := r.Decode(&m)
+	require.Error(t, err)
+
+	var lineErr *ndjson.InvalidLineError
+	require.ErrorAs(t, err, &lineErr)
+
+	errMsg := lineErr.Error()
+	assert.Contains(t, errMsg, "...(truncated)")
+	assert.LessOrEqual(t, len(errMsg), 350)
+}
+
+func TestInvalidLineError_Unwrap(t *testing.T) {
+	input := "not-json\n"
+	r := ndjson.NewReader(strings.NewReader(input))
+	var m msg
+	err := r.Decode(&m)
+	require.Error(t, err)
+
+	var lineErr *ndjson.InvalidLineError
+	require.ErrorAs(t, err, &lineErr)
+
+	// Unwrap should return the underlying json parse error.
+	unwrapped := lineErr.Unwrap()
+	require.Error(t, unwrapped)
+	assert.Contains(t, unwrapped.Error(), "invalid character")
+}

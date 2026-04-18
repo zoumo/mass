@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	acpruntime "github.com/zoumo/mass/pkg/agentrun/runtime/acp"
 	spec "github.com/zoumo/mass/pkg/runtime-spec"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
@@ -35,7 +36,7 @@ func TestStatus_EventCountsOverlay(t *testing.T) {
 	// 4. Create a Translator with a buffered channel. We do NOT need to Start()
 	//    it — NotifyStateChange calls broadcast() directly.
 	in := make(chan acp.SessionNotification, 16)
-	trans := NewTranslator("run-1", in, nil)
+	trans := NewTranslator("run-1", in, nil, slog.Default())
 
 	// Broadcast a few state_change events to build up in-memory counts.
 	trans.NotifyStateChange("creating", "running", 1, "test", nil)
@@ -59,4 +60,44 @@ func TestStatus_EventCountsOverlay(t *testing.T) {
 	// Sanity: the overlay must contain the event type that was broadcast.
 	assert.Equal(t, 2, expected["runtime_update"],
 		"Translator should have counted 2 runtime_update events")
+}
+
+// newTestService creates a minimal Service for handler-level tests that only
+// exercise validation logic (no real ACP session needed).
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+	stateDir := t.TempDir()
+
+	st := apiruntime.State{
+		MassVersion: "0.1.0",
+		ID:          "test-session",
+		Status:      apiruntime.StatusRunning,
+		Bundle:      "/tmp/fake-bundle",
+	}
+	require.NoError(t, spec.WriteState(stateDir, st))
+
+	mgr := acpruntime.New(apiruntime.Config{}, "/tmp/fake-bundle", stateDir, slog.Default())
+	in := make(chan acp.SessionNotification, 16)
+	trans := NewTranslator("run-1", in, nil, slog.Default())
+	return New(mgr, trans, "", slog.Default())
+}
+
+func TestService_Stop_ReturnsNil(t *testing.T) {
+	svc := newTestService(t)
+	err := svc.Stop(context.Background())
+	assert.NoError(t, err)
+}
+
+func TestService_SetModel_EmptyModelID(t *testing.T) {
+	svc := newTestService(t)
+	_, err := svc.SetModel(context.Background(), &runapi.SessionSetModelParams{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing modelId")
+}
+
+func TestService_Prompt_EmptyPrompt(t *testing.T) {
+	svc := newTestService(t)
+	_, err := svc.Prompt(context.Background(), &runapi.SessionPromptParams{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing prompt")
 }

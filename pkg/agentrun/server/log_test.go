@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -258,6 +259,34 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 // TestEventLog_PartialWriteTruncation verifies that a failed Append truncates
 // the file back to its pre-write offset, preventing a damaged tail from
 // persisting after a write failure.
+func TestEventLog_LastSeq_EmptyLog(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	log, err := OpenEventLog(path)
+	require.NoError(t, err)
+	defer log.Close()
+
+	assert.Equal(t, -1, log.LastSeq(), "empty log should return -1")
+	assert.Equal(t, 0, log.NextSeq(), "empty log NextSeq should be 0")
+}
+
+func TestEventLog_LastSeq_AfterAppend(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	log, err := OpenEventLog(path)
+	require.NoError(t, err)
+
+	for i := 0; i < 3; i++ {
+		ev := runapi.AgentRunEvent{RunID: "r1", Seq: i, Time: testTime(t), Type: runapi.EventTypeAgentMessage, Payload: runapi.NewContentEvent(runapi.EventTypeAgentMessage, "", runapi.TextBlock("x"))}
+		require.NoError(t, log.Append(ev))
+	}
+	assert.Equal(t, 2, log.LastSeq())
+	assert.Equal(t, 3, log.NextSeq())
+	require.NoError(t, log.Close())
+}
+
 func TestEventLog_PartialWriteTruncation(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
@@ -298,7 +327,7 @@ func TestEventLog_TranslatorWritesAgentRunEvent(t *testing.T) {
 	require.NoError(t, err)
 
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, evLog)
+	tr := NewTranslator("run-1", in, evLog, slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 
@@ -322,4 +351,69 @@ func TestEventLog_TranslatorWritesAgentRunEvent(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, ev.Content.Text)
 	assert.Equal(t, "logged", ev.Content.Text.Text)
+}
+
+func TestTranslator_SetSessionID(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("run-1", in, nil, slog.Default())
+
+	tr.SetSessionID("sess-abc")
+
+	// Verify by broadcasting an event and checking SessionID on the output.
+	ch, _, _ := tr.Subscribe()
+	tr.NotifyStateChange("creating", "running", 1, "test", nil)
+
+	ev := <-ch
+	assert.Equal(t, "sess-abc", ev.SessionID)
+	tr.Stop()
+}
+
+func TestTranslator_NotifyError(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("run-1", in, nil, slog.Default())
+
+	ch, _, _ := tr.Subscribe()
+	tr.NotifyError("something broke")
+
+	ev := <-ch
+	assert.Equal(t, runapi.EventTypeError, ev.Type)
+	errEv, ok := ev.Payload.(runapi.ErrorEvent)
+	require.True(t, ok)
+	assert.Equal(t, "something broke", errEv.Msg)
+	tr.Stop()
+}
+
+func TestTranslator_LastSeq(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("run-1", in, nil, slog.Default())
+
+	assert.Equal(t, -1, tr.LastSeq(), "no events yet")
+
+	ch, _, _ := tr.Subscribe()
+	tr.NotifyError("e1")
+	<-ch
+	assert.Equal(t, 0, tr.LastSeq())
+
+	tr.NotifyError("e2")
+	<-ch
+	assert.Equal(t, 1, tr.LastSeq())
+	tr.Stop()
+}
+
+func TestTranslator_EventCounts(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("run-1", in, nil, slog.Default())
+
+	ch, _, _ := tr.Subscribe()
+	tr.NotifyError("e1")
+	<-ch
+	tr.NotifyStateChange("creating", "running", 1, "test", nil)
+	<-ch
+	tr.NotifyError("e2")
+	<-ch
+
+	counts := tr.EventCounts()
+	assert.Equal(t, 2, counts[runapi.EventTypeError])
+	assert.Equal(t, 1, counts[runapi.EventTypeRuntimeUpdate])
+	tr.Stop()
 }
