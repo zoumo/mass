@@ -16,6 +16,12 @@ Reference files for architecture, decisions, conventions, and design:
 | [docs/design/](docs/design/) | Detailed design documents for each subsystem |
 | [code-principle](docs/develop/rules/code-principle.md) | **Must** Follow Basic Guidelines for Code Development |
 
+## Skills
+
+| Skill | Path | Description |
+|-------|------|-------------|
+| massctl | [skills/massctl/SKILL.md](skills/massctl/SKILL.md) | Use MASS to manage workspaces, agent lifecycles, orchestrate multi-agent collaboration |
+
 ## 设计一致性
 
 - Code changes **must be** aligned with `docs/design`
