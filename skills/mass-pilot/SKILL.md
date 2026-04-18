@@ -1,5 +1,5 @@
 ---
-name: massctl
+name: mass-pilot
 description: |
   通过 massctl CLI 使用 MASS（Multi-Agent Supervision System）管理 workspace、agent 生命周期，
   按任务复杂度编排多 agent 协作，解决实际问题。
