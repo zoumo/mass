@@ -24,10 +24,10 @@ func TestOptions_Validate(t *testing.T) {
 
 func TestOptions_PathDerivation(t *testing.T) {
 	t.Parallel()
-	o := Options{Root: "/var/run/mass"}
+	o := Options{Root: "/tmp/test-mass"}
 
-	assert.Equal(t, "/var/run/mass/mass.sock", o.SocketPath())
-	assert.Equal(t, "/var/run/mass/workspaces", o.WorkspaceRoot())
-	assert.Equal(t, "/var/run/mass/bundles", o.BundleRoot())
-	assert.Equal(t, "/var/run/mass/mass.db", o.MetaDBPath())
+	assert.Equal(t, "/tmp/test-mass/mass.sock", o.SocketPath())
+	assert.Equal(t, "/tmp/test-mass/workspaces", o.WorkspaceRoot())
+	assert.Equal(t, "/tmp/test-mass/bundles", o.BundleRoot())
+	assert.Equal(t, "/tmp/test-mass/mass.db", o.MetaDBPath())
 }

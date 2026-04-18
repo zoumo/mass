@@ -20,7 +20,7 @@ bin/massctl daemon status
 - `daemon: running` → 继续
 - `daemon: not running` → **停止。告知用户 mass daemon 未运行，不要自行启动。**
 
-> `--socket` 默认 `/var/run/mass/mass.sock`，自定义时加 `--socket <path>`。以下示例省略该 flag。
+> `--socket` 默认 `$HOME/.mass/mass.sock`，自定义时加 `--socket <path>`。以下示例省略该 flag。
 
 ### 查看可用 Agent
 

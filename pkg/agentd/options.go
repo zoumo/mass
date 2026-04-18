@@ -4,18 +4,26 @@ package agentd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
-// DefaultRoot is the default root directory for mass data.
-const DefaultRoot = "/var/run/mass"
+// DefaultRoot returns the default root directory for mass data.
+// It resolves to $HOME/.mass at runtime.
+func DefaultRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), ".mass")
+	}
+	return filepath.Join(home, ".mass")
+}
 
 // Options holds the root-path-based configuration for the mass daemon.
 // All derived paths are computed from Root, eliminating the need for a
 // config.yaml file.
 type Options struct {
 	// Root is the base directory for all mass-managed files.
-	// Defaults to DefaultRoot ("/var/run/mass") if not overridden.
+	// Defaults to DefaultRoot() ($HOME/.mass) if not overridden.
 	Root string
 }
 

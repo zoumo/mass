@@ -38,7 +38,7 @@ func NewCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&rootPath, "root", agentd.DefaultRoot, "root directory for mass data (socket, DB, bundles, workspaces)")
+	cmd.Flags().StringVar(&rootPath, "root", agentd.DefaultRoot(), "root directory for mass data (socket, DB, bundles, workspaces)")
 	logCfg.AddFlags(cmd.Flags())
 	return cmd
 }

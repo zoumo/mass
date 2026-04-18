@@ -101,7 +101,7 @@ func TestState_JSON_RoundTrip(t *testing.T) {
 		ID:          "sess-abc",
 		Status:      api.StatusRunning,
 		PID:         12345,
-		Bundle:      "/var/run/bundles/test",
+		Bundle:      "/tmp/test-mass/bundles/test",
 		Annotations: map[string]string{"agent": "claude"},
 		ExitCode:    &exitCode,
 		UpdatedAt:   "2026-04-17T12:00:00Z",
@@ -117,7 +117,7 @@ func TestState_JSON_RoundTrip(t *testing.T) {
 	assert.Equal(t, "sess-abc", decoded.ID)
 	assert.Equal(t, api.StatusRunning, decoded.Status)
 	assert.Equal(t, 12345, decoded.PID)
-	assert.Equal(t, "/var/run/bundles/test", decoded.Bundle)
+	assert.Equal(t, "/tmp/test-mass/bundles/test", decoded.Bundle)
 	assert.Equal(t, "claude", decoded.Annotations["agent"])
 	require.NotNil(t, decoded.ExitCode)
 	assert.Equal(t, 0, *decoded.ExitCode)

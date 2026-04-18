@@ -4,6 +4,7 @@ package commands
 import (
 	"context"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/zoumo/mass/cmd/massctl/commands/compose"
 	"github.com/zoumo/mass/cmd/massctl/commands/daemon"
 	"github.com/zoumo/mass/cmd/massctl/commands/workspace"
+	"github.com/zoumo/mass/pkg/agentd"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
@@ -25,7 +27,7 @@ func NewRootCommand() *cobra.Command {
 		Use:   "massctl",
 		Short: "CLI for mass daemon management",
 	}
-	root.PersistentFlags().StringVar(&socketPath, "socket", "/var/run/mass/mass.sock", "ARI socket path")
+	root.PersistentFlags().StringVar(&socketPath, "socket", filepath.Join(agentd.DefaultRoot(), "mass.sock"), "ARI socket path")
 
 	getClient := func() (pkgariapi.Client, error) {
 		if socketPath == "" {

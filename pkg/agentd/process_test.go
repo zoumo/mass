@@ -270,9 +270,9 @@ func TestAgentKey(t *testing.T) {
 
 func TestProcessManager_BundlePath(t *testing.T) {
 	t.Parallel()
-	pm := &ProcessManager{bundleRoot: "/var/run/mass/bundles"}
+	pm := &ProcessManager{bundleRoot: "/tmp/test-mass/bundles"}
 	got := pm.BundlePath("ws1", "agent-a")
-	expected := "/var/run/mass/bundles/ws1-agent-a"
+	expected := "/tmp/test-mass/bundles/ws1-agent-a"
 	if got != expected {
 		t.Errorf("BundlePath: expected %s, got %s", expected, got)
 	}
