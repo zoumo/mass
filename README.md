@@ -44,7 +44,7 @@ massctl agentrun stop my-agent -w myproject
 <td width="50%">
 
 ### 👁️ Full Observability Over Agent Behavior
-Every thought, tool call, message, and state transition is captured as a typed, sequenced event stream. Connect to a running agent's shim at any time — reconnect and replay from any point without losing a single event.
+Every thought, tool call, message, and state transition is captured as a typed, sequenced event stream. Connect to a running agent-run process at any time — reconnect and replay from any point without losing a single event.
 
 ```bash
 # Connect via workspace + agent name:
@@ -106,7 +106,7 @@ Instead of reinventing the wheel, MASS borrows the battle-tested architecture of
 ```
 OCI (Containers)                    MASS (Agents)
 ─────────────────                   ─────────────────
-runc + containerd-shim         →    agent-shim
+runc + containerd-shim         →    agent-run
 containerd                     →    agentd
 CRI (Container Runtime Interface)→  ARI (Agent Runtime Interface)
 OCI Runtime Spec               →    MASS Runtime Spec
@@ -129,7 +129,7 @@ The name reflects what it does: supervise multiple AI agents on a single host wi
 | 1 | **Spec-First** | Define interfaces and wire formats before writing code. Specs are contracts; components are swappable implementations. |
 | 2 | **No Container Baggage** | Borrow OCI's architecture, not its kernel isolation. No namespaces, cgroups, seccomp, or pivot_root. Agents are processes, not sandboxes. |
 | 3 | **Agent-Native Concerns** | Focus on what agents actually need: workspace preparation, protocol communication (ACP), skill/knowledge injection, inter-agent messaging. |
-| 4 | **Layered Separation** | Each layer does one thing. agent-shim runs the process and holds ACP. agentd manages lifecycle. External callers decide what to run. |
+| 4 | **Layered Separation** | Each layer does one thing. agent-run runs the process and holds ACP. agentd manages lifecycle. External callers decide what to run. |
 | 5 | **Simplicity First** | Design for current needs. Extension points exist but stay empty until real requirements emerge. |
 
 ## Architecture
@@ -153,7 +153,7 @@ The name reflects what it does: supervise multiple AI agents on a single host wi
 └───────────────────────────────────────────────────┼──────────┘
                         Unix socket per agent       │
                   ┌─────────────────────────────────▼──────┐
-                  │  agent-shim                            │
+                  │  agent-run                             │
                   │  ┌──────────────────────────────────┐  │
                   │  │ ACP Protocol (JSON-RPC / stdio)  │  │
                   │  │ Event Translator + EventLog      │  │
@@ -171,7 +171,7 @@ The name reflects what it does: supervise multiple AI agents on a single host wi
 
 | Layer | Component | Analogous to | Responsibility |
 |-------|-----------|-------------|----------------|
-| **L0** | agent-shim | runc + containerd-shim | Run one agent process, hold ACP stdio, translate events |
+| **L0** | agent-run | runc + containerd-shim | Run one agent process, hold ACP stdio, translate events |
 | **L1** | agentd | containerd | Multi-agent lifecycle, workspace provisioning, metadata, recovery |
 | **L2** | ARI | CRI | External control plane interface (JSON-RPC 2.0) |
 
@@ -179,11 +179,11 @@ The name reflects what it does: supervise multiple AI agents on a single host wi
 
 ### Recovery-First Design
 
-Daemon crash? No problem. On restart, agentd reconnects to surviving shim processes, replays event history via K8s-style List-Watch (`session/watch_event` with `fromSeq`), and resumes exactly where it left off. Zero agent downtime.
+Daemon crash? No problem. On restart, agentd reconnects to surviving agent-run processes, replays event history via K8s-style List-Watch (`session/watch_event` with `fromSeq`), and resumes exactly where it left off. Zero agent downtime.
 
-### Shim Write Authority
+### Agent-Run Write Authority
 
-After bootstrap, **only the shim drives state transitions** — agentd never writes `idle/running/stopped` directly. This eliminates an entire class of race conditions between the control plane and the runtime.
+After bootstrap, **only the agent-run process drives state transitions** — agentd never writes `idle/running/stopped` directly. This eliminates an entire class of race conditions between the control plane and the runtime.
 
 ### Typed Event Streaming
 
@@ -209,7 +209,7 @@ Events are persisted to NDJSON with **damaged-tail tolerance**: corrupt lines at
 
 ### Single Binary, Zero Dependencies
 
-Pure Go. Two binaries: `mass` (daemon + shim) and `massctl` (CLI). No external databases, no container runtime, no message queues. Just Unix sockets and bbolt.
+Pure Go. Two binaries: `mass` (daemon + agent-run) and `massctl` (CLI). No external databases, no container runtime, no message queues. Just Unix sockets and bbolt.
 
 ## Quick Start
 
@@ -237,24 +237,6 @@ bin/massctl agentrun prompt my-agent -w myproject --text "Explain main.go" --wai
 | `agent/*` | `create` · `update` · `get` · `list` · `delete` |
 | `agentrun/*` | `create` · `prompt` · `cancel` · `stop` · `delete` · `restart` · `list` · `get` |
 
-## Project Structure
-
-```
-cmd/
-  mass/              daemon + agent-run + workspace-mcp (single binary)
-  massctl/           management CLI
-pkg/
-  ari/               Agent Runtime Interface (server + client + API types)
-  agentd/            Agent Manager, Process Manager, recovery, metadata store
-  agentrun/          agent-run process (shim server + client + ACP runtime)
-  workspace/         Workspace Manager (Git/EmptyDir/Local, hooks, ref-counting)
-  jsonrpc/           transport-agnostic JSON-RPC 2.0 framework
-  runtime-spec/      MASS Runtime Spec types
-  tui/               Terminal UI (chat interface)
-docs/
-  design/            spec documents + architecture decisions
-```
-
 ## Tech Stack
 
 | Layer | Technology |
@@ -270,6 +252,7 @@ docs/
 
 - **[Design Specs](docs/design/README.md)** — Architecture overview, OCI mapping, all spec documents
 - **[Architecture](docs/ARCHITECTURE.md)** — Component map, data flow, package layout
+- **[Development Guide](docs/develop/)** — Code principles, contribution rules, development references
 - **[Decisions](.gsd/DECISIONS.md)** — Architectural decision records (D001–D112+)
 
 ---
