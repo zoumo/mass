@@ -1,6 +1,8 @@
 # 开发指南
 
 - use `make build` to build go binary 
+- use `make fmt` to fix code format
+- use `make lint` to find lint error
 
 ## Project Intelligence
 

@@ -306,3 +306,116 @@ func TestAgentTransitionState_NotFound(t *testing.T) {
 	assert.Equal(t, "ws1", notFound.Workspace)
 	assert.Equal(t, "phantom", notFound.Name)
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Error type formatting
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestErrorTypes_Format(t *testing.T) {
+	t.Parallel()
+
+	t.Run("ErrAgentRunNotFound", func(t *testing.T) {
+		err := &ErrAgentRunNotFound{Workspace: "ws", Name: "a1"}
+		assert.Contains(t, err.Error(), "ws/a1")
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("ErrDeleteNotStopped", func(t *testing.T) {
+		err := &ErrDeleteNotStopped{Workspace: "ws", Name: "a1", State: apiruntime.StatusRunning}
+		assert.Contains(t, err.Error(), "ws/a1")
+		assert.Contains(t, err.Error(), "running")
+	})
+
+	t.Run("ErrAgentRunAlreadyExists", func(t *testing.T) {
+		err := &ErrAgentRunAlreadyExists{Workspace: "ws", Name: "a1"}
+		assert.Contains(t, err.Error(), "ws")
+		assert.Contains(t, err.Error(), "a1")
+		assert.Contains(t, err.Error(), "already exists")
+	})
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// TransitionState success/mismatch
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestAgentTransitionState_Success(t *testing.T) {
+	t.Parallel()
+
+	am := newTestAgentManager(t)
+	ctx := context.Background()
+
+	agent := makeTestAgentRun("ws1", "trans")
+	require.NoError(t, am.Create(ctx, agent))
+	// State starts as "creating".
+
+	// Transition creating → idle should succeed.
+	ok, err := am.TransitionState(ctx, "ws1", "trans", apiruntime.StatusCreating, apiruntime.StatusIdle)
+	require.NoError(t, err)
+	assert.True(t, ok, "transition from matching state should succeed")
+
+	got, err := am.Get(ctx, "ws1", "trans")
+	require.NoError(t, err)
+	assert.Equal(t, apiruntime.StatusIdle, got.Status.State)
+}
+
+func TestAgentTransitionState_Mismatch(t *testing.T) {
+	t.Parallel()
+
+	am := newTestAgentManager(t)
+	ctx := context.Background()
+
+	agent := makeTestAgentRun("ws1", "mismatch")
+	require.NoError(t, am.Create(ctx, agent))
+	// State is "creating".
+
+	// Transition idle → running should fail (current state is creating, not idle).
+	ok, err := am.TransitionState(ctx, "ws1", "mismatch", apiruntime.StatusIdle, apiruntime.StatusRunning)
+	require.NoError(t, err, "mismatch should not be an error")
+	assert.False(t, ok, "transition from wrong state should return false")
+
+	// State should remain creating.
+	got, err := am.Get(ctx, "ws1", "mismatch")
+	require.NoError(t, err)
+	assert.Equal(t, apiruntime.StatusCreating, got.Status.State)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// List combined filters and nil filter
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestAgentList_NilFilter(t *testing.T) {
+	t.Parallel()
+
+	am := newTestAgentManager(t)
+	ctx := context.Background()
+
+	require.NoError(t, am.Create(ctx, makeTestAgentRun("ws1", "a1")))
+	require.NoError(t, am.Create(ctx, makeTestAgentRun("ws2", "a2")))
+
+	all, err := am.List(ctx, nil)
+	require.NoError(t, err)
+	assert.Len(t, all, 2, "nil filter should return all agents")
+}
+
+func TestAgentList_CombinedFilter(t *testing.T) {
+	t.Parallel()
+
+	am := newTestAgentManager(t)
+	ctx := context.Background()
+
+	require.NoError(t, am.Create(ctx, makeTestAgentRun("ws1", "a1")))
+	require.NoError(t, am.Create(ctx, makeTestAgentRun("ws1", "a2")))
+	require.NoError(t, am.Create(ctx, makeTestAgentRun("ws2", "a3")))
+
+	// Set a1 to stopped.
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped}))
+
+	// Filter: workspace=ws1 AND state=stopped → only a1.
+	result, err := am.List(ctx, &pkgariapi.AgentRunFilter{
+		Workspace: "ws1",
+		State:     apiruntime.StatusStopped,
+	})
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Equal(t, "a1", result[0].Metadata.Name)
+}

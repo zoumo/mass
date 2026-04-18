@@ -164,3 +164,41 @@ func TestListOptions_FunctionalOptions(t *testing.T) {
 	assert.Equal(t, "idle", opts.FieldSelector["state"])
 	assert.Equal(t, "infra", opts.Labels["team"])
 }
+
+func TestListOptions_WithPhase(t *testing.T) {
+	opts := pkgariapi.ApplyListOptions(pkgariapi.WithPhase("ready"))
+	assert.Equal(t, "ready", opts.FieldSelector["phase"])
+}
+
+// ── RestartPolicy ───────────────────────────────────────────────────────────
+
+func TestRestartPolicy_IsValid(t *testing.T) {
+	valid := []pkgariapi.RestartPolicy{"", pkgariapi.RestartPolicyTryReload, pkgariapi.RestartPolicyAlwaysNew}
+	for _, p := range valid {
+		assert.True(t, p.IsValid(), "expected %q to be valid", p)
+	}
+
+	invalid := []pkgariapi.RestartPolicy{"bogus", "never", "restart"}
+	for _, p := range invalid {
+		assert.False(t, p.IsValid(), "expected %q to be invalid", p)
+	}
+}
+
+// ── AgentList type ──────────────────────────────────────────────────────────
+
+func TestAgentList_JSON_RoundTrip(t *testing.T) {
+	list := pkgariapi.AgentList{
+		Items: []pkgariapi.Agent{
+			{Metadata: pkgariapi.ObjectMeta{Name: "a1"}, Spec: pkgariapi.AgentSpec{Command: "echo"}},
+			{Metadata: pkgariapi.ObjectMeta{Name: "a2"}, Spec: pkgariapi.AgentSpec{Command: "cat"}},
+		},
+	}
+	data, err := json.Marshal(list)
+	require.NoError(t, err)
+
+	var decoded pkgariapi.AgentList
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.Len(t, decoded.Items, 2)
+	assert.Equal(t, "a1", decoded.Items[0].Metadata.Name)
+	assert.Equal(t, "a2", decoded.Items[1].Metadata.Name)
+}

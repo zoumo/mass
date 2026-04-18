@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -254,6 +255,52 @@ done:
 	}
 
 	t.Logf("Test complete: agent %s/%s lifecycle: creating → running → stopped", agentWorkspace, agentName)
+}
+
+// ── agentKey ──────────────────────────────────────────────────────────────────
+
+func TestAgentKey(t *testing.T) {
+	t.Parallel()
+	if got := agentKey("ws1", "agent-a"); got != "ws1/agent-a" {
+		t.Errorf("agentKey: expected ws1/agent-a, got %s", got)
+	}
+}
+
+// ── BundlePath ───────────────────────────────────────────────────────────────
+
+func TestProcessManager_BundlePath(t *testing.T) {
+	t.Parallel()
+	pm := &ProcessManager{bundleRoot: "/var/run/mass/bundles"}
+	got := pm.BundlePath("ws1", "agent-a")
+	expected := "/var/run/mass/bundles/ws1-agent-a"
+	if got != expected {
+		t.Errorf("BundlePath: expected %s, got %s", expected, got)
+	}
+}
+
+// ── ValidateAgentSocketPath ──────────────────────────────────────────────────
+
+func TestProcessManager_ValidateAgentSocketPath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("short path passes", func(t *testing.T) {
+		pm := &ProcessManager{bundleRoot: "/tmp/b"}
+		err := pm.ValidateAgentSocketPath("ws", "a")
+		if err != nil {
+			t.Errorf("expected no error for short path, got: %v", err)
+		}
+	})
+
+	t.Run("long path fails", func(t *testing.T) {
+		// Create a bundle root long enough that the socket path exceeds 104 bytes.
+		// Final path: longRoot/workspace-name-agent-name/agent-run.sock
+		longRoot := "/tmp/" + strings.Repeat("x", 80)
+		pm := &ProcessManager{bundleRoot: longRoot}
+		err := pm.ValidateAgentSocketPath("workspace-name", "agent-name")
+		if err == nil {
+			t.Error("expected error for long socket path, got nil")
+		}
+	})
 }
 
 // ── generateConfig ────────────────────────────────────────────────────────────

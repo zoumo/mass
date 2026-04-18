@@ -60,9 +60,9 @@ func TestRuntimeSuite(t *testing.T) {
 // The caller is responsible for creating the bundle dir and workspace subdir.
 func newTestConfig(name string) apiruntime.Config {
 	return apiruntime.Config{
-		MassVersion: "0.1.0",
-		Metadata:    apiruntime.Metadata{Name: name},
-		AgentRoot:   apiruntime.AgentRoot{Path: "workspace"},
+		MassVersion:    "0.1.0",
+		Metadata:       apiruntime.Metadata{Name: name},
+		AgentRoot:      apiruntime.AgentRoot{Path: "workspace"},
 		ClientProtocol: apiruntime.ClientProtocolACP,
 		Process: apiruntime.Process{
 			Command: mockAgentBin,

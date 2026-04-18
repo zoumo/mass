@@ -800,6 +800,232 @@ func TestNoAgentIDInResponses(t *testing.T) {
 // TestServerServeShutdown — basic lifecycle smoke test (kept from T01)
 // ────────────────────────────────────────────────────────────────────────────
 
+// ────────────────────────────────────────────────────────────────────────────
+// Agent (agent/) service handler tests
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestAgentCreate(t *testing.T) {
+	env := newTestServer(t)
+
+	ag := pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "test-agent"},
+		Spec:     pkgariapi.AgentSpec{Command: "echo"},
+	}
+	var result pkgariapi.Agent
+	require.NoError(t, env.client.Call("agent/create", ag, &result))
+	assert.Equal(t, "test-agent", result.Metadata.Name)
+	assert.Equal(t, "echo", result.Spec.Command)
+}
+
+func TestAgentCreate_DuplicateError(t *testing.T) {
+	env := newTestServer(t)
+
+	ag := pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "dup-agent"},
+		Spec:     pkgariapi.AgentSpec{Command: "echo"},
+	}
+	var result pkgariapi.Agent
+	require.NoError(t, env.client.Call("agent/create", ag, &result))
+
+	// Second create with same name should fail.
+	_, err := callRaw(t, env.client, "agent/create", ag)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+}
+
+func TestAgentCreate_MissingName(t *testing.T) {
+	env := newTestServer(t)
+
+	ag := pkgariapi.Agent{Spec: pkgariapi.AgentSpec{Command: "echo"}}
+	_, err := callRaw(t, env.client, "agent/create", ag)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name is required")
+}
+
+func TestAgentCreate_MissingCommand(t *testing.T) {
+	env := newTestServer(t)
+
+	ag := pkgariapi.Agent{Metadata: pkgariapi.ObjectMeta{Name: "no-cmd"}}
+	_, err := callRaw(t, env.client, "agent/create", ag)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "command is required")
+}
+
+func TestAgentGet(t *testing.T) {
+	env := newTestServer(t)
+
+	// Seed an agent via store.
+	require.NoError(t, env.store.SetAgent(context.Background(), &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "get-agent"},
+		Spec:     pkgariapi.AgentSpec{Command: "cat"},
+	}))
+
+	var result pkgariapi.Agent
+	require.NoError(t, env.client.Call("agent/get", pkgariapi.ObjectKey{Name: "get-agent"}, &result))
+	assert.Equal(t, "get-agent", result.Metadata.Name)
+	assert.Equal(t, "cat", result.Spec.Command)
+}
+
+func TestAgentGet_NotFound(t *testing.T) {
+	env := newTestServer(t)
+
+	_, err := callRaw(t, env.client, "agent/get", pkgariapi.ObjectKey{Name: "no-such"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestAgentGet_MissingName(t *testing.T) {
+	env := newTestServer(t)
+
+	_, err := callRaw(t, env.client, "agent/get", pkgariapi.ObjectKey{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name is required")
+}
+
+func TestAgentUpdate(t *testing.T) {
+	env := newTestServer(t)
+
+	// Create first.
+	require.NoError(t, env.store.SetAgent(context.Background(), &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "upd-agent"},
+		Spec:     pkgariapi.AgentSpec{Command: "old-cmd"},
+	}))
+
+	// Update command.
+	ag := pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "upd-agent"},
+		Spec:     pkgariapi.AgentSpec{Command: "new-cmd"},
+	}
+	var result pkgariapi.Agent
+	require.NoError(t, env.client.Call("agent/update", ag, &result))
+	assert.Equal(t, "new-cmd", result.Spec.Command)
+}
+
+func TestAgentUpdate_NotFound(t *testing.T) {
+	env := newTestServer(t)
+
+	ag := pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "ghost"},
+		Spec:     pkgariapi.AgentSpec{Command: "echo"},
+	}
+	_, err := callRaw(t, env.client, "agent/update", ag)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestAgentUpdate_MissingName(t *testing.T) {
+	env := newTestServer(t)
+
+	ag := pkgariapi.Agent{Spec: pkgariapi.AgentSpec{Command: "echo"}}
+	_, err := callRaw(t, env.client, "agent/update", ag)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name is required")
+}
+
+func TestAgentList(t *testing.T) {
+	env := newTestServer(t)
+	ctx := context.Background()
+
+	require.NoError(t, env.store.SetAgent(ctx, &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "ag1"},
+		Spec:     pkgariapi.AgentSpec{Command: "a"},
+	}))
+	require.NoError(t, env.store.SetAgent(ctx, &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "ag2"},
+		Spec:     pkgariapi.AgentSpec{Command: "b"},
+	}))
+
+	var result pkgariapi.AgentList
+	require.NoError(t, env.client.Call("agent/list", pkgariapi.ListOptions{}, &result))
+	assert.GreaterOrEqual(t, len(result.Items), 2)
+
+	names := make(map[string]bool)
+	for _, ag := range result.Items {
+		names[ag.Metadata.Name] = true
+	}
+	assert.True(t, names["ag1"])
+	assert.True(t, names["ag2"])
+}
+
+func TestAgentList_Empty(t *testing.T) {
+	env := newTestServer(t)
+
+	var result pkgariapi.AgentList
+	require.NoError(t, env.client.Call("agent/list", pkgariapi.ListOptions{}, &result))
+	assert.Empty(t, result.Items)
+}
+
+func TestAgentDelete(t *testing.T) {
+	env := newTestServer(t)
+
+	require.NoError(t, env.store.SetAgent(context.Background(), &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "del-agent"},
+		Spec:     pkgariapi.AgentSpec{Command: "rm"},
+	}))
+
+	require.NoError(t, env.client.Call("agent/delete", pkgariapi.ObjectKey{Name: "del-agent"}, nil))
+
+	// Verify gone.
+	ag, err := env.store.GetAgent(context.Background(), "del-agent")
+	require.NoError(t, err)
+	assert.Nil(t, ag)
+}
+
+func TestAgentDelete_NotFound(t *testing.T) {
+	env := newTestServer(t)
+
+	// Delete is a no-op for non-existent agent (per implementation).
+	require.NoError(t, env.client.Call("agent/delete", pkgariapi.ObjectKey{Name: "ghost"}, nil))
+}
+
+func TestAgentDelete_MissingName(t *testing.T) {
+	env := newTestServer(t)
+
+	_, err := callRaw(t, env.client, "agent/delete", pkgariapi.ObjectKey{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "name is required")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// agentrun/stop and agentrun/cancel handler tests (error paths only —
+// happy-path requires full process lifecycle which is covered in
+// pkg/agentd/process_test.go integration test)
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestAgentRunStop_NotFound(t *testing.T) {
+	env := newTestServer(t)
+
+	_, err := callRaw(t, env.client, "agentrun/stop", pkgariapi.ObjectKey{
+		Workspace: "no-ws",
+		Name:      "no-agent",
+	})
+	require.Error(t, err)
+}
+
+func TestAgentRunCancel_NotFound(t *testing.T) {
+	env := newTestServer(t)
+
+	_, err := callRaw(t, env.client, "agentrun/cancel", pkgariapi.ObjectKey{
+		Workspace: "no-ws",
+		Name:      "no-agent",
+	})
+	require.Error(t, err)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// MapRPCError tests
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestMapRPCError_Nil(t *testing.T) {
+	assert.NoError(t, ariserver.MapRPCError(nil))
+}
+
+func TestMapRPCError_PlainError(t *testing.T) {
+	err := ariserver.MapRPCError(fmt.Errorf("boom"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
+}
+
 func TestServerServeShutdown(t *testing.T) {
 	env := newTestServer(t)
 	// env.client is already connected; just verify it can call a no-op method.

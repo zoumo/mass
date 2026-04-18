@@ -56,9 +56,9 @@ func setupAgentRunForTUI(t *testing.T) (context.Context, *runclient.Client, stri
 	}
 
 	cfg := apiruntime.Config{
-		MassVersion: "0.1.0",
-		Metadata:    apiruntime.Metadata{Name: agentID},
-		AgentRoot:   apiruntime.AgentRoot{Path: "workspace"},
+		MassVersion:    "0.1.0",
+		Metadata:       apiruntime.Metadata{Name: agentID},
+		AgentRoot:      apiruntime.AgentRoot{Path: "workspace"},
 		ClientProtocol: apiruntime.ClientProtocolACP,
 		Process: apiruntime.Process{
 			Command: mockagentBin,

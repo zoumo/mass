@@ -41,7 +41,7 @@ type SourceConfig struct {
 
 // AgentRunEntry describes a single agent run following the metadata/spec pattern.
 type AgentRunEntry struct {
-	Metadata AgentRunMetadata     `json:"metadata"`
+	Metadata AgentRunMetadata       `json:"metadata"`
 	Spec     pkgariapi.AgentRunSpec `json:"spec"`
 }
 
