@@ -5,10 +5,14 @@ COMMANDS := $(notdir $(patsubst %/main.go,%,$(wildcard cmd/*/main.go)))
 
 
 .PHONY: build
-fast-build: $(COMMANDS)
+fast-build: tidy $(COMMANDS)
 
 .PHONY: build
-build: test $(COMMANDS)
+build: tidy test $(COMMANDS)
+
+.PHONY: tidy
+tidy:
+	go mod tidy
 
 .PHONY: $(COMMANDS)
 $(COMMANDS):
