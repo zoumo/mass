@@ -6,14 +6,14 @@
 
 ```yaml
 kind: workspace-compose
-meta
+metadata:
   name: feature-ws
 spec:
   source:
     type: local
     path: /path/to/code
   agents:
-    - meta
+    - metadata:
         name: worker
       spec:
         agent: claude
@@ -30,7 +30,7 @@ spec:
           Rules:
           - All inter-agent communication must use workspace_send tool.
           - Plans must be written to files, messages only carry file path + summary.
-    - meta
+    - metadata:
         name: reviewer
       spec:
         agent: codex
@@ -55,19 +55,19 @@ spec:
 
 ```bash
 # 启动
-bin/massctl compose -f compose.yaml
+massctl compose -f compose.yaml
 
 # 下发任务
-bin/massctl agentrun prompt worker -w feature-ws \
+massctl agentrun prompt worker -w feature-ws \
   --text "Implement rate limiting for /api/v1/* endpoints. Max 100 req/min per API key."
 
 # 监控
-bin/massctl agentrun get -w feature-ws
+massctl agentrun get -w feature-ws
 
 # 清理
 for agent in worker reviewer; do
-  bin/massctl agentrun stop $agent -w feature-ws
-  bin/massctl agentrun delete $agent -w feature-ws
+  massctl agentrun stop $agent -w feature-ws
+  massctl agentrun delete $agent -w feature-ws
 done
-bin/massctl workspace delete feature-ws
+massctl workspace delete feature-ws
 ```

@@ -14,7 +14,7 @@ version: 0.1.0
 ## 健康检查（每次操作前必须执行）
 
 ```bash
-bin/massctl daemon status
+massctl daemon status
 ```
 
 - `daemon: running` → 继续
@@ -27,7 +27,7 @@ bin/massctl daemon status
 健康检查通过后，先确认当前可用的 agent 定义：
 
 ```bash
-bin/massctl agent get
+massctl agent get
 ```
 
 虽然 daemon 启动时会内置 `claude`、`codex`、`gsd-pi`，但用户可能已自定义其他 agent。**始终以 `agent get` 的实际输出为准，不要假设只有内置 agent。**
@@ -65,19 +65,19 @@ bin/massctl agent get
 
 ```bash
 # 挂载本地目录（mass 不会删除它）
-bin/massctl workspace create local --name my-ws --path /path/to/code
+massctl workspace create local --name my-ws --path /path/to/code
 
 # 克隆 git 仓库（mass 管理该目录）
-bin/massctl workspace create git --name my-ws --url https://github.com/org/repo.git --ref main
+massctl workspace create git --name my-ws --url https://github.com/org/repo.git --ref main
 
 # 空目录
-bin/massctl workspace create empty --name my-ws
+massctl workspace create empty --name my-ws
 ```
 
 创建是**异步**的，轮询等待 ready：
 
 ```bash
-bin/massctl workspace get my-ws
+massctl workspace get my-ws
 # 等待 status.phase == "ready"
 # 如果 phase == "error" → 创建失败，检查 source 配置
 ```
@@ -85,8 +85,8 @@ bin/massctl workspace get my-ws
 ### 查看 / 删除
 
 ```bash
-bin/massctl workspace get [NAME]     # 列出或查看 workspace
-bin/massctl workspace delete NAME    # 删除（需先清空所有 agentrun）
+massctl workspace get [NAME]     # 列出或查看 workspace
+massctl workspace delete NAME    # 删除（需先清空所有 agentrun）
 ```
 
 ---
@@ -115,7 +115,7 @@ creating ──┐
 ### 创建
 
 ```bash
-bin/massctl agentrun create \
+massctl agentrun create \
   -w my-ws --name worker --agent claude \
   --system-prompt "You are a senior engineer."
 ```
@@ -125,30 +125,30 @@ bin/massctl agentrun create \
 启动是**异步**的：
 
 ```bash
-bin/massctl agentrun get worker -w my-ws   # 等待 state == "idle"
+massctl agentrun get worker -w my-ws   # 等待 state == "idle"
 ```
 
 ### 生命周期操作
 
 ```bash
-bin/massctl agentrun stop worker -w my-ws       # → stopped
-bin/massctl agentrun restart worker -w my-ws     # stopped/error → creating → idle
-bin/massctl agentrun cancel worker -w my-ws      # 取消当前 turn (running → idle)
-bin/massctl agentrun delete worker -w my-ws      # 删除记录（需 stopped/error）
+massctl agentrun stop worker -w my-ws       # → stopped
+massctl agentrun restart worker -w my-ws     # stopped/error → creating → idle
+massctl agentrun cancel worker -w my-ws      # 取消当前 turn (running → idle)
+massctl agentrun delete worker -w my-ws      # 删除记录（需 stopped/error）
 ```
 
 ### 查看
 
 ```bash
-bin/massctl agentrun get -w my-ws               # 列出 workspace 下所有 agentrun
-bin/massctl agentrun get -w my-ws --state idle   # 按状态过滤
-bin/massctl agentrun get worker -w my-ws         # 查看指定 agentrun
+massctl agentrun get -w my-ws               # 列出 workspace 下所有 agentrun
+massctl agentrun get -w my-ws --state idle   # 按状态过滤
+massctl agentrun get worker -w my-ws         # 查看指定 agentrun
 ```
 
 ### Compose：声明式多 Agent 启动
 
 ```bash
-bin/massctl compose -f compose.yaml
+massctl compose -f compose.yaml
 ```
 
 自动完成：创建 workspace → 等待 ready → 创建所有 agent → 等待全部 idle。
@@ -165,16 +165,16 @@ bin/massctl compose -f compose.yaml
 
 ```bash
 # 发后即走
-bin/massctl agentrun prompt worker -w my-ws --text "Fix the auth bug"
+massctl agentrun prompt worker -w my-ws --text "Fix the auth bug"
 
 # 等待结果（5 分钟超时）
-bin/massctl agentrun prompt worker -w my-ws --text "Fix the auth bug" --wait
+massctl agentrun prompt worker -w my-ws --text "Fix the auth bug" --wait
 ```
 
 ### 交互式聊天
 
 ```bash
-bin/massctl agentrun chat worker -w my-ws
+massctl agentrun chat worker -w my-ws
 ```
 
 ### Agent 间消息
@@ -182,7 +182,7 @@ bin/massctl agentrun chat worker -w my-ws
 同一 workspace 内的 agent 通过 workspace 消息通信：
 
 ```bash
-bin/massctl workspace send -w my-ws --from planner --to reviewer \
+massctl workspace send -w my-ws --from planner --to reviewer \
   --text "[round-1-proposal] Here is my design..."
 ```
 
@@ -212,17 +212,17 @@ Agent 内部有两个 MCP 工具：
 **场景：** Bug 修复、小功能、代码审查。步骤 < 3。
 
 ```bash
-bin/massctl workspace create local --name task-ws --path /path/to/code
+massctl workspace create local --name task-ws --path /path/to/code
 # 等 ready
-bin/massctl agentrun create -w task-ws --name worker --agent claude \
+massctl agentrun create -w task-ws --name worker --agent claude \
   --system-prompt "You are a senior engineer working on this codebase."
 # 等 idle
-bin/massctl agentrun prompt worker -w task-ws \
+massctl agentrun prompt worker -w task-ws \
   --text "Fix the nil pointer in pkg/auth/handler.go:42" --wait
 # 拿到结果后清理
-bin/massctl agentrun stop worker -w task-ws
-bin/massctl agentrun delete worker -w task-ws
-bin/massctl workspace delete task-ws
+massctl agentrun stop worker -w task-ws
+massctl agentrun delete worker -w task-ws
+massctl workspace delete task-ws
 ```
 
 ### Level 2：中等任务 — Worker + Reviewer
@@ -236,8 +236,8 @@ bin/massctl workspace delete task-ws
 详细 compose 配置见 [references/level2-compose.md](references/level2-compose.md)。
 
 ```bash
-bin/massctl compose -f compose.yaml
-bin/massctl agentrun prompt worker -w feature-ws \
+massctl compose -f compose.yaml
+massctl agentrun prompt worker -w feature-ws \
   --text "Implement rate limiting for /api/v1/*. Max 100 req/min per API key."
 # agent 通过 workspace_send 自主协作
 # 完成后清理
@@ -254,8 +254,8 @@ bin/massctl agentrun prompt worker -w feature-ws \
 详细 compose 配置见 [references/level3-compose.md](references/level3-compose.md)。
 
 ```bash
-bin/massctl compose -f compose.yaml
-bin/massctl agentrun prompt planner -w refactor-ws \
+massctl compose -f compose.yaml
+massctl agentrun prompt planner -w refactor-ws \
   --text "Refactor auth system: extract middleware, add JWT, migrate to Redis, update handlers, add tests."
 # planner→reviewer 多轮审查 → executor /gsd auto 执行 → planner 验证
 # 完成后清理
@@ -287,20 +287,20 @@ bin/massctl agentrun prompt planner -w refactor-ws \
 
 ```bash
 # 查看状态
-bin/massctl agentrun get -w my-ws
+massctl agentrun get -w my-ws
 
 # error 状态 → restart
-bin/massctl agentrun restart <name> -w my-ws
+massctl agentrun restart <name> -w my-ws
 
 # running 卡住 → cancel → 重新 prompt
-bin/massctl agentrun cancel <name> -w my-ws
+massctl agentrun cancel <name> -w my-ws
 
 # 全部重建
-for agent in $(bin/massctl agentrun get -w my-ws -o json | jq -r '.[].metadata.name'); do
-  bin/massctl agentrun stop $agent -w my-ws 2>/dev/null
-  bin/massctl agentrun delete $agent -w my-ws 2>/dev/null
+for agent in $(massctl agentrun get -w my-ws -o json | jq -r '.[].metadata.name'); do
+  massctl agentrun stop $agent -w my-ws 2>/dev/null
+  massctl agentrun delete $agent -w my-ws 2>/dev/null
 done
-bin/massctl workspace delete my-ws
+massctl workspace delete my-ws
 ```
 
 ### 清理顺序

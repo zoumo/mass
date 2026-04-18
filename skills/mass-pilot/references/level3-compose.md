@@ -13,7 +13,7 @@ spec:
     type: local
     path: /path/to/code
   agents:
-    - meta
+    - metadata:
         name: planner
       spec:
         agent: claude
@@ -81,10 +81,10 @@ spec:
 
 ```bash
 # 启动
-bin/massctl compose -f compose.yaml
+massctl compose -f compose.yaml
 
 # 下发任务给 planner
-bin/massctl agentrun prompt planner -w refactor-ws \
+massctl agentrun prompt planner -w refactor-ws \
   --text "Refactor auth system: extract middleware, add JWT, migrate session to Redis, update handlers, add tests."
 
 # 协作流程:
@@ -95,12 +95,12 @@ bin/massctl agentrun prompt planner -w refactor-ws \
 #   executor → [execution-done] → planner 验证
 
 # 监控
-bin/massctl agentrun get -w refactor-ws
+massctl agentrun get -w refactor-ws
 
 # 清理
 for agent in planner reviewer executor; do
-  bin/massctl agentrun stop $agent -w refactor-ws
-  bin/massctl agentrun delete $agent -w refactor-ws
+  massctl agentrun stop $agent -w refactor-ws
+  massctl agentrun delete $agent -w refactor-ws
 done
-bin/massctl workspace delete refactor-ws
+massctl workspace delete refactor-ws
 ```

@@ -6,8 +6,8 @@
 
 ```yaml
 kind: workspace-compose
-meta
-  name: my-ws                   # Workspace 名称
+metadata:
+  name: my-ws                    # Workspace 名称
 spec:
   source:
     type: local                  # local | git | emptyDir
@@ -15,7 +15,7 @@ spec:
     # url: https://...           # git 必填
     # ref: main                  # git 可选（分支/tag/commit）
   agents:
-    - meta
+    - metadata:
         name: agent-name         # AgentRun 名称（workspace 内唯一）
       spec:
         agent: claude            # 内置 agent 定义名

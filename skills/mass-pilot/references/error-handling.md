@@ -58,11 +58,11 @@ Agent 无响应？
 部分恢复不行时，全部拆掉重来：
 
 ```bash
-for agent in $(bin/massctl agentrun get -w my-ws -o json | jq -r '.[].metadata.name'); do
-  bin/massctl agentrun stop $agent -w my-ws 2>/dev/null
-  bin/massctl agentrun delete $agent -w my-ws 2>/dev/null
+for agent in $(massctl agentrun get -w my-ws -o json | jq -r '.[].metadata.name'); do
+  massctl agentrun stop $agent -w my-ws 2>/dev/null
+  massctl agentrun delete $agent -w my-ws 2>/dev/null
 done
-bin/massctl workspace delete my-ws
+massctl workspace delete my-ws
 # 然后用 compose 重建
-bin/massctl compose -f compose.yaml
+massctl compose -f compose.yaml
 ```

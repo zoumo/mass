@@ -19,7 +19,7 @@
 
 ```yaml
 agents:
-  - meta { name: planner }
+  - metadata: { name: planner }
     spec:
       agent: claude
       systemPrompt: |
@@ -28,7 +28,7 @@ agents:
         Wait for all [execution-done] messages, then verify and report.
   - metadata: { name: reviewer }
     spec: { agent: codex, systemPrompt: "..." }
-  - meta { name: executor-api }
+  - metadata: { name: executor-api }
     spec:
       agent: gsd-pi
       systemPrompt: "Execute API-related subtasks via /gsd auto."
@@ -60,16 +60,16 @@ Agent A (生成) → Agent B (转换) → Agent C (验证)
 
 ```bash
 # 分别创建 workspace
-bin/massctl workspace create local --name api-ws --path /path/to/api
-bin/massctl workspace create local --name frontend-ws --path /path/to/frontend
+massctl workspace create local --name api-ws --path /path/to/api
+massctl workspace create local --name frontend-ws --path /path/to/frontend
 
 # 各自启动 agent
-bin/massctl agentrun create -w api-ws --name api-worker --agent claude --system-prompt "..."
-bin/massctl agentrun create -w frontend-ws --name fe-worker --agent claude --system-prompt "..."
+massctl agentrun create -w api-ws --name api-worker --agent claude --system-prompt "..."
+massctl agentrun create -w frontend-ws --name fe-worker --agent claude --system-prompt "..."
 
 # 协调：先改 API，再改前端
-bin/massctl agentrun prompt api-worker -w api-ws --text "Add new endpoint..." --wait
-bin/massctl agentrun prompt fe-worker -w frontend-ws --text "Update client to use new endpoint..." --wait
+massctl agentrun prompt api-worker -w api-ws --text "Add new endpoint..." --wait
+massctl agentrun prompt fe-worker -w frontend-ws --text "Update client to use new endpoint..." --wait
 ```
 
 ## 自定义 Agent 定义
@@ -77,7 +77,7 @@ bin/massctl agentrun prompt fe-worker -w frontend-ws --text "Update client to us
 内置 agent 不够用时，创建自定义 agent：
 
 ```bash
-bin/massctl agent apply -f my-agent.yaml
+massctl agent apply -f my-agent.yaml
 ```
 
 ```yaml
