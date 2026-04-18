@@ -1,5 +1,10 @@
 # pkg/tui/chat — 设计约定
 
+> **事件消费参考**：本包是 `runtime/watch_event` 的参考实现。
+> 事件类型定义、数据流处理、内容提取优先级、late-join 容错等通用协议见
+> [Event Consumer Guide](../../../docs/develop/event-consumer-guide.md)。
+> 本文档仅记录 chat TUI 实现层面的设计决策和 Bubbletea 特有约束。
+
 ## 架构
 
 ```

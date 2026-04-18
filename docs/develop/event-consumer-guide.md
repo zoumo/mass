@@ -14,11 +14,21 @@
 ```
 1. 通过 Unix socket 建立 JSON-RPC 连接
 2. 调用 runtime/watch_event（fromSeq 可选）
+   → 返回 { watchId, nextSeq }
 3. 开始消费 runtime/event_update notification 流
+   → 每条 notification 携带 watchId，用于过滤本次订阅的事件
 4. 可选：调用 runtime/status 获取当前 agent 状态
 ```
 
-### 1.2 fromSeq 语义
+### 1.2 watchId 与多路复用
+
+`runtime/watch_event` 返回一个 `watchId`（服务端分配的不透明标识符）。
+后续每条 `runtime/event_update` notification 的 AgentRunEvent 信封中都携带该 `watchId`。
+当多个 watch 流共享同一条连接时，客户端通过 `watchId` 区分不同订阅的事件。
+
+> **注意**：`nextSeq` 仅用于诊断，断线重连应使用客户端收到的最后一个 `event.seq + 1`。
+
+### 1.3 fromSeq 语义
 
 | fromSeq | 行为 |
 |---------|------|
@@ -26,7 +36,7 @@
 | `0` | 全量 replay + live（相当于 K8s List + Watch） |
 | `N` | 从 seq N 开始 replay + live（断线恢复用） |
 
-### 1.3 断线重连
+### 1.4 断线重连
 
 使用客户端收到的最后一个 `event.seq + 1` 作为 `fromSeq` 重连，即可无缝补齐丢失的事件段。
 **不要使用** response 中的 `nextSeq` 作为重连 seq——它只用于诊断。
@@ -294,21 +304,28 @@ status == "end"：
 ```json
 {
   "entries": [
-    { "content": "Analyze the codebase", "status": "completed" },
-    { "content": "Refactor auth module", "status": "in_progress" },
-    { "content": "Update tests", "status": "pending" }
+    { "content": "Analyze the codebase", "status": "completed", "priority": "high" },
+    { "content": "Refactor auth module", "status": "in_progress", "priority": "medium" },
+    { "content": "Update tests", "status": "pending", "priority": "low" }
   ]
 }
 ```
 
-### 6.2 处理策略
+### 6.2 Entry 字段
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `content` | string | 步骤描述文本 |
+| `status` | string | `pending`、`in_progress`、`completed` |
+| `priority` | string | 优先级：`high`、`medium`、`low`（可选） |
+
+### 6.3 处理策略
 
 - 每次收到 `plan` 事件时，**替换整个 plan 视图**（不是增量更新）
 - `entries` 数组已排序，直接按序渲染
-- 每个 entry 的 `status` 可为：`pending`、`in_progress`、`completed`
 - 如果 `entries` 为空数组，可忽略该事件
 
-### 6.3 Plan 与 Turn 的关系
+### 6.4 Plan 与 Turn 的关系
 
 Plan 事件可以在 turn 内的任意时刻到达（通常在 agent 决定执行计划后）。
 同一个 turn 内可能有多次 plan 更新（每次 agent 完成一步后更新 status）。
@@ -408,6 +425,24 @@ turn_end { stopReason: "end_turn" }
 
 ### 8.3 `status` 子字段：进程状态
 
+```json
+{
+  "previousStatus": "idle",
+  "status": "running",
+  "pid": 12345,
+  "reason": "prompt-started",
+  "sessionChanged": ["configOptions", "agentInfo"]
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `previousStatus` | string | 变更前的状态 |
+| `status` | string | 当前状态（见下表） |
+| `pid` | int | Agent 进程 PID（可选） |
+| `reason` | string | 状态变更原因（可选） |
+| `sessionChanged` | string[] | 本次变更涉及的 session 属性列表（可选）。当 session 元数据变更（如 configOptions、agentInfo、capabilities）但进程状态未变时，`previousStatus == status` 且该字段非空 |
+
 | status 值 | 含义 |
 |-----------|------|
 | `running` | Agent 正在执行 turn |
@@ -493,7 +528,8 @@ Late join 是指消费方在 agent 已经运行中途才连接。这是常见场
 
 ### 连接
 
-- [ ] 建立 JSON-RPC 连接并调用 `runtime/watch_event`，消费 `runtime/event_update` notification
+- [ ] 建立 JSON-RPC 连接并调用 `runtime/watch_event`，保存返回的 `watchId`
+- [ ] 消费 `runtime/event_update` notification，按 `watchId` 过滤本次订阅的事件
 - [ ] 保存最后收到的 `seq` 用于断线重连
 - [ ] 调用 `runtime/status` 获取初始 agent 状态
 
