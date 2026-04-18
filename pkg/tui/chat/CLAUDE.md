@@ -3,17 +3,20 @@
 ## 架构
 
 ```
-agent-run RPC client (chat.go)
+connectCmd (chat.go)
     │
-    ├── readLoop → c.notifs channel (所有通知)
+    ├── runclient.Dial → *runclient.Client
+    ├── sc.WatchEvent  → *runclient.Watcher (typed event stream)
     │
     ▼
-waitNotif (tea.Cmd)
+waitNotif(watcher) (tea.Cmd)
+    │  读 watcher.ResultChan()
+    │  Watcher 内部处理 JSON-RPC 反序列化和 watchID 过滤
     │
-    ├── runtime/event_update → notifMsg     → handleNotif()
+    ├── turn_end event     → turnEndMsg
     ├── runtime_update (含 Status) → stateChangeMsg → 更新状态栏
-    ├── turn_end event    → turnEndMsg
-    └── channel closed    → connClosedMsg
+    ├── 其他事件            → notifMsg     → handleNotif()
+    └── channel closed      → connClosedMsg
     │
     ▼
 chatModel (chat.go)
@@ -33,20 +36,22 @@ chat 可以随时连接到正在运行的 agent。这意味着：
 
 ## Fire-and-Forget Prompt
 
-`sendPromptCmd` 使用 `c.send()`（不等回复）而非 `c.call()`（阻塞）。原因：
+`sendPromptCmd` 使用 `sc.SendPrompt()`（内部调 `CallAsync`，不等回复）而非阻塞式 `Call`。原因：
 
-- `session/prompt` RPC 阻塞到 turn 结束——如果用 `c.call()` 会卡住 tea.Cmd goroutine
+- `session/prompt` RPC 阻塞到 turn 结束——如果用阻塞式 `Call` 会卡住 tea.Cmd goroutine
 - Turn 结束通过 `turn_end` 通知知道，不需要 RPC 回复
-- `c.send()` 发完立即返回，不注册 pending handler
-- 这样 `session/cancel` 的 `c.call()` 不会和 prompt 的 encoder 竞争
+- `CallAsync` 发完立即返回，不注册 pending response handler
+- 这样 `session/cancel` 的阻塞式 `Call` 不会和 prompt 的 encoder 竞争
 
-## RPC 读取
+## RPC 事件流
 
-使用 `bufio.Reader.ReadBytes('\n')` + `json.Unmarshal` 逐行读取 NDJSON 流：
+chat 通过 `runclient.Watcher` 接收事件，Watcher 内部封装了：
 
-- **无大小限制**：`ReadBytes` 按需增长，不像 `bufio.Scanner` 有硬上限
-- **非 JSON 容错**：遇到非 JSON 行时 skip 并 log warning，不中断连接
-- **流状态可恢复**：`json.Decoder` 遇到非 JSON 后流位置损坏无法恢复，`ReadBytes` 按行边界切分，天然可以跳过坏行
+- NDJSON 流的读取和 JSON 反序列化
+- watchID 过滤（只返回本次 watch 订阅的事件）
+- 类型化的 `AgentRunEvent` 输出（通过 `ResultChan()`）
+
+chat 不直接接触 NDJSON 流或 JSON 解析。
 
 ## waitNotif 必须内部循环
 
@@ -55,18 +60,19 @@ chat 可以随时连接到正在运行的 agent。这意味着：
 **整个通知链永久断裂**。
 
 ```go
-// ✓ 正确：循环跳过无效消息
+// ✓ 正确：循环处理，最终返回 tea.Msg
 for {
-    msg, ok := <-ch
+    ev, ok := <-w.ResultChan()
     if !ok { return connClosedMsg{} }
-    if msg.Method != runapi.MethodRuntimeEventUpdate {
-        continue // 不返回 nil！
+    if ev.Type == runapi.EventTypeTurnEnd {
+        return turnEndMsg{}
     }
-    // ... process ...
+    // ... 其他类型分支 ...
+    return notifMsg{ev: ev}
 }
 
 // ✗ 错误：返回 nil 会断链
-if msg.Method != runapi.MethodRuntimeEventUpdate {
+if ev.Type == "unknown" {
     return nil // BUG: 链断了，后续所有事件丢失
 }
 ```
@@ -155,12 +161,12 @@ chat 处理 `user_message` 时通过 `sentPrompt` flag 去重：
 
 `waitNotif` 是一个自调度链：读一个通知 → 返回 tea.Msg → Update 处理 → 在 cmds 里加 `waitNotif` 继续读下一个。
 
-**Update 中每个消费 notifs channel 的 case 都必须重新调度 `waitNotif(m.notifs)`：**
+**Update 中每个消费 notifs channel 的 case 都必须重新调度 `waitNotif(m.watcher)`：**
 
 ```go
-case notifMsg:       cmds = append(cmds, waitNotif(m.notifs))  // ✓
-case turnEndMsg:     cmds = append(cmds, waitNotif(m.notifs))  // ✓
-case stateChangeMsg: cmds = append(cmds, waitNotif(m.notifs))  // ✓ 曾经遗漏导致消息全丢
+case notifMsg:       cmds = append(cmds, waitNotif(m.watcher))  // ✓
+case turnEndMsg:     cmds = append(cmds, waitNotif(m.watcher))  // ✓
+case stateChangeMsg: cmds = append(cmds, waitNotif(m.watcher))  // ✓ 曾经遗漏导致消息全丢
 case connClosedMsg:  // 不需要（连接已断）
 ```
 
