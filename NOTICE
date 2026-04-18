@@ -1,0 +1,30 @@
+MASS (Multi-Agent Service System)
+Copyright 2026 jim.zoumo@gmail.com
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for details.
+
+==========================================================================
+Third-Party Code Notices
+==========================================================================
+
+The following third-party code is included in this repository under
+a different license than the project's Apache 2.0 license:
+
+--------------------------------------------------------------------------
+Charmbracelet Crush (vendored subset)
+--------------------------------------------------------------------------
+
+Location:   third_party/charmbracelet/crush/
+Source:     https://github.com/charmbracelet/crush
+Commit:     e23ef333aa7b58aed57a0e238cd72a908eb1e20d
+License:    FSL-1.1-MIT (Functional Source License 1.1, MIT Future License)
+Copyright:  2025-2026 Charmbracelet, Inc.
+
+NOTE: FSL-1.1-MIT is NOT an OSI-approved open-source license. It prohibits
+"Competing Use" — making the software available in a commercial product or
+service that substitutes for or offers substantially similar functionality
+to Charmbracelet's products. The code automatically converts to the MIT
+license two years after its initial release date.
+
+See third_party/charmbracelet/crush/LICENSE.md for the full license text.

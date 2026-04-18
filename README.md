@@ -255,6 +255,18 @@ bin/massctl agentrun prompt my-agent -w myproject --text "Explain main.go" --wai
 - **[Development Guide](docs/develop/)** — Code principles, contribution rules, development references
 - **[Decisions](.gsd/DECISIONS.md)** — Architectural decision records (D001–D112+)
 
+## Acknowledgments
+
+MASS's interactive TUI (diff view, chat interface) incorporates code from [Charmbracelet's Crush](https://github.com/charmbracelet/crush) — a beautifully designed terminal UI toolkit. The vendored subset lives in `third_party/charmbracelet/crush/` under the [FSL-1.1-MIT](third_party/charmbracelet/crush/LICENSE.md) license (converts to MIT two years after release). See [NOTICE](NOTICE) for details.
+
+Thanks to the [Charmbracelet](https://github.com/charmbracelet) team for building excellent TUI components that make terminal applications a joy to use.
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).
+
+> **Note:** Third-party code under `third_party/` may use different licenses. See [NOTICE](NOTICE) for details.
+
 ---
 
 <div align="center">
