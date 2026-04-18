@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-17
+---
+
 # agentd — runtime realization daemon
 
 mass is the daemon that realizes already-decided runtime objects.

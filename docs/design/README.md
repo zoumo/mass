@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-17
+---
+
 # Multi-Agent Supervision System (MASS) — 设计规范 v2
 
 ## 什么是 MASS

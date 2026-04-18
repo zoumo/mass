@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-17
+---
+
 # ARI — Agent Runtime Interface
 
 ARI is the local control API between an external caller and mass.

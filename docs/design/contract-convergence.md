@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-17
+---
+
 # Contract Convergence
 
 This file is the slice-level authority map for the design set. It names which document owns each contract and records the invariants that must stay aligned across all docs.

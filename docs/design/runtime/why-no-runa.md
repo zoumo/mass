@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-17
+---
+
 # 为什么 MASS 没有 runa
 
 OCI 生态里 runc 是核心组件。MASS 没有对应的 runa。本文说明原因。

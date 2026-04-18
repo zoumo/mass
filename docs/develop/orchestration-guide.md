@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-18
+---
+
 # Orchestration Guide — 外部调用方如何使用 MASS
 
 ## 概述

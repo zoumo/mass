@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-17
+---
+
 # AgentRun 与 agent-run 状态机
 
 本文档描述 AgentRun（DB 持久化状态）和 agent-run（运行时状态）的状态定义、变更时机、同步机制，以及 Prompt 的完整生命周期。

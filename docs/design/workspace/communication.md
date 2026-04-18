@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-17
+---
+
 # Workspace Communication — Agent 间通信设计
 
 ## 概述

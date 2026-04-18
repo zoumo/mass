@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-17
+---
+
 # Shim RPC Specification
 
 ## 概述

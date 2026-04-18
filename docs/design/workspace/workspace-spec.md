@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-17
+---
+
 # MASS Workspace Spec
 
 The Workspace Spec declares how agentd should prepare a working directory for one or more AgentRuns.

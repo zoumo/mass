@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-18
+---
+
 # MASS Runtime Spec — Design Rationale
 
 ## Architecture Reference

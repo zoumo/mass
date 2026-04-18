@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-18
+---
+
 # MASS Runtime Specification
 
 ## 概述

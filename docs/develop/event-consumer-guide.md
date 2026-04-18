@@ -1,3 +1,7 @@
+---
+last_updated: 2026-04-18
+---
+
 # Event Consumer Guide — `runtime/watch_event` 最佳实践
 
 本文档面向所有通过 `runtime/watch_event` 消费 AgentRunEvent 事件流的第三方 UI 或事件消费方。
