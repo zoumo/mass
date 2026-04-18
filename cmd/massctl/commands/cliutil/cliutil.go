@@ -4,6 +4,7 @@ package cliutil
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
@@ -13,6 +14,8 @@ import (
 type ClientFn func() (pkgariapi.Client, error)
 
 // OutputJSON pretty-prints the result as JSON to stdout.
+//
+// Deprecated: prefer PrintJSON or ResourcePrinter for new commands.
 func OutputJSON(result any) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
@@ -20,6 +23,13 @@ func OutputJSON(result any) {
 		fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// PrintJSON writes result as pretty JSON to w.
+func PrintJSON(w io.Writer, result any) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result)
 }
 
 // HandleError prints the error to stderr and exits with code 1.

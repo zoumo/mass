@@ -26,7 +26,7 @@ type LogConfig struct {
 
 // AddFlags registers logging flags on the given flag set.
 func (c *LogConfig) AddFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&c.Level, "log-level", "info", "log level (debug, info, warn, error)")
+	fs.StringVar(&c.Level, "log-level", "info", "log level (trace, debug, info, warn, error)")
 	fs.StringVar(&c.Format, "log-format", "auto", "log format (auto, pretty, text, json)")
 	fs.StringVar(&c.File, "log-file", "", "log file path (empty = stderr)")
 	fs.IntVar(&c.MaxSizeMB, "log-max-size", 100, "max log file size in MB before rotation")
@@ -105,6 +105,8 @@ func NewHandler(format string, level slog.Level, w io.Writer) slog.Handler {
 // Accepted values: "debug", "info", "warn", "error" (case-insensitive).
 func ParseLevel(s string) (slog.Level, error) {
 	switch strings.ToLower(s) {
+	case "trace":
+		return LevelTrace, nil
 	case "debug":
 		return slog.LevelDebug, nil
 	case "info":
@@ -114,6 +116,6 @@ func ParseLevel(s string) (slog.Level, error) {
 	case "error":
 		return slog.LevelError, nil
 	default:
-		return slog.LevelInfo, fmt.Errorf("unknown log level %q (valid: debug, info, warn, error)", s)
+		return slog.LevelInfo, fmt.Errorf("unknown log level %q (valid: trace, debug, info, warn, error)", s)
 	}
 }

@@ -3,9 +3,11 @@ package acp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/coder/acp-go-sdk"
 
+	"github.com/zoumo/mass/internal/logging"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
@@ -18,7 +20,8 @@ import (
 // send those requests. The methods satisfy the interface and return an error if
 // called unexpectedly.
 type acpClient struct {
-	mgr *Manager
+	mgr    *Manager
+	logger *slog.Logger
 }
 
 var _ acp.Client = (*acpClient)(nil)
@@ -28,7 +31,9 @@ var _ acp.Client = (*acpClient)(nil)
 func (c *acpClient) SessionUpdate(_ context.Context, n acp.SessionNotification) error {
 	select {
 	case c.mgr.events <- n:
+		c.logger.Log(context.Background(), logging.LevelTrace, "notification received")
 	default:
+		c.logger.Log(context.Background(), logging.LevelTrace, "notification dropped, channel full")
 	}
 	return nil
 }
@@ -38,12 +43,20 @@ func (c *acpClient) SessionUpdate(_ context.Context, n acp.SessionNotification) 
 // The response must include a valid Outcome with Selected + OptionId;
 // an empty Outcome is treated as denial by ACP agents.
 func (c *acpClient) RequestPermission(_ context.Context, req acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
+	c.logger.Debug("permission request", "policy", c.mgr.cfg.Session.Permissions, "options", len(req.Options))
 	switch c.mgr.cfg.Session.Permissions {
 	case apiruntime.DenyAll:
+		c.logger.Debug("permission denied", "policy", apiruntime.DenyAll)
 		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: deny_all policy blocks all operations")
 	case apiruntime.ApproveReads:
+		c.logger.Debug("permission denied", "policy", apiruntime.ApproveReads)
 		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: approve_reads policy blocks write operations")
 	case apiruntime.ApproveAll: // select the first available option
+		optID := acp.PermissionOptionId("")
+		if len(req.Options) > 0 {
+			optID = req.Options[0].OptionId
+		}
+		c.logger.Debug("permission approved", "optionId", optID)
 		if len(req.Options) == 0 {
 			return acp.RequestPermissionResponse{
 				Outcome: acp.RequestPermissionOutcome{

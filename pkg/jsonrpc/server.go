@@ -61,7 +61,7 @@ type Server struct {
 func NewServer(logger *slog.Logger, opts ...ServerOption) *Server {
 	s := &Server{
 		services: make(map[string]*ServiceDesc),
-		logger:   logger,
+		logger:   logger.With("subsystem", "rpc"),
 		done:     make(chan struct{}),
 	}
 	for _, opt := range opts {
@@ -155,16 +155,19 @@ func (h *serverHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *js
 		return json.Unmarshal(*req.Params, dst)
 	}
 
+	h.srv.logger.Debug("request", "method", req.Method)
 	info := &UnaryServerInfo{FullMethod: req.Method}
 	result, err := h.srv.dispatch(ctx, unmarshal, info, method)
 	if err != nil {
 		rpcErr := toRPCError(err)
+		h.srv.logger.Debug("error", "method", req.Method, "code", rpcErr.Code)
 		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    rpcErr.Code,
 			Message: rpcErr.Message,
 		})
 		return
 	}
+	h.srv.logger.Debug("response", "method", req.Method)
 	_ = conn.Reply(ctx, req.ID, result)
 }
 

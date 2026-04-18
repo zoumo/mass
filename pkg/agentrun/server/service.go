@@ -33,13 +33,14 @@ type Service struct {
 
 // New creates a new Service.
 func New(mgr *acpruntime.Manager, trans *Translator, logPath string, logger *slog.Logger) *Service {
-	return &Service{mgr: mgr, trans: trans, logPath: logPath, logger: logger}
+	return &Service{mgr: mgr, trans: trans, logPath: logPath, logger: logger.With("subsystem", "service")}
 }
 
 func (s *Service) Prompt(ctx context.Context, req *runapi.SessionPromptParams) (*runapi.SessionPromptResult, error) {
 	if len(req.Prompt) == 0 {
 		return nil, jsonrpc.ErrInvalidParams("missing prompt")
 	}
+	s.logger.Debug("prompt", "blocks", len(req.Prompt))
 	s.trans.NotifyTurnStart()
 	s.trans.NotifyUserPrompt(req.Prompt)
 	resp, err := s.mgr.Prompt(ctx, req.Prompt)
@@ -51,6 +52,7 @@ func (s *Service) Prompt(ctx context.Context, req *runapi.SessionPromptParams) (
 		s.trans.NotifyError(err.Error())
 	}
 	s.trans.NotifyTurnEnd(acp.StopReason(stopReason))
+	s.logger.Debug("prompt done", "stopReason", stopReason)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
@@ -58,6 +60,7 @@ func (s *Service) Prompt(ctx context.Context, req *runapi.SessionPromptParams) (
 }
 
 func (s *Service) Cancel(ctx context.Context) error {
+	s.logger.Debug("cancel")
 	if err := s.mgr.Cancel(ctx); err != nil {
 		return jsonrpc.ErrInternal(err.Error())
 	}
@@ -76,6 +79,7 @@ func (s *Service) Load(_ context.Context, _ *runapi.SessionLoadParams) error {
 // When FromSeq is set, historical events are replayed via runtime/event_update
 // notifications first, then live events follow — no large response payload.
 func (s *Service) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventParams) (*runapi.SessionWatchEventResult, error) {
+	s.logger.Debug("watch_event", "fromSeq", req.FromSeq)
 	peer := jsonrpc.PeerFromContext(ctx)
 	if peer == nil {
 		return nil, jsonrpc.ErrInternal("no peer in context")
@@ -116,7 +120,7 @@ func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer) (*runap
 					// Subscriber evicted by Translator (channel full, K8s-style).
 					// Close the peer connection to propagate disconnect to client,
 					// triggering re-dial + WatchEvent(fromSeq=lastSeq+1).
-					slog.Warn("watch: subscriber evicted by translator, closing peer",
+					s.logger.Warn("subscriber evicted by translator, closing peer",
 						"watchID", watchID, "reason", "channel_full")
 					peer.Close()
 					return
@@ -188,7 +192,7 @@ func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, fromS
 			case ev, ok := <-ch:
 				if !ok {
 					// Subscriber evicted by Translator (channel full, K8s-style).
-					slog.Warn("watch: subscriber evicted by translator, closing peer",
+					s.logger.Warn("subscriber evicted by translator, closing peer",
 						"watchID", watchID, "reason", "channel_full")
 					peer.Close()
 					return
@@ -225,6 +229,7 @@ func (s *Service) Status(_ context.Context) (*runapi.RuntimeStatusResult, error)
 }
 
 func (s *Service) SetModel(ctx context.Context, req *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error) {
+	s.logger.Debug("set_model", "modelID", req.ModelID)
 	if req.ModelID == "" {
 		return nil, jsonrpc.ErrInvalidParams("missing modelId")
 	}
@@ -235,6 +240,7 @@ func (s *Service) SetModel(ctx context.Context, req *runapi.SessionSetModelParam
 }
 
 func (s *Service) Stop(_ context.Context) error {
+	s.logger.Debug("stop")
 	// Stop signals are handled by the transport layer (the caller detects the
 	// reply and triggers Shutdown). The service layer itself has no lifecycle
 	// state to clean up here.

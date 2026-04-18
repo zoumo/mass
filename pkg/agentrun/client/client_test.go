@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -53,7 +54,7 @@ func startTestServer(t *testing.T, svc runserver.Handler) string {
 	sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("run-ct-%d.sock", time.Now().UnixNano()))
 	_ = os.Remove(sockPath)
 
-	srv := jsonrpc.NewServer(nil)
+	srv := jsonrpc.NewServer(slog.Default())
 	runserver.Register(srv, svc)
 
 	ln, err := net.Listen("unix", sockPath)

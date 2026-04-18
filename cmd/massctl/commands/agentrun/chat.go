@@ -12,15 +12,13 @@ import (
 )
 
 func newChatCmd(getClient cliutil.ClientFn) *cobra.Command {
-	var (
-		ws   string
-		name string
-	)
+	var ws string
 	cmd := &cobra.Command{
-		Use:   "chat",
+		Use:   "chat name",
 		Short: "Interactive chat with a running agent (resolves run socket via ARI)",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
 			client, err := getClient()
 			if err != nil {
 				return err
@@ -41,8 +39,6 @@ func newChatCmd(getClient cliutil.ClientFn) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
-	cmd.Flags().StringVar(&name, "name", "", "Agent run name (required)")
 	_ = cmd.MarkFlagRequired("workspace")
-	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }

@@ -333,17 +333,17 @@ ctl workspace delete --name "$WS"
 |---|---|
 | **一键创建 workspace+agents** | `massctl up -f <config.yaml>` |
 | 注册 agent 模板 | `massctl agent apply -f <file.yaml>` |
-| 查看 agent 模板 | `massctl agent list` |
+| 查看 agent 模板 | `massctl agent get` |
 | 创建本地 workspace | `massctl workspace create local --name <name> --path <abs-path>` |
-| 查看 workspace 状态 | `massctl workspace get --name <name>` |
+| 查看 workspace 状态 | `massctl workspace get <name>` |
 | 创建 agent run | `massctl agentrun create --workspace <ws> --name <n> --runtime-class <rc>` |
-| 发送 prompt（阻塞等待） | `massctl agentrun prompt --workspace <ws> --name <name> --text '...' --wait` |
-| 发送 prompt（异步） | `massctl agentrun prompt --workspace <ws> --name <name> --text '...'` |
-| 查看 agent run 详情 | `massctl agentrun get --workspace <ws> --name <name>` |
+| 发送 prompt（阻塞等待） | `massctl agentrun prompt <name> -w <ws> --text '...' --wait` |
+| 发送 prompt（异步） | `massctl agentrun prompt <name> -w <ws> --text '...'` |
+| 查看 agent run 详情 | `massctl agentrun get <name> -w <ws>` |
 | agent 间消息 | `massctl workspace send --name <ws> --from <a> --to <b> --text '...'` |
-| 取消执行中的 prompt | `massctl agentrun cancel --workspace <ws> --name <name>` |
-| 停止 agent | `massctl agentrun stop --workspace <ws> --name <name>` |
-| 删除 agent | `massctl agentrun delete --workspace <ws> --name <name>` |
+| 取消执行中的 prompt | `massctl agentrun cancel <name> -w <ws>` |
+| 停止 agent | `massctl agentrun stop <name> -w <ws>` |
+| 删除 agent | `massctl agentrun delete <name> -w <ws>` |
 | 交互式 chat | `massctl shim --socket <path> chat` |
 | 查看 shim 状态 | `massctl shim --socket <path> state` |
 

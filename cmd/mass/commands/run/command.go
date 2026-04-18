@@ -104,7 +104,7 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string, logCfg *l
 	}
 	defer evLog.Close()
 
-	trans := runserver.NewTranslator(id, mgr.Events(), evLog)
+	trans := runserver.NewTranslator(id, mgr.Events(), evLog, logger)
 	// Inject the ACP session ID now that Create() has completed the handshake.
 	trans.SetSessionID(mgr.SessionID())
 	mgr.SetStateChangeHook(func(change acpruntime.StateChange) {

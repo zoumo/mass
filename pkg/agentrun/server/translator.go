@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -8,6 +9,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/google/uuid"
 
+	"github.com/zoumo/mass/internal/logging"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 )
 
@@ -20,6 +22,7 @@ type Translator struct {
 	sessionID string // ACP session ID, set after handshake via SetSessionID
 	in        <-chan acp.SessionNotification
 	log       *EventLog
+	logger    *slog.Logger
 
 	// sessionMetadataHook is called after broadcastEvent for runtime_update
 	// events that carry metadata fields (availableCommands, configOptions,
@@ -40,7 +43,7 @@ type Translator struct {
 // NewTranslator creates a Translator that reads from in.
 // runID is the agent run identifier (the agent-run --id value).
 // Pass a non-nil EventLog to enable durable event logging.
-func NewTranslator(runID string, in <-chan acp.SessionNotification, log *EventLog) *Translator {
+func NewTranslator(runID string, in <-chan acp.SessionNotification, log *EventLog, logger *slog.Logger) *Translator {
 	nextSeq := 0
 	if log != nil {
 		nextSeq = log.NextSeq()
@@ -49,6 +52,7 @@ func NewTranslator(runID string, in <-chan acp.SessionNotification, log *EventLo
 		runID:       runID,
 		in:          in,
 		log:         log,
+		logger:      logger.With("subsystem", "events"),
 		subs:        make(map[int]chan runapi.AgentRunEvent),
 		nextSeq:     nextSeq,
 		done:        make(chan struct{}),
@@ -118,6 +122,7 @@ func (t *Translator) Subscribe() (<-chan runapi.AgentRunEvent, int, int) {
 	t.nextID++
 	ch := make(chan runapi.AgentRunEvent, 1024)
 	t.subs[id] = ch
+	t.logger.Debug("subscribe", "subID", id, "nextSeq", t.nextSeq)
 	return ch, id, t.nextSeq
 }
 
@@ -128,6 +133,7 @@ func (t *Translator) Unsubscribe(id int) {
 	if ch, ok := t.subs[id]; ok {
 		close(ch)
 		delete(t.subs, id)
+		t.logger.Debug("unsubscribe", "subID", id)
 	}
 }
 
@@ -156,6 +162,7 @@ func (t *Translator) LastSeq() int {
 // which runs under mu.Lock.
 func (t *Translator) NotifyTurnStart() {
 	newTurnID := uuid.New().String()
+	t.logger.Debug("turn_start", "turnID", newTurnID)
 	t.broadcast(func(seq int, at time.Time) runapi.AgentRunEvent {
 		t.currentTurnId = newTurnID
 		return runapi.AgentRunEvent{
@@ -203,6 +210,7 @@ func (t *Translator) NotifyError(msg string) {
 // The current turnId is included in the event and cleared AFTER use so the
 // turn_end event itself carries the identifier.
 func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
+	t.logger.Debug("turn_end", "turnID", t.currentTurnId, "reason", reason)
 	t.closeOpenBlock()
 	t.broadcast(func(seq int, at time.Time) runapi.AgentRunEvent {
 		ae := runapi.AgentRunEvent{
@@ -224,6 +232,7 @@ func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
 // sessionChanged lists state sections that were updated (e.g. ["agentInfo","capabilities"]
 // for the synthetic bootstrap-metadata event). Pass nil for lifecycle-only transitions.
 func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, reason string, sessionChanged []string) {
+	t.logger.Debug("state_change", "from", previousStatus, "to", status, "reason", reason)
 	t.broadcast(func(seq int, at time.Time) runapi.AgentRunEvent {
 		return runapi.AgentRunEvent{
 			RunID:     t.runID,
@@ -355,10 +364,11 @@ func (t *Translator) broadcast(build func(seq int, at time.Time) runapi.AgentRun
 
 	ev := build(t.nextSeq, time.Now().UTC())
 	ev.Seq = t.nextSeq
+	t.logger.Log(context.Background(), logging.LevelTrace, "broadcast", "seq", ev.Seq, "type", ev.Type, "subs", len(t.subs))
 
 	if t.log != nil {
 		if err := t.log.Append(ev); err != nil {
-			slog.Error("events: log append failed, event dropped",
+			t.logger.Error("log append failed, event dropped",
 				"seq", t.nextSeq,
 				"type", ev.Type,
 				"error", err,
@@ -380,7 +390,7 @@ func (t *Translator) broadcast(build func(seq int, at time.Time) runapi.AgentRun
 		select {
 		case ch <- ev:
 		default:
-			slog.Warn("events: slow subscriber evicted (channel full)",
+			t.logger.Warn("slow subscriber evicted, channel full",
 				"subID", id, "seq", ev.Seq, "type", ev.Type)
 			close(ch)
 			delete(t.subs, id)

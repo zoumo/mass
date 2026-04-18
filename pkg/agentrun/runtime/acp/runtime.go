@@ -59,7 +59,7 @@ func New(cfg apiruntime.Config, bundleDir, stateDir string, logger *slog.Logger)
 		cfg:       cfg,
 		bundleDir: bundleDir,
 		stateDir:  stateDir,
-		logger:    logger,
+		logger:    logger.With("subsystem", "runtime"),
 		events:    make(chan acp.SessionNotification, 1024),
 	}
 }
@@ -120,8 +120,9 @@ func (m *Manager) Create(ctx context.Context) error {
 		return fmt.Errorf("runtime: start agent: %w", err)
 	}
 	m.cmd = cmd
+	m.logger.Info("process started", "pid", cmd.Process.Pid)
 
-	client := &acpClient{mgr: m}
+	client := &acpClient{mgr: m, logger: m.logger.With("subsystem", "acp")}
 	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutPipe)
 	m.conn = conn
 
@@ -166,6 +167,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	m.sessionID = sessionResp.SessionId
 	m.models = sessionResp.Models
 	m.mu.Unlock()
+	m.logger.Info("session created", "sessionID", sessionResp.SessionId)
 
 	if m.cfg.Session.SystemPrompt != "" {
 		_, err = conn.Prompt(ctx, acp.PromptRequest{
@@ -178,6 +180,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		}
 	}
 
+	m.logger.Info("agent ready", "pid", cmd.Process.Pid, "sessionID", sessionResp.SessionId)
 	if err := m.writeState(func(s *apiruntime.State) {
 		s.MassVersion = m.cfg.MassVersion
 		s.ID = m.cfg.Metadata.Name
@@ -196,6 +199,7 @@ func (m *Manager) Create(ctx context.Context) error {
 
 	go func() {
 		_ = cmd.Wait()
+		m.logger.Info("process exited")
 		_ = m.writeState(func(s *apiruntime.State) {
 			s.MassVersion = m.cfg.MassVersion
 			s.ID = m.cfg.Metadata.Name
@@ -219,6 +223,7 @@ func (m *Manager) Kill(ctx context.Context) error {
 		return fmt.Errorf("runtime: agent process not started")
 	}
 
+	m.logger.Info("killing", "pid", cmd.Process.Pid)
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		_ = cmd.Process.Kill()
 	}
@@ -227,6 +232,7 @@ func (m *Manager) Kill(ctx context.Context) error {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
+		m.logger.Info("SIGKILL after timeout")
 		_ = cmd.Process.Kill()
 		select {
 		case <-done:
@@ -273,6 +279,7 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 	if conn == nil {
 		return acp.PromptResponse{}, fmt.Errorf("runtime: agent not started")
 	}
+	m.logger.Debug("prompt started", "blocks", len(prompt))
 
 	_ = m.writeState(func(s *apiruntime.State) {
 		s.Status = apiruntime.StatusRunning
@@ -288,6 +295,7 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		if err != nil {
 			reason = "prompt-failed"
 		}
+		m.logger.Debug("prompt done", "reason", reason)
 		_ = m.writeState(func(s *apiruntime.State) {
 			s.Status = apiruntime.StatusIdle
 		}, reason)
@@ -309,6 +317,7 @@ func (m *Manager) Cancel(ctx context.Context) error {
 	if conn == nil {
 		return fmt.Errorf("runtime: agent not started")
 	}
+	m.logger.Debug("cancel")
 
 	if err := conn.Cancel(ctx, acp.CancelNotification{SessionId: sessionID}); err != nil {
 		return fmt.Errorf("runtime: cancel: %w", err)
@@ -326,6 +335,7 @@ func (m *Manager) SetModel(ctx context.Context, modelID string) error {
 	if conn == nil {
 		return fmt.Errorf("runtime: agent not started")
 	}
+	m.logger.Debug("set_model", "modelID", modelID)
 
 	_, err := conn.UnstableSetSessionModel(ctx, acp.UnstableSetSessionModelRequest{
 		SessionId: sessionID,
@@ -402,6 +412,9 @@ func (m *Manager) writeState(apply func(*apiruntime.State), reason string) error
 	}
 
 	statusChanged := prevErr == nil && previous.Status != state.Status
+	if statusChanged {
+		m.logger.Debug("state written", "from", previous.Status, "to", state.Status, "reason", reason)
+	}
 	hook := m.stateChangeHook
 	change := StateChange{
 		SessionID:      state.ID,

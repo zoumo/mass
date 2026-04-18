@@ -53,7 +53,7 @@ func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
 	mgr := newTestManager(apiruntime.DenyAll)
 	defer cleanupManager(mgr)
 
-	client := &acpClient{mgr: mgr}
+	client := &acpClient{mgr: mgr, logger: slog.Default()}
 	_, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deny_all")
@@ -63,7 +63,7 @@ func TestAcpClient_RequestPermission_ApproveReads(t *testing.T) {
 	mgr := newTestManager(apiruntime.ApproveReads)
 	defer cleanupManager(mgr)
 
-	client := &acpClient{mgr: mgr}
+	client := &acpClient{mgr: mgr, logger: slog.Default()}
 	_, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "approve_reads")
@@ -73,7 +73,7 @@ func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
 	mgr := newTestManager(apiruntime.ApproveAll)
 	defer cleanupManager(mgr)
 
-	client := &acpClient{mgr: mgr}
+	client := &acpClient{mgr: mgr, logger: slog.Default()}
 	_, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{})
 	require.NoError(t, err, "approve_all should return no error")
 }
@@ -83,7 +83,7 @@ func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
 func TestAcpClient_NotSupported(t *testing.T) {
 	mgr := newTestManager(apiruntime.ApproveAll)
 	defer cleanupManager(mgr)
-	client := &acpClient{mgr: mgr}
+	client := &acpClient{mgr: mgr, logger: slog.Default()}
 	ctx := context.Background()
 
 	_, err := client.ReadTextFile(ctx, acp.ReadTextFileRequest{})
@@ -174,7 +174,7 @@ func TestConvertMcpServers_Empty(t *testing.T) {
 func TestAcpClient_SessionUpdate_DropsWhenFull(t *testing.T) {
 	mgr := newTestManager(apiruntime.ApproveAll)
 	defer cleanupManager(mgr)
-	client := &acpClient{mgr: mgr}
+	client := &acpClient{mgr: mgr, logger: slog.Default()}
 
 	// Fill the channel to capacity (64).
 	for i := 0; i < cap(mgr.events); i++ {
@@ -189,7 +189,7 @@ func TestAcpClient_SessionUpdate_DropsWhenFull(t *testing.T) {
 func TestAcpClient_SessionUpdate_Delivers(t *testing.T) {
 	mgr := newTestManager(apiruntime.ApproveAll)
 	defer cleanupManager(mgr)
-	client := &acpClient{mgr: mgr}
+	client := &acpClient{mgr: mgr, logger: slog.Default()}
 
 	n := acp.SessionNotification{}
 	err := client.SessionUpdate(context.Background(), n)
