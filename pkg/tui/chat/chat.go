@@ -177,27 +177,25 @@ func connectCmd(sock string) tea.Cmd {
 // Stop()), connClosedMsg is returned.
 func waitNotif(w *runclient.Watcher) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		for {
-			ev, ok := <-w.ResultChan()
-			if !ok {
-				return connClosedMsg{}
-			}
-			// turn_end → dedicated message so Update can finalize the assistant.
-			if ev.Type == runapi.EventTypeTurnEnd {
-				return turnEndMsg{}
-			}
-			// runtime_update with Status → dedicated message for status bar updates.
-			if ev.Type == runapi.EventTypeRuntimeUpdate {
-				if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok && ru.Status != nil {
-					return stateChangeMsg{
-						previous: ru.Status.PreviousStatus,
-						status:   ru.Status.Status,
-						reason:   ru.Status.Reason,
-					}
+		ev, ok := <-w.ResultChan()
+		if !ok {
+			return connClosedMsg{}
+		}
+		// turn_end → dedicated message so Update can finalize the assistant.
+		if ev.Type == runapi.EventTypeTurnEnd {
+			return turnEndMsg{}
+		}
+		// runtime_update with Status → dedicated message for status bar updates.
+		if ev.Type == runapi.EventTypeRuntimeUpdate {
+			if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok && ru.Status != nil {
+				return stateChangeMsg{
+					previous: ru.Status.PreviousStatus,
+					status:   ru.Status.Status,
+					reason:   ru.Status.Reason,
 				}
 			}
-			return notifMsg{ev: ev}
 		}
+		return notifMsg{ev: ev}
 	})
 }
 

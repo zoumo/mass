@@ -58,29 +58,14 @@ chat 通过 `runclient.Watcher` 接收事件，Watcher 内部封装了：
 
 chat 不直接接触 NDJSON 流或 JSON 解析。
 
-## waitNotif 必须内部循环
+## waitNotif 绝不能返回 nil
 
-`waitNotif` 使用 `for` 循环处理无效消息（非 agent-run 通知、解析失败），**绝不能返回 nil**。
+`waitNotif` 读取 `w.ResultChan()` 并返回对应的 `tea.Msg`，**绝不能返回 nil**。
 原因：返回 nil 的 tea.Cmd 不会触发 Bubbletea 的 Update，导致 waitNotif 不会被重新调度，
 **整个通知链永久断裂**。
 
-```go
-// ✓ 正确：循环处理，最终返回 tea.Msg
-for {
-    ev, ok := <-w.ResultChan()
-    if !ok { return connClosedMsg{} }
-    if ev.Type == runapi.EventTypeTurnEnd {
-        return turnEndMsg{}
-    }
-    // ... 其他类型分支 ...
-    return notifMsg{ev: ev}
-}
-
-// ✗ 错误：返回 nil 会断链
-if ev.Type == "unknown" {
-    return nil // BUG: 链断了，后续所有事件丢失
-}
-```
+Watcher 已在内部完成 watchID 过滤和 JSON 解析，所以到达 `waitNotif` 的事件都是有效的，
+每个分支都必须 return 一个非 nil 的 `tea.Msg`。
 
 ## 状态栏
 
