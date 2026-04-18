@@ -35,9 +35,9 @@ With MASS, you get a **production-grade runtime** that turns AI agents into mana
 Launch Claude Code, Codex, or any [ACP](https://github.com/coder/acp-go-sdk)-compatible agent as a long-running, supervised process. One command to create, prompt, cancel, restart, or stop — all through a unified API.
 
 ```bash
-massctl agentrun create --agent claude-code
-massctl agentrun prompt --prompt "Fix the auth bug"
-massctl agentrun stop
+massctl agentrun create -w myproject --name my-agent --agent claude
+massctl agentrun prompt my-agent -w myproject --text "Fix the auth bug"
+massctl agentrun stop my-agent -w myproject
 ```
 
 </td>
@@ -47,8 +47,7 @@ massctl agentrun stop
 Every thought, tool call, message, and state transition is captured as a typed, sequenced event stream. Connect to a running agent's shim at any time — reconnect and replay from any point without losing a single event.
 
 ```bash
-massctl shim chat --sock /path/to/shim.sock
-# Or connect via workspace + agent name:
+# Connect via workspace + agent name:
 massctl agentrun chat -w myproject --name my-agent
 # Interactive TUI: thinking → tool_call → agent_message → ...
 ```
@@ -76,8 +75,8 @@ Clone repos, provision scratch dirs, or mount local paths — then share them ac
 Everything is an API call. Build orchestrators, CI pipelines, or custom UIs on top of ARI (Agent Runtime Interface) — the same way Kubernetes builds on CRI.
 
 ```json
-{"method": "agentrun/create", "params": {"workspace": "myproject", "agent": "claude-code"}}
-{"method": "agentrun/prompt", "params": {"prompt": "Refactor the auth module"}}
+{"method": "agentrun/create", "params": {"metadata": {"workspace": "myproject", "name": "my-agent"}, "spec": {"agent": "claude"}}}
+{"method": "agentrun/prompt", "params": {"workspace": "myproject", "name": "my-agent", "prompt": [{"type": "text", "text": "Refactor the auth module"}]}}
 ```
 
 </td>
@@ -89,7 +88,7 @@ No Docker. No databases. No message queues. Just `make build` and you have two b
 ```bash
 make build
 bin/mass server &
-bin/massctl agentrun create --agent my-agent
+bin/massctl agentrun create -w myproject --name my-agent --agent claude
 ```
 
 </td>
@@ -192,7 +191,7 @@ Every event carries a globally monotonic `seq` (like K8s `resourceVersion`), a `
 
 ### Async Bootstrap
 
-`agentrun/create` returns immediately. The agent initializes in the background — workspace cloning, ACP handshake, capability discovery — all happen asynchronously. Poll `agentrun/status` or watch events to track progress.
+`agentrun/create` returns immediately. The agent initializes in the background — workspace cloning, ACP handshake, capability discovery — all happen asynchronously. Poll `agentrun/get` or watch events to track progress.
 
 ### Workspace Sharing
 
@@ -219,12 +218,15 @@ Pure Go. Two binaries: `mass` (daemon + shim) and `massctl` (CLI). No external d
 make build
 
 # Start the daemon
-bin/mass server --state-dir /tmp/mass-state
+bin/mass server --root /tmp/mass-state
 
 # In another terminal — create a workspace and run an agent
-bin/massctl workspace create --name myproject --source-type local --source-path /path/to/code
-bin/massctl agentrun create --workspace myproject --agent claude-code
-bin/massctl agentrun prompt --workspace myproject --name claude-code-xxxx --prompt "Explain main.go"
+bin/massctl workspace create local --name myproject --path /path/to/code
+bin/massctl agentrun create -w myproject --name my-agent --agent claude
+# Wait for agent to reach idle state
+bin/massctl agentrun get my-agent -w myproject
+# Send a prompt
+bin/massctl agentrun prompt my-agent -w myproject --text "Explain main.go" --wait
 ```
 
 ## ARI Method Surface
@@ -239,16 +241,16 @@ bin/massctl agentrun prompt --workspace myproject --name claude-code-xxxx --prom
 
 ```
 cmd/
-  mass/              daemon + agent-shim + workspace-mcp (single binary)
+  mass/              daemon + agent-run + workspace-mcp (single binary)
   massctl/           management CLI
 pkg/
   ari/               Agent Runtime Interface (server + client + API types)
-  agentd/            Process Manager, recovery, agent lifecycle
-  shim/              agent-shim (server + client + API + ACP runtime)
+  agentd/            Agent Manager, Process Manager, recovery, metadata store
+  agentrun/          agent-run process (shim server + client + ACP runtime)
   workspace/         Workspace Manager (Git/EmptyDir/Local, hooks, ref-counting)
-  meta/              bbolt metadata store
   jsonrpc/           transport-agnostic JSON-RPC 2.0 framework
   runtime-spec/      MASS Runtime Spec types
+  tui/               Terminal UI (chat interface)
 docs/
   design/            spec documents + architecture decisions
 ```
