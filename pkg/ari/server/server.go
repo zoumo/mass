@@ -156,7 +156,7 @@ func (a *workspaceAdapter) Create(ctx context.Context, ws *pkgariapi.Workspace) 
 
 // Get handles workspace/get.
 func (a *workspaceAdapter) Get(ctx context.Context, name string) (*pkgariapi.Workspace, error) {
-	a.logger.Info("workspace/get", "workspace", name)
+	a.logger.Debug("workspace/get", "workspace", name)
 
 	ws, err := a.store.GetWorkspace(ctx, name)
 	if err != nil {
@@ -174,7 +174,7 @@ func (a *workspaceAdapter) Get(ctx context.Context, name string) (*pkgariapi.Wor
 //
 // Returns workspaces matching the optional field selector filter.
 func (a *workspaceAdapter) List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.WorkspaceList, error) {
-	a.logger.Info("workspace/list")
+	a.logger.Debug("workspace/list")
 
 	var filter *pkgariapi.WorkspaceFilter
 	if phase := opts.FieldSelector["phase"]; phase != "" {
@@ -307,11 +307,6 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 		return nil, jsonrpc.ErrInvalidParams(err.Error())
 	}
 
-	if !ar.Spec.RestartPolicy.IsValid() {
-		return nil, jsonrpc.ErrInvalidParams(
-			fmt.Sprintf("invalid restartPolicy %q: must be one of \"try_reload\", \"always_new\"", ar.Spec.RestartPolicy))
-	}
-
 	a.logger.Info("agentrun/create", "workspace", ar.Metadata.Workspace, "name", ar.Metadata.Name)
 
 	ws, err := a.store.GetWorkspace(ctx, ar.Metadata.Workspace)
@@ -376,7 +371,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 //
 // Returns detailed agent run info with agent-run runtime state populated in Status.Run.
 func (a *agentRunAdapter) Get(ctx context.Context, wsName, name string) (*pkgariapi.AgentRun, error) {
-	a.logger.Info("agentrun/get", "workspace", wsName, "name", name)
+	a.logger.Debug("agentrun/get", "workspace", wsName, "name", name)
 
 	agent, err := a.store.GetAgentRun(ctx, wsName, name)
 	if err != nil {
@@ -412,7 +407,7 @@ func (a *agentRunAdapter) Get(ctx context.Context, wsName, name string) (*pkgari
 func (a *agentRunAdapter) List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.AgentRunList, error) {
 	wsFilter := opts.FieldSelector["workspace"]
 	stFilter := opts.FieldSelector["state"]
-	a.logger.Info("agentrun/list", "workspace", wsFilter, "state", stFilter)
+	a.logger.Debug("agentrun/list", "workspace", wsFilter, "state", stFilter)
 
 	filter := &pkgariapi.AgentRunFilter{
 		Workspace: wsFilter,
@@ -707,7 +702,7 @@ func (a *agentAdapter) Update(ctx context.Context, agent *pkgariapi.Agent) (*pkg
 //
 // Returns the agent definition or InvalidParams if not found.
 func (a *agentAdapter) Get(ctx context.Context, name string) (*pkgariapi.Agent, error) {
-	a.logger.Info("agent/get", "name", name)
+	a.logger.Debug("agent/get", "name", name)
 
 	ag, err := a.store.GetAgent(ctx, name)
 	if err != nil {
@@ -723,7 +718,7 @@ func (a *agentAdapter) Get(ctx context.Context, name string) (*pkgariapi.Agent, 
 //
 // Returns all agent definition objects stored in the metadata DB.
 func (a *agentAdapter) List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.AgentList, error) {
-	a.logger.Info("agent/list")
+	a.logger.Debug("agent/list")
 
 	ags, err := a.store.ListAgents(ctx)
 	if err != nil {
