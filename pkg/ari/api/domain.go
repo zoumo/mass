@@ -114,29 +114,6 @@ func (l *AgentList) objectType() string { return "agent" }
 // AgentRun
 // ────────────────────────────────────────────────────────────────────────────
 
-// RestartPolicy controls session continuation behavior on agent restart.
-type RestartPolicy string
-
-const (
-	// RestartPolicyTryReload attempts session/load to restore conversation
-	// history from the prior session when the agent is recovered after a
-	// daemon restart.
-	RestartPolicyTryReload RestartPolicy = "try_reload"
-
-	// RestartPolicyAlwaysNew (default) always starts a fresh session on
-	// recovery, discarding prior conversation history.
-	RestartPolicyAlwaysNew RestartPolicy = "always_new"
-)
-
-// IsValid reports whether p is a known RestartPolicy value (including empty, which means default).
-func (p RestartPolicy) IsValid() bool {
-	switch p {
-	case "", RestartPolicyTryReload, RestartPolicyAlwaysNew:
-		return true
-	}
-	return false
-}
-
 // AgentRunSpec describes the desired configuration of an agent run.
 type AgentRunSpec struct {
 	// Agent is the agent definition name that this run is based on.
@@ -154,11 +131,6 @@ type AgentRunSpec struct {
 	// agentd auto-injects the workspace MCP server; this field allows
 	// callers to add additional MCP servers per run.
 	McpServers []apiruntime.McpServer `json:"mcpServers,omitempty"`
-
-	// RestartPolicy controls session continuation on agent restart.
-	// Values: "try_reload" — attempt session/load to restore conversation history;
-	//         "always_new" (default) — always start a fresh session.
-	RestartPolicy RestartPolicy `json:"restartPolicy,omitempty"`
 
 	// Description is a human-readable description of the agent.
 	Description string `json:"description,omitempty"`

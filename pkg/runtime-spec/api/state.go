@@ -8,8 +8,13 @@ type State struct {
 	// MassVersion is the MASS Runtime Spec version this state complies with.
 	MassVersion string `json:"massVersion"`
 
-	// ID is the agent's unique session ID.
+	// ID is the agent instance name (MASS runtime object identity).
 	ID string `json:"id"`
+
+	// SessionID is the protocol-level session ID (e.g. from ACP session/new).
+	// Persisted for best-effort session recovery via session/load on restart.
+	// Empty before the protocol handshake completes.
+	SessionID string `json:"sessionId,omitempty"`
 
 	// Status is the current lifecycle status.
 	Status Status `json:"status"`

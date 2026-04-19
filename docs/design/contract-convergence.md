@@ -44,7 +44,7 @@ The converged bootstrap story is:
 
 1. `workspace/create` starts async workspace preparation. Returns immediately with `phase: "pending"`.
 2. Caller polls `workspace/get` until `phase: "ready"`.
-3. `agentrun/create` is **async**: it accepts `workspace` + `name` + `agent` (and optional `systemPrompt`, `labels`, `restartPolicy`). Returns immediately with `state: "creating"`.
+3. `agentrun/create` is **async**: it accepts `workspace` + `name` + `agent` (and optional `systemPrompt`, `labels`). Returns immediately with `state: "creating"`.
 4. Callers poll `agentrun/get` until state transitions to `"idle"` or `"error"`.
 5. After the agent reaches `idle` state, actual work enters through `agentrun/prompt`.
 

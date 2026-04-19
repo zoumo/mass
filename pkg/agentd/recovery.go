@@ -270,23 +270,21 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	// Start the event consumer goroutine (routes runtime_update/Status → DB, others → Events).
 	m.startEventConsumer(ws, name, runProc)
 
-	// Apply RestartPolicy: try_reload attempts ACP session/load to restore
-	// conversation history. always_new (default) starts fresh.
-	if agent.Spec.RestartPolicy == pkgariapi.RestartPolicyTryReload {
-		sessionID, readErr := m.readStateSessionID(agent.Status.RunStateDir)
-		if readErr != nil {
-			logger.Info("try_reload: could not read sessionId from state file, skipping",
-				"error", readErr)
-		} else if sessionID != "" {
-			if loadErr := client.Load(ctx, &runapi.SessionLoadParams{SessionID: sessionID}); loadErr != nil {
-				logger.Info("try_reload: session/load failed, continuing",
-					"session_id", sessionID, "error", loadErr)
-			} else {
-				logger.Info("try_reload: session/load succeeded", "session_id", sessionID)
-			}
+	// Best-effort session recovery: always attempt session/load.
+	// Agent-run checks ACP loadSession capability internally and auto-fallbacks.
+	sessionID, readErr := m.readStateSessionID(agent.Status.RunStateDir)
+	if readErr != nil {
+		logger.Info("session/load: could not read sessionId from state file, skipping",
+			"error", readErr)
+	} else if sessionID != "" {
+		if loadErr := client.Load(ctx, &runapi.SessionLoadParams{SessionID: sessionID}); loadErr != nil {
+			logger.Info("session/load: failed, continuing",
+				"session_id", sessionID, "error", loadErr)
 		} else {
-			logger.Info("try_reload: no sessionId in state file, skipping")
+			logger.Info("session/load: succeeded", "session_id", sessionID)
 		}
+	} else {
+		logger.Info("session/load: no sessionId in state file, skipping")
 	}
 
 	// Register in processes map.
@@ -300,9 +298,9 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	return status.State.Status, nil
 }
 
-// readStateSessionID reads the ACP session ID from the state.json in stateDir.
+// readStateSessionID reads the protocol session ID from state.json in stateDir.
 // Returns ("", error) if the file is missing or unreadable, ("", nil) if the
-// file exists but ID is empty (e.g. agent-run wrote state before ACP handshake).
+// file exists but SessionID is empty (e.g. agent-run wrote state before protocol handshake).
 func (m *ProcessManager) readStateSessionID(stateDir string) (string, error) {
 	if stateDir == "" {
 		return "", fmt.Errorf("no state dir")
@@ -311,7 +309,7 @@ func (m *ProcessManager) readStateSessionID(stateDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return state.ID, nil
+	return state.SessionID, nil
 }
 
 // watchRecoveredProcess watches a recovered agent-run that we didn't fork.

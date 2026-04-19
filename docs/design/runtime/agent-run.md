@@ -100,7 +100,7 @@ agent-run 对上暴露的是 **runtime/session 语义**，不是 raw ACP。
 session/prompt       发送一个工作 turn
 session/cancel       取消当前 turn
 runtime/watch_event  K8s List-Watch 风格事件订阅（replay + live）
-session/load         恢复已有 ACP session（try_reload 策略）
+session/load         恢复已有 ACP session（best-effort，recovery 时始终尝试）
 session/set_model    切换当前模型
 runtime/status       查询 runtime truth 与恢复边界
 runtime/stop         优雅停止 runtime
@@ -186,4 +186,4 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 - notification surface 是 `runtime/event_update`（统一替代原 `session/update` + `runtime/state_change`）；
 - recovery story 通过 `runtime/status` / `runtime/watch_event` 闭合；
 - ACP 继续留在 shim 内部；
-- `session/load` 在 `ShimClient` 中作为可失败的恢复尝试（用于 `try_reload` restart policy）；该调用允许失败并 fallback。
+- `session/load` 在 recovery 时始终尝试，agent-run 内部检查 ACP `loadSession` 能力并自动 fallback；调用方无需关心恢复策略。

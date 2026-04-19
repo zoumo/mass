@@ -298,8 +298,8 @@ This file is the explicit capability and coverage contract for the project.
 - Source: inferred
 - Primary owning slice: M007/S02
 - Supporting slices: M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04
-- Validation: S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real agent-run binary.
-- Notes: Covered by M007: RestartPolicy+tryReload (S02), shim state authority (S02), CLI hardening (S04), integration test completeness (S05). Cross-client hardening (Codex) remains deferred per D014.
+- Validation: S02 enforced D088 shim write authority boundary and implemented D089 unconditional best-effort session recovery — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real agent-run binary.
+- Notes: Covered by M007: unconditional best-effort session recovery (S02), shim state authority (S02), CLI hardening (S04), integration test completeness (S05). Cross-client hardening (Codex) remains deferred per D014.
 
 ### R047 — agentd exposes agent/* ARI methods as external surface; session/* is removed. Agent identified by (workspace, name) pair — no opaque UUID.
 - Class: core-capability
@@ -614,7 +614,7 @@ This file is the explicit capability and coverage contract for the project.
 | R041 | differentiator | validated | M003-c761yf (provisional) | none | Fully realized in M004: room/create, room/status, room/delete ARI handlers (ownership); room/send with target resolution and sender attribution (routing); deliverPrompt helper with auto-start semantics (delivery). Proven by TestARIMultiAgentRoundTrip — 3-agent bidirectional messaging end-to-end. |
 | R042 | constraint | deferred | none | none | unmapped |
 | R043 | constraint | deferred | none | none | unmapped |
-| R044 | quality-attribute | validated | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | S02 enforced D088 shim write authority boundary and implemented D089 RestartPolicy tryReload/alwaysNew — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real agent-run binary. |
+| R044 | quality-attribute | validated | M007/S02 | M002-q9r6sg/S01, M002-q9r6sg/S03, M002-q9r6sg/S04 | S02 enforced D088 shim write authority boundary and implemented D089 unconditional best-effort session recovery (RestartPolicy removed) — M007 is converging the contract first as intended. Unit tests prove both boundaries without a real agent-run binary. |
 | R045 | anti-feature | out-of-scope | none | none | n/a |
 | R046 | anti-feature | out-of-scope | none | none | n/a |
 | R047 | core-capability | validated | M005/S03 | M005/S01, M005/S02 | M007/S03 validated: Full ARI JSON-RPC surface (workspace/* + agent/* handlers) implemented in pkg/ari/server.go with (workspace,name) identity throughout. 22 handler tests in pkg/ari/server_test.go cover workspace/create→agent/create→agent/prompt→agent/stop lifecycle. TestNoAgentIDInResponses confirms no agentId field in any response. ari-spec.md documents all 5 workspace/* and 9 agent/* methods with workspace+name params. golangci-lint passes 0 issues. |

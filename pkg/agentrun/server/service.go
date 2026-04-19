@@ -67,10 +67,32 @@ func (s *Service) Cancel(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) Load(_ context.Context, _ *runapi.SessionLoadParams) error {
-	// session/load is called by mass during recovery to restore a prior ACP
-	// session. The underlying acpruntime.Manager does not expose a Load method;
-	// the agent-run handles session restoration internally via the ACP client.
+func (s *Service) Load(_ context.Context, req *runapi.SessionLoadParams) error {
+	// session/load is called by agentd during recovery to restore a prior ACP
+	// session. Agent-run checks the ACP loadSession capability and auto-fallbacks.
+	// Always returns nil (non-fatal) — agentd does not need to distinguish
+	// "restored" vs "fresh session".
+	if req.SessionID == "" {
+		s.logger.Info("session/load: no sessionId provided, skipping")
+		return nil
+	}
+
+	st, err := s.mgr.GetState()
+	if err != nil {
+		s.logger.Info("session/load: could not read state, skipping", "error", err)
+		return nil
+	}
+
+	if st.Session == nil || st.Session.Capabilities == nil || !st.Session.Capabilities.LoadSession {
+		s.logger.Info("session/load: ACP agent does not support loadSession, skipping",
+			"sessionId", req.SessionID)
+		return nil
+	}
+
+	// ACP agent supports loadSession but the SDK does not yet expose the method.
+	// Log and return success — session recovery will work once the SDK catches up.
+	s.logger.Info("session/load: ACP loadSession capability detected but SDK method not yet available",
+		"sessionId", req.SessionID)
 	return nil
 }
 

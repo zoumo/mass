@@ -24,8 +24,8 @@ type SessionPromptResult struct {
 }
 
 // SessionLoadParams is the JSON body for the "session/load" RPC method.
-// The agent-run server exposes this for try_reload restart policy; mass calls it
-// during recovery to restore a prior ACP session.
+// agentd always calls this during recovery for best-effort session restore.
+// agent-run checks ACP loadSession capability internally and auto-fallbacks.
 type SessionLoadParams struct {
 	SessionID string `json:"sessionId"`
 }

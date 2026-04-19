@@ -658,10 +658,10 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Reference:** M007/S02/T01 — pkg/agentd/process.go buildNotifHandler.
 - **When:** M007/S02
 
-## K054 — tryReload block must come AFTER atomic Subscribe, not before
+## K054 — session/load block must come AFTER atomic Subscribe, not before
 
-- **Pattern:** In `recoverAgent()`, the `session/load` call for tryReload is placed AFTER the atomic Subscribe call (which establishes the live stateChange notification subscription). The ordering matters: session/load signals the agent-run to restore conversation context, and the agent-run may emit a stateChange notification immediately in response. If Subscribe hasn't fired yet, that notification is missed.
-- **Lesson:** The correct order is: Status check → reconcile DB → Subscribe (atomic backfill + live sub) → tryReload (if applicable). Placing tryReload before Subscribe risks losing the stateChange notification that follows it.
+- **Pattern:** In `recoverAgent()`, the `session/load` call for best-effort session recovery is placed AFTER the atomic Subscribe call (which establishes the live stateChange notification subscription). The ordering matters: session/load signals the agent-run to restore conversation context, and the agent-run may emit a stateChange notification immediately in response. If Subscribe hasn't fired yet, that notification is missed.
+- **Lesson:** The correct order is: Status check → reconcile DB → Subscribe (atomic backfill + live sub) → session/load (unconditional best-effort). Placing session/load before Subscribe risks losing the stateChange notification that follows it.
 - **Reference:** M007/S02/T02 — pkg/agentd/recovery.go recoverAgent().
 - **When:** M007/S02
 
@@ -728,10 +728,10 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Reference:** M007/S05/T02 — pkg/agentd/process.go forkRun.
 - **When:** M007/S05
 
-## K064 — tryReload Subscribe-before-Load ordering is a correctness invariant
+## K064 — Subscribe-before-Load ordering is a correctness invariant for session recovery
 
-- **Pattern:** In `recoverAgent()`, the `Subscribe()` call on the agent-run client must be established *before* the `session/load` call (tryReload path). The notification channel must be open before the load triggers a stateChange from the agent-run.
-- **Lesson:** If session/load fires before Subscribe, the immediate stateChange notification (creating→idle) arrives before the notification handler is registered and is silently dropped. The agent stays in an incorrect state in the DB. Subscribe first, load second — this is a correctness invariant for the tryReload path. D089 documents this ordering decision.
+- **Pattern:** In `recoverAgent()`, the `Subscribe()` call on the agent-run client must be established *before* the `session/load` call (unconditional best-effort recovery). The notification channel must be open before the load triggers a stateChange from the agent-run.
+- **Lesson:** If session/load fires before Subscribe, the immediate stateChange notification (creating→idle) arrives before the notification handler is registered and is silently dropped. The agent stays in an incorrect state in the DB. Subscribe first, load second — this is a correctness invariant for session recovery. D089 documents this ordering decision.
 - **Reference:** M007/S02/T02 — pkg/agentd/recovery.go recoverAgent(); D089.
 - **When:** M007/S02
 

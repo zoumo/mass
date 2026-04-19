@@ -170,20 +170,6 @@ func TestListOptions_WithPhase(t *testing.T) {
 	assert.Equal(t, "ready", opts.FieldSelector["phase"])
 }
 
-// ── RestartPolicy ───────────────────────────────────────────────────────────
-
-func TestRestartPolicy_IsValid(t *testing.T) {
-	valid := []pkgariapi.RestartPolicy{"", pkgariapi.RestartPolicyTryReload, pkgariapi.RestartPolicyAlwaysNew}
-	for _, p := range valid {
-		assert.True(t, p.IsValid(), "expected %q to be valid", p)
-	}
-
-	invalid := []pkgariapi.RestartPolicy{"bogus", "never", "restart"}
-	for _, p := range invalid {
-		assert.False(t, p.IsValid(), "expected %q to be invalid", p)
-	}
-}
-
 // ── AgentSpec.IsDisabled ────────────────────────────────────────────────────
 
 func TestAgentSpec_IsDisabled(t *testing.T) {

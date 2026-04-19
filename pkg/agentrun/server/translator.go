@@ -19,7 +19,7 @@ import (
 // event log for durable history (log-before-fanout under mutex).
 type Translator struct {
 	runID     string
-	sessionID string // ACP session ID, set after handshake via SetSessionID
+	sessionID string // protocol session ID, set after handshake via SetSessionID
 	in        <-chan acp.SessionNotification
 	log       *EventLog
 	logger    *slog.Logger
@@ -60,7 +60,7 @@ func NewTranslator(runID string, in <-chan acp.SessionNotification, log *EventLo
 	}
 }
 
-// SetSessionID injects the ACP session ID after the session/new handshake
+// SetSessionID injects the protocol session ID after the session/new handshake
 // completes. This is called by the run command after mgr.Create() succeeds.
 func (t *Translator) SetSessionID(id string) {
 	t.mu.Lock()

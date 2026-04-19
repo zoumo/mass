@@ -499,44 +499,6 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 	}
 }
 
-// TestAgentRunCreateRestartPolicyValidation verifies that agentrun/create
-// rejects unknown restartPolicy values with -32602 (CodeInvalidParams) and
-// accepts valid values ("", "try_reload", "always_new").
-func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
-	env := newTestServer(t)
-	createAndWaitWorkspace(t, env.client, "rp-ws")
-	seedAgentDef(t, env.store, "default")
-
-	// Invalid values must be rejected.
-	for _, bad := range []pkgariapi.RestartPolicy{"on-failure", "never", "always", "bad-value"} {
-		ar := pkgariapi.AgentRun{
-			Metadata: pkgariapi.ObjectMeta{Workspace: "rp-ws", Name: "rp-agent-bad"},
-			Spec:     pkgariapi.AgentRunSpec{Agent: "default", RestartPolicy: bad},
-		}
-		_, err := callRaw(t, env.client, "agentrun/create", ar)
-		require.Error(t, err, "restartPolicy=%q must be rejected", bad)
-		assert.Contains(t, err.Error(), "-32602",
-			"restartPolicy=%q must return CodeInvalidParams", bad)
-	}
-
-	// Valid values must not be rejected at the validation layer.
-	// (The agent goes into "creating" state; agent-run start will fail in test env — that's OK.)
-	for _, good := range []pkgariapi.RestartPolicy{"", "try_reload", "always_new"} {
-		ar := pkgariapi.AgentRun{
-			Metadata: pkgariapi.ObjectMeta{Workspace: "rp-ws", Name: "rp-agent-" + string(good)},
-			Spec:     pkgariapi.AgentRunSpec{Agent: "default", RestartPolicy: good},
-		}
-		_, err := callRaw(t, env.client, "agentrun/create", ar)
-		// The call may succeed (state=creating) or fail with an internal error
-		// (agent-run start fails in test env) — but must NOT fail with -32602 for
-		// the restartPolicy field itself.
-		if err != nil {
-			assert.NotContains(t, err.Error(), "invalid restartPolicy",
-				"restartPolicy=%q should not be rejected as invalid", good)
-		}
-	}
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Mock agent-run for workspace/send and agentrun/prompt delivery tests
 // ────────────────────────────────────────────────────────────────────────────

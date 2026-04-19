@@ -19,8 +19,11 @@ The state of an agent includes the following properties:
 * **`massVersion`** (string, REQUIRED) is the version of the MASS Runtime Specification
   with which the state complies.
 * **`id`** (string, REQUIRED) is the MASS runtime object's ID.
-  In agentd deployments this is the MASS `sessionId`, and it MUST be unique across all agents on this host.
-  It is distinct from any protocol-level session ID created inside the agent protocol session (e.g., ACP `sessionId`).
+  In agentd deployments this is the agent instance name, and it MUST be unique across all agents on this host.
+  It is distinct from any protocol-level session ID (see `sessionId` below).
+* **`sessionId`** (string, OPTIONAL) is the protocol-level session ID (e.g. from ACP `session/new`)
+  obtained during bootstrap. Persisted so that `session/load` can attempt best-effort
+  session recovery on restart. Empty before the protocol handshake completes.
 * **`status`** (string, REQUIRED) is the runtime state of the agent.
   The value MAY be one of:
 
@@ -274,7 +277,8 @@ Identity authority stays split:
 
 - AgentRun identity `(workspace, name)` is allocated and owned by mass/ARI and names the runtime object.
 - Protocol session ID (e.g., ACP `sessionId`) is allocated by the agent peer during bootstrap and only identifies the inner protocol session.
-- Implementations MUST NOT imply that the two identifiers are equal, interchangeable, or durably mirrored unless later persistence work explicitly records that mapping.
+- The protocol session ID is persisted in `state.sessionId` for best-effort session recovery via `session/load`.
+  The two identifiers (runtime `id` vs protocol `sessionId`) are NOT interchangeable.
 
 ## Errors
 

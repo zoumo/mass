@@ -459,13 +459,12 @@ func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// RestartPolicy: try_reload / always_new tests
+// Best-effort session recovery tests (unconditional session/load)
 // ────────────────────────────────────────────────────────────────────────────
 
-// TestRecovery_TryReload_AttemptsSessionLoad verifies that an agent with
-// RestartPolicy=try_reload calls session/load on the agent-run with the sessionId
-// read from the persisted state.json.
-func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
+// TestRecovery_AlwaysAttemptsSessionLoad verifies that session/load is called
+// unconditionally with the SessionID from persisted state.json.
+func TestRecovery_AlwaysAttemptsSessionLoad(t *testing.T) {
 	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -474,20 +473,18 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 
 	// Write state.json with a known session ID.
 	stateDir := t.TempDir()
-	const knownSessionID = "reload-session-abc123"
+	const knownSessionID = "session-abc123"
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		MassVersion: "0.1.0",
-		ID:          knownSessionID,
+		ID:          "agent-name",
+		SessionID:   knownSessionID,
 		Status:      apiruntime.StatusIdle,
 		Bundle:      "/tmp/test-bundle",
 	}))
 
 	agent := &pkgariapi.AgentRun{
-		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "tryreload-agent"},
-		Spec: pkgariapi.AgentRunSpec{
-			Agent:         "default",
-			RestartPolicy: pkgariapi.RestartPolicyTryReload,
-		},
+		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "session-load-agent"},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
 			State:         apiruntime.StatusIdle,
 			RunSocketPath: socketPath,
@@ -496,18 +493,18 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 		},
 	}
 	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
-	key := agentKey("default", "tryreload-agent")
+	key := agentKey("default", "session-load-agent")
 
 	require.NoError(t, pm.RecoverSessions(ctx))
 
-	// Verify session/load was called on the agent-run with the correct sessionId.
+	// Verify session/load was called with the correct SessionID.
 	srv.mu.Lock()
 	loadCalled := srv.loadCalled
 	loadCalledWith := srv.loadCalledWith
 	srv.mu.Unlock()
 
-	assert.True(t, loadCalled, "session/load should have been called for try_reload policy")
-	assert.Equal(t, knownSessionID, loadCalledWith, "session/load should carry the persisted sessionId")
+	assert.True(t, loadCalled, "session/load should be called unconditionally")
+	assert.Equal(t, knownSessionID, loadCalledWith, "session/load should carry persisted SessionID")
 
 	// Agent must be in the processes map.
 	assert.NotNil(t, pm.GetProcess(key), "agent should be recovered")
@@ -524,10 +521,9 @@ func TestRecovery_TryReload_AttemptsSessionLoad(t *testing.T) {
 	}
 }
 
-// TestRecovery_TryReload_FallsBackOnLoadFailure verifies that when the agent-run
-// returns an error for session/load, recoverAgent still succeeds and the agent
-// is placed in the processes map (graceful fallback).
-func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
+// TestRecovery_SessionLoadFailure_Continues verifies that when the agent-run
+// returns an error for session/load, recovery still succeeds (graceful fallback).
+func TestRecovery_SessionLoadFailure_Continues(t *testing.T) {
 	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -542,17 +538,15 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 	stateDir := t.TempDir()
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		MassVersion: "0.1.0",
-		ID:          "some-session",
+		ID:          "agent-name",
+		SessionID:   "some-session",
 		Status:      apiruntime.StatusIdle,
 		Bundle:      "/tmp/test-bundle",
 	}))
 
 	agent := &pkgariapi.AgentRun{
-		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "tryreload-fallback"},
-		Spec: pkgariapi.AgentRunSpec{
-			Agent:         "default",
-			RestartPolicy: pkgariapi.RestartPolicyTryReload,
-		},
+		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "load-fail-agent"},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
 			State:         apiruntime.StatusIdle,
 			RunSocketPath: socketPath,
@@ -561,7 +555,7 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 		},
 	}
 	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
-	key := agentKey("default", "tryreload-fallback")
+	key := agentKey("default", "load-fail-agent")
 
 	// RecoverSessions must succeed even though session/load returned an error.
 	require.NoError(t, pm.RecoverSessions(ctx))
@@ -581,74 +575,27 @@ func TestRecovery_TryReload_FallsBackOnLoadFailure(t *testing.T) {
 	}
 }
 
-// TestRecovery_TryReload_FallsBackOnMissingStateFile verifies that when
-// RunStateDir points to a nonexistent path, recoverAgent proceeds without
-// panicking and the agent is placed in the processes map.
-func TestRecovery_TryReload_FallsBackOnMissingStateFile(t *testing.T) {
+// TestRecovery_NoSessionID_SkipsLoad verifies that when state.json has no
+// SessionID, session/load is not called.
+func TestRecovery_NoSessionID_SkipsLoad(t *testing.T) {
 	pm, metaStore := setupRecoveryTest(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	srv, socketPath := newMockRunServer(t)
 
-	agent := &pkgariapi.AgentRun{
-		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "tryreload-nostate"},
-		Spec: pkgariapi.AgentRunSpec{
-			Agent:         "default",
-			RestartPolicy: pkgariapi.RestartPolicyTryReload,
-		},
-		Status: pkgariapi.AgentRunStatus{
-			State:         apiruntime.StatusIdle,
-			RunSocketPath: socketPath,
-			RunStateDir:   "/tmp/nonexistent-state-dir-tryreload-test",
-			RunPID:        99999,
-		},
-	}
-	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
-	key := agentKey("default", "tryreload-nostate")
-
-	// Must not panic; must succeed.
-	require.NoError(t, pm.RecoverSessions(ctx))
-
-	// Agent should be in processes map.
-	runProc := pm.GetProcess(key)
-	assert.NotNil(t, runProc, "agent should be recovered even if state file is missing")
-
-	// Cleanup.
-	srv.close()
-	if runProc != nil {
-		select {
-		case <-runProc.Done:
-		case <-time.After(3 * time.Second):
-			t.Fatal("timeout waiting for process cleanup")
-		}
-	}
-}
-
-// TestRecovery_AlwaysNew_SkipsSessionLoad verifies that an agent with
-// RestartPolicy="" (default/always_new) does NOT call session/load on the agent-run.
-func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
-	pm, metaStore := setupRecoveryTest(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	srv, socketPath := newMockRunServer(t)
-
-	// Write a state.json so there's something to load — should be ignored.
+	// Write state.json without SessionID.
 	stateDir := t.TempDir()
 	require.NoError(t, spec.WriteState(stateDir, apiruntime.State{
 		MassVersion: "0.1.0",
-		ID:          "existing-session",
+		ID:          "agent-name",
 		Status:      apiruntime.StatusIdle,
 		Bundle:      "/tmp/test-bundle",
 	}))
 
 	agent := &pkgariapi.AgentRun{
-		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "alwaysnew-agent"},
-		Spec: pkgariapi.AgentRunSpec{
-			Agent:         "default",
-			RestartPolicy: "", // empty = always_new (default)
-		},
+		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "no-session-agent"},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
 			State:         apiruntime.StatusIdle,
 			RunSocketPath: socketPath,
@@ -657,7 +604,7 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 		},
 	}
 	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
-	key := agentKey("default", "alwaysnew-agent")
+	key := agentKey("default", "no-session-agent")
 
 	require.NoError(t, pm.RecoverSessions(ctx))
 
@@ -665,11 +612,11 @@ func TestRecovery_AlwaysNew_SkipsSessionLoad(t *testing.T) {
 	srv.mu.Lock()
 	loadCalled := srv.loadCalled
 	srv.mu.Unlock()
-	assert.False(t, loadCalled, "session/load should not be called for always_new/empty policy")
+	assert.False(t, loadCalled, "session/load should not be called when SessionID is empty")
 
 	// Agent should still be recovered.
 	runProc := pm.GetProcess(key)
-	assert.NotNil(t, runProc, "agent should be recovered with always_new policy")
+	assert.NotNil(t, runProc, "agent should be recovered even without session ID")
 
 	// Cleanup.
 	srv.close()

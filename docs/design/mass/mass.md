@@ -65,7 +65,7 @@ An AgentRun is the durable, externally-visible runtime object that records:
 
 - identity: `workspace` + `name` (unique key — all AgentRuns belong to a workspace);
 - selected `agent`;
-- restart policy and bootstrap inputs (`systemPrompt`, `labels`);
+- bootstrap inputs (`systemPrompt`, `labels`);
 - external lifecycle state (`creating`, `idle`, `running`, `stopped`, `error`).
 
 AgentRun identity (`workspace` + `name`) is stable across restarts.

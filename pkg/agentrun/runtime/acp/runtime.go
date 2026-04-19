@@ -190,6 +190,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	if err := m.writeState(func(s *apiruntime.State) {
 		s.MassVersion = m.cfg.MassVersion
 		s.ID = m.cfg.Metadata.Name
+		s.SessionID = string(m.sessionID)
 		s.Status = apiruntime.StatusIdle
 		s.PID = cmd.Process.Pid
 		s.Bundle = m.bundleDir

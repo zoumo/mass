@@ -5,8 +5,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 func TestParseConfig_LocalWorkspace(t *testing.T) {
@@ -27,7 +25,6 @@ spec:
         name: claude-code
       spec:
         agent: claude
-        restartPolicy: try_reload
         systemPrompt: "You are a helpful assistant."
 `
 	cfg, err := parseConfig([]byte(input))
@@ -41,12 +38,10 @@ spec:
 	require.Len(t, cfg.Spec.Agents, 2)
 	assert.Equal(t, "codex", cfg.Spec.Agents[0].Metadata.Name)
 	assert.Equal(t, "codex", cfg.Spec.Agents[0].Spec.Agent)
-	assert.Empty(t, cfg.Spec.Agents[0].Spec.RestartPolicy)
 	assert.Empty(t, cfg.Spec.Agents[0].Spec.SystemPrompt)
 
 	assert.Equal(t, "claude-code", cfg.Spec.Agents[1].Metadata.Name)
 	assert.Equal(t, "claude", cfg.Spec.Agents[1].Spec.Agent)
-	assert.Equal(t, pkgariapi.RestartPolicyTryReload, cfg.Spec.Agents[1].Spec.RestartPolicy)
 	assert.Equal(t, "You are a helpful assistant.", cfg.Spec.Agents[1].Spec.SystemPrompt)
 }
 

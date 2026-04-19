@@ -78,8 +78,7 @@ All CRUD responses return the domain object directly (no wrapper).
     "updatedAt": "2026-01-01T00:00:00Z"
   },
   "spec": {
-    "agent": "claude",
-    "restartPolicy": "always_new"
+    "agent": "claude"
   },
   "status": {
     "state": "idle",
@@ -392,7 +391,6 @@ Callers poll `agentrun/get` until state transitions to `"idle"` or `"error"`.
   "metadata": { "workspace": "my-project", "name": "architect" },
   "spec": {
     "agent": "claude",
-    "restartPolicy": "always_new",
     "systemPrompt": "You are a coding agent."
   }
 }
@@ -571,7 +569,6 @@ AgentRun state values: `creating`, `idle`, `running`, `stopped`, `error`.
 | `metadata.createdAt` | string | RFC3339 creation timestamp |
 | `metadata.updatedAt` | string | RFC3339 last-updated timestamp |
 | `spec.agent` | string | Selected agent definition name |
-| `spec.restartPolicy` | string? | Session continuation policy on restart |
 | `spec.description` | string? | Human-readable description |
 | `spec.systemPrompt` | string? | Agent system prompt |
 | `status.state` | string | Current agent state |
