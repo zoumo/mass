@@ -122,7 +122,7 @@ massctl agentrun create \
   --system-prompt "You are a senior engineer."
 ```
 
-可选 flag：`--permissions approve_all|approve_reads|deny_all`、`--restart-policy try_reload|always_new`
+可选 flag：`--permissions approve_all|approve_reads|deny_all`
 
 启动是**异步**的：
 
@@ -150,12 +150,27 @@ massctl agentrun get worker -w my-ws         # 查看指定 agentrun
 ### Compose：声明式多 Agent 启动
 
 ```bash
-massctl compose -f compose.yaml
+massctl compose apply -f compose.yaml
 ```
 
 自动完成：创建 workspace → 等待 ready → 创建所有 agent → 等待全部 idle。
 
 格式见 [references/compose-format.md](references/compose-format.md)。
+
+### Compose Run：快速启动单个 Agent
+
+```bash
+# 使用当前目录作为 local workspace，快速启动一个 agent
+massctl compose run -w my-ws --agent claude
+
+# 指定 agentrun 名称
+massctl compose run -w my-ws --agent claude --name my-claude
+
+# 带 system prompt
+massctl compose run -w my-ws --agent claude --system-prompt "You are a reviewer"
+```
+
+如果 workspace 已存在且 ready，自动复用；否则以当前目录创建新的 local workspace。
 
 ---
 
@@ -238,7 +253,7 @@ massctl workspace delete task-ws
 详细 compose 配置见 [references/level2-compose.md](references/level2-compose.md)。
 
 ```bash
-massctl compose -f compose.yaml
+massctl compose apply -f compose.yaml
 massctl agentrun prompt worker -w feature-ws \
   --text "Implement rate limiting for /api/v1/*. Max 100 req/min per API key."
 # agent 通过 workspace_send 自主协作
@@ -256,7 +271,7 @@ massctl agentrun prompt worker -w feature-ws \
 详细 compose 配置见 [references/level3-compose.md](references/level3-compose.md)。
 
 ```bash
-massctl compose -f compose.yaml
+massctl compose apply -f compose.yaml
 massctl agentrun prompt planner -w refactor-ws \
   --text "Refactor auth system: extract middleware, add JWT, migrate to Redis, update handlers, add tests."
 # planner→reviewer 多轮审查 → executor /gsd auto 执行 → planner 验证

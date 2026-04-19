@@ -81,7 +81,7 @@ spec:
 
 ```bash
 # 启动
-massctl compose -f compose.yaml
+massctl compose apply -f compose.yaml
 
 # 下发任务给 planner
 massctl agentrun prompt planner -w refactor-ws \

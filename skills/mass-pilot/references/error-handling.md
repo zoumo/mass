@@ -64,5 +64,5 @@ for agent in $(massctl agentrun get -w my-ws -o json | jq -r '.[].metadata.name'
 done
 massctl workspace delete my-ws
 # 然后用 compose 重建
-massctl compose -f compose.yaml
+massctl compose apply -f compose.yaml
 ```

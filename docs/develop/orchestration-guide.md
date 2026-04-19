@@ -97,10 +97,16 @@ while true; do
 done
 ```
 
-或使用 `massctl compose` 一次性创建 workspace + 所有 AgentRun：
+或使用 `massctl compose apply` 一次性创建 workspace + 所有 AgentRun：
 
 ```bash
-massctl compose -f workspace-compose.yaml
+massctl compose apply -f workspace-compose.yaml
+```
+
+或使用 `massctl compose run` 快速启动单个 Agent（当前目录作为 local workspace）：
+
+```bash
+massctl compose run -w my-project --agent claude
 ```
 
 ### 第三步：创建 AgentRun
@@ -347,7 +353,8 @@ massctl agentrun watch --workspace ws
 | `massctl agent apply -f <file>` | 注册 agent 定义 |
 | `massctl workspace create --name <ws> --source-type local --source-path <path>` | 创建 workspace |
 | `massctl workspace get <ws> -o json` | 查询 workspace 状态 |
-| `massctl compose -f <file>` | 一次性创建 workspace + agents |
+| `massctl compose apply -f <file>` | 一次性创建 workspace + agents |
+| `massctl compose run -w <ws> --agent <def>` | 快速启动单个 agent（当前目录作为 workspace） |
 | `massctl agentrun create --workspace <ws> --name <name> --agent <def>` | 启动 agent |
 | `massctl agentrun get <name> -w <ws> -o json` | 查询 agent 状态 |
 | `massctl agentrun get -w <ws> -o json` | 列出所有 agent |
@@ -410,7 +417,7 @@ spec:
 ```
 
 ```bash
-massctl compose -f workspace-compose.yaml
+massctl compose apply -f workspace-compose.yaml
 ```
 
 ### 3. 在 system prompt 中定义协作协议
