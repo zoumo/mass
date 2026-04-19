@@ -714,7 +714,18 @@ func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string, r
 
 // killRun kills the agent-run process if it's still running.
 func (m *ProcessManager) killRun(runProc *RunProcess) error {
+	// For recovered processes (no Cmd), fall back to killing by PID directly.
 	if runProc.Cmd == nil || runProc.Cmd.Process == nil {
+		if runProc.PID <= 0 {
+			return nil
+		}
+		proc, err := os.FindProcess(runProc.PID)
+		if err != nil {
+			return nil
+		}
+		_ = proc.Signal(os.Interrupt)
+		time.Sleep(2 * time.Second)
+		_ = proc.Kill()
 		return nil
 	}
 
