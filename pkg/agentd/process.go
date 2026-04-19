@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -611,6 +612,9 @@ func (m *ProcessManager) forkRun(agent *pkgariapi.AgentRun, bundlePath, stateDir
 
 	// Create exec.Cmd WITHOUT tying to the request context.
 	cmd := exec.Command(runBinary, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
 	cmd.Stderr = os.Stderr // always pipe stderr for debugging
 	cmd.Stdout = nil       // discard stdout (agent-run logs to stderr via slog)
 
