@@ -184,6 +184,43 @@ func TestRestartPolicy_IsValid(t *testing.T) {
 	}
 }
 
+// ── AgentSpec.IsDisabled ────────────────────────────────────────────────────
+
+func TestAgentSpec_IsDisabled(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+
+	tests := []struct {
+		name     string
+		disabled *bool
+		want     bool
+	}{
+		{"nil means not disabled", nil, false},
+		{"true means disabled", boolPtr(true), true},
+		{"false means not disabled", boolPtr(false), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := pkgariapi.AgentSpec{Disabled: tt.disabled, Command: "echo"}
+			assert.Equal(t, tt.want, spec.IsDisabled())
+		})
+	}
+}
+
+func TestAgentSpec_Disabled_JSON_OmitsNil(t *testing.T) {
+	// nil Disabled should be omitted from JSON (omitempty).
+	spec := pkgariapi.AgentSpec{Command: "echo"}
+	data, err := json.Marshal(spec)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "disabled")
+
+	// Explicit false should appear in JSON.
+	boolFalse := false
+	spec2 := pkgariapi.AgentSpec{Disabled: &boolFalse, Command: "echo"}
+	data2, err := json.Marshal(spec2)
+	require.NoError(t, err)
+	assert.Contains(t, string(data2), `"disabled":false`)
+}
+
 // ── AgentList type ──────────────────────────────────────────────────────────
 
 func TestAgentList_JSON_RoundTrip(t *testing.T) {

@@ -163,6 +163,16 @@ func seedAgent(t *testing.T, metaStore *store.Store, wsName, name string, state 
 	require.NoError(t, err)
 }
 
+// seedAgentDef inserts a minimal agent definition into the store so that
+// agentrun/create validation (agent-exists + not-disabled) passes.
+func seedAgentDef(t *testing.T, metaStore *store.Store, name string) {
+	t.Helper()
+	_ = metaStore.SetAgent(context.Background(), &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: name},
+		Spec:     pkgariapi.AgentSpec{Command: "echo"},
+	})
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Workspace tests
 // ────────────────────────────────────────────────────────────────────────────
@@ -269,6 +279,7 @@ func TestWorkspaceDeleteNotFound(t *testing.T) {
 func TestAgentCreateReturnsCreating(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "ac-ws")
+	seedAgentDef(t, env.store, "default")
 
 	// Call via raw to inspect JSON for absence of "agentId".
 	ar := pkgariapi.AgentRun{
@@ -459,6 +470,7 @@ func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
 func TestAgentCreateSocketPathTooLong(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "sock-ws")
+	seedAgentDef(t, env.store, "default")
 
 	// 70 'a' chars: combined with any realistic tmpdir bundleRoot this will
 	// exceed 104 bytes (macOS) / 108 bytes (Linux).
@@ -493,6 +505,7 @@ func TestAgentCreateSocketPathTooLong(t *testing.T) {
 func TestAgentRunCreateRestartPolicyValidation(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "rp-ws")
+	seedAgentDef(t, env.store, "default")
 
 	// Invalid values must be rejected.
 	for _, bad := range []pkgariapi.RestartPolicy{"on-failure", "never", "always", "bad-value"} {
@@ -984,6 +997,58 @@ func TestAgentDelete_MissingName(t *testing.T) {
 	_, err := callRaw(t, env.client, "agent/delete", pkgariapi.ObjectKey{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "name is required")
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// agentrun/create rejects disabled agent
+// ────────────────────────────────────────────────────────────────────────────
+
+func TestAgentRunCreateRejectsDisabledAgent(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "dis-ws")
+
+	// Seed a disabled agent definition.
+	disabled := true
+	require.NoError(t, env.store.SetAgent(context.Background(), &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "disabled-agent"},
+		Spec:     pkgariapi.AgentSpec{Disabled: &disabled, Command: "echo"},
+	}))
+
+	ar := pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: "dis-ws", Name: "run-1"},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "disabled-agent"},
+	}
+	_, err := callRaw(t, env.client, "agentrun/create", ar)
+	require.Error(t, err, "agentrun/create must reject disabled agent")
+	assert.Contains(t, err.Error(), "-32602", "error code must be InvalidParams")
+	assert.Contains(t, err.Error(), "disabled")
+}
+
+func TestAgentRunCreateAcceptsEnabledAgent(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "en-ws")
+
+	// Seed an enabled agent definition (Disabled=nil).
+	require.NoError(t, env.store.SetAgent(context.Background(), &pkgariapi.Agent{
+		Metadata: pkgariapi.ObjectMeta{Name: "enabled-agent"},
+		Spec:     pkgariapi.AgentSpec{Command: "echo"},
+	}))
+
+	ar := pkgariapi.AgentRun{
+		Metadata: pkgariapi.ObjectMeta{Workspace: "en-ws", Name: "run-1"},
+		Spec:     pkgariapi.AgentRunSpec{Agent: "enabled-agent"},
+	}
+	raw, err := callRaw(t, env.client, "agentrun/create", ar)
+	// Should not fail with "disabled" error. May fail later (no real process) but
+	// must not be -32602 about disabled.
+	if err != nil {
+		assert.NotContains(t, err.Error(), "disabled",
+			"enabled agent must not be rejected as disabled")
+	} else {
+		var result pkgariapi.AgentRun
+		require.NoError(t, json.Unmarshal(raw, &result))
+		assert.Equal(t, apiruntime.StatusCreating, result.Status.State)
+	}
 }
 
 // ────────────────────────────────────────────────────────────────────────────

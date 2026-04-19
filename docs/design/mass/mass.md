@@ -47,6 +47,7 @@ Agent Manager owns the CRUD lifecycle of reusable named configurations.
 An Agent definition is a named runtime configuration template with the following fields:
 
 - `name` (unique key) — the name that `agentrun/create.agent` references to select this template;
+- optional `disabled` — when `true`, the agent is prevented from creating new agent runs (`nil`/`false` means not disabled);
 - `command` — the executable command for the agent process;
 - optional `args` — command arguments;
 - optional `env` — environment variables as a list of `{name, value}` objects;
@@ -54,6 +55,7 @@ An Agent definition is a named runtime configuration template with the following
 
 There is no runtime process associated with an Agent definition.
 When an AgentRun is created, the Process Manager looks up the Agent definition named by `agentrun/create.agent` and uses its `command`, `args`, and `env` to generate the MASS Runtime Spec `config.json`.
+If the selected agent is disabled, `agentrun/create` rejects the request with an InvalidParams error.
 Agents are managed via `agent/create`, `agent/update`, `agent/get`, `agent/list`, `agent/delete`.
 
 ### Agent Manager

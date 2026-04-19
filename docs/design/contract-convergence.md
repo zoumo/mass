@@ -23,7 +23,7 @@ Use these terms consistently across all design documents:
 
 | Term | Meaning |
 |---|---|
-| **Agent definition** | A reusable named configuration record (`name`, `command`, `args`, `env`, `startupTimeoutSeconds`). Selected by `agentrun/create.agent` using its name. Managed via `agent/*` ARI methods. No runtime process. |
+| **Agent definition** | A reusable named configuration record (`name`, `disabled`, `command`, `args`, `env`, `startupTimeoutSeconds`). Selected by `agentrun/create.agent` using its name. Disabled agents cannot start new runs. Managed via `agent/*` ARI methods. No runtime process. |
 | **AgentRun** | A running (or stopped) instance of an agent. Identified by `(workspace, name)`. Managed via `agentrun/*` ARI methods. Has a shim process. |
 | **Workspace** | A prepared working directory (git / emptyDir / local). Managed via `workspace/*` ARI methods. |
 | **shim session** | The internal ACP session managed by agent-run. Uses `session/*` + `runtime/*` RPC. Not exposed externally. |

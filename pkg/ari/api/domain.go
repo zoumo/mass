@@ -60,6 +60,10 @@ type ObjectMeta struct {
 
 // AgentSpec describes how to launch an agent process for this named agent definition.
 type AgentSpec struct {
+	// Disabled controls whether the agent is prevented from creating new agent runs.
+	// nil or false means not disabled (agent is usable). true means disabled.
+	Disabled *bool `json:"disabled,omitempty"`
+
 	// ClientProtocol selects the communication protocol adapter.
 	// Default: "acp".
 	ClientProtocol apiruntime.ClientProtocol `json:"clientProtocol,omitempty"`
@@ -76,6 +80,12 @@ type AgentSpec struct {
 	// StartupTimeoutSeconds is the maximum time (in seconds) to wait for the
 	// agent-run to reach idle state. Nil means use the daemon default.
 	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
+}
+
+// IsDisabled reports whether the agent is disabled.
+// A nil Disabled pointer is treated as not disabled (backward-compatible default).
+func (s AgentSpec) IsDisabled() bool {
+	return s.Disabled != nil && *s.Disabled
 }
 
 // Agent represents an agent definition record.

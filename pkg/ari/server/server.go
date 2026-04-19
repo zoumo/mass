@@ -328,6 +328,18 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 		}
 	}
 
+	// Validate the referenced agent definition exists and is not disabled.
+	agentDef, err := a.store.GetAgent(ctx, ar.Spec.Agent)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	if agentDef == nil {
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s not found", ar.Spec.Agent))
+	}
+	if agentDef.Spec.IsDisabled() {
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s is disabled", ar.Spec.Agent))
+	}
+
 	ar.Status.State = apiruntime.StatusCreating
 	if err := a.agents.Create(ctx, ar); err != nil {
 		var alreadyExists *agentd.ErrAgentRunAlreadyExists

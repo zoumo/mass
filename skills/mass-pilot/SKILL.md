@@ -37,16 +37,18 @@ massctl agent get
 | 对象 | 含义 | 标识 |
 |------|------|------|
 | **Workspace** | agent 共享的工作目录（git clone / 本地路径 / 空目录） | `name` |
-| **Agent** | 可复用的 agent 定义（command + args + env） | `name` |
+| **Agent** | 可复用的 agent 定义（command + args + env + disabled） | `name` |
 | **AgentRun** | 绑定到 workspace 的运行中 agent 实例 | `(workspace, name)` |
 
 ## 内置 Agent
 
-| 名称 | 特长 | 最佳角色 |
-|------|------|----------|
-| `claude` | 全能——设计、编码、规划、分析 | 规划者、主力 worker、协调者 |
-| `codex` | 严谨严格，善于发现边界问题 | 方案 reviewer、QA 关卡 |
-| `gsd-pi` | 长时间运行编码任务，按步骤逐项执行 | 执行者（用 `/gsd auto <计划>` 驱动） |
+| 名称 | 特长 | 最佳角色 | 默认状态 |
+|------|------|----------|----------|
+| `claude` | 全能——设计、编码、规划、分析 | 规划者、主力 worker、协调者 | 启用 |
+| `codex` | 严谨严格，善于发现边界问题 | 方案 reviewer、QA 关卡 | 启用 |
+| `gsd-pi` | 长时间运行编码任务，按步骤逐项执行 | 执行者（用 `/gsd auto <计划>` 驱动） | **禁用** |
+
+> `gsd-pi` 默认禁用（`disabled: true`）。启用方法：`massctl agent apply gsd-pi --disabled=false`
 
 ## 端到端流程
 
@@ -282,6 +284,18 @@ massctl agentrun prompt planner -w refactor-ws \
 ## Part 5: 错误处理
 
 详细的错误诊断、恢复方案和决策树见 [references/error-handling.md](references/error-handling.md)。
+
+### Agent 禁用诊断
+
+如果 `agentrun/create` 返回 `agent <name> is disabled` 错误：
+
+```bash
+# 检查 agent 是否禁用
+massctl agent get
+
+# 启用指定 agent
+massctl agent apply <name> --disabled=false
+```
 
 ### 快速恢复
 

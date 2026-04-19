@@ -31,8 +31,9 @@ var builtinAgents = []pkgariapi.Agent{
 	{
 		Metadata: pkgariapi.ObjectMeta{Name: "gsd-pi"},
 		Spec: pkgariapi.AgentSpec{
-			Command: "bunx",
-			Args:    []string{"gsd-pi-acp@0.1.2"},
+			Disabled: new(true),
+			Command:  "bunx",
+			Args:     []string{"gsd-pi-acp@0.1.2"},
 		},
 	},
 }

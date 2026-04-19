@@ -365,12 +365,13 @@ Delete an Agent record.
 | `metadata.labels` | map? | Arbitrary metadata |
 | `metadata.createdAt` | string | RFC3339 creation timestamp |
 | `metadata.updatedAt` | string | RFC3339 last-updated timestamp |
+| `spec.disabled` | bool? | When `true`, the agent is prevented from creating new agent runs. `nil`/`false` means not disabled. |
 | `spec.command` | string | Executable command for the agent process |
 | `spec.args` | []string? | Command arguments |
 | `spec.env` | [{name, value}]? | Environment variables |
 | `spec.startupTimeoutSeconds` | int? | Bootstrap timeout in seconds |
 
-Note: `agentrun/create` `spec.agent` selects an Agent definition by name.
+Note: `agentrun/create` `spec.agent` selects an Agent definition by name. If the selected agent is disabled, `agentrun/create` returns `-32602` (InvalidParams).
 
 ## AgentRun Methods
 

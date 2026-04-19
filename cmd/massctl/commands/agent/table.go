@@ -11,9 +11,15 @@ import (
 func columns() []cliutil.Column {
 	return []cliutil.Column{
 		{Header: "NAME", Field: func(v any) string { return v.(pkgariapi.Agent).Metadata.Name }},
+		{Header: "DISABLED", Field: func(v any) string {
+			if v.(pkgariapi.Agent).Spec.IsDisabled() {
+				return "true"
+			}
+			return ""
+		}},
 		{Header: "COMMAND", Field: func(v any) string { return v.(pkgariapi.Agent).Spec.Command }},
+		{Header: "ARGS", Field: func(v any) string { return strings.Join(v.(pkgariapi.Agent).Spec.Args, " ") }},
 		{Header: "AGE", Field: func(v any) string { return cliutil.FormatAge(v.(pkgariapi.Agent).Metadata.CreatedAt) }},
-		{Header: "ARGS", Field: func(v any) string { return strings.Join(v.(pkgariapi.Agent).Spec.Args, " ") }, Wide: true},
 		{Header: "LABELS", Field: func(v any) string { return formatLabels(v.(pkgariapi.Agent).Metadata.Labels) }, Wide: true},
 	}
 }
