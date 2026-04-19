@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -14,80 +13,22 @@ import (
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
-// NewCommand returns the "compose" cobra command.
+// NewCommand returns the "compose" cobra command with apply and run subcommands.
 func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
-	var file string
 	cmd := &cobra.Command{
 		Use:   "compose",
-		Short: "Create workspace and agent runs from a declarative config file",
-		Long: `compose reads a workspace-compose YAML file and creates the workspace and all agent runs.
-It waits for the workspace to be ready and each agent to reach idle state,
-then prints the run socket path for each agent.
-
-Example config (kind: workspace-compose):
-  kind: workspace-compose
-  meta
-    name: mass-e2e
-  spec:
-    source:
-      type: local
-      path: /path/to/project
-    agents:
-      - metadata:
-          name: codex
-        spec:
-          agent: codex
-      - meta
-          name: claude-code
-        spec:
-          agent: claude`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			data, err := os.ReadFile(file)
-			if err != nil {
-				return fmt.Errorf("reading config %q: %w", file, err)
-			}
-			cfg, err := parseConfig(data)
-			if err != nil {
-				return err
-			}
-
-			client, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer client.Close()
-
-			ctx := context.Background()
-			wsName := cfg.Metadata.Name
-			if err := createWorkspace(ctx, client, cfg); err != nil {
-				return err
-			}
-			if err := waitWorkspaceReady(ctx, client, wsName); err != nil {
-				return err
-			}
-			for _, a := range cfg.Spec.Agents {
-				if err := createAgentRun(ctx, client, wsName, a); err != nil {
-					return err
-				}
-			}
-			for _, a := range cfg.Spec.Agents {
-				if err := waitAgentIdle(ctx, client, wsName, a.Metadata.Name); err != nil {
-					return err
-				}
-			}
-
-			fmt.Println("\nAll agents are ready. Socket info:")
-			for _, a := range cfg.Spec.Agents {
-				printSocketInfo(ctx, client, wsName, a.Metadata.Name)
-			}
-			return nil
-		},
+		Short: "Declarative workspace and agent-run management",
 	}
-	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to workspace-compose YAML file (required)")
-	_ = cmd.MarkFlagRequired("file")
+	cmd.AddCommand(
+		newApplyCmd(getClient),
+		newRunCmd(getClient),
+	)
 	return cmd
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Shared helpers used by both apply and run subcommands
+// ────────────────────────────────────────────────────────────────────────────
 
 func createWorkspace(ctx context.Context, client pkgariapi.Client, cfg Config) error {
 	src, err := buildSource(cfg.Spec.Source)
@@ -107,6 +48,28 @@ func createWorkspace(ctx context.Context, client pkgariapi.Client, cfg Config) e
 	}
 	fmt.Printf("Workspace %q created (phase: %s)\n", ws.Metadata.Name, ws.Status.Phase)
 	return nil
+}
+
+// ensureWorkspace reuses an existing ready workspace or creates a new one.
+func ensureWorkspace(ctx context.Context, client pkgariapi.Client, wsName string, src SourceConfig) error {
+	var ws pkgariapi.Workspace
+	if err := client.Get(ctx, pkgariapi.ObjectKey{Name: wsName}, &ws); err == nil {
+		if ws.Status.Phase == pkgariapi.WorkspacePhaseReady {
+			fmt.Printf("Workspace %q already exists (reusing, path: %s)\n", wsName, ws.Status.Path)
+			return nil
+		}
+		// Exists but not yet ready — wait.
+		return waitWorkspaceReady(ctx, client, wsName)
+	}
+	// Not found — create new.
+	cfg := Config{
+		Metadata: ConfigMetadata{Name: wsName},
+		Spec:     WorkspaceComposeSpec{Source: src},
+	}
+	if err := createWorkspace(ctx, client, cfg); err != nil {
+		return err
+	}
+	return waitWorkspaceReady(ctx, client, wsName)
 }
 
 func waitWorkspaceReady(ctx context.Context, client pkgariapi.Client, name string) error {

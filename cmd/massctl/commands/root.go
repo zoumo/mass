@@ -24,8 +24,9 @@ func NewRootCommand() *cobra.Command {
 	var socketPath string
 
 	root := &cobra.Command{
-		Use:   "massctl",
-		Short: "CLI for mass daemon management",
+		Use:          "massctl",
+		Short:        "CLI for mass daemon management",
+		SilenceUsage: true,
 	}
 	root.PersistentFlags().StringVar(&socketPath, "socket", filepath.Join(agentd.DefaultRoot(), "mass.sock"), "ARI socket path")
 
