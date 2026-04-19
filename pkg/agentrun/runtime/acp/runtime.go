@@ -23,6 +23,12 @@ import (
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
+// systemPromptGuard is appended to the user-supplied system prompt before
+// sending it to the agent. It prevents the agent from acting on the role
+// definition itself — the agent should wait for the next explicit instruction.
+const systemPromptGuard = "\n\nIMPORTANT: The above is your role and protocol setup. " +
+	"Do NOT take any action now. Wait for the next instruction before proceeding."
+
 // StateChange describes an externally visible runtime lifecycle transition.
 type StateChange struct {
 	SessionID      string
@@ -172,7 +178,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	if m.cfg.Session.SystemPrompt != "" {
 		_, err = conn.Prompt(ctx, acp.PromptRequest{
 			SessionId: m.sessionID,
-			Prompt:    []acp.ContentBlock{acp.TextBlock(m.cfg.Session.SystemPrompt)},
+			Prompt:    []acp.ContentBlock{acp.TextBlock(m.cfg.Session.SystemPrompt + systemPromptGuard)},
 		})
 		if err != nil {
 			handshakeErr = err
