@@ -11,11 +11,11 @@ import (
 func columns() []cliutil.Column {
 	return []cliutil.Column{
 		{Header: "NAME", Field: func(v any) string { return v.(pkgariapi.Agent).Metadata.Name }},
-		{Header: "DISABLED", Field: func(v any) string {
+		{Header: "ENABLED", Field: func(v any) string {
 			if v.(pkgariapi.Agent).Spec.IsDisabled() {
-				return "true"
+				return "false"
 			}
-			return ""
+			return "true"
 		}},
 		{Header: "COMMAND", Field: func(v any) string { return v.(pkgariapi.Agent).Spec.Command }},
 		{Header: "ARGS", Field: func(v any) string { return strings.Join(v.(pkgariapi.Agent).Spec.Args, " ") }},
