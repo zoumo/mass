@@ -22,13 +22,21 @@ func (m *mockWorkspaceOps) Send(ctx context.Context, req *pkgariapi.WorkspaceSen
 
 // ── mock AgentRunOps (stub — not used in workspace tests) ────────────────────
 
-type mockAgentRunOps struct{}
+type mockAgentRunOps struct {
+	stopFn func(context.Context, pkgariapi.ObjectKey) error
+}
 
 func (m *mockAgentRunOps) Prompt(context.Context, pkgariapi.ObjectKey, []pkgariapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
 	return &pkgariapi.AgentRunPromptResult{}, nil
 }
 func (m *mockAgentRunOps) Cancel(context.Context, pkgariapi.ObjectKey) error { return nil }
-func (m *mockAgentRunOps) Stop(context.Context, pkgariapi.ObjectKey) error   { return nil }
+func (m *mockAgentRunOps) Stop(ctx context.Context, key pkgariapi.ObjectKey) error {
+	if m.stopFn != nil {
+		return m.stopFn(ctx, key)
+	}
+	return nil
+}
+
 func (m *mockAgentRunOps) Restart(context.Context, pkgariapi.ObjectKey) (*pkgariapi.AgentRun, error) {
 	return &pkgariapi.AgentRun{}, nil
 }
