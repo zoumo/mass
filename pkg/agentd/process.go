@@ -601,6 +601,7 @@ func (m *ProcessManager) forkRun(agent *pkgariapi.AgentRun, bundlePath, stateDir
 		"--permissions", string(apiruntime.ApproveAll),
 		"--log-level", m.logLevel,
 		"--log-format", m.logFormat,
+		"--log-file", filepath.Join(bundlePath, "agent-run.log"),
 	}
 
 	// Log the command for debugging.
@@ -615,8 +616,8 @@ func (m *ProcessManager) forkRun(agent *pkgariapi.AgentRun, bundlePath, stateDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
-	cmd.Stderr = os.Stderr // always pipe stderr for debugging
-	cmd.Stdout = nil       // discard stdout (agent-run logs to stderr via slog)
+	cmd.Stderr = os.Stderr // capture panics/early errors; structured logs go to --log-file
+	cmd.Stdout = nil
 
 	// Start the process.
 	if err := cmd.Start(); err != nil {
