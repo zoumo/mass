@@ -25,73 +25,26 @@
 
 ## What You Get
 
-With MASS, you get a **production-grade runtime** that turns AI agents into manageable, observable, recoverable services — not fragile scripts you babysit.
-
 <table>
 <tr>
-<td width="50%">
-
-### 🔌 Run Any ACP Agent as a Service
-Launch Claude Code, Codex, or any [ACP](https://github.com/coder/acp-go-sdk)-compatible agent as a long-running, supervised process. One command to create, prompt, cancel, restart, or stop — all through a unified API.
-
-```bash
-massctl agentrun create -w myproject --name my-agent --agent claude
-massctl agentrun prompt my-agent -w myproject --text "Fix the auth bug"
-massctl agentrun stop my-agent -w myproject
-```
-
-</td>
-<td width="50%">
-
-### 👁️ Full Observability Over Agent Behavior
-Every thought, tool call, message, and state transition is captured as a typed, sequenced event stream. Connect to a running agent-run process at any time — reconnect and replay from any point without losing a single event.
-
-```bash
-# Connect via workspace + agent name:
-massctl agentrun chat -w myproject --name my-agent
-# Interactive TUI: thinking → tool_call → agent_message → ...
-```
-
-</td>
+<td>🔌 <b>Agent as a Service</b></td>
+<td>Run any AI agent as a <b>supervised, long-running process</b> without a terminal.</td>
 </tr>
 <tr>
-<td width="50%">
-
-### 🔄 Crash Recovery Without Agent Downtime
-Daemon crashes? Agents keep running. On restart, MASS automatically reconnects to surviving agent processes and replays missed events — zero data loss, zero manual intervention.
-
-</td>
-<td width="50%">
-
-### 📂 Managed Workspaces for Multi-Agent Collaboration
-Clone repos, provision scratch dirs, or mount local paths — then share them across multiple agents with automatic ref-counted cleanup. Agents collaborate on the same codebase without stepping on each other.
-
-</td>
+<td>🧩 <b>Any Agent, One Interface</b></td>
+<td>Speaks <a href="https://agentclientprotocol.com"><b>ACP</b></a> (Agent Client Protocol). Claude Code, Codex, or any ACP-compatible agent — <b>no vendor lock-in</b>.</td>
 </tr>
 <tr>
-<td width="50%">
-
-### 🧩 Programmatic Control via JSON-RPC
-Everything is an API call. Build orchestrators, CI pipelines, or custom UIs on top of ARI (Agent Runtime Interface) — the same way Kubernetes builds on CRI.
-
-```json
-{"method": "agentrun/create", "params": {"metadata": {"workspace": "myproject", "name": "my-agent"}, "spec": {"agent": "claude"}}}
-{"method": "agentrun/prompt", "params": {"workspace": "myproject", "name": "my-agent", "prompt": [{"type": "text", "text": "Refactor the auth module"}]}}
-```
-
-</td>
-<td width="50%">
-
-### ⚡ Single Binary, Instant Deployment
-No Docker. No databases. No message queues. Just `make build` and you have two binaries (`mass` + `massctl`) that manage everything via Unix sockets and an embedded key-value store.
-
-```bash
-make build
-bin/mass server &
-bin/massctl agentrun create -w myproject --name my-agent --agent claude
-```
-
-</td>
+<td>👁️ <b>Observable, Interactive, Async</b></td>
+<td><b>Typed event stream</b> for every agent. Connect via <b>TUI</b> (<code>massctl agentrun chat</code>) anytime — chat, browse diffs, send a task, walk away, come back for results. <b>Replay</b> from any point.</td>
+</tr>
+<tr>
+<td>📂 <b>Shared Workspace</b></td>
+<td>Multiple agents work in the <b>same workspace</b> (git / local / emptyDir). <b>Ref-counted</b> lifecycle, automatic cleanup.</td>
+</tr>
+<tr>
+<td>⚡ <b>CLI + JSON-RPC</b></td>
+<td><code>massctl</code> CLI for daily use. Full <b>JSON-RPC 2.0 API</b> (ARI) for orchestrators, CI pipelines, or custom UIs.</td>
 </tr>
 </table>
 
@@ -99,9 +52,9 @@ bin/massctl agentrun create -w myproject --name my-agent --agent claude
 
 ## What is MASS?
 
-MASS manages AI coding agents the way **containerd manages containers** — with clean layering, spec-driven contracts, and recovery built into the foundation.
+**M**ulti-**A**gent **S**upervision **S**ystem — manages AI coding agents the way **containerd manages containers**. Not a framework. Not an SDK. A **supervision system** with clean layering, spec-driven contracts, and recovery built into the foundation.
 
-Instead of reinventing the wheel, MASS borrows the battle-tested architecture of the [OCI](https://opencontainers.org/) container ecosystem and maps it directly onto the agent domain:
+MASS borrows the battle-tested architecture of the [OCI](https://opencontainers.org/) container ecosystem and maps it directly onto the agent domain:
 
 ```
 OCI (Containers)                    MASS (Agents)
@@ -116,126 +69,118 @@ crictl                         →    massctl
 
 > Containers solved a structurally isomorphic problem: how to standardize describing, preparing, and executing isolated workloads. Agents face the same layered concerns — minus the kernel isolation.
 
-## Why "MASS"?
+### Architecture
 
-**M**ulti-**A**gent **S**upervision **S**ystem.
+```mermaid
+graph TD
+    Client["massctl / Orchestrator"]
+    Client -->|"ARI (JSON-RPC 2.0 / Unix socket)"| Agentd
 
-The name reflects what it does: supervise multiple AI agents on a single host with the rigor of a production runtime. Not a framework. Not an SDK. A **supervision system** — like systemd for agents, but with agent-native semantics baked in.
+    subgraph Agentd["agentd"]
+        WM["Workspace Manager"]
+        ARM["AgentRun Manager"]
+    end
 
-## Design Principles
+    ARM -->|JSON-RPC| AR1["agent-run"]
+    ARM -->|JSON-RPC| AR2["agent-run"]
 
-| # | Principle | What it means |
-|---|-----------|---------------|
-| 1 | **Spec-First** | Define interfaces and wire formats before writing code. Specs are contracts; components are swappable implementations. |
-| 2 | **No Container Baggage** | Borrow OCI's architecture, not its kernel isolation. No namespaces, cgroups, seccomp, or pivot_root. Agents are processes, not sandboxes. |
-| 3 | **Agent-Native Concerns** | Focus on what agents actually need: workspace preparation, protocol communication (ACP), skill/knowledge injection, inter-agent messaging. |
-| 4 | **Layered Separation** | Each layer does one thing. agent-run runs the process and holds ACP. agentd manages lifecycle. External callers decide what to run. |
-| 5 | **Simplicity First** | Design for current needs. Extension points exist but stay empty until real requirements emerge. |
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│  Orchestrator / massctl CLI                                  │
-│  ─────────────────────────────────────────────────────────── │
-│  ARI JSON-RPC 2.0 over Unix socket                           │
-└───────────────────────┬──────────────────────────────────────┘
-                        │
-┌───────────────────────▼──────────────────────────────────────┐
-│  agentd                                                      │
-│  ┌────────────────┐ ┌─────────────────┐ ┌─────────────────┐ │
-│  │ Workspace Mgr  │ │  Agent Manager  │ │ Process Manager │ │
-│  │ git/emptyDir/  │ │  CRUD + specs   │ │ fork/watch/     │ │
-│  │ local sources  │ │                 │ │ recover/restart │ │
-│  └────────────────┘ └─────────────────┘ └────────┬────────┘ │
-│                                                   │          │
-│  bbolt metadata store ──── recovery engine        │          │
-└───────────────────────────────────────────────────┼──────────┘
-                        Unix socket per agent       │
-                  ┌─────────────────────────────────▼──────┐
-                  │  agent-run                             │
-                  │  ┌──────────────────────────────────┐  │
-                  │  │ ACP Protocol (JSON-RPC / stdio)  │  │
-                  │  │ Event Translator + EventLog      │  │
-                  │  │ Session metadata hooks            │  │
-                  │  └──────────────┬───────────────────┘  │
-                  └─────────────────┼──────────────────────┘
-                                    │ stdin/stdout
-                  ┌─────────────────▼──────────────────────┐
-                  │  AI Agent Process                      │
-                  │  (Claude Code, Codex, custom agents)   │
-                  └────────────────────────────────────────┘
+    AR1 -->|"ACP (stdio)"| Agent1["ACP Agent<br/>(claude)"]
+    AR2 -->|"ACP (stdio)"| Agent2["ACP Agent<br/>(codex)"]
 ```
 
-**Three layers, clear boundaries:**
+The diagram shows three layers: **client → daemon → runtime**. Each layer communicates via JSON-RPC.
 
-| Layer | Component | Analogous to | Responsibility |
-|-------|-----------|-------------|----------------|
-| **L0** | agent-run | runc + containerd-shim | Run one agent process, hold ACP stdio, translate events |
-| **L1** | agentd | containerd | Multi-agent lifecycle, workspace provisioning, metadata, recovery |
-| **L2** | ARI | CRI | External control plane interface (JSON-RPC 2.0) |
+**Data Models**
 
-## Key Advantages
+| Concept | Description |
+|---------|-------------|
+| **Agent** | Reusable template defining how to launch an agent process (command, args, env). Register once, use across workspaces. |
+| **Workspace** | Prepared working directory (git clone, local mount, or empty scratch) shared by one or more agent runs. |
+| **AgentRun** | Running instance of an Agent within a Workspace. Supervised process with its own lifecycle (`creating → idle → running → stopped`). |
 
-### Recovery-First Design
+**Components**
 
-Daemon crash? No problem. On restart, agentd reconnects to surviving agent-run processes, replays event history via K8s-style List-Watch (`session/watch_event` with `fromSeq`), and resumes exactly where it left off. Zero agent downtime.
+| Concept | Description |
+|---------|-------------|
+| **agentd** | The daemon (analogous to `containerd`). Manages workspaces, forks/watches/recovers agent-run processes, and exposes the ARI API. |
+| **agent-run** | The low-level runtime process (analogous to `runc`). Manages a single agent process, holds the ACP stdio connection, and translates protocol events. |
+| **massctl** | CLI client (analogous to `crictl`). All operations go through ARI. |
 
-### Agent-Run Write Authority
+**Protocols**
 
-After bootstrap, **only the agent-run process drives state transitions** — agentd never writes `idle/running/stopped` directly. This eliminates an entire class of race conditions between the control plane and the runtime.
+| Concept | Description |
+|---------|-------------|
+| **ARI** | Agent Runtime Interface — JSON-RPC 2.0 over Unix socket. The control plane API between massctl/orchestrator and agentd. |
+| **agent-run RPC** | JSON-RPC between agentd and each agent-run process. Used for lifecycle management and session control. |
+| **ACP** | [Agent Client Protocol](https://agentclientprotocol.com) — JSON-RPC over stdio between agent-run and the actual AI agent process. |
 
-### Typed Event Streaming
+### Built-in Agents
 
-Every event carries a globally monotonic `seq` (like K8s `resourceVersion`), a `turnId` for conversation scoping, and content block streaming status. Clients can replay from any point, dedup automatically, and never miss an event.
+MASS ships with three built-in agent definitions. All agents communicate via [ACP](https://github.com/coder/acp-go-sdk) over stdio and require [Bun](https://bun.sh) (`bunx`) to launch:
 
-### Async Bootstrap
+| Agent | ACP Adapter | Status |
+|-------|-------------|--------|
+| **claude** | [`@agentclientprotocol/claude-agent-acp`](https://github.com/anthropics/claude-code/tree/main/packages/claude-agent-acp) | Enabled |
+| **codex** | [`@zed-industries/codex-acp`](https://github.com/zed-industries/codex-acp) | Enabled |
+| **gsd-pi** | [`gsd-pi-acp`](https://github.com/zoumo/gsd-pi-acp) | **Disabled** by default |
 
-`agentrun/create` returns immediately. The agent initializes in the background — workspace cloning, ACP handshake, capability discovery — all happen asynchronously. Poll `agentrun/get` or watch events to track progress.
 
-### Workspace Sharing
+## Installation
 
-Multiple agents can share a workspace with ref-counted lifecycle management. Three source types out of the box:
+**Prerequisites**
 
-| Source | Use case |
-|--------|----------|
-| `git` | Clone a repo (shallow, single-branch) |
-| `emptyDir` | Ephemeral scratch space |
-| `local` | Pre-existing directory (unmanaged) |
+- [Go 1.26+](https://go.dev) — to build MASS
+- [ACP-compatible agent](https://agentclientprotocol.com/get-started/agents) — at least one agent to run. Built-in agents (claude, codex, gsd-pi) require [Bun](https://bun.sh) or [Node.js](https://nodejs.org).
 
-### Crash-Resilient Event Log
-
-Events are persisted to NDJSON with **damaged-tail tolerance**: corrupt lines at the end of the log (from a crash mid-write) are automatically skipped. Mid-file corruption is caught and reported. No manual repair needed.
-
-### Single Binary, Zero Dependencies
-
-Pure Go. Two binaries: `mass` (daemon + agent-run) and `massctl` (CLI). No external databases, no container runtime, no message queues. Just Unix sockets and bbolt.
+```bash
+make build
+# Produces: bin/mass (daemon + agent-run) and bin/massctl (CLI)
+```
 
 ## Quick Start
 
 ```bash
-# Build
-make build
+# 1. Start the daemon
+mass server
 
-# Start the daemon
-bin/mass server --root /tmp/mass-state
+# 2. In another terminal — launch a claude agent in the current directory
+#    -w sets the workspace name, --agent picks a built-in agent definition
+massctl compose run -w my-project --agent claude
 
-# In another terminal — create a workspace and run an agent
-bin/massctl workspace create local --name myproject --path /path/to/code
-bin/massctl agentrun create -w myproject --name my-agent --agent claude
-# Wait for agent to reach idle state
-bin/massctl agentrun get my-agent -w myproject
-# Send a prompt
-bin/massctl agentrun prompt my-agent -w myproject --text "Explain main.go" --wait
+# 3. Send a prompt and wait for the response
+massctl agentrun prompt claude -w my-project --text "explain this repo" --wait
+
+# 4. Or open the interactive TUI to chat, view diffs, and monitor in real-time
+massctl agentrun chat claude -w my-project
+
+# 5. When done, stop the agent run and clean up
+massctl agentrun stop claude -w my-project
+massctl workspace delete my-project
 ```
 
-## ARI Method Surface
+For declarative workflows, use `compose apply` with a YAML spec instead of imperative commands.
 
-| Group | Methods |
-|-------|---------|
-| `workspace/*` | `create` · `get` · `list` · `delete` · `send` |
-| `agent/*` | `create` · `update` · `get` · `list` · `delete` |
-| `agentrun/*` | `create` · `prompt` · `cancel` · `stop` · `delete` · `restart` · `list` · `get` |
+## CLI Overview
+
+**`mass`** — the daemon binary.
+
+| Command | Description |
+|---------|-------------|
+| `mass server` | Start the MASS daemon |
+| `mass run` | Directly spawn an agent-run process (low-level) |
+
+**`massctl`** — the CLI client. All operations go through ARI.
+
+| Command | Description |
+|---------|-------------|
+| `massctl compose run` | Quick-start a single agent in the current directory |
+| `massctl compose apply` | Declarative workspace + agent-run management via YAML |
+| `massctl workspace {create,get,delete}` | Manage workspaces |
+| `massctl agent {apply,get,delete}` | Manage agent definitions |
+| `massctl agentrun {create,get,stop,restart,delete}` | Agent-run lifecycle |
+| `massctl agentrun prompt` | Send a prompt to a running agent (`--wait` for response) |
+| `massctl agentrun chat` | Interactive TUI — chat, view diffs, replay events |
+| `massctl daemon status` | Check daemon health |
 
 ## Tech Stack
 
@@ -245,8 +190,6 @@ bin/massctl agentrun prompt my-agent -w myproject --text "Explain main.go" --wai
 | RPC | JSON-RPC 2.0 (`sourcegraph/jsonrpc2`) |
 | Storage | bbolt (embedded key-value) |
 | Agent Protocol | ACP (JSON-RPC over stdio) |
-| CLI | cobra |
-| Event Log | NDJSON |
 
 ## Documentation
 
