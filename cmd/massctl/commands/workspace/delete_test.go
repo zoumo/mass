@@ -3,12 +3,14 @@ package workspace
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 func TestDeleteSuccess(t *testing.T) {
@@ -51,8 +53,14 @@ func TestDeleteForce(t *testing.T) {
 	mc.listFn = func(_ context.Context, list pkgariapi.ObjectList, _ ...pkgariapi.ListOption) error {
 		arList := list.(*pkgariapi.AgentRunList)
 		arList.Items = []pkgariapi.AgentRun{
-			{Metadata: pkgariapi.ObjectMeta{Name: "run1"}},
-			{Metadata: pkgariapi.ObjectMeta{Name: "run2"}},
+			{
+				Metadata: pkgariapi.ObjectMeta{Name: "run1"},
+				Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusIdle},
+			},
+			{
+				Metadata: pkgariapi.ObjectMeta{Name: "run2"},
+				Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped},
+			},
 		}
 		return nil
 	}
@@ -61,6 +69,12 @@ func TestDeleteForce(t *testing.T) {
 			stoppedRuns = append(stoppedRuns, key.Name)
 			return nil
 		},
+	}
+	// Get returns stopped state so waitForExited completes immediately.
+	mc.getFn = func(_ context.Context, _ pkgariapi.ObjectKey, obj pkgariapi.Object) error {
+		ar := obj.(*pkgariapi.AgentRun)
+		ar.Status.State = apiruntime.StatusStopped
+		return nil
 	}
 	mc.deleteFn = func(_ context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
 		switch obj.(type) {
@@ -80,10 +94,84 @@ func TestDeleteForce(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err)
-	assert.Equal(t, []string{"run1", "run2"}, stoppedRuns)
+	assert.Equal(t, []string{"run1"}, stoppedRuns, "only idle run should be stopped")
 	assert.Equal(t, []string{"run1", "run2"}, deletedRuns)
 	assert.True(t, deletedWS)
+	assert.Contains(t, buf.String(), `agentrun "run1" stopped`)
 	assert.Contains(t, buf.String(), `agentrun "run1" deleted`)
 	assert.Contains(t, buf.String(), `agentrun "run2" deleted`)
 	assert.Contains(t, buf.String(), `workspace "ws1" deleted`)
+}
+
+func TestDeleteForceStopError(t *testing.T) {
+	mc := newMockClient()
+	mc.listFn = func(_ context.Context, list pkgariapi.ObjectList, _ ...pkgariapi.ListOption) error {
+		arList := list.(*pkgariapi.AgentRunList)
+		arList.Items = []pkgariapi.AgentRun{
+			{
+				Metadata: pkgariapi.ObjectMeta{Name: "run1"},
+				Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusIdle},
+			},
+		}
+		return nil
+	}
+	mc.agentRunOps = &mockAgentRunOps{
+		stopFn: func(context.Context, pkgariapi.ObjectKey) error {
+			return fmt.Errorf("connection refused")
+		},
+	}
+
+	cmd := NewCommand(clientFn(mc))
+	cmd.SetArgs([]string{"delete", "ws1", "--force"})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stopping agentrun")
+	assert.Contains(t, err.Error(), "connection refused")
+}
+
+func TestDeleteForceEmptyRuns(t *testing.T) {
+	var deletedWS bool
+	mc := newMockClient()
+	mc.listFn = func(_ context.Context, list pkgariapi.ObjectList, _ ...pkgariapi.ListOption) error {
+		list.(*pkgariapi.AgentRunList).Items = nil
+		return nil
+	}
+	mc.deleteFn = func(_ context.Context, _ pkgariapi.ObjectKey, obj pkgariapi.Object) error {
+		if _, ok := obj.(*pkgariapi.Workspace); ok {
+			deletedWS = true
+		}
+		return nil
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCommand(clientFn(mc))
+	cmd.SetArgs([]string{"delete", "ws1", "--force"})
+	cmd.SetOut(&buf)
+	cmd.SetErr(&bytes.Buffer{})
+
+	err := cmd.Execute()
+	require.NoError(t, err)
+	assert.True(t, deletedWS)
+	assert.Contains(t, buf.String(), `workspace "ws1" deleted`)
+}
+
+func TestIsExited(t *testing.T) {
+	tests := []struct {
+		state apiruntime.Status
+		want  bool
+	}{
+		{apiruntime.StatusStopped, true},
+		{apiruntime.StatusError, true},
+		{apiruntime.StatusIdle, false},
+		{apiruntime.StatusCreating, false},
+		{apiruntime.StatusRunning, false},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.state), func(t *testing.T) {
+			assert.Equal(t, tt.want, isExited(tt.state))
+		})
+	}
 }
