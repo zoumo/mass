@@ -6,7 +6,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 // Config is the top-level document for `massctl compose`.
@@ -26,7 +26,7 @@ type ConfigMetadata struct {
 // WorkspaceComposeSpec describes the workspace source and the agent runs to create.
 type WorkspaceComposeSpec struct {
 	Source SourceConfig    `json:"source"`
-	Agents []AgentRunEntry `json:"agents"`
+	Runs   []AgentRunEntry `json:"runs"`
 }
 
 // SourceConfig describes the workspace source (local, git, or emptyDir).
@@ -39,15 +39,13 @@ type SourceConfig struct {
 	Ref string `json:"ref,omitempty"`
 }
 
-// AgentRunEntry describes a single agent run following the metadata/spec pattern.
+// AgentRunEntry describes a single agent run in flattened form.
 type AgentRunEntry struct {
-	Metadata AgentRunMetadata       `json:"metadata"`
-	Spec     pkgariapi.AgentRunSpec `json:"spec"`
-}
-
-// AgentRunMetadata holds the agent run's name within the workspace.
-type AgentRunMetadata struct {
-	Name string `json:"name"`
+	Name         string                      `json:"name"`
+	Agent        string                      `json:"agent"`
+	SystemPrompt string                      `json:"systemPrompt,omitempty"`
+	Permissions  apiruntime.PermissionPolicy `json:"permissions,omitempty"`
+	McpServers   []apiruntime.McpServer      `json:"mcpServers,omitempty"`
 }
 
 // parseConfig parses and validates YAML bytes into a Config.
@@ -69,12 +67,12 @@ func validateConfig(cfg Config) error {
 	if cfg.Metadata.Name == "" {
 		return fmt.Errorf("metadata.name is required")
 	}
-	for i, a := range cfg.Spec.Agents {
-		if a.Metadata.Name == "" {
-			return fmt.Errorf("spec.agents[%d].metadata.name is required", i)
+	for i, a := range cfg.Spec.Runs {
+		if a.Name == "" {
+			return fmt.Errorf("spec.runs[%d].name is required", i)
 		}
-		if a.Spec.Agent == "" {
-			return fmt.Errorf("spec.agents[%d].spec.agent is required", i)
+		if a.Agent == "" {
+			return fmt.Errorf("spec.runs[%d].agent is required", i)
 		}
 	}
 	return nil

@@ -47,20 +47,20 @@ then prints the run socket path for each agent.
 			if err := waitWorkspaceReady(ctx, client, wsName); err != nil {
 				return err
 			}
-			for _, a := range cfg.Spec.Agents {
+			for _, a := range cfg.Spec.Runs {
 				if err := createAgentRun(ctx, client, wsName, a); err != nil {
 					return err
 				}
 			}
-			for _, a := range cfg.Spec.Agents {
-				if err := waitAgentIdle(ctx, client, wsName, a.Metadata.Name); err != nil {
+			for _, a := range cfg.Spec.Runs {
+				if err := waitAgentIdle(ctx, client, wsName, a.Name); err != nil {
 					return err
 				}
 			}
 
 			fmt.Println("\nAll agents are ready. Socket info:")
-			for _, a := range cfg.Spec.Agents {
-				printSocketInfo(ctx, client, wsName, a.Metadata.Name)
+			for _, a := range cfg.Spec.Runs {
+				printSocketInfo(ctx, client, wsName, a.Name)
 			}
 			return nil
 		},

@@ -87,11 +87,9 @@ spec:
         - command: /path/to/notify.sh
           args: ["${MASS_AGENT_NAME}", "${MASS_AGENT_STATE}"]
           description: Notify orchestrator of agent state change
-  agents:
-    - metadata:
-        name: coder
-      spec:
-        agent: claude
+  runs:
+    - name: coder
+      agent: claude
 ```
 
 ### Hook 类型

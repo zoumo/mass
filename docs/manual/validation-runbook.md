@@ -91,19 +91,13 @@ spec:
   source:
     type: local
     path: /Users/jim/code/zoumo/open-agent-runtime
-  agents:
-    - metadata:
-        name: codex
-      spec:
-        agent: codex
-    - metadata:
-        name: claude-code
-      spec:
-        agent: claude
-    - metadata:
-        name: gsd-pi
-      spec:
-        agent: gsd-pi
+  runs:
+    - name: codex
+      agent: codex
+    - name: claude-code
+      agent: claude
+    - name: gsd-pi
+      agent: gsd-pi
 ```
 
 > `source.path` 必须为绝对路径，请根据实际项目位置修改。

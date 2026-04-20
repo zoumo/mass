@@ -18,28 +18,25 @@
 多个 executor 同时处理独立子任务。
 
 ```yaml
-agents:
-  - metadata: { name: planner }
-    spec:
-      agent: claude
-      systemPrompt: |
-        Split the task into independent subtasks.
-        Send each subtask as [execution-request] to a different executor.
-        Wait for all [execution-done] messages, then verify and report.
-  - metadata: { name: reviewer }
-    spec: { agent: codex, systemPrompt: "..." }
-  - metadata: { name: executor-api }
-    spec:
-      agent: gsd-pi
-      systemPrompt: "Execute API-related subtasks via /gsd auto."
-  - metadata: { name: executor-db }
-    spec:
-      agent: gsd-pi
-      systemPrompt: "Execute database-related subtasks via /gsd auto."
-  - metadata: { name: executor-test }
-    spec:
-      agent: gsd-pi
-      systemPrompt: "Execute test-writing subtasks via /gsd auto."
+runs:
+  - name: planner
+    agent: claude
+    systemPrompt: |
+      Split the task into independent subtasks.
+      Send each subtask as [execution-request] to a different executor.
+      Wait for all [execution-done] messages, then verify and report.
+  - name: reviewer
+    agent: codex
+    systemPrompt: "..."
+  - name: executor-api
+    agent: gsd-pi
+    systemPrompt: "Execute API-related subtasks via /gsd auto."
+  - name: executor-db
+    agent: gsd-pi
+    systemPrompt: "Execute database-related subtasks via /gsd auto."
+  - name: executor-test
+    agent: gsd-pi
+    systemPrompt: "Execute test-writing subtasks via /gsd auto."
 ```
 
 Planner 分发 `[execution-request]` 给不同 executor，各自独立执行，完成后回报。
@@ -81,7 +78,7 @@ massctl agent apply -f my-agent.yaml
 ```
 
 ```yaml
-metadata:
+meta
   name: my-custom-agent
 spec:
   command: /path/to/custom-agent-binary

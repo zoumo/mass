@@ -16,16 +16,12 @@ spec:
   source:
     type: local
     path: /tmp/myproject
-  agents:
-    - metadata:
-        name: codex
-      spec:
-        agent: codex
-    - metadata:
-        name: claude-code
-      spec:
-        agent: claude
-        systemPrompt: "You are a helpful assistant."
+  runs:
+    - name: codex
+      agent: codex
+    - name: claude-code
+      agent: claude
+      systemPrompt: "You are a helpful assistant."
 `
 	cfg, err := parseConfig([]byte(input))
 	require.NoError(t, err)
@@ -35,14 +31,14 @@ spec:
 	assert.Equal(t, "local", cfg.Spec.Source.Type)
 	assert.Equal(t, "/tmp/myproject", cfg.Spec.Source.Path)
 
-	require.Len(t, cfg.Spec.Agents, 2)
-	assert.Equal(t, "codex", cfg.Spec.Agents[0].Metadata.Name)
-	assert.Equal(t, "codex", cfg.Spec.Agents[0].Spec.Agent)
-	assert.Empty(t, cfg.Spec.Agents[0].Spec.SystemPrompt)
+	require.Len(t, cfg.Spec.Runs, 2)
+	assert.Equal(t, "codex", cfg.Spec.Runs[0].Name)
+	assert.Equal(t, "codex", cfg.Spec.Runs[0].Agent)
+	assert.Empty(t, cfg.Spec.Runs[0].SystemPrompt)
 
-	assert.Equal(t, "claude-code", cfg.Spec.Agents[1].Metadata.Name)
-	assert.Equal(t, "claude", cfg.Spec.Agents[1].Spec.Agent)
-	assert.Equal(t, "You are a helpful assistant.", cfg.Spec.Agents[1].Spec.SystemPrompt)
+	assert.Equal(t, "claude-code", cfg.Spec.Runs[1].Name)
+	assert.Equal(t, "claude", cfg.Spec.Runs[1].Agent)
+	assert.Equal(t, "You are a helpful assistant.", cfg.Spec.Runs[1].SystemPrompt)
 }
 
 func TestParseConfig_GitWorkspace(t *testing.T) {
@@ -55,7 +51,7 @@ spec:
     type: git
     url: https://github.com/example/repo.git
     ref: main
-  agents: []
+  runs: []
 `
 	cfg, err := parseConfig([]byte(input))
 	require.NoError(t, err)
@@ -73,19 +69,17 @@ metadata:
 spec:
   source:
     type: emptyDir
-  agents:
-    - metadata:
-        name: gsd-pi
-      spec:
-        agent: gsd-pi
+  runs:
+    - name: gsd-pi
+      agent: gsd-pi
 `
 	cfg, err := parseConfig([]byte(input))
 	require.NoError(t, err)
 
 	assert.Equal(t, "scratch", cfg.Metadata.Name)
 	assert.Equal(t, "emptyDir", cfg.Spec.Source.Type)
-	require.Len(t, cfg.Spec.Agents, 1)
-	assert.Equal(t, "gsd-pi", cfg.Spec.Agents[0].Metadata.Name)
+	require.Len(t, cfg.Spec.Runs, 1)
+	assert.Equal(t, "gsd-pi", cfg.Spec.Runs[0].Name)
 }
 
 func TestParseConfig_InvalidYAML(t *testing.T) {
@@ -101,7 +95,7 @@ metadata:
 spec:
   source:
     type: emptyDir
-  agents: []
+  runs: []
 `
 	_, err := parseConfig([]byte(input))
 	assert.ErrorContains(t, err, "kind")
@@ -115,13 +109,13 @@ metadata:
 spec:
   source:
     type: emptyDir
-  agents: []
+  runs: []
 `
 	_, err := parseConfig([]byte(input))
 	assert.ErrorContains(t, err, "metadata.name")
 }
 
-func TestParseConfig_MissingAgentMetadataName(t *testing.T) {
+func TestParseConfig_MissingRunName(t *testing.T) {
 	input := `
 kind: workspace-compose
 metadata:
@@ -129,17 +123,15 @@ metadata:
 spec:
   source:
     type: emptyDir
-  agents:
-    - metadata:
-        name: ""
-      spec:
-        agent: codex
+  runs:
+    - name: ""
+      agent: codex
 `
 	_, err := parseConfig([]byte(input))
-	assert.ErrorContains(t, err, "spec.agents[0].metadata.name")
+	assert.ErrorContains(t, err, "spec.runs[0].name")
 }
 
-func TestParseConfig_MissingAgentSpecAgent(t *testing.T) {
+func TestParseConfig_MissingRunAgent(t *testing.T) {
 	input := `
 kind: workspace-compose
 metadata:
@@ -147,12 +139,10 @@ metadata:
 spec:
   source:
     type: emptyDir
-  agents:
-    - metadata:
-        name: codex
-      spec:
-        agent: ""
+  runs:
+    - name: codex
+      agent: ""
 `
 	_, err := parseConfig([]byte(input))
-	assert.ErrorContains(t, err, "spec.agents[0].spec.agent")
+	assert.ErrorContains(t, err, "spec.runs[0].agent")
 }

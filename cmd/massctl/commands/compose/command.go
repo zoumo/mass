@@ -94,14 +94,19 @@ func createAgentRun(ctx context.Context, client pkgariapi.Client, wsName string,
 	ar := pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{
 			Workspace: wsName,
-			Name:      a.Metadata.Name,
+			Name:      a.Name,
 		},
-		Spec: a.Spec,
+		Spec: pkgariapi.AgentRunSpec{
+			Agent:        a.Agent,
+			SystemPrompt: a.SystemPrompt,
+			Permissions:  a.Permissions,
+			McpServers:   a.McpServers,
+		},
 	}
 	if err := client.Create(ctx, &ar); err != nil {
-		return fmt.Errorf("agentrun/create %q: %w", a.Metadata.Name, err)
+		return fmt.Errorf("agentrun/create %q: %w", a.Name, err)
 	}
-	fmt.Printf("Agent run %q/%q created (state: %s)\n", wsName, a.Metadata.Name, ar.Status.State)
+	fmt.Printf("Agent run %q/%q created (state: %s)\n", wsName, a.Name, ar.Status.State)
 	return nil
 }
 

@@ -36,7 +36,7 @@ workspace 已存在且 ready 时自动复用，否则以 `cwd` 为 local source 
 
 ```yaml
 kind: workspace-compose
-metadata:
+meta
   name: my-ws                    # Workspace 名称
 spec:
   source:
@@ -44,14 +44,12 @@ spec:
     path: /path/to/code          # local 必填
     # url: https://...           # git 必填
     # ref: main                  # git 可选（分支/tag/commit）
-  agents:
-    - metadata:
-        name: agent-name         # AgentRun 名称（workspace 内唯一）
-      spec:
-        agent: claude            # 内置 agent 定义名
-        systemPrompt: |          # 系统提示词
-          Your role description...
-        permissions: approve_all # approve_all | approve_reads | deny_all
+  runs:
+    - name: agent-name           # AgentRun 名称（workspace 内唯一）
+      agent: claude              # 内置 agent 定义名
+      systemPrompt: |            # 系统提示词
+        Your role description...
+      permissions: approve_all   # approve_all | approve_reads | deny_all
 ```
 
 ## 字段说明
@@ -64,10 +62,11 @@ spec:
 | `git` | `url`，可选 `ref` | 克隆 git 仓库，mass 管理目录 |
 | `emptyDir` | 无 | 创建空目录，mass 管理 |
 
-### agents[].spec
+### runs[]
 
 | 字段 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
+| `name` | 是 | — | AgentRun 名称（workspace 内唯一） |
 | `agent` | 是 | — | 引用的 agent 定义名（claude / codex / gsd-pi 或自定义） |
 | `systemPrompt` | 否 | — | 该 agentrun 实例的系统提示词 |
 | `permissions` | 否 | `approve_all` | 文件/终端权限策略 |

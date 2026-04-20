@@ -401,19 +401,15 @@ spec:
   source:
     type: local
     path: /path/to/code
-  agents:
-    - metadata:
-        name: coder
-      spec:
-        agent: claude
-        systemPrompt: |
-          You are a coding agent. When you finish, send results to reviewer via workspace_send.
-    - metadata:
-        name: reviewer
-      spec:
-        agent: codex
-        systemPrompt: |
-          You are a code reviewer. Send feedback or approval via workspace_send.
+  runs:
+    - name: coder
+      agent: claude
+      systemPrompt: |
+        You are a coding agent. When you finish, send results to reviewer via workspace_send.
+    - name: reviewer
+      agent: codex
+      systemPrompt: |
+        You are a code reviewer. Send feedback or approval via workspace_send.
 ```
 
 ```bash

@@ -8,7 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // newRunCmd returns the "compose run" subcommand that quick-starts a single
@@ -63,11 +62,9 @@ If the workspace already exists and is ready, it is reused.
 
 			// Create agent run.
 			entry := AgentRunEntry{
-				Metadata: AgentRunMetadata{Name: runName},
-				Spec: pkgariapi.AgentRunSpec{
-					Agent:        agent,
-					SystemPrompt: systemPrompt,
-				},
+				Name:         runName,
+				Agent:        agent,
+				SystemPrompt: systemPrompt,
 			}
 			if err := createAgentRun(ctx, client, wsName, entry); err != nil {
 				return err
