@@ -2,6 +2,7 @@ package agentrun
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -12,9 +13,9 @@ import (
 func newRestartCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var ws string
 	cmd := &cobra.Command{
-		Use:   "restart name",
-		Short: "Restart a stopped agent run",
-		Args:  cobra.ExactArgs(1),
+		Use:   "restart name [name ...]",
+		Short: "Restart one or more stopped agent runs",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -22,12 +23,16 @@ func newRestartCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			name := args[0]
-			result, err := client.AgentRuns().Restart(context.Background(), pkgariapi.ObjectKey{Workspace: ws, Name: name})
-			if err != nil {
-				return err
+			for _, name := range args {
+				result, err := client.AgentRuns().Restart(context.Background(), pkgariapi.ObjectKey{Workspace: ws, Name: name})
+				if err != nil {
+					return fmt.Errorf("restarting agentrun %s/%s: %w", ws, name, err)
+				}
+				if err := cliutil.PrintJSON(cmd.OutOrStdout(), result); err != nil {
+					return err
+				}
 			}
-			return cliutil.PrintJSON(cmd.OutOrStdout(), result)
+			return nil
 		},
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")

@@ -13,9 +13,9 @@ import (
 func newStopCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var ws string
 	cmd := &cobra.Command{
-		Use:   "stop name",
-		Short: "Stop an agent run",
-		Args:  cobra.ExactArgs(1),
+		Use:   "stop name [name ...]",
+		Short: "Stop one or more agent runs",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -23,11 +23,12 @@ func newStopCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			name := args[0]
-			if err := client.AgentRuns().Stop(context.Background(), pkgariapi.ObjectKey{Workspace: ws, Name: name}); err != nil {
-				return err
+			for _, name := range args {
+				if err := client.AgentRuns().Stop(context.Background(), pkgariapi.ObjectKey{Workspace: ws, Name: name}); err != nil {
+					return fmt.Errorf("stopping agentrun %s/%s: %w", ws, name, err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "agentrun %s/%s stopped\n", ws, name)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "agentrun %s/%s stopped\n", ws, name)
 			return nil
 		},
 	}
