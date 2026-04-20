@@ -11,9 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/zoumo/mass/pkg/agentd/store"
