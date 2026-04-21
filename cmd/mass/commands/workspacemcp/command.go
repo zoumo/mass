@@ -183,6 +183,7 @@ func NewCommand() *cobra.Command {
 }
 
 func run(socket, workspace, agent string, logCfg *logging.LogConfig) error {
+	logCfg.Filename = "workspace-mcp-server.log"
 	logger, logCleanup, err := logCfg.Build()
 	if err != nil {
 		return fmt.Errorf("build logger: %w", err)

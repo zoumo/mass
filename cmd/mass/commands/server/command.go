@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -44,6 +45,9 @@ func NewCommand() *cobra.Command {
 }
 
 func run(rootPath string, logCfg *logging.LogConfig) error {
+	logCfg.Filename = "mass-server.log"
+	logCfg.SetDefaultPath(filepath.Join(rootPath, "logs"))
+
 	// Configure logger before anything else.
 	logger, logCleanup, err := logCfg.Build()
 	if err != nil {
@@ -75,7 +79,7 @@ func run(rootPath string, logCfg *logging.LogConfig) error {
 	)
 
 	// Create all required subdirectories.
-	for _, dir := range []string{opts.Root, opts.WorkspaceRoot(), opts.BundleRoot()} {
+	for _, dir := range []string{opts.Root, opts.WorkspaceRoot(), opts.BundleRoot(), filepath.Join(opts.Root, "logs")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}

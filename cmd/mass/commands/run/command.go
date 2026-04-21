@@ -59,6 +59,7 @@ discover all running agent-runs by scanning /run/mass/agentrun/*/agent-run.sock.
 }
 
 func run(cmd *cobra.Command, bundle, permissions, id, stateDir string, logCfg *logging.LogConfig) error {
+	logCfg.Filename = "agent-run.log"
 	logger, logCleanup, err := logCfg.Build()
 	if err != nil {
 		return fmt.Errorf("agent-run: init logger: %w", err)

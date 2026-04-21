@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,7 +20,8 @@ import (
 type LogConfig struct {
 	Level      string // "debug"|"info"|"warn"|"error"
 	Format     string // "auto"|"pretty"|"text"|"json"
-	File       string // path to log file (empty = stderr)
+	Path       string // log directory (empty = stderr)
+	Filename   string // log filename within Path (set programmatically, not via flag)
 	MaxSizeMB  int    // max size in MB before rotation (lumberjack)
 	MaxAgeDays int    // max age in days before deletion (lumberjack)
 }
@@ -28,9 +30,16 @@ type LogConfig struct {
 func (c *LogConfig) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&c.Level, "log-level", "info", "log level (trace, debug, info, warn, error)")
 	fs.StringVar(&c.Format, "log-format", "auto", "log format (auto, pretty, text, json)")
-	fs.StringVar(&c.File, "log-file", "", "log file path (empty = stderr)")
+	fs.StringVar(&c.Path, "log-path", c.Path, "log directory (empty = stderr)")
 	fs.IntVar(&c.MaxSizeMB, "log-max-size", 100, "max log file size in MB before rotation")
 	fs.IntVar(&c.MaxAgeDays, "log-max-age", 7, "max log file age in days before deletion")
+}
+
+// SetDefaultPath sets the log file path if it was not explicitly provided.
+func (c *LogConfig) SetDefaultPath(path string) {
+	if c.Path == "" {
+		c.Path = path
+	}
 }
 
 // Build creates a slog.Logger from the config.
@@ -44,9 +53,10 @@ func (c *LogConfig) Build() (*slog.Logger, func(), error) {
 	var w io.Writer
 	cleanup := func() {}
 
-	if c.File != "" {
+	if c.Path != "" {
+		logFile := filepath.Join(c.Path, c.Filename)
 		lj := &lumberjack.Logger{
-			Filename: c.File,
+			Filename: logFile,
 			MaxSize:  c.MaxSizeMB,
 			MaxAge:   c.MaxAgeDays,
 		}

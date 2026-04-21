@@ -392,14 +392,13 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 	annotations["agent"] = agentDef.Metadata.Name
 
 	// Compute the bundle/state directory (same formula as createBundle) so we
-	// can pass --log-file to the workspace-mcp-server before the directory
+	// can pass --log-path to the workspace-mcp-server before the directory
 	// is actually created.
 	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
-	logFile := filepath.Join(stateDir, "workspace-mcp-server.log")
 
 	// Auto-inject workspace MCP server, then merge caller-specified extras.
 	// Caller entries override auto-injected entries with the same name.
-	mcpBinary, mcpArgs := m.workspaceMcpCommand(agent.Metadata.Workspace, agent.Metadata.Name, logFile)
+	mcpBinary, mcpArgs := m.workspaceMcpCommand(agent.Metadata.Workspace, agent.Metadata.Name, stateDir)
 	workspaceMcp := apiruntime.McpServer{
 		Type:    "stdio",
 		Name:    "workspace",
@@ -481,7 +480,7 @@ func mergeMcpServers(base, overrides []apiruntime.McpServer) []apiruntime.McpSer
 
 // workspaceMcpCommand returns the command and args for the workspace MCP server.
 // Uses self-fork: os.Executable() + "workspace-mcp" subcommand (same pattern as agent-run).
-func (m *ProcessManager) workspaceMcpCommand(workspace, agent, logFile string) (string, []string) {
+func (m *ProcessManager) workspaceMcpCommand(workspace, agent, logDir string) (string, []string) {
 	self, err := os.Executable()
 	if err != nil {
 		m.logger.Error("os.Executable failed for workspace-mcp, falling back to PATH", "error", err)
@@ -492,7 +491,7 @@ func (m *ProcessManager) workspaceMcpCommand(workspace, agent, logFile string) (
 		"--socket", m.socketPath,
 		"--workspace", workspace,
 		"--agent", agent,
-		"--log-file", logFile,
+		"--log-path", logDir,
 		"--log-level", m.logLevel,
 		"--log-format", m.logFormat,
 	}
@@ -601,7 +600,7 @@ func (m *ProcessManager) forkRun(agent *pkgariapi.AgentRun, bundlePath, stateDir
 		"--permissions", string(apiruntime.ApproveAll),
 		"--log-level", m.logLevel,
 		"--log-format", m.logFormat,
-		"--log-file", filepath.Join(bundlePath, "agent-run.log"),
+		"--log-path", bundlePath,
 	}
 
 	// Log the command for debugging.
@@ -616,7 +615,7 @@ func (m *ProcessManager) forkRun(agent *pkgariapi.AgentRun, bundlePath, stateDir
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
-	cmd.Stderr = os.Stderr // capture panics/early errors; structured logs go to --log-file
+	cmd.Stderr = os.Stderr // capture panics/early errors; structured logs go to --log-path
 	cmd.Stdout = nil
 
 	// Start the process.

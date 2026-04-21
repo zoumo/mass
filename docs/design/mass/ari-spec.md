@@ -640,7 +640,7 @@ Configuration is passed via CLI flags:
 | `--socket` | yes | Path to mass's Unix socket |
 | `--workspace` | yes | The workspace this server instance belongs to |
 | `--agent` | no | The agent name for sender identification |
-| `--log-file` | no | Log file path |
+| `--log-path` | no | Log file path |
 | `--log-level` | no | Log level (debug, info, warn, error); defaults to `info` |
 | `--log-format` | no | Log format (pretty, text, json); defaults to `pretty` |
 
