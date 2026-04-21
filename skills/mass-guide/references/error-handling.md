@@ -27,14 +27,6 @@
 | daemon 重启后 agent `error` | shim 进程未能存活 | `agentrun restart` |
 | 删除失败："not stopped" | agent 还在 running 或 idle | 先 `stop`，再 `delete` |
 
-## Agent 间通信错误
-
-| 错误 | 原因 | 处理 |
-|------|------|------|
-| `workspace send` 失败：agent not found | 目标 agent 名称错误或未创建 | `agentrun get -w <ws>` 查看实际 agent 名称 |
-| 消息未送达 | 目标 agent 已 stopped 或 error | restart 目标 agent → 等 idle → 重发 |
-| Agent 死锁（双方都在等待） | 两个 agent 互相等对方消息 | `cancel` 其中一个 → 重新 prompt 指示它继续 |
-
 ## 决策树
 
 ```
@@ -52,6 +44,8 @@ Agent 无响应？
 └─ idle 但 prompt 没反应？
    └─ stop → delete → 重建 → 重新 prompt
 ```
+
+> Task 协议相关错误见 **mass-pilot** skill。
 
 ## 完整重建
 

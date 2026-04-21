@@ -20,7 +20,8 @@ Reference files for architecture, decisions, conventions, and design:
 
 | Skill | Path | Description |
 |-------|------|-------------|
-| mass-pilot | [skills/mass-pilot/SKILL.md](skills/mass-pilot/SKILL.md) | Use MASS to manage workspaces, agent lifecycles, orchestrate multi-agent collaboration |
+| mass-guide | [skills/mass-guide/SKILL.md](skills/mass-guide/SKILL.md) | Manage MASS workspaces, agent lifecycles via massctl CLI |
+| mass-pilot | [skills/mass-pilot/SKILL.md](skills/mass-pilot/SKILL.md) | Multi-agent collaboration via file-based Task protocol, role workflows, orchestration |
 
 ## 设计一致性
 
