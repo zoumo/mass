@@ -157,6 +157,7 @@ func (m *Manager) Create(ctx context.Context) error {
 
 	mcpServers := convertMcpServers(m.cfg.Session.McpServers)
 	newSessionReq := acp.NewSessionRequest{
+		Meta:       m.cfg.Session.Meta,
 		Cwd:        workDir,
 		McpServers: mcpServers,
 	}

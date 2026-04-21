@@ -93,6 +93,8 @@ type Process struct {
 // Session specifies session-level configuration.
 // Shared across all client protocols; delivery method depends on ClientProtocol.
 type Session struct {
+	Meta map[string]any `json:"_meta,omitempty"`
+
 	// SystemPrompt is the agent's role definition and capability constraints.
 	// How it is delivered depends on ClientProtocol:
 	//   - ACP: via session/new or first prompt (ACP bootstrap)
