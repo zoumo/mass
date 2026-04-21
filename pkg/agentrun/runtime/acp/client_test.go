@@ -60,22 +60,144 @@ func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
 }
 
 func TestAcpClient_RequestPermission_ApproveReads(t *testing.T) {
-	mgr := newTestManager(apiruntime.ApproveReads)
-	defer cleanupManager(mgr)
+	readKind := acp.ToolKindRead
+	searchKind := acp.ToolKindSearch
+	editKind := acp.ToolKindEdit
+	executeKind := acp.ToolKindExecute
 
-	client := &acpClient{mgr: mgr, logger: slog.Default()}
-	_, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "approve_reads")
+	allowOpt := acp.PermissionOption{OptionId: "allow-1", Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow"}
+	rejectOpt := acp.PermissionOption{OptionId: "reject-1", Kind: acp.PermissionOptionKindRejectOnce, Name: "Reject"}
+	both := []acp.PermissionOption{allowOpt, rejectOpt}
+
+	titleStr := func(s string) *string { return &s }
+
+	tests := []struct {
+		name      string
+		toolCall  acp.ToolCallUpdate
+		options   []acp.PermissionOption
+		wantAllow bool
+	}{
+		{
+			name:      "read kind → allow",
+			toolCall:  acp.ToolCallUpdate{Kind: &readKind},
+			options:   both,
+			wantAllow: true,
+		},
+		{
+			name:      "search kind → allow",
+			toolCall:  acp.ToolCallUpdate{Kind: &searchKind},
+			options:   both,
+			wantAllow: true,
+		},
+		{
+			name:      "edit kind → reject",
+			toolCall:  acp.ToolCallUpdate{Kind: &editKind},
+			options:   both,
+			wantAllow: false,
+		},
+		{
+			name:      "execute kind → reject",
+			toolCall:  acp.ToolCallUpdate{Kind: &executeKind},
+			options:   both,
+			wantAllow: false,
+		},
+		{
+			name:      "nil kind, title 'Read config file' → allow",
+			toolCall:  acp.ToolCallUpdate{Title: titleStr("Read config file")},
+			options:   both,
+			wantAllow: true,
+		},
+		{
+			name:      "nil kind, title 'Write auth.go' → reject",
+			toolCall:  acp.ToolCallUpdate{Title: titleStr("Write auth.go")},
+			options:   both,
+			wantAllow: false,
+		},
+		{
+			name:      "nil kind, nil title → reject (unknown defaults to deny)",
+			toolCall:  acp.ToolCallUpdate{},
+			options:   both,
+			wantAllow: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newTestManager(apiruntime.ApproveReads)
+			defer cleanupManager(mgr)
+			client := &acpClient{mgr: mgr, logger: slog.Default()}
+
+			resp, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
+				ToolCall: tt.toolCall,
+				Options:  tt.options,
+			})
+
+			require.NoError(t, err)
+			if tt.wantAllow {
+				require.NotNil(t, resp.Outcome.Selected)
+				assert.Equal(t, acp.PermissionOptionId("allow-1"), resp.Outcome.Selected.OptionId)
+			} else {
+				// either canceled or selected reject option
+				if resp.Outcome.Selected != nil {
+					assert.Equal(t, acp.PermissionOptionId("reject-1"), resp.Outcome.Selected.OptionId)
+				} else {
+					assert.NotNil(t, resp.Outcome.Cancelled) //nolint:misspell
+				}
+			}
+		})
+	}
 }
 
 func TestAcpClient_RequestPermission_ApproveAll(t *testing.T) {
-	mgr := newTestManager(apiruntime.ApproveAll)
-	defer cleanupManager(mgr)
+	tests := []struct {
+		name      string
+		options   []acp.PermissionOption
+		wantOptID acp.PermissionOptionId
+	}{
+		{
+			name:      "no options: returns selected with empty optionId",
+			options:   nil,
+			wantOptID: "",
+		},
+		{
+			name: "prefer allow_once over first option when first is reject",
+			options: []acp.PermissionOption{
+				{OptionId: "reject-1", Kind: acp.PermissionOptionKindRejectOnce, Name: "Reject"},
+				{OptionId: "allow-1", Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow"},
+			},
+			wantOptID: "allow-1",
+		},
+		{
+			name: "prefer allow_once over allow_always",
+			options: []acp.PermissionOption{
+				{OptionId: "allow-always", Kind: acp.PermissionOptionKindAllowAlways, Name: "Allow always"},
+				{OptionId: "allow-once", Kind: acp.PermissionOptionKindAllowOnce, Name: "Allow once"},
+			},
+			wantOptID: "allow-once",
+		},
+		{
+			name: "no allow option: fall back to options[0]",
+			options: []acp.PermissionOption{
+				{OptionId: "reject-1", Kind: acp.PermissionOptionKindRejectOnce, Name: "Reject"},
+			},
+			wantOptID: "reject-1",
+		},
+	}
 
-	client := &acpClient{mgr: mgr, logger: slog.Default()}
-	_, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{})
-	require.NoError(t, err, "approve_all should return no error")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newTestManager(apiruntime.ApproveAll)
+			defer cleanupManager(mgr)
+			client := &acpClient{mgr: mgr, logger: slog.Default()}
+
+			resp, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
+				Options: tt.options,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, resp.Outcome.Selected)
+			assert.Equal(t, tt.wantOptID, resp.Outcome.Selected.OptionId)
+		})
+	}
 }
 
 // ── Not-supported stubs ───────────────────────────────────────────────────────
