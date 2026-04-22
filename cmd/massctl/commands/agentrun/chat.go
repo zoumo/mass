@@ -35,7 +35,11 @@ func newChatCmd(getClient cliutil.ClientFn) *cobra.Command {
 				return fmt.Errorf("agent run %s/%s has no run socket (state: %s)", ws, name, ar.Status.State)
 			}
 
-			return chat.RunChatTUI(ar.Status.Run.SocketPath)
+			return chat.RunChatTUI(chat.ChatTUIOptions{
+				SocketPath:    ar.Status.Run.SocketPath,
+				WorkspaceName: ws,
+				AgentName:     name,
+			})
 		},
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")

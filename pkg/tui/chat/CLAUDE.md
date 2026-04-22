@@ -18,18 +18,76 @@ waitNotif(watcher) (tea.Cmd)
     │  读 watcher.ResultChan()
     │  Watcher 内部处理 JSON-RPC 反序列化和 watchID 过滤
     │
-    ├── turn_end event     → turnEndMsg
-    ├── runtime_update (含 Status) → stateChangeMsg → 更新状态栏
-    ├── 其他事件            → notifMsg     → handleNotif()
-    └── channel closed      → connClosedMsg
+    ├── turn_end event                          → turnEndMsg
+    ├── runtime_update (含 Status)              → stateChangeMsg → 更新状态栏
+    ├── runtime_update (含 AvailableCommands)   → agentCommandsMsg → 更新动态命令
+    ├── 其他事件                                 → notifMsg → handleNotif()
+    └── channel closed                          → connClosedMsg
     │
     ▼
 chatModel (chat.go)
     ├── chat: *component.Chat    ← pkg/tui/component 的 crush 风格渲染
     ├── StreamingMessage         ← 可变 Message 实现 (streaming.go)
     ├── toolItemIDs              ← tool_call ID → chat item ID 映射
-    └── agentStatus              ← 实时 agent 状态
+    ├── agentStatus              ← 实时 agent 状态
+    ├── agentCommands            ← 动态 agent 命令（来自 RuntimeUpdateEvent）
+    ├── currentModel             ← 当前模型 ID（来自 initialStatusMsg）
+    └── completion *completionState ← 内联命令补全（completion.go）
 ```
+
+## 布局
+
+```
+┌──────────────────────────────────────────────┐
+│                                              │  ← chat viewport（可滚动）
+│  messages...                                 │
+├──────────────────────────────────────────────┤  ← 上分隔线
+│  MASS > workspace > agent > model    ● idle  │  ← header（header.go）
+├──────────────────────────────────────────────┤
+│  > _                                         │  ← textarea editor（1 行起）
+├──────────────────────────────────────────────┤  ← 下分隔线（始终显示）
+│  /model  Switch model           session      │  ← completion area（/ 触发，inactive 时高度 0）
+│  /mass-guide  通过 massctl CLI…  agent        │
+├──────────────────────────────────────────────┤  ← 仅 completion 激活时显示
+│  enter send · shift+enter newline · / cmds   │  ← status bar line 1
+│  tab chat · ctrl+x cancel · ctrl+c quit      │  ← status bar line 2
+└──────────────────────────────────────────────┘
+```
+
+`inputAreaHeight = 7`：div + header + div + input(1行) + div + statusbar(2行)。
+completion 激活时额外占 `completion.Height() + 1`（额外分隔线），通过 `recalcViewport()` 动态调整 chat viewport。
+
+## 命令系统
+
+命令分三类（`commands.go` + `command_handlers.go`）：
+
+| 类别 | 注册方式 | 执行方式 | 示例 |
+|------|---------|---------|------|
+| system | `commandRegistry` 静态注册 | 直接调用 handler | help, clear, cancel, exit |
+| session | `commandRegistry` 静态注册 | 直接调用 handler（可调 RPC） | model, status |
+| agent | 运行时从 `agentCommands` 动态构建 | 整条文本（含 args）通过 `session/prompt` 发送 | /batch, /loop 等 |
+
+**agent 命令传参**：用户输入 `/batch args`，完整文本 `"/batch args"` 直接发送为 prompt，不截断 args。
+
+**`/model` handler**：
+- 无 args → 显示当前模型
+- 有 args → 调 `sc.SetModel(ctx, &SessionSetModelParams{ModelID: args})`
+
+**描述规范化**：`singleLine()` 将 agent 命令描述中的换行符折叠为空格，避免补全列表出现多行。
+
+## 内联命令补全（completion.go）
+
+`completionState` 管理 `/` 触发的补全弹出框：
+
+- **激活条件**：textarea 内容以 `/` 开头且不在 waiting 状态
+- **退出条件**：Esc（清空输入）、文本不再以 `/` 开头、Enter 执行命令
+
+**键盘路由（completion 激活时）：**
+- `↑/↓` — 在补全列表中选择
+- `Tab` / `Enter` — 将选中命令填入输入框（加尾部空格方便追加参数），不执行
+- `Esc` — 关闭补全，清空输入框
+
+**渲染布局**：两列对齐。`Activate()` 计算所有命令名的最大宽度，`completionItem.Render()` 左列固定宽度显示 `/name`，右列截断 description + 右对齐 category tag。Style 有 `Padding(0,1)`，渲染时需从 `availForRight` 减去 2 避免换行。
 
 ## Late Join（中途接入）
 
@@ -64,21 +122,22 @@ chat 不直接接触 NDJSON 流或 JSON 解析。
 原因：返回 nil 的 tea.Cmd 不会触发 Bubbletea 的 Update，导致 waitNotif 不会被重新调度，
 **整个通知链永久断裂**。
 
-Watcher 已在内部完成 watchID 过滤和 JSON 解析，所以到达 `waitNotif` 的事件都是有效的，
-每个分支都必须 return 一个非 nil 的 `tea.Msg`。
-
 ## 状态栏
 
-底部等待区域显示实时 agent 状态：
+底部两行固定区域。内容随上下文切换：
 
-- `● running` (绿色) — ctrl+x to cancel
-- `● idle` (蓝色) — ready for input
-- `● error` (红色) — agent error, check logs
-- `● stopped` (灰色) — agent stopped
+- **editor 模式（默认）**：`enter send · shift+enter newline · / commands` / `tab chat · ctrl+x cancel · ctrl+c quit`
+- **completion 激活**：`↑/↓ select · tab confirm · esc close` / `ctrl+c quit`
+- **chat focused**：`j/k select · space expand · d/u half-page · g/G top/bottom` / `tab editor · esc back · ctrl+c quit`
+
+info message（如 "Chat cleared"）显示在 line 2 左侧。
+
+agent 状态指示器（`● running/idle/error/stopped`）显示在 header 右侧，不在 statusbar。
 
 状态来源：
-1. 连接时 `runtime/status` RPC 查询初始状态 → 返回 `initialStatusMsg`（不触发 waitNotif 重调度）
-2. 之后通过 `runtime_update`（含 Status）通知实时更新 → 返回 `stateChangeMsg`（触发 waitNotif 重调度）
+1. 连接时 `runtime/status` RPC 查询初始状态 → 返回 `initialStatusMsg`（同时携带 `currentModel`、`availableModels`、`availableCommands`）
+2. 之后通过 `runtime_update`（含 Status）通知实时更新 → 返回 `stateChangeMsg`
+3. `runtime_update`（含 AvailableCommands）→ 返回 `agentCommandsMsg`
 
 **关键：** `fetchStatusCmd` 必须返回 `initialStatusMsg` 而非 `stateChangeMsg`。
 如果返回 `stateChangeMsg`，其 handler 会调 `waitNotif(m.watcher)` 产生第二条通知链，
@@ -88,10 +147,14 @@ Watcher 已在内部完成 watchID 过滤和 JSON 解析，所以到达 `waitNot
 
 | 按键 | 上下文 | 行为 |
 |------|--------|------|
-| Enter | editor | 发送消息 |
+| Enter | completion 激活 | 将选中命令填入输入框（不执行） |
+| Enter | editor | 发送消息 / 执行命令 |
 | Shift+Enter | editor | 插入换行 |
-| Tab | 全局 | 切换 editor ↔ chat 焦点 |
+| Tab | completion 激活 | 同 Enter（填入输入框） |
+| Tab | 全局（其他） | 切换 editor ↔ chat 焦点 |
+| ↑/↓ | completion 激活 | 在补全列表中导航 |
 | Ctrl+X | waiting | 取消当前 turn (session/cancel) |
+| Esc | completion 激活 | 关闭补全，清空输入框 |
 | Esc | chat focused | 切回 editor |
 | Ctrl+C | 全局 | 退出 |
 | j/k | chat focused | 上下滚动 1 行 |
@@ -154,13 +217,14 @@ chat 处理 `user_message` 时通过 `sentPrompt` flag 去重：
 **Update 中每个消费 notifs channel 的 case 都必须重新调度 `waitNotif(m.watcher)`：**
 
 ```go
-case notifMsg:       cmds = append(cmds, waitNotif(m.watcher))  // ✓
-case turnEndMsg:     cmds = append(cmds, waitNotif(m.watcher))  // ✓
-case stateChangeMsg: cmds = append(cmds, waitNotif(m.watcher))  // ✓ 曾经遗漏导致消息全丢
-case connClosedMsg:  // 不需要（连接已断）
+case notifMsg:         cmds = append(cmds, waitNotif(m.watcher))  // ✓
+case turnEndMsg:       cmds = append(cmds, waitNotif(m.watcher))  // ✓
+case stateChangeMsg:   cmds = append(cmds, waitNotif(m.watcher))  // ✓ 曾经遗漏导致消息全丢
+case agentCommandsMsg: cmds = append(cmds, waitNotif(m.watcher))  // ✓
+case connClosedMsg:    // 不需要（连接已断）
 ```
 
-如果某个 case 漏了 `waitNotif`，链就断了，**后续所有通知（text、thinking、tool_call 等）都会被静默丢弃**。症状：状态栏显示 running 但看不到任何过程消息。
+如果某个 case 漏了 `waitNotif`，链就断了，**后续所有通知（text、thinking、tool_call 等）都会被静默丢弃**。
 
 ## 不要做的事
 
@@ -174,3 +238,6 @@ case connClosedMsg:  // 不需要（连接已断）
 - **不要设 ToolCall.Finished=false** —— 会触发 isSpinning()=true，显示乱码动画字符
 - **不要让 `fetchStatusCmd` 返回 `stateChangeMsg`** —— 必须用 `initialStatusMsg`，否则产生双 waitNotif 链
 - **不要用 `ScrollBy()` / `ScrollToBottom()` 等非 Animate 方法** —— 会导致翻页后动画冻结，必须用 `*AndAnimate` 变体
+- **不要在 agent 命令 dispatch 时只传 name 不传 args** —— `/command args` 整条文本必须完整发送
+- **不要在 completion item `Render()` 里忽略 style padding** —— `Dialog.NormalItem` 有 `Padding(0,1)`，content 宽度需减 2
+- **不要让 agent 命令 description 保留换行符** —— 必须用 `singleLine()` 折叠，否则补全列表出现多行渲染

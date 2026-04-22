@@ -36,7 +36,8 @@ type (
 
 type (
 	connErrMsg   struct{ err error }
-	promptErrMsg struct{ err error }
+	promptErrMsg    struct{ err error }
+	setModelResult  struct{ modelID string }
 	panicMsg     struct{ err error }
 )
 
@@ -60,13 +61,22 @@ type stateChangeMsg struct {
 	previous string
 	status   string
 	reason   string
+	seq      int // event sequence number, used to distinguish replay vs live
 }
 
 // initialStatusMsg is sent by fetchStatusCmd. It is a separate type from
 // stateChangeMsg to prevent fetchStatusCmd from spawning a duplicate waitNotif
 // chain — only stateChangeMsg (from the event stream) re-schedules waitNotif.
 type initialStatusMsg struct {
-	status string
+	status            string
+	availableCommands []apiruntime.AvailableCommand
+	currentModel      string
+	availableModels   []apiruntime.ModelInfo
+}
+
+// agentCommandsMsg is sent when RuntimeUpdateEvent carries AvailableCommands.
+type agentCommandsMsg struct {
+	commands []runapi.AvailableCommand
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -77,7 +87,7 @@ var (
 	styleHelp = lipgloss.NewStyle().Faint(true)
 )
 
-const inputAreaHeight = 6 // textarea (3 rows) + divider + help + margin
+const inputAreaHeight = 7 // divider + header + divider + input(1 line) + divider + statusbar(2 lines)
 
 // ── Model ─────────────────────────────────────────────────────────────────────
 
@@ -87,9 +97,11 @@ type chatModel struct {
 	spinner spinner.Model
 	sty     styles.Styles
 
-	sock    string
-	client  *runclient.Client
-	watcher *runclient.Watcher
+	sock          string
+	workspaceName string
+	agentName     string
+	client        *runclient.Client
+	watcher       *runclient.Watcher
 
 	// Streaming state.
 	currentMsg   *StreamingMessage // mutable message being streamed
@@ -104,7 +116,25 @@ type chatModel struct {
 
 	turnCounter int // monotonic counter for generating unique IDs
 
-	agentStatus string // current agent status: "idle", "running", "stopped", "error"
+	agentStatus     string // current agent status: "idle", "running", "stopped", "error"
+	agentCommands   []agentCommand
+	currentModel    string               // current model ID from session state
+	availableModels []apiruntime.ModelInfo // model list from session state, used for /model completion
+
+	// liveSeq is the watcher's nextSeq boundary: events with seq < liveSeq are
+	// historical replay events; events with seq >= liveSeq are live.
+	// Set once when connReadyMsg is received.
+	liveSeq int
+	// initialStatusApplied is true once initialStatusMsg has been processed.
+	// After this point, historical stateChangeMsgs (seq < liveSeq) that would
+	// set status to "running" are ignored — they cannot reflect current state.
+	initialStatusApplied bool
+
+	completion       *completionState
+	completionArgCmd string // non-empty when completion is showing args for this command name
+
+	history     *History
+	infoMessage *infoMessage
 
 	chatFocused bool
 	waiting     bool
@@ -118,12 +148,12 @@ func (m *chatModel) nextID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, m.turnCounter)
 }
 
-func newChatModel(sock string) chatModel {
+func newChatModel(opts ChatTUIOptions) chatModel {
 	ta := textarea.New()
-	ta.Placeholder = "Type a message… (Enter to send, Shift+Enter for newline)"
+	ta.Placeholder = "Type a message…"
 	ta.ShowLineNumbers = false
 	ta.MaxHeight = 15
-	ta.MinHeight = 3
+	ta.MinHeight = 1
 	ta.DynamicHeight = true
 	ta.CharLimit = 0
 
@@ -131,12 +161,16 @@ func newChatModel(sock string) chatModel {
 	sty := styles.DefaultStyles()
 
 	return chatModel{
-		sock:        sock,
-		chat:        component.NewChat(),
-		input:       ta,
-		spinner:     sp,
-		sty:         sty,
-		toolItemIDs: make(map[string]string),
+		sock:          opts.SocketPath,
+		workspaceName: opts.WorkspaceName,
+		agentName:     opts.AgentName,
+		chat:          component.NewChat(),
+		input:         ta,
+		spinner:       sp,
+		sty:           sty,
+		completion:    newCompletionState(&sty),
+		history:       NewHistory(100),
+		toolItemIDs:   make(map[string]string),
 	}
 }
 
@@ -156,9 +190,10 @@ func connectCmd(sock string) tea.Cmd {
 		if err != nil {
 			return connErrMsg{fmt.Errorf("connect: %w", err)}
 		}
-		// WatchEvent returns a Watcher with typed events via ResultChan().
-		// The Watcher handles JSON deserialization and watchID filtering internally.
-		watcher, err := sc.WatchEvent(ctx, nil)
+		// WatchEvent with FromSeq=0 replays all historical events first,
+		// then streams live events (List-Watch pattern).
+		fromSeq := 0
+		watcher, err := sc.WatchEvent(ctx, &runapi.SessionWatchEventParams{FromSeq: &fromSeq})
 		if err != nil {
 			sc.Close()
 			return connErrMsg{fmt.Errorf("session/watch_event: %w", err)}
@@ -187,11 +222,17 @@ func waitNotif(w *runclient.Watcher) tea.Cmd {
 		}
 		// runtime_update with Status → dedicated message for status bar updates.
 		if ev.Type == runapi.EventTypeRuntimeUpdate {
-			if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok && ru.Status != nil {
-				return stateChangeMsg{
-					previous: ru.Status.PreviousStatus,
-					status:   ru.Status.Status,
-					reason:   ru.Status.Reason,
+			if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok {
+				if ru.Status != nil {
+					return stateChangeMsg{
+						previous: ru.Status.PreviousStatus,
+						status:   ru.Status.Status,
+						reason:   ru.Status.Reason,
+						seq:      ev.Seq,
+					}
+				}
+				if ru.AvailableCommands != nil {
+					return agentCommandsMsg{commands: ru.AvailableCommands.Commands}
 				}
 			}
 		}
@@ -232,7 +273,15 @@ func fetchStatusCmd(sc *runclient.Client) tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		return initialStatusMsg{status: string(result.State.Status)}
+		msg := initialStatusMsg{status: string(result.State.Status)}
+		if result.State.Session != nil {
+			msg.availableCommands = result.State.Session.AvailableCommands
+			if result.State.Session.Models != nil {
+				msg.currentModel = result.State.Session.Models.CurrentModelId
+				msg.availableModels = result.State.Session.Models.AvailableModels
+			}
+		}
+		return msg
 	})
 }
 
@@ -245,11 +294,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		vpHeight := msg.Height - inputAreaHeight
-		if vpHeight < 1 {
-			vpHeight = 1
-		}
-		m.chat.SetSize(msg.Width, vpHeight)
+		m.recalcViewport()
 		m.input.SetWidth(msg.Width)
 		if !m.ready {
 			// First WindowSizeMsg: focus the input here because Init() has a
@@ -262,7 +307,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case connReadyMsg:
 		m.client = msg.sc
 		m.watcher = msg.watcher
-		m.chat.AppendMessages(component.NewSystemItem(m.nextID("sys"), "connected — tab focus · shift+click select text · ctrl+c quit", styleDim))
+		m.liveSeq = msg.watcher.NextSeq() // events with seq < liveSeq are historical replay
 		cmds = append(cmds, waitNotif(m.watcher), fetchStatusCmd(m.client), watchDisconnect(m.client))
 
 	case panicMsg:
@@ -285,6 +330,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, waitNotif(m.watcher))
 
 	case turnEndMsg:
+		// Finalize the streaming assistant message for UI rendering only.
+		// Do NOT touch m.waiting here — state is driven solely by
+		// runtime_update{status} events (stateChangeMsg). The matching
+		// stateChangeMsg{idle} will clear waiting and re-focus the input.
 		if m.currentMsg != nil {
 			m.currentMsg.Finish(component.FinishReasonEndTurn)
 			if cmd := m.updateCurrentAssistant(); cmd != nil {
@@ -293,9 +342,12 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.currentMsg = nil
 		m.currentMsgID = ""
-		m.waiting = false
-		m.chatFocused = false
-		cmds = append(cmds, m.input.Focus(), waitNotif(m.watcher))
+		cmds = append(cmds, waitNotif(m.watcher))
+
+	case setModelResult:
+		m.currentModel = msg.modelID
+		m.chat.AppendMessages(component.NewSystemItem(m.nextID("sys"),
+			fmt.Sprintf("model switched to %s", msg.modelID), styleDim))
 
 	case promptErrMsg:
 		m.chat.AppendMessages(component.NewSystemItem(m.nextID("sys"), "error: "+msg.err.Error(), styleErr))
@@ -312,6 +364,16 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.input.Focus(), waitNotif(m.watcher))
 
 	case stateChangeMsg:
+		isHistorical := m.liveSeq > 0 && msg.seq < m.liveSeq
+		// Historical replay events that arrive after initialStatusMsg was applied
+		// must not override the authoritative current status. Specifically, a
+		// historical "running" event from an incomplete past turn (e.g. crash
+		// with no matching "idle") would permanently stuck the TUI in waiting
+		// mode even though the agent is actually idle right now.
+		if isHistorical && m.initialStatusApplied {
+			cmds = append(cmds, waitNotif(m.watcher))
+			break
+		}
 		m.agentStatus = msg.status
 		if msg.status == string(apiruntime.StatusRunning) && !m.waiting {
 			m.waiting = true
@@ -325,13 +387,32 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, waitNotif(m.watcher)) // keep the notification chain alive
 
 	case initialStatusMsg:
-		// Initial status from fetchStatusCmd — update status bar but do NOT
-		// re-schedule waitNotif (that would create a duplicate chain).
+		// Initial status from fetchStatusCmd — authoritative current state.
+		// Do NOT re-schedule waitNotif (that would create a duplicate chain).
 		m.agentStatus = msg.status
-		if msg.status == string(apiruntime.StatusRunning) && !m.waiting {
-			m.waiting = true
-			m.input.Blur()
+		m.currentModel = msg.currentModel
+		m.availableModels = msg.availableModels
+		m.updateAgentCommands(msg.availableCommands)
+		m.initialStatusApplied = true
+		switch msg.status {
+		case string(apiruntime.StatusRunning):
+			if !m.waiting {
+				m.waiting = true
+				m.input.Blur()
+			}
+		default:
+			// idle / stopped / error — override any waiting state set by
+			// historical replay events that arrived before this message.
+			if m.waiting {
+				m.waiting = false
+				m.chatFocused = false
+				cmds = append(cmds, m.input.Focus())
+			}
 		}
+
+	case agentCommandsMsg:
+		m.updateAgentCommands(msg.commands)
+		cmds = append(cmds, waitNotif(m.watcher))
 
 	case anim.StepMsg:
 		// Forward animation ticks to the chat (for spinner animations).
@@ -343,6 +424,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var spinCmd tea.Cmd
 		m.spinner, spinCmd = m.spinner.Update(msg)
 		cmds = append(cmds, spinCmd)
+
+	case infoExpiredMsg:
+		m.infoMessage = nil
 
 	case tea.MouseClickMsg:
 		mouse := msg.Mouse()
@@ -394,11 +478,28 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		return cmds
 
 	case key.Code == tea.KeyTab && key.Mod == 0:
+		// When completion is active, Tab confirms the selected entry.
+		if !m.waiting && m.completion.Active() {
+			if entry := m.completion.Selected(); entry != nil {
+				if m.completionArgCmd != "" {
+					// Arg completion: confirm the argument value and close popup.
+					m.input.SetValue("/" + m.completionArgCmd + " " + entry.Name)
+					m.completionArgCmd = ""
+					m.completion.Deactivate()
+					m.recalcViewport()
+				} else {
+					// Command completion: fill command name and stay open for args.
+					m.input.SetValue("/" + entry.Name + " ")
+					m.syncCompletion()
+				}
+			}
+			return cmds
+		}
+		// Otherwise toggle editor ↔ chat focus.
 		m.chatFocused = !m.chatFocused
 		if m.chatFocused {
 			m.input.Blur()
 			m.chat.Focus()
-			// Auto-select last visible item so space/enter can interact.
 			m.chat.SelectLastInView()
 		} else {
 			m.chat.Blur()
@@ -407,8 +508,12 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		return cmds
 
 	case key.Code == tea.KeyEscape && key.Mod == 0:
-		// Esc only switches focus, never cancels. Use Ctrl+X to cancel.
-		if m.chatFocused {
+		if m.completion.Active() {
+			// Esc dismisses completion and clears the input.
+			m.completion.Deactivate()
+			m.input.Reset()
+			m.recalcViewport()
+		} else if m.chatFocused {
 			m.chatFocused = false
 			m.chat.Blur()
 			cmds = append(cmds, m.input.Focus())
@@ -462,11 +567,50 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 		if m.waiting || m.client == nil {
 			break
 		}
+		// When completion is active, Enter confirms the selected item (same as Tab)
+		// rather than executing — so the user can add args before sending.
+		if m.completion.Active() {
+			if entry := m.completion.Selected(); entry != nil {
+				if m.completionArgCmd != "" {
+					// Arg completion: confirm and close popup (ready to send).
+					m.input.SetValue("/" + m.completionArgCmd + " " + entry.Name)
+					m.completionArgCmd = ""
+					m.completion.Deactivate()
+					m.recalcViewport()
+				} else {
+					// Command completion: fill name, stay open for args.
+					m.input.SetValue("/" + entry.Name + " ")
+					m.syncCompletion()
+				}
+			}
+			break
+		}
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
 			break
 		}
+
+		// Slash command interception — before sending to agent.
+		if cmd, args, found := parseSlashCommand(text); found {
+			m.input.Reset()
+			m.completion.Deactivate()
+			m.recalcViewport()
+			m.history.Push(text)
+			return cmd.Handler(m, args)
+		}
+
+		// Agent command interception — dynamic commands from runtime.
+		if _, found := m.matchAgentCommand(text); found {
+			m.input.Reset()
+			m.completion.Deactivate()
+			m.recalcViewport()
+			m.history.Push(text)
+			return cmdAgentCommand(m, text)
+		}
+
 		m.input.Reset()
+		m.completion.Deactivate()
+		m.recalcViewport()
 		m.input.Blur()
 
 		// Re-enable follow mode so the user sees their message and the response.
@@ -488,10 +632,32 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 			}
 		}
 
-		m.waiting = true
+		// Do NOT set m.waiting = true here — state is driven solely by the
+		// incoming stateChangeMsg{running} from runtime_update. Setting it
+		// optimistically here would create a dual-driver and cause races.
 		m.sentPrompt = true
 		m.toolItemIDs = make(map[string]string) // reset tool tracking
+		m.history.Push(text)
 		cmds = append(cmds, sendPromptCmd(m.client, text))
+
+	case key.Code == tea.KeyUp && !m.waiting:
+		if m.completion.Active() {
+			m.completion.SelectPrev()
+		} else if m.input.Line() == 0 {
+			m.history.SaveDraft(m.input.Value())
+			if text, ok := m.history.Prev(); ok {
+				m.input.SetValue(text)
+			}
+		}
+
+	case key.Code == tea.KeyDown && !m.waiting:
+		if m.completion.Active() {
+			m.completion.SelectNext()
+		} else if m.input.Line() == m.input.LineCount()-1 {
+			if text, ok := m.history.Next(); ok {
+				m.input.SetValue(text)
+			}
+		}
 
 	case key.Code == tea.KeyPgUp:
 		cmds = append(cmds, m.chat.ScrollByAndAnimate(-m.chat.Height()))
@@ -504,10 +670,87 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 			var taCmd tea.Cmd
 			m.input, taCmd = m.input.Update(tea.KeyPressMsg(key))
 			cmds = append(cmds, taCmd)
+			m.syncCompletion()
 		}
 	}
 
 	return cmds
+}
+
+// syncCompletion checks the current input value and activates/updates/deactivates
+// the completion popup accordingly.
+func (m *chatModel) syncCompletion() {
+	text := m.input.Value()
+	if strings.HasPrefix(text, "/") && !m.waiting {
+		cmdPart, argPart, hasSpace := strings.Cut(text[1:], " ")
+		if !hasSpace {
+			// Still typing the command name — show command completion.
+			m.completionArgCmd = ""
+			if !m.completion.Active() {
+				m.completion.Activate(m.buildAllCompletionEntries())
+			}
+			m.completion.UpdateFilter(cmdPart)
+			m.recalcViewport()
+			return
+		}
+		// Command name is complete; check for argument completion.
+		cmd := lookupCommand(strings.ToLower(cmdPart))
+		if cmd != nil && cmd.ArgCompleter != nil {
+			entries := cmd.ArgCompleter(m, argPart)
+			if len(entries) > 0 {
+				if m.completionArgCmd != cmd.Name {
+					// Entering arg mode (or switched to a different command).
+					m.completionArgCmd = cmd.Name
+					m.completion.Activate(entries)
+				}
+				m.completion.UpdateFilter(argPart)
+				m.recalcViewport()
+				return
+			}
+		}
+	}
+	// No applicable completion.
+	m.completionArgCmd = ""
+	if m.completion.Active() {
+		m.completion.Deactivate()
+		m.recalcViewport()
+	}
+}
+
+// recalcViewport adjusts the chat viewport height to account for the completion area.
+func (m *chatModel) recalcViewport() {
+	if m.width == 0 || m.height == 0 {
+		return
+	}
+	completionHeight := m.completion.Height()
+	if completionHeight > 0 {
+		completionHeight++ // +1 for the divider above the completion list
+	}
+	vpHeight := m.height - inputAreaHeight - completionHeight
+	if vpHeight < 1 {
+		vpHeight = 1
+	}
+	m.chat.SetSize(m.width, vpHeight)
+}
+
+// buildAllCompletionEntries builds a unified list of all commands for completion.
+func (m *chatModel) buildAllCompletionEntries() []completionEntry {
+	entries := make([]completionEntry, 0, len(commandRegistry)+len(m.agentCommands))
+	for _, cmd := range commandRegistry {
+		entries = append(entries, completionEntry{
+			Name:        cmd.Name,
+			Description: cmd.Description,
+			Category:    completionCategory(cmd.Category),
+		})
+	}
+	for _, ac := range m.agentCommands {
+		entries = append(entries, completionEntry{
+			Name:        ac.Name,
+			Description: ac.Description,
+			Category:    categoryAgent,
+		})
+	}
+	return entries
 }
 
 func (m *chatModel) updateCurrentAssistant() tea.Cmd {
@@ -721,18 +964,33 @@ func (m chatModel) View() tea.View {
 	}
 
 	chatView := m.chat.Render()
-	divider := styleDim.Render(strings.Repeat("─", m.width))
+	div := styleDim.Render(strings.Repeat("─", m.width))
+	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, m.width)
 
-	var bottom string
+	var input string
 	if m.waiting {
-		bottom = "  " + m.spinner.View() + m.renderStatusLine()
+		input = "  " + m.spinner.View() + m.renderStatusLine()
 	} else {
-		bottom = m.input.View()
+		input = m.input.View()
 	}
 
-	help := m.renderHelp()
+	statusBar := m.renderHelp()
 
-	v := tea.NewView(chatView + "\n" + divider + "\n" + bottom + "\n" + help)
+	// Layout:
+	//   chat
+	//   ──────  (divider)
+	//   header
+	//   ──────  (divider)
+	//   input   [+ completion area if active]
+	//   ──────  (divider)
+	//   status bar
+	content := chatView + "\n" + div + "\n" + header + "\n" + div + "\n" + input
+	if m.completion.Active() {
+		content += "\n" + div + "\n" + m.completion.Render(m.width)
+	}
+	content += "\n" + div + "\n" + statusBar
+
+	v := tea.NewView(content)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
@@ -781,21 +1039,40 @@ func (m chatModel) renderStatusLine() string {
 }
 
 func (m chatModel) renderHelp() string {
-	var keys []string
-	if m.chatFocused {
-		keys = append(keys, "j/k select", "space expand", "d/u half-page", "g/G top/bottom", "tab editor", "esc back")
-	} else {
-		keys = append(keys, "enter send", "shift+enter newline", "tab chat", "ctrl+x cancel")
+	h := styleHelp
+
+	switch {
+	case m.completion.Active():
+		line1 := h.Render(" ↑/↓ select · tab confirm · esc close")
+		line2 := h.Render(" ctrl+c quit")
+		return line1 + "\n" + line2
+	case m.chatFocused:
+		line1 := h.Render(" j/k select · space expand · d/u half-page · g/G top/bottom")
+		line2 := h.Render(" tab editor · esc back · ctrl+c quit")
+		return line1 + "\n" + line2
+	default:
+		line1 := h.Render(" enter send · shift+enter newline · / commands")
+		line2 := h.Render(" tab chat · ctrl+x cancel · ctrl+c quit")
+		if m.infoMessage != nil {
+			info := " " + lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Render(m.infoMessage.text)
+			return line1 + "\n" + info
+		}
+		return line1 + "\n" + line2
 	}
-	keys = append(keys, "shift+click select text", "ctrl+c quit")
-	return styleHelp.Render(" " + strings.Join(keys, " · "))
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+// ChatTUIOptions holds configuration for RunChatTUI.
+type ChatTUIOptions struct {
+	SocketPath    string
+	WorkspaceName string
+	AgentName     string
+}
+
 // RunChatTUI launches the interactive chat TUI connected to the given agent-run socket.
-func RunChatTUI(sock string) error {
-	p := tea.NewProgram(newChatModel(sock))
+func RunChatTUI(opts ChatTUIOptions) error {
+	p := tea.NewProgram(newChatModel(opts))
 	_, err := p.Run()
 	return err
 }
