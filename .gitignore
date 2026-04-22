@@ -81,3 +81,6 @@ vendor/
 *.log
 .cache/
 tmp/
+
+# ── GSD baseline (auto-generated) ──
+.mcp.json
