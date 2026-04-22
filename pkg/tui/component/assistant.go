@@ -29,6 +29,10 @@ type AssistantMessageItem struct {
 	anim              *anim.Anim
 	thinkingExpanded  bool
 	thinkingBoxHeight int
+
+	// fullRenderCache caches the complete Render() output (body + thinking + border).
+	// Keyed by width. Cleared alongside cachedMessageItem on content changes.
+	fullRenderCache map[int]string
 }
 
 // NewAssistantMessageItem creates a new AssistantMessageItem.
@@ -95,6 +99,11 @@ func (a *AssistantMessageItem) RawRender(width int) string {
 	return highlighted
 }
 
+func (a *AssistantMessageItem) clearCache() {
+	a.cachedMessageItem.clearCache()
+	a.fullRenderCache = nil
+}
+
 // Render implements list.Item.
 func (a *AssistantMessageItem) Render(width int) string {
 	// Spinning: show just the animation, no block.
@@ -102,25 +111,38 @@ func (a *AssistantMessageItem) Render(width int) string {
 		return "  " + a.RawRender(width)
 	}
 
-	body := a.renderTextContent(cappedMessageWidth(width))
+	cappedWidth := cappedMessageWidth(width)
+
+	if a.fullRenderCache != nil {
+		if cached, ok := a.fullRenderCache[cappedWidth]; ok {
+			return cached
+		}
+	}
+
+	body := a.renderTextContent(cappedWidth)
 	if strings.TrimSpace(body) == "" {
 		return ""
 	}
 
-	// Thinking goes into Detail.
 	var detail string
 	thinkingFaint := lipgloss.NewStyle().Faint(true)
 	thinking := strings.TrimSpace(a.message.ReasoningContent().Thinking)
 	if thinking != "" {
-		detail = a.renderThinkingText(thinking, cappedMessageWidth(width))
+		detail = a.renderThinkingText(thinking, cappedWidth)
 	}
 
-	return RenderBlock(BlockConfig{
+	result := RenderBlock(BlockConfig{
 		Border:      &BorderConfig{Char: "▌", Color: a.sty.Primary},
 		Body:        body,
 		Detail:      detail,
 		DetailStyle: &thinkingFaint,
 	})
+
+	if a.fullRenderCache == nil {
+		a.fullRenderCache = make(map[int]string)
+	}
+	a.fullRenderCache[cappedWidth] = result
+	return result
 }
 
 // renderTextContent renders only the text content (no thinking).

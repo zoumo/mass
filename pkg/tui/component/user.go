@@ -58,10 +58,6 @@ func (m *UserMessageItem) RawRender(width int) string {
 func (m *UserMessageItem) Render(width int) string {
 	cappedWidth := cappedMessageWidth(width)
 	return RenderBlock(BlockConfig{
-		Label: &LabelConfig{
-			Text:  "[User]",
-			Style: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF9500")),
-		},
 		Body: m.RawRender(width),
 		Border: &BorderConfig{
 			Char:  "▌",
