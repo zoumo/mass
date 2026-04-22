@@ -50,13 +50,43 @@ func cleanupManager(m *Manager) {
 // ── acpClient.RequestPermission ──────────────────────────────────────────────
 
 func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
-	mgr := newTestManager(apiruntime.DenyAll)
-	defer cleanupManager(mgr)
+	rejectOpt := acp.PermissionOption{OptionId: "reject-1", Kind: acp.PermissionOptionKindRejectOnce, Name: "Reject"}
 
-	client := &acpClient{mgr: mgr, logger: slog.Default()}
-	_, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "deny_all")
+	tests := []struct {
+		name      string
+		options   []acp.PermissionOption
+		wantOptID acp.PermissionOptionId
+	}{
+		{
+			name:      "with reject option: selects it",
+			options:   []acp.PermissionOption{rejectOpt},
+			wantOptID: "reject-1",
+		},
+		{
+			name:      "no options: returns cancelled",
+			options:   nil,
+			wantOptID: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mgr := newTestManager(apiruntime.DenyAll)
+			defer cleanupManager(mgr)
+			client := &acpClient{mgr: mgr, logger: slog.Default()}
+
+			resp, err := client.RequestPermission(context.Background(), acp.RequestPermissionRequest{
+				Options: tt.options,
+			})
+			require.NoError(t, err)
+			if tt.wantOptID != "" {
+				require.NotNil(t, resp.Outcome.Selected)
+				assert.Equal(t, tt.wantOptID, resp.Outcome.Selected.OptionId)
+			} else {
+				assert.NotNil(t, resp.Outcome.Cancelled) //nolint:misspell
+			}
+		})
+	}
 }
 
 func TestAcpClient_RequestPermission_ApproveReads(t *testing.T) {

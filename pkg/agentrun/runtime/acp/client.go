@@ -135,8 +135,9 @@ func (c *acpClient) RequestPermission(_ context.Context, req acp.RequestPermissi
 	c.logger.Debug("permission request", "policy", c.mgr.cfg.Session.Permissions, "options", len(req.Options))
 	switch c.mgr.cfg.Session.Permissions {
 	case apiruntime.DenyAll:
+		rejectOpt := pickOption(req.Options, acp.PermissionOptionKindRejectOnce, acp.PermissionOptionKindRejectAlways)
 		c.logger.Debug("permission denied", "policy", apiruntime.DenyAll)
-		return acp.RequestPermissionResponse{}, fmt.Errorf("permission denied: deny_all policy blocks all operations")
+		return rejectedResponse(rejectOpt), nil
 	case apiruntime.ApproveReads:
 		kind := inferToolKind(req)
 		if isReadKind(kind) {
