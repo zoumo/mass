@@ -35,10 +35,10 @@ type (
 )
 
 type (
-	connErrMsg   struct{ err error }
-	promptErrMsg    struct{ err error }
-	setModelResult  struct{ modelID string }
-	panicMsg     struct{ err error }
+	connErrMsg     struct{ err error }
+	promptErrMsg   struct{ err error }
+	setModelResult struct{ modelID string }
+	panicMsg       struct{ err error }
 )
 
 // safeCmd wraps a tea.Cmd with panic recovery. If the inner command panics,
@@ -118,7 +118,7 @@ type chatModel struct {
 
 	agentStatus     string // current agent status: "idle", "running", "stopped", "error"
 	agentCommands   []agentCommand
-	currentModel    string               // current model ID from session state
+	currentModel    string                 // current model ID from session state
 	availableModels []apiruntime.ModelInfo // model list from session state, used for /model completion
 
 	// liveSeq is the watcher's nextSeq boundary: events with seq < liveSeq are

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"gopkg.in/yaml.v3"
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 // OutputFormat controls how resources are rendered.
@@ -66,12 +66,16 @@ func (p *ResourcePrinter) printJSON(w io.Writer, items []any) error {
 }
 
 func (p *ResourcePrinter) printYAML(w io.Writer, items []any) error {
-	enc := yaml.NewEncoder(w)
-	defer enc.Close()
+	var obj any = items
 	if len(items) == 1 {
-		return enc.Encode(items[0])
+		obj = items[0]
 	}
-	return enc.Encode(items)
+	out, err := sigsyaml.Marshal(obj)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(out)
+	return err
 }
 
 func (p *ResourcePrinter) printTable(w io.Writer, items []any) error {

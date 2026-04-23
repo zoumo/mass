@@ -87,30 +87,6 @@ func WithLabels(labels map[string]string) ListOption {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Run State
-// ────────────────────────────────────────────────────────────────────────────
-
-// RunStateInfo describes the runtime state of an agent-run process.
-// Populated in AgentRun.Status.Run when the agent-run is running.
-type RunStateInfo struct {
-	// Status is the agent-run process lifecycle status.
-	Status string `json:"status"`
-
-	// PID is the OS process ID of the agent-run process.
-	PID int `json:"pid,omitempty"`
-
-	// Bundle is the absolute path to the agent's bundle directory.
-	Bundle string `json:"bundle"`
-
-	// SocketPath is the Unix domain socket path for the agent-run.s RPC endpoint.
-	SocketPath string `json:"socketPath,omitempty"`
-
-	// ExitCode is the OS exit code of the agent-run process.
-	// Only populated after the process has exited.
-	ExitCode *int `json:"exitCode,omitempty"`
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // Domain operation params/results (non-CRUD operations with unique params)
 // ────────────────────────────────────────────────────────────────────────────
 

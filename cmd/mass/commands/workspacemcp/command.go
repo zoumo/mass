@@ -140,7 +140,7 @@ func workspaceStatusHandler(cfg handlerConfig, client pkgariapi.Client, logger *
 		}
 		sb.WriteString(fmt.Sprintf("Members (%d):\n", len(members.Items)))
 		for _, m := range members.Items {
-			sb.WriteString(fmt.Sprintf("  - %s [%s] state: %s\n", m.Metadata.Name, m.Spec.Agent, m.Status.State))
+			sb.WriteString(fmt.Sprintf("  - %s [%s] state: %s\n", m.Metadata.Name, m.Spec.Agent, m.Status.Status))
 		}
 
 		return &mcp.CallToolResult{

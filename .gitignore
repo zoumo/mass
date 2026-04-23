@@ -4,6 +4,7 @@
 ./mockagent
 ./mass
 ./massctl
+nohup.out
 
 # ── Scripts (auto-generated) ──
 scripts/verify-*

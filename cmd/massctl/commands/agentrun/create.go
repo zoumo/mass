@@ -2,6 +2,7 @@ package agentrun
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -17,6 +18,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 		agent        string
 		systemPrompt string
 		permissions  string
+		noWait       bool
 	)
 	cmd := &cobra.Command{
 		Use:   "create",
@@ -40,7 +42,18 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 					Permissions:  apiruntime.PermissionPolicy(permissions),
 				},
 			}
-			if err := client.Create(context.Background(), &ar); err != nil {
+			ctx := context.Background()
+			if err := client.Create(ctx, &ar); err != nil {
+				return err
+			}
+			fmt.Printf("Agent run %q/%q created (state: %s)\n", ws, name, ar.Status.Status)
+			if noWait {
+				return nil
+			}
+			if err := cliutil.WaitAgentIdle(ctx, client, ws, name); err != nil {
+				return err
+			}
+			if err := client.Get(ctx, pkgariapi.ObjectKey{Workspace: ws, Name: name}, &ar); err != nil {
 				return err
 			}
 			return cliutil.PrintJSON(cmd.OutOrStdout(), ar)
@@ -51,6 +64,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent definition name (required)")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "System prompt for the agent run")
 	cmd.Flags().StringVar(&permissions, "permissions", "", "Permission policy: approve_all, approve_reads, deny_all (default: approve_all)")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Do not wait for the agent run to become idle")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")
 	_ = cmd.MarkFlagRequired("agent")

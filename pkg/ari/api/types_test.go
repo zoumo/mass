@@ -91,27 +91,20 @@ func TestAgentRun_ARIView_StripsInternalFields(t *testing.T) {
 		Metadata: pkgariapi.ObjectMeta{Name: "agent-1", Workspace: "ws1"},
 		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
-			State:           "idle",
-			RunSocketPath:   "/tmp/test.sock",
-			RunStateDir:     "/tmp/statedir",
-			RunPID:          42,
-			BootstrapConfig: json.RawMessage(`{"foo":"bar"}`),
+			Status:     "idle",
+			SocketPath: "/tmp/test.sock",
+			StateDir:   "/tmp/statedir",
+			PID:        42,
 		},
 	}
 
 	view := ar.ARIView()
-	assert.Empty(t, view.Status.RunSocketPath, "ARIView should strip RunSocketPath")
-	assert.Empty(t, view.Status.RunStateDir, "ARIView should strip RunStateDir")
-	assert.Zero(t, view.Status.RunPID, "ARIView should strip RunPID")
-	assert.Nil(t, view.Status.BootstrapConfig, "ARIView should strip BootstrapConfig")
+	assert.Empty(t, view.Status.StateDir, "ARIView should strip StateDir")
 
-	// Verify JSON serialization of the view has no internal fields
+	// Verify JSON serialization of the view has no stateDir field.
 	data, err := json.Marshal(view)
 	require.NoError(t, err)
-	assert.NotContains(t, string(data), "runSocketPath")
-	assert.NotContains(t, string(data), "runStateDir")
-	assert.NotContains(t, string(data), "runPid")
-	assert.NotContains(t, string(data), "bootstrapConfig")
+	assert.NotContains(t, string(data), "stateDir")
 }
 
 func TestWorkspace_ARIView_StripsHooks(t *testing.T) {

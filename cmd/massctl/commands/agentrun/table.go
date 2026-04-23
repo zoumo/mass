@@ -13,12 +13,12 @@ func columns() []cliutil.Column {
 		{Header: "WORKSPACE", Field: func(v any) string { return v.(pkgariapi.AgentRun).Metadata.Workspace }},
 		{Header: "NAME", Field: func(v any) string { return v.(pkgariapi.AgentRun).Metadata.Name }},
 		{Header: "AGENT", Field: func(v any) string { return v.(pkgariapi.AgentRun).Spec.Agent }},
-		{Header: "STATE", Field: func(v any) string { return string(v.(pkgariapi.AgentRun).Status.State) }},
+		{Header: "STATE", Field: func(v any) string { return string(v.(pkgariapi.AgentRun).Status.Status) }},
 		{Header: "AGE", Field: func(v any) string { return cliutil.FormatAge(v.(pkgariapi.AgentRun).Metadata.CreatedAt) }},
 		{Header: "PID", Field: func(v any) string {
 			r := v.(pkgariapi.AgentRun)
-			if r.Status.Run != nil && r.Status.Run.PID > 0 {
-				return fmt.Sprintf("%d", r.Status.Run.PID)
+			if r.Status.PID > 0 {
+				return fmt.Sprintf("%d", r.Status.PID)
 			}
 			return ""
 		}, Wide: true},

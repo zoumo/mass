@@ -137,36 +137,36 @@ type AgentRunSpec struct {
 }
 
 // AgentRunStatus holds the observed runtime state of an agent run.
-// Internal fields (run socket, state dir, PID, bootstrap config) must be
-// persisted in the store (json tags present) but stripped via ARIView()
+// StateDir is an internal field persisted in the store but stripped via ARIView()
 // before sending over the wire.
 type AgentRunStatus struct {
-	// State is the current lifecycle status of the agent.
-	State apiruntime.Status `json:"state"`
+	// Status is the current lifecycle status of the agent.
+	Status apiruntime.Status `json:"status"`
 
-	// ErrorMessage is a non-empty error description when State is apiruntime.StatusError.
+	// ErrorMessage is a non-empty error description when Status is apiruntime.StatusError.
 	ErrorMessage string `json:"errorMessage,omitempty"`
 
-	// Run holds the runtime state of the agent-run process.
-	// Populated in Get responses when the agent-run is running; nil otherwise.
-	// Contains SocketPath so callers no longer need agentrun/attach.
-	Run *RunStateInfo `json:"run,omitempty"`
+	// PID is the OS process ID of the agent-run process.
+	PID int `json:"pid,omitempty"`
 
-	// RunSocketPath is the Unix socket path for the agent-run's RPC endpoint.
-	// Persisted in store; stripped by ARIView().
-	RunSocketPath string `json:"runSocketPath,omitempty"`
+	// Bundle is the absolute path to the agent's bundle directory.
+	Bundle string `json:"bundle,omitempty"`
 
-	// RunStateDir is the absolute path to the agent-run's state directory.
-	// Persisted in store; stripped by ARIView().
-	RunStateDir string `json:"runStateDir,omitempty"`
+	// SocketPath is the Unix domain socket path for the agent-run's RPC endpoint.
+	SocketPath string `json:"socketPath,omitempty"`
 
-	// RunPID is the OS process ID of the agent-run process.
-	// Persisted in store; stripped by ARIView().
-	RunPID int `json:"runPid,omitempty"`
+	// ExitCode is the OS exit code of the agent-run process.
+	ExitCode *int `json:"exitCode,omitempty"`
 
-	// BootstrapConfig is the JSON-serialized config used to start this agent run.
+	// SessionID is the ACP protocol session ID established during the session/new handshake.
+	SessionID string `json:"sessionId,omitempty"`
+
+	// EventPath is the absolute path to the JSONL event log for the current session.
+	EventPath string `json:"eventPath,omitempty"`
+
+	// StateDir is the absolute path to the agent-run's state directory.
 	// Persisted in store; stripped by ARIView().
-	BootstrapConfig json.RawMessage `json:"bootstrapConfig,omitempty"`
+	StateDir string `json:"stateDir,omitempty"`
 }
 
 // AgentRun represents an agent run record.
@@ -197,8 +197,8 @@ type AgentRunFilter struct {
 	// Workspace filters by workspace name. Empty means all workspaces.
 	Workspace string
 
-	// State filters by agent status. Empty/zero means all states.
-	State apiruntime.Status
+	// Status filters by agent status. Empty/zero means all states.
+	Status apiruntime.Status
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -274,10 +274,7 @@ type WorkspaceFilter struct {
 
 // ARIView returns an AgentRun with internal-only fields zeroed for wire transmission.
 func (a AgentRun) ARIView() AgentRun {
-	a.Status.RunSocketPath = ""
-	a.Status.RunStateDir = ""
-	a.Status.RunPID = 0
-	a.Status.BootstrapConfig = nil
+	a.Status.StateDir = ""
 	return a
 }
 

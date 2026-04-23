@@ -28,12 +28,12 @@ func (e *ErrAgentRunNotFound) Error() string {
 type ErrDeleteNotStopped struct {
 	Workspace string
 	Name      string
-	State     apiruntime.Status
+	Status    apiruntime.Status
 }
 
 func (e *ErrDeleteNotStopped) Error() string {
 	return fmt.Sprintf("mass: cannot delete agent run %s/%s in state %s (agent run must be stopped or error first)",
-		e.Workspace, e.Name, e.State)
+		e.Workspace, e.Name, e.Status)
 }
 
 // ErrAgentRunAlreadyExists is returned when creating an agent whose (workspace, name) pair already exists.
@@ -66,17 +66,17 @@ func NewAgentRunManager(s *store.Store, logger *slog.Logger) *AgentRunManager {
 }
 
 // Create creates a new agent.
-// Sets default status.State to apiruntime.StatusCreating if empty.
+// Sets default status.Status to apiruntime.StatusCreating if empty.
 // Returns ErrAgentRunAlreadyExists if the (workspace, name) pair already exists.
 func (m *AgentRunManager) Create(ctx context.Context, agent *pkgariapi.AgentRun) error {
-	if agent.Status.State == "" {
-		agent.Status.State = apiruntime.StatusCreating
+	if agent.Status.Status == "" {
+		agent.Status.Status = apiruntime.StatusCreating
 	}
 
 	m.logger.Info("creating agent",
 		"workspace", agent.Metadata.Workspace,
 		"name", agent.Metadata.Name,
-		"state", agent.Status.State)
+		"state", agent.Status.Status)
 
 	if err := m.store.CreateAgentRun(ctx, agent); err != nil {
 		if errors.Is(err, store.ErrAlreadyExists) {
@@ -95,7 +95,7 @@ func (m *AgentRunManager) Create(ctx context.Context, agent *pkgariapi.AgentRun)
 	m.logger.Info("agent created",
 		"workspace", agent.Metadata.Workspace,
 		"name", agent.Metadata.Name,
-		"state", agent.Status.State)
+		"state", agent.Status.Status)
 
 	return nil
 }
@@ -133,7 +133,7 @@ func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name stri
 	m.logger.Info("updating agent status",
 		"workspace", workspace,
 		"name", name,
-		"state", status.State)
+		"state", status.Status)
 
 	if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, status); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -149,8 +149,41 @@ func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name stri
 	m.logger.Info("agent status updated",
 		"workspace", workspace,
 		"name", name,
-		"state", status.State)
+		"state", status.Status)
 
+	return nil
+}
+
+// UpdateState updates only Status.Status and Status.ErrorMessage,
+// preserving all other status fields (PID, SocketPath, StateDir, etc.).
+func (m *AgentRunManager) UpdateState(ctx context.Context, workspace, name string, state apiruntime.Status, errMsg string) error {
+	m.logger.Info("updating agent state",
+		"workspace", workspace,
+		"name", name,
+		"state", state)
+
+	if err := m.store.UpdateAgentRunState(ctx, workspace, name, state, errMsg); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return &ErrAgentRunNotFound{Workspace: workspace, Name: name}
+		}
+		m.logger.Error("failed to update agent state",
+			"workspace", workspace,
+			"name", name,
+			"error", err)
+		return fmt.Errorf("mass: failed to update agent state: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateSessionInfo updates SessionID and EventPath, preserving all other status fields.
+func (m *AgentRunManager) UpdateSessionInfo(ctx context.Context, workspace, name, sessionID, eventPath string) error {
+	if err := m.store.UpdateAgentRunSessionInfo(ctx, workspace, name, sessionID, eventPath); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return &ErrAgentRunNotFound{Workspace: workspace, Name: name}
+		}
+		return fmt.Errorf("mass: failed to update session info: %w", err)
+	}
 	return nil
 }
 
@@ -193,22 +226,22 @@ func (m *AgentRunManager) Delete(ctx context.Context, workspace, name string) er
 	}
 
 	// Only stopped or error agents may be deleted.
-	if current.Status.State != apiruntime.StatusStopped && current.Status.State != apiruntime.StatusError {
+	if current.Status.Status != apiruntime.StatusStopped && current.Status.Status != apiruntime.StatusError {
 		m.logger.Warn("delete blocked: agent is still active",
 			"workspace", workspace,
 			"name", name,
-			"state", current.Status.State)
+			"state", current.Status.Status)
 		return &ErrDeleteNotStopped{
 			Workspace: workspace,
 			Name:      name,
-			State:     current.Status.State,
+			Status:    current.Status.Status,
 		}
 	}
 
 	m.logger.Info("deleting agent",
 		"workspace", workspace,
 		"name", name,
-		"state", current.Status.State)
+		"state", current.Status.Status)
 
 	if err := m.store.DeleteAgentRun(ctx, workspace, name); err != nil {
 		m.logger.Error("failed to delete agent",

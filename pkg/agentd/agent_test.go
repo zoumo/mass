@@ -66,7 +66,7 @@ func TestAgentCreate_RoundTrip(t *testing.T) {
 	require.NoError(t, am.Create(ctx, agent), "Create should succeed")
 
 	// Verify default state was applied.
-	assert.Equal(t, apiruntime.StatusCreating, agent.Status.State, "default state should be creating")
+	assert.Equal(t, apiruntime.StatusCreating, agent.Status.Status, "default state should be creating")
 
 	got, err := am.Get(ctx, "default", "alpha")
 	require.NoError(t, err, "Get should succeed")
@@ -77,7 +77,7 @@ func TestAgentCreate_RoundTrip(t *testing.T) {
 	assert.Equal(t, "default", got.Spec.Agent)
 	assert.Equal(t, "test agent", got.Spec.Description)
 	assert.Equal(t, "you are a test", got.Spec.SystemPrompt)
-	assert.Equal(t, apiruntime.StatusCreating, got.Status.State)
+	assert.Equal(t, apiruntime.StatusCreating, got.Status.Status)
 	assert.Equal(t, map[string]string{"env": "test"}, got.Metadata.Labels)
 }
 
@@ -110,14 +110,14 @@ func TestAgentList_StateFilter(t *testing.T) {
 	require.NoError(t, am.Create(ctx, a1))
 	require.NoError(t, am.Create(ctx, a2))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped}))
 
-	stoppedAgents, err := am.List(ctx, &pkgariapi.AgentRunFilter{State: apiruntime.StatusStopped})
+	stoppedAgents, err := am.List(ctx, &pkgariapi.AgentRunFilter{Status: apiruntime.StatusStopped})
 	require.NoError(t, err)
 	require.Len(t, stoppedAgents, 1)
 	assert.Equal(t, "a1", stoppedAgents[0].Metadata.Name)
 
-	creatingAgents, err := am.List(ctx, &pkgariapi.AgentRunFilter{State: apiruntime.StatusCreating})
+	creatingAgents, err := am.List(ctx, &pkgariapi.AgentRunFilter{Status: apiruntime.StatusCreating})
 	require.NoError(t, err)
 	require.Len(t, creatingAgents, 1)
 	assert.Equal(t, "a2", creatingAgents[0].Metadata.Name)
@@ -156,12 +156,12 @@ func TestAgentUpdateStatus(t *testing.T) {
 	agent := makeTestAgentRun("ws1", "stateful")
 	require.NoError(t, am.Create(ctx, agent))
 
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", pkgariapi.AgentRunStatus{State: apiruntime.StatusRunning}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "stateful", pkgariapi.AgentRunStatus{Status: apiruntime.StatusRunning}))
 
 	got, err := am.Get(ctx, "ws1", "stateful")
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, apiruntime.StatusRunning, got.Status.State)
+	assert.Equal(t, apiruntime.StatusRunning, got.Status.Status)
 }
 
 // TestAgentDelete_RequiresStopped tests that a stopped agent can be deleted.
@@ -175,7 +175,7 @@ func TestAgentDelete_RequiresStopped(t *testing.T) {
 	require.NoError(t, am.Create(ctx, agent))
 
 	// Transition to stopped.
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "deletable", pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped}))
 
 	// Delete should succeed.
 	require.NoError(t, am.Delete(ctx, "ws1", "deletable"))
@@ -196,7 +196,7 @@ func TestAgentDelete_AllowsError(t *testing.T) {
 	agent := makeTestAgentRun("ws1", "errored")
 	require.NoError(t, am.Create(ctx, agent))
 	require.NoError(t, am.UpdateStatus(ctx, "ws1", "errored", pkgariapi.AgentRunStatus{
-		State:        apiruntime.StatusError,
+		Status:       apiruntime.StatusError,
 		ErrorMessage: "boom",
 	}))
 
@@ -225,7 +225,7 @@ func TestAgentDelete_Protected(t *testing.T) {
 	require.ErrorAs(t, err, &notStopped, "error should be ErrDeleteNotStopped")
 	assert.Equal(t, "ws1", notStopped.Workspace)
 	assert.Equal(t, "protected", notStopped.Name)
-	assert.Equal(t, apiruntime.StatusCreating, notStopped.State)
+	assert.Equal(t, apiruntime.StatusCreating, notStopped.Status)
 }
 
 // TestAgentGet_NotFound tests that Get returns nil,nil for a missing agent.
@@ -281,7 +281,7 @@ func TestAgentUpdateStatus_NotFound(t *testing.T) {
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	err := am.UpdateStatus(ctx, "ws1", "ghost", pkgariapi.AgentRunStatus{State: apiruntime.StatusRunning})
+	err := am.UpdateStatus(ctx, "ws1", "ghost", pkgariapi.AgentRunStatus{Status: apiruntime.StatusRunning})
 	require.Error(t, err, "UpdateStatus of missing agent should fail")
 
 	var notFound *ErrAgentRunNotFound
@@ -321,7 +321,7 @@ func TestErrorTypes_Format(t *testing.T) {
 	})
 
 	t.Run("ErrDeleteNotStopped", func(t *testing.T) {
-		err := &ErrDeleteNotStopped{Workspace: "ws", Name: "a1", State: apiruntime.StatusRunning}
+		err := &ErrDeleteNotStopped{Workspace: "ws", Name: "a1", Status: apiruntime.StatusRunning}
 		assert.Contains(t, err.Error(), "ws/a1")
 		assert.Contains(t, err.Error(), "running")
 	})
@@ -355,7 +355,7 @@ func TestAgentTransitionState_Success(t *testing.T) {
 
 	got, err := am.Get(ctx, "ws1", "trans")
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusIdle, got.Status.State)
+	assert.Equal(t, apiruntime.StatusIdle, got.Status.Status)
 }
 
 func TestAgentTransitionState_Mismatch(t *testing.T) {
@@ -376,7 +376,7 @@ func TestAgentTransitionState_Mismatch(t *testing.T) {
 	// State should remain creating.
 	got, err := am.Get(ctx, "ws1", "mismatch")
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusCreating, got.Status.State)
+	assert.Equal(t, apiruntime.StatusCreating, got.Status.Status)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -408,12 +408,12 @@ func TestAgentList_CombinedFilter(t *testing.T) {
 	require.NoError(t, am.Create(ctx, makeTestAgentRun("ws2", "a3")))
 
 	// Set a1 to stopped.
-	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped}))
+	require.NoError(t, am.UpdateStatus(ctx, "ws1", "a1", pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped}))
 
 	// Filter: workspace=ws1 AND state=stopped → only a1.
 	result, err := am.List(ctx, &pkgariapi.AgentRunFilter{
 		Workspace: "ws1",
-		State:     apiruntime.StatusStopped,
+		Status:    apiruntime.StatusStopped,
 	})
 	require.NoError(t, err)
 	require.Len(t, result, 1)

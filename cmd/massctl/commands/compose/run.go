@@ -18,6 +18,7 @@ func newRunCmd(getClient cliutil.ClientFn) *cobra.Command {
 		agent        string
 		name         string
 		systemPrompt string
+		noWait       bool
 	)
 
 	cmd := &cobra.Command{
@@ -69,7 +70,10 @@ If the workspace already exists and is ready, it is reused.
 			if err := createAgentRun(ctx, client, wsName, entry); err != nil {
 				return err
 			}
-			if err := waitAgentIdle(ctx, client, wsName, runName); err != nil {
+			if noWait {
+				return nil
+			}
+			if err := cliutil.WaitAgentIdle(ctx, client, wsName, runName); err != nil {
 				return err
 			}
 
@@ -83,6 +87,7 @@ If the workspace already exists and is ready, it is reused.
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent definition name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent run name (default: same as agent name)")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "System prompt for the agent run")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Do not wait for the agent run to become idle")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("agent")
 

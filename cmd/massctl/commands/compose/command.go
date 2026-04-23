@@ -106,29 +106,10 @@ func createAgentRun(ctx context.Context, client pkgariapi.Client, wsName string,
 	if err := client.Create(ctx, &ar); err != nil {
 		return fmt.Errorf("agentrun/create %q: %w", a.Name, err)
 	}
-	fmt.Printf("Agent run %q/%q created (state: %s)\n", wsName, a.Name, ar.Status.State)
+	fmt.Printf("Agent run %q/%q created (state: %s)\n", wsName, a.Name, ar.Status.Status)
 	return nil
 }
 
-func waitAgentIdle(ctx context.Context, client pkgariapi.Client, wsName, agName string) error {
-	fmt.Printf("Waiting for agent %q/%q to be idle...\n", wsName, agName)
-	for {
-		time.Sleep(500 * time.Millisecond)
-		var ar pkgariapi.AgentRun
-		if err := client.Get(ctx, pkgariapi.ObjectKey{Workspace: wsName, Name: agName}, &ar); err != nil {
-			return fmt.Errorf("agentrun/get %q: %w", agName, err)
-		}
-		switch ar.Status.State {
-		case "idle":
-			fmt.Printf("Agent %q/%q is idle\n", wsName, agName)
-			return nil
-		case "error":
-			return fmt.Errorf("agent %q/%q entered error state: %s", wsName, agName, ar.Status.ErrorMessage)
-		case "stopped":
-			return fmt.Errorf("agent %q/%q stopped unexpectedly", wsName, agName)
-		}
-	}
-}
 
 func printSocketInfo(ctx context.Context, client pkgariapi.Client, wsName, agName string) {
 	var ar pkgariapi.AgentRun
@@ -136,8 +117,8 @@ func printSocketInfo(ctx context.Context, client pkgariapi.Client, wsName, agNam
 		fmt.Printf("  %s/%s: (get failed: %v)\n", wsName, agName, err)
 		return
 	}
-	if ar.Status.Run != nil && ar.Status.Run.SocketPath != "" {
-		fmt.Printf("  %s/%s: %s\n", wsName, agName, ar.Status.Run.SocketPath)
+	if ar.Status.SocketPath != "" {
+		fmt.Printf("  %s/%s: %s\n", wsName, agName, ar.Status.SocketPath)
 	} else {
 		fmt.Printf("  %s/%s: (no socket info)\n", wsName, agName)
 	}

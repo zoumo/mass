@@ -58,7 +58,7 @@ func forceCleanAgentRuns(ctx context.Context, cmd *cobra.Command, client pkgaria
 	for _, ar := range list.Items {
 		key := pkgariapi.ObjectKey{Workspace: workspace, Name: ar.Metadata.Name}
 
-		if !isExited(ar.Status.State) {
+		if !isExited(ar.Status.Status) {
 			if err := client.AgentRuns().Stop(ctx, key); err != nil {
 				return fmt.Errorf("stopping agentrun %q: %w", ar.Metadata.Name, err)
 			}
@@ -93,7 +93,7 @@ func waitForExited(ctx context.Context, client pkgariapi.Client, key pkgariapi.O
 			if err := client.Get(ctx, key, &ar); err != nil {
 				return err
 			}
-			if isExited(ar.Status.State) {
+			if isExited(ar.Status.Status) {
 				return nil
 			}
 		}

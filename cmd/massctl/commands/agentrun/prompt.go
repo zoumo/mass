@@ -51,12 +51,12 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 			if err := client.Get(ctx, key, &ar); err != nil {
 				return fmt.Errorf("agentrun/get: %w", err)
 			}
-			if ar.Status.Run == nil || ar.Status.Run.SocketPath == "" {
-				return fmt.Errorf("agent run %s/%s has no run socket (state: %s)", ws, name, ar.Status.State)
+			if ar.Status.SocketPath == "" {
+				return fmt.Errorf("agent run %s/%s has no run socket (state: %s)", ws, name, ar.Status.Status)
 			}
 
 			// Connect to the agent-run process directly.
-			runClient, err := runclient.Dial(ctx, ar.Status.Run.SocketPath)
+			runClient, err := runclient.Dial(ctx, ar.Status.SocketPath)
 			if err != nil {
 				return fmt.Errorf("dial agent-run: %w", err)
 			}

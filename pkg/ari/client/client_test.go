@@ -78,7 +78,7 @@ func registerMockHandlers(srv *jsonrpc.Server) {
 		Methods: map[string]jsonrpc.Method{
 			"create": mockMethod(func() any { return &pkgariapi.AgentRun{} }, func(v any) any {
 				ar := v.(*pkgariapi.AgentRun)
-				ar.Status.State = "creating"
+				ar.Status.Status = "creating"
 				return ar
 			}),
 			"get": mockMethod(func() any { return &pkgariapi.ObjectKey{} }, func(v any) any {

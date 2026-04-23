@@ -55,11 +55,11 @@ func TestDeleteForce(t *testing.T) {
 		arList.Items = []pkgariapi.AgentRun{
 			{
 				Metadata: pkgariapi.ObjectMeta{Name: "run1"},
-				Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusIdle},
+				Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusIdle},
 			},
 			{
 				Metadata: pkgariapi.ObjectMeta{Name: "run2"},
-				Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped},
+				Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped},
 			},
 		}
 		return nil
@@ -73,7 +73,7 @@ func TestDeleteForce(t *testing.T) {
 	// Get returns stopped state so waitForExited completes immediately.
 	mc.getFn = func(_ context.Context, _ pkgariapi.ObjectKey, obj pkgariapi.Object) error {
 		ar := obj.(*pkgariapi.AgentRun)
-		ar.Status.State = apiruntime.StatusStopped
+		ar.Status.Status = apiruntime.StatusStopped
 		return nil
 	}
 	mc.deleteFn = func(_ context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
@@ -110,7 +110,7 @@ func TestDeleteForceStopError(t *testing.T) {
 		arList.Items = []pkgariapi.AgentRun{
 			{
 				Metadata: pkgariapi.ObjectMeta{Name: "run1"},
-				Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusIdle},
+				Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusIdle},
 			},
 		}
 		return nil

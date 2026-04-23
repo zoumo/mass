@@ -63,7 +63,7 @@ func TestAcpClient_RequestPermission_DenyAll(t *testing.T) {
 			wantOptID: "reject-1",
 		},
 		{
-			name:      "no options: returns cancelled",
+			name:      "no options: returns canceled",
 			options:   nil,
 			wantOptID: "",
 		},

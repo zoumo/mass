@@ -53,7 +53,7 @@ then prints the run socket path for each agent.
 				}
 			}
 			for _, a := range cfg.Spec.Runs {
-				if err := waitAgentIdle(ctx, client, wsName, a.Name); err != nil {
+				if err := cliutil.WaitAgentIdle(ctx, client, wsName, a.Name); err != nil {
 					return err
 				}
 			}
