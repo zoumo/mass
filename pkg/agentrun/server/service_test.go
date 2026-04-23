@@ -36,14 +36,14 @@ func TestStatus_EventCountsOverlay(t *testing.T) {
 	// 4. Create a Translator with a buffered channel. We do NOT need to Start()
 	//    it — NotifyStateChange calls broadcast() directly.
 	in := make(chan acp.SessionNotification, 16)
-	trans := NewTranslator("run-1", in, nil, slog.Default())
+	trans := NewTranslator("run-1", in, "", slog.Default())
 
 	// Broadcast a few state_change events to build up in-memory counts.
 	trans.NotifyStateChange("creating", "running", 1, "test", nil)
 	trans.NotifyStateChange("running", "running", 1, "heartbeat", nil)
 
 	// 5. Create the Service under test.
-	svc := New(mgr, trans, "", slog.Default())
+	svc := New(mgr, trans, slog.Default())
 
 	// 6. Call Status().
 	result, err := svc.Status(context.Background())
@@ -78,8 +78,8 @@ func newTestService(t *testing.T) *Service {
 
 	mgr := acpruntime.New(apiruntime.Config{}, "/tmp/fake-bundle", stateDir, slog.Default())
 	in := make(chan acp.SessionNotification, 16)
-	trans := NewTranslator("run-1", in, nil, slog.Default())
-	return New(mgr, trans, "", slog.Default())
+	trans := NewTranslator("run-1", in, "", slog.Default())
+	return New(mgr, trans, slog.Default())
 }
 
 func TestService_Stop_ReturnsNil(t *testing.T) {
@@ -100,4 +100,49 @@ func TestService_Prompt_EmptyPrompt(t *testing.T) {
 	_, err := svc.Prompt(context.Background(), &runapi.SessionPromptParams{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "missing prompt")
+}
+
+func TestService_Stop_EmitsAuditEvent(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	trans := NewTranslator("run-1", in, "", slog.Default())
+	ch, _, _ := trans.Subscribe()
+
+	stateDir := t.TempDir()
+	st := apiruntime.State{MassVersion: "0.1.0", ID: "s", Status: apiruntime.StatusRunning, Bundle: "/b"}
+	require.NoError(t, spec.WriteState(stateDir, st))
+	mgr := acpruntime.New(apiruntime.Config{}, "/b", stateDir, slog.Default())
+	svc := New(mgr, trans, slog.Default())
+
+	require.NoError(t, svc.Stop(context.Background()))
+
+	ev := <-ch
+	assert.Equal(t, runapi.EventTypeRuntimeUpdate, ev.Type)
+	ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent)
+	require.True(t, ok)
+	require.NotNil(t, ru.OperationAudit)
+	assert.Equal(t, "stop", ru.OperationAudit.Operation)
+	assert.True(t, ru.OperationAudit.Success)
+}
+
+func TestService_SetModel_AuditOnValidationFailure(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	trans := NewTranslator("run-1", in, "", slog.Default())
+	ch, _, _ := trans.Subscribe()
+
+	stateDir := t.TempDir()
+	st := apiruntime.State{MassVersion: "0.1.0", ID: "s", Status: apiruntime.StatusRunning, Bundle: "/b"}
+	require.NoError(t, spec.WriteState(stateDir, st))
+	mgr := acpruntime.New(apiruntime.Config{}, "/b", stateDir, slog.Default())
+	svc := New(mgr, trans, slog.Default())
+
+	_, err := svc.SetModel(context.Background(), &runapi.SessionSetModelParams{})
+	require.Error(t, err)
+
+	ev := <-ch
+	ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent)
+	require.True(t, ok)
+	require.NotNil(t, ru.OperationAudit)
+	assert.Equal(t, "set_model", ru.OperationAudit.Operation)
+	assert.False(t, ru.OperationAudit.Success)
+	assert.NotEmpty(t, ru.OperationAudit.Error)
 }

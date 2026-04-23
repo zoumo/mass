@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,17 +32,31 @@ type EventLog struct {
 
 // OpenEventLog opens (or creates) the JSONL log file at path.
 // Existing content is preserved; new entries are appended.
+// If the file has a damaged tail (corrupt last bytes from a crash), the tail is
+// truncated to the end of the last valid event before appending, preventing the
+// damaged bytes from becoming mid-file corruption on the next replay.
+// nextSeq is derived from the last valid event's Seq+1, not line count.
 // The caller owns the EventLog and must call Close when done.
 func OpenEventLog(path string) (*EventLog, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	nextSeq, truncateAt, err := lastValidOffset(path)
+	if err != nil {
+		return nil, fmt.Errorf("events: scan log %s: %w", path, err)
+	}
+
+	// O_RDWR so we can truncate; O_CREATE so new files are created.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o640)
 	if err != nil {
 		return nil, fmt.Errorf("events: open log %s: %w", path, err)
 	}
 
-	nextSeq, err := countLines(path)
-	if err != nil {
+	// Truncate to end of last valid event (no-op for clean files or new files).
+	if err := f.Truncate(truncateAt); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("events: count lines in %s: %w", path, err)
+		return nil, fmt.Errorf("events: truncate log %s: %w", path, err)
+	}
+	if _, err := f.Seek(truncateAt, io.SeekStart); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("events: seek log %s: %w", path, err)
 	}
 
 	return &EventLog{f: f, enc: json.NewEncoder(f), nextSeq: nextSeq}, nil
@@ -163,42 +179,44 @@ func ReadEventLog(path string, fromSeq int) ([]runapi.AgentRunEvent, error) {
 	return entries, nil
 }
 
-// countLines counts non-empty lines in path without decoding them. This keeps
-// the live append path usable even when older history rows are corrupt.
-// Uses chunk-based reading with O(1) memory regardless of line size.
-func countLines(path string) (int, error) {
+// lastValidOffset scans path and returns (nextSeq, byteOffset) of the last
+// successfully decoded event line. nextSeq = lastEvent.Seq + 1.
+// Returns (0, 0, nil) for empty or nonexistent files.
+// byteOffset points to the byte immediately after the last valid line (including
+// its newline), so Truncate(byteOffset) removes any damaged tail.
+func lastValidOffset(path string) (nextSeq int, offset int64, err error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
-		return 0, nil
+		return 0, 0, nil
 	}
 	if err != nil {
-		return 0, err
+		return 0, 0, fmt.Errorf("events: scan %s: %w", path, err)
 	}
 	defer f.Close()
 
-	buf := make([]byte, 32*1024)
-	count := 0
-	hasContent := false // tracks whether current line has non-whitespace
-	for {
-		n, err := f.Read(buf)
-		for i := 0; i < n; i++ {
-			switch {
-			case buf[i] == '\n':
-				if hasContent {
-					count++
-				}
-				hasContent = false
-			case buf[i] != ' ' && buf[i] != '\t' && buf[i] != '\r':
-				hasContent = true
+	var pos int64
+	var lastValidEnd int64
+	lastSeq := -1
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 64*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		end := pos + int64(len(line)) + 1 // +1 for \n
+		if len(bytes.TrimSpace(line)) > 0 {
+			var e runapi.AgentRunEvent
+			if json.Unmarshal(line, &e) == nil {
+				lastValidEnd = end
+				lastSeq = e.Seq
 			}
 		}
-		if err != nil {
-			break
-		}
+		pos = end
 	}
-	// Handle last line without trailing newline.
-	if hasContent {
-		count++
+	if scanErr := scanner.Err(); scanErr != nil {
+		return 0, 0, fmt.Errorf("events: scan %s: %w", path, scanErr)
 	}
-	return count, nil
+	if lastSeq < 0 {
+		return 0, 0, nil
+	}
+	return lastSeq + 1, lastValidEnd, nil
 }

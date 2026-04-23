@@ -234,17 +234,17 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSen
 			"workspace", req.Workspace, "to", req.To)
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.To))
 	}
-	if agent.Status.State == apiruntime.StatusError {
+	if agent.Status.Status == apiruntime.StatusError {
 		a.logger.Warn("workspace/send: target agent in error state",
 			"workspace", req.Workspace, "to", req.To)
 		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "target agent is in error state"}
 	}
-	if agent.Status.State != apiruntime.StatusIdle {
+	if agent.Status.Status != apiruntime.StatusIdle {
 		a.logger.Warn("workspace/send: target agent not idle",
-			"workspace", req.Workspace, "to", req.To, "state", agent.Status.State)
+			"workspace", req.Workspace, "to", req.To, "state", agent.Status.Status)
 		return nil, &jsonrpc.RPCError{
 			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("target agent not in idle state: %s", agent.Status.State),
+			Message: fmt.Sprintf("target agent not in idle state: %s", agent.Status.Status),
 		}
 	}
 
@@ -259,7 +259,7 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSen
 		}
 		state := "<missing>"
 		if current != nil {
-			state = string(current.Status.State)
+			state = string(current.Status.Status)
 		}
 		return nil, &jsonrpc.RPCError{
 			Code:    pkgariapi.CodeRecoveryBlocked,
@@ -335,7 +335,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s is disabled", ar.Spec.Agent))
 	}
 
-	ar.Status.State = apiruntime.StatusCreating
+	ar.Status.Status = apiruntime.StatusCreating
 	if err := a.agents.Create(ctx, ar); err != nil {
 		var alreadyExists *agentd.ErrAgentRunAlreadyExists
 		if errors.As(err, &alreadyExists) {
@@ -355,7 +355,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 			a.logger.Warn("agentrun/create: agent-run start failed",
 				"workspace", wsName, "name", agName, "error", err)
 			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, pkgariapi.AgentRunStatus{
-				State:        apiruntime.StatusError,
+				Status:       apiruntime.StatusError,
 				ErrorMessage: err.Error(),
 			})
 		} else {
@@ -381,24 +381,7 @@ func (a *agentRunAdapter) Get(ctx context.Context, wsName, name string) (*pkgari
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", wsName, name))
 	}
 
-	result := agent.ARIView()
-
-	// Best-effort: populate agent-run runtime state if available.
-	if rts, err := a.processes.RuntimeStatus(ctx, wsName, name); err == nil {
-		st := rts.State
-		socketPath := agent.Status.RunSocketPath
-		if p := a.processes.GetProcess(wsName + "/" + name); p != nil {
-			socketPath = p.SocketPath
-		}
-		result.Status.Run = &pkgariapi.RunStateInfo{
-			Status:     string(st.Status),
-			PID:        agent.Status.RunPID,
-			Bundle:     st.Bundle,
-			SocketPath: socketPath,
-		}
-	}
-
-	return &result, nil
+	return copyVal(agent.ARIView()), nil
 }
 
 // List handles agentrun/list.
@@ -411,7 +394,7 @@ func (a *agentRunAdapter) List(ctx context.Context, opts pkgariapi.ListOptions) 
 
 	filter := &pkgariapi.AgentRunFilter{
 		Workspace: wsFilter,
-		State:     apiruntime.Status(stFilter),
+		Status:    apiruntime.Status(stFilter),
 	}
 	agentRuns, err := a.agents.List(ctx, filter)
 	if err != nil {
@@ -478,12 +461,12 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPro
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.Name))
 	}
 
-	if agent.Status.State != apiruntime.StatusIdle {
+	if agent.Status.Status != apiruntime.StatusIdle {
 		a.logger.Warn("agentrun/prompt: agent not in idle state",
-			"workspace", req.Workspace, "name", req.Name, "state", agent.Status.State)
+			"workspace", req.Workspace, "name", req.Name, "state", agent.Status.Status)
 		return nil, &jsonrpc.RPCError{
 			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("agent not in idle state: %s", agent.Status.State),
+			Message: fmt.Sprintf("agent not in idle state: %s", agent.Status.Status),
 		}
 	}
 
@@ -498,7 +481,7 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPro
 		}
 		state := "<missing>"
 		if current != nil {
-			state = string(current.Status.State)
+			state = string(current.Status.Status)
 		}
 		return nil, &jsonrpc.RPCError{
 			Code:    pkgariapi.CodeRecoveryBlocked,
@@ -581,10 +564,10 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 	}
 
 	// Agents in terminal states have no active agent-run.
-	needsStop := agent.Status.State != apiruntime.StatusStopped && agent.Status.State != apiruntime.StatusError
+	needsStop := agent.Status.Status != apiruntime.StatusStopped && agent.Status.Status != apiruntime.StatusError
 
 	if err := a.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
-		State: apiruntime.StatusCreating,
+		Status: apiruntime.StatusRestarting,
 	}); err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
@@ -598,7 +581,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 			}
 			// Stop() transitions state to "stopped"; re-set to "creating" for Start().
 			if err := a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
-				State: apiruntime.StatusCreating,
+				Status: apiruntime.StatusCreating,
 			}); err != nil {
 				a.logger.Warn("agentrun/restart: failed to re-transition to creating",
 					"workspace", wsName, "name", name, "error", err)
@@ -609,7 +592,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 			a.logger.Warn("agentrun/restart: agent-run start failed",
 				"workspace", wsName, "name", name, "error", err)
 			_ = a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
-				State:        apiruntime.StatusError,
+				Status:       apiruntime.StatusError,
 				ErrorMessage: err.Error(),
 			})
 		}
@@ -620,7 +603,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 	if err2 != nil || agentUpdated == nil {
 		agentUpdated = &pkgariapi.AgentRun{
 			Metadata: pkgariapi.ObjectMeta{Workspace: wsName, Name: name},
-			Status:   pkgariapi.AgentRunStatus{State: apiruntime.StatusCreating},
+			Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusCreating},
 		}
 	}
 	return copyVal(agentUpdated.ARIView()), nil
@@ -757,7 +740,7 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkga
 		s.logger.Warn("prompt failure: current state lookup failed",
 			"workspace", wsName, "name", name, "error", err)
 	}
-	if current != nil && current.Status.State == apiruntime.StatusStopped {
+	if current != nil && current.Status.Status == apiruntime.StatusStopped {
 		s.logger.Info("prompt failure: ignored after stop",
 			"workspace", wsName, "name", name, "error", cause)
 		return
@@ -768,7 +751,7 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkga
 		if current != nil {
 			status = current.Status
 		}
-		status.State = rts.State.Status
+		status.Status = rts.State.Status
 		status.ErrorMessage = cause.Error()
 		_ = s.agents.UpdateStatus(ctx, wsName, name, status)
 		return
@@ -784,18 +767,15 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkga
 		s.logger.Warn("prompt failure: current state lookup failed",
 			"workspace", wsName, "name", name, "error", err)
 	}
-	if current != nil && current.Status.State == apiruntime.StatusStopped {
+	if current != nil && current.Status.Status == apiruntime.StatusStopped {
 		s.logger.Info("prompt failure: ignored after stop",
 			"workspace", wsName, "name", name, "error", cause)
 		return
 	}
 
 	_ = s.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
-		State:         apiruntime.StatusError,
-		RunSocketPath: fallback.RunSocketPath,
-		RunStateDir:   fallback.RunStateDir,
-		RunPID:        fallback.RunPID,
-		ErrorMessage:  cause.Error(),
+		Status:       apiruntime.StatusError,
+		ErrorMessage: cause.Error(),
 	})
 }
 

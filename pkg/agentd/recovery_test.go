@@ -48,10 +48,10 @@ func createRecoveryTestAgent(t *testing.T, ctx context.Context, metaStore *store
 			Agent: "default",
 		},
 		Status: pkgariapi.AgentRunStatus{
-			State:         state,
-			RunSocketPath: socketPath,
-			RunStateDir:   "/tmp/run-state-" + name,
-			RunPID:        99999,
+			Status:     state,
+			SocketPath: socketPath,
+			StateDir:   "/tmp/run-state-" + name,
+			PID:        99999,
 		},
 	}
 	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
@@ -128,7 +128,7 @@ func TestRecoverSessions_DeadRun(t *testing.T) {
 	// Verify agent was marked stopped.
 	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusStopped, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusStopped, agent.Status.Status,
 		"dead agent-run agent should be marked stopped")
 
 	// Verify the agent is NOT in the processes map.
@@ -203,7 +203,7 @@ func TestRecoverSessions_MixedLiveAndDead(t *testing.T) {
 	assert.Nil(t, pm.GetProcess(deadKey), "dead agent should not be in processes map")
 	deadAgent, err := metaStore.GetAgentRun(ctx, deadWS, deadName)
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusStopped, deadAgent.Status.State)
+	assert.Equal(t, apiruntime.StatusStopped, deadAgent.Status.Status)
 
 	// Clean up the live mock.
 	srv.close()
@@ -232,7 +232,7 @@ func TestRecoverSessions_NoSocketPath(t *testing.T) {
 	// Agent should be marked stopped.
 	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusStopped, agent.Status.State)
+	assert.Equal(t, apiruntime.StatusStopped, agent.Status.Status)
 }
 
 // TestRecoverSessions_RunReportsStopped verifies that when an agent-run reports
@@ -265,7 +265,7 @@ func TestRecoverSessions_RunReportsStopped(t *testing.T) {
 	// Agent should be marked stopped (fail-closed).
 	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusStopped, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusStopped, agent.Status.Status,
 		"run-reports-stopped agent should be marked stopped in DB")
 
 	// Agent should NOT be in the processes map.
@@ -311,7 +311,7 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 	// Agent state in DB should now be "running" (reconciled from idle).
 	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusRunning, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusRunning, agent.Status.Status,
 		"agent should be transitioned from idle to running")
 
 	// Agent should be in the processes map.
@@ -373,7 +373,7 @@ func TestRecoverSessions_RunMismatchLogsWarning(t *testing.T) {
 	// does not update the DB state.
 	agent, err := metaStore.GetAgentRun(ctx, ws, name)
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusCreating, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusCreating, agent.Status.Status,
 		"DB state should remain creating (mismatch only logged, not reconciled)")
 
 	// Mock agent-run should have been subscribed (recovery completed).
@@ -407,7 +407,7 @@ func createAgentForRecovery(t *testing.T, ctx context.Context, metaStore *store.
 			Agent: "default",
 		},
 		Status: pkgariapi.AgentRunStatus{
-			State: state,
+			Status: state,
 		},
 	}
 	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
@@ -431,7 +431,7 @@ func TestRecoverSessions_CreatingAgentMarkedError(t *testing.T) {
 	agent, err := metaStore.GetAgentRun(ctx, "default", "stuck-creating")
 	require.NoError(t, err)
 	require.NotNil(t, agent)
-	assert.Equal(t, apiruntime.StatusError, agent.Status.State,
+	assert.Equal(t, apiruntime.StatusError, agent.Status.Status,
 		"agent stuck in creating should be marked error after daemon restart")
 	assert.Contains(t, agent.Status.ErrorMessage, "daemon restarted during creating phase")
 }
@@ -455,7 +455,7 @@ func TestRecoverSessions_SkipsErrorAgents(t *testing.T) {
 	// The error state should be unchanged.
 	agent, err := metaStore.GetAgentRun(ctx, "default", "error-agent")
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusError, agent.Status.State)
+	assert.Equal(t, apiruntime.StatusError, agent.Status.Status)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -486,10 +486,10 @@ func TestRecovery_AlwaysAttemptsSessionLoad(t *testing.T) {
 		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "session-load-agent"},
 		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
-			State:         apiruntime.StatusIdle,
-			RunSocketPath: socketPath,
-			RunStateDir:   stateDir,
-			RunPID:        99999,
+			Status:     apiruntime.StatusIdle,
+			SocketPath: socketPath,
+			StateDir:   stateDir,
+			PID:        99999,
 		},
 	}
 	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
@@ -548,10 +548,10 @@ func TestRecovery_SessionLoadFailure_Continues(t *testing.T) {
 		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "load-fail-agent"},
 		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
-			State:         apiruntime.StatusIdle,
-			RunSocketPath: socketPath,
-			RunStateDir:   stateDir,
-			RunPID:        99999,
+			Status:     apiruntime.StatusIdle,
+			SocketPath: socketPath,
+			StateDir:   stateDir,
+			PID:        99999,
 		},
 	}
 	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))
@@ -597,10 +597,10 @@ func TestRecovery_NoSessionID_SkipsLoad(t *testing.T) {
 		Metadata: pkgariapi.ObjectMeta{Workspace: "default", Name: "no-session-agent"},
 		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
-			State:         apiruntime.StatusIdle,
-			RunSocketPath: socketPath,
-			RunStateDir:   stateDir,
-			RunPID:        99999,
+			Status:     apiruntime.StatusIdle,
+			SocketPath: socketPath,
+			StateDir:   stateDir,
+			PID:        99999,
 		},
 	}
 	require.NoError(t, metaStore.CreateAgentRun(ctx, agent))

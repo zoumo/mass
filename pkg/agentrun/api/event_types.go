@@ -432,6 +432,14 @@ type RuntimeStatus struct {
 	SessionChanged []string `json:"sessionChanged,omitempty"`
 }
 
+// OperationAuditEvent records the result of a user-triggered session operation.
+type OperationAuditEvent struct {
+	Operation string            `json:"operation"`
+	Params    map[string]string `json:"params,omitempty"`
+	Success   bool              `json:"success"`
+	Error     string            `json:"error,omitempty"`
+}
+
 // RuntimeUpdateEvent is the merged event type for runtime status changes
 // and session metadata updates. All fields are optional pointers — nil means
 // "not updated", non-nil means "updated" (empty value = cleared).
@@ -442,6 +450,7 @@ type RuntimeUpdateEvent struct {
 	ConfigOptions     *ConfigOptionEvent      `json:"configOptions,omitempty"`
 	SessionInfo       *SessionInfoEvent       `json:"sessionInfo,omitempty"`
 	Usage             *UsageEvent             `json:"usage,omitempty"`
+	OperationAudit    *OperationAuditEvent    `json:"operationAudit,omitempty"`
 }
 
 func (RuntimeUpdateEvent) eventType() string { return EventTypeRuntimeUpdate }

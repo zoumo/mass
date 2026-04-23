@@ -157,7 +157,7 @@ func seedAgent(t *testing.T, metaStore *store.Store, wsName, name string, state 
 		},
 		Spec: pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
-			State: state,
+			Status: state,
 		},
 	})
 	require.NoError(t, err)
@@ -291,7 +291,7 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 
 	var result pkgariapi.AgentRun
 	require.NoError(t, json.Unmarshal(raw, &result))
-	assert.Equal(t, apiruntime.StatusCreating, result.Status.State)
+	assert.Equal(t, apiruntime.StatusCreating, result.Status.Status)
 	assert.Equal(t, "ac-ws", result.Metadata.Workspace)
 	assert.Equal(t, "my-agent", result.Metadata.Name)
 
@@ -321,7 +321,7 @@ func TestAgentListAndGet(t *testing.T) {
 		Workspace: "als-ws",
 		Name:      "agent-idle",
 	}, &getResult))
-	assert.Equal(t, apiruntime.StatusIdle, getResult.Status.State)
+	assert.Equal(t, apiruntime.StatusIdle, getResult.Status.Status)
 	assert.Equal(t, "als-ws", getResult.Metadata.Workspace)
 	assert.Equal(t, "agent-idle", getResult.Metadata.Name)
 }
@@ -361,7 +361,7 @@ func TestAgentPromptRejectsEmptyPrompt(t *testing.T) {
 	agent, getErr := env.store.GetAgentRun(context.Background(), "empty-prompt-ws", "agent-idle")
 	require.NoError(t, getErr)
 	require.NotNil(t, agent)
-	assert.Equal(t, apiruntime.StatusIdle, agent.Status.State)
+	assert.Equal(t, apiruntime.StatusIdle, agent.Status.Status)
 }
 
 func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
@@ -408,7 +408,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		Workspace: "reserve-ws",
 		Name:      agentName,
 	}, &getResult))
-	assert.Equal(t, apiruntime.StatusRunning, getResult.Status.State)
+	assert.Equal(t, apiruntime.StatusRunning, getResult.Status.Status)
 
 	err = env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 		Workspace: "reserve-ws",
@@ -434,7 +434,7 @@ func TestAgentRunRestartFromIdle(t *testing.T) {
 		Name:      "idle-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from idle state must succeed")
-	assert.Equal(t, apiruntime.StatusCreating, result.Status.State)
+	assert.Equal(t, apiruntime.StatusRestarting, result.Status.Status)
 }
 
 func TestAgentRunRestartFromRunning(t *testing.T) {
@@ -448,7 +448,7 @@ func TestAgentRunRestartFromRunning(t *testing.T) {
 		Name:      "running-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from running state must succeed")
-	assert.Equal(t, apiruntime.StatusCreating, result.Status.State)
+	assert.Equal(t, apiruntime.StatusRestarting, result.Status.Status)
 }
 
 func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
@@ -1009,7 +1009,7 @@ func TestAgentRunCreateAcceptsEnabledAgent(t *testing.T) {
 	} else {
 		var result pkgariapi.AgentRun
 		require.NoError(t, json.Unmarshal(raw, &result))
-		assert.Equal(t, apiruntime.StatusCreating, result.Status.State)
+		assert.Equal(t, apiruntime.StatusCreating, result.Status.Status)
 	}
 }
 

@@ -21,6 +21,11 @@ const (
 
 	// StatusError means the agent encountered an unrecoverable error.
 	StatusError Status = "error"
+
+	// StatusRestarting means the agent-run is being restarted.
+	// Transitions: restarting → stopped → creating → idle.
+	// Treated as transient: daemon recovery cleans up stuck-restarting agents.
+	StatusRestarting Status = "restarting"
 )
 
 // String implements fmt.Stringer.

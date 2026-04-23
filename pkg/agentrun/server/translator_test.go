@@ -2,7 +2,6 @@ package server
 
 import (
 	"log/slog"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
 )
 
 func makeNotif(fn func(*acp.SessionUpdate)) acp.SessionNotification {
@@ -50,7 +50,7 @@ func sendAndDrainEvent(t *testing.T, in chan<- acp.SessionNotification, ch <-cha
 
 func TestTranslate_AgentMessageChunk(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -73,7 +73,7 @@ func TestTranslate_AgentMessageChunk(t *testing.T) {
 
 func TestTranslate_AgentThoughtChunk(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -93,7 +93,7 @@ func TestTranslate_AgentThoughtChunk(t *testing.T) {
 
 func TestTranslate_ToolCall(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -110,7 +110,7 @@ func TestTranslate_ToolCall(t *testing.T) {
 
 func TestTranslate_ToolCallUpdate(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -128,7 +128,7 @@ func TestTranslate_ToolCallUpdate(t *testing.T) {
 
 func TestTranslate_ToolCallUpdate_NilStatus(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -145,7 +145,7 @@ func TestTranslate_ToolCallUpdate_NilStatus(t *testing.T) {
 
 func TestTranslate_Plan(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -164,7 +164,7 @@ func TestTranslate_Plan(t *testing.T) {
 
 func TestTranslate_UserMessageChunk(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -184,7 +184,7 @@ func TestTranslate_UserMessageChunk(t *testing.T) {
 
 func TestTranslate_PreviouslyIgnoredVariants(t *testing.T) {
 	in := make(chan acp.SessionNotification, 3)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -214,7 +214,7 @@ func TestTranslate_PreviouslyIgnoredVariants(t *testing.T) {
 
 func TestTranslate_UnknownVariant(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -229,7 +229,7 @@ func TestTranslate_UnknownVariant(t *testing.T) {
 
 func TestFanOut_ThreeSubscribers(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch1, _, _ := tr.Subscribe()
 	ch2, _, _ := tr.Subscribe()
 	ch3, _, _ := tr.Subscribe()
@@ -253,7 +253,7 @@ func TestFanOut_ThreeSubscribers(t *testing.T) {
 
 func TestNotifyTurnStartAndEnd(t *testing.T) {
 	in := make(chan acp.SessionNotification)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -274,7 +274,7 @@ func TestNotifyTurnStartAndEnd(t *testing.T) {
 
 func TestNotifyStateChange(t *testing.T) {
 	in := make(chan acp.SessionNotification)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, nextSeq := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -297,20 +297,20 @@ func TestNotifyStateChange(t *testing.T) {
 }
 
 func TestNotifyStateChange_WithSessionChanged(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "events.jsonl")
-
-	evLog, err := OpenEventLog(logPath)
-	require.NoError(t, err)
-	defer evLog.Close()
+	stateDir := t.TempDir()
+	sessionID := "test-session-456"
 
 	in := make(chan acp.SessionNotification)
-	tr := NewTranslator("run-1", in, evLog, slog.Default())
+	tr := NewTranslator("run-1", in, stateDir, slog.Default())
+	tr.SetSessionID(sessionID)
 	tr.Start()
 
 	tr.NotifyStateChange("idle", "idle", 42, "bootstrap-metadata", []string{"agentInfo", "capabilities"})
 
+	tr.Stop()
+
 	// Read the event log to verify the persisted event.
+	logPath := spec.SessionEventLogPath(stateDir, sessionID)
 	entries, readErr := ReadEventLog(logPath, 0)
 	require.NoError(t, readErr)
 	require.Len(t, entries, 1)
@@ -326,8 +326,6 @@ func TestNotifyStateChange_WithSessionChanged(t *testing.T) {
 	assert.Equal(t, "idle", ru.Status.PreviousStatus)
 	assert.Equal(t, "idle", ru.Status.Status)
 	assert.Equal(t, 42, ru.Status.PID)
-
-	tr.Stop()
 }
 
 func TestEventRoundTrip(t *testing.T) {
@@ -397,7 +395,7 @@ func TestEventTypes(t *testing.T) {
 // TurnID, and that a runtime event emitted after NotifyTurnEnd carries no TurnID.
 func TestTurnAwareEvent_TurnIdAssigned(t *testing.T) {
 	in := make(chan acp.SessionNotification, 4)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -429,7 +427,7 @@ func TestTurnAwareEvent_TurnIdAssigned(t *testing.T) {
 // between consecutive turns.
 func TestTurnAwareEvent_TurnIDChangesPerTurn(t *testing.T) {
 	in := make(chan acp.SessionNotification, 8)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -452,7 +450,7 @@ func TestTurnAwareEvent_TurnIDChangesPerTurn(t *testing.T) {
 // events emitted during an active turn do not carry turn fields.
 func TestTurnAwareEvent_StateChangeExcludesTurnFields(t *testing.T) {
 	in := make(chan acp.SessionNotification)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -474,7 +472,7 @@ func TestTurnAwareEvent_StateChangeExcludesTurnFields(t *testing.T) {
 // (session_info, usage, etc.) carry TurnID when inside an active turn.
 func TestTurnAwareEvent_MetadataEventInTurn(t *testing.T) {
 	in := make(chan acp.SessionNotification, 2)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -498,7 +496,7 @@ func TestTurnAwareEvent_MetadataEventInTurn(t *testing.T) {
 // do NOT carry TurnID when outside an active turn.
 func TestTurnAwareEvent_MetadataEventOutsideTurn(t *testing.T) {
 	in := make(chan acp.SessionNotification, 2)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -517,15 +515,12 @@ func TestTurnAwareEvent_MetadataEventOutsideTurn(t *testing.T) {
 // TestFailClosed_AppendFailureDropsEvent verifies that if EventLog.Append fails,
 // the event is not fanned out and nextSeq is not incremented.
 func TestFailClosed_AppendFailureDropsEvent(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "events.jsonl")
-
-	evLog, err := OpenEventLog(logPath)
-	require.NoError(t, err)
-	defer evLog.Close()
+	stateDir := t.TempDir()
+	sessionID := "fc-session"
 
 	in := make(chan acp.SessionNotification, 4)
-	tr := NewTranslator("run-1", in, evLog, slog.Default())
+	tr := NewTranslator("run-1", in, stateDir, slog.Default())
+	tr.SetSessionID(sessionID)
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -539,8 +534,10 @@ func TestFailClosed_AppendFailureDropsEvent(t *testing.T) {
 	ev0 := drainEvent(t, ch)
 	assert.Equal(t, 0, ev0.Seq)
 
-	// Now close the event log to force Append to fail.
-	require.NoError(t, evLog.Close())
+	// Close the internal event log to force Append to fail.
+	tr.mu.Lock()
+	require.NoError(t, tr.log.Close())
+	tr.mu.Unlock()
 
 	// Send a second event — Append will fail (file closed), so it should be dropped.
 	in <- makeNotif(func(u *acp.SessionUpdate) {
@@ -561,14 +558,12 @@ func TestFailClosed_AppendFailureDropsEvent(t *testing.T) {
 // TestConcurrentBroadcast_SeqContinuous verifies that concurrent broadcasts
 // from NotifyStateChange and ACP events produce a JSONL log with no seq gaps.
 func TestConcurrentBroadcast_SeqContinuous(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "events.jsonl")
-
-	evLog, err := OpenEventLog(logPath)
-	require.NoError(t, err)
+	stateDir := t.TempDir()
+	sessionID := "concurrent-session"
 
 	in := make(chan acp.SessionNotification, 100)
-	tr := NewTranslator("run-1", in, evLog, slog.Default())
+	tr := NewTranslator("run-1", in, stateDir, slog.Default())
+	tr.SetSessionID(sessionID)
 	ch, subID, _ := tr.Subscribe()
 	tr.Start()
 
@@ -619,9 +614,9 @@ func TestConcurrentBroadcast_SeqContinuous(t *testing.T) {
 
 	tr.Unsubscribe(subID)
 	tr.Stop()
-	require.NoError(t, evLog.Close())
 
 	// Verify JSONL file has consecutive seq numbers.
+	logPath := spec.SessionEventLogPath(stateDir, sessionID)
 	entries, err := ReadEventLog(logPath, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, numEvents, "JSONL must have exactly numEvents entries")
@@ -633,7 +628,7 @@ func TestConcurrentBroadcast_SeqContinuous(t *testing.T) {
 // TestTurnAwareEvent_ReplayOrdering verifies replay ordering invariants.
 func TestTurnAwareEvent_ReplayOrdering(t *testing.T) {
 	in := make(chan acp.SessionNotification, 8)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -687,7 +682,7 @@ func TestTurnAwareEvent_ReplayOrdering(t *testing.T) {
 // per-type counts after a full prompt turn cycle.
 func TestEventCounts_PromptTurn(t *testing.T) {
 	in := make(chan acp.SessionNotification, 8)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -731,15 +726,12 @@ func TestEventCounts_PromptTurn(t *testing.T) {
 // TestEventCounts_FailClosedOnAppendFailure verifies that eventCounts are NOT
 // incremented when EventLog.Append fails (fail-closed semantics).
 func TestEventCounts_FailClosedOnAppendFailure(t *testing.T) {
-	dir := t.TempDir()
-	logPath := filepath.Join(dir, "events.jsonl")
-
-	evLog, err := OpenEventLog(logPath)
-	require.NoError(t, err)
-	defer evLog.Close()
+	stateDir := t.TempDir()
+	sessionID := "fc-counts-session"
 
 	in := make(chan acp.SessionNotification, 4)
-	tr := NewTranslator("run-1", in, evLog, slog.Default())
+	tr := NewTranslator("run-1", in, stateDir, slog.Default())
+	tr.SetSessionID(sessionID)
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -748,8 +740,10 @@ func TestEventCounts_FailClosedOnAppendFailure(t *testing.T) {
 	sendAndDrainEvent(t, in, ch, "ok")
 	assert.Equal(t, 1, tr.EventCounts()["agent_message"], "agent_message count after successful event")
 
-	// Close the event log file to force Append failures.
-	require.NoError(t, evLog.Close())
+	// Close the internal event log to force Append failures.
+	tr.mu.Lock()
+	require.NoError(t, tr.log.Close())
+	tr.mu.Unlock()
 
 	// Send another AgentMessageChunk — should be dropped (fail-closed).
 	in <- makeNotif(func(u *acp.SessionUpdate) {
@@ -774,7 +768,7 @@ func TestEventCounts_FailClosedOnAppendFailure(t *testing.T) {
 // called with a ConfigOptionEvent when a ConfigOptionUpdate notification arrives.
 func TestSessionMetadataHook_ConfigOption(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 
 	var captured runapi.Event
@@ -825,7 +819,7 @@ func TestSessionMetadataHook_ConfigOption(t *testing.T) {
 // is NOT called for non-metadata event types like text.
 func TestSessionMetadataHook_IgnoresNonMetadata(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 
 	hookCalled := false
@@ -851,7 +845,7 @@ func TestSessionMetadataHook_IgnoresNonMetadata(t *testing.T) {
 // TestSessionMetadataHook_AllFourTypes verifies the hook fires for all 4 metadata types.
 func TestSessionMetadataHook_AllFourTypes(t *testing.T) {
 	in := make(chan acp.SessionNotification, 4)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 
 	var mu sync.Mutex

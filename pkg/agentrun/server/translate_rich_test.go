@@ -16,7 +16,7 @@ import (
 
 func TestTranslateRich_ToolCall_FullFields(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -76,7 +76,7 @@ func TestTranslateRich_ToolCall_FullFields(t *testing.T) {
 
 func TestTranslateRich_ToolCallUpdate_FullFields(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -117,7 +117,7 @@ func TestTranslateRich_ToolCallUpdate_FullFields(t *testing.T) {
 
 func TestTranslateRich_ContentBlock_Text(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -151,7 +151,7 @@ func TestTranslateRich_ContentBlock_Text(t *testing.T) {
 
 func TestTranslateRich_ContentBlock_Image(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -185,7 +185,7 @@ func TestTranslateRich_ContentBlock_Image(t *testing.T) {
 
 func TestTranslateRich_ContentBlock_Audio(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -214,7 +214,7 @@ func TestTranslateRich_ContentBlock_Audio(t *testing.T) {
 
 func TestTranslateRich_ContentBlock_ResourceLink(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -260,7 +260,7 @@ func TestTranslateRich_ContentBlock_ResourceLink(t *testing.T) {
 
 func TestTranslateRich_ContentBlock_Resource(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -300,7 +300,7 @@ func TestTranslateRich_ContentBlock_Resource(t *testing.T) {
 
 func TestTranslateRich_AvailableCommandsUpdate(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -344,7 +344,7 @@ func TestTranslateRich_AvailableCommandsUpdate(t *testing.T) {
 
 func TestTranslateRich_CurrentModeUpdate(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -368,7 +368,7 @@ func TestTranslateRich_CurrentModeUpdate(t *testing.T) {
 
 func TestTranslateRich_ConfigOptionUpdate(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -422,7 +422,7 @@ func TestTranslateRich_ConfigOptionUpdate(t *testing.T) {
 
 func TestTranslateRich_ConfigOptionUpdate_GroupedOptions(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -470,7 +470,7 @@ func TestTranslateRich_ConfigOptionUpdate_GroupedOptions(t *testing.T) {
 
 func TestTranslateRich_SessionInfoUpdate(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -501,7 +501,7 @@ func TestTranslateRich_SessionInfoUpdate(t *testing.T) {
 
 func TestTranslateRich_UsageUpdate(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()
@@ -531,7 +531,7 @@ func TestTranslateRich_UsageUpdate(t *testing.T) {
 
 func TestTranslateRich_RawInputOutput_RoundTrip(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("s1", in, nil, slog.Default())
+	tr := NewTranslator("s1", in, "", slog.Default())
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 	defer tr.Stop()

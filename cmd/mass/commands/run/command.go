@@ -98,14 +98,7 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string, logCfg *l
 		return err
 	}
 
-	logPath := spec.EventLogPath(runStateDir)
-	evLog, err := runserver.OpenEventLog(logPath)
-	if err != nil {
-		return fmt.Errorf("agent-run: open event log: %w", err)
-	}
-	defer evLog.Close()
-
-	trans := runserver.NewTranslator(id, mgr.Events(), evLog, logger)
+	trans := runserver.NewTranslator(id, mgr.Events(), runStateDir, logger)
 	// Inject the protocol session ID now that Create() has completed the handshake.
 	trans.SetSessionID(mgr.SessionID())
 	mgr.SetStateChangeHook(func(change acpruntime.StateChange) {
@@ -133,7 +126,7 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string, logCfg *l
 	}
 
 	// Build service and register it with a new jsonrpc.Server.
-	svc := runserver.New(mgr, trans, logPath, logger)
+	svc := runserver.New(mgr, trans, logger)
 	srv := jsonrpc.NewServer(logger)
 	runserver.Register(srv, svc)
 

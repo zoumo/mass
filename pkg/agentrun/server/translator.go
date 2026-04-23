@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -11,15 +12,17 @@ import (
 
 	"github.com/zoumo/mass/internal/logging"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
 )
 
 // Translator drains ACP session notifications, translates each notification
 // into an AgentRunEvent, and fans the result out to all registered subscriber
-// channels. If log is non-nil, every AgentRunEvent is also appended to the JSONL
-// event log for durable history (log-before-fanout under mutex).
+// channels. If stateDir is non-empty, every AgentRunEvent is also appended to
+// a per-session JSONL event log for durable history (log-before-fanout under mutex).
 type Translator struct {
 	runID     string
 	sessionID string // protocol session ID, set after handshake via SetSessionID
+	stateDir  string // base state dir; empty = no logging
 	in        <-chan acp.SessionNotification
 	log       *EventLog
 	logger    *slog.Logger
@@ -42,19 +45,15 @@ type Translator struct {
 
 // NewTranslator creates a Translator that reads from in.
 // runID is the agent run identifier (the agent-run --id value).
-// Pass a non-nil EventLog to enable durable event logging.
-func NewTranslator(runID string, in <-chan acp.SessionNotification, log *EventLog, logger *slog.Logger) *Translator {
-	nextSeq := 0
-	if log != nil {
-		nextSeq = log.NextSeq()
-	}
+// Pass a non-empty stateDir to enable durable per-session event logging.
+func NewTranslator(runID string, in <-chan acp.SessionNotification, stateDir string, logger *slog.Logger) *Translator {
 	return &Translator{
 		runID:       runID,
+		stateDir:    stateDir,
 		in:          in,
-		log:         log,
 		logger:      logger.With("subsystem", "events"),
 		subs:        make(map[int]chan runapi.AgentRunEvent),
-		nextSeq:     nextSeq,
+		nextSeq:     0,
 		done:        make(chan struct{}),
 		eventCounts: make(map[string]int),
 	}
@@ -62,10 +61,51 @@ func NewTranslator(runID string, in <-chan acp.SessionNotification, log *EventLo
 
 // SetSessionID injects the protocol session ID after the session/new handshake
 // completes. This is called by the run command after mgr.Create() succeeds.
+// When stateDir is set, it opens (or creates) the per-session event log at
+// {stateDir}/bundles/events/{base64url(id)}.jsonl and resets nextSeq accordingly.
+// Any damaged tail in an existing log file is truncated before appending.
 func (t *Translator) SetSessionID(id string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.sessionID = id
+
+	if t.stateDir == "" || id == "" {
+		return
+	}
+
+	// Close the previous session log if any.
+	if t.log != nil {
+		_ = t.log.Close()
+		t.log = nil
+	}
+
+	eventsDir := spec.EventsDir(t.stateDir)
+	if err := os.MkdirAll(eventsDir, 0o750); err != nil {
+		t.logger.Error("failed to create events dir", "error", err)
+		return
+	}
+
+	path := spec.SessionEventLogPath(t.stateDir, id)
+	log, err := OpenEventLog(path)
+	if err != nil {
+		t.logger.Error("failed to open session event log", "path", path, "error", err)
+		return
+	}
+	t.log = log
+	t.nextSeq = log.NextSeq()
+}
+
+// ReadCurrentSessionLog reads events from the current session's log file starting
+// at fromSeq. Returns nil if no session is active or no stateDir was configured.
+func (t *Translator) ReadCurrentSessionLog(fromSeq int) ([]runapi.AgentRunEvent, error) {
+	t.mu.Lock()
+	sid := t.sessionID
+	stateDir := t.stateDir
+	t.mu.Unlock()
+	if sid == "" || stateDir == "" {
+		return nil, nil
+	}
+	return ReadEventLog(spec.SessionEventLogPath(stateDir, sid), fromSeq)
 }
 
 // SetSessionMetadataHook registers a callback that is invoked after
@@ -203,6 +243,23 @@ func (t *Translator) NotifyUserPrompt(blocks []runapi.ContentBlock) {
 // watchers/subscribers see the error — not just the direct RPC caller.
 func (t *Translator) NotifyError(msg string) {
 	t.broadcastEvent(runapi.ErrorEvent{Msg: msg})
+}
+
+// NotifyOperationAudit broadcasts a runtime_update event recording the result
+// of a user-triggered session operation (cancel, set_model, stop).
+func (t *Translator) NotifyOperationAudit(op string, params map[string]string, err error) {
+	errMsg := ""
+	if err != nil {
+		errMsg = err.Error()
+	}
+	t.broadcastEvent(runapi.RuntimeUpdateEvent{
+		OperationAudit: &runapi.OperationAuditEvent{
+			Operation: op,
+			Params:    params,
+			Success:   err == nil,
+			Error:     errMsg,
+		},
+	})
 }
 
 // NotifyTurnEnd broadcasts a turn_end AgentRunEvent.

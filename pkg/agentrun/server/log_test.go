@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	spec "github.com/zoumo/mass/pkg/runtime-spec"
 )
 
 func testTime(t *testing.T) time.Time {
@@ -221,7 +222,7 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	}
 	require.NoError(t, log1.Close())
 
-	// Append a corrupt tail line (simulating a crash).
+	// Append a corrupt tail line (simulating a crash mid-write).
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
 	require.NoError(t, err)
 	_, err = f.WriteString("TRUNCATED\n")
@@ -233,26 +234,27 @@ func TestEventLog_AppendAfterDamagedTail(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 3, "damaged tail should be skipped before new append")
 
-	// Reopen — countLines sees 4 non-empty lines, so nextSeq = 4.
+	// Reopen — OpenEventLog truncates the damaged tail; nextSeq = last valid seq + 1 = 3.
 	log2, err := OpenEventLog(path)
 	require.NoError(t, err)
-	require.Equal(t, 4, log2.NextSeq())
+	require.Equal(t, 3, log2.NextSeq())
 
-	// Append with seq 4 succeeds.
-	ev4 := runapi.AgentRunEvent{RunID: "s1", Seq: 4, Time: testTime(t), Type: runapi.EventTypeAgentMessage, Payload: runapi.NewContentEvent(runapi.EventTypeAgentMessage, "", runapi.TextBlock("new"))}
-	require.NoError(t, log2.Append(ev4))
+	// Append with seq 3 succeeds.
+	ev3 := runapi.AgentRunEvent{RunID: "s1", Seq: 3, Time: testTime(t), Type: runapi.EventTypeAgentMessage, Payload: runapi.NewContentEvent(runapi.EventTypeAgentMessage, "", runapi.TextBlock("new"))}
+	require.NoError(t, log2.Append(ev3))
 	require.NoError(t, log2.Close())
 
-	// After appending, the corrupt line is now mid-file. ReadEventLog correctly
-	// identifies this as mid-file corruption.
-	_, err = ReadEventLog(path, 0)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "mid-file corruption")
+	// Damaged tail was truncated before append, so there is no corruption.
+	// ReadEventLog returns 4 consecutive valid entries.
+	entries, err = ReadEventLog(path, 0)
+	require.NoError(t, err)
+	require.Len(t, entries, 4)
+	assert.Equal(t, 3, entries[3].Seq)
 
-	// The file has 5 non-empty lines and OpenEventLog still works.
+	// Reopening again: nextSeq = 4.
 	log3, err := OpenEventLog(path)
 	require.NoError(t, err)
-	assert.Equal(t, 5, log3.NextSeq())
+	assert.Equal(t, 4, log3.NextSeq())
 	require.NoError(t, log3.Close())
 }
 
@@ -320,14 +322,12 @@ func TestEventLog_PartialWriteTruncation(t *testing.T) {
 }
 
 func TestEventLog_TranslatorWritesAgentRunEvent(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "events.jsonl")
-
-	evLog, err := OpenEventLog(path)
-	require.NoError(t, err)
+	stateDir := t.TempDir()
+	sessionID := "test-session-123"
 
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, evLog, slog.Default())
+	tr := NewTranslator("run-1", in, stateDir, slog.Default())
+	tr.SetSessionID(sessionID)
 	ch, _, _ := tr.Subscribe()
 	tr.Start()
 
@@ -339,8 +339,8 @@ func TestEventLog_TranslatorWritesAgentRunEvent(t *testing.T) {
 	<-ch
 
 	tr.Stop()
-	require.NoError(t, evLog.Close())
 
+	path := spec.SessionEventLogPath(stateDir, sessionID)
 	entries, err := ReadEventLog(path, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
@@ -355,7 +355,7 @@ func TestEventLog_TranslatorWritesAgentRunEvent(t *testing.T) {
 
 func TestTranslator_SetSessionID(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 
 	tr.SetSessionID("sess-abc")
 
@@ -370,7 +370,7 @@ func TestTranslator_SetSessionID(t *testing.T) {
 
 func TestTranslator_NotifyError(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 
 	ch, _, _ := tr.Subscribe()
 	tr.NotifyError("something broke")
@@ -385,7 +385,7 @@ func TestTranslator_NotifyError(t *testing.T) {
 
 func TestTranslator_LastSeq(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 
 	assert.Equal(t, -1, tr.LastSeq(), "no events yet")
 
@@ -402,7 +402,7 @@ func TestTranslator_LastSeq(t *testing.T) {
 
 func TestTranslator_EventCounts(t *testing.T) {
 	in := make(chan acp.SessionNotification, 1)
-	tr := NewTranslator("run-1", in, nil, slog.Default())
+	tr := NewTranslator("run-1", in, "", slog.Default())
 
 	ch, _, _ := tr.Subscribe()
 	tr.NotifyError("e1")

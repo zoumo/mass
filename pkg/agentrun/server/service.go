@@ -25,15 +25,14 @@ func nextWatchID() string {
 
 // Service implements Handler.
 type Service struct {
-	mgr     *acpruntime.Manager
-	trans   *Translator
-	logPath string
-	logger  *slog.Logger
+	mgr    *acpruntime.Manager
+	trans  *Translator
+	logger *slog.Logger
 }
 
 // New creates a new Service.
-func New(mgr *acpruntime.Manager, trans *Translator, logPath string, logger *slog.Logger) *Service {
-	return &Service{mgr: mgr, trans: trans, logPath: logPath, logger: logger.With("subsystem", "service")}
+func New(mgr *acpruntime.Manager, trans *Translator, logger *slog.Logger) *Service {
+	return &Service{mgr: mgr, trans: trans, logger: logger.With("subsystem", "service")}
 }
 
 func (s *Service) Prompt(ctx context.Context, req *runapi.SessionPromptParams) (*runapi.SessionPromptResult, error) {
@@ -59,10 +58,14 @@ func (s *Service) Prompt(ctx context.Context, req *runapi.SessionPromptParams) (
 	return &runapi.SessionPromptResult{StopReason: string(resp.StopReason)}, nil
 }
 
-func (s *Service) Cancel(ctx context.Context) error {
+func (s *Service) Cancel(ctx context.Context) (retErr error) {
 	s.logger.Debug("cancel")
+	defer func() {
+		s.trans.NotifyOperationAudit("cancel", nil, retErr)
+	}()
 	if err := s.mgr.Cancel(ctx); err != nil {
-		return jsonrpc.ErrInternal(err.Error())
+		retErr = jsonrpc.ErrInternal(err.Error())
+		return retErr
 	}
 	return nil
 }
@@ -184,8 +187,8 @@ func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, fromS
 		defer s.trans.Unsubscribe(subID)
 		disconnect := peer.DisconnectNotify()
 
-		// Replay historical events from event log (no mutex held).
-		entries, err := ReadEventLog(s.logPath, fromSeq)
+		// Replay historical events from the current session's event log (no mutex held).
+		entries, err := s.trans.ReadCurrentSessionLog(fromSeq)
 		if err != nil {
 			s.logger.Error("watch_event: replay read failed", "fromSeq", fromSeq, "error", err)
 			return
@@ -250,21 +253,24 @@ func (s *Service) Status(_ context.Context) (*runapi.RuntimeStatusResult, error)
 	}, nil
 }
 
-func (s *Service) SetModel(ctx context.Context, req *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error) {
+func (s *Service) SetModel(ctx context.Context, req *runapi.SessionSetModelParams) (_ *runapi.SessionSetModelResult, retErr error) {
 	s.logger.Debug("set_model", "modelID", req.ModelID)
+	defer func() {
+		s.trans.NotifyOperationAudit("set_model", map[string]string{"modelId": req.ModelID}, retErr)
+	}()
 	if req.ModelID == "" {
-		return nil, jsonrpc.ErrInvalidParams("missing modelId")
+		retErr = jsonrpc.ErrInvalidParams("missing modelId")
+		return nil, retErr
 	}
 	if err := s.mgr.SetModel(ctx, req.ModelID); err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
+		retErr = jsonrpc.ErrInternal(err.Error())
+		return nil, retErr
 	}
 	return &runapi.SessionSetModelResult{}, nil
 }
 
 func (s *Service) Stop(_ context.Context) error {
 	s.logger.Debug("stop")
-	// Stop signals are handled by the transport layer (the caller detects the
-	// reply and triggers Shutdown). The service layer itself has no lifecycle
-	// state to clean up here.
+	s.trans.NotifyOperationAudit("stop", nil, nil)
 	return nil
 }
