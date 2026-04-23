@@ -579,14 +579,15 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 				a.logger.Warn("agentrun/restart: pre-stop failed, continuing",
 					"workspace", wsName, "name", name, "error", err)
 			}
-			// Stop() transitions state to "stopped"; re-set to "creating" for Start().
-			if err := a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
-				Status: apiruntime.StatusCreating,
-			}); err != nil {
-				a.logger.Warn("agentrun/restart: failed to re-transition to creating",
-					"workspace", wsName, "name", name, "error", err)
-				return
-			}
+		}
+		// Transition to "creating" for Start() — required on all paths
+		// because the initial status was set to "restarting".
+		if err := a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
+			Status: apiruntime.StatusCreating,
+		}); err != nil {
+			a.logger.Warn("agentrun/restart: failed to transition to creating",
+				"workspace", wsName, "name", name, "error", err)
+			return
 		}
 		if _, err := a.processes.Start(bgCtx, wsName, name); err != nil {
 			a.logger.Warn("agentrun/restart: agent-run start failed",
