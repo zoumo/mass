@@ -141,7 +141,7 @@ make build
 
 ```bash
 # 1. Start the daemon
-mass server
+mass daemon start
 
 # 2. In another terminal — launch a claude agent in the current directory
 #    -w sets the workspace name, --agent picks a built-in agent definition
@@ -166,7 +166,9 @@ For declarative workflows, use `compose apply` with a YAML spec instead of imper
 
 | Command | Description |
 |---------|-------------|
-| `mass server` | Start the MASS daemon |
+| `mass daemon start` | Start the MASS daemon |
+| `mass daemon restart` | Restart the running daemon (SIGHUP → re-exec) |
+| `mass daemon status` | Check daemon health |
 | `mass run` | Directly spawn an agent-run process (low-level) |
 
 **`massctl`** — the CLI client. All operations go through ARI.
@@ -180,7 +182,6 @@ For declarative workflows, use `compose apply` with a YAML spec instead of imper
 | `massctl agentrun {create,get,stop,restart,delete}` | Agent-run lifecycle |
 | `massctl agentrun prompt` | Send a prompt to a running agent (`--wait` for response) |
 | `massctl agentrun chat` | Interactive TUI — chat, view diffs, replay events |
-| `massctl daemon status` | Check daemon health |
 
 ## Tech Stack
 

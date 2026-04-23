@@ -26,10 +26,10 @@ func TestAgentLifecycle(t *testing.T) {
 	// Step 1: agentrun/create → state=idle
 	t.Log("Step 1: agentrun/create → wait for state=idle")
 	ar := testutil.CreateAgentAndWait(t, ctx, client, wsName, "agent-lifecycle", "mockagent")
-	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, "agent-lifecycle", ar.Status.State)
+	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, "agent-lifecycle", ar.Status.Status)
 
-	if ar.Status.State != "idle" {
-		t.Errorf("expected state=idle, got %s", ar.Status.State)
+	if ar.Status.Status != "idle" {
+		t.Errorf("expected state=idle, got %s", ar.Status.Status)
 	}
 
 	// Step 2: agentrun/prompt → async dispatch; state transitions to running
@@ -87,7 +87,7 @@ func TestAgentPromptAndStop(t *testing.T) {
 	defer testutil.DeleteTestWorkspace(t, ctx, client, wsName)
 
 	ar := testutil.CreateAgentAndWait(t, ctx, client, wsName, "agent-ps", "mockagent")
-	t.Logf("agent ready: state=%s", ar.Status.State)
+	t.Logf("agent ready: state=%s", ar.Status.Status)
 
 	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-ps"}
 	promptResult, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock("prompt and stop test")})
@@ -126,8 +126,8 @@ func TestAgentPromptFromIdle(t *testing.T) {
 	defer testutil.DeleteTestWorkspace(t, ctx, client, wsName)
 
 	ar := testutil.CreateAgentAndWait(t, ctx, client, wsName, "agent-auto", "mockagent")
-	if ar.Status.State != "idle" {
-		t.Errorf("expected state=idle before first prompt, got %s", ar.Status.State)
+	if ar.Status.Status != "idle" {
+		t.Errorf("expected state=idle before first prompt, got %s", ar.Status.Status)
 	}
 
 	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-auto"}
@@ -161,7 +161,7 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 	defer testutil.DeleteTestWorkspace(t, ctx, client, wsName)
 
 	ar := testutil.CreateAgentAndWait(t, ctx, client, wsName, "agent-seq", "mockagent")
-	t.Logf("agent ready: state=%s", ar.Status.State)
+	t.Logf("agent ready: state=%s", ar.Status.Status)
 
 	prompts := []string{
 		"first sequential prompt",

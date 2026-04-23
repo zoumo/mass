@@ -365,7 +365,7 @@ massctl agentrun watch --workspace ws
 
 ### 工作流程
 
-1. 确保 mass daemon 已启动（`massctl daemon status`）
+1. 确保 mass daemon 已启动（`mass daemon status`）
 2. 注册需要的 agent 定义（或确认已存在：`massctl agent get`）
 3. 创建 workspace，轮询直到 phase=ready
 4. 创建 AgentRun，轮询直到 state=idle

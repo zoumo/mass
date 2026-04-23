@@ -45,7 +45,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 ### What's Implemented
 
 - `mass` manages agents with **(workspace, name)** identity (no UUID), async lifecycle, fail-closed recovery
-- `mass` is a **cobra tree**: `mass server` (daemon, --root flag, no config.yaml), `mass run` (inlined from agent-run), `mass workspace-mcp` (inlined from workspace-mcp-server)
+- `mass` is a **cobra tree**: `mass daemon` (start/restart/status, --root flag, no config.yaml), `mass run` (inlined from agent-run), `mass workspace-mcp` (inlined from workspace-mcp-server)
 - `massctl` is a **full-featured CLI**: `massctl agent` (template CRUD: apply/get/list/delete) + `massctl agentrun` (lifecycle: create/list/status/prompt/stop/delete/restart/attach/cancel) + workspace/daemon/shim commands
 - **ARI surface (final):** `workspace/*` (create/status/list/delete/send) + `agent/*` (set/get/list/delete — AgentTemplate CRUD) + `agentrun/*` (create/prompt/cancel/stop/delete/restart/list/status/attach — running instance lifecycle)
 - **pkg/ari tri-split (M013/S02):** `pkg/ari/api` (pure types + ARI method constants), `pkg/ari/server` (interfaces, Registry, RPC dispatch), `pkg/ari/client` (typed ARIClient + simple Client); api/ari/ directory deleted
@@ -86,7 +86,7 @@ Reliable, observable agent execution with truthful lifecycle and recovery semant
 - **Adapter pattern for conflicting method names (M012):** Three thin unexported adapter structs for WorkspaceService.List and AgentService.List (K077, D112)
 - **errors.Is vs os.IsNotExist (K081):** spec.ReadState wraps with fmt.Errorf — must use errors.Is(err, os.ErrNotExist), not os.IsNotExist
 - **bbolt buckets:** `v1/workspaces/{name}`, `v1/agentruns/{workspace}/{name}`, `v1/agents/{name}`
-- **--root derived paths**: Options.SocketPath(), WorkspaceRoot(), BundleRoot(), MetaDBPath() — no config file needed
+- **--root derived paths**: Options.SocketPath(), WorkspaceRoot(), AgentRunRoot(), MetaDBPath(), PidFilePath() — no config file needed
 - **macOS socket path limit**: t.TempDir() paths often exceed 104-byte Unix socket limit; use os.MkdirTemp("/tmp", "mass-*") for socket-sensitive tests (K075)
 - **pkg/jsonrpc notifCh race**: Pre-existing send-on-closed-channel race visible under -count=3; single-run go test ./... is the acceptance bar (K078)
 - **rg exit code semantics**: exit 1 = no matches (not a failure); zero-match verification gates must use `! rg PATTERN` (K082)

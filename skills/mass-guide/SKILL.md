@@ -14,10 +14,10 @@ version: 0.2.0
 ## 健康检查（每次操作前必须执行）
 
 ```bash
-massctl daemon status
+mass daemon status
 ```
 
-- `daemon: running` → 继续
+- `daemon: running (pid: N)` → 继续
 - `daemon: not running` → **停止。告知用户 mass daemon 未运行，不要自行启动。**
 
 > `--socket` 默认 `$HOME/.mass/mass.sock`，自定义时加 `--socket <path>`。以下示例省略该 flag。
