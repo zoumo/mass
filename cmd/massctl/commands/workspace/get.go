@@ -48,21 +48,30 @@ func listWorkspaces(ctx context.Context, client pkgariapi.Client, printer *cliut
 	if err := client.List(ctx, &list); err != nil {
 		return err
 	}
+	list.Kind = pkgariapi.KindList
 	items := make([]any, len(list.Items))
 	for i := range list.Items {
 		items[i] = list.Items[i]
 	}
-	return printer.Print(cmd.OutOrStdout(), items)
+	return printer.PrintList(cmd.OutOrStdout(), items, list)
 }
 
 func getWorkspaces(ctx context.Context, client pkgariapi.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command, names []string) error {
-	var items []any
+	var list pkgariapi.WorkspaceList
 	for _, name := range names {
 		var ws pkgariapi.Workspace
 		if err := client.Get(ctx, pkgariapi.ObjectKey{Name: name}, &ws); err != nil {
 			return fmt.Errorf("workspace %q: %w", name, err)
 		}
-		items = append(items, ws)
+		list.Items = append(list.Items, ws)
 	}
-	return printer.Print(cmd.OutOrStdout(), items)
+	items := make([]any, len(list.Items))
+	for i := range list.Items {
+		items[i] = list.Items[i]
+	}
+	if len(items) == 1 {
+		return printer.Print(cmd.OutOrStdout(), items)
+	}
+	list.Kind = pkgariapi.KindList
+	return printer.PrintList(cmd.OutOrStdout(), items, list)
 }

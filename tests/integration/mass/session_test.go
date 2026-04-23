@@ -5,6 +5,7 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	"github.com/zoumo/mass/tests/integration/testutil"
 )
 
@@ -35,7 +36,7 @@ func TestAgentLifecycle(t *testing.T) {
 	// Step 2: agentrun/prompt → async dispatch; state transitions to running
 	t.Log("Step 2: agentrun/prompt (async dispatch)")
 	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-lifecycle"}
-	promptResult, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock("test lifecycle prompt")})
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock("test lifecycle prompt")})
 	if err != nil {
 		t.Fatalf("agentrun/prompt failed: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestAgentPromptAndStop(t *testing.T) {
 	t.Logf("agent ready: state=%s", ar.Status.Status)
 
 	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-ps"}
-	promptResult, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock("prompt and stop test")})
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock("prompt and stop test")})
 	if err != nil {
 		t.Fatalf("agentrun/prompt failed: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestAgentPromptFromIdle(t *testing.T) {
 	}
 
 	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-auto"}
-	promptResult, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock("auto-start prompt")})
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock("auto-start prompt")})
 	if err != nil {
 		t.Fatalf("agentrun/prompt (from idle) failed: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestMultipleAgentPromptsSequential(t *testing.T) {
 	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-seq"}
 	for i, promptText := range prompts {
 		t.Logf("Sending prompt %d/%d: %q", i+1, len(prompts), promptText)
-		promptResult, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock(promptText)})
+		promptResult, err := client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock(promptText)})
 		if err != nil {
 			t.Fatalf("agentrun/prompt %d failed: %v", i+1, err)
 		}

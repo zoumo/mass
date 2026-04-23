@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
@@ -135,7 +136,7 @@ func (c *ariClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pkg
 
 type agentRunOps struct{ c *jsonrpc.Client }
 
-func (o *agentRunOps) Prompt(ctx context.Context, key pkgariapi.ObjectKey, prompt []pkgariapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
+func (o *agentRunOps) Prompt(ctx context.Context, key pkgariapi.ObjectKey, prompt []runapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
 	req := pkgariapi.AgentRunPromptParams{
 		Workspace: key.Workspace,
 		Name:      key.Name,

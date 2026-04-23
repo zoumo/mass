@@ -9,16 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 )
 
 // ── ContentBlock round-trip (ACP SDK type re-export) ─────────────────────────
 
 func TestContentBlock_TextBlock_RoundTrip(t *testing.T) {
-	block := pkgariapi.TextBlock("hello world")
+	block := runapi.TextBlock("hello world")
 	data, err := json.Marshal(block)
 	require.NoError(t, err)
 
-	var decoded pkgariapi.ContentBlock
+	var decoded runapi.ContentBlock
 	require.NoError(t, json.Unmarshal(data, &decoded))
 
 	require.NotNil(t, decoded.Text, "should decode as text content")
@@ -26,11 +27,11 @@ func TestContentBlock_TextBlock_RoundTrip(t *testing.T) {
 }
 
 func TestContentBlock_ImageBlock_RoundTrip(t *testing.T) {
-	block := pkgariapi.ImageBlock("aGVsbG8=", "image/png")
+	block := runapi.ImageBlock("aGVsbG8=", "image/png")
 	data, err := json.Marshal(block)
 	require.NoError(t, err)
 
-	var decoded pkgariapi.ContentBlock
+	var decoded runapi.ContentBlock
 	require.NoError(t, json.Unmarshal(data, &decoded))
 
 	require.NotNil(t, decoded.Image, "should decode as image content")
@@ -44,7 +45,7 @@ func TestAgentRunPromptParams_RoundTrip(t *testing.T) {
 	params := pkgariapi.AgentRunPromptParams{
 		Workspace: "ws1",
 		Name:      "agent-1",
-		Prompt:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("what is 2+2?")},
+		Prompt:    []runapi.ContentBlock{runapi.TextBlock("what is 2+2?")},
 	}
 	data, err := json.Marshal(params)
 	require.NoError(t, err)
@@ -66,7 +67,7 @@ func TestWorkspaceSendParams_RoundTrip(t *testing.T) {
 		Workspace:  "ws1",
 		From:       "claude",
 		To:         "codex",
-		Message:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello codex")},
+		Message:    []runapi.ContentBlock{runapi.TextBlock("hello codex")},
 		NeedsReply: true,
 	}
 	data, err := json.Marshal(params)

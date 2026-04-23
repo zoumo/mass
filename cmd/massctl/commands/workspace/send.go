@@ -8,6 +8,7 @@ import (
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 )
 
 func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
@@ -32,7 +33,7 @@ func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {
 				Workspace: ws,
 				From:      from,
 				To:        to,
-				Message:   []pkgariapi.ContentBlock{pkgariapi.TextBlock(text)},
+				Message:   []runapi.ContentBlock{runapi.TextBlock(text)},
 			})
 			if err != nil {
 				return err

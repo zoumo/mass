@@ -35,6 +35,7 @@ func (s *Store) CreateAgentRun(_ context.Context, agent *pkgariapi.AgentRun) err
 	if agent.Metadata.UpdatedAt.IsZero() {
 		agent.Metadata.UpdatedAt = agent.Metadata.CreatedAt
 	}
+	agent.Kind = pkgariapi.KindAgentRun
 
 	return s.db.Update(func(tx *bolt.Tx) error {
 		wb, err := workspaceBucket(tx, agent.Metadata.Workspace)
@@ -82,7 +83,11 @@ func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*pkgaria
 			return nil // not found
 		}
 		agent = &pkgariapi.AgentRun{}
-		return json.Unmarshal(data, agent)
+		if err := json.Unmarshal(data, agent); err != nil {
+			return err
+		}
+		agent.Kind = pkgariapi.KindAgentRun
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("store: get agent %s/%s: %w", workspace, name, err)
@@ -115,6 +120,7 @@ func (s *Store) ListAgentRuns(_ context.Context, filter *pkgariapi.AgentRunFilte
 				if filter != nil && filter.Status != "" && a.Status.Status != filter.Status {
 					return nil
 				}
+				a.Kind = pkgariapi.KindAgentRun
 				copy := a
 				result = append(result, &copy)
 				return nil

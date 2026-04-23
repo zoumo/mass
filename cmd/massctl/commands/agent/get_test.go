@@ -83,5 +83,5 @@ func TestGetJSON(t *testing.T) {
 
 	err := cmd.Execute()
 	require.NoError(t, err)
-	assert.Contains(t, buf.String(), "[")
+	assert.Contains(t, buf.String(), "items")
 }

@@ -48,6 +48,7 @@ func (s *Store) SetAgent(_ context.Context, ag *pkgariapi.Agent) error {
 			ag.Metadata.CreatedAt = now
 		}
 		ag.Metadata.UpdatedAt = now
+		ag.Kind = pkgariapi.KindAgent
 
 		data, err := json.Marshal(ag)
 		if err != nil {
@@ -79,7 +80,11 @@ func (s *Store) GetAgent(_ context.Context, name string) (*pkgariapi.Agent, erro
 			return nil // not found
 		}
 		ag = &pkgariapi.Agent{}
-		return json.Unmarshal(data, ag)
+		if err := json.Unmarshal(data, ag); err != nil {
+			return err
+		}
+		ag.Kind = pkgariapi.KindAgent
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("store: get agent %s: %w", name, err)
@@ -106,6 +111,7 @@ func (s *Store) ListAgents(_ context.Context) ([]*pkgariapi.Agent, error) {
 				s.logger.Error("skipping corrupt agent record", "error", err)
 				return nil
 			}
+			ag.Kind = pkgariapi.KindAgent
 			copy := ag
 			result = append(result, &copy)
 			return nil

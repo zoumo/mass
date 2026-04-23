@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	"github.com/zoumo/mass/tests/integration/testutil"
 )
 
@@ -48,7 +49,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 
 			key := pkgariapi.ObjectKey{Workspace: wsName, Name: agentName}
 			clientMu.Lock()
-			promptResult, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock(fmt.Sprintf("concurrent prompt %d", idx+1))})
+			promptResult, err := client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock(fmt.Sprintf("concurrent prompt %d", idx+1))})
 			clientMu.Unlock()
 
 			if err != nil {

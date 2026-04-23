@@ -5,17 +5,8 @@
 // and supplementary wire types.
 package api
 
-import acp "github.com/coder/acp-go-sdk"
-
-// ContentBlock is an ACP content block (text, image, audio, resource, resource-link).
-// Re-exported here so ARI callers don't need to import the agentrun/api or acp-go-sdk packages.
-type ContentBlock = acp.ContentBlock
-
-// Convenience constructors for common content block types.
-var (
-	TextBlock  = acp.TextBlock
-	ImageBlock = acp.ImageBlock
-	AudioBlock = acp.AudioBlock
+import (
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 )
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -99,7 +90,7 @@ type AgentRunPromptParams struct {
 	Name string `json:"name"`
 
 	// Prompt is an array of ACP ContentBlocks (text, image, audio, etc.) (required).
-	Prompt []ContentBlock `json:"prompt"`
+	Prompt []runapi.ContentBlock `json:"prompt"`
 }
 
 // AgentRunPromptResult is the response result for agentrun/prompt method.
@@ -121,7 +112,7 @@ type WorkspaceSendParams struct {
 	To string `json:"to"`
 
 	// Message is an array of ACP ContentBlocks to send (required).
-	Message []ContentBlock `json:"message"`
+	Message []runapi.ContentBlock `json:"message"`
 
 	// NeedsReply indicates whether the sender expects a reply via workspace message.
 	// When true, the delivered prompt includes reply-to and reply-requested=true headers.

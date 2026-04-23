@@ -48,21 +48,30 @@ func listAgents(ctx context.Context, client pkgariapi.Client, printer *cliutil.R
 	if err := client.List(ctx, &list); err != nil {
 		return err
 	}
+	list.Kind = pkgariapi.KindList
 	items := make([]any, len(list.Items))
 	for i := range list.Items {
 		items[i] = list.Items[i]
 	}
-	return printer.Print(cmd.OutOrStdout(), items)
+	return printer.PrintList(cmd.OutOrStdout(), items, list)
 }
 
 func getAgents(ctx context.Context, client pkgariapi.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command, names []string) error {
-	var items []any
+	var list pkgariapi.AgentList
 	for _, name := range names {
 		var ag pkgariapi.Agent
 		if err := client.Get(ctx, pkgariapi.ObjectKey{Name: name}, &ag); err != nil {
 			return fmt.Errorf("agent %q: %w", name, err)
 		}
-		items = append(items, ag)
+		list.Items = append(list.Items, ag)
 	}
-	return printer.Print(cmd.OutOrStdout(), items)
+	items := make([]any, len(list.Items))
+	for i := range list.Items {
+		items[i] = list.Items[i]
+	}
+	if len(items) == 1 {
+		return printer.Print(cmd.OutOrStdout(), items)
+	}
+	list.Kind = pkgariapi.KindList
+	return printer.PrintList(cmd.OutOrStdout(), items, list)
 }

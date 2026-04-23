@@ -13,6 +13,7 @@ import (
 
 	"github.com/zoumo/mass/internal/logging"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
@@ -80,7 +81,7 @@ func workspaceSendHandler(cfg handlerConfig, client pkgariapi.Client, logger *sl
 			Workspace:  cfg.workspaceName,
 			From:       cfg.agentName,
 			To:         input.TargetAgent,
-			Message:    []pkgariapi.ContentBlock{pkgariapi.TextBlock(input.Message)},
+			Message:    []runapi.ContentBlock{runapi.TextBlock(input.Message)},
 			NeedsReply: input.NeedsReply,
 		})
 		if err != nil {

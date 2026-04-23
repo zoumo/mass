@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
@@ -273,7 +274,7 @@ func TestClient_AgentRunOps_Prompt(t *testing.T) {
 	env := newTestClientEnv(t)
 	result, err := env.client.AgentRuns().Prompt(context.Background(),
 		pkgariapi.ObjectKey{Workspace: "ws1", Name: "ar1"},
-		[]pkgariapi.ContentBlock{pkgariapi.TextBlock("hello")},
+		[]runapi.ContentBlock{runapi.TextBlock("hello")},
 	)
 	require.NoError(t, err)
 	assert.True(t, result.Accepted)
@@ -311,7 +312,7 @@ func TestClient_WorkspaceOps_Send(t *testing.T) {
 		Workspace: "ws1",
 		From:      "a1",
 		To:        "a2",
-		Message:   []pkgariapi.ContentBlock{pkgariapi.TextBlock("hi")},
+		Message:   []runapi.ContentBlock{runapi.TextBlock("hi")},
 	})
 	require.NoError(t, err)
 	assert.True(t, result.Delivered)

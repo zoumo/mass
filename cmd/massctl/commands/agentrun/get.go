@@ -64,21 +64,30 @@ func listAgentRuns(ctx context.Context, client pkgariapi.Client, printer *cliuti
 	if err := client.List(ctx, &list, opts...); err != nil {
 		return err
 	}
+	list.Kind = pkgariapi.KindList
 	items := make([]any, len(list.Items))
 	for i := range list.Items {
 		items[i] = list.Items[i]
 	}
-	return printer.Print(cmd.OutOrStdout(), items)
+	return printer.PrintList(cmd.OutOrStdout(), items, list)
 }
 
 func getAgentRuns(ctx context.Context, client pkgariapi.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command, ws string, names []string) error {
-	var items []any
+	var list pkgariapi.AgentRunList
 	for _, name := range names {
 		var ar pkgariapi.AgentRun
 		if err := client.Get(ctx, pkgariapi.ObjectKey{Workspace: ws, Name: name}, &ar); err != nil {
 			return fmt.Errorf("agentrun %s/%s: %w", ws, name, err)
 		}
-		items = append(items, ar)
+		list.Items = append(list.Items, ar)
 	}
-	return printer.Print(cmd.OutOrStdout(), items)
+	items := make([]any, len(list.Items))
+	for i := range list.Items {
+		items[i] = list.Items[i]
+	}
+	if len(items) == 1 {
+		return printer.Print(cmd.OutOrStdout(), items)
+	}
+	list.Kind = pkgariapi.KindList
+	return printer.PrintList(cmd.OutOrStdout(), items, list)
 }

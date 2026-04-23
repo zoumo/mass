@@ -44,11 +44,22 @@ type ResourcePrinter struct {
 // Print renders items to w. For json/yaml the raw objects are serialized.
 // For table/wide the Column definitions are used to extract fields.
 func (p *ResourcePrinter) Print(w io.Writer, items []any) error {
+	return p.printWithList(w, items, nil)
+}
+
+// PrintList renders items to w. For json/yaml, listObj is serialized instead
+// of the raw items slice, preserving the API list wrapper (e.g. AgentRunList).
+// For table/wide, items are used for column extraction as usual.
+func (p *ResourcePrinter) PrintList(w io.Writer, items []any, listObj any) error {
+	return p.printWithList(w, items, listObj)
+}
+
+func (p *ResourcePrinter) printWithList(w io.Writer, items []any, listObj any) error {
 	switch p.Format {
 	case FormatJSON:
-		return p.printJSON(w, items)
+		return p.printJSON(w, items, listObj)
 	case FormatYAML:
-		return p.printYAML(w, items)
+		return p.printYAML(w, items, listObj)
 	case FormatTable, FormatWide, "":
 		return p.printTable(w, items)
 	default:
@@ -56,19 +67,26 @@ func (p *ResourcePrinter) Print(w io.Writer, items []any) error {
 	}
 }
 
-func (p *ResourcePrinter) printJSON(w io.Writer, items []any) error {
+func (p *ResourcePrinter) printJSON(w io.Writer, items []any, listObj any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
+	if listObj != nil {
+		return enc.Encode(listObj)
+	}
 	if len(items) == 1 {
 		return enc.Encode(items[0])
 	}
 	return enc.Encode(items)
 }
 
-func (p *ResourcePrinter) printYAML(w io.Writer, items []any) error {
-	var obj any = items
-	if len(items) == 1 {
+func (p *ResourcePrinter) printYAML(w io.Writer, items []any, listObj any) error {
+	var obj any
+	if listObj != nil {
+		obj = listObj
+	} else if len(items) == 1 {
 		obj = items[0]
+	} else {
+		obj = items
 	}
 	out, err := sigsyaml.Marshal(obj)
 	if err != nil {

@@ -31,7 +31,7 @@ func TestCreateSuccess(t *testing.T) {
 	}
 
 	cmd := NewCommand(clientFn(mc))
-	cmd.SetArgs([]string{"create", "--workspace", "ws1", "--name", "run1", "--agent", "agent1"})
+	cmd.SetArgs([]string{"create", "--workspace", "ws1", "--name", "run1", "--agent", "agent1", "--no-wait"})
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 

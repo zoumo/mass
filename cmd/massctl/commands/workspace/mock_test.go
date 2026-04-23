@@ -5,6 +5,7 @@ import (
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 )
 
 // ── mock WorkspaceOps ────────────────────────────────────────────────────────
@@ -26,7 +27,7 @@ type mockAgentRunOps struct {
 	stopFn func(context.Context, pkgariapi.ObjectKey) error
 }
 
-func (m *mockAgentRunOps) Prompt(context.Context, pkgariapi.ObjectKey, []pkgariapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
+func (m *mockAgentRunOps) Prompt(context.Context, pkgariapi.ObjectKey, []runapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
 	return &pkgariapi.AgentRunPromptResult{}, nil
 }
 func (m *mockAgentRunOps) Cancel(context.Context, pkgariapi.ObjectKey) error { return nil }

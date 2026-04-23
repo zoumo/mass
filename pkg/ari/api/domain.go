@@ -15,6 +15,19 @@ import (
 // Object system (controller-runtime style)
 // ────────────────────────────────────────────────────────────────────────────
 
+// TypeMeta describes the kind of an ARI resource.
+type TypeMeta struct {
+	Kind string `json:"kind"`
+}
+
+// Kind constants for ARI resource types.
+const (
+	KindAgent     = "Agent"
+	KindAgentRun  = "AgentRun"
+	KindWorkspace = "Workspace"
+	KindList      = "List"
+)
+
 // Object is implemented by all ARI domain types (Workspace, AgentRun, Agent).
 type Object interface {
 	GetObjectMeta() *ObjectMeta
@@ -93,6 +106,7 @@ func (s AgentSpec) IsDisabled() bool {
 // It is selected by AgentRun.Spec.Agent when creating a running instance.
 // Identity is Metadata.Name — globally unique across all agent definitions.
 type Agent struct {
+	TypeMeta `json:",inline"`
 	// Metadata holds identity and lifecycle fields.
 	Metadata ObjectMeta `json:"metadata"`
 
@@ -105,7 +119,8 @@ func (a *Agent) objectType() string         { return "agent" }
 
 // AgentList holds a list of Agent objects.
 type AgentList struct {
-	Items []Agent `json:"items"`
+	TypeMeta `json:",inline"`
+	Items    []Agent `json:"items"`
 }
 
 func (l *AgentList) objectType() string { return "agent" }
@@ -172,6 +187,7 @@ type AgentRunStatus struct {
 // AgentRun represents an agent run record.
 // Identity is (Metadata.Workspace, Metadata.Name) — no UUID.
 type AgentRun struct {
+	TypeMeta `json:",inline"`
 	// Metadata holds identity and lifecycle fields.
 	Metadata ObjectMeta `json:"metadata"`
 
@@ -187,7 +203,8 @@ func (a *AgentRun) objectType() string         { return "agentrun" }
 
 // AgentRunList holds a list of AgentRun objects.
 type AgentRunList struct {
-	Items []AgentRun `json:"items"`
+	TypeMeta `json:",inline"`
+	Items    []AgentRun `json:"items"`
 }
 
 func (l *AgentRunList) objectType() string { return "agentrun" }
@@ -242,6 +259,7 @@ type WorkspaceStatus struct {
 // Workspace represents a workspace record.
 // Identity is Metadata.Name — no UUID.
 type Workspace struct {
+	TypeMeta `json:",inline"`
 	// Metadata holds identity and lifecycle fields.
 	Metadata ObjectMeta `json:"metadata"`
 
@@ -257,7 +275,8 @@ func (w *Workspace) objectType() string         { return "workspace" }
 
 // WorkspaceList holds a list of Workspace objects.
 type WorkspaceList struct {
-	Items []Workspace `json:"items"`
+	TypeMeta `json:",inline"`
+	Items    []Workspace `json:"items"`
 }
 
 func (l *WorkspaceList) objectType() string { return "workspace" }

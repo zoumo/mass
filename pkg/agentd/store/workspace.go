@@ -30,6 +30,7 @@ func (s *Store) CreateWorkspace(_ context.Context, ws *pkgariapi.Workspace) erro
 	if ws.Status.Phase == "" {
 		ws.Status.Phase = pkgariapi.WorkspacePhasePending
 	}
+	ws.Kind = pkgariapi.KindWorkspace
 
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := workspacesBucket(tx)
@@ -63,7 +64,11 @@ func (s *Store) GetWorkspace(_ context.Context, name string) (*pkgariapi.Workspa
 			return nil // not found
 		}
 		ws = &pkgariapi.Workspace{}
-		return json.Unmarshal(data, ws)
+		if err := json.Unmarshal(data, ws); err != nil {
+			return err
+		}
+		ws.Kind = pkgariapi.KindWorkspace
+		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("store: get workspace %s: %w", name, err)
@@ -89,6 +94,7 @@ func (s *Store) ListWorkspaces(_ context.Context, filter *pkgariapi.WorkspaceFil
 			if filter != nil && filter.Phase != "" && ws.Status.Phase != filter.Phase {
 				return nil
 			}
+			ws.Kind = pkgariapi.KindWorkspace
 			copy := ws
 			result = append(result, &copy)
 			return nil

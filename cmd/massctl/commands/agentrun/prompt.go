@@ -36,7 +36,7 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 			key := pkgariapi.ObjectKey{Workspace: ws, Name: name}
 
 			if !wait {
-				result, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock(text)})
+				result, err := client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock(text)})
 				if err != nil {
 					return err
 				}

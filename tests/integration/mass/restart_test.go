@@ -10,6 +10,7 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 	"github.com/zoumo/mass/tests/integration/testutil"
 )
@@ -78,7 +79,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	t.Log("Prompting agent-A before restart")
 	keyA := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-a"}
-	promptResultA, err := client1.AgentRuns().Prompt(ctx1, keyA, []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello before restart")})
+	promptResultA, err := client1.AgentRuns().Prompt(ctx1, keyA, []runapi.ContentBlock{runapi.TextBlock("hello before restart")})
 	if err != nil {
 		t.Fatalf("agentrun/prompt A: %v", err)
 	}
@@ -86,7 +87,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	t.Log("Prompting agent-B before restart")
 	keyB := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-b"}
-	promptResultB, err := client1.AgentRuns().Prompt(ctx1, keyB, []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello before restart")})
+	promptResultB, err := client1.AgentRuns().Prompt(ctx1, keyB, []runapi.ContentBlock{runapi.TextBlock("hello before restart")})
 	if err != nil {
 		t.Fatalf("agentrun/prompt B: %v", err)
 	}

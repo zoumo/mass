@@ -338,7 +338,7 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 		err := env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 			Workspace: "pr-ws",
 			Name:      name,
-			Prompt:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello")},
+			Prompt:    []runapi.ContentBlock{runapi.TextBlock("hello")},
 		}, nil)
 		require.Error(t, err, "agentrun/prompt for %s must return an error", name)
 		assert.Contains(t, err.Error(), "not in idle state",
@@ -399,7 +399,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	require.NoError(t, env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 		Workspace: "reserve-ws",
 		Name:      agentName,
-		Prompt:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello")},
+		Prompt:    []runapi.ContentBlock{runapi.TextBlock("hello")},
 	}, &result))
 	require.True(t, result.Accepted)
 
@@ -413,7 +413,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	err = env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 		Workspace: "reserve-ws",
 		Name:      agentName,
-		Prompt:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("second")},
+		Prompt:    []runapi.ContentBlock{runapi.TextBlock("second")},
 	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not in idle state")
@@ -659,7 +659,7 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 		Workspace: "send-ws",
 		From:      "sender",
 		To:        agentName,
-		Message:   []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello")},
+		Message:   []runapi.ContentBlock{runapi.TextBlock("hello")},
 	}, &sendResult))
 	assert.True(t, sendResult.Delivered)
 
@@ -686,7 +686,7 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 		Workspace:  "reply-ws",
 		From:       "codex",
 		To:         agentName,
-		Message:    []pkgariapi.ContentBlock{pkgariapi.TextBlock("please review")},
+		Message:    []runapi.ContentBlock{runapi.TextBlock("please review")},
 		NeedsReply: true,
 	}, &sendResult))
 	assert.True(t, sendResult.Delivered)
@@ -710,7 +710,7 @@ func TestWorkspaceSendRejectedForErrorAgent(t *testing.T) {
 		Workspace: "serr-ws",
 		From:      "sender",
 		To:        "err-agent",
-		Message:   []pkgariapi.ContentBlock{pkgariapi.TextBlock("hi")},
+		Message:   []runapi.ContentBlock{runapi.TextBlock("hi")},
 	}, nil)
 	require.Error(t, err, "workspace/send to error-state agent must fail")
 }

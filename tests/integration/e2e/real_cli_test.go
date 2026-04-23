@@ -9,6 +9,7 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	"github.com/zoumo/mass/tests/integration/testutil"
 )
@@ -35,7 +36,7 @@ func runRealCLILifecycle(t *testing.T, ctx context.Context, client pkgariapi.Cli
 
 	t.Log("Step 3: agentrun/prompt (async — triggers agent startup, may take 10-30s)")
 	key := pkgariapi.ObjectKey{Workspace: wsName, Name: agentName}
-	promptResult, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock("respond with only the word hello")})
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock("respond with only the word hello")})
 	if err != nil {
 		t.Fatalf("agentrun/prompt failed: %v", err)
 	}

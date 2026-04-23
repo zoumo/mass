@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	"github.com/zoumo/mass/tests/integration/testutil"
 )
 
@@ -45,7 +46,7 @@ func TestEndToEndPipeline(t *testing.T) {
 	// Step 3: agentrun/prompt (async dispatch)
 	t.Log("Step 3: agentrun/prompt (async dispatch)")
 	key := pkgariapi.ObjectKey{Workspace: wsName, Name: agentName}
-	promptResult, err := client.AgentRuns().Prompt(ctx, key, []pkgariapi.ContentBlock{pkgariapi.TextBlock("hello from e2e integration test")})
+	promptResult, err := client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock("hello from e2e integration test")})
 	if err != nil {
 		t.Fatalf("agentrun/prompt failed: %v", err)
 	}
