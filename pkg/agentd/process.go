@@ -173,23 +173,23 @@ func (m *ProcessManager) startEventConsumer(workspace, name string, runProc *Run
 					cancel()
 					continue
 				}
-				if current != nil && current.Status.State == apiruntime.StatusStopped && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
+				if current != nil && current.Status.Status == apiruntime.StatusStopped && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
 					logger.Info("stateChange: dropped stale live state after stop",
 						"agent_key", key,
-						"current", current.Status.State,
+						"current", current.Status.Status,
 						"new", newStatus)
 					cancel()
 					continue
 				}
-				if err := m.agents.UpdateStatus(updateCtx, workspace, name, pkgariapi.AgentRunStatus{
-					State:         apiruntime.Status(newStatus),
-					RunSocketPath: runProc.SocketPath,
-					RunStateDir:   runProc.StateDir,
-					RunPID:        runProc.PID,
-				}); err != nil {
+				if err := m.agents.UpdateState(updateCtx, workspace, name, apiruntime.Status(newStatus), ""); err != nil {
 					logger.Warn("stateChange: failed to update DB state",
 						"agent_key", key,
 						"error", err)
+				}
+				// On transition to idle the ACP handshake is complete and
+				// state.json contains the sessionID. Persist it now.
+				if apiruntime.Status(newStatus) == apiruntime.StatusIdle && runProc.StateDir != "" {
+					m.syncSessionInfo(updateCtx, workspace, name, runProc.StateDir, logger)
 				}
 				cancel()
 				continue
@@ -236,8 +236,8 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 	}
 
 	// Validate agent status - must be "creating" to start.
-	if agent.Status.State != apiruntime.StatusCreating {
-		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.State)
+	if agent.Status.Status != apiruntime.StatusCreating {
+		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.Status)
 	}
 
 	// 2. Resolve Agent definition from DB.
@@ -304,22 +304,15 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 	}
 	runProc.Client = client
 
-	// 7b. Persist bootstrap config + agent-run socket/state/pid for recovery.
-	bootstrapJSON, err := json.Marshal(cfg)
-	if err != nil {
-		m.logger.Error("failed to marshal bootstrap config", "agent_key", key, "error", err)
-		// Non-fatal: agent can still run, just won't have recovery data.
-	} else {
-		if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{
-			State:           apiruntime.StatusCreating, // keep creating until we transition below
-			RunSocketPath:   socketPath,
-			RunStateDir:     stateDir,
-			RunPID:          runProc.PID,
-			BootstrapConfig: bootstrapJSON,
-		}); err != nil {
-			m.logger.Error("failed to persist bootstrap config", "agent_key", key, "error", err)
-			// Non-fatal: agent can still run.
-		}
+	// 7b. Persist agent-run socket/state/pid for recovery.
+	if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{
+		Status:     apiruntime.StatusCreating, // keep creating until we transition below
+		SocketPath: socketPath,
+		StateDir:   stateDir,
+		PID:        runProc.PID,
+	}); err != nil {
+		m.logger.Error("failed to persist run info", "agent_key", key, "error", err)
+		// Non-fatal: agent can still run.
 	}
 
 	// 8. Watch events (live-only — this is a fresh start).
@@ -348,17 +341,15 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 		if statusResult.State.Status != apiruntime.StatusCreating {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := m.agents.UpdateStatus(updateCtx, workspace, name, pkgariapi.AgentRunStatus{
-				State:         statusResult.State.Status,
-				RunSocketPath: socketPath,
-				RunStateDir:   stateDir,
-				RunPID:        runProc.PID,
-			}); err != nil {
+			if err := m.agents.UpdateState(updateCtx, workspace, name, statusResult.State.Status, ""); err != nil {
 				m.logger.Warn("bootstrap state sync failed",
 					"agent_key", key, "state", statusResult.State.Status, "error", err)
 			} else {
 				m.logger.Info("bootstrap state synced from agent-run",
 					"agent_key", key, "state", statusResult.State.Status)
+				if statusResult.State.Status == apiruntime.StatusIdle {
+					m.syncSessionInfo(updateCtx, workspace, name, stateDir, m.logger.With("agent_key", key))
+				}
 			}
 		}
 	}
@@ -502,9 +493,8 @@ func (m *ProcessManager) workspaceMcpCommand(workspace, agent, logDir string) (s
 // Also creates the workspace symlink (agentRoot.path -> actual workspace).
 // Returns bundlePath, stateDir, socketPath.
 func (m *ProcessManager) createBundle(agent *pkgariapi.AgentRun, cfg apiruntime.Config) (string, string, string, error) {
-	// Bundle directory: <bundleRoot>/<workspace>-<name>
-	dirFragment := agent.Metadata.Workspace + "-" + agent.Metadata.Name
-	bundlePath := filepath.Join(m.bundleRoot, dirFragment)
+	// Bundle directory: <bundleRoot>/<workspace>/<name>
+	bundlePath := filepath.Join(m.bundleRoot, agent.Metadata.Workspace, agent.Metadata.Name)
 
 	// Create bundle directory.
 	if err := os.MkdirAll(bundlePath, 0o755); err != nil {
@@ -776,7 +766,7 @@ func (m *ProcessManager) watchProcess(workspace, name string, runProc *RunProces
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped})
 
 	// Bundle directory is intentionally NOT cleaned up here.
 	// It must persist until the agent is explicitly deleted via agent/delete.
@@ -811,8 +801,8 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 			return fmt.Errorf("process: agent %s does not exist", key)
 		}
 		// Agent exists but is not running — transition to stopped if needed.
-		if agent.Status.State != apiruntime.StatusStopped {
-			if err := m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{State: apiruntime.StatusStopped}); err != nil {
+		if agent.Status.Status != apiruntime.StatusStopped {
+			if err := m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped}); err != nil {
 				return fmt.Errorf("process: transition agent %s to stopped: %w", key, err)
 			}
 		}
@@ -966,8 +956,7 @@ func (m *ProcessManager) InjectProcess(key string, proc *RunProcess) {
 // This path is deterministic and can be computed even when the agent-run is not running,
 // allowing callers (e.g. agent/delete) to clean up the bundle after the process exits.
 func (m *ProcessManager) BundlePath(workspace, name string) string {
-	dirFragment := workspace + "-" + name
-	return filepath.Join(m.bundleRoot, dirFragment)
+	return filepath.Join(m.bundleRoot, workspace, name)
 }
 
 // ValidateAgentSocketPath checks whether the would-be Unix socket path for the
@@ -978,7 +967,7 @@ func (m *ProcessManager) BundlePath(workspace, name string) string {
 // Call this before writing any DB records (e.g. in handleAgentCreate) so that
 // a -32602 error is returned before any side effects.
 func (m *ProcessManager) ValidateAgentSocketPath(workspace, name string) error {
-	sockPath := filepath.Join(m.bundleRoot, workspace+"-"+name, "agent-run.sock")
+	sockPath := filepath.Join(m.bundleRoot, workspace, name, "agent-run.sock")
 	return spec.ValidateRunSocketPath(sockPath)
 }
 
@@ -995,4 +984,23 @@ func (m *ProcessManager) SetAgentRecoveryInfo(key string, info *RecoveryInfo) bo
 
 	runProc.Recovery = info
 	return true
+}
+
+// syncSessionInfo reads state.json from stateDir and persists SessionID and
+// EventPath into the agent's DB record. Best-effort: logs and returns on error.
+func (m *ProcessManager) syncSessionInfo(ctx context.Context, workspace, name, stateDir string, logger *slog.Logger) {
+	state, err := spec.ReadState(stateDir)
+	if err != nil {
+		logger.Info("syncSessionInfo: could not read state.json, skipping",
+			"workspace", workspace, "name", name, "error", err)
+		return
+	}
+	if state.SessionID == "" {
+		return
+	}
+	eventPath := spec.SessionEventLogPath(stateDir, state.SessionID)
+	if err := m.agents.UpdateSessionInfo(ctx, workspace, name, state.SessionID, eventPath); err != nil {
+		logger.Warn("syncSessionInfo: failed to persist session info",
+			"workspace", workspace, "name", name, "error", err)
+	}
 }

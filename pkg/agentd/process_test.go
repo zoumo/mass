@@ -100,7 +100,7 @@ func TestProcessManagerStart(t *testing.T) {
 			Agent: "mockagent",
 		},
 		Status: pkgariapi.AgentRunStatus{
-			State: apiruntime.StatusCreating,
+			Status: apiruntime.StatusCreating,
 		},
 	}
 	if err := metaStore.CreateAgentRun(ctx, agent); err != nil {
@@ -136,12 +136,12 @@ func TestProcessManagerStart(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get agent after Start: %v", err)
 		}
-		if updatedAgent.Status.State != apiruntime.StatusCreating {
+		if updatedAgent.Status.Status != apiruntime.StatusCreating {
 			break
 		}
 	}
-	if updatedAgent.Status.State != apiruntime.StatusIdle && updatedAgent.Status.State != apiruntime.StatusRunning {
-		t.Errorf("expected agent state 'idle' or 'running' after stateChange notification, got '%s'", updatedAgent.Status.State)
+	if updatedAgent.Status.Status != apiruntime.StatusIdle && updatedAgent.Status.Status != apiruntime.StatusRunning {
+		t.Errorf("expected agent state 'idle' or 'running' after stateChange notification, got '%s'", updatedAgent.Status.Status)
 	}
 
 	// Verify PID > 0.
@@ -237,14 +237,14 @@ done:
 		if err != nil {
 			t.Fatalf("Get agent after shutdown: %v", err)
 		}
-		if finalAgent.Status.State == apiruntime.StatusStopped {
+		if finalAgent.Status.Status == apiruntime.StatusStopped {
 			break
 		}
 	}
-	if finalAgent == nil || finalAgent.Status.State != apiruntime.StatusStopped {
+	if finalAgent == nil || finalAgent.Status.Status != apiruntime.StatusStopped {
 		got := apiruntime.Status("")
 		if finalAgent != nil {
-			got = finalAgent.Status.State
+			got = finalAgent.Status.Status
 		}
 		t.Errorf("expected agent state 'stopped' after shutdown, got '%s'", got)
 	}
@@ -270,9 +270,9 @@ func TestAgentKey(t *testing.T) {
 
 func TestProcessManager_BundlePath(t *testing.T) {
 	t.Parallel()
-	pm := &ProcessManager{bundleRoot: "/tmp/test-mass/bundles"}
+	pm := &ProcessManager{bundleRoot: "/tmp/test-mass/agentruns"}
 	got := pm.BundlePath("ws1", "agent-a")
-	expected := "/tmp/test-mass/bundles/ws1-agent-a"
+	expected := "/tmp/test-mass/agentruns/ws1/agent-a"
 	if got != expected {
 		t.Errorf("BundlePath: expected %s, got %s", expected, got)
 	}

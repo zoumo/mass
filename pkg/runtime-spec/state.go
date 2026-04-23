@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
 const (
 	stateFile     = "state.json"
-	eventLogFile  = "events.jsonl"
 	runSocketFile = "agent-run.sock"
 )
 
@@ -21,9 +21,21 @@ func StateDir(baseDir, id string) string {
 	return filepath.Join(baseDir, id)
 }
 
-// EventLogPath returns the path to the JSONL event log for the given state dir.
-func EventLogPath(stateDir string) string {
-	return filepath.Join(stateDir, eventLogFile)
+// EventsDir returns the directory for per-session event logs.
+func EventsDir(stateDir string) string {
+	return filepath.Join(stateDir, "events")
+}
+
+// sanitizeFilename replaces path-unsafe characters with underscores.
+func sanitizeFilename(s string) string {
+	r := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "\x00", "_")
+	return r.Replace(s)
+}
+
+// SessionEventLogPath returns the JSONL log path for the given session.
+// Path-unsafe characters in sessionID are replaced with underscores.
+func SessionEventLogPath(stateDir, sessionID string) string {
+	return filepath.Join(EventsDir(stateDir), sanitizeFilename(sessionID)+".jsonl")
 }
 
 // RunSocketPath returns the Unix socket path for the agent-run RPC server.

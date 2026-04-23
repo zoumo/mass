@@ -45,13 +45,18 @@ func (o Options) WorkspaceRoot() string {
 	return filepath.Join(o.Root, "workspaces")
 }
 
-// BundleRoot returns the root directory for agent bundle creation.
-// Each agent gets a subdirectory: <BundleRoot>/<workspace>-<name>/.
-func (o Options) BundleRoot() string {
-	return filepath.Join(o.Root, "bundles")
+// AgentRunRoot returns the root directory for agent-run bundle creation.
+// Each agent gets a subdirectory: <AgentRunRoot>/<workspace>/<name>/.
+func (o Options) AgentRunRoot() string {
+	return filepath.Join(o.Root, "agentruns")
 }
 
 // MetaDBPath returns the path to the bbolt metadata database file.
 func (o Options) MetaDBPath() string {
 	return filepath.Join(o.Root, "mass.db")
+}
+
+// PidFilePath returns the path to the daemon PID file.
+func (o Options) PidFilePath() string {
+	return filepath.Join(o.Root, "mass.pid")
 }
