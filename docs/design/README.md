@@ -77,7 +77,7 @@ Agent 面临着同样的分层关切：
 │          [internal: Process Manager, Workspace Manager,         │
 │           Agent Manager, Recovery, bbolt Metadata Store]        │
 └──────────────────────────┬─────────────────────────────────────┘
-                           │ shim RPC (session/* + runtime/*)
+                           │ agent-run RPC (session/* + runtime/*)
                            ▼
 ┌─── Workspace: agentd-e2e ──────────────────────────────────────┐
 │                                                                 │
@@ -92,7 +92,7 @@ Agent 面临着同样的分层关切：
 │  └──────┬───────┘  └──────┴───────┘  └──────┬───────┘          │
 │         │                 │                 │                    │
 │         └─────────────────┼─────────────────┘                    │
-│                           │ workspace-mcp → mass → target shim │
+│                           │ workspace-mcp → mass → target agent-run │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -103,14 +103,14 @@ Agent 面临着同样的分层关切：
 - `workspace/*` — workspace 生命周期管理（create/get/list/delete/send）
 - `agent/*` — Agent CRUD（create/update/get/list/delete）
 - `agentrun/*` — AgentRun 生命周期（create/prompt/cancel/stop/delete/restart/list/get）
-- agentd 重启后的 shim reconnect 和 recovery
+- agentd 重启后的 agent-run reconnect 和 recovery
 - bbolt-based metadata persistence
 - workspace-mcp-server（`agentd workspacemcp` 子命令）
 
 尚未实现（future work）：
 
 - **workspace task/inbox**：结构化任务委派和排队交付
-- **Event streaming**：调用方通过 `agentrun/get` 获取 shim socket 路径后直连消费事件，ARI 层不做事件透传
+- **Event streaming**：调用方通过 `agentrun/get` 获取 agent-run socket 路径后直连消费事件，ARI 层不做事件透传
 - **AgentRun 级 env override**：`agentrun/create` 当前无 `env` 字段
 - **Hook output persistence**：workspace hook stdout/stderr 不通过 ARI 返回
 
@@ -121,7 +121,7 @@ Agent 面临着同样的分层关切：
 1. [contract-convergence.md](./contract-convergence.md) — 当前跨文档 authority map 与关键不变量；
 2. `*-spec.md` 文档 — 规范契约；无 `-spec` 后缀的文档只负责解释组件或设计理由。
 
-对于 shim 边界，当前 authoritative 读取顺序是：
+对于 agent-run 边界，当前 authoritative 读取顺序是：
 
 1. [runtime/runtime-spec.md](./runtime/runtime-spec.md) — runtime 状态模型、bundle、state dir、socket 路径；
 2. [runtime/run-rpc-spec.md](./runtime/run-rpc-spec.md) — clean-break `session/*` + `runtime/*` surface、notification、recovery / replay；

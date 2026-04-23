@@ -83,17 +83,17 @@ All CRUD responses return the domain object directly (no wrapper).
   "status": {
     "state": "idle",
     "errorMessage": "",
-    "shim": {
+    "agent-run": {
       "status": "idle",
       "pid": 12345,
       "bundle": "/var/lib/agentd/bundles/my-project-architect",
-      "socketPath": "/run/mass/bundles/my-project-architect/shim.sock"
+      "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
     }
   }
 }
 ```
 
-The `status.shim` field is populated when the agent has a running shim process. It is `null`/omitted otherwise. The `socketPath` in `status.shim` replaces the removed `agentrun/attach` endpoint — callers obtain the shim socket path via `agentrun/get`.
+The `status` field is populated when the agent has a running agent-run process. It is `null`/omitted otherwise. The `socketPath` in `status` replaces the removed `agentrun/attach` endpoint — callers obtain the agent-run socket path via `agentrun/get`.
 
 ### Workspace
 
@@ -115,8 +115,8 @@ The `status.shim` field is populated when the agent has a running shim process. 
 }
 ```
 
-Internal fields (`shimSocketPath`, `shimStateDir`, `shimPid`, `bootstrapConfig` in AgentRun status;
-`hooks` in Workspace spec) are not exposed via ARI.
+Internal field (`stateDir` in AgentRun status;
+`hooks` in Workspace spec) is not exposed via ARI.
 
 ## Client Interface
 
@@ -281,8 +281,8 @@ Blocked if any AgentRuns are currently using the workspace.
 ### `workspace/send`
 
 Route a message from one agent to another within a workspace.
-The target agent receives the message as a prompt via its running shim.
-This is a fire-and-forget delivery: `delivered: true` means the message was dispatched to the shim, not that a response was received.
+The target agent receives the message as a prompt via its running agent-run.
+This is a fire-and-forget delivery: `delivered: true` means the message was dispatched to the agent-run, not that a response was received.
 
 **Params:**
 
@@ -297,7 +297,7 @@ This is a fire-and-forget delivery: `delivered: true` means the message was disp
 **Result:** `{delivered: true}`
 
 **Errors:**
-- `-32001` when daemon is recovering, target agent is in error state, or target shim is not running
+- `-32001` when daemon is recovering, target agent is in error state, or target agent-run is not running
 - `-32602` when target agent is not found
 
 ## Agent Methods — Agent CRUD
@@ -375,13 +375,13 @@ Note: `agentrun/create` `spec.agent` selects an Agent definition by name. If the
 ## AgentRun Methods
 
 `agentrun/*` methods manage the **lifecycle of running agent instances**.
-An AgentRun is identified by `(workspace, name)` and has a shim process.
+An AgentRun is identified by `(workspace, name)` and has a agent-run process.
 
 ### `agentrun/create`
 
 `agentrun/create` is **async configuration-only bootstrap**.
 It creates the AgentRun record and returns immediately with `status.state: "creating"`.
-Actual bootstrap (shim startup, ACP initialization) happens in the background.
+Actual bootstrap (agent-run startup, ACP initialization) happens in the background.
 Callers poll `agentrun/get` until state transitions to `"idle"` or `"error"`.
 
 **Params:** AgentRun object
@@ -444,11 +444,11 @@ Poll until idle:
     "spec": { "agent": "claude" },
     "status": {
       "state": "idle",
-      "shim": {
+      "agent-run": {
         "status": "idle",
         "pid": 12345,
         "bundle": "/var/lib/agentd/bundles/my-project-architect",
-        "socketPath": "/run/mass/bundles/my-project-architect/shim.sock"
+        "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
       }
     }
   }
@@ -533,11 +533,11 @@ Field selectors:
 
 ### `agentrun/get`
 
-Return current AgentRun state including optional shim runtime state.
+Return current AgentRun state including optional agent-run runtime state.
 
 **Params:** ObjectKey `{workspace, name}`
 
-**Result:** AgentRun (with `status.shim` populated when shim is running)
+**Result:** AgentRun (with `status` populated when agent-run is running)
 
 ```json
 {
@@ -545,17 +545,17 @@ Return current AgentRun state including optional shim runtime state.
   "spec": { "agent": "claude" },
   "status": {
     "state": "idle",
-    "shim": {
+    "agent-run": {
       "status": "idle",
       "pid": 12345,
       "bundle": "/var/lib/agentd/bundles/my-project-architect",
-      "socketPath": "/run/mass/bundles/my-project-architect/shim.sock"
+      "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
     }
   }
 }
 ```
 
-`status.shim` is omitted when the agent has no running shim process.
+`status` is omitted when the agent has no running agent-run process.
 
 AgentRun state values: `creating`, `idle`, `running`, `stopped`, `error`.
 
@@ -571,16 +571,15 @@ AgentRun state values: `creating`, `idle`, `running`, `stopped`, `error`.
 | `spec.agent` | string | Selected agent definition name |
 | `spec.description` | string? | Human-readable description |
 | `spec.systemPrompt` | string? | Agent system prompt |
-| `status.state` | string | Current agent state |
-| `status.errorMessage` | string? | Error details when `state` is `"error"` |
-| `status.shim` | object? | Shim runtime info (populated when shim is running) |
-| `status.shim.status` | string | Shim status |
-| `status.shim.pid` | int | Shim process ID |
-| `status.shim.bundle` | string | Bundle directory path |
-| `status.shim.socketPath` | string | Shim Unix socket path (for direct shim RPC connection) |
+| `status.status` | string | Current agent status |
+| `status.errorMessage` | string? | Error details when `status` is `"error"` |
+| `status.pid` | int? | Agent-run process ID (when running) |
+| `status.bundle` | string? | Bundle directory path |
+| `status.socketPath` | string? | Unix socket path for direct agent-run RPC connection |
+| `status.sessionId` | string? | ACP protocol session ID |
+| `status.eventPath` | string? | JSONL event log path for current session |
 
-Internal fields (`shimSocketPath`, `shimStateDir`, `shimPid`, `bootstrapConfig`) are present in
-the store but are not serialized in ARI responses.
+Internal field (`stateDir`) is present in the store but not serialized in ARI responses.
 
 ## AgentRun State Machine
 
@@ -600,20 +599,20 @@ creating ──┐
 | `error` | Bootstrap or runtime failure; agent must be restarted or deleted |
 
 Transition rules:
-- `creating → idle`: shim started successfully, ACP initialized
-- `creating → error`: shim start failed
+- `creating → idle`: agent-run started successfully, ACP initialized
+- `creating → error`: agent-run start failed
 - `idle → running`: `agentrun/prompt` dispatched
 - `running → idle`: prompt turn completes (agent returns to idle)
 - `idle → stopped` / `running → stopped`: `agentrun/stop` received
 - `running → error`: runtime failure during a turn
 - `error → creating` / `stopped → creating`: `agentrun/restart` triggers re-bootstrap
 
-## Events (Shim RPC)
+## Events (Agent-run RPC)
 
 Events are not streamed directly over the ARI connection. Instead:
 
-- `agentrun/get` returns `status.shim.socketPath` — the shim's Unix socket path.
-- Callers connect directly to the shim socket and call `runtime/watch_event` to receive `runtime/event_update` notifications.
+- `agentrun/get` returns `status.socketPath` — the agent-run's Unix socket path.
+- Callers connect directly to the agent-run socket and call `runtime/watch_event` to receive `runtime/event_update` notifications.
 - See [run-rpc-spec.md](../runtime/run-rpc-spec.md) for the full notification surface.
 
 ## Error Codes
@@ -648,9 +647,9 @@ Configuration is passed via CLI flags:
 
 The ARI contract intentionally exposes less than raw ACP:
 
-- **exposed**: workspace management, Agent CRUD, AgentRun bootstrap, prompt delivery, cancellation, status, shim socket path (via `agentrun/get`), AgentRun/workspace listing;
+- **exposed**: workspace management, Agent CRUD, AgentRun bootstrap, prompt delivery, cancellation, status, agent-run socket path (via `agentrun/get`), AgentRun/workspace listing;
 - **not exposed as direct public contract**: raw ACP negotiation, `fs/*`, `terminal/*`, or other client-side ACP duties;
-- **governed by runtime permission posture**: what the shim may approve or deny while acting as ACP client.
+- **governed by runtime permission posture**: what the agent-run may approve or deny while acting as ACP client.
 
 ## Wire Protocol Summary
 
@@ -667,7 +666,7 @@ The ARI contract intentionally exposes less than raw ACP:
 | `agent/list` | ListOptions (optional) | `{items: Agent[]}` |
 | `agent/delete` | ObjectKey `{name}` | — |
 | `agentrun/create` | AgentRun object | AgentRun |
-| `agentrun/get` | ObjectKey `{workspace, name}` | AgentRun (with `status.shim`) |
+| `agentrun/get` | ObjectKey `{workspace, name}` | AgentRun (with `status`) |
 | `agentrun/list` | ListOptions (optional) | `{items: AgentRun[]}` |
 | `agentrun/delete` | ObjectKey `{workspace, name}` | — |
 | `agentrun/prompt` | `{workspace, name, prompt: ContentBlock[]}` | `{accepted}` |
@@ -679,6 +678,6 @@ The ARI contract intentionally exposes less than raw ACP:
 
 The following are target gaps, not current capabilities:
 
-- **Event streaming**: callers obtain the shim socket path via `agentrun/get` and connect directly to the shim to consume `runtime/event_update` notifications. ARI does not provide event passthrough.
+- **Event streaming**: callers obtain the agent-run socket path via `agentrun/get` and connect directly to the agent-run to consume `runtime/event_update` notifications. ARI does not provide event passthrough.
 - **AgentRun env override**: `agentrun/create` currently has no `env` field; only Agent definition env is used.
 - **Hook output in workspace/get**: workspace preparation hook stdout/stderr is not currently returned.

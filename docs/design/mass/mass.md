@@ -18,8 +18,8 @@ It does **not** own external scheduling intent.
 | Workspace preparation and cleanup | Workspace Manager | authoritative runtime execution |
 | Agent configuration | operator / external caller | store and serve via `agent/*` |
 | AgentRun lifecycle and identity | Agent Manager | external lifecycle authority |
-| Shim process truth | Process Manager | internal runtime execution |
-| ACP protocol details | runtime / shim | hidden behind shim and translated for ARI |
+| Agent-run process truth | Process Manager | internal runtime execution |
+| ACP protocol details | runtime / agent-run | hidden behind agent-run and translated for ARI |
 
 ## Internal Subsystems
 
@@ -73,17 +73,17 @@ AgentRun identity (`workspace` + `name`) is stable across restarts.
 
 ### Process Manager
 
-Process Manager realizes an AgentRun into an actual runtime process through the shim.
+Process Manager realizes an AgentRun into an actual runtime process through the agent-run.
 It owns:
 
 - bundle materialization;
 - runtime startup and shutdown;
 - runtime-state inspection;
-- reconnect to existing shim processes;
+- reconnect to existing agent-run processes;
 - typed event subscription;
 - recovery on daemon restart.
 
-Session-level concerns (shim socket path, PID, bundle directory) are tracked directly by Process Manager and surfaced through `agentrun/get` via `shimState`.
+Session-level concerns (agent-run socket path, PID, bundle directory) are tracked directly by Process Manager and surfaced through `agentrun/get` via `status`.
 
 ## AgentRun Identity
 
@@ -115,8 +115,8 @@ creating ──┐
 
 Transition rules:
 
-- `creating → idle`: shim started successfully (ACP initialized);
-- `creating → error`: shim start failed;
+- `creating → idle`: agent-run started successfully (ACP initialized);
+- `creating → error`: agent-run start failed;
 - `idle → running`: `agentrun/prompt` dispatched;
 - `running → idle`: prompt turn completes (agent returns to idle);
 - `idle → stopped` / `running → stopped`: `agentrun/stop` received;
@@ -130,8 +130,8 @@ The converged bootstrap story for AgentRun creation:
 1. `workspace/create` is called; agentd prepares the workspace asynchronously.
 2. Caller polls `workspace/get` until `phase: "ready"`.
 3. `agentrun/create` is called with `workspace` + `name` + `agent`.
-4. agentd validates the workspace is ready, writes AgentRun metadata with `state: "creating"`, and starts the shim in a background goroutine.
-5. The shim materializes the bundle, resolves `cwd`, and completes ACP bootstrap.
+4. agentd validates the workspace is ready, writes AgentRun metadata with `state: "creating"`, and starts the agent-run in a background goroutine.
+5. The agent-run materializes the bundle, resolves `cwd`, and completes ACP bootstrap.
 6. On success: AgentRun transitions to `idle`. On failure: AgentRun transitions to `error`.
 7. Actual work arrives later through `agentrun/prompt`.
 8. Callers poll `agentrun/get` until state transitions out of `creating`.
@@ -209,7 +209,7 @@ Rejection conditions:
 - daemon is in recovery mode (`-32001`);
 - target agent not found (`-32602`);
 - target agent is in `error` state (`-32001`);
-- target shim is not running (`-32001`).
+- target agent-run is not running (`-32001`).
 
 ## Recovery and Persistence Posture
 
@@ -218,20 +218,21 @@ After restart, AgentRun identity (`workspace` + `name`) is the recovery key.
 
 Persisted recovery state:
 
-- `workspace`, `name`, `agent`, bootstrap configuration (`BootstrapConfig`);
-- shim socket path (`ShimSocketPath`), state directory (`ShimStateDir`), shim PID (`ShimPID`) for live process reconnect;
+- `workspace`, `name`, `agent` — identity and template reference;
+- `socketPath`, `stateDir`, `pid` — for live process reconnect;
+- `sessionId`, `eventPath` — ACP session identity and event log;
 - last known agent state.
 
 On daemon restart:
 
 1. Load all AgentRun records from DB.
-2. For each AgentRun with `idle` or `running` state, attempt shim reconnect.
+2. For each AgentRun with `idle` or `running` state, attempt agent-run reconnect.
 3. If reconnect succeeds: restore to `idle` state (or recover running state via runtime/status).
 4. If reconnect fails: mark agent `error` (fail-closed).
 
 AgentRuns in `creating` state at daemon restart are marked `error` ("daemon restarted during creating phase") — they never completed bootstrap.
 
-External callers never see internal shim process details beyond what `agentrun/get` surfaces in `shimState`.
+External callers never see internal agent-run process details beyond what `agentrun/get` surfaces in `status`.
 
 ## Runtime Bootstrap Flow
 
@@ -270,9 +271,9 @@ Workspace hooks run in agentd's host process environment and are not affected by
 
 Capability posture is also explicit:
 
-- ACP remains the inner protocol between shim and agent;
+- ACP remains the inner protocol between agent-run and agent;
 - agentd exposes a curated ARI surface (`agentrun/*`, `agent/*`, `workspace/*`);
-- raw ACP client responsibilities such as `fs/*`, `terminal/*`, or low-level protocol negotiation remain behind the shim boundary and are governed by permission policy rather than by direct ARI passthrough.
+- raw ACP client responsibilities such as `fs/*`, `terminal/*`, or low-level protocol negotiation remain behind the agent-run boundary and are governed by permission policy rather than by direct ARI passthrough.
 
 ## Shared Workspace Semantics
 
@@ -285,19 +286,20 @@ If several AgentRuns share a workspace, they share read/write impact on the same
 - local path attachment is host-impacting and must be canonicalized before registration;
 - hooks execute as host commands and can have host-side effects before any agent prompt runs;
 - shared workspace means shared host-path impact;
-- ACP capability exposure is intentionally narrower at the ARI boundary than at the shim boundary.
+- ACP capability exposure is intentionally narrower at the ARI boundary than at the agent-run boundary.
 
-## Shim File Layout
+## Agent-Run File Layout
 
 For each AgentRun, agentd stores bundle, state, and socket co-located under the bundle root:
 
 ```
-<bundleRoot>/<workspace>-<name>/
+<bundleRoot>/<workspace>/<name>/
 ├── config.json          ← mass writes (MASS Runtime Spec)
 ├── workspace -> <path>  ← agentd symlinks to the workspace directory
-├── state.json           ← shim writes
-├── agent-run.sock      ← shim creates (Unix domain socket)
-└── events.jsonl         ← shim appends
+├── state.json           ← agent-run writes
+├── agent-run.sock      ← agent-run creates (Unix domain socket)
+└── events/
+    └── <sessionId>.jsonl ← agent-run appends (one file per ACP session)
 ```
 
-`ShimSocketPath` and `ShimStateDir` are persisted in the AgentRun metadata so mass can reconnect after restart without scanning the filesystem.
+`socketPath` and `stateDir` are persisted in the AgentRun metadata so mass can reconnect after restart without scanning the filesystem.

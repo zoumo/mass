@@ -585,8 +585,6 @@ func (m *ProcessManager) forkRun(agent *pkgariapi.AgentRun, bundlePath, stateDir
 	args := []string{
 		"run",
 		"--bundle", bundlePath,
-		"--id", filepath.Base(bundlePath),
-		"--state-dir", filepath.Dir(bundlePath), // bundleRoot; agent-run appends /<id>
 		"--permissions", string(apiruntime.ApproveAll),
 		"--log-level", m.logLevel,
 		"--log-format", m.logFormat,

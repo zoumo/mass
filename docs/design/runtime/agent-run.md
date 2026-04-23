@@ -8,7 +8,7 @@ last_updated: 2026-04-18
 
 agent-run 是 MASS Runtime 的参考实现边界：
 它读取 bundle、启动 agent 进程、持有 stdio、完成 ACP bootstrap，
-并对外暴露 shim RPC。
+并对外暴露 agent-run RPC。
 
 它对标 containerd-shim，但在 MASS 里同时吸收了独立 `runc` 不再成立后留下的职责。
 相关原因见 [why-no-runa.md](why-no-runa.md)。
@@ -17,7 +17,7 @@ agent-run 是 MASS Runtime 的参考实现边界：
 
 ```text
 agentd（可重启）
-   │  shim RPC: session/* + runtime/*
+   │  agent-run RPC: session/* + runtime/*
    ▼
 agent-run（每个 AgentRun 一个，独立存活）
    │  ACP over stdio
@@ -25,12 +25,12 @@ agent-run（每个 AgentRun 一个，独立存活）
 agent 进程（claude-acp / pi-acp / gemini / ...）
 ```
 
-## shim RPC 稳定性声明
+## Agent-Run RPC 稳定性声明
 
 **agent-run 保持现有 RPC 边界。**
-shim 提供 `session/*` + `runtime/*` RPC surface（request/response，clean-break 实现已对齐）、bundle/state 共置和单 AgentRun 单 shim 进程设计。
+agent-run 提供 `session/*` + `runtime/*` RPC surface（request/response，clean-break 实现已对齐）、bundle/state 共置和单 AgentRun 单 agent-run 进程设计。
 
-agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent/*` 管理 Agent CRUD。shim RPC 的 `session/*` + `runtime/*` 是内部协议，不暴露给外部调用方。
+agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent/*` 管理 Agent CRUD。agent-run RPC 的 `session/*` + `runtime/*` 是内部协议，不暴露给外部调用方。
 **统一 notification surface**：live notification 统一为 `runtime/event_update`，携带 `runId`、`sessionId`、`seq`、`type`、`turnId`（turn 内事件）、`payload` 顶层字段。事件类型包括核心流式事件和 `runtime_update`（合并进程状态与 session 元数据）。
 详见 [run-rpc-spec.md](run-rpc-spec.md) 中的"Turn-Aware Event Ordering"章节。
 
@@ -44,7 +44,7 @@ agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent
 
 - socket 路径约定不是本文档的 authority；
 - 方法名与 notification 名不是本文档的 authority；
-- 本文档不再重复维护另一套 shim 协议说法。
+- 本文档不再重复维护另一套 agent-run 协议说法。
 
 ## 架构参照
 
@@ -54,7 +54,7 @@ agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent
 | containerd-shim | agent-run | 中间层，独立进程，生命周期与单个 workload 绑定 |
 | runc | — | agent 不需要内核隔离，fork/exec 责任吸收到 agent-run |
 | 容器进程 | agent 进程 | 工作负载 |
-| ttrpc over Unix socket | JSON-RPC 2.0 over Unix socket | shim 控制协议 |
+| ttrpc over Unix socket | JSON-RPC 2.0 over Unix socket | agent-run 控制协议 |
 
 **agent-run = fork/exec + stdio 持有 + ACP client + runtime truth exporter**
 
@@ -74,7 +74,7 @@ agent-run 内部的职责序列是：
 4. 持有 agent 的 stdin/stdout，根据 `clientProtocol` 完成协议握手（如 ACP `initialize`）；
 5. 使用 `clientProtocol` 指定的方式建立 bootstrap（resolved `cwd` + `session` 字段）；
 6. 写入 runtime state 与事件日志；
-7. 在 shim socket 上提供对外控制与恢复能力；
+7. 在 agent-run socket 上提供对外控制与恢复能力；
 8. 持续监督 agent 进程，必要时执行 stop / cleanup 流程。
 
 ## 双重角色
@@ -106,7 +106,7 @@ runtime/status       查询 runtime truth 与恢复边界
 runtime/stop         优雅停止 runtime
 ```
 
-对上暴露的 live notification 也是 shim 自己的 surface：
+对上暴露的 live notification 也是 agent-run 自己的 surface：
 
 - `runtime/event_update`（统一 notification，包含核心流式事件和 `runtime_update` 事件）
 
@@ -124,8 +124,8 @@ agent-run 处在 MASS runtime design set 的 authority split 中间：
 | 关切 | authority | agent-run 的角色 |
 |------|-----------|-------------------|
 | AgentRun identity `(workspace, name)` | agentd / ARI | 读取外部分配结果，不重新定义 |
-| process truth、runtime status、runtime-local failure | runtime / shim | 直接拥有并对上暴露 |
-| ACP `sessionId` 与 ACP 协议细节 | ACP peer + shim | 内部维护，不让上层越过 shim 边界 |
+| process truth、runtime status、runtime-local failure | runtime / agent-run | 直接拥有并对上暴露 |
+| ACP `sessionId` 与 ACP 协议细节 | ACP peer + agent-run | 内部维护，不让上层越过 agent-run 边界 |
 | desired scheduling intent | external caller | 不拥有 |
 
 因此，agent-run 负责的是 **runtime-local truth**，不是外部调度策略。
@@ -142,13 +142,13 @@ agent-run ↔ agent:   ACP over stdio
 这意味着：
 
 - agentd 不需要理解 ACP 事件名、握手细节或客户端职责；
-- shim 把底层协议翻译成上层能消费的 `runtime/event_update` notification；
-- 若未来某个 agent 不走 ACP，只要 shim 继续维持相同的对上 surface，
+- agent-run 把底层协议翻译成上层能消费的 `runtime/event_update` notification；
+- 若未来某个 agent 不走 ACP，只要 agent-run 继续维持相同的对上 surface，
   上层 contract 仍然成立。
 
 ## 恢复与爆炸半径隔离
 
-独立 shim 进程的价值仍然是爆炸半径隔离：
+独立 agent-run 进程的价值仍然是爆炸半径隔离：
 
 ```text
 agentd 重启
@@ -160,7 +160,7 @@ agentd 重启
 
 agentd 恢复后，不需要重新理解 ACP，只需要：
 
-1. 发现 shim socket；
+1. 发现 agent-run socket；
 2. 连接；
 3. `runtime/status` 获取当前 runtime truth 与 `lastSeq`；
 4. `runtime/watch_event` 一步完成历史补齐 + live 流恢复。
@@ -169,9 +169,9 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 恢复方法名与顺序，由 run-rpc-spec authority 定义；
 本文档只是解释为什么 agent-run 必须提供这类能力。
 
-## 为什么需要独立 shim
+## 为什么需要独立 agent-run
 
-独立 shim 解决的是 agent 场景下几个无法回避的问题：
+独立 agent-run 解决的是 agent 场景下几个无法回避的问题：
 
 1. **stdio 必须被长期持有** —— ACP over stdio 决定了 agent 不能在 client 退出后继续”自己活着”；
 2. **process truth 需要独立于 agentd 生存** —— agentd 重启不应直接杀掉所有 AgentRun；
@@ -185,5 +185,5 @@ agentd 恢复后，不需要重新理解 ACP，只需要：
 - request/response surface 是 `session/*` + `runtime/*`（已实现）；
 - notification surface 是 `runtime/event_update`（统一替代原 `session/update` + `runtime/state_change`）；
 - recovery story 通过 `runtime/status` / `runtime/watch_event` 闭合；
-- ACP 继续留在 shim 内部；
+- ACP 继续留在 agent-run 内部；
 - `session/load` 在 recovery 时始终尝试，agent-run 内部检查 ACP `loadSession` 能力并自动 fallback；调用方无需关心恢复策略。

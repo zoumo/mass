@@ -113,8 +113,8 @@ process state, and ACP identity into one concept.
 |---|---|---|---|
 | MASS runtime object | agentd + runtime | AgentRun `(workspace, name)`; runtime `status` = `creating`/`idle`/`running`/`stopped`/`error` | Names the runtime instance exposed through ARI and runtime state.json. |
 | agentd AgentRun lifecycle | agentd | `creating` / `idle` / `running` / `stopped` / `error` | AgentRun lifecycle state around the runtime process. |
-| Host process | runtime / shim | PID + process status | Operational signal for whether the agent process is alive. |
-| ACP peer session | ACP peer + shim | ACP `sessionId` | Inner protocol identity, distinct from AgentRun identity. |
+| Host process | runtime / agent-run | PID + process status | Operational signal for whether the agent process is alive. |
+| ACP peer session | ACP peer + agent-run | ACP `sessionId` | Inner protocol identity, distinct from AgentRun identity. |
 
 The important split is:
 
@@ -290,10 +290,11 @@ The following fields are durably persisted in `AgentRunStatus` and available for
 | Field | Purpose |
 |---|---|
 | `workspace`, `name`, `agent` | AgentRun identity and template reference |
-| `BootstrapConfig` | Resolved configuration snapshot (`systemPrompt`, `mcpServers`, permissions) |
-| `ShimSocketPath` | Durable pointer to shim Unix socket for reconnect |
-| `ShimStateDir` | Durable pointer to shim state directory |
-| `ShimPID` | Shim process PID for live process reconnect |
+| `socketPath` | Unix socket path for agent-run RPC reconnect |
+| `stateDir` | Agent-run state directory (internal; stripped by ARIView) |
+| `pid` | Agent-run process PID |
+| `sessionId` | ACP protocol session ID (for `session/load` on restart) |
+| `eventPath` | JSONL event log path for the current session |
 
 ### Remaining Gaps (Future Work)
 

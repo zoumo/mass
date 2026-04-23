@@ -10,7 +10,7 @@ last_updated: 2026-04-18
 生命周期状态机、操作语义，以及文件系统布局约定。
 
 这些规范是**实现无关**的——任何符合此规范的 runtime 实现（无论是直接集成
-还是独立 shim 进程）都必须遵守这里定义的行为。
+还是独立 agent-run 进程）都必须遵守这里定义的行为。
 
 ## State
 
@@ -46,7 +46,7 @@ The state of an agent includes the following properties:
   If no annotations were provided then this property MAY either be absent or an empty map.
 
 The state MAY include additional properties. The following optional fields are
-populated by the shim during runtime:
+populated by the agent-run during runtime:
 
 * **`updatedAt`** (string, OPTIONAL) is the RFC3339Nano timestamp of the last state write.
   Updated on every `state.json` persist cycle.
@@ -111,77 +111,45 @@ populated by the shim during runtime:
 
 ### State Storage
 
-The runtime MUST store state in a volatile location (e.g. `/run/`).
-State is ephemeral — lost on host restart.
-Persistent metadata is the responsibility of agentd.
+In OCI, bundle and state directories are separate: `bundle` holds `config.json` and rootfs, while the state directory (e.g. `/run/runc/<id>/`) holds ephemeral runtime files.
 
-The `bundle` field points to the bundle directory (where `config.json` lives),
-NOT the state directory. This mirrors OCI state where `bundle` points to the
-bundle, not to `/run/runc/<id>/`.
+MASS simplifies this: **bundle and state are the same directory**. All files — configuration and runtime state — live together under `<bundleRoot>/<workspace>/<name>/`. This eliminates the need to track two separate paths.
+
+The `bundle` field in `state.json` therefore points to the directory that also contains `state.json` itself.
 
 ## File System Layout
 
-In agentd-managed deployments, bundle, state, and socket are co-located under the bundle root:
-
 ```
-<bundleRoot>/<workspace>-<name>/      ← bundle dir (bundle field in state.json)
-├── config.json                       ← mass writes (MASS Runtime Spec)
+<bundleRoot>/<workspace>/<name>/      ← bundle dir = state dir
+├── config.json                       ← mass writes before create
 ├── workspace -> <workspace-dir>      ← agentd symlinks to workspace directory
-├── state.json                        ← shim writes
-├── agent-run.sock                   ← shim creates (Unix domain socket)
-└── events.jsonl                      ← shim appends
+├── state.json                        ← agent-run writes at runtime
+├── agent-run.sock                    ← agent-run creates (Unix domain socket)
+└── events/
+    └── <sessionId>.jsonl             ← agent-run appends (one file per ACP session)
 ```
 
-When running `mass run` in standalone mode, the default state directory is `<cwd>`.
-
-agentd persists `ShimSocketPath` and `ShimStateDir` in AgentRun metadata,
-so recovery uses persisted metadata rather than filesystem scanning.
+agentd persists the directory path in AgentRun metadata (`stateDir`) so recovery reconnects using the stored path rather than scanning the filesystem.
 
 ## Bundle
 
-A **bundle** is a directory containing all information needed to create an agent.
-The runtime reads a bundle directory to obtain the configuration.
-
-A bundle MUST contain the following file:
+The bundle directory contains the configuration that mass prepares before invoking `create`:
 
 * **`config.json`** (REQUIRED) — the agent configuration as defined in [config.md](config-spec.md).
-
-agentd MUST prepare the following before invoking the runtime:
-
-* **`workspace`** (symlink at `agentRoot.path`, REQUIRED) — a symbolic link at the
-  path named by `config.json`'s `agentRoot.path` (typically `"workspace"`), pointing
-  to the workspace directory prepared by the Workspace Manager.
-  mass creates this symlink — the runtime only reads it.
-
-```
-<bundle-dir>/
-├── config.json       ← mass writes (MASS Runtime Spec)
-└── workspace -> /var/lib/agentd/workspaces/ws-abc123/   ← agentd symlinks
-```
+* **`workspace`** (symlink at `agentRoot.path`, REQUIRED) — a symbolic link pointing to the workspace directory prepared by the Workspace Manager. mass creates this symlink; the runtime only reads it.
 
 The runtime resolves `agentRoot.path` at `create` time by joining the bundle directory
-with the path and calling `EvalSymlinks`, yielding the canonical absolute path.
-This resolved path is used as `cmd.Dir` and as the agent working directory
-(e.g., ACP `session/new cwd` parameter, or CLI `--cwd` argument).
+with the path and calling `EvalSymlinks`, yielding the canonical absolute path used as
+`cmd.Dir` and the agent working directory (e.g., ACP `session/new cwd`).
 
-### agentRoot as OCI root analogy
+### agentRoot
 
-OCI's `root.path` is a relative path inside the bundle pointing to the container's
-rootfs. containerd (via the snapshotter) prepares the rootfs and places it at that
-path before handing the bundle to runc.
-
-MASS follows the same pattern: `agentRoot.path` is a relative path inside the bundle.
-agentd's Workspace Manager prepares the workspace directory and creates a symlink at
-`agentRoot.path` inside the bundle. The runtime reads and resolves the path — it never
-creates or modifies the workspace directory.
-
-The key difference: OCI rootfs is isolated per container. MASS workspace is shared —
-multiple AgentRuns sharing a workspace each have their own bundle, but their `agentRoot.path`
-symlinks all point to the same underlying workspace directory.
+In OCI, `root.path` points to the container's isolated rootfs inside the bundle.
+In MASS, `agentRoot.path` points to a symlink inside the bundle that resolves to the
+shared workspace directory. The workspace is not isolated per agent — multiple AgentRuns
+in the same workspace share the same underlying directory.
 
 ### Bundle Lifecycle
-
-mass is responsible for creating bundle directories and preparing their contents:
 
 1. Workspace Manager prepares the workspace directory (git clone / emptyDir / local).
 2. mass creates the bundle directory.
@@ -189,10 +157,6 @@ mass is responsible for creating bundle directories and preparing their contents
 4. mass creates the symlink: `bundle/workspace → <workspace-dir>`.
 5. agentd invokes the runtime's `create` operation with the bundle path.
 6. The runtime reads `config.json`, resolves `agentRoot.path` → canonical absolute path, starts agent.
-
-This mirrors OCI's bundle concept:
-containerd creates the bundle directory + rootfs → runc reads config.json from it.
-mass creates the bundle directory + workspace symlink → the runtime reads config.json from it.
 
 ## Lifecycle
 
@@ -354,8 +318,7 @@ the caller (agentd) is responsible for sending SIGKILL.
 This operation MUST [generate an error](#errors) if it is not provided the agent ID.
 Attempting to `delete` an agent that is not [`stopped`](#state) MUST have no effect
 on the agent and MUST [generate an error](#errors).
-Deleting an agent MUST delete the resources that were created during the `create` step
-(e.g. the bundle/state directory under `<bundleRoot>/<workspace>-<name>/`).
+Deleting an agent MUST delete the bundle directory (`<bundleRoot>/<workspace>/<name>/`) created during the `create` step.
 Once an agent is deleted its ID MAY be used by a subsequent agent.
 
 ## config.json
@@ -435,8 +398,8 @@ Runtime 必须产出结构化的 typed event stream，供上层消费。
 
 ### 事件持久化
 
-Runtime MUST 将 typed events 追加写入 state dir 下的 `events.jsonl`，
-供 agentd 重连后回放。
+Runtime MUST 将 typed events 追加写入 bundle 目录下的 `events/<sessionId>.jsonl`，
+每个 ACP session 对应一个独立文件，供 agentd 重连后回放。
 
 ## Agent 进程分类
 

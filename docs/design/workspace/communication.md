@@ -53,7 +53,7 @@ workspace-mcp (claude-code 的 MCP server)
   │  ARI call: workspace/send(workspace="agentd-e2e", from="claude-code", to="codex", message=...)
   ▼
 agentd
-  │  lookup target shim → codex 的 agent-run
+  │  lookup target agent-run → codex 的 agent-run
   │  append envelope: <workspace-message from="claude-code" reply-requested="true" />
   ▼
 agent-run (codex)
@@ -70,7 +70,7 @@ codex (receives message, processes, replies via same path in reverse)
 
 `workspace/send` 提供 workspace 内 agent 间的即发即忘消息路由。
 
-**投递语义**：fire-and-forget。`delivered: true` 表示消息已分发到目标 agent 的 shim，不保证处理完成。
+**投递语义**：fire-and-forget。`delivered: true` 表示消息已分发到目标 agent 的 agent-run，不保证处理完成。
 
 **投递约束**：目标 agent 必须处于 `idle` 状态才能接收消息。若目标 agent 不在 `idle` 状态（`creating`、`running`、`stopped`、`error`），调用返回错误。
 
@@ -109,7 +109,7 @@ mass 在投递消息时会在消息文本**尾部**追加 XML 格式的信封标
 | daemon 处于 recovery 模式 | `-32001` |
 | 目标 agent 未找到 | `-32602` |
 | 目标 agent 处于 `error` 状态 | `-32001` |
-| 目标 agent 的 shim 未运行 | `-32001` |
+| 目标 agent 的 agent-run 未运行 | `-32001` |
 
 ---
 

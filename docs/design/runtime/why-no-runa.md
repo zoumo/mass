@@ -40,7 +40,7 @@ agent 进程和 ACP client 的生命周期是绑定的，"启动后独立存活"
 
 谁 fork/exec agent 进程，谁就持有它的 stdin/stdout pipe。
 要把 stdio 移交给另一个进程，需要通过 SCM_RIGHTS 传递文件描述符，
-这等于变相实现了一个 shim 协议，复杂度不低于直接在 shim 里 fork。
+这等于变相实现了一个 agent-run 协议，复杂度不低于直接在 agent-run 里 fork。
 
 更根本的问题：stdio 的读端必须有人持续消费，否则 agent 写满 pipe buffer 会阻塞。
 这个"持续消费"就是 ACP client 的职责，它必须常驻，不能是一次性 CLI。

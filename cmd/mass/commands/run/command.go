@@ -27,7 +27,6 @@ func NewCommand() *cobra.Command {
 		bundle      string
 		permissions string
 		id          string
-		stateDir    string
 		logCfg      logging.LogConfig
 	)
 
@@ -40,25 +39,24 @@ It reads a config.json from the bundle directory, fork/execs the agent process,
 completes the ACP initialize + session/new handshake, and exposes a JSON-RPC
 server over a Unix socket for upstream management (mass daemon or any orchestrator).
 
-The socket is created at <state-dir>/<id>/agent-run.sock so mass can
-discover all running agent-runs by scanning /run/mass/agentrun/*/agent-run.sock.`,
+The bundle directory also serves as the state directory: state.json, agent-run.sock,
+and events/<sessionId>.jsonl are all written inside the bundle directory.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cmd, bundle, permissions, id, stateDir, &logCfg)
+			return run(cmd, bundle, permissions, id, &logCfg)
 		},
 	}
 
 	cmd.Flags().StringVar(&bundle, "bundle", "", "path to the MASS bundle directory containing config.json (required)")
 	cmd.Flags().StringVar(&permissions, "permissions", "approve_all", "fs/terminal permission policy: approve_all | approve_reads | deny_all")
-	cmd.Flags().StringVar(&id, "id", "", "agent session ID (auto-generated if empty)")
-	cmd.Flags().StringVar(&stateDir, "state-dir", "/run/mass/agentrun", "base directory for ephemeral state files")
+	cmd.Flags().StringVar(&id, "id", "", "agent session ID (defaults to metadata.name from config.json)")
 	logCfg.AddFlags(cmd.Flags())
 
 	_ = cmd.MarkFlagRequired("bundle")
 	return cmd
 }
 
-func run(cmd *cobra.Command, bundle, permissions, id, stateDir string, logCfg *logging.LogConfig) error {
+func run(cmd *cobra.Command, bundle, permissions, id string, logCfg *logging.LogConfig) error {
 	logCfg.Filename = "agent-run.log"
 	logger, logCleanup, err := logCfg.Build()
 	if err != nil {
@@ -85,7 +83,8 @@ func run(cmd *cobra.Command, bundle, permissions, id, stateDir string, logCfg *l
 		id = cfg.Metadata.Name
 	}
 
-	runStateDir := spec.StateDir(stateDir, id)
+	// Bundle dir is the state dir — all runtime files live together.
+	runStateDir := bundle
 	socketPath := spec.RunSocketPath(runStateDir)
 	mgr := acpruntime.New(cfg, bundle, runStateDir, logger)
 
