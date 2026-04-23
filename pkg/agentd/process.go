@@ -235,9 +235,9 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 		return nil, fmt.Errorf("process: agent %s does not exist", key)
 	}
 
-	// Validate agent status - must be "creating" to start.
-	if agent.Status.Status != apiruntime.StatusCreating {
-		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.Status)
+	// Validate agent status - must be "pending" to start.
+	if agent.Status.Status != apiruntime.StatusPending {
+		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'pending' to start)", key, agent.Status.Status)
 	}
 
 	// 2. Resolve Agent definition from DB.

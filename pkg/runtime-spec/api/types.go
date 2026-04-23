@@ -6,7 +6,12 @@ package api
 type Status string
 
 const (
-	// StatusCreating means the agent is being created (ACP handshake not yet complete).
+	// StatusPending means the agent run record has been created by mass,
+	// but the agent-run process has not yet been forked.
+	StatusPending Status = "pending"
+
+	// StatusCreating means the agent-run process has started and is performing
+	// the protocol handshake (e.g. ACP initialize + session/new).
 	StatusCreating Status = "creating"
 
 	// StatusIdle means the agent process is running and the ACP session is
@@ -21,11 +26,6 @@ const (
 
 	// StatusError means the agent encountered an unrecoverable error.
 	StatusError Status = "error"
-
-	// StatusRestarting means the agent-run is being restarted.
-	// Transitions: restarting → stopped → creating → idle.
-	// Treated as transient: daemon recovery cleans up stuck-restarting agents.
-	StatusRestarting Status = "restarting"
 )
 
 // String implements fmt.Stringer.

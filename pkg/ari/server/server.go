@@ -335,7 +335,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s is disabled", ar.Spec.Agent))
 	}
 
-	ar.Status.Status = apiruntime.StatusCreating
+	ar.Status.Status = apiruntime.StatusPending
 	if err := a.agents.Create(ctx, ar); err != nil {
 		var alreadyExists *agentd.ErrAgentRunAlreadyExists
 		if errors.As(err, &alreadyExists) {
@@ -551,7 +551,7 @@ func (a *agentRunAdapter) Stop(ctx context.Context, wsName, name string) error {
 // Restart handles agentrun/restart.
 //
 // Accepts any agent state. Stops the existing agent-run (if running) then starts a
-// new one. Returns immediately with state="creating".
+// new one. Returns immediately with state="pending".
 func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pkgariapi.AgentRun, error) {
 	a.logger.Info("agentrun/restart", "workspace", wsName, "name", name)
 
@@ -566,8 +566,9 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 	// Agents in terminal states have no active agent-run.
 	needsStop := agent.Status.Status != apiruntime.StatusStopped && agent.Status.Status != apiruntime.StatusError
 
+	// Set pending before goroutine so sync response sees it.
 	if err := a.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
-		Status: apiruntime.StatusRestarting,
+		Status: apiruntime.StatusPending,
 	}); err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
@@ -579,15 +580,6 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 				a.logger.Warn("agentrun/restart: pre-stop failed, continuing",
 					"workspace", wsName, "name", name, "error", err)
 			}
-		}
-		// Transition to "creating" for Start() — required on all paths
-		// because the initial status was set to "restarting".
-		if err := a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
-			Status: apiruntime.StatusCreating,
-		}); err != nil {
-			a.logger.Warn("agentrun/restart: failed to transition to creating",
-				"workspace", wsName, "name", name, "error", err)
-			return
 		}
 		if _, err := a.processes.Start(bgCtx, wsName, name); err != nil {
 			a.logger.Warn("agentrun/restart: agent-run start failed",
@@ -604,7 +596,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 	if err2 != nil || agentUpdated == nil {
 		agentUpdated = &pkgariapi.AgentRun{
 			Metadata: pkgariapi.ObjectMeta{Workspace: wsName, Name: name},
-			Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusCreating},
+			Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusPending},
 		}
 	}
 	return copyVal(agentUpdated.ARIView()), nil

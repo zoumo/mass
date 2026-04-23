@@ -88,7 +88,7 @@ func TestProcessManagerStart(t *testing.T) {
 		t.Fatalf("CreateWorkspace: %v", err)
 	}
 
-	// Create an agent in "creating" state (required by Start).
+	// Create an agent in "pending" state (required by Start).
 	agentWorkspace := "test-ws"
 	agentName := "test-agent"
 	agent := &pkgariapi.AgentRun{
@@ -100,7 +100,7 @@ func TestProcessManagerStart(t *testing.T) {
 			Agent: "mockagent",
 		},
 		Status: pkgariapi.AgentRunStatus{
-			Status: apiruntime.StatusCreating,
+			Status: apiruntime.StatusPending,
 		},
 	}
 	if err := metaStore.CreateAgentRun(ctx, agent); err != nil {

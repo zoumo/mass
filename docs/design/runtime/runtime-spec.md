@@ -27,12 +27,15 @@ The state of an agent includes the following properties:
 * **`status`** (string, REQUIRED) is the runtime state of the agent.
   The value MAY be one of:
 
-  * `creating`: the agent is being created (step 2 in the [lifecycle](#lifecycle))
+  * `pending`: the agent run record has been created by mass, but the agent-run
+    process has not yet been forked (daemon-layer only; never reported by the runtime)
+  * `creating`: the agent-run process has started and is performing the protocol
+    handshake (e.g. ACP `initialize` + `session/new`)
   * `idle`: the runtime has finished the [create operation](#create),
     the agent process is running, the protocol session has been established,
     and the agent is ready to receive prompts
   * `running`: the agent is executing a prompt (processing a `session/prompt`)
-  * `stopped`: the agent process has exited (step 7 in the [lifecycle](#lifecycle))
+  * `stopped`: the agent process has exited gracefully
   * `error`: an unrecoverable failure occurred during creating, idle, or running
 
   Additional values MAY be defined by the runtime, however,
@@ -201,20 +204,25 @@ The `start` operation is currently a no-op, reserved for future use.
 ### Lifecycle Diagram
 
 ```
-         create
+      agentrun/create
            │
            ▼
       ┌──────────┐
-      │ creating  │
+      │ pending   │  DB record created, process not yet forked
       └────┬──────┘
-           │ process started + protocol initialized + session established
+           │ fork/exec
+           ▼
+      ┌──────────┐
+      │ creating  │  process started, protocol handshake in progress
+      └────┬──────┘
+           │ handshake complete (ACP session/new)
            ▼
       ┌──────────┐          session/prompt           ┌──────────┐
       │  idle     │ ──────────────────────────────► │ running   │
       │           │ ◄────────────────────────────── │(prompting)│
       └────┬──────┘          prompt completed        └────┬──────┘
            │                                              │
-           │ kill / exit / error                          │ kill / exit / error
+           │ kill / exit                                  │ kill / exit
            ▼                                              ▼
       ┌──────────┐                                   ┌──────────┐
       │ stopped   │                                   │ stopped   │
@@ -222,6 +230,9 @@ The `start` operation is currently a no-op, reserved for future use.
            │ delete                                        │ delete
            ▼                                              ▼
        (removed)                                      (removed)
+
+      Any state except pending may transition to error on unrecoverable failure.
+      Restart = stop (→ stopped) + create (→ pending → creating → idle).
 ```
 
 ## State Mapping and Identity Authority
@@ -229,13 +240,14 @@ The `start` operation is currently a no-op, reserved for future use.
 The design set uses the following cross-layer mapping. `status` in this document is the
 runtime-owned state, not the mass daemon session state, and not the ACP peer's session identifier.
 
-| MASS runtime `status` | agentd AgentRun state | Process status | Protocol session ID authority | Notes |
-|---|---|---|---|---|
-| `creating` | `creating` — bootstrap in progress | process may be absent or starting | none yet, or not yet durable | agentd has allocated the AgentRun identity, but protocol bootstrap is not complete. |
-| `idle` | `idle` | running | Protocol peer may now return its own session ID; it is subordinate protocol state | Runtime bootstrap is complete and the agent is ready to receive prompts. |
-| `running` | `running` | running | same session ID established during bootstrap | External work is flowing through `agentrun/prompt`. |
-| `stopped` | `stopped` | stopped or exited | last known session ID is historical only | Process has exited; runtime state is terminal until delete. |
-| `error` | `error` | stopped or absent | last known session ID is historical only | Unrecoverable failure; agent must be restarted or deleted. |
+| MASS runtime `status` | Who sets it | Process status | Notes |
+|---|---|---|---|
+| `pending` | daemon (ARI create) | not yet forked | DB record exists, process not started. Daemon recovery: mark error if stuck. |
+| `creating` | runtime (agent-run) | starting | Process forked, protocol handshake in progress. |
+| `idle` | runtime (agent-run) | running | Bootstrap complete, ready for prompts. |
+| `running` | runtime (agent-run) | running | Processing a session/prompt. |
+| `stopped` | runtime (graceful) or daemon (fallback) | exited | Graceful: runtime reports before exit. Crash: daemon detects via watchProcess. |
+| `error` | runtime or daemon | exited or absent | Unrecoverable failure. Runtime reports if possible; daemon as fallback. |
 
 Identity authority stays split:
 
