@@ -1,5 +1,4 @@
-// Package server implements the "mass server" subcommand.
-package server
+package daemon
 
 import (
 	"context"
@@ -9,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,32 +23,21 @@ import (
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
-// NewCommand returns the "server" cobra command.
-func NewCommand() *cobra.Command {
-	var (
-		rootPath string
-		logCfg   logging.LogConfig
-	)
-
-	cmd := &cobra.Command{
-		Use:   "server",
-		Short: "Start the mass daemon",
-		Long:  `Start the MASS agent daemon and listen for ARI connections on the configured Unix socket.`,
+func newStartCmd(rootPath *string, logCfg *logging.LogConfig) *cobra.Command {
+	return &cobra.Command{
+		Use:          "start",
+		Short:        "Start the mass daemon",
+		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(rootPath, &logCfg)
+			return runStart(*rootPath, logCfg)
 		},
 	}
-
-	cmd.Flags().StringVar(&rootPath, "root", agentd.DefaultRoot(), "root directory for mass data (socket, DB, bundles, workspaces)")
-	logCfg.AddFlags(cmd.Flags())
-	return cmd
 }
 
-func run(rootPath string, logCfg *logging.LogConfig) error {
+func runStart(rootPath string, logCfg *logging.LogConfig) error {
 	logCfg.Filename = "mass-server.log"
 	logCfg.SetDefaultPath(filepath.Join(rootPath, "logs"))
 
-	// Configure logger before anything else.
 	logger, logCleanup, err := logCfg.Build()
 	if err != nil {
 		return err
@@ -61,7 +50,7 @@ func run(rootPath string, logCfg *logging.LogConfig) error {
 		return err
 	}
 
-	// go-run detection: warn when the binary path looks like a temporary go build artifact.
+	// go-run detection.
 	if self, err := os.Executable(); err == nil {
 		if strings.Contains(self, "/tmp/go-build") {
 			logger.Warn("running from go-run temp binary — os.Executable() path is ephemeral",
@@ -74,16 +63,23 @@ func run(rootPath string, logCfg *logging.LogConfig) error {
 		"root", opts.Root,
 		"socket", opts.SocketPath(),
 		"workspace_root", opts.WorkspaceRoot(),
-		"bundle_root", opts.BundleRoot(),
+		"agentrun_root", opts.AgentRunRoot(),
 		"meta_db", opts.MetaDBPath(),
 	)
 
 	// Create all required subdirectories.
-	for _, dir := range []string{opts.Root, opts.WorkspaceRoot(), opts.BundleRoot(), filepath.Join(opts.Root, "logs")} {
+	for _, dir := range []string{opts.Root, opts.WorkspaceRoot(), opts.AgentRunRoot(), filepath.Join(opts.Root, "logs")} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
+
+	// Write PID file.
+	pidPath := opts.PidFilePath()
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		return fmt.Errorf("write pid file: %w", err)
+	}
+	defer os.Remove(pidPath)
 
 	// Initialize metadata store.
 	metaStore, err := store.NewStore(opts.MetaDBPath(), logger)
@@ -92,27 +88,15 @@ func run(rootPath string, logCfg *logging.LogConfig) error {
 	}
 	logger.Info("metadata store initialized", "path", opts.MetaDBPath())
 
-	// Seed built-in agent definitions (skip existing).
 	if err := agentd.EnsureBuiltinAgents(context.Background(), metaStore, logger); err != nil {
 		return fmt.Errorf("seed builtin agents: %w", err)
 	}
 
-	// Create WorkspaceManager.
 	manager := workspace.NewWorkspaceManager()
-	logger.Info("workspace manager initialized")
-
-	// Create AgentRunManager.
 	agents := agentd.NewAgentRunManager(metaStore, logger)
-	logger.Info("agent run manager initialized")
+	processes := agentd.NewProcessManager(agents, metaStore, opts.SocketPath(), opts.AgentRunRoot(), logger, logCfg.Level, logCfg.Format)
 
-	// Create ProcessManager (self-fork).
-	processes := agentd.NewProcessManager(agents, metaStore, opts.SocketPath(), opts.BundleRoot(), logger, logCfg.Level, logCfg.Format)
-	logger.Info("process manager initialized",
-		"socket_path", opts.SocketPath(),
-		"bundle_root", opts.BundleRoot(),
-	)
-
-	// Run recovery pass: reconnect to agent-runs that survived a daemon restart.
+	// Recovery pass.
 	{
 		recoverCtx, recoverCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := processes.RecoverSessions(recoverCtx); err != nil {
@@ -123,18 +107,14 @@ func run(rootPath string, logCfg *logging.LogConfig) error {
 		recoverCancel()
 	}
 
-	// Initialize workspace manager refcounts from DB.
 	if err := manager.InitRefCounts(metaStore); err != nil {
 		logger.Warn("workspace refcount init failed (non-fatal)", "error", err)
 	}
 
-	// Create ARI service and wire it to a new jsonrpc.Server.
 	svc := ariserver.New(manager, agents, processes, metaStore, opts.WorkspaceRoot(), logger)
 	srv := jsonrpc.NewServer(logger)
 	ariserver.Register(srv, svc)
-	logger.Info("ARI server created")
 
-	// Remove stale socket file from a previous crash (K014).
 	_ = os.Remove(opts.SocketPath())
 
 	ln, err := net.Listen("unix", opts.SocketPath())
@@ -143,7 +123,6 @@ func run(rootPath string, logCfg *logging.LogConfig) error {
 	}
 	defer ln.Close()
 
-	// Start server in goroutine.
 	go func() {
 		logger.Info("starting ARI server", "socket", opts.SocketPath())
 		if err := srv.Serve(ln); err != nil {
@@ -151,26 +130,36 @@ func run(rootPath string, logCfg *logging.LogConfig) error {
 		}
 	}()
 
-	// Setup signal handler for SIGTERM/SIGINT.
+	// Signal handling: SIGTERM/SIGINT → shutdown, SIGHUP → restart (re-exec).
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 
 	sig := <-sigChan
-	logger.Info("received signal, shutting down", "signal", sig)
+	logger.Info("received signal", "signal", sig)
 
-	// Graceful shutdown with timeout.
+	// Graceful shutdown.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_ = ln.Close() // close listener so srv.Serve returns
 	if err := srv.Shutdown(ctx); err != nil {
 		logger.Error("shutdown error", "error", err)
 	}
+	_ = ln.Close()
 
-	// Close metadata store.
 	logger.Info("closing metadata store")
 	if err := metaStore.Close(); err != nil {
 		logger.Error("metadata store close error", "error", err)
+	}
+
+	if sig == syscall.SIGHUP {
+		logger.Info("re-executing for restart")
+		self, err := os.Executable()
+		if err != nil {
+			return fmt.Errorf("os.Executable: %w", err)
+		}
+		// syscall.Exec replaces the process image; PID stays the same.
+		// Defers do not run after Exec — PID file persists (same PID).
+		return syscall.Exec(self, os.Args, os.Environ())
 	}
 
 	logger.Info("shutdown complete")

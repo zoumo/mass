@@ -48,7 +48,7 @@ func SetupMassTest(t *testing.T) (context.Context, context.CancelFunc, pkgariapi
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 
-	massCmd := exec.CommandContext(ctx, massBin, "server", "--root", rootDir)
+	massCmd := exec.CommandContext(ctx, massBin, "daemon", "start", "--root", rootDir)
 	massCmd.Stdout = os.Stdout
 	massCmd.Stderr = os.Stderr
 
@@ -127,7 +127,7 @@ func SetupMassTestWithRuntimeClass(
 
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 
-	massCmd := exec.CommandContext(ctx, massBin, "server", "--root", rootDir)
+	massCmd := exec.CommandContext(ctx, massBin, "daemon", "start", "--root", rootDir)
 	massCmd.Stdout = os.Stdout
 	massCmd.Stderr = os.Stderr
 
@@ -272,14 +272,14 @@ func WaitForAgentStateOneOf(
 			continue
 		}
 		for _, want := range wantStates {
-			if string(ar.Status.State) == want {
+			if string(ar.Status.Status) == want {
 				return ar
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("agent %s/%s did not reach state(s) %v within %v (last state: %q)",
-		workspace, name, wantStates, timeout, ar.Status.State)
+		workspace, name, wantStates, timeout, ar.Status.Status)
 	return ar
 }
 
@@ -294,7 +294,7 @@ func CreateAgentAndWait(t *testing.T, ctx context.Context, client pkgariapi.Clie
 		t.Fatalf("agentrun/create (workspace=%s name=%s): %v", workspace, name, err)
 	}
 	t.Logf("agent create dispatched: workspace=%s name=%s state=%s",
-		ar.Metadata.Workspace, ar.Metadata.Name, ar.Status.State)
+		ar.Metadata.Workspace, ar.Metadata.Name, ar.Status.Status)
 	return WaitForAgentState(t, ctx, client, workspace, name, "idle", 15*time.Second)
 }
 
@@ -311,7 +311,7 @@ func StopAndDeleteAgent(t *testing.T, ctx context.Context, client pkgariapi.Clie
 		if err := client.Get(ctx, key, &ar); err != nil {
 			break
 		}
-		if ar.Status.State == "stopped" || ar.Status.State == "error" {
+		if ar.Status.Status == "stopped" || ar.Status.Status == "error" {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -325,7 +325,7 @@ func StopAndDeleteAgent(t *testing.T, ctx context.Context, client pkgariapi.Clie
 // Caller is responsible for cleanup.
 func StartMass(t *testing.T, ctx context.Context, massBin, rootDir, socketPath string) *exec.Cmd {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, massBin, "server", "--root", rootDir)
+	cmd := exec.CommandContext(ctx, massBin, "daemon", "start", "--root", rootDir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 

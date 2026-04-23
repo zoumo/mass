@@ -4,8 +4,8 @@ package commands
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/zoumo/mass/cmd/mass/commands/daemon"
 	"github.com/zoumo/mass/cmd/mass/commands/run"
-	"github.com/zoumo/mass/cmd/mass/commands/server"
 	"github.com/zoumo/mass/cmd/mass/commands/workspacemcp"
 )
 
@@ -17,7 +17,7 @@ func NewRootCommand() *cobra.Command {
 		Long:         `mass is the Multi-Agent Supervision System daemon — it manages agent runtime via ARI.`,
 		SilenceUsage: true,
 	}
-	cmd.AddCommand(server.NewCommand())
+	cmd.AddCommand(daemon.NewCommand())
 	cmd.AddCommand(run.NewCommand())
 	cmd.AddCommand(workspacemcp.NewCommand())
 	return cmd
