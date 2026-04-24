@@ -230,6 +230,10 @@ type WorkspaceSpec struct {
 	// Hooks is the lifecycle hooks specification.
 	// Persisted in store; not exposed in ARI wire responses.
 	Hooks json.RawMessage `json:"hooks,omitempty"`
+
+	// Features is the feature gate override map.
+	// Missing keys use defaults from agentd.defaultFeatures.
+	Features map[string]bool `json:"features,omitempty"`
 }
 
 // WorkspacePhase is the lifecycle phase of a workspace.

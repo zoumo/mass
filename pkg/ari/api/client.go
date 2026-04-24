@@ -55,6 +55,18 @@ type AgentRunOps interface {
 
 	// Restart stops and restarts an agent run.
 	Restart(ctx context.Context, key ObjectKey) (*AgentRun, error)
+
+	// TaskCreate creates a task file and prompts the agent.
+	TaskCreate(ctx context.Context, params *AgentRunTaskCreateParams) (*AgentRunTaskCreateResult, error)
+
+	// TaskGet retrieves a task by ID.
+	TaskGet(ctx context.Context, params *AgentRunTaskGetParams) (*AgentTask, error)
+
+	// TaskList lists all tasks for an agent run.
+	TaskList(ctx context.Context, params *AgentRunTaskListParams) (*AgentRunTaskListResult, error)
+
+	// TaskRetry retries an existing task by bumping its attempt count and re-prompting the agent.
+	TaskRetry(ctx context.Context, params *AgentRunTaskRetryParams) (*AgentRunTaskRetryResult, error)
 }
 
 // WorkspaceOps provides non-CRUD operations on workspaces.

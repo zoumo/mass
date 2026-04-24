@@ -32,6 +32,10 @@ type AgentRunService interface {
 	Cancel(ctx context.Context, workspace, name string) error
 	Stop(ctx context.Context, workspace, name string) error
 	Restart(ctx context.Context, workspace, name string) (*pkgariapi.AgentRun, error)
+	TaskCreate(ctx context.Context, params *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error)
+	TaskGet(ctx context.Context, params *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error)
+	TaskList(ctx context.Context, params *pkgariapi.AgentRunTaskListParams) (*pkgariapi.AgentRunTaskListResult, error)
+	TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error)
 }
 
 // AgentService defines agent definition CRUD methods.
@@ -167,6 +171,34 @@ func RegisterAgentRunService(s *jsonrpc.Server, svc AgentRunService) {
 					return nil, jsonrpc.ErrInvalidParams("workspace and name are required")
 				}
 				return svc.Restart(ctx, key.Workspace, key.Name)
+			},
+			"task/create": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var params pkgariapi.AgentRunTaskCreateParams
+				if err := unmarshal(&params); err != nil {
+					return nil, jsonrpc.ErrInvalidParams(err.Error())
+				}
+				return svc.TaskCreate(ctx, &params)
+			},
+			"task/get": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var params pkgariapi.AgentRunTaskGetParams
+				if err := unmarshal(&params); err != nil {
+					return nil, jsonrpc.ErrInvalidParams(err.Error())
+				}
+				return svc.TaskGet(ctx, &params)
+			},
+			"task/list": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var params pkgariapi.AgentRunTaskListParams
+				if err := unmarshal(&params); err != nil {
+					return nil, jsonrpc.ErrInvalidParams(err.Error())
+				}
+				return svc.TaskList(ctx, &params)
+			},
+			"task/retry": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				var params pkgariapi.AgentRunTaskRetryParams
+				if err := unmarshal(&params); err != nil {
+					return nil, jsonrpc.ErrInvalidParams(err.Error())
+				}
+				return svc.TaskRetry(ctx, &params)
 			},
 		},
 	})

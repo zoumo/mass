@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
@@ -162,6 +162,38 @@ func (o *agentRunOps) Stop(ctx context.Context, key pkgariapi.ObjectKey) error {
 func (o *agentRunOps) Restart(ctx context.Context, key pkgariapi.ObjectKey) (*pkgariapi.AgentRun, error) {
 	var result pkgariapi.AgentRun
 	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunRestart, key, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (o *agentRunOps) TaskCreate(ctx context.Context, params *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error) {
+	var result pkgariapi.AgentRunTaskCreateResult
+	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunTaskCreate, params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (o *agentRunOps) TaskGet(ctx context.Context, params *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error) {
+	var result pkgariapi.AgentTask
+	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunTaskGet, params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (o *agentRunOps) TaskList(ctx context.Context, params *pkgariapi.AgentRunTaskListParams) (*pkgariapi.AgentRunTaskListResult, error) {
+	var result pkgariapi.AgentRunTaskListResult
+	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunTaskList, params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (o *agentRunOps) TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error) {
+	var result pkgariapi.AgentRunTaskRetryResult
+	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunTaskRetry, params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
