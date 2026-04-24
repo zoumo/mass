@@ -136,7 +136,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 
 	// Pending/Creating-cleanup pass: agents stuck in transient states
 	// when the daemon crashed will never complete — mark them as error.
-	for _, queryState := range []apiruntime.Status{apiruntime.StatusPending, apiruntime.StatusCreating} {
+	for _, queryState := range []apiruntime.Status{apiruntime.StatusCreating} {
 		stuckAgents, err := m.store.ListAgentRuns(ctx, &pkgariapi.AgentRunFilter{Status: queryState})
 		if err != nil {
 			m.logger.Warn("recovery: failed to list agents for cleanup", "state", queryState, "error", err)

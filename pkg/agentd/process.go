@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -50,8 +51,8 @@ type ProcessManager struct {
 	store      *store.Store
 	socketPath string
 	bundleRoot string
-	logLevel   string // propagated to agent-run and workspace-mcp child processes
-	logFormat  string // propagated to agent-run and workspace-mcp child processes
+	logLevel   string // propagated to agent-run and mesh-mcp child processes
+	logFormat  string // propagated to agent-run and mesh-mcp child processes
 
 	// RunBinary overrides the agent-run binary path for testing.
 	// When empty (default), forkRun uses os.Executable() (self-fork).
@@ -181,6 +182,14 @@ func (m *ProcessManager) startEventConsumer(workspace, name string, runProc *Run
 					cancel()
 					continue
 				}
+				if current != nil && current.Status.Status == apiruntime.StatusRestarting && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
+					logger.Info("stateChange: dropped stale live state during restart",
+						"agent_key", key,
+						"current", current.Status.Status,
+						"new", newStatus)
+					cancel()
+					continue
+				}
 				if err := m.agents.UpdateState(updateCtx, workspace, name, apiruntime.Status(newStatus), ""); err != nil {
 					logger.Warn("stateChange: failed to update DB state",
 						"agent_key", key,
@@ -235,9 +244,9 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 		return nil, fmt.Errorf("process: agent %s does not exist", key)
 	}
 
-	// Validate agent status - must be "pending" to start.
-	if agent.Status.Status != apiruntime.StatusPending {
-		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'pending' to start)", key, agent.Status.Status)
+	// Validate agent status - must be "creating" to start.
+	if agent.Status.Status != apiruntime.StatusCreating {
+		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.Status)
 	}
 
 	// 2. Resolve Agent definition from DB.
@@ -249,8 +258,18 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 		return nil, fmt.Errorf("process: agent definition %s not found", agent.Spec.Agent)
 	}
 
+	// From this point the runtime bootstrap has started. The socket may not
+	// exist yet, so observers should see creating while Start waits for it.
+	if err := m.agents.UpdateState(ctx, workspace, name, apiruntime.StatusCreating, ""); err != nil {
+		return nil, fmt.Errorf("process: mark agent creating: %w", err)
+	}
+	agent.Status.Status = apiruntime.StatusCreating
+
+	// 2b. Fetch workspace for feature gate checks (best-effort).
+	ws, _ := m.store.GetWorkspace(ctx, workspace)
+
 	// 3. Generate config.json for this agent run.
-	cfg := m.generateConfig(agent, agentDef)
+	cfg := m.generateConfig(agent, agentDef, ws)
 
 	// 4. Create bundle directory with workspace symlink.
 	bundlePath, stateDir, socketPath, err := m.createBundle(agent, cfg)
@@ -368,7 +387,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 }
 
 // generateConfig creates the MASS Runtime config.json for this agent.
-func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkgariapi.Agent) apiruntime.Config {
+func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkgariapi.Agent, ws *pkgariapi.Workspace) apiruntime.Config {
 	// Build environment variables in KEY=VALUE format from the Agent definition.
 	env := make([]string, 0, len(agentDef.Spec.Env))
 	for _, ev := range agentDef.Spec.Env {
@@ -377,26 +396,28 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 
 	// Build annotations from agent labels.
 	annotations := make(map[string]string)
-	for k, v := range agent.Metadata.Labels {
-		annotations[k] = v
-	}
+	maps.Copy(annotations, agent.Metadata.Labels)
 	annotations["agent"] = agentDef.Metadata.Name
 
 	// Compute the bundle/state directory (same formula as createBundle) so we
-	// can pass --log-path to the workspace-mcp-server before the directory
+	// can pass --log-path to the workspace-mesh server before the directory
 	// is actually created.
-	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace+"-"+agent.Metadata.Name)
+	stateDir := filepath.Join(m.bundleRoot, agent.Metadata.Workspace, agent.Metadata.Name)
 
-	// Auto-inject workspace MCP server, then merge caller-specified extras.
-	// Caller entries override auto-injected entries with the same name.
-	mcpBinary, mcpArgs := m.workspaceMcpCommand(agent.Metadata.Workspace, agent.Metadata.Name, stateDir)
-	workspaceMcp := apiruntime.McpServer{
-		Type:    "stdio",
-		Name:    "workspace",
-		Command: mcpBinary,
-		Args:    mcpArgs,
+	// Conditional MCP injection based on WorkspaceMesh feature.
+	var mcpServers []apiruntime.McpServer
+	if featureEnabled(ws, FeatureWorkspaceMesh) {
+		mcpBinary, mcpArgs := m.workspaceMcpCommand(agent.Metadata.Workspace, agent.Metadata.Name, stateDir)
+		workspaceMcp := apiruntime.McpServer{
+			Type:    "stdio",
+			Name:    pkgariapi.WorkspaceMeshName,
+			Command: mcpBinary,
+			Args:    mcpArgs,
+		}
+		mcpServers = mergeMcpServers([]apiruntime.McpServer{workspaceMcp}, agent.Spec.McpServers)
+	} else {
+		mcpServers = agent.Spec.McpServers
 	}
-	mcpServers := mergeMcpServers([]apiruntime.McpServer{workspaceMcp}, agent.Spec.McpServers)
 
 	// ClientProtocol from AgentSpec, default to ACP.
 	protocol := agentDef.Spec.ClientProtocol
@@ -408,6 +429,15 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 	permissions := agent.Spec.Permissions
 	if permissions == "" {
 		permissions = apiruntime.ApproveAll
+	}
+
+	// System prompt augmentation based on enabled features.
+	systemPrompt := agent.Spec.SystemPrompt
+	if featureEnabled(ws, FeatureWorkspaceMesh) {
+		systemPrompt = appendPromptSection(systemPrompt, workspaceMeshPrompt(agent.Metadata.Workspace, agent.Metadata.Name))
+	}
+	if featureEnabled(ws, FeatureAgentTask) {
+		systemPrompt = appendPromptSection(systemPrompt, agentTaskPrompt())
 	}
 
 	return apiruntime.Config{
@@ -426,7 +456,7 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 			Env:     env,
 		},
 		Session: apiruntime.Session{
-			SystemPrompt: agent.Spec.SystemPrompt,
+			SystemPrompt: systemPrompt,
 			Permissions:  permissions,
 			McpServers:   mcpServers,
 		},
@@ -470,15 +500,15 @@ func mergeMcpServers(base, overrides []apiruntime.McpServer) []apiruntime.McpSer
 }
 
 // workspaceMcpCommand returns the command and args for the workspace MCP server.
-// Uses self-fork: os.Executable() + "workspace-mcp" subcommand (same pattern as agent-run).
+// Uses self-fork: os.Executable() + mesh subcommand (same pattern as agent-run).
 func (m *ProcessManager) workspaceMcpCommand(workspace, agent, logDir string) (string, []string) {
 	self, err := os.Executable()
 	if err != nil {
-		m.logger.Error("os.Executable failed for workspace-mcp, falling back to PATH", "error", err)
+		m.logger.Error("os.Executable failed for workspace mesh subcommand, falling back to PATH", "error", err)
 		self = "mass"
 	}
 	args := []string{
-		"workspace-mcp",
+		"mesh-mcp",
 		"--socket", m.socketPath,
 		"--workspace", workspace,
 		"--agent", agent,
@@ -1001,4 +1031,38 @@ func (m *ProcessManager) syncSessionInfo(ctx context.Context, workspace, name, s
 		logger.Warn("syncSessionInfo: failed to persist session info",
 			"workspace", workspace, "name", name, "error", err)
 	}
+}
+
+// appendPromptSection appends a section to the system prompt with double newline separator.
+func appendPromptSection(base, section string) string {
+	if base == "" {
+		return section
+	}
+	return base + "\n---\n" + section
+}
+
+// workspaceMeshPrompt returns the WorkspaceMesh feature system prompt snippet.
+func workspaceMeshPrompt(workspaceName, agentRunName string) string {
+	return fmt.Sprintf(`<%s>
+You are %s in the %s workspace.
+You can use the workspace-mesh MCP to discover other agents and collaborate with them.
+</%s>`,
+		pkgariapi.WorkspaceMeshName,
+		agentRunName,
+		workspaceName,
+		pkgariapi.WorkspaceMeshName,
+	)
+}
+
+// agentTaskPrompt returns the AgentTask feature system prompt snippet.
+func agentTaskPrompt() string {
+	return `<agent-task-protocol>
+You may receive a task file path. Read the JSON file.
+Use "request.description" and optional "request.filePaths" as input.
+
+When done, update the same file:
+- Set "completed" to "true".
+- Write "response.status", "response.description", and optional "response.filePaths".
+- Set "response.updatedAt" to the current time in ISO8601 format.
+</agent-task-protocol>`
 }

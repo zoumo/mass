@@ -26,8 +26,20 @@ import (
 // systemPromptGuard is appended to the user-supplied system prompt before
 // sending it to the agent. It prevents the agent from acting on the role
 // definition itself — the agent should wait for the next explicit instruction.
-const systemPromptGuard = "\n\nIMPORTANT: The above is your role and protocol setup. " +
-	"Do NOT take any action now. Wait for the next instruction before proceeding."
+const systemPromptGuard = "\n---\nIMPORTANT: The above content is protocol and role setup. " +
+	"Do NOT execute any commands or take any action now. Wait for the next message before proceeding."
+
+func buildSeedSystemPrompt(systemPrompt string) string {
+	if systemPrompt == "" {
+		return ""
+	}
+	return systemPrompt + systemPromptGuard
+}
+
+// BuildSeedSystemPrompt returns the user system prompt plus the runtime guard.
+func BuildSeedSystemPrompt(systemPrompt string) string {
+	return buildSeedSystemPrompt(systemPrompt)
+}
 
 // StateChange describes an externally visible runtime lifecycle transition.
 type StateChange struct {
@@ -176,17 +188,6 @@ func (m *Manager) Create(ctx context.Context) error {
 	m.mu.Unlock()
 	m.logger.Info("session created", "sessionID", sessionResp.SessionId)
 
-	if m.cfg.Session.SystemPrompt != "" {
-		_, err = conn.Prompt(ctx, acp.PromptRequest{
-			SessionId: m.sessionID,
-			Prompt:    []acp.ContentBlock{acp.TextBlock(m.cfg.Session.SystemPrompt + systemPromptGuard)},
-		})
-		if err != nil {
-			handshakeErr = err
-			return fmt.Errorf("runtime: acp systemPrompt seed: %w", err)
-		}
-	}
-
 	m.logger.Info("agent ready", "pid", cmd.Process.Pid, "sessionID", sessionResp.SessionId)
 	if err := m.writeState(func(s *apiruntime.State) {
 		s.MassVersion = m.cfg.MassVersion
@@ -218,6 +219,17 @@ func (m *Manager) Create(ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+// SeedSystemPrompt sends the configured system prompt, plus the runtime guard,
+// as a normal prompt after bootstrap. Call this only after Create() succeeds.
+func (m *Manager) SeedSystemPrompt(ctx context.Context) (acp.PromptResponse, error) {
+	if m.cfg.Session.SystemPrompt == "" {
+		return acp.PromptResponse{}, nil
+	}
+	return m.Prompt(ctx, []acp.ContentBlock{
+		acp.TextBlock(buildSeedSystemPrompt(m.cfg.Session.SystemPrompt)),
+	})
 }
 
 // Kill sends SIGTERM to the agent process, waits up to 5 seconds for it to

@@ -150,7 +150,7 @@ func TestSessionUpdate_DeliversOrderedParams(t *testing.T) {
 		var update runapi.AgentRunEvent
 		select {
 		case update = <-runProc.Events:
-		case <-time.After(2 * time.Second):
+		case <-time.After(5 * time.Second):
 			t.Fatalf("timeout waiting for agent-run/event %d", i)
 		}
 

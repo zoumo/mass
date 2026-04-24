@@ -88,7 +88,7 @@ func TestProcessManagerStart(t *testing.T) {
 		t.Fatalf("CreateWorkspace: %v", err)
 	}
 
-	// Create an agent in "pending" state (required by Start).
+	// Create an agent in "creating" state (required by Start).
 	agentWorkspace := "test-ws"
 	agentName := "test-agent"
 	agent := &pkgariapi.AgentRun{
@@ -100,7 +100,7 @@ func TestProcessManagerStart(t *testing.T) {
 			Agent: "mockagent",
 		},
 		Status: pkgariapi.AgentRunStatus{
-			Status: apiruntime.StatusPending,
+			Status: apiruntime.StatusCreating,
 		},
 	}
 	if err := metaStore.CreateAgentRun(ctx, agent); err != nil {
@@ -334,20 +334,32 @@ func TestGenerateConfig(t *testing.T) {
 			},
 		}
 
-		cfg := pm.generateConfig(agent, rc)
+		cfg := pm.generateConfig(agent, rc, nil)
 
 		if cfg.Metadata.Name != "my-agent" {
 			t.Errorf("expected Name=my-agent, got %q", cfg.Metadata.Name)
 		}
-		if cfg.Session.SystemPrompt != "you are helpful" {
-			t.Errorf("expected SystemPrompt='you are helpful', got %q", cfg.Session.SystemPrompt)
+		if !strings.Contains(cfg.Session.SystemPrompt, "you are helpful") {
+			t.Errorf("expected SystemPrompt to contain original prompt, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
+			t.Errorf("expected SystemPrompt to include workspace mesh section, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "in the ws1 workspace") {
+			t.Errorf("expected SystemPrompt to include workspace name, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "You are my-agent") {
+			t.Errorf("expected SystemPrompt to include agentrun name, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "<agent-task-protocol>") {
+			t.Errorf("expected SystemPrompt to include agent task section, got %q", cfg.Session.SystemPrompt)
 		}
 		if cfg.Process.Command != "/usr/bin/mockagent" {
 			t.Errorf("expected Command=/usr/bin/mockagent, got %q", cfg.Process.Command)
 		}
 		if len(cfg.Session.McpServers) != 1 {
 			t.Errorf("expected 1 MCP server, got %d", len(cfg.Session.McpServers))
-		} else if cfg.Session.McpServers[0].Name != "workspace" {
+		} else if cfg.Session.McpServers[0].Name != pkgariapi.WorkspaceMeshName {
 			t.Errorf("expected workspace MCP server, got %q", cfg.Session.McpServers[0].Name)
 		}
 		// Verify annotations include runtimeClass.
@@ -382,9 +394,47 @@ func TestGenerateConfig(t *testing.T) {
 			},
 		}
 
-		cfg := pm.generateConfig(agent, rc)
-		if cfg.Session.SystemPrompt != "" {
-			t.Errorf("expected empty SystemPrompt, got %q", cfg.Session.SystemPrompt)
+		cfg := pm.generateConfig(agent, rc, nil)
+		if !strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
+			t.Errorf("expected default workspace mesh prompt, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "in the ws1 workspace") {
+			t.Errorf("expected default workspace mesh prompt to include workspace name, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "You are bare-agent") {
+			t.Errorf("expected default workspace mesh prompt to include agentrun name, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "<agent-task-protocol>") {
+			t.Errorf("expected default agent task prompt, got %q", cfg.Session.SystemPrompt)
+		}
+	})
+
+	t.Run("workspace feature overrides disable prompt and mcp injection", func(t *testing.T) {
+		ws := &pkgariapi.Workspace{
+			Spec: pkgariapi.WorkspaceSpec{
+				Features: map[string]bool{
+					FeatureWorkspaceMesh: false,
+					FeatureAgentTask:     false,
+				},
+			},
+		}
+		agent := &pkgariapi.AgentRun{
+			Metadata: pkgariapi.ObjectMeta{
+				Workspace: "ws1",
+				Name:      "plain-agent",
+			},
+			Spec: pkgariapi.AgentRunSpec{
+				Agent:        "mockagent",
+				SystemPrompt: "keep it plain",
+			},
+		}
+
+		cfg := pm.generateConfig(agent, rc, ws)
+		if cfg.Session.SystemPrompt != "keep it plain" {
+			t.Errorf("expected unmodified SystemPrompt, got %q", cfg.Session.SystemPrompt)
+		}
+		if len(cfg.Session.McpServers) != 0 {
+			t.Errorf("expected no MCP servers when WorkspaceMesh disabled, got %d", len(cfg.Session.McpServers))
 		}
 	})
 }
