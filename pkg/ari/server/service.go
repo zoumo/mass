@@ -47,6 +47,11 @@ type AgentService interface {
 	Delete(ctx context.Context, name string) error
 }
 
+// SystemService defines system-level RPC methods (daemon info).
+type SystemService interface {
+	Info(ctx context.Context) (*pkgariapi.SystemInfoResult, error)
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Register functions
 // ────────────────────────────────────────────────────────────────────────────
@@ -246,6 +251,18 @@ func RegisterAgentService(s *jsonrpc.Server, svc AgentService) {
 					return nil, jsonrpc.ErrInvalidParams("name is required")
 				}
 				return nil, svc.Delete(ctx, key.Name)
+			},
+		},
+	})
+}
+
+// RegisterSystemService registers a SystemService implementation with the server.
+func RegisterSystemService(s *jsonrpc.Server, svc SystemService) {
+	s.RegisterService("system", &jsonrpc.ServiceDesc{
+		Methods: map[string]jsonrpc.Method{
+			"info": func(ctx context.Context, unmarshal func(any) error) (any, error) {
+				// params are empty, ignore unmarshal
+				return svc.Info(ctx)
 			},
 		},
 	})

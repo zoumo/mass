@@ -35,6 +35,9 @@ type Client interface {
 	// Workspaces returns the sub-interface for non-CRUD workspace operations.
 	Workspaces() WorkspaceOps
 
+	// System returns the sub-interface for system-level operations.
+	System() SystemOps
+
 	// Close closes the underlying connection.
 	Close() error
 
@@ -73,4 +76,10 @@ type AgentRunOps interface {
 type WorkspaceOps interface {
 	// Send routes a message between agent runs within a workspace.
 	Send(ctx context.Context, req *WorkspaceSendParams) (*WorkspaceSendResult, error)
+}
+
+// SystemOps provides system-level operations.
+type SystemOps interface {
+	// Info returns daemon version and runtime information.
+	Info(ctx context.Context) (*SystemInfoResult, error)
 }

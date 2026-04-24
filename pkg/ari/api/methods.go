@@ -1,5 +1,10 @@
 package api
 
+// ARI system methods.
+const (
+	MethodSystemInfo = "system/info"
+)
+
 // ARI workspace methods (orchestrator ↔ mass).
 const (
 	MethodWorkspaceCreate = "workspace/create"

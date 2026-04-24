@@ -16,6 +16,7 @@ var (
 	_ pkgariapi.Client       = (*ariClient)(nil)
 	_ pkgariapi.AgentRunOps  = (*agentRunOps)(nil)
 	_ pkgariapi.WorkspaceOps = (*workspaceOps)(nil)
+	_ pkgariapi.SystemOps    = (*systemOps)(nil)
 )
 
 // ariClient implements api.Client using JSON-RPC.
@@ -23,6 +24,7 @@ type ariClient struct {
 	raw        *jsonrpc.Client
 	agentRuns  agentRunOps
 	workspaces workspaceOps
+	system     systemOps
 }
 
 // Dial connects to the ARI server at the given Unix socket path and returns
@@ -40,6 +42,7 @@ func newClient(c *jsonrpc.Client) *ariClient {
 	ac := &ariClient{raw: c}
 	ac.agentRuns = agentRunOps{c: c}
 	ac.workspaces = workspaceOps{c: c}
+	ac.system = systemOps{c: c}
 	return ac
 }
 
@@ -54,6 +57,9 @@ func (c *ariClient) AgentRuns() pkgariapi.AgentRunOps { return &c.agentRuns }
 
 // Workspaces returns the sub-interface for non-CRUD workspace operations.
 func (c *ariClient) Workspaces() pkgariapi.WorkspaceOps { return &c.workspaces }
+
+// System returns the sub-interface for system-level operations.
+func (c *ariClient) System() pkgariapi.SystemOps { return &c.system }
 
 // ────────────────────────────────────────────────────────────────────────────
 // CRUD — type-switched routing
@@ -208,6 +214,20 @@ type workspaceOps struct{ c *jsonrpc.Client }
 func (o *workspaceOps) Send(ctx context.Context, req *pkgariapi.WorkspaceSendParams) (*pkgariapi.WorkspaceSendResult, error) {
 	var result pkgariapi.WorkspaceSendResult
 	if err := o.c.Call(ctx, pkgariapi.MethodWorkspaceSend, req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SystemOps
+// ────────────────────────────────────────────────────────────────────────────
+
+type systemOps struct{ c *jsonrpc.Client }
+
+func (o *systemOps) Info(ctx context.Context) (*pkgariapi.SystemInfoResult, error) {
+	var result pkgariapi.SystemInfoResult
+	if err := o.c.Call(ctx, pkgariapi.MethodSystemInfo, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

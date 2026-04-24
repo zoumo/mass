@@ -200,3 +200,20 @@ type AgentRunTaskRetryResult struct {
 	Task     AgentTask `json:"task"`
 	TaskPath string    `json:"taskPath"`
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// System Info (daemon version and runtime info)
+// ────────────────────────────────────────────────────────────────────────────
+
+// SystemInfoParams is the request params for system/info (empty).
+type SystemInfoParams struct{}
+
+// SystemInfoResult is the response result for system/info.
+type SystemInfoResult struct {
+	Version    string `json:"version"`
+	GitCommit  string `json:"gitCommit"`
+	BuildTime  string `json:"buildTime,omitempty"`
+	Root       string `json:"root"`
+	SocketPath string `json:"socketPath"`
+	Pid        int    `json:"pid"`
+}

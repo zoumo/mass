@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zoumo/mass/internal/version"
 	"github.com/zoumo/mass/pkg/agentd"
 	"github.com/zoumo/mass/pkg/agentd/store"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
@@ -64,11 +65,12 @@ func New(
 	}
 }
 
-// Register wires all three ARI service interfaces with the jsonrpc.Server.
+// Register wires all ARI service interfaces with the jsonrpc.Server.
 func Register(srv *jsonrpc.Server, svc *Service) {
 	RegisterWorkspaceService(srv, &workspaceAdapter{svc})
 	RegisterAgentRunService(srv, &agentRunAdapter{svc})
 	RegisterAgentService(srv, &agentAdapter{svc})
+	RegisterSystemService(srv, &systemAdapter{svc})
 }
 
 // copyVal returns a pointer to a shallow copy of v.
@@ -86,6 +88,9 @@ type agentRunAdapter struct{ *Service }
 
 // agentAdapter adapts *Service to AgentService.
 type agentAdapter struct{ *Service }
+
+// systemAdapter adapts *Service to SystemService.
+type systemAdapter struct{ *Service }
 
 // ────────────────────────────────────────────────────────────────────────────
 // WorkspaceService (workspaceAdapter)
@@ -1134,4 +1139,38 @@ func buildWorkspaceFooter(p pkgariapi.WorkspaceSendParams) string {
 		return "\n\n<workspace-message from=\"" + p.From + "\" reply-to=\"" + p.From + "\" reply-requested=\"true\" />"
 	}
 	return "\n\n<workspace-message from=\"" + p.From + "\" />"
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// SystemService (systemAdapter)
+// ────────────────────────────────────────────────────────────────────────────
+
+// Info handles system/info.
+// Returns daemon version and runtime information.
+func (a *systemAdapter) Info(ctx context.Context) (*pkgariapi.SystemInfoResult, error) {
+	opts := agentd.Options{Root: a.baseDir}
+	pid, _ := readPidFile(opts.PidFilePath())
+
+	return &pkgariapi.SystemInfoResult{
+		Version:    version.Version,
+		GitCommit:  version.GitCommit,
+		BuildTime:  version.BuildTime,
+		Root:       a.baseDir,
+		SocketPath: opts.SocketPath(),
+		Pid:        pid,
+	}, nil
+}
+
+// readPidFile reads the PID from the given path.
+// Returns 0 if the file doesn't exist or cannot be read.
+func readPidFile(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, err
+	}
+	return pid, nil
 }
