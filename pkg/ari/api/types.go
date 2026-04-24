@@ -6,6 +6,8 @@
 package api
 
 import (
+	"time"
+
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 )
 
@@ -123,4 +125,78 @@ type WorkspaceSendParams struct {
 type WorkspaceSendResult struct {
 	// Delivered is true when the message was dispatched to the target agent-run.
 	Delivered bool `json:"delivered"`
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// AgentTask types
+// ────────────────────────────────────────────────────────────────────────────
+
+// AgentTask is the on-disk task record.
+type AgentTask struct {
+	ID        string             `json:"id"`
+	Assignee  string             `json:"assignee"`
+	Attempt   int                `json:"attempt"`
+	CreatedAt time.Time          `json:"createdAt"`
+	Request   AgentTaskRequest   `json:"request"`
+	Completed bool               `json:"completed,omitempty"`
+	Response  *AgentTaskResponse `json:"response,omitempty"`
+}
+
+// AgentTaskRequest is the request portion of a task.
+type AgentTaskRequest struct {
+	Description string   `json:"description"`
+	FilePaths   []string `json:"filePaths,omitempty"`
+}
+
+// AgentTaskResponse is the response portion of a task (written by agent).
+type AgentTaskResponse struct {
+	Status      string    `json:"status"`
+	Description string    `json:"description"`
+	FilePaths   []string  `json:"filePaths,omitempty"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+// AgentRunTaskCreateParams is the request params for agentrun/task/create.
+type AgentRunTaskCreateParams struct {
+	Workspace   string   `json:"workspace"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	FilePaths   []string `json:"filePaths,omitempty"`
+}
+
+// AgentRunTaskCreateResult is the response result for agentrun/task/create.
+type AgentRunTaskCreateResult struct {
+	Task     AgentTask `json:"task"`
+	TaskPath string    `json:"taskPath"`
+}
+
+// AgentRunTaskGetParams is the request params for agentrun/task/get.
+type AgentRunTaskGetParams struct {
+	Workspace string `json:"workspace"`
+	Name      string `json:"name"`
+	TaskID    string `json:"taskId"`
+}
+
+// AgentRunTaskListParams is the request params for agentrun/task/list.
+type AgentRunTaskListParams struct {
+	Workspace string `json:"workspace"`
+	Name      string `json:"name"`
+}
+
+// AgentRunTaskListResult is the response result for agentrun/task/list.
+type AgentRunTaskListResult struct {
+	Items []AgentTask `json:"items"`
+}
+
+// AgentRunTaskRetryParams is the request params for agentrun/task/retry.
+type AgentRunTaskRetryParams struct {
+	Workspace string `json:"workspace"`
+	Name      string `json:"name"`
+	TaskID    string `json:"taskId"`
+}
+
+// AgentRunTaskRetryResult is the response result for agentrun/task/retry.
+type AgentRunTaskRetryResult struct {
+	Task     AgentTask `json:"task"`
+	TaskPath string    `json:"taskPath"`
 }

@@ -291,7 +291,7 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 
 	var result pkgariapi.AgentRun
 	require.NoError(t, json.Unmarshal(raw, &result))
-	assert.Equal(t, apiruntime.StatusPending, result.Status.Status)
+	assert.Equal(t, apiruntime.StatusCreating, result.Status.Status)
 	assert.Equal(t, "ac-ws", result.Metadata.Workspace)
 	assert.Equal(t, "my-agent", result.Metadata.Name)
 
@@ -434,7 +434,7 @@ func TestAgentRunRestartFromIdle(t *testing.T) {
 		Name:      "idle-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from idle state must succeed")
-	assert.Equal(t, apiruntime.StatusPending, result.Status.Status)
+	assert.Equal(t, apiruntime.StatusRestarting, result.Status.Status)
 }
 
 func TestAgentRunRestartFromRunning(t *testing.T) {
@@ -448,7 +448,7 @@ func TestAgentRunRestartFromRunning(t *testing.T) {
 		Name:      "running-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from running state must succeed")
-	assert.Equal(t, apiruntime.StatusPending, result.Status.Status)
+	assert.Equal(t, apiruntime.StatusRestarting, result.Status.Status)
 }
 
 func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
@@ -713,6 +713,195 @@ func TestWorkspaceSendRejectedForErrorAgent(t *testing.T) {
 		Message:   []runapi.ContentBlock{runapi.TextBlock("hi")},
 	}, nil)
 	require.Error(t, err, "workspace/send to error-state agent must fail")
+}
+
+func TestAgentRunTaskCreateDelivered(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "task-ws")
+
+	agentName := "task-agent"
+	seedAgent(t, env.store, "task-ws", agentName, apiruntime.StatusIdle)
+	runSrv := injectMockRun(t, env, "task-ws", agentName)
+
+	var result pkgariapi.AgentRunTaskCreateResult
+	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskCreate, pkgariapi.AgentRunTaskCreateParams{
+		Workspace:   "task-ws",
+		Name:        agentName,
+		Description: "Review foo.go",
+		FilePaths:   []string{"foo.go"},
+	}, &result))
+
+	assert.Equal(t, "task-0001", result.Task.ID)
+	assert.Equal(t, agentName, result.Task.Assignee)
+	assert.Equal(t, 1, result.Task.Attempt)
+	assert.Equal(t, "Review foo.go", result.Task.Request.Description)
+	assert.Equal(t, []string{"foo.go"}, result.Task.Request.FilePaths)
+	assert.Equal(t, filepath.Join(env.processes.BundlePath("task-ws", agentName), "tasks", "task-0001.json"), result.TaskPath)
+
+	require.Eventually(t, func() bool {
+		return len(runSrv.receivedPrompts()) >= 1
+	}, 2*time.Second, 20*time.Millisecond, "mock agent-run did not receive task prompt")
+	assert.Contains(t, runSrv.receivedPrompts()[0], result.TaskPath)
+	assert.Contains(t, runSrv.receivedPrompts()[0], "task protocol in your system prompt")
+
+	var gotTask pkgariapi.AgentTask
+	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskGet, pkgariapi.AgentRunTaskGetParams{
+		Workspace: "task-ws",
+		Name:      agentName,
+		TaskID:    "task-0001",
+	}, &gotTask))
+	assert.Equal(t, result.Task.ID, gotTask.ID)
+	assert.Equal(t, result.Task.Request.Description, gotTask.Request.Description)
+
+	var listResult pkgariapi.AgentRunTaskListResult
+	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskList, pkgariapi.AgentRunTaskListParams{
+		Workspace: "task-ws",
+		Name:      agentName,
+	}, &listResult))
+	require.Len(t, listResult.Items, 1)
+	assert.Equal(t, "task-0001", listResult.Items[0].ID)
+	assert.Equal(t, 1, listResult.Items[0].Attempt)
+}
+
+func TestAgentRunTaskCreateBlockedDuringRecovery(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "task-recovery-ws")
+	seedAgent(t, env.store, "task-recovery-ws", "task-agent", apiruntime.StatusIdle)
+	env.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
+
+	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskCreate, pkgariapi.AgentRunTaskCreateParams{
+		Workspace:   "task-recovery-ws",
+		Name:        "task-agent",
+		Description: "blocked",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "recovering")
+}
+
+func TestAgentRunTaskCreateLocalFailureRollsBackToIdle(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "task-fail-ws")
+	agentName := "task-agent"
+	seedAgent(t, env.store, "task-fail-ws", agentName, apiruntime.StatusIdle)
+
+	bundlePath := env.processes.BundlePath("task-fail-ws", agentName)
+	require.NoError(t, os.MkdirAll(bundlePath, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(bundlePath, "tasks"), []byte("not-a-directory"), 0o644))
+
+	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskCreate, pkgariapi.AgentRunTaskCreateParams{
+		Workspace:   "task-fail-ws",
+		Name:        agentName,
+		Description: "will fail locally",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mkdir tasks")
+
+	require.Eventually(t, func() bool {
+		agent, getErr := env.store.GetAgentRun(context.Background(), "task-fail-ws", agentName)
+		if getErr != nil || agent == nil {
+			return false
+		}
+		return agent.Status.Status == apiruntime.StatusIdle
+	}, 2*time.Second, 20*time.Millisecond, "agent should roll back to idle after local task/create failure")
+}
+
+func TestAgentRunTaskRetryDelivered(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "task-retry-ws")
+
+	agentName := "task-agent"
+	seedAgent(t, env.store, "task-retry-ws", agentName, apiruntime.StatusIdle)
+	runSrv := injectMockRun(t, env, "task-retry-ws", agentName)
+
+	tasksDir := filepath.Join(env.processes.BundlePath("task-retry-ws", agentName), "tasks")
+	require.NoError(t, os.MkdirAll(tasksDir, 0o755))
+	taskPath := filepath.Join(tasksDir, "task-0001.json")
+	seed := pkgariapi.AgentTask{
+		ID:        "task-0001",
+		Assignee:  agentName,
+		Attempt:   1,
+		CreatedAt: time.Now().Add(-time.Minute),
+		Request: pkgariapi.AgentTaskRequest{
+			Description: "Retry me",
+			FilePaths:   []string{"foo.go"},
+		},
+		Completed: true,
+		Response: &pkgariapi.AgentTaskResponse{
+			Status:      "failed",
+			Description: "first attempt failed",
+			UpdatedAt:   time.Now().Add(-30 * time.Second),
+		},
+	}
+	data, err := json.MarshalIndent(seed, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(taskPath, data, 0o644))
+
+	var result pkgariapi.AgentRunTaskRetryResult
+	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskRetry, pkgariapi.AgentRunTaskRetryParams{
+		Workspace: "task-retry-ws",
+		Name:      agentName,
+		TaskID:    "task-0001",
+	}, &result))
+
+	assert.Equal(t, "task-0001", result.Task.ID)
+	assert.Equal(t, 2, result.Task.Attempt)
+	assert.False(t, result.Task.Completed)
+	assert.Nil(t, result.Task.Response)
+
+	require.Eventually(t, func() bool {
+		return len(runSrv.receivedPrompts()) >= 1
+	}, 2*time.Second, 20*time.Millisecond, "mock agent-run did not receive retry prompt")
+	assert.Contains(t, runSrv.receivedPrompts()[0], "Task attempt 2")
+	assert.Contains(t, runSrv.receivedPrompts()[0], taskPath)
+
+	var gotTask pkgariapi.AgentTask
+	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskGet, pkgariapi.AgentRunTaskGetParams{
+		Workspace: "task-retry-ws",
+		Name:      agentName,
+		TaskID:    "task-0001",
+	}, &gotTask))
+	assert.Equal(t, 2, gotTask.Attempt)
+	assert.False(t, gotTask.Completed)
+	assert.Nil(t, gotTask.Response)
+}
+
+func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
+	env := newTestServer(t)
+	createAndWaitWorkspace(t, env.client, "task-wrap-ws")
+
+	agentName := "task-agent"
+	seedAgent(t, env.store, "task-wrap-ws", agentName, apiruntime.StatusIdle)
+	runSrv := injectMockRun(t, env, "task-wrap-ws", agentName)
+
+	tasksDir := filepath.Join(env.processes.BundlePath("task-wrap-ws", agentName), "tasks")
+	require.NoError(t, os.MkdirAll(tasksDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tasksDir, "task-0001.json"), []byte(`{"id":"task-0001","request":{"description":"old"}}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(tasksDir, "task-9999.json"), []byte(`{"id":"task-9999","request":{"description":"old max"}}`), 0o644))
+
+	var result pkgariapi.AgentRunTaskCreateResult
+	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskCreate, pkgariapi.AgentRunTaskCreateParams{
+		Workspace:   "task-wrap-ws",
+		Name:        agentName,
+		Description: "wrapped task",
+		FilePaths:   []string{"foo.go"},
+	}, &result))
+
+	assert.Equal(t, "task-0000", result.Task.ID)
+	assert.Equal(t, filepath.Join(tasksDir, "task-0000.json"), result.TaskPath)
+
+	var task pkgariapi.AgentTask
+	data, err := os.ReadFile(result.TaskPath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &task))
+	assert.Equal(t, "task-0000", task.ID)
+	assert.Equal(t, "wrapped task", task.Request.Description)
+	assert.Equal(t, []string{"foo.go"}, task.Request.FilePaths)
+	assert.Equal(t, 1, task.Attempt)
+
+	require.Eventually(t, func() bool {
+		return len(runSrv.receivedPrompts()) >= 1
+	}, 2*time.Second, 20*time.Millisecond, "mock agent-run did not receive wrapped task prompt")
+	assert.Contains(t, runSrv.receivedPrompts()[0], result.TaskPath)
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1009,7 +1198,7 @@ func TestAgentRunCreateAcceptsEnabledAgent(t *testing.T) {
 	} else {
 		var result pkgariapi.AgentRun
 		require.NoError(t, json.Unmarshal(raw, &result))
-		assert.Equal(t, apiruntime.StatusPending, result.Status.Status)
+		assert.Equal(t, apiruntime.StatusCreating, result.Status.Status)
 	}
 }
 

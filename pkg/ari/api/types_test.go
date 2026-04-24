@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // ── ContentBlock round-trip (ACP SDK type re-export) ─────────────────────────

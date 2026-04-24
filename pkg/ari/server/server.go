@@ -19,6 +19,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/zoumo/mass/pkg/agentd"
@@ -335,7 +338,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s is disabled", ar.Spec.Agent))
 	}
 
-	ar.Status.Status = apiruntime.StatusPending
+	ar.Status.Status = apiruntime.StatusCreating
 	if err := a.agents.Create(ctx, ar); err != nil {
 		var alreadyExists *agentd.ErrAgentRunAlreadyExists
 		if errors.As(err, &alreadyExists) {
@@ -550,8 +553,9 @@ func (a *agentRunAdapter) Stop(ctx context.Context, wsName, name string) error {
 
 // Restart handles agentrun/restart.
 //
-// Accepts any agent state. Stops the existing agent-run (if running) then starts a
-// new one. Returns immediately with state="pending".
+// Accepts any agent state. Stops the existing agent-run (if running), then
+// prepares the record for a normal Start call. State transitions are delegated
+// to Stop and Start so restart follows the same lifecycle as explicit commands.
 func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pkgariapi.AgentRun, error) {
 	a.logger.Info("agentrun/restart", "workspace", wsName, "name", name)
 
@@ -563,23 +567,51 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", wsName, name))
 	}
 
+	if agent.Status.Status == apiruntime.StatusIdle || agent.Status.Status == apiruntime.StatusRunning {
+		from := agent.Status.Status
+		reserved, err := a.agents.TransitionState(ctx, wsName, name, from, apiruntime.StatusRestarting)
+		if err != nil {
+			return nil, jsonrpc.ErrInternal(err.Error())
+		}
+		if !reserved {
+			current, getErr := a.store.GetAgentRun(ctx, wsName, name)
+			if getErr != nil {
+				return nil, jsonrpc.ErrInternal(getErr.Error())
+			}
+			state := "<missing>"
+			if current != nil {
+				state = string(current.Status.Status)
+			}
+			return nil, &jsonrpc.RPCError{
+				Code:    pkgariapi.CodeRecoveryBlocked,
+				Message: fmt.Sprintf("agent state changed during restart: %s", state),
+			}
+		}
+		agent.Status.Status = apiruntime.StatusRestarting
+	}
+
 	// Agents in terminal states have no active agent-run.
 	needsStop := agent.Status.Status != apiruntime.StatusStopped && agent.Status.Status != apiruntime.StatusError
-
-	// Set pending before goroutine so sync response sees it.
-	if err := a.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
-		Status: apiruntime.StatusPending,
-	}); err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
 
 	go func() {
 		bgCtx := context.Background()
 		if needsStop {
 			if err := a.processes.Stop(bgCtx, wsName, name); err != nil {
-				a.logger.Warn("agentrun/restart: pre-stop failed, continuing",
+				a.logger.Warn("agentrun/restart: stop failed",
 					"workspace", wsName, "name", name, "error", err)
+				_ = a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
+					Status:       apiruntime.StatusError,
+					ErrorMessage: err.Error(),
+				})
+				return
 			}
+		}
+		if err := a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
+			Status: apiruntime.StatusCreating,
+		}); err != nil {
+			a.logger.Warn("agentrun/restart: mark creating failed",
+				"workspace", wsName, "name", name, "error", err)
+			return
 		}
 		if _, err := a.processes.Start(bgCtx, wsName, name); err != nil {
 			a.logger.Warn("agentrun/restart: agent-run start failed",
@@ -591,15 +623,338 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 		}
 	}()
 
-	// Read back updated agent state for the response.
-	agentUpdated, err2 := a.store.GetAgentRun(ctx, wsName, name)
-	if err2 != nil || agentUpdated == nil {
-		agentUpdated = &pkgariapi.AgentRun{
-			Metadata: pkgariapi.ObjectMeta{Workspace: wsName, Name: name},
-			Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusPending},
+	return copyVal(agent.ARIView()), nil
+}
+
+// TaskCreate handles agentrun/task/create.
+func (a *agentRunAdapter) TaskCreate(ctx context.Context, params *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error) {
+	if params.Workspace == "" || params.Name == "" || params.Description == "" {
+		return nil, jsonrpc.ErrInvalidParams("workspace, name, and description are required")
+	}
+
+	a.logger.Info("agentrun/task/create", "workspace", params.Workspace, "name", params.Name)
+
+	if a.processes.IsRecovering() {
+		a.logger.Warn("agentrun/task/create: recovery blocked",
+			"workspace", params.Workspace, "name", params.Name)
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
+	}
+
+	agent, err := a.store.GetAgentRun(ctx, params.Workspace, params.Name)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	if agent == nil {
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", params.Workspace, params.Name))
+	}
+
+	if agent.Status.Status != apiruntime.StatusIdle {
+		a.logger.Warn("agentrun/task/create: agent not in idle state",
+			"workspace", params.Workspace, "name", params.Name, "state", agent.Status.Status)
+		return nil, &jsonrpc.RPCError{
+			Code:    pkgariapi.CodeRecoveryBlocked,
+			Message: fmt.Sprintf("agent not in idle state: %s", agent.Status.Status),
 		}
 	}
-	return copyVal(agentUpdated.ARIView()), nil
+
+	// Reserve agent: idle → running (same as agentrun/prompt).
+	reserved, err := a.agents.TransitionState(ctx, params.Workspace, params.Name, apiruntime.StatusIdle, apiruntime.StatusRunning)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	if !reserved {
+		current, getErr := a.store.GetAgentRun(ctx, params.Workspace, params.Name)
+		if getErr != nil {
+			return nil, jsonrpc.ErrInternal(getErr.Error())
+		}
+		state := "<missing>"
+		if current != nil {
+			state = string(current.Status.Status)
+		}
+		return nil, &jsonrpc.RPCError{
+			Code:    pkgariapi.CodeRecoveryBlocked,
+			Message: fmt.Sprintf("agent not in idle state: %s", state),
+		}
+	}
+
+	rollbackToIdle := func(cause error) error {
+		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if updateErr := a.agents.UpdateStatus(rctx, params.Workspace, params.Name, pkgariapi.AgentRunStatus{
+			Status: apiruntime.StatusIdle,
+		}); updateErr != nil {
+			a.logger.Warn("agentrun/task/create: failed to roll back to idle",
+				"workspace", params.Workspace, "name", params.Name, "error", updateErr)
+		}
+		return jsonrpc.ErrInternal(cause.Error())
+	}
+
+	// Create tasks directory.
+	tasksDir := filepath.Join(a.processes.BundlePath(params.Workspace, params.Name), "tasks")
+	if err := os.MkdirAll(tasksDir, 0o755); err != nil {
+		return nil, rollbackToIdle(fmt.Errorf("mkdir tasks: %w", err))
+	}
+
+	// Find next task number.
+	taskID, taskPath, err := nextTaskPath(tasksDir)
+	if err != nil {
+		return nil, rollbackToIdle(err)
+	}
+
+	// Build task.
+	task := pkgariapi.AgentTask{
+		ID:        taskID,
+		Assignee:  params.Name,
+		Attempt:   1,
+		CreatedAt: time.Now(),
+		Request: pkgariapi.AgentTaskRequest{
+			Description: params.Description,
+			FilePaths:   params.FilePaths,
+		},
+	}
+
+	// Write task file.
+	data, err := json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return nil, rollbackToIdle(fmt.Errorf("marshal task: %w", err))
+	}
+	if err := os.WriteFile(taskPath, data, 0o644); err != nil {
+		return nil, rollbackToIdle(fmt.Errorf("write task: %w", err))
+	}
+
+	if err := a.dispatchTaskPrompt(ctx, params.Workspace, params.Name, taskPath, task.Attempt, agent.Status, "create"); err != nil {
+		return nil, err
+	}
+
+	return &pkgariapi.AgentRunTaskCreateResult{
+		Task:     task,
+		TaskPath: taskPath,
+	}, nil
+}
+
+// TaskGet handles agentrun/task/get.
+func (a *agentRunAdapter) TaskGet(ctx context.Context, params *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error) {
+	if params.Workspace == "" || params.Name == "" || params.TaskID == "" {
+		return nil, jsonrpc.ErrInvalidParams("workspace, name, and taskId are required")
+	}
+
+	a.logger.Debug("agentrun/task/get", "workspace", params.Workspace, "name", params.Name, "taskId", params.TaskID)
+
+	taskPath := filepath.Join(a.processes.BundlePath(params.Workspace, params.Name), "tasks", params.TaskID+".json")
+	data, err := os.ReadFile(taskPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("task %s not found", params.TaskID))
+		}
+		return nil, jsonrpc.ErrInternal(fmt.Sprintf("read task: %v", err))
+	}
+
+	var task pkgariapi.AgentTask
+	if err := json.Unmarshal(data, &task); err != nil {
+		return nil, jsonrpc.ErrInternal(fmt.Sprintf("unmarshal task: %v", err))
+	}
+
+	return &task, nil
+}
+
+// TaskList handles agentrun/task/list.
+func (a *agentRunAdapter) TaskList(ctx context.Context, params *pkgariapi.AgentRunTaskListParams) (*pkgariapi.AgentRunTaskListResult, error) {
+	if params.Workspace == "" || params.Name == "" {
+		return nil, jsonrpc.ErrInvalidParams("workspace and name are required")
+	}
+
+	a.logger.Debug("agentrun/task/list", "workspace", params.Workspace, "name", params.Name)
+
+	tasksDir := filepath.Join(a.processes.BundlePath(params.Workspace, params.Name), "tasks")
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &pkgariapi.AgentRunTaskListResult{Items: []pkgariapi.AgentTask{}}, nil
+		}
+		return nil, jsonrpc.ErrInternal(fmt.Sprintf("readdir tasks: %v", err))
+	}
+
+	var tasks []pkgariapi.AgentTask
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(tasksDir, e.Name()))
+		if err != nil {
+			a.logger.Warn("task/list: skip unreadable file", "file", e.Name(), "error", err)
+			continue
+		}
+		var task pkgariapi.AgentTask
+		if err := json.Unmarshal(data, &task); err != nil {
+			a.logger.Warn("task/list: skip invalid json", "file", e.Name(), "error", err)
+			continue
+		}
+		tasks = append(tasks, task)
+	}
+	sort.Slice(tasks, func(i, j int) bool {
+		return tasks[i].ID < tasks[j].ID
+	})
+
+	return &pkgariapi.AgentRunTaskListResult{Items: tasks}, nil
+}
+
+// TaskRetry handles agentrun/task/retry.
+func (a *agentRunAdapter) TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error) {
+	if params.Workspace == "" || params.Name == "" || params.TaskID == "" {
+		return nil, jsonrpc.ErrInvalidParams("workspace, name, and taskId are required")
+	}
+
+	a.logger.Info("agentrun/task/retry", "workspace", params.Workspace, "name", params.Name, "taskId", params.TaskID)
+
+	if a.processes.IsRecovering() {
+		a.logger.Warn("agentrun/task/retry: recovery blocked",
+			"workspace", params.Workspace, "name", params.Name, "taskId", params.TaskID)
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
+	}
+
+	agent, err := a.store.GetAgentRun(ctx, params.Workspace, params.Name)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	if agent == nil {
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", params.Workspace, params.Name))
+	}
+	if agent.Status.Status != apiruntime.StatusIdle {
+		return nil, &jsonrpc.RPCError{
+			Code:    pkgariapi.CodeRecoveryBlocked,
+			Message: fmt.Sprintf("agent not in idle state: %s", agent.Status.Status),
+		}
+	}
+
+	reserved, err := a.agents.TransitionState(ctx, params.Workspace, params.Name, apiruntime.StatusIdle, apiruntime.StatusRunning)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	if !reserved {
+		current, getErr := a.store.GetAgentRun(ctx, params.Workspace, params.Name)
+		if getErr != nil {
+			return nil, jsonrpc.ErrInternal(getErr.Error())
+		}
+		state := "<missing>"
+		if current != nil {
+			state = string(current.Status.Status)
+		}
+		return nil, &jsonrpc.RPCError{
+			Code:    pkgariapi.CodeRecoveryBlocked,
+			Message: fmt.Sprintf("agent not in idle state: %s", state),
+		}
+	}
+
+	rollbackToIdle := func(cause error) error {
+		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if updateErr := a.agents.UpdateStatus(rctx, params.Workspace, params.Name, pkgariapi.AgentRunStatus{
+			Status: apiruntime.StatusIdle,
+		}); updateErr != nil {
+			a.logger.Warn("agentrun/task/retry: failed to roll back to idle",
+				"workspace", params.Workspace, "name", params.Name, "taskId", params.TaskID, "error", updateErr)
+		}
+		return jsonrpc.ErrInternal(cause.Error())
+	}
+
+	taskPath := filepath.Join(a.processes.BundlePath(params.Workspace, params.Name), "tasks", params.TaskID+".json")
+	data, err := os.ReadFile(taskPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, rollbackToIdle(fmt.Errorf("task %s not found", params.TaskID))
+		}
+		return nil, rollbackToIdle(fmt.Errorf("read task: %w", err))
+	}
+
+	var task pkgariapi.AgentTask
+	if err := json.Unmarshal(data, &task); err != nil {
+		return nil, rollbackToIdle(fmt.Errorf("unmarshal task: %w", err))
+	}
+
+	if task.Attempt < 1 {
+		task.Attempt = 1
+	}
+	task.Attempt++
+	task.Completed = false
+	task.Response = nil
+
+	data, err = json.MarshalIndent(task, "", "  ")
+	if err != nil {
+		return nil, rollbackToIdle(fmt.Errorf("marshal task: %w", err))
+	}
+	if err := os.WriteFile(taskPath, data, 0o644); err != nil {
+		return nil, rollbackToIdle(fmt.Errorf("write task: %w", err))
+	}
+
+	if err := a.dispatchTaskPrompt(ctx, params.Workspace, params.Name, taskPath, task.Attempt, agent.Status, "retry"); err != nil {
+		return nil, err
+	}
+
+	return &pkgariapi.AgentRunTaskRetryResult{
+		Task:     task,
+		TaskPath: taskPath,
+	}, nil
+}
+
+func nextTaskPath(tasksDir string) (string, string, error) {
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		return "", "", fmt.Errorf("readdir tasks: %w", err)
+	}
+
+	var taskFiles []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, "task-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		numStr := strings.TrimSuffix(strings.TrimPrefix(name, "task-"), ".json")
+		if len(numStr) != 4 {
+			continue
+		}
+		taskFiles = append(taskFiles, name)
+	}
+
+	maxNum := 0
+	if len(taskFiles) > 0 {
+		sort.Strings(taskFiles)
+		latest := taskFiles[len(taskFiles)-1]
+		numStr := strings.TrimSuffix(strings.TrimPrefix(latest, "task-"), ".json")
+		n, err := strconv.Atoi(numStr)
+		if err != nil {
+			return "", "", fmt.Errorf("parse latest task number: %w", err)
+		}
+		maxNum = n
+	}
+
+	nextNum := (maxNum + 1) % 10000
+	taskID := fmt.Sprintf("task-%04d", nextNum)
+	return taskID, filepath.Join(tasksDir, taskID+".json"), nil
+}
+
+func (a *agentRunAdapter) dispatchTaskPrompt(ctx context.Context, workspaceName, name, taskPath string, attempt int, fallback pkgariapi.AgentRunStatus, op string) error {
+	client, err := a.processes.Connect(ctx, workspaceName, name)
+	if err != nil {
+		a.logger.Warn("agentrun/task/"+op+": agent not running",
+			"workspace", workspaceName, "name", name, "error", err)
+		a.recordPromptDeliveryFailure(workspaceName, name, fallback, err, true)
+		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
+	}
+
+	promptText := fmt.Sprintf("Task attempt %d at: %s\nRead the task file and complete it using the task protocol in your system prompt.", attempt, taskPath)
+	go func() {
+		if _, err := client.Prompt(context.Background(), &runapi.SessionPromptParams{
+			Prompt: []runapi.ContentBlock{runapi.TextBlock(promptText)},
+		}); err != nil {
+			a.logger.Warn("agentrun/task/"+op+": prompt delivery failed",
+				"workspace", workspaceName, "name", name, "error", err)
+			a.recordPromptDeliveryFailure(workspaceName, name, fallback, err, false)
+		}
+	}()
+	return nil
 }
 
 // ────────────────────────────────────────────────────────────────────────────

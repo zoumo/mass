@@ -11,14 +11,18 @@ const (
 
 // ARI agentrun methods.
 const (
-	MethodAgentRunCreate  = "agentrun/create"
-	MethodAgentRunPrompt  = "agentrun/prompt"
-	MethodAgentRunCancel  = "agentrun/cancel"
-	MethodAgentRunStop    = "agentrun/stop"
-	MethodAgentRunDelete  = "agentrun/delete"
-	MethodAgentRunRestart = "agentrun/restart"
-	MethodAgentRunList    = "agentrun/list"
-	MethodAgentRunGet     = "agentrun/get"
+	MethodAgentRunCreate     = "agentrun/create"
+	MethodAgentRunPrompt     = "agentrun/prompt"
+	MethodAgentRunCancel     = "agentrun/cancel"
+	MethodAgentRunStop       = "agentrun/stop"
+	MethodAgentRunDelete     = "agentrun/delete"
+	MethodAgentRunRestart    = "agentrun/restart"
+	MethodAgentRunList       = "agentrun/list"
+	MethodAgentRunGet        = "agentrun/get"
+	MethodAgentRunTaskCreate = "agentrun/task/create"
+	MethodAgentRunTaskGet    = "agentrun/task/get"
+	MethodAgentRunTaskList   = "agentrun/task/list"
+	MethodAgentRunTaskRetry  = "agentrun/task/retry"
 )
 
 // ARI agent definition methods.
