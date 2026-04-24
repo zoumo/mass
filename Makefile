@@ -18,6 +18,11 @@ fast-build: tidy $(COMMANDS)
 .PHONY: build
 build: tidy test $(COMMANDS)
 
+.PHONY: install
+install: tidy
+	go install $(LDFLAGS) ./cmd/mass
+	go install $(LDFLAGS) ./cmd/massctl
+
 .PHONY: tidy
 tidy:
 	go mod tidy
