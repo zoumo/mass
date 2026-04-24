@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 	"github.com/zoumo/mass/tests/integration/testutil"
 )
