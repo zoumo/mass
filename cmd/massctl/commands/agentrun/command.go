@@ -21,6 +21,7 @@ func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 	cmd.AddCommand(newCancelCmd(getClient))
 	cmd.AddCommand(newRestartCmd(getClient))
 	cmd.AddCommand(newPromptCmd(getClient))
+	cmd.AddCommand(newTaskCmd(getClient))
 	cmd.AddCommand(newChatCmd(getClient))
 	cmd.AddCommand(newDebugCmd())
 	return cmd
