@@ -12,26 +12,55 @@ import (
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
-// mockInnerClient implements pkgariapi.Client for the embedded interface.
-type mockInnerClient struct{}
-
-func (m *mockInnerClient) Create(ctx context.Context, obj pkgariapi.Object) error { return nil }
-func (m *mockInnerClient) Get(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
-	return nil
-}
-func (m *mockInnerClient) Update(ctx context.Context, obj pkgariapi.Object) error { return nil }
-func (m *mockInnerClient) List(ctx context.Context, list pkgariapi.ObjectList, opts ...pkgariapi.ListOption) error {
-	return nil
+// mockClient implements pkgariapi.Client for testing.
+type mockClient struct {
+	createFn func(ctx context.Context, obj pkgariapi.Object) error
+	getFn    func(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error
+	updateFn func(ctx context.Context, obj pkgariapi.Object) error
+	listFn   func(ctx context.Context, list pkgariapi.ObjectList, opts ...pkgariapi.ListOption) error
+	deleteFn func(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error
 }
 
-func (m *mockInnerClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
+func (m *mockClient) Create(ctx context.Context, obj pkgariapi.Object) error {
+	if m.createFn != nil {
+		return m.createFn(ctx, obj)
+	}
 	return nil
 }
-func (m *mockInnerClient) AgentRuns() pkgariapi.AgentRunOps   { return &mockAgentRunOps{} }
-func (m *mockInnerClient) Workspaces() pkgariapi.WorkspaceOps { return &mockWorkspaceOps{} }
-func (m *mockInnerClient) System() pkgariapi.SystemOps        { return &mockSystemOps{} }
-func (m *mockInnerClient) Close() error                       { return nil }
-func (m *mockInnerClient) DisconnectNotify() <-chan struct{}  { return make(chan struct{}) }
+
+func (m *mockClient) Get(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
+	if m.getFn != nil {
+		return m.getFn(ctx, key, obj)
+	}
+	return nil
+}
+
+func (m *mockClient) Update(ctx context.Context, obj pkgariapi.Object) error {
+	if m.updateFn != nil {
+		return m.updateFn(ctx, obj)
+	}
+	return nil
+}
+
+func (m *mockClient) List(ctx context.Context, list pkgariapi.ObjectList, opts ...pkgariapi.ListOption) error {
+	if m.listFn != nil {
+		return m.listFn(ctx, list, opts...)
+	}
+	return nil
+}
+
+func (m *mockClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
+	if m.deleteFn != nil {
+		return m.deleteFn(ctx, key, obj)
+	}
+	return nil
+}
+
+func (m *mockClient) AgentRuns() pkgariapi.AgentRunOps   { return &mockAgentRunOps{} }
+func (m *mockClient) Workspaces() pkgariapi.WorkspaceOps { return &mockWorkspaceOps{} }
+func (m *mockClient) System() pkgariapi.SystemOps        { return &mockSystemOps{} }
+func (m *mockClient) Close() error                       { return nil }
+func (m *mockClient) DisconnectNotify() <-chan struct{}  { return make(chan struct{}) }
 
 // mock AgentRunOps (stub — not used in agent tests)
 type mockAgentRunOps struct{}
@@ -73,55 +102,6 @@ type mockSystemOps struct{}
 
 func (m *mockSystemOps) Info(context.Context) (*pkgariapi.SystemInfoResult, error) {
 	return nil, nil
-}
-
-// mockClient embeds the Client interface and overrides only what agent commands need.
-type mockClient struct {
-	pkgariapi.Client
-	createFn func(ctx context.Context, obj pkgariapi.Object) error
-	getFn    func(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error
-	updateFn func(ctx context.Context, obj pkgariapi.Object) error
-	listFn   func(ctx context.Context, list pkgariapi.ObjectList, opts ...pkgariapi.ListOption) error
-	deleteFn func(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error
-}
-
-func newMockClient() *mockClient {
-	return &mockClient{Client: &mockInnerClient{}}
-}
-
-func (m *mockClient) Create(ctx context.Context, obj pkgariapi.Object) error {
-	if m.createFn != nil {
-		return m.createFn(ctx, obj)
-	}
-	return nil
-}
-
-func (m *mockClient) Get(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
-	if m.getFn != nil {
-		return m.getFn(ctx, key, obj)
-	}
-	return nil
-}
-
-func (m *mockClient) Update(ctx context.Context, obj pkgariapi.Object) error {
-	if m.updateFn != nil {
-		return m.updateFn(ctx, obj)
-	}
-	return nil
-}
-
-func (m *mockClient) List(ctx context.Context, list pkgariapi.ObjectList, opts ...pkgariapi.ListOption) error {
-	if m.listFn != nil {
-		return m.listFn(ctx, list, opts...)
-	}
-	return nil
-}
-
-func (m *mockClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
-	if m.deleteFn != nil {
-		return m.deleteFn(ctx, key, obj)
-	}
-	return nil
 }
 
 // newMockClientFn returns a ClientFn that always returns the given mock.
