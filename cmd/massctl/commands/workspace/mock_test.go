@@ -58,6 +58,14 @@ func (m *mockAgentRunOps) TaskRetry(context.Context, *pkgariapi.AgentRunTaskRetr
 	return &pkgariapi.AgentRunTaskRetryResult{}, nil
 }
 
+// ── mock SystemOps (stub — not used in workspace tests) ────────────────────────
+
+type mockSystemOps struct{}
+
+func (m *mockSystemOps) Info(context.Context) (*pkgariapi.SystemInfoResult, error) {
+	return &pkgariapi.SystemInfoResult{}, nil
+}
+
 // ── mock Client ──────────────────────────────────────────────────────────────
 
 type mockClient struct {
@@ -69,12 +77,14 @@ type mockClient struct {
 
 	agentRunOps  *mockAgentRunOps
 	workspaceOps *mockWorkspaceOps
+	systemOps    *mockSystemOps
 }
 
 func newMockClient() *mockClient {
 	return &mockClient{
 		agentRunOps:  &mockAgentRunOps{},
 		workspaceOps: &mockWorkspaceOps{},
+		systemOps:    &mockSystemOps{},
 	}
 }
 
@@ -115,6 +125,7 @@ func (m *mockClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pk
 
 func (m *mockClient) AgentRuns() pkgariapi.AgentRunOps   { return m.agentRunOps }
 func (m *mockClient) Workspaces() pkgariapi.WorkspaceOps { return m.workspaceOps }
+func (m *mockClient) System() pkgariapi.SystemOps        { return m.systemOps }
 func (m *mockClient) Close() error                       { return nil }
 func (m *mockClient) DisconnectNotify() <-chan struct{}  { return make(chan struct{}) }
 

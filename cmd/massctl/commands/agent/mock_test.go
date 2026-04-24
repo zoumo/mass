@@ -8,8 +8,72 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
+
+// mockInnerClient implements pkgariapi.Client for the embedded interface.
+type mockInnerClient struct{}
+
+func (m *mockInnerClient) Create(ctx context.Context, obj pkgariapi.Object) error { return nil }
+func (m *mockInnerClient) Get(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
+	return nil
+}
+func (m *mockInnerClient) Update(ctx context.Context, obj pkgariapi.Object) error { return nil }
+func (m *mockInnerClient) List(ctx context.Context, list pkgariapi.ObjectList, opts ...pkgariapi.ListOption) error {
+	return nil
+}
+
+func (m *mockInnerClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
+	return nil
+}
+func (m *mockInnerClient) AgentRuns() pkgariapi.AgentRunOps   { return &mockAgentRunOps{} }
+func (m *mockInnerClient) Workspaces() pkgariapi.WorkspaceOps { return &mockWorkspaceOps{} }
+func (m *mockInnerClient) System() pkgariapi.SystemOps        { return &mockSystemOps{} }
+func (m *mockInnerClient) Close() error                       { return nil }
+func (m *mockInnerClient) DisconnectNotify() <-chan struct{}  { return make(chan struct{}) }
+
+// mock AgentRunOps (stub — not used in agent tests)
+type mockAgentRunOps struct{}
+
+func (m *mockAgentRunOps) Prompt(context.Context, pkgariapi.ObjectKey, []runapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
+	return nil, nil
+}
+func (m *mockAgentRunOps) Cancel(context.Context, pkgariapi.ObjectKey) error { return nil }
+func (m *mockAgentRunOps) Stop(context.Context, pkgariapi.ObjectKey) error   { return nil }
+func (m *mockAgentRunOps) Restart(context.Context, pkgariapi.ObjectKey) (*pkgariapi.AgentRun, error) {
+	return nil, nil
+}
+
+func (m *mockAgentRunOps) TaskCreate(context.Context, *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error) {
+	return nil, nil
+}
+
+func (m *mockAgentRunOps) TaskGet(context.Context, *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error) {
+	return nil, nil
+}
+
+func (m *mockAgentRunOps) TaskList(context.Context, *pkgariapi.AgentRunTaskListParams) (*pkgariapi.AgentRunTaskListResult, error) {
+	return nil, nil
+}
+
+func (m *mockAgentRunOps) TaskRetry(context.Context, *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error) {
+	return nil, nil
+}
+
+// mock WorkspaceOps (stub — not used in agent tests)
+type mockWorkspaceOps struct{}
+
+func (m *mockWorkspaceOps) Send(context.Context, *pkgariapi.WorkspaceSendParams) (*pkgariapi.WorkspaceSendResult, error) {
+	return nil, nil
+}
+
+// mock SystemOps (stub — not used in agent tests)
+type mockSystemOps struct{}
+
+func (m *mockSystemOps) Info(context.Context) (*pkgariapi.SystemInfoResult, error) {
+	return nil, nil
+}
 
 // mockClient embeds the Client interface and overrides only what agent commands need.
 type mockClient struct {
@@ -19,6 +83,10 @@ type mockClient struct {
 	updateFn func(ctx context.Context, obj pkgariapi.Object) error
 	listFn   func(ctx context.Context, list pkgariapi.ObjectList, opts ...pkgariapi.ListOption) error
 	deleteFn func(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error
+}
+
+func newMockClient() *mockClient {
+	return &mockClient{Client: &mockInnerClient{}}
 }
 
 func (m *mockClient) Create(ctx context.Context, obj pkgariapi.Object) error {
@@ -55,8 +123,6 @@ func (m *mockClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pk
 	}
 	return nil
 }
-
-func (m *mockClient) Close() error { return nil }
 
 // newMockClientFn returns a ClientFn that always returns the given mock.
 func newMockClientFn(mock *mockClient) func() (pkgariapi.Client, error) {

@@ -96,12 +96,14 @@ type mockClient struct {
 
 	agentRunOps  *mockAgentRunOps
 	workspaceOps *mockWorkspaceOps
+	systemOps    *mockSystemOps
 }
 
 func newMockClient() *mockClient {
 	return &mockClient{
 		agentRunOps:  &mockAgentRunOps{},
 		workspaceOps: &mockWorkspaceOps{},
+		systemOps:    &mockSystemOps{},
 	}
 }
 
@@ -142,8 +144,22 @@ func (m *mockClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pk
 
 func (m *mockClient) AgentRuns() pkgariapi.AgentRunOps   { return m.agentRunOps }
 func (m *mockClient) Workspaces() pkgariapi.WorkspaceOps { return m.workspaceOps }
+func (m *mockClient) System() pkgariapi.SystemOps        { return m.systemOps }
 func (m *mockClient) Close() error                       { return nil }
 func (m *mockClient) DisconnectNotify() <-chan struct{}  { return make(chan struct{}) }
+
+// ── mock SystemOps ──────────────────────────────────────────────────────────────
+
+type mockSystemOps struct {
+	infoFn func(ctx context.Context) (*pkgariapi.SystemInfoResult, error)
+}
+
+func (m *mockSystemOps) Info(ctx context.Context) (*pkgariapi.SystemInfoResult, error) {
+	if m.infoFn != nil {
+		return m.infoFn(ctx)
+	}
+	return &pkgariapi.SystemInfoResult{}, nil
+}
 
 // clientFn returns a cliutil.ClientFn that always returns mc.
 func clientFn(mc *mockClient) cliutil.ClientFn {
