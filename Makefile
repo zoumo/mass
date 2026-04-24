@@ -3,6 +3,14 @@ BIN_DIR := bin
 # Auto-discover commands: each subdirectory under cmd/ with a main.go is a command
 COMMANDS := $(notdir $(patsubst %/main.go,%,$(wildcard cmd/*/main.go)))
 
+# Version info injected via ldflags
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIME ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")
+LDFLAGS := -ldflags "-X 'github.com/zoumo/mass/internal/version.Version=$(VERSION)' \
+                    -X 'github.com/zoumo/mass/internal/version.GitCommit=$(GIT_COMMIT)' \
+                    -X 'github.com/zoumo/mass/internal/version.BuildTime=$(BUILD_TIME)'"
+
 
 .PHONY: build
 fast-build: tidy $(COMMANDS)
@@ -16,7 +24,7 @@ tidy:
 
 .PHONY: $(COMMANDS)
 $(COMMANDS):
-	go build -o $(BIN_DIR)/$@ ./cmd/$@
+	go build $(LDFLAGS) -o $(BIN_DIR)/$@ ./cmd/$@
 
 .PHONY: test
 test: fmt lint
