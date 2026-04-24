@@ -1,10 +1,10 @@
 ---
 name: mass-guide
 description: |
-  通过 massctl CLI 使用 MASS（Multi-Agent Supervision System）管理 workspace、agent 生命周期。
-  当用户提到 mass、massctl、agent 生命周期、workspace、或想启动/管理 AI agent 时触发。
+  通过 massctl CLI 使用 MASS 管理 workspace、agent 生命周期、task 委派。
+  当用户提到 mass、massctl、agent 生命周期、workspace、task、或想启动/管理 AI agent 时触发。
   多 agent 协作编排见 mass-pilot skill。
-version: 0.2.0
+version: 0.3.0
 ---
 
 # MASS Usage Guide
@@ -39,6 +39,7 @@ massctl agent get
 | **Workspace** | agent 共享的工作目录（git clone / 本地路径 / 空目录） | `name` |
 | **Agent** | 可复用的 agent 定义（command + args + env + disabled） | `name` |
 | **AgentRun** | 绑定到 workspace 的运行中 agent 实例 | `(workspace, name)` |
+| **Task** | 结构化任务委派（request → agent → response） | `(workspace, agent, task-id)` |
 
 ## 内置 Agent
 
@@ -189,6 +190,74 @@ massctl agentrun prompt worker -w my-ws --text "Fix the auth bug"
 # 等待结果（5 分钟超时）
 massctl agentrun prompt worker -w my-ws --text "Fix the auth bug" --wait
 ```
+
+### Task 管理
+
+Task 是结构化的任务委派方式，系统自动处理 prompt 和文件操作。
+
+#### 创建 Task（自动 prompt agent）
+
+```bash
+massctl agentrun task create -w {workspace} --name {agent} \
+  --description "{task_description}" \
+  --file {input_file_1} --file {input_file_2}
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `-w, --workspace` | yes | Workspace name |
+| `--name` | yes | AgentRun name |
+| `--description` | yes | Task description |
+| `--file` | no | Input file paths（可多次指定） |
+
+`task create` 会：
+1. 检查 agent 是否 idle（否则返回错误）
+2. 创建 task 文件（系统生成 ID）
+3. 自动 prompt agent（内置 task protocol）
+4. Agent 状态 idle → running
+
+返回包含 `task.id`，用于后续查询。
+
+#### 查询 Task 状态
+
+```bash
+massctl agentrun task get -w {workspace} --name {agent} --id {task-id} [-o json|table]
+```
+
+返回完整 task JSON：
+
+```json
+{
+  "id": "task-abc123",
+  "completed": false,          // ← 轮询检查此字段
+  "request": {
+    "description": "...",
+    "filePaths": ["..."]
+  },
+  "response": {                // ← agent 完成后写入
+    "status": "success",       // ← success/failed/needs_human
+    "description": "...",
+    "filePaths": ["..."],
+    "updatedAt": "..."
+  }
+}
+```
+
+#### 列出 Task
+
+```bash
+massctl agentrun task list -w {workspace} --name {agent}
+```
+
+#### 重试 Task
+
+```bash
+massctl agentrun task retry -w {workspace} --name {agent} --id {task-id}
+```
+
+增加 `attempt` 计数，清除旧 response，自动重新 prompt agent。
+
+> 多 agent 协作编排（task-based workflow）见 [mass-pilot](../mass-pilot/SKILL.md) skill。
 
 ### 交互式聊天
 
