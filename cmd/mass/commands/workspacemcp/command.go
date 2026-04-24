@@ -1,4 +1,4 @@
-// Package workspacemcp implements the "mass workspace-mcp" subcommand.
+// Package workspacemcp implements the "mass mesh-mcp" subcommand.
 package workspacemcp
 
 import (
@@ -12,8 +12,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/internal/logging"
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
@@ -21,7 +21,7 @@ import (
 // Tool schemas
 // ────────────────────────────────────────────────────────────────────────────
 
-var workspaceSendSchema = json.RawMessage(`{
+var agentRunSendSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
     "targetAgent": {
@@ -40,7 +40,7 @@ var workspaceSendSchema = json.RawMessage(`{
   "required": ["targetAgent", "message"]
 }`)
 
-var workspaceStatusSchema = json.RawMessage(`{
+var agentRunStatusSchema = json.RawMessage(`{
   "type": "object",
   "properties": {},
   "required": []
@@ -55,7 +55,7 @@ type handlerConfig struct {
 	agentName     string
 }
 
-func workspaceSendHandler(cfg handlerConfig, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
+func agentRunSendHandler(cfg handlerConfig, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var input struct {
 			TargetAgent string `json:"targetAgent"`
@@ -75,7 +75,7 @@ func workspaceSendHandler(cfg handlerConfig, client pkgariapi.Client, logger *sl
 			}, nil
 		}
 
-		logger.Info("workspace_send", "target", input.TargetAgent, "needsReply", input.NeedsReply)
+		logger.Info(pkgariapi.WorkspaceMeshToolAgentRunSend, "target", input.TargetAgent, "needsReply", input.NeedsReply)
 
 		result, err := client.Workspaces().Send(ctx, &pkgariapi.WorkspaceSendParams{
 			Workspace:  cfg.workspaceName,
@@ -112,9 +112,9 @@ func workspaceSendHandler(cfg handlerConfig, client pkgariapi.Client, logger *sl
 	}
 }
 
-func workspaceStatusHandler(cfg handlerConfig, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
+func agentRunStatusHandler(cfg handlerConfig, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		logger.Info("workspace_status", "workspace", cfg.workspaceName)
+		logger.Info(pkgariapi.WorkspaceMeshToolAgentRunStatus, "workspace", cfg.workspaceName)
 
 		// Fetch workspace details.
 		var ws pkgariapi.Workspace
@@ -154,7 +154,7 @@ func workspaceStatusHandler(cfg handlerConfig, client pkgariapi.Client, logger *
 // Subcommand
 // ────────────────────────────────────────────────────────────────────────────
 
-// NewCommand returns the "workspace-mcp" cobra command.
+// NewCommand returns the "mesh-mcp" cobra command.
 func NewCommand() *cobra.Command {
 	var (
 		socket    string
@@ -164,9 +164,9 @@ func NewCommand() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:          "workspace-mcp",
+		Use:          "mesh-mcp",
 		Short:        "Run the workspace MCP server (stdio transport)",
-		Long:         `workspace-mcp exposes workspace_send and workspace_status MCP tools over stdio.`,
+		Long:         fmt.Sprintf("mesh-mcp exposes %s and %s MCP tools over stdio.", pkgariapi.WorkspaceMeshToolAgentRunSend, pkgariapi.WorkspaceMeshToolAgentRunStatus),
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(socket, workspace, agent, &logCfg)
@@ -184,7 +184,7 @@ func NewCommand() *cobra.Command {
 }
 
 func run(socket, workspace, agent string, logCfg *logging.LogConfig) error {
-	logCfg.Filename = "workspace-mcp-server.log"
+	logCfg.Filename = "workspace-mesh-server.log"
 	logger, logCleanup, err := logCfg.Build()
 	if err != nil {
 		return fmt.Errorf("build logger: %w", err)
@@ -207,19 +207,19 @@ func run(socket, workspace, agent string, logCfg *logging.LogConfig) error {
 		agentName:     agent,
 	}
 
-	server := mcp.NewServer(&mcp.Implementation{Name: "workspace-mcp-server", Version: "0.1.0"}, nil)
+	server := mcp.NewServer(&mcp.Implementation{Name: pkgariapi.WorkspaceMeshName, Version: "0.1.0"}, nil)
 
 	server.AddTool(&mcp.Tool{
-		Name:        "workspace_send",
+		Name:        pkgariapi.WorkspaceMeshToolAgentRunSend,
 		Description: "Send a message to another agent in the current workspace",
-		InputSchema: workspaceSendSchema,
-	}, workspaceSendHandler(cfg, client, logger))
+		InputSchema: agentRunSendSchema,
+	}, agentRunSendHandler(cfg, client, logger))
 
 	server.AddTool(&mcp.Tool{
-		Name:        "workspace_status",
+		Name:        pkgariapi.WorkspaceMeshToolAgentRunStatus,
 		Description: "Get the current workspace membership and status",
-		InputSchema: workspaceStatusSchema,
-	}, workspaceStatusHandler(cfg, client, logger))
+		InputSchema: agentRunStatusSchema,
+	}, agentRunStatusHandler(cfg, client, logger))
 
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {
 		logger.Error("server exited", "error", err)

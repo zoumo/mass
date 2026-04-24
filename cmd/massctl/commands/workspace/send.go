@@ -7,8 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 func newSendCmd(getClient cliutil.ClientFn) *cobra.Command {

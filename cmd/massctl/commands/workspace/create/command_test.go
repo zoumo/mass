@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 )
 
 // ── mock AgentRunOps (stub — not used in create tests) ───────────────────────
@@ -24,6 +24,22 @@ func (m *mockAgentRunOps) Cancel(context.Context, pkgariapi.ObjectKey) error { r
 func (m *mockAgentRunOps) Stop(context.Context, pkgariapi.ObjectKey) error   { return nil }
 func (m *mockAgentRunOps) Restart(context.Context, pkgariapi.ObjectKey) (*pkgariapi.AgentRun, error) {
 	return &pkgariapi.AgentRun{}, nil
+}
+
+func (m *mockAgentRunOps) TaskCreate(context.Context, *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error) {
+	return &pkgariapi.AgentRunTaskCreateResult{}, nil
+}
+
+func (m *mockAgentRunOps) TaskGet(context.Context, *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error) {
+	return &pkgariapi.AgentTask{}, nil
+}
+
+func (m *mockAgentRunOps) TaskList(context.Context, *pkgariapi.AgentRunTaskListParams) (*pkgariapi.AgentRunTaskListResult, error) {
+	return &pkgariapi.AgentRunTaskListResult{}, nil
+}
+
+func (m *mockAgentRunOps) TaskRetry(context.Context, *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error) {
+	return &pkgariapi.AgentRunTaskRetryResult{}, nil
 }
 
 // ── mock WorkspaceOps (stub — not used in create tests) ──────────────────────

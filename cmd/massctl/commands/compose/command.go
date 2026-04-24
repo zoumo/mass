@@ -110,7 +110,6 @@ func createAgentRun(ctx context.Context, client pkgariapi.Client, wsName string,
 	return nil
 }
 
-
 func printSocketInfo(ctx context.Context, client pkgariapi.Client, wsName, agName string) {
 	var ar pkgariapi.AgentRun
 	if err := client.Get(ctx, pkgariapi.ObjectKey{Workspace: wsName, Name: agName}, &ar); err != nil {

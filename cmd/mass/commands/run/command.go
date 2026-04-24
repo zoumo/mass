@@ -8,8 +8,10 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
+	"github.com/coder/acp-go-sdk"
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/internal/logging"
@@ -25,6 +27,7 @@ import (
 func NewCommand() *cobra.Command {
 	var (
 		bundle      string
+		stateDir    string
 		permissions string
 		id          string
 		logCfg      logging.LogConfig
@@ -43,11 +46,12 @@ The bundle directory also serves as the state directory: state.json, agent-run.s
 and events/<sessionId>.jsonl are all written inside the bundle directory.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cmd, bundle, permissions, id, &logCfg)
+			return run(cmd, bundle, stateDir, permissions, id, &logCfg)
 		},
 	}
 
 	cmd.Flags().StringVar(&bundle, "bundle", "", "path to the MASS bundle directory containing config.json (required)")
+	cmd.Flags().StringVar(&stateDir, "state-dir", "", "optional parent state directory for compatibility; runtime state will be written to <state-dir>/<id>")
 	cmd.Flags().StringVar(&permissions, "permissions", "approve_all", "fs/terminal permission policy: approve_all | approve_reads | deny_all")
 	cmd.Flags().StringVar(&id, "id", "", "agent session ID (defaults to metadata.name from config.json)")
 	logCfg.AddFlags(cmd.Flags())
@@ -56,7 +60,7 @@ and events/<sessionId>.jsonl are all written inside the bundle directory.`,
 	return cmd
 }
 
-func run(cmd *cobra.Command, bundle, permissions, id string, logCfg *logging.LogConfig) error {
+func run(cmd *cobra.Command, bundle, stateDir, permissions, id string, logCfg *logging.LogConfig) error {
 	logCfg.Filename = "agent-run.log"
 	logger, logCleanup, err := logCfg.Build()
 	if err != nil {
@@ -83,8 +87,13 @@ func run(cmd *cobra.Command, bundle, permissions, id string, logCfg *logging.Log
 		id = cfg.Metadata.Name
 	}
 
-	// Bundle dir is the state dir — all runtime files live together.
+	// Default layout co-locates runtime state with the bundle. For compatibility
+	// with older callers and integration tests, allow an explicit parent
+	// --state-dir and place runtime state under <state-dir>/<id>.
 	runStateDir := bundle
+	if stateDir != "" {
+		runStateDir = filepath.Join(stateDir, id)
+	}
 	socketPath := spec.RunSocketPath(runStateDir)
 	mgr := acpruntime.New(cfg, bundle, runStateDir, logger)
 
@@ -122,6 +131,23 @@ func run(cmd *cobra.Command, bundle, permissions, id string, logCfg *logging.Log
 	{
 		st, _ := mgr.GetState()
 		trans.NotifyStateChange("idle", "idle", st.PID, "bootstrap-metadata", []string{"agentInfo", "capabilities"})
+	}
+
+	if cfg.Session.SystemPrompt != "" {
+		trans.NotifyTurnStart()
+		trans.NotifyUserPrompt([]runapi.ContentBlock{runapi.TextBlock(acpruntime.BuildSeedSystemPrompt(cfg.Session.SystemPrompt))})
+		resp, err := mgr.SeedSystemPrompt(ctx)
+		stopReason := "error"
+		if err == nil {
+			stopReason = string(resp.StopReason)
+		}
+		if err != nil {
+			trans.NotifyError(err.Error())
+		}
+		trans.NotifyTurnEnd(acp.StopReason(stopReason))
+		if err != nil {
+			return fmt.Errorf("agent-run: seed system prompt: %w", err)
+		}
 	}
 
 	// Build service and register it with a new jsonrpc.Server.
