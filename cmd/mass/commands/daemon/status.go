@@ -67,7 +67,7 @@ func runStatus(rootPath string) error {
 		return nil
 	}
 
-	fmt.Printf("daemon: running (pid: %d, version: %s)\n", info.Pid, formatVersion(info))
+	fmt.Printf("daemon: running (pid: %d, version: %s, go%s)\n", info.Pid, formatVersion(info), info.GoVersion)
 	return nil
 }
 

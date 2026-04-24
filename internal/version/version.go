@@ -23,5 +23,5 @@ func String() string {
 
 // Full returns full version info including Go version.
 func Full() string {
-	return String() + ", go" + GoVersion
+	return String() + ", " + GoVersion
 }
