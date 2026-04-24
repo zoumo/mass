@@ -16,8 +16,8 @@ var (
 
 // renderHeader renders a single-line breadcrumb status bar:
 //
-//	MASS > workspace > agent > model                            ● status
-func renderHeader(workspaceName, agentName, agentStatus, currentModel string, width int) string {
+//	MASS > workspace > agent > model                    ● status seq:N
+func renderHeader(workspaceName, agentName, agentStatus, currentModel string, maxSeq, width int) string {
 	sep := headerSepStyle.Render(" > ")
 
 	left := headerLogoStyle.Render("MASS")
@@ -31,7 +31,7 @@ func renderHeader(workspaceName, agentName, agentStatus, currentModel string, wi
 		left += sep + headerItemStyle.Render(currentModel)
 	}
 
-	right := renderHeaderStatus(agentStatus)
+	right := renderHeaderStatusWithSeq(agentStatus, maxSeq)
 	leftWidth := lipgloss.Width(left)
 	rightWidth := lipgloss.Width(right)
 	gap := strings.Repeat(" ", max(0, width-leftWidth-rightWidth))
@@ -39,22 +39,50 @@ func renderHeader(workspaceName, agentName, agentStatus, currentModel string, wi
 	return left + gap + right
 }
 
-func renderHeaderStatus(status string) string {
+// renderHeaderStatusWithSeq renders the status indicator with event sequence number.
+// Format: "● status seq:N"
+func renderHeaderStatusWithSeq(status string, seq int) string {
 	if status == "" {
 		status = "unknown"
 	}
+	seqText := headerItemStyle.Render(" seq:" + itoa(seq))
 	switch status {
 	case string(apiruntime.StatusRunning):
-		return styleStatusRunning.Render("● running")
+		return styleStatusRunning.Render("● running") + seqText
 	case string(apiruntime.StatusRestarting):
-		return styleStatusRunning.Render("● restarting")
+		return styleStatusRunning.Render("● restarting") + seqText
 	case string(apiruntime.StatusIdle):
-		return styleStatusIdle.Render("● idle")
+		return styleStatusIdle.Render("● idle") + seqText
 	case string(apiruntime.StatusError):
-		return styleStatusError.Render("● error")
+		return styleStatusError.Render("● error") + seqText
 	case string(apiruntime.StatusStopped):
-		return styleStatusStopped.Render("● stopped")
+		return styleStatusStopped.Render("● stopped") + seqText
 	default:
-		return styleDim.Render("● " + status)
+		return styleDim.Render("● "+status) + seqText
 	}
+}
+
+// itoa converts int to string without importing strconv (tiny helper).
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf []byte
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	for n > 0 {
+		buf = append(buf, byte('0'+n%10))
+		n /= 10
+	}
+	if neg {
+		buf = append(buf, '-')
+	}
+	// Reverse buf
+	for i, j := 0, len(buf)-1; i < j; i, j = i+1, j-1 {
+		buf[i], buf[j] = buf[j], buf[i]
+	}
+	return string(buf)
 }

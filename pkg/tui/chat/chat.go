@@ -125,6 +125,9 @@ type chatModel struct {
 	// historical replay events; events with seq >= liveSeq are live.
 	// Set once when connReadyMsg is received.
 	liveSeq int
+	// maxSeq tracks the highest event sequence number received so far.
+	// Displayed in the header next to the status indicator.
+	maxSeq int
 	// initialStatusApplied is true once initialStatusMsg has been processed.
 	// After this point, historical stateChangeMsgs (seq < liveSeq) that would
 	// set status to "running" are ignored — they cannot reflect current state.
@@ -364,6 +367,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, m.input.Focus(), waitNotif(m.watcher))
 
 	case stateChangeMsg:
+		// Update maxSeq from the event sequence number.
+		if msg.seq > m.maxSeq {
+			m.maxSeq = msg.seq
+		}
 		isHistorical := m.liveSeq > 0 && msg.seq < m.liveSeq
 		// Historical replay events that arrive after initialStatusMsg was applied
 		// must not override the authoritative current status. Specifically, a
@@ -796,6 +803,11 @@ func contentBlockText(cb runapi.ContentBlock) string {
 }
 
 func (m *chatModel) handleNotif(ev runapi.AgentRunEvent) tea.Cmd {
+	// Update maxSeq for every received event.
+	if ev.Seq > m.maxSeq {
+		m.maxSeq = ev.Seq
+	}
+
 	// runtime_update events are handled by waitNotif; skip here.
 	if ev.Type == runapi.EventTypeRuntimeUpdate {
 		return nil
@@ -965,7 +977,7 @@ func (m chatModel) View() tea.View {
 
 	chatView := m.chat.Render()
 	div := styleDim.Render(strings.Repeat("─", m.width))
-	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, m.width)
+	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, m.maxSeq, m.width)
 
 	var input string
 	if m.waiting {
