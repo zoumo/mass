@@ -458,7 +458,7 @@ Poll until idle:
 ### `agentrun/prompt`
 
 Deliver a prompt turn to an AgentRun.
-Rejected when the agent is in `creating`, `stopped`, or `error` state.
+Rejected when the agent is in `creating`, `running`, `restarting`, `stopped`, or `error` state.
 Only accepted when state is `idle`.
 
 **Params:**
@@ -504,13 +504,15 @@ Requires the agent to be in `stopped` or `error` state.
 
 ### `agentrun/restart`
 
-Re-bootstrap a stopped or errored AgentRun from existing state.
-Transitions the agent back to `creating` and starts background bootstrap.
+Re-bootstrap an AgentRun from existing state.
+If the agent is `idle` or `running`, it first transitions to `restarting` to block new work,
+then stops the existing process, transitions to `creating`, and starts background bootstrap.
+If the agent is already `stopped` or `error`, it transitions directly to `creating`.
 Caller polls `agentrun/get` until `idle` or `error`.
 
 **Params:** ObjectKey `{workspace, name}`
 
-**Result:** AgentRun (state is `"creating"`)
+**Result:** AgentRun (state is usually `"restarting"` for active agents or `"creating"` for terminal agents)
 
 ### `agentrun/list`
 
@@ -557,7 +559,7 @@ Return current AgentRun state including optional agent-run runtime state.
 
 `status` is omitted when the agent has no running agent-run process.
 
-AgentRun state values: `creating`, `idle`, `running`, `stopped`, `error`.
+AgentRun state values: `creating`, `idle`, `running`, `restarting`, `stopped`, `error`.
 
 ## AgentRun Domain Shape
 
@@ -584,17 +586,25 @@ Internal field (`stateDir`) is present in the store but not serialized in ARI re
 ## AgentRun State Machine
 
 ```
-creating ──┐
-           ├──> idle ──> running ──> stopped
-           |              │
-    error <─┴─────────────┘
+creating ──> idle ──> running
+   ▲          │          │
+   │          └────┬─────┘
+   │               ▼
+   │          restarting
+   │               │
+   └───────────────┘
+
+idle/running ── stop/exit ──> stopped
+stopped/error ── restart ──> creating
+any state ── unrecoverable failure ──> error
 ```
 
 | State | Meaning |
 |---|---|
-| `creating` | `agentrun/create` accepted; background bootstrap in progress |
+| `creating` | `agentrun/create` or restart accepted; bootstrap is pending or in progress |
 | `idle` | Bootstrap complete; agent is ready to accept a prompt |
 | `running` | Agent is processing an active prompt turn |
+| `restarting` | Restart accepted for an active agent; existing process is being stopped before re-bootstrap |
 | `stopped` | Agent process is stopped; state is preserved |
 | `error` | Bootstrap or runtime failure; agent must be restarted or deleted |
 
@@ -604,8 +614,10 @@ Transition rules:
 - `idle → running`: `agentrun/prompt` dispatched
 - `running → idle`: prompt turn completes (agent returns to idle)
 - `idle → stopped` / `running → stopped`: `agentrun/stop` received
+- `idle → restarting` / `running → restarting`: `agentrun/restart` accepted and new work is blocked
+- `restarting → stopped → creating`: existing process stopped and restart continues with normal bootstrap
 - `running → error`: runtime failure during a turn
-- `error → creating` / `stopped → creating`: `agentrun/restart` triggers re-bootstrap
+- `error → creating` / `stopped → creating`: `agentrun/restart` triggers re-bootstrap without a pre-stop
 
 ## Events (Agent-run RPC)
 
@@ -624,13 +636,13 @@ Events are not streamed directly over the ARI connection. Instead:
 | `-32603` | `CodeInternalError` | Internal server error |
 | `-32601` | `CodeMethodNotFound` | Unknown method name |
 
-## workspace-mcp-server
+## workspace-mesh
 
-The `mass workspace-mcp` subcommand starts a workspace-scoped MCP server.
+The `mass mesh-mcp` subcommand starts a workspace-scoped MCP server.
 It exposes two MCP tools that wrap ARI calls:
 
-- `workspace_status` — calls `workspace/get` for workspace state and `agentrun/list` (with workspace filter) for member agents
-- `workspace_send` — calls `workspace/send`
+- `agentrun_status` — calls `workspace/get` for workspace state and `agentrun/list` (with workspace filter) for member agents
+- `agentrun_send` — calls `workspace/send`
 
 Configuration is passed via CLI flags:
 

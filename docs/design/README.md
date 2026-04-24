@@ -105,7 +105,7 @@ Agent 面临着同样的分层关切：
 - `agentrun/*` — AgentRun 生命周期（create/prompt/cancel/stop/delete/restart/list/get）
 - agentd 重启后的 agent-run reconnect 和 recovery
 - bbolt-based metadata persistence
-- workspace-mcp-server（`agentd workspacemcp` 子命令）
+- workspace-mesh（`mass mesh-mcp` 子命令）
 
 尚未实现（future work）：
 

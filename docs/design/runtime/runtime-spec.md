@@ -27,14 +27,15 @@ The state of an agent includes the following properties:
 * **`status`** (string, REQUIRED) is the runtime state of the agent.
   The value MAY be one of:
 
-  * `pending`: the agent run record has been created by mass, but the agent-run
-    process has not yet been forked (daemon-layer only; never reported by the runtime)
-  * `creating`: the agent-run process has started and is performing the protocol
-    handshake (e.g. ACP `initialize` + `session/new`)
+  * `creating`: mass accepted creation or restart and runtime bootstrap is
+    pending or in progress; once the agent-run process starts, it performs the
+    protocol handshake (e.g. ACP `initialize` + `session/new`)
   * `idle`: the runtime has finished the [create operation](#create),
     the agent process is running, the protocol session has been established,
     and the agent is ready to receive prompts
   * `running`: the agent is executing a prompt (processing a `session/prompt`)
+  * `restarting`: mass accepted a restart for an `idle` or `running` AgentRun and
+    is stopping the existing process before re-entering `creating`
   * `stopped`: the agent process has exited gracefully
   * `error`: an unrecoverable failure occurred during creating, idle, or running
 
@@ -75,7 +76,7 @@ populated by the agent-run during runtime:
 |---------------|----------------|-------|
 | `ociVersion` | `massVersion` | Same |
 | `id` | `id` | Same |
-| `status` | `status` | Same pattern: creating/idle/running/stopped/error |
+| `status` | `status` | Same pattern: creating/idle/running/restarting/stopped/error |
 | `pid` | `pid` | Same |
 | `bundle` (rootfs + config path) | `bundle` (config.json path) | Same concept |
 | `annotations` | `annotations` | Same |
@@ -208,12 +209,7 @@ The `start` operation is currently a no-op, reserved for future use.
            │
            ▼
       ┌──────────┐
-      │ pending   │  DB record created, process not yet forked
-      └────┬──────┘
-           │ fork/exec
-           ▼
-      ┌──────────┐
-      │ creating  │  process started, protocol handshake in progress
+      │ creating  │  accepted; fork/exec + protocol handshake pending/in progress
       └────┬──────┘
            │ handshake complete (ACP session/new)
            ▼
@@ -222,17 +218,21 @@ The `start` operation is currently a no-op, reserved for future use.
       │           │ ◄────────────────────────────── │(prompting)│
       └────┬──────┘          prompt completed        └────┬──────┘
            │                                              │
-           │ kill / exit                                  │ kill / exit
+           │ agentrun/restart                             │ agentrun/restart
            ▼                                              ▼
       ┌──────────┐                                   ┌──────────┐
-      │ stopped   │                                   │ stopped   │
+      │restarting│                                   │restarting│
       └────┬──────┘                                   └────┬──────┘
-           │ delete                                        │ delete
-           ▼                                              ▼
-       (removed)                                      (removed)
+           │ stop complete                                │ stop complete
+           └──────────────────────► creating ◄────────────┘
 
-      Any state except pending may transition to error on unrecoverable failure.
-      Restart = stop (→ stopped) + create (→ pending → creating → idle).
+      idle/running ── kill / exit ──► stopped
+      stopped ── agentrun/restart ──► creating
+      error ── agentrun/restart ──► creating
+      stopped/error ── delete ──► (removed)
+
+      Any state may transition to error on unrecoverable failure.
+      Restart = mark restarting when active, stop (→ stopped), then start (→ creating → idle).
 ```
 
 ## State Mapping and Identity Authority
@@ -242,10 +242,10 @@ runtime-owned state, not the mass daemon session state, and not the ACP peer's s
 
 | MASS runtime `status` | Who sets it | Process status | Notes |
 |---|---|---|---|
-| `pending` | daemon (ARI create) | not yet forked | DB record exists, process not started. Daemon recovery: mark error if stuck. |
-| `creating` | runtime (agent-run) | starting | Process forked, protocol handshake in progress. |
+| `creating` | daemon + runtime | absent or starting | Create/restart accepted; process fork and protocol handshake pending or in progress. Daemon recovery: mark error if stuck. |
 | `idle` | runtime (agent-run) | running | Bootstrap complete, ready for prompts. |
 | `running` | runtime (agent-run) | running | Processing a session/prompt. |
+| `restarting` | daemon | running or stopping | Restart accepted for an active agent; new prompts/tasks are blocked while stop completes. |
 | `stopped` | runtime (graceful) or daemon (fallback) | exited | Graceful: runtime reports before exit. Crash: daemon detects via watchProcess. |
 | `error` | runtime or daemon | exited or absent | Unrecoverable failure. Runtime reports if possible; daemon as fallback. |
 

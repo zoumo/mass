@@ -111,8 +111,8 @@ process state, and ACP identity into one concept.
 
 | Concern | Authority | Identifier / State | Notes |
 |---|---|---|---|
-| MASS runtime object | agentd + runtime | AgentRun `(workspace, name)`; runtime `status` = `creating`/`idle`/`running`/`stopped`/`error` | Names the runtime instance exposed through ARI and runtime state.json. |
-| agentd AgentRun lifecycle | agentd | `creating` / `idle` / `running` / `stopped` / `error` | AgentRun lifecycle state around the runtime process. |
+| MASS runtime object | agentd + runtime | AgentRun `(workspace, name)`; runtime `status` = `creating`/`idle`/`running`/`restarting`/`stopped`/`error` | Names the runtime instance exposed through ARI and runtime state.json. |
+| agentd AgentRun lifecycle | agentd | `creating` / `idle` / `running` / `restarting` / `stopped` / `error` | AgentRun lifecycle state around the runtime process. |
 | Host process | runtime / agent-run | PID + process status | Operational signal for whether the agent process is alive. |
 | ACP peer session | ACP peer + agent-run | ACP `sessionId` | Inner protocol identity, distinct from AgentRun identity. |
 

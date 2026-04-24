@@ -221,13 +221,13 @@ while [ $round -le $MAX_ROUNDS ]; do
 
   # Check reviewer's response (vian agent-run events or agent output convention)
   # If approved, break
-  # If rejected, designer will receive feedback via workspace_send and auto-iterate
+  # If rejected, designer will receive feedback via agentrun_send and auto-iterate
   
   round=$((round + 1))
 done
 ```
 
-在实际使用中，review loop 通常由 agent 自身的 system prompt 驱动 — agent 通过 `workspace_send` MCP 工具互相发送消息，外部调用方只需观测最终状态。
+在实际使用中，review loop 通常由 agent 自身的 system prompt 驱动 — agent 通过 `agentrun_send` MCP 工具互相发送消息，外部调用方只需观测最终状态。
 
 ### Fan-out / Fan-in（扇出/汇聚）
 
@@ -260,13 +260,13 @@ massctl workspace send --name ws --from coordinator --to writer \
 
 ### Coordinator（协调者模式）
 
-一个 coordinator agent 根据任务性质动态路由到不同的专家 agent。这是最灵活的模式，coordinator 本身就是一个 MASS 管理的 agent，通过 `workspace_send` 工具与其他 agent 通信。
+一个 coordinator agent 根据任务性质动态路由到不同的专家 agent。这是最灵活的模式，coordinator 本身就是一个 MASS 管理的 agent，通过 `agentrun_send` 工具与其他 agent 通信。
 
 ```text
 User → Coordinator Agent
-         ├→ workspace_send → Expert A
-         ├→ workspace_send → Expert B
-         └→ workspace_send → Expert C
+         ├→ agentrun_send → Expert A
+         ├→ agentrun_send → Expert B
+         └→ agentrun_send → Expert C
 ```
 
 这个模式下，外部调用方只需 prompt coordinator，编排逻辑在 coordinator 的 system prompt 中：
@@ -378,7 +378,7 @@ massctl agentrun watch --workspace ws
 - workspace/send 要求目标 agent 处于 idle 状态
 - agentrun/prompt 要求 agent 处于 idle 状态
 - 创建操作是异步的，必须轮询等待就绪
-- agent 间通过 workspace_send MCP 工具自主通信，不需要 orchestrator 中转每条消息
+- agent 间通过 agentrun_send MCP 工具自主通信，不需要 orchestrator 中转每条消息
 ```
 
 ---
@@ -387,7 +387,7 @@ massctl agentrun watch --workspace ws
 
 ### 1. 让 agent 自主协作，orchestrator 只做宏观控制
 
-**推荐**：orchestrator 给 agent 注入协作协议（system prompt），让 agent 通过 `workspace_send` 自主交互。orchestrator 只在关键节点介入（启动、超时、最终结果收集）。
+**推荐**：orchestrator 给 agent 注入协作协议（system prompt），让 agent 通过 `agentrun_send` 自主交互。orchestrator 只在关键节点介入（启动、超时、最终结果收集）。
 
 **不推荐**：orchestrator 中转每条消息（A 的输出 → orchestrator → B 的输入）。这增加了延迟和复杂度。
 
@@ -405,11 +405,11 @@ spec:
     - name: coder
       agent: claude
       systemPrompt: |
-        You are a coding agent. When you finish, send results to reviewer via workspace_send.
+        You are a coding agent. When you finish, send results to reviewer via agentrun_send.
     - name: reviewer
       agent: codex
       systemPrompt: |
-        You are a code reviewer. Send feedback or approval via workspace_send.
+        You are a code reviewer. Send feedback or approval via agentrun_send.
 ```
 
 ```bash

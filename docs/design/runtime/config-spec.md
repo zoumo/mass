@@ -213,7 +213,7 @@ that canonical path as the agent process working directory.
   未来新增协议时，需在此表中补充对应的注入方式。
 
   注意：agentd 在创建每个 AgentRun 时，会自动注入一个名为 `workspace` 的 stdio MCP server，
-  提供 `workspace_status` 和 `workspace_send` 工具。该 server 无需在 config.json 中显式声明。
+  提供 `agentrun_status` 和 `agentrun_send` 工具。该 server 无需在 config.json 中显式声明。
 
 #### McpServer
 

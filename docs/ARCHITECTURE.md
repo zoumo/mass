@@ -87,7 +87,7 @@ MASS is a daemon-based runtime for managing AI agents on a single host. The core
 
 | Binary | Purpose |
 |--------|---------|
-| `bin/mass` | Main daemon + `mass run` self-fork entrypoint + `mass workspace-mcp` |
+| `bin/mass` | Main daemon + `mass run` self-fork entrypoint + `mass mesh-mcp` |
 | `bin/massctl` | Management CLI (workspace, agent, agentrun, compose, daemon subcommands) |
 
 ---
@@ -218,7 +218,7 @@ pkg/
   workspace/        WorkspaceManager, Git/EmptyDir/Local handlers, hooks
   tui/              Terminal UI components
 cmd/
-  mass/             main daemon + run + workspace-mcp subcommands
+  mass/             main daemon + run + mesh-mcp subcommands
     commands/
       run/          agent-run bootstrap wiring
       server/       daemon server

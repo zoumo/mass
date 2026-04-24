@@ -15,31 +15,31 @@ last_updated: 2026-04-17
 
 ## 通信协议 — MCP 路由架构
 
-Agent 间通信通过 workspace-mcp-server 实现。agentd 为每个 agent-run 进程注入一个 workspace-mcp 实例，作为 MCP stdio server 运行在 agent 的进程树中。
+Agent 间通信通过 workspace-mesh 实现。agentd 为每个 agent-run 进程注入一个 workspace-mesh 实例，作为 MCP stdio server 运行在 agent 的进程树中。
 
 ### MCP 工具
 
-workspace-mcp-server 提供两个 MCP tool：
+workspace-mesh 提供两个 MCP tool：
 
 | MCP Tool | 对应 ARI 方法 | 功能 |
 |----------|--------------|------|
-| `workspace_send` | `workspace/send` | 向 workspace 内另一个 agent 发送消息 |
-| `workspace_status` | `workspace/get` | 查询 workspace 成员与状态 |
+| `agentrun_send` | `workspace/send` | 向 workspace 内另一个 agent 发送消息 |
+| `agentrun_status` | `workspace/get` | 查询 workspace 成员与状态 |
 
 ### 注入方式
 
-ProcessManager 在生成 `config.json` 时将 workspace-mcp 写入 `acpAgent.session.mcpServers`：
+ProcessManager 在生成 `config.json` 时将 workspace-mesh 写入 `acpAgent.session.mcpServers`：
 
 ```json
 {
   "type": "stdio",
   "name": "workspace",
   "command": "mass",
-  "args": ["workspace-mcp", "--socket", "<mass unix socket path>", "--workspace", "<workspace name>", "--agent", "<agent name>"]
+  "args": ["mesh-mcp", "--socket", "<mass unix socket path>", "--workspace", "<workspace name>", "--agent", "<agent name>"]
 }
 ```
 
-agent-run 启动时读取 `config.json`，fork/exec workspace-mcp 子进程。workspace-mcp 通过 `--socket` 指定的 Unix socket 连接回 mass 发起 ARI 调用。
+agent-run 启动时读取 `config.json`，fork/exec mesh-mcp 子进程。workspace-mesh 通过 `--socket` 指定的 Unix socket 连接回 mass 发起 ARI 调用。
 
 ### 消息路由数据流
 
@@ -47,9 +47,9 @@ agent-run 启动时读取 `config.json`，fork/exec workspace-mcp 子进程。wo
 
 ```text
 claude-code
-  │  calls MCP tool: workspace_send(targetAgent="codex", message="[round-1-proposal] ...")
+  │  calls MCP tool: agentrun_send(targetAgent="codex", message="[round-1-proposal] ...")
   ▼
-workspace-mcp (claude-code 的 MCP server)
+workspace-mesh (claude-code 的 MCP server)
   │  ARI call: workspace/send(workspace="agentd-e2e", from="claude-code", to="codex", message=...)
   ▼
 agentd
@@ -116,7 +116,7 @@ mass 在投递消息时会在消息文本**尾部**追加 XML 格式的信封标
 ## 第二部分：设计提案 — Task/Inbox（Future Work）
 
 > **注意**：本部分描述尚未实现的功能。以下内容是设计提案，不是当前能力。
-> 当前 ARI 不包含 `workspace/taskCreate` 等方法；workspace-mcp-server 不包含 `workspace_task_*` 工具；agentd 不维护 Inbox 队列或 PendingReply 记录。
+> 当前 ARI 不包含 `workspace/taskCreate` 等方法；workspace-mesh 不包含 `workspace_task_*` 工具；agentd 不维护 Inbox 队列或 PendingReply 记录。
 
 ### 动机
 
@@ -160,7 +160,7 @@ pending ──> working ──> completed
 
 ### 设计提案：MCP 工具（未实现）
 
-workspace-mcp-server 拟新增以下工具：
+workspace-mesh 拟新增以下工具：
 
 - `workspace_task_create` — 创建 task 并委派给 assignee
 - `workspace_task_complete` — 标记 task 完成并回传结果
@@ -197,6 +197,6 @@ workspace-mcp-server 拟新增以下工具：
 |----------|---------|------|
 | Task（8 个状态） | WorkspaceTask（5 个状态，提案） | MASS 不需要 INPUT_REQUIRED / AUTH_REQUIRED / REJECTED |
 | contextId | threadId（提案） | MASS 的 thread 更轻量，只是字符串标记 |
-| Agent Card | workspace_status（已实现） | MASS 在 workspace 范围内发现，不需要独立的 well-known URL |
+| Agent Card | agentrun_status（已实现） | MASS 在 workspace 范围内发现，不需要独立的 well-known URL |
 | Push Notification | auto-reply + inbox delivery（提案） | MASS 使用 prompt 投递而非 HTTP webhook |
 | Artifact | task result 纯文本（提案） | MASS 暂不需要结构化产物 |

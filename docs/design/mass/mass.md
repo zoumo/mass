@@ -66,7 +66,7 @@ An AgentRun is the durable, externally-visible runtime object that records:
 - identity: `workspace` + `name` (unique key — all AgentRuns belong to a workspace);
 - selected `agent`;
 - bootstrap inputs (`systemPrompt`, `labels`);
-- external lifecycle state (`creating`, `idle`, `running`, `stopped`, `error`).
+- external lifecycle state (`creating`, `idle`, `running`, `restarting`, `stopped`, `error`).
 
 AgentRun identity (`workspace` + `name`) is stable across restarts.
 `agentrun/create` is the external entry point; the Agent Manager validates inputs, writes durable AgentRun metadata, and triggers the internal bootstrap sequence via Process Manager.
@@ -99,17 +99,25 @@ No opaque UUID is exposed through ARI.
 ## AgentRun State Machine
 
 ```
-creating ──┐
-           ├──> idle ──> running ──> stopped
-           |              │
-    error <─┴─────────────┘
+creating ──> idle ──> running
+   ▲          │          │
+   │          └────┬─────┘
+   │               ▼
+   │          restarting
+   │               │
+   └───────────────┘
+
+idle/running ── stop/exit ──> stopped
+stopped/error ── restart ──> creating
+any state ── unrecoverable failure ──> error
 ```
 
 | State | Meaning |
 |---|---|
-| `creating` | `agentrun/create` accepted; background bootstrap in progress |
+| `creating` | `agentrun/create` or restart accepted; bootstrap is pending or in progress |
 | `idle` | Bootstrap complete; agent is ready to accept a prompt |
 | `running` | Agent is processing an active prompt turn |
+| `restarting` | Restart accepted for an active agent; existing process is being stopped before re-bootstrap |
 | `stopped` | Agent process is stopped; state is preserved |
 | `error` | Bootstrap or runtime failure; agent is not operational |
 
@@ -120,8 +128,10 @@ Transition rules:
 - `idle → running`: `agentrun/prompt` dispatched;
 - `running → idle`: prompt turn completes (agent returns to idle);
 - `idle → stopped` / `running → stopped`: `agentrun/stop` received;
+- `idle → restarting` / `running → restarting`: `agentrun/restart` accepted and new work is blocked;
+- `restarting → stopped → creating`: existing process stopped and restart continues with normal bootstrap;
 - `running → error`: runtime failure during a turn;
-- `error → creating` / `stopped → creating`: `agentrun/restart` triggers re-bootstrap.
+- `error → creating` / `stopped → creating`: `agentrun/restart` triggers re-bootstrap without a pre-stop.
 
 ## Bootstrap Contract
 
@@ -175,12 +185,13 @@ Agents already in `error` may be deleted directly because they are already non-o
 
 ## Restart
 
-`agentrun/restart` re-bootstraps an AgentRun from `stopped` or `error` state:
+`agentrun/restart` re-bootstraps an AgentRun from any state:
 
-1. Validates agent is `stopped` or `error`.
-2. Transitions agent to `creating`.
-3. Triggers background re-bootstrap using existing AgentRun metadata.
-4. Caller polls `agentrun/get` until `idle` or `error`.
+1. If the agent is `idle` or `running`, atomically transitions it to `restarting` to block new work.
+2. If an agent-run process is active, calls the normal stop path and waits for `stopped`.
+3. Transitions agent to `creating`.
+4. Triggers background re-bootstrap using existing AgentRun metadata.
+5. Caller polls `agentrun/get` until `idle` or `error`.
 
 Restart preserves `workspace`, `name`, and bootstrap configuration.
 It does not create a new AgentRun identity.
