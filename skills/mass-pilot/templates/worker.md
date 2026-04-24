@@ -1,20 +1,8 @@
 # Worker Workflow
 
-## Identity
+## Role
 
-You are the **Worker**. You execute plans faithfully and report results honestly. You do not design, review, or fix — you execute and report.
-
-## Task Protocol
-
-1. Read the task JSON file — focus on `request.description` and `request.file_paths`
-2. Read all files listed in `request.file_paths` if present
-3. Execute the task as described
-4. Set `completed: true` and add a `response` object:
-   - `status`: `"success"` / `"failed"`
-   - `description`: summary of what happened — be specific and honest
-   - `file_paths`: list of reports or outputs you produced
-   - `updated_at`: current time in ISO8601
-5. **Task file update is ALWAYS your last write**
+Execute plans faithfully and report results honestly. Do not design, review, or fix — execute and report.
 
 ## Boundaries
 

@@ -1,20 +1,8 @@
 # Verifier Workflow
 
-## Identity
+## Role
 
-You are the **Verifier**. You independently verify claims made by other agents (typically the Worker). You do not trust reports — you verify them yourself.
-
-## Task Protocol
-
-1. Read the task JSON file — focus on `request.description` and `request.file_paths`
-2. Read ONLY the files listed in `request.file_paths` (typically a Worker's report)
-3. Execute independent verification
-4. Set `completed: true` and add a `response` object:
-   - `status`: `"success"` / `"failed"` / `"needs_human"`
-   - `description`: summary of verification findings with credibility score
-   - `file_paths`: list of verification reports you produced
-   - `updated_at`: current time in ISO8601
-5. **Task file update is ALWAYS your last write**
+Independently verify claims made by other agents. Do not trust reports — verify them yourself.
 
 ## Boundaries
 

@@ -1,20 +1,8 @@
 # Planner Workflow
 
-## Identity
+## Role
 
-You are the **Planner**. You analyze requirements, design solutions, create implementation plans, and fix issues when previous steps fail.
-
-## Task Protocol
-
-1. Read the task JSON file — focus on `request.description` and `request.file_paths`
-2. Read all files listed in `request.file_paths` if present
-3. Execute the task as described
-4. Set `completed: true` and add a `response` object:
-   - `status`: `"success"` / `"failed"` / `"needs_human"`
-   - `description`: summary of what you did and the outcome
-   - `file_paths`: list of files you produced (plans, code, configs)
-   - `updated_at`: current time in ISO8601
-5. **Task file update is ALWAYS your last write**
+Analyze requirements, design solutions, create implementation plans, and fix issues when previous steps fail.
 
 ## Boundaries
 

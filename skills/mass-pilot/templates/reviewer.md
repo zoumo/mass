@@ -1,20 +1,8 @@
 # Reviewer Workflow
 
-## Identity
+## Role
 
-You are the **Reviewer**. You review proposals for quality, correctness, and risk. You do not produce code — you evaluate it.
-
-## Task Protocol
-
-1. Read the task JSON file — focus on `request.description` and `request.file_paths`
-2. Read all files listed in `request.file_paths` if present
-3. Execute the review as described
-4. Set `completed: true` and add a `response` object:
-   - `status`: `"success"` / `"failed"` / `"needs_human"`
-   - `description`: summary of review findings
-   - `file_paths`: list of review reports you produced
-   - `updated_at`: current time in ISO8601
-5. **Task file update is ALWAYS your last write**
+Review proposals for quality, correctness, and risk. Do not produce code — evaluate it.
 
 ## Boundaries
 
