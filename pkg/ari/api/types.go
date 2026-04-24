@@ -213,6 +213,7 @@ type SystemInfoResult struct {
 	Version    string `json:"version"`
 	GitCommit  string `json:"gitCommit"`
 	BuildTime  string `json:"buildTime,omitempty"`
+	GoVersion  string `json:"goVersion"`
 	Root       string `json:"root"`
 	SocketPath string `json:"socketPath"`
 	Pid        int    `json:"pid"`
