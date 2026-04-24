@@ -1,41 +1,43 @@
 #!/usr/bin/env bash
-# Poll a task file until the agent completes it or an error/timeout occurs.
+# Poll a task until the agent completes it or an error/timeout occurs.
+# Uses massctl task API.
 #
-# Usage: poll-task.sh <workspace> <agent-name> <task-path> [interval=10] [timeout=1800]
+# Usage: poll-task.sh <workspace> <agent-name> <task-id> [interval=10] [timeout=1800]
 #
 # Exit codes:
 #   0 — task completed (completed==true), read response.status for routing
-#   1 — agent idle but task not completed after max re-prompts
-#   2 — agent in error/stopped state
-#   3 — timeout
+#   1 — Agent idle but task not completed after max retries
+#   2 — Agent in error/stopped state
+#   3 — 超时
 
 set -euo pipefail
 
-WORKSPACE="${1:?Usage: poll-task.sh <workspace> <agent-name> <task-path> [interval] [timeout]}"
+WORKSPACE="${1:?Usage: poll-task.sh <workspace> <agent-name> <task-id> [interval] [timeout]}"
 AGENT_NAME="${2:?Missing agent-name}"
-TASK_PATH="${3:?Missing task-path}"
+TASK_ID="${3:?Missing task-id}"
 INTERVAL="${4:-10}"
 TIMEOUT="${5:-1800}"
 
-MAX_REPROMPTS=2
-reprompt_count=0
+MAX_RETRIES=2
+retry_count=0
 elapsed=0
 
-prompt_text="Your task is at: ${TASK_PATH}. Read it, complete the work, update the task file."
+get_task() {
+  massctl agentrun task get -w "$WORKSPACE" --name "$AGENT_NAME" --id "$TASK_ID" -o json 2>/dev/null
+}
 
 while true; do
   # 1. Check agent state
   agent_state=$(massctl agentrun get "$AGENT_NAME" -w "$WORKSPACE" -o json 2>/dev/null | jq -r '.status.state // "unknown"')
 
-  # 2. Check task completed field
-  task_completed="false"
-  if [[ -f "$TASK_PATH" ]]; then
-    task_completed=$(jq -r '.completed // false' "$TASK_PATH")
-  fi
+  # 2. Check task completed field via API
+  task_json=$(get_task)
+  task_completed=$(echo "$task_json" | jq -r '.completed // false')
 
   # 3. Route
   if [[ "$task_completed" == "true" ]]; then
-    echo "Task completed. Response status: $(jq -r '.response.status // "unknown"' "$TASK_PATH")"
+    status=$(echo "$task_json" | jq -r '.response.status // "unknown"')
+    echo "Task completed. Response status: $status"
     exit 0
   fi
 
@@ -45,17 +47,17 @@ while true; do
   fi
 
   if [[ "$agent_state" == "idle" ]]; then
-    if (( reprompt_count < MAX_REPROMPTS )); then
-      reprompt_count=$((reprompt_count + 1))
-      echo "Agent idle but task not completed. Re-prompting ($reprompt_count/$MAX_REPROMPTS)..."
-      massctl agentrun prompt "$AGENT_NAME" -w "$WORKSPACE" --text "$prompt_text" 2>/dev/null || true
+    if (( retry_count < MAX_RETRIES )); then
+      retry_count=$((retry_count + 1))
+      echo "Agent idle but task not completed. Retrying task ($retry_count/$MAX_RETRIES)..."
+      massctl agentrun task retry -w "$WORKSPACE" --name "$AGENT_NAME" --id "$TASK_ID" 2>/dev/null || true
     else
-      echo "Agent idle, task not completed after $MAX_REPROMPTS re-prompts."
+      echo "Agent idle, task not completed after $MAX_RETRIES retries."
       exit 1
     fi
   fi
 
-  # agent is running or we just re-prompted — wait
+  # agent is running or we just retried — wait
   if (( elapsed >= TIMEOUT )); then
     echo "Timeout after ${TIMEOUT}s."
     exit 3
