@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"syscall"
@@ -8,7 +9,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/zoumo/mass/internal/version"
 	"github.com/zoumo/mass/pkg/agentd"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	"github.com/zoumo/mass/pkg/ari/client"
 )
 
 func newStatusCmd(rootPath *string) *cobra.Command {
@@ -46,6 +50,30 @@ func runStatus(rootPath string) error {
 	}
 	conn.Close()
 
-	fmt.Printf("daemon: running (pid: %d)\n", pid)
+	// Call system/info RPC for version info.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	c, err := client.Dial(ctx, opts.SocketPath())
+	if err != nil {
+		fmt.Printf("daemon: running (pid: %d, version: %s)\n", pid, version.String())
+		return nil
+	}
+	defer c.Close()
+
+	info, err := c.System().Info(ctx)
+	if err != nil {
+		fmt.Printf("daemon: running (pid: %d, version: %s)\n", pid, version.String())
+		return nil
+	}
+
+	fmt.Printf("daemon: running (pid: %d, version: %s)\n", info.Pid, formatVersion(info))
 	return nil
+}
+
+func formatVersion(info *pkgariapi.SystemInfoResult) string {
+	if info.GitCommit != "" && info.GitCommit != "unknown" {
+		return info.Version + " (" + info.GitCommit + ")"
+	}
+	return info.Version
 }
