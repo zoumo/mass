@@ -46,6 +46,8 @@ func renderHeaderStatus(status string) string {
 	switch status {
 	case string(apiruntime.StatusRunning):
 		return styleStatusRunning.Render("● running")
+	case string(apiruntime.StatusRestarting):
+		return styleStatusRunning.Render("● restarting")
 	case string(apiruntime.StatusIdle):
 		return styleStatusIdle.Render("● idle")
 	case string(apiruntime.StatusError):

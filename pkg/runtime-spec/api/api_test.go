@@ -17,6 +17,7 @@ func TestStatus_String(t *testing.T) {
 	assert.Equal(t, "creating", api.StatusCreating.String())
 	assert.Equal(t, "idle", api.StatusIdle.String())
 	assert.Equal(t, "running", api.StatusRunning.String())
+	assert.Equal(t, "restarting", api.StatusRestarting.String())
 	assert.Equal(t, "stopped", api.StatusStopped.String())
 	assert.Equal(t, "error", api.StatusError.String())
 }

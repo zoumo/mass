@@ -6,12 +6,8 @@ package api
 type Status string
 
 const (
-	// StatusPending means the agent run record has been created by mass,
-	// but the agent-run process has not yet been forked.
-	StatusPending Status = "pending"
-
-	// StatusCreating means the agent-run process has started and is performing
-	// the protocol handshake (e.g. ACP initialize + session/new).
+	// StatusCreating means MASS accepted create/restart and runtime bootstrap
+	// is pending or in progress (fork/exec + protocol handshake).
 	StatusCreating Status = "creating"
 
 	// StatusIdle means the agent process is running and the ACP session is
@@ -20,6 +16,10 @@ const (
 
 	// StatusRunning means the agent is processing a session/prompt.
 	StatusRunning Status = "running"
+
+	// StatusRestarting means MASS accepted a restart request and is stopping
+	// the existing agent-run before starting a new one.
+	StatusRestarting Status = "restarting"
 
 	// StatusStopped means the agent process has exited.
 	StatusStopped Status = "stopped"

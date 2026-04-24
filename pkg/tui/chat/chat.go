@@ -1013,6 +1013,8 @@ func (m chatModel) renderStatusLine() string {
 	switch status {
 	case string(apiruntime.StatusRunning):
 		styled = styleStatusRunning.Render("● running")
+	case string(apiruntime.StatusRestarting):
+		styled = styleStatusRunning.Render("● restarting")
 	case string(apiruntime.StatusIdle):
 		styled = styleStatusIdle.Render("● idle")
 	case string(apiruntime.StatusError):
@@ -1027,6 +1029,8 @@ func (m chatModel) renderStatusLine() string {
 	switch status {
 	case string(apiruntime.StatusRunning):
 		hint = styleDim.Render(" — ctrl+x to cancel")
+	case string(apiruntime.StatusRestarting):
+		hint = styleDim.Render(" — restarting")
 	case string(apiruntime.StatusIdle):
 		hint = styleDim.Render(" — ready for input")
 	case string(apiruntime.StatusError):
