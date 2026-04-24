@@ -1,11 +1,11 @@
 ---
 name: mass-pilot
 description: |
-  用文件 Task 协议编排多 agent 协作。提供标准化的任务委派、角色 workflow、轮询脚本。
-  Orchestrator 通过 Task 文件与 agent 交互，agent 间不直接通信。
-  依赖 mass-guide skill 进行 workspace 和 agent 生命周期管理（massctl 操作）。
-  当用户提到多 agent 协作、编排、task protocol、角色分工时触发。
-version: 0.1.0
+  用 task API 编排多 agent 协作。Orchestrator 通过 massctl task create/get 与 agent 交互，agent 间不直接通信。
+  Orchestrator 轮询 completed 字段，读取 response.status 路由决策。
+  依赖 mass-guide skill 进行 workspace 和 agent 生命周期管理。
+  当用户提到多 agent 协作、编排、角色分工时触发。
+version: 0.2.0
 ---
 
 # MASS Pilot — Multi-Agent Collaboration
@@ -15,9 +15,42 @@ version: 0.1.0
 > **前置依赖**：本 skill 依赖 **mass-guide** skill 进行 workspace 和 agent 生命周期管理。
 > 使用前确保已通过 `massctl` 创建 workspace 和 agentrun。
 
-## Task Protocol
+## Task Interaction（Orchestrator 与 Agent 通信）
 
-Task 文件是 orchestrator 与 agent 之间的唯一通信方式。完整格式规范见 [references/task-protocol.md](references/task-protocol.md)。
+Orchestrator 用 task API 与 agent 交互，**不直接通信**：
+
+```
+Orchestrator                  Agent
+    |                           |
+    |--- task create ---------->|  (自动 prompt agent)
+    |                           |-- 执行 task
+    |                           |-- 写入 response
+    |<-- task get (poll) -------|  (检查 completed)
+    |                           |
+    |-- 读取 response.status ---|  (路由决策)
+```
+
+**Task API 详细说明见 [mass-guide](../mass-guide/SKILL.md) skill Part 3 "Task 管理"。**
+
+### Orchestrator 关心的字段
+
+```json
+{
+  "completed": false,         // ← 轮询检查此字段
+  "response": {               // ← agent 完成后写入
+    "status": "success",      // ← 路由决策依据
+    "description": "...",
+    "filePaths": ["..."]
+  }
+}
+```
+
+**关键点**：
+- `completed` 从 `false` → `true` 标记 agent 完成执行
+- `response.status` 决定下一步路由
+- Orchestrator **只读** response，**不写** task 文件
+
+---
 
 ## 内置角色 Workflow
 
@@ -92,37 +125,27 @@ mkdir -p .mass/{workspace}/_orchestrator/
 
 按 `.mass/{workspace}/_orchestrator/workflow.md` 中定义的阶段循环执行。每个阶段包含：
 
-**a) 创建 Task**
+**a) 创建 Task（自动 prompt agent）**
 
 ```bash
-cat > .mass/{workspace}/{agent}/task-{NNNN}.json << 'EOF'
-{
-  "id": "task-{NNNN}",
-  "assignee": "{agent}",
-  "created_at": "{ISO8601_NOW}",
-  "request": {
-    "description": "{task_description}",
-    "file_paths": ["{input_file_1}", "{input_file_2}"]
-  }
-}
-EOF
+massctl agentrun task create -w {workspace} --name {agent} \
+  --description "{task_description}" \
+  --file {input_file_1} --file {input_file_2}
 ```
 
-**b) Prompt Agent**
+`task create` 会：
+1. 创建 task 文件（系统生成 ID）
+2. 自动 prompt agent（内置 task protocol prompt）
+3. Agent 状态从 idle → running
+
+返回 JSON 包含：
+- `task.id` — 用于轮询和路由
+- `task.assignee` — agent name
+
+**b) 轮询等待（用 massctl 命令）**
 
 ```bash
-massctl agentrun prompt {agent} -w {workspace} \
-  --text "Your task is at: .mass/{workspace}/{agent}/task-{NNNN}.json
-Read your workflow at .mass/{workspace}/{agent}/workflow.md, then read the task file.
-Complete the task described in request.description. Read files listed in request.file_paths if present.
-When done, set completed=true and add a response object with: status, description, file_paths (if you produced files), updated_at.
-Task file update is ALWAYS your last write."
-```
-
-**c) 轮询等待**
-
-```bash
-skills/mass-pilot/scripts/poll-task.sh {workspace} {agent} .mass/{workspace}/{agent}/task-{NNNN}.json
+skills/mass-pilot/scripts/poll-task.sh {workspace} {agent} {task-id}
 ```
 
 详见 [references/poll-task.md](references/poll-task.md)。
@@ -134,10 +157,11 @@ skills/mass-pilot/scripts/poll-task.sh {workspace} {agent} .mass/{workspace}/{ag
 | 2 | Agent error/stopped | restart 或人类介入 |
 | 3 | 超时 | 人类介入 |
 
-**d) 路由决策**
+**c) 路由决策**
 
 ```bash
-status=$(jq -r '.response.status' .mass/{workspace}/{agent}/task-{NNNN}.json)
+task=$(massctl agentrun task get -w {workspace} --name {agent} --id {task-id} -o json)
+status=$(echo "$task" | jq -r '.response.status')
 ```
 
 | response.status | 操作 |
@@ -146,7 +170,8 @@ status=$(jq -r '.response.status' .mass/{workspace}/{agent}/task-{NNNN}.json)
 | `failed` | 按 orchestrator workflow 的修复策略处理（如创建 fix task） |
 | `needs_human` | 升级给人类 |
 
-重复 a-d 直到 orchestrator workflow 中所有阶段完成。
+如果遇到不认识的 status，按照语义自己决定
+重复 a-c 直到 orchestrator workflow 中所有阶段完成。
 
 ### Step 3: 清理
 
@@ -161,7 +186,7 @@ status=$(jq -r '.response.status' .mass/{workspace}/{agent}/task-{NNNN}.json)
 3. **审查最多 3 轮** — 第 3 轮强制收敛
 4. **修复闭环** — 失败 → planner fix → 重试，最多 3 次 → 人类兜底
 5. **一个 workspace 对应一个完整任务** — 不混杂无关工作
-6. **Agent 间不直接通信** — 所有协调经 orchestrator 的 task 文件
+6. **Agent 间不直接通信** — 所有协调经 orchestrator 通过 task API
 
 ## 常见编排模式
 
@@ -180,11 +205,13 @@ Orchestrator 不受限于以上模式，可根据实际需求自由组合。
 
 | 错误 | 原因 | 处理 |
 |------|------|------|
-| Task 文件不存在 | 路径错误或未创建 | 检查 `.mass/{workspace}/{agent}/` 目录 |
-| Agent 完成但 task 未更新 | Agent 没按协议写回 response | 检查 prompt 是否包含 task protocol 指令 |
-| poll-task.sh exit 1 | Agent idle 但 task 未完成，重试用尽 | 手动检查 agent 日志 |
-| poll-task.sh exit 2 | Agent error/stopped | `massctl agentrun restart` → 等 idle → 重新 prompt |
-| poll-task.sh exit 3 | 超时 | 人类介入 |
-| response.status == needs_human | Agent 判断需要人类介入 | 读 response.description 了解原因 |
+| `task create` 返回 agent not found | AgentRun 未创建或名称错误 | 用 mass-guide 检查 agentrun 状态 |
+| `task create` 返回 agent not idle | Agent 正在执行其他 task | 等待 idle 或 cancel 当前 task |
+| `task get` 返回 task not found | task-id 错误或已被删除 | 用 `task list` 查看现有 task |
+| poll exit 1 | Agent idle 但 task 未 completed，retry 用尽 | 手动检查 agent 日志或重新 create task |
+| poll exit 2 | Agent error/stopped | `massctl agentrun restart` → 等 idle → task retry |
+| poll exit 3 | 超时 | 人类介入 |
+| `response.status == needs_human` | Agent 判断需要人类介入 | 读 response.description 了解原因 |
+| `completed==true` 但 response 为空 | Agent 未正确写入 response | 手动检查 task 文件，可能需要 task retry |
 
 Agent 生命周期相关错误（创建、启动、停止）见 **mass-guide** skill。
