@@ -9,9 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/mass/internal/version"
 	"github.com/zoumo/mass/pkg/agentd"
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/ari/client"
 )
 
@@ -56,24 +54,17 @@ func runStatus(rootPath string) error {
 
 	c, err := client.Dial(ctx, opts.SocketPath())
 	if err != nil {
-		fmt.Printf("daemon: running (pid: %d, version: %s)\n", pid, version.String())
+		fmt.Printf("daemon: running (pid: %d)\n", pid)
 		return nil
 	}
 	defer c.Close()
 
 	info, err := c.System().Info(ctx)
 	if err != nil {
-		fmt.Printf("daemon: running (pid: %d, version: %s)\n", pid, version.String())
+		fmt.Printf("daemon: running (pid: %d)\n", pid)
 		return nil
 	}
 
-	fmt.Printf("daemon: running (pid: %d, version: %s, go%s)\n", info.Pid, formatVersion(info), info.GoVersion)
+	fmt.Printf("daemon: running (pid: %d, version: %s, %s)\n", pid, info.Version, info.GoVersion)
 	return nil
-}
-
-func formatVersion(info *pkgariapi.SystemInfoResult) string {
-	if info.GitCommit != "" && info.GitCommit != "unknown" {
-		return info.Version + " (" + info.GitCommit + ")"
-	}
-	return info.Version
 }

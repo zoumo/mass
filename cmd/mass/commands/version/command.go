@@ -10,15 +10,33 @@ import (
 
 // NewCommand returns the version subcommand.
 func NewCommand() *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("mass version:", version.Full())
-			if version.BuildTime != "" {
-				fmt.Println("build time:", version.BuildTime)
+			if jsonOutput {
+				printJSON()
+			} else {
+				printText()
 			}
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
+	return cmd
+}
+
+func printText() {
+	fmt.Println("version:    ", version.Version)
+	fmt.Println("git commit: ", version.GitCommit)
+	fmt.Println("go version: ", version.GoVersion)
+	if version.BuildTime != "" {
+		fmt.Println("build time: ", version.BuildTime)
+	}
+}
+
+func printJSON() {
+	fmt.Printf(`{"version":"%s","gitCommit":"%s","goVersion":"%s","buildTime":"%s"}
+`, version.Version, version.GitCommit, version.GoVersion, version.BuildTime)
 }
