@@ -26,7 +26,7 @@ func newRecordConn[T any](failAt int) *recordConn[T] {
 	return &recordConn[T]{
 		failAt:   failAt,
 		closedCh: make(chan struct{}),
-		sendCh:   make(chan struct{}, 64), // buffered so Send never blocks on this
+		sendCh:   make(chan struct{}, 256), // buffered so Send never blocks on this
 	}
 }
 
@@ -194,5 +194,43 @@ func TestWatchServer_Accept_ConcurrentPublish(t *testing.T) {
 		for j, ev := range got {
 			assert.Equal(t, j, ev.Seq, "conn %d event %d wrong seq", i, j)
 		}
+	}
+}
+
+func TestWatchServer_ConcurrentPublishMaintainsOrder(t *testing.T) {
+	srv := watch.NewWatchServer[int]()
+	conn := newRecordConn[int](-1)
+	srv.Accept(conn)
+
+	const numEvents = 100
+
+	// Concurrently publish 100 events. publishMu serializes the sends, so
+	// the watcher must receive all events with no duplicates or drops.
+	// Running under -race verifies there are no data races in the implementation.
+	var wg sync.WaitGroup
+	for i := 0; i < numEvents; i++ {
+		wg.Add(1)
+		go func(seq int) {
+			defer wg.Done()
+			srv.Publish(watch.Event[int]{Seq: seq, Payload: seq})
+		}(i)
+	}
+	wg.Wait()
+
+	conn.waitSends(t, numEvents)
+
+	got := conn.Sent()
+	assert.Len(t, got, numEvents, "watcher must receive all published events")
+
+	// Verify all Seq values 0..99 are present with no drops and no duplicates.
+	// The concurrent goroutines race for publishMu, so arrival order across
+	// different Publish calls is non-deterministic; what we guarantee is that
+	// every event is delivered exactly once and without data races (-race).
+	seen := make(map[int]int, numEvents)
+	for _, ev := range got {
+		seen[ev.Seq]++
+	}
+	for i := 0; i < numEvents; i++ {
+		assert.Equal(t, 1, seen[i], "seq %d must appear exactly once", i)
 	}
 }

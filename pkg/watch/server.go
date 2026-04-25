@@ -21,9 +21,10 @@ type watcher[T any] struct {
 // Each watcher gets its own goroutine, so one slow or broken connection
 // does not block the others.
 type WatchServer[T any] struct {
-	mu       sync.Mutex
-	watchers map[uint64]*watcher[T]
-	nextID   uint64
+	mu        sync.Mutex
+	watchers  map[uint64]*watcher[T]
+	nextID    uint64
+	publishMu sync.Mutex // serializes Publish calls to guarantee per-watcher event order
 }
 
 // NewWatchServer creates an empty WatchServer.
@@ -64,28 +65,28 @@ func (s *WatchServer[T]) Accept(conn ServerConn[T]) {
 }
 
 // Publish sends ev to all registered watchers.
-// Each watcher's delivery runs in its own goroutine so that a slow consumer
-// does not block publication to others. Within a single watcher the sends are
-// ordered because the goroutine drains the mailbox sequentially.
+// publishMu serializes concurrent Publish calls so that events are delivered
+// to every watcher in the same global order, eliminating the race where two
+// concurrent callers could interleave their sends to the same unbuffered mailbox.
 func (s *WatchServer[T]) Publish(ev Event[T]) {
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+
 	s.mu.Lock()
-	// Snapshot the current watcher set so we release the lock before blocking.
+	// Snapshot the current watcher set so we release mu before blocking on sends.
 	ws := make([]*watcher[T], 0, len(s.watchers))
 	for _, w := range s.watchers {
 		ws = append(ws, w)
 	}
 	s.mu.Unlock()
 
-	var wg sync.WaitGroup
+	// Send to each watcher sequentially. Because publishMu is held for the
+	// entire loop, ev1 always enters every mailbox before ev2 can begin,
+	// preserving ordered fan-out without spawning per-watcher goroutines.
 	for _, w := range ws {
-		wg.Add(1)
-		go func(w *watcher[T]) {
-			defer wg.Done()
-			select {
-			case w.mailbox <- ev:
-			case <-w.done:
-			}
-		}(w)
+		select {
+		case w.mailbox <- ev:
+		case <-w.done:
+		}
 	}
-	wg.Wait()
 }
