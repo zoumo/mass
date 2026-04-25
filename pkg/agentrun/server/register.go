@@ -24,7 +24,7 @@ type Handler interface {
 	//
 	// Channel overflow: slow subscribers are evicted (channel closed + removed).
 	// Clients reconnect with fromSeq=lastReceivedSeq+1 to resume.
-	WatchEvent(ctx context.Context, req *runapi.SessionWatchEventParams) (*runapi.SessionWatchEventResult, error)
+	WatchEvent(ctx context.Context, req *runapi.SessionWatchEventParams, watchID string) (*runapi.SessionWatchEventResult, error)
 	SetModel(ctx context.Context, req *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error)
 	Status(ctx context.Context) (*runapi.RuntimeStatusResult, error)
 	Stop(ctx context.Context) error
@@ -63,13 +63,20 @@ func Register(s *jsonrpc.Server, svc Handler) {
 	s.RegisterService("runtime", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
 			"watch_event": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req runapi.SessionWatchEventParams
-				// params are optional for watch_event
-				if err := unmarshal(&req); err != nil {
-					// ignore unmarshal errors for missing params
-					req = runapi.SessionWatchEventParams{}
+				// watchId is injected by the jsonrpc transport layer (Client.Watch).
+				// Parse both transport field (watchId) and business fields (fromSeq).
+				var wire struct {
+					WatchID string `json:"watchId"`
+					FromSeq *int   `json:"fromSeq,omitempty"`
 				}
-				return svc.WatchEvent(ctx, &req)
+				if err := unmarshal(&wire); err != nil {
+					wire = struct {
+						WatchID string `json:"watchId"`
+						FromSeq *int   `json:"fromSeq,omitempty"`
+					}{}
+				}
+				req := &runapi.SessionWatchEventParams{FromSeq: wire.FromSeq}
+				return svc.WatchEvent(ctx, req, wire.WatchID)
 			},
 			"status": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				return svc.Status(ctx)

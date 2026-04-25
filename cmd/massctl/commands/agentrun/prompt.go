@@ -12,6 +12,7 @@ import (
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	"github.com/zoumo/mass/pkg/watch"
 )
 
 func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
@@ -63,10 +64,13 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 			defer runClient.Close()
 
 			// Start watching events before sending prompt to avoid missing any.
-			watcher, err := runClient.WatchEvent(ctx, nil)
-			if err != nil {
-				return fmt.Errorf("watch_event: %w", err)
-			}
+			watcher := watch.NewRetryWatcher(
+				ctx,
+				runclient.NewWatchFunc(ar.Status.SocketPath),
+				-1,
+				func(ev runapi.AgentRunEvent) int { return ev.Seq },
+				1024,
+			)
 			defer watcher.Stop()
 
 			// Send prompt (fire-and-forget).

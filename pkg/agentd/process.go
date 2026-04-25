@@ -90,17 +90,10 @@ type RunProcess struct {
 	// Client is the connected Client for RPC communication.
 	Client *runclient.Client
 
-	// Watcher is the K8s-style event watcher returned by WatchEvent().
-	// The event consumer goroutine reads from Watcher.ResultChan() and
-	// routes events to DB updates (state_change) or the Events channel.
-	Watcher *runclient.Watcher
-
-	// WC is the watch client used for event stream in recovered agents.
-	// Nil for freshly-forked agents (which use Watcher instead).
-	WC *watch.WatchClient[runapi.AgentRunEvent]
-
-	// WCStop cancels WC's context on cleanup.
-	WCStop context.CancelFunc
+	// Watcher is the event stream from the agent-run.
+	// It wraps a RetryWatcher with auto-reconnect for both freshly-forked and
+	// recovered agents.
+	Watcher watch.Interface[runapi.AgentRunEvent]
 
 	// Cmd is the exec.Cmd for the agent-run process (for Wait/Kill).
 	Cmd *exec.Cmd
@@ -218,16 +211,8 @@ func (m *ProcessManager) startEventConsumer(workspace, name string, runProc *Run
 	logger := m.logger.With("agent_key", key)
 
 	go func() {
-		if runProc.WC != nil {
-			// Recovered agent: consume from WatchClient.
-			for wev := range runProc.WC.Events() {
-				m.routeEvent(workspace, name, runProc, wev.Payload, logger)
-			}
-		} else {
-			// Freshly-forked agent: consume from Watcher (unchanged path).
-			for ev := range runProc.Watcher.ResultChan() {
-				m.routeEvent(workspace, name, runProc, ev, logger)
-			}
+		for ev := range runProc.Watcher.ResultChan() {
+			m.routeEvent(workspace, name, runProc, ev, logger)
 		}
 	}()
 }
@@ -352,15 +337,14 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 		// Non-fatal: agent can still run.
 	}
 
-	// 8. Watch events (live-only — this is a fresh start).
-	// WatchEvent returns a Watcher with a typed event channel (K8s Watch pattern).
-	watcher, err := client.WatchEvent(ctx, &runapi.SessionWatchEventParams{})
-	if err != nil {
-		// Close client, kill agent-run; leave bundle intact (preserved until agent/delete).
-		_ = client.Close()
-		_ = m.killRun(runProc)
-		return nil, fmt.Errorf("process: watch_event: agent=%s: %w", key, err)
-	}
+	// 8. Watch events with reconnect/replay recovery.
+	watcher := watch.NewRetryWatcher(
+		ctx,
+		runclient.NewWatchFunc(socketPath),
+		-1,
+		func(ev runapi.AgentRunEvent) int { return ev.Seq },
+		1024,
+	)
 	runProc.Watcher = watcher
 
 	// Start the event consumer goroutine that routes Watcher events to
@@ -803,6 +787,13 @@ func (m *ProcessManager) watchProcess(workspace, name string, runProc *RunProces
 	key := runProc.AgentKey
 
 	m.logger.Info("agent-run process exited", "agent_key", key, "error", runProc.exitErr)
+
+	if runProc.Watcher != nil {
+		runProc.Watcher.Stop()
+	}
+	if runProc.Client != nil {
+		_ = runProc.Client.Close()
+	}
 
 	// Remove from processes map.
 	m.mu.Lock()

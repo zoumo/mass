@@ -102,9 +102,7 @@ type chatModel struct {
 	workspaceName string
 	agentName     string
 	client        *runclient.Client
-	wc            *watch.WatchClient[runapi.AgentRunEvent]
-	watchCtx      context.Context
-	watchCancel   context.CancelFunc
+	watcher       *watch.RetryWatcher[runapi.AgentRunEvent]
 
 	// Streaming state.
 	currentMsg   *StreamingMessage // mutable message being streamed
@@ -163,9 +161,9 @@ func (m *chatModel) cleanup() {
 		_ = m.client.Close()
 		m.client = nil
 	}
-	if m.watchCancel != nil {
-		m.watchCancel()
-		m.watchCancel = nil
+	if m.watcher != nil {
+		m.watcher.Stop()
+		m.watcher = nil
 	}
 }
 
@@ -182,8 +180,14 @@ func newChatModel(opts ChatTUIOptions) chatModel {
 	sty := styles.DefaultStyles()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	wc := watch.NewWatchClient(runclient.NewDialFunc(opts.SocketPath), -1, 4096)
-	wc.Start(ctx)
+	watcher := watch.NewRetryWatcher(
+		ctx,
+		runclient.NewWatchFunc(opts.SocketPath),
+		-1,
+		func(ev runapi.AgentRunEvent) int { return ev.Seq },
+		4096,
+	)
+	_ = cancel // retained for test/cleanup; watcher.Stop() cancels internally
 
 	return chatModel{
 		sock:          opts.SocketPath,
@@ -196,9 +200,7 @@ func newChatModel(opts ChatTUIOptions) chatModel {
 		completion:    newCompletionState(&sty),
 		history:       NewHistory(100),
 		toolItemIDs:   make(map[string]string),
-		wc:            wc,
-		watchCtx:      ctx,
-		watchCancel:   cancel,
+		watcher:       watcher,
 	}
 }
 
@@ -237,14 +239,13 @@ func reconnectCmd(sock string) tea.Cmd {
 // The loop skips unknown events to avoid returning nil (which would break the
 // Bubbletea notification chain — see CLAUDE.md "waitNotif 必须内部循环").
 // When the Events channel closes (context canceled), watchStoppedMsg is returned.
-func waitNotif(wc *watch.WatchClient[runapi.AgentRunEvent]) tea.Cmd {
+func waitNotif(watcher *watch.RetryWatcher[runapi.AgentRunEvent]) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		for {
-			ev, ok := <-wc.Events()
+			inner, ok := <-watcher.ResultChan()
 			if !ok {
 				return watchStoppedMsg{}
 			}
-			inner := ev.Payload
 			// turn_end → dedicated message so Update can finalize the assistant.
 			if inner.Type == runapi.EventTypeTurnEnd {
 				return turnEndMsg{}
@@ -344,7 +345,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, fetchStatusCmd(m.client), watchDisconnect(m.client))
 		if !m.watchReading {
 			m.watchReading = true
-			cmds = append(cmds, waitNotif(m.wc))
+			cmds = append(cmds, waitNotif(m.watcher))
 		}
 
 	case panicMsg:
@@ -370,7 +371,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		cmds = append(cmds, waitNotif(m.wc))
+		cmds = append(cmds, waitNotif(m.watcher))
 
 	case turnEndMsg:
 		// Finalize the streaming assistant message for UI rendering only.
@@ -385,7 +386,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.currentMsg = nil
 		m.currentMsgID = ""
-		cmds = append(cmds, waitNotif(m.wc))
+		cmds = append(cmds, waitNotif(m.watcher))
 
 	case setModelResult:
 		m.currentModel = msg.modelID
@@ -404,7 +405,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentMsgID = ""
 		m.waiting = false
 		m.chatFocused = false
-		cmds = append(cmds, m.input.Focus(), waitNotif(m.wc))
+		cmds = append(cmds, m.input.Focus(), waitNotif(m.watcher))
 
 	case stateChangeMsg:
 		isHistorical := m.liveSeq > 0 && msg.seq <= m.liveSeq
@@ -414,7 +415,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// with no matching "idle") would permanently stuck the TUI in waiting
 		// mode even though the agent is actually idle right now.
 		if isHistorical && m.initialStatusApplied {
-			cmds = append(cmds, waitNotif(m.wc))
+			cmds = append(cmds, waitNotif(m.watcher))
 			break
 		}
 		m.agentStatus = msg.status
@@ -427,14 +428,14 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatFocused = false
 			cmds = append(cmds, m.input.Focus())
 		}
-		cmds = append(cmds, waitNotif(m.wc)) // keep the notification chain alive
+		cmds = append(cmds, waitNotif(m.watcher)) // keep the notification chain alive
 
 	case initialStatusMsg:
 		// Initial status from fetchStatusCmd — authoritative current state.
 		// Snapshot the current cursor as the live boundary: events with seq <= liveSeq
 		// are historical replay; events with seq > liveSeq are live.
 		// Do NOT re-schedule waitNotif (that would create a duplicate chain).
-		m.liveSeq = m.wc.Cursor()
+		m.liveSeq = m.watcher.Cursor()
 		m.agentStatus = msg.status
 		m.currentModel = msg.currentModel
 		m.availableModels = msg.availableModels
@@ -458,7 +459,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentCommandsMsg:
 		m.updateAgentCommands(msg.commands)
-		cmds = append(cmds, waitNotif(m.wc))
+		cmds = append(cmds, waitNotif(m.watcher))
 
 	case anim.StepMsg:
 		// Forward animation ticks to the chat (for spinner animations).
@@ -1009,7 +1010,7 @@ func (m chatModel) View() tea.View {
 
 	chatView := m.chat.Render()
 	div := styleDim.Render(strings.Repeat("─", m.width))
-	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, m.wc.Cursor(), m.width)
+	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, m.watcher.Cursor(), m.width)
 
 	var input string
 	if m.waiting {

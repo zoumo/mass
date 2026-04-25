@@ -33,8 +33,8 @@ func (s *stubRunService) Load(_ context.Context, _ *runapi.SessionLoadParams) er
 	return nil
 }
 
-func (s *stubRunService) WatchEvent(_ context.Context, _ *runapi.SessionWatchEventParams) (*runapi.SessionWatchEventResult, error) {
-	return &runapi.SessionWatchEventResult{WatchID: "stub-w1", NextSeq: 0}, nil
+func (s *stubRunService) WatchEvent(_ context.Context, _ *runapi.SessionWatchEventParams, watchID string) (*runapi.SessionWatchEventResult, error) {
+	return &runapi.SessionWatchEventResult{WatchID: watchID, NextSeq: 0}, nil
 }
 
 func (s *stubRunService) Status(_ context.Context) (*runapi.RuntimeStatusResult, error) {
@@ -138,9 +138,7 @@ func TestClient_WatchEvent(t *testing.T) {
 
 	watcher, err := sc.WatchEvent(context.Background(), &runapi.SessionWatchEventParams{})
 	require.NoError(t, err)
-	defer watcher.Stop()
-	assert.Equal(t, 0, watcher.NextSeq())
-	assert.NotEmpty(t, watcher.WatchID())
+	watcher.Stop()
 }
 
 func TestClient_Stop(t *testing.T) {
@@ -186,105 +184,4 @@ func TestClient_WatchEvent_WatcherStopIdempotent(t *testing.T) {
 	watcher.Stop()
 	watcher.Stop()
 	watcher.Stop()
-}
-
-// replayRunService is a Handler that, when WatchEvent is called, sends
-// replayCount notifications to the peer BEFORE returning the RPC response.
-// This simulates a large burst of replay events that arrive before the client
-// watcher goroutine starts draining, exercising the relay-goroutine fix.
-type replayRunService struct {
-	replayCount int
-	watchID     string
-}
-
-func (s *replayRunService) Prompt(_ context.Context, _ *runapi.SessionPromptParams) (*runapi.SessionPromptResult, error) {
-	return &runapi.SessionPromptResult{}, nil
-}
-func (s *replayRunService) Cancel(_ context.Context) error { return nil }
-func (s *replayRunService) Load(_ context.Context, _ *runapi.SessionLoadParams) error {
-	return nil
-}
-
-func (s *replayRunService) SetModel(_ context.Context, _ *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error) {
-	return &runapi.SessionSetModelResult{}, nil
-}
-
-func (s *replayRunService) Status(_ context.Context) (*runapi.RuntimeStatusResult, error) {
-	return &runapi.RuntimeStatusResult{}, nil
-}
-func (s *replayRunService) Stop(_ context.Context) error { return nil }
-
-func (s *replayRunService) WatchEvent(ctx context.Context, _ *runapi.SessionWatchEventParams) (*runapi.SessionWatchEventResult, error) {
-	peer := jsonrpc.PeerFromContext(ctx)
-	// Send all replay notifications BEFORE returning the RPC result.
-	// Without the relay goroutine fix, events beyond the 64-slot rawCh buffer
-	// would be silently dropped by routeToSubscribers' non-blocking send.
-	for i := 0; i < s.replayCount; i++ {
-		ev := runapi.AgentRunEvent{
-			WatchID: s.watchID,
-			RunID:   "run-replay",
-			Seq:     i,
-			Type:    runapi.EventTypeTurnStart,
-			Payload: runapi.TurnStartEvent{},
-		}
-		if err := peer.Notify(ctx, runapi.MethodRuntimeEventUpdate, ev); err != nil {
-			return nil, err
-		}
-	}
-	return &runapi.SessionWatchEventResult{WatchID: s.watchID, NextSeq: s.replayCount}, nil
-}
-
-// TestWatchEventConn_LargeReplayBeforeWatcherDrain verifies that no events are
-// dropped when the server sends more replay notifications than the raw subscription
-// channel buffer before WatchEventConn installs the watcher goroutine.
-//
-// The relay goroutine introduced in the fix absorbs the burst into an unbounded
-// internal buffer, preventing the non-blocking drop in routeToSubscribers.
-func TestWatchEventConn_LargeReplayBeforeWatcherDrain(t *testing.T) {
-	const replayCount = 2048
-	watchID := "w-large-replay"
-
-	svc := &replayRunService{replayCount: replayCount, watchID: watchID}
-	sockPath := startTestServer(t, svc)
-
-	sc, err := runclient.Dial(context.Background(), sockPath)
-	require.NoError(t, err)
-	defer sc.Close()
-
-	conn, err := sc.WatchEventConn(context.Background(), 0)
-	require.NoError(t, err)
-	defer conn.Close()
-
-	// Drain all replayCount events; none must be dropped.
-	received := 0
-	for {
-		ev, err := func() (runapi.AgentRunEvent, error) {
-			type result struct {
-				ev  runapi.AgentRunEvent
-				err error
-			}
-			ch := make(chan result, 1)
-			go func() {
-				we, e := conn.Recv()
-				ch <- result{we.Payload, e}
-			}()
-			select {
-			case r := <-ch:
-				return r.ev, r.err
-			case <-time.After(5 * time.Second):
-				return runapi.AgentRunEvent{}, fmt.Errorf("timeout waiting for event %d", received)
-			}
-		}()
-		if err != nil {
-			t.Fatalf("Recv error after %d events: %v", received, err)
-		}
-		if ev.WatchID != watchID {
-			continue // skip events from other watch IDs (should not happen)
-		}
-		received++
-		if received == replayCount {
-			break
-		}
-	}
-	assert.Equal(t, replayCount, received, "all replay events must be received without drops")
 }

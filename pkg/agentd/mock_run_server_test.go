@@ -204,8 +204,16 @@ func (h *mockRunHandler) handleLoad(ctx context.Context, conn *jsonrpc2.Conn, re
 }
 
 func (h *mockRunHandler) handleWatchEvent(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
-	// Fixed watchID for the mock — client-side Watcher filters by this value.
-	const watchID = "mock-watch-1"
+	var params struct {
+		WatchID string `json:"watchId"`
+	}
+	if req.Params != nil {
+		_ = json.Unmarshal(*req.Params, &params)
+	}
+	watchID := params.WatchID
+	if watchID == "" {
+		watchID = "mock-watch-fallback"
+	}
 
 	h.srv.mu.Lock()
 	h.srv.subscribed = true
@@ -215,8 +223,6 @@ func (h *mockRunHandler) handleWatchEvent(ctx context.Context, conn *jsonrpc2.Co
 
 	_ = conn.Reply(ctx, req.ID, runapi.SessionWatchEventResult{WatchID: watchID, NextSeq: 0})
 
-	// Emit queued notifications asynchronously, stamping each with the watchID
-	// so the client-side Watcher filter can match them.
 	go func() {
 		for _, n := range notifs {
 			if m, ok := n.params.(map[string]any); ok {

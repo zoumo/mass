@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"sync/atomic"
 
 	acp "github.com/coder/acp-go-sdk"
 
@@ -12,16 +10,6 @@ import (
 	acpruntime "github.com/zoumo/mass/pkg/agentrun/runtime/acp"
 	"github.com/zoumo/mass/pkg/jsonrpc"
 )
-
-// watchIDCounter is a process-global monotonic counter for generating unique
-// watch stream identifiers. Each session/watch_event call gets a unique watchID
-// so that a single connection can carry multiple independent watch streams.
-var watchIDCounter atomic.Int64
-
-// nextWatchID returns a unique watch stream identifier (e.g. "w1", "w2", ...).
-func nextWatchID() string {
-	return fmt.Sprintf("w%d", watchIDCounter.Add(1))
-}
 
 // Service implements Handler.
 type Service struct {
@@ -103,11 +91,15 @@ func (s *Service) Load(_ context.Context, req *runapi.SessionLoadParams) error {
 // When FromSeq is nil, only live events are streamed.
 // When FromSeq is set, historical events are replayed via runtime/event_update
 // notifications first, then live events follow — no large response payload.
-func (s *Service) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventParams) (*runapi.SessionWatchEventResult, error) {
-	s.logger.Debug("watch_event", "fromSeq", req.FromSeq)
+func (s *Service) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventParams, watchID string) (*runapi.SessionWatchEventResult, error) {
+	s.logger.Debug("watch_event", "watchID", watchID, "fromSeq", req.FromSeq)
 	peer := jsonrpc.PeerFromContext(ctx)
 	if peer == nil {
 		return nil, jsonrpc.ErrInternal("no peer in context")
+	}
+
+	if watchID == "" {
+		return nil, jsonrpc.ErrInvalidParams("watchId is required")
 	}
 
 	if req.FromSeq != nil && *req.FromSeq < 0 {
@@ -115,9 +107,9 @@ func (s *Service) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventP
 	}
 
 	if req.FromSeq != nil {
-		return s.watchWithReplay(ctx, peer, *req.FromSeq)
+		return s.watchWithReplay(ctx, peer, watchID, *req.FromSeq)
 	}
-	return s.watchLiveOnly(ctx, peer)
+	return s.watchLiveOnly(ctx, peer, watchID)
 }
 
 // watchLiveOnly subscribes to live events only (no replay).
@@ -129,9 +121,8 @@ func (s *Service) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventP
 // closes the channel and removes the subscriber. This goroutine detects the
 // channel close (ok=false), calls peer.Close() to force-disconnect the client,
 // which triggers the client to reconnect with fromSeq=lastReceivedSeq+1.
-func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer) (*runapi.SessionWatchEventResult, error) {
+func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer, watchID string) (*runapi.SessionWatchEventResult, error) {
 	ch, subID, nextSeq := s.trans.Subscribe()
-	watchID := nextWatchID()
 
 	go func() {
 		defer s.trans.Unsubscribe(subID)
@@ -177,10 +168,9 @@ func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer) (*runap
 //
 // Slow consumer handling: same as watchLiveOnly — Translator eviction triggers
 // peer.Close() to propagate disconnect for client-side reconnection.
-func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, fromSeq int) (*runapi.SessionWatchEventResult, error) {
+func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, watchID string, fromSeq int) (*runapi.SessionWatchEventResult, error) {
 	// Phase 1: register subscriber under mutex (O(1)).
 	ch, subID, nextSeq := s.trans.Subscribe()
-	watchID := nextWatchID()
 
 	// Phase 2: replay + live in background goroutine.
 	go func() {

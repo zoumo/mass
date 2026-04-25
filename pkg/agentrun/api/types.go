@@ -34,14 +34,14 @@ type SessionLoadParams struct {
 // When FromSeq is nil, only live events are streamed (watch from HEAD).
 // When FromSeq is set, historical events from that seq are replayed first via
 // runtime/event_update notifications, followed by live events (K8s List-Watch pattern).
+//
+// Note: watchId is injected by the jsonrpc transport layer (Client.Watch),
+// not set by callers.
 type SessionWatchEventParams struct {
 	FromSeq *int `json:"fromSeq,omitempty"`
 }
 
 // SessionWatchEventResult is returned by "session/watch_event".
-// WatchID is an opaque identifier assigned by the server for this watch stream.
-// The client uses it to demux notifications when multiple watch streams share
-// one connection (each runtime/event_update notification carries the originating WatchID).
 // NextSeq is the sequence number boundary at subscription time — for diagnostics
 // only. Clients should track the last received event seq for reconnection.
 type SessionWatchEventResult struct {

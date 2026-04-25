@@ -8,6 +8,7 @@ import (
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	"github.com/zoumo/mass/pkg/jsonrpc"
+	"github.com/zoumo/mass/pkg/watch"
 )
 
 // Client is a typed client for the Agent Run JSON-RPC protocol.
@@ -59,37 +60,25 @@ func (c *Client) Load(ctx context.Context, req *runapi.SessionLoadParams) error 
 	return c.c.Call(ctx, runapi.MethodSessionLoad, req, nil)
 }
 
-// WatchEvent starts a K8s List-Watch style event subscription and returns a
-// Watcher that delivers typed AgentRunEvent values through ResultChan().
+// WatchEvent starts a watch stream and returns a watch.Interface delivering
+// typed AgentRunEvent values.
 //
-// This replaces the old pattern of registering a global notification handler
-// at Dial time. Each WatchEvent call creates an independent watch stream with
-// its own watchID, allowing multiple concurrent watchers on a single connection.
+// The watchID is generated and injected by the jsonrpc transport layer
+// (Client.Watch) — callers do not set it.
 //
-// Usage:
-//
-//	watcher, err := client.WatchEvent(ctx, &runapi.SessionWatchEventParams{FromSeq: &fromSeq})
-//	if err != nil { ... }
-//	defer watcher.Stop()
-//	for ev := range watcher.ResultChan() { ... }
-//
-// When the connection drops (server evicts slow consumer, network failure, etc.),
-// ResultChan() is closed. The consumer should reconnect:
-//
-//	client, _ = runclient.Dial(ctx, socketPath)
-//	watcher, _ = client.WatchEvent(ctx, &runapi.SessionWatchEventParams{FromSeq: &lastSeq})
-func (c *Client) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventParams) (*Watcher, error) {
+// IMPORTANT: this is a single-shot watch. If the consumer is slow, the jsonrpc
+// layer evicts the stream (closes ResultChan). For zero-drop semantics with
+// automatic reconnection, use NewWatchFunc with watch.NewRetryWatcher instead.
+func (c *Client) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventParams) (watch.Interface[runapi.AgentRunEvent], error) {
+	if req == nil {
+		req = &runapi.SessionWatchEventParams{}
+	}
 	var result runapi.SessionWatchEventResult
-	if err := c.c.Call(ctx, runapi.MethodRuntimeWatchEvent, req, &result); err != nil {
+	ws, err := c.c.Watch(ctx, runapi.MethodRuntimeWatchEvent, req, &result, 256)
+	if err != nil {
 		return nil, err
 	}
-
-	// Subscribe to runtime/event_update notifications at the jsonrpc transport layer.
-	// The Subscribe channel receives ALL runtime/event_update notifications on this
-	// connection; the Watcher's filter goroutine demuxes by watchID.
-	notifCh, unsub := c.c.Subscribe(runapi.MethodRuntimeEventUpdate, 1024)
-
-	return newWatcher(result.WatchID, result.NextSeq, notifCh, unsub), nil
+	return newTypedWatcher(ws), nil
 }
 
 func (c *Client) Status(ctx context.Context) (*runapi.RuntimeStatusResult, error) {

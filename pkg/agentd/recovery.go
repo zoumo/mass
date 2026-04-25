@@ -250,14 +250,17 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 		}
 	}
 
-	// Create WatchClient for live-only event stream (recovery: no replay needed,
+	// Create RetryWatcher for live-only event stream (recovery: no replay needed,
 	// state already reconciled from runtime/status above).
-	wcCtx, wcCancel := context.WithCancel(ctx)
-	wc := watch.NewWatchClient(runclient.NewDialFunc(agent.Status.SocketPath), status.Recovery.LastSeq, 64)
-	wc.Start(wcCtx)
-	runProc.WC = wc
-	runProc.WCStop = wcCancel
-	logger.Info("recovery: WatchClient started",
+	watcher := watch.NewRetryWatcher(
+		ctx,
+		runclient.NewWatchFunc(agent.Status.SocketPath),
+		status.Recovery.LastSeq,
+		func(ev runapi.AgentRunEvent) int { return ev.Seq },
+		64,
+	)
+	runProc.Watcher = watcher
+	logger.Info("recovery: RetryWatcher started",
 		"initial_cursor", status.Recovery.LastSeq,
 		"from_seq", status.Recovery.LastSeq+1)
 
@@ -315,9 +318,9 @@ func (m *ProcessManager) watchRecoveredProcess(workspace, name string, runProc *
 	// Wait for connection loss.
 	<-runProc.Client.DisconnectNotify()
 
-	// Cancel WatchClient so its goroutine exits cleanly.
-	if runProc.WCStop != nil {
-		runProc.WCStop()
+	// Stop the watch stream so its goroutine exits cleanly.
+	if runProc.Watcher != nil {
+		runProc.Watcher.Stop()
 	}
 
 	key := runProc.AgentKey

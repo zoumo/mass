@@ -82,6 +82,12 @@ type Client struct {
 	subMu   sync.Mutex
 	subs    map[int]*subscription
 	nextSub int
+
+	// Watch streams: per-watchID routing for watch notifications.
+	// AddWatch() creates entries; WatchStream.Stop() or eviction removes them.
+	// notifWorker routes by watchId field in notification payload (priority over Subscribe).
+	watchMu sync.RWMutex
+	watches map[string]*WatchStream
 }
 
 // NewClient wraps an existing net.Conn and returns a Client.
@@ -92,6 +98,7 @@ func NewClient(nc net.Conn, opts ...ClientOption) *Client {
 		workerDone: make(chan struct{}),
 		closeCh:    make(chan struct{}),
 		subs:       make(map[int]*subscription),
+		watches:    make(map[string]*WatchStream),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -218,7 +225,14 @@ func (c *Client) notifWorker() {
 		case msg := <-c.notifCh:
 			nm := NotificationMsg{Method: msg.method, Params: msg.params}
 
-			// Step 1: try per-method subscribers.
+			// Step 1: try watch routing (by watchId in payload).
+			// This has highest priority — matched watch events never fall
+			// through to Subscribe or global handlers.
+			if c.routeWatchEvent(msg.params) {
+				continue
+			}
+
+			// Step 2: try per-method subscribers.
 			matched := c.routeToSubscribers(nm)
 
 			// Step 2: fallback to global handler/channel only if no subscriber matched.
@@ -250,6 +264,14 @@ done:
 		delete(c.subs, id)
 	}
 	c.subMu.Unlock()
+
+	// Close all watch streams so consumers detect disconnect.
+	c.watchMu.Lock()
+	for _, ws := range c.watches {
+		ws.closeCh()
+	}
+	c.watches = make(map[string]*WatchStream)
+	c.watchMu.Unlock()
 }
 
 // routeToSubscribers delivers a notification to all per-method subscribers
@@ -302,4 +324,75 @@ func (h *clientHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *js
 	}
 	// Enqueue — may block if buffer is full (backpressure).
 	h.client.enqueueNotification(ctx, req.Method, params)
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Watch stream management
+// ──────────────────────────────────────────────────────────────────────────────
+
+// AddWatch registers a new watch stream for the given watchID.
+// Subsequent notifications whose payload contains a matching watchId field are
+// routed to the returned WatchStream. bufSize is the channel capacity.
+func (c *Client) AddWatch(watchID string, bufSize int) *WatchStream {
+	ws := &WatchStream{
+		watchID: watchID,
+		ch:      make(chan WatchEvent, bufSize),
+		done:    make(chan struct{}),
+		client:  c,
+	}
+	c.watchMu.Lock()
+	c.watches[watchID] = ws
+	c.watchMu.Unlock()
+	return ws
+}
+
+func (c *Client) removeWatch(watchID string, ws *WatchStream) {
+	c.watchMu.Lock()
+	if c.watches[watchID] == ws {
+		delete(c.watches, watchID)
+	}
+	c.watchMu.Unlock()
+}
+
+// routeWatchEvent tries to deliver a notification to a registered WatchStream.
+// Returns true if the notification contained a watchId that matched a stream
+// (even if delivery was skipped due to eviction or stop).
+func (c *Client) routeWatchEvent(params json.RawMessage) bool {
+	var probe struct {
+		WatchID string `json:"watchId"`
+		Seq     int    `json:"seq"`
+	}
+	if json.Unmarshal(params, &probe) != nil || probe.WatchID == "" {
+		return false
+	}
+
+	c.watchMu.RLock()
+	ws := c.watches[probe.WatchID]
+	c.watchMu.RUnlock()
+	if ws == nil {
+		return false
+	}
+
+	ev := WatchEvent{
+		WatchID: probe.WatchID,
+		Seq:     probe.Seq,
+		Payload: params,
+	}
+
+	select {
+	case ws.ch <- ev:
+	case <-ws.done:
+	default:
+		c.evictWatch(ws)
+	}
+	return true
+}
+
+func (c *Client) evictWatch(ws *WatchStream) {
+	c.watchMu.Lock()
+	if c.watches[ws.watchID] == ws {
+		delete(c.watches, ws.watchID)
+	}
+	c.watchMu.Unlock()
+	ws.closeCh()
 }
