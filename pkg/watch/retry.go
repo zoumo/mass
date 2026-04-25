@@ -60,14 +60,11 @@ func NewRetryWatcher[T any](
 	return rw
 }
 
-// ResultChan implements Interface[T].
 func (rw *RetryWatcher[T]) ResultChan() <-chan T { return rw.result }
 
-// Cursor returns the seq of the last successfully enqueued event. Returns -1
-// if no events have been delivered yet.
+// Cursor returns -1 if no events have been delivered yet.
 func (rw *RetryWatcher[T]) Cursor() int { return int(rw.cursor.Load()) }
 
-// Stop implements Interface[T]. Idempotent.
 func (rw *RetryWatcher[T]) Stop() {
 	rw.once.Do(func() {
 		rw.cancel()
@@ -88,7 +85,10 @@ func (rw *RetryWatcher[T]) reconnectLoop(ctx context.Context) {
 			return
 		default:
 		}
-		rw.runOnce(ctx)
+		delivered := rw.runOnce(ctx)
+		if delivered {
+			backoff = retryBackoffInitial
+		}
 
 		timer := time.NewTimer(backoff)
 		select {
@@ -104,7 +104,7 @@ func (rw *RetryWatcher[T]) reconnectLoop(ctx context.Context) {
 	}
 }
 
-func (rw *RetryWatcher[T]) runOnce(ctx context.Context) {
+func (rw *RetryWatcher[T]) runOnce(ctx context.Context) bool {
 	cursor := int(rw.cursor.Load())
 	fromSeq := cursor + 1
 	if cursor < 0 {
@@ -113,13 +113,14 @@ func (rw *RetryWatcher[T]) runOnce(ctx context.Context) {
 
 	active, err := rw.wf(ctx, fromSeq)
 	if err != nil {
-		return
+		return false
 	}
 
 	rw.activeMu.Lock()
 	rw.active = active
 	rw.activeMu.Unlock()
 
+	delivered := false
 	defer func() {
 		active.Stop()
 		rw.activeMu.Lock()
@@ -133,8 +134,10 @@ func (rw *RetryWatcher[T]) runOnce(ctx context.Context) {
 		select {
 		case rw.result <- ev:
 			rw.cursor.Store(int64(rw.getSeq(ev)))
+			delivered = true
 		case <-ctx.Done():
-			return
+			return delivered
 		}
 	}
+	return delivered
 }

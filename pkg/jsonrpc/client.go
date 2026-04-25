@@ -226,8 +226,6 @@ func (c *Client) notifWorker() {
 			nm := NotificationMsg{Method: msg.method, Params: msg.params}
 
 			// Step 1: try watch routing (by watchId in payload).
-			// This has highest priority — matched watch events never fall
-			// through to Subscribe or global handlers.
 			if c.routeWatchEvent(msg.params) {
 				continue
 			}
@@ -235,7 +233,7 @@ func (c *Client) notifWorker() {
 			// Step 2: try per-method subscribers.
 			matched := c.routeToSubscribers(nm)
 
-			// Step 2: fallback to global handler/channel only if no subscriber matched.
+			// Step 3: fallback to global handler/channel only if no subscriber matched.
 			if !matched {
 				switch {
 				case c.notifChanOut != nil:
@@ -354,10 +352,16 @@ func (c *Client) removeWatch(watchID string, ws *WatchStream) {
 	c.watchMu.Unlock()
 }
 
-// routeWatchEvent tries to deliver a notification to a registered WatchStream.
-// Returns true if the notification contained a watchId that matched a stream
-// (even if delivery was skipped due to eviction or stop).
+// routeWatchEvent returns true if the notification matched a registered watch stream.
 func (c *Client) routeWatchEvent(params json.RawMessage) bool {
+	// Fast path: skip unmarshal when no watches are registered.
+	c.watchMu.RLock()
+	empty := len(c.watches) == 0
+	c.watchMu.RUnlock()
+	if empty {
+		return false
+	}
+
 	var probe struct {
 		WatchID string `json:"watchId"`
 		Seq     int    `json:"seq"`

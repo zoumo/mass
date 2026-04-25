@@ -179,15 +179,13 @@ func newChatModel(opts ChatTUIOptions) chatModel {
 	sp := spinner.New()
 	sty := styles.DefaultStyles()
 
-	ctx, cancel := context.WithCancel(context.Background())
 	watcher := watch.NewRetryWatcher(
-		ctx,
+		context.Background(),
 		runclient.NewWatchFunc(opts.SocketPath),
 		-1,
 		func(ev runapi.AgentRunEvent) int { return ev.Seq },
 		4096,
 	)
-	_ = cancel // retained for test/cleanup; watcher.Stop() cancels internally
 
 	return chatModel{
 		sock:          opts.SocketPath,

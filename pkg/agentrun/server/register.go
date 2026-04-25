@@ -7,6 +7,12 @@ import (
 	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
+// watchEventWire carries both transport-level (watchId) and business (fromSeq) fields.
+type watchEventWire struct {
+	WatchID string `json:"watchId"`
+	FromSeq *int   `json:"fromSeq,omitempty"`
+}
+
 // Handler defines the Agent Run JSON-RPC protocol methods.
 // These are the methods exposed by agent-run over a Unix socket.
 type Handler interface {
@@ -63,18 +69,8 @@ func Register(s *jsonrpc.Server, svc Handler) {
 	s.RegisterService("runtime", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
 			"watch_event": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				// watchId is injected by the jsonrpc transport layer (Client.Watch).
-				// Parse both transport field (watchId) and business fields (fromSeq).
-				var wire struct {
-					WatchID string `json:"watchId"`
-					FromSeq *int   `json:"fromSeq,omitempty"`
-				}
-				if err := unmarshal(&wire); err != nil {
-					wire = struct {
-						WatchID string `json:"watchId"`
-						FromSeq *int   `json:"fromSeq,omitempty"`
-					}{}
-				}
+				var wire watchEventWire
+				_ = unmarshal(&wire) // params optional — zero value is valid
 				req := &runapi.SessionWatchEventParams{FromSeq: wire.FromSeq}
 				return svc.WatchEvent(ctx, req, wire.WatchID)
 			},

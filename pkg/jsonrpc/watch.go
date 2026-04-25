@@ -36,21 +36,10 @@ type WatchStream struct {
 	closeChOnce sync.Once
 }
 
-// WatchID returns the server-assigned watch stream identifier.
-func (ws *WatchStream) WatchID() string { return ws.watchID }
-
-// ResultChan returns the channel delivering watch events.
-// Closed when the connection drops or the stream is evicted.
-// Consumers should also select on Done() to detect Stop().
 func (ws *WatchStream) ResultChan() <-chan WatchEvent { return ws.ch }
 
-// Done returns a channel that is closed when Stop() is called.
-// Use in a select alongside ResultChan() to detect explicit stop.
 func (ws *WatchStream) Done() <-chan struct{} { return ws.done }
 
-// Stop terminates the watch stream. Idempotent, concurrent-safe.
-// Closes done and removes from the client's watch map.
-// Does NOT close ch — see channel ownership comment above.
 func (ws *WatchStream) Stop() {
 	ws.stopOnce.Do(func() {
 		close(ws.done)

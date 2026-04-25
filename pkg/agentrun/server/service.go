@@ -123,33 +123,7 @@ func (s *Service) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventP
 // which triggers the client to reconnect with fromSeq=lastReceivedSeq+1.
 func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer, watchID string) (*runapi.SessionWatchEventResult, error) {
 	ch, subID, nextSeq := s.trans.Subscribe()
-
-	go func() {
-		defer s.trans.Unsubscribe(subID)
-		disconnect := peer.DisconnectNotify()
-		for {
-			select {
-			case <-disconnect:
-				return
-			case ev, ok := <-ch:
-				if !ok {
-					// Subscriber evicted by Translator (channel full, K8s-style).
-					// Close the peer connection to propagate disconnect to client,
-					// triggering re-dial + WatchEvent(fromSeq=lastSeq+1).
-					s.logger.Warn("subscriber evicted by translator, closing peer",
-						"watchID", watchID, "reason", "channel_full")
-					peer.Close()
-					return
-				}
-				// Stamp watchID on each event for client-side demux.
-				ev.WatchID = watchID
-				if err := peer.Notify(ctx, runapi.MethodRuntimeEventUpdate, ev); err != nil {
-					return
-				}
-			}
-		}
-	}()
-
+	go s.forwardLiveEvents(ctx, peer, ch, subID, watchID, 0)
 	return &runapi.SessionWatchEventResult{WatchID: watchID, NextSeq: nextSeq}, nil
 }
 
@@ -162,22 +136,13 @@ func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer, watchID
 // Dedup guarantee: history events with seq < nextSeq are sent from file,
 // live events with seq < nextSeq are skipped. broadcast() does log-before-fanout
 // under the same mutex, so the file contains all seq < nextSeq at subscribe time.
-//
-// Each event is stamped with watchID for client-side demux (same as watchLiveOnly).
-// Replay events also carry watchID so the client can filter consistently.
-//
-// Slow consumer handling: same as watchLiveOnly — Translator eviction triggers
-// peer.Close() to propagate disconnect for client-side reconnection.
 func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, watchID string, fromSeq int) (*runapi.SessionWatchEventResult, error) {
-	// Phase 1: register subscriber under mutex (O(1)).
 	ch, subID, nextSeq := s.trans.Subscribe()
 
-	// Phase 2: replay + live in background goroutine.
 	go func() {
 		defer s.trans.Unsubscribe(subID)
 		disconnect := peer.DisconnectNotify()
 
-		// Replay historical events from the current session's event log (no mutex held).
 		entries, err := s.trans.ReadCurrentSessionLog(fromSeq)
 		if err != nil {
 			s.logger.Error("watch_event: replay read failed", "fromSeq", fromSeq, "error", err)
@@ -185,46 +150,54 @@ func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, watch
 		}
 		for _, entry := range entries {
 			if entry.Seq >= nextSeq {
-				break // remaining entries will come from live channel
+				break
 			}
 			select {
 			case <-disconnect:
 				return
 			default:
 			}
-			// Stamp watchID on replay events for consistent client-side filtering.
 			entry.WatchID = watchID
 			if err := peer.Notify(ctx, runapi.MethodRuntimeEventUpdate, entry); err != nil {
 				return
 			}
 		}
 
-		// Switch to live events, dedup overlap.
-		for {
-			select {
-			case <-disconnect:
-				return
-			case ev, ok := <-ch:
-				if !ok {
-					// Subscriber evicted by Translator (channel full, K8s-style).
-					s.logger.Warn("subscriber evicted by translator, closing peer",
-						"watchID", watchID, "reason", "channel_full")
-					peer.Close()
-					return
-				}
-				if ev.Seq < nextSeq {
-					continue // dedup: already sent from file
-				}
-				// Stamp watchID on each live event for client-side demux.
-				ev.WatchID = watchID
-				if err := peer.Notify(ctx, runapi.MethodRuntimeEventUpdate, ev); err != nil {
-					return
-				}
-			}
-		}
+		// Switch to live events with dedup (skipBelow=nextSeq).
+		s.forwardLiveEvents(ctx, peer, ch, 0, watchID, nextSeq)
 	}()
 
 	return &runapi.SessionWatchEventResult{WatchID: watchID, NextSeq: nextSeq}, nil
+}
+
+// forwardLiveEvents reads from the subscriber channel, stamps watchID, and
+// sends events as notifications. Events with seq < skipBelow are dropped (dedup).
+// If subID > 0, unsubscribes on exit.
+func (s *Service) forwardLiveEvents(ctx context.Context, peer *jsonrpc.Peer, ch <-chan runapi.AgentRunEvent, subID int, watchID string, skipBelow int) {
+	if subID > 0 {
+		defer s.trans.Unsubscribe(subID)
+	}
+	disconnect := peer.DisconnectNotify()
+	for {
+		select {
+		case <-disconnect:
+			return
+		case ev, ok := <-ch:
+			if !ok {
+				s.logger.Warn("subscriber evicted by translator, closing peer",
+					"watchID", watchID, "reason", "channel_full")
+				peer.Close()
+				return
+			}
+			if ev.Seq < skipBelow {
+				continue
+			}
+			ev.WatchID = watchID
+			if err := peer.Notify(ctx, runapi.MethodRuntimeEventUpdate, ev); err != nil {
+				return
+			}
+		}
+	}
 }
 
 func (s *Service) Status(_ context.Context) (*runapi.RuntimeStatusResult, error) {
