@@ -249,16 +249,18 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 		}
 	}
 
-	// Watch events with full replay (K8s List-Watch: fromSeq=0).
-	// WatchEvent returns a Watcher; events are consumed by startEventConsumer.
-	fromSeq := 0
+	// Watch live events only (fromSeq = lastSeq+1).
+	// State is already reconciled from runtime/status above; replaying historical
+	// events via fromSeq=0 would overwrite the reconciled DB state.
+	fromSeq := status.Recovery.LastSeq + 1
 	watcher, err := client.WatchEvent(ctx, &runapi.SessionWatchEventParams{FromSeq: &fromSeq})
 	if err != nil {
 		_ = client.Close()
 		return apiruntime.StatusStopped, fmt.Errorf("session/watch_event fromSeq=%d: %w", fromSeq, err)
 	}
 	runProc.Watcher = watcher
-	logger.Info("recovery: watch_event with replay",
+	logger.Info("recovery: watch_event live-only",
+		"from_seq", fromSeq,
 		"next_seq", watcher.NextSeq())
 
 	// Start the event consumer goroutine (routes runtime_update/Status → DB, others → Events).
