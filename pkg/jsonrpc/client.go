@@ -72,6 +72,8 @@ type Client struct {
 	notifChanOut chan<- NotificationMsg // caller-provided channel (WithNotificationChannel)
 	notifCh      chan notificationMsg
 	workerDone   chan struct{}
+	closeCh      chan struct{}
+	closeOnce    sync.Once
 
 	// Per-method notification subscriptions (K8s Watch pattern).
 	// Subscribe() creates entries; the returned unsubscribe func removes them.
@@ -88,6 +90,7 @@ func NewClient(nc net.Conn, opts ...ClientOption) *Client {
 	c := &Client{
 		notifCh:    make(chan notificationMsg, 256),
 		workerDone: make(chan struct{}),
+		closeCh:    make(chan struct{}),
 		subs:       make(map[int]*subscription),
 	}
 	for _, opt := range opts {
@@ -138,12 +141,7 @@ func (c *Client) CallAsync(ctx context.Context, method string, params any) error
 // Close closes the underlying connection and drains the notification worker.
 func (c *Client) Close() error {
 	err := c.conn.Close()
-	// Close notifCh so the worker drains and exits.
-	// Guard against double-close with a recover.
-	func() {
-		defer func() { _ = recover() }() //nolint:revive
-		close(c.notifCh)
-	}()
+	c.closeOnce.Do(func() { close(c.closeCh) })
 	<-c.workerDone
 	return err
 }
@@ -204,28 +202,46 @@ func (c *Client) Subscribe(method string, bufSize int) (<-chan NotificationMsg, 
 //  2. If NO subscriber matched, fall back to the global handler or channel
 //     (backwards compatible with WithNotificationHandler/WithNotificationChannel).
 //
-// On connection close (notifCh drained), ALL subscriber channels are closed
-// so that range loops on them terminate naturally. This propagates disconnect
-// up to Watcher.ResultChan() consumers.
+// On close (closeCh fired or remote disconnect via DisconnectNotify), remaining
+// buffered messages in notifCh are silently drained. ALL subscriber channels are
+// then closed so that range loops on them terminate naturally. This propagates
+// disconnect up to Watcher.ResultChan() consumers.
 func (c *Client) notifWorker() {
 	defer close(c.workerDone)
-	for msg := range c.notifCh {
-		nm := NotificationMsg{Method: msg.method, Params: msg.params}
+	disconnect := c.conn.DisconnectNotify()
+	for {
+		select {
+		case <-c.closeCh:
+			goto cleanup
+		case <-disconnect:
+			goto cleanup
+		case msg := <-c.notifCh:
+			nm := NotificationMsg{Method: msg.method, Params: msg.params}
 
-		// Step 1: try per-method subscribers.
-		matched := c.routeToSubscribers(nm)
+			// Step 1: try per-method subscribers.
+			matched := c.routeToSubscribers(nm)
 
-		// Step 2: fallback to global handler/channel only if no subscriber matched.
-		if !matched {
-			switch {
-			case c.notifChanOut != nil:
-				c.notifChanOut <- nm
-			case c.notifHandler != nil:
-				c.notifHandler(msg.ctx, msg.method, msg.params)
+			// Step 2: fallback to global handler/channel only if no subscriber matched.
+			if !matched {
+				switch {
+				case c.notifChanOut != nil:
+					c.notifChanOut <- nm
+				case c.notifHandler != nil:
+					c.notifHandler(msg.ctx, msg.method, msg.params)
+				}
 			}
 		}
 	}
-
+cleanup:
+	// Drain any remaining buffered notifications without blocking.
+	for {
+		select {
+		case <-c.notifCh:
+		default:
+			goto done
+		}
+	}
+done:
 	// Connection closed — close all remaining subscriber channels so consumers
 	// detect disconnect (range loop exits, Watcher.ResultChan() returns zero value).
 	c.subMu.Lock()
@@ -261,9 +277,12 @@ func (c *Client) routeToSubscribers(msg NotificationMsg) bool {
 
 // enqueueNotification puts a notification on the bounded channel.
 // Blocks (backpressure) if the channel is full — this pauses the read loop
-// until the worker catches up.
+// until the worker catches up. Exits silently if the client is closed.
 func (c *Client) enqueueNotification(ctx context.Context, method string, params json.RawMessage) {
-	c.notifCh <- notificationMsg{ctx: ctx, method: method, params: params}
+	select {
+	case c.notifCh <- notificationMsg{ctx: ctx, method: method, params: params}:
+	case <-c.closeCh:
+	}
 }
 
 // clientHandler implements jsonrpc2.Handler for the Client.

@@ -26,11 +26,11 @@ import (
 // on the clean-break protocol surface.
 type mockRunServer struct {
 	listener net.Listener
-	conn     *jsonrpc2.Conn
 	done     chan struct{}
 	once     sync.Once
 
 	mu                sync.Mutex
+	conns             []*jsonrpc2.Conn // all active connections
 	statusResult      runapi.RuntimeStatusResult
 	promptResult      runapi.SessionPromptResult
 	subscribed        bool
@@ -94,8 +94,25 @@ func (s *mockRunServer) serve() {
 		}
 		stream := jsonrpc2.NewPlainObjectStream(nc)
 		h := jsonrpc2.AsyncHandler(&mockRunHandler{srv: s})
-		s.conn = jsonrpc2.NewConn(context.Background(), stream, h)
-		<-s.conn.DisconnectNotify()
+		conn := jsonrpc2.NewConn(context.Background(), stream, h)
+		s.mu.Lock()
+		s.conns = append(s.conns, conn)
+		s.mu.Unlock()
+		// Handle each connection in its own goroutine so multiple concurrent
+		// connections (e.g. recoverAgent's status client + WatchClient's dial)
+		// can be served simultaneously.
+		go func(c *jsonrpc2.Conn) {
+			<-c.DisconnectNotify()
+			// Remove from conns list on disconnect.
+			s.mu.Lock()
+			for i, cc := range s.conns {
+				if cc == c {
+					s.conns = append(s.conns[:i], s.conns[i+1:]...)
+					break
+				}
+			}
+			s.mu.Unlock()
+		}(conn)
 	}
 }
 
@@ -104,8 +121,13 @@ func (s *mockRunServer) close() {
 	if s.listener != nil {
 		_ = s.listener.Close()
 	}
-	if s.conn != nil {
-		_ = s.conn.Close()
+	// Close all active connections.
+	s.mu.Lock()
+	conns := make([]*jsonrpc2.Conn, len(s.conns))
+	copy(conns, s.conns)
+	s.mu.Unlock()
+	for _, c := range conns {
+		_ = c.Close()
 	}
 }
 

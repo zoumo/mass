@@ -14,6 +14,7 @@ import (
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	spec "github.com/zoumo/mass/pkg/runtime-spec"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	"github.com/zoumo/mass/pkg/watch"
 )
 
 // RecoverSessions runs at daemon startup and attempts to reconnect to agent-run
@@ -249,19 +250,16 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 		}
 	}
 
-	// Watch live events only (fromSeq = lastSeq+1).
-	// State is already reconciled from runtime/status above; replaying historical
-	// events via fromSeq=0 would overwrite the reconciled DB state.
-	fromSeq := status.Recovery.LastSeq + 1
-	watcher, err := client.WatchEvent(ctx, &runapi.SessionWatchEventParams{FromSeq: &fromSeq})
-	if err != nil {
-		_ = client.Close()
-		return apiruntime.StatusStopped, fmt.Errorf("session/watch_event fromSeq=%d: %w", fromSeq, err)
-	}
-	runProc.Watcher = watcher
-	logger.Info("recovery: watch_event live-only",
-		"from_seq", fromSeq,
-		"next_seq", watcher.NextSeq())
+	// Create WatchClient for live-only event stream (recovery: no replay needed,
+	// state already reconciled from runtime/status above).
+	wcCtx, wcCancel := context.WithCancel(ctx)
+	wc := watch.NewWatchClient(runclient.NewDialFunc(agent.Status.SocketPath), status.Recovery.LastSeq, 64)
+	wc.Start(wcCtx)
+	runProc.WC = wc
+	runProc.WCStop = wcCancel
+	logger.Info("recovery: WatchClient started",
+		"initial_cursor", status.Recovery.LastSeq,
+		"from_seq", status.Recovery.LastSeq+1)
 
 	// Start the event consumer goroutine (routes runtime_update/Status → DB, others → Events).
 	m.startEventConsumer(ws, name, runProc)
@@ -316,6 +314,11 @@ func (m *ProcessManager) readStateSessionID(stateDir string) (string, error) {
 func (m *ProcessManager) watchRecoveredProcess(workspace, name string, runProc *RunProcess) {
 	// Wait for connection loss.
 	<-runProc.Client.DisconnectNotify()
+
+	// Cancel WatchClient so its goroutine exits cleanly.
+	if runProc.WCStop != nil {
+		runProc.WCStop()
+	}
 
 	key := runProc.AgentKey
 	m.logger.Info("recovered agent-run disconnected", "agent_key", key)

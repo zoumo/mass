@@ -23,6 +23,7 @@ import (
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	spec "github.com/zoumo/mass/pkg/runtime-spec"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
+	"github.com/zoumo/mass/pkg/watch"
 )
 
 // EventHandler is called for each runtime/event_update notification received from the agent-run.
@@ -94,6 +95,13 @@ type RunProcess struct {
 	// routes events to DB updates (state_change) or the Events channel.
 	Watcher *runclient.Watcher
 
+	// WC is the watch client used for event stream in recovered agents.
+	// Nil for freshly-forked agents (which use Watcher instead).
+	WC *watch.WatchClient[runapi.AgentRunEvent]
+
+	// WCStop cancels WC's context on cleanup.
+	WCStop context.CancelFunc
+
 	// Cmd is the exec.Cmd for the agent-run process (for Wait/Kill).
 	Cmd *exec.Cmd
 
@@ -131,84 +139,94 @@ func NewProcessManager(agents *AgentRunManager, s *store.Store, socketPath, bund
 	}
 }
 
-// startEventConsumer launches a goroutine that reads from the Watcher's
-// ResultChan and routes events:
+// routeEvent routes a single AgentRunEvent from the event consumer:
+//   - runtime_update with Status → DB agent state update (D088)
+//   - all other events → runProc.Events channel for external consumers
+func (m *ProcessManager) routeEvent(workspace, name string, runProc *RunProcess, ev runapi.AgentRunEvent, logger *slog.Logger) {
+	if ev.Type == runapi.EventTypeRuntimeUpdate {
+		ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent)
+		if !ok || ru.Status == nil {
+			// runtime_update without Status (e.g. metadata-only) → forward to Events.
+			select {
+			case runProc.Events <- ev:
+			default:
+			}
+			return
+		}
+		prevStatus := ru.Status.PreviousStatus
+		newStatus := ru.Status.Status
+		logger.Info("stateChange: updating DB state",
+			"prev", prevStatus,
+			"new", newStatus)
+		updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		current, err := m.agents.Get(updateCtx, workspace, name)
+		if err != nil {
+			logger.Warn("stateChange: failed to read DB state",
+				"error", err)
+			cancel()
+			return
+		}
+		if current != nil && current.Status.Status == apiruntime.StatusStopped && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
+			logger.Info("stateChange: dropped stale live state after stop",
+				"current", current.Status.Status,
+				"new", newStatus)
+			cancel()
+			return
+		}
+		if current != nil && current.Status.Status == apiruntime.StatusRestarting && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
+			logger.Info("stateChange: dropped stale live state during restart",
+				"current", current.Status.Status,
+				"new", newStatus)
+			cancel()
+			return
+		}
+		if err := m.agents.UpdateState(updateCtx, workspace, name, apiruntime.Status(newStatus), ""); err != nil {
+			logger.Warn("stateChange: failed to update DB state",
+				"error", err)
+		}
+		// On transition to idle the ACP handshake is complete and
+		// state.json contains the sessionID. Persist it now.
+		if apiruntime.Status(newStatus) == apiruntime.StatusIdle && runProc.StateDir != "" {
+			m.syncSessionInfo(updateCtx, workspace, name, runProc.StateDir, logger)
+		}
+		cancel()
+		return
+	}
+
+	// All other events → push to the Events channel for external consumers.
+	select {
+	case runProc.Events <- ev:
+	default:
+		// No consumer is draining Events; drop silently to avoid log spam.
+	}
+}
+
+// startEventConsumer launches a goroutine that reads from the event source and
+// routes events:
 //   - runtime_update with Status → DB agent state update (D088)
 //   - all other events → runProc.Events channel for external consumers
 //
-// This replaces the old global NotificationHandler pattern. Events are already
-// deserialized by the Watcher, so no JSON parsing is needed here.
+// When runProc.WC is non-nil (recovered agents), events are read from WC.Events().
+// Otherwise events are read from runProc.Watcher.ResultChan() (freshly-forked agents).
 //
-// The goroutine exits when the Watcher's ResultChan closes (connection lost,
-// slow consumer eviction, or explicit Stop()). This is the single authoritative
-// event consumer — all DB state transitions after bootstrap flow through here.
+// The goroutine exits when the event channel closes (connection lost,
+// slow consumer eviction, context canceled, or explicit Stop()). This is the
+// single authoritative event consumer — all DB state transitions after bootstrap
+// flow through here.
 func (m *ProcessManager) startEventConsumer(workspace, name string, runProc *RunProcess) {
 	key := agentKey(workspace, name)
 	logger := m.logger.With("agent_key", key)
 
 	go func() {
-		for ev := range runProc.Watcher.ResultChan() {
-			// Route runtime_update events with Status to DB state updates.
-			if ev.Type == runapi.EventTypeRuntimeUpdate {
-				ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent)
-				if !ok || ru.Status == nil {
-					// runtime_update without Status (e.g. metadata-only) → forward to Events.
-					select {
-					case runProc.Events <- ev:
-					default:
-					}
-					continue
-				}
-				prevStatus := ru.Status.PreviousStatus
-				newStatus := ru.Status.Status
-				logger.Info("stateChange: updating DB state",
-					"agent_key", key,
-					"prev", prevStatus,
-					"new", newStatus)
-				updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				current, err := m.agents.Get(updateCtx, workspace, name)
-				if err != nil {
-					logger.Warn("stateChange: failed to read DB state",
-						"agent_key", key,
-						"error", err)
-					cancel()
-					continue
-				}
-				if current != nil && current.Status.Status == apiruntime.StatusStopped && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
-					logger.Info("stateChange: dropped stale live state after stop",
-						"agent_key", key,
-						"current", current.Status.Status,
-						"new", newStatus)
-					cancel()
-					continue
-				}
-				if current != nil && current.Status.Status == apiruntime.StatusRestarting && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
-					logger.Info("stateChange: dropped stale live state during restart",
-						"agent_key", key,
-						"current", current.Status.Status,
-						"new", newStatus)
-					cancel()
-					continue
-				}
-				if err := m.agents.UpdateState(updateCtx, workspace, name, apiruntime.Status(newStatus), ""); err != nil {
-					logger.Warn("stateChange: failed to update DB state",
-						"agent_key", key,
-						"error", err)
-				}
-				// On transition to idle the ACP handshake is complete and
-				// state.json contains the sessionID. Persist it now.
-				if apiruntime.Status(newStatus) == apiruntime.StatusIdle && runProc.StateDir != "" {
-					m.syncSessionInfo(updateCtx, workspace, name, runProc.StateDir, logger)
-				}
-				cancel()
-				continue
+		if runProc.WC != nil {
+			// Recovered agent: consume from WatchClient.
+			for wev := range runProc.WC.Events() {
+				m.routeEvent(workspace, name, runProc, wev.Payload, logger)
 			}
-
-			// All other events → push to the Events channel for external consumers.
-			select {
-			case runProc.Events <- ev:
-			default:
-				// No consumer is draining Events; drop silently to avoid log spam.
+		} else {
+			// Freshly-forked agent: consume from Watcher (unchanged path).
+			for ev := range runProc.Watcher.ResultChan() {
+				m.routeEvent(workspace, name, runProc, ev, logger)
 			}
 		}
 	}()

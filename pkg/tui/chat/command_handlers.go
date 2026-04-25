@@ -70,9 +70,7 @@ func cmdCancel(m *chatModel, _ string) []tea.Cmd {
 }
 
 func cmdExit(m *chatModel, _ string) []tea.Cmd {
-	if m.client != nil {
-		m.client.Close()
-	}
+	m.cleanup()
 	return []tea.Cmd{tea.Quit}
 }
 

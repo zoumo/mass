@@ -58,6 +58,24 @@ func createRecoveryTestAgent(t *testing.T, ctx context.Context, metaStore *store
 	return workspace, name
 }
 
+// waitForSubscribed polls srv.subscribed until it becomes true or the deadline
+// passes. WatchClient dials asynchronously, so the subscribe call may arrive
+// shortly after RecoverSessions returns.
+func waitForSubscribed(t *testing.T, srv *mockRunServer, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		srv.mu.Lock()
+		ok := srv.subscribed
+		srv.mu.Unlock()
+		if ok {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
 // TestRecoverSessions_LiveRun verifies that an agent with a live agent-run
 // is recovered: the agent-run client is connected, status/subscribe are called,
 // and the agent is registered in the processes map.
@@ -96,10 +114,8 @@ func TestRecoverSessions_LiveRun(t *testing.T) {
 	assert.Equal(t, socketPath, runProc.SocketPath)
 
 	// Verify the mock agent-run received a subscribe call.
-	srv.mu.Lock()
-	subscribed := srv.subscribed
-	srv.mu.Unlock()
-	assert.True(t, subscribed, "agent-run should have been subscribed")
+	// WatchClient dials asynchronously — poll until subscribed or timeout.
+	assert.True(t, waitForSubscribed(t, srv, 2*time.Second), "agent-run should have been subscribed")
 
 	// Cleanup: close the mock server and wait for the watcher to clean up.
 	srv.close()
@@ -321,10 +337,8 @@ func TestRecoverSessions_ReconcileIdleToRunning(t *testing.T) {
 	assert.NotNil(t, runProc.Client)
 
 	// Mock agent-run should have been subscribed.
-	srv.mu.Lock()
-	subscribed := srv.subscribed
-	srv.mu.Unlock()
-	assert.True(t, subscribed)
+	// WatchClient dials asynchronously — poll until subscribed or timeout.
+	assert.True(t, waitForSubscribed(t, srv, 2*time.Second))
 
 	// Cleanup.
 	srv.close()
@@ -377,10 +391,8 @@ func TestRecoverSessions_RunMismatchLogsWarning(t *testing.T) {
 		"DB state should remain creating (mismatch only logged, not reconciled)")
 
 	// Mock agent-run should have been subscribed (recovery completed).
-	srv.mu.Lock()
-	subscribed := srv.subscribed
-	srv.mu.Unlock()
-	assert.True(t, subscribed)
+	// WatchClient dials asynchronously — poll until subscribed or timeout.
+	assert.True(t, waitForSubscribed(t, srv, 2*time.Second))
 
 	// Cleanup.
 	srv.close()

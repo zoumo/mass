@@ -117,6 +117,7 @@ func TestRecoverSessions_PhaseTransitions_WithLiveRun(t *testing.T) {
 		"RecoveredAt should be at or after test start time")
 
 	// Cleanup.
+	assert.True(t, waitForSubscribed(t, srv, 2*time.Second), "WatchClient should subscribe before teardown")
 	srv.close()
 	select {
 	case <-runProc.Done:

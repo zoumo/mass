@@ -168,10 +168,11 @@ func TestWatcher_UnmarshalFailure_Skipped(t *testing.T) {
 	}
 }
 
-// TestWatcher_SlowConsumer_DropsEvent verifies that when ResultChan is full
-// (consumer not draining), additional events are dropped without blocking the
-// filter goroutine. The watcher must not deadlock.
-func TestWatcher_SlowConsumer_DropsEvent(t *testing.T) {
+// TestWatcher_SlowConsumer_BackpressureBlocks verifies that when ResultChan is full
+// (consumer not draining), the filter goroutine blocks (backpressure) rather than
+// dropping events. After the consumer drains, all events are eventually delivered.
+func TestWatcher_SlowConsumer_BackpressureBlocks(t *testing.T) {
+	// notifCh has enough capacity to accept all events without blocking the sender.
 	notifCh := make(chan jsonrpc.NotificationMsg, 512)
 	unsub := func() { close(notifCh) }
 	w := newWatcher("w-1", 0, notifCh, unsub)
@@ -189,28 +190,30 @@ func TestWatcher_SlowConsumer_DropsEvent(t *testing.T) {
 		})
 	}
 
-	// Let the filter goroutine process all notifications.
-	time.Sleep(200 * time.Millisecond)
+	// Allow the filter goroutine time to fill the result channel and then block.
+	time.Sleep(50 * time.Millisecond)
 
-	// Drain whatever arrived — should be <= 256 (buffer size).
+	// The result channel should be full (256 events buffered); the filter goroutine
+	// is now blocked on the 257th send — verifying backpressure.
+	assert.Len(t, w.ResultChan(), 256,
+		"result channel must be full when consumer is slow")
+
+	// Drain all delivered events — this unblocks the filter goroutine, which then
+	// delivers the remaining events.
 	var received int
-	for {
+	for i := 0; i < total; i++ {
 		select {
 		case _, ok := <-w.ResultChan():
 			if !ok {
-				t.Fatal("ResultChan should not be closed")
+				t.Fatal("ResultChan closed unexpectedly")
 			}
 			received++
-		default:
-			goto done
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timeout waiting for event %d", i)
 		}
 	}
-done:
-	assert.LessOrEqual(t, received, 256,
-		"received events must not exceed result channel buffer size")
-	assert.Positive(t, received,
-		"at least some events should be delivered")
-	t.Logf("delivered %d/%d events (dropped %d)", received, total, total-received)
+	assert.Equal(t, total, received, "all events must be delivered with backpressure (no drops)")
+	t.Logf("delivered %d/%d events", received, total)
 }
 
 // TestWatcher_Accessors verifies that WatchID() and NextSeq() return the values

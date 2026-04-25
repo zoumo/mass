@@ -113,15 +113,7 @@ func newWatcher(watchID string, nextSeq int, notifCh <-chan jsonrpc.Notification
 			if ev.WatchID != watchID {
 				continue
 			}
-			select {
-			case eventCh <- ev:
-			default:
-				// Consumer is slow — drop event. The upstream Translator's
-				// slow-subscriber eviction will close the connection soon,
-				// triggering reconnection with fromSeq.
-				slog.Debug("watcher: result channel full, event dropped",
-					"watchID", watchID, "seq", ev.Seq)
-			}
+			eventCh <- ev
 		}
 	}()
 

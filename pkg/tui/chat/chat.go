@@ -18,6 +18,7 @@ import (
 	runclient "github.com/zoumo/mass/pkg/agentrun/client"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	"github.com/zoumo/mass/pkg/tui/component"
+	"github.com/zoumo/mass/pkg/watch"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/anim"
 	"github.com/zoumo/mass/third_party/charmbracelet/crush/ui/styles"
 )
@@ -29,9 +30,9 @@ type (
 	turnEndMsg    struct{}
 	connClosedMsg struct{}
 	connReadyMsg  struct {
-		sc      *runclient.Client
-		watcher *runclient.Watcher
+		sc *runclient.Client
 	}
+	watchStoppedMsg struct{} // WatchClient stopped (ctx canceled), no reconnect needed
 )
 
 type (
@@ -101,7 +102,9 @@ type chatModel struct {
 	workspaceName string
 	agentName     string
 	client        *runclient.Client
-	watcher       *runclient.Watcher
+	wc            *watch.WatchClient[runapi.AgentRunEvent]
+	watchCtx      context.Context
+	watchCancel   context.CancelFunc
 
 	// Streaming state.
 	currentMsg   *StreamingMessage // mutable message being streamed
@@ -121,17 +124,19 @@ type chatModel struct {
 	currentModel    string                 // current model ID from session state
 	availableModels []apiruntime.ModelInfo // model list from session state, used for /model completion
 
-	// liveSeq is the watcher's nextSeq boundary: events with seq < liveSeq are
-	// historical replay events; events with seq >= liveSeq are live.
-	// Set once when connReadyMsg is received.
+	// liveSeq is the cursor snapshot taken when initialStatusMsg is received.
+	// Events with seq <= liveSeq are historical replay; events with seq > liveSeq are live.
+	// Set once when initialStatusMsg is processed.
 	liveSeq int
-	// maxSeq tracks the highest event sequence number received so far.
-	// Displayed in the header next to the status indicator.
-	maxSeq int
 	// initialStatusApplied is true once initialStatusMsg has been processed.
-	// After this point, historical stateChangeMsgs (seq < liveSeq) that would
+	// After this point, historical stateChangeMsgs (seq <= liveSeq) that would
 	// set status to "running" are ignored — they cannot reflect current state.
 	initialStatusApplied bool
+
+	// watchReading is true once the first waitNotif has been started.
+	// On RPC reconnects (connReadyMsg), we skip adding a second waitNotif
+	// because the existing goroutine is still alive on wc.Events().
+	watchReading bool
 
 	completion       *completionState
 	completionArgCmd string // non-empty when completion is showing args for this command name
@@ -151,6 +156,19 @@ func (m *chatModel) nextID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, m.turnCounter)
 }
 
+// cleanup closes the RPC client and cancels the WatchClient context.
+// Must be called on all quit paths to avoid leaking goroutines.
+func (m *chatModel) cleanup() {
+	if m.client != nil {
+		_ = m.client.Close()
+		m.client = nil
+	}
+	if m.watchCancel != nil {
+		m.watchCancel()
+		m.watchCancel = nil
+	}
+}
+
 func newChatModel(opts ChatTUIOptions) chatModel {
 	ta := textarea.New()
 	ta.Placeholder = "Type a message…"
@@ -163,6 +181,10 @@ func newChatModel(opts ChatTUIOptions) chatModel {
 	sp := spinner.New()
 	sty := styles.DefaultStyles()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	wc := watch.NewWatchClient(runclient.NewDialFunc(opts.SocketPath), -1, 4096)
+	wc.Start(ctx)
+
 	return chatModel{
 		sock:          opts.SocketPath,
 		workspaceName: opts.WorkspaceName,
@@ -174,6 +196,9 @@ func newChatModel(opts ChatTUIOptions) chatModel {
 		completion:    newCompletionState(&sty),
 		history:       NewHistory(100),
 		toolItemIDs:   make(map[string]string),
+		wc:            wc,
+		watchCtx:      ctx,
+		watchCancel:   cancel,
 	}
 }
 
@@ -187,59 +212,61 @@ func (m chatModel) Init() tea.Cmd {
 }
 
 func connectCmd(sock string) tea.Cmd {
+	return reconnectCmd(sock)
+}
+
+// reconnectCmd dials the agent-run socket and returns the RPC client.
+// The event stream is handled independently by WatchClient.
+func reconnectCmd(sock string) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		ctx := context.Background()
 		sc, err := runclient.Dial(ctx, sock)
 		if err != nil {
 			return connErrMsg{fmt.Errorf("connect: %w", err)}
 		}
-		// WatchEvent with FromSeq=0 replays all historical events first,
-		// then streams live events (List-Watch pattern).
-		fromSeq := 0
-		watcher, err := sc.WatchEvent(ctx, &runapi.SessionWatchEventParams{FromSeq: &fromSeq})
-		if err != nil {
-			sc.Close()
-			return connErrMsg{fmt.Errorf("session/watch_event: %w", err)}
-		}
-		return connReadyMsg{sc: sc, watcher: watcher}
+		return connReadyMsg{sc: sc}
 	})
 }
 
-// waitNotif reads the next event from the Watcher's ResultChan and converts it
-// to the appropriate tea.Msg. The Watcher has already deserialized the raw
-// JSON-RPC notification into a typed AgentRunEvent, so no JSON parsing is needed.
+// waitNotif reads the next event from the WatchClient's Events channel and
+// converts it to the appropriate tea.Msg. The WatchClient handles reconnection
+// automatically, so watchStoppedMsg is only returned when the channel is closed
+// (i.e., the WatchClient context was canceled). connClosedMsg is returned only
+// by watchDisconnect (RPC disconnect), to trigger a reconnect.
 //
 // The loop skips unknown events to avoid returning nil (which would break the
 // Bubbletea notification chain — see CLAUDE.md "waitNotif 必须内部循环").
-// When ResultChan closes (connection lost, slow consumer eviction, or explicit
-// Stop()), connClosedMsg is returned.
-func waitNotif(w *runclient.Watcher) tea.Cmd {
+// When the Events channel closes (context canceled), watchStoppedMsg is returned.
+func waitNotif(wc *watch.WatchClient[runapi.AgentRunEvent]) tea.Cmd {
 	return safeCmd(func() tea.Msg {
-		ev, ok := <-w.ResultChan()
-		if !ok {
-			return connClosedMsg{}
-		}
-		// turn_end → dedicated message so Update can finalize the assistant.
-		if ev.Type == runapi.EventTypeTurnEnd {
-			return turnEndMsg{}
-		}
-		// runtime_update with Status → dedicated message for status bar updates.
-		if ev.Type == runapi.EventTypeRuntimeUpdate {
-			if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok {
-				if ru.Status != nil {
-					return stateChangeMsg{
-						previous: ru.Status.PreviousStatus,
-						status:   ru.Status.Status,
-						reason:   ru.Status.Reason,
-						seq:      ev.Seq,
+		for {
+			ev, ok := <-wc.Events()
+			if !ok {
+				return watchStoppedMsg{}
+			}
+			inner := ev.Payload
+			// turn_end → dedicated message so Update can finalize the assistant.
+			if inner.Type == runapi.EventTypeTurnEnd {
+				return turnEndMsg{}
+			}
+			// runtime_update with Status → dedicated message for status bar updates.
+			if inner.Type == runapi.EventTypeRuntimeUpdate {
+				if ru, ok := inner.Payload.(runapi.RuntimeUpdateEvent); ok {
+					if ru.Status != nil {
+						return stateChangeMsg{
+							previous: ru.Status.PreviousStatus,
+							status:   ru.Status.Status,
+							reason:   ru.Status.Reason,
+							seq:      inner.Seq,
+						}
+					}
+					if ru.AvailableCommands != nil {
+						return agentCommandsMsg{commands: ru.AvailableCommands.Commands}
 					}
 				}
-				if ru.AvailableCommands != nil {
-					return agentCommandsMsg{commands: ru.AvailableCommands.Commands}
-				}
 			}
+			return notifMsg{ev: inner}
 		}
-		return notifMsg{ev: ev}
 	})
 }
 
@@ -308,29 +335,42 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case connReadyMsg:
+		if m.client != nil {
+			_ = m.client.Close()
+		}
 		m.client = msg.sc
-		m.watcher = msg.watcher
-		m.liveSeq = msg.watcher.NextSeq() // events with seq < liveSeq are historical replay
-		cmds = append(cmds, waitNotif(m.watcher), fetchStatusCmd(m.client), watchDisconnect(m.client))
+		m.liveSeq = 0                  // reset for re-snapshot on next initialStatusMsg
+		m.initialStatusApplied = false // reset so replayed stateChangeMsg events are not filtered during reconnect
+		cmds = append(cmds, fetchStatusCmd(m.client), watchDisconnect(m.client))
+		if !m.watchReading {
+			m.watchReading = true
+			cmds = append(cmds, waitNotif(m.wc))
+		}
 
 	case panicMsg:
 		m.chat.AppendMessages(component.NewSystemItem(m.nextID("sys"), "fatal: "+msg.err.Error(), styleErr))
+		m.cleanup()
 		return m, tea.Quit
 
 	case connErrMsg:
 		m.chat.AppendMessages(component.NewSystemItem(m.nextID("sys"), "error: "+msg.err.Error(), styleErr))
+		m.cleanup()
 		return m, tea.Quit
 
 	case connClosedMsg:
-		m.chat.AppendMessages(component.NewSystemItem(m.nextID("sys"), "connection closed", styleDim))
-		return m, tea.Quit
+		m.chat.AppendMessages(component.NewSystemItem(m.nextID("sys"), "reconnecting...", styleDim))
+		return m, reconnectCmd(m.sock)
+
+	case watchStoppedMsg:
+		// WatchClient stopped (ctx canceled); no reconnect, no action needed.
+		return m, nil
 
 	case notifMsg:
 		cmd := m.handleNotif(msg.ev)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
-		cmds = append(cmds, waitNotif(m.watcher))
+		cmds = append(cmds, waitNotif(m.wc))
 
 	case turnEndMsg:
 		// Finalize the streaming assistant message for UI rendering only.
@@ -345,7 +385,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.currentMsg = nil
 		m.currentMsgID = ""
-		cmds = append(cmds, waitNotif(m.watcher))
+		cmds = append(cmds, waitNotif(m.wc))
 
 	case setModelResult:
 		m.currentModel = msg.modelID
@@ -364,21 +404,17 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentMsgID = ""
 		m.waiting = false
 		m.chatFocused = false
-		cmds = append(cmds, m.input.Focus(), waitNotif(m.watcher))
+		cmds = append(cmds, m.input.Focus(), waitNotif(m.wc))
 
 	case stateChangeMsg:
-		// Update maxSeq from the event sequence number.
-		if msg.seq > m.maxSeq {
-			m.maxSeq = msg.seq
-		}
-		isHistorical := m.liveSeq > 0 && msg.seq < m.liveSeq
+		isHistorical := m.liveSeq > 0 && msg.seq <= m.liveSeq
 		// Historical replay events that arrive after initialStatusMsg was applied
 		// must not override the authoritative current status. Specifically, a
 		// historical "running" event from an incomplete past turn (e.g. crash
 		// with no matching "idle") would permanently stuck the TUI in waiting
 		// mode even though the agent is actually idle right now.
 		if isHistorical && m.initialStatusApplied {
-			cmds = append(cmds, waitNotif(m.watcher))
+			cmds = append(cmds, waitNotif(m.wc))
 			break
 		}
 		m.agentStatus = msg.status
@@ -391,11 +427,14 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chatFocused = false
 			cmds = append(cmds, m.input.Focus())
 		}
-		cmds = append(cmds, waitNotif(m.watcher)) // keep the notification chain alive
+		cmds = append(cmds, waitNotif(m.wc)) // keep the notification chain alive
 
 	case initialStatusMsg:
 		// Initial status from fetchStatusCmd — authoritative current state.
+		// Snapshot the current cursor as the live boundary: events with seq <= liveSeq
+		// are historical replay; events with seq > liveSeq are live.
 		// Do NOT re-schedule waitNotif (that would create a duplicate chain).
+		m.liveSeq = m.wc.Cursor()
 		m.agentStatus = msg.status
 		m.currentModel = msg.currentModel
 		m.availableModels = msg.availableModels
@@ -419,7 +458,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentCommandsMsg:
 		m.updateAgentCommands(msg.commands)
-		cmds = append(cmds, waitNotif(m.watcher))
+		cmds = append(cmds, waitNotif(m.wc))
 
 	case anim.StepMsg:
 		// Forward animation ticks to the chat (for spinner animations).
@@ -478,9 +517,7 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 
 	switch {
 	case key.Mod&tea.ModCtrl != 0 && key.Code == 'c':
-		if m.client != nil {
-			m.client.Close()
-		}
+		m.cleanup()
 		cmds = append(cmds, tea.Quit)
 		return cmds
 
@@ -803,11 +840,6 @@ func contentBlockText(cb runapi.ContentBlock) string {
 }
 
 func (m *chatModel) handleNotif(ev runapi.AgentRunEvent) tea.Cmd {
-	// Update maxSeq for every received event.
-	if ev.Seq > m.maxSeq {
-		m.maxSeq = ev.Seq
-	}
-
 	// runtime_update events are handled by waitNotif; skip here.
 	if ev.Type == runapi.EventTypeRuntimeUpdate {
 		return nil
@@ -977,7 +1009,7 @@ func (m chatModel) View() tea.View {
 
 	chatView := m.chat.Render()
 	div := styleDim.Render(strings.Repeat("─", m.width))
-	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, m.maxSeq, m.width)
+	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, m.wc.Cursor(), m.width)
 
 	var input string
 	if m.waiting {
