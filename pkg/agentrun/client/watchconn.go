@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
+	"github.com/zoumo/mass/pkg/jsonrpc"
 	"github.com/zoumo/mass/pkg/watch"
 )
 
@@ -41,11 +42,22 @@ func (c *agentRunConn) Close() error {
 // Subscribe to runtime/event_update BEFORE sending the runtime/watch_event RPC
 // to avoid a race where the server sends replay notifications between the RPC
 // response and the Subscribe call, causing those notifications to be dropped.
+//
+// A relay goroutine drains the raw subscription channel (rawCh) into an
+// unbounded in-memory buffer and forwards to relayCh. This prevents the
+// non-blocking drop in routeToSubscribers when the server sends more than
+// 1024 replay notifications before the watcher goroutine starts draining.
 func (c *Client) WatchEventConn(ctx context.Context, fromSeq int) (watch.ClientConn[runapi.AgentRunEvent], error) {
 	// Step 1: subscribe first to ensure no replay notifications are missed.
-	notifCh, unsub := c.c.Subscribe(runapi.MethodRuntimeEventUpdate, 1024)
+	// Use a modest buffer; the relay goroutine will absorb any bursts.
+	rawCh, unsub := c.c.Subscribe(runapi.MethodRuntimeEventUpdate, 64)
 
-	// Step 2: call runtime/watch_event RPC.
+	// Step 2: start relay goroutine with an unbounded internal queue so rawCh
+	// is always drained quickly, preventing non-blocking drop in routeToSubscribers.
+	relayCh := make(chan jsonrpc.NotificationMsg, 64)
+	go relayNotifications(rawCh, relayCh)
+
+	// Step 3: call runtime/watch_event RPC.
 	fromSeqCopy := fromSeq
 	var result runapi.SessionWatchEventResult
 	if err := c.c.Call(ctx, runapi.MethodRuntimeWatchEvent, &runapi.SessionWatchEventParams{FromSeq: &fromSeqCopy}, &result); err != nil {
@@ -53,9 +65,52 @@ func (c *Client) WatchEventConn(ctx context.Context, fromSeq int) (watch.ClientC
 		return nil, err
 	}
 
-	// Step 3: build watcher using the pre-registered notifCh.
-	w := newWatcher(result.WatchID, result.NextSeq, notifCh, unsub)
+	// Step 4: build watcher using relayCh (which already buffers any replay
+	// notifications that arrived between steps 1 and now).
+	w := newWatcher(result.WatchID, result.NextSeq, relayCh, unsub)
 	return &agentRunConn{w: w, closeOnce: sync.Once{}}, nil
+}
+
+// relayNotifications reads from src and writes to dst, using an unbounded
+// in-memory slice to absorb bursts without ever dropping a message.
+//
+// When src closes, any buffered messages are flushed to dst and then dst is
+// closed. This maintains the invariant expected by newWatcher: closing the
+// input channel eventually closes the output channel.
+//
+// Ownership: the caller owns unsub (which closes src). Stop() → unsub() →
+// src closes → relay flushes + closes dst → watcher goroutine exits →
+// ResultChan closes.
+func relayNotifications(src <-chan jsonrpc.NotificationMsg, dst chan<- jsonrpc.NotificationMsg) {
+	var buf []jsonrpc.NotificationMsg
+	for {
+		if len(buf) == 0 {
+			// Buffer is empty: block waiting for the next message from src.
+			msg, ok := <-src
+			if !ok {
+				// src closed with empty buffer — signal downstream.
+				close(dst)
+				return
+			}
+			buf = append(buf, msg)
+		}
+		// Buffer is non-empty: simultaneously try to read more from src and
+		// forward the head of the buffer to dst.
+		select {
+		case msg, ok := <-src:
+			if !ok {
+				// src closed: flush remaining buffer to dst then close.
+				for _, m := range buf {
+					dst <- m
+				}
+				close(dst)
+				return
+			}
+			buf = append(buf, msg)
+		case dst <- buf[0]:
+			buf = buf[1:]
+		}
+	}
 }
 
 // ownedConn wraps a watch.ClientConn and an io.Closer (the underlying *Client).

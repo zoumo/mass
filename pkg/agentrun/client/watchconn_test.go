@@ -1,6 +1,7 @@
 package client
 
 import (
+	"encoding/json"
 	"io"
 	"testing"
 	"time"
@@ -12,6 +13,56 @@ import (
 	"github.com/zoumo/mass/pkg/jsonrpc"
 	"github.com/zoumo/mass/pkg/watch"
 )
+
+// makeSeqNotifMsg builds a NotificationMsg whose Params is the JSON-encoded seq integer.
+func makeSeqNotifMsg(seq int) jsonrpc.NotificationMsg {
+	raw, _ := json.Marshal(seq)
+	return jsonrpc.NotificationMsg{Method: "test", Params: raw}
+}
+
+// TestRelayNotifications_NoDrop verifies that relayNotifications never drops
+// messages even when dst would fill up — excess messages are buffered internally.
+func TestRelayNotifications_NoDrop(t *testing.T) {
+	const count = 2048
+	src := make(chan jsonrpc.NotificationMsg, 64)
+	dst := make(chan jsonrpc.NotificationMsg, 64)
+
+	go relayNotifications(src, dst)
+
+	// Produce count messages in a separate goroutine to avoid blocking.
+	go func() {
+		for i := 0; i < count; i++ {
+			src <- makeSeqNotifMsg(i)
+		}
+		close(src)
+	}()
+
+	// Drain dst; relayNotifications must close dst after src is exhausted.
+	received := 0
+	for range dst {
+		received++
+	}
+	assert.Equal(t, count, received, "relayNotifications must not drop any message")
+}
+
+// TestRelayNotifications_ClosePropagates verifies that closing src causes dst
+// to be closed after all buffered messages are flushed to dst.
+func TestRelayNotifications_ClosePropagates(t *testing.T) {
+	src := make(chan jsonrpc.NotificationMsg, 4)
+	dst := make(chan jsonrpc.NotificationMsg, 4)
+
+	go relayNotifications(src, dst)
+
+	src <- jsonrpc.NotificationMsg{Method: "m1"}
+	src <- jsonrpc.NotificationMsg{Method: "m2"}
+	close(src)
+
+	var got []string
+	for msg := range dst {
+		got = append(got, msg.Method)
+	}
+	require.Equal(t, []string{"m1", "m2"}, got)
+}
 
 // newTestConn creates an agentRunConn backed by a Watcher driven by notifCh.
 // The returned unsub function closes notifCh (simulating connection loss).
