@@ -168,3 +168,4 @@ Agent 面临着同样的分层关切：
 | [mass/ari-spec.md](./mass/ari-spec.md) | 规范 | ARI — Agent Runtime Interface；`workspace/*`、`agent/*` Agent CRUD、`agentrun/*` AgentRun 生命周期 |
 | [mass/mass.md](./mass/mass.md) | 组件 | agentd — agent 运行时守护进程；Workspace Manager、Agent Manager、Agent Manager、Process Manager |
 | [mass/lifecycle-hooks.md](./mass/lifecycle-hooks.md) | 设计提案 | AgentRun Lifecycle Hooks — workspace 级别的 agent 状态变化通知机制 |
+| [mass/watch-framework.md](./mass/watch-framework.md) | 设计提案 | Watch Framework — 统一 Watch client/server、自动重连、游标追踪、零丢失交付；修复当前 TUI 事件丢失问题 |
