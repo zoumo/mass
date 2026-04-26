@@ -1,43 +1,16 @@
-# Workflow YAML Schema Reference
+# Pipeline YAML Schema Reference
+
+Pipeline files define stages, routing logic, and output. They reference a compose file for workspace and agent definitions.
 
 ## Top-level fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | yes | Workflow identifier |
+| `name` | string | yes | Pipeline identifier, used as workspace name prefix |
 | `description` | string | no | Human-readable purpose |
-| `workspace` | object | yes | Workspace configuration |
-| `agents` | map | yes | Agent definitions keyed by name |
+| `compose` | string | yes | Path to the compose YAML file (absolute or relative to CWD) |
 | `stages` | list | yes | Ordered list of stages to execute |
 | `output` | object | no | Output collection configuration |
-
----
-
-## `workspace`
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | enum | yes | `local` \| `git` \| `empty` |
-| `path` | string | conditional | Required for `local` (project path) and `git` (repo URL). Ignored for `empty`. |
-
----
-
-## `agents`
-
-Map of agent name → agent config. Agent names must be unique and are referenced by stages.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `system_prompt` | string | yes | Full system prompt for this agent |
-
-Example:
-```yaml
-agents:
-  designer:
-    system_prompt: "You are a software architect. Analyze requirements and produce a design document."
-  reviewer:
-    system_prompt: "You are a code reviewer. Review the design for correctness and risk."
-```
 
 ---
 
@@ -51,12 +24,12 @@ Ordered list. Execution starts at `stages[0]`. Routing via `routes` determines w
 |-------|------|----------|-------------|
 | `name` | string | yes | Unique stage identifier, used in `goto` and `input_from` |
 | `type` | enum | no | `serial` (default) \| `parallel` |
-| `agent` | string | yes | Agent name from `agents` map |
-| `description` | string | yes | Semantic task description — LLM interprets this to build the task prompt |
+| `agent` | string | yes | Agent run name from compose `spec.runs` |
+| `description` | string | yes | Semantic task description — orchestrator builds the task prompt from this |
 | `input_files` | list | no | Static files to pass to this stage's task |
-| `input_from` | list | no | Stage names whose artifacts to collect and pass as task input files |
+| `input_from` | list | no | Stage names whose artifacts to collect and pass as task input |
 | `max_retries` | int | no | Max times this stage can be re-entered via `goto`. Default: 3 |
-| `routes` | list | yes | Routing rules based on response status |
+| `routes` | list | yes | Routing rules based on task reason |
 
 ### Parallel stage
 
@@ -64,19 +37,12 @@ Ordered list. Execution starts at `stages[0]`. Routing via `routes` determines w
 |-------|------|----------|-------------|
 | `name` | string | yes | Unique stage identifier |
 | `type` | enum | yes | Must be `parallel` |
-| `tasks` | list | yes | List of parallel sub-tasks (each has `agent`, `description`, `input_from`, `input_files`) |
-| `wait` | enum | no | `all` (default) — wait for all sub-tasks \| `any` — proceed when first completes |
-| `max_retries` | int | no | Max retries for this stage. Default: 3 |
-| `routes` | list | yes | Routing rules using aggregated status values |
+| `tasks` | list | yes | List of parallel sub-tasks |
+| `wait` | enum | no | `all` (default) \| `any` |
+| `max_retries` | int | no | Default: 3 |
+| `routes` | list | yes | Routing rules using aggregated reason values |
 
-Parallel sub-task fields:
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `agent` | string | yes | Agent name from `agents` map |
-| `description` | string | yes | Semantic task description |
-| `input_from` | list | no | Stage names whose artifacts to collect |
-| `input_files` | list | no | Static files |
+Parallel sub-task fields: `agent`, `description`, `input_from`, `input_files` (same as serial).
 
 ---
 
@@ -84,14 +50,16 @@ Parallel sub-task fields:
 
 List of routing rules evaluated in order. First matching `when` wins.
 
+Routing matches against the task's `.reason` field (set by `massctl agentrun task done --reason`).
+
 ### Serial stage `when` values
 
 | Value | Meaning |
 |-------|---------|
-| `success` | `response.status == "success"` |
-| `failed` | `response.status == "failed"` |
-| `needs_human` | `response.status == "needs_human"` |
-| Any string | Custom `response.status` value |
+| `success` | Agent reported `reason=success` |
+| `failed` | Agent reported `reason=failed` |
+| `needs_human` | Agent reported `reason=needs_human` |
+| Any string | Matches any custom reason value |
 
 ### Parallel stage `when` values (aggregated)
 
@@ -120,39 +88,15 @@ List of routing rules evaluated in order. First matching `when` wins.
 | `destination` | string | no | Local path to copy artifacts to. Default: `./mass-pipeline-output/` |
 | `summary` | bool | no | Print execution summary on completion. Default: `true` |
 
-When `collect_from` references a parallel stage, artifacts from **all** sub-task agents within that stage are merged into `destination`.
-
 ---
 
-## Built-in `--input` flag
-
-```
-/mass-pipeline workflow.yaml --input file1.md --input file2.md
-```
-
-Files passed via `--input` are injected into every stage that has no explicit `input_files` defined.
-
----
-
-## Complete example
+## Example
 
 ```yaml
 name: design-review-implement
 description: "设计 → 评审 → 实现"
 
-workspace:
-  type: local
-  path: ./
-
-agents:
-  designer:
-    system_prompt: "You are a software architect. Analyze the requirements and produce a detailed design document with clear component boundaries and interfaces."
-  security_reviewer:
-    system_prompt: "You are a security reviewer. Review the design for security vulnerabilities, authentication gaps, and data exposure risks."
-  perf_reviewer:
-    system_prompt: "You are a performance reviewer. Review the design for scalability bottlenecks, inefficient data access patterns, and resource contention."
-  implementer:
-    system_prompt: "You are a senior developer. Implement the design faithfully, following the reviewed design document exactly."
+compose: /tmp/mass-pipelines/my-compose.yaml
 
 stages:
   - name: design

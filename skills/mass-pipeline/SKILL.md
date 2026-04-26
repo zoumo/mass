@@ -40,7 +40,7 @@ version: 0.2.0
 
 ## 触发格式
 
-### 内置 dev-pipeline（推荐）
+### 内置 coding-pipeline（推荐）
 
 直接描述任务，使用内置标准开发流程（plan → review → execute → code review → fix）：
 
@@ -49,20 +49,36 @@ version: 0.2.0
 用 pipeline 实现 [任务描述]
 ```
 
-Orchestrator 自动使用 `skills/mass-pipeline/templates/dev-pipeline.yaml`，将用户描述作为 `--input` 传入。
+Orchestrator 自动使用：
+- compose: `skills/mass-pipeline/templates/coding-compose.yaml`
+- pipeline: `skills/mass-pipeline/templates/coding-pipeline.yaml`
+
 每个审查循环最多 3 轮收敛，超限后 escalate。
 
 ### 自定义 pipeline
 
 ```
-/mass-pipeline path/to/pipeline.yaml
-/mass-pipeline path/to/pipeline.yaml --input file1.md --input file2.md
+/mass-pipeline /path/to/pipeline.yaml
+/mass-pipeline /path/to/pipeline.yaml --input file1.md --input file2.md
 ```
 
 `--input` 文件注入到所有未显式配置 `input_files` 的 stage。
 
-完整 YAML 字段说明见 [references/workflow-schema.md](references/workflow-schema.md)。
-自定义 pipeline 示例见 [templates/dev-pipeline.yaml](templates/dev-pipeline.yaml)。
+**自定义文件写入规则**：当 orchestrator 需要生成自定义 compose 或 pipeline 文件时，写到临时目录：
+
+```bash
+TMPDIR=$(mktemp -d /tmp/mass-pipeline-XXXXXX)
+compose_file="$TMPDIR/compose.yaml"
+pipeline_file="$TMPDIR/pipeline.yaml"
+```
+
+完整字段说明：
+- Compose YAML: [references/compose-schema.md](references/compose-schema.md)
+- Pipeline YAML: [references/pipeline-schema.md](references/pipeline-schema.md)
+
+内置模板参考:
+- `templates/coding-compose.yaml` — workspace-compose with planner/reviewer/worker agents
+- `templates/coding-pipeline.yaml` — plan → review → execute → code review → fix
 
 ---
 
