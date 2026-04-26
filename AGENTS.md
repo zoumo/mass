@@ -22,6 +22,7 @@ Reference files for architecture, decisions, conventions, and design:
 |-------|------|-------------|
 | mass-guide | [skills/mass-guide/SKILL.md](skills/mass-guide/SKILL.md) | Manage MASS workspaces, agent lifecycles via massctl CLI |
 | mass-pilot | [skills/mass-pilot/SKILL.md](skills/mass-pilot/SKILL.md) | Multi-agent collaboration via file-based Task protocol, role workflows, orchestration |
+| mass-workflow | [skills/mass-workflow/SKILL.md](skills/mass-workflow/SKILL.md) | Declarative YAML-driven multi-agent workflow orchestrator |
 
 ## 设计一致性
 
