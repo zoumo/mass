@@ -208,12 +208,13 @@ func (a *workspaceAdapter) List(ctx context.Context, opts pkgariapi.ListOptions)
 // Delete handles workspace/delete.
 //
 // Rejects deletion if the workspace has active agent runs.
-// After the DB record is removed, runs teardown hooks and deletes the managed
-// workspace directory via WorkspaceManager.Cleanup.
+// Cleanup (teardown hooks + managed directory removal) runs before the DB
+// record is deleted so that a crash between cleanup and DB delete leaves the
+// workspace record intact and the next delete attempt can retry (Cleanup is
+// idempotent for missing directories).
 func (a *workspaceAdapter) Delete(ctx context.Context, name string) error {
 	a.logger.Info("workspace/delete", "workspace", name)
 
-	// Fetch before deleting so we can build the WorkspaceSpec for Cleanup.
 	ws, err := a.store.GetWorkspace(ctx, name)
 	if err != nil {
 		return jsonrpc.ErrInternal(err.Error())
@@ -222,14 +223,20 @@ func (a *workspaceAdapter) Delete(ctx context.Context, name string) error {
 		return jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s not found", name))
 	}
 
-	if err := a.store.DeleteWorkspace(ctx, name); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return jsonrpc.ErrInvalidParams(err.Error())
+	// Pre-validate: reject if any agent runs exist before touching the filesystem.
+	agents, err := a.store.ListAgentRuns(ctx, &pkgariapi.AgentRunFilter{Workspace: name})
+	if err != nil {
+		return jsonrpc.ErrInternal(err.Error())
+	}
+	if len(agents) > 0 {
+		return &jsonrpc.RPCError{
+			Code:    pkgariapi.CodeRecoveryBlocked,
+			Message: fmt.Sprintf("workspace %s has %d agent(s) and cannot be deleted", name, len(agents)),
 		}
-		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
 	}
 
-	// Run teardown hooks and remove managed directory.
+	// Cleanup filesystem first. If a crash occurs here the DB record is still
+	// intact and the next delete retries cleanly.
 	targetDir := filepath.Join(a.baseDir, "workspaces", name)
 	var src workspace.Source
 	if len(ws.Spec.Source) > 0 {
@@ -247,6 +254,16 @@ func (a *workspaceAdapter) Delete(ctx context.Context, name string) error {
 	}
 	if cleanErr := a.manager.Cleanup(ctx, targetDir, wsSpec); cleanErr != nil {
 		a.logger.Warn("workspace/delete: cleanup failed", "workspace", name, "error", cleanErr)
+		return jsonrpc.ErrInternal(fmt.Sprintf("workspace cleanup failed: %v", cleanErr))
+	}
+
+	// Remove DB record last. DeleteWorkspace re-validates no agents atomically,
+	// catching any agent created in the window between pre-validation and here.
+	if err := a.store.DeleteWorkspace(ctx, name); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return jsonrpc.ErrInvalidParams(err.Error())
+		}
+		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
 	}
 	return nil
 }
