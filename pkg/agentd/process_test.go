@@ -270,9 +270,9 @@ func TestAgentKey(t *testing.T) {
 
 func TestProcessManager_BundlePath(t *testing.T) {
 	t.Parallel()
-	pm := &ProcessManager{bundleRoot: "/tmp/test-mass/agentruns"}
+	pm := &ProcessManager{bundleRoot: "/tmp/test-mass/runs"}
 	got := pm.BundlePath("ws1", "agent-a")
-	expected := "/tmp/test-mass/agentruns/ws1/agent-a"
+	expected := "/tmp/test-mass/runs/ws1/agent-a"
 	if got != expected {
 		t.Errorf("BundlePath: expected %s, got %s", expected, got)
 	}
@@ -342,14 +342,17 @@ func TestGenerateConfig(t *testing.T) {
 		if !strings.Contains(cfg.Session.SystemPrompt, "you are helpful") {
 			t.Errorf("expected SystemPrompt to contain original prompt, got %q", cfg.Session.SystemPrompt)
 		}
-		if !strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
-			t.Errorf("expected SystemPrompt to include workspace mesh section, got %q", cfg.Session.SystemPrompt)
-		}
-		if !strings.Contains(cfg.Session.SystemPrompt, "in the ws1 workspace") {
-			t.Errorf("expected SystemPrompt to include workspace name, got %q", cfg.Session.SystemPrompt)
+		if !strings.Contains(cfg.Session.SystemPrompt, "<identity>") {
+			t.Errorf("expected SystemPrompt to include identity section, got %q", cfg.Session.SystemPrompt)
 		}
 		if !strings.Contains(cfg.Session.SystemPrompt, "You are my-agent") {
 			t.Errorf("expected SystemPrompt to include agentrun name, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, `workspace "ws1"`) {
+			t.Errorf("expected SystemPrompt to include workspace name, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
+			t.Errorf("expected SystemPrompt to include workspace mesh section, got %q", cfg.Session.SystemPrompt)
 		}
 		if !strings.Contains(cfg.Session.SystemPrompt, "<agent-task-protocol>") {
 			t.Errorf("expected SystemPrompt to include agent task section, got %q", cfg.Session.SystemPrompt)
@@ -395,17 +398,17 @@ func TestGenerateConfig(t *testing.T) {
 		}
 
 		cfg := pm.generateConfig(agent, rc, nil)
-		if !strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
-			t.Errorf("expected default workspace mesh prompt, got %q", cfg.Session.SystemPrompt)
-		}
-		if !strings.Contains(cfg.Session.SystemPrompt, "in the ws1 workspace") {
-			t.Errorf("expected default workspace mesh prompt to include workspace name, got %q", cfg.Session.SystemPrompt)
+		if !strings.Contains(cfg.Session.SystemPrompt, "<identity>") {
+			t.Errorf("expected identity section, got %q", cfg.Session.SystemPrompt)
 		}
 		if !strings.Contains(cfg.Session.SystemPrompt, "You are bare-agent") {
-			t.Errorf("expected default workspace mesh prompt to include agentrun name, got %q", cfg.Session.SystemPrompt)
+			t.Errorf("expected identity to include agentrun name, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
+			t.Errorf("expected workspace mesh prompt, got %q", cfg.Session.SystemPrompt)
 		}
 		if !strings.Contains(cfg.Session.SystemPrompt, "<agent-task-protocol>") {
-			t.Errorf("expected default agent task prompt, got %q", cfg.Session.SystemPrompt)
+			t.Errorf("expected agent task prompt, got %q", cfg.Session.SystemPrompt)
 		}
 	})
 
@@ -430,8 +433,17 @@ func TestGenerateConfig(t *testing.T) {
 		}
 
 		cfg := pm.generateConfig(agent, rc, ws)
-		if cfg.Session.SystemPrompt != "keep it plain" {
-			t.Errorf("expected unmodified SystemPrompt, got %q", cfg.Session.SystemPrompt)
+		if !strings.Contains(cfg.Session.SystemPrompt, "<identity>") {
+			t.Errorf("expected identity section even with features disabled, got %q", cfg.Session.SystemPrompt)
+		}
+		if !strings.Contains(cfg.Session.SystemPrompt, "keep it plain") {
+			t.Errorf("expected user prompt in SystemPrompt, got %q", cfg.Session.SystemPrompt)
+		}
+		if strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
+			t.Errorf("expected no workspace mesh when disabled, got %q", cfg.Session.SystemPrompt)
+		}
+		if strings.Contains(cfg.Session.SystemPrompt, "<agent-task-protocol>") {
+			t.Errorf("expected no agent task when disabled, got %q", cfg.Session.SystemPrompt)
 		}
 		if len(cfg.Session.McpServers) != 0 {
 			t.Errorf("expected no MCP servers when WorkspaceMesh disabled, got %d", len(cfg.Session.McpServers))

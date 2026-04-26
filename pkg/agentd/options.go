@@ -48,7 +48,7 @@ func (o Options) WorkspaceRoot() string {
 // AgentRunRoot returns the root directory for agent-run bundle creation.
 // Each agent gets a subdirectory: <AgentRunRoot>/<workspace>/<name>/.
 func (o Options) AgentRunRoot() string {
-	return filepath.Join(o.Root, "agentruns")
+	return filepath.Join(o.Root, "runs")
 }
 
 // MetaDBPath returns the path to the bbolt metadata database file.

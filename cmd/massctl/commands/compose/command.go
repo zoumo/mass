@@ -2,9 +2,7 @@ package compose
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -26,70 +24,6 @@ func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 	return cmd
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Shared helpers used by both apply and run subcommands
-// ────────────────────────────────────────────────────────────────────────────
-
-func createWorkspace(ctx context.Context, client pkgariapi.Client, cfg Config) error {
-	src, err := buildSource(cfg.Spec.Source)
-	if err != nil {
-		return err
-	}
-	srcJSON, err := json.Marshal(src)
-	if err != nil {
-		return fmt.Errorf("marshal source: %w", err)
-	}
-	ws := pkgariapi.Workspace{
-		Metadata: pkgariapi.ObjectMeta{Name: cfg.Metadata.Name},
-		Spec:     pkgariapi.WorkspaceSpec{Source: srcJSON},
-	}
-	if err := client.Create(ctx, &ws); err != nil {
-		return fmt.Errorf("workspace/create: %w", err)
-	}
-	fmt.Printf("Workspace %q created (phase: %s)\n", ws.Metadata.Name, ws.Status.Phase)
-	return nil
-}
-
-// ensureWorkspace reuses an existing ready workspace or creates a new one.
-func ensureWorkspace(ctx context.Context, client pkgariapi.Client, wsName string, src SourceConfig) error {
-	var ws pkgariapi.Workspace
-	if err := client.Get(ctx, pkgariapi.ObjectKey{Name: wsName}, &ws); err == nil {
-		if ws.Status.Phase == pkgariapi.WorkspacePhaseReady {
-			fmt.Printf("Workspace %q already exists (reusing, path: %s)\n", wsName, ws.Status.Path)
-			return nil
-		}
-		// Exists but not yet ready — wait.
-		return waitWorkspaceReady(ctx, client, wsName)
-	}
-	// Not found — create new.
-	cfg := Config{
-		Metadata: ConfigMetadata{Name: wsName},
-		Spec:     WorkspaceComposeSpec{Source: src},
-	}
-	if err := createWorkspace(ctx, client, cfg); err != nil {
-		return err
-	}
-	return waitWorkspaceReady(ctx, client, wsName)
-}
-
-func waitWorkspaceReady(ctx context.Context, client pkgariapi.Client, name string) error {
-	fmt.Printf("Waiting for workspace %q to be ready...\n", name)
-	for {
-		time.Sleep(500 * time.Millisecond)
-		var ws pkgariapi.Workspace
-		if err := client.Get(ctx, pkgariapi.ObjectKey{Name: name}, &ws); err != nil {
-			return fmt.Errorf("workspace/get: %w", err)
-		}
-		switch ws.Status.Phase {
-		case pkgariapi.WorkspacePhaseReady:
-			fmt.Printf("Workspace %q is ready (path: %s)\n", name, ws.Status.Path)
-			return nil
-		case pkgariapi.WorkspacePhaseError:
-			return fmt.Errorf("workspace %q entered error state", name)
-		}
-	}
-}
-
 func createAgentRun(ctx context.Context, client pkgariapi.Client, wsName string, a AgentRunEntry) error {
 	ar := pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{
@@ -101,13 +35,10 @@ func createAgentRun(ctx context.Context, client pkgariapi.Client, wsName string,
 			SystemPrompt: a.SystemPrompt,
 			Permissions:  a.Permissions,
 			McpServers:   a.McpServers,
+			WorkflowFile: a.WorkflowFile,
 		},
 	}
-	if err := client.Create(ctx, &ar); err != nil {
-		return fmt.Errorf("agentrun/create %q: %w", a.Name, err)
-	}
-	fmt.Printf("Agent run %q/%q created (state: %s)\n", wsName, a.Name, ar.Status.Status)
-	return nil
+	return cliutil.CreateAgentRun(ctx, client, &ar)
 }
 
 func printSocketInfo(ctx context.Context, client pkgariapi.Client, wsName, agName string) {

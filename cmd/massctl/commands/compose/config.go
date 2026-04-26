@@ -46,6 +46,7 @@ type AgentRunEntry struct {
 	SystemPrompt string                      `json:"systemPrompt,omitempty"`
 	Permissions  apiruntime.PermissionPolicy `json:"permissions,omitempty"`
 	McpServers   []apiruntime.McpServer      `json:"mcpServers,omitempty"`
+	WorkflowFile string                      `json:"workflowFile,omitempty"`
 }
 
 // parseConfig parses and validates YAML bytes into a Config.

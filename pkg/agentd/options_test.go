@@ -28,7 +28,7 @@ func TestOptions_PathDerivation(t *testing.T) {
 
 	assert.Equal(t, "/tmp/test-mass/mass.sock", o.SocketPath())
 	assert.Equal(t, "/tmp/test-mass/workspaces", o.WorkspaceRoot())
-	assert.Equal(t, "/tmp/test-mass/agentruns", o.AgentRunRoot())
+	assert.Equal(t, "/tmp/test-mass/runs", o.AgentRunRoot())
 	assert.Equal(t, "/tmp/test-mass/mass.db", o.MetaDBPath())
 	assert.Equal(t, "/tmp/test-mass/mass.pid", o.PidFilePath())
 }

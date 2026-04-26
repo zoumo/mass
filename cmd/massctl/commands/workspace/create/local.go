@@ -2,13 +2,10 @@ package create
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
@@ -22,30 +19,19 @@ func newLocalCmd(getClient cliutil.ClientFn) *cobra.Command {
 		Short: "Create a workspace from a local directory",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if path == "" {
-				return fmt.Errorf("--path is required")
-			}
-			src := workspace.Source{
-				Type:  workspace.SourceTypeLocal,
-				Local: workspace.LocalSource{Path: path},
-			}
-			srcJSON, err := json.Marshal(src)
-			if err != nil {
-				return fmt.Errorf("marshal source: %w", err)
-			}
 			client, err := getClient()
 			if err != nil {
 				return err
 			}
 			defer client.Close()
 
-			ws := pkgariapi.Workspace{
-				Metadata: pkgariapi.ObjectMeta{Name: name},
-				Spec:     pkgariapi.WorkspaceSpec{Source: srcJSON},
+			src := workspace.Source{
+				Type:  workspace.SourceTypeLocal,
+				Local: workspace.LocalSource{Path: path},
 			}
-			if err := client.Create(context.Background(), &ws); err != nil {
-				cliutil.HandleError(err)
-				return nil
+			ws, err := cliutil.CreateWorkspace(context.Background(), client, name, src)
+			if err != nil {
+				return err
 			}
 			cliutil.OutputJSON(ws)
 			return nil

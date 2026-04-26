@@ -49,7 +49,6 @@ func makeTestAgentRun(workspace, name string) *pkgariapi.AgentRun {
 		},
 		Spec: pkgariapi.AgentRunSpec{
 			Agent:        "default",
-			Description:  "test agent",
 			SystemPrompt: "you are a test",
 		},
 	}
@@ -75,7 +74,6 @@ func TestAgentCreate_RoundTrip(t *testing.T) {
 	assert.Equal(t, "default", got.Metadata.Workspace)
 	assert.Equal(t, "alpha", got.Metadata.Name)
 	assert.Equal(t, "default", got.Spec.Agent)
-	assert.Equal(t, "test agent", got.Spec.Description)
 	assert.Equal(t, "you are a test", got.Spec.SystemPrompt)
 	assert.Equal(t, apiruntime.StatusCreating, got.Status.Status)
 	assert.Equal(t, map[string]string{"env": "test"}, got.Metadata.Labels)

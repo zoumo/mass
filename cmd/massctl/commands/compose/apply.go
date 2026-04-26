@@ -41,10 +41,14 @@ then prints the run socket path for each agent.
 
 			ctx := context.Background()
 			wsName := cfg.Metadata.Name
-			if err := createWorkspace(ctx, client, cfg); err != nil {
+			src, err := buildSource(cfg.Spec.Source)
+			if err != nil {
 				return err
 			}
-			if err := waitWorkspaceReady(ctx, client, wsName); err != nil {
+			if _, err := cliutil.CreateWorkspace(ctx, client, wsName, src); err != nil {
+				return err
+			}
+			if err := cliutil.WaitWorkspaceReady(ctx, client, wsName); err != nil {
 				return err
 			}
 			for _, a := range cfg.Spec.Runs {

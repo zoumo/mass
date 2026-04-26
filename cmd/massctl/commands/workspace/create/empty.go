@@ -2,12 +2,10 @@ package create
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
@@ -18,24 +16,16 @@ func newEmptyCmd(getClient cliutil.ClientFn) *cobra.Command {
 		Short: "Create an empty directory workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			src := workspace.Source{Type: workspace.SourceTypeEmptyDir}
-			srcJSON, err := json.Marshal(src)
-			if err != nil {
-				return nil
-			}
 			client, err := getClient()
 			if err != nil {
 				return err
 			}
 			defer client.Close()
 
-			ws := pkgariapi.Workspace{
-				Metadata: pkgariapi.ObjectMeta{Name: name},
-				Spec:     pkgariapi.WorkspaceSpec{Source: srcJSON},
-			}
-			if err := client.Create(context.Background(), &ws); err != nil {
-				cliutil.HandleError(err)
-				return nil
+			src := workspace.Source{Type: workspace.SourceTypeEmptyDir}
+			ws, err := cliutil.CreateWorkspace(context.Background(), client, name, src)
+			if err != nil {
+				return err
 			}
 			cliutil.OutputJSON(ws)
 			return nil

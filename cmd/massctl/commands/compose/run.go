@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
+	"github.com/zoumo/mass/pkg/workspace"
 )
 
 // newRunCmd returns the "compose run" subcommand that quick-starts a single
@@ -18,6 +19,7 @@ func newRunCmd(getClient cliutil.ClientFn) *cobra.Command {
 		agent        string
 		name         string
 		systemPrompt string
+		workflowFile string
 		noWait       bool
 	)
 
@@ -55,9 +57,11 @@ If the workspace already exists and is ready, it is reused.
 
 			ctx := context.Background()
 
-			// Ensure workspace exists (reuse if ready, create if not).
-			src := SourceConfig{Type: "local", Path: cwd}
-			if err := ensureWorkspace(ctx, client, wsName, src); err != nil {
+			src := workspace.Source{
+				Type:  workspace.SourceTypeLocal,
+				Local: workspace.LocalSource{Path: cwd},
+			}
+			if err := cliutil.EnsureWorkspace(ctx, client, wsName, src); err != nil {
 				return err
 			}
 
@@ -66,6 +70,7 @@ If the workspace already exists and is ready, it is reused.
 				Name:         runName,
 				Agent:        agent,
 				SystemPrompt: systemPrompt,
+				WorkflowFile: workflowFile,
 			}
 			if err := createAgentRun(ctx, client, wsName, entry); err != nil {
 				return err
@@ -87,6 +92,7 @@ If the workspace already exists and is ready, it is reused.
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent definition name (required)")
 	cmd.Flags().StringVar(&name, "name", "", "Agent run name (default: same as agent name)")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "System prompt for the agent run")
+	cmd.Flags().StringVar(&workflowFile, "workflow", "", "Path to a workflow definition file (copied to bundle)")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "Do not wait for the agent run to become idle")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("agent")

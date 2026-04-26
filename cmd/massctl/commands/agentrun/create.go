@@ -2,7 +2,6 @@ package agentrun
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +17,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 		agent        string
 		systemPrompt string
 		permissions  string
+		workflowFile string
 		wait         bool
 	)
 	cmd := &cobra.Command{
@@ -40,13 +40,13 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 					Agent:        agent,
 					SystemPrompt: systemPrompt,
 					Permissions:  apiruntime.PermissionPolicy(permissions),
+					WorkflowFile: workflowFile,
 				},
 			}
 			ctx := context.Background()
-			if err := client.Create(ctx, &ar); err != nil {
+			if err := cliutil.CreateAgentRun(ctx, client, &ar); err != nil {
 				return err
 			}
-			fmt.Printf("Agent run %q/%q created (state: %s)\n", ws, name, ar.Status.Status)
 			if !wait {
 				return nil
 			}
@@ -64,6 +64,7 @@ func newCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent definition name (required)")
 	cmd.Flags().StringVar(&systemPrompt, "system-prompt", "", "System prompt for the agent run")
 	cmd.Flags().StringVar(&permissions, "permissions", "", "Permission policy: approve_all, approve_reads, deny_all (default: approve_all)")
+	cmd.Flags().StringVar(&workflowFile, "workflow", "", "Path to a workflow definition file (copied to bundle)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the agent run to become idle")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("name")

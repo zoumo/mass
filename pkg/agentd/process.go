@@ -433,13 +433,31 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 		permissions = apiruntime.ApproveAll
 	}
 
-	// System prompt augmentation based on enabled features.
-	systemPrompt := agent.Spec.SystemPrompt
+	// System prompt assembly (order matters):
+	// 1. Identity — who you are, which workspace, workspace path
+	// 2. Workspace Mesh MCP usage (feature-gated)
+	// 3. Agent Task protocol (feature-gated)
+	// 4. User-supplied system prompt
+	// 5. Workflow file reference
+	workspacePath := ""
+	if ws != nil {
+		workspacePath = ws.Status.Path
+	}
+	var systemPrompt string
+	systemPrompt = appendPromptSection(systemPrompt, identityPrompt(agent.Metadata.Workspace, agent.Metadata.Name, workspacePath))
 	if featureEnabled(ws, FeatureWorkspaceMesh) {
-		systemPrompt = appendPromptSection(systemPrompt, workspaceMeshPrompt(agent.Metadata.Workspace, agent.Metadata.Name))
+		systemPrompt = appendPromptSection(systemPrompt, workspaceMeshMCPPrompt())
 	}
 	if featureEnabled(ws, FeatureAgentTask) {
 		systemPrompt = appendPromptSection(systemPrompt, agentTaskPrompt())
+	}
+	if agent.Spec.SystemPrompt != "" {
+		systemPrompt = appendPromptSection(systemPrompt, agent.Spec.SystemPrompt)
+	}
+	if agent.Spec.WorkflowFile != "" {
+		if _, err := os.Stat(agent.Spec.WorkflowFile); err == nil {
+			systemPrompt = appendPromptSection(systemPrompt, workflowPrompt(agent.Spec.WorkflowFile))
+		}
 	}
 
 	return apiruntime.Config{
@@ -568,9 +586,23 @@ func (m *ProcessManager) createBundle(agent *pkgariapi.AgentRun, cfg apiruntime.
 		return "", "", "", fmt.Errorf("symlink workspace %s -> %s: %w", workspaceLink, workspace.Status.Path, err)
 	}
 
+	// Copy workflow file into bundle and update spec to point to the copy.
+	if agent.Spec.WorkflowFile != "" {
+		src := agent.Spec.WorkflowFile
+		dst := filepath.Join(bundlePath, "workflow.md")
+		data, err := os.ReadFile(src)
+		if err != nil {
+			_ = os.RemoveAll(bundlePath)
+			return "", "", "", fmt.Errorf("read workflow file %s: %w", src, err)
+		}
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			_ = os.RemoveAll(bundlePath)
+			return "", "", "", fmt.Errorf("write workflow.md: %w", err)
+		}
+		agent.Spec.WorkflowFile = dst
+	}
+
 	// State directory is co-located with the bundle directory.
-	// All agent-run runtime files (agent-run.sock, state.json, events.jsonl) live
-	// inside the bundle so the entire agent lifecycle is in one place.
 	stateDir := bundlePath
 
 	// Socket path.
@@ -1050,17 +1082,33 @@ func appendPromptSection(base, section string) string {
 	return base + "\n---\n" + section
 }
 
-// workspaceMeshPrompt returns the WorkspaceMesh feature system prompt snippet.
-func workspaceMeshPrompt(workspaceName, agentRunName string) string {
+func identityPrompt(workspaceName, agentName, workspacePath string) string {
+	path := workspacePath
+	if path == "" {
+		path = "(unknown)"
+	}
+	return fmt.Sprintf(`<identity>
+You are %s, an agent in workspace %q.
+Workspace path: %s
+</identity>`, agentName, workspaceName, path)
+}
+
+func workspaceMeshMCPPrompt() string {
 	return fmt.Sprintf(`<%s>
-You are %s in the %s workspace.
 You can use the workspace-mesh MCP to discover other agents and collaborate with them.
 </%s>`,
 		pkgariapi.WorkspaceMeshName,
-		agentRunName,
-		workspaceName,
 		pkgariapi.WorkspaceMeshName,
 	)
+}
+
+func workflowPrompt(workflowPath string) string {
+	return fmt.Sprintf(`<workflow>
+Your workflow is defined in the file below.
+Read it carefully and follow the instructions strictly.
+
+Path: %s
+</workflow>`, workflowPath)
 }
 
 // agentTaskPrompt returns the AgentTask feature system prompt snippet.

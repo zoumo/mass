@@ -2,7 +2,6 @@ package create
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -10,7 +9,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
@@ -26,6 +24,31 @@ type workspaceSource struct {
 	Ref   string `yaml:"ref,omitempty"`
 	Depth int    `yaml:"depth,omitempty"`
 	Path  string `yaml:"path,omitempty"`
+}
+
+func (s workspaceSource) toSource() (workspace.Source, error) {
+	switch s.Type {
+	case "git":
+		if s.URL == "" {
+			return workspace.Source{}, fmt.Errorf("git source requires 'source.url'")
+		}
+		return workspace.Source{
+			Type: workspace.SourceTypeGit,
+			Git:  workspace.GitSource{URL: s.URL, Ref: s.Ref, Depth: s.Depth},
+		}, nil
+	case "emptyDir", "empty":
+		return workspace.Source{Type: workspace.SourceTypeEmptyDir}, nil
+	case "local":
+		if s.Path == "" {
+			return workspace.Source{}, fmt.Errorf("local source requires 'source.path'")
+		}
+		return workspace.Source{
+			Type:  workspace.SourceTypeLocal,
+			Local: workspace.LocalSource{Path: s.Path},
+		}, nil
+	default:
+		return workspace.Source{}, fmt.Errorf("unknown source type %q (valid: git, emptyDir, local)", s.Type)
+	}
 }
 
 func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
@@ -50,30 +73,9 @@ func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
 				return fmt.Errorf("workspace spec must have a non-empty 'source.type' field")
 			}
 
-			var src workspace.Source
-			switch s.Source.Type {
-			case "git":
-				if s.Source.URL == "" {
-					return fmt.Errorf("git source requires 'source.url'")
-				}
-				src = workspace.Source{
-					Type: workspace.SourceTypeGit,
-					Git:  workspace.GitSource{URL: s.Source.URL, Ref: s.Source.Ref, Depth: s.Source.Depth},
-				}
-			case "emptyDir", "empty":
-				src = workspace.Source{Type: workspace.SourceTypeEmptyDir}
-			case "local":
-				if s.Source.Path == "" {
-					return fmt.Errorf("local source requires 'source.path'")
-				}
-				src = workspace.Source{Type: workspace.SourceTypeLocal, Local: workspace.LocalSource{Path: s.Source.Path}}
-			default:
-				return fmt.Errorf("unknown source type %q (valid: git, emptyDir, local)", s.Source.Type)
-			}
-
-			srcJSON, err := json.Marshal(src)
+			src, err := s.Source.toSource()
 			if err != nil {
-				return fmt.Errorf("marshal source: %w", err)
+				return err
 			}
 
 			client, err := getClient()
@@ -82,13 +84,9 @@ func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			ws := pkgariapi.Workspace{
-				Metadata: pkgariapi.ObjectMeta{Name: s.Name},
-				Spec:     pkgariapi.WorkspaceSpec{Source: srcJSON},
-			}
-			if err := client.Create(context.Background(), &ws); err != nil {
-				cliutil.HandleError(err)
-				return nil
+			ws, err := cliutil.CreateWorkspace(context.Background(), client, s.Name, src)
+			if err != nil {
+				return err
 			}
 			cliutil.OutputJSON(ws)
 			return nil

@@ -147,8 +147,9 @@ type AgentRunSpec struct {
 	// callers to add additional MCP servers per run.
 	McpServers []apiruntime.McpServer `json:"mcpServers,omitempty"`
 
-	// Description is a human-readable description of the agent.
-	Description string `json:"description,omitempty"`
+	// WorkflowFile is an absolute path to a workflow definition file.
+	// agentd copies it into the bundle and injects a reference in the system prompt.
+	WorkflowFile string `json:"workflowFile,omitempty"`
 }
 
 // AgentRunStatus holds the observed runtime state of an agent run.
