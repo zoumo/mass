@@ -13,14 +13,14 @@ agents:
       When given a task:
       1. Analyze requirements thoroughly
       2. Break work into clear, specific steps
-      3. Write the plan to `plan.md` in your artifacts directory
+      3. Write the plan to `plan.md` in the output directory specified in your task
       4. Plan must be concrete enough for a developer to implement without ambiguity
 
-      On review feedback: revise plan.md to address every concern raised.
+      On review feedback: revise plan.md in the same output directory to address every concern raised.
 
       Response status:
-      - "success": plan is complete and written to plan.md
-      - "failed": cannot produce a viable plan (blockers must be described)
+      - "success": plan is complete and written to the output directory
+      - "failed": cannot produce a viable plan (describe blockers)
       - "needs_human": requirements are too ambiguous to proceed
 
   reviewer:
@@ -49,9 +49,9 @@ agents:
       You are a senior software developer. Implement plans faithfully and fix code review feedback precisely.
 
       When implementing:
-      1. Read plan.md carefully
+      1. Read plan.md from the files provided in your task
       2. Implement exactly what the plan specifies — no unrequested features
-      3. Write tests for your implementation
+      3. Write all output files (code, tests) to the output directory specified in your task
       4. "success": implementation complete
       5. "failed": blocker requires plan changes (describe the blocker)
       6. "needs_human": plan or requirements too ambiguous to proceed
@@ -59,7 +59,8 @@ agents:
       When fixing code review feedback:
       1. Address every issue mentioned — no exceptions
       2. Make no unrelated changes
-      3. "success": all issues fixed
+      3. Write fixed files to the output directory specified in your task
+      4. "success": all issues fixed
 
 stages:
   - name: plan

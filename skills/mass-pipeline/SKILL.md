@@ -168,15 +168,19 @@ done
 
 **② 创建 task**
 
-```bash
-massctl agentrun task create -w {workspace} --name {stage.agent} \
-  --description "{stage.description}" \
-  $(for f in "${input_files[@]}"; do echo "--file $f"; done)
-```
+Always inject the output directory into the description so the agent writes to a deterministic, workspace-namespaced path:
 
-提取返回的 `task.id`：
 ```bash
-task_id=$(massctl agentrun task create ... -o json | jq -r '.id')
+output_dir=".mass/{workspace}/{stage.agent}/artifacts"
+full_description="{stage.description}
+
+Output directory: {output_dir}
+Write ALL output files to this directory."
+
+task_id=$(massctl agentrun task create -w {workspace} --name {stage.agent} \
+  --description "$full_description" \
+  $(for f in "${input_files[@]}"; do echo "--file $f"; done) \
+  -o json | jq -r '.id')
 ```
 
 **③ 轮询等待**
@@ -232,8 +236,13 @@ response_status=$(echo "$task_json" | jq -r '.response.status // "unknown"')
 # 为每个 sub-task 创建 task，收集 task_id
 declare -A sub_task_ids
 for sub_task in "${stage.tasks[@]}"; do
+  output_dir=".mass/{workspace}/{sub_task.agent}/artifacts"
+  full_description="{sub_task.description}
+
+Output directory: {output_dir}
+Write ALL output files to this directory."
   task_id=$(massctl agentrun task create -w {workspace} --name {sub_task.agent} \
-    --description "{sub_task.description}" \
+    --description "$full_description" \
     $(for f in "${sub_task_input_files[@]}"; do echo "--file $f"; done) \
     -o json | jq -r '.id')
   sub_task_ids[{sub_task.agent}]=$task_id
