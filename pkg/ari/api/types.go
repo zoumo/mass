@@ -145,7 +145,6 @@ type AgentTask struct {
 	Response  json.RawMessage `json:"response,omitempty"`
 }
 
-
 // AgentRunTaskCreateParams is the request params for agentrun/task/create.
 type AgentRunTaskCreateParams struct {
 	Workspace   string   `json:"workspace"`

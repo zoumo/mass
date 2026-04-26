@@ -104,32 +104,44 @@ func NullaryCommand(fn func(ctx context.Context) error) Method {
 5. CAS 失败后获取当前状态构造错误（子模式也重复 4 次）
 6. `processes.Connect`
 
-**方案：** 提取到 `*Service` 方法，职责边界到 Connect 成功为止：
+**方案：** 提取到 `*Service` 方法，职责边界到 CAS 成功为止（**不包含 Connect**）：
 
 ```go
-// reserveAndConnect performs recovery check, validates idle state,
-// CAS idle→running, and connects to the agent process.
+// reserveIdleAgent performs recovery check, validates idle state, and
+// CAS idle→running. Returns the reserved agent record.
 // On CAS failure, returns an error containing the agent's current state.
-// On connect failure, automatically rolls back to idle.
 //
-// Callers remain responsible for:
-// - operation-specific prompt delivery failure handling (different log messages,
-//   target names like To/Name, and recordPromptDeliveryFailure behavior)
-// - post-dispatch error recovery and state transitions
-func (a *Service) reserveAndConnect(ctx context.Context, ws, name string) (*runclient.Client, *pkgariapi.AgentRun, error) {
+// Does NOT call Connect or handle connect failures — callers retain full
+// control over Connect + recordPromptDeliveryFailure behavior, because:
+// - connect failure 的当前行为是 recordPromptDeliveryFailure(..., true)，
+//   当 runtime 状态不可查时标记 agent 为 error（非 idle）
+// - 不同 caller 的 failure target（To/Name）、日志消息、RPC error 格式各不相同
+// - 自动 rollback to idle 会让坏掉的 agent 看起来可用，导致反复 dispatch
+func (a *Service) reserveIdleAgent(ctx context.Context, ws, name string) (*pkgariapi.AgentRun, error) {
     // 1. recovery check
     // 2. get agent run
     // 3. validate idle
     // 4. CAS idle→running (with current-state error on failure)
-    // 5. connect (rollback to idle on failure)
 }
 ```
 
 同时提取 `rollbackAgentToIdle(ws, name, op string, cause error) error`，消除 `TaskCreate` 和 `TaskRetry` 中完全一样的 rollback 闭包。
 
-> **Review feedback (P2):** 四个 caller 的失败处理各有差异（日志 message、target name、是否 recordPromptDeliveryFailure）。`reserveAndConnect` 只负责到 Connect 成功为止，prompt delivery 失败的处理仍由各 caller 负责，不纳入 helper。
+各 caller 的使用模式：
 
-**预估消除：** ~120 行 reserve-dispatch + ~30 行 rollback。
+```go
+// Prompt handler
+agent, err := a.reserveIdleAgent(ctx, ws, name)
+if err != nil { return nil, err }
+client, err := a.processes.Connect(ctx, ws, name)
+if err != nil {
+    a.recordPromptDeliveryFailure(ctx, ws, name, err, true)
+    return nil, jsonrpc.ErrInternal(err.Error())
+}
+// ... dispatch prompt
+```
+
+**预估消除：** ~80 行 reserve + ~30 行 rollback。
 
 **涉及文件：** `pkg/ari/server/server.go`
 
@@ -151,8 +163,11 @@ func (a *Service) reserveAndConnect(ctx context.Context, ws, name string) (*runc
 
 ```go
 func (s *Store) updateAgentRun(workspace, name string, mutate func(*pkgariapi.AgentRun) error) error {
-    if workspace == "" || name == "" {
-        return ErrInvalidInput
+    if workspace == "" {
+        return fmt.Errorf("store: workspace is required")
+    }
+    if name == "" {
+        return fmt.Errorf("store: agent name is required")
     }
     return s.db.Update(func(tx *bolt.Tx) error {
         wb := workspaceBucket(tx, workspace)
@@ -370,12 +385,21 @@ func (b *TypedBucket[T]) Delete(tx *bolt.Tx, key string) error
 
 ## Review 记录
 
-### Codex Review (2026-04-26)
+### Codex Review Round 2 (2026-04-26)
 
-详见 `docs/review/code-reuse-refactoring-review.md`，共 3 项反馈，均已纳入：
+详见 `docs/review/code-reuse-refactoring-review.md`。
+
+**Round 1 (3 项) — 全部已解决：**
 
 | 编号 | 严重度 | 问题 | 处置 |
 |------|--------|------|------|
-| 1 | P1 | Fanout[T] 抹平了不兼容的 delivery 语义 | Wave 2.1 降级为 design-first，需先分类 delivery policy |
-| 2 | P2 | UnaryMethod/NullaryMethod 不覆盖 error-only RPC | 新增 `UnaryCommand` / `NullaryCommand` 变体 |
-| 3 | P2 | reserveAndConnect 未定义失败语义 | 明确职责边界到 Connect 成功为止，prompt delivery 失败由 caller 处理 |
+| 1 | P1 | Fanout[T] 抹平了不兼容的 delivery 语义 | Wave 2.1 降级为 design-first |
+| 2 | P2 | UnaryMethod/NullaryMethod 不覆盖 error-only RPC | 新增 `UnaryCommand` / `NullaryCommand` |
+| 3 | P2 | reserveAndConnect 未定义失败语义 | 明确职责边界（见 Round 2 进一步修正） |
+
+**Round 2 (2 项) — 全部已解决：**
+
+| 编号 | 严重度 | 问题 | 处置 |
+|------|--------|------|------|
+| 4 | P2 | connect 失败自动 rollback to idle 会掩盖 runtime 故障 | 重命名为 `reserveIdleAgent`，职责收窄到 CAS 成功为止，Connect + 失败处理留给 caller |
+| 5 | P2 | `ErrInvalidInput` 未定义，与现有错误风格不一致 | 改为保持现有具体错误信息（`"store: workspace is required"` 等） |

@@ -60,13 +60,7 @@ type SystemService interface {
 func RegisterWorkspaceService(s *jsonrpc.Server, svc WorkspaceService) {
 	s.RegisterService("workspace", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
-			"create": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var ws pkgariapi.Workspace
-				if err := unmarshal(&ws); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.Create(ctx, &ws)
-			},
+			"create": jsonrpc.UnaryMethod(svc.Create),
 			"get": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				var key pkgariapi.ObjectKey
 				if err := unmarshal(&key); err != nil {
@@ -93,13 +87,7 @@ func RegisterWorkspaceService(s *jsonrpc.Server, svc WorkspaceService) {
 				}
 				return nil, svc.Delete(ctx, key.Name)
 			},
-			"send": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.WorkspaceSendParams
-				if err := unmarshal(&req); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.Send(ctx, &req)
-			},
+			"send": jsonrpc.UnaryMethod(svc.Send),
 		},
 	})
 }
@@ -108,13 +96,7 @@ func RegisterWorkspaceService(s *jsonrpc.Server, svc WorkspaceService) {
 func RegisterAgentRunService(s *jsonrpc.Server, svc AgentRunService) {
 	s.RegisterService("agentrun", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
-			"create": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var ar pkgariapi.AgentRun
-				if err := unmarshal(&ar); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.Create(ctx, &ar)
-			},
+			"create": jsonrpc.UnaryMethod(svc.Create),
 			"get": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				var key pkgariapi.ObjectKey
 				if err := unmarshal(&key); err != nil {
@@ -140,13 +122,7 @@ func RegisterAgentRunService(s *jsonrpc.Server, svc AgentRunService) {
 				}
 				return nil, svc.Delete(ctx, key.Workspace, key.Name)
 			},
-			"prompt": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req pkgariapi.AgentRunPromptParams
-				if err := unmarshal(&req); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.Prompt(ctx, &req)
-			},
+			"prompt": jsonrpc.UnaryMethod(svc.Prompt),
 			"cancel": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				var key pkgariapi.ObjectKey
 				if err := unmarshal(&key); err != nil {
@@ -177,34 +153,10 @@ func RegisterAgentRunService(s *jsonrpc.Server, svc AgentRunService) {
 				}
 				return svc.Restart(ctx, key.Workspace, key.Name)
 			},
-			"task/create": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var params pkgariapi.AgentRunTaskCreateParams
-				if err := unmarshal(&params); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.TaskCreate(ctx, &params)
-			},
-			"task/get": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var params pkgariapi.AgentRunTaskGetParams
-				if err := unmarshal(&params); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.TaskGet(ctx, &params)
-			},
-			"task/list": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var params pkgariapi.AgentRunTaskListParams
-				if err := unmarshal(&params); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.TaskList(ctx, &params)
-			},
-			"task/retry": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var params pkgariapi.AgentRunTaskRetryParams
-				if err := unmarshal(&params); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.TaskRetry(ctx, &params)
-			},
+			"task/create": jsonrpc.UnaryMethod(svc.TaskCreate),
+			"task/get":    jsonrpc.UnaryMethod(svc.TaskGet),
+			"task/list":   jsonrpc.UnaryMethod(svc.TaskList),
+			"task/retry":  jsonrpc.UnaryMethod(svc.TaskRetry),
 		},
 	})
 }
@@ -213,20 +165,8 @@ func RegisterAgentRunService(s *jsonrpc.Server, svc AgentRunService) {
 func RegisterAgentService(s *jsonrpc.Server, svc AgentService) {
 	s.RegisterService("agent", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
-			"create": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var agent pkgariapi.Agent
-				if err := unmarshal(&agent); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.Create(ctx, &agent)
-			},
-			"update": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var agent pkgariapi.Agent
-				if err := unmarshal(&agent); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.Update(ctx, &agent)
-			},
+			"create": jsonrpc.UnaryMethod(svc.Create),
+			"update": jsonrpc.UnaryMethod(svc.Update),
 			"get": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				var key pkgariapi.ObjectKey
 				if err := unmarshal(&key); err != nil {
@@ -260,10 +200,7 @@ func RegisterAgentService(s *jsonrpc.Server, svc AgentService) {
 func RegisterSystemService(s *jsonrpc.Server, svc SystemService) {
 	s.RegisterService("system", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
-			"info": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				// params are empty, ignore unmarshal
-				return svc.Info(ctx)
-			},
+			"info": jsonrpc.NullaryMethod(svc.Info),
 		},
 	})
 }

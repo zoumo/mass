@@ -40,46 +40,23 @@ type Handler interface {
 func Register(s *jsonrpc.Server, svc Handler) {
 	s.RegisterService("session", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
-			"prompt": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req runapi.SessionPromptParams
-				if err := unmarshal(&req); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.Prompt(ctx, &req)
-			},
-			"cancel": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				return nil, svc.Cancel(ctx)
-			},
-			"load": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req runapi.SessionLoadParams
-				if err := unmarshal(&req); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return nil, svc.Load(ctx, &req)
-			},
-			"set_model": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				var req runapi.SessionSetModelParams
-				if err := unmarshal(&req); err != nil {
-					return nil, jsonrpc.ErrInvalidParams(err.Error())
-				}
-				return svc.SetModel(ctx, &req)
-			},
+			"prompt":    jsonrpc.UnaryMethod(svc.Prompt),
+			"cancel":    jsonrpc.NullaryCommand(svc.Cancel),
+			"load":      jsonrpc.UnaryCommand(svc.Load),
+			"set_model": jsonrpc.UnaryMethod(svc.SetModel),
 		},
 	})
 	s.RegisterService("runtime", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
+			// watch_event needs watchId extraction — keep hand-written.
 			"watch_event": func(ctx context.Context, unmarshal func(any) error) (any, error) {
 				var wire watchEventWire
 				_ = unmarshal(&wire) // params optional — zero value is valid
 				req := &runapi.SessionWatchEventParams{FromSeq: wire.FromSeq}
 				return svc.WatchEvent(ctx, req, wire.WatchID)
 			},
-			"status": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				return svc.Status(ctx)
-			},
-			"stop": func(ctx context.Context, unmarshal func(any) error) (any, error) {
-				return nil, svc.Stop(ctx)
-			},
+			"status": jsonrpc.NullaryMethod(svc.Status),
+			"stop":   jsonrpc.NullaryCommand(svc.Stop),
 		},
 	})
 }

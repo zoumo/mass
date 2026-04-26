@@ -227,52 +227,9 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSen
 	a.logger.Info("workspace/send",
 		"workspace", req.Workspace, "from", req.From, "to", req.To)
 
-	if a.processes.IsRecovering() {
-		a.logger.Warn("workspace/send: recovery blocked",
-			"workspace", req.Workspace, "to", req.To)
-		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
-	}
-
-	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.To)
+	agent, err := a.reserveIdleAgent(ctx, req.Workspace, req.To, "target agent")
 	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if agent == nil {
-		a.logger.Warn("workspace/send: target agent not found",
-			"workspace", req.Workspace, "to", req.To)
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.To))
-	}
-	if agent.Status.Status == apiruntime.StatusError {
-		a.logger.Warn("workspace/send: target agent in error state",
-			"workspace", req.Workspace, "to", req.To)
-		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "target agent is in error state"}
-	}
-	if agent.Status.Status != apiruntime.StatusIdle {
-		a.logger.Warn("workspace/send: target agent not idle",
-			"workspace", req.Workspace, "to", req.To, "state", agent.Status.Status)
-		return nil, &jsonrpc.RPCError{
-			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("target agent not in idle state: %s", agent.Status.Status),
-		}
-	}
-
-	reserved, err := a.agents.TransitionState(ctx, req.Workspace, req.To, apiruntime.StatusIdle, apiruntime.StatusRunning)
-	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if !reserved {
-		current, getErr := a.store.GetAgentRun(ctx, req.Workspace, req.To)
-		if getErr != nil {
-			return nil, jsonrpc.ErrInternal(getErr.Error())
-		}
-		state := "<missing>"
-		if current != nil {
-			state = string(current.Status.Status)
-		}
-		return nil, &jsonrpc.RPCError{
-			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("target agent not in idle state: %s", state),
-		}
+		return nil, err
 	}
 
 	client, err := a.processes.Connect(ctx, req.Workspace, req.To)
@@ -455,46 +412,9 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPro
 
 	a.logger.Info("agentrun/prompt", "workspace", req.Workspace, "name", req.Name)
 
-	if a.processes.IsRecovering() {
-		a.logger.Warn("agentrun/prompt: recovery blocked",
-			"workspace", req.Workspace, "name", req.Name)
-		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
-	}
-
-	agent, err := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
+	agent, err := a.reserveIdleAgent(ctx, req.Workspace, req.Name, "agent")
 	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if agent == nil {
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", req.Workspace, req.Name))
-	}
-
-	if agent.Status.Status != apiruntime.StatusIdle {
-		a.logger.Warn("agentrun/prompt: agent not in idle state",
-			"workspace", req.Workspace, "name", req.Name, "state", agent.Status.Status)
-		return nil, &jsonrpc.RPCError{
-			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("agent not in idle state: %s", agent.Status.Status),
-		}
-	}
-
-	reserved, err := a.agents.TransitionState(ctx, req.Workspace, req.Name, apiruntime.StatusIdle, apiruntime.StatusRunning)
-	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if !reserved {
-		current, getErr := a.store.GetAgentRun(ctx, req.Workspace, req.Name)
-		if getErr != nil {
-			return nil, jsonrpc.ErrInternal(getErr.Error())
-		}
-		state := "<missing>"
-		if current != nil {
-			state = string(current.Status.Status)
-		}
-		return nil, &jsonrpc.RPCError{
-			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("agent not in idle state: %s", state),
-		}
+		return nil, err
 	}
 
 	client, err := a.processes.Connect(ctx, req.Workspace, req.Name)
@@ -639,59 +559,13 @@ func (a *agentRunAdapter) TaskCreate(ctx context.Context, params *pkgariapi.Agen
 
 	a.logger.Info("agentrun/task/create", "workspace", params.Workspace, "name", params.Name)
 
-	if a.processes.IsRecovering() {
-		a.logger.Warn("agentrun/task/create: recovery blocked",
-			"workspace", params.Workspace, "name", params.Name)
-		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
-	}
-
-	agent, err := a.store.GetAgentRun(ctx, params.Workspace, params.Name)
+	agent, err := a.reserveIdleAgent(ctx, params.Workspace, params.Name, "agent")
 	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if agent == nil {
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", params.Workspace, params.Name))
-	}
-
-	if agent.Status.Status != apiruntime.StatusIdle {
-		a.logger.Warn("agentrun/task/create: agent not in idle state",
-			"workspace", params.Workspace, "name", params.Name, "state", agent.Status.Status)
-		return nil, &jsonrpc.RPCError{
-			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("agent not in idle state: %s", agent.Status.Status),
-		}
-	}
-
-	// Reserve agent: idle → running (same as agentrun/prompt).
-	reserved, err := a.agents.TransitionState(ctx, params.Workspace, params.Name, apiruntime.StatusIdle, apiruntime.StatusRunning)
-	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if !reserved {
-		current, getErr := a.store.GetAgentRun(ctx, params.Workspace, params.Name)
-		if getErr != nil {
-			return nil, jsonrpc.ErrInternal(getErr.Error())
-		}
-		state := "<missing>"
-		if current != nil {
-			state = string(current.Status.Status)
-		}
-		return nil, &jsonrpc.RPCError{
-			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("agent not in idle state: %s", state),
-		}
+		return nil, err
 	}
 
 	rollbackToIdle := func(cause error) error {
-		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if updateErr := a.agents.UpdateStatus(rctx, params.Workspace, params.Name, pkgariapi.AgentRunStatus{
-			Status: apiruntime.StatusIdle,
-		}); updateErr != nil {
-			a.logger.Warn("agentrun/task/create: failed to roll back to idle",
-				"workspace", params.Workspace, "name", params.Name, "error", updateErr)
-		}
-		return jsonrpc.ErrInternal(cause.Error())
+		return a.rollbackAgentToIdle(params.Workspace, params.Name, "agentrun/task/create", cause)
 	}
 
 	// Create tasks directory.
@@ -816,55 +690,13 @@ func (a *agentRunAdapter) TaskRetry(ctx context.Context, params *pkgariapi.Agent
 
 	a.logger.Info("agentrun/task/retry", "workspace", params.Workspace, "name", params.Name, "taskId", params.TaskID)
 
-	if a.processes.IsRecovering() {
-		a.logger.Warn("agentrun/task/retry: recovery blocked",
-			"workspace", params.Workspace, "name", params.Name, "taskId", params.TaskID)
-		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
-	}
-
-	agent, err := a.store.GetAgentRun(ctx, params.Workspace, params.Name)
+	agent, err := a.reserveIdleAgent(ctx, params.Workspace, params.Name, "agent")
 	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if agent == nil {
-		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", params.Workspace, params.Name))
-	}
-	if agent.Status.Status != apiruntime.StatusIdle {
-		return nil, &jsonrpc.RPCError{
-			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("agent not in idle state: %s", agent.Status.Status),
-		}
-	}
-
-	reserved, err := a.agents.TransitionState(ctx, params.Workspace, params.Name, apiruntime.StatusIdle, apiruntime.StatusRunning)
-	if err != nil {
-		return nil, jsonrpc.ErrInternal(err.Error())
-	}
-	if !reserved {
-		current, getErr := a.store.GetAgentRun(ctx, params.Workspace, params.Name)
-		if getErr != nil {
-			return nil, jsonrpc.ErrInternal(getErr.Error())
-		}
-		state := "<missing>"
-		if current != nil {
-			state = string(current.Status.Status)
-		}
-		return nil, &jsonrpc.RPCError{
-			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("agent not in idle state: %s", state),
-		}
+		return nil, err
 	}
 
 	rollbackToIdle := func(cause error) error {
-		rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if updateErr := a.agents.UpdateStatus(rctx, params.Workspace, params.Name, pkgariapi.AgentRunStatus{
-			Status: apiruntime.StatusIdle,
-		}); updateErr != nil {
-			a.logger.Warn("agentrun/task/retry: failed to roll back to idle",
-				"workspace", params.Workspace, "name", params.Name, "taskId", params.TaskID, "error", updateErr)
-		}
-		return jsonrpc.ErrInternal(cause.Error())
+		return a.rollbackAgentToIdle(params.Workspace, params.Name, "agentrun/task/retry", cause)
 	}
 
 	taskPath := filepath.Join(a.processes.BundlePath(params.Workspace, params.Name), "tasks", params.TaskID+".json")
@@ -1087,6 +919,65 @@ func (a *agentAdapter) Delete(ctx context.Context, name string) error {
 // ────────────────────────────────────────────────────────────────────────────
 // Shared helpers (on *Service so both adapter families can call them)
 // ────────────────────────────────────────────────────────────────────────────
+
+// reserveIdleAgent validates that the named agent run exists and is idle, then
+// atomically transitions it from idle to running. entityLabel customizes error
+// messages (e.g. "agent" vs "target agent").
+func (s *Service) reserveIdleAgent(ctx context.Context, ws, name, entityLabel string) (*pkgariapi.AgentRun, error) {
+	if s.processes.IsRecovering() {
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
+	}
+
+	agent, err := s.store.GetAgentRun(ctx, ws, name)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	if agent == nil {
+		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("%s %s/%s not found", entityLabel, ws, name))
+	}
+	if agent.Status.Status != apiruntime.StatusIdle {
+		return nil, &jsonrpc.RPCError{
+			Code:    pkgariapi.CodeRecoveryBlocked,
+			Message: fmt.Sprintf("%s not in idle state: %s", entityLabel, agent.Status.Status),
+		}
+	}
+
+	reserved, err := s.agents.TransitionState(ctx, ws, name, apiruntime.StatusIdle, apiruntime.StatusRunning)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	if !reserved {
+		current, getErr := s.store.GetAgentRun(ctx, ws, name)
+		if getErr != nil {
+			return nil, jsonrpc.ErrInternal(getErr.Error())
+		}
+		state := "<missing>"
+		if current != nil {
+			state = string(current.Status.Status)
+		}
+		return nil, &jsonrpc.RPCError{
+			Code:    pkgariapi.CodeRecoveryBlocked,
+			Message: fmt.Sprintf("%s not in idle state: %s", entityLabel, state),
+		}
+	}
+
+	return agent, nil
+}
+
+// rollbackAgentToIdle reverts an agent from running back to idle when an
+// operation fails after the CAS transition. It returns an internal RPC error
+// wrapping cause.
+func (s *Service) rollbackAgentToIdle(ws, name, op string, cause error) error {
+	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if updateErr := s.agents.UpdateStatus(rctx, ws, name, pkgariapi.AgentRunStatus{
+		Status: apiruntime.StatusIdle,
+	}); updateErr != nil {
+		s.logger.Warn(op+": failed to roll back to idle",
+			"workspace", ws, "name", name, "error", updateErr)
+	}
+	return jsonrpc.ErrInternal(cause.Error())
+}
 
 // recordPromptDeliveryFailure updates agent run status after a failed prompt
 // delivery, consulting the runtime status to get the authoritative state.

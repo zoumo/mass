@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -154,9 +155,14 @@ func (s *Store) ListAgentRuns(_ context.Context, filter *pkgariapi.AgentRunFilte
 	return result, nil
 }
 
-// UpdateAgentRunStatus overwrites the Status field of the identified agent run.
-// Returns an error if the agent run does not exist.
-func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, status pkgariapi.AgentRunStatus) error {
+// errStateMismatch is a sentinel returned by a mutate callback to signal
+// that a CAS-style state check failed. It is never surfaced to callers.
+var errStateMismatch = fmt.Errorf("state mismatch")
+
+// updateAgentRun is the shared read-modify-write helper for agent run mutations.
+// It validates inputs, opens a bolt transaction, reads and unmarshals the record,
+// invokes mutate, sets UpdatedAt, and writes the record back.
+func (s *Store) updateAgentRun(workspace, name, op string, mutate func(*pkgariapi.AgentRun) error) error {
 	if workspace == "" {
 		return fmt.Errorf("store: workspace is required")
 	}
@@ -172,13 +178,15 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 		key := []byte(name)
 		data := wb.Get(key)
 		if data == nil {
-			return &ResourceError{Op: "update", Resource: "agent", Key: workspace + "/" + name, Err: ErrNotFound}
+			return &ResourceError{Op: op, Resource: "agent", Key: workspace + "/" + name, Err: ErrNotFound}
 		}
 		var agent pkgariapi.AgentRun
 		if err := json.Unmarshal(data, &agent); err != nil {
 			return fmt.Errorf("store: unmarshal agent %s/%s: %w", workspace, name, err)
 		}
-		agent.Status = status
+		if err := mutate(&agent); err != nil {
+			return err
+		}
 		agent.Metadata.UpdatedAt = time.Now()
 		updated, err := json.Marshal(&agent)
 		if err != nil {
@@ -187,6 +195,15 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 		if err := wb.Put(key, updated); err != nil {
 			return fmt.Errorf("store: store agent %s/%s: %w", workspace, name, err)
 		}
+		return nil
+	})
+}
+
+// UpdateAgentRunStatus overwrites the Status field of the identified agent run.
+// Returns an error if the agent run does not exist.
+func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, status pkgariapi.AgentRunStatus) error {
+	return s.updateAgentRun(workspace, name, "update", func(agent *pkgariapi.AgentRun) error {
+		agent.Status = status
 		s.logger.Debug("agentRun status updated",
 			"workspace", workspace,
 			"name", name,
@@ -198,37 +215,9 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 // UpdateAgentRunState updates only Status.Status and Status.ErrorMessage,
 // preserving all other status fields (PID, SocketPath, StateDir, etc.).
 func (s *Store) UpdateAgentRunState(_ context.Context, workspace, name string, state apiruntime.Status, errMsg string) error {
-	if workspace == "" {
-		return fmt.Errorf("store: workspace is required")
-	}
-	if name == "" {
-		return fmt.Errorf("store: agent name is required")
-	}
-
-	return s.db.Update(func(tx *bolt.Tx) error {
-		wb, err := workspaceBucket(tx, workspace)
-		if err != nil {
-			return err
-		}
-		key := []byte(name)
-		data := wb.Get(key)
-		if data == nil {
-			return &ResourceError{Op: "update-state", Resource: "agent", Key: workspace + "/" + name, Err: ErrNotFound}
-		}
-		var agent pkgariapi.AgentRun
-		if err := json.Unmarshal(data, &agent); err != nil {
-			return fmt.Errorf("store: unmarshal agent %s/%s: %w", workspace, name, err)
-		}
+	return s.updateAgentRun(workspace, name, "update-state", func(agent *pkgariapi.AgentRun) error {
 		agent.Status.Status = state
 		agent.Status.ErrorMessage = errMsg
-		agent.Metadata.UpdatedAt = time.Now()
-		updated, err := json.Marshal(&agent)
-		if err != nil {
-			return fmt.Errorf("store: marshal agent %s/%s: %w", workspace, name, err)
-		}
-		if err := wb.Put(key, updated); err != nil {
-			return fmt.Errorf("store: store agent %s/%s: %w", workspace, name, err)
-		}
 		s.logger.Debug("agentRun state updated",
 			"workspace", workspace,
 			"name", name,
@@ -239,37 +228,9 @@ func (s *Store) UpdateAgentRunState(_ context.Context, workspace, name string, s
 
 // UpdateAgentRunSessionInfo updates SessionID and EventPath, preserving all other status fields.
 func (s *Store) UpdateAgentRunSessionInfo(_ context.Context, workspace, name, sessionID, eventPath string) error {
-	if workspace == "" {
-		return fmt.Errorf("store: workspace is required")
-	}
-	if name == "" {
-		return fmt.Errorf("store: agent name is required")
-	}
-
-	return s.db.Update(func(tx *bolt.Tx) error {
-		wb, err := workspaceBucket(tx, workspace)
-		if err != nil {
-			return err
-		}
-		key := []byte(name)
-		data := wb.Get(key)
-		if data == nil {
-			return &ResourceError{Op: "update-session", Resource: "agent", Key: workspace + "/" + name, Err: ErrNotFound}
-		}
-		var agent pkgariapi.AgentRun
-		if err := json.Unmarshal(data, &agent); err != nil {
-			return fmt.Errorf("store: unmarshal agent %s/%s: %w", workspace, name, err)
-		}
+	return s.updateAgentRun(workspace, name, "update-session", func(agent *pkgariapi.AgentRun) error {
 		agent.Status.SessionID = sessionID
 		agent.Status.EventPath = eventPath
-		agent.Metadata.UpdatedAt = time.Now()
-		updated, err := json.Marshal(&agent)
-		if err != nil {
-			return fmt.Errorf("store: marshal agent %s/%s: %w", workspace, name, err)
-		}
-		if err := wb.Put(key, updated); err != nil {
-			return fmt.Errorf("store: store agent %s/%s: %w", workspace, name, err)
-		}
 		return nil
 	})
 }
@@ -278,41 +239,11 @@ func (s *Store) UpdateAgentRunSessionInfo(_ context.Context, workspace, name, se
 // matches expected. It preserves run metadata, error text, and all other fields.
 // Returns false, nil when the agent exists but is not in the expected state.
 func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next apiruntime.Status) (bool, error) {
-	if workspace == "" {
-		return false, fmt.Errorf("store: workspace is required")
-	}
-	if name == "" {
-		return false, fmt.Errorf("store: agent name is required")
-	}
-
-	var transitioned bool
-	err := s.db.Update(func(tx *bolt.Tx) error {
-		wb, err := workspaceBucket(tx, workspace)
-		if err != nil {
-			return err
-		}
-		key := []byte(name)
-		data := wb.Get(key)
-		if data == nil {
-			return &ResourceError{Op: "transition", Resource: "agent", Key: workspace + "/" + name, Err: ErrNotFound}
-		}
-		var agent pkgariapi.AgentRun
-		if err := json.Unmarshal(data, &agent); err != nil {
-			return fmt.Errorf("store: unmarshal agent %s/%s: %w", workspace, name, err)
-		}
+	err := s.updateAgentRun(workspace, name, "transition", func(agent *pkgariapi.AgentRun) error {
 		if agent.Status.Status != expected {
-			return nil
+			return errStateMismatch
 		}
 		agent.Status.Status = next
-		agent.Metadata.UpdatedAt = time.Now()
-		updated, err := json.Marshal(&agent)
-		if err != nil {
-			return fmt.Errorf("store: marshal agent %s/%s: %w", workspace, name, err)
-		}
-		if err := wb.Put(key, updated); err != nil {
-			return fmt.Errorf("store: store agent %s/%s: %w", workspace, name, err)
-		}
-		transitioned = true
 		s.logger.Debug("agentRun state transitioned",
 			"workspace", workspace,
 			"name", name,
@@ -320,10 +251,13 @@ func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name strin
 			"to", next)
 		return nil
 	})
+	if errors.Is(err, errStateMismatch) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	return transitioned, nil
+	return true, nil
 }
 
 // DeleteAgentRun removes the identified agent run.
