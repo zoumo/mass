@@ -2,69 +2,80 @@
 
 Reviewed proposal: `docs/proposal/code-reuse-refactoring.md`
 
+Last updated: 2026-04-26
+
 ## Summary
 
-Found 3 substantive issues. The highest-risk item is the proposed generic
-`Fanout[T]`, because the current implementations have different delivery and
-ordering semantics that the proposed API does not model.
+The proposal now incorporates the first review pass for the RPC helpers and
+fan-out abstraction. Two previous findings are resolved. Two issues remain for
+the current version:
 
 | Severity | Count |
 |----------|-------|
-| P1 | 1 |
+| P1 | 0 |
 | P2 | 2 |
 
-## Findings
+## Current Findings
 
-### [P1] Generic Fanout erases incompatible delivery semantics
+### [P2] reserveAndConnect still changes connect-failure state semantics
 
-**File:** `docs/proposal/code-reuse-refactoring.md` lines 153-169
+**File:** `docs/proposal/code-reuse-refactoring.md` lines 107-130
 
-**Issue:** The three implementations are not equivalent enough for the proposed
-`Fanout[T]` API. `WatchServer` uses unbuffered blocking sends plus `publishMu`
-to preserve global order; `Translator` logs and assigns seq under the same lock
-before nonblocking eviction; `jsonrpc.Client` filters by method and drops slow
-subscriber messages without eviction so fallback routing remains correct.
+**Issue:** The revised helper says connect failure will "automatically roll back
+to idle", while also saying callers remain responsible for
+`recordPromptDeliveryFailure` behavior. In the current implementation, connect
+failure is handled by `recordPromptDeliveryFailure(..., true)` for
+`workspace/send`, `agentrun/prompt`, and task dispatch. When runtime status is
+unavailable, that path marks the agent `error`, not `idle`.
 
-**Why it matters:** A shared fanout abstraction that does not make these
-semantics explicit can silently change watch ordering, recovery behavior, or
-notification delivery.
+**Why it matters:** If the refactor rolls back to `idle` on connect failure,
+it can make a non-running or broken reserved agent immediately look available
+again. That differs from the current failure path and can cause repeated
+dispatch attempts instead of surfacing the runtime failure state.
 
-**Suggestion:** Treat Wave 2.1 as a design task before implementation. Either
-split the abstractions by delivery policy or make ordering, filtering, drop vs
-evict, and log-before-fanout behavior explicit in the API.
+**Suggestion:** Do not bake "rollback to idle on connect failure" into
+`reserveAndConnect` unless that behavior is intentionally changing. Prefer one
+of these contracts:
 
-### [P2] Helper signatures do not cover error-only RPCs
+- `reserveIdleAgent` only performs recovery/get/idle/CAS and returns the
+  reserved agent; callers keep the existing `Connect` and
+  `recordPromptDeliveryFailure` logic.
+- `reserveAndConnect` accepts a typed failure policy/callback that preserves
+  each caller's current `recordPromptDeliveryFailure` behavior and RPC message.
 
-**File:** `docs/proposal/code-reuse-refactoring.md` lines 42-56
+### [P2] updateAgentRun example references undefined ErrInvalidInput
 
-**Issue:** The proposed `UnaryMethod` and `NullaryMethod` only accept handlers
-returning `(*Res, error)`, but several methods called out in the section return
-only `error`, including `Load`, `Cancel`, `Stop`, and ARI delete/cancel/stop
-methods.
+**File:** `docs/proposal/code-reuse-refactoring.md` lines 150-160
 
-**Why it matters:** As written, the advertised replacement cannot compile for a
-meaningful part of the duplication the proposal intends to remove.
+**Issue:** The proposed `updateAgentRun` helper returns `ErrInvalidInput`, but
+`pkg/agentd/store` does not currently define that symbol. Existing store methods
+return contextual errors such as `store: workspace is required` and
+`store: agent name is required`.
 
-**Suggestion:** Add command-style helpers such as `UnaryCommand` and
-`NullaryCommand`, or define the helper layer around explicit `any` results so
-error-only handlers are supported intentionally.
+**Why it matters:** Implementing the proposal literally will not compile, and
+adding a new generic error would also weaken existing error messages unless the
+callers wrap it carefully.
 
-### [P2] reserveAndConnect contract omits failure semantics
+**Suggestion:** Keep the current validation messages in the helper, for example:
 
-**File:** `docs/proposal/code-reuse-refactoring.md` lines 85-97
+```go
+if workspace == "" {
+    return fmt.Errorf("store: workspace is required")
+}
+if name == "" {
+    return fmt.Errorf("store: agent name is required")
+}
+```
 
-**Issue:** The extraction bundles `Connect` into the reservation helper but does
-not specify how operation-specific failure handling is preserved. Current
-callers record prompt delivery failures with different messages and targets:
-`workspace/send` uses `To`, prompt uses `Name`, and task dispatch includes the
-operation.
+## Resolved Findings
 
-**Why it matters:** These calls determine whether the agent is marked error
-after a reserved `idle -> running` transition. A vague helper contract could
-leave agents stuck, make race behavior harder to diagnose, or normalize the
-wrong RPC errors.
+### [Resolved] Helper signatures did not cover error-only RPCs
 
-**Suggestion:** Define the returned failure contract or callback hooks before
-implementation. Keep operation-specific logging, error messages, target names,
-and `recordPromptDeliveryFailure` behavior visible at the call site or encoded
-in a typed option struct.
+The proposal now adds `UnaryCommand` and `NullaryCommand`, covering handlers
+that return only `error`.
+
+### [Resolved] Generic Fanout erased incompatible delivery semantics
+
+The proposal now downgrades fan-out unification to a design-first task and
+explicitly documents the different delivery policies for `WatchServer`,
+`Translator`, and `jsonrpc.Client`.

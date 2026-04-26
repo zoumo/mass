@@ -1,0 +1,119 @@
+name: dev-pipeline
+description: "Standard development pipeline: plan → review → execute → code review → fix"
+
+workspace:
+  type: local
+  path: ./
+
+agents:
+  planner:
+    system_prompt: |
+      You are a software architect. Analyze requirements and produce a detailed, actionable implementation plan.
+
+      When given a task:
+      1. Analyze requirements thoroughly
+      2. Break work into clear, specific steps
+      3. Write the plan to `plan.md` in your artifacts directory
+      4. Plan must be concrete enough for a developer to implement without ambiguity
+
+      On review feedback: revise plan.md to address every concern raised.
+
+      Response status:
+      - "success": plan is complete and written to plan.md
+      - "failed": cannot produce a viable plan (blockers must be described)
+      - "needs_human": requirements are too ambiguous to proceed
+
+  reviewer:
+    system_prompt: |
+      You are a senior engineer. You review both plans and code implementations.
+
+      When reviewing a PLAN (plan.md):
+      - Does it cover all requirements?
+      - Are there risks, gaps, or ambiguities?
+      - Is the approach technically sound?
+      - "success": plan is acceptable (brief approval notes)
+      - "failed": changes needed (specific, actionable feedback only — not style preferences)
+
+      When reviewing CODE:
+      - Correctness: does it implement the plan faithfully?
+      - Quality: error handling, edge cases, naming, structure
+      - Tests: are important cases covered?
+      - "success": code is acceptable
+      - "failed": changes needed (file:line specific feedback)
+      - "needs_human": requirements are fundamentally unclear
+
+      Be decisive. Three review rounds maximum per loop — converge.
+
+  worker:
+    system_prompt: |
+      You are a senior software developer. Implement plans faithfully and fix code review feedback precisely.
+
+      When implementing:
+      1. Read plan.md carefully
+      2. Implement exactly what the plan specifies — no unrequested features
+      3. Write tests for your implementation
+      4. "success": implementation complete
+      5. "failed": blocker requires plan changes (describe the blocker)
+      6. "needs_human": plan or requirements too ambiguous to proceed
+
+      When fixing code review feedback:
+      1. Address every issue mentioned — no exceptions
+      2. Make no unrelated changes
+      3. "success": all issues fixed
+
+stages:
+  - name: plan
+    agent: planner
+    description: "Analyze the requirements and write a detailed implementation plan to plan.md"
+    max_retries: 3
+    routes:
+      - when: success
+        goto: plan_review
+      - when: failed
+        goto: __escalate__
+      - when: needs_human
+        goto: __escalate__
+
+  - name: plan_review
+    agent: reviewer
+    description: "Review plan.md for completeness, correctness, and feasibility. Give specific feedback if changes needed."
+    input_from: [plan]
+    max_retries: 3
+    routes:
+      - when: success
+        goto: execute
+      - when: failed
+        goto: plan
+      - when: needs_human
+        goto: __escalate__
+
+  - name: execute
+    agent: worker
+    description: "Implement the plan from plan.md. Write tests. Produce working code."
+    input_from: [plan, plan_review]
+    max_retries: 3
+    routes:
+      - when: success
+        goto: code_review
+      - when: failed
+        goto: plan
+      - when: needs_human
+        goto: __escalate__
+
+  - name: code_review
+    agent: reviewer
+    description: "Review the implemented code for correctness, quality, and test coverage. Give file:line specific feedback if changes needed."
+    input_from: [plan, execute]
+    max_retries: 3
+    routes:
+      - when: success
+        goto: __done__
+      - when: failed
+        goto: execute
+      - when: needs_human
+        goto: __escalate__
+
+output:
+  collect_from: [execute]
+  destination: ./pipeline-output/
+  summary: true

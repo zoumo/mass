@@ -1,15 +1,16 @@
 ---
 name: mass-pipeline
 description: |
-  通用声明式多 agent 工作流编排。读取 YAML workflow 配置，自动创建 workspace 和 agents，
+  声明式多 agent pipeline 编排。读取 YAML pipeline 配置，自动创建 workspace 和 agents，
   按阶段执行 task，通过 response.status 路由，收集输出，清理资源。
-  触发：用户运行 /mass-pipeline <workflow.yaml>，或提到"运行 workflow"、"执行 workflow 配置"。
-version: 0.1.0
+  触发：用户运行 /mass-pipeline，或提到"用 pipeline 执行"、"多 agent 协作完成任务"。
+  内置标准开发流程：plan → review → execute → code review → fix（使用 dev-pipeline 模板）。
+version: 0.2.0
 ---
 
-# mass-pipeline — Declarative Multi-Agent Workflow Orchestrator
+# mass-pipeline — Declarative Multi-Agent Pipeline Orchestrator
 
-读取用户提供的 YAML workflow 配置，自动编排多 agent 执行流程。
+读取 YAML pipeline 配置，自动编排多 agent 执行流程。内置标准开发 pipeline 模板。
 
 > **前置依赖**：本 skill 依赖 **mass-guide** skill 进行 workspace 和 agent 生命周期管理。
 > 执行前调用 mass-guide 确认 `mass daemon status` 正常。
@@ -39,14 +40,29 @@ version: 0.1.0
 
 ## 触发格式
 
+### 内置 dev-pipeline（推荐）
+
+直接描述任务，使用内置标准开发流程（plan → review → execute → code review → fix）：
+
 ```
-/mass-pipeline path/to/workflow.yaml
-/mass-pipeline path/to/workflow.yaml --input file1.md --input file2.md
+/mass-pipeline
+用 pipeline 实现 [任务描述]
+```
+
+Orchestrator 自动使用 `skills/mass-pipeline/templates/dev-pipeline.yaml`，将用户描述作为 `--input` 传入。
+每个审查循环最多 3 轮收敛，超限后 escalate。
+
+### 自定义 pipeline
+
+```
+/mass-pipeline path/to/pipeline.yaml
+/mass-pipeline path/to/pipeline.yaml --input file1.md --input file2.md
 ```
 
 `--input` 文件注入到所有未显式配置 `input_files` 的 stage。
 
 完整 YAML 字段说明见 [references/workflow-schema.md](references/workflow-schema.md)。
+自定义 pipeline 示例见 [templates/dev-pipeline.yaml](templates/dev-pipeline.yaml)。
 
 ---
 
