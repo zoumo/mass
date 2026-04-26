@@ -111,3 +111,153 @@ massctl agentrun create -w {workspace-name} --name {agent-key} --agent claude \
 若任意 agentrun 创建失败：立即停止，执行完整清理（见 Step 4），报告错误。
 
 ---
+
+## Step 2: Stage Execution Loop
+
+从 `stages[0]` 开始，按 routes 跳转执行，直到到达 `__done__` 或 `__escalate__`。
+
+维护内存状态（本 session 内）：
+- `current_stage` — 当前 stage name
+- `retry_counters` — map: stage_name → retry_count（初始化为全 0）
+- `stage_artifacts` — map: stage_name → list of artifact file paths（执行后填充）
+
+### 2a. 执行 Serial Stage
+
+**① 构建 task input files 列表**
+
+```bash
+input_files=()
+
+# 1. --input 全局注入（仅当 stage 无显式 input_files 时）
+if [[ ${#stage.input_files[@]} -eq 0 ]]; then
+  input_files+=("${global_inputs[@]}")
+fi
+
+# 2. 显式 input_files
+for f in "${stage.input_files[@]}"; do
+  input_files+=("$f")
+done
+
+# 3. input_from: 收集上游 stage artifacts
+for upstream_stage in "${stage.input_from[@]}"; do
+  for artifact in "${stage_artifacts[$upstream_stage][@]}"; do
+    input_files+=("$artifact")
+  done
+done
+```
+
+**② 创建 task**
+
+```bash
+massctl agentrun task create -w {workspace} --name {stage.agent} \
+  --description "{stage.description}" \
+  $(for f in "${input_files[@]}"; do echo "--file $f"; done)
+```
+
+提取返回的 `task.id`：
+```bash
+task_id=$(massctl agentrun task create ... -o json | jq -r '.id')
+```
+
+**③ 轮询等待**
+
+```bash
+skills/mass-workflow/scripts/poll-task.sh {workspace} {stage.agent} {task_id}
+poll_exit=$?
+```
+
+| poll exit | 处理 |
+|-----------|------|
+| 0 | 读取 response.status，执行路由 |
+| 1 | agent idle retry 用尽 → 视为 `failed`，走 routes 路由 |
+| 2 | agent error/stopped → 停止，人工介入（不走 routes，直接 escalate） |
+| 3 | 超时 → 视为 `failed`，走 routes 路由 |
+
+**④ 收集 artifacts**
+
+```bash
+artifact_dir=".mass/{workspace}/{stage.agent}/artifacts/"
+if [[ -d "$artifact_dir" ]]; then
+  stage_artifacts[{stage.name}]=$(find "$artifact_dir" -type f)
+fi
+```
+
+**⑤ 读取 response.status 并路由**
+
+```bash
+task_json=$(massctl agentrun task get -w {workspace} --name {stage.agent} --id {task_id} -o json)
+response_status=$(echo "$task_json" | jq -r '.response.status // "unknown"')
+```
+
+按 `stage.routes` 顺序匹配 `when == response_status`，找到第一个匹配的 `goto`：
+
+- `goto` 是 stage name：
+  - `retry_counters[goto]++`
+  - 若 `retry_counters[goto] > stage.max_retries`（默认 3）：→ `__escalate__`
+  - 否则：`current_stage = goto`，继续循环
+- `goto: __done__`：进入 Step 3
+- `goto: __escalate__`：打印执行路径 + response.description，停止
+
+无匹配 `when`：按语义判断最接近的 route；若无法判断，视为 `needs_human` → `__escalate__`。
+
+---
+
+### 2b. 执行 Parallel Stage
+
+**① 并发创建所有 sub-task**
+
+对每个 `tasks[i]` 按 2a 的 ① 逻辑构建 input files，并发执行：
+
+```bash
+# 为每个 sub-task 创建 task，收集 task_id
+declare -A sub_task_ids
+for sub_task in "${stage.tasks[@]}"; do
+  task_id=$(massctl agentrun task create -w {workspace} --name {sub_task.agent} \
+    --description "{sub_task.description}" \
+    $(for f in "${sub_task_input_files[@]}"; do echo "--file $f"; done) \
+    -o json | jq -r '.id')
+  sub_task_ids[{sub_task.agent}]=$task_id
+done
+```
+
+**② 并发轮询**
+
+对每个 sub-task 并发运行 poll-task.sh（后台进程），等待结果：
+
+```bash
+declare -A sub_poll_exits
+for agent in "${!sub_task_ids[@]}"; do
+  (
+    skills/mass-workflow/scripts/poll-task.sh {workspace} "$agent" "${sub_task_ids[$agent]}"
+    echo $? > /tmp/poll_exit_{workspace}_{agent}
+  ) &
+done
+wait  # 等待所有后台 poll 完成（wait: all）
+# wait: any — 使用 wait -n 等第一个完成，cancel 其余（若 massctl 支持 task cancel）
+```
+
+**③ 聚合状态**
+
+读取每个 sub-task 的 response.status，计算聚合结果：
+
+| 聚合规则 | 触发条件 |
+|---------|---------|
+| `all_success` | 所有 sub-task response.status == success |
+| `all_failed` | 所有 sub-task response.status == failed |
+| `any_failed` | 至少一个 failed（且非 all_failed） |
+| `any_success` | 至少一个 success（用于 wait: any 场景） |
+
+**④ 收集所有 sub-task artifacts**
+
+```bash
+for agent in "${!sub_task_ids[@]}"; do
+  artifact_dir=".mass/{workspace}/$agent/artifacts/"
+  if [[ -d "$artifact_dir" ]]; then
+    stage_artifacts[{stage.name}]+=$(find "$artifact_dir" -type f)
+  fi
+done
+```
+
+**⑤ 路由** — 与 serial stage 相同逻辑，使用聚合 status 匹配 `when`。
+
+---
