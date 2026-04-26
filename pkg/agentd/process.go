@@ -312,7 +312,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 	}
 	if err := m.waitForSocket(waitCtx, socketPath, runProc); err != nil {
 		// Kill agent-run process; leave bundle intact (preserved until agent/delete).
-		_ = m.killRun(runProc)
+		m.killRun(runProc)
 		return nil, fmt.Errorf("process: wait for socket: %w", err)
 	}
 
@@ -321,7 +321,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 	client, err := runclient.Dial(ctx, socketPath)
 	if err != nil {
 		// Kill agent-run process; leave bundle intact (preserved until agent/delete).
-		_ = m.killRun(runProc)
+		m.killRun(runProc)
 		return nil, fmt.Errorf("process: connect agent-run client: agent=%s: %w", key, err)
 	}
 	runProc.Client = client
@@ -765,48 +765,40 @@ func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string, r
 }
 
 // killRun kills the agent-run process if it's still running.
-func (m *ProcessManager) killRun(runProc *RunProcess) error {
+func (m *ProcessManager) killRun(runProc *RunProcess) {
 	// For recovered processes (no Cmd), fall back to killing by PID directly.
 	if runProc.Cmd == nil || runProc.Cmd.Process == nil {
 		if runProc.PID <= 0 {
-			return nil
+			return
 		}
 		proc, err := os.FindProcess(runProc.PID)
 		if err != nil {
-			return nil
+			return
 		}
 		_ = proc.Signal(os.Interrupt)
 		time.Sleep(2 * time.Second)
 		_ = proc.Kill()
-		return nil
+		return
 	}
 
 	// Try graceful shutdown first (SIGTERM).
 	if err := runProc.Cmd.Process.Signal(os.Interrupt); err != nil {
 		// Process might already be dead.
 		if err.Error() == "os: process already finished" {
-			return nil
+			return
 		}
 		// Fall back to SIGKILL.
 		_ = runProc.Cmd.Process.Kill()
 	}
 
-	// Wait for process to exit with a short timeout.
-	done := make(chan error, 1)
-	go func() {
-		done <- runProc.Cmd.Wait()
-	}()
-
+	// Wait via Done channel (set by the goroutine in Start that owns Cmd.Wait).
+	// Calling Cmd.Wait() a second time is not safe in Go.
 	select {
+	case <-runProc.Done:
 	case <-time.After(2 * time.Second):
-		// Timeout, force kill.
 		_ = runProc.Cmd.Process.Kill()
-		<-done // Drain the channel.
-	case err := <-done:
-		return err
+		<-runProc.Done
 	}
-
-	return nil
 }
 
 // watchProcess waits for the agent-run process to exit and cleans up.
@@ -893,9 +885,7 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 		m.logger.Info("agent-run process exited gracefully", "agent_key", key)
 	case <-time.After(10 * time.Second):
 		m.logger.Warn("agent-run process did not exit in time, killing", "agent_key", key)
-		if err := m.killRun(runProc); err != nil {
-			m.logger.Error("failed to kill agent-run process", "agent_key", key, "error", err)
-		}
+		m.killRun(runProc)
 		// Wait for watchProcess to clean up.
 		<-runProc.Done
 	}
