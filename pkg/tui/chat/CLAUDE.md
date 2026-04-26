@@ -122,6 +122,9 @@ chat 不直接接触 NDJSON 流或 JSON 解析。
 原因：返回 nil 的 tea.Cmd 不会触发 Bubbletea 的 Update，导致 waitNotif 不会被重新调度，
 **整个通知链永久断裂**。
 
+内部 `for` 循环用于跳过无法识别的 `runtime_update` 子类型（既非 Status 也非 AvailableCommands），
+这些事件没有对应的 `tea.Msg`，直接 `continue` 读下一个事件。
+
 ## 状态栏
 
 底部两行固定区域。内容随上下文切换：

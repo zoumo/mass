@@ -73,9 +73,6 @@ func Register(srv *jsonrpc.Server, svc *Service) {
 	RegisterSystemService(srv, &systemAdapter{svc})
 }
 
-// copyVal returns a pointer to a shallow copy of v.
-func copyVal[T any](v T) *T { return &v }
-
 // ────────────────────────────────────────────────────────────────────────────
 // Adapter types
 // ────────────────────────────────────────────────────────────────────────────
@@ -115,7 +112,8 @@ func (a *workspaceAdapter) Create(ctx context.Context, ws *pkgariapi.Workspace) 
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 
-	result := copyVal(ws.ARIView())
+	view := ws.ARIView()
+	result := &view
 
 	// Parse source for the Prepare call.
 	var src workspace.Source
@@ -348,8 +346,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 
 	ar.Status.Status = apiruntime.StatusCreating
 	if err := a.agents.Create(ctx, ar); err != nil {
-		var alreadyExists *agentd.ErrAgentRunAlreadyExists
-		if errors.As(err, &alreadyExists) {
+		if _, ok := errors.AsType[*agentd.ErrAgentRunAlreadyExists](err); ok {
 			return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
 		}
 		return nil, jsonrpc.ErrInternal(err.Error())
@@ -375,7 +372,8 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 		}
 	}()
 
-	return copyVal(ar.ARIView()), nil
+	view := ar.ARIView()
+	return &view, nil
 }
 
 // Get handles agentrun/get.
@@ -392,7 +390,8 @@ func (a *agentRunAdapter) Get(ctx context.Context, wsName, name string) (*pkgari
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", wsName, name))
 	}
 
-	return copyVal(agent.ARIView()), nil
+	v := agent.ARIView()
+	return &v, nil
 }
 
 // List handles agentrun/list.
@@ -426,12 +425,10 @@ func (a *agentRunAdapter) Delete(ctx context.Context, wsName, name string) error
 	a.logger.Info("agentrun/delete", "workspace", wsName, "name", name)
 
 	if err := a.agents.Delete(ctx, wsName, name); err != nil {
-		var notFound *agentd.ErrAgentRunNotFound
-		if errors.As(err, &notFound) {
+		if _, ok := errors.AsType[*agentd.ErrAgentRunNotFound](err); ok {
 			return jsonrpc.ErrInvalidParams(err.Error())
 		}
-		var notStopped *agentd.ErrDeleteNotStopped
-		if errors.As(err, &notStopped) {
+		if _, ok := errors.AsType[*agentd.ErrDeleteNotStopped](err); ok {
 			return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
 		}
 		return jsonrpc.ErrInternal(err.Error())
@@ -592,7 +589,8 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 		}
 	}()
 
-	return copyVal(agent.ARIView()), nil
+	v := agent.ARIView()
+	return &v, nil
 }
 
 // TaskCreate handles agentrun/task/create.

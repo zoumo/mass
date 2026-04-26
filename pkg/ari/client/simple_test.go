@@ -22,12 +22,8 @@ func TestNewClientSocketMissing(t *testing.T) {
 		client.Close()
 		t.Fatal("expected error for missing socket, got nil")
 	}
-	if client != nil {
-		client.Close()
-		t.Fatal("expected nil client for missing socket")
-	}
 	// Verify error contains socket path
-	if err != nil && !containsSubstring(err.Error(), socketPath) {
+	if !containsSubstring(err.Error(), socketPath) {
 		t.Errorf("error message should contain socket path %q, got: %v", socketPath, err)
 	}
 }

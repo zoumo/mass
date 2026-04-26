@@ -234,9 +234,8 @@ func reconnectCmd(sock string) tea.Cmd {
 // (i.e., the WatchClient context was canceled). connClosedMsg is returned only
 // by watchDisconnect (RPC disconnect), to trigger a reconnect.
 //
-// The loop skips unknown events to avoid returning nil (which would break the
-// Bubbletea notification chain — see CLAUDE.md "waitNotif 必须内部循环").
-// When the Events channel closes (context canceled), watchStoppedMsg is returned.
+// The loop skips unrecognized runtime_update subtypes via continue;
+// all other events are always mapped to a non-nil tea.Msg.
 func waitNotif(watcher *watch.RetryWatcher[runapi.AgentRunEvent]) tea.Cmd {
 	return safeCmd(func() tea.Msg {
 		for {
@@ -263,6 +262,8 @@ func waitNotif(watcher *watch.RetryWatcher[runapi.AgentRunEvent]) tea.Cmd {
 						return agentCommandsMsg{commands: ru.AvailableCommands.Commands}
 					}
 				}
+				// Skip unrecognized runtime_update subtypes.
+				continue
 			}
 			return notifMsg{ev: inner}
 		}
