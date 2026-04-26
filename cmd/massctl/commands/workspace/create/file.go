@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
+	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
@@ -52,7 +53,10 @@ func (s workspaceSource) toSource() (workspace.Source, error) {
 }
 
 func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
-	var file string
+	var (
+		file string
+		wait bool
+	)
 	cmd := &cobra.Command{
 		Use:   "-f <file>",
 		Short: "Create a workspace from a YAML spec file",
@@ -84,9 +88,18 @@ func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			ws, err := cliutil.CreateWorkspace(context.Background(), client, s.Name, src)
+			ctx := context.Background()
+			ws, err := cliutil.CreateWorkspace(ctx, client, s.Name, src)
 			if err != nil {
 				return err
+			}
+			if wait {
+				if err := cliutil.WaitWorkspaceReady(ctx, client, s.Name); err != nil {
+					return err
+				}
+				if err := client.Get(ctx, pkgariapi.ObjectKey{Name: s.Name}, ws); err != nil {
+					return err
+				}
 			}
 			cliutil.OutputJSON(ws)
 			return nil
@@ -94,5 +107,6 @@ func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to workspace YAML spec file (required)")
 	_ = cmd.MarkFlagRequired("file")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for workspace to become ready")
 	return cmd
 }
