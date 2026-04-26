@@ -14,6 +14,29 @@ version: 0.1.0
 > **前置依赖**：本 skill 依赖 **mass-guide** skill 进行 workspace 和 agent 生命周期管理。
 > 执行前调用 mass-guide 确认 `mass daemon status` 正常。
 
+## Orchestrator Boundary Rules
+
+**You are the conductor, not the performer.**
+
+### DO
+- Create tasks for agents via `massctl agentrun task create`
+- Poll task completion via `scripts/poll-task.sh`
+- Read `response.status` and route to the next stage
+- Pass artifacts between stages as `--file` inputs
+- Call scripts (`validate-workflow.sh`, `init-workflow.sh`, `poll-task.sh`) for deterministic operations
+- Make routing decisions (which stage to run next, when to escalate)
+
+### DO NOT
+- Write code, documents, or designs yourself — that is agent work
+- Analyze content in agent artifacts — pass them to the next agent
+- Make judgment calls about whether a design is "good" — the reviewer agent does that
+- Retry agent work differently — create a new task with updated context instead
+- Skip stages because you think the result is obvious
+
+**If you catch yourself about to "help" by doing a task directly instead of delegating it — stop. Create a task for the agent.**
+
+---
+
 ## 触发格式
 
 ```
@@ -63,52 +86,33 @@ mass daemon status
 
 ### 0c. 前置验证（启动前）
 
-验证失败时立即停止，**不创建任何资源**：
+Run the validation script. Exit immediately on failure — **do not create any resources**:
 
-1. `agents` map 不为空
-2. `stages` 列表不为空
-3. 每个 serial stage 的 `agent` 字段引用了 `agents` map 中存在的 key
-4. 每个 parallel stage 的每个 sub-task `agent` 字段引用了 `agents` map 中存在的 key
-5. 所有 `routes[].goto` 要么是已知 stage name，要么是 `__done__` / `__escalate__`
-6. 所有 `input_from` 引用的 stage name 在 `stages` 中存在
-7. `workspace.type` 为 `local | git | empty`
-
-验证通过后，向用户展示解析结果摘要：
-```
-Workflow: {name}
-Workspace: {type} {path}
-Agents: {agent1}, {agent2}, ...
-Stages: {stage1} → {stage2} → ...
+```bash
+skills/mass-workflow/scripts/validate-workflow.sh {workflow_file}
 ```
 
-等待用户确认（"确认执行？"），确认后继续。
+Exit code 0: validation passed, script prints summary. Show the summary to the user.
+Exit code 1: validation failed, script prints specific field errors. Report errors and stop.
+Exit code 2: missing dependency (PyYAML). Report and stop.
+
+After successful validation, ask the user: "确认执行？" Wait for confirmation before proceeding.
 
 ---
 
 ## Step 1: 创建 Workspace + Agents
 
-使用 **mass-guide** skill 执行：
-
-### 1a. 创建 workspace
+Run the init script. This handles workspace creation, readiness polling, agentrun creation, and idle polling:
 
 ```bash
-massctl workspace create {type} --name {workspace-name} [--path {path} | --url {url}]
+skills/mass-workflow/scripts/init-workflow.sh {workflow_file} {workspace-name}
 ```
 
-等待 workspace status == ready（轮询 `massctl workspace get {name} -o json`）。
+Exit code 0: workspace ready + all agents idle.
+Exit code 1: creation or polling failed. Execute full cleanup (Step 4) and report the error.
+Exit code 2: missing dependency. Report and stop.
 
-### 1b. 创建所有 agentrun
-
-对 `agents` map 中每个 agent，执行：
-
-```bash
-massctl agentrun create -w {workspace-name} --name {agent-key} --agent claude \
-  --system-prompt "{agent.system_prompt}"
-```
-
-默认 `--agent claude`。等待每个 agentrun state == idle。
-
-若任意 agentrun 创建失败：立即停止，执行完整清理（见 Step 4），报告错误。
+The workspace name is: `{workflow.name}-{random4hex}` (generated in Step 0b to avoid conflicts).
 
 ---
 
