@@ -11,8 +11,34 @@ import (
 // NewCommand returns the "workspace" cobra command.
 func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "workspace",
-		Short: "Workspace management",
+		Use:     "workspace",
+		Aliases: []string{"ws"},
+		Short:   "Workspace management",
+		Long: `Manage workspaces – isolated working directories bound to agent runs.
+
+A workspace must reach phase "ready" before agent runs can be created in it.
+Poll with: massctl ws get <name>
+
+Source types:
+  local    Mount an existing local directory (mass will not delete it)
+  git      Clone a git repository (mass manages the directory)
+  empty    Create an empty directory
+
+Examples:
+  # Create from local directory and wait until ready
+  massctl ws create local --name my-ws --path /path/to/code --wait
+
+  # Clone a git repo
+  massctl ws create git --name my-ws --url https://github.com/org/repo.git --ref main --wait
+
+  # List all workspaces
+  massctl ws get
+
+  # Get a specific workspace (check phase)
+  massctl ws get my-ws
+
+  # Delete (all agent runs must be deleted first)
+  massctl ws delete my-ws`,
 	}
 
 	cmd.AddCommand(newGetCmd(getClient))

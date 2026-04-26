@@ -288,15 +288,15 @@ func TestAgentUpdateStatus_NotFound(t *testing.T) {
 	assert.Equal(t, "ghost", notFound.Name)
 }
 
-// TestAgentTransitionState_NotFound tests that TransitionState returns ErrAgentRunNotFound for a missing agent.
+// TestAgentTransitionPhase_NotFound tests that TransitionPhase returns ErrAgentRunNotFound for a missing agent.
 func TestAgentTransitionState_NotFound(t *testing.T) {
 	t.Parallel()
 
 	am := newTestAgentManager(t)
 	ctx := context.Background()
 
-	ok, err := am.TransitionState(ctx, "ws1", "phantom", apiruntime.PhaseIdle, apiruntime.PhaseRunning)
-	require.Error(t, err, "TransitionState of missing agent should fail")
+	ok, err := am.TransitionPhase(ctx, "ws1", "phantom", apiruntime.PhaseIdle, apiruntime.PhaseRunning)
+	require.Error(t, err, "TransitionPhase of missing agent should fail")
 	assert.False(t, ok)
 
 	var notFound *ErrAgentRunNotFound
@@ -333,7 +333,7 @@ func TestErrorTypes_Format(t *testing.T) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// TransitionState success/mismatch
+// TransitionPhase success/mismatch
 // ────────────────────────────────────────────────────────────────────────────
 
 func TestAgentTransitionState_Success(t *testing.T) {
@@ -344,10 +344,10 @@ func TestAgentTransitionState_Success(t *testing.T) {
 
 	agent := makeTestAgentRun("ws1", "trans")
 	require.NoError(t, am.Create(ctx, agent))
-	// State starts as "creating".
+	// Phase starts as "creating".
 
 	// Transition creating → idle should succeed.
-	ok, err := am.TransitionState(ctx, "ws1", "trans", apiruntime.PhaseCreating, apiruntime.PhaseIdle)
+	ok, err := am.TransitionPhase(ctx, "ws1", "trans", apiruntime.PhaseCreating, apiruntime.PhaseIdle)
 	require.NoError(t, err)
 	assert.True(t, ok, "transition from matching state should succeed")
 
@@ -366,12 +366,12 @@ func TestAgentTransitionState_Mismatch(t *testing.T) {
 	require.NoError(t, am.Create(ctx, agent))
 	// State is "creating".
 
-	// Transition idle → running should fail (current state is creating, not idle).
-	ok, err := am.TransitionState(ctx, "ws1", "mismatch", apiruntime.PhaseIdle, apiruntime.PhaseRunning)
+	// Transition idle → running should fail (current phase is creating, not idle).
+	ok, err := am.TransitionPhase(ctx, "ws1", "mismatch", apiruntime.PhaseIdle, apiruntime.PhaseRunning)
 	require.NoError(t, err, "mismatch should not be an error")
-	assert.False(t, ok, "transition from wrong state should return false")
+	assert.False(t, ok, "transition from wrong phase should return false")
 
-	// State should remain creating.
+	// Phase should remain creating.
 	got, err := am.Get(ctx, "ws1", "mismatch")
 	require.NoError(t, err)
 	assert.Equal(t, apiruntime.PhaseCreating, got.Status.Phase)

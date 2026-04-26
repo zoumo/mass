@@ -17,6 +17,23 @@ func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "compose",
 		Short: "Declarative workspace and agent-run management",
+		Long: `Declarative workspace and agent-run management.
+
+  apply    Create workspace and agent runs from a YAML compose file
+  run      Quick-start a single agent run from the current directory
+
+Examples:
+  # Declarative multi-agent setup from a compose file
+  massctl compose apply -f compose.yaml
+
+  # Quick-start a single agent (uses current directory as local workspace)
+  massctl compose run -w my-ws --agent claude
+
+  # With system prompt
+  massctl compose run -w my-ws --agent claude --system-prompt "You are a reviewer"
+
+  # Custom run name
+  massctl compose run -w my-ws --agent claude --name my-claude`,
 	}
 	cmd.AddCommand(
 		newApplyCmd(getClient),

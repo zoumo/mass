@@ -173,8 +173,8 @@ func (m *ProcessManager) routeEvent(workspace, name string, runProc *RunProcess,
 			cancel()
 			return
 		}
-		if err := m.agents.UpdateState(updateCtx, workspace, name, apiruntime.Phase(newStatus), ""); err != nil {
-			logger.Warn("stateChange: failed to update DB state",
+		if err := m.agents.UpdatePhase(updateCtx, workspace, name, apiruntime.Phase(newStatus), ""); err != nil {
+			logger.Warn("stateChange: failed to update DB phase",
 				"error", err)
 		}
 		// On transition to idle the ACP handshake is complete and
@@ -249,7 +249,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 
 	// Validate agent status - must be "creating" to start.
 	if agent.Status.Phase != apiruntime.PhaseCreating {
-		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.Phase)
+		return nil, fmt.Errorf("process: agent %s is in phase %s (must be 'creating' to start)", key, agent.Status.Phase)
 	}
 
 	// 2. Resolve Agent definition from DB.
@@ -263,7 +263,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 
 	// From this point the runtime bootstrap has started. The socket may not
 	// exist yet, so observers should see creating while Start waits for it.
-	if err := m.agents.UpdateState(ctx, workspace, name, apiruntime.PhaseCreating, ""); err != nil {
+	if err := m.agents.UpdatePhase(ctx, workspace, name, apiruntime.PhaseCreating, ""); err != nil {
 		return nil, fmt.Errorf("process: mark agent creating: %w", err)
 	}
 	agent.Status.Phase = apiruntime.PhaseCreating
@@ -362,11 +362,11 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 		if statusResult.State.Phase != apiruntime.PhaseCreating {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := m.agents.UpdateState(updateCtx, workspace, name, statusResult.State.Phase, ""); err != nil {
+			if err := m.agents.UpdatePhase(updateCtx, workspace, name, statusResult.State.Phase, ""); err != nil {
 				m.logger.Warn("bootstrap state sync failed",
 					"agent_key", key, "phase", statusResult.State.Phase, "error", err)
 			} else {
-				m.logger.Info("bootstrap state synced from agent-run",
+				m.logger.Info("bootstrap phase synced from agent-run",
 					"agent_key", key, "phase", statusResult.State.Phase)
 				if statusResult.State.Phase == apiruntime.PhaseIdle {
 					m.syncSessionInfo(updateCtx, workspace, name, stateDir, m.logger.With("agent_key", key))

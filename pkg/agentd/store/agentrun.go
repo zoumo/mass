@@ -212,13 +212,13 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 	})
 }
 
-// UpdateAgentRunState updates only Status.Status and Status.ErrorMessage,
+// UpdateAgentRunPhase updates only Status.Phase and Status.ErrorMessage,
 // preserving all other status fields (PID, SocketPath, StateDir, etc.).
-func (s *Store) UpdateAgentRunState(_ context.Context, workspace, name string, state apiruntime.Phase, errMsg string) error {
-	return s.updateAgentRun(workspace, name, "update-state", func(agent *pkgariapi.AgentRun) error {
+func (s *Store) UpdateAgentRunPhase(_ context.Context, workspace, name string, state apiruntime.Phase, errMsg string) error {
+	return s.updateAgentRun(workspace, name, "update-phase", func(agent *pkgariapi.AgentRun) error {
 		agent.Status.Phase = state
 		agent.Status.ErrorMessage = errMsg
-		s.logger.Debug("agentRun state updated",
+		s.logger.Debug("agentRun phase updated",
 			"workspace", workspace,
 			"name", name,
 			"phase", state)
@@ -235,16 +235,16 @@ func (s *Store) UpdateAgentRunSessionInfo(_ context.Context, workspace, name, se
 	})
 }
 
-// TransitionAgentRunState updates only Status.Status when the current state
+// TransitionAgentRunPhase updates only Status.Phase when the current phase
 // matches expected. It preserves run metadata, error text, and all other fields.
-// Returns false, nil when the agent exists but is not in the expected state.
-func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next apiruntime.Phase) (bool, error) {
+// Returns false, nil when the agent exists but is not in the expected phase.
+func (s *Store) TransitionAgentRunPhase(_ context.Context, workspace, name string, expected, next apiruntime.Phase) (bool, error) {
 	err := s.updateAgentRun(workspace, name, "transition", func(agent *pkgariapi.AgentRun) error {
 		if agent.Status.Phase != expected {
 			return errStateMismatch
 		}
 		agent.Status.Phase = next
-		s.logger.Debug("agentRun state transitioned",
+		s.logger.Debug("agentRun phase transitioned",
 			"workspace", workspace,
 			"name", name,
 			"from", expected,

@@ -32,7 +32,7 @@ type ErrDeleteNotStopped struct {
 }
 
 func (e *ErrDeleteNotStopped) Error() string {
-	return fmt.Sprintf("mass: cannot delete agent run %s/%s in state %s (agent run must be stopped or error first)",
+	return fmt.Sprintf("mass: cannot delete agent run %s/%s in phase %s (agent run must be stopped or error first)",
 		e.Workspace, e.Name, e.Phase)
 }
 
@@ -154,23 +154,23 @@ func (m *AgentRunManager) UpdateStatus(ctx context.Context, workspace, name stri
 	return nil
 }
 
-// UpdateState updates only Status.Status and Status.ErrorMessage,
+// UpdatePhase updates only Status.Phase and Status.ErrorMessage,
 // preserving all other status fields (PID, SocketPath, StateDir, etc.).
-func (m *AgentRunManager) UpdateState(ctx context.Context, workspace, name string, state apiruntime.Phase, errMsg string) error {
-	m.logger.Info("updating agent state",
+func (m *AgentRunManager) UpdatePhase(ctx context.Context, workspace, name string, state apiruntime.Phase, errMsg string) error {
+	m.logger.Info("updating agent phase",
 		"workspace", workspace,
 		"name", name,
 		"phase", state)
 
-	if err := m.store.UpdateAgentRunState(ctx, workspace, name, state, errMsg); err != nil {
+	if err := m.store.UpdateAgentRunPhase(ctx, workspace, name, state, errMsg); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return &ErrAgentRunNotFound{Workspace: workspace, Name: name}
 		}
-		m.logger.Error("failed to update agent state",
+		m.logger.Error("failed to update agent phase",
 			"workspace", workspace,
 			"name", name,
 			"error", err)
-		return fmt.Errorf("mass: failed to update agent state: %w", err)
+		return fmt.Errorf("mass: failed to update agent phase: %w", err)
 	}
 
 	return nil
@@ -187,28 +187,28 @@ func (m *AgentRunManager) UpdateSessionInfo(ctx context.Context, workspace, name
 	return nil
 }
 
-// TransitionState updates an agent state only when the current state matches
+// TransitionPhase updates an agent phase only when the current phase matches
 // expected. It returns false when the agent exists but was already in another
-// state. Other status fields are preserved.
-func (m *AgentRunManager) TransitionState(ctx context.Context, workspace, name string, expected, next apiruntime.Phase) (bool, error) {
-	m.logger.Info("transitioning agent state",
+// phase. Other status fields are preserved.
+func (m *AgentRunManager) TransitionPhase(ctx context.Context, workspace, name string, expected, next apiruntime.Phase) (bool, error) {
+	m.logger.Info("transitioning agent phase",
 		"workspace", workspace,
 		"name", name,
 		"from", expected,
 		"to", next)
 
-	ok, err := m.store.TransitionAgentRunState(ctx, workspace, name, expected, next)
+	ok, err := m.store.TransitionAgentRunPhase(ctx, workspace, name, expected, next)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return false, &ErrAgentRunNotFound{Workspace: workspace, Name: name}
 		}
-		m.logger.Error("failed to transition agent state",
+		m.logger.Error("failed to transition agent phase",
 			"workspace", workspace,
 			"name", name,
 			"from", expected,
 			"to", next,
 			"error", err)
-		return false, fmt.Errorf("mass: failed to transition agent state: %w", err)
+		return false, fmt.Errorf("mass: failed to transition agent phase: %w", err)
 	}
 	return ok, nil
 }

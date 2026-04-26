@@ -32,7 +32,7 @@ func newChatCmd(getClient cliutil.ClientFn) *cobra.Command {
 			client.Close()
 
 			if ar.Status.SocketPath == "" {
-				return fmt.Errorf("agent run %s/%s has no run socket (state: %s)", ws, name, ar.Status.Phase)
+				return fmt.Errorf("agent run %s/%s has no run socket (phase: %s)", ws, name, ar.Status.Phase)
 			}
 
 			return chat.RunChatTUI(chat.ChatTUIOptions{

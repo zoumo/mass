@@ -341,8 +341,8 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 			Prompt:    []runapi.ContentBlock{runapi.TextBlock("hello")},
 		}, nil)
 		require.Error(t, err, "agentrun/prompt for %s must return an error", name)
-		assert.Contains(t, err.Error(), "not in idle state",
-			"error for %s must mention 'not in idle state'", name)
+		assert.Contains(t, err.Error(), "not in idle phase",
+			"error for %s must mention 'not in idle phase'", name)
 	}
 }
 
@@ -416,7 +416,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		Prompt:    []runapi.ContentBlock{runapi.TextBlock("second")},
 	}, nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not in idle state")
+	assert.Contains(t, err.Error(), "not in idle phase")
 }
 
 // ────────────────────────────────────────────────────────────────────────────

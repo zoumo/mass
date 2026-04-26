@@ -24,7 +24,7 @@ func WaitAgentIdle(ctx context.Context, client ariclient.Client, wsName, agName 
 			fmt.Printf("Agent %q/%q is idle\n", wsName, agName)
 			return nil
 		case "error":
-			return fmt.Errorf("agent %q/%q entered error state: %s", wsName, agName, ar.Status.ErrorMessage)
+			return fmt.Errorf("agent %q/%q entered error phase: %s", wsName, agName, ar.Status.ErrorMessage)
 		case "stopped":
 			return fmt.Errorf("agent %q/%q stopped unexpectedly", wsName, agName)
 		}

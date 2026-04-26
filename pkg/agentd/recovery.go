@@ -125,7 +125,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 				// Already reconciled by recoverAgent; no additional update needed.
 			} else if currentState == apiruntime.PhaseRunning && runStatus == apiruntime.PhaseIdle {
 				// Agent-run became idle during recovery — update to idle.
-				if aErr := m.agents.UpdateState(ctx, ws, name, apiruntime.PhaseIdle, ""); aErr != nil {
+				if aErr := m.agents.UpdatePhase(ctx, ws, name, apiruntime.PhaseIdle, ""); aErr != nil {
 					m.logger.Warn("recovery: failed to reconcile running→idle",
 						"agent_key", key, "error", aErr)
 				}
@@ -135,7 +135,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 		}
 	}
 
-	// Pending/Creating-cleanup pass: agents stuck in transient states
+	// Pending/Creating-cleanup pass: agents stuck in transient phases
 	// when the daemon crashed will never complete — mark them as error.
 	for _, queryState := range []apiruntime.Phase{apiruntime.PhaseCreating} {
 		stuckAgents, err := m.store.ListAgentRuns(ctx, &pkgariapi.AgentRunFilter{Phase: queryState})
@@ -149,7 +149,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 				continue
 			}
 			errMsg := fmt.Sprintf("agent bootstrap lost: daemon restarted during %s phase", queryState)
-			m.logger.Warn("recovery: agent stuck in transient state, marking error", "agent_key", key, "phase", queryState)
+			m.logger.Warn("recovery: agent stuck in transient phase, marking error", "agent_key", key, "phase", queryState)
 			if aErr := m.agents.UpdateStatus(ctx, agent.Metadata.Workspace, agent.Metadata.Name,
 				pkgariapi.AgentRunStatus{
 					Phase:        apiruntime.PhaseError,
@@ -218,7 +218,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	logger.Info("recovery: agent-run status",
 		"status", status.State.Phase,
 		"lastSeq", status.Recovery.LastSeq,
-		slog.Group("state",
+		slog.Group("phase",
 			"id", status.State.ID,
 			"pid", status.State.PID,
 		))
@@ -232,11 +232,11 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 
 	case status.State.Phase == apiruntime.PhaseRunning && agent.Status.Phase == apiruntime.PhaseIdle:
 		// Agent-run is running but DB still says idle — update DB to match agent-run truth.
-		if err := m.agents.UpdateState(ctx, ws, name, apiruntime.PhaseRunning, ""); err != nil {
-			logger.Warn("recovery: failed to reconcile agent state idle→running (proceeding)",
+		if err := m.agents.UpdatePhase(ctx, ws, name, apiruntime.PhaseRunning, ""); err != nil {
+			logger.Warn("recovery: failed to reconcile agent phase idle→running (proceeding)",
 				"error", err)
 		} else {
-			logger.Info("recovery: reconciled agent state idle→running to match agent-run")
+			logger.Info("recovery: reconciled agent phase idle→running to match agent-run")
 		}
 
 	default:
@@ -244,7 +244,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 		runStatus := string(status.State.Phase)
 		dbState := string(agent.Status.Phase)
 		if runStatus != dbState {
-			logger.Warn("recovery: agent-run status differs from DB state (proceeding)",
+			logger.Warn("recovery: agent-run status differs from DB phase (proceeding)",
 				"run_status", runStatus,
 				"db_state", dbState)
 		}

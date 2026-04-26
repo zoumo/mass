@@ -183,13 +183,13 @@ func TestUpdateAgentRunStatus_NotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestTransitionAgentRunState(t *testing.T) {
+func TestTransitionAgentRunPhase(t *testing.T) {
 	s := tempStore(t)
 	agent := makeAgentRun("ws", "reserved")
 	agent.Status.SocketPath = "/tmp/run.sock"
 	require.NoError(t, s.CreateAgentRun(t.Context(), agent))
 
-	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "reserved", apiruntime.PhaseIdle, apiruntime.PhaseRunning)
+	ok, err := s.TransitionAgentRunPhase(t.Context(), "ws", "reserved", apiruntime.PhaseIdle, apiruntime.PhaseRunning)
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -199,11 +199,11 @@ func TestTransitionAgentRunState(t *testing.T) {
 	require.Equal(t, "/tmp/run.sock", got.Status.SocketPath)
 }
 
-func TestTransitionAgentRunState_WrongExpectedState(t *testing.T) {
+func TestTransitionAgentRunPhase_WrongExpectedState(t *testing.T) {
 	s := tempStore(t)
 	require.NoError(t, s.CreateAgentRun(t.Context(), makeAgentRun("ws", "busy")))
 
-	ok, err := s.TransitionAgentRunState(t.Context(), "ws", "busy", apiruntime.PhaseStopped, apiruntime.PhaseRunning)
+	ok, err := s.TransitionAgentRunPhase(t.Context(), "ws", "busy", apiruntime.PhaseStopped, apiruntime.PhaseRunning)
 	require.NoError(t, err)
 	require.False(t, ok)
 

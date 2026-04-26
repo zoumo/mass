@@ -535,7 +535,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 
 	if agent.Status.Phase == apiruntime.PhaseIdle || agent.Status.Phase == apiruntime.PhaseRunning {
 		from := agent.Status.Phase
-		reserved, err := a.agents.TransitionState(ctx, wsName, name, from, apiruntime.PhaseRestarting)
+		reserved, err := a.agents.TransitionPhase(ctx, wsName, name, from, apiruntime.PhaseRestarting)
 		if err != nil {
 			return nil, jsonrpc.ErrInternal(err.Error())
 		}
@@ -550,7 +550,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 			}
 			return nil, &jsonrpc.RPCError{
 				Code:    pkgariapi.CodeRecoveryBlocked,
-				Message: fmt.Sprintf("agent state changed during restart: %s", state),
+				Message: fmt.Sprintf("agent phase changed during restart: %s", state),
 			}
 		}
 		agent.Status.Phase = apiruntime.PhaseRestarting
@@ -978,11 +978,11 @@ func (s *Service) reserveIdleAgent(ctx context.Context, ws, name, entityLabel st
 	if agent.Status.Phase != apiruntime.PhaseIdle {
 		return nil, &jsonrpc.RPCError{
 			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("%s not in idle state: %s", entityLabel, agent.Status.Phase),
+			Message: fmt.Sprintf("%s not in idle phase: %s", entityLabel, agent.Status.Phase),
 		}
 	}
 
-	reserved, err := s.agents.TransitionState(ctx, ws, name, apiruntime.PhaseIdle, apiruntime.PhaseRunning)
+	reserved, err := s.agents.TransitionPhase(ctx, ws, name, apiruntime.PhaseIdle, apiruntime.PhaseRunning)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
