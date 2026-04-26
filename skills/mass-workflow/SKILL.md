@@ -261,3 +261,115 @@ done
 **⑤ 路由** — 与 serial stage 相同逻辑，使用聚合 status 匹配 `when`。
 
 ---
+
+## Step 3: Collect Output Artifacts
+
+仅在 `__done__` 时执行（escalate 时跳过，保留 artifacts 供 debug）。
+
+```bash
+destination="${output.destination:-./mass-workflow-output/}"
+mkdir -p "$destination"
+
+for stage_name in "${output.collect_from[@]}"; do
+  for artifact in "${stage_artifacts[$stage_name][@]}"; do
+    cp "$artifact" "$destination"
+  done
+done
+
+echo "Output collected to: $destination"
+ls "$destination"
+```
+
+---
+
+## Step 4: 清理
+
+**无论成功、失败、escalate，均执行清理。** 失败时保留 `.mass/{workspace}/` artifacts（不删 workspace 内文件，只停止 agent 进程和删除 agentrun 记录）。
+
+使用 **mass-guide** skill 顺序执行：
+
+```bash
+# 1. 停止所有 agentrun
+for agent in all_agent_names; do
+  massctl agentrun stop "$agent" -w {workspace}
+done
+
+# 2. 删除所有 agentrun
+for agent in all_agent_names; do
+  massctl agentrun delete "$agent" -w {workspace}
+done
+
+# 3. 删除 workspace（成功时删除；失败/escalate 时询问用户是否删除）
+massctl workspace delete {workspace}
+```
+
+清理失败时记录警告，继续清理其余资源，不中断流程。
+
+---
+
+## Step 5: 打印执行摘要
+
+```
+=== mass-workflow execution summary ===
+Workflow:   {name}
+Status:     done | escalated
+Duration:   {elapsed}s
+
+Stage execution path:
+  design          → success  (1 attempt)
+  parallel_review → all_success (1 attempt)
+  implement       → success  (2 attempts)
+
+Output: {destination}
+```
+
+escalate 时额外打印：
+```
+=== ESCALATION ===
+Stage: {stage_name}
+Reason: {response.description}
+Retry count: {n}/{max_retries}
+
+Next steps:
+  - Review artifacts at: .mass/{workspace}/{agent}/artifacts/
+  - Re-run with adjusted workflow or fix the issue manually
+```
+
+---
+
+## 错误处理速查
+
+| 场景 | 行为 |
+|------|------|
+| YAML 文件不存在 | 立即停止，报告路径错误，不创建任何资源 |
+| YAML 验证失败 | 立即停止，报告具体字段错误，不创建任何资源 |
+| workspace 创建失败 | 立即停止，不创建 agentrun |
+| agentrun 创建失败 | 停止，清理已创建的 agentrun + workspace |
+| poll exit 2 (agent error) | 不走 routes，直接 __escalate__ |
+| poll exit 1/3 (idle/timeout) | 视为 `failed`，走正常 routes 路由 |
+| retry 超限 | 强制 __escalate__，不管 routes 配置 |
+| `__escalate__` | 打印完整上下文，保留 artifacts，清理进程资源 |
+| 无匹配 route | 按 response.status 语义判断；无法判断 → __escalate__ |
+| cleanup 失败 | 记录警告，继续清理其余资源 |
+
+---
+
+## 设计原则
+
+1. **YAML 是语义描述，不是模板** — orchestrator（LLM）读取 `description` 字段并自行判断如何构建 task prompt，不 hardcode 模板
+2. **Agent 间不直接通信** — 所有协调经 orchestrator via task API
+3. **失败时保留 artifacts** — 供 debug，不自动删除
+4. **验证前置** — YAML 问题在启动前暴露，不在执行中途失败
+5. **cleanup 保证** — 任何终止路径都执行清理
+
+---
+
+## 与其他 skill 的关系
+
+| Skill | 职责 |
+|-------|------|
+| `mass-guide` | 前置依赖：workspace/agent 生命周期原语 |
+| `mass-pilot` | 保留：手写复杂 orchestrator 逻辑 |
+| `mass-workflow` | 本 skill：声明式配置驱动的通用 orchestrator |
+
+复杂条件分支、动态角色选择、跨 session 持久化 → 使用 `mass-pilot` 手写。
