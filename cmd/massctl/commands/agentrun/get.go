@@ -48,7 +48,7 @@ With one or more names, gets those specific agent runs (-w required).`,
 	}
 
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required for get, optional filter for list)")
-	cmd.Flags().StringVar(&state, "state", "", "Filter by state (list only)")
+	cmd.Flags().StringVar(&state, "phase", "", "Filter by lifecycle phase (list only)")
 	cliutil.AddOutputFlag(cmd, &format)
 	return cmd
 }
@@ -59,7 +59,7 @@ func listAgentRuns(ctx context.Context, client ariclient.Client, printer *cliuti
 		opts = append(opts, pkgariapi.InWorkspace(ws))
 	}
 	if state != "" {
-		opts = append(opts, pkgariapi.WithState(state))
+		opts = append(opts, pkgariapi.WithPhase(state))
 	}
 	var list pkgariapi.AgentRunList
 	if err := client.List(ctx, &list, opts...); err != nil {

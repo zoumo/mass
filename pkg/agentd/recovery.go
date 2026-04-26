@@ -140,7 +140,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 	for _, queryState := range []apiruntime.Phase{apiruntime.PhaseCreating} {
 		stuckAgents, err := m.store.ListAgentRuns(ctx, &pkgariapi.AgentRunFilter{Phase: queryState})
 		if err != nil {
-			m.logger.Warn("recovery: failed to list agents for cleanup", "state", queryState, "error", err)
+			m.logger.Warn("recovery: failed to list agents for cleanup", "phase", queryState, "error", err)
 			continue
 		}
 		for _, agent := range stuckAgents {
@@ -149,7 +149,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 				continue
 			}
 			errMsg := fmt.Sprintf("agent bootstrap lost: daemon restarted during %s phase", queryState)
-			m.logger.Warn("recovery: agent stuck in transient state, marking error", "agent_key", key, "state", queryState)
+			m.logger.Warn("recovery: agent stuck in transient state, marking error", "agent_key", key, "phase", queryState)
 			if aErr := m.agents.UpdateStatus(ctx, agent.Metadata.Workspace, agent.Metadata.Name,
 				pkgariapi.AgentRunStatus{
 					Phase:        apiruntime.PhaseError,

@@ -22,8 +22,8 @@ func newDebugCmd() *cobra.Command {
 	_ = cmd.MarkPersistentFlagRequired("socket")
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "state",
-		Short: "Print agent state and recovery metadata (runtime/status)",
+		Use:   "status",
+		Short: "Print agent runtime status and recovery metadata (runtime/status)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			sc, err := runclient.Dial(cmd.Context(), socket)

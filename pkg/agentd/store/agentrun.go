@@ -207,7 +207,7 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 		s.logger.Debug("agentRun status updated",
 			"workspace", workspace,
 			"name", name,
-			"state", status.Phase)
+			"phase", status.Phase)
 		return nil
 	})
 }
@@ -221,7 +221,7 @@ func (s *Store) UpdateAgentRunState(_ context.Context, workspace, name string, s
 		s.logger.Debug("agentRun state updated",
 			"workspace", workspace,
 			"name", name,
-			"state", state)
+			"phase", state)
 		return nil
 	})
 }

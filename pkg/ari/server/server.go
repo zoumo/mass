@@ -399,12 +399,12 @@ func (a *agentRunAdapter) Get(ctx context.Context, wsName, name string) (*pkgari
 // Returns all agent runs matching the optional workspace/state filter.
 func (a *agentRunAdapter) List(ctx context.Context, opts pkgariapi.ListOptions) (*pkgariapi.AgentRunList, error) {
 	wsFilter := opts.FieldSelector["workspace"]
-	stFilter := opts.FieldSelector["state"]
-	a.logger.Debug("agentrun/list", "workspace", wsFilter, "state", stFilter)
+	phaseFilter := opts.FieldSelector["phase"]
+	a.logger.Debug("agentrun/list", "workspace", wsFilter, "phase", phaseFilter)
 
 	filter := &pkgariapi.AgentRunFilter{
 		Workspace: wsFilter,
-		Phase:     apiruntime.Phase(stFilter),
+		Phase:     apiruntime.Phase(phaseFilter),
 	}
 	agentRuns, err := a.agents.List(ctx, filter)
 	if err != nil {

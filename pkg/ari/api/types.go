@@ -34,7 +34,7 @@ type ListOptions struct {
 	// FieldSelector filters by field values.
 	// Supported fields depend on the resource type:
 	//   Workspace: "phase"
-	//   AgentRun:  "workspace", "state"
+	//   AgentRun:  "workspace", "phase"
 	//   Agent:     (none)
 	FieldSelector map[string]string `json:"fieldSelector,omitempty"`
 
@@ -67,10 +67,7 @@ func WithField(field, value string) ListOption {
 // InWorkspace filters agent runs by workspace name.
 func InWorkspace(ws string) ListOption { return WithField("workspace", ws) }
 
-// WithState filters agent runs by state.
-func WithState(state string) ListOption { return WithField("state", state) }
-
-// WithPhase filters workspaces by phase.
+// WithPhase filters by lifecycle phase (agent runs or workspaces).
 func WithPhase(phase string) ListOption { return WithField("phase", phase) }
 
 // WithLabels filters by label key-value pairs.

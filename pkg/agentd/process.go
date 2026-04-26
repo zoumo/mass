@@ -364,10 +364,10 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 			defer cancel()
 			if err := m.agents.UpdateState(updateCtx, workspace, name, statusResult.State.Phase, ""); err != nil {
 				m.logger.Warn("bootstrap state sync failed",
-					"agent_key", key, "state", statusResult.State.Phase, "error", err)
+					"agent_key", key, "phase", statusResult.State.Phase, "error", err)
 			} else {
 				m.logger.Info("bootstrap state synced from agent-run",
-					"agent_key", key, "state", statusResult.State.Phase)
+					"agent_key", key, "phase", statusResult.State.Phase)
 				if statusResult.State.Phase == apiruntime.PhaseIdle {
 					m.syncSessionInfo(updateCtx, workspace, name, stateDir, m.logger.With("agent_key", key))
 				}

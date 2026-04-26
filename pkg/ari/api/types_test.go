@@ -151,11 +151,11 @@ func TestObjectMeta_JSON_RoundTrip(t *testing.T) {
 func TestListOptions_FunctionalOptions(t *testing.T) {
 	opts := pkgariapi.ApplyListOptions(
 		pkgariapi.InWorkspace("ws1"),
-		pkgariapi.WithState("idle"),
+		pkgariapi.WithPhase("idle"),
 		pkgariapi.WithLabels(map[string]string{"team": "infra"}),
 	)
 	assert.Equal(t, "ws1", opts.FieldSelector["workspace"])
-	assert.Equal(t, "idle", opts.FieldSelector["state"])
+	assert.Equal(t, "idle", opts.FieldSelector["phase"])
 	assert.Equal(t, "infra", opts.Labels["team"])
 }
 
