@@ -9,6 +9,7 @@ import (
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
@@ -50,7 +51,7 @@ func isExited(state apiruntime.Status) bool {
 }
 
 // forceCleanAgentRuns stops and then deletes every agent run in the workspace.
-func forceCleanAgentRuns(ctx context.Context, cmd *cobra.Command, client pkgariapi.Client, workspace string) error {
+func forceCleanAgentRuns(ctx context.Context, cmd *cobra.Command, client ariclient.Client, workspace string) error {
 	var list pkgariapi.AgentRunList
 	if err := client.List(ctx, &list, pkgariapi.InWorkspace(workspace)); err != nil {
 		return fmt.Errorf("listing agent runs: %w", err)
@@ -77,7 +78,7 @@ func forceCleanAgentRuns(ctx context.Context, cmd *cobra.Command, client pkgaria
 }
 
 // waitForExited polls until the agent run reaches a terminal state (stopped/error).
-func waitForExited(ctx context.Context, client pkgariapi.Client, key pkgariapi.ObjectKey) error {
+func waitForExited(ctx context.Context, client ariclient.Client, key pkgariapi.ObjectKey) error {
 	timeout := time.After(30 * time.Second)
 	tick := time.NewTicker(500 * time.Millisecond)
 	defer tick.Stop()

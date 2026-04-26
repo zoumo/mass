@@ -15,7 +15,6 @@ import (
 	"github.com/zoumo/mass/cmd/massctl/commands/version"
 	"github.com/zoumo/mass/cmd/massctl/commands/workspace"
 	"github.com/zoumo/mass/pkg/agentd"
-	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
@@ -30,7 +29,7 @@ func NewRootCommand() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&socketPath, "socket", filepath.Join(agentd.DefaultRoot(), "mass.sock"), "ARI socket path")
 
-	getClient := func() (pkgariapi.Client, error) {
+	getClient := func() (ariclient.Client, error) {
 		if socketPath == "" {
 			return nil, os.ErrInvalid
 		}

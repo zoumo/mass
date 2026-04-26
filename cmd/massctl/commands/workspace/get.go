@@ -8,6 +8,7 @@ import (
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
 // newGetCmd returns the "get" subcommand.
@@ -43,7 +44,7 @@ With one or more names, gets those specific workspaces.`,
 	return cmd
 }
 
-func listWorkspaces(ctx context.Context, client pkgariapi.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command) error {
+func listWorkspaces(ctx context.Context, client ariclient.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command) error {
 	var list pkgariapi.WorkspaceList
 	if err := client.List(ctx, &list); err != nil {
 		return err
@@ -56,7 +57,7 @@ func listWorkspaces(ctx context.Context, client pkgariapi.Client, printer *cliut
 	return printer.PrintList(cmd.OutOrStdout(), items, list)
 }
 
-func getWorkspaces(ctx context.Context, client pkgariapi.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command, names []string) error {
+func getWorkspaces(ctx context.Context, client ariclient.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command, names []string) error {
 	var list pkgariapi.WorkspaceList
 	for _, name := range names {
 		var ws pkgariapi.Workspace

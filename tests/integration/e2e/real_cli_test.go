@@ -10,13 +10,14 @@ import (
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 	"github.com/zoumo/mass/tests/integration/testutil"
 )
 
 // runRealCLILifecycle exercises the full ARI agent lifecycle against a real
 // CLI runtime.
-func runRealCLILifecycle(t *testing.T, ctx context.Context, client pkgariapi.Client, runtimeClass string) {
+func runRealCLILifecycle(t *testing.T, ctx context.Context, client ariclient.Client, runtimeClass string) {
 	t.Helper()
 
 	wsName := fmt.Sprintf("test-%s", runtimeClass)

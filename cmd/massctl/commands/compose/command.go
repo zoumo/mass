@@ -8,6 +8,7 @@ import (
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
@@ -24,7 +25,7 @@ func NewCommand(getClient cliutil.ClientFn) *cobra.Command {
 	return cmd
 }
 
-func createAgentRun(ctx context.Context, client pkgariapi.Client, wsName string, a AgentRunEntry) error {
+func createAgentRun(ctx context.Context, client ariclient.Client, wsName string, a AgentRunEntry) error {
 	ar := pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{
 			Workspace: wsName,
@@ -41,7 +42,7 @@ func createAgentRun(ctx context.Context, client pkgariapi.Client, wsName string,
 	return cliutil.CreateAgentRun(ctx, client, &ar)
 }
 
-func printSocketInfo(ctx context.Context, client pkgariapi.Client, wsName, agName string) {
+func printSocketInfo(ctx context.Context, client ariclient.Client, wsName, agName string) {
 	var ar pkgariapi.AgentRun
 	if err := client.Get(ctx, pkgariapi.ObjectKey{Workspace: wsName, Name: agName}, &ar); err != nil {
 		fmt.Printf("  %s/%s: (get failed: %v)\n", wsName, agName, err)

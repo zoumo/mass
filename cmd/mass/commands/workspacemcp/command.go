@@ -55,7 +55,7 @@ type handlerConfig struct {
 	agentName     string
 }
 
-func agentRunSendHandler(cfg handlerConfig, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
+func agentRunSendHandler(cfg handlerConfig, client ariclient.Client, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var input struct {
 			TargetAgent string `json:"targetAgent"`
@@ -112,7 +112,7 @@ func agentRunSendHandler(cfg handlerConfig, client pkgariapi.Client, logger *slo
 	}
 }
 
-func agentRunStatusHandler(cfg handlerConfig, client pkgariapi.Client, logger *slog.Logger) mcp.ToolHandler {
+func agentRunStatusHandler(cfg handlerConfig, client ariclient.Client, logger *slog.Logger) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		logger.Info(pkgariapi.WorkspaceMeshToolAgentRunStatus, "workspace", cfg.workspaceName)
 

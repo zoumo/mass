@@ -8,6 +8,7 @@ import (
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
 // newGetCmd returns the "get" subcommand.
@@ -43,7 +44,7 @@ With one or more names, gets those specific agents.`,
 	return cmd
 }
 
-func listAgents(ctx context.Context, client pkgariapi.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command) error {
+func listAgents(ctx context.Context, client ariclient.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command) error {
 	var list pkgariapi.AgentList
 	if err := client.List(ctx, &list); err != nil {
 		return err
@@ -56,7 +57,7 @@ func listAgents(ctx context.Context, client pkgariapi.Client, printer *cliutil.R
 	return printer.PrintList(cmd.OutOrStdout(), items, list)
 }
 
-func getAgents(ctx context.Context, client pkgariapi.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command, names []string) error {
+func getAgents(ctx context.Context, client ariclient.Client, printer *cliutil.ResourcePrinter, cmd *cobra.Command, names []string) error {
 	var list pkgariapi.AgentList
 	for _, name := range names {
 		var ag pkgariapi.Agent

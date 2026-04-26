@@ -23,7 +23,7 @@ var socketCounter int64
 
 // SetupMassTest starts mass daemon and returns context, client, and cleanup function.
 // It registers the "mockagent" runtime via agent/create.
-func SetupMassTest(t *testing.T) (context.Context, context.CancelFunc, pkgariapi.Client, func()) {
+func SetupMassTest(t *testing.T) (context.Context, context.CancelFunc, ariclient.Client, func()) {
 	t.Helper()
 	counter := atomic.AddInt64(&socketCounter, 1)
 	rootDir := fmt.Sprintf("/tmp/mass-%d-%d", os.Getpid(), counter)
@@ -107,7 +107,7 @@ func SetupMassTestWithRuntimeClass(
 	t *testing.T,
 	runtimeClassName string,
 	spec pkgariapi.AgentSpec,
-) (context.Context, context.CancelFunc, pkgariapi.Client, func()) {
+) (context.Context, context.CancelFunc, ariclient.Client, func()) {
 	t.Helper()
 
 	counter := atomic.AddInt64(&socketCounter, 1)
@@ -199,7 +199,7 @@ func WaitForSocket(socketPath string, timeout time.Duration) error {
 }
 
 // CreateTestWorkspace calls workspace/create and polls until phase=="ready".
-func CreateTestWorkspace(t *testing.T, ctx context.Context, client pkgariapi.Client, name string) string {
+func CreateTestWorkspace(t *testing.T, ctx context.Context, client ariclient.Client, name string) string {
 	t.Helper()
 	ws := pkgariapi.Workspace{
 		Metadata: pkgariapi.ObjectMeta{Name: name},
@@ -233,7 +233,7 @@ func CreateTestWorkspace(t *testing.T, ctx context.Context, client pkgariapi.Cli
 }
 
 // DeleteTestWorkspace removes a workspace. Best-effort cleanup.
-func DeleteTestWorkspace(t *testing.T, ctx context.Context, client pkgariapi.Client, name string) {
+func DeleteTestWorkspace(t *testing.T, ctx context.Context, client ariclient.Client, name string) {
 	t.Helper()
 	if err := client.Delete(ctx, pkgariapi.ObjectKey{Name: name}, &pkgariapi.Workspace{}); err != nil {
 		t.Logf("workspace/delete (name=%s): %v (ignored)", name, err)
@@ -244,7 +244,7 @@ func DeleteTestWorkspace(t *testing.T, ctx context.Context, client pkgariapi.Cli
 func WaitForAgentState(
 	t *testing.T,
 	ctx context.Context,
-	client pkgariapi.Client,
+	client ariclient.Client,
 	workspace, name, wantState string,
 	timeout time.Duration,
 ) pkgariapi.AgentRun {
@@ -256,7 +256,7 @@ func WaitForAgentState(
 func WaitForAgentStateOneOf(
 	t *testing.T,
 	ctx context.Context,
-	client pkgariapi.Client,
+	client ariclient.Client,
 	workspace, name string,
 	wantStates []string,
 	timeout time.Duration,
@@ -284,7 +284,7 @@ func WaitForAgentStateOneOf(
 }
 
 // CreateAgentAndWait calls agentrun/create and polls until state=="idle".
-func CreateAgentAndWait(t *testing.T, ctx context.Context, client pkgariapi.Client, workspace, name, agentDef string) pkgariapi.AgentRun {
+func CreateAgentAndWait(t *testing.T, ctx context.Context, client ariclient.Client, workspace, name, agentDef string) pkgariapi.AgentRun {
 	t.Helper()
 	ar := pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{Workspace: workspace, Name: name},
@@ -299,7 +299,7 @@ func CreateAgentAndWait(t *testing.T, ctx context.Context, client pkgariapi.Clie
 }
 
 // StopAndDeleteAgent stops and then deletes an agent. Best-effort cleanup.
-func StopAndDeleteAgent(t *testing.T, ctx context.Context, client pkgariapi.Client, workspace, name string) {
+func StopAndDeleteAgent(t *testing.T, ctx context.Context, client ariclient.Client, workspace, name string) {
 	t.Helper()
 	key := pkgariapi.ObjectKey{Workspace: workspace, Name: name}
 	if err := client.AgentRuns().Stop(ctx, key); err != nil {

@@ -7,11 +7,12 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
 // CreateWorkspace creates a workspace via the ARI client and prints status.
-func CreateWorkspace(ctx context.Context, client pkgariapi.Client, name string, src workspace.Source) (*pkgariapi.Workspace, error) {
+func CreateWorkspace(ctx context.Context, client ariclient.Client, name string, src workspace.Source) (*pkgariapi.Workspace, error) {
 	srcJSON, err := json.Marshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("marshal source: %w", err)
@@ -28,7 +29,7 @@ func CreateWorkspace(ctx context.Context, client pkgariapi.Client, name string, 
 }
 
 // WaitWorkspaceReady polls until the workspace reaches Ready or Error phase.
-func WaitWorkspaceReady(ctx context.Context, client pkgariapi.Client, name string) error {
+func WaitWorkspaceReady(ctx context.Context, client ariclient.Client, name string) error {
 	fmt.Printf("Waiting for workspace %q to be ready...\n", name)
 	for {
 		time.Sleep(500 * time.Millisecond)
@@ -48,7 +49,7 @@ func WaitWorkspaceReady(ctx context.Context, client pkgariapi.Client, name strin
 
 // EnsureWorkspace reuses an existing ready workspace or creates a new one and
 // waits for it to become ready.
-func EnsureWorkspace(ctx context.Context, client pkgariapi.Client, name string, src workspace.Source) error {
+func EnsureWorkspace(ctx context.Context, client ariclient.Client, name string, src workspace.Source) error {
 	var ws pkgariapi.Workspace
 	if err := client.Get(ctx, pkgariapi.ObjectKey{Name: name}, &ws); err == nil {
 		if ws.Status.Phase == pkgariapi.WorkspacePhaseReady {
@@ -65,7 +66,7 @@ func EnsureWorkspace(ctx context.Context, client pkgariapi.Client, name string, 
 
 // CreateAgentRun validates the workflow file (if set), creates an agent run
 // via the ARI client, and prints status.
-func CreateAgentRun(ctx context.Context, client pkgariapi.Client, ar *pkgariapi.AgentRun) error {
+func CreateAgentRun(ctx context.Context, client ariclient.Client, ar *pkgariapi.AgentRun) error {
 	if ar.Spec.WorkflowFile != "" {
 		abs, err := ResolveFilePath(ar.Spec.WorkflowFile)
 		if err != nil {

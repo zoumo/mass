@@ -10,6 +10,7 @@ import (
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
 func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
@@ -60,7 +61,7 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 	return cmd
 }
 
-func applyFromFile(ctx context.Context, cmd *cobra.Command, client pkgariapi.Client, file string) error {
+func applyFromFile(ctx context.Context, cmd *cobra.Command, client ariclient.Client, file string) error {
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return fmt.Errorf("reading agent file %q: %w", file, err)
@@ -85,7 +86,7 @@ func applyFromFile(ctx context.Context, cmd *cobra.Command, client pkgariapi.Cli
 	return cliutil.PrintJSON(cmd.OutOrStdout(), ag)
 }
 
-func applyInline(ctx context.Context, cmd *cobra.Command, client pkgariapi.Client, name string, disabled bool) error {
+func applyInline(ctx context.Context, cmd *cobra.Command, client ariclient.Client, name string, disabled bool) error {
 	var ag pkgariapi.Agent
 	if err := client.Get(ctx, pkgariapi.ObjectKey{Name: name}, &ag); err != nil {
 		return fmt.Errorf("agent %q: %w", name, err)

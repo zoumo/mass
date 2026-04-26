@@ -6,11 +6,12 @@ import (
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
 // WaitAgentIdle polls until the agent run reaches idle state, returns error on
 // error/stopped states. Prints progress to stdout.
-func WaitAgentIdle(ctx context.Context, client pkgariapi.Client, wsName, agName string) error {
+func WaitAgentIdle(ctx context.Context, client ariclient.Client, wsName, agName string) error {
 	fmt.Printf("Waiting for agent %q/%q to be idle...\n", wsName, agName)
 	for {
 		time.Sleep(500 * time.Millisecond)

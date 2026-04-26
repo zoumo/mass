@@ -10,9 +10,10 @@ import (
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
-// mockClient implements pkgariapi.Client for testing.
+// mockClient implements ariclient.Client for testing.
 type mockClient struct {
 	createFn func(ctx context.Context, obj pkgariapi.Object) error
 	getFn    func(ctx context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error
@@ -56,9 +57,9 @@ func (m *mockClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pk
 	return nil
 }
 
-func (m *mockClient) AgentRuns() pkgariapi.AgentRunOps   { return &mockAgentRunOps{} }
-func (m *mockClient) Workspaces() pkgariapi.WorkspaceOps { return &mockWorkspaceOps{} }
-func (m *mockClient) System() pkgariapi.SystemOps        { return &mockSystemOps{} }
+func (m *mockClient) AgentRuns() ariclient.AgentRunOps   { return &mockAgentRunOps{} }
+func (m *mockClient) Workspaces() ariclient.WorkspaceOps { return &mockWorkspaceOps{} }
+func (m *mockClient) System() ariclient.SystemOps        { return &mockSystemOps{} }
 func (m *mockClient) Close() error                       { return nil }
 func (m *mockClient) DisconnectNotify() <-chan struct{}  { return make(chan struct{}) }
 
@@ -105,8 +106,8 @@ func (m *mockSystemOps) Info(context.Context) (*pkgariapi.SystemInfoResult, erro
 }
 
 // newMockClientFn returns a ClientFn that always returns the given mock.
-func newMockClientFn(mock *mockClient) func() (pkgariapi.Client, error) {
-	return func() (pkgariapi.Client, error) { return mock, nil }
+func newMockClientFn(mock *mockClient) func() (ariclient.Client, error) {
+	return func() (ariclient.Client, error) { return mock, nil }
 }
 
 // writeYAML creates a temp file with the given content and returns its path.

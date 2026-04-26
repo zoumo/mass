@@ -20,7 +20,7 @@ import (
 
 // testClientEnv holds a typed client connected to an in-process mock server.
 type testClientEnv struct {
-	client pkgariapi.Client
+	client Client
 	cancel context.CancelFunc
 }
 

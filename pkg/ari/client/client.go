@@ -1,4 +1,4 @@
-// Package client provides a typed ARI client implementing api.Client.
+// Package client provides a typed ARI client implementing Client.
 package client
 
 import (
@@ -13,13 +13,13 @@ import (
 
 // Compile-time checks.
 var (
-	_ pkgariapi.Client       = (*ariClient)(nil)
-	_ pkgariapi.AgentRunOps  = (*agentRunOps)(nil)
-	_ pkgariapi.WorkspaceOps = (*workspaceOps)(nil)
-	_ pkgariapi.SystemOps    = (*systemOps)(nil)
+	_ Client       = (*ariClient)(nil)
+	_ AgentRunOps  = (*agentRunOps)(nil)
+	_ WorkspaceOps = (*workspaceOps)(nil)
+	_ SystemOps    = (*systemOps)(nil)
 )
 
-// ariClient implements api.Client using JSON-RPC.
+// ariClient implements Client using JSON-RPC.
 type ariClient struct {
 	raw        *jsonrpc.Client
 	agentRuns  agentRunOps
@@ -29,7 +29,7 @@ type ariClient struct {
 
 // Dial connects to the ARI server at the given Unix socket path and returns
 // a typed Client. The connection stays open until Close is called.
-func Dial(ctx context.Context, socketPath string, opts ...jsonrpc.DialOption) (pkgariapi.Client, error) {
+func Dial(ctx context.Context, socketPath string, opts ...jsonrpc.DialOption) (Client, error) {
 	c, err := jsonrpc.Dial(ctx, "unix", socketPath, opts...)
 	if err != nil {
 		return nil, err
@@ -37,7 +37,7 @@ func Dial(ctx context.Context, socketPath string, opts ...jsonrpc.DialOption) (p
 	return newClient(c), nil
 }
 
-// newClient wraps a jsonrpc.Client into a typed api.Client.
+// newClient wraps a jsonrpc.Client into a typed Client.
 func newClient(c *jsonrpc.Client) *ariClient {
 	ac := &ariClient{raw: c}
 	ac.agentRuns = agentRunOps{c: c}
@@ -53,13 +53,13 @@ func (c *ariClient) Close() error { return c.raw.Close() }
 func (c *ariClient) DisconnectNotify() <-chan struct{} { return c.raw.DisconnectNotify() }
 
 // AgentRuns returns the sub-interface for non-CRUD agent run operations.
-func (c *ariClient) AgentRuns() pkgariapi.AgentRunOps { return &c.agentRuns }
+func (c *ariClient) AgentRuns() AgentRunOps { return &c.agentRuns }
 
 // Workspaces returns the sub-interface for non-CRUD workspace operations.
-func (c *ariClient) Workspaces() pkgariapi.WorkspaceOps { return &c.workspaces }
+func (c *ariClient) Workspaces() WorkspaceOps { return &c.workspaces }
 
 // System returns the sub-interface for system-level operations.
-func (c *ariClient) System() pkgariapi.SystemOps { return &c.system }
+func (c *ariClient) System() SystemOps { return &c.system }
 
 // ────────────────────────────────────────────────────────────────────────────
 // CRUD — type-switched routing

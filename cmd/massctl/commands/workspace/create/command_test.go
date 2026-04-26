@@ -11,6 +11,7 @@ import (
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
+	ariclient "github.com/zoumo/mass/pkg/ari/client"
 )
 
 // ── mock AgentRunOps (stub — not used in create tests) ───────────────────────
@@ -107,9 +108,9 @@ func (m *mockClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pk
 	return nil
 }
 
-func (m *mockClient) AgentRuns() pkgariapi.AgentRunOps   { return m.agentRunOps }
-func (m *mockClient) Workspaces() pkgariapi.WorkspaceOps { return m.workspaceOps }
-func (m *mockClient) System() pkgariapi.SystemOps        { return m.systemOps }
+func (m *mockClient) AgentRuns() ariclient.AgentRunOps   { return m.agentRunOps }
+func (m *mockClient) Workspaces() ariclient.WorkspaceOps { return m.workspaceOps }
+func (m *mockClient) System() ariclient.SystemOps        { return m.systemOps }
 func (m *mockClient) Close() error                       { return nil }
 func (m *mockClient) DisconnectNotify() <-chan struct{}  { return make(chan struct{}) }
 
@@ -123,7 +124,7 @@ func (m *mockSystemOps) Info(context.Context) (*pkgariapi.SystemInfoResult, erro
 
 // clientFn returns a cliutil.ClientFn that always returns mc.
 func clientFn(mc *mockClient) cliutil.ClientFn {
-	return func() (pkgariapi.Client, error) {
+	return func() (ariclient.Client, error) {
 		return mc, nil
 	}
 }
