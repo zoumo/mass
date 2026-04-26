@@ -88,6 +88,7 @@ func (rw *RetryWatcher[T]) reconnectLoop(ctx context.Context) {
 		delivered := rw.runOnce(ctx)
 		if delivered {
 			backoff = retryBackoffInitial
+			continue
 		}
 
 		timer := time.NewTimer(backoff)

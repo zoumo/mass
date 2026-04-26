@@ -354,14 +354,6 @@ func (c *Client) removeWatch(watchID string, ws *WatchStream) {
 
 // routeWatchEvent returns true if the notification matched a registered watch stream.
 func (c *Client) routeWatchEvent(params json.RawMessage) bool {
-	// Fast path: skip unmarshal when no watches are registered.
-	c.watchMu.RLock()
-	empty := len(c.watches) == 0
-	c.watchMu.RUnlock()
-	if empty {
-		return false
-	}
-
 	var probe struct {
 		WatchID string `json:"watchId"`
 		Seq     int    `json:"seq"`

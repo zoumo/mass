@@ -123,7 +123,7 @@ func (s *Service) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventP
 // which triggers the client to reconnect with fromSeq=lastReceivedSeq+1.
 func (s *Service) watchLiveOnly(ctx context.Context, peer *jsonrpc.Peer, watchID string) (*runapi.SessionWatchEventResult, error) {
 	ch, subID, nextSeq := s.trans.Subscribe()
-	go s.forwardLiveEvents(ctx, peer, ch, subID, watchID, 0)
+	go s.forwardLiveEvents(ctx, peer, ch, subID, true, watchID, 0)
 	return &runapi.SessionWatchEventResult{WatchID: watchID, NextSeq: nextSeq}, nil
 }
 
@@ -164,17 +164,14 @@ func (s *Service) watchWithReplay(ctx context.Context, peer *jsonrpc.Peer, watch
 		}
 
 		// Switch to live events with dedup (skipBelow=nextSeq).
-		s.forwardLiveEvents(ctx, peer, ch, 0, watchID, nextSeq)
+		s.forwardLiveEvents(ctx, peer, ch, subID, false, watchID, nextSeq)
 	}()
 
 	return &runapi.SessionWatchEventResult{WatchID: watchID, NextSeq: nextSeq}, nil
 }
 
-// forwardLiveEvents reads from the subscriber channel, stamps watchID, and
-// sends events as notifications. Events with seq < skipBelow are dropped (dedup).
-// If subID > 0, unsubscribes on exit.
-func (s *Service) forwardLiveEvents(ctx context.Context, peer *jsonrpc.Peer, ch <-chan runapi.AgentRunEvent, subID int, watchID string, skipBelow int) {
-	if subID > 0 {
+func (s *Service) forwardLiveEvents(ctx context.Context, peer *jsonrpc.Peer, ch <-chan runapi.AgentRunEvent, subID int, ownsSubscription bool, watchID string, skipBelow int) {
+	if ownsSubscription {
 		defer s.trans.Unsubscribe(subID)
 	}
 	disconnect := peer.DisconnectNotify()
