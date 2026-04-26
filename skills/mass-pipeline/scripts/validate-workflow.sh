@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate a mass-workflow YAML file before execution.
+# Validate a mass-pipeline YAML file before execution.
 # Usage: validate-workflow.sh <workflow.yaml>
 # Exit codes:
 #   0 — validation passed

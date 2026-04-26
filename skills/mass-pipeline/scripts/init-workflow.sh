@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Initialize workspace and agentrun instances for a mass-workflow execution.
+# Initialize workspace and agentrun instances for a mass-pipeline execution.
 # Reads agent definitions from workflow YAML and creates all resources.
 #
 # Usage: init-workflow.sh <workflow.yaml> <workspace-name> [ws-timeout=120] [agent-timeout=90]

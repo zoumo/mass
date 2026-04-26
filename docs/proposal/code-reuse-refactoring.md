@@ -2,7 +2,7 @@
 
 ## 状态
 
-**Design Proposal** — 尚未实现。
+**Design Proposal** — 尚未实现。已纳入 Codex review 反馈（见 `docs/review/code-reuse-refactoring-review.md`）。
 
 ## 动机
 
@@ -36,9 +36,10 @@
 
 `prompt`、`load`、`set_model` 完全相同结构；`cancel`、`status`、`stop` 是无参数变体。
 
-**方案：** 在 `pkg/jsonrpc` 中添加两个泛型 helper：
+**方案：** 在 `pkg/jsonrpc` 中添加四个泛型 helper，覆盖 query（有返回值）和 command（仅返回 error）两种模式：
 
 ```go
+// Query-style: 有请求参数，有返回值
 func UnaryMethod[Req, Res any](fn func(ctx context.Context, req *Req) (*Res, error)) Method {
     return func(ctx context.Context, unmarshal func(any) error) (any, error) {
         var req Req
@@ -49,9 +50,28 @@ func UnaryMethod[Req, Res any](fn func(ctx context.Context, req *Req) (*Res, err
     }
 }
 
+// Query-style: 无请求参数，有返回值
 func NullaryMethod[Res any](fn func(ctx context.Context) (*Res, error)) Method {
     return func(ctx context.Context, _ func(any) error) (any, error) {
         return fn(ctx)
+    }
+}
+
+// Command-style: 有请求参数，仅返回 error（如 Load, SetModel）
+func UnaryCommand[Req any](fn func(ctx context.Context, req *Req) error) Method {
+    return func(ctx context.Context, unmarshal func(any) error) (any, error) {
+        var req Req
+        if err := unmarshal(&req); err != nil {
+            return nil, ErrInvalidParams(err.Error())
+        }
+        return nil, fn(ctx, &req)
+    }
+}
+
+// Command-style: 无请求参数，仅返回 error（如 Cancel, Stop）
+func NullaryCommand(fn func(ctx context.Context) error) Method {
+    return func(ctx context.Context, _ func(any) error) (any, error) {
+        return nil, fn(ctx)
     }
 }
 ```
@@ -59,8 +79,10 @@ func NullaryMethod[Res any](fn func(ctx context.Context) (*Res, error)) Method {
 注册代码变为：
 
 ```go
-"prompt": jsonrpc.UnaryMethod(svc.Prompt),
-"status": jsonrpc.NullaryMethod(svc.Status),
+"prompt": jsonrpc.UnaryMethod(svc.Prompt),    // (*Res, error)
+"status": jsonrpc.NullaryMethod(svc.Status),   // (*Res, error)
+"cancel": jsonrpc.NullaryCommand(svc.Cancel),  // error
+"load":   jsonrpc.UnaryCommand(svc.Load),      // error
 ```
 
 > `watch_event` 因需同时提取 transport 层 `watchId` 和业务字段，保持手写。
@@ -82,19 +104,30 @@ func NullaryMethod[Res any](fn func(ctx context.Context) (*Res, error)) Method {
 5. CAS 失败后获取当前状态构造错误（子模式也重复 4 次）
 6. `processes.Connect`
 
-**方案：** 提取到 `*Service` 方法：
+**方案：** 提取到 `*Service` 方法，职责边界到 Connect 成功为止：
 
 ```go
+// reserveAndConnect performs recovery check, validates idle state,
+// CAS idle→running, and connects to the agent process.
+// On CAS failure, returns an error containing the agent's current state.
+// On connect failure, automatically rolls back to idle.
+//
+// Callers remain responsible for:
+// - operation-specific prompt delivery failure handling (different log messages,
+//   target names like To/Name, and recordPromptDeliveryFailure behavior)
+// - post-dispatch error recovery and state transitions
 func (a *Service) reserveAndConnect(ctx context.Context, ws, name string) (*runclient.Client, *pkgariapi.AgentRun, error) {
-    // recovery check
-    // get agent run
-    // validate idle
-    // CAS idle→running (with current-state error on failure)
-    // connect
+    // 1. recovery check
+    // 2. get agent run
+    // 3. validate idle
+    // 4. CAS idle→running (with current-state error on failure)
+    // 5. connect (rollback to idle on failure)
 }
 ```
 
 同时提取 `rollbackAgentToIdle(ws, name, op string, cause error) error`，消除 `TaskCreate` 和 `TaskRetry` 中完全一样的 rollback 闭包。
+
+> **Review feedback (P2):** 四个 caller 的失败处理各有差异（日志 message、target name、是否 recordPromptDeliveryFailure）。`reserveAndConnect` 只负责到 Connect 成功为止，prompt delivery 失败的处理仍由各 caller 负责，不纳入 helper。
 
 **预估消除：** ~120 行 reserve-dispatch + ~30 行 rollback。
 
@@ -138,39 +171,53 @@ func (s *Store) updateAgentRun(workspace, name string, mutate func(*pkgariapi.Ag
 
 ## Wave 2：统一基础设施
 
-### 2.1 `Fanout[T]` — 统一 subscribe/publish/evict
+### 2.1 Fan-out 抽象 — **Design-First**，不急于统一
 
-**现状：** 三处独立实现了相同的 fan-out 模式：
+> **Review feedback (P1):** 三处实现的 delivery 语义根本不同，不能用一个 `Fanout[T]` 一刀切。
 
-| 位置 | subscribe | publish | evict 策略 |
-|------|-----------|---------|-----------|
-| `watch.WatchServer` | `Accept()` → watchers map + nextID | `Publish()` → 遍历发送 | done channel 检测 |
-| `agentrun/server.Translator` | `Subscribe()` → subs map + nextID | `broadcast()` → 遍历发送 | default 分支 close+delete |
-| `jsonrpc.Client` | `Subscribe()` → subs map + nextSub | `routeToSubscribers()` → 遍历发送 | — |
+**现状：** 三处独立实现了 subscribe/publish/evict，但 delivery policy 有本质差异：
 
-三处都维护 map + mutex + 递增 ID + cleanup 逻辑。
+| 位置 | 发送方式 | 保序机制 | 慢消费者策略 |
+|------|---------|---------|------------|
+| `watch.WatchServer` | **blocking send** | `publishMu` 全局排序 | done channel 检测，不主动 evict |
+| `agentrun/server.Translator` | **nonblocking send** | log-before-fanout 在同一 mutex 下 | default 分支 close+delete（K8s-style eviction） |
+| `jsonrpc.Client` | **nonblocking send** | 无全局保序 | drop 消息但不 evict subscriber，保证 fallback routing 正确 |
 
-**方案：** 在 `pkg/fanout`（或 `pkg/pubsub`）中提供泛型类型：
+**问题：** 一个统一的 `Fanout[T]` 如果不显式建模这些差异，会静默改变 watch 排序、recovery 行为或通知投递语义。
+
+**修订方案：** 此项从"直接实现"降级为"设计任务"。实施前需先完成以下设计：
+
+1. **分类 delivery policy：** 确定是拆成 2-3 个不同抽象（如 `OrderedFanout` vs `BestEffortFanout`），还是通过 policy 参数统一
+2. **明确语义边界：** 每种 policy 需显式定义：
+   - 发送阻塞 vs 非阻塞
+   - 是否需要全局保序
+   - 慢消费者：evict（close channel）vs drop（跳过消息）vs block
+   - 是否支持 publish 前的 hook（如 log-before-fanout）
+3. **验证迁移安全性：** 对每个使用方写出迁移前后的行为对比，确认无语义退化
+
+**可能的拆分方向：**
 
 ```go
-type Fanout[T any] struct {
-    mu     sync.RWMutex
-    subs   map[int]chan T
-    nextID int
-    bufSize int
-}
+// 方案 A：策略参数
+type DropPolicy int
+const (
+    DropMessage DropPolicy = iota  // jsonrpc.Client: 丢消息不 evict
+    EvictSlow                       // Translator: close channel + 移除
+    BlockSend                       // WatchServer: 阻塞直到消费
+)
 
-func (f *Fanout[T]) Subscribe() (<-chan T, int)
-func (f *Fanout[T]) Unsubscribe(id int)
-func (f *Fanout[T]) Publish(ev T, onEvict func(id int))
-func (f *Fanout[T]) Close()
+type Fanout[T any] struct { ... }
+func NewFanout[T any](bufSize int, policy DropPolicy) *Fanout[T]
+
+// 方案 B：拆成独立类型
+type BlockingFanout[T any] struct { ... }   // WatchServer
+type EvictingFanout[T any] struct { ... }   // Translator
+// jsonrpc.Client 的 method-level subscribe 语义太特殊，可能不适合统一
 ```
 
-`Translator` 组合 `Fanout`，publish 前调 log-before-fanout 钩子。`WatchServer` 组合 `Fanout`，evict 回调触发 watcher stop。`Client` 的 method-level subscribe 也组合 `Fanout`。
+**预估消除：** ~100 行跨 3 个包（设计确认后）。
 
-**预估消除：** ~100 行跨 3 个包。
-
-**涉及文件：** `pkg/fanout/fanout.go`（新增）、`pkg/watch/server.go`、`pkg/agentrun/server/translator.go`、`pkg/jsonrpc/client.go`
+**涉及文件：** 待设计确认。`pkg/fanout/fanout.go`（新增）为初始候选位置。
 
 ---
 
@@ -312,9 +359,23 @@ func (b *TypedBucket[T]) Delete(tx *bolt.Tx, key string) error
 
 | Wave | 范围 | 依赖 | 建议时间 |
 |------|------|------|---------|
-| 1 | UnaryMethod + reserveAndConnect + updateAgentRun | 无，各自独立 | 可并行开发 |
-| 2 | Fanout[T] + decodeAs + writeState | Fanout 需先设计 API | Wave 1 之后 |
+| 1 | UnaryMethod/Command + reserveAndConnect + updateAgentRun | 无，各自独立 | 可并行开发 |
+| 2 | Fan-out 设计 + decodeAs + writeState | Fan-out 需先完成设计文档 | Wave 1 之后 |
 | 3 | TUI 层清理 | 无 | 穿插在功能迭代中 |
 | 4 | TypedBucket[T] | 需要设计 | 下次 store 需求时 |
 
 每个 Wave 内的改动互不依赖，可以拆成独立 PR 逐步合入。
+
+---
+
+## Review 记录
+
+### Codex Review (2026-04-26)
+
+详见 `docs/review/code-reuse-refactoring-review.md`，共 3 项反馈，均已纳入：
+
+| 编号 | 严重度 | 问题 | 处置 |
+|------|--------|------|------|
+| 1 | P1 | Fanout[T] 抹平了不兼容的 delivery 语义 | Wave 2.1 降级为 design-first，需先分类 delivery policy |
+| 2 | P2 | UnaryMethod/NullaryMethod 不覆盖 error-only RPC | 新增 `UnaryCommand` / `NullaryCommand` 变体 |
+| 3 | P2 | reserveAndConnect 未定义失败语义 | 明确职责边界到 Connect 成功为止，prompt delivery 失败由 caller 处理 |

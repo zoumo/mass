@@ -1,13 +1,13 @@
 ---
-name: mass-workflow
+name: mass-pipeline
 description: |
   通用声明式多 agent 工作流编排。读取 YAML workflow 配置，自动创建 workspace 和 agents，
   按阶段执行 task，通过 response.status 路由，收集输出，清理资源。
-  触发：用户运行 /mass-workflow <workflow.yaml>，或提到"运行 workflow"、"执行 workflow 配置"。
+  触发：用户运行 /mass-pipeline <workflow.yaml>，或提到"运行 workflow"、"执行 workflow 配置"。
 version: 0.1.0
 ---
 
-# mass-workflow — Declarative Multi-Agent Workflow Orchestrator
+# mass-pipeline — Declarative Multi-Agent Workflow Orchestrator
 
 读取用户提供的 YAML workflow 配置，自动编排多 agent 执行流程。
 
@@ -40,8 +40,8 @@ version: 0.1.0
 ## 触发格式
 
 ```
-/mass-workflow path/to/workflow.yaml
-/mass-workflow path/to/workflow.yaml --input file1.md --input file2.md
+/mass-pipeline path/to/workflow.yaml
+/mass-pipeline path/to/workflow.yaml --input file1.md --input file2.md
 ```
 
 `--input` 文件注入到所有未显式配置 `input_files` 的 stage。
@@ -89,7 +89,7 @@ mass daemon status
 Run the validation script. Exit immediately on failure — **do not create any resources**:
 
 ```bash
-skills/mass-workflow/scripts/validate-workflow.sh {workflow_file}
+skills/mass-pipeline/scripts/validate-workflow.sh {workflow_file}
 ```
 
 Exit code 0: validation passed, script prints summary. Show the summary to the user.
@@ -105,7 +105,7 @@ After successful validation, ask the user: "确认执行？" Wait for confirmati
 Run the init script. This handles workspace creation, readiness polling, agentrun creation, and idle polling:
 
 ```bash
-skills/mass-workflow/scripts/init-workflow.sh {workflow_file} {workspace-name}
+skills/mass-pipeline/scripts/init-workflow.sh {workflow_file} {workspace-name}
 ```
 
 Exit code 0: workspace ready + all agents idle.
@@ -166,7 +166,7 @@ task_id=$(massctl agentrun task create ... -o json | jq -r '.id')
 **③ 轮询等待**
 
 ```bash
-skills/mass-workflow/scripts/poll-task.sh {workspace} {stage.agent} {task_id}
+skills/mass-pipeline/scripts/poll-task.sh {workspace} {stage.agent} {task_id}
 poll_exit=$?
 ```
 
@@ -232,7 +232,7 @@ done
 declare -A sub_poll_exits
 for agent in "${!sub_task_ids[@]}"; do
   (
-    skills/mass-workflow/scripts/poll-task.sh {workspace} "$agent" "${sub_task_ids[$agent]}"
+    skills/mass-pipeline/scripts/poll-task.sh {workspace} "$agent" "${sub_task_ids[$agent]}"
     echo $? > /tmp/poll_exit_{workspace}_{agent}
   ) &
 done
@@ -271,7 +271,7 @@ done
 仅在 `__done__` 时执行（escalate 时跳过，保留 artifacts 供 debug）。
 
 ```bash
-destination="${output.destination:-./mass-workflow-output/}"
+destination="${output.destination:-./mass-pipeline-output/}"
 mkdir -p "$destination"
 
 for stage_name in "${output.collect_from[@]}"; do
@@ -314,7 +314,7 @@ massctl workspace delete {workspace}
 ## Step 5: 打印执行摘要
 
 ```
-=== mass-workflow execution summary ===
+=== mass-pipeline execution summary ===
 Workflow:   {name}
 Status:     done | escalated
 Duration:   {elapsed}s
@@ -374,6 +374,6 @@ Next steps:
 |-------|------|
 | `mass-guide` | 前置依赖：workspace/agent 生命周期原语 |
 | `mass-pilot` | 保留：手写复杂 orchestrator 逻辑 |
-| `mass-workflow` | 本 skill：声明式配置驱动的通用 orchestrator |
+| `mass-pipeline` | 本 skill：声明式配置驱动的通用 orchestrator |
 
 复杂条件分支、动态角色选择、跨 session 持久化 → 使用 `mass-pilot` 手写。

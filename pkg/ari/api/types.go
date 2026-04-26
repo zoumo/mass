@@ -6,6 +6,7 @@
 package api
 
 import (
+	"encoding/json"
 	"time"
 
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
@@ -132,28 +133,32 @@ type WorkspaceSendResult struct {
 // ────────────────────────────────────────────────────────────────────────────
 
 // AgentTask is the on-disk task record.
+// Request and Response are stored as raw JSON — the server passes them through
+// without interpretation. Callers that need typed access should unmarshal into
+// AgentTaskRequest / AgentTaskResponse.
 type AgentTask struct {
-	ID        string             `json:"id"`
-	Assignee  string             `json:"assignee"`
-	Attempt   int                `json:"attempt"`
-	CreatedAt time.Time          `json:"createdAt"`
-	Request   AgentTaskRequest   `json:"request"`
-	Completed bool               `json:"completed"`
-	Response  *AgentTaskResponse `json:"response,omitempty"`
+	ID        string          `json:"id"`
+	Assignee  string          `json:"assignee"`
+	Attempt   int             `json:"attempt"`
+	CreatedAt time.Time       `json:"createdAt"`
+	Request   json.RawMessage `json:"request"`
+	Completed bool            `json:"completed"`
+	Response  json.RawMessage `json:"response,omitempty"`
 }
 
-// AgentTaskRequest is the request portion of a task.
+// AgentTaskRequest is the conventional request schema.
+// The server does not enforce this — callers may use any JSON shape.
 type AgentTaskRequest struct {
 	Description string   `json:"description"`
 	FilePaths   []string `json:"filePaths,omitempty"`
 }
 
-// AgentTaskResponse is the response portion of a task (written by agent).
+// AgentTaskResponse is the conventional response schema.
+// The server does not enforce this — agents may use any JSON shape.
 type AgentTaskResponse struct {
-	Status      string    `json:"status"`
-	Description string    `json:"description"`
-	FilePaths   []string  `json:"filePaths,omitempty"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	Status      string   `json:"status"`
+	Description string   `json:"description"`
+	FilePaths   []string `json:"filePaths,omitempty"`
 }
 
 // AgentRunTaskCreateParams is the request params for agentrun/task/create.

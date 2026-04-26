@@ -117,7 +117,7 @@ List of routing rules evaluated in order. First matching `when` wins.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `collect_from` | list | no | Stage names whose artifacts to copy to `destination` |
-| `destination` | string | no | Local path to copy artifacts to. Default: `./mass-workflow-output/` |
+| `destination` | string | no | Local path to copy artifacts to. Default: `./mass-pipeline-output/` |
 | `summary` | bool | no | Print execution summary on completion. Default: `true` |
 
 When `collect_from` references a parallel stage, artifacts from **all** sub-task agents within that stage are merged into `destination`.
@@ -127,7 +127,7 @@ When `collect_from` references a parallel stage, artifacts from **all** sub-task
 ## Built-in `--input` flag
 
 ```
-/mass-workflow workflow.yaml --input file1.md --input file2.md
+/mass-pipeline workflow.yaml --input file1.md --input file2.md
 ```
 
 Files passed via `--input` are injected into every stage that has no explicit `input_files` defined.
