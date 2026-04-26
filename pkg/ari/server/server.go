@@ -203,14 +203,45 @@ func (a *workspaceAdapter) List(ctx context.Context, opts pkgariapi.ListOptions)
 // Delete handles workspace/delete.
 //
 // Rejects deletion if the workspace has active agent runs.
+// After the DB record is removed, runs teardown hooks and deletes the managed
+// workspace directory via WorkspaceManager.Cleanup.
 func (a *workspaceAdapter) Delete(ctx context.Context, name string) error {
 	a.logger.Info("workspace/delete", "workspace", name)
+
+	// Fetch before deleting so we can build the WorkspaceSpec for Cleanup.
+	ws, err := a.store.GetWorkspace(ctx, name)
+	if err != nil {
+		return jsonrpc.ErrInternal(err.Error())
+	}
+	if ws == nil {
+		return jsonrpc.ErrInvalidParams(fmt.Sprintf("workspace %s not found", name))
+	}
 
 	if err := a.store.DeleteWorkspace(ctx, name); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return jsonrpc.ErrInvalidParams(err.Error())
 		}
 		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
+	}
+
+	// Run teardown hooks and remove managed directory.
+	targetDir := filepath.Join(a.baseDir, "workspaces", name)
+	var src workspace.Source
+	if len(ws.Spec.Source) > 0 {
+		_ = json.Unmarshal(ws.Spec.Source, &src)
+	}
+	var hooks workspace.Hooks
+	if len(ws.Spec.Hooks) > 0 {
+		_ = json.Unmarshal(ws.Spec.Hooks, &hooks)
+	}
+	wsSpec := workspace.WorkspaceSpec{
+		MassVersion: "0.1.0",
+		Metadata:    workspace.WorkspaceMetadata{Name: name},
+		Source:      src,
+		Hooks:       hooks,
+	}
+	if cleanErr := a.manager.Cleanup(ctx, targetDir, wsSpec); cleanErr != nil {
+		a.logger.Warn("workspace/delete: cleanup failed", "workspace", name, "error", cleanErr)
 	}
 	return nil
 }
