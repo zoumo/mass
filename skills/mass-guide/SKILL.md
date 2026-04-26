@@ -54,10 +54,9 @@ massctl agent get
 ## 端到端流程
 
 ```
-健康检查 → 创建 Workspace → 等待 Ready
-  → 创建 AgentRun → 等待 Idle
-  → Prompt → 等待结果
-  → Stop Agent → Delete Agent → Delete Workspace
+健康检查 → compose apply → 所有 agent idle
+  → task create → 轮询 done → 读取 reason
+  → compose down (stop + delete agents + delete workspace)
 ```
 
 > 多 agent 协作编排见 [mass-pilot](../mass-pilot/SKILL.md) skill。
@@ -96,7 +95,53 @@ massctl workspace delete NAME    # 删除（需先清空所有 agentrun）
 
 ---
 
-## Part 2: AgentRun 生命周期管理
+## Part 2: Agent 启动（推荐：Compose）
+
+### Compose Apply：声明式多 Agent 启动（推荐）
+
+```bash
+massctl compose apply -f compose.yaml
+```
+
+自动完成：创建 workspace → 等待 ready → 创建所有 agent → 等待全部 idle → 打印每个 agent 的 socket 路径。
+
+**这是启动 agent 的推荐方式。** 单次命令替代手动创建 workspace、逐个创建 agentrun、分别轮询的全部步骤。
+
+Compose 文件格式见 [../mass-pipeline/references/compose-schema.md](../mass-pipeline/references/compose-schema.md)。
+
+```yaml
+# compose.yaml 最小示例
+kind: workspace-compose
+meta
+  name: my-ws
+spec:
+  source:
+    type: local
+    path: /path/to/code
+  runs:
+    - name: worker
+      agent: claude
+      systemPrompt: "You are a senior engineer."
+```
+
+### Compose Run：快速启动单个 Agent
+
+```bash
+# 使用当前目录，快速启动一个 agent
+massctl compose run -w my-ws --agent claude
+
+# 指定名称和 system prompt
+massctl compose run -w my-ws --agent claude --name reviewer \
+  --system-prompt "You are a code reviewer."
+```
+
+workspace 已存在且 ready 时自动复用；否则以当前目录创建新的 local workspace。
+
+---
+
+## Part 3: AgentRun 手动管理（备用）
+
+手动管理适用于需要对单个 agentrun 进行细粒度控制的场景。批量启动优先用 `compose apply`。
 
 AgentRun 属于某个 workspace，标识是 `(workspace, name)`。
 
@@ -112,7 +157,7 @@ creating ──┐
 | 状态 | 含义 | 允许操作 |
 |------|------|----------|
 | `creating` | 正在启动 | 轮询等待 |
-| `idle` | 就绪 | prompt, stop |
+| `idle` | 就绪 | prompt, task create, stop |
 | `running` | 正在处理 prompt | cancel, stop |
 | `stopped` | 已停止，可恢复 | restart, delete |
 | `error` | 失败 | restart, delete |
@@ -130,7 +175,7 @@ massctl agentrun create \
 启动是**异步**的：
 
 ```bash
-massctl agentrun get worker -w my-ws   # 等待 state == "idle"
+massctl agentrun get worker -w my-ws   # 轮询直到 status.status == "idle"
 ```
 
 ### 生命周期操作
@@ -150,34 +195,9 @@ massctl agentrun get -w my-ws --state idle   # 按状态过滤
 massctl agentrun get worker -w my-ws         # 查看指定 agentrun
 ```
 
-### Compose：声明式多 Agent 启动
-
-```bash
-massctl compose apply -f compose.yaml
-```
-
-自动完成：创建 workspace → 等待 ready → 创建所有 agent → 等待全部 idle。
-
-格式见 [references/compose-format.md](references/compose-format.md)。
-
-### Compose Run：快速启动单个 Agent
-
-```bash
-# 使用当前目录作为 local workspace，快速启动一个 agent
-massctl compose run -w my-ws --agent claude
-
-# 指定 agentrun 名称
-massctl compose run -w my-ws --agent claude --name my-claude
-
-# 带 system prompt
-massctl compose run -w my-ws --agent claude --system-prompt "You are a reviewer"
-```
-
-如果 workspace 已存在且 ready，自动复用；否则以当前目录创建新的 local workspace。
-
 ---
 
-## Part 3: 与 Agent 交互
+## Part 4: 与 Agent 交互
 
 ### 发送 Prompt
 
@@ -191,9 +211,19 @@ massctl agentrun prompt worker -w my-ws --text "Fix the auth bug"
 massctl agentrun prompt worker -w my-ws --text "Fix the auth bug" --wait
 ```
 
-### Task 管理
+### Task 生命周期
 
-Task 是结构化的任务委派方式，系统自动处理 prompt 和文件操作。
+Task 是结构化的任务委派方式，自动处理 prompt、文件传递和结果收集。
+
+#### Task 状态机
+
+```
+[create] → agent running → [agent calls task done] → done=true
+                                                        │
+                                              reason + updatedAt 填入
+```
+
+agent 调用 `massctl agentrun task done` 完成 task，`done` 字段由 Go 代码写为 bool `true`，类型安全。
 
 #### 创建 Task（自动 prompt agent）
 
@@ -216,7 +246,26 @@ massctl agentrun task create -w {workspace} --name {agent} \
 3. 自动 prompt agent（内置 task protocol）
 4. Agent 状态 idle → running
 
-返回包含 `task.id`，用于后续查询。
+返回包含 `task.id` 和 `taskPath`，用于后续查询。
+
+#### Task 完成（由 Agent 调用）
+
+Agent 完成工作后调用：
+
+```bash
+massctl agentrun task done \
+  --file {task-path} \
+  --reason {reason} \
+  --response '{"description":"...","filePaths":["..."]}'
+```
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--file` | yes | task JSON 文件路径（从 task create 返回的 taskPath） |
+| `--reason` | yes | 结果描述字符串，如 success / failed / needs_human |
+| `--response` | yes | JSON object，至少含 `description`，可含 `filePaths` |
+
+CLI 负责写入：`done=true`（bool）、`reason`、`updatedAt=now()`，原子替换文件。
 
 #### 查询 Task 状态
 
@@ -224,23 +273,36 @@ massctl agentrun task create -w {workspace} --name {agent} \
 massctl agentrun task get -w {workspace} --name {agent} --id {task-id} [-o json|table]
 ```
 
-返回完整 task JSON：
+Task JSON 结构（`AgentTask`）：
 
 ```json
 {
-  "id": "task-abc123",
-  "completed": false,          // ← 轮询检查此字段
+  "id": "task-0001",
+  "assignee": "worker",
+  "attempt": 1,
+  "createdAt": "2026-04-27T00:00:00Z",
   "request": {
     "description": "...",
     "filePaths": ["..."]
   },
-  "response": {                // ← agent 完成后写入
-    "status": "success",       // ← success/failed/needs_human
-    "description": "...",
-    "filePaths": ["..."],
-    "updatedAt": "..."
-  }
+  "done": false,            // ← bool，由 task done CLI 写入
+  "reason": "",             // ← agent 设置的结果字符串（done=true 后有值）
+  "updatedAt": null,        // ← task done 时自动设为当前时间
+  "response": { ... }       // ← 额外 JSON（description、filePaths 等）
 }
+```
+
+轮询示例：
+
+```bash
+# 轮询直到 done == true
+while true; do
+  done=$(cat /path/to/task.json | jq -r '.done')
+  [[ "$done" == "true" ]] && break
+  sleep 5
+done
+reason=$(cat /path/to/task.json | jq -r '.reason')
+echo "Task finished with reason: $reason"
 ```
 
 #### 列出 Task
@@ -255,7 +317,7 @@ massctl agentrun task list -w {workspace} --name {agent}
 massctl agentrun task retry -w {workspace} --name {agent} --id {task-id}
 ```
 
-增加 `attempt` 计数，清除旧 response，自动重新 prompt agent。
+增加 `attempt` 计数，清除旧 response / reason / done，自动重新 prompt agent。
 
 > 多 agent 协作编排（task-based workflow）见 [mass-pilot](../mass-pilot/SKILL.md) skill。
 
@@ -265,25 +327,29 @@ massctl agentrun task retry -w {workspace} --name {agent} --id {task-id}
 massctl agentrun chat worker -w my-ws
 ```
 
-### 简单任务示例
+### 端到端示例（compose + task）
 
 ```bash
-massctl workspace create local --name task-ws --path /path/to/code
-# 等 ready
-massctl agentrun create -w task-ws --name worker --agent claude \
-  --system-prompt "You are a senior engineer working on this codebase."
-# 等 idle
-massctl agentrun prompt worker -w task-ws \
-  --text "Fix the nil pointer in pkg/auth/handler.go:42" --wait
-# 拿到结果后清理
-massctl agentrun stop worker -w task-ws
-massctl agentrun delete worker -w task-ws
-massctl workspace delete task-ws
+# 1. 启动
+massctl compose apply -f compose.yaml   # workspace + agents，一次搞定
+
+# 2. 委派任务
+massctl agentrun task create -w my-ws --name worker \
+  --description "Fix nil pointer in pkg/auth/handler.go:42"
+# → 返回 task-id 和 taskPath
+
+# 3. 轮询完成（或用 poll-task.sh）
+# done=true → 读取 reason
+
+# 4. 清理
+massctl agentrun stop worker -w my-ws
+massctl agentrun delete worker -w my-ws
+massctl workspace delete my-ws
 ```
 
 ---
 
-## Part 4: 错误处理
+## Part 5: 错误处理
 
 详细的错误诊断、恢复方案和决策树见 [references/error-handling.md](references/error-handling.md)。
 
