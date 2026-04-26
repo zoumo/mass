@@ -55,11 +55,11 @@ func TestDeleteForce(t *testing.T) {
 		arList.Items = []pkgariapi.AgentRun{
 			{
 				Metadata: pkgariapi.ObjectMeta{Name: "run1"},
-				Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusIdle},
+				Status:   pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseIdle},
 			},
 			{
 				Metadata: pkgariapi.ObjectMeta{Name: "run2"},
-				Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped},
+				Status:   pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseStopped},
 			},
 		}
 		return nil
@@ -73,7 +73,7 @@ func TestDeleteForce(t *testing.T) {
 	// Get returns stopped state so waitForExited completes immediately.
 	mc.getFn = func(_ context.Context, _ pkgariapi.ObjectKey, obj pkgariapi.Object) error {
 		ar := obj.(*pkgariapi.AgentRun)
-		ar.Status.Status = apiruntime.StatusStopped
+		ar.Status.Phase = apiruntime.PhaseStopped
 		return nil
 	}
 	mc.deleteFn = func(_ context.Context, key pkgariapi.ObjectKey, obj pkgariapi.Object) error {
@@ -110,7 +110,7 @@ func TestDeleteForceStopError(t *testing.T) {
 		arList.Items = []pkgariapi.AgentRun{
 			{
 				Metadata: pkgariapi.ObjectMeta{Name: "run1"},
-				Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusIdle},
+				Status:   pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseIdle},
 			},
 		}
 		return nil
@@ -160,14 +160,14 @@ func TestDeleteForceEmptyRuns(t *testing.T) {
 
 func TestIsExited(t *testing.T) {
 	tests := []struct {
-		state apiruntime.Status
+		state apiruntime.Phase
 		want  bool
 	}{
-		{apiruntime.StatusStopped, true},
-		{apiruntime.StatusError, true},
-		{apiruntime.StatusIdle, false},
-		{apiruntime.StatusCreating, false},
-		{apiruntime.StatusRunning, false},
+		{apiruntime.PhaseStopped, true},
+		{apiruntime.PhaseError, true},
+		{apiruntime.PhaseIdle, false},
+		{apiruntime.PhaseCreating, false},
+		{apiruntime.PhaseRunning, false},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.state), func(t *testing.T) {

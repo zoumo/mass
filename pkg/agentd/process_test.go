@@ -100,7 +100,7 @@ func TestProcessManagerStart(t *testing.T) {
 			Agent: "mockagent",
 		},
 		Status: pkgariapi.AgentRunStatus{
-			Status: apiruntime.StatusCreating,
+			Phase: apiruntime.PhaseCreating,
 		},
 	}
 	if err := metaStore.CreateAgentRun(ctx, agent); err != nil {
@@ -136,12 +136,12 @@ func TestProcessManagerStart(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get agent after Start: %v", err)
 		}
-		if updatedAgent.Status.Status != apiruntime.StatusCreating {
+		if updatedAgent.Status.Phase != apiruntime.PhaseCreating {
 			break
 		}
 	}
-	if updatedAgent.Status.Status != apiruntime.StatusIdle && updatedAgent.Status.Status != apiruntime.StatusRunning {
-		t.Errorf("expected agent state 'idle' or 'running' after stateChange notification, got '%s'", updatedAgent.Status.Status)
+	if updatedAgent.Status.Phase != apiruntime.PhaseIdle && updatedAgent.Status.Phase != apiruntime.PhaseRunning {
+		t.Errorf("expected agent state 'idle' or 'running' after stateChange notification, got '%s'", updatedAgent.Status.Phase)
 	}
 
 	// Verify PID > 0.
@@ -161,10 +161,10 @@ func TestProcessManagerStart(t *testing.T) {
 	}
 	state := statusResult.State
 	t.Logf("Agent-run state: ID=%s, Status=%s, PID=%d, Bundle=%s, recovery.lastSeq=%d",
-		state.ID, state.Status, state.PID, state.Bundle, statusResult.Recovery.LastSeq)
+		state.ID, state.Phase, state.PID, state.Bundle, statusResult.Recovery.LastSeq)
 
-	if state.Status != apiruntime.StatusIdle && state.Status != apiruntime.StatusRunning {
-		t.Errorf("expected agent-run status 'idle' or 'running', got '%s'", state.Status)
+	if state.Phase != apiruntime.PhaseIdle && state.Phase != apiruntime.PhaseRunning {
+		t.Errorf("expected agent-run status 'idle' or 'running', got '%s'", state.Phase)
 	}
 
 	// Stop the default drain goroutine so the test can read events.
@@ -237,14 +237,14 @@ done:
 		if err != nil {
 			t.Fatalf("Get agent after shutdown: %v", err)
 		}
-		if finalAgent.Status.Status == apiruntime.StatusStopped {
+		if finalAgent.Status.Phase == apiruntime.PhaseStopped {
 			break
 		}
 	}
-	if finalAgent == nil || finalAgent.Status.Status != apiruntime.StatusStopped {
-		got := apiruntime.Status("")
+	if finalAgent == nil || finalAgent.Status.Phase != apiruntime.PhaseStopped {
+		got := apiruntime.Phase("")
 		if finalAgent != nil {
-			got = finalAgent.Status.Status
+			got = finalAgent.Status.Phase
 		}
 		t.Errorf("expected agent state 'stopped' after shutdown, got '%s'", got)
 	}

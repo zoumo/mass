@@ -148,7 +148,7 @@ func createAndWaitWorkspace(t *testing.T, client *ariclient.RawClient, name stri
 
 // seedAgent inserts a raw agent record directly into the store, bypassing the
 // background agent-run start. Used to prime DB state for handler-only tests.
-func seedAgent(t *testing.T, metaStore *store.Store, wsName, name string, state apiruntime.Status) {
+func seedAgent(t *testing.T, metaStore *store.Store, wsName, name string, state apiruntime.Phase) {
 	t.Helper()
 	err := metaStore.CreateAgentRun(context.Background(), &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{
@@ -157,7 +157,7 @@ func seedAgent(t *testing.T, metaStore *store.Store, wsName, name string, state 
 		},
 		Spec: pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
-			Status: state,
+			Phase: state,
 		},
 	})
 	require.NoError(t, err)
@@ -241,7 +241,7 @@ func TestWorkspaceDeleteBlockedByAgent(t *testing.T) {
 	env := newTestServer(t)
 
 	createAndWaitWorkspace(t, env.client, "w-blocked")
-	seedAgent(t, env.store, "w-blocked", "blocker", apiruntime.StatusIdle)
+	seedAgent(t, env.store, "w-blocked", "blocker", apiruntime.PhaseIdle)
 
 	err := env.client.Call("workspace/delete", pkgariapi.ObjectKey{Name: "w-blocked"}, nil)
 	require.Error(t, err, "workspace/delete must fail when an agent is present")
@@ -291,7 +291,7 @@ func TestAgentCreateReturnsCreating(t *testing.T) {
 
 	var result pkgariapi.AgentRun
 	require.NoError(t, json.Unmarshal(raw, &result))
-	assert.Equal(t, apiruntime.StatusCreating, result.Status.Status)
+	assert.Equal(t, apiruntime.PhaseCreating, result.Status.Phase)
 	assert.Equal(t, "ac-ws", result.Metadata.Workspace)
 	assert.Equal(t, "my-agent", result.Metadata.Name)
 
@@ -306,8 +306,8 @@ func TestAgentListAndGet(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "als-ws")
 
-	seedAgent(t, env.store, "als-ws", "agent-idle", apiruntime.StatusIdle)
-	seedAgent(t, env.store, "als-ws", "agent-stopped", apiruntime.StatusStopped)
+	seedAgent(t, env.store, "als-ws", "agent-idle", apiruntime.PhaseIdle)
+	seedAgent(t, env.store, "als-ws", "agent-stopped", apiruntime.PhaseStopped)
 
 	var listResult pkgariapi.AgentRunList
 	require.NoError(t, env.client.Call("agentrun/list",
@@ -321,7 +321,7 @@ func TestAgentListAndGet(t *testing.T) {
 		Workspace: "als-ws",
 		Name:      "agent-idle",
 	}, &getResult))
-	assert.Equal(t, apiruntime.StatusIdle, getResult.Status.Status)
+	assert.Equal(t, apiruntime.PhaseIdle, getResult.Status.Phase)
 	assert.Equal(t, "als-ws", getResult.Metadata.Workspace)
 	assert.Equal(t, "agent-idle", getResult.Metadata.Name)
 }
@@ -330,9 +330,9 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "pr-ws")
 
-	seedAgent(t, env.store, "pr-ws", "agent-stopped", apiruntime.StatusStopped)
-	seedAgent(t, env.store, "pr-ws", "agent-error", apiruntime.StatusError)
-	seedAgent(t, env.store, "pr-ws", "agent-creating", apiruntime.StatusCreating)
+	seedAgent(t, env.store, "pr-ws", "agent-stopped", apiruntime.PhaseStopped)
+	seedAgent(t, env.store, "pr-ws", "agent-error", apiruntime.PhaseError)
+	seedAgent(t, env.store, "pr-ws", "agent-creating", apiruntime.PhaseCreating)
 
 	for _, name := range []string{"agent-stopped", "agent-error", "agent-creating"} {
 		err := env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
@@ -349,7 +349,7 @@ func TestAgentPromptRejectedForBadState(t *testing.T) {
 func TestAgentPromptRejectsEmptyPrompt(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "empty-prompt-ws")
-	seedAgent(t, env.store, "empty-prompt-ws", "agent-idle", apiruntime.StatusIdle)
+	seedAgent(t, env.store, "empty-prompt-ws", "agent-idle", apiruntime.PhaseIdle)
 
 	err := env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 		Workspace: "empty-prompt-ws",
@@ -361,7 +361,7 @@ func TestAgentPromptRejectsEmptyPrompt(t *testing.T) {
 	agent, getErr := env.store.GetAgentRun(context.Background(), "empty-prompt-ws", "agent-idle")
 	require.NoError(t, getErr)
 	require.NotNil(t, agent)
-	assert.Equal(t, apiruntime.StatusIdle, agent.Status.Status)
+	assert.Equal(t, apiruntime.PhaseIdle, agent.Status.Phase)
 }
 
 func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
@@ -369,7 +369,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "reserve-ws")
 
 	agentName := "agent-reserve"
-	seedAgent(t, env.store, "reserve-ws", agentName, apiruntime.StatusIdle)
+	seedAgent(t, env.store, "reserve-ws", agentName, apiruntime.PhaseIdle)
 
 	runSrv, runSock := newMiniRunServer(t)
 	_ = runSrv
@@ -408,7 +408,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 		Workspace: "reserve-ws",
 		Name:      agentName,
 	}, &getResult))
-	assert.Equal(t, apiruntime.StatusRunning, getResult.Status.Status)
+	assert.Equal(t, apiruntime.PhaseRunning, getResult.Status.Phase)
 
 	err = env.client.Call("agentrun/prompt", pkgariapi.AgentRunPromptParams{
 		Workspace: "reserve-ws",
@@ -426,7 +426,7 @@ func TestAgentPromptReservesBeforeAccepted(t *testing.T) {
 func TestAgentRunRestartFromIdle(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "restart-idle-ws")
-	seedAgent(t, env.store, "restart-idle-ws", "idle-agent", apiruntime.StatusIdle)
+	seedAgent(t, env.store, "restart-idle-ws", "idle-agent", apiruntime.PhaseIdle)
 
 	var result pkgariapi.AgentRun
 	err := env.client.Call("agentrun/restart", pkgariapi.ObjectKey{
@@ -434,13 +434,13 @@ func TestAgentRunRestartFromIdle(t *testing.T) {
 		Name:      "idle-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from idle state must succeed")
-	assert.Equal(t, apiruntime.StatusRestarting, result.Status.Status)
+	assert.Equal(t, apiruntime.PhaseRestarting, result.Status.Phase)
 }
 
 func TestAgentRunRestartFromRunning(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "restart-running-ws")
-	seedAgent(t, env.store, "restart-running-ws", "running-agent", apiruntime.StatusRunning)
+	seedAgent(t, env.store, "restart-running-ws", "running-agent", apiruntime.PhaseRunning)
 
 	var result pkgariapi.AgentRun
 	err := env.client.Call("agentrun/restart", pkgariapi.ObjectKey{
@@ -448,14 +448,14 @@ func TestAgentRunRestartFromRunning(t *testing.T) {
 		Name:      "running-agent",
 	}, &result)
 	require.NoError(t, err, "agentrun/restart from running state must succeed")
-	assert.Equal(t, apiruntime.StatusRestarting, result.Status.Status)
+	assert.Equal(t, apiruntime.PhaseRestarting, result.Status.Phase)
 }
 
 func TestAgentDeleteRejectedForNonTerminal(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "del-ws")
 
-	seedAgent(t, env.store, "del-ws", "active-agent", apiruntime.StatusIdle)
+	seedAgent(t, env.store, "del-ws", "active-agent", apiruntime.PhaseIdle)
 
 	err := env.client.Call("agentrun/delete", pkgariapi.ObjectKey{
 		Workspace: "del-ws",
@@ -651,7 +651,7 @@ func TestWorkspaceSendDelivered(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "send-ws")
 
 	agentName := "recv-agent"
-	seedAgent(t, env.store, "send-ws", agentName, apiruntime.StatusIdle)
+	seedAgent(t, env.store, "send-ws", agentName, apiruntime.PhaseIdle)
 	runSrv := injectMockRun(t, env, "send-ws", agentName)
 
 	var sendResult pkgariapi.WorkspaceSendResult
@@ -678,7 +678,7 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "reply-ws")
 
 	agentName := "reply-agent"
-	seedAgent(t, env.store, "reply-ws", agentName, apiruntime.StatusIdle)
+	seedAgent(t, env.store, "reply-ws", agentName, apiruntime.PhaseIdle)
 	runSrv := injectMockRun(t, env, "reply-ws", agentName)
 
 	var sendResult pkgariapi.WorkspaceSendResult
@@ -704,7 +704,7 @@ func TestWorkspaceSendNeedsReplyAddsReplyHeader(t *testing.T) {
 func TestWorkspaceSendRejectedForErrorAgent(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "serr-ws")
-	seedAgent(t, env.store, "serr-ws", "err-agent", apiruntime.StatusError)
+	seedAgent(t, env.store, "serr-ws", "err-agent", apiruntime.PhaseError)
 
 	err := env.client.Call("workspace/send", pkgariapi.WorkspaceSendParams{
 		Workspace: "serr-ws",
@@ -720,7 +720,7 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "task-ws")
 
 	agentName := "task-agent"
-	seedAgent(t, env.store, "task-ws", agentName, apiruntime.StatusIdle)
+	seedAgent(t, env.store, "task-ws", agentName, apiruntime.PhaseIdle)
 	runSrv := injectMockRun(t, env, "task-ws", agentName)
 
 	var result pkgariapi.AgentRunTaskCreateResult
@@ -766,7 +766,7 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 func TestAgentRunTaskCreateBlockedDuringRecovery(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "task-recovery-ws")
-	seedAgent(t, env.store, "task-recovery-ws", "task-agent", apiruntime.StatusIdle)
+	seedAgent(t, env.store, "task-recovery-ws", "task-agent", apiruntime.PhaseIdle)
 	env.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
 
 	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskCreate, pkgariapi.AgentRunTaskCreateParams{
@@ -782,7 +782,7 @@ func TestAgentRunTaskCreateLocalFailureRollsBackToIdle(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "task-fail-ws")
 	agentName := "task-agent"
-	seedAgent(t, env.store, "task-fail-ws", agentName, apiruntime.StatusIdle)
+	seedAgent(t, env.store, "task-fail-ws", agentName, apiruntime.PhaseIdle)
 
 	bundlePath := env.processes.BundlePath("task-fail-ws", agentName)
 	require.NoError(t, os.MkdirAll(bundlePath, 0o755))
@@ -801,7 +801,7 @@ func TestAgentRunTaskCreateLocalFailureRollsBackToIdle(t *testing.T) {
 		if getErr != nil || agent == nil {
 			return false
 		}
-		return agent.Status.Status == apiruntime.StatusIdle
+		return agent.Status.Phase == apiruntime.PhaseIdle
 	}, 2*time.Second, 20*time.Millisecond, "agent should roll back to idle after local task/create failure")
 }
 
@@ -810,7 +810,7 @@ func TestAgentRunTaskRetryDelivered(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "task-retry-ws")
 
 	agentName := "task-agent"
-	seedAgent(t, env.store, "task-retry-ws", agentName, apiruntime.StatusIdle)
+	seedAgent(t, env.store, "task-retry-ws", agentName, apiruntime.PhaseIdle)
 	runSrv := injectMockRun(t, env, "task-retry-ws", agentName)
 
 	tasksDir := filepath.Join(env.processes.BundlePath("task-retry-ws", agentName), "tasks")
@@ -871,7 +871,7 @@ func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "task-wrap-ws")
 
 	agentName := "task-agent"
-	seedAgent(t, env.store, "task-wrap-ws", agentName, apiruntime.StatusIdle)
+	seedAgent(t, env.store, "task-wrap-ws", agentName, apiruntime.PhaseIdle)
 	runSrv := injectMockRun(t, env, "task-wrap-ws", agentName)
 
 	tasksDir := filepath.Join(env.processes.BundlePath("task-wrap-ws", agentName), "tasks")
@@ -936,8 +936,8 @@ func TestNoAgentIDInResponses(t *testing.T) {
 	env := newTestServer(t)
 	createAndWaitWorkspace(t, env.client, "noid-ws")
 
-	seedAgent(t, env.store, "noid-ws", "a1", apiruntime.StatusIdle)
-	seedAgent(t, env.store, "noid-ws", "a2", apiruntime.StatusStopped)
+	seedAgent(t, env.store, "noid-ws", "a1", apiruntime.PhaseIdle)
+	seedAgent(t, env.store, "noid-ws", "a2", apiruntime.PhaseStopped)
 
 	// agentrun/list
 	listRaw, err := callRaw(t, env.client, "agentrun/list",
@@ -1199,7 +1199,7 @@ func TestAgentRunCreateAcceptsEnabledAgent(t *testing.T) {
 	} else {
 		var result pkgariapi.AgentRun
 		require.NoError(t, json.Unmarshal(raw, &result))
-		assert.Equal(t, apiruntime.StatusCreating, result.Status.Status)
+		assert.Equal(t, apiruntime.PhaseCreating, result.Status.Phase)
 	}
 }
 

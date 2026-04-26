@@ -27,7 +27,7 @@ get_task() {
 
 while true; do
   agent_state=$(massctl agentrun get "$AGENT_NAME" -w "$WORKSPACE" -o json 2>/dev/null \
-    | jq -r '.status.state // "unknown"')
+    | jq -r '.status.phase // "unknown"')
 
   task_json=$(get_task)
   task_completed=$(echo "$task_json" | jq -r '.completed // false')

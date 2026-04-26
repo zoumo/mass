@@ -354,7 +354,7 @@ turn_end { stopReason: "end_turn" }
 ### 7.2 消费方状态机
 
 ```
-                         turn_start / runtime_update(status: running)
+                         turn_start / runtime_update(phase: running)
                          ┌──────────┐
                 ┌───────→│ waiting  │←──────────┐
                 │        └────┬─────┘           │
@@ -366,7 +366,7 @@ turn_end { stopReason: "end_turn" }
                 │        │ waiting  │───────────┘
                 │        └────┬─────┘
                 │             │
-                │      turn_end / runtime_update(status: idle)
+                │      turn_end / runtime_update(phase: idle)
                 │             │
                 │             ▼
                 │        ┌──────────┐
@@ -388,7 +388,7 @@ turn_end { stopReason: "end_turn" }
 
 在 late join 或断线场景中，可能看不到 `turn_end`。消费方应：
 
-- 使用 `runtime_update` 的 `status.status == "idle"` 作为备用的 turn 结束信号
+- 使用 `runtime_update` 的 `phase.phase == "idle"` 作为备用的 turn 结束信号
 - 如果 `runtime_update` 报告 `idle` 而消费方仍在 `waiting`，视为隐式 turn_end
 
 ---
@@ -402,9 +402,9 @@ turn_end { stopReason: "end_turn" }
 
 ```json
 {
-  "status": {
-    "previousStatus": "idle",
-    "status": "running",
+  "phase": {
+    "previousPhase": "idle",
+    "phase": "running",
     "pid": 12345,
     "reason": "prompt-started"
   },
@@ -420,19 +420,19 @@ turn_end { stopReason: "end_turn" }
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `status` | `RuntimeStatus` | 进程生命周期变更 |
+| `phase` | `RuntimePhase` | 进程生命周期变更 |
 | `availableCommands` | `{commands: AvailableCommand[]}` | 可用命令列表更新（nil=未更新，空 commands=清除） |
 | `currentMode` | `{modeId: string}` | 操作模式变更 |
 | `configOptions` | `{options: ConfigOption[]}` | 配置选项变更（nil=未更新，空 options=清除） |
 | `sessionInfo` | `{title?, updatedAt?}` | 会话元数据更新 |
 | `usage` | `{size, used, cost?}` | Token/API 用量统计 |
 
-### 8.3 `status` 子字段：进程状态
+### 8.3 `phase` 子字段：进程状态
 
 ```json
 {
-  "previousStatus": "idle",
-  "status": "running",
+  "previousPhase": "idle",
+  "phase": "running",
   "pid": 12345,
   "reason": "prompt-started",
   "sessionChanged": ["configOptions", "agentInfo"]
@@ -441,13 +441,13 @@ turn_end { stopReason: "end_turn" }
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `previousStatus` | string | 变更前的状态 |
-| `status` | string | 当前状态（见下表） |
+| `previousPhase` | string | 变更前的状态 |
+| `phase` | string | 当前状态（见下表） |
 | `pid` | int | Agent 进程 PID（可选） |
 | `reason` | string | 状态变更原因（可选） |
-| `sessionChanged` | string[] | 本次变更涉及的 session 属性列表（可选）。当 session 元数据变更（如 configOptions、agentInfo、capabilities）但进程状态未变时，`previousStatus == status` 且该字段非空 |
+| `sessionChanged` | string[] | 本次变更涉及的 session 属性列表（可选）。当 session 元数据变更（如 configOptions、agentInfo、capabilities）但进程状态未变时，`previousPhase == phase` 且该字段非空 |
 
-| status 值 | 含义 |
+| phase 值 | 含义 |
 |-----------|------|
 | `running` | Agent 正在执行 turn |
 | `idle` | Agent 空闲，可接受 prompt |
@@ -458,11 +458,11 @@ turn_end { stopReason: "end_turn" }
 
 ```
 收到 runtime_update：
-  if status != nil:
+  if phase != nil:
     更新 UI 状态指示器
-    status.status == "running" 且消费方不在 waiting：
+    phase.phase == "running" 且消费方不在 waiting：
       → 进入 waiting 模式（可能是其他 client 发起的 prompt）
-    status.status == "idle" 且消费方在 waiting：
+    phase.phase == "idle" 且消费方在 waiting：
       → 退出 waiting 模式（turn 已结束的备用信号）
 
   if availableCommands != nil:
@@ -495,7 +495,7 @@ Late join 是指消费方在 agent 已经运行中途才连接。这是常见场
 | 收到 tool_result 但没有对应 tool_call | 静默跳过 |
 | agent 已在 running | 通过 `runtime/status` 或 `runtime_update` 获知，自动进入 waiting |
 | 没有看到 turn_start | 不影响——text/tool 事件可以独立处理 |
-| 没有看到 turn_end | 使用 `runtime_update` 的 `status.status == "idle"` 作为备用信号 |
+| 没有看到 turn_end | 使用 `runtime_update` 的 `phase.phase == "idle"` 作为备用信号 |
 
 ### 完整恢复（fromSeq=0）
 
@@ -555,8 +555,8 @@ Late join 是指消费方在 agent 已经运行中途才连接。这是常见场
 ### Turn 管理
 
 - [ ] turn_end 时清理 currentMsg 并切换到 idle
-- [ ] `runtime_update` 的 `status.status == "idle"` 作为备用 turn 结束信号
-- [ ] `runtime_update` 的 `status.status == "running"` 时进入 waiting 模式
+- [ ] `runtime_update` 的 `phase.phase == "idle"` 作为备用 turn 结束信号
+- [ ] `runtime_update` 的 `phase.phase == "running"` 时进入 waiting 模式
 
 ### user_message 去重
 
@@ -569,4 +569,4 @@ Late join 是指消费方在 agent 已经运行中途才连接。这是常见场
 ### runtime_update
 
 - [ ] 按 payload 字段分发处理（status, availableCommands, currentMode 等）
-- [ ] `status` 字段用于状态指示器和备用 turn 结束信号
+- [ ] `phase` 字段用于状态指示器和备用 turn 结束信号

@@ -32,7 +32,7 @@ type Handler interface {
 	// Clients reconnect with fromSeq=lastReceivedSeq+1 to resume.
 	WatchEvent(ctx context.Context, req *runapi.SessionWatchEventParams, watchID string) (*runapi.SessionWatchEventResult, error)
 	SetModel(ctx context.Context, req *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error)
-	Status(ctx context.Context) (*runapi.RuntimeStatusResult, error)
+	Status(ctx context.Context) (*runapi.RuntimePhaseResult, error)
 	Stop(ctx context.Context) error
 }
 

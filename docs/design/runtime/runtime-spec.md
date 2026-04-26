@@ -24,7 +24,7 @@ The state of an agent includes the following properties:
 * **`sessionId`** (string, OPTIONAL) is the protocol-level session ID (e.g. from ACP `session/new`)
   obtained during bootstrap. Persisted so that `session/load` can attempt best-effort
   session recovery on restart. Empty before the protocol handshake completes.
-* **`status`** (string, REQUIRED) is the runtime state of the agent.
+* **`phase`** (string, REQUIRED) is the runtime phase of the agent.
   The value MAY be one of:
 
   * `creating`: mass accepted creation or restart and runtime bootstrap is
@@ -42,7 +42,7 @@ The state of an agent includes the following properties:
   Additional values MAY be defined by the runtime, however,
   they MUST be used to represent new runtime states not defined above.
 
-* **`pid`** (int, REQUIRED when `status` is `idle` or `running`) is the ID
+* **`pid`** (int, REQUIRED when `phase` is `idle` or `running`) is the ID
   of the agent process as seen by the host OS.
 * **`bundle`** (string, REQUIRED) is the absolute path to the agent's bundle directory.
   This is provided so that consumers can find the agent's configuration on the host.
@@ -76,7 +76,7 @@ populated by the agent-run during runtime:
 |---------------|----------------|-------|
 | `ociVersion` | `massVersion` | Same |
 | `id` | `id` | Same |
-| `status` | `status` | Same pattern: creating/idle/running/restarting/stopped/error |
+| `status` | `phase` | Same pattern: creating/idle/running/restarting/stopped/error |
 | `pid` | `pid` | Same |
 | `bundle` (rootfs + config path) | `bundle` (config.json path) | Same concept |
 | `annotations` | `annotations` | Same |
@@ -89,7 +89,7 @@ populated by the agent-run during runtime:
 {
   "massVersion": "0.1.0",
   "id": "my-project-architect",
-  "status": "idle",
+  "phase": "idle",
   "pid": 12345,
   "bundle": "/var/lib/agentd/bundles/my-project-architect",
   "annotations": {
@@ -237,10 +237,10 @@ The `start` operation is currently a no-op, reserved for future use.
 
 ## State Mapping and Identity Authority
 
-The design set uses the following cross-layer mapping. `status` in this document is the
-runtime-owned state, not the mass daemon session state, and not the ACP peer's session identifier.
+The design set uses the following cross-layer mapping. `phase` in this document is the
+runtime-owned phase, not the mass daemon session state, and not the ACP peer's session identifier.
 
-| MASS runtime `status` | Who sets it | Process status | Notes |
+| MASS runtime `phase` | Who sets it | Process status | Notes |
 |---|---|---|---|
 | `creating` | daemon + runtime | absent or starting | Create/restart accepted; process fork and protocol handshake pending or in progress. Daemon recovery: mark error if stuck. |
 | `idle` | runtime (agent-run) | running | Bootstrap complete, ready for prompts. |
@@ -397,7 +397,7 @@ Runtime 必须产出结构化的 typed event stream，供上层消费。
 | `turn_start` | prompt 开始处理 | — | 标记一个 turn 的开始 |
 | `turn_end` | prompt 完成 | prompt_response | 标记一个 turn 的结束 |
 | `error` | 错误或进程异常 | ACP 错误 | 错误信息 |
-| `runtime_update` | 元数据更新 / 进程状态变更 | metadata updates | 运行时状态与 session 元数据更新（status, availableCommands, currentMode, configOptions, sessionInfo, usage） |
+| `runtime_update` | 元数据更新 / 进程状态变更 | metadata updates | 运行时状态与 session 元数据更新（phase, availableCommands, currentMode, configOptions, sessionInfo, usage） |
 
 > **Content Block Streaming**：`agent_message`、`agent_thinking`、`user_message` 三种事件
 > 携带 `status` 字段（`start` / `streaming` / `end`）标识 content block 生命周期。

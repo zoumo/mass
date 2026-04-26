@@ -62,10 +62,10 @@ func TestAgentRunEvent_RoundTrip_RuntimeUpdate(t *testing.T) {
 	now := time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC)
 	ev := api.NewAgentRunEvent("run-1", "", 10, now,
 		api.RuntimeUpdateEvent{
-			Status: &api.RuntimeStatus{
-				PreviousStatus: "creating",
-				Status:         "idle",
-				PID:            12345,
+			Phase: &api.RuntimePhase{
+				PreviousPhase: "creating",
+				Phase:         "idle",
+				PID:           12345,
 			},
 		},
 		"turn-001", // should be dropped for runtime_update
@@ -82,9 +82,9 @@ func TestAgentRunEvent_RoundTrip_RuntimeUpdate(t *testing.T) {
 
 	ru, ok := decoded.Payload.(api.RuntimeUpdateEvent)
 	require.True(t, ok, "payload should be RuntimeUpdateEvent")
-	require.NotNil(t, ru.Status)
-	assert.Equal(t, "idle", ru.Status.Status)
-	assert.Equal(t, 12345, ru.Status.PID)
+	require.NotNil(t, ru.Phase)
+	assert.Equal(t, "idle", ru.Phase.Phase)
+	assert.Equal(t, 12345, ru.Phase.PID)
 }
 
 func TestAgentRunEvent_RoundTrip_ToolCall(t *testing.T) {

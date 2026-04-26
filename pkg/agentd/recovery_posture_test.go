@@ -85,18 +85,18 @@ func TestRecoverSessions_PhaseTransitions_WithLiveRun(t *testing.T) {
 	// Start a mock agent-run server.
 	srv, socketPath := newMockRunServer(t)
 	srv.mu.Lock()
-	srv.statusResult = runapi.RuntimeStatusResult{
+	srv.statusResult = runapi.RuntimePhaseResult{
 		State: apiruntime.State{
 			MassVersion: "0.1.0",
 			ID:          "phase-test-agent",
-			Status:      apiruntime.StatusRunning,
+			Phase:       apiruntime.PhaseRunning,
 			Bundle:      "/tmp/test-bundle",
 		},
 		Recovery: runapi.RuntimeStatusRecovery{LastSeq: 0},
 	}
 	srv.mu.Unlock()
 
-	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "phase-test", apiruntime.StatusRunning, socketPath)
+	ws, name := createRecoveryTestAgent(t, ctx, store, "default", "phase-test", apiruntime.PhaseRunning, socketPath)
 	key := agentKey(ws, name)
 
 	before := time.Now()
@@ -134,7 +134,7 @@ func TestRecoverSessions_PhaseTransitions_WithDeadRun(t *testing.T) {
 	defer cancel()
 
 	createRecoveryTestAgent(t, ctx, store, "default", "dead-phase-agent",
-		apiruntime.StatusRunning, "/tmp/dead-phase-unique.sock")
+		apiruntime.PhaseRunning, "/tmp/dead-phase-unique.sock")
 
 	err := pm.RecoverSessions(ctx)
 	require.NoError(t, err)

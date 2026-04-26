@@ -7,7 +7,7 @@ const (
 	MethodSessionLoad       = "session/load"
 	MethodRuntimeWatchEvent = "runtime/watch_event"
 	MethodSessionSetModel   = "session/set_model"
-	MethodRuntimeStatus     = "runtime/status"
+	MethodRuntimePhase      = "runtime/status"
 	MethodRuntimeStop       = "runtime/stop"
 )
 

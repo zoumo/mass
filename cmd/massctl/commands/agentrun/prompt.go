@@ -53,7 +53,7 @@ func newPromptCmd(getClient cliutil.ClientFn) *cobra.Command {
 				return fmt.Errorf("agentrun/get: %w", err)
 			}
 			if ar.Status.SocketPath == "" {
-				return fmt.Errorf("agent run %s/%s has no run socket (state: %s)", ws, name, ar.Status.Status)
+				return fmt.Errorf("agent run %s/%s has no run socket (state: %s)", ws, name, ar.Status.Phase)
 			}
 
 			// Connect to the agent-run process directly.

@@ -298,9 +298,9 @@ func (t *Translator) NotifyStateChange(previousStatus, status string, pid int, r
 			Time:      at,
 			Type:      runapi.EventTypeRuntimeUpdate,
 			Payload: runapi.RuntimeUpdateEvent{
-				Status: &runapi.RuntimeStatus{
-					PreviousStatus: previousStatus,
-					Status:         status,
+				Phase: &runapi.RuntimePhase{
+					PreviousPhase:  previousStatus,
+					Phase:          status,
 					PID:            pid,
 					Reason:         reason,
 					SessionChanged: sessionChanged,

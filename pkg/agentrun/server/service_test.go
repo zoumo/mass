@@ -23,7 +23,7 @@ func TestStatus_EventCountsOverlay(t *testing.T) {
 	staleState := apiruntime.State{
 		MassVersion: "0.1.0",
 		ID:          "test-session",
-		Status:      apiruntime.StatusRunning,
+		Phase:       apiruntime.PhaseRunning,
 		Bundle:      "/tmp/fake-bundle",
 		EventCounts: map[string]int{"stale_event": 99},
 	}
@@ -71,7 +71,7 @@ func newTestService(t *testing.T) *Service {
 	st := apiruntime.State{
 		MassVersion: "0.1.0",
 		ID:          "test-session",
-		Status:      apiruntime.StatusRunning,
+		Phase:       apiruntime.PhaseRunning,
 		Bundle:      "/tmp/fake-bundle",
 	}
 	require.NoError(t, spec.WriteState(stateDir, st))
@@ -108,7 +108,7 @@ func TestService_Stop_EmitsAuditEvent(t *testing.T) {
 	ch, _, _ := trans.Subscribe()
 
 	stateDir := t.TempDir()
-	st := apiruntime.State{MassVersion: "0.1.0", ID: "s", Status: apiruntime.StatusRunning, Bundle: "/b"}
+	st := apiruntime.State{MassVersion: "0.1.0", ID: "s", Phase: apiruntime.PhaseRunning, Bundle: "/b"}
 	require.NoError(t, spec.WriteState(stateDir, st))
 	mgr := acpruntime.New(apiruntime.Config{}, "/b", stateDir, slog.Default())
 	svc := New(mgr, trans, slog.Default())
@@ -130,7 +130,7 @@ func TestService_SetModel_AuditOnValidationFailure(t *testing.T) {
 	ch, _, _ := trans.Subscribe()
 
 	stateDir := t.TempDir()
-	st := apiruntime.State{MassVersion: "0.1.0", ID: "s", Status: apiruntime.StatusRunning, Bundle: "/b"}
+	st := apiruntime.State{MassVersion: "0.1.0", ID: "s", Phase: apiruntime.PhaseRunning, Bundle: "/b"}
 	require.NoError(t, spec.WriteState(stateDir, st))
 	mgr := acpruntime.New(apiruntime.Config{}, "/b", stateDir, slog.Default())
 	svc := New(mgr, trans, slog.Default())

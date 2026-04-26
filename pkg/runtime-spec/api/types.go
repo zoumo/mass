@@ -2,35 +2,35 @@
 // It has no external dependencies — only the Go standard library.
 package api
 
-// Status is the runtime status of an agent, mirroring OCI container status.
-type Status string
+// Phase is the lifecycle phase of an agent, mirroring OCI container status.
+type Phase string
 
 const (
-	// StatusCreating means MASS accepted create/restart and runtime bootstrap
+	// PhaseCreating means MASS accepted create/restart and runtime bootstrap
 	// is pending or in progress (fork/exec + protocol handshake).
-	StatusCreating Status = "creating"
+	PhaseCreating Phase = "creating"
 
-	// StatusIdle means the agent process is running and the ACP session is
+	// PhaseIdle means the agent process is running and the ACP session is
 	// established. The agent is idle, waiting for a prompt.
-	StatusIdle Status = "idle"
+	PhaseIdle Phase = "idle"
 
-	// StatusRunning means the agent is processing a session/prompt.
-	StatusRunning Status = "running"
+	// PhaseRunning means the agent is processing a session/prompt.
+	PhaseRunning Phase = "running"
 
-	// StatusRestarting means MASS accepted a restart request and is stopping
+	// PhaseRestarting means MASS accepted a restart request and is stopping
 	// the existing agent-run before starting a new one.
-	StatusRestarting Status = "restarting"
+	PhaseRestarting Phase = "restarting"
 
-	// StatusStopped means the agent process has exited.
-	StatusStopped Status = "stopped"
+	// PhaseStopped means the agent process has exited.
+	PhaseStopped Phase = "stopped"
 
-	// StatusError means the agent encountered an unrecoverable error.
-	StatusError Status = "error"
+	// PhaseError means the agent encountered an unrecoverable error.
+	PhaseError Phase = "error"
 )
 
 // String implements fmt.Stringer.
-func (s Status) String() string {
-	return string(s)
+func (p Phase) String() string {
+	return string(p)
 }
 
 // EnvVar is a name-value pair representing an environment variable.

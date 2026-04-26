@@ -204,10 +204,10 @@ func TestAgentRunStatus(t *testing.T) {
 		t.Fatalf("Status failed: %v", err)
 	}
 
-	t.Logf("status: state=%s pid=%d", status.State.Status, status.State.PID)
+	t.Logf("status: state=%s pid=%d", status.State.Phase, status.State.PID)
 
-	if status.State.Status != apiruntime.StatusIdle {
-		t.Errorf("expected status=idle, got %s", status.State.Status)
+	if status.State.Phase != apiruntime.PhaseIdle {
+		t.Errorf("expected status=idle, got %s", status.State.Phase)
 	}
 	if status.State.PID <= 0 {
 		t.Errorf("expected positive PID, got %d", status.State.PID)

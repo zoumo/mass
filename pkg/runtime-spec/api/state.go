@@ -16,11 +16,11 @@ type State struct {
 	// Empty before the protocol handshake completes.
 	SessionID string `json:"sessionId,omitempty"`
 
-	// Status is the current lifecycle status.
-	Status Status `json:"status"`
+	// Phase is the current lifecycle phase.
+	Phase Phase `json:"phase"`
 
 	// PID is the OS process ID of the agent process.
-	// Required when Status is created or running.
+	// Required when Phase is created or running.
 	PID int `json:"pid,omitempty"`
 
 	// Bundle is the absolute path to the agent's bundle directory.

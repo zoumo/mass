@@ -50,7 +50,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 	for _, a := range allAgents {
 		// Skip terminal states: stopped agents have no agent-run to recover,
 		// and error agents require explicit restart per the agent lifecycle model.
-		if a.Status.Status != apiruntime.StatusStopped && a.Status.Status != apiruntime.StatusError {
+		if a.Status.Phase != apiruntime.PhaseStopped && a.Status.Phase != apiruntime.PhaseError {
 			candidates = append(candidates, a)
 		}
 	}
@@ -76,7 +76,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			// complete bootstrap — mark them error with a meaningful message
 			// rather than stopped. Non-creating agents are marked stopped
 			// (fail-closed posture per D012/D029).
-			if agent.Status.Status == apiruntime.StatusCreating {
+			if agent.Status.Phase == apiruntime.PhaseCreating {
 				m.logger.Warn("recovery: creating agent has no live agent-run, marking error",
 					"agent_key", key, "error", err)
 				// Don't mark stopped here — the creating-cleanup pass handles this below.
@@ -89,7 +89,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 					"error", err)
 				// Fail-closed: mark agent as stopped (D012/D029).
 				if tErr := m.agents.UpdateStatus(ctx, ws, name, pkgariapi.AgentRunStatus{
-					Status:       apiruntime.StatusStopped,
+					Phase:        apiruntime.PhaseStopped,
 					ErrorMessage: fmt.Sprintf("agent-run not recovered after daemon restart: %v", err),
 				}); tErr != nil {
 					m.logger.Error("recovery: failed to mark agent stopped",
@@ -117,15 +117,15 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			// logs a warning and returns the agent-run status without changing the DB —
 			// we preserve the DB state here to match that contract.
 			currentAgent, _ := m.store.GetAgentRun(ctx, ws, name)
-			currentState := agent.Status.Status // initial state before recoverAgent
+			currentState := agent.Status.Phase // initial state before recoverAgent
 			if currentAgent != nil {
-				currentState = currentAgent.Status.Status
+				currentState = currentAgent.Status.Phase
 			}
-			if currentState == apiruntime.StatusIdle && runStatus == apiruntime.StatusRunning {
+			if currentState == apiruntime.PhaseIdle && runStatus == apiruntime.PhaseRunning {
 				// Already reconciled by recoverAgent; no additional update needed.
-			} else if currentState == apiruntime.StatusRunning && runStatus == apiruntime.StatusIdle {
+			} else if currentState == apiruntime.PhaseRunning && runStatus == apiruntime.PhaseIdle {
 				// Agent-run became idle during recovery — update to idle.
-				if aErr := m.agents.UpdateState(ctx, ws, name, apiruntime.StatusIdle, ""); aErr != nil {
+				if aErr := m.agents.UpdateState(ctx, ws, name, apiruntime.PhaseIdle, ""); aErr != nil {
 					m.logger.Warn("recovery: failed to reconcile running→idle",
 						"agent_key", key, "error", aErr)
 				}
@@ -137,8 +137,8 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 
 	// Pending/Creating-cleanup pass: agents stuck in transient states
 	// when the daemon crashed will never complete — mark them as error.
-	for _, queryState := range []apiruntime.Status{apiruntime.StatusCreating} {
-		stuckAgents, err := m.store.ListAgentRuns(ctx, &pkgariapi.AgentRunFilter{Status: queryState})
+	for _, queryState := range []apiruntime.Phase{apiruntime.PhaseCreating} {
+		stuckAgents, err := m.store.ListAgentRuns(ctx, &pkgariapi.AgentRunFilter{Phase: queryState})
 		if err != nil {
 			m.logger.Warn("recovery: failed to list agents for cleanup", "state", queryState, "error", err)
 			continue
@@ -152,7 +152,7 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 			m.logger.Warn("recovery: agent stuck in transient state, marking error", "agent_key", key, "state", queryState)
 			if aErr := m.agents.UpdateStatus(ctx, agent.Metadata.Workspace, agent.Metadata.Name,
 				pkgariapi.AgentRunStatus{
-					Status:       apiruntime.StatusError,
+					Phase:        apiruntime.PhaseError,
 					ErrorMessage: errMsg,
 				}); aErr != nil {
 				m.logger.Warn("recovery: failed to mark agent as error",
@@ -174,10 +174,10 @@ func (m *ProcessManager) RecoverSessions(ctx context.Context) error {
 }
 
 // recoverAgent attempts to reconnect to a single agent-run process.
-// Returns the agent-run's reported apiruntime.Status on success (apiruntime.StatusStopped on failure).
-func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.AgentRun) (apiruntime.Status, error) {
+// Returns the agent-run's reported apiruntime.Status on success (apiruntime.PhaseStopped on failure).
+func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.AgentRun) (apiruntime.Phase, error) {
 	if agent.Status.SocketPath == "" {
-		return apiruntime.StatusStopped, fmt.Errorf("no socket path persisted for agent %s/%s",
+		return apiruntime.PhaseStopped, fmt.Errorf("no socket path persisted for agent %s/%s",
 			agent.Metadata.Workspace, agent.Metadata.Name)
 	}
 
@@ -204,7 +204,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	// Connect to the agent-run socket (plain Dial, event routing via Watcher).
 	client, err := runclient.Dial(ctx, agent.Status.SocketPath)
 	if err != nil {
-		return apiruntime.StatusStopped, fmt.Errorf("connect to agent-run socket %s: %w", agent.Status.SocketPath, err)
+		return apiruntime.PhaseStopped, fmt.Errorf("connect to agent-run socket %s: %w", agent.Status.SocketPath, err)
 	}
 	runProc.Client = client
 
@@ -212,11 +212,11 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	statusResult, err := client.Status(ctx)
 	if err != nil {
 		_ = client.Close()
-		return apiruntime.StatusStopped, fmt.Errorf("runtime/status: %w", err)
+		return apiruntime.PhaseStopped, fmt.Errorf("runtime/status: %w", err)
 	}
 	status := *statusResult
 	logger.Info("recovery: agent-run status",
-		"status", status.State.Status,
+		"status", status.State.Phase,
 		"lastSeq", status.Recovery.LastSeq,
 		slog.Group("state",
 			"id", status.State.ID,
@@ -225,14 +225,14 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 
 	// Reconcile agent-run-reported status against DB agent state.
 	switch {
-	case status.State.Status == apiruntime.StatusStopped:
+	case status.State.Phase == apiruntime.PhaseStopped:
 		// Agent-run reports stopped — fail-closed.
 		_ = client.Close()
-		return apiruntime.StatusStopped, fmt.Errorf("agent-run reports stopped for agent %s", key)
+		return apiruntime.PhaseStopped, fmt.Errorf("agent-run reports stopped for agent %s", key)
 
-	case status.State.Status == apiruntime.StatusRunning && agent.Status.Status == apiruntime.StatusIdle:
+	case status.State.Phase == apiruntime.PhaseRunning && agent.Status.Phase == apiruntime.PhaseIdle:
 		// Agent-run is running but DB still says idle — update DB to match agent-run truth.
-		if err := m.agents.UpdateState(ctx, ws, name, apiruntime.StatusRunning, ""); err != nil {
+		if err := m.agents.UpdateState(ctx, ws, name, apiruntime.PhaseRunning, ""); err != nil {
 			logger.Warn("recovery: failed to reconcile agent state idle→running (proceeding)",
 				"error", err)
 		} else {
@@ -241,8 +241,8 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 
 	default:
 		// For any other mismatch, log and proceed — the agent-run is alive.
-		runStatus := string(status.State.Status)
-		dbState := string(agent.Status.Status)
+		runStatus := string(status.State.Phase)
+		dbState := string(agent.Status.Phase)
 		if runStatus != dbState {
 			logger.Warn("recovery: agent-run status differs from DB state (proceeding)",
 				"run_status", runStatus,
@@ -294,7 +294,7 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	// Start watchRecoveredProcess goroutine.
 	go m.watchRecoveredProcess(ws, name, runProc)
 
-	return status.State.Status, nil
+	return status.State.Phase, nil
 }
 
 // readStateSessionID reads the protocol session ID from state.json in stateDir.
@@ -337,7 +337,7 @@ func (m *ProcessManager) watchRecoveredProcess(workspace, name string, runProc *
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseStopped})
 
 	// Close the Done channel LAST to signal all cleanup is complete.
 	close(runProc.Done)

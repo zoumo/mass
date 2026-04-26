@@ -423,10 +423,10 @@ type UsageEvent struct {
 	Used int            `json:"used"`
 }
 
-// RuntimeStatus carries runtime process lifecycle transitions.
-type RuntimeStatus struct {
-	PreviousStatus string   `json:"previousStatus"`
-	Status         string   `json:"status"`
+// RuntimePhase carries runtime process lifecycle transitions.
+type RuntimePhase struct {
+	PreviousPhase  string   `json:"previousPhase"`
+	Phase          string   `json:"phase"`
 	PID            int      `json:"pid,omitempty"`
 	Reason         string   `json:"reason,omitempty"`
 	SessionChanged []string `json:"sessionChanged,omitempty"`
@@ -444,7 +444,7 @@ type OperationAuditEvent struct {
 // and session metadata updates. All fields are optional pointers — nil means
 // "not updated", non-nil means "updated" (empty value = cleared).
 type RuntimeUpdateEvent struct {
-	Status            *RuntimeStatus          `json:"status,omitempty"`
+	Phase             *RuntimePhase           `json:"phase,omitempty"`
 	AvailableCommands *AvailableCommandsEvent `json:"availableCommands,omitempty"`
 	CurrentMode       *CurrentModeEvent       `json:"currentMode,omitempty"`
 	ConfigOptions     *ConfigOptionEvent      `json:"configOptions,omitempty"`

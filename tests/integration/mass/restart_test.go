@@ -66,16 +66,16 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	t.Log("Creating agent-A")
 	arA1 := testutil.CreateAgentAndWait(t, ctx1, client1, wsName, "agent-a", "mockagent")
 	t.Logf("agent-A: workspace=%s name=%s state=%s",
-		arA1.Metadata.Workspace, arA1.Metadata.Name, arA1.Status.Status)
+		arA1.Metadata.Workspace, arA1.Metadata.Name, arA1.Status.Phase)
 
-	if arA1.Status.Status != "idle" {
-		t.Fatalf("expected agent-A state=idle, got %s", arA1.Status.Status)
+	if arA1.Status.Phase != "idle" {
+		t.Fatalf("expected agent-A state=idle, got %s", arA1.Status.Phase)
 	}
 
 	t.Log("Creating agent-B")
 	arB1 := testutil.CreateAgentAndWait(t, ctx1, client1, wsName, "agent-b", "mockagent")
 	t.Logf("agent-B: workspace=%s name=%s state=%s",
-		arB1.Metadata.Workspace, arB1.Metadata.Name, arB1.Status.Status)
+		arB1.Metadata.Workspace, arB1.Metadata.Name, arB1.Status.Phase)
 
 	t.Log("Prompting agent-A before restart")
 	keyA := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-a"}
@@ -165,7 +165,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	}
 
 	t.Logf("agent-A post-restart state=%s (agent-run killed → fail-closed, identity preserved)",
-		arA2.Status.Status)
+		arA2.Status.Phase)
 
 	// =========================================================================
 	// Phase 5: Verify agent-B is in a terminal state
@@ -173,7 +173,7 @@ func TestAgentdRestartRecovery(t *testing.T) {
 	t.Log("Phase 5: Verify agent-B is in terminal state (dead agent-run fail-closed)")
 
 	arB2 := testutil.WaitForAgentStateOneOf(t, ctx2, client2, wsName, "agent-b", terminalStates, 10*time.Second)
-	t.Logf("agent-B post-restart state=%s ✓", arB2.Status.Status)
+	t.Logf("agent-B post-restart state=%s ✓", arB2.Status.Phase)
 
 	// =========================================================================
 	// Phase 6: Verify agent list — both agents queryable with identity intact
@@ -192,8 +192,8 @@ func TestAgentdRestartRecovery(t *testing.T) {
 
 	agentStates := make(map[string]string)
 	for _, a := range listResult.Items {
-		agentStates[a.Metadata.Name] = string(a.Status.Status)
-		t.Logf("  agent: workspace=%s name=%s state=%s", a.Metadata.Workspace, a.Metadata.Name, a.Status.Status)
+		agentStates[a.Metadata.Name] = string(a.Status.Phase)
+		t.Logf("  agent: workspace=%s name=%s state=%s", a.Metadata.Workspace, a.Metadata.Name, a.Status.Phase)
 	}
 	for _, aName := range []string{"agent-a", "agent-b"} {
 		st := agentStates[aName]

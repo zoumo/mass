@@ -37,8 +37,8 @@ func (s *stubRunService) WatchEvent(_ context.Context, _ *runapi.SessionWatchEve
 	return &runapi.SessionWatchEventResult{WatchID: watchID, NextSeq: 0}, nil
 }
 
-func (s *stubRunService) Status(_ context.Context) (*runapi.RuntimeStatusResult, error) {
-	return &runapi.RuntimeStatusResult{}, nil
+func (s *stubRunService) Status(_ context.Context) (*runapi.RuntimePhaseResult, error) {
+	return &runapi.RuntimePhaseResult{}, nil
 }
 
 func (s *stubRunService) SetModel(_ context.Context, _ *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error) {

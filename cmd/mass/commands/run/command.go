@@ -110,7 +110,7 @@ func run(cmd *cobra.Command, bundle, stateDir, permissions, id string, logCfg *l
 	// Inject the protocol session ID now that Create() has completed the handshake.
 	trans.SetSessionID(mgr.SessionID())
 	mgr.SetStateChangeHook(func(change acpruntime.StateChange) {
-		trans.NotifyStateChange(change.PreviousStatus.String(), change.Status.String(), change.PID, change.Reason, change.SessionChanged)
+		trans.NotifyStateChange(change.PreviousPhase.String(), change.Phase.String(), change.PID, change.Reason, change.SessionChanged)
 	})
 	// Wire session metadata hook: Translator → buildSessionUpdate → Manager.UpdateSessionMetadata.
 	trans.SetSessionMetadataHook(func(ev runapi.Event) {

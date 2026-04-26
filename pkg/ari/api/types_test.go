@@ -92,7 +92,7 @@ func TestAgentRun_ARIView_StripsInternalFields(t *testing.T) {
 		Metadata: pkgariapi.ObjectMeta{Name: "agent-1", Workspace: "ws1"},
 		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
 		Status: pkgariapi.AgentRunStatus{
-			Status:     "idle",
+			Phase:      "idle",
 			SocketPath: "/tmp/test.sock",
 			StateDir:   "/tmp/statedir",
 			PID:        42,

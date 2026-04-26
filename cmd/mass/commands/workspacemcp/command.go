@@ -141,7 +141,7 @@ func agentRunStatusHandler(cfg handlerConfig, client ariclient.Client, logger *s
 		}
 		sb.WriteString(fmt.Sprintf("Members (%d):\n", len(members.Items)))
 		for _, m := range members.Items {
-			sb.WriteString(fmt.Sprintf("  - %s [%s] state: %s\n", m.Metadata.Name, m.Spec.Agent, m.Status.Status))
+			sb.WriteString(fmt.Sprintf("  - %s [%s] state: %s\n", m.Metadata.Name, m.Spec.Agent, m.Status.Phase))
 		}
 
 		return &mcp.CallToolResult{

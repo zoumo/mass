@@ -19,7 +19,7 @@ func WaitAgentIdle(ctx context.Context, client ariclient.Client, wsName, agName 
 		if err := client.Get(ctx, pkgariapi.ObjectKey{Workspace: wsName, Name: agName}, &ar); err != nil {
 			return fmt.Errorf("agentrun/get %q: %w", agName, err)
 		}
-		switch ar.Status.Status {
+		switch ar.Status.Phase {
 		case "idle":
 			fmt.Printf("Agent %q/%q is idle\n", wsName, agName)
 			return nil

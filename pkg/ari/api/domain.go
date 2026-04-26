@@ -156,10 +156,10 @@ type AgentRunSpec struct {
 // StateDir is an internal field persisted in the store but stripped via ARIView()
 // before sending over the wire.
 type AgentRunStatus struct {
-	// Status is the current lifecycle status of the agent.
-	Status apiruntime.Status `json:"status"`
+	// Phase is the current lifecycle phase of the agent.
+	Phase apiruntime.Phase `json:"phase"`
 
-	// ErrorMessage is a non-empty error description when Status is apiruntime.StatusError.
+	// ErrorMessage is a non-empty error description when Status is apiruntime.PhaseError.
 	ErrorMessage string `json:"errorMessage,omitempty"`
 
 	// PID is the OS process ID of the agent-run process.
@@ -215,8 +215,8 @@ type AgentRunFilter struct {
 	// Workspace filters by workspace name. Empty means all workspaces.
 	Workspace string
 
-	// Status filters by agent status. Empty/zero means all states.
-	Status apiruntime.Status
+	// Phase filters by agent phase. Empty/zero means all phases.
+	Phase apiruntime.Phase
 }
 
 // ────────────────────────────────────────────────────────────────────────────

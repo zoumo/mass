@@ -14,12 +14,12 @@ import (
 
 func TestStatus_String(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, "creating", api.StatusCreating.String())
-	assert.Equal(t, "idle", api.StatusIdle.String())
-	assert.Equal(t, "running", api.StatusRunning.String())
-	assert.Equal(t, "restarting", api.StatusRestarting.String())
-	assert.Equal(t, "stopped", api.StatusStopped.String())
-	assert.Equal(t, "error", api.StatusError.String())
+	assert.Equal(t, "creating", api.PhaseCreating.String())
+	assert.Equal(t, "idle", api.PhaseIdle.String())
+	assert.Equal(t, "running", api.PhaseRunning.String())
+	assert.Equal(t, "restarting", api.PhaseRestarting.String())
+	assert.Equal(t, "stopped", api.PhaseStopped.String())
+	assert.Equal(t, "error", api.PhaseError.String())
 }
 
 // ── ClientProtocol ──────────────────────────────────────────────────────────
@@ -100,7 +100,7 @@ func TestState_JSON_RoundTrip(t *testing.T) {
 	st := api.State{
 		MassVersion: "0.1.0",
 		ID:          "sess-abc",
-		Status:      api.StatusRunning,
+		Phase:       api.PhaseRunning,
 		PID:         12345,
 		Bundle:      "/tmp/test-mass/bundles/test",
 		Annotations: map[string]string{"agent": "claude"},
@@ -116,7 +116,7 @@ func TestState_JSON_RoundTrip(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &decoded))
 
 	assert.Equal(t, "sess-abc", decoded.ID)
-	assert.Equal(t, api.StatusRunning, decoded.Status)
+	assert.Equal(t, api.PhaseRunning, decoded.Phase)
 	assert.Equal(t, 12345, decoded.PID)
 	assert.Equal(t, "/tmp/test-mass/bundles/test", decoded.Bundle)
 	assert.Equal(t, "claude", decoded.Annotations["agent"])

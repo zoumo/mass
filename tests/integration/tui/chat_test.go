@@ -275,11 +275,11 @@ bootstrapLoop:
 				t.Fatal("watcher closed during bootstrap")
 			}
 			if ev.Type == runapi.EventTypeRuntimeUpdate {
-				if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok && ru.Status != nil {
-					sc := stateChange{previous: ru.Status.PreviousStatus, status: ru.Status.Status}
+				if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok && ru.Phase != nil {
+					sc := stateChange{previous: ru.Phase.PreviousPhase, status: ru.Phase.Phase}
 					stateChanges = append(stateChanges, sc)
 					t.Logf("state change: %s → %s", sc.previous, sc.status)
-					if ru.Status.Status == "idle" {
+					if ru.Phase.Phase == "idle" {
 						break bootstrapLoop
 					}
 				}
@@ -313,8 +313,8 @@ turnLoop:
 				t.Fatal("watcher closed during turn")
 			}
 			if ev.Type == runapi.EventTypeRuntimeUpdate {
-				if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok && ru.Status != nil {
-					sc := stateChange{previous: ru.Status.PreviousStatus, status: ru.Status.Status}
+				if ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent); ok && ru.Phase != nil {
+					sc := stateChange{previous: ru.Phase.PreviousPhase, status: ru.Phase.Phase}
 					stateChanges = append(stateChanges, sc)
 					t.Logf("state change: %s → %s", sc.previous, sc.status)
 				}

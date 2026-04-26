@@ -31,7 +31,7 @@ type mockRunServer struct {
 
 	mu                sync.Mutex
 	conns             []*jsonrpc2.Conn // all active connections
-	statusResult      runapi.RuntimeStatusResult
+	statusResult      runapi.RuntimePhaseResult
 	promptResult      runapi.SessionPromptResult
 	subscribed        bool
 	liveNotifications []runNotif // queued to emit after subscribe
@@ -60,11 +60,11 @@ func newMockRunServer(t *testing.T) (*mockRunServer, string) {
 	s := &mockRunServer{
 		listener: ln,
 		done:     make(chan struct{}),
-		statusResult: runapi.RuntimeStatusResult{
+		statusResult: runapi.RuntimePhaseResult{
 			State: apiruntime.State{
 				MassVersion: "0.1.0",
 				ID:          "test-session",
-				Status:      apiruntime.StatusIdle,
+				Phase:       apiruntime.PhaseIdle,
 				Bundle:      "/tmp/test-bundle",
 			},
 			Recovery: runapi.RuntimeStatusRecovery{LastSeq: -1},

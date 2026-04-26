@@ -29,7 +29,7 @@ func sampleState() apiruntime.State {
 	return apiruntime.State{
 		MassVersion: "0.1.0",
 		ID:          "test-session-123",
-		Status:      apiruntime.StatusIdle,
+		Phase:       apiruntime.PhaseIdle,
 		PID:         42,
 		Bundle:      "/path/to/bundle",
 		Annotations: map[string]string{"key": "value"},
@@ -52,7 +52,7 @@ func (s *StateSuite) TestWriteReadRoundTrip() {
 
 	s.Equal(st.MassVersion, got.MassVersion)
 	s.Equal(st.ID, got.ID)
-	s.Equal(st.Status, got.Status)
+	s.Equal(st.Phase, got.Phase)
 	s.Equal(st.PID, got.PID)
 	s.Equal(st.Bundle, got.Bundle)
 	s.Equal(st.Annotations, got.Annotations)
@@ -198,7 +198,7 @@ func fullState() apiruntime.State {
 	return apiruntime.State{
 		MassVersion: "0.2.0",
 		ID:          "full-roundtrip-session",
-		Status:      apiruntime.StatusRunning,
+		Phase:       apiruntime.PhaseRunning,
 		PID:         9999,
 		Bundle:      "/opt/bundles/test-agent",
 		Annotations: map[string]string{"env": "test", "team": "platform"},
@@ -230,7 +230,7 @@ func (s *StateSuite) TestFullStateRoundTrip() {
 	// Top-level scalar & map fields
 	s.Equal(want.MassVersion, got.MassVersion)
 	s.Equal(want.ID, got.ID)
-	s.Equal(want.Status, got.Status)
+	s.Equal(want.Phase, got.Phase)
 	s.Equal(want.PID, got.PID)
 	s.Equal(want.Bundle, got.Bundle)
 	s.Equal(want.Annotations, got.Annotations)

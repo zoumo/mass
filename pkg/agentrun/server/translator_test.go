@@ -289,11 +289,11 @@ func TestNotifyStateChange(t *testing.T) {
 	assert.Empty(t, ev.TurnID, "runtime_update must not carry TurnID")
 	ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent)
 	require.True(t, ok)
-	require.NotNil(t, ru.Status)
-	assert.Equal(t, "created", ru.Status.PreviousStatus)
-	assert.Equal(t, "running", ru.Status.Status)
-	assert.Equal(t, 1234, ru.Status.PID)
-	assert.Equal(t, "prompt-started", ru.Status.Reason)
+	require.NotNil(t, ru.Phase)
+	assert.Equal(t, "created", ru.Phase.PreviousPhase)
+	assert.Equal(t, "running", ru.Phase.Phase)
+	assert.Equal(t, 1234, ru.Phase.PID)
+	assert.Equal(t, "prompt-started", ru.Phase.Reason)
 }
 
 func TestNotifyStateChange_WithSessionChanged(t *testing.T) {
@@ -320,12 +320,12 @@ func TestNotifyStateChange_WithSessionChanged(t *testing.T) {
 
 	ru, ok := entry.Payload.(runapi.RuntimeUpdateEvent)
 	require.True(t, ok)
-	require.NotNil(t, ru.Status)
-	assert.Equal(t, "bootstrap-metadata", ru.Status.Reason)
-	assert.Equal(t, []string{"agentInfo", "capabilities"}, ru.Status.SessionChanged)
-	assert.Equal(t, "idle", ru.Status.PreviousStatus)
-	assert.Equal(t, "idle", ru.Status.Status)
-	assert.Equal(t, 42, ru.Status.PID)
+	require.NotNil(t, ru.Phase)
+	assert.Equal(t, "bootstrap-metadata", ru.Phase.Reason)
+	assert.Equal(t, []string{"agentInfo", "capabilities"}, ru.Phase.SessionChanged)
+	assert.Equal(t, "idle", ru.Phase.PreviousPhase)
+	assert.Equal(t, "idle", ru.Phase.Phase)
+	assert.Equal(t, 42, ru.Phase.PID)
 }
 
 func TestEventRoundTrip(t *testing.T) {
@@ -383,7 +383,7 @@ func TestEventTypes(t *testing.T) {
 		{runapi.TurnStartEvent{}, "turn_start"},
 		{runapi.TurnEndEvent{StopReason: "end_turn"}, "turn_end"},
 		{runapi.ErrorEvent{Msg: "oops"}, "error"},
-		{runapi.RuntimeUpdateEvent{Status: &runapi.RuntimeStatus{PreviousStatus: "idle", Status: "running"}}, "runtime_update"},
+		{runapi.RuntimeUpdateEvent{Phase: &runapi.RuntimePhase{PreviousPhase: "idle", Phase: "running"}}, "runtime_update"},
 	}
 	for _, tc := range cases {
 		assert.Equal(t, tc.want, runapi.EventTypeOf(tc.ev), "wrong eventType for %T", tc.ev)

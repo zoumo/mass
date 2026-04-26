@@ -36,8 +36,8 @@ func (s *replayService) SetModel(context.Context, *runapi.SessionSetModelParams)
 	return &runapi.SessionSetModelResult{}, nil
 }
 
-func (s *replayService) Status(context.Context) (*runapi.RuntimeStatusResult, error) {
-	return &runapi.RuntimeStatusResult{}, nil
+func (s *replayService) Status(context.Context) (*runapi.RuntimePhaseResult, error) {
+	return &runapi.RuntimePhaseResult{}, nil
 }
 func (s *replayService) Stop(context.Context) error { return nil }
 

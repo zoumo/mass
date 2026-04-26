@@ -268,7 +268,7 @@ In agentd-managed deployments, bundle/state/socket are co-located:
     "state": {
       "massVersion": "0.1.0",
       "id": "session-abc123",
-      "status": "idle",
+      "phase": "idle",
       "pid": 12345,
       "bundle": "/var/lib/agentd/bundles/session-abc123",
       "annotations": {
@@ -421,9 +421,9 @@ content 事件（turn 内，携带 turn 字段和 block status）：
     "time": "2026-04-07T10:00:00Z",
     "type": "runtime_update",
     "payload": {
-      "status": {
-        "previousStatus": "idle",
-        "status": "running",
+      "phase": {
+        "previousPhase": "idle",
+        "phase": "running",
         "pid": 12345,
         "reason": "prompt-started"
       }
@@ -495,7 +495,7 @@ content 事件（turn 内，携带 turn 字段和 block status）：
 | `turn_start` | _(empty)_ | 一个 turn 开始 |
 | `turn_end` | `stopReason: string` | 一个 turn 结束 |
 | `error` | `message: string` | ACP 翻译失败、runtime 异常、畸形事件 |
-| `runtime_update` | `status?`, `availableCommands?`, `currentMode?`, `configOptions?`, `sessionInfo?`, `usage?` | 运行时状态与 session 元数据更新（见下方详细说明） |
+| `runtime_update` | `phase?`, `availableCommands?`, `currentMode?`, `configOptions?`, `sessionInfo?`, `usage?` | 运行时状态与 session 元数据更新（见下方详细说明） |
 
 ### `runtime_update` Payload
 
@@ -504,9 +504,9 @@ content 事件（turn 内，携带 turn 字段和 block status）：
 
 ```json
 {
-  "status": {
-    "previousStatus": "idle",
-    "status": "running",
+  "phase": {
+    "previousPhase": "idle",
+    "phase": "running",
     "pid": 12345,
     "reason": "prompt-started"
   },
@@ -520,7 +520,7 @@ content 事件（turn 内，携带 turn 字段和 block status）：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `status` | `RuntimeStatus` | 进程生命周期变更（previousStatus, status, pid, reason） |
+| `phase` | `RuntimePhase` | 进程生命周期变更（previousPhase, phase, pid, reason） |
 | `availableCommands` | `{commands: AvailableCommand[]}` | 可用命令列表更新（nil=未更新，空 commands=清除） |
 | `currentMode` | `{modeId: string}` | 操作模式变更 |
 | `configOptions` | `{options: ConfigOption[]}` | 配置选项变更（nil=未更新，空 options=清除） |

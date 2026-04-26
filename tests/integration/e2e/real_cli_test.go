@@ -30,9 +30,9 @@ func runRealCLILifecycle(t *testing.T, ctx context.Context, client ariclient.Cli
 	t.Log("Step 2: agentrun/create → poll until idle")
 	ar := testutil.CreateAgentAndWait(t, ctx, client, wsName, agentName, runtimeClass)
 	t.Logf("agent ready: workspace=%s name=%s state=%s",
-		wsName, agentName, ar.Status.Status)
-	if ar.Status.Status != "idle" {
-		t.Fatalf("expected state=idle, got %s", ar.Status.Status)
+		wsName, agentName, ar.Status.Phase)
+	if ar.Status.Phase != "idle" {
+		t.Fatalf("expected state=idle, got %s", ar.Status.Phase)
 	}
 
 	t.Log("Step 3: agentrun/prompt (async — triggers agent startup, may take 10-30s)")
@@ -55,7 +55,7 @@ func runRealCLILifecycle(t *testing.T, ctx context.Context, client ariclient.Cli
 	if err := client.Get(ctx, key, &getAR); err != nil {
 		t.Fatalf("agentrun/get failed: %v", err)
 	}
-	t.Logf("agent status: state=%s", getAR.Status.Status)
+	t.Logf("agent status: state=%s", getAR.Status.Phase)
 
 	t.Log("Step 6: agentrun/stop → poll until stopped")
 	if err := client.AgentRuns().Stop(ctx, key); err != nil {

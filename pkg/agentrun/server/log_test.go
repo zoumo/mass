@@ -28,7 +28,7 @@ func TestEventLog_AppendAndRead(t *testing.T) {
 	require.NoError(t, err)
 
 	ev0 := runapi.AgentRunEvent{RunID: "run-1", Seq: 0, Time: testTime(t), Type: runapi.EventTypeAgentMessage, Payload: runapi.NewContentEvent(runapi.EventTypeAgentMessage, "", runapi.TextBlock("hello"))}
-	ev1 := runapi.AgentRunEvent{RunID: "run-1", Seq: 1, Time: testTime(t), Type: runapi.EventTypeRuntimeUpdate, Payload: runapi.RuntimeUpdateEvent{Status: &runapi.RuntimeStatus{PreviousStatus: "created", Status: "running", PID: 42, Reason: "prompt-started"}}}
+	ev1 := runapi.AgentRunEvent{RunID: "run-1", Seq: 1, Time: testTime(t), Type: runapi.EventTypeRuntimeUpdate, Payload: runapi.RuntimeUpdateEvent{Phase: &runapi.RuntimePhase{PreviousPhase: "created", Phase: "running", PID: 42, Reason: "prompt-started"}}}
 
 	require.NoError(t, log.Append(ev0))
 	require.NoError(t, log.Append(ev1))
@@ -49,10 +49,10 @@ func TestEventLog_AppendAndRead(t *testing.T) {
 	assert.Equal(t, runapi.EventTypeRuntimeUpdate, entries[1].Type)
 	ru, ok := entries[1].Payload.(runapi.RuntimeUpdateEvent)
 	require.True(t, ok)
-	require.NotNil(t, ru.Status)
-	assert.Equal(t, "created", ru.Status.PreviousStatus)
-	assert.Equal(t, "running", ru.Status.Status)
-	assert.Equal(t, 42, ru.Status.PID)
+	require.NotNil(t, ru.Phase)
+	assert.Equal(t, "created", ru.Phase.PreviousPhase)
+	assert.Equal(t, "running", ru.Phase.Phase)
+	assert.Equal(t, 42, ru.Phase.PID)
 }
 
 func TestEventLog_FromSeq(t *testing.T) {
@@ -88,7 +88,7 @@ func TestEventLog_SeqContinuesAfterReopen(t *testing.T) {
 	log2, err := OpenEventLog(path)
 	require.NoError(t, err)
 	require.Equal(t, 3, log2.NextSeq())
-	ev3 := runapi.AgentRunEvent{RunID: "run-1", Seq: 3, Time: testTime(t), Type: runapi.EventTypeRuntimeUpdate, Payload: runapi.RuntimeUpdateEvent{Status: &runapi.RuntimeStatus{PreviousStatus: "running", Status: "created"}}}
+	ev3 := runapi.AgentRunEvent{RunID: "run-1", Seq: 3, Time: testTime(t), Type: runapi.EventTypeRuntimeUpdate, Payload: runapi.RuntimeUpdateEvent{Phase: &runapi.RuntimePhase{PreviousPhase: "running", Phase: "created"}}}
 	require.NoError(t, log2.Append(ev3))
 	require.NoError(t, log2.Close())
 

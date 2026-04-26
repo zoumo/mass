@@ -36,7 +36,7 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	require.NoError(t, store.CreateAgentRun(ctx, &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{Workspace: ws, Name: agentName},
 		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
-		Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusCreating},
+		Status:   pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseCreating},
 	}))
 
 	// Set up mock agent-run, queue a creating→idle stateChange notification.
@@ -49,10 +49,10 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 		"time":  "2026-01-01T00:00:00Z",
 		"type":  "runtime_update",
 		"payload": map[string]any{
-			"status": map[string]any{
-				"previousStatus": "creating",
-				"status":         "idle",
-				"pid":            1234,
+			"phase": map[string]any{
+				"previousPhase": "creating",
+				"phase":         "idle",
+				"pid":           1234,
 			},
 		},
 	})
@@ -88,14 +88,14 @@ func TestStateChange_CreatingToIdle_UpdatesDB(t *testing.T) {
 	// Use 5s timeout to tolerate CPU contention when running in parallel with other packages.
 	require.Eventually(t, func() bool {
 		agent, _ := store.GetAgentRun(ctx, ws, agentName)
-		return agent != nil && agent.Status.Status == apiruntime.StatusIdle
+		return agent != nil && agent.Status.Phase == apiruntime.PhaseIdle
 	}, 5*time.Second, 50*time.Millisecond,
 		"DB state should become idle after runtime/state_change notification")
 
 	// Confirm final DB state.
 	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusIdle, agent.Status.Status,
+	assert.Equal(t, apiruntime.PhaseIdle, agent.Status.Phase,
 		"DB state must reflect the run-emitted stateChange, not a direct write")
 }
 
@@ -180,7 +180,7 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	require.NoError(t, store.CreateAgentRun(ctx, &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{Workspace: ws, Name: agentName},
 		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
-		Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusIdle},
+		Status:   pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseIdle},
 	}))
 
 	// Queue two successive stateChange notifications: idle→running, then running→idle.
@@ -191,10 +191,10 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 		"time":  "2026-01-01T00:00:00Z",
 		"type":  "runtime_update",
 		"payload": map[string]any{
-			"status": map[string]any{
-				"previousStatus": "idle",
-				"status":         "running",
-				"pid":            5678,
+			"phase": map[string]any{
+				"previousPhase": "idle",
+				"phase":         "running",
+				"pid":           5678,
 			},
 		},
 	})
@@ -204,10 +204,10 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 		"time":  "2026-01-01T00:00:01Z",
 		"type":  "runtime_update",
 		"payload": map[string]any{
-			"status": map[string]any{
-				"previousStatus": "running",
-				"status":         "idle",
-				"pid":            5678,
+			"phase": map[string]any{
+				"previousPhase": "running",
+				"phase":         "idle",
+				"pid":           5678,
 			},
 		},
 	})
@@ -238,13 +238,13 @@ func TestStateChange_RunningToIdle_UpdatesDB(t *testing.T) {
 	// Wait for both stateChange notifications to be processed (final state = idle).
 	require.Eventually(t, func() bool {
 		agent, _ := store.GetAgentRun(ctx, ws, agentName)
-		return agent != nil && agent.Status.Status == apiruntime.StatusIdle
+		return agent != nil && agent.Status.Phase == apiruntime.PhaseIdle
 	}, 3*time.Second, 50*time.Millisecond,
 		"DB state should settle at idle after running→idle stateChange notification")
 
 	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusIdle, agent.Status.Status,
+	assert.Equal(t, apiruntime.PhaseIdle, agent.Status.Phase,
 		"final DB state must be idle after running→idle stateChange")
 }
 
@@ -266,7 +266,7 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	require.NoError(t, store.CreateAgentRun(ctx, &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{Workspace: ws, Name: agentName},
 		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
-		Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusCreating},
+		Status:   pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseCreating},
 	}))
 
 	// Set up mock agent-run with NO queued notifications.
@@ -305,10 +305,10 @@ func TestStart_DoesNotWriteStatusRunning(t *testing.T) {
 	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
 	require.NotNil(t, agent)
-	assert.NotEqual(t, apiruntime.StatusRunning, agent.Status.Status,
+	assert.NotEqual(t, apiruntime.PhaseRunning, agent.Status.Phase,
 		"Start() must not write StatusRunning directly (D088); "+
 			"state should only change via runtime/state_change notification")
-	assert.Equal(t, apiruntime.StatusCreating, agent.Status.Status,
+	assert.Equal(t, apiruntime.PhaseCreating, agent.Status.Phase,
 		"without a stateChange notification, DB state must remain StatusCreating")
 }
 
@@ -327,7 +327,7 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	require.NoError(t, store.CreateAgentRun(ctx, &pkgariapi.AgentRun{
 		Metadata: pkgariapi.ObjectMeta{Workspace: ws, Name: agentName},
 		Spec:     pkgariapi.AgentRunSpec{Agent: "default"},
-		Status:   pkgariapi.AgentRunStatus{Status: apiruntime.StatusCreating},
+		Status:   pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseCreating},
 	}))
 
 	// Queue a malformed stateChange notification (array instead of object).
@@ -370,6 +370,6 @@ func TestStateChange_MalformedParamsDropped(t *testing.T) {
 	// DB state must be unchanged.
 	agent, err := store.GetAgentRun(ctx, ws, agentName)
 	require.NoError(t, err)
-	assert.Equal(t, apiruntime.StatusCreating, agent.Status.Status,
+	assert.Equal(t, apiruntime.PhaseCreating, agent.Status.Phase,
 		"malformed stateChange must be dropped; DB state must be unchanged")
 }

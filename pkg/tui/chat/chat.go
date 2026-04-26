@@ -250,11 +250,11 @@ func waitNotif(watcher *watch.RetryWatcher[runapi.AgentRunEvent]) tea.Cmd {
 			// runtime_update with Status → dedicated message for status bar updates.
 			if inner.Type == runapi.EventTypeRuntimeUpdate {
 				if ru, ok := inner.Payload.(runapi.RuntimeUpdateEvent); ok {
-					if ru.Status != nil {
+					if ru.Phase != nil {
 						return stateChangeMsg{
-							previous: ru.Status.PreviousStatus,
-							status:   ru.Status.Status,
-							reason:   ru.Status.Reason,
+							previous: ru.Phase.PreviousPhase,
+							status:   ru.Phase.Phase,
+							reason:   ru.Phase.Reason,
 							seq:      inner.Seq,
 						}
 					}
@@ -303,7 +303,7 @@ func fetchStatusCmd(sc *runclient.Client) tea.Cmd {
 		if err != nil {
 			return nil
 		}
-		msg := initialStatusMsg{status: string(result.State.Status)}
+		msg := initialStatusMsg{status: string(result.State.Phase)}
 		if result.State.Session != nil {
 			msg.availableCommands = result.State.Session.AvailableCommands
 			if result.State.Session.Models != nil {
@@ -418,11 +418,11 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 		m.agentStatus = msg.status
-		if msg.status == string(apiruntime.StatusRunning) && !m.waiting {
+		if msg.status == string(apiruntime.PhaseRunning) && !m.waiting {
 			m.waiting = true
 			m.input.Blur()
 		}
-		if msg.status == string(apiruntime.StatusIdle) && m.waiting {
+		if msg.status == string(apiruntime.PhaseIdle) && m.waiting {
 			m.waiting = false
 			m.chatFocused = false
 			cmds = append(cmds, m.input.Focus())
@@ -441,7 +441,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.updateAgentCommands(msg.availableCommands)
 		m.initialStatusApplied = true
 		switch msg.status {
-		case string(apiruntime.StatusRunning):
+		case string(apiruntime.PhaseRunning):
 			if !m.waiting {
 				m.waiting = true
 				m.input.Blur()
@@ -1053,15 +1053,15 @@ func (m chatModel) renderStatusLine() string {
 
 	var styled string
 	switch status {
-	case string(apiruntime.StatusRunning):
+	case string(apiruntime.PhaseRunning):
 		styled = styleStatusRunning.Render("● running")
-	case string(apiruntime.StatusRestarting):
+	case string(apiruntime.PhaseRestarting):
 		styled = styleStatusRunning.Render("● restarting")
-	case string(apiruntime.StatusIdle):
+	case string(apiruntime.PhaseIdle):
 		styled = styleStatusIdle.Render("● idle")
-	case string(apiruntime.StatusError):
+	case string(apiruntime.PhaseError):
 		styled = styleStatusError.Render("● error")
-	case string(apiruntime.StatusStopped):
+	case string(apiruntime.PhaseStopped):
 		styled = styleStatusStopped.Render("● stopped")
 	default:
 		styled = styleDim.Render("● " + status)
@@ -1069,15 +1069,15 @@ func (m chatModel) renderStatusLine() string {
 
 	hint := ""
 	switch status {
-	case string(apiruntime.StatusRunning):
+	case string(apiruntime.PhaseRunning):
 		hint = styleDim.Render(" — ctrl+x to cancel")
-	case string(apiruntime.StatusRestarting):
+	case string(apiruntime.PhaseRestarting):
 		hint = styleDim.Render(" — restarting")
-	case string(apiruntime.StatusIdle):
+	case string(apiruntime.PhaseIdle):
 		hint = styleDim.Render(" — ready for input")
-	case string(apiruntime.StatusError):
+	case string(apiruntime.PhaseError):
 		hint = styleDim.Render(" — agent error, check logs")
-	case string(apiruntime.StatusStopped):
+	case string(apiruntime.PhaseStopped):
 		hint = styleDim.Render(" — agent stopped")
 	}
 

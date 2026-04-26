@@ -138,7 +138,7 @@ func NewProcessManager(agents *AgentRunManager, s *store.Store, socketPath, bund
 func (m *ProcessManager) routeEvent(workspace, name string, runProc *RunProcess, ev runapi.AgentRunEvent, logger *slog.Logger) {
 	if ev.Type == runapi.EventTypeRuntimeUpdate {
 		ru, ok := ev.Payload.(runapi.RuntimeUpdateEvent)
-		if !ok || ru.Status == nil {
+		if !ok || ru.Phase == nil {
 			// runtime_update without Status (e.g. metadata-only) → forward to Events.
 			select {
 			case runProc.Events <- ev:
@@ -146,8 +146,8 @@ func (m *ProcessManager) routeEvent(workspace, name string, runProc *RunProcess,
 			}
 			return
 		}
-		prevStatus := ru.Status.PreviousStatus
-		newStatus := ru.Status.Status
+		prevStatus := ru.Phase.PreviousPhase
+		newStatus := ru.Phase.Phase
 		logger.Info("stateChange: updating DB state",
 			"prev", prevStatus,
 			"new", newStatus)
@@ -159,27 +159,27 @@ func (m *ProcessManager) routeEvent(workspace, name string, runProc *RunProcess,
 			cancel()
 			return
 		}
-		if current != nil && current.Status.Status == apiruntime.StatusStopped && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
+		if current != nil && current.Status.Phase == apiruntime.PhaseStopped && apiruntime.Phase(newStatus) != apiruntime.PhaseStopped {
 			logger.Info("stateChange: dropped stale live state after stop",
-				"current", current.Status.Status,
+				"current", current.Status.Phase,
 				"new", newStatus)
 			cancel()
 			return
 		}
-		if current != nil && current.Status.Status == apiruntime.StatusRestarting && apiruntime.Status(newStatus) != apiruntime.StatusStopped {
+		if current != nil && current.Status.Phase == apiruntime.PhaseRestarting && apiruntime.Phase(newStatus) != apiruntime.PhaseStopped {
 			logger.Info("stateChange: dropped stale live state during restart",
-				"current", current.Status.Status,
+				"current", current.Status.Phase,
 				"new", newStatus)
 			cancel()
 			return
 		}
-		if err := m.agents.UpdateState(updateCtx, workspace, name, apiruntime.Status(newStatus), ""); err != nil {
+		if err := m.agents.UpdateState(updateCtx, workspace, name, apiruntime.Phase(newStatus), ""); err != nil {
 			logger.Warn("stateChange: failed to update DB state",
 				"error", err)
 		}
 		// On transition to idle the ACP handshake is complete and
 		// state.json contains the sessionID. Persist it now.
-		if apiruntime.Status(newStatus) == apiruntime.StatusIdle && runProc.StateDir != "" {
+		if apiruntime.Phase(newStatus) == apiruntime.PhaseIdle && runProc.StateDir != "" {
 			m.syncSessionInfo(updateCtx, workspace, name, runProc.StateDir, logger)
 		}
 		cancel()
@@ -248,8 +248,8 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 	}
 
 	// Validate agent status - must be "creating" to start.
-	if agent.Status.Status != apiruntime.StatusCreating {
-		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.Status)
+	if agent.Status.Phase != apiruntime.PhaseCreating {
+		return nil, fmt.Errorf("process: agent %s is in state %s (must be 'creating' to start)", key, agent.Status.Phase)
 	}
 
 	// 2. Resolve Agent definition from DB.
@@ -263,10 +263,10 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 
 	// From this point the runtime bootstrap has started. The socket may not
 	// exist yet, so observers should see creating while Start waits for it.
-	if err := m.agents.UpdateState(ctx, workspace, name, apiruntime.StatusCreating, ""); err != nil {
+	if err := m.agents.UpdateState(ctx, workspace, name, apiruntime.PhaseCreating, ""); err != nil {
 		return nil, fmt.Errorf("process: mark agent creating: %w", err)
 	}
-	agent.Status.Status = apiruntime.StatusCreating
+	agent.Status.Phase = apiruntime.PhaseCreating
 
 	// 2b. Fetch workspace for feature gate checks (best-effort).
 	ws, _ := m.store.GetWorkspace(ctx, workspace)
@@ -328,7 +328,7 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 
 	// 7b. Persist agent-run socket/state/pid for recovery.
 	if err := m.store.UpdateAgentRunStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{
-		Status:     apiruntime.StatusCreating, // keep creating until we transition below
+		Phase:      apiruntime.PhaseCreating, // keep creating until we transition below
 		SocketPath: socketPath,
 		StateDir:   stateDir,
 		PID:        runProc.PID,
@@ -359,16 +359,16 @@ func (m *ProcessManager) Start(ctx context.Context, workspace, name string) (*Ru
 	// here ensures the DB reflects the actual state even when the notification
 	// was dropped.
 	if statusResult, statusErr := client.Status(ctx); statusErr == nil {
-		if statusResult.State.Status != apiruntime.StatusCreating {
+		if statusResult.State.Phase != apiruntime.PhaseCreating {
 			updateCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := m.agents.UpdateState(updateCtx, workspace, name, statusResult.State.Status, ""); err != nil {
+			if err := m.agents.UpdateState(updateCtx, workspace, name, statusResult.State.Phase, ""); err != nil {
 				m.logger.Warn("bootstrap state sync failed",
-					"agent_key", key, "state", statusResult.State.Status, "error", err)
+					"agent_key", key, "state", statusResult.State.Phase, "error", err)
 			} else {
 				m.logger.Info("bootstrap state synced from agent-run",
-					"agent_key", key, "state", statusResult.State.Status)
-				if statusResult.State.Status == apiruntime.StatusIdle {
+					"agent_key", key, "state", statusResult.State.Phase)
+				if statusResult.State.Phase == apiruntime.PhaseIdle {
 					m.syncSessionInfo(updateCtx, workspace, name, stateDir, m.logger.With("agent_key", key))
 				}
 			}
@@ -827,7 +827,7 @@ func (m *ProcessManager) watchProcess(workspace, name string, runProc *RunProces
 	// Transition agent to "stopped" (best effort).
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped})
+	_ = m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseStopped})
 
 	// Bundle directory is intentionally NOT cleaned up here.
 	// It must persist until the agent is explicitly deleted via agent/delete.
@@ -862,8 +862,8 @@ func (m *ProcessManager) Stop(ctx context.Context, workspace, name string) error
 			return fmt.Errorf("process: agent %s does not exist", key)
 		}
 		// Agent exists but is not running — transition to stopped if needed.
-		if agent.Status.Status != apiruntime.StatusStopped {
-			if err := m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{Status: apiruntime.StatusStopped}); err != nil {
+		if agent.Status.Phase != apiruntime.PhaseStopped {
+			if err := m.agents.UpdateStatus(ctx, workspace, name, pkgariapi.AgentRunStatus{Phase: apiruntime.PhaseStopped}); err != nil {
 				return fmt.Errorf("process: transition agent %s to stopped: %w", key, err)
 			}
 		}
@@ -921,25 +921,25 @@ func (m *ProcessManager) State(ctx context.Context, workspace, name string) (api
 	return statusResult.State, nil
 }
 
-// RuntimeStatus returns the full runtime/status result including recovery
+// RuntimePhase returns the full runtime/status result including recovery
 // metadata for the given agent.
-func (m *ProcessManager) RuntimeStatus(ctx context.Context, workspace, name string) (runapi.RuntimeStatusResult, error) {
+func (m *ProcessManager) RuntimePhase(ctx context.Context, workspace, name string) (runapi.RuntimePhaseResult, error) {
 	key := agentKey(workspace, name)
 	m.mu.RLock()
 	runProc, exists := m.processes[key]
 	m.mu.RUnlock()
 
 	if !exists {
-		return runapi.RuntimeStatusResult{}, fmt.Errorf("process: agent %s is not running", key)
+		return runapi.RuntimePhaseResult{}, fmt.Errorf("process: agent %s is not running", key)
 	}
 
 	if runProc.Client == nil {
-		return runapi.RuntimeStatusResult{}, fmt.Errorf("process: agent %s has no client connection", key)
+		return runapi.RuntimePhaseResult{}, fmt.Errorf("process: agent %s has no client connection", key)
 	}
 
 	result, err := runProc.Client.Status(ctx)
 	if err != nil {
-		return runapi.RuntimeStatusResult{}, err
+		return runapi.RuntimePhaseResult{}, err
 	}
 	return *result, nil
 }

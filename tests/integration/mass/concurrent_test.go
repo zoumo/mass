@@ -94,8 +94,8 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 			t.Errorf("agent %d (%s) get failed: %v", i+1, name, err)
 			continue
 		}
-		if ar.Status.Status != "running" && ar.Status.Status != "idle" {
-			t.Errorf("agent %d (%s): expected state=running or idle, got %s", i+1, name, ar.Status.Status)
+		if ar.Status.Phase != "running" && ar.Status.Phase != "idle" {
+			t.Errorf("agent %d (%s): expected state=running or idle, got %s", i+1, name, ar.Status.Phase)
 		}
 	}
 
@@ -124,7 +124,7 @@ func TestMultipleConcurrentAgents(t *testing.T) {
 				if err != nil {
 					break
 				}
-				if ar.Status.Status == "stopped" || ar.Status.Status == "error" {
+				if ar.Status.Phase == "stopped" || ar.Status.Phase == "error" {
 					break
 				}
 				time.Sleep(200 * time.Millisecond)

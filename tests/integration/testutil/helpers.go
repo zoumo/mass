@@ -272,14 +272,14 @@ func WaitForAgentStateOneOf(
 			continue
 		}
 		for _, want := range wantStates {
-			if string(ar.Status.Status) == want {
+			if string(ar.Status.Phase) == want {
 				return ar
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("agent %s/%s did not reach state(s) %v within %v (last state: %q)",
-		workspace, name, wantStates, timeout, ar.Status.Status)
+		workspace, name, wantStates, timeout, ar.Status.Phase)
 	return ar
 }
 
@@ -294,7 +294,7 @@ func CreateAgentAndWait(t *testing.T, ctx context.Context, client ariclient.Clie
 		t.Fatalf("agentrun/create (workspace=%s name=%s): %v", workspace, name, err)
 	}
 	t.Logf("agent create dispatched: workspace=%s name=%s state=%s",
-		ar.Metadata.Workspace, ar.Metadata.Name, ar.Status.Status)
+		ar.Metadata.Workspace, ar.Metadata.Name, ar.Status.Phase)
 	return WaitForAgentState(t, ctx, client, workspace, name, "idle", 15*time.Second)
 }
 
@@ -311,7 +311,7 @@ func StopAndDeleteAgent(t *testing.T, ctx context.Context, client ariclient.Clie
 		if err := client.Get(ctx, key, &ar); err != nil {
 			break
 		}
-		if ar.Status.Status == "stopped" || ar.Status.Status == "error" {
+		if ar.Status.Phase == "stopped" || ar.Status.Phase == "error" {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)

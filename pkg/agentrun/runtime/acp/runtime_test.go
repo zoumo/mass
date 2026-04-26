@@ -111,7 +111,7 @@ func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
 
 	state, err := mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(apiruntime.StatusIdle, state.Status)
+	s.Equal(apiruntime.PhaseIdle, state.Phase)
 	s.Positive(state.PID)
 
 	// Kill process externally and verify state transitions to stopped.
@@ -122,7 +122,7 @@ func (s *RuntimeSuite) TestCreate_ReachesCreatedState() {
 	// Wait for background goroutine to write stopped state.
 	s.Require().Eventually(func() bool {
 		st, err := mgr.GetState()
-		return err == nil && st.Status == apiruntime.StatusStopped
+		return err == nil && st.Phase == apiruntime.PhaseStopped
 	}, 10*time.Second, 100*time.Millisecond, "expected status=stopped after SIGKILL")
 }
 
@@ -137,7 +137,7 @@ func (s *RuntimeSuite) TestKill_TransitionsToStopped() {
 
 	state, err := mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(apiruntime.StatusStopped, state.Status)
+	s.Equal(apiruntime.PhaseStopped, state.Phase)
 }
 
 func (s *RuntimeSuite) TestDelete_RemovesStateDir() {
@@ -259,7 +259,7 @@ func (s *RuntimeSuite) TestKill_PreservesSession() {
 
 	state, err := mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(apiruntime.StatusIdle, state.Status)
+	s.Equal(apiruntime.PhaseIdle, state.Phase)
 
 	// Inject Session into state.json (simulates bootstrap-capture from S05).
 	writeSessionToStateDir(s.T(), stateDir)
@@ -273,7 +273,7 @@ func (s *RuntimeSuite) TestKill_PreservesSession() {
 
 	state, err = mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(apiruntime.StatusStopped, state.Status)
+	s.Equal(apiruntime.PhaseStopped, state.Phase)
 	s.Require().NotNil(state.Session, "Session must survive Kill()")
 	s.Equal("test-agent", state.Session.AgentInfo.Name)
 	s.NotEmpty(state.UpdatedAt, "UpdatedAt must be set after Kill")
@@ -302,7 +302,7 @@ func (s *RuntimeSuite) TestProcessExit_PreservesSession() {
 	// Wait for background goroutine to write stopped state.
 	s.Require().Eventually(func() bool {
 		st, err := mgr.GetState()
-		return err == nil && st.Status == apiruntime.StatusStopped
+		return err == nil && st.Phase == apiruntime.PhaseStopped
 	}, 10*time.Second, 100*time.Millisecond, "expected status=stopped after SIGKILL")
 
 	state, err = mgr.GetState()
@@ -322,7 +322,7 @@ func (s *RuntimeSuite) TestCreate_PopulatesSession() {
 
 	state, err := mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(apiruntime.StatusIdle, state.Status)
+	s.Equal(apiruntime.PhaseIdle, state.Phase)
 
 	// Verify Session was populated from InitializeResponse at bootstrap-complete.
 	s.Require().NotNil(state.Session, "Session must be populated after Create()")
@@ -343,7 +343,7 @@ func (s *RuntimeSuite) TestCreate_PopulatesSession() {
 
 	state, err = mgr.GetState()
 	s.Require().NoError(err)
-	s.Equal(apiruntime.StatusStopped, state.Status)
+	s.Equal(apiruntime.PhaseStopped, state.Phase)
 	s.Require().NotNil(state.Session, "Session must survive Kill()")
 	s.Equal("mockagent", state.Session.AgentInfo.Name)
 	s.True(state.Session.Capabilities.LoadSession, "LoadSession must survive Kill()")
@@ -451,7 +451,7 @@ func (s *RuntimeSuite) TestUpdateSessionMetadata_EmitsStateChange() {
 
 	// Verify hook was called with metadata-only change.
 	s.Require().NotNil(captured, "stateChangeHook must be called")
-	s.Equal(captured.PreviousStatus, captured.Status, "metadata-only: PreviousStatus == Status")
+	s.Equal(captured.PreviousPhase, captured.Phase, "metadata-only: PreviousStatus == Status")
 	s.Equal("config-updated", captured.Reason)
 	s.Equal([]string{"configOptions"}, captured.SessionChanged)
 
@@ -492,7 +492,7 @@ func (s *RuntimeSuite) TestUpdateSessionMetadata_PreservedByKill() {
 
 	state, readErr := spec.ReadState(stateDir)
 	s.Require().NoError(readErr)
-	s.Equal(apiruntime.StatusStopped, state.Status)
+	s.Equal(apiruntime.PhaseStopped, state.Phase)
 	s.Require().NotNil(state.Session, "Session must survive Kill()")
 	s.Require().Len(state.Session.ConfigOptions, 1, "configOptions must survive Kill()")
 	s.Equal("model", state.Session.ConfigOptions[0].Select.ID)
@@ -588,7 +588,7 @@ func (s *RuntimeSuite) TestMetadataHookChain_ConfigOption() {
 
 	// (3) Verify state_change emitted with correct sessionChanged.
 	s.Require().NotNil(captured, "stateChangeHook must be called")
-	s.Equal(captured.PreviousStatus, captured.Status, "metadata-only: PreviousStatus == Status")
+	s.Equal(captured.PreviousPhase, captured.Phase, "metadata-only: PreviousStatus == Status")
 	s.Equal("config-updated", captured.Reason)
 	s.Equal([]string{"configOptions"}, captured.SessionChanged)
 
@@ -597,7 +597,7 @@ func (s *RuntimeSuite) TestMetadataHookChain_ConfigOption() {
 
 	postKill, readErr := spec.ReadState(stateDir)
 	s.Require().NoError(readErr)
-	s.Equal(apiruntime.StatusStopped, postKill.Status)
+	s.Equal(apiruntime.PhaseStopped, postKill.Phase)
 	s.Require().NotNil(postKill.Session, "Session must survive Kill()")
 	s.Require().Len(postKill.Session.ConfigOptions, 1, "configOptions must survive Kill()")
 	s.Equal("model", postKill.Session.ConfigOptions[0].Select.ID)

@@ -70,10 +70,10 @@ func TestRuntimeLifecycle(t *testing.T) {
 	ar := testutil.CreateAgentAndWait(t, ctx, client, wsName, agentName, "mockagent")
 
 	// ── Step 4: assert state == idle ──────────────────────────────────────────
-	if ar.Status.Status != "idle" {
-		t.Errorf("agentrun/create: expected state=idle, got %s", ar.Status.Status)
+	if ar.Status.Phase != "idle" {
+		t.Errorf("agentrun/create: expected state=idle, got %s", ar.Status.Phase)
 	} else {
-		t.Logf("agent reached idle: workspace=%s name=%s state=%s", wsName, agentName, ar.Status.Status)
+		t.Logf("agent reached idle: workspace=%s name=%s state=%s", wsName, agentName, ar.Status.Phase)
 	}
 
 	// Cleanup agent before deleting agent definition

@@ -344,7 +344,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s is disabled", ar.Spec.Agent))
 	}
 
-	ar.Status.Status = apiruntime.StatusCreating
+	ar.Status.Phase = apiruntime.PhaseCreating
 	if err := a.agents.Create(ctx, ar); err != nil {
 		if _, ok := errors.AsType[*agentd.ErrAgentRunAlreadyExists](err); ok {
 			return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
@@ -363,7 +363,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 			a.logger.Warn("agentrun/create: agent-run start failed",
 				"workspace", wsName, "name", agName, "error", err)
 			_ = a.agents.UpdateStatus(bgCtx, wsName, agName, pkgariapi.AgentRunStatus{
-				Status:       apiruntime.StatusError,
+				Phase:        apiruntime.PhaseError,
 				ErrorMessage: err.Error(),
 			})
 		} else {
@@ -404,7 +404,7 @@ func (a *agentRunAdapter) List(ctx context.Context, opts pkgariapi.ListOptions) 
 
 	filter := &pkgariapi.AgentRunFilter{
 		Workspace: wsFilter,
-		Status:    apiruntime.Status(stFilter),
+		Phase:     apiruntime.Phase(stFilter),
 	}
 	agentRuns, err := a.agents.List(ctx, filter)
 	if err != nil {
@@ -533,9 +533,9 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("agent %s/%s not found", wsName, name))
 	}
 
-	if agent.Status.Status == apiruntime.StatusIdle || agent.Status.Status == apiruntime.StatusRunning {
-		from := agent.Status.Status
-		reserved, err := a.agents.TransitionState(ctx, wsName, name, from, apiruntime.StatusRestarting)
+	if agent.Status.Phase == apiruntime.PhaseIdle || agent.Status.Phase == apiruntime.PhaseRunning {
+		from := agent.Status.Phase
+		reserved, err := a.agents.TransitionState(ctx, wsName, name, from, apiruntime.PhaseRestarting)
 		if err != nil {
 			return nil, jsonrpc.ErrInternal(err.Error())
 		}
@@ -546,18 +546,18 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 			}
 			state := "<missing>"
 			if current != nil {
-				state = string(current.Status.Status)
+				state = string(current.Status.Phase)
 			}
 			return nil, &jsonrpc.RPCError{
 				Code:    pkgariapi.CodeRecoveryBlocked,
 				Message: fmt.Sprintf("agent state changed during restart: %s", state),
 			}
 		}
-		agent.Status.Status = apiruntime.StatusRestarting
+		agent.Status.Phase = apiruntime.PhaseRestarting
 	}
 
 	// Agents in terminal states have no active agent-run.
-	needsStop := agent.Status.Status != apiruntime.StatusStopped && agent.Status.Status != apiruntime.StatusError
+	needsStop := agent.Status.Phase != apiruntime.PhaseStopped && agent.Status.Phase != apiruntime.PhaseError
 
 	go func() {
 		bgCtx := context.Background()
@@ -566,14 +566,14 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 				a.logger.Warn("agentrun/restart: stop failed",
 					"workspace", wsName, "name", name, "error", err)
 				_ = a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
-					Status:       apiruntime.StatusError,
+					Phase:        apiruntime.PhaseError,
 					ErrorMessage: err.Error(),
 				})
 				return
 			}
 		}
 		if err := a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
-			Status: apiruntime.StatusCreating,
+			Phase: apiruntime.PhaseCreating,
 		}); err != nil {
 			a.logger.Warn("agentrun/restart: mark creating failed",
 				"workspace", wsName, "name", name, "error", err)
@@ -583,7 +583,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 			a.logger.Warn("agentrun/restart: agent-run start failed",
 				"workspace", wsName, "name", name, "error", err)
 			_ = a.agents.UpdateStatus(bgCtx, wsName, name, pkgariapi.AgentRunStatus{
-				Status:       apiruntime.StatusError,
+				Phase:        apiruntime.PhaseError,
 				ErrorMessage: err.Error(),
 			})
 		}
@@ -975,14 +975,14 @@ func (s *Service) reserveIdleAgent(ctx context.Context, ws, name, entityLabel st
 	if agent == nil {
 		return nil, jsonrpc.ErrInvalidParams(fmt.Sprintf("%s %s/%s not found", entityLabel, ws, name))
 	}
-	if agent.Status.Status != apiruntime.StatusIdle {
+	if agent.Status.Phase != apiruntime.PhaseIdle {
 		return nil, &jsonrpc.RPCError{
 			Code:    pkgariapi.CodeRecoveryBlocked,
-			Message: fmt.Sprintf("%s not in idle state: %s", entityLabel, agent.Status.Status),
+			Message: fmt.Sprintf("%s not in idle state: %s", entityLabel, agent.Status.Phase),
 		}
 	}
 
-	reserved, err := s.agents.TransitionState(ctx, ws, name, apiruntime.StatusIdle, apiruntime.StatusRunning)
+	reserved, err := s.agents.TransitionState(ctx, ws, name, apiruntime.PhaseIdle, apiruntime.PhaseRunning)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
@@ -993,7 +993,7 @@ func (s *Service) reserveIdleAgent(ctx context.Context, ws, name, entityLabel st
 		}
 		state := "<missing>"
 		if current != nil {
-			state = string(current.Status.Status)
+			state = string(current.Status.Phase)
 		}
 		return nil, &jsonrpc.RPCError{
 			Code:    pkgariapi.CodeRecoveryBlocked,
@@ -1011,7 +1011,7 @@ func (s *Service) rollbackAgentToIdle(ws, name, op string, cause error) error {
 	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if updateErr := s.agents.UpdateStatus(rctx, ws, name, pkgariapi.AgentRunStatus{
-		Status: apiruntime.StatusIdle,
+		Phase: apiruntime.PhaseIdle,
 	}); updateErr != nil {
 		s.logger.Warn(op+": failed to roll back to idle",
 			"workspace", ws, "name", name, "error", updateErr)
@@ -1029,18 +1029,18 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkga
 		s.logger.Warn("prompt failure: current state lookup failed",
 			"workspace", wsName, "name", name, "error", err)
 	}
-	if current != nil && current.Status.Status == apiruntime.StatusStopped {
+	if current != nil && current.Status.Phase == apiruntime.PhaseStopped {
 		s.logger.Info("prompt failure: ignored after stop",
 			"workspace", wsName, "name", name, "error", cause)
 		return
 	}
 
-	if rts, statusErr := s.processes.RuntimeStatus(ctx, wsName, name); statusErr == nil {
+	if rts, statusErr := s.processes.RuntimePhase(ctx, wsName, name); statusErr == nil {
 		status := fallback
 		if current != nil {
 			status = current.Status
 		}
-		status.Status = rts.State.Status
+		status.Phase = rts.State.Phase
 		status.ErrorMessage = cause.Error()
 		_ = s.agents.UpdateStatus(ctx, wsName, name, status)
 		return
@@ -1056,14 +1056,14 @@ func (s *Service) recordPromptDeliveryFailure(wsName, name string, fallback pkga
 		s.logger.Warn("prompt failure: current state lookup failed",
 			"workspace", wsName, "name", name, "error", err)
 	}
-	if current != nil && current.Status.Status == apiruntime.StatusStopped {
+	if current != nil && current.Status.Phase == apiruntime.PhaseStopped {
 		s.logger.Info("prompt failure: ignored after stop",
 			"workspace", wsName, "name", name, "error", cause)
 		return
 	}
 
 	_ = s.agents.UpdateStatus(ctx, wsName, name, pkgariapi.AgentRunStatus{
-		Status:       apiruntime.StatusError,
+		Phase:        apiruntime.PhaseError,
 		ErrorMessage: cause.Error(),
 	})
 }

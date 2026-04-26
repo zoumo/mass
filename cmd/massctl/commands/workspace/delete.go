@@ -46,8 +46,8 @@ func newDeleteCmd(getClient cliutil.ClientFn) *cobra.Command {
 }
 
 // isExited reports whether the agent run state is stopped or error.
-func isExited(state apiruntime.Status) bool {
-	return state == apiruntime.StatusStopped || state == apiruntime.StatusError
+func isExited(state apiruntime.Phase) bool {
+	return state == apiruntime.PhaseStopped || state == apiruntime.PhaseError
 }
 
 // forceCleanAgentRuns stops and then deletes every agent run in the workspace.
@@ -59,7 +59,7 @@ func forceCleanAgentRuns(ctx context.Context, cmd *cobra.Command, client ariclie
 	for _, ar := range list.Items {
 		key := pkgariapi.ObjectKey{Workspace: workspace, Name: ar.Metadata.Name}
 
-		if !isExited(ar.Status.Status) {
+		if !isExited(ar.Status.Phase) {
 			if err := client.AgentRuns().Stop(ctx, key); err != nil {
 				return fmt.Errorf("stopping agentrun %q: %w", ar.Metadata.Name, err)
 			}
@@ -94,7 +94,7 @@ func waitForExited(ctx context.Context, client ariclient.Client, key pkgariapi.O
 			if err := client.Get(ctx, key, &ar); err != nil {
 				return err
 			}
-			if isExited(ar.Status.Status) {
+			if isExited(ar.Status.Phase) {
 				return nil
 			}
 		}

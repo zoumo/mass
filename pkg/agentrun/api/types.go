@@ -62,8 +62,8 @@ type SessionSetModelParams struct {
 // SessionSetModelResult is returned by "session/set_model".
 type SessionSetModelResult struct{}
 
-// RuntimeStatusResult is returned by "runtime/status".
-type RuntimeStatusResult struct {
+// RuntimePhaseResult is returned by "runtime/status".
+type RuntimePhaseResult struct {
 	State    apiruntime.State      `json:"state"`
 	Recovery RuntimeStatusRecovery `json:"recovery"`
 }

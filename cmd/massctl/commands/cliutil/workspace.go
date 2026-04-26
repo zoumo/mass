@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
@@ -13,6 +14,14 @@ import (
 
 // CreateWorkspace creates a workspace via the ARI client and prints status.
 func CreateWorkspace(ctx context.Context, client ariclient.Client, name string, src workspace.Source) (*pkgariapi.Workspace, error) {
+	if src.Type == workspace.SourceTypeLocal && !filepath.IsAbs(src.Local.Path) {
+		abs, err := filepath.Abs(src.Local.Path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve local path: %w", err)
+		}
+		src.Local.Path = abs
+	}
+
 	srcJSON, err := json.Marshal(src)
 	if err != nil {
 		return nil, fmt.Errorf("marshal source: %w", err)
@@ -77,6 +86,6 @@ func CreateAgentRun(ctx context.Context, client ariclient.Client, ar *pkgariapi.
 	if err := client.Create(ctx, ar); err != nil {
 		return fmt.Errorf("agentrun/create %q: %w", ar.Metadata.Name, err)
 	}
-	fmt.Printf("Agent run %q/%q created (state: %s)\n", ar.Metadata.Workspace, ar.Metadata.Name, ar.Status.Status)
+	fmt.Printf("Agent run %q/%q created (state: %s)\n", ar.Metadata.Workspace, ar.Metadata.Name, ar.Status.Phase)
 	return nil
 }

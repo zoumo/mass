@@ -197,7 +197,7 @@ func (s *Service) forwardLiveEvents(ctx context.Context, peer *jsonrpc.Peer, ch 
 	}
 }
 
-func (s *Service) Status(_ context.Context) (*runapi.RuntimeStatusResult, error) {
+func (s *Service) Status(_ context.Context) (*runapi.RuntimePhaseResult, error) {
 	st, err := s.mgr.GetState()
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
@@ -205,7 +205,7 @@ func (s *Service) Status(_ context.Context) (*runapi.RuntimeStatusResult, error)
 	// Overlay real-time in-memory event counts from the Translator onto the
 	// state read from disk — the file value is stale between state writes.
 	st.EventCounts = s.trans.EventCounts()
-	return &runapi.RuntimeStatusResult{
+	return &runapi.RuntimePhaseResult{
 		State: st,
 		Recovery: runapi.RuntimeStatusRecovery{
 			LastSeq: s.trans.LastSeq(),

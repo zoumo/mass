@@ -64,7 +64,7 @@ esac
 elapsed=0
 while true; do
   state=$(massctl workspace get "$WORKSPACE_NAME" -o json 2>/dev/null \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',{}).get('state','unknown'))" 2>/dev/null \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',{}).get('phase','unknown'))" 2>/dev/null \
     || echo "unknown")
   if [[ "$state" == "ready" ]]; then
     echo "Workspace $WORKSPACE_NAME is ready."
@@ -95,7 +95,7 @@ while IFS= read -r agent_name; do
   elapsed=0
   while true; do
     state=$(massctl agentrun get "$agent_name" -w "$WORKSPACE_NAME" -o json 2>/dev/null \
-      | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',{}).get('state','unknown'))" 2>/dev/null \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',{}).get('phase','unknown'))" 2>/dev/null \
       || echo "unknown")
     if [[ "$state" == "idle" ]]; then
       echo "Agent '$agent_name' is idle."

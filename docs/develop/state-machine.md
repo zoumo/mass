@@ -58,7 +58,7 @@ AgentRun 和 agent-run 共用同一组状态枚举：
 
 | 角色 | 行为 |
 |------|------|
-| mass | ARI `Create` 写入 DB `state=creating` |
+| mass | ARI `Create` 写入 DB `phase=creating` |
 | agent-run | 刚 fork，尚未启动 ACP |
 
 两者对齐。
@@ -68,7 +68,7 @@ AgentRun 和 agent-run 共用同一组状态枚举：
 | 角色 | 行为 |
 |------|------|
 | agent-run | ACP 握手完成，`writeState(idle)` 触发 `StateChangeHook` |
-| mass | 收到 `runtime_update`（含 Status）通知 → `startEventConsumer` 写 DB |
+| mass | 收到 `runtime_update`（含 Phase）通知 → `startEventConsumer` 写 DB |
 | mass（补偿） | 若通知在 Subscribe 之前已发出而丢失，`client.Status()` 主动查询状态并同步 DB |
 
 两者对齐，有补偿机制。

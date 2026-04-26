@@ -99,7 +99,7 @@ func (s *Store) GetAgentRun(_ context.Context, workspace, name string) (*pkgaria
 // ListAgentRuns returns all agent runs matching the optional filter.
 //
 //   - If filter.Workspace is non-empty, only that workspace's sub-bucket is scanned.
-//   - If filter.Status is non-empty, only agent runs with that state are returned.
+//   - If filter.Phase is non-empty, only agent runs with that state are returned.
 //   - If filter is nil every agent run in every workspace is returned.
 func (s *Store) ListAgentRuns(_ context.Context, filter *pkgariapi.AgentRunFilter) ([]*pkgariapi.AgentRun, error) {
 	var result []*pkgariapi.AgentRun
@@ -118,7 +118,7 @@ func (s *Store) ListAgentRuns(_ context.Context, filter *pkgariapi.AgentRunFilte
 					s.logger.Error("skipping corrupt agentRun record", "error", err)
 					return nil
 				}
-				if filter != nil && filter.Status != "" && a.Status.Status != filter.Status {
+				if filter != nil && filter.Phase != "" && a.Status.Phase != filter.Phase {
 					return nil
 				}
 				a.Kind = pkgariapi.KindAgentRun
@@ -207,16 +207,16 @@ func (s *Store) UpdateAgentRunStatus(_ context.Context, workspace, name string, 
 		s.logger.Debug("agentRun status updated",
 			"workspace", workspace,
 			"name", name,
-			"state", status.Status)
+			"state", status.Phase)
 		return nil
 	})
 }
 
 // UpdateAgentRunState updates only Status.Status and Status.ErrorMessage,
 // preserving all other status fields (PID, SocketPath, StateDir, etc.).
-func (s *Store) UpdateAgentRunState(_ context.Context, workspace, name string, state apiruntime.Status, errMsg string) error {
+func (s *Store) UpdateAgentRunState(_ context.Context, workspace, name string, state apiruntime.Phase, errMsg string) error {
 	return s.updateAgentRun(workspace, name, "update-state", func(agent *pkgariapi.AgentRun) error {
-		agent.Status.Status = state
+		agent.Status.Phase = state
 		agent.Status.ErrorMessage = errMsg
 		s.logger.Debug("agentRun state updated",
 			"workspace", workspace,
@@ -238,12 +238,12 @@ func (s *Store) UpdateAgentRunSessionInfo(_ context.Context, workspace, name, se
 // TransitionAgentRunState updates only Status.Status when the current state
 // matches expected. It preserves run metadata, error text, and all other fields.
 // Returns false, nil when the agent exists but is not in the expected state.
-func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next apiruntime.Status) (bool, error) {
+func (s *Store) TransitionAgentRunState(_ context.Context, workspace, name string, expected, next apiruntime.Phase) (bool, error) {
 	err := s.updateAgentRun(workspace, name, "transition", func(agent *pkgariapi.AgentRun) error {
-		if agent.Status.Status != expected {
+		if agent.Status.Phase != expected {
 			return errStateMismatch
 		}
-		agent.Status.Status = next
+		agent.Status.Phase = next
 		s.logger.Debug("agentRun state transitioned",
 			"workspace", workspace,
 			"name", name,

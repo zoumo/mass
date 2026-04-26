@@ -47,15 +47,15 @@ func renderHeaderStatusWithSeq(status string, seq int) string {
 	}
 	seqText := headerItemStyle.Render(" seq:" + itoa(seq))
 	switch status {
-	case string(apiruntime.StatusRunning):
+	case string(apiruntime.PhaseRunning):
 		return styleStatusRunning.Render("● running") + seqText
-	case string(apiruntime.StatusRestarting):
+	case string(apiruntime.PhaseRestarting):
 		return styleStatusRunning.Render("● restarting") + seqText
-	case string(apiruntime.StatusIdle):
+	case string(apiruntime.PhaseIdle):
 		return styleStatusIdle.Render("● idle") + seqText
-	case string(apiruntime.StatusError):
+	case string(apiruntime.PhaseError):
 		return styleStatusError.Render("● error") + seqText
-	case string(apiruntime.StatusStopped):
+	case string(apiruntime.PhaseStopped):
 		return styleStatusStopped.Render("● stopped") + seqText
 	default:
 		return styleDim.Render("● "+status) + seqText

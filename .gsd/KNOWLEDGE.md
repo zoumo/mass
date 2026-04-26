@@ -291,7 +291,7 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 
 ## K038 — Shim-vs-DB state reconciliation uses string comparison, not shared enums
 
-- **Pattern:** The agent-run reports status using `spec.Status` (creating/created/running/stopped) while the DB stores `meta.SessionState` (created/running/paused:warm/paused:cold/stopped). These are different types with overlapping but non-identical value sets.
+- **Pattern:** The agent-run reports status using `spec.Phase` (creating/created/running/stopped) while the DB stores `meta.SessionState` (created/running/paused:warm/paused:cold/stopped). These are different types with overlapping but non-identical value sets.
 - **Gotcha:** You cannot use `==` between the two types directly. The reconciliation in `recoverSession` converts both to strings for comparison, with explicit switch cases for the actionable states (stopped → fail-close, running+created → transition).
 - **Lesson:** When comparing state across system boundaries (agent-run process vs DB), prefer an explicit switch on the authoritative side (agent-run) and handle each case individually, rather than trying to build a mapping table. The "other mismatch" catch-all is important for states like paused:warm that exist only on one side.
 - **Reference:** pkg/agentd/recovery.go reconciliation block between Status() and History() calls
@@ -644,10 +644,10 @@ This file records patterns, gotchas, and non-obvious lessons learned that would 
 - **Reference:** M007/S01/T04 — pkg/ari/server.go replaced with 60-line stub. Full rewrite in S03.
 - **When:** M007/S01
 
-## K052 — recovery.go: agents in "creating" state at daemon restart should be marked StatusError, not StatusStopped
+## K052 — recovery.go: agents in "creating" state at daemon restart should be marked PhaseError, not PhaseStopped
 
-- **Pattern:** An agent caught in `StatusCreating` at daemon restart means the agent-run fork never completed. The correct recovery posture is to mark it `StatusError` with message "daemon restarted during creating phase" — NOT stopped. Stopped implies a normal lifecycle termination.
-- **Lesson:** StatusStopped means "ran and completed". StatusError means "something went wrong and it is not recoverable without operator intervention". An agent that never bootstrapped is in the error category.
+- **Pattern:** An agent caught in `PhaseCreating` at daemon restart means the agent-run fork never completed. The correct recovery posture is to mark it `PhaseError` with message "daemon restarted during creating phase" — NOT stopped. Stopped implies a normal lifecycle termination.
+- **Lesson:** PhaseStopped means "ran and completed". PhaseError means "something went wrong and it is not recoverable without operator intervention". An agent that never bootstrapped is in the error category.
 - **Reference:** M007/S01/T03 — pkg/agentd/recovery.go creating-cleanup pass.
 - **When:** M007/S01
 

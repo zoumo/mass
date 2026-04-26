@@ -81,10 +81,10 @@ All CRUD responses return the domain object directly (no wrapper).
     "agent": "claude"
   },
   "status": {
-    "state": "idle",
+    "phase": "idle",
     "errorMessage": "",
     "agent-run": {
-      "status": "idle",
+      "phase": "idle",
       "pid": 12345,
       "bundle": "/var/lib/agentd/bundles/my-project-architect",
       "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
@@ -146,7 +146,7 @@ List operations accept functional options for filtering:
 
 ```go
 client.List(ctx, &agentRunList, InWorkspace("my-project"))
-client.List(ctx, &agentRunList, WithState("idle"))
+client.List(ctx, &agentRunList, WithPhase("idle"))
 client.List(ctx, &workspaceList, WithPhase("ready"))
 client.List(ctx, &agentList, WithLabels(map[string]string{"team": "platform"}))
 ```
@@ -155,14 +155,14 @@ On the wire, list options are sent as `ListOptions`:
 
 ```json
 {
-  "fieldSelector": { "workspace": "my-project", "state": "idle" },
+  "fieldSelector": { "workspace": "my-project", "phase": "idle" },
   "labels": { "team": "platform" }
 }
 ```
 
 Supported field selectors by resource type:
 - **Workspace**: `phase`
-- **AgentRun**: `workspace`, `state`
+- **AgentRun**: `workspace`, `phase`
 
 ### ContentBlock
 
@@ -380,9 +380,9 @@ An AgentRun is identified by `(workspace, name)` and has a agent-run process.
 ### `agentrun/create`
 
 `agentrun/create` is **async configuration-only bootstrap**.
-It creates the AgentRun record and returns immediately with `status.state: "creating"`.
+It creates the AgentRun record and returns immediately with `status.phase: "creating"`.
 Actual bootstrap (agent-run startup, ACP initialization) happens in the background.
-Callers poll `agentrun/get` until state transitions to `"idle"` or `"error"`.
+Callers poll `agentrun/get` until phase transitions to `"idle"` or `"error"`.
 
 **Params:** AgentRun object
 
@@ -396,7 +396,7 @@ Callers poll `agentrun/get` until state transitions to `"idle"` or `"error"`.
 }
 ```
 
-**Result:** AgentRun (state is always `"creating"` on success)
+**Result:** AgentRun (phase is always `"creating"` on success)
 
 **Example:**
 
@@ -419,7 +419,7 @@ Callers poll `agentrun/get` until state transitions to `"idle"` or `"error"`.
   "result": {
     "metadata": { "name": "architect", "workspace": "my-project", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z" },
     "spec": { "agent": "claude" },
-    "status": { "state": "creating" }
+    "status": { "phase": "creating" }
   }
 }
 ```
@@ -443,9 +443,9 @@ Poll until idle:
     "metadata": { "name": "architect", "workspace": "my-project", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z" },
     "spec": { "agent": "claude" },
     "status": {
-      "state": "idle",
+      "phase": "idle",
       "agent-run": {
-        "status": "idle",
+        "phase": "idle",
         "pid": 12345,
         "bundle": "/var/lib/agentd/bundles/my-project-architect",
         "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
@@ -512,7 +512,7 @@ Caller polls `agentrun/get` until `idle` or `error`.
 
 **Params:** ObjectKey `{workspace, name}`
 
-**Result:** AgentRun (state is usually `"restarting"` for active agents or `"creating"` for terminal agents)
+**Result:** AgentRun (phase is usually `"restarting"` for active agents or `"creating"` for terminal agents)
 
 ### `agentrun/list`
 
@@ -522,7 +522,7 @@ List AgentRun records with optional filters.
 
 ```json
 {
-  "fieldSelector": { "workspace": "my-project", "state": "idle" },
+  "fieldSelector": { "workspace": "my-project", "phase": "idle" },
   "labels": { "team": "platform" }
 }
 ```
@@ -531,7 +531,7 @@ List AgentRun records with optional filters.
 
 Field selectors:
 - `workspace`: restrict to a single workspace
-- `state`: restrict to agents in a given state
+- `phase`: restrict to agents in a given phase
 
 ### `agentrun/get`
 
@@ -546,9 +546,9 @@ Return current AgentRun state including optional agent-run runtime state.
   "metadata": { "name": "architect", "workspace": "my-project", "createdAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z" },
   "spec": { "agent": "claude" },
   "status": {
-    "state": "idle",
+    "phase": "idle",
     "agent-run": {
-      "status": "idle",
+      "phase": "idle",
       "pid": 12345,
       "bundle": "/var/lib/agentd/bundles/my-project-architect",
       "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
@@ -559,7 +559,7 @@ Return current AgentRun state including optional agent-run runtime state.
 
 `status` is omitted when the agent has no running agent-run process.
 
-AgentRun state values: `creating`, `idle`, `running`, `restarting`, `stopped`, `error`.
+AgentRun phase values: `creating`, `idle`, `running`, `restarting`, `stopped`, `error`.
 
 ## AgentRun Domain Shape
 
@@ -573,8 +573,8 @@ AgentRun state values: `creating`, `idle`, `running`, `restarting`, `stopped`, `
 | `spec.agent` | string | Selected agent definition name |
 | `spec.description` | string? | Human-readable description |
 | `spec.systemPrompt` | string? | Agent system prompt |
-| `status.status` | string | Current agent status |
-| `status.errorMessage` | string? | Error details when `status` is `"error"` |
+| `status.phase` | string | Current agent phase |
+| `status.errorMessage` | string? | Error details when `phase` is `"error"` |
 | `status.pid` | int? | Agent-run process ID (when running) |
 | `status.bundle` | string? | Bundle directory path |
 | `status.socketPath` | string? | Unix socket path for direct agent-run RPC connection |

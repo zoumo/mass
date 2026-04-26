@@ -81,9 +81,9 @@ func (c *Client) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventPa
 	return newTypedWatcher(ws), nil
 }
 
-func (c *Client) Status(ctx context.Context) (*runapi.RuntimeStatusResult, error) {
-	var result runapi.RuntimeStatusResult
-	if err := c.c.Call(ctx, runapi.MethodRuntimeStatus, nil, &result); err != nil {
+func (c *Client) Status(ctx context.Context) (*runapi.RuntimePhaseResult, error) {
+	var result runapi.RuntimePhaseResult
+	if err := c.c.Call(ctx, runapi.MethodRuntimePhase, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

@@ -37,9 +37,9 @@ func TestEndToEndPipeline(t *testing.T) {
 	// Step 2: agentrun/create → poll until state=idle
 	t.Log("Step 2: agentrun/create → poll until state=idle")
 	ar := testutil.CreateAgentAndWait(t, ctx, client, wsName, agentName, "mockagent")
-	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, agentName, ar.Status.Status)
-	if ar.Status.Status != "idle" {
-		t.Errorf("expected state=idle, got %s", ar.Status.Status)
+	t.Logf("agent ready: workspace=%s name=%s state=%s", wsName, agentName, ar.Status.Phase)
+	if ar.Status.Phase != "idle" {
+		t.Errorf("expected state=idle, got %s", ar.Status.Phase)
 	}
 	t.Log("agent state=idle ✓")
 
@@ -58,7 +58,7 @@ func TestEndToEndPipeline(t *testing.T) {
 	// Step 4: poll until state=running or idle (mockagent is instant)
 	t.Log("Step 4: verify agent state=running (or idle if turn already completed)")
 	st4 := testutil.WaitForAgentStateOneOf(t, ctx, client, wsName, agentName, []string{"running", "idle"}, 10*time.Second)
-	t.Logf("agent state=%s after prompt ✓", st4.Status.Status)
+	t.Logf("agent state=%s after prompt ✓", st4.Status.Phase)
 
 	// Step 5: agentrun/stop → poll until state=stopped
 	t.Log("Step 5: agentrun/stop → poll until state=stopped")

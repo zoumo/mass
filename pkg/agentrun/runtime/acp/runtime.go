@@ -44,8 +44,8 @@ func BuildSeedSystemPrompt(systemPrompt string) string {
 // StateChange describes an externally visible runtime lifecycle transition.
 type StateChange struct {
 	SessionID      string
-	PreviousStatus apiruntime.Status
-	Status         apiruntime.Status
+	PreviousPhase  apiruntime.Phase
+	Phase          apiruntime.Phase
 	PID            int
 	Reason         string
 	SessionChanged []string
@@ -111,7 +111,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	if err := m.writeState(func(s *apiruntime.State) {
 		s.MassVersion = m.cfg.MassVersion
 		s.ID = m.cfg.Metadata.Name
-		s.Status = apiruntime.StatusCreating
+		s.Phase = apiruntime.PhaseCreating
 		s.Bundle = m.bundleDir
 		s.Annotations = m.cfg.Metadata.Annotations
 	}, "bootstrap-started"); err != nil {
@@ -152,7 +152,7 @@ func (m *Manager) Create(ctx context.Context) error {
 			_ = m.writeState(func(s *apiruntime.State) {
 				s.MassVersion = m.cfg.MassVersion
 				s.ID = m.cfg.Metadata.Name
-				s.Status = apiruntime.StatusStopped
+				s.Phase = apiruntime.PhaseStopped
 				s.Bundle = m.bundleDir
 				s.Annotations = m.cfg.Metadata.Annotations
 			}, "bootstrap-failed")
@@ -193,7 +193,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		s.MassVersion = m.cfg.MassVersion
 		s.ID = m.cfg.Metadata.Name
 		s.SessionID = string(m.sessionID)
-		s.Status = apiruntime.StatusIdle
+		s.Phase = apiruntime.PhaseIdle
 		s.PID = cmd.Process.Pid
 		s.Bundle = m.bundleDir
 		s.Annotations = m.cfg.Metadata.Annotations
@@ -212,7 +212,7 @@ func (m *Manager) Create(ctx context.Context) error {
 		_ = m.writeState(func(s *apiruntime.State) {
 			s.MassVersion = m.cfg.MassVersion
 			s.ID = m.cfg.Metadata.Name
-			s.Status = apiruntime.StatusStopped
+			s.Phase = apiruntime.PhaseStopped
 			s.Bundle = m.bundleDir
 			s.Annotations = m.cfg.Metadata.Annotations
 		}, "process-exited")
@@ -263,7 +263,7 @@ func (m *Manager) Kill(ctx context.Context) error {
 	return m.writeState(func(s *apiruntime.State) {
 		s.MassVersion = m.cfg.MassVersion
 		s.ID = m.cfg.Metadata.Name
-		s.Status = apiruntime.StatusStopped
+		s.Phase = apiruntime.PhaseStopped
 		s.Bundle = m.bundleDir
 		s.Annotations = m.cfg.Metadata.Annotations
 	}, "runtime-stop")
@@ -275,8 +275,8 @@ func (m *Manager) Delete() error {
 	if err != nil {
 		return fmt.Errorf("runtime: read state for delete: %w", err)
 	}
-	if s.Status != apiruntime.StatusStopped {
-		return fmt.Errorf("runtime: cannot delete agent in status %q (must be stopped)", s.Status)
+	if s.Phase != apiruntime.PhaseStopped {
+		return fmt.Errorf("runtime: cannot delete agent in status %q (must be stopped)", s.Phase)
 	}
 	return spec.DeleteState(m.stateDir)
 }
@@ -302,7 +302,7 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 	m.logger.Debug("prompt started", "blocks", len(prompt))
 
 	_ = m.writeState(func(s *apiruntime.State) {
-		s.Status = apiruntime.StatusRunning
+		s.Phase = apiruntime.PhaseRunning
 	}, "prompt-started")
 
 	resp, err := conn.Prompt(ctx, acp.PromptRequest{
@@ -317,7 +317,7 @@ func (m *Manager) Prompt(ctx context.Context, prompt []acp.ContentBlock) (acp.Pr
 		}
 		m.logger.Debug("prompt done", "reason", reason)
 		_ = m.writeState(func(s *apiruntime.State) {
-			s.Status = apiruntime.StatusIdle
+			s.Phase = apiruntime.PhaseIdle
 		}, reason)
 	}
 
@@ -431,17 +431,17 @@ func (m *Manager) writeState(apply func(*apiruntime.State), reason string) error
 		return err
 	}
 
-	statusChanged := prevErr == nil && previous.Status != state.Status
+	statusChanged := prevErr == nil && previous.Phase != state.Phase
 	if statusChanged {
-		m.logger.Debug("state written", "from", previous.Status, "to", state.Status, "reason", reason)
+		m.logger.Debug("state written", "from", previous.Phase, "to", state.Phase, "reason", reason)
 	}
 	hook := m.stateChangeHook
 	change := StateChange{
-		SessionID:      state.ID,
-		PreviousStatus: previous.Status,
-		Status:         state.Status,
-		PID:            state.PID,
-		Reason:         reason,
+		SessionID:     state.ID,
+		PreviousPhase: previous.Phase,
+		Phase:         state.Phase,
+		PID:           state.PID,
+		Reason:        reason,
 	}
 
 	m.mu.Unlock()
@@ -494,8 +494,8 @@ func (m *Manager) UpdateSessionMetadata(changed []string, reason string, apply f
 	hook := m.stateChangeHook
 	change := StateChange{
 		SessionID:      state.ID,
-		PreviousStatus: state.Status,
-		Status:         state.Status,
+		PreviousPhase:  state.Phase,
+		Phase:          state.Phase,
 		PID:            state.PID,
 		Reason:         reason,
 		SessionChanged: changed,

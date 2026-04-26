@@ -586,7 +586,7 @@ func TestTranslateRich_AgentRunEventDecode_AllEventTypes(t *testing.T) {
 		{"turn_start", "turn_start", runapi.TurnStartEvent{}},
 		{"turn_end", "turn_end", runapi.TurnEndEvent{StopReason: "stop"}},
 		{"error", "error", runapi.ErrorEvent{Msg: "oops"}},
-		{"runtime_update", "runtime_update", runapi.RuntimeUpdateEvent{Status: &runapi.RuntimeStatus{PreviousStatus: "idle", Status: "running"}}},
+		{"runtime_update", "runtime_update", runapi.RuntimeUpdateEvent{Phase: &runapi.RuntimePhase{PreviousPhase: "idle", Phase: "running"}}},
 	}
 
 	for _, tc := range cases {
