@@ -24,7 +24,7 @@ version: 0.2.0
 - Poll task completion via `scripts/poll-task.sh`
 - Read `.status` and route to the next stage
 - Pass artifacts between stages as `--file` inputs
-- Call scripts (`validate-workflow.sh`, `init-workflow.sh`, `poll-task.sh`) for deterministic operations
+- Call scripts (`validate-pipeline.sh`, `init-workflow.sh`, `poll-task.sh`) for deterministic operations
 - Make routing decisions (which stage to run next, when to escalate)
 
 ### DO NOT
@@ -70,6 +70,18 @@ Orchestrator 自动使用：
 TMPDIR=$(mktemp -d /tmp/mass-pipeline-XXXXXX)
 compose_file="$TMPDIR/compose.yaml"
 pipeline_file="$TMPDIR/pipeline.yaml"
+```
+
+**Compose 文件占位符规则**：`metadata.name` 必须写成字面字符串 `WORKSPACE_NAME`，不得硬编码任何具体名称。`init-workflow.sh` 在运行时将其替换为实际的 workspace 名称。
+
+```yaml
+# ✅ 正确
+meta
+  name: WORKSPACE_NAME
+
+# ❌ 错误 — 硬编码会导致 workspace 名称固定，无法复用
+metadata:
+  name: my-project-ws
 ```
 
 完整字段说明：
@@ -121,7 +133,7 @@ mass daemon status
 Run the validation script. Exit immediately on failure — **do not create any resources**:
 
 ```bash
-skills/mass-pipeline/scripts/validate-workflow.sh {workflow_file}
+skills/mass-pipeline/scripts/validate-pipeline.sh {pipeline_file}
 ```
 
 Exit code 0: validation passed, script prints summary. Show the summary to the user.
