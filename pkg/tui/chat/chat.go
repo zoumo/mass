@@ -574,27 +574,27 @@ func (m *chatModel) handleKey(key tea.Key) []tea.Cmd {
 	}
 
 	if m.chatFocused {
-		switch {
-		case key.Code == 'j' || key.Code == tea.KeyDown:
+		switch key.Code {
+		case 'j', tea.KeyDown:
 			m.chat.SelectNext()
 			cmds = append(cmds, m.chat.ScrollToSelectedAndAnimate())
-		case key.Code == 'k' || key.Code == tea.KeyUp:
+		case 'k', tea.KeyUp:
 			m.chat.SelectPrev()
 			cmds = append(cmds, m.chat.ScrollToSelectedAndAnimate())
-		case key.Code == 'd':
+		case 'd':
 			cmds = append(cmds, m.chat.ScrollByAndAnimate(m.chat.Height()/2))
-		case key.Code == 'u':
+		case 'u':
 			cmds = append(cmds, m.chat.ScrollByAndAnimate(-m.chat.Height()/2))
-		case key.Code == ' ' || key.Code == tea.KeyEnter:
+		case ' ', tea.KeyEnter:
 			// Space/Enter toggles expand on selected tool item.
 			m.chat.ToggleExpandedSelectedItem()
-		case key.Code == 'f' || key.Code == tea.KeyPgDown:
+		case 'f', tea.KeyPgDown:
 			cmds = append(cmds, m.chat.ScrollByAndAnimate(m.chat.Height()))
-		case key.Code == 'b' || key.Code == tea.KeyPgUp:
+		case 'b', tea.KeyPgUp:
 			cmds = append(cmds, m.chat.ScrollByAndAnimate(-m.chat.Height()))
-		case key.Code == 'g' || key.Code == tea.KeyHome:
+		case 'g', tea.KeyHome:
 			cmds = append(cmds, m.chat.ScrollToTopAndAnimate())
-		case key.Code == 'G' || key.Code == tea.KeyEnd:
+		case 'G', tea.KeyEnd:
 			cmds = append(cmds, m.chat.ScrollToBottomAndAnimate())
 		}
 		return cmds
@@ -770,10 +770,7 @@ func (m *chatModel) recalcViewport() {
 	if completionHeight > 0 {
 		completionHeight++ // +1 for the divider above the completion list
 	}
-	vpHeight := m.height - inputAreaHeight - completionHeight
-	if vpHeight < 1 {
-		vpHeight = 1
-	}
+	vpHeight := max(m.height-inputAreaHeight-completionHeight, 1)
 	m.chat.SetSize(m.width, vpHeight)
 }
 
@@ -969,9 +966,10 @@ func (m *chatModel) handleNotif(ev runapi.AgentRunEvent) tea.Cmd {
 						})
 					}
 					// Update status only for terminal states.
-					if pl.Status == "completed" {
+					switch pl.Status {
+					case "completed":
 						ti.SetStatus(component.ToolStatusSuccess)
-					} else if pl.Status == "error" {
+					case "error":
 						ti.SetStatus(component.ToolStatusError)
 					}
 				}
