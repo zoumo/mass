@@ -34,6 +34,11 @@ import (
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
+// promptDeliveryTimeout bounds fire-and-forget Prompt RPC calls in background
+// goroutines. If the shim is stuck the goroutine would otherwise block forever
+// while the agent status has already been transitioned to running/busy.
+const promptDeliveryTimeout = 30 * time.Second
+
 // Service holds shared dependencies for all ARI handlers.
 // Use Register to wire it with a jsonrpc.Server.
 type Service struct {
@@ -275,7 +280,9 @@ func (a *workspaceAdapter) Send(ctx context.Context, req *pkgariapi.WorkspaceSen
 	copy(blocks, req.Message)
 	blocks = append(blocks, runapi.TextBlock(buildWorkspaceFooter(*req)))
 	go func() {
-		if _, err := client.Prompt(context.Background(), &runapi.SessionPromptParams{Prompt: blocks}); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), promptDeliveryTimeout)
+		defer cancel()
+		if _, err := client.Prompt(ctx, &runapi.SessionPromptParams{Prompt: blocks}); err != nil {
 			a.logger.Warn("workspace/send: prompt delivery failed",
 				"workspace", req.Workspace, "to", req.To, "error", err)
 			a.recordPromptDeliveryFailure(req.Workspace, req.To, agent.Status, err, false)
@@ -458,7 +465,9 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPro
 
 	prompt := req.Prompt
 	go func() {
-		if _, err := client.Prompt(context.Background(), &runapi.SessionPromptParams{Prompt: prompt}); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), promptDeliveryTimeout)
+		defer cancel()
+		if _, err := client.Prompt(ctx, &runapi.SessionPromptParams{Prompt: prompt}); err != nil {
 			a.logger.Warn("agentrun/prompt: prompt delivery failed",
 				"workspace", req.Workspace, "name", req.Name, "error", err)
 			a.recordPromptDeliveryFailure(req.Workspace, req.Name, agent.Status, err, false)
@@ -819,7 +828,9 @@ func (a *agentRunAdapter) dispatchTaskPrompt(ctx context.Context, workspaceName,
 
 	promptText := fmt.Sprintf("Task attempt %d at: %s\nRead the task file and complete it using the task protocol in your system prompt.", attempt, taskPath)
 	go func() {
-		if _, err := client.Prompt(context.Background(), &runapi.SessionPromptParams{
+		ctx, cancel := context.WithTimeout(context.Background(), promptDeliveryTimeout)
+		defer cancel()
+		if _, err := client.Prompt(ctx, &runapi.SessionPromptParams{
 			Prompt: []runapi.ContentBlock{runapi.TextBlock(promptText)},
 		}); err != nil {
 			a.logger.Warn("agentrun/task/"+op+": prompt delivery failed",
