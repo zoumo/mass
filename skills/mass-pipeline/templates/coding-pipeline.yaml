@@ -1,8 +1,6 @@
 name: coding
 description: "Standard development pipeline: plan → review → execute → code review → fix"
 
-compose: skills/mass-pipeline/templates/coding-compose.yaml
-
 stages:
   - name: plan
     agent: planner

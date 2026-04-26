@@ -8,9 +8,10 @@ Pipeline files define stages, routing logic, and output. They reference a compos
 |-------|------|----------|-------------|
 | `name` | string | yes | Pipeline identifier, used as workspace name prefix |
 | `description` | string | no | Human-readable purpose |
-| `compose` | string | yes | Path to the compose YAML file (absolute or relative to CWD) |
 | `stages` | list | yes | Ordered list of stages to execute |
 | `output` | object | no | Output collection configuration |
+
+> **Note:** Pipeline files do not reference a compose file. The compose file (workspace + agents) is managed separately by the orchestrator and passed directly to `init-workspace.sh`.
 
 ---
 

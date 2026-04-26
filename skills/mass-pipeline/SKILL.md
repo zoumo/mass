@@ -107,7 +107,7 @@ Step 5: 打印执行摘要
 
 ---
 
-## Step 0: 健康检查 + 读取 workflow.yaml
+## Step 0: 健康检查 + 读取 pipeline + 确定 compose
 
 ### 0a. 健康检查
 
@@ -118,27 +118,34 @@ mass daemon status
 - `daemon: running` → 继续
 - 否则 → 停止，告知用户
 
-### 0b. 读取 workflow.yaml
+### 0b. 读取 pipeline + 确定 compose 文件
 
-读取用户指定路径的 YAML 文件。提取：
-- `name` — workflow 名称，用作 workspace name（加随机后缀避免冲突）：`{name}-{random4hex}`
+从 pipeline YAML 提取：
+- `name` — pipeline 名称，用作 workspace name 前缀：`{name}-{random4hex}`
 - `description` — 仅展示用
-- `workspace` — type + path
-- `agents` — 名称 → system_prompt 的 map
 - `stages` — 有序列表
-- `output` — 输出配置（可选，缺省见 schema）
+- `output` — 输出配置（可选）
+
+**Compose 文件由 orchestrator 单独决定**，不在 pipeline YAML 中引用：
+- 内置 coding pipeline → 直接使用 `skills/mass-pipeline/templates/coding-compose.yaml`
+- 自定义 pipeline → orchestrator 自行生成 compose 文件写到临时目录
+
+生成 workspace 名：
+```bash
+WORKSPACE_NAME="{pipeline.name}-$(openssl rand -hex 2)"
+```
 
 ### 0c. 前置验证（启动前）
 
-Run the validation script. Exit immediately on failure — **do not create any resources**:
+只验证 pipeline 字段（stages/routes）：
 
 ```bash
 skills/mass-pipeline/scripts/validate-pipeline.sh {pipeline_file}
 ```
 
-Exit code 0: validation passed, script prints summary. Show the summary to the user.
-Exit code 1: validation failed, script prints specific field errors. Report errors and stop.
-Exit code 2: missing dependency (PyYAML). Report and stop.
+Exit code 0: validation passed. Show summary to user.
+Exit code 1: validation failed, prints errors. Report and stop.
+Exit code 2: missing dependency. Report and stop.
 
 After successful validation, ask the user: "确认执行？" Wait for confirmation before proceeding.
 
@@ -146,17 +153,15 @@ After successful validation, ask the user: "确认执行？" Wait for confirmati
 
 ## Step 1: 创建 Workspace + Agents
 
-Run the init script. This handles workspace creation, readiness polling, agentrun creation, and idle polling:
-
 ```bash
-skills/mass-pipeline/scripts/init-workflow.sh {workflow_file} {workspace-name}
+skills/mass-pipeline/scripts/init-workspace.sh {compose_file} {workspace_name}
 ```
+
+此脚本将 `WORKSPACE_NAME` 占位符替换为实际名称，调用 `massctl compose apply`，等待 workspace ready + 所有 agent idle。
 
 Exit code 0: workspace ready + all agents idle.
 Exit code 1: creation or polling failed. Execute full cleanup (Step 4) and report the error.
 Exit code 2: missing dependency. Report and stop.
-
-The workspace name is: `{workflow.name}-{random4hex}` (generated in Step 0b to avoid conflicts).
 
 ---
 
