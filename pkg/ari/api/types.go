@@ -138,7 +138,7 @@ type AgentTask struct {
 	Attempt   int                `json:"attempt"`
 	CreatedAt time.Time          `json:"createdAt"`
 	Request   AgentTaskRequest   `json:"request"`
-	Completed bool               `json:"completed,omitempty"`
+	Completed bool               `json:"completed"`
 	Response  *AgentTaskResponse `json:"response,omitempty"`
 }
 

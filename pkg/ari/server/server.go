@@ -754,8 +754,8 @@ func (a *agentRunAdapter) TaskGet(ctx context.Context, params *pkgariapi.AgentRu
 		return nil, jsonrpc.ErrInternal(fmt.Sprintf("read task: %v", err))
 	}
 
-	var task pkgariapi.AgentTask
-	if err := json.Unmarshal(data, &task); err != nil {
+	task, err := parseTaskFile(data)
+	if err != nil {
 		return nil, jsonrpc.ErrInternal(fmt.Sprintf("unmarshal task: %v", err))
 	}
 
@@ -789,8 +789,8 @@ func (a *agentRunAdapter) TaskList(ctx context.Context, params *pkgariapi.AgentR
 			a.logger.Warn("task/list: skip unreadable file", "file", e.Name(), "error", err)
 			continue
 		}
-		var task pkgariapi.AgentTask
-		if err := json.Unmarshal(data, &task); err != nil {
+		task, err := parseTaskFile(data)
+		if err != nil {
 			a.logger.Warn("task/list: skip invalid json", "file", e.Name(), "error", err)
 			continue
 		}
@@ -871,8 +871,8 @@ func (a *agentRunAdapter) TaskRetry(ctx context.Context, params *pkgariapi.Agent
 		return nil, rollbackToIdle(fmt.Errorf("read task: %w", err))
 	}
 
-	var task pkgariapi.AgentTask
-	if err := json.Unmarshal(data, &task); err != nil {
+	task, err := parseTaskFile(data)
+	if err != nil {
 		return nil, rollbackToIdle(fmt.Errorf("unmarshal task: %w", err))
 	}
 
@@ -899,6 +899,33 @@ func (a *agentRunAdapter) TaskRetry(ctx context.Context, params *pkgariapi.Agent
 		Task:     task,
 		TaskPath: taskPath,
 	}, nil
+}
+
+// parseTaskFile unmarshals a task JSON file. If the full parse fails (e.g.
+// agent wrote malformed response fields), it falls back to parsing only the
+// envelope fields that the server controls.
+func parseTaskFile(data []byte) (pkgariapi.AgentTask, error) {
+	var task pkgariapi.AgentTask
+	if err := json.Unmarshal(data, &task); err != nil {
+		var envelope struct {
+			ID        string    `json:"id"`
+			Assignee  string    `json:"assignee"`
+			Attempt   int       `json:"attempt"`
+			CreatedAt time.Time `json:"createdAt"`
+			Completed bool      `json:"completed"`
+		}
+		if err2 := json.Unmarshal(data, &envelope); err2 != nil {
+			return pkgariapi.AgentTask{}, err
+		}
+		return pkgariapi.AgentTask{
+			ID:        envelope.ID,
+			Assignee:  envelope.Assignee,
+			Attempt:   envelope.Attempt,
+			CreatedAt: envelope.CreatedAt,
+			Completed: envelope.Completed,
+		}, nil
+	}
+	return task, nil
 }
 
 func nextTaskPath(tasksDir string) (string, string, error) {
