@@ -2,7 +2,10 @@ package agentrun
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -16,9 +19,73 @@ func newTaskCmd(getClient cliutil.ClientFn) *cobra.Command {
 		Short: "Manage agent tasks",
 	}
 	cmd.AddCommand(newTaskCreateCmd(getClient))
+	cmd.AddCommand(newTaskDoneCmd())
 	cmd.AddCommand(newTaskRetryCmd(getClient))
 	cmd.AddCommand(newTaskGetCmd(getClient))
 	cmd.AddCommand(newTaskListCmd(getClient))
+	return cmd
+}
+
+func newTaskDoneCmd() *cobra.Command {
+	var (
+		filePath string
+		reason   string
+		response string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "done",
+		Short: "Mark a task as done by writing response to the task file",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// validate --response is a valid JSON object
+			var rawResp json.RawMessage
+			if err := json.Unmarshal([]byte(response), &rawResp); err != nil {
+				return fmt.Errorf("--response is not valid JSON: %w", err)
+			}
+			var obj map[string]json.RawMessage
+			if err := json.Unmarshal(rawResp, &obj); err != nil {
+				return fmt.Errorf("--response must be a JSON object: %w", err)
+			}
+
+			// read existing task file
+			data, err := os.ReadFile(filePath)
+			if err != nil {
+				return fmt.Errorf("read task file: %w", err)
+			}
+			var task pkgariapi.AgentTask
+			if err := json.Unmarshal(data, &task); err != nil {
+				return fmt.Errorf("parse task file: %w", err)
+			}
+
+			now := time.Now()
+			task.Done = true
+			task.Reason = reason
+			task.UpdatedAt = &now
+			task.Response = rawResp
+
+			// atomic write via temp file + rename
+			tmp := filePath + ".tmp"
+			out, err := json.MarshalIndent(task, "", "  ")
+			if err != nil {
+				return fmt.Errorf("marshal task: %w", err)
+			}
+			if err := os.WriteFile(tmp, out, 0o644); err != nil {
+				return fmt.Errorf("write temp file: %w", err)
+			}
+			if err := os.Rename(tmp, filePath); err != nil {
+				return fmt.Errorf("rename temp file: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Task %s marked as done.\n", task.ID)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&filePath, "file", "", "Path to the task JSON file (required)")
+	cmd.Flags().StringVar(&reason, "reason", "", "Short string describing the outcome, e.g. success, failed, needs_human (required)")
+	cmd.Flags().StringVar(&response, "response", "", `Extra response fields as JSON object, e.g. {"description":"...","filePaths":["..."]} (required)`)
+	_ = cmd.MarkFlagRequired("file")
+	_ = cmd.MarkFlagRequired("reason")
+	_ = cmd.MarkFlagRequired("response")
 	return cmd
 }
 
@@ -190,16 +257,16 @@ func taskColumns() []cliutil.Column {
 		{Header: "ID", Field: func(v any) string { return v.(pkgariapi.AgentTask).ID }},
 		{Header: "ASSIGNEE", Field: func(v any) string { return v.(pkgariapi.AgentTask).Assignee }},
 		{Header: "ATTEMPT", Field: func(v any) string { return fmt.Sprintf("%d", v.(pkgariapi.AgentTask).Attempt) }},
-		{Header: "COMPLETED", Field: func(v any) string {
-			if v.(pkgariapi.AgentTask).Completed {
+		{Header: "DONE", Field: func(v any) string {
+			if v.(pkgariapi.AgentTask).Done {
 				return "true"
 			}
 			return "false"
 		}},
-		{Header: "STATUS", Field: func(v any) string {
+		{Header: "REASON", Field: func(v any) string {
 			task := v.(pkgariapi.AgentTask)
-			if task.Completed {
-				return "completed"
+			if task.Done {
+				return task.Reason
 			}
 			return "pending"
 		}},

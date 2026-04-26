@@ -4,7 +4,7 @@
 # Usage: poll-task.sh <workspace> <agent-name> <task-id> [interval=10] [timeout=1800]
 #
 # Exit codes:
-#   0 — task completed (completed==true), read response.status for routing
+#   0 — task completed (completed==true), read .status for routing
 #   1 — agent idle but task not completed after max retries
 #   2 — agent in error/stopped state
 #   3 — timeout
@@ -22,18 +22,28 @@ idle_retry_count=0
 elapsed=0
 
 get_task() {
-  massctl agentrun task get -w "$WORKSPACE" --name "$AGENT_NAME" --id "$TASK_ID" -o json 2>/dev/null
+  local task_file="/Users/jim/.mass/runs/$WORKSPACE/$AGENT_NAME/tasks/$TASK_ID.json"
+  if [[ -f "$task_file" ]]; then
+    cat "$task_file"
+  else
+    massctl agentrun task get -w "$WORKSPACE" --name "$AGENT_NAME" --id "$TASK_ID" -o json 2>/dev/null
+  fi
+}
+
+is_completed() {
+  local val
+  val=$(echo "$1" | jq -r '.done // false')
+  [[ "$val" == "true" ]]
 }
 
 while true; do
   agent_state=$(massctl agentrun get "$AGENT_NAME" -w "$WORKSPACE" -o json 2>/dev/null \
-    | jq -r '.status.phase // "unknown"')
+    | jq -r '.status.status // "unknown"')
 
   task_json=$(get_task)
-  task_completed=$(echo "$task_json" | jq -r '.completed // false')
 
-  if [[ "$task_completed" == "true" ]]; then
-    status=$(echo "$task_json" | jq -r '.response.status // "unknown"')
+  if is_completed "$task_json"; then
+    status=$(echo "$task_json" | jq -r '.status // "unknown"')
     echo "Task completed. Response status: $status"
     exit 0
   fi

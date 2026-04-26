@@ -1107,9 +1107,22 @@ func agentTaskPrompt() string {
 You may receive a task file path. Read the JSON file.
 Use "request.description" and optional "request.filePaths" as input.
 
-When done, update the same file:
-- Set "completed" to "true".
-- Write "response.status", "response.description", and optional "response.filePaths".
-- Set "response.updatedAt" to the current time in ISO8601 format.
+When done, run this command to mark the task as done:
+
+  massctl agentrun task done \
+    --file <task-path> \
+    --reason <reason> \
+    --response '<json>'
+
+Where:
+- <task-path> is the path passed to you
+- <reason> is a short string describing the outcome (e.g. success, failed, needs_human)
+- <json> is a JSON object with at least "description" (string) and optionally "filePaths" ([]string)
+
+Example:
+  massctl agentrun task done \
+    --file /path/to/task.json \
+    --reason success \
+    --response '{"description":"Done.","filePaths":["/output/result.md"]}'
 </agent-task-protocol>`
 }

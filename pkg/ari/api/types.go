@@ -141,7 +141,9 @@ type AgentTask struct {
 	Attempt   int             `json:"attempt"`
 	CreatedAt time.Time       `json:"createdAt"`
 	Request   json.RawMessage `json:"request"`
-	Completed bool            `json:"completed"`
+	Done      bool            `json:"done"`
+	Reason    string          `json:"reason,omitempty"`
+	UpdatedAt *time.Time      `json:"updatedAt,omitempty"`
 	Response  json.RawMessage `json:"response,omitempty"`
 }
 

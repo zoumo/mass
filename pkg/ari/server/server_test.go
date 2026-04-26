@@ -830,7 +830,7 @@ func TestAgentRunTaskRetryDelivered(t *testing.T) {
 		Attempt:   1,
 		CreatedAt: time.Now().Add(-time.Minute),
 		Request:   reqJSON,
-		Completed: true,
+		Done:      true,
 		Response:  respJSON,
 	}
 	data, err := json.MarshalIndent(seed, "", "  ")
@@ -846,7 +846,7 @@ func TestAgentRunTaskRetryDelivered(t *testing.T) {
 
 	assert.Equal(t, "task-0001", result.Task.ID)
 	assert.Equal(t, 2, result.Task.Attempt)
-	assert.False(t, result.Task.Completed)
+	assert.False(t, result.Task.Done)
 	assert.Nil(t, result.Task.Response)
 
 	require.Eventually(t, func() bool {
@@ -862,7 +862,7 @@ func TestAgentRunTaskRetryDelivered(t *testing.T) {
 		TaskID:    "task-0001",
 	}, &gotTask))
 	assert.Equal(t, 2, gotTask.Attempt)
-	assert.False(t, gotTask.Completed)
+	assert.False(t, gotTask.Done)
 	assert.Nil(t, gotTask.Response)
 }
 

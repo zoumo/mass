@@ -2,7 +2,7 @@
 name: mass-pipeline
 description: |
   声明式多 agent pipeline 编排。读取 YAML pipeline 配置，自动创建 workspace 和 agents，
-  按阶段执行 task，通过 response.status 路由，收集输出，清理资源。
+  按阶段执行 task，通过 .status 路由，收集输出，清理资源。
   触发：用户运行 /mass-pipeline，或提到"用 pipeline 执行"、"多 agent 协作完成任务"。
   内置标准开发流程：plan → review → execute → code review → fix（使用 dev-pipeline 模板）。
 version: 0.2.0
@@ -22,7 +22,7 @@ version: 0.2.0
 ### DO
 - Create tasks for agents via `massctl agentrun task create`
 - Poll task completion via `scripts/poll-task.sh`
-- Read `response.status` and route to the next stage
+- Read `.status` and route to the next stage
 - Pass artifacts between stages as `--file` inputs
 - Call scripts (`validate-workflow.sh`, `init-workflow.sh`, `poll-task.sh`) for deterministic operations
 - Make routing decisions (which stage to run next, when to escalate)
@@ -192,7 +192,7 @@ poll_exit=$?
 
 | poll exit | 处理 |
 |-----------|------|
-| 0 | 读取 response.status，执行路由 |
+| 0 | 读取 .status，执行路由 |
 | 1 | agent idle retry 用尽 → 视为 `failed`，走 routes 路由 |
 | 2 | agent error/stopped → 停止，人工介入（不走 routes，直接 escalate） |
 | 3 | 超时 → 视为 `failed`，走 routes 路由 |
@@ -206,11 +206,11 @@ if [[ -d "$artifact_dir" ]]; then
 fi
 ```
 
-**⑤ 读取 response.status 并路由**
+**⑤ 读取 .status 并路由**
 
 ```bash
 task_json=$(massctl agentrun task get -w {workspace} --name {stage.agent} --id {task_id} -o json)
-response_status=$(echo "$task_json" | jq -r '.response.status // "unknown"')
+response_status=$(echo "$task_json" | jq -r '.status // "unknown"')
 ```
 
 按 `stage.routes` 顺序匹配 `when == response_status`，找到第一个匹配的 `goto`：
@@ -267,12 +267,12 @@ wait  # 等待所有后台 poll 完成（wait: all）
 
 **③ 聚合状态**
 
-读取每个 sub-task 的 response.status，计算聚合结果：
+读取每个 sub-task 的 .status，计算聚合结果：
 
 | 聚合规则 | 触发条件 |
 |---------|---------|
-| `all_success` | 所有 sub-task response.status == success |
-| `all_failed` | 所有 sub-task response.status == failed |
+| `all_success` | 所有 sub-task .status == success |
+| `all_failed` | 所有 sub-task .status == failed |
 | `any_failed` | 至少一个 failed（且非 all_failed） |
 | `any_success` | 至少一个 success（用于 wait: any 场景） |
 
@@ -378,7 +378,7 @@ Next steps:
 | poll exit 1/3 (idle/timeout) | 视为 `failed`，走正常 routes 路由 |
 | retry 超限 | 强制 __escalate__，不管 routes 配置 |
 | `__escalate__` | 打印完整上下文，保留 artifacts，清理进程资源 |
-| 无匹配 route | 按 response.status 语义判断；无法判断 → __escalate__ |
+| 无匹配 route | 按 .status 语义判断；无法判断 → __escalate__ |
 | cleanup 失败 | 记录警告，继续清理其余资源 |
 
 ---

@@ -759,7 +759,7 @@ func (a *agentRunAdapter) TaskRetry(ctx context.Context, params *pkgariapi.Agent
 		task.Attempt = 1
 	}
 	task.Attempt++
-	task.Completed = false
+	task.Done = false
 	task.Response = nil
 
 	data, err = json.MarshalIndent(task, "", "  ")
