@@ -734,8 +734,10 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 	assert.Equal(t, "task-0001", result.Task.ID)
 	assert.Equal(t, agentName, result.Task.Assignee)
 	assert.Equal(t, 1, result.Task.Attempt)
-	assert.Equal(t, "Review foo.go", result.Task.Request.Description)
-	assert.Equal(t, []string{"foo.go"}, result.Task.Request.FilePaths)
+	var req pkgariapi.AgentTaskRequest
+	require.NoError(t, json.Unmarshal(result.Task.Request, &req))
+	assert.Equal(t, "Review foo.go", req.Description)
+	assert.Equal(t, []string{"foo.go"}, req.FilePaths)
 	assert.Equal(t, filepath.Join(env.processes.BundlePath("task-ws", agentName), "tasks", "task-0001.json"), result.TaskPath)
 
 	require.Eventually(t, func() bool {
@@ -751,7 +753,7 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 		TaskID:    "task-0001",
 	}, &gotTask))
 	assert.Equal(t, result.Task.ID, gotTask.ID)
-	assert.Equal(t, result.Task.Request.Description, gotTask.Request.Description)
+	assert.JSONEq(t, string(result.Task.Request), string(gotTask.Request))
 
 	var listResult pkgariapi.AgentRunTaskListResult
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskList, pkgariapi.AgentRunTaskListParams{
@@ -816,21 +818,22 @@ func TestAgentRunTaskRetryDelivered(t *testing.T) {
 	tasksDir := filepath.Join(env.processes.BundlePath("task-retry-ws", agentName), "tasks")
 	require.NoError(t, os.MkdirAll(tasksDir, 0o755))
 	taskPath := filepath.Join(tasksDir, "task-0001.json")
+	reqJSON, _ := json.Marshal(pkgariapi.AgentTaskRequest{
+		Description: "Retry me",
+		FilePaths:   []string{"foo.go"},
+	})
+	respJSON, _ := json.Marshal(pkgariapi.AgentTaskResponse{
+		Status:      "failed",
+		Description: "first attempt failed",
+	})
 	seed := pkgariapi.AgentTask{
 		ID:        "task-0001",
 		Assignee:  agentName,
 		Attempt:   1,
 		CreatedAt: time.Now().Add(-time.Minute),
-		Request: pkgariapi.AgentTaskRequest{
-			Description: "Retry me",
-			FilePaths:   []string{"foo.go"},
-		},
+		Request:   reqJSON,
 		Completed: true,
-		Response: &pkgariapi.AgentTaskResponse{
-			Status:      "failed",
-			Description: "first attempt failed",
-			UpdatedAt:   time.Now().Add(-30 * time.Second),
-		},
+		Response:  respJSON,
 	}
 	data, err := json.MarshalIndent(seed, "", "  ")
 	require.NoError(t, err)
@@ -894,8 +897,10 @@ func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(data, &task))
 	assert.Equal(t, "task-0000", task.ID)
-	assert.Equal(t, "wrapped task", task.Request.Description)
-	assert.Equal(t, []string{"foo.go"}, task.Request.FilePaths)
+	var taskReq pkgariapi.AgentTaskRequest
+	require.NoError(t, json.Unmarshal(task.Request, &taskReq))
+	assert.Equal(t, "wrapped task", taskReq.Description)
+	assert.Equal(t, []string{"foo.go"}, taskReq.FilePaths)
 	assert.Equal(t, 1, task.Attempt)
 
 	require.Eventually(t, func() bool {

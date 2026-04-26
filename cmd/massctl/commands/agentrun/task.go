@@ -2,6 +2,7 @@ package agentrun
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -201,18 +202,26 @@ func taskColumns() []cliutil.Column {
 			if !task.Completed {
 				return "pending"
 			}
-			if task.Response == nil {
-				return "completed"
+			var resp pkgariapi.AgentTaskResponse
+			if len(task.Response) > 0 && json.Unmarshal(task.Response, &resp) == nil && resp.Status != "" {
+				return resp.Status
 			}
-			return task.Response.Status
+			return "completed"
 		}},
 		{Header: "AGE", Field: func(v any) string { return cliutil.FormatAge(v.(pkgariapi.AgentTask).CreatedAt) }},
 		{Header: "DESCRIPTION", Field: func(v any) string {
 			task := v.(pkgariapi.AgentTask)
-			if task.Completed && task.Response != nil && task.Response.Description != "" {
-				return task.Response.Description
+			if task.Completed && len(task.Response) > 0 {
+				var resp pkgariapi.AgentTaskResponse
+				if json.Unmarshal(task.Response, &resp) == nil && resp.Description != "" {
+					return resp.Description
+				}
 			}
-			return task.Request.Description
+			var req pkgariapi.AgentTaskRequest
+			if json.Unmarshal(task.Request, &req) == nil {
+				return req.Description
+			}
+			return ""
 		}, Wide: true},
 	}
 }
