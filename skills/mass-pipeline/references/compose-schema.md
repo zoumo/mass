@@ -7,7 +7,7 @@ Compose files follow the `massctl compose apply` format. They define the workspa
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `kind` | string | yes | Must be `workspace-compose` |
-| `metadata.name` | string | yes | **Must be the literal string `WORKSPACE_NAME`** — `init-workflow.sh` substitutes the real name at runtime. Never hardcode a workspace name here. |
+| `metadata.name` | string | yes | Workspace name placeholder. Convention: write `WORKSPACE_NAME`. The actual name is supplied via `--workspace` flag at runtime (`massctl compose apply -f file.yaml --workspace real-name`) and overrides this field entirely. |
 | `spec.source` | object | yes | Workspace source configuration |
 | `spec.runs` | list | yes | Agent run definitions |
 

@@ -14,6 +14,7 @@ import (
 // and all agent runs from a declarative YAML file.
 func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var file string
+	var workspace string
 	cmd := &cobra.Command{
 		Use:   "apply",
 		Short: "Create workspace and agent runs from a declarative config file",
@@ -21,7 +22,8 @@ func newApplyCmd(getClient cliutil.ClientFn) *cobra.Command {
 It waits for the workspace to be ready and each agent to reach idle state,
 then prints the run socket path for each agent.
 
-  massctl compose apply -f compose.yaml`,
+  massctl compose apply -f compose.yaml
+  massctl compose apply -f compose.yaml --workspace my-ws-abc123`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := os.ReadFile(file)
@@ -41,6 +43,9 @@ then prints the run socket path for each agent.
 
 			ctx := context.Background()
 			wsName := cfg.Metadata.Name
+			if workspace != "" {
+				wsName = workspace
+			}
 			src, err := buildSource(cfg.Spec.Source)
 			if err != nil {
 				return err
@@ -70,6 +75,7 @@ then prints the run socket path for each agent.
 		},
 	}
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to workspace-compose YAML file (required)")
+	cmd.Flags().StringVar(&workspace, "workspace", "", "Override workspace name from the compose file")
 	_ = cmd.MarkFlagRequired("file")
 	return cmd
 }

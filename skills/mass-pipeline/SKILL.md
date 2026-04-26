@@ -24,7 +24,7 @@ version: 0.2.0
 - Poll task completion via `scripts/poll-task.sh`
 - Read `.status` and route to the next stage
 - Pass artifacts between stages as `--file` inputs
-- Call scripts (`validate-pipeline.sh`, `init-workflow.sh`, `poll-task.sh`) for deterministic operations
+- Call scripts (`validate-pipeline.sh`, `poll-task.sh`) for deterministic operations
 - Make routing decisions (which stage to run next, when to escalate)
 
 ### DO NOT
@@ -154,14 +154,10 @@ After successful validation, ask the user: "确认执行？" Wait for confirmati
 ## Step 1: 创建 Workspace + Agents
 
 ```bash
-skills/mass-pipeline/scripts/init-workspace.sh {compose_file} {workspace_name}
+massctl compose apply -f {compose_file} --workspace {workspace_name}
 ```
 
-此脚本将 `WORKSPACE_NAME` 占位符替换为实际名称，调用 `massctl compose apply`，等待 workspace ready + 所有 agent idle。
-
-Exit code 0: workspace ready + all agents idle.
-Exit code 1: creation or polling failed. Execute full cleanup (Step 4) and report the error.
-Exit code 2: missing dependency. Report and stop.
+`--workspace` 覆盖 compose 文件中的 `metadata.name`，等待 workspace ready + 所有 agent idle。失败时执行 Step 4 清理并报告错误。
 
 ---
 
