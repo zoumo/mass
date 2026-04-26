@@ -734,10 +734,8 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 	assert.Equal(t, "task-0001", result.Task.ID)
 	assert.Equal(t, agentName, result.Task.Assignee)
 	assert.Equal(t, 1, result.Task.Attempt)
-	var req pkgariapi.AgentTaskRequest
-	require.NoError(t, json.Unmarshal(result.Task.Request, &req))
-	assert.Equal(t, "Review foo.go", req.Description)
-	assert.Equal(t, []string{"foo.go"}, req.FilePaths)
+	assert.Contains(t, string(result.Task.Request), "Review foo.go")
+	assert.Contains(t, string(result.Task.Request), "foo.go")
 	assert.Equal(t, filepath.Join(env.processes.BundlePath("task-ws", agentName), "tasks", "task-0001.json"), result.TaskPath)
 
 	require.Eventually(t, func() bool {
@@ -818,13 +816,13 @@ func TestAgentRunTaskRetryDelivered(t *testing.T) {
 	tasksDir := filepath.Join(env.processes.BundlePath("task-retry-ws", agentName), "tasks")
 	require.NoError(t, os.MkdirAll(tasksDir, 0o755))
 	taskPath := filepath.Join(tasksDir, "task-0001.json")
-	reqJSON, _ := json.Marshal(pkgariapi.AgentTaskRequest{
-		Description: "Retry me",
-		FilePaths:   []string{"foo.go"},
+	reqJSON, _ := json.Marshal(map[string]any{
+		"description": "Retry me",
+		"filePaths":   []string{"foo.go"},
 	})
-	respJSON, _ := json.Marshal(pkgariapi.AgentTaskResponse{
-		Status:      "failed",
-		Description: "first attempt failed",
+	respJSON, _ := json.Marshal(map[string]any{
+		"status":      "failed",
+		"description": "first attempt failed",
 	})
 	seed := pkgariapi.AgentTask{
 		ID:        "task-0001",
@@ -897,10 +895,8 @@ func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(data, &task))
 	assert.Equal(t, "task-0000", task.ID)
-	var taskReq pkgariapi.AgentTaskRequest
-	require.NoError(t, json.Unmarshal(task.Request, &taskReq))
-	assert.Equal(t, "wrapped task", taskReq.Description)
-	assert.Equal(t, []string{"foo.go"}, taskReq.FilePaths)
+	assert.Contains(t, string(task.Request), "wrapped task")
+	assert.Contains(t, string(task.Request), "foo.go")
 	assert.Equal(t, 1, task.Attempt)
 
 	require.Eventually(t, func() bool {

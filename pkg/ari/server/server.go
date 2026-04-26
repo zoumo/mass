@@ -707,10 +707,11 @@ func (a *agentRunAdapter) TaskCreate(ctx context.Context, params *pkgariapi.Agen
 	}
 
 	// Build task.
-	reqJSON, err := json.Marshal(pkgariapi.AgentTaskRequest{
-		Description: params.Description,
-		FilePaths:   params.FilePaths,
-	})
+	req := map[string]any{"description": params.Description}
+	if len(params.FilePaths) > 0 {
+		req["filePaths"] = params.FilePaths
+	}
+	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		return nil, rollbackToIdle(fmt.Errorf("marshal request: %w", err))
 	}
