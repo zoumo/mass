@@ -75,7 +75,7 @@ func (m *mockAgentRunOps) Restart(context.Context, pkgariapi.ObjectKey) (*pkgari
 	return nil, nil
 }
 
-func (m *mockAgentRunOps) TaskCreate(context.Context, *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error) {
+func (m *mockAgentRunOps) TaskDo(context.Context, *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error) {
 	return nil, nil
 }
 

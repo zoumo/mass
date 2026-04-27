@@ -20,7 +20,7 @@ version: 0.2.0
 **You are the conductor, not the performer.**
 
 ### DO
-- Create tasks for agents via `massctl agentrun task create`
+- Create tasks for agents via `massctl agentrun task do`
 - Poll task completion via `scripts/poll-task.sh`
 - Read `.status` and route to the next stage
 - Pass artifacts between stages as `--file` inputs
@@ -206,10 +206,10 @@ full_description="{stage.description}
 Output directory: {output_dir}
 Write ALL output files to this directory."
 
-task_id=$(massctl agentrun task create -w {workspace} --name {stage.agent} \
+task_id=$(massctl agentrun task do -w {workspace} --run {stage.agent} \
   --description "$full_description" \
-  $(for f in "${input_files[@]}"; do echo "--file $f"; done) \
-  -o json | jq -r '.id')
+  $(for f in "${input_files[@]}"; do echo "--files $f"; done) \
+  | jq -r '.task.id')
 ```
 
 **③ 轮询等待**
@@ -238,8 +238,8 @@ fi
 **⑤ 读取 .status 并路由**
 
 ```bash
-task_json=$(massctl agentrun task get -w {workspace} --name {stage.agent} --id {task_id} -o json)
-response_status=$(echo "$task_json" | jq -r '.status // "unknown"')
+task_json=$(massctl agentrun task get -w {workspace} --run {stage.agent} {task_id} -o json)
+response_status=$(echo "$task_json" | jq -r '.reason // "unknown"')
 ```
 
 按 `stage.routes` 顺序匹配 `when == response_status`，找到第一个匹配的 `goto`：
@@ -270,10 +270,10 @@ for sub_task in "${stage.tasks[@]}"; do
 
 Output directory: {output_dir}
 Write ALL output files to this directory."
-  task_id=$(massctl agentrun task create -w {workspace} --name {sub_task.agent} \
+  task_id=$(massctl agentrun task do -w {workspace} --run {sub_task.agent} \
     --description "$full_description" \
-    $(for f in "${sub_task_input_files[@]}"; do echo "--file $f"; done) \
-    -o json | jq -r '.id')
+    $(for f in "${sub_task_input_files[@]}"; do echo "--files $f"; done) \
+    | jq -r '.task.id')
   sub_task_ids[{sub_task.agent}]=$task_id
 done
 ```

@@ -593,13 +593,13 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 	return &v, nil
 }
 
-// TaskCreate handles agentrun/task/create.
-func (a *agentRunAdapter) TaskCreate(ctx context.Context, params *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error) {
+// TaskDo handles agentrun/task/do.
+func (a *agentRunAdapter) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error) {
 	if params.Workspace == "" || params.Name == "" || params.Description == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, name, and description are required")
 	}
 
-	a.logger.Info("agentrun/task/create", "workspace", params.Workspace, "name", params.Name)
+	a.logger.Info("agentrun/task/do", "workspace", params.Workspace, "name", params.Name)
 
 	agent, err := a.reserveIdleAgent(ctx, params.Workspace, params.Name, "agent")
 	if err != nil {
@@ -607,7 +607,7 @@ func (a *agentRunAdapter) TaskCreate(ctx context.Context, params *pkgariapi.Agen
 	}
 
 	rollbackToIdle := func(cause error) error {
-		return a.rollbackAgentToIdle(params.Workspace, params.Name, "agentrun/task/create", cause)
+		return a.rollbackAgentToIdle(params.Workspace, params.Name, "agentrun/task/do", cause)
 	}
 
 	// Create tasks directory.
@@ -648,11 +648,11 @@ func (a *agentRunAdapter) TaskCreate(ctx context.Context, params *pkgariapi.Agen
 		return nil, rollbackToIdle(fmt.Errorf("write task: %w", err))
 	}
 
-	if err := a.dispatchTaskPrompt(ctx, params.Workspace, params.Name, taskPath, task.Attempt, agent.Status, "create"); err != nil {
+	if err := a.dispatchTaskPrompt(ctx, params.Workspace, params.Name, taskPath, task.Attempt, agent.Status, "do"); err != nil {
 		return nil, err
 	}
 
-	return &pkgariapi.AgentRunTaskCreateResult{
+	return &pkgariapi.AgentRunTaskDoResult{
 		Task:     task,
 		TaskPath: taskPath,
 	}, nil
@@ -828,7 +828,7 @@ func (a *agentRunAdapter) dispatchTaskPrompt(ctx context.Context, workspaceName,
 		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
 	}
 
-	promptText := fmt.Sprintf("Task attempt %d at: %s\nRead the task file and complete it using the task protocol in your system prompt.", attempt, taskPath)
+	promptText := fmt.Sprintf("Task attempt %d at: %s\nRead the JSON file. Treat all fields in \"request\" as your input and instructions.\nWhen done: massctl agentrun task done --file %s --reason {reason} --response '{json}'", attempt, taskPath, taskPath)
 	if err := client.SendPrompt(ctx, &runapi.SessionPromptParams{
 		Prompt: []runapi.ContentBlock{runapi.TextBlock(promptText)},
 	}); err != nil {

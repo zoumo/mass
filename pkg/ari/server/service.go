@@ -32,7 +32,7 @@ type AgentRunService interface {
 	Cancel(ctx context.Context, workspace, name string) error
 	Stop(ctx context.Context, workspace, name string) error
 	Restart(ctx context.Context, workspace, name string) (*pkgariapi.AgentRun, error)
-	TaskCreate(ctx context.Context, params *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error)
+	TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error)
 	TaskGet(ctx context.Context, params *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error)
 	TaskList(ctx context.Context, params *pkgariapi.AgentRunTaskListParams) (*pkgariapi.AgentRunTaskListResult, error)
 	TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error)
@@ -153,10 +153,10 @@ func RegisterAgentRunService(s *jsonrpc.Server, svc AgentRunService) {
 				}
 				return svc.Restart(ctx, key.Workspace, key.Name)
 			},
-			"task/create": jsonrpc.UnaryMethod(svc.TaskCreate),
-			"task/get":    jsonrpc.UnaryMethod(svc.TaskGet),
-			"task/list":   jsonrpc.UnaryMethod(svc.TaskList),
-			"task/retry":  jsonrpc.UnaryMethod(svc.TaskRetry),
+			"task/do":    jsonrpc.UnaryMethod(svc.TaskDo),
+			"task/get":   jsonrpc.UnaryMethod(svc.TaskGet),
+			"task/list":  jsonrpc.UnaryMethod(svc.TaskList),
+			"task/retry": jsonrpc.UnaryMethod(svc.TaskRetry),
 		},
 	})
 }

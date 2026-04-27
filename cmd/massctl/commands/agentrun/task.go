@@ -18,11 +18,10 @@ func newTaskCmd(getClient cliutil.ClientFn) *cobra.Command {
 		Use:   "task",
 		Short: "Manage agent tasks",
 	}
-	cmd.AddCommand(newTaskCreateCmd(getClient))
+	cmd.AddCommand(newTaskDoCmd(getClient))
 	cmd.AddCommand(newTaskDoneCmd())
-	cmd.AddCommand(newTaskRetryCmd(getClient))
 	cmd.AddCommand(newTaskGetCmd(getClient))
-	cmd.AddCommand(newTaskListCmd(getClient))
+	cmd.AddCommand(newTaskRetryCmd(getClient))
 	return cmd
 }
 
@@ -38,7 +37,6 @@ func newTaskDoneCmd() *cobra.Command {
 		Short: "Mark a task as done by writing response to the task file",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// validate --response is a valid JSON object
 			var rawResp json.RawMessage
 			if err := json.Unmarshal([]byte(response), &rawResp); err != nil {
 				return fmt.Errorf("--response is not valid JSON: %w", err)
@@ -48,7 +46,6 @@ func newTaskDoneCmd() *cobra.Command {
 				return fmt.Errorf("--response must be a JSON object: %w", err)
 			}
 
-			// read existing task file
 			data, err := os.ReadFile(filePath)
 			if err != nil {
 				return fmt.Errorf("read task file: %w", err)
@@ -64,7 +61,6 @@ func newTaskDoneCmd() *cobra.Command {
 			task.UpdatedAt = &now
 			task.Response = rawResp
 
-			// atomic write via temp file + rename
 			tmp := filePath + ".tmp"
 			out, err := json.MarshalIndent(task, "", "  ")
 			if err != nil {
@@ -81,25 +77,25 @@ func newTaskDoneCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&filePath, "file", "", "Path to the task JSON file (required)")
-	cmd.Flags().StringVar(&reason, "reason", "", "Short string describing the outcome, e.g. success, failed, needs_human (required)")
-	cmd.Flags().StringVar(&response, "response", "", `Extra response fields as JSON object, e.g. {"description":"...","filePaths":["..."]} (required)`)
+	cmd.Flags().StringVar(&reason, "reason", "", "Outcome summary, e.g. success, failed, needs_human (required)")
+	cmd.Flags().StringVar(&response, "response", "", "Result as JSON object (required)")
 	_ = cmd.MarkFlagRequired("file")
 	_ = cmd.MarkFlagRequired("reason")
 	_ = cmd.MarkFlagRequired("response")
 	return cmd
 }
 
-func newTaskCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
+func newTaskDoCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
 		ws          string
-		name        string
+		run         string
 		description string
 		filePaths   []string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "create",
-		Short: "Create a task for an agent run",
+		Use:   "do",
+		Short: "Dispatch a task to an agent run",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
@@ -108,9 +104,9 @@ func newTaskCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			result, err := client.AgentRuns().TaskCreate(context.Background(), &pkgariapi.AgentRunTaskCreateParams{
+			result, err := client.AgentRuns().TaskDo(context.Background(), &pkgariapi.AgentRunTaskDoParams{
 				Workspace:   ws,
-				Name:        name,
+				Name:        run,
 				Description: description,
 				FilePaths:   filePaths,
 			})
@@ -121,27 +117,31 @@ func newTaskCreateCmd(getClient cliutil.ClientFn) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
-	cmd.Flags().StringVar(&name, "name", "", "Agent name (required)")
+	cmd.Flags().StringVar(&run, "run", "", "Agent run name (required)")
 	cmd.Flags().StringVar(&description, "description", "", "Task description (required)")
-	cmd.Flags().StringSliceVar(&filePaths, "file", nil, "Input file paths")
+	cmd.Flags().StringSliceVar(&filePaths, "files", nil, "Input file paths")
 	_ = cmd.MarkFlagRequired("workspace")
-	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("run")
 	_ = cmd.MarkFlagRequired("description")
 	return cmd
 }
 
+// newTaskGetCmd handles both single-task lookup (with positional IDs) and list-all.
+// Usage:
+//
+//	task get -w ws --run agent              → list all tasks
+//	task get -w ws --run agent id1 id2      → get specific tasks
 func newTaskGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
 		ws     string
-		name   string
-		taskID string
+		run    string
 		format cliutil.OutputFormat
 	)
 
 	cmd := &cobra.Command{
-		Use:   "get",
-		Short: "Get an agent task",
-		Args:  cobra.NoArgs,
+		Use:   "get [task-id...]",
+		Short: "Get or list tasks for an agent run",
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -149,33 +149,51 @@ func newTaskGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 			}
 			defer client.Close()
 
-			task, err := client.AgentRuns().TaskGet(context.Background(), &pkgariapi.AgentRunTaskGetParams{
-				Workspace: ws,
-				Name:      name,
-				TaskID:    taskID,
-			})
-			if err != nil {
-				return err
+			ctx := context.Background()
+			printer := &cliutil.ResourcePrinter{Format: format, Columns: taskColumns()}
+
+			if len(args) == 0 {
+				result, err := client.AgentRuns().TaskList(ctx, &pkgariapi.AgentRunTaskListParams{
+					Workspace: ws,
+					Name:      run,
+				})
+				if err != nil {
+					return err
+				}
+				items := make([]any, len(result.Items))
+				for i := range result.Items {
+					items[i] = result.Items[i]
+				}
+				return printer.PrintList(cmd.OutOrStdout(), items, result)
 			}
 
-			printer := &cliutil.ResourcePrinter{Format: format, Columns: taskColumns()}
-			return printer.Print(cmd.OutOrStdout(), []any{*task})
+			var tasks []any
+			for _, id := range args {
+				task, err := client.AgentRuns().TaskGet(ctx, &pkgariapi.AgentRunTaskGetParams{
+					Workspace: ws,
+					Name:      run,
+					TaskID:    id,
+				})
+				if err != nil {
+					return fmt.Errorf("task %s: %w", id, err)
+				}
+				tasks = append(tasks, *task)
+			}
+			return printer.Print(cmd.OutOrStdout(), tasks)
 		},
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
-	cmd.Flags().StringVar(&name, "name", "", "Agent name (required)")
-	cmd.Flags().StringVar(&taskID, "id", "", "Task ID (required)")
+	cmd.Flags().StringVar(&run, "run", "", "Agent run name (required)")
 	cliutil.AddOutputFlag(cmd, &format)
 	_ = cmd.MarkFlagRequired("workspace")
-	_ = cmd.MarkFlagRequired("name")
-	_ = cmd.MarkFlagRequired("id")
+	_ = cmd.MarkFlagRequired("run")
 	return cmd
 }
 
 func newTaskRetryCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
 		ws     string
-		name   string
+		run    string
 		taskID string
 	)
 
@@ -192,7 +210,7 @@ func newTaskRetryCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 			result, err := client.AgentRuns().TaskRetry(context.Background(), &pkgariapi.AgentRunTaskRetryParams{
 				Workspace: ws,
-				Name:      name,
+				Name:      run,
 				TaskID:    taskID,
 			})
 			if err != nil {
@@ -202,53 +220,11 @@ func newTaskRetryCmd(getClient cliutil.ClientFn) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
-	cmd.Flags().StringVar(&name, "name", "", "Agent name (required)")
+	cmd.Flags().StringVar(&run, "run", "", "Agent run name (required)")
 	cmd.Flags().StringVar(&taskID, "id", "", "Task ID (required)")
 	_ = cmd.MarkFlagRequired("workspace")
-	_ = cmd.MarkFlagRequired("name")
+	_ = cmd.MarkFlagRequired("run")
 	_ = cmd.MarkFlagRequired("id")
-	return cmd
-}
-
-func newTaskListCmd(getClient cliutil.ClientFn) *cobra.Command {
-	var (
-		ws     string
-		name   string
-		format cliutil.OutputFormat
-	)
-
-	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List tasks for an agent run",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := getClient()
-			if err != nil {
-				return err
-			}
-			defer client.Close()
-
-			result, err := client.AgentRuns().TaskList(context.Background(), &pkgariapi.AgentRunTaskListParams{
-				Workspace: ws,
-				Name:      name,
-			})
-			if err != nil {
-				return err
-			}
-
-			printer := &cliutil.ResourcePrinter{Format: format, Columns: taskColumns()}
-			items := make([]any, len(result.Items))
-			for i := range result.Items {
-				items[i] = result.Items[i]
-			}
-			return printer.PrintList(cmd.OutOrStdout(), items, result)
-		},
-	}
-	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
-	cmd.Flags().StringVar(&name, "name", "", "Agent name (required)")
-	cliutil.AddOutputFlag(cmd, &format)
-	_ = cmd.MarkFlagRequired("workspace")
-	_ = cmd.MarkFlagRequired("name")
 	return cmd
 }
 

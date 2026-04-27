@@ -448,9 +448,6 @@ func (m *ProcessManager) generateConfig(agent *pkgariapi.AgentRun, agentDef *pkg
 	if featureEnabled(ws, FeatureWorkspaceMesh) {
 		systemPrompt = appendPromptSection(systemPrompt, workspaceMeshMCPPrompt())
 	}
-	if featureEnabled(ws, FeatureAgentTask) {
-		systemPrompt = appendPromptSection(systemPrompt, agentTaskPrompt())
-	}
 	if agent.Spec.SystemPrompt != "" {
 		systemPrompt = appendPromptSection(systemPrompt, agent.Spec.SystemPrompt)
 	}
@@ -1116,18 +1113,4 @@ func workflowPrompt(workflowPath string) string {
 	return fmt.Sprintf(`<workflow>
 Follow workflow instructions in file %s.
 </workflow>`, workflowPath)
-}
-
-// agentTaskPrompt returns the AgentTask feature system prompt snippet.
-func agentTaskPrompt() string {
-	return `<agent-task-protocol>
-You may receive a task file path. Read the JSON file and treat all fields in "request" as your input and instructions.
-
-When done, report the result by running:
-massctl agentrun task done --file {task-path} --reason {reason} --response '{json}'
-
-- {task-path}: the path passed to you
-- {reason}: outcome summary (e.g. success, failed, needs_human)
-- {json}: any JSON object describing the result
-</agent-task-protocol>`
 }
