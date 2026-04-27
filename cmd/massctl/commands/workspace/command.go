@@ -20,12 +20,10 @@ A workspace must reach phase "ready" before agent runs can be created in it.
 Poll with: massctl ws get <name>
 
 Source types:
-  local    Mount an existing local directory (mass will not delete it)
-  git      Clone a git repository (mass manages the directory)
-  empty    Create an empty directory
-
-Examples:
-  # Create from local directory and wait until ready
+  local    mount an existing local directory (mass will not delete it)
+  git      clone a git repository (mass manages the directory)
+  empty    create an empty directory`,
+		Example: `  # Create from local directory and wait until ready
   massctl ws create local --name my-ws --path /path/to/code --wait
 
   # Clone a git repo

@@ -21,10 +21,8 @@ State machine:
                 └──> error <┘
 
 An agent run must be idle before you can send a prompt.
-Poll with: massctl ar get <name> -w <workspace>
-
-Examples:
-  # Create and wait until idle
+Poll with: massctl ar get <name> -w <workspace>`,
+		Example: `  # Create and wait until idle
   massctl ar create -w my-ws --name worker --agent claude \
     --system-prompt "You are a senior engineer." --wait
 

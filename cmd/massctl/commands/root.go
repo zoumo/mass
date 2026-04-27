@@ -20,37 +20,48 @@ import (
 )
 
 func init() {
-	cobra.AddTemplateFunc("shortWithAliases", func(cmd *cobra.Command) string {
+	cobra.AddTemplateFunc("nameWithAliases", func(cmd *cobra.Command) string {
 		if len(cmd.Aliases) == 0 {
-			return cmd.Short
+			return cmd.Name()
 		}
-		return cmd.Short + " (alias: " + strings.Join(cmd.Aliases, ", ") + ")"
+		return cmd.Name() + " (" + strings.Join(cmd.Aliases, ", ") + ")"
+	})
+	cobra.AddTemplateFunc("cmdAliasNamePad", func(parent *cobra.Command) int {
+		maxLen := 11
+		for _, c := range parent.Commands() {
+			if !c.IsAvailableCommand() && c.Name() != "help" {
+				continue
+			}
+			n := c.Name()
+			if len(c.Aliases) > 0 {
+				n = n + " (" + strings.Join(c.Aliases, ", ") + ")"
+			}
+			if len(n) > maxLen {
+				maxLen = len(n)
+			}
+		}
+		return maxLen + 1
 	})
 }
 
-// usageTemplate is a copy of cobra's default UsageTemplate with one change:
-// the subcommand Short line uses shortWithAliases to append alias hints.
-const usageTemplate = `Usage:{{if .Runnable}}
-  {{.UseLine}}{{end}}{{if .HasAvailableSubCommands}}
-  {{.CommandPath}} [command]{{end}}{{if gt (len .Aliases) 0}}
-
-Aliases:
-  {{.NameAndAliases}}{{end}}{{if .HasExample}}
-
+// usageTemplate renders help output in four sections:
+//  1. description (Long or Short)
+//  2. Examples
+//  3. Available Commands  (aliases shown inline)
+//  4. Options / Global Options
+const usageTemplate = `{{if .Long}}{{.Long | trimRightSpace}}{{else}}{{.Short | trimRightSpace}}{{end}}
+{{if .HasExample}}
 Examples:
-{{.Example}}{{end}}{{if .HasAvailableSubCommands}}
+{{.Example | trimRightSpace}}{{end}}{{if .HasAvailableSubCommands}}
 
-Available Commands:{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
-  {{rpad .Name .NamePadding }} {{shortWithAliases .}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
+Available Commands:{{$pad := cmdAliasNamePad .}}{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
+  {{rpad (nameWithAliases .) $pad}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
 
-Flags:
+Options:
 {{.LocalFlags.FlagUsages | trimRightSpace}}{{end}}{{if .HasAvailableInheritedFlags}}
 
-Global Flags:
-{{.InheritedFlags.FlagUsages | trimRightSpace}}{{end}}{{if .HasHelpSubCommands}}
-
-Additional help topics:{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
-  {{rpad .Name .NamePadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
+Global Options:
+{{.InheritedFlags.FlagUsages | trimRightSpace}}{{end}}{{if .HasAvailableSubCommands}}
 
 Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
 `
@@ -63,25 +74,23 @@ func NewRootCommand() *cobra.Command {
 		Use:          "massctl",
 		Short:        "CLI for mass daemon management",
 		SilenceUsage: true,
-		Long: `massctl controls workspaces and agent-run lifecycles in the mass daemon.
+		Long: `massctl controls workspaces and agent-run lifecycles in the mass daemon.`,
+		Example: `  # Typical end-to-end workflow
+  massctl ws create local --name my-ws --path /path/to/code --wait
+  massctl ar create -w my-ws --name worker --agent claude --wait
+  massctl ar prompt worker -w my-ws --text "Fix the bug" --wait
+  massctl ar stop worker -w my-ws
+  massctl ar delete worker -w my-ws
+  massctl ws delete my-ws
 
-Typical workflow:
-  1. Create workspace    massctl ws create local --name my-ws --path /path/to/code --wait
-  2. Create agent run    massctl ar create -w my-ws --name worker --agent claude --wait
-  3. Send prompt         massctl ar prompt worker -w my-ws --text "Fix the bug" --wait
-  4. Clean up            massctl ar stop worker -w my-ws
-                         massctl ar delete worker -w my-ws
-                         massctl ws delete my-ws
-
-Quick start (single agent from current directory):
+  # Quick start: single agent from current directory
   massctl compose run -w my-ws --agent claude
 
-Declarative multi-agent setup:
-  massctl compose apply -f compose.yaml
-
-Use "massctl [command] --help" for full examples and flag reference.`,
+  # Declarative multi-agent setup
+  massctl compose apply -f compose.yaml`,
 	}
 	root.SetUsageTemplate(usageTemplate)
+	root.SetHelpTemplate("{{.UsageString}}\n")
 	root.PersistentFlags().StringVar(&socketPath, "socket", filepath.Join(agentd.DefaultRoot(), "mass.sock"), "ARI socket path")
 
 	getClient := func() (ariclient.Client, error) {
