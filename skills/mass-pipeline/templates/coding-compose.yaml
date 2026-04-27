@@ -19,10 +19,6 @@ spec:
 
         On review feedback: revise plan.md in the same output directory to address every concern raised.
 
-        When done, run:
-          massctl agentrun task done --file <task-path> --reason <reason> --response '<json>'
-        Where reason is one of: success, failed, needs_human
-        And json contains at least {"description": "..."}
 
     - name: reviewer
       agent: claude
@@ -41,10 +37,6 @@ spec:
 
         Be decisive. Three review rounds maximum per loop — converge.
 
-        When done, run:
-          massctl agentrun task done --file <task-path> --reason <reason> --response '<json>'
-        Where reason is one of: success (acceptable), failed (changes needed), needs_human
-        And json contains at least {"description": "..."}
 
     - name: worker
       agent: claude
@@ -61,7 +53,3 @@ spec:
         2. Make no unrelated changes
         3. Write fixed files to the output directory specified in your task
 
-        When done, run:
-          massctl agentrun task done --file <task-path> --reason <reason> --response '<json>'
-        Where reason is one of: success, failed (blocker requires plan changes), needs_human
-        And json contains at least {"description": "..."}

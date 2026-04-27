@@ -595,7 +595,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 
 // TaskDo handles agentrun/task/do.
 func (a *agentRunAdapter) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error) {
-	if params.Workspace == "" || params.Name == "" || params.Description == "" {
+	if params.Workspace == "" || params.Name == "" || params.Prompt == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, name, and description are required")
 	}
 
@@ -623,7 +623,7 @@ func (a *agentRunAdapter) TaskDo(ctx context.Context, params *pkgariapi.AgentRun
 	}
 
 	// Build task.
-	req := map[string]any{"description": params.Description}
+	req := map[string]any{"prompt": params.Prompt}
 	if len(params.FilePaths) > 0 {
 		req["filePaths"] = params.FilePaths
 	}
@@ -822,7 +822,7 @@ func (a *agentRunAdapter) dispatchTaskPrompt(ctx context.Context, workspaceName,
 		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
 	}
 
-	promptText := fmt.Sprintf("Task attempt %d at: %s\nRead the JSON file. Treat all fields in \"request\" as your input and instructions.\nWhen done: massctl agentrun task done --file %s --reason {reason} --response '{json}'", attempt, taskPath, taskPath)
+	promptText := fmt.Sprintf("Task attempt %d at: %s\nRead the JSON file. Treat all fields in \"request\" as your input and instructions.\nWhen done: massctl agentrun task done --task-file %s --reason {reason} --response '{json}'", attempt, taskPath, taskPath)
 	if err := client.SendPrompt(ctx, &runapi.SessionPromptParams{
 		Prompt: []runapi.ContentBlock{runapi.TextBlock(promptText)},
 	}); err != nil {

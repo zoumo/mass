@@ -72,18 +72,6 @@ compose_file="$TMPDIR/compose.yaml"
 pipeline_file="$TMPDIR/pipeline.yaml"
 ```
 
-**Compose 文件占位符规则**：`metadata.name` 必须写成字面字符串 `WORKSPACE_NAME`，不得硬编码任何具体名称。`init-workflow.sh` 在运行时将其替换为实际的 workspace 名称。
-
-```yaml
-# ✅ 正确
-meta
-  name: WORKSPACE_NAME
-
-# ❌ 错误 — 硬编码会导致 workspace 名称固定，无法复用
-metadata:
-  name: my-project-ws
-```
-
 完整字段说明：
 - Compose YAML: [references/compose-schema.md](references/compose-schema.md)
 - Pipeline YAML: [references/pipeline-schema.md](references/pipeline-schema.md)
@@ -197,19 +185,11 @@ done
 
 **② 创建 task**
 
-Always inject the output directory into the description so the agent writes to a deterministic, workspace-namespaced path:
-
 ```bash
-output_dir=".mass/{workspace}/{stage.agent}/artifacts"
-full_description="{stage.description}
-
-Output directory: {output_dir}
-Write ALL output files to this directory."
-
 task_id=$(massctl agentrun task do -w {workspace} --run {stage.agent} \
-  --description "$full_description" \
+  --prompt "{stage.prompt}" \
   $(for f in "${input_files[@]}"; do echo "--files $f"; done) \
-  | jq -r '.task.id')
+  | jq -r '.id')
 ```
 
 **③ 轮询等待**
@@ -229,10 +209,8 @@ poll_exit=$?
 **④ 收集 artifacts**
 
 ```bash
-artifact_dir=".mass/{workspace}/{stage.agent}/artifacts/"
-if [[ -d "$artifact_dir" ]]; then
-  stage_artifacts[{stage.name}]=$(find "$artifact_dir" -type f)
-fi
+# artifacts 由 agent 写入临时目录（在 task response 中返回路径）
+stage_artifacts[{stage.name}]=$(echo "$task_json" | jq -r '.response.filePaths[]?' 2>/dev/null)
 ```
 
 **⑤ 读取 .status 并路由**
@@ -265,15 +243,10 @@ response_status=$(echo "$task_json" | jq -r '.reason // "unknown"')
 # 为每个 sub-task 创建 task，收集 task_id
 declare -A sub_task_ids
 for sub_task in "${stage.tasks[@]}"; do
-  output_dir=".mass/{workspace}/{sub_task.agent}/artifacts"
-  full_description="{sub_task.description}
-
-Output directory: {output_dir}
-Write ALL output files to this directory."
   task_id=$(massctl agentrun task do -w {workspace} --run {sub_task.agent} \
-    --description "$full_description" \
+    --prompt "{sub_task.prompt}" \
     $(for f in "${sub_task_input_files[@]}"; do echo "--files $f"; done) \
-    | jq -r '.task.id')
+    | jq -r '.id')
   sub_task_ids[{sub_task.agent}]=$task_id
 done
 ```
@@ -308,11 +281,11 @@ wait  # 等待所有后台 poll 完成（wait: all）
 **④ 收集所有 sub-task artifacts**
 
 ```bash
+# artifacts 由各 agent 写入临时目录，路径在各 task response.filePaths 中
 for agent in "${!sub_task_ids[@]}"; do
-  artifact_dir=".mass/{workspace}/$agent/artifacts/"
-  if [[ -d "$artifact_dir" ]]; then
-    stage_artifacts[{stage.name}]+=$(find "$artifact_dir" -type f)
-  fi
+  task_id="${sub_task_ids[$agent]}"
+  task_json=$(massctl agentrun task get -w {workspace} --run "$agent" "$task_id" -o json)
+  stage_artifacts[{stage.name}]+=$(echo "$task_json" | jq -r '.response.filePaths[]?' 2>/dev/null)
 done
 ```
 
