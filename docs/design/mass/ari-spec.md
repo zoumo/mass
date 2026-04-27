@@ -627,7 +627,8 @@ Create and dispatch a new task to an AgentRun. Creates a task record on disk, tr
 | `workspace` | string | yes | Workspace name |
 | `name` | string | yes | AgentRun name |
 | `prompt` | string | yes | Task prompt text |
-| `filePaths` | []string | no | Optional file paths to include as context |
+| `inputFiles` | []string | no | Input file paths to include as context |
+| `outputDir` | string | no | Directory for agent output files (default: tasks/{task-id}/output/) |
 
 **Result:** AgentTask
 
