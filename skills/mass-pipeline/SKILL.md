@@ -1,19 +1,19 @@
 ---
 name: mass-pipeline
 description: |
-  声明式多 agent pipeline 编排。读取 YAML pipeline 配置，自动创建 workspace 和 agents，
-  按阶段执行 task，通过 .status 路由，收集输出，清理资源。
-  触发：用户运行 /mass-pipeline，或提到"用 pipeline 执行"、"多 agent 协作完成任务"。
-  内置标准开发流程：plan → review → execute → code review → fix（使用 dev-pipeline 模板）。
+  Declarative multi-agent pipeline orchestration. Reads a YAML pipeline config, automatically creates workspaces and agents,
+  executes tasks stage by stage, routes via .reason, collects outputs, and cleans up resources.
+  Trigger: user runs /mass-pipeline, or mentions "execute with pipeline" or "multi-agent collaboration to complete a task".
+  Built-in standard development workflow: plan → review → execute → code review → fix (using the dev-pipeline template).
 version: 0.2.0
 ---
 
 # mass-pipeline — Declarative Multi-Agent Pipeline Orchestrator
 
-读取 YAML pipeline 配置，自动编排多 agent 执行流程。内置标准开发 pipeline 模板。
+Reads a YAML pipeline config and automatically orchestrates a multi-agent execution workflow. Includes a built-in standard development pipeline template.
 
-> **前置依赖**：本 skill 依赖 **mass-guide** skill 进行 workspace 和 agent 生命周期管理。
-> 执行前调用 mass-guide 确认 `mass daemon status` 正常。
+> **Prerequisite**: This skill depends on the **mass-guide** skill for workspace and agent lifecycle management.
+> Before executing, call mass-guide to confirm `mass daemon status` is healthy.
 
 ## Orchestrator Boundary Rules
 
@@ -22,7 +22,7 @@ version: 0.2.0
 ### DO
 - Create tasks for agents via `massctl agentrun task do`
 - Poll task completion via `scripts/poll-task.sh`
-- Read `.status` and route to the next stage
+- Read `.reason` and route to the next stage
 - Pass artifacts between stages as `--input-files` inputs
 - Call scripts (`validate-pipeline.sh`, `poll-task.sh`) for deterministic operations
 - Make routing decisions (which stage to run next, when to escalate)
@@ -38,33 +38,33 @@ version: 0.2.0
 
 ---
 
-## 触发格式
+## Trigger Format
 
-### 内置 coding-pipeline（推荐）
+### Built-in coding-pipeline (recommended)
 
-直接描述任务，使用内置标准开发流程（plan → review → execute → code review → fix）：
+Describe the task directly; the built-in standard development workflow is used (plan → review → execute → code review → fix):
 
 ```
 /mass-pipeline
-用 pipeline 实现 [任务描述]
+Implement [task description] with pipeline
 ```
 
-Orchestrator 自动使用：
+The orchestrator automatically uses:
 - compose: `skills/mass-pipeline/templates/coding-compose.yaml`
 - pipeline: `skills/mass-pipeline/templates/coding-pipeline.yaml`
 
-每个审查循环最多 3 轮收敛，超限后 escalate。
+Each review loop converges within at most 3 rounds; exceeding the limit triggers an escalate.
 
-### 自定义 pipeline
+### Custom pipeline
 
 ```
 /mass-pipeline /path/to/pipeline.yaml
 /mass-pipeline /path/to/pipeline.yaml --input file1.md --input file2.md
 ```
 
-`--input` 文件注入到所有未显式配置 `input_files` 的 stage。
+`--input` files are injected into all stages that do not have `input_files` explicitly configured.
 
-**自定义文件写入规则**：当 orchestrator 需要生成自定义 compose 或 pipeline 文件时，写到临时目录：
+**Custom file write rule**: When the orchestrator needs to generate a custom compose or pipeline file, write it to a temporary directory:
 
 ```bash
 TMPDIR=$(mktemp -d /tmp/mass-pipeline-XXXXXX)
@@ -72,60 +72,60 @@ compose_file="$TMPDIR/compose.yaml"
 pipeline_file="$TMPDIR/pipeline.yaml"
 ```
 
-完整字段说明：
+Full field reference:
 - Compose YAML: [references/compose-schema.md](references/compose-schema.md)
 - Pipeline YAML: [references/pipeline-schema.md](references/pipeline-schema.md)
 
-内置模板参考:
+Built-in template reference:
 - `templates/coding-compose.yaml` — workspace-compose with planner/reviewer/worker agents
 - `templates/coding-pipeline.yaml` — plan → review → execute → code review → fix
 
 ---
 
-## 执行流程
+## Execution Workflow
 
 ```
-Step 0: 健康检查 + 读取并验证 workflow.yaml
-Step 1: 创建 workspace + 所有 agentrun
-Step 2: 执行阶段循环（stage loop）
-Step 3: 收集输出 artifacts
-Step 4: 清理 workspace + agents
-Step 5: 打印执行摘要
+Step 0: Health check + read and validate workflow.yaml
+Step 1: Create workspace + all agentrun instances
+Step 2: Execute the stage loop
+Step 3: Collect output artifacts
+Step 4: Clean up workspace + agents
+Step 5: Print execution summary
 ```
 
 ---
 
-## Step 0: 健康检查 + 读取 pipeline + 确定 compose
+## Step 0: Health Check + Read Pipeline + Determine Compose
 
-### 0a. 健康检查
+### 0a. Health Check
 
 ```bash
 mass daemon status
 ```
 
-- `daemon: running` → 继续
-- 否则 → 停止，告知用户
+- `daemon: running` → continue
+- Otherwise → stop and notify the user
 
-### 0b. 读取 pipeline + 确定 compose 文件
+### 0b. Read Pipeline + Determine Compose File
 
-从 pipeline YAML 提取：
-- `name` — pipeline 名称，用作 workspace name 前缀：`{name}-{random4hex}`
-- `description` — 仅展示用
-- `stages` — 有序列表
-- `output` — 输出配置（可选）
+Extract from the pipeline YAML:
+- `name` — pipeline name, used as workspace name prefix: `{name}-{random4hex}`
+- `description` — display only
+- `stages` — ordered list
+- `output` — output configuration (optional)
 
-**Compose 文件由 orchestrator 单独决定**，不在 pipeline YAML 中引用：
-- 内置 coding pipeline → 直接使用 `skills/mass-pipeline/templates/coding-compose.yaml`
-- 自定义 pipeline → orchestrator 自行生成 compose 文件写到临时目录
+**The compose file is determined solely by the orchestrator** and is not referenced inside the pipeline YAML:
+- Built-in coding pipeline → use `skills/mass-pipeline/templates/coding-compose.yaml` directly
+- Custom pipeline → orchestrator generates the compose file and writes it to a temporary directory
 
-生成 workspace 名：
+Generate workspace name:
 ```bash
 WORKSPACE_NAME="{pipeline.name}-$(openssl rand -hex 2)"
 ```
 
-### 0c. 前置验证（启动前）
+### 0c. Pre-flight Validation (before startup)
 
-只验证 pipeline 字段（stages/routes）：
+Validate only pipeline fields (stages/routes):
 
 ```bash
 skills/mass-pipeline/scripts/validate-pipeline.sh {pipeline_file}
@@ -135,47 +135,58 @@ Exit code 0: validation passed. Show summary to user.
 Exit code 1: validation failed, prints errors. Report and stop.
 Exit code 2: missing dependency. Report and stop.
 
-After successful validation, ask the user: "确认执行？" Wait for confirmation before proceeding.
+After successful validation, ask the user: "Confirm execution?" Wait for confirmation before proceeding.
 
 ---
 
-## Step 1: 创建 Workspace + Agents
+## Step 1: Create Workspace + Agents
 
 ```bash
 massctl compose apply -f {compose_file} --workspace {workspace_name}
 ```
 
-`--workspace` 覆盖 compose 文件中的 `metadata.name`，等待 workspace ready + 所有 agent idle。失败时执行 Step 4 清理并报告错误。
+`--workspace` overrides `metadata.name` in the compose file. Wait for workspace ready + all agents idle. On failure, execute Step 4 cleanup and report the error.
+
+**Immediately after successful creation, retrieve the workspace absolute path — all subsequent paths are relative to this:**
+
+```bash
+WORKSPACE_PATH=$(massctl workspace get {workspace_name} -o json | jq -r '.status.path')
+```
 
 ---
 
 ## Step 2: Stage Execution Loop
 
-从 `stages[0]` 开始，按 routes 跳转执行，直到到达 `__done__` 或 `__escalate__`。
+Start from `stages[0]`, follow routes to jump between stages, until `__done__` or `__escalate__` is reached.
 
-维护内存状态（本 session 内）：
-- `current_stage` — 当前 stage name
-- `retry_counters` — map: stage_name → retry_count（初始化为全 0）
-- `stage_artifacts` — map: stage_name → list of artifact file paths（执行后填充）
+Maintain in-memory state (within this session):
+- `current_stage` — current stage name
+- `retry_counters` — map: stage_name → retry_count (initialized to all 0)
+- `stage_artifacts` — map: stage_name → list of artifact file paths (populated after execution)
+- `WORKSPACE_PATH` — workspace absolute path retrieved in Step 1
 
-### 2a. 执行 Serial Stage
+### 2a. Execute Serial Stage
 
-**① 构建 task input files 列表**
+**① Build task input files list**
+
+All paths must be absolute paths:
 
 ```bash
 input_files=()
 
-# 1. --input 全局注入（仅当 stage 无显式 input_files 时）
+# 1. --input global injection (only when stage has no explicit input_files)
 if [[ ${#stage.input_files[@]} -eq 0 ]]; then
-  input_files+=("${global_inputs[@]}")
+  for f in "${global_inputs[@]}"; do
+    input_files+=($(realpath "$f"))
+  done
 fi
 
-# 2. 显式 input_files
+# 2. Explicit input_files (relative paths are resolved against WORKSPACE_PATH)
 for f in "${stage.input_files[@]}"; do
-  input_files+=("$f")
+  [[ "$f" = /* ]] && input_files+=("$f") || input_files+=("${WORKSPACE_PATH}/$f")
 done
 
-# 3. input_from: 收集上游 stage artifacts
+# 3. input_from: collect upstream stage artifacts (already absolute paths)
 for upstream_stage in "${stage.input_from[@]}"; do
   for artifact in "${stage_artifacts[$upstream_stage][@]}"; do
     input_files+=("$artifact")
@@ -183,10 +194,10 @@ for upstream_stage in "${stage.input_from[@]}"; do
 done
 ```
 
-**② 创建 task**
+**② Create task**
 
 ```bash
-STAGE_OUTPUT_DIR=".mass/{workspace}/{stage.agent}/output/{stage.name}"
+STAGE_OUTPUT_DIR="${WORKSPACE_PATH}/.mass/{workspace}/{stage.agent}/output/{stage.name}"
 mkdir -p "$STAGE_OUTPUT_DIR"
 
 task_id=$(massctl agentrun task do -w {workspace} --run {stage.agent} \
@@ -196,58 +207,58 @@ task_id=$(massctl agentrun task do -w {workspace} --run {stage.agent} \
   | jq -r '.id')
 ```
 
-**③ 轮询等待**
+**③ Poll and wait**
 
 ```bash
 skills/mass-pipeline/scripts/poll-task.sh {workspace} {stage.agent} {task_id}
 poll_exit=$?
 ```
 
-| poll exit | 处理 |
-|-----------|------|
-| 0 | 读取 .status，执行路由 |
-| 1 | agent idle retry 用尽 → 视为 `failed`，走 routes 路由 |
-| 2 | agent error/stopped → 停止，人工介入（不走 routes，直接 escalate） |
-| 3 | 超时 → 视为 `failed`，走 routes 路由 |
+| poll exit | handling |
+|-----------|----------|
+| 0 | read .reason, execute routing |
+| 1 | agent idle retries exhausted → treat as `failed`, follow routes |
+| 2 | agent error/stopped → stop, require manual intervention (skip routes, escalate directly) |
+| 3 | timeout → treat as `failed`, follow routes |
 
-**④ 收集 artifacts**
+**④ Collect artifacts**
 
 ```bash
-# artifacts 由 agent 写入 --output-dir 指定的目录
+# artifacts are written by agent to the directory specified by --output-dir
 stage_artifacts[{stage.name}]=$(find "$STAGE_OUTPUT_DIR" -type f 2>/dev/null)
 ```
 
-**⑤ 读取 .status 并路由**
+**⑤ Read .reason and route**
 
 ```bash
 task_json=$(massctl agentrun task get -w {workspace} --run {stage.agent} {task_id} -o json)
 response_status=$(echo "$task_json" | jq -r '.reason // "unknown"')
 ```
 
-按 `stage.routes` 顺序匹配 `when == response_status`，找到第一个匹配的 `goto`：
+Match `when == response_status` in `stage.routes` order, find the first matching `goto`:
 
-- `goto` 是 stage name：
+- `goto` is a stage name:
   - `retry_counters[goto]++`
-  - 若 `retry_counters[goto] > stage.max_retries`（默认 3）：→ `__escalate__`
-  - 否则：`current_stage = goto`，继续循环
-- `goto: __done__`：进入 Step 3
-- `goto: __escalate__`：打印执行路径 + response.description，停止
+  - If `retry_counters[goto] > stage.max_retries` (default 3): → `__escalate__`
+  - Otherwise: `current_stage = goto`, continue loop
+- `goto: __done__`: proceed to Step 3
+- `goto: __escalate__`: print execution path + response.description, stop
 
-无匹配 `when`：按语义判断最接近的 route；若无法判断，视为 `needs_human` → `__escalate__`。
+No matching `when`: make the best semantic judgment; if unable to determine, treat as `needs_human` → `__escalate__`.
 
 ---
 
-### 2b. 执行 Parallel Stage
+### 2b. Execute Parallel Stage
 
-**① 并发创建所有 sub-task**
+**① Concurrently create all sub-tasks**
 
-对每个 `tasks[i]` 按 2a 的 ① 逻辑构建 input files，并发执行：
+For each `tasks[i]`, build input files following the ① logic from 2a, then execute concurrently:
 
 ```bash
-# 为每个 sub-task 创建 task，收集 task_id
+# Create a task for each sub-task, collect task_ids
 declare -A sub_task_ids
 for sub_task in "${stage.tasks[@]}"; do
-  SUB_OUTPUT_DIR=".mass/{workspace}/${sub_task.agent}/output/{stage.name}"
+  SUB_OUTPUT_DIR="${WORKSPACE_PATH}/.mass/{workspace}/${sub_task.agent}/output/{stage.name}"
   mkdir -p "$SUB_OUTPUT_DIR"
   task_id=$(massctl agentrun task do -w {workspace} --run {sub_task.agent} \
     --prompt "{sub_task.prompt}" \
@@ -258,9 +269,9 @@ for sub_task in "${stage.tasks[@]}"; do
 done
 ```
 
-**② 并发轮询**
+**② Concurrent polling**
 
-对每个 sub-task 并发运行 poll-task.sh（后台进程），等待结果：
+Run poll-task.sh concurrently for each sub-task (background processes), wait for results:
 
 ```bash
 declare -A sub_poll_exits
@@ -270,140 +281,152 @@ for agent in "${!sub_task_ids[@]}"; do
     echo $? > /tmp/poll_exit_{workspace}_{agent}
   ) &
 done
-wait  # 等待所有后台 poll 完成（wait: all）
-# wait: any — 使用 wait -n 等第一个完成，cancel 其余（若 massctl 支持 task cancel）
+wait  # wait for all background polls to complete (wait: all)
+# wait: any — use wait -n to wait for the first to complete, cancel the rest (if massctl supports task cancel)
 ```
 
-**③ 聚合状态**
+**③ Aggregate reason**
 
-读取每个 sub-task 的 .status，计算聚合结果：
+Read each sub-task's .reason and compute the aggregated result:
 
-| 聚合规则 | 触发条件 |
-|---------|---------|
-| `all_success` | 所有 sub-task .status == success |
-| `all_failed` | 所有 sub-task .status == failed |
-| `any_failed` | 至少一个 failed（且非 all_failed） |
-| `any_success` | 至少一个 success（用于 wait: any 场景） |
+| Aggregation rule | Trigger condition |
+|------------------|-------------------|
+| `all_success` | all sub-task .reason == success |
+| `all_failed` | all sub-task .reason == failed |
+| `any_failed` | at least one failed (and not all_failed) |
+| `any_success` | at least one success (for wait: any scenarios) |
 
-**④ 收集所有 sub-task artifacts**
+**④ Collect all sub-task artifacts**
 
 ```bash
-# artifacts 由各 agent 写入 --output-dir 指定的目录
 for agent in "${!sub_task_ids[@]}"; do
-  SUB_OUTPUT_DIR=".mass/{workspace}/${agent}/output/{stage.name}"
+  SUB_OUTPUT_DIR="${WORKSPACE_PATH}/.mass/{workspace}/${agent}/output/{stage.name}"
   stage_artifacts[{stage.name}]+=$(find "$SUB_OUTPUT_DIR" -type f 2>/dev/null)
 done
 ```
 
-**⑤ 路由** — 与 serial stage 相同逻辑，使用聚合 status 匹配 `when`。
+**⑤ Route** — same logic as serial stage, using the aggregated reason to match `when`.
 
 ---
 
-## Step 3: Collect Output Artifacts
+## Step 3: Collect Artifact Paths
 
-仅在 `__done__` 时执行（escalate 时跳过，保留 artifacts 供 debug）。
+Do not move files. Agents have already written files to `.mass/{workspace}/{agent}/output/{stage}/` via `--output-dir`.
+
+This step only scans each stage's output dir, records the actually produced file paths, for display in the Step 5 summary:
 
 ```bash
-destination="${output.destination:-./mass-pipeline-output/}"
-mkdir -p "$destination"
-
-for stage_name in "${output.collect_from[@]}"; do
-  for artifact in "${stage_artifacts[$stage_name][@]}"; do
-    cp "$artifact" "$destination"
-  done
+for stage_name in all_executed_stages; do
+  STAGE_OUTPUT_DIR="${WORKSPACE_PATH}/.mass/{workspace}/{stage.agent}/output/{stage_name}"
+  stage_artifacts[{stage_name}]=$(find "$STAGE_OUTPUT_DIR" -type f 2>/dev/null)
 done
-
-echo "Output collected to: $destination"
-ls "$destination"
 ```
 
 ---
 
-## Step 4: 清理
+## Step 4: Cleanup
 
-**无论成功、失败、escalate，均执行清理。** 失败时保留 `.mass/{workspace}/` artifacts（不删 workspace 内文件，只停止 agent 进程和删除 agentrun 记录）。
+**Execute cleanup regardless of success, failure, or escalate.** On failure, retain `.mass/{workspace}/` artifacts (do not delete files inside the workspace; only stop agent processes and delete agentrun records).
 
-使用 **mass-guide** skill 顺序执行：
+### preserve_workspace Logic
+
+Read `cleanup.preserve_workspace` from the pipeline YAML (default `false`):
+
+- `false` (default):
+  - Success (`__done__`) → stop agentrun + delete agentrun + delete workspace
+  - Failure/escalate → stop agentrun + delete agentrun, **retain workspace directory**, ask user whether to delete
+- `true`:
+  - Any termination path → only stop agentrun processes, **retain agentrun records and workspace directory**
+  - Print notice: `Workspace preserved for debugging: {workspace_name}` + artifact paths
+
+Use **mass-guide** skill to execute sequentially:
 
 ```bash
-# 1. 停止所有 agentrun
+# 1. Stop all agentruns
 for agent in all_agent_names; do
   massctl agentrun stop "$agent" -w {workspace}
 done
 
-# 2. 删除所有 agentrun
+# 2. Delete all agentruns (skip when preserve_workspace=true)
 for agent in all_agent_names; do
   massctl agentrun delete "$agent" -w {workspace}
 done
 
-# 3. 删除 workspace（成功时删除；失败/escalate 时询问用户是否删除）
+# 3. Delete workspace (skip when preserve_workspace=true; ask user on failure/escalate)
 massctl workspace delete {workspace}
 ```
 
-清理失败时记录警告，继续清理其余资源，不中断流程。
+On cleanup failure, log a warning, continue cleaning up remaining resources, and do not interrupt the flow.
 
 ---
 
-## Step 5: 打印执行摘要
+## Step 5: Print Execution Summary
 
 ```
 === mass-pipeline execution summary ===
-Workflow:   {name}
+Pipeline:   {name}
 Status:     done | escalated
-Duration:   {elapsed}s
+Duration:   {total_elapsed}s
 
-Stage execution path:
-  design          → success  (1 attempt)
-  parallel_review → all_success (1 attempt)
-  implement       → success  (2 attempts)
+Stages:
+  audit_plan   success   attempt 1/3   42s
+    prompt:    "Audit CLI ↔ docs drift in this repo"
+    output:    .mass/{workspace}/worker/output/audit_plan/
+               ├── audit-report.md
+               └── fix-plan.md
 
-Output: {destination}
+  review       success   attempt 1/3   18s
+    prompt:    "Review audit-report.md and fix-plan.md ..."
+    output:    .mass/{workspace}/reviewer/output/review/
+               └── final-fix-plan.md
 ```
 
-escalate 时额外打印：
+escalate additionally prints:
 ```
 === ESCALATION ===
-Stage: {stage_name}
-Reason: {response.description}
+Stage:       {stage_name}
+Reason:      {response.description}
 Retry count: {n}/{max_retries}
 
+Artifacts:   .mass/{workspace}/{agent}/output/{stage_name}/
+
 Next steps:
-  - Review artifacts at: .mass/{workspace}/{agent}/artifacts/
-  - Re-run with adjusted workflow or fix the issue manually
+  - Review artifacts above
+  - Re-run with adjusted pipeline or fix the issue manually
 ```
 
 ---
 
-## 错误处理速查
+## Error Handling Quick Reference
 
-| 场景 | 行为 |
-|------|------|
-| YAML 文件不存在 | 立即停止，报告路径错误，不创建任何资源 |
-| YAML 验证失败 | 立即停止，报告具体字段错误，不创建任何资源 |
-| workspace 创建失败 | 立即停止，不创建 agentrun |
-| agentrun 创建失败 | 停止，清理已创建的 agentrun + workspace |
-| poll exit 2 (agent error) | 不走 routes，直接 __escalate__ |
-| poll exit 1/3 (idle/timeout) | 视为 `failed`，走正常 routes 路由 |
-| retry 超限 | 强制 __escalate__，不管 routes 配置 |
-| `__escalate__` | 打印完整上下文，保留 artifacts，清理进程资源 |
-| 无匹配 route | 按 .status 语义判断；无法判断 → __escalate__ |
-| cleanup 失败 | 记录警告，继续清理其余资源 |
-
----
-
-## 设计原则
-
-1. **YAML 是语义描述，不是模板** — orchestrator（LLM）读取 `description` 字段并自行判断如何构建 task prompt，不 hardcode 模板
-2. **Agent 间不直接通信** — 所有协调经 orchestrator via task API
-3. **失败时保留 artifacts** — 供 debug，不自动删除
-4. **验证前置** — YAML 问题在启动前暴露，不在执行中途失败
-5. **cleanup 保证** — 任何终止路径都执行清理
+| Scenario | Behavior |
+|----------|----------|
+| YAML file not found | Stop immediately, report path error, create no resources |
+| YAML validation failed | Stop immediately, report specific field errors, create no resources |
+| workspace creation failed | Stop immediately, do not create agentrun |
+| agentrun creation failed | Stop, clean up already-created agentruns + workspace |
+| poll exit 2 (agent error) | Skip routes, go directly to __escalate__ |
+| poll exit 1/3 (idle/timeout) | Treat as `failed`, follow normal routes |
+| retry limit exceeded | Force __escalate__, ignore routes config |
+| `__escalate__` | Print full context, retain artifacts, clean up process resources |
+| No matching route | Make semantic judgment from .reason; if unable to determine → __escalate__ |
+| cleanup failed | Log warning, continue cleaning up remaining resources |
 
 ---
 
-## 与其他 skill 的关系
+## Design Principles
 
-| Skill | 职责 |
-|-------|------|
-| `mass-guide` | 前置依赖：workspace/agent 生命周期原语 |
-| `mass-pipeline` | 本 skill：声明式配置驱动的通用 orchestrator |
+1. **YAML is a semantic description, not a template** — the orchestrator (LLM) reads the `description` field and decides how to construct task prompts; no hardcoded templates
+2. **Agents do not communicate directly** — all coordination goes through the orchestrator via the task API
+3. **Preserve artifacts on failure** — retained for debugging; not deleted automatically
+4. **Validation is front-loaded** — YAML issues are surfaced before startup, not mid-execution
+5. **Cleanup is guaranteed** — any termination path executes cleanup
+
+---
+
+## Relationship to Other Skills
+
+| Skill | Responsibility |
+|-------|----------------|
+| `mass-guide` | Prerequisite dependency: workspace/agent lifecycle primitives |
+| `mass-pipeline` | This skill: declarative config-driven general-purpose orchestrator |

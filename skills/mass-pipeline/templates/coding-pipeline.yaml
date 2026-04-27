@@ -1,6 +1,9 @@
 name: coding
 description: "Standard development pipeline: plan → review → execute → code review → fix"
 
+cleanup:
+  preserve_workspace: false  # set true to keep workspace + artifacts for debugging
+
 stages:
   - name: plan
     agent: planner
@@ -54,6 +57,4 @@ stages:
         goto: __escalate__
 
 output:
-  collect_from: [execute]
-  destination: ./pipeline-output/
   summary: true

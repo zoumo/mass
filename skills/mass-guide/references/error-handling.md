@@ -1,55 +1,55 @@
-# 错误处理
+# Error Handling
 
-## 前置检查错误
+## Pre-flight Check Errors
 
-| 错误 | 原因 | 处理 |
-|------|------|------|
-| `daemon: not running` | daemon 未启动 | 告知用户启动，不要自行启动 |
-| 连接被拒绝 | `--socket` 路径错误 | 与用户确认 socket 路径 |
+| Error | Cause | Resolution |
+|-------|-------|------------|
+| `daemon: not running` | Daemon is not started | Inform the user to start it; do not start it yourself |
+| Connection refused | `--socket` path is wrong | Confirm the socket path with the user |
 
-## Workspace 错误
+## Workspace Errors
 
-| 错误 | 原因 | 处理 |
-|------|------|------|
-| phase 停在 `pending` | source 准备慢（大仓库 clone） | 继续轮询。超过 5 分钟让用户检查 daemon 日志 |
-| phase 变为 `error` | source 无效：路径不存在、git URL 不可达、ref 不存在 | `workspace delete` → 修正配置 → 重建 |
-| 删除失败："workspace has active agents" | 还有 agentrun 挂在上面 | 先 stop + delete 所有 agentrun，再删 workspace |
+| Error | Cause | Resolution |
+|-------|-------|------------|
+| Phase stuck at `pending` | Source preparation is slow (large repo clone) | Keep polling. If it exceeds 5 minutes, ask the user to check daemon logs |
+| Phase becomes `error` | Invalid source: path does not exist, git URL unreachable, ref not found | `workspace delete` → fix the config → recreate |
+| Delete fails: "workspace has active agents" | There are agentruns still attached | Stop and delete all agentruns first, then delete the workspace |
 
-## AgentRun 错误
+## AgentRun Errors
 
-| 错误 | 原因 | 处理 |
-|------|------|------|
-| 创建失败：workspace not ready | workspace 还在 `pending` | 等 workspace `ready` 后重试 |
-| 创建失败：agent not found | `--agent` 名称错误 | `agent get` 查看可用 agent 列表 |
-| 停在 `creating` 超过 2 分钟 | agent 二进制未安装或 ACP 握手超时 | `agentrun get` 查 errorMessage，让用户检查 agent 二进制可用性 |
-| prompt 被拒绝："not idle" | agent 不在 `idle` 状态 | `running` → `cancel` 后等 idle；`stopped`/`error` → `restart` 后等 idle |
-| 工作中进入 `error` | 运行时崩溃、OOM、shim 进程死亡 | `agentrun restart`。反复失败则检查 daemon 日志 |
-| daemon 重启后 agent `error` | shim 进程未能存活 | `agentrun restart` |
-| 删除失败："not stopped" | agent 还在 running 或 idle | 先 `stop`，再 `delete` |
+| Error | Cause | Resolution |
+|-------|-------|------------|
+| Create fails: workspace not ready | Workspace is still `pending` | Wait for workspace to be `ready`, then retry |
+| Create fails: agent not found | `--agent` name is wrong | Use `agent get` to view the list of available agents |
+| Stuck in `creating` for over 2 minutes | Agent binary not installed or ACP handshake timed out | Use `agentrun get` to check errorMessage; ask the user to verify agent binary availability |
+| Prompt rejected: "not idle" | Agent is not in `idle` state | If `running` → `cancel`, then wait for idle; if `stopped`/`error` → `restart`, then wait for idle |
+| Enters `error` while working | Runtime crash, OOM, or shim process died | `agentrun restart`. If it keeps failing, check daemon logs |
+| Agent `error` after daemon restart | Shim process did not survive | `agentrun restart` |
+| Delete fails: "not stopped" | Agent is still running or idle | `stop` first, then `delete` |
 
-## 决策树
+## Decision Tree
 
 ```
-Agent 无响应？
-├─ agentrun get <name> -w <ws> 查状态
-├─ running 太久？
-│  └─ cancel → 等 idle → 重新 prompt
-├─ error？
-│  └─ restart → 等 idle → 重新 prompt
-├─ stopped？
-│  └─ restart → 等 idle → 重新 prompt
-├─ creating 超过 2 分钟？
-│  └─ 有 errorMessage → 让用户检查 agent 二进制
-│  └─ 无 errorMessage → 继续等待
-└─ idle 但 prompt 没反应？
-   └─ stop → delete → 重建 → 重新 prompt
+Agent unresponsive?
+├─ agentrun get <name> -w <ws>  to check state
+├─ running for too long?
+│  └─ cancel → wait for idle → re-prompt
+├─ error?
+│  └─ restart → wait for idle → re-prompt
+├─ stopped?
+│  └─ restart → wait for idle → re-prompt
+├─ creating for over 2 minutes?
+│  └─ has errorMessage → ask user to check agent binary
+│  └─ no errorMessage → keep waiting
+└─ idle but prompt has no effect?
+   └─ stop → delete → recreate → re-prompt
 ```
 
-> Task 协议相关错误见 **mass-pilot** skill。
+> For Task protocol-related errors, see the **mass-pilot** skill.
 
-## 完整重建
+## Full Rebuild
 
-部分恢复不行时，全部拆掉重来：
+When partial recovery is not possible, tear everything down and start over:
 
 ```bash
 for agent in $(massctl agentrun get -w my-ws -o json | jq -r '.[].metadata.name'); do
@@ -57,6 +57,6 @@ for agent in $(massctl agentrun get -w my-ws -o json | jq -r '.[].metadata.name'
   massctl agentrun delete $agent -w my-ws 2>/dev/null
 done
 massctl workspace delete my-ws
-# 然后用 compose 重建
+# Then rebuild with compose
 massctl compose apply -f compose.yaml
 ```

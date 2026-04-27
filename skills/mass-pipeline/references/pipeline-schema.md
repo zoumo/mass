@@ -10,6 +10,13 @@ Pipeline files define stages, routing logic, and output. They reference a compos
 | `description` | string | no | Human-readable purpose |
 | `stages` | list | yes | Ordered list of stages to execute |
 | `output` | object | no | Output collection configuration |
+| `cleanup` | object | no | Cleanup behavior configuration |
+
+## `cleanup`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `preserve_workspace` | bool | no | If `true`, keep workspace directory and agentrun records after completion for debugging. Default: `false` |
 
 > **Note:** Pipeline files do not reference a compose file. The compose file (workspace + agents) is managed separately by the orchestrator and applied via `massctl compose apply`.
 
@@ -85,9 +92,10 @@ Routing matches against the task's `.reason` field (set by `massctl agentrun tas
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `collect_from` | list | no | Stage names whose artifacts to copy to `destination` |
-| `destination` | string | no | Local path to copy artifacts to. Default: `./mass-pipeline-output/` |
 | `summary` | bool | no | Print execution summary on completion. Default: `true` |
+
+Files are written by agents directly via `--output-dir` to `.mass/{workspace}/{agent}/output/{stage}/`.
+No collection or copying. The summary prints the output paths for each stage.
 
 ---
 
@@ -145,7 +153,8 @@ stages:
         goto: __escalate__
 
 output:
-  collect_from: [implement]
-  destination: ./output/
   summary: true
+
+cleanup:
+  preserve_workspace: false  # set true to keep workspace + artifacts for debugging
 ```
