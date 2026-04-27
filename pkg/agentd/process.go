@@ -1085,7 +1085,7 @@ Workspace path: %s
 
 func workspaceMeshMCPPrompt() string {
 	return fmt.Sprintf(`<%s>
-You can use the workspace-mesh MCP to discover other agents and collaborate with them.
+Use workspace-mesh MCP to collaborate with other agents.
 </%s>`,
 		pkgariapi.WorkspaceMeshName,
 		pkgariapi.WorkspaceMeshName,
