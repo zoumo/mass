@@ -8,7 +8,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -449,6 +451,90 @@ func TestGenerateConfig(t *testing.T) {
 			t.Errorf("expected no MCP servers when WorkspaceMesh disabled, got %d", len(cfg.Session.McpServers))
 		}
 	})
+}
+
+// TestKillRun_TerminatesProcessGroup verifies that killRun signals the entire
+// process group spawned by an agent-run, not just the leader. This is the
+// regression test for the leak that left bunx/cfuse/MCP descendants running
+// after agentrun stop/delete (PPID reparented to 1).
+func TestKillRun_TerminatesProcessGroup(t *testing.T) {
+	// Spawn a parent that forks a long-running grandchild and waits on it.
+	// `setsid` would also work; using Setpgid here mirrors forkRun exactly.
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	cmd := exec.Command("/bin/sh", "-c",
+		"sleep 600 & echo $! > "+pidFile+"; wait")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start parent: %v", err)
+	}
+
+	// Track parent exit so killRun can drain Done.
+	done := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(done)
+	}()
+
+	// Wait for the child to write its PID.
+	var childPID int
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(pidFile)
+		if err == nil && len(data) > 0 {
+			if pid, perr := strconv.Atoi(strings.TrimSpace(string(data))); perr == nil && pid > 0 {
+				childPID = pid
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if childPID == 0 {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		t.Fatal("child PID never written")
+	}
+
+	// Sanity-check pgid setup: child must share parent's pgid.
+	parentPgid, err := syscall.Getpgid(cmd.Process.Pid)
+	if err != nil {
+		t.Fatalf("getpgid parent: %v", err)
+	}
+	childPgid, err := syscall.Getpgid(childPID)
+	if err != nil {
+		t.Fatalf("getpgid child: %v", err)
+	}
+	if parentPgid != childPgid {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		t.Fatalf("pgid setup wrong: parent=%d child=%d", parentPgid, childPgid)
+	}
+
+	// Run the function under test.
+	pm := &ProcessManager{logger: slog.Default()}
+	pm.killRun(&RunProcess{
+		AgentKey: "test/test",
+		PID:      cmd.Process.Pid,
+		Cmd:      cmd,
+		Done:     done,
+	})
+
+	// Parent should be reaped (Done closed).
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		t.Fatal("parent never exited after killRun")
+	}
+
+	// Child must also be gone — this is the regression: previously the leader
+	// got SIGINT/SIGKILL but the child kept running until reboot.
+	// Allow a brief moment for SIGKILL propagation through the group.
+	for i := 0; i < 50; i++ {
+		if err := syscall.Kill(childPID, 0); err == syscall.ESRCH {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	_ = syscall.Kill(childPID, syscall.SIGKILL)
+	t.Fatalf("child PID %d still alive after killRun — process group not signaled", childPID)
 }
 
 // findRunBinary finds the mass binary for testing (it contains the run subcommand).
