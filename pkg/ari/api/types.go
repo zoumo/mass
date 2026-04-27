@@ -146,10 +146,10 @@ type AgentTask struct {
 
 // AgentRunTaskDoParams is the request params for agentrun/task/do.
 type AgentRunTaskDoParams struct {
-	Workspace   string   `json:"workspace"`
-	Name        string   `json:"name"`
-	Prompt string `json:"prompt"`
-	FilePaths   []string `json:"filePaths,omitempty"`
+	Workspace string   `json:"workspace"`
+	Name      string   `json:"name"`
+	Prompt    string   `json:"prompt"`
+	FilePaths []string `json:"filePaths,omitempty"`
 }
 
 // AgentRunTaskGetParams is the request params for agentrun/task/get.

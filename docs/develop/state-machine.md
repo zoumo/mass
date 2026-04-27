@@ -15,6 +15,7 @@ AgentRun 和 agent-run 共用同一组状态枚举：
 | `creating` | Agent 正在创建，ACP 握手尚未完成 |
 | `idle` | Agent 进程运行中，ACP session 已建立，等待 prompt |
 | `running` | Agent 正在处理 prompt |
+| `restarting` | 重启已接受，正在停止现有进程（阻塞新 prompt） |
 | `stopped` | Agent 进程已退出 |
 | `error` | Agent 遇到不可恢复的错误 |
 
@@ -45,6 +46,7 @@ AgentRun 和 agent-run 共用同一组状态枚举：
 ```
 
 任意非终态 + `agentrun/restart` → `creating`（重新走一遍流程）。
+`idle`/`running` + `agentrun/restart` → `restarting` → `creating`（先停止现有进程再重新 bootstrap）。
 
 ## 核心原则
 
@@ -106,7 +108,7 @@ AgentRun 和 agent-run 共用同一组状态枚举：
 | 角色 | 行为 |
 |------|------|
 | mass | 发 `runtime/stop` RPC → agent-run 退出 → `watchProcess` 写 DB `stopped` |
-| mass | 若 10 秒未退出则 SIGKILL |
+| mass | 若 2 秒未退出则 SIGKILL |
 
 ### 7. 启动失败（→ error）
 
@@ -215,5 +217,5 @@ agent-run 内部将 ACP notification 非阻塞推入缓冲 channel，Translator 
 | 机制 | 说明 |
 |------|------|
 | `agentrun/cancel` | 取消当前 prompt，调 agent-run 的 `Cancel()` |
-| `agentrun/stop` | 停掉整个 agent-run 进程，10 秒未退出则 SIGKILL |
+| `agentrun/stop` | 停掉整个 agent-run 进程，2 秒未退出则 SIGKILL |
 | 进程崩溃 | Agent 进程崩溃 → pipe 断开 → `conn.Prompt()` 返回 error → `watchProcess` 设为 `stopped` |

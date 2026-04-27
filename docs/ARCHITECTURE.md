@@ -29,8 +29,7 @@ MASS is a daemon-based runtime for managing AI agents on a single host. The core
 │ agentd  (cmd/mass)                                                  │
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
-│  │ pkg/ari/server/  — ARI service (WorkspaceService,            │   │
-│  │                    AgentRunService, AgentService adapters)   │   │
+│  │ pkg/ari/server/  — ARI service impl, dispatch                │   │
 │  │ pkg/ari/api/     — ARI wire types, domain models, methods    │   │
 │  │ pkg/ari/client/  — typed + simple ARI clients                │   │
 │  └──────────────────────────────────────────────────────────────┘   │
@@ -114,7 +113,7 @@ orchestrator → agentrun/prompt
   agentd: auto-start if creating; deliverPrompt helper
           ShimClient.Prompt() → shim session/prompt
           shim → ACP agent process
-          ACP events → Translator → Envelope (seq, turnId, streamSeq)
+          ACP events → Translator → Envelope (seq, turnId)
           live subscribers receive agent/update events
           runtime_update(running→idle) on completion
   → returns stopReason
@@ -126,15 +125,15 @@ orchestrator → agentrun/prompt
 agentd start → RecoverSessions()
   for each non-terminal session:
     try runtime/status on persisted shim socket
-    if alive: DisconnectNotify watcher; SubscribeFromSeq(lastSeq)
+    if alive: DisconnectNotify watcher; re-subscribe from lastSeq
     if dead:  mark stopped (fail-closed)
   set RecoveryPhase=Complete
-  rebuild Registry + WorkspaceManager refcounts from DB
+  rebuild ProcessManager + WorkspaceManager refcounts from DB
 ```
 
 ### Event ordering
 
-Events carry `seq` (global monotonic dedup key), `turnId` (assigned at `turn_start`, cleared at `turn_end`), and `streamSeq` (resets 0 per turn). `runtime/event_update` events are seq-only (not turn-ordered). Replay uses `(turnId, streamSeq)` within a turn, `seq` across turns.
+Events carry `seq` (global monotonic dedup key) and `turnId` (assigned at `turn_start`, cleared at `turn_end`). `runtime/event_update` events are seq-only (not turn-ordered). Replay uses `turnId` within a turn, `seq` across turns.
 
 ### Session metadata pipeline (post-M014)
 
@@ -163,11 +162,10 @@ runtime/status → Status()
 
 1. **Unix socket path limit**: 104 bytes (macOS) / 108 bytes (Linux). Socket path overflow is validated at `agentrun/create` entry with JSON-RPC -32602 before any DB write.
 2. **Agent-run self-fork**: `mass run` is the agent-run entrypoint — `os.Executable()` self-fork with `MASS_SHIM_BINARY` env override for tests.
-3. **ON DELETE SET NULL**: `sessions.agent_id` FK uses `ON DELETE SET NULL` — session lookup must happen _before_ agent deletion, not after.
-4. **Workspace ref_count safety**: `workspace/cleanup` gates on persisted DB `ref_count`, never on volatile in-memory `RefCount`. Recovery guard blocks cleanup during active recovery.
-5. **Mutex + file I/O in recovery only**: `Translator.SubscribeFromSeq` holds mutex during log read + subscription registration. This is acceptable at startup/recovery (shim idle) but must not be used in hot paths.
+3. **Workspace ref_count safety**: `workspace/cleanup` gates on persisted DB `ref_count`, never on volatile in-memory `RefCount`. Recovery guard blocks cleanup during active recovery.
+5. **Mutex + file I/O in recovery only**: Event log subscription holds mutex during log read + subscription registration. This is acceptable at startup/recovery (shim idle) but must not be used in hot paths.
 6. **Damaged-tail tolerance**: `ReadEventLog` uses two-pass line classification — corrupt-at-tail (crash mode) is skipped; mid-file corruption errors.
-7. **JSON omitempty + zero int**: `StreamSeq` is `*int` (pointer), not `int` — `int(0)` with `omitempty` is silently dropped; `*int(0)` is preserved.
+7. **JSON omitempty + zero int**: Sequence fields use `*int` (pointer), not `int` — `int(0)` with `omitempty` is silently dropped; `*int(0)` is preserved.
 8. **api/ subdirectory rule**: `api/` packages contain only `struct`, `const`, `enum`. No interfaces, no functions — those go to `server/` or `client/`.
 9. **runtime-spec/api independence**: `pkg/runtime-spec/api` must NOT import `pkg/agentrun/api`. Union types are copied with `state:` error prefixes, not shared.
 10. **writeState closure invariant**: All state.json mutations go through `func(*apiruntime.State)` closures — never construct State literals directly. `UpdatedAt` and `EventCounts` are derived fields stamped after the closure runs.
@@ -182,7 +180,7 @@ runtime/status → Status()
 |-------|-----------|
 | Language | Go (1.21+) |
 | RPC framework | `pkg/jsonrpc/` (transport-agnostic, wraps `sourcegraph/jsonrpc2`) |
-| Metadata store | bbolt (pure-Go, embedded key-value; bucket hierarchy `v1/workspaces`, `v1/agents`, `v1/agentruns`, `v1/runtimes`) |
+| Metadata store | bbolt (pure-Go, embedded key-value; bucket hierarchy `v1/workspaces`, `v1/agents`, `v1/agentruns`) |
 | Agent protocol | ACP (Agent Communication Protocol) JSON-RPC over stdio |
 | Shim ↔ agentd | Custom JSON-RPC 2.0 over Unix socket (`session/*`, `runtime/*` methods) |
 | CLI | `spf13/cobra` (resource-first grammar) |
@@ -202,7 +200,7 @@ pkg/
     ndjson/         NDJSON streaming utility
   ari/
     api/            ARI wire types, domain models, method constants
-    server/         ARI service interfaces, Registry, dispatch
+    server/         ARI service impl, dispatch
     client/         typed ARIClient + simple Client
   agentrun/
     api/            wire types, method constants, event types + constants
@@ -221,7 +219,7 @@ cmd/
   mass/             main daemon + run + mesh-mcp subcommands
     commands/
       run/          agent-run bootstrap wiring
-      server/       daemon server
+      daemon/       daemon server
       workspacemcp/ workspace MCP server
   massctl/          management CLI
     commands/

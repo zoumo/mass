@@ -25,6 +25,8 @@ massctl compose run -w my-ws --agent claude --system-prompt "You are a reviewer"
 | `--agent` | 是 | Agent 定义名 |
 | `--name` | 否 | AgentRun 名称（默认等于 agent 名称） |
 | `--system-prompt` | 否 | 系统提示词 |
+| `--workflow` | 否 | 工作流文件路径 |
+| `--no-wait` | 否 | 不等待 agentrun 进入 idle |
 
 workspace 已存在且 ready 时自动复用，否则以 `cwd` 为 local source 新建。
 
@@ -36,7 +38,7 @@ workspace 已存在且 ready 时自动复用，否则以 `cwd` 为 local source 
 
 ```yaml
 kind: workspace-compose
-meta
+metadata:
   name: my-ws                    # Workspace 名称
 spec:
   source:
@@ -60,7 +62,7 @@ spec:
 |------|----------|------|
 | `local` | `path` | 挂载本地目录，mass 不管理其生命周期 |
 | `git` | `url`，可选 `ref` | 克隆 git 仓库，mass 管理目录 |
-| `emptyDir` | 无 | 创建空目录，mass 管理 |
+| `empty` | 无 | 创建空目录，mass 管理 |
 
 ### runs[]
 

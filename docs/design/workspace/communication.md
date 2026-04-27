@@ -28,12 +28,12 @@ workspace-mesh 提供两个 MCP tool：
 
 ### 注入方式
 
-ProcessManager 在生成 `config.json` 时将 workspace-mesh 写入 `acpAgent.session.mcpServers`：
+ProcessManager 在生成 `config.json` 时将 workspace-mesh 写入 `session.mcpServers`：
 
 ```json
 {
   "type": "stdio",
-  "name": "workspace",
+  "name": "workspace-mesh",
   "command": "mass",
   "args": ["mesh-mcp", "--socket", "<mass unix socket path>", "--workspace", "<workspace name>", "--agent", "<agent name>"]
 }
@@ -88,16 +88,14 @@ codex (receives message, processes, replies via same path in reverse)
 
 ### 信封格式（Envelope）
 
-mass 在投递消息时会在消息文本**尾部**追加 XML 格式的信封标签：
+mass 在投递消息时会追加一个 XML 格式的信封标签作为**单独的 ContentBlock**：
 
 ```
-<消息正文>
-
 <workspace-message from="<sender>" reply-to="<sender>" reply-requested="true" />
 ```
 
 - 自闭合 XML 标签，属性值用双引号；
-- 消息正文与 XML 标签间用 `\n\n` 分隔；
+- 信封作为单独的 ContentBlock 添加到消息中，而非追加到文本尾部；
 - `reply-to` 和 `reply-requested` 仅在 `needsReply=true` 时出现；
 - `reply-to` 当前硬编码等于 `from`；
 - 当前不支持 `threadId` 参数。

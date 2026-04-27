@@ -23,7 +23,7 @@ version: 0.2.0
 - Create tasks for agents via `massctl agentrun task do`
 - Poll task completion via `scripts/poll-task.sh`
 - Read `.status` and route to the next stage
-- Pass artifacts between stages as `--file` inputs
+- Pass artifacts between stages as `--files` inputs
 - Call scripts (`validate-pipeline.sh`, `poll-task.sh`) for deterministic operations
 - Make routing decisions (which stage to run next, when to escalate)
 
