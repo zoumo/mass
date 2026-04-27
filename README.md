@@ -155,6 +155,7 @@ massctl agentrun chat claude -w my-project
 
 # 5. When done, stop the agent run and clean up
 massctl agentrun stop claude -w my-project
+massctl agentrun delete claude -w my-project
 massctl workspace delete my-project
 ```
 
@@ -170,6 +171,7 @@ For declarative workflows, use `compose apply` with a YAML spec instead of imper
 | `mass daemon restart` | Restart the running daemon (SIGHUP → re-exec) |
 | `mass daemon status` | Check daemon health |
 | `mass run` | Directly spawn an agent-run process (low-level) |
+| `mass version` | Print version information |
 
 **`massctl`** — the CLI client. All operations go through ARI.
 
@@ -179,9 +181,10 @@ For declarative workflows, use `compose apply` with a YAML spec instead of imper
 | `massctl compose apply` | Declarative workspace + agent-run management via YAML |
 | `massctl workspace {create,get,delete}` | Manage workspaces |
 | `massctl agent {apply,get,delete}` | Manage agent definitions |
-| `massctl agentrun {create,get,stop,restart,delete}` | Agent-run lifecycle |
+| `massctl agentrun {create,get,stop,restart,delete,cancel,task,debug}` | Agent-run lifecycle |
 | `massctl agentrun prompt` | Send a prompt to a running agent (`--wait` for response) |
 | `massctl agentrun chat` | Interactive TUI — chat, view diffs, replay events |
+| `massctl version` | Print version information |
 
 ## Tech Stack
 
