@@ -2,11 +2,11 @@
 
 ## compose apply
 
-`massctl compose apply -f <file>` declaratively creates a workspace and multiple agentruns.
+`massctl compose apply -f <file>` declaratively creates workspace + multiple agentruns.
 
 ## compose run (Quick Start)
 
-`massctl compose run` quickly starts a single agent run using the current directory, without a YAML file.
+`massctl compose run` starts single agentrun using cwd, no YAML needed.
 
 ```bash
 # Minimal usage
@@ -28,11 +28,11 @@ massctl compose run -w my-ws --agent claude --system-prompt "You are a reviewer"
 | `--workflow` | No | Workflow file path |
 | `--no-wait` | No | Do not wait for agentrun to enter idle |
 
-If the workspace already exists and is ready, it is reused automatically; otherwise a new workspace is created with `cwd` as the local source.
+If workspace exists and is ready, reused automatically; else new workspace created with `cwd` as local source.
 
 ## compose apply YAML Format
 
-`massctl compose apply -f <file>` declaratively creates a workspace and multiple agentruns (the workspace must not already exist).
+`massctl compose apply -f <file>` declaratively creates workspace + multiple agentruns (workspace must not exist).
 
 ## Full Format
 
@@ -60,9 +60,9 @@ spec:
 
 | type | Required fields | Description |
 |------|-----------------|-------------|
-| `local` | `path` | Mounts a local directory; mass does not manage its lifecycle |
-| `git` | `url`, optional `ref` | Clones a git repository; mass manages the directory |
-| `empty` | none | Creates an empty directory; mass manages it |
+| `local` | `path` | Mounts local dir; mass doesn't manage lifecycle |
+| `git` | `url`, optional `ref` | Clones git repo; mass manages dir |
+| `empty` | none | Creates empty dir; mass manages it |
 
 ### runs[]
 
@@ -78,4 +78,4 @@ spec:
 1. Create workspace → poll until phase == `ready`
 2. Create each agentrun in sequence
 3. Poll until all agentrun states == `idle`
-4. Print the socket path for every agent
+4. Print socket path for every agent
