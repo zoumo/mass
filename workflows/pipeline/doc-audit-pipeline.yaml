@@ -9,30 +9,14 @@ stages:
   - name: audit_plan
     agent: worker
     description: |
-      You will receive a task prompt describing what to audit.
+      Audit docs per task prompt.
 
-      Step 1 — Determine scope: explore the codebase to identify which doc files and
-      source-of-truth files/commands are relevant. Record the scope at the top of your report.
+      1. Scope: find relevant doc files + source-of-truth files/commands. Record scope at top.
+      2. Audit: per discrepancy — file path + line range, exact doc quote, actual source-of-truth value, severity: CRITICAL (causes errors / misleading) | MINOR (stale/drift).
+      3. fix-plan.md: per finding — Fix ID (FIX-001…), file, severity, effort (trivial/small/medium), Old (exact), New (exact), Reason (1 line).
 
-      Step 2 — Perform the audit. For each discrepancy found, record:
-        - File path + line range
-        - Exact quote from doc (what it says)
-        - What the source of truth actually says
-        - Severity: CRITICAL (will cause errors / actively misleading) / MINOR (stale, description drift)
-
-      Step 3 — Write fix-plan.md. For each finding:
-        - Fix ID (FIX-001, FIX-002, ...)
-        - File path
-        - Severity: CRITICAL | MINOR
-        - Effort: trivial (1-2 lines) | small (< 10 lines) | medium (section rewrite)
-        - Old: exact quoted content to replace
-        - New: exact replacement
-        - Reason: one line
-
-      Order: CRITICAL first, then MINOR. Note cross-file dependencies.
-      End with a summary table: file | critical | minor | effort total.
-
-      Write audit-report.md and fix-plan.md to your task output directory.
+      Order CRITICAL first. Note cross-file deps. End with summary table: file | critical | minor | effort.
+      Write audit-report.md and fix-plan.md to task output dir.
     max_retries: 3
     routes:
       - when: success
@@ -45,19 +29,12 @@ stages:
   - name: review
     agent: reviewer
     description: |
-      Review audit-report.md and fix-plan.md for completeness and accuracy.
+      Review audit-report.md and fix-plan.md.
 
-      Check:
-        - Did the worker record and justify the scope they chose?
-        - Are findings specific enough (file, line, exact text)?
-        - Any false positives (doc and source of truth actually agree)?
-        - Did the worker use the real source of truth (run commands / read code), not guess?
-        - Does fix-plan.md cover all findings? Are Old/New values verbatim for CRITICAL fixes?
+      Check: scope justified? findings specific (file/line/exact text)? false positives? source-of-truth verified (not guessed)? fix-plan covers all findings? Old/New verbatim for CRITICAL?
 
-      If approved: write final-fix-plan.md (copy of fix-plan.md with your approval note) to
-      your task output directory. Mark success.
-
-      If rejected: write review-feedback.md listing specific gaps. Mark failed.
+      Approved: write final-fix-plan.md (fix-plan.md + approval note) to task output dir. Mark success.
+      Rejected: write review-feedback.md with specific gaps. Mark failed.
     input_from: [audit_plan]
     max_retries: 3
     routes:

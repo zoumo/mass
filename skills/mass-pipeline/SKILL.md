@@ -8,33 +8,32 @@ description: |
 version: 0.2.0
 ---
 
-# mass-pipeline — Declarative Multi-Agent Pipeline Orchestrator
+# mass-pipeline — Multi-Agent Pipeline Orchestrator
 
-Reads a YAML pipeline config and automatically orchestrates a multi-agent execution workflow. Includes a built-in standard development pipeline template.
+Reads YAML pipeline config, orchestrates multi-agent execution. Built-in dev pipeline template included.
 
-> **Prerequisite**: This skill depends on the **mass-guide** skill for workspace and agent lifecycle management.
-> Before executing, call mass-guide to confirm `mass daemon status` is healthy.
+> **Prerequisite**: Depends on **mass-guide** for workspace/agent lifecycle. Confirm `mass daemon status` healthy before running.
 
 ## Orchestrator Boundary Rules
 
-**You are the conductor, not the performer.**
+**Conductor, not performer.**
 
 ### DO
-- Create tasks for agents via `massctl agentrun task do`
-- Poll task completion via `scripts/poll-task.sh`
-- Read `.reason` and route to the next stage
-- Pass artifacts between stages as `--input-files` inputs
-- Call scripts (`validate-pipeline.sh`, `poll-task.sh`) for deterministic operations
-- Make routing decisions (which stage to run next, when to escalate)
+- Make tasks via `massctl agentrun task do`
+- Poll via `scripts/poll-task.sh`
+- Read `.reason`, route to next stage
+- Pass artifacts as `--input-files`
+- Call scripts (`validate-pipeline.sh`, `poll-task.sh`) for deterministic ops
+- Make routing decisions (next stage, when to escalate)
 
 ### DO NOT
-- Write code, documents, or designs yourself — that is agent work
-- Analyze content in agent artifacts — pass them to the next agent
-- Make judgment calls about whether a design is "good" — the reviewer agent does that
-- Retry agent work differently — create a new task with updated context instead
-- Skip stages because you think the result is obvious
+- Write code/docs/designs — agent work
+- Analyze agent artifact content — pass to next agent
+- Judge design quality — reviewer agent's job
+- Retry agent work differently — make new task with updated context
+- Skip stages because result seems obvious
 
-**If you catch yourself about to "help" by doing a task directly instead of delegating it — stop. Create a task for the agent.**
+**About to "help" by doing task directly instead of delegating — stop. Make a task for the agent.**
 
 ---
 
@@ -42,18 +41,18 @@ Reads a YAML pipeline config and automatically orchestrates a multi-agent execut
 
 ### Built-in coding-pipeline (recommended)
 
-Describe the task directly; the built-in standard development workflow is used (plan → review → execute → code review → fix):
+Describe task; built-in workflow (plan → review → execute → code review → fix) used:
 
 ```
 /mass-pipeline
 Implement [task description] with pipeline
 ```
 
-The orchestrator automatically uses:
+Auto-uses:
 - compose: `skills/mass-pipeline/templates/coding-compose.yaml`
 - pipeline: `skills/mass-pipeline/templates/coding-pipeline.yaml`
 
-Each review loop converges within at most 3 rounds; exceeding the limit triggers an escalate.
+Review loop max 3 rounds; exceeding triggers escalate.
 
 ### Custom pipeline
 
@@ -62,9 +61,9 @@ Each review loop converges within at most 3 rounds; exceeding the limit triggers
 /mass-pipeline /path/to/pipeline.yaml --input file1.md --input file2.md
 ```
 
-`--input` files are injected into all stages that do not have `input_files` explicitly configured.
+`--input` injected into all stages without explicit `input_files`.
 
-**Custom file write rule**: When the orchestrator needs to generate a custom compose or pipeline file, write it to a temporary directory:
+**Custom file write rule**: Write generated compose/pipeline to temp dir:
 
 ```bash
 TMPDIR=$(mktemp -d /tmp/mass-pipeline-XXXXXX)
@@ -72,12 +71,12 @@ compose_file="$TMPDIR/compose.yaml"
 pipeline_file="$TMPDIR/pipeline.yaml"
 ```
 
-Full field reference:
+Refs:
 - Compose YAML: [references/compose-schema.md](references/compose-schema.md)
 - Pipeline YAML: [references/pipeline-schema.md](references/pipeline-schema.md)
 
-Built-in template reference:
-- `templates/coding-compose.yaml` — workspace-compose with planner/reviewer/worker agents
+Templates:
+- `templates/coding-compose.yaml` — workspace-compose with planner/reviewer/worker
 - `templates/coding-pipeline.yaml` — plan → review → execute → code review → fix
 
 ---
@@ -85,9 +84,9 @@ Built-in template reference:
 ## Execution Workflow
 
 ```
-Step 0: Health check + read and validate workflow.yaml
-Step 1: Create workspace + all agentrun instances
-Step 2: Execute the stage loop
+Step 0: Health check + read/validate workflow.yaml
+Step 1: Make workspace + all agentrun instances
+Step 2: Run stage loop
 Step 3: Collect output artifacts
 Step 4: Clean up workspace + agents
 Step 5: Print execution summary
@@ -103,51 +102,47 @@ Step 5: Print execution summary
 mass daemon status
 ```
 
-- `daemon: running` → continue
-- Otherwise → stop and notify the user
+`daemon: running` → continue. Otherwise → stop, notify user.
 
 ### 0b. Read Pipeline + Determine Compose File
 
-Extract from the pipeline YAML:
-- `name` — pipeline name, used as workspace name prefix: `{name}-{random4hex}`
+Extract from pipeline YAML:
+- `name` — workspace name prefix: `{name}-{random4hex}`
 - `description` — display only
 - `stages` — ordered list
-- `output` — output configuration (optional)
+- `output` — optional
 
-**The compose file is determined solely by the orchestrator** and is not referenced inside the pipeline YAML:
-- Built-in coding pipeline → use `skills/mass-pipeline/templates/coding-compose.yaml` directly
-- Custom pipeline → orchestrator generates the compose file and writes it to a temporary directory
+**Compose file determined solely by orchestrator**, not referenced in pipeline YAML:
+- Built-in → use `skills/mass-pipeline/templates/coding-compose.yaml` directly
+- Custom → generate compose file, write to temp dir
 
-Generate workspace name:
 ```bash
 WORKSPACE_NAME="{pipeline.name}-$(openssl rand -hex 2)"
 ```
 
 ### 0c. Pre-flight Validation (before startup)
 
-Validate only pipeline fields (stages/routes):
-
 ```bash
 skills/mass-pipeline/scripts/validate-pipeline.sh {pipeline_file}
 ```
 
-Exit code 0: validation passed. Show summary to user.
-Exit code 1: validation failed, prints errors. Report and stop.
-Exit code 2: missing dependency. Report and stop.
+- Exit 0: passed. Show summary.
+- Exit 1: failed. Report errors, stop.
+- Exit 2: missing dependency. Report, stop.
 
-After successful validation, ask the user: "Confirm execution?" Wait for confirmation before proceeding.
+After validation: ask "Confirm execution?" Wait for confirmation.
 
 ---
 
-## Step 1: Create Workspace + Agents
+## Step 1: Make Workspace + Agents
 
 ```bash
 massctl compose apply -f {compose_file} --workspace {workspace_name}
 ```
 
-`--workspace` overrides `metadata.name` in the compose file. Wait for workspace ready + all agents idle. On failure, execute Step 4 cleanup and report the error.
+`--workspace` overrides `metadata.name`. Wait for workspace ready + all agents idle. On failure, run Step 4 cleanup, report error.
 
-**Immediately after successful creation, retrieve the workspace absolute path — all subsequent paths are relative to this:**
+**Get workspace absolute path immediately — all subsequent paths relative to this:**
 
 ```bash
 WORKSPACE_PATH=$(massctl workspace get {workspace_name} -o json | jq -r '.status.path')
@@ -157,19 +152,17 @@ WORKSPACE_PATH=$(massctl workspace get {workspace_name} -o json | jq -r '.status
 
 ## Step 2: Stage Execution Loop
 
-Start from `stages[0]`, follow routes to jump between stages, until `__done__` or `__escalate__` is reached.
+Start from `stages[0]`, follow routes until `__done__` or `__escalate__`.
 
-Maintain in-memory state (within this session):
-- `current_stage` — current stage name
-- `retry_counters` — map: stage_name → retry_count (initialized to all 0)
-- `stage_artifacts` — map: stage_name → list of artifact file paths (populated after execution)
-- `WORKSPACE_PATH` — workspace absolute path retrieved in Step 1
+In-memory state:
+- `current_stage`
+- `retry_counters` — map: stage_name → count (init 0)
+- `stage_artifacts` — map: stage_name → file paths
+- `WORKSPACE_PATH`
 
-### 2a. Execute Serial Stage
+### 2a. Run Serial Stage
 
-**① Build task input files list**
-
-All paths must be absolute paths:
+**① Build input files list** (all absolute paths):
 
 ```bash
 input_files=()
@@ -181,12 +174,12 @@ if [[ ${#stage.input_files[@]} -eq 0 ]]; then
   done
 fi
 
-# 2. Explicit input_files (relative paths are resolved against WORKSPACE_PATH)
+# 2. Explicit input_files (relative paths resolved against WORKSPACE_PATH)
 for f in "${stage.input_files[@]}"; do
   [[ "$f" = /* ]] && input_files+=("$f") || input_files+=("${WORKSPACE_PATH}/$f")
 done
 
-# 3. input_from: collect upstream stage artifacts (already absolute paths)
+# 3. input_from: collect upstream stage artifacts (already absolute)
 for upstream_stage in "${stage.input_from[@]}"; do
   for artifact in "${stage_artifacts[$upstream_stage][@]}"; do
     input_files+=("$artifact")
@@ -194,7 +187,7 @@ for upstream_stage in "${stage.input_from[@]}"; do
 done
 ```
 
-**② Create task**
+**② Make task**
 
 ```bash
 STAGE_OUTPUT_DIR="${WORKSPACE_PATH}/.mass/{workspace}/{stage.agent}/output/{stage.name}"
@@ -207,7 +200,7 @@ task_id=$(massctl agentrun task do -w {workspace} --run {stage.agent} \
   | jq -r '.id')
 ```
 
-**③ Poll and wait**
+**③ Poll**
 
 ```bash
 skills/mass-pipeline/scripts/poll-task.sh {workspace} {stage.agent} {task_id}
@@ -216,46 +209,43 @@ poll_exit=$?
 
 | poll exit | handling |
 |-----------|----------|
-| 0 | read .reason, execute routing |
-| 1 | agent idle retries exhausted → treat as `failed`, follow routes |
-| 2 | agent error/stopped → stop, require manual intervention (skip routes, escalate directly) |
+| 0 | read .reason, route |
+| 1 | idle retries exhausted → treat as `failed`, follow routes |
+| 2 | agent error/stopped → skip routes, escalate directly |
 | 3 | timeout → treat as `failed`, follow routes |
 
 **④ Collect artifacts**
 
 ```bash
-# artifacts are written by agent to the directory specified by --output-dir
+# artifacts written by agent to --output-dir directory
 stage_artifacts[{stage.name}]=$(find "$STAGE_OUTPUT_DIR" -type f 2>/dev/null)
 ```
 
-**⑤ Read .reason and route**
+**⑤ Read .reason, route**
 
 ```bash
 task_json=$(massctl agentrun task get -w {workspace} --run {stage.agent} {task_id} -o json)
 response_status=$(echo "$task_json" | jq -r '.reason // "unknown"')
 ```
 
-Match `when == response_status` in `stage.routes` order, find the first matching `goto`:
+Match `when == response_status` in `stage.routes` order, first matching `goto`:
 
-- `goto` is a stage name:
-  - `retry_counters[goto]++`
-  - If `retry_counters[goto] > stage.max_retries` (default 3): → `__escalate__`
-  - Otherwise: `current_stage = goto`, continue loop
-- `goto: __done__`: proceed to Step 3
-- `goto: __escalate__`: print execution path + response.description, stop
+- `goto` is stage name → `retry_counters[goto]++`
+  - `> stage.max_retries` (default 3): → `__escalate__`
+  - Otherwise: `current_stage = goto`, continue
+- `goto: __done__` → Step 3
+- `goto: __escalate__` → print path + response.description, stop
 
-No matching `when`: make the best semantic judgment; if unable to determine, treat as `needs_human` → `__escalate__`.
+No match → best semantic judgment; if unable → `needs_human` → `__escalate__`.
 
 ---
 
-### 2b. Execute Parallel Stage
+### 2b. Run Parallel Stage
 
-**① Concurrently create all sub-tasks**
-
-For each `tasks[i]`, build input files following the ① logic from 2a, then execute concurrently:
+**① Concurrently make all sub-tasks** (input files per ① from 2a):
 
 ```bash
-# Create a task for each sub-task, collect task_ids
+# Make task for each sub-task, collect task_ids
 declare -A sub_task_ids
 for sub_task in "${stage.tasks[@]}"; do
   SUB_OUTPUT_DIR="${WORKSPACE_PATH}/.mass/{workspace}/${sub_task.agent}/output/{stage.name}"
@@ -269,9 +259,7 @@ for sub_task in "${stage.tasks[@]}"; do
 done
 ```
 
-**② Concurrent polling**
-
-Run poll-task.sh concurrently for each sub-task (background processes), wait for results:
+**② Concurrent polling** (background, wait all):
 
 ```bash
 declare -A sub_poll_exits
@@ -281,22 +269,20 @@ for agent in "${!sub_task_ids[@]}"; do
     echo $? > /tmp/poll_exit_{workspace}_{agent}
   ) &
 done
-wait  # wait for all background polls to complete (wait: all)
-# wait: any — use wait -n to wait for the first to complete, cancel the rest (if massctl supports task cancel)
+wait  # wait: all — wait for all background polls to complete
+# wait: any — use wait -n to wait for first to complete, cancel rest (if massctl supports task cancel)
 ```
 
-**③ Aggregate reason**
+**③ Aggregate .reason**
 
-Read each sub-task's .reason and compute the aggregated result:
+| Rule | Condition |
+|------|-----------|
+| `all_success` | all .reason == success |
+| `all_failed` | all .reason == failed |
+| `any_failed` | ≥1 failed, not all_failed |
+| `any_success` | ≥1 success (wait: any) |
 
-| Aggregation rule | Trigger condition |
-|------------------|-------------------|
-| `all_success` | all sub-task .reason == success |
-| `all_failed` | all sub-task .reason == failed |
-| `any_failed` | at least one failed (and not all_failed) |
-| `any_success` | at least one success (for wait: any scenarios) |
-
-**④ Collect all sub-task artifacts**
+**④ Collect sub-task artifacts**
 
 ```bash
 for agent in "${!sub_task_ids[@]}"; do
@@ -305,15 +291,13 @@ for agent in "${!sub_task_ids[@]}"; do
 done
 ```
 
-**⑤ Route** — same logic as serial stage, using the aggregated reason to match `when`.
+**⑤ Route** — same as serial, using aggregated reason.
 
 ---
 
 ## Step 3: Collect Artifact Paths
 
-Do not move files. Agents have already written files to `.mass/{workspace}/{agent}/output/{stage}/` via `--output-dir`.
-
-This step only scans each stage's output dir, records the actually produced file paths, for display in the Step 5 summary:
+Don't move files. Agents wrote to `.mass/{workspace}/{agent}/output/{stage}/` via `--output-dir`. Scan, record for Step 5:
 
 ```bash
 for stage_name in all_executed_stages; do
@@ -326,20 +310,20 @@ done
 
 ## Step 4: Cleanup
 
-**Execute cleanup regardless of success, failure, or escalate.** On failure, retain `.mass/{workspace}/` artifacts (do not delete files inside the workspace; only stop agent processes and delete agentrun records).
+**Always run cleanup — success, failure, or escalate.** On failure, retain `.mass/{workspace}/` artifacts (stop processes + delete agentrun records only; don't delete files).
 
 ### preserve_workspace Logic
 
-Read `cleanup.preserve_workspace` from the pipeline YAML (default `false`):
+`cleanup.preserve_workspace` in pipeline YAML (default `false`):
 
-- `false` (default):
-  - Success (`__done__`) → stop agentrun + delete agentrun + delete workspace
-  - Failure/escalate → stop agentrun + delete agentrun, **retain workspace directory**, ask user whether to delete
+- `false`:
+  - `__done__` → stop agentrun + delete agentrun + delete workspace
+  - failure/escalate → stop + delete agentrun, **retain workspace dir**, ask user to delete
 - `true`:
-  - Any termination path → only stop agentrun processes, **retain agentrun records and workspace directory**
-  - Print notice: `Workspace preserved for debugging: {workspace_name}` + artifact paths
+  - Any path → stop processes only, **retain agentrun records + workspace dir**
+  - Print: `Workspace preserved for debugging: {workspace_name}` + paths
 
-Use **mass-guide** skill to execute sequentially:
+Use **mass-guide**, run sequentially:
 
 ```bash
 # 1. Stop all agentruns
@@ -356,11 +340,11 @@ done
 massctl workspace delete {workspace}
 ```
 
-On cleanup failure, log a warning, continue cleaning up remaining resources, and do not interrupt the flow.
+On cleanup failure, log warning, continue remaining cleanup, don't stop flow.
 
 ---
 
-## Step 5: Print Execution Summary
+## Step 5: Execution Summary
 
 ```
 === mass-pipeline execution summary ===
@@ -381,7 +365,7 @@ Stages:
                └── final-fix-plan.md
 ```
 
-escalate additionally prints:
+Escalate additionally prints:
 ```
 === ESCALATION ===
 Stage:       {stage_name}
@@ -392,41 +376,41 @@ Artifacts:   .mass/{workspace}/{agent}/output/{stage_name}/
 
 Next steps:
   - Review artifacts above
-  - Re-run with adjusted pipeline or fix the issue manually
+  - Re-run with adjusted pipeline or fix issue manually
 ```
 
 ---
 
-## Error Handling Quick Reference
+## Error Handling
 
 | Scenario | Behavior |
 |----------|----------|
-| YAML file not found | Stop immediately, report path error, create no resources |
-| YAML validation failed | Stop immediately, report specific field errors, create no resources |
-| workspace creation failed | Stop immediately, do not create agentrun |
-| agentrun creation failed | Stop, clean up already-created agentruns + workspace |
-| poll exit 2 (agent error) | Skip routes, go directly to __escalate__ |
+| YAML not found | Stop, report path error, make no resources |
+| YAML validation failed | Stop, report field errors, make no resources |
+| workspace creation failed | Stop, don't make agentrun |
+| agentrun creation failed | Stop, clean up already-made agentruns + workspace |
+| poll exit 2 (agent error) | Skip routes → `__escalate__` directly |
 | poll exit 1/3 (idle/timeout) | Treat as `failed`, follow normal routes |
-| retry limit exceeded | Force __escalate__, ignore routes config |
-| `__escalate__` | Print full context, retain artifacts, clean up process resources |
-| No matching route | Make semantic judgment from .reason; if unable to determine → __escalate__ |
-| cleanup failed | Log warning, continue cleaning up remaining resources |
+| retry limit exceeded | Force `__escalate__`, ignore routes |
+| `__escalate__` | Print full context, retain artifacts, clean up processes |
+| No matching route | Semantic judgment; if unable → `__escalate__` |
+| cleanup failed | Log warning, continue remaining cleanup |
 
 ---
 
 ## Design Principles
 
-1. **YAML is a semantic description, not a template** — the orchestrator (LLM) reads the `description` field and decides how to construct task prompts; no hardcoded templates
-2. **Agents do not communicate directly** — all coordination goes through the orchestrator via the task API
-3. **Preserve artifacts on failure** — retained for debugging; not deleted automatically
-4. **Validation is front-loaded** — YAML issues are surfaced before startup, not mid-execution
-5. **Cleanup is guaranteed** — any termination path executes cleanup
+1. **YAML = semantic description, not template** — orchestrator reads `description`, constructs prompts; no hardcoded templates
+2. **Agents don't communicate directly** — all coordination via orchestrator + task API
+3. **Preserve artifacts on failure** — not auto-deleted; kept for debugging
+4. **Validation front-loaded** — YAML issues before startup, not mid-run
+5. **Cleanup guaranteed** — all termination paths run cleanup
 
 ---
 
-## Relationship to Other Skills
+## Related Skills
 
 | Skill | Responsibility |
 |-------|----------------|
-| `mass-guide` | Prerequisite dependency: workspace/agent lifecycle primitives |
-| `mass-pipeline` | This skill: declarative config-driven general-purpose orchestrator |
+| `mass-guide` | Prerequisite: workspace/agent lifecycle primitives |
+| `mass-pipeline` | This skill: declarative config-driven orchestrator |

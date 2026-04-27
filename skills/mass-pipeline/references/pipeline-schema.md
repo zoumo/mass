@@ -1,6 +1,6 @@
 # Pipeline YAML Schema Reference
 
-Pipeline files define stages, routing logic, and output. They reference a compose file for workspace and agent definitions.
+Pipeline files define stages, routing logic, output. Reference compose file for workspace + agent definitions.
 
 ## Top-level fields
 
@@ -8,23 +8,23 @@ Pipeline files define stages, routing logic, and output. They reference a compos
 |-------|------|----------|-------------|
 | `name` | string | yes | Pipeline identifier, used as workspace name prefix |
 | `description` | string | no | Human-readable purpose |
-| `stages` | list | yes | Ordered list of stages to execute |
-| `output` | object | no | Output collection configuration |
-| `cleanup` | object | no | Cleanup behavior configuration |
+| `stages` | list | yes | Ordered stages to execute |
+| `output` | object | no | Output collection config |
+| `cleanup` | object | no | Cleanup behavior config |
 
 ## `cleanup`
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `preserve_workspace` | bool | no | If `true`, keep workspace directory and agentrun records after completion for debugging. Default: `false` |
+| `preserve_workspace` | bool | no | If `true`, keep workspace dir + agentrun records after completion for debugging. Default: `false` |
 
-> **Note:** Pipeline files do not reference a compose file. The compose file (workspace + agents) is managed separately by the orchestrator and applied via `massctl compose apply`.
+> **Note:** Pipeline files do not reference a compose file. Compose file (workspace + agents) managed separately by orchestrator, applied via `massctl compose apply`.
 
 ---
 
 ## `stages`
 
-Ordered list. Execution starts at `stages[0]`. Routing via `routes` determines what runs next.
+Ordered list. Execution starts at `stages[0]`. Routing via `routes` determines next stage.
 
 ### Serial stage (default)
 
@@ -33,10 +33,10 @@ Ordered list. Execution starts at `stages[0]`. Routing via `routes` determines w
 | `name` | string | yes | Unique stage identifier, used in `goto` and `input_from` |
 | `type` | enum | no | `serial` (default) \| `parallel` |
 | `agent` | string | yes | Agent run name from compose `spec.runs` |
-| `description` | string | yes | Semantic task description — orchestrator builds the task prompt from this |
-| `input_files` | list | no | Static files to pass to this stage's task |
-| `input_from` | list | no | Stage names whose artifacts to collect and pass as task input |
-| `max_retries` | int | no | Max times this stage can be re-entered via `goto`. Default: 3 |
+| `description` | string | yes | Semantic task description — orchestrator builds task prompt from this |
+| `input_files` | list | no | Static files to pass to stage's task |
+| `input_from` | list | no | Stage names whose artifacts to collect + pass as task input |
+| `max_retries` | int | no | Max re-entries via `goto`. Default: 3 |
 | `routes` | list | yes | Routing rules based on task reason |
 
 ### Parallel stage
@@ -45,7 +45,7 @@ Ordered list. Execution starts at `stages[0]`. Routing via `routes` determines w
 |-------|------|----------|-------------|
 | `name` | string | yes | Unique stage identifier |
 | `type` | enum | yes | Must be `parallel` |
-| `tasks` | list | yes | List of parallel sub-tasks |
+| `tasks` | list | yes | Parallel sub-tasks |
 | `wait` | enum | no | `all` (default) \| `any` |
 | `max_retries` | int | no | Default: 3 |
 | `routes` | list | yes | Routing rules using aggregated reason values |
@@ -58,7 +58,7 @@ Parallel sub-task fields: `agent`, `description`, `input_from`, `input_files` (s
 
 List of routing rules evaluated in order. First matching `when` wins.
 
-Routing matches against the task's `.reason` field (set by `massctl agentrun task done --reason`).
+Routing matches against task's `.reason` field (set by `massctl agentrun task done --reason`).
 
 ### Serial stage `when` values
 
@@ -94,8 +94,8 @@ Routing matches against the task's `.reason` field (set by `massctl agentrun tas
 |-------|------|----------|-------------|
 | `summary` | bool | no | Print execution summary on completion. Default: `true` |
 
-Files are written by agents directly via `--output-dir` to `.mass/{workspace}/{agent}/output/{stage}/`.
-No collection or copying. The summary prints the output paths for each stage.
+Agents write files directly via `--output-dir` to `.mass/{workspace}/{agent}/output/{stage}/`.
+No collection/copying. Summary prints output paths per stage.
 
 ---
 

@@ -1,14 +1,14 @@
 # Compose YAML Schema Reference
 
-Compose files follow the `massctl compose apply` format. They define the workspace and all agent runs.
+Compose files follow `massctl compose apply` format. Define workspace + all agent runs.
 
 ## Top-level fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `kind` | string | yes | Must be `workspace-compose` |
-| `metadata.name` | string | yes | Workspace name placeholder. Convention: write `WORKSPACE_NAME`. The actual name is supplied via `--workspace` flag at runtime (`massctl compose apply -f file.yaml --workspace real-name`) and overrides this field entirely. |
-| `spec.source` | object | yes | Workspace source configuration |
+| `metadata.name` | string | yes | Workspace name placeholder. Convention: write `WORKSPACE_NAME`. Actual name via `--workspace` flag at runtime (`massctl compose apply -f file.yaml --workspace real-name`); overrides this field. |
+| `spec.source` | object | yes | Workspace source config |
 | `spec.runs` | list | yes | Agent run definitions |
 
 ---
@@ -18,9 +18,9 @@ Compose files follow the `massctl compose apply` format. They define the workspa
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `type` | enum | yes | `local` \| `git` \| `empty` |
-| `path` | string | conditional | Absolute path to local directory. Required for `local` type only. |
-| `url` | string | conditional | Git repository URL. Required for `git` type only. |
-| `ref` | string | no | Git ref (branch/tag/sha). Only for `git` type. |
+| `path` | string | conditional | Absolute path to local dir. Required for `local` only. |
+| `url` | string | conditional | Git repo URL. Required for `git` only. |
+| `ref` | string | no | Git ref (branch/tag/sha). `git` type only. |
 
 ---
 
@@ -35,7 +35,7 @@ List of agent run entries.
 | `systemPrompt` | string | no | System prompt for this agent |
 | `permissions` | object | no | Permission policy |
 | `mcpServers` | list | no | MCP server configs |
-| `workflowFile` | string | no | Path to a workflow file |
+| `workflowFile` | string | no | Path to workflow file |
 
 ---
 
