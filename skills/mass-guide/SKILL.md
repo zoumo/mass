@@ -261,7 +261,7 @@ massctl agentrun task done \
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--file` | yes | task JSON 文件路径（从 task do 返回的 taskPath） |
+| `--file` | yes | task JSON 文件路径（在 task do 的 request prompt 里） |
 | `--reason` | yes | 结果描述字符串，如 success / failed / needs_human |
 | `--response` | yes | JSON object，至少含 `description`，可含 `filePaths` |
 
@@ -314,7 +314,7 @@ massctl agentrun task get -w {workspace} --run {agent}
 #### 重试 Task
 
 ```bash
-massctl agentrun task retry -w {workspace} --run {agent} --id {task-id}
+massctl agentrun task retry -w {workspace} --run {agent} {task-id}
 ```
 
 增加 `attempt` 计数，清除旧 response / reason / done，自动重新 prompt agent。

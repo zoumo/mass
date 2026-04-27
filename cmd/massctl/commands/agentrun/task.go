@@ -192,15 +192,14 @@ func newTaskGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 
 func newTaskRetryCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		ws     string
-		run    string
-		taskID string
+		ws  string
+		run string
 	)
 
 	cmd := &cobra.Command{
-		Use:   "retry",
+		Use:   "retry <task-id>",
 		Short: "Retry an existing agent task",
-		Args:  cobra.NoArgs,
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := getClient()
 			if err != nil {
@@ -211,7 +210,7 @@ func newTaskRetryCmd(getClient cliutil.ClientFn) *cobra.Command {
 			result, err := client.AgentRuns().TaskRetry(context.Background(), &pkgariapi.AgentRunTaskRetryParams{
 				Workspace: ws,
 				Name:      run,
-				TaskID:    taskID,
+				TaskID:    args[0],
 			})
 			if err != nil {
 				return err
@@ -221,10 +220,8 @@ func newTaskRetryCmd(getClient cliutil.ClientFn) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&run, "run", "", "Agent run name (required)")
-	cmd.Flags().StringVar(&taskID, "id", "", "Task ID (required)")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("run")
-	_ = cmd.MarkFlagRequired("id")
 	return cmd
 }
 
