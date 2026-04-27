@@ -1094,10 +1094,7 @@ Use workspace-mesh MCP to collaborate with other agents.
 
 func workflowPrompt(workflowPath string) string {
 	return fmt.Sprintf(`<workflow>
-Your workflow is defined in the file below.
-Read it carefully and follow the instructions strictly.
-
-Path: %s
+Follow workflow instructions in file %s.
 </workflow>`, workflowPath)
 }
 
