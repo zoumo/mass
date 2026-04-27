@@ -76,10 +76,10 @@ func newTaskDoneCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&filePath, "file", "", "Path to the task JSON file (required)")
+	cmd.Flags().StringVar(&filePath, "task-file", "", "Path to the task JSON file (required)")
 	cmd.Flags().StringVar(&reason, "reason", "", "Outcome summary, e.g. success, failed, needs_human (required)")
 	cmd.Flags().StringVar(&response, "response", "", "Result as JSON object (required)")
-	_ = cmd.MarkFlagRequired("file")
+	_ = cmd.MarkFlagRequired("task-file")
 	_ = cmd.MarkFlagRequired("reason")
 	_ = cmd.MarkFlagRequired("response")
 	return cmd
@@ -87,10 +87,10 @@ func newTaskDoneCmd() *cobra.Command {
 
 func newTaskDoCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		ws          string
-		run         string
-		description string
-		filePaths   []string
+		ws        string
+		run       string
+		prompt    string
+		filePaths []string
 	)
 
 	cmd := &cobra.Command{
@@ -105,10 +105,10 @@ func newTaskDoCmd(getClient cliutil.ClientFn) *cobra.Command {
 			defer client.Close()
 
 			result, err := client.AgentRuns().TaskDo(context.Background(), &pkgariapi.AgentRunTaskDoParams{
-				Workspace:   ws,
-				Name:        run,
-				Description: description,
-				FilePaths:   filePaths,
+				Workspace: ws,
+				Name:      run,
+				Prompt:    prompt,
+				FilePaths: filePaths,
 			})
 			if err != nil {
 				return err
@@ -118,11 +118,11 @@ func newTaskDoCmd(getClient cliutil.ClientFn) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&run, "run", "", "Agent run name (required)")
-	cmd.Flags().StringVar(&description, "description", "", "Task description (required)")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Task prompt / description (required)")
 	cmd.Flags().StringSliceVar(&filePaths, "files", nil, "Input file paths")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("run")
-	_ = cmd.MarkFlagRequired("description")
+	_ = cmd.MarkFlagRequired("prompt")
 	return cmd
 }
 

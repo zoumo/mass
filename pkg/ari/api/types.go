@@ -148,7 +148,7 @@ type AgentTask struct {
 type AgentRunTaskDoParams struct {
 	Workspace   string   `json:"workspace"`
 	Name        string   `json:"name"`
-	Description string   `json:"description"`
+	Prompt string `json:"prompt"`
 	FilePaths   []string `json:"filePaths,omitempty"`
 }
 

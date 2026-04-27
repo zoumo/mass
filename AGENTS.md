@@ -26,4 +26,5 @@ Reference files for architecture, decisions, conventions, and design:
 ## 设计一致性
 
 - Code changes **must be** aligned with `docs/design`
+- If there are code updates under `./cmd`, they **must be** synchronized under `./skills`.
 - No need to consider compatibility Now

@@ -36,17 +36,6 @@ List of agent run entries.
 | `mcpServers` | list | no | MCP server configs |
 | `workflowFile` | string | no | Path to a workflow file |
 
-### System prompt requirements
-
-Every agent's system prompt **must** include the task completion instruction:
-
-```
-When done, run:
-  massctl agentrun task done --file {task-path} --reason {reason} --response '{json}'
-Where reason is a short string describing the outcome (e.g. success, failed, needs_human)
-And json is a JSON object with at least {"description": "..."}
-```
-
 ---
 
 ## Example
@@ -65,14 +54,8 @@ spec:
       systemPrompt: |
         You are a software architect. Produce a design document.
 
-        When done, run:
-          massctl agentrun task done --file {task-path} --reason {reason} --response '{json}'
-
     - name: reviewer
       agent: claude
       systemPrompt: |
         You are a senior engineer. Review designs and code.
-
-        When done, run:
-          massctl agentrun task done --file {task-path} --reason {reason} --response '{json}'
 ```
