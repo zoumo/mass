@@ -118,7 +118,7 @@ any state ── unrecoverable failure ──> error
 | `idle` | Bootstrap complete; agent is ready to accept a prompt |
 | `running` | Agent is processing an active prompt turn |
 | `restarting` | Restart accepted for an active agent; existing process is being stopped before re-bootstrap |
-| `stopped` | Agent process is stopped; state is preserved |
+| `stopped` | Agent process is stopped; phase is preserved |
 | `error` | Bootstrap or runtime failure; agent is not operational |
 
 Transition rules:
@@ -140,13 +140,13 @@ The converged bootstrap story for AgentRun creation:
 1. `workspace/create` is called; agentd prepares the workspace asynchronously.
 2. Caller polls `workspace/get` until `phase: "ready"`.
 3. `agentrun/create` is called with `workspace` + `name` + `agent`.
-4. agentd validates the workspace is ready, writes AgentRun metadata with `state: "creating"`, and starts the agent-run in a background goroutine.
+4. agentd validates the workspace is ready, writes AgentRun metadata with `phase: "creating"`, and starts the agent-run in a background goroutine.
 5. The agent-run materializes the bundle, resolves `cwd`, and completes ACP bootstrap.
 6. On success: AgentRun transitions to `idle`. On failure: AgentRun transitions to `error`.
 7. Actual work arrives later through `agentrun/prompt`.
-8. Callers poll `agentrun/get` until state transitions out of `creating`.
+8. Callers poll `agentrun/get` until phase transitions out of `creating`.
 
-`agentrun/create` returns immediately with `state: "creating"`.
+`agentrun/create` returns immediately with `phase: "creating"`.
 It does **not** wait for bootstrap to complete.
 
 ## Async Create Semantics
@@ -155,19 +155,34 @@ It does **not** wait for bootstrap to complete.
 The response is:
 
 ```json
-{ "workspace": "my-project", "name": "architect", "state": "creating" }
+{
+  "kind": "AgentRun",
+  "metadata": { "workspace": "my-project", "name": "architect" },
+  "spec": { "agent": "..." },
+  "status": { "phase": "creating" }
+}
 ```
 
 The caller polls `agentrun/get` to determine when the agent is ready:
 
 ```json
-{ "agent": { "workspace": "my-project", "name": "architect", "state": "idle", ... } }
+{
+  "kind": "AgentRun",
+  "metadata": { "workspace": "my-project", "name": "architect" },
+  "spec": { "agent": "..." },
+  "status": { "phase": "idle" }
+}
 ```
 
 Bootstrap errors surface as:
 
 ```json
-{ "agent": { "workspace": "my-project", "name": "architect", "state": "error", "errorMessage": "..." } }
+{
+  "kind": "AgentRun",
+  "metadata": { "workspace": "my-project", "name": "architect" },
+  "spec": { "agent": "..." },
+  "status": { "phase": "error", "errorMessage": "..." }
+}
 ```
 
 ## Stop and Delete Separation
@@ -257,16 +272,16 @@ ARI client
   <- { name, phase: "ready", path }
 
 ARI client
-  -> agentrun/create(workspace, name, runtimeClass, ...)   # async bootstrap
-  <- { workspace, name, state: "creating" }
+  -> agentrun/create(workspace, name, agent, ...)   # async bootstrap
+  <- { workspace, name, phase: "creating" }
 
 agentd (background)
   -> materialize bundle + resolve cwd + ACP initialize
-  -> reach bootstrap-complete / idle state (agentRun.state = "idle")
+  -> reach bootstrap-complete / idle phase (agentRun.phase = "idle")
 
 ARI client
-  -> agentrun/get(workspace, name)      # poll until state != "creating"
-  <- { agent: { workspace, name, state: "idle", ... } }
+  -> agentrun/get(workspace, name)      # poll until phase != "creating"
+  <- { kind: "AgentRun", meta { workspace, name }, status: { phase: "idle", ... } }
 
 ARI client
   -> agentrun/prompt(workspace, name, prompt)

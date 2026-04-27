@@ -29,8 +29,8 @@ Poll with: massctl ar get <name> -w <workspace>`,
   # List all agent runs in a workspace
   massctl ar get -w my-ws
 
-  # Filter by state
-  massctl ar get -w my-ws --state idle
+  # Filter by phase
+  massctl ar get -w my-ws --phase idle
 
   # Send a prompt and wait for full response
   massctl ar prompt worker -w my-ws --text "Fix the nil pointer in pkg/auth" --wait
@@ -39,10 +39,10 @@ Poll with: massctl ar get <name> -w <workspace>`,
   massctl ar prompt worker -w my-ws --text "Review the PR"
 
   # Structured task (auto-prompts agent, returns task-id)
-  massctl ar task create -w my-ws --name worker --description "Fix the auth bug"
+  massctl ar task do -w my-ws --run worker --prompt "Fix the auth bug"
 
-  # Poll task until completed == true
-  massctl ar task get -w my-ws --name worker --id <task-id>
+  # Poll task status
+  massctl ar task get -w my-ws --run worker <task-id>
 
   # Interactive chat session
   massctl ar chat worker -w my-ws

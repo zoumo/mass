@@ -87,7 +87,7 @@ Workspace 准备 agent 的工作目录。创建是异步的，需要轮询等待
 
 ```bash
 # 创建 workspace
-massctl workspace create --name my-project --source-type local --source-path /path/to/code
+massctl workspace create local --name my-project --path /path/to/code
 
 # 轮询等待 ready
 while true; do
@@ -183,7 +183,7 @@ task → Agent A → Agent B → Agent C → result
 
 ```bash
 # A: 生成方案
-massctl agentrun prompt --workspace ws --name designer --text "Design auth system"
+massctl agentrun prompt designer -w ws --text "Design auth system"
 wait_for_idle ws designer
 
 # A → B: 方案交给 reviewer
@@ -211,7 +211,7 @@ Designer ←→ Reviewer（最多 N 轮）
 MAX_ROUNDS=3
 round=1
 
-massctl agentrun prompt --workspace ws --name designer \
+massctl agentrun prompt designer -w ws \
   --text "Design auth system, then send proposal to reviewer"
 wait_for_idle ws designer
 
@@ -272,7 +272,7 @@ User → Coordinator Agent
 这个模式下，外部调用方只需 prompt coordinator，编排逻辑在 coordinator 的 system prompt 中：
 
 ```bash
-massctl agentrun prompt --workspace ws --name coordinator \
+massctl agentrun prompt coordinator -w ws \
   --text "Complete this feature request: <description>"
 # coordinator 自主决定调用哪些 expert agents
 wait_for_idle ws coordinator
@@ -351,7 +351,7 @@ massctl agentrun watch --workspace ws
 | 命令 | 用途 |
 |------|------|
 | `massctl agent apply -f <file>` | 注册 agent 定义 |
-| `massctl workspace create --name <ws> --source-type local --source-path <path>` | 创建 workspace |
+| `massctl workspace create local --name <ws> --path <path>` | 创建 workspace |
 | `massctl workspace get <ws> -o json` | 查询 workspace 状态 |
 | `massctl compose apply -f <file>` | 一次性创建 workspace + agents |
 | `massctl compose run -w <ws> --agent <def>` | 快速启动单个 agent（当前目录作为 workspace） |

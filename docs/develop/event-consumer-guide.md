@@ -308,9 +308,9 @@ status == "end"：
 ```json
 {
   "entries": [
-    { "content": "Analyze the codebase", "status": "completed", "priority": "high" },
-    { "content": "Refactor auth module", "status": "in_progress", "priority": "medium" },
-    { "content": "Update tests", "status": "pending", "priority": "low" }
+    { "content": "Analyze the codebase", "status": "completed" },
+    { "content": "Refactor auth module", "status": "in_progress" },
+    { "content": "Update tests", "status": "pending" }
   ]
 }
 ```
@@ -321,7 +321,6 @@ status == "end"：
 |------|------|------|
 | `content` | string | 步骤描述文本 |
 | `status` | string | `pending`、`in_progress`、`completed` |
-| `priority` | string | 优先级：`high`、`medium`、`low`（可选） |
 
 ### 6.3 处理策略
 
@@ -426,6 +425,7 @@ turn_end { stopReason: "end_turn" }
 | `configOptions` | `{options: ConfigOption[]}` | 配置选项变更（nil=未更新，空 options=清除） |
 | `sessionInfo` | `{title?, updatedAt?}` | 会话元数据更新 |
 | `usage` | `{size, used, cost?}` | Token/API 用量统计 |
+| `operationAudit` | `{operation: string, params?: any}` | 操作审计记录（nil=无审计事件） |
 
 ### 8.3 `phase` 子字段：进程状态
 

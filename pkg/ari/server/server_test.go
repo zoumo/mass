@@ -727,7 +727,7 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-ws",
 		Name:        agentName,
-		Description: "Review foo.go",
+		Prompt:      "Review foo.go",
 		FilePaths:   []string{"foo.go"},
 	}, &result))
 
@@ -772,7 +772,7 @@ func TestAgentRunTaskCreateBlockedDuringRecovery(t *testing.T) {
 	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-recovery-ws",
 		Name:        "task-agent",
-		Description: "blocked",
+		Prompt:      "blocked",
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "recovering")
@@ -791,7 +791,7 @@ func TestAgentRunTaskCreateLocalFailureRollsBackToIdle(t *testing.T) {
 	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-fail-ws",
 		Name:        agentName,
-		Description: "will fail locally",
+		Prompt:      "will fail locally",
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mkdir tasks")
@@ -883,7 +883,7 @@ func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-wrap-ws",
 		Name:        agentName,
-		Description: "wrapped task",
+		Prompt:      "wrapped task",
 		FilePaths:   []string{"foo.go"},
 	}, &result))
 

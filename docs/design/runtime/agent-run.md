@@ -16,7 +16,7 @@ agent-run 是 MASS Runtime 的参考实现边界：
 每个 AgentRun（运行实例）对应一个独立的 agent-run 进程。
 
 ```text
-agentd（可重启）
+mass daemon（可重启）
    │  agent-run RPC: session/* + runtime/*
    ▼
 agent-run（每个 AgentRun 一个，独立存活）
@@ -30,7 +30,7 @@ agent 进程（claude-acp / pi-acp / gemini / ...）
 **agent-run 保持现有 RPC 边界。**
 agent-run 提供 `session/*` + `runtime/*` RPC surface（request/response，clean-break 实现已对齐）、bundle/state 共置和单 AgentRun 单 agent-run 进程设计。
 
-agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent/*` 管理 Agent CRUD。agent-run RPC 的 `session/*` + `runtime/*` 是内部协议，不暴露给外部调用方。
+mass daemon 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent/*` 管理 Agent CRUD。agent-run RPC 的 `session/*` + `runtime/*` 是内部协议，不暴露给外部调用方。
 **统一 notification surface**：live notification 统一为 `runtime/event_update`，携带 `runId`、`sessionId`、`seq`、`type`、`turnId`（turn 内事件）、`payload` 顶层字段。事件类型包括核心流式事件和 `runtime_update`（合并进程状态与 session 元数据）。
 详见 [run-rpc-spec.md](run-rpc-spec.md) 中的"Turn-Aware Event Ordering"章节。
 
@@ -50,7 +50,7 @@ agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent
 
 | containerd 生态 | MASS 生态 | 说明 |
 |----------------|----------|------|
-| containerd | agentd | 高层守护进程，可重启 |
+| containerd | mass daemon | 高层守护进程，可重启 |
 | containerd-shim | agent-run | 中间层，独立进程，生命周期与单个 workload 绑定 |
 | runc | — | agent 不需要内核隔离，fork/exec 责任吸收到 agent-run |
 | 容器进程 | agent 进程 | 工作负载 |
@@ -60,10 +60,10 @@ agentd 的外部 ARI 使用 `agentrun/*` 管理运行实例生命周期，`agent
 
 ## 进程模型
 
-agentd 为每个 AgentRun fork/exec 一个 agent-run：
+mass daemon 为每个 AgentRun fork/exec 一个 agent-run：
 
 ```text
-agentd fork/exec agent-run --bundle <bundle-dir> --socket <socket-path>
+mass fork/exec agent-run --bundle <bundle-dir> --state-dir <state-dir> --permissions <policy> --id <id>
 ```
 
 agent-run 内部的职责序列是：
@@ -151,14 +151,14 @@ agent-run ↔ agent:   ACP over stdio
 独立 agent-run 进程的价值仍然是爆炸半径隔离：
 
 ```text
-agentd 重启
+mass daemon 重启
     │
     ├── agent-run 1（my-project-architect）→ 继续存活
     ├── agent-run 2（my-project-coder）→ 继续存活
     └── agent-run 3（my-project-reviewer）→ 继续存活
 ```
 
-agentd 恢复后，不需要重新理解 ACP，只需要：
+mass daemon 恢复后，不需要重新理解 ACP，只需要：
 
 1. 发现 agent-run socket；
 2. 连接；

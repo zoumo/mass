@@ -83,12 +83,9 @@ All CRUD responses return the domain object directly (no wrapper).
   "status": {
     "phase": "idle",
     "errorMessage": "",
-    "agent-run": {
-      "phase": "idle",
-      "pid": 12345,
-      "bundle": "/var/lib/agentd/bundles/my-project-architect",
-      "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
-    }
+    "pid": 12345,
+    "bundle": "/var/lib/agentd/bundles/my-project-architect",
+    "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
   }
 }
 ```
@@ -444,12 +441,9 @@ Poll until idle:
     "spec": { "agent": "claude" },
     "status": {
       "phase": "idle",
-      "agent-run": {
-        "phase": "idle",
-        "pid": 12345,
-        "bundle": "/var/lib/agentd/bundles/my-project-architect",
-        "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
-      }
+      "pid": 12345,
+      "bundle": "/var/lib/agentd/bundles/my-project-architect",
+      "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
     }
   }
 }
@@ -547,12 +541,9 @@ Return current AgentRun state including optional agent-run runtime state.
   "spec": { "agent": "claude" },
   "status": {
     "phase": "idle",
-    "agent-run": {
-      "phase": "idle",
-      "pid": 12345,
-      "bundle": "/var/lib/agentd/bundles/my-project-architect",
-      "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
-    }
+    "pid": 12345,
+    "bundle": "/var/lib/agentd/bundles/my-project-architect",
+    "socketPath": "/run/mass/bundles/my-project-architect/agent-run.sock"
   }
 }
 ```
@@ -571,8 +562,10 @@ AgentRun phase values: `creating`, `idle`, `running`, `restarting`, `stopped`, `
 | `metadata.createdAt` | string | RFC3339 creation timestamp |
 | `metadata.updatedAt` | string | RFC3339 last-updated timestamp |
 | `spec.agent` | string | Selected agent definition name |
-| `spec.description` | string? | Human-readable description |
 | `spec.systemPrompt` | string? | Agent system prompt |
+| `spec.permissions` | string? | Permission policy for agent-initiated fs/terminal requests (default: `approve_all`) |
+| `spec.mcpServers` | array? | Extra MCP servers for this run (workspace MCP is auto-injected) |
+| `spec.workflowFile` | string? | Absolute path to a workflow definition file |
 | `status.phase` | string | Current agent phase |
 | `status.errorMessage` | string? | Error details when `phase` is `"error"` |
 | `status.pid` | int? | Agent-run process ID (when running) |
@@ -618,6 +611,63 @@ Transition rules:
 - `restarting → stopped → creating`: existing process stopped and restart continues with normal bootstrap
 - `running → error`: runtime failure during a turn
 - `error → creating` / `stopped → creating`: `agentrun/restart` triggers re-bootstrap without a pre-stop
+
+## AgentRun Task Methods
+
+`agentrun/task/*` methods provide a structured task delegation surface — wrapping the prompt/poll cycle and persisting task records on disk for inspection and retry.
+
+### `agentrun/task/do`
+
+Create and dispatch a new task to an AgentRun. Creates a task record on disk, transitions the agent to `running`, and delivers the task prompt. Returns immediately with the created task.
+
+**Params:**
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `workspace` | string | yes | Workspace name |
+| `name` | string | yes | AgentRun name |
+| `prompt` | string | yes | Task prompt text |
+| `filePaths` | []string | no | Optional file paths to include as context |
+
+**Result:** AgentTask
+
+### `agentrun/task/get`
+
+Retrieve a task record by ID.
+
+**Params:** `{workspace, name, taskId}`
+
+**Result:** AgentTask
+
+### `agentrun/task/list`
+
+List all task records for an AgentRun.
+
+**Params:** `{workspace, name}`
+
+**Result:** `{items: AgentTask[]}`
+
+### `agentrun/task/retry`
+
+Retry a previously completed or failed task. Creates a new attempt for the existing task record and redispatches the prompt.
+
+**Params:** `{workspace, name, taskId}`
+
+**Result:** AgentTask
+
+### AgentTask Shape
+
+| Field | Type | Meaning |
+|---|---|---|
+| `id` | string | Task ID (auto-assigned) |
+| `assignee` | string | AgentRun name assigned to this task |
+| `attempt` | int | Attempt number (1-based; incremented on retry) |
+| `createdAt` | string | RFC3339 creation timestamp |
+| `request` | object | Opaque task request payload (passed through without interpretation) |
+| `done` | bool | Whether the task is complete |
+| `reason` | string? | Completion reason |
+| `updatedAt` | string? | RFC3339 last-updated timestamp |
+| `response` | object? | Opaque task response payload (populated on completion) |
 
 ## Events (Agent-run RPC)
 

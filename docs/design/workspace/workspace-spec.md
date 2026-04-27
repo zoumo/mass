@@ -4,7 +4,7 @@ last_updated: 2026-04-17
 
 # MASS Workspace Spec
 
-The Workspace Spec declares how agentd should prepare a working directory for one or more AgentRuns.
+The Workspace Spec declares how mass should prepare a working directory for one or more AgentRuns.
 It is the authority for **workspace identity, source preparation, hook lifecycle, and host-impact boundary rules**.
 
 ## Top-Level Shape
@@ -89,7 +89,7 @@ A `local` workspace is **not** created or deleted by mass. It is an attachment t
 
 ## `hooks`
 
-Hooks let agentd run host commands around workspace lifecycle transitions.
+Hooks let mass run host commands around workspace lifecycle transitions.
 
 ```json
 {
@@ -126,12 +126,12 @@ Any `setup` hook failure fails workspace preparation.
 
 ### 1. Local workspace attachment
 
-`local` is the highest-trust source type because it attaches agentd directly to an existing host path.
+`local` is the highest-trust source type because it attaches mass directly to an existing host path.
 The contract is explicit:
 
 - `path` must be an absolute host path;
-- agentd must validate the path exists and is a directory before registration;
-- agentd must canonicalize the path before treating it as the realized workspace path;
+- mass must validate the path exists and is a directory before registration;
+- mass must canonicalize the path before treating it as the realized workspace path;
 - cleanup must **not** delete that canonicalized local path;
 - future policy such as allowlists or root restrictions is deployment policy, not hidden implied behavior.
 
@@ -156,7 +156,7 @@ This is the design-set authority for the phrase **hook execution**.
 The Workspace Spec does **not** define per-hook `env` fields today.
 The boundary rules are therefore:
 
-- workspace hooks run in agentd's host process environment, subject to future daemon policy;
+- workspace hooks run in mass's host process environment, subject to future daemon policy;
 - agent process env is built from: inherited daemon/host environment as the base, plus Agent definition `env` layered on top;
 - there is no AgentRun-level env override in `agentrun/create`; env is fixed by the Agent definition;
 - hook environment and agent environment are different surfaces — hooks are not affected by Agent definition env.

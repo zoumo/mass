@@ -11,7 +11,7 @@ Pipeline files define stages, routing logic, and output. They reference a compos
 | `stages` | list | yes | Ordered list of stages to execute |
 | `output` | object | no | Output collection configuration |
 
-> **Note:** Pipeline files do not reference a compose file. The compose file (workspace + agents) is managed separately by the orchestrator and passed directly to `init-workspace.sh`.
+> **Note:** Pipeline files do not reference a compose file. The compose file (workspace + agents) is managed separately by the orchestrator and applied via `massctl compose apply`.
 
 ---
 
@@ -96,8 +96,6 @@ Routing matches against the task's `.reason` field (set by `massctl agentrun tas
 ```yaml
 name: design-review-implement
 description: "设计 → 评审 → 实现"
-
-compose: /tmp/mass-pipelines/my-compose.yaml
 
 stages:
   - name: design
