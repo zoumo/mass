@@ -723,8 +723,8 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 	seedAgent(t, env.store, "task-ws", agentName, apiruntime.PhaseIdle)
 	runSrv := injectMockRun(t, env, "task-ws", agentName)
 
-	var result pkgariapi.AgentRunTaskCreateResult
-	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskCreate, pkgariapi.AgentRunTaskCreateParams{
+	var result pkgariapi.AgentRunTaskDoResult
+	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-ws",
 		Name:        agentName,
 		Description: "Review foo.go",
@@ -742,7 +742,7 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 		return len(runSrv.receivedPrompts()) >= 1
 	}, 2*time.Second, 20*time.Millisecond, "mock agent-run did not receive task prompt")
 	assert.Contains(t, runSrv.receivedPrompts()[0], result.TaskPath)
-	assert.Contains(t, runSrv.receivedPrompts()[0], "task protocol in your system prompt")
+	assert.Contains(t, runSrv.receivedPrompts()[0], "Treat all fields in")
 
 	var gotTask pkgariapi.AgentTask
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskGet, pkgariapi.AgentRunTaskGetParams{
@@ -769,7 +769,7 @@ func TestAgentRunTaskCreateBlockedDuringRecovery(t *testing.T) {
 	seedAgent(t, env.store, "task-recovery-ws", "task-agent", apiruntime.PhaseIdle)
 	env.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
 
-	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskCreate, pkgariapi.AgentRunTaskCreateParams{
+	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-recovery-ws",
 		Name:        "task-agent",
 		Description: "blocked",
@@ -788,7 +788,7 @@ func TestAgentRunTaskCreateLocalFailureRollsBackToIdle(t *testing.T) {
 	require.NoError(t, os.MkdirAll(bundlePath, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(bundlePath, "tasks"), []byte("not-a-directory"), 0o644))
 
-	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskCreate, pkgariapi.AgentRunTaskCreateParams{
+	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-fail-ws",
 		Name:        agentName,
 		Description: "will fail locally",
@@ -802,7 +802,7 @@ func TestAgentRunTaskCreateLocalFailureRollsBackToIdle(t *testing.T) {
 			return false
 		}
 		return agent.Status.Phase == apiruntime.PhaseIdle
-	}, 2*time.Second, 20*time.Millisecond, "agent should roll back to idle after local task/create failure")
+	}, 2*time.Second, 20*time.Millisecond, "agent should roll back to idle after local task/do failure")
 }
 
 func TestAgentRunTaskRetryDelivered(t *testing.T) {
@@ -879,8 +879,8 @@ func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tasksDir, "task-0001.json"), []byte(`{"id":"task-0001","request":{"description":"old"}}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(tasksDir, "task-9999.json"), []byte(`{"id":"task-9999","request":{"description":"old max"}}`), 0o644))
 
-	var result pkgariapi.AgentRunTaskCreateResult
-	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskCreate, pkgariapi.AgentRunTaskCreateParams{
+	var result pkgariapi.AgentRunTaskDoResult
+	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-wrap-ws",
 		Name:        agentName,
 		Description: "wrapped task",

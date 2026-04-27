@@ -144,16 +144,16 @@ type AgentTask struct {
 	Response  json.RawMessage `json:"response,omitempty"`
 }
 
-// AgentRunTaskCreateParams is the request params for agentrun/task/create.
-type AgentRunTaskCreateParams struct {
+// AgentRunTaskDoParams is the request params for agentrun/task/do.
+type AgentRunTaskDoParams struct {
 	Workspace   string   `json:"workspace"`
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	FilePaths   []string `json:"filePaths,omitempty"`
 }
 
-// AgentRunTaskCreateResult is the response result for agentrun/task/create.
-type AgentRunTaskCreateResult struct {
+// AgentRunTaskDoResult is the response result for agentrun/task/do.
+type AgentRunTaskDoResult struct {
 	Task     AgentTask `json:"task"`
 	TaskPath string    `json:"taskPath"`
 }

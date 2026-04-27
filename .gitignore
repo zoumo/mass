@@ -5,6 +5,7 @@
 ./mass
 ./massctl
 nohup.out
+.mass
 
 # ── Scripts (auto-generated) ──
 scripts/verify-*

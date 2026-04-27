@@ -60,8 +60,8 @@ type AgentRunOps interface {
 	// Restart stops and restarts an agent run.
 	Restart(ctx context.Context, key pkgariapi.ObjectKey) (*pkgariapi.AgentRun, error)
 
-	// TaskCreate creates a task file and prompts the agent.
-	TaskCreate(ctx context.Context, params *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error)
+	// TaskDo creates a task file and prompts the agent.
+	TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error)
 
 	// TaskGet retrieves a task by ID.
 	TaskGet(ctx context.Context, params *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error)

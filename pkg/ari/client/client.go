@@ -173,9 +173,9 @@ func (o *agentRunOps) Restart(ctx context.Context, key pkgariapi.ObjectKey) (*pk
 	return &result, nil
 }
 
-func (o *agentRunOps) TaskCreate(ctx context.Context, params *pkgariapi.AgentRunTaskCreateParams) (*pkgariapi.AgentRunTaskCreateResult, error) {
-	var result pkgariapi.AgentRunTaskCreateResult
-	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunTaskCreate, params, &result); err != nil {
+func (o *agentRunOps) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error) {
+	var result pkgariapi.AgentRunTaskDoResult
+	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunTaskDo, params, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

@@ -22,12 +22,7 @@ idle_retry_count=0
 elapsed=0
 
 get_task() {
-  local task_file="/Users/jim/.mass/runs/$WORKSPACE/$AGENT_NAME/tasks/$TASK_ID.json"
-  if [[ -f "$task_file" ]]; then
-    cat "$task_file"
-  else
-    massctl agentrun task get -w "$WORKSPACE" --name "$AGENT_NAME" --id "$TASK_ID" -o json 2>/dev/null
-  fi
+  massctl agentrun task get -w "$WORKSPACE" --run "$AGENT_NAME" "$TASK_ID" -o json 2>/dev/null
 }
 
 is_completed() {
@@ -38,12 +33,12 @@ is_completed() {
 
 while true; do
   agent_state=$(massctl agentrun get "$AGENT_NAME" -w "$WORKSPACE" -o json 2>/dev/null \
-    | jq -r '.status.status // "unknown"')
+    | jq -r '.status.phase // "unknown"')
 
   task_json=$(get_task)
 
   if is_completed "$task_json"; then
-    status=$(echo "$task_json" | jq -r '.status // "unknown"')
+    status=$(echo "$task_json" | jq -r '.reason // "unknown"')
     echo "Task completed. Response status: $status"
     exit 0
   fi
@@ -57,7 +52,7 @@ while true; do
     if (( idle_retry_count < MAX_IDLE_RETRIES )); then
       idle_retry_count=$((idle_retry_count + 1))
       echo "Agent idle but task not completed. Retrying ($idle_retry_count/$MAX_IDLE_RETRIES)..." >&2
-      massctl agentrun task retry -w "$WORKSPACE" --name "$AGENT_NAME" --id "$TASK_ID" 2>/dev/null || true
+      massctl agentrun task retry -w "$WORKSPACE" --run "$AGENT_NAME" --id "$TASK_ID" 2>/dev/null || true
     else
       echo "Agent idle, task not completed after $MAX_IDLE_RETRIES retries." >&2
       exit 1

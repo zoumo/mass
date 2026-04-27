@@ -356,9 +356,6 @@ func TestGenerateConfig(t *testing.T) {
 		if !strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
 			t.Errorf("expected SystemPrompt to include workspace mesh section, got %q", cfg.Session.SystemPrompt)
 		}
-		if !strings.Contains(cfg.Session.SystemPrompt, "<agent-task-protocol>") {
-			t.Errorf("expected SystemPrompt to include agent task section, got %q", cfg.Session.SystemPrompt)
-		}
 		if cfg.Process.Command != "/usr/bin/mockagent" {
 			t.Errorf("expected Command=/usr/bin/mockagent, got %q", cfg.Process.Command)
 		}
@@ -409,9 +406,6 @@ func TestGenerateConfig(t *testing.T) {
 		if !strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
 			t.Errorf("expected workspace mesh prompt, got %q", cfg.Session.SystemPrompt)
 		}
-		if !strings.Contains(cfg.Session.SystemPrompt, "<agent-task-protocol>") {
-			t.Errorf("expected agent task prompt, got %q", cfg.Session.SystemPrompt)
-		}
 	})
 
 	t.Run("workspace feature overrides disable prompt and mcp injection", func(t *testing.T) {
@@ -419,7 +413,6 @@ func TestGenerateConfig(t *testing.T) {
 			Spec: pkgariapi.WorkspaceSpec{
 				Features: map[string]bool{
 					FeatureWorkspaceMesh: false,
-					FeatureAgentTask:     false,
 				},
 			},
 		}
@@ -443,9 +436,6 @@ func TestGenerateConfig(t *testing.T) {
 		}
 		if strings.Contains(cfg.Session.SystemPrompt, "<"+pkgariapi.WorkspaceMeshName+">") {
 			t.Errorf("expected no workspace mesh when disabled, got %q", cfg.Session.SystemPrompt)
-		}
-		if strings.Contains(cfg.Session.SystemPrompt, "<agent-task-protocol>") {
-			t.Errorf("expected no agent task when disabled, got %q", cfg.Session.SystemPrompt)
 		}
 		if len(cfg.Session.McpServers) != 0 {
 			t.Errorf("expected no MCP servers when WorkspaceMesh disabled, got %d", len(cfg.Session.McpServers))
