@@ -1100,7 +1100,13 @@ Follow workflow instructions in file %s.
 // agentTaskPrompt returns the AgentTask feature system prompt snippet.
 func agentTaskPrompt() string {
 	return `<agent-task-protocol>
-You may receive a task file path. Read it, use request.description as input.
-When done: massctl agentrun task done --file {task-path} --reason {reason} --response '{"description":"...","filePaths":[]}'
+You may receive a task file path. Read the JSON file and treat all fields in "request" as your input and instructions.
+
+When done, report the result by running:
+massctl agentrun task done --file {task-path} --reason {reason} --response '{json}'
+
+- {task-path}: the path passed to you
+- {reason}: outcome summary (e.g. success, failed, needs_human)
+- {json}: any JSON object describing the result
 </agent-task-protocol>`
 }
