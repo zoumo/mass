@@ -725,10 +725,10 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 
 	var result pkgariapi.AgentTask
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
-		Workspace:   "task-ws",
-		Name:        agentName,
-		Prompt:      "Review foo.go",
-		FilePaths:   []string{"foo.go"},
+		Workspace: "task-ws",
+		Name:      agentName,
+		Prompt:    "Review foo.go",
+		FilePaths: []string{"foo.go"},
 	}, &result))
 
 	assert.Equal(t, "task-0001", result.ID)
@@ -770,9 +770,9 @@ func TestAgentRunTaskCreateBlockedDuringRecovery(t *testing.T) {
 	env.processes.SetRecoveryPhase(agentd.RecoveryPhaseRecovering)
 
 	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
-		Workspace:   "task-recovery-ws",
-		Name:        "task-agent",
-		Prompt:      "blocked",
+		Workspace: "task-recovery-ws",
+		Name:      "task-agent",
+		Prompt:    "blocked",
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "recovering")
@@ -789,9 +789,9 @@ func TestAgentRunTaskCreateLocalFailureRollsBackToIdle(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(bundlePath, "tasks"), []byte("not-a-directory"), 0o644))
 
 	_, err := callRaw(t, env.client, pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
-		Workspace:   "task-fail-ws",
-		Name:        agentName,
-		Prompt:      "will fail locally",
+		Workspace: "task-fail-ws",
+		Name:      agentName,
+		Prompt:    "will fail locally",
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mkdir tasks")
@@ -881,10 +881,10 @@ func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
 
 	var result pkgariapi.AgentTask
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
-		Workspace:   "task-wrap-ws",
-		Name:        agentName,
-		Prompt:      "wrapped task",
-		FilePaths:   []string{"foo.go"},
+		Workspace: "task-wrap-ws",
+		Name:      agentName,
+		Prompt:    "wrapped task",
+		FilePaths: []string{"foo.go"},
 	}, &result))
 
 	assert.Equal(t, "task-0000", result.ID)

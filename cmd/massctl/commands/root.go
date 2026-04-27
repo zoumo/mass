@@ -50,7 +50,9 @@ func init() {
 //  3. Available Commands  (aliases shown inline)
 //  4. Options / Global Options
 const usageTemplate = `{{if .Long}}{{.Long | trimRightSpace}}{{else}}{{.Short | trimRightSpace}}{{end}}
-{{if .HasExample}}
+{{if not .HasAvailableSubCommands}}
+Usage:
+  {{.UseLine}}{{end}}{{if .HasExample}}
 Examples:
 {{.Example | trimRightSpace}}{{end}}{{if .HasAvailableSubCommands}}
 

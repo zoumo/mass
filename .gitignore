@@ -86,3 +86,5 @@ tmp/
 
 # ── GSD baseline (auto-generated) ──
 .mcp.json
+.worktrees/
+.worktrees/

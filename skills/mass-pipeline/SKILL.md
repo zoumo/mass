@@ -400,7 +400,4 @@ Next steps:
 | Skill | 职责 |
 |-------|------|
 | `mass-guide` | 前置依赖：workspace/agent 生命周期原语 |
-| `mass-pilot` | 保留：手写复杂 orchestrator 逻辑 |
 | `mass-pipeline` | 本 skill：声明式配置驱动的通用 orchestrator |
-
-复杂条件分支、动态角色选择、跨 session 持久化 → 使用 `mass-pilot` 手写。
