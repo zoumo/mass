@@ -16,10 +16,10 @@ type mockAgentRunOps struct {
 	cancelFn     func(ctx context.Context, key pkgariapi.ObjectKey) error
 	stopFn       func(ctx context.Context, key pkgariapi.ObjectKey) error
 	restartFn    func(ctx context.Context, key pkgariapi.ObjectKey) (*pkgariapi.AgentRun, error)
-	taskCreateFn func(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error)
+	taskCreateFn func(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error)
 	taskGetFn    func(ctx context.Context, params *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error)
 	taskListFn   func(ctx context.Context, params *pkgariapi.AgentRunTaskListParams) (*pkgariapi.AgentRunTaskListResult, error)
-	taskRetryFn  func(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error)
+	taskRetryFn  func(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error)
 }
 
 func (m *mockAgentRunOps) Prompt(ctx context.Context, key pkgariapi.ObjectKey, prompt []runapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
@@ -50,11 +50,11 @@ func (m *mockAgentRunOps) Restart(ctx context.Context, key pkgariapi.ObjectKey) 
 	return &pkgariapi.AgentRun{}, nil
 }
 
-func (m *mockAgentRunOps) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error) {
+func (m *mockAgentRunOps) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error) {
 	if m.taskCreateFn != nil {
 		return m.taskCreateFn(ctx, params)
 	}
-	return &pkgariapi.AgentRunTaskDoResult{}, nil
+	return &pkgariapi.AgentTask{}, nil
 }
 
 func (m *mockAgentRunOps) TaskGet(ctx context.Context, params *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error) {
@@ -71,11 +71,11 @@ func (m *mockAgentRunOps) TaskList(ctx context.Context, params *pkgariapi.AgentR
 	return &pkgariapi.AgentRunTaskListResult{}, nil
 }
 
-func (m *mockAgentRunOps) TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error) {
+func (m *mockAgentRunOps) TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error) {
 	if m.taskRetryFn != nil {
 		return m.taskRetryFn(ctx, params)
 	}
-	return &pkgariapi.AgentRunTaskRetryResult{}, nil
+	return &pkgariapi.AgentTask{}, nil
 }
 
 // ── mock WorkspaceOps (stub — not used in agentrun tests) ────────────────────
