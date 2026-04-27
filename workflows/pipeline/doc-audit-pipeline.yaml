@@ -1,0 +1,84 @@
+name: doc-audit
+description: "Audit docs for outdated content and produce a fix plan. Audit scope defined by --input context file."
+compose: workflows/compose/doc-audit-compose.yaml
+
+stages:
+  - name: audit
+    agent: worker
+    description: |
+      Read the audit context file provided as input — it defines exactly what to audit,
+      which files to check, and what to compare against.
+
+      Perform the audit as specified. For each discrepancy found, record:
+        - File path + line range
+        - Exact quote from doc (what it says)
+        - What the source of truth actually says
+        - Severity: CRITICAL (will cause errors / actively misleading) / MINOR (stale, description drift)
+
+      Write all findings to audit-report.md in your task output directory.
+      Be exhaustive — do not skip any item listed in the context file.
+    max_retries: 3
+    routes:
+      - when: success
+        goto: audit_review
+      - when: failed
+        goto: __escalate__
+      - when: needs_human
+        goto: __escalate__
+
+  - name: audit_review
+    agent: reviewer
+    description: |
+      Review audit-report.md for completeness and accuracy.
+
+      Use the audit context file (also provided as input) to verify scope coverage:
+        - Did the auditor check every item listed in the context?
+        - Are findings specific enough (file, line, exact text)?
+        - Any false positives (doc and source of truth actually agree)?
+        - Did the auditor use the real source of truth (run commands / read code), not guess?
+
+      Mark success only if the audit is thorough enough to drive a reliable fix plan.
+      Mark failed with specific gaps if incomplete.
+    input_from: [audit]
+    max_retries: 3
+    routes:
+      - when: success
+        goto: fix_plan
+      - when: failed
+        goto: audit
+      - when: needs_human
+        goto: __escalate__
+
+  - name: fix_plan
+    agent: planner
+    description: |
+      Based on audit-report.md (and reviewer feedback if any), write fix-plan.md.
+
+      For each fix:
+        - Fix ID (FIX-001, FIX-002, ...)
+        - File path
+        - Severity: CRITICAL | MINOR
+        - Effort: trivial (1-2 lines) | small (< 10 lines) | medium (section rewrite)
+        - Old: exact quoted content to replace
+        - New: exact replacement
+        - Reason: one line
+
+      Order: CRITICAL first, then MINOR.
+      Note cross-file dependencies (same change needed in multiple files).
+      End with a summary table: file | critical | minor | effort total.
+
+      Write to fix-plan.md in your task output directory.
+    input_from: [audit, audit_review]
+    max_retries: 3
+    routes:
+      - when: success
+        goto: __done__
+      - when: failed
+        goto: fix_plan
+      - when: needs_human
+        goto: __escalate__
+
+output:
+  collect_from: [fix_plan, audit]
+  destination: ./mass/doc-audit-XXXX/
+  summary: true
