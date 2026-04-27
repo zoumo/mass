@@ -152,12 +152,6 @@ type AgentRunTaskDoParams struct {
 	FilePaths   []string `json:"filePaths,omitempty"`
 }
 
-// AgentRunTaskDoResult is the response result for agentrun/task/do.
-type AgentRunTaskDoResult struct {
-	Task     AgentTask `json:"task"`
-	TaskPath string    `json:"taskPath"`
-}
-
 // AgentRunTaskGetParams is the request params for agentrun/task/get.
 type AgentRunTaskGetParams struct {
 	Workspace string `json:"workspace"`
@@ -181,12 +175,6 @@ type AgentRunTaskRetryParams struct {
 	Workspace string `json:"workspace"`
 	Name      string `json:"name"`
 	TaskID    string `json:"taskId"`
-}
-
-// AgentRunTaskRetryResult is the response result for agentrun/task/retry.
-type AgentRunTaskRetryResult struct {
-	Task     AgentTask `json:"task"`
-	TaskPath string    `json:"taskPath"`
 }
 
 // ────────────────────────────────────────────────────────────────────────────

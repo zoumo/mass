@@ -61,7 +61,7 @@ type AgentRunOps interface {
 	Restart(ctx context.Context, key pkgariapi.ObjectKey) (*pkgariapi.AgentRun, error)
 
 	// TaskDo creates a task file and prompts the agent.
-	TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error)
+	TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error)
 
 	// TaskGet retrieves a task by ID.
 	TaskGet(ctx context.Context, params *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error)
@@ -70,7 +70,7 @@ type AgentRunOps interface {
 	TaskList(ctx context.Context, params *pkgariapi.AgentRunTaskListParams) (*pkgariapi.AgentRunTaskListResult, error)
 
 	// TaskRetry retries an existing task by bumping its attempt count and re-prompting the agent.
-	TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error)
+	TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error)
 }
 
 // WorkspaceOps provides non-CRUD operations on workspaces.

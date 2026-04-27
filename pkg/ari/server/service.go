@@ -32,10 +32,10 @@ type AgentRunService interface {
 	Cancel(ctx context.Context, workspace, name string) error
 	Stop(ctx context.Context, workspace, name string) error
 	Restart(ctx context.Context, workspace, name string) (*pkgariapi.AgentRun, error)
-	TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error)
+	TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error)
 	TaskGet(ctx context.Context, params *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error)
 	TaskList(ctx context.Context, params *pkgariapi.AgentRunTaskListParams) (*pkgariapi.AgentRunTaskListResult, error)
-	TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error)
+	TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error)
 }
 
 // AgentService defines agent definition CRUD methods.

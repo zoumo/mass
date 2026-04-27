@@ -27,8 +27,8 @@ func (m *mockAgentRunOps) Restart(context.Context, pkgariapi.ObjectKey) (*pkgari
 	return &pkgariapi.AgentRun{}, nil
 }
 
-func (m *mockAgentRunOps) TaskDo(context.Context, *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error) {
-	return &pkgariapi.AgentRunTaskDoResult{}, nil
+func (m *mockAgentRunOps) TaskDo(context.Context, *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error) {
+	return &pkgariapi.AgentTask{}, nil
 }
 
 func (m *mockAgentRunOps) TaskGet(context.Context, *pkgariapi.AgentRunTaskGetParams) (*pkgariapi.AgentTask, error) {
@@ -39,8 +39,8 @@ func (m *mockAgentRunOps) TaskList(context.Context, *pkgariapi.AgentRunTaskListP
 	return &pkgariapi.AgentRunTaskListResult{}, nil
 }
 
-func (m *mockAgentRunOps) TaskRetry(context.Context, *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error) {
-	return &pkgariapi.AgentRunTaskRetryResult{}, nil
+func (m *mockAgentRunOps) TaskRetry(context.Context, *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error) {
+	return &pkgariapi.AgentTask{}, nil
 }
 
 // ── mock WorkspaceOps (stub — not used in create tests) ──────────────────────

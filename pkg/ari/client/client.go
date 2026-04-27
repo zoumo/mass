@@ -173,8 +173,8 @@ func (o *agentRunOps) Restart(ctx context.Context, key pkgariapi.ObjectKey) (*pk
 	return &result, nil
 }
 
-func (o *agentRunOps) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error) {
-	var result pkgariapi.AgentRunTaskDoResult
+func (o *agentRunOps) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error) {
+	var result pkgariapi.AgentTask
 	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunTaskDo, params, &result); err != nil {
 		return nil, err
 	}
@@ -197,8 +197,8 @@ func (o *agentRunOps) TaskList(ctx context.Context, params *pkgariapi.AgentRunTa
 	return &result, nil
 }
 
-func (o *agentRunOps) TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error) {
-	var result pkgariapi.AgentRunTaskRetryResult
+func (o *agentRunOps) TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error) {
+	var result pkgariapi.AgentTask
 	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunTaskRetry, params, &result); err != nil {
 		return nil, err
 	}

@@ -594,7 +594,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 }
 
 // TaskDo handles agentrun/task/do.
-func (a *agentRunAdapter) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error) {
+func (a *agentRunAdapter) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error) {
 	if params.Workspace == "" || params.Name == "" || params.Description == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, name, and description are required")
 	}
@@ -652,10 +652,7 @@ func (a *agentRunAdapter) TaskDo(ctx context.Context, params *pkgariapi.AgentRun
 		return nil, err
 	}
 
-	return &pkgariapi.AgentRunTaskDoResult{
-		Task:     task,
-		TaskPath: taskPath,
-	}, nil
+	return &task, nil
 }
 
 // TaskGet handles agentrun/task/get.
@@ -725,7 +722,7 @@ func (a *agentRunAdapter) TaskList(ctx context.Context, params *pkgariapi.AgentR
 }
 
 // TaskRetry handles agentrun/task/retry.
-func (a *agentRunAdapter) TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error) {
+func (a *agentRunAdapter) TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error) {
 	if params.Workspace == "" || params.Name == "" || params.TaskID == "" {
 		return nil, jsonrpc.ErrInvalidParams("workspace, name, and taskId are required")
 	}
@@ -774,10 +771,7 @@ func (a *agentRunAdapter) TaskRetry(ctx context.Context, params *pkgariapi.Agent
 		return nil, err
 	}
 
-	return &pkgariapi.AgentRunTaskRetryResult{
-		Task:     task,
-		TaskPath: taskPath,
-	}, nil
+	return &task, nil
 }
 
 func nextTaskPath(tasksDir string) (string, string, error) {

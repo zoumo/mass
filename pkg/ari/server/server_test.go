@@ -723,7 +723,7 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 	seedAgent(t, env.store, "task-ws", agentName, apiruntime.PhaseIdle)
 	runSrv := injectMockRun(t, env, "task-ws", agentName)
 
-	var result pkgariapi.AgentRunTaskDoResult
+	var result pkgariapi.AgentTask
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-ws",
 		Name:        agentName,
@@ -731,17 +731,17 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 		FilePaths:   []string{"foo.go"},
 	}, &result))
 
-	assert.Equal(t, "task-0001", result.Task.ID)
-	assert.Equal(t, agentName, result.Task.Assignee)
-	assert.Equal(t, 1, result.Task.Attempt)
-	assert.Contains(t, string(result.Task.Request), "Review foo.go")
-	assert.Contains(t, string(result.Task.Request), "foo.go")
-	assert.Equal(t, filepath.Join(env.processes.BundlePath("task-ws", agentName), "tasks", "task-0001.json"), result.TaskPath)
+	assert.Equal(t, "task-0001", result.ID)
+	assert.Equal(t, agentName, result.Assignee)
+	assert.Equal(t, 1, result.Attempt)
+	assert.Contains(t, string(result.Request), "Review foo.go")
+	assert.Contains(t, string(result.Request), "foo.go")
+	expectedPath := filepath.Join(env.processes.BundlePath("task-ws", agentName), "tasks", result.ID+".json")
 
 	require.Eventually(t, func() bool {
 		return len(runSrv.receivedPrompts()) >= 1
 	}, 2*time.Second, 20*time.Millisecond, "mock agent-run did not receive task prompt")
-	assert.Contains(t, runSrv.receivedPrompts()[0], result.TaskPath)
+	assert.Contains(t, runSrv.receivedPrompts()[0], expectedPath)
 	assert.Contains(t, runSrv.receivedPrompts()[0], "Treat all fields in")
 
 	var gotTask pkgariapi.AgentTask
@@ -750,8 +750,8 @@ func TestAgentRunTaskCreateDelivered(t *testing.T) {
 		Name:      agentName,
 		TaskID:    "task-0001",
 	}, &gotTask))
-	assert.Equal(t, result.Task.ID, gotTask.ID)
-	assert.JSONEq(t, string(result.Task.Request), string(gotTask.Request))
+	assert.Equal(t, result.ID, gotTask.ID)
+	assert.JSONEq(t, string(result.Request), string(gotTask.Request))
 
 	var listResult pkgariapi.AgentRunTaskListResult
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskList, pkgariapi.AgentRunTaskListParams{
@@ -837,17 +837,17 @@ func TestAgentRunTaskRetryDelivered(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(taskPath, data, 0o644))
 
-	var result pkgariapi.AgentRunTaskRetryResult
+	var result pkgariapi.AgentTask
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskRetry, pkgariapi.AgentRunTaskRetryParams{
 		Workspace: "task-retry-ws",
 		Name:      agentName,
 		TaskID:    "task-0001",
 	}, &result))
 
-	assert.Equal(t, "task-0001", result.Task.ID)
-	assert.Equal(t, 2, result.Task.Attempt)
-	assert.False(t, result.Task.Done)
-	assert.Nil(t, result.Task.Response)
+	assert.Equal(t, "task-0001", result.ID)
+	assert.Equal(t, 2, result.Attempt)
+	assert.False(t, result.Done)
+	assert.Nil(t, result.Response)
 
 	require.Eventually(t, func() bool {
 		return len(runSrv.receivedPrompts()) >= 1
@@ -879,7 +879,7 @@ func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tasksDir, "task-0001.json"), []byte(`{"id":"task-0001","request":{"description":"old"}}`), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(tasksDir, "task-9999.json"), []byte(`{"id":"task-9999","request":{"description":"old max"}}`), 0o644))
 
-	var result pkgariapi.AgentRunTaskDoResult
+	var result pkgariapi.AgentTask
 	require.NoError(t, env.client.Call(pkgariapi.MethodAgentRunTaskDo, pkgariapi.AgentRunTaskDoParams{
 		Workspace:   "task-wrap-ws",
 		Name:        agentName,
@@ -887,11 +887,11 @@ func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
 		FilePaths:   []string{"foo.go"},
 	}, &result))
 
-	assert.Equal(t, "task-0000", result.Task.ID)
-	assert.Equal(t, filepath.Join(tasksDir, "task-0000.json"), result.TaskPath)
+	assert.Equal(t, "task-0000", result.ID)
+	expectedPath2 := filepath.Join(tasksDir, result.ID+".json")
 
 	var task pkgariapi.AgentTask
-	data, err := os.ReadFile(result.TaskPath)
+	data, err := os.ReadFile(expectedPath2)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(data, &task))
 	assert.Equal(t, "task-0000", task.ID)
@@ -902,7 +902,7 @@ func TestAgentRunTaskCreateWrapsAndOverwritesExistingFile(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return len(runSrv.receivedPrompts()) >= 1
 	}, 2*time.Second, 20*time.Millisecond, "mock agent-run did not receive wrapped task prompt")
-	assert.Contains(t, runSrv.receivedPrompts()[0], result.TaskPath)
+	assert.Contains(t, runSrv.receivedPrompts()[0], expectedPath2)
 }
 
 // ────────────────────────────────────────────────────────────────────────────

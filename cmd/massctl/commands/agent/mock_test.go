@@ -75,7 +75,7 @@ func (m *mockAgentRunOps) Restart(context.Context, pkgariapi.ObjectKey) (*pkgari
 	return nil, nil
 }
 
-func (m *mockAgentRunOps) TaskDo(context.Context, *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentRunTaskDoResult, error) {
+func (m *mockAgentRunOps) TaskDo(context.Context, *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error) {
 	return nil, nil
 }
 
@@ -87,7 +87,7 @@ func (m *mockAgentRunOps) TaskList(context.Context, *pkgariapi.AgentRunTaskListP
 	return nil, nil
 }
 
-func (m *mockAgentRunOps) TaskRetry(context.Context, *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentRunTaskRetryResult, error) {
+func (m *mockAgentRunOps) TaskRetry(context.Context, *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error) {
 	return nil, nil
 }
 
