@@ -186,8 +186,12 @@ done
 **② 创建 task**
 
 ```bash
+STAGE_OUTPUT_DIR=".mass/{workspace}/{stage.agent}/output/{stage.name}"
+mkdir -p "$STAGE_OUTPUT_DIR"
+
 task_id=$(massctl agentrun task do -w {workspace} --run {stage.agent} \
   --prompt "{stage.prompt}" \
+  --output-dir "$STAGE_OUTPUT_DIR" \
   $(for f in "${input_files[@]}"; do echo "--input-files $f"; done) \
   | jq -r '.id')
 ```
@@ -209,8 +213,8 @@ poll_exit=$?
 **④ 收集 artifacts**
 
 ```bash
-# artifacts 由 agent 写入临时目录（在 task response 中返回路径）
-stage_artifacts[{stage.name}]=$(echo "$task_json" | jq -r '.response.filePaths[]?' 2>/dev/null)
+# artifacts 由 agent 写入 --output-dir 指定的目录
+stage_artifacts[{stage.name}]=$(find "$STAGE_OUTPUT_DIR" -type f 2>/dev/null)
 ```
 
 **⑤ 读取 .status 并路由**
@@ -243,8 +247,11 @@ response_status=$(echo "$task_json" | jq -r '.reason // "unknown"')
 # 为每个 sub-task 创建 task，收集 task_id
 declare -A sub_task_ids
 for sub_task in "${stage.tasks[@]}"; do
+  SUB_OUTPUT_DIR=".mass/{workspace}/${sub_task.agent}/output/{stage.name}"
+  mkdir -p "$SUB_OUTPUT_DIR"
   task_id=$(massctl agentrun task do -w {workspace} --run {sub_task.agent} \
     --prompt "{sub_task.prompt}" \
+    --output-dir "$SUB_OUTPUT_DIR" \
     $(for f in "${sub_task_input_files[@]}"; do echo "--input-files $f"; done) \
     | jq -r '.id')
   sub_task_ids[{sub_task.agent}]=$task_id
@@ -281,11 +288,10 @@ wait  # 等待所有后台 poll 完成（wait: all）
 **④ 收集所有 sub-task artifacts**
 
 ```bash
-# artifacts 由各 agent 写入临时目录，路径在各 task response.filePaths 中
+# artifacts 由各 agent 写入 --output-dir 指定的目录
 for agent in "${!sub_task_ids[@]}"; do
-  task_id="${sub_task_ids[$agent]}"
-  task_json=$(massctl agentrun task get -w {workspace} --run "$agent" "$task_id" -o json)
-  stage_artifacts[{stage.name}]+=$(echo "$task_json" | jq -r '.response.filePaths[]?' 2>/dev/null)
+  SUB_OUTPUT_DIR=".mass/{workspace}/${agent}/output/{stage.name}"
+  stage_artifacts[{stage.name}]+=$(find "$SUB_OUTPUT_DIR" -type f 2>/dev/null)
 done
 ```
 
