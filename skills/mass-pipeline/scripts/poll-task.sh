@@ -52,7 +52,7 @@ while true; do
     if (( idle_retry_count < MAX_IDLE_RETRIES )); then
       idle_retry_count=$((idle_retry_count + 1))
       echo "Agent idle but task not completed. Retrying ($idle_retry_count/$MAX_IDLE_RETRIES)..." >&2
-      massctl agentrun task retry -w "$WORKSPACE" --run "$AGENT_NAME" --id "$TASK_ID" 2>/dev/null || true
+      massctl agentrun task retry -w "$WORKSPACE" --run "$AGENT_NAME" "$TASK_ID" 2>/dev/null || true
     else
       echo "Agent idle, task not completed after $MAX_IDLE_RETRIES retries." >&2
       exit 1
