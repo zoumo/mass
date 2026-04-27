@@ -15,7 +15,7 @@ WORKSPACE="${1:?Usage: poll-task.sh <workspace> <agent-name> <task-id> [interval
 AGENT_NAME="${2:?Missing agent-name}"
 TASK_ID="${3:?Missing task-id}"
 INTERVAL="${4:-10}"
-TIMEOUT="${5:-1800}"
+TIMEOUT="${5:-900}"
 
 MAX_IDLE_RETRIES=2
 idle_retry_count=0

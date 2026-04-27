@@ -36,6 +36,25 @@ import (
 
 // Service holds shared dependencies for all ARI handlers.
 // Use Register to wire it with a jsonrpc.Server.
+
+// Task prompt templates sent to agents on do/retry.
+// Placeholders: %d = attempt number, %s = taskPath (repeated twice).
+// Task prompt templates sent to agents on do/retry.
+// Placeholders: %d = attempt number, %s = taskPath (repeated twice).
+const (
+	// agentTaskDoPrompt is sent on first dispatch. Agent reads the task file and executes.
+	agentTaskDoPrompt = `Task attempt %d at: %s
+Read the JSON file. Treat all fields in "request" as your input and instructions.
+When done: massctl agentrun task done --task-file %s --reason {reason} --response {json}`
+
+	// agentTaskRetryPrompt is sent when agent went idle without calling task done.
+	// Asks whether work is complete; if so, call task done immediately.
+	agentTaskRetryPrompt = `Task attempt %d at: %s
+Have you completed everything described in the request?
+If yes: massctl agentrun task done --task-file %s --reason {reason} --response {json}
+If not: continue working on it.`
+)
+
 type Service struct {
 	manager   *workspace.WorkspaceManager
 	agents    *agentd.AgentRunManager
@@ -822,7 +841,13 @@ func (a *agentRunAdapter) dispatchTaskPrompt(ctx context.Context, workspaceName,
 		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
 	}
 
-	promptText := fmt.Sprintf("Task attempt %d at: %s\nRead the JSON file. Treat all fields in \"request\" as your input and instructions.\nWhen done: massctl agentrun task done --task-file %s --reason {reason} --response '{json}'", attempt, taskPath, taskPath)
+	var promptText string
+	switch op {
+	case "retry":
+		promptText = fmt.Sprintf(agentTaskRetryPrompt, attempt, taskPath, taskPath)
+	default:
+		promptText = fmt.Sprintf(agentTaskDoPrompt, attempt, taskPath, taskPath)
+	}
 	if err := client.SendPrompt(ctx, &runapi.SessionPromptParams{
 		Prompt: []runapi.ContentBlock{runapi.TextBlock(promptText)},
 	}); err != nil {
