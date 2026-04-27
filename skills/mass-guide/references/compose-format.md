@@ -1,81 +1,81 @@
-# Compose 格式
+# Compose Format
 
 ## compose apply
 
-`massctl compose apply -f <file>` 声明式创建 workspace + 多个 agentrun。
+`massctl compose apply -f <file>` declaratively creates a workspace and multiple agentruns.
 
-## compose run（快速启动）
+## compose run (Quick Start)
 
-`massctl compose run` 使用当前目录快速启动单个 agent run，无需 YAML 文件。
+`massctl compose run` quickly starts a single agent run using the current directory, without a YAML file.
 
 ```bash
-# 最简用法
+# Minimal usage
 massctl compose run -w my-ws --agent claude
 
-# 指定 run 名称
+# Specify run name
 massctl compose run -w my-ws --agent claude --name my-claude
 
-# 带 system prompt
+# With system prompt
 massctl compose run -w my-ws --agent claude --system-prompt "You are a reviewer"
 ```
 
-| Flag | 必填 | 说明 |
-|------|------|------|
-| `-w, --workspace` | 是 | Workspace 名称 |
-| `--agent` | 是 | Agent 定义名 |
-| `--name` | 否 | AgentRun 名称（默认等于 agent 名称） |
-| `--system-prompt` | 否 | 系统提示词 |
-| `--workflow` | 否 | 工作流文件路径 |
-| `--no-wait` | 否 | 不等待 agentrun 进入 idle |
+| Flag | Required | Description |
+|------|----------|-------------|
+| `-w, --workspace` | Yes | Workspace name |
+| `--agent` | Yes | Agent definition name |
+| `--name` | No | AgentRun name (defaults to agent name) |
+| `--system-prompt` | No | System prompt |
+| `--workflow` | No | Workflow file path |
+| `--no-wait` | No | Do not wait for agentrun to enter idle |
 
-workspace 已存在且 ready 时自动复用，否则以 `cwd` 为 local source 新建。
+If the workspace already exists and is ready, it is reused automatically; otherwise a new workspace is created with `cwd` as the local source.
 
-## compose apply YAML 格式
+## compose apply YAML Format
 
-`massctl compose apply -f <file>` 声明式创建 workspace + 多个 agentrun（workspace 必须不存在）。
+`massctl compose apply -f <file>` declaratively creates a workspace and multiple agentruns (the workspace must not already exist).
 
-## 完整格式
+## Full Format
 
 ```yaml
 kind: workspace-compose
 metadata:
-  name: my-ws                    # Workspace 名称
+  name: my-ws                    # Workspace name
 spec:
   source:
     type: local                  # local | git | emptyDir
-    path: /path/to/code          # local 必填
-    # url: https://...           # git 必填
-    # ref: main                  # git 可选（分支/tag/commit）
+    path: /path/to/code          # Required for local
+    # url: https://...           # Required for git
+    # ref: main                  # Optional for git (branch/tag/commit)
   runs:
-    - name: agent-name           # AgentRun 名称（workspace 内唯一）
-      agent: claude              # 内置 agent 定义名
-      systemPrompt: |            # 系统提示词
+    - name: agent-name           # AgentRun name (unique within workspace)
+      agent: claude              # Built-in agent definition name
+      systemPrompt: |            # System prompt
         Your role description...
       permissions: approve_all   # approve_all | approve_reads | deny_all
 ```
 
-## 字段说明
+## Field Reference
 
 ### source
 
-| type | 必填字段 | 说明 |
-|------|----------|------|
-| `local` | `path` | 挂载本地目录，mass 不管理其生命周期 |
-| `git` | `url`，可选 `ref` | 克隆 git 仓库，mass 管理目录 |
-| `empty` | 无 | 创建空目录，mass 管理 |
+| type | Required fields | Description |
+|------|-----------------|-------------|
+| `local` | `path` | Mounts a local directory; mass does not manage its lifecycle |
+| `git` | `url`, optional `ref` | Clones a git repository; mass manages the directory |
+| `empty` | none | Creates an empty directory; mass manages it |
 
 ### runs[]
 
-| 字段 | 必填 | 默认值 | 说明 |
-|------|------|--------|------|
-| `name` | 是 | — | AgentRun 名称（workspace 内唯一） |
-| `agent` | 是 | — | 引用的 agent 定义名（claude / codex / gsd-pi 或自定义） |
-| `systemPrompt` | 否 | — | 该 agentrun 实例的系统提示词 |
-| `permissions` | 否 | `approve_all` | 文件/终端权限策略 |
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `name` | Yes | — | AgentRun name (unique within workspace) |
+| `agent` | Yes | — | Referenced agent definition name (claude / codex / gsd-pi or custom) |
+| `systemPrompt` | No | — | System prompt for this agentrun instance |
+| `permissions` | No | `approve_all` | File/terminal permission policy |
 
-## compose 执行流程
+## compose Execution Flow
 
-1. 创建 workspace → 轮询直到 phase == `ready`
-2. 依次创建每个 agentrun
-3. 轮询等待所有 agentrun state == `idle`
-4. 打印所有 agent 的 socket 路径
+1. Create workspace → poll until phase == `ready`
+2. Create each agentrun in sequence
+3. Poll until all agentrun states == `idle`
+4. Print the socket path for every agent

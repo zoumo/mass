@@ -1,60 +1,26 @@
 name: doc-audit
-description: "Audit docs for outdated content and produce a fix plan. Audit scope defined by --input context file."
+description: "Audit docs for outdated content and produce a fix plan."
 compose: workflows/compose/doc-audit-compose.yaml
 
+cleanup:
+  preserve_workspace: false  # set true to keep workspace + artifacts for debugging
+
 stages:
-  - name: audit
+  - name: audit_plan
     agent: worker
     description: |
-      Read the audit context file provided as input — it defines exactly what to audit,
-      which files to check, and what to compare against.
+      You will receive a task prompt describing what to audit.
 
-      Perform the audit as specified. For each discrepancy found, record:
+      Step 1 — Determine scope: explore the codebase to identify which doc files and
+      source-of-truth files/commands are relevant. Record the scope at the top of your report.
+
+      Step 2 — Perform the audit. For each discrepancy found, record:
         - File path + line range
         - Exact quote from doc (what it says)
         - What the source of truth actually says
         - Severity: CRITICAL (will cause errors / actively misleading) / MINOR (stale, description drift)
 
-      Write all findings to audit-report.md in your task output directory.
-      Be exhaustive — do not skip any item listed in the context file.
-    max_retries: 3
-    routes:
-      - when: success
-        goto: audit_review
-      - when: failed
-        goto: __escalate__
-      - when: needs_human
-        goto: __escalate__
-
-  - name: audit_review
-    agent: reviewer
-    description: |
-      Review audit-report.md for completeness and accuracy.
-
-      Use the audit context file (also provided as input) to verify scope coverage:
-        - Did the auditor check every item listed in the context?
-        - Are findings specific enough (file, line, exact text)?
-        - Any false positives (doc and source of truth actually agree)?
-        - Did the auditor use the real source of truth (run commands / read code), not guess?
-
-      Mark success only if the audit is thorough enough to drive a reliable fix plan.
-      Mark failed with specific gaps if incomplete.
-    input_from: [audit]
-    max_retries: 3
-    routes:
-      - when: success
-        goto: fix_plan
-      - when: failed
-        goto: audit
-      - when: needs_human
-        goto: __escalate__
-
-  - name: fix_plan
-    agent: planner
-    description: |
-      Based on audit-report.md (and reviewer feedback if any), write fix-plan.md.
-
-      For each fix:
+      Step 3 — Write fix-plan.md. For each finding:
         - Fix ID (FIX-001, FIX-002, ...)
         - File path
         - Severity: CRITICAL | MINOR
@@ -63,22 +29,44 @@ stages:
         - New: exact replacement
         - Reason: one line
 
-      Order: CRITICAL first, then MINOR.
-      Note cross-file dependencies (same change needed in multiple files).
+      Order: CRITICAL first, then MINOR. Note cross-file dependencies.
       End with a summary table: file | critical | minor | effort total.
 
-      Write to fix-plan.md in your task output directory.
-    input_from: [audit, audit_review]
+      Write audit-report.md and fix-plan.md to your task output directory.
+    max_retries: 3
+    routes:
+      - when: success
+        goto: review
+      - when: failed
+        goto: __escalate__
+      - when: needs_human
+        goto: __escalate__
+
+  - name: review
+    agent: reviewer
+    description: |
+      Review audit-report.md and fix-plan.md for completeness and accuracy.
+
+      Check:
+        - Did the worker record and justify the scope they chose?
+        - Are findings specific enough (file, line, exact text)?
+        - Any false positives (doc and source of truth actually agree)?
+        - Did the worker use the real source of truth (run commands / read code), not guess?
+        - Does fix-plan.md cover all findings? Are Old/New values verbatim for CRITICAL fixes?
+
+      If approved: write final-fix-plan.md (copy of fix-plan.md with your approval note) to
+      your task output directory. Mark success.
+
+      If rejected: write review-feedback.md listing specific gaps. Mark failed.
+    input_from: [audit_plan]
     max_retries: 3
     routes:
       - when: success
         goto: __done__
       - when: failed
-        goto: fix_plan
+        goto: audit_plan
       - when: needs_human
         goto: __escalate__
 
 output:
-  collect_from: [fix_plan, audit]
-  destination: ./mass/doc-audit-XXXX/
   summary: true

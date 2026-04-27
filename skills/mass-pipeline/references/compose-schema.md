@@ -18,7 +18,8 @@ Compose files follow the `massctl compose apply` format. They define the workspa
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `type` | enum | yes | `local` \| `git` \| `empty` |
-| `path` | string | conditional | Absolute path for `local`; repo URL for `git`. Ignored for `empty`. |
+| `path` | string | conditional | Absolute path to local directory. Required for `local` type only. |
+| `url` | string | conditional | Git repository URL. Required for `git` type only. |
 | `ref` | string | no | Git ref (branch/tag/sha). Only for `git` type. |
 
 ---
@@ -31,7 +32,7 @@ List of agent run entries.
 |-------|------|----------|-------------|
 | `name` | string | yes | Agent run name — must match names referenced in pipeline `agent` fields |
 | `agent` | string | yes | Agent type (e.g. `claude`) |
-| `systemPrompt` | string | yes | Full system prompt for this agent |
+| `systemPrompt` | string | no | System prompt for this agent |
 | `permissions` | object | no | Permission policy |
 | `mcpServers` | list | no | MCP server configs |
 | `workflowFile` | string | no | Path to a workflow file |
