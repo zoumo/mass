@@ -178,10 +178,10 @@ runtime/status → Status()
 
 | Layer | Technology |
 |-------|-----------|
-| Language | Go (1.21+) |
+| Language | Go 1.26+ |
 | RPC framework | `pkg/jsonrpc/` (transport-agnostic, wraps `sourcegraph/jsonrpc2`) |
 | Metadata store | bbolt (pure-Go, embedded key-value; bucket hierarchy `v1/workspaces`, `v1/agents`, `v1/agentruns`) |
-| Agent protocol | ACP (Agent Communication Protocol) JSON-RPC over stdio |
+| Agent protocol | ACP (Agent Client Protocol) JSON-RPC over stdio |
 | Shim ↔ agentd | Custom JSON-RPC 2.0 over Unix socket (`session/*`, `runtime/*` methods) |
 | CLI | `spf13/cobra` (resource-first grammar) |
 | UUID generation | `github.com/google/uuid` (workspace IDs) |
@@ -227,7 +227,8 @@ cmd/
       agent/        agent CRUD
       workspace/    workspace management
       compose/      multi-agent compose
-      daemon/       daemon control
+      version/      version info
+      cliutil/      CLI shared utilities
 internal/
   testutil/mockagent/  mock ACP agent for integration tests
 ```
