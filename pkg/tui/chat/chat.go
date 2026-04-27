@@ -1007,7 +1007,11 @@ func (m chatModel) View() tea.View {
 
 	chatView := m.chat.Render()
 	div := styleDim.Render(strings.Repeat("─", m.width))
-	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, m.watcher.Cursor(), m.width)
+	cursor := -1
+	if m.watcher != nil {
+		cursor = m.watcher.Cursor()
+	}
+	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, cursor, m.width)
 
 	var input string
 	if m.waiting {

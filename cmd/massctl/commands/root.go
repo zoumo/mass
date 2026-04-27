@@ -74,7 +74,7 @@ func NewRootCommand() *cobra.Command {
 		Use:          "massctl",
 		Short:        "CLI for mass daemon management",
 		SilenceUsage: true,
-		Long: `massctl controls workspaces and agent-run lifecycles in the mass daemon.`,
+		Long:         `massctl controls workspaces and agent-run lifecycles in the mass daemon.`,
 		Example: `  # Typical end-to-end workflow
   massctl ws create local --name my-ws --path /path/to/code --wait
   massctl ar create -w my-ws --name worker --agent claude --wait
