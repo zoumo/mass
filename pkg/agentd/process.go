@@ -764,31 +764,43 @@ func (m *ProcessManager) waitForSocket(ctx context.Context, socketPath string, r
 	}
 }
 
-// killRun kills the agent-run process if it's still running.
+// killRun kills the agent-run process group if it's still running.
+//
+// Signals are sent to the negative PID (i.e. the process group), not the
+// leader PID alone, so that all descendants spawned by the agent-run — the
+// ACP runtime, bunx, the CLI agent process (cfuse, claude-code), MCP
+// servers — are also terminated. forkRun sets Setpgid: true, so the
+// agent-run is the leader of its own process group and every descendant
+// inherits that pgid until it explicitly creates a new one.
+//
+// Without process-group signaling, signaling only the leader leaves the
+// descendants reparented to PID 1 and they keep running until the host is
+// rebooted, accumulating across runs.
 func (m *ProcessManager) killRun(runProc *RunProcess) {
-	// For recovered processes (no Cmd), fall back to killing by PID directly.
-	if runProc.Cmd == nil || runProc.Cmd.Process == nil {
-		if runProc.PID <= 0 {
-			return
-		}
-		proc, err := os.FindProcess(runProc.PID)
-		if err != nil {
-			return
-		}
-		_ = proc.Signal(os.Interrupt)
-		time.Sleep(2 * time.Second)
-		_ = proc.Kill()
+	// Pick the PID to use as the process group ID. forkRun sets Setpgid: true
+	// so PID == PGID for both freshly forked and recovered agent-runs.
+	var pgid int
+	switch {
+	case runProc.Cmd != nil && runProc.Cmd.Process != nil:
+		pgid = runProc.Cmd.Process.Pid
+	case runProc.PID > 0:
+		pgid = runProc.PID
+	default:
 		return
 	}
 
-	// Try graceful shutdown first (SIGTERM).
-	if err := runProc.Cmd.Process.Signal(os.Interrupt); err != nil {
-		// Process might already be dead.
-		if err.Error() == "os: process already finished" {
-			return
-		}
-		// Fall back to SIGKILL.
-		_ = runProc.Cmd.Process.Kill()
+	// Try graceful shutdown of the entire process group first (SIGINT).
+	if err := syscall.Kill(-pgid, syscall.SIGINT); err == syscall.ESRCH {
+		// Process group already gone.
+		return
+	}
+
+	// For recovered processes we don't own a Done channel, so just give the
+	// group a moment to exit and follow up with SIGKILL.
+	if runProc.Cmd == nil || runProc.Cmd.Process == nil {
+		time.Sleep(2 * time.Second)
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		return
 	}
 
 	// Wait via Done channel (set by the goroutine in Start that owns Cmd.Wait).
@@ -796,9 +808,18 @@ func (m *ProcessManager) killRun(runProc *RunProcess) {
 	select {
 	case <-runProc.Done:
 	case <-time.After(2 * time.Second):
-		_ = runProc.Cmd.Process.Kill()
+		// Leader did not respond to SIGINT in time; force-kill the group.
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		<-runProc.Done
 	}
+
+	// Belt-and-suspenders: even after the leader exits cleanly, descendants
+	// may still be alive (SIGINT-ignoring shell-backgrounded jobs, or MCP
+	// servers that detach from the parent's stdio). The pgid is sticky to
+	// each process even after reparenting to PID 1, so SIGKILL on the group
+	// reaches every straggler. ESRCH here is the desired no-op when the group
+	// is empty.
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
 }
 
 // watchProcess waits for the agent-run process to exit and cleans up.
