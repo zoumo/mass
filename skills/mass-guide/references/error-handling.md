@@ -4,28 +4,28 @@
 
 | Error | Cause | Resolution |
 |-------|-------|------------|
-| `daemon: not running` | Daemon is not started | Inform the user to start it; do not start it yourself |
-| Connection refused | `--socket` path is wrong | Confirm the socket path with the user |
+| `daemon: not running` | Daemon not started | Tell user to start it; don't start yourself |
+| Connection refused | `--socket` path wrong | Confirm socket path with user |
 
 ## Workspace Errors
 
 | Error | Cause | Resolution |
 |-------|-------|------------|
-| Phase stuck at `pending` | Source preparation is slow (large repo clone) | Keep polling. If it exceeds 5 minutes, ask the user to check daemon logs |
-| Phase becomes `error` | Invalid source: path does not exist, git URL unreachable, ref not found | `workspace delete` → fix the config → recreate |
-| Delete fails: "workspace has active agents" | There are agentruns still attached | Stop and delete all agentruns first, then delete the workspace |
+| Phase stuck at `pending` | Source prep slow (large repo clone) | Keep polling. If >5 min, ask user to check daemon logs |
+| Phase becomes `error` | Invalid source: path missing, git URL unreachable, ref not found | `workspace delete` → fix config → recreate |
+| Delete fails: "workspace has active agents" | Agentruns still attached | Stop+delete all agentruns first, then delete workspace |
 
 ## AgentRun Errors
 
 | Error | Cause | Resolution |
 |-------|-------|------------|
-| Create fails: workspace not ready | Workspace is still `pending` | Wait for workspace to be `ready`, then retry |
-| Create fails: agent not found | `--agent` name is wrong | Use `agent get` to view the list of available agents |
-| Stuck in `creating` for over 2 minutes | Agent binary not installed or ACP handshake timed out | Use `agentrun get` to check errorMessage; ask the user to verify agent binary availability |
-| Prompt rejected: "not idle" | Agent is not in `idle` state | If `running` → `cancel`, then wait for idle; if `stopped`/`error` → `restart`, then wait for idle |
-| Enters `error` while working | Runtime crash, OOM, or shim process died | `agentrun restart`. If it keeps failing, check daemon logs |
-| Agent `error` after daemon restart | Shim process did not survive | `agentrun restart` |
-| Delete fails: "not stopped" | Agent is still running or idle | `stop` first, then `delete` |
+| Create fails: workspace not ready | Workspace still `pending` | Wait for `ready`, then retry |
+| Create fails: agent not found | `--agent` name wrong | Use `agent get` to list available agents |
+| Stuck in `creating` >2 min | Agent binary not installed or ACP handshake timed out | `agentrun get` to check errorMessage; ask user to verify agent binary |
+| Prompt rejected: "not idle" | Agent not in `idle` state | If `running` → `cancel`, wait for idle; if `stopped`/`error` → `restart`, wait for idle |
+| Enters `error` while working | Runtime crash, OOM, or shim died | `agentrun restart`. If keeps failing, check daemon logs |
+| Agent `error` after daemon restart | Shim didn't survive | `agentrun restart` |
+| Delete fails: "not stopped" | Agent still running or idle | `stop` first, then `delete` |
 
 ## Decision Tree
 
@@ -45,11 +45,11 @@ Agent unresponsive?
    └─ stop → delete → recreate → re-prompt
 ```
 
-> For Task protocol-related errors, see the **mass-pilot** skill.
+> For Task protocol-related errors, see **mass-pilot** skill.
 
 ## Full Rebuild
 
-When partial recovery is not possible, tear everything down and start over:
+When partial recovery not possible, tear down and restart:
 
 ```bash
 for agent in $(massctl agentrun get -w my-ws -o json | jq -r '.[].metadata.name'); do
