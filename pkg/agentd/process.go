@@ -1109,20 +1109,14 @@ Use "request.description" and optional "request.filePaths" as input.
 
 When done, run this command to mark the task as done:
 
-  massctl agentrun task done \
-    --file <task-path> \
-    --reason <reason> \
-    --response '<json>'
+massctl agentrun task done --file {task-path} --reason {reason} --response '{json}'
 
 Where:
-- <task-path> is the path passed to you
-- <reason> is a short string describing the outcome (e.g. success, failed, needs_human)
-- <json> is a JSON object with at least "description" (string) and optionally "filePaths" ([]string)
+- {task-path} is the path passed to you
+- {reason} is a short string describing the outcome (e.g. success, failed, needs_human)
+- {json} is a JSON object with at least "description" (string) and optionally "filePaths" ([]string)
 
 Example:
-  massctl agentrun task done \
-    --file /path/to/task.json \
-    --reason success \
-    --response '{"description":"Done.","filePaths":["/output/result.md"]}'
+massctl agentrun task done --file /path/to/task.json --reason success --response '{"description":"Done.","filePaths":["/output/result.md"]}'
 </agent-task-protocol>`
 }
