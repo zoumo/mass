@@ -23,7 +23,7 @@ version: 0.2.0
 - Create tasks for agents via `massctl agentrun task do`
 - Poll task completion via `scripts/poll-task.sh`
 - Read `.status` and route to the next stage
-- Pass artifacts between stages as `--files` inputs
+- Pass artifacts between stages as `--input-files` inputs
 - Call scripts (`validate-pipeline.sh`, `poll-task.sh`) for deterministic operations
 - Make routing decisions (which stage to run next, when to escalate)
 
@@ -188,7 +188,7 @@ done
 ```bash
 task_id=$(massctl agentrun task do -w {workspace} --run {stage.agent} \
   --prompt "{stage.prompt}" \
-  $(for f in "${input_files[@]}"; do echo "--files $f"; done) \
+  $(for f in "${input_files[@]}"; do echo "--input-files $f"; done) \
   | jq -r '.id')
 ```
 
@@ -245,7 +245,7 @@ declare -A sub_task_ids
 for sub_task in "${stage.tasks[@]}"; do
   task_id=$(massctl agentrun task do -w {workspace} --run {sub_task.agent} \
     --prompt "{sub_task.prompt}" \
-    $(for f in "${sub_task_input_files[@]}"; do echo "--files $f"; done) \
+    $(for f in "${sub_task_input_files[@]}"; do echo "--input-files $f"; done) \
     | jq -r '.id')
   sub_task_ids[{sub_task.agent}]=$task_id
 done

@@ -615,7 +615,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 // TaskDo handles agentrun/task/do.
 func (a *agentRunAdapter) TaskDo(ctx context.Context, params *pkgariapi.AgentRunTaskDoParams) (*pkgariapi.AgentTask, error) {
 	if params.Workspace == "" || params.Name == "" || params.Prompt == "" {
-		return nil, jsonrpc.ErrInvalidParams("workspace, name, and description are required")
+		return nil, jsonrpc.ErrInvalidParams("workspace, name, and prompt are required")
 	}
 
 	a.logger.Info("agentrun/task/do", "workspace", params.Workspace, "name", params.Name)
@@ -643,9 +643,14 @@ func (a *agentRunAdapter) TaskDo(ctx context.Context, params *pkgariapi.AgentRun
 
 	// Build task.
 	req := map[string]any{"prompt": params.Prompt}
-	if len(params.FilePaths) > 0 {
-		req["filePaths"] = params.FilePaths
+	if len(params.InputFiles) > 0 {
+		req["inputFiles"] = params.InputFiles
 	}
+	outputDir := params.OutputDir
+	if outputDir == "" {
+		outputDir = filepath.Join(tasksDir, taskID, "output")
+	}
+	req["outputDir"] = outputDir
 	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		return nil, rollbackToIdle(fmt.Errorf("marshal request: %w", err))

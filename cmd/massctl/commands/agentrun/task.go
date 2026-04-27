@@ -87,10 +87,11 @@ func newTaskDoneCmd() *cobra.Command {
 
 func newTaskDoCmd(getClient cliutil.ClientFn) *cobra.Command {
 	var (
-		ws        string
-		run       string
-		prompt    string
-		filePaths []string
+		ws         string
+		run        string
+		prompt     string
+		inputFiles []string
+		outputDir  string
 	)
 
 	cmd := &cobra.Command{
@@ -105,10 +106,11 @@ func newTaskDoCmd(getClient cliutil.ClientFn) *cobra.Command {
 			defer client.Close()
 
 			result, err := client.AgentRuns().TaskDo(context.Background(), &pkgariapi.AgentRunTaskDoParams{
-				Workspace: ws,
-				Name:      run,
-				Prompt:    prompt,
-				FilePaths: filePaths,
+				Workspace:  ws,
+				Name:       run,
+				Prompt:     prompt,
+				InputFiles: inputFiles,
+				OutputDir:  outputDir,
 			})
 			if err != nil {
 				return err
@@ -119,7 +121,8 @@ func newTaskDoCmd(getClient cliutil.ClientFn) *cobra.Command {
 	cmd.Flags().StringVarP(&ws, "workspace", "w", "", "Workspace name (required)")
 	cmd.Flags().StringVar(&run, "run", "", "Agent run name (required)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Task prompt / description (required)")
-	cmd.Flags().StringSliceVar(&filePaths, "files", nil, "Input file paths")
+	cmd.Flags().StringSliceVar(&inputFiles, "input-files", nil, "Input file paths")
+	cmd.Flags().StringVar(&outputDir, "output-dir", "", "Directory for agent output files")
 	_ = cmd.MarkFlagRequired("workspace")
 	_ = cmd.MarkFlagRequired("run")
 	_ = cmd.MarkFlagRequired("prompt")
