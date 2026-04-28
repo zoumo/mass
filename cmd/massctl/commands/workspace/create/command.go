@@ -18,11 +18,13 @@ Subcommands:
   local  --name <name> --path <path>
   git    --name <name> --url <url> [--ref <ref>] [--depth <n>]
   empty  --name <name>
-  -f     <file>   (full spec YAML)`,
+
+Flags:
+  -f <file>   Create from a full spec YAML file`,
 	}
 	cmd.AddCommand(newLocalCmd(getClient))
 	cmd.AddCommand(newGitCmd(getClient))
 	cmd.AddCommand(newEmptyCmd(getClient))
-	cmd.AddCommand(newFileCmd(getClient))
+	addFileFlags(cmd, getClient)
 	return cmd
 }
