@@ -76,6 +76,15 @@ func runStart(rootPath string, logCfg *logging.LogConfig) error {
 
 	// Write PID file.
 	pidPath := opts.PidFilePath()
+	if data, err := os.ReadFile(pidPath); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			if proc, err := os.FindProcess(pid); err == nil {
+				if proc.Signal(syscall.Signal(0)) == nil {
+					return fmt.Errorf("mass daemon already running (pid %d); use 'mass daemon restart' to restart", pid)
+				}
+			}
+		}
+	}
 	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
 		return fmt.Errorf("write pid file: %w", err)
 	}
