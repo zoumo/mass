@@ -52,61 +52,59 @@ func (s workspaceSource) toSource() (workspace.Source, error) {
 	}
 }
 
-func newFileCmd(getClient cliutil.ClientFn) *cobra.Command {
+func addFileFlags(cmd *cobra.Command, getClient cliutil.ClientFn) {
 	var (
 		file string
 		wait bool
 	)
-	cmd := &cobra.Command{
-		Use:   "-f <file>",
-		Short: "Create a workspace from a YAML spec file",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			data, err := os.ReadFile(file)
-			if err != nil {
-				return fmt.Errorf("reading workspace spec %q: %w", file, err)
-			}
-			var s workspaceSpec
-			if err := yaml.Unmarshal(data, &s); err != nil {
-				return fmt.Errorf("parsing workspace spec %q: %w", file, err)
-			}
-			if s.Name == "" {
-				return fmt.Errorf("workspace spec must have a non-empty 'name' field")
-			}
-			if s.Source.Type == "" {
-				return fmt.Errorf("workspace spec must have a non-empty 'source.type' field")
-			}
+	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to workspace YAML spec file")
+	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for workspace to become ready (used with -f)")
 
-			src, err := s.Source.toSource()
-			if err != nil {
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if file == "" {
+			return cmd.Help()
+		}
+
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("reading workspace spec %q: %w", file, err)
+		}
+		var s workspaceSpec
+		if err := yaml.Unmarshal(data, &s); err != nil {
+			return fmt.Errorf("parsing workspace spec %q: %w", file, err)
+		}
+		if s.Name == "" {
+			return fmt.Errorf("workspace spec must have a non-empty 'name' field")
+		}
+		if s.Source.Type == "" {
+			return fmt.Errorf("workspace spec must have a non-empty 'source.type' field")
+		}
+
+		src, err := s.Source.toSource()
+		if err != nil {
+			return err
+		}
+
+		client, err := getClient()
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+
+		ctx := context.Background()
+		ws, err := cliutil.CreateWorkspace(ctx, client, s.Name, src)
+		if err != nil {
+			return err
+		}
+		if wait {
+			if err := cliutil.WaitWorkspaceReady(ctx, client, s.Name); err != nil {
 				return err
 			}
-
-			client, err := getClient()
-			if err != nil {
+			if err := client.Get(ctx, pkgariapi.ObjectKey{Name: s.Name}, ws); err != nil {
 				return err
 			}
-			defer client.Close()
-
-			ctx := context.Background()
-			ws, err := cliutil.CreateWorkspace(ctx, client, s.Name, src)
-			if err != nil {
-				return err
-			}
-			if wait {
-				if err := cliutil.WaitWorkspaceReady(ctx, client, s.Name); err != nil {
-					return err
-				}
-				if err := client.Get(ctx, pkgariapi.ObjectKey{Name: s.Name}, ws); err != nil {
-					return err
-				}
-			}
-			cliutil.OutputJSON(ws)
-			return nil
-		},
+		}
+		cliutil.OutputJSON(ws)
+		return nil
 	}
-	cmd.Flags().StringVarP(&file, "file", "f", "", "Path to workspace YAML spec file (required)")
-	_ = cmd.MarkFlagRequired("file")
-	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for workspace to become ready")
-	return cmd
 }
