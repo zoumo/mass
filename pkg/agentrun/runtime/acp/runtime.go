@@ -69,6 +69,7 @@ type Manager struct {
 	models          *acp.SessionModelState // from session/new response
 	stateChangeHook StateChangeHook
 	eventCountsFn   func() map[string]int
+	usageFn         func() *apiruntime.UsageInfo
 }
 
 // New creates a new Manager. It does not start the agent process.
@@ -95,6 +96,14 @@ func (m *Manager) SetEventCountsFn(fn func() map[string]int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.eventCountsFn = fn
+}
+
+// SetUsageFn registers a function that returns the latest context window usage.
+// The function is called during every state write to flush usage into state.json.
+func (m *Manager) SetUsageFn(fn func() *apiruntime.UsageInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.usageFn = fn
 }
 
 // Create starts the agent process and performs the ACP handshake.
@@ -425,6 +434,9 @@ func (m *Manager) writeState(apply func(*apiruntime.State), reason string) error
 	if m.eventCountsFn != nil {
 		state.EventCounts = m.eventCountsFn()
 	}
+	if m.usageFn != nil {
+		state.Usage = m.usageFn()
+	}
 
 	if err := spec.WriteState(m.stateDir, state); err != nil {
 		m.mu.Unlock()
@@ -482,6 +494,9 @@ func (m *Manager) UpdateSessionMetadata(changed []string, reason string, apply f
 
 	if m.eventCountsFn != nil {
 		state.EventCounts = m.eventCountsFn()
+	}
+	if m.usageFn != nil {
+		state.Usage = m.usageFn()
 	}
 
 	if err := spec.WriteState(m.stateDir, state); err != nil {

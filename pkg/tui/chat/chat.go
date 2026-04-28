@@ -73,11 +73,17 @@ type initialStatusMsg struct {
 	availableCommands []apiruntime.AvailableCommand
 	currentModel      string
 	availableModels   []apiruntime.ModelInfo
+	usage             *apiruntime.UsageInfo
 }
 
 // agentCommandsMsg is sent when RuntimeUpdateEvent carries AvailableCommands.
 type agentCommandsMsg struct {
 	commands []runapi.AvailableCommand
+}
+
+// usageUpdateMsg is sent when RuntimeUpdateEvent carries Usage.
+type usageUpdateMsg struct {
+	usage *runapi.UsageEvent
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────────
@@ -121,6 +127,7 @@ type chatModel struct {
 	agentCommands   []agentCommand
 	currentModel    string                 // current model ID from session state
 	availableModels []apiruntime.ModelInfo // model list from session state, used for /model completion
+	currentUsage    *apiruntime.UsageInfo  // latest context window usage from agent
 
 	// liveSeq is the cursor snapshot taken when initialStatusMsg is received.
 	// Events with seq <= liveSeq are historical replay; events with seq > liveSeq are live.
@@ -261,6 +268,9 @@ func waitNotif(watcher *watch.RetryWatcher[runapi.AgentRunEvent]) tea.Cmd {
 					if ru.AvailableCommands != nil {
 						return agentCommandsMsg{commands: ru.AvailableCommands.Commands}
 					}
+					if ru.Usage != nil {
+						return usageUpdateMsg{usage: ru.Usage}
+					}
 				}
 				// Skip unrecognized runtime_update subtypes.
 				continue
@@ -304,6 +314,9 @@ func fetchStatusCmd(sc *runclient.Client) tea.Cmd {
 			return nil
 		}
 		msg := initialStatusMsg{status: string(result.State.Phase)}
+		if result.State.Usage != nil {
+			msg.usage = result.State.Usage
+		}
 		if result.State.Session != nil {
 			msg.availableCommands = result.State.Session.AvailableCommands
 			if result.State.Session.Models != nil {
@@ -440,6 +453,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.availableModels = msg.availableModels
 		m.updateAgentCommands(msg.availableCommands)
 		m.initialStatusApplied = true
+		if msg.usage != nil {
+			m.currentUsage = msg.usage
+		}
 		switch msg.status {
 		case string(apiruntime.PhaseRunning):
 			if !m.waiting {
@@ -458,6 +474,10 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentCommandsMsg:
 		m.updateAgentCommands(msg.commands)
+		cmds = append(cmds, waitNotif(m.watcher))
+
+	case usageUpdateMsg:
+		m.currentUsage = &apiruntime.UsageInfo{Used: msg.usage.Used, Size: msg.usage.Size}
 		cmds = append(cmds, waitNotif(m.watcher))
 
 	case anim.StepMsg:
@@ -1011,7 +1031,7 @@ func (m chatModel) View() tea.View {
 	if m.watcher != nil {
 		cursor = m.watcher.Cursor()
 	}
-	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, cursor, m.width)
+	header := renderHeader(m.workspaceName, m.agentName, m.agentStatus, m.currentModel, m.currentUsage, cursor, m.width)
 
 	var input string
 	if m.waiting {

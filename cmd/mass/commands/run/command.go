@@ -123,6 +123,13 @@ func run(cmd *cobra.Command, bundle, stateDir, permissions, id string, logCfg *l
 		}
 	})
 	mgr.SetEventCountsFn(trans.EventCounts)
+	mgr.SetUsageFn(func() *apiruntime.UsageInfo {
+		u := trans.LatestUsage()
+		if u == nil {
+			return nil
+		}
+		return &apiruntime.UsageInfo{Used: u.Used, Size: u.Size}
+	})
 	trans.Start()
 	defer trans.Stop()
 

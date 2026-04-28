@@ -43,4 +43,14 @@ type State struct {
 	// EventCounts maps event type strings to their cumulative counts.
 	// Derived field — set on every state write, not independently.
 	EventCounts map[string]int `json:"eventCounts,omitempty"`
+
+	// Usage is the latest context window usage snapshot from the agent.
+	// Derived field — set on every state write, not independently.
+	Usage *UsageInfo `json:"usage,omitempty"`
+}
+
+// UsageInfo is the latest context window usage snapshot from the agent process.
+type UsageInfo struct {
+	Used int `json:"used"`
+	Size int `json:"size"`
 }

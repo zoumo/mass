@@ -41,6 +41,7 @@ type Translator struct {
 	currentTurnId    string
 	currentBlockType string // event type of currently open content block ("" = none)
 	eventCounts      map[string]int
+	latestUsage      *runapi.UsageEvent
 }
 
 // NewTranslator creates a Translator that reads from in.
@@ -189,6 +190,13 @@ func (t *Translator) EventCounts() map[string]int {
 	return cp
 }
 
+// LatestUsage returns the most recent UsageEvent received from the agent, or nil.
+func (t *Translator) LatestUsage() *runapi.UsageEvent {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.latestUsage
+}
+
 // LastSeq returns the last assigned sequence number, or -1 when no event
 // has been emitted yet.
 func (t *Translator) LastSeq() int {
@@ -322,6 +330,12 @@ func (t *Translator) run() {
 			ev := translate(n)
 			if ev == nil {
 				continue
+			}
+
+			if ru, ok := ev.(runapi.RuntimeUpdateEvent); ok && ru.Usage != nil {
+				t.mu.Lock()
+				t.latestUsage = ru.Usage
+				t.mu.Unlock()
 			}
 
 			if isContentEvent(ev) {
