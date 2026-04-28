@@ -170,6 +170,15 @@ func (a *workspaceAdapter) Create(ctx context.Context, ws *pkgariapi.Workspace) 
 		}
 		a.logger.Info("workspace/create: prepared",
 			"workspace", wsName, "phase", "ready", "path", path)
+
+		// Pre-create the workspace run directory so it exists for the full
+		// lifetime of the workspace (created here, removed on workspace/delete).
+		wsRunDir := filepath.Dir(a.processes.BundlePath(wsName, "_"))
+		if err := os.MkdirAll(wsRunDir, 0o755); err != nil {
+			a.logger.Warn("workspace/create: failed to create run directory",
+				"workspace", wsName, "path", wsRunDir, "error", err)
+		}
+
 		_ = a.store.UpdateWorkspaceStatus(prepareCtx, wsName, pkgariapi.WorkspaceStatus{
 			Phase: pkgariapi.WorkspacePhaseReady,
 			Path:  path,
