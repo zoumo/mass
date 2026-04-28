@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -16,8 +17,8 @@ var (
 
 // renderHeader renders a single-line breadcrumb status bar:
 //
-//	MASS > workspace > agent > model                    ● status seq:N
-func renderHeader(workspaceName, agentName, agentStatus, currentModel string, maxSeq, width int) string {
+//	MASS > workspace > agent > model  128K/200K          ● status seq:N
+func renderHeader(workspaceName, agentName, agentStatus, currentModel string, usage *apiruntime.UsageInfo, maxSeq, width int) string {
 	sep := headerSepStyle.Render(" > ")
 
 	left := headerLogoStyle.Render("MASS")
@@ -29,6 +30,9 @@ func renderHeader(workspaceName, agentName, agentStatus, currentModel string, ma
 	}
 	if currentModel != "" {
 		left += sep + headerItemStyle.Render(currentModel)
+	}
+	if usage != nil && usage.Size > 0 {
+		left += headerSepStyle.Render("  ") + headerItemStyle.Render(renderUsage(usage.Used, usage.Size))
 	}
 
 	right := renderHeaderStatusWithSeq(agentStatus, maxSeq)
@@ -59,6 +63,22 @@ func renderHeaderStatusWithSeq(status string, seq int) string {
 		return styleStatusStopped.Render("● stopped") + seqText
 	default:
 		return styleDim.Render("● "+status) + seqText
+	}
+}
+
+// renderUsage formats used/size as "128K/200K" or "1.2M/2M".
+func renderUsage(used, size int) string {
+	return fmt.Sprintf("%s/%s", formatTokens(used), formatTokens(size))
+}
+
+func formatTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%dK", n/1_000)
+	default:
+		return itoa(n)
 	}
 }
 
