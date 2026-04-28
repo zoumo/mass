@@ -277,6 +277,15 @@ func (a *workspaceAdapter) Delete(ctx context.Context, name string) error {
 		}
 		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: err.Error()}
 	}
+
+	// Remove the workspace run directory (best effort).
+	// agentrun/delete removes individual bundle dirs but leaves the parent workspace
+	// directory behind; clean it up here as the final step.
+	wsRunDir := filepath.Dir(a.processes.BundlePath(name, "_"))
+	if err := os.RemoveAll(wsRunDir); err != nil {
+		a.logger.Warn("workspace/delete: failed to remove run directory",
+			"workspace", name, "path", wsRunDir, "error", err)
+	}
 	return nil
 }
 
