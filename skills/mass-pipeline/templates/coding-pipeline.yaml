@@ -1,12 +1,39 @@
 name: coding
 description: "Standard development pipeline: plan → review → execute → code review → fix"
 
+workspace:
+  source:
+    type: local
+    path: ./
+
+agentRuns:
+  planner:
+    agent: claude
+    systemPrompt: |
+      You are a software architect. Produce detailed, actionable implementation plans.
+
+      Always write output files to the directory specified in your task. When given review feedback, address every concern raised before resubmitting.
+
+  reviewer:
+    agent: claude
+    systemPrompt: |
+      You are a senior engineer who reviews plans and code. Be decisive — converge within three review rounds.
+
+      Always write output files to the directory specified in your task.
+
+  worker:
+    agent: claude
+    systemPrompt: |
+      You are a senior software developer. Implement plans faithfully; fix review feedback precisely.
+
+      Always write output files to the directory specified in your task. Make no changes beyond what is asked.
+
 cleanup:
-  preserve_workspace: false  # set true to keep workspace + artifacts for debugging
+  preserve_workspace: false
 
 stages:
   - name: plan
-    agent: planner
+    agentRun: planner
     description: "Analyze the requirements and write a detailed implementation plan to plan.md"
     max_retries: 3
     routes:
@@ -18,7 +45,7 @@ stages:
         goto: __escalate__
 
   - name: plan_review
-    agent: reviewer
+    agentRun: reviewer
     description: "Review plan.md for completeness, correctness, and feasibility. Give specific feedback if changes needed."
     input_from: [plan]
     max_retries: 3
@@ -31,7 +58,7 @@ stages:
         goto: __escalate__
 
   - name: execute
-    agent: worker
+    agentRun: worker
     description: "Implement the plan from plan.md. Write tests. Produce working code."
     input_from: [plan, plan_review]
     max_retries: 3
@@ -44,7 +71,7 @@ stages:
         goto: __escalate__
 
   - name: code_review
-    agent: reviewer
+    agentRun: reviewer
     description: "Review the implemented code for correctness, quality, and test coverage. Give file:line specific feedback if changes needed."
     input_from: [plan, execute]
     max_retries: 3
