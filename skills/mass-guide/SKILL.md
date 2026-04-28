@@ -125,7 +125,7 @@ Auto: makes workspace → waits ready → makes all agents → waits all idle �
 
 **Preferred way to start agents.** One command replaces manual steps of making workspace, making agentruns one-by-one, polling each separately.
 
-See [../mass-pipeline/references/compose-schema.md](../mass-pipeline/references/compose-schema.md) for compose file format.
+See [references/compose-format.md](references/compose-format.md) for compose file format.
 
 ```yaml
 # compose.yaml minimal example
