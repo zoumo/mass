@@ -46,7 +46,7 @@ then prints the run socket path for each agent.
 			if workspace != "" {
 				wsName = workspace
 			}
-			src, err := buildSource(cfg.Spec.Source)
+			src, err := cliutil.BuildSource(cfg.Spec.Source)
 			if err != nil {
 				return err
 			}

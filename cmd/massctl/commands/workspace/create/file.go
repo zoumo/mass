@@ -6,50 +6,22 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	"github.com/zoumo/mass/pkg/workspace"
 )
 
-// workspaceSpec is the YAML shape for workspace create -f.
-type workspaceSpec struct {
-	Name   string          `yaml:"name"`
-	Source workspaceSource `yaml:"source"`
-}
-
-type workspaceSource struct {
-	Type  string `yaml:"type"`
-	URL   string `yaml:"url,omitempty"`
-	Ref   string `yaml:"ref,omitempty"`
-	Depth int    `yaml:"depth,omitempty"`
-	Path  string `yaml:"path,omitempty"`
-}
-
-func (s workspaceSource) toSource() (workspace.Source, error) {
-	switch s.Type {
-	case "git":
-		if s.URL == "" {
-			return workspace.Source{}, fmt.Errorf("git source requires 'source.url'")
-		}
-		return workspace.Source{
-			Type: workspace.SourceTypeGit,
-			Git:  workspace.GitSource{URL: s.URL, Ref: s.Ref, Depth: s.Depth},
-		}, nil
-	case "emptyDir", "empty":
-		return workspace.Source{Type: workspace.SourceTypeEmptyDir}, nil
-	case "local":
-		if s.Path == "" {
-			return workspace.Source{}, fmt.Errorf("local source requires 'source.path'")
-		}
-		return workspace.Source{
-			Type:  workspace.SourceTypeLocal,
-			Local: workspace.LocalSource{Path: s.Path},
-		}, nil
-	default:
-		return workspace.Source{}, fmt.Errorf("unknown source type %q (valid: git, emptyDir, local)", s.Type)
-	}
+// workspaceInput matches the API Workspace shape (metadata.name + spec.source)
+// so that `massctl ws get -o json` output can be fed back into `workspace create -f`.
+type workspaceInput struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Spec struct {
+		Source workspace.Source `json:"source"`
+	} `json:"spec"`
 }
 
 func addFileFlags(cmd *cobra.Command, getClient cliutil.ClientFn) {
@@ -69,20 +41,15 @@ func addFileFlags(cmd *cobra.Command, getClient cliutil.ClientFn) {
 		if err != nil {
 			return fmt.Errorf("reading workspace spec %q: %w", file, err)
 		}
-		var s workspaceSpec
-		if err := yaml.Unmarshal(data, &s); err != nil {
+		var input workspaceInput
+		if err := sigsyaml.Unmarshal(data, &input); err != nil {
 			return fmt.Errorf("parsing workspace spec %q: %w", file, err)
 		}
-		if s.Name == "" {
-			return fmt.Errorf("workspace spec must have a non-empty 'name' field")
+		if input.Metadata.Name == "" {
+			return fmt.Errorf("workspace spec must have a non-empty 'metadata.name' field")
 		}
-		if s.Source.Type == "" {
-			return fmt.Errorf("workspace spec must have a non-empty 'source.type' field")
-		}
-
-		src, err := s.Source.toSource()
-		if err != nil {
-			return err
+		if input.Spec.Source.Type == "" {
+			return fmt.Errorf("workspace spec must have a non-empty 'spec.source.type' field")
 		}
 
 		client, err := getClient()
@@ -92,19 +59,18 @@ func addFileFlags(cmd *cobra.Command, getClient cliutil.ClientFn) {
 		defer client.Close()
 
 		ctx := context.Background()
-		ws, err := cliutil.CreateWorkspace(ctx, client, s.Name, src)
+		ws, err := cliutil.CreateWorkspace(ctx, client, input.Metadata.Name, input.Spec.Source)
 		if err != nil {
 			return err
 		}
 		if wait {
-			if err := cliutil.WaitWorkspaceReady(ctx, client, s.Name); err != nil {
+			if err := cliutil.WaitWorkspaceReady(ctx, client, input.Metadata.Name); err != nil {
 				return err
 			}
-			if err := client.Get(ctx, pkgariapi.ObjectKey{Name: s.Name}, ws); err != nil {
+			if err := client.Get(ctx, pkgariapi.ObjectKey{Name: input.Metadata.Name}, ws); err != nil {
 				return err
 			}
 		}
-		cliutil.OutputJSON(ws)
-		return nil
+		return cliutil.PrintJSON(cmd.OutOrStdout(), ws)
 	}
 }

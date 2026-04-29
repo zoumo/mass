@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
@@ -67,7 +67,7 @@ func applyFromFile(ctx context.Context, cmd *cobra.Command, client ariclient.Cli
 		return fmt.Errorf("reading agent file %q: %w", file, err)
 	}
 	var ag pkgariapi.Agent
-	if err := yaml.Unmarshal(data, &ag); err != nil {
+	if err := sigsyaml.Unmarshal(data, &ag); err != nil {
 		return fmt.Errorf("parsing agent YAML %q: %w", file, err)
 	}
 	if ag.Metadata.Name == "" {
