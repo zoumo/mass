@@ -6,6 +6,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
 
@@ -25,18 +26,8 @@ type ConfigMetadata struct {
 
 // WorkspaceComposeSpec describes the workspace source and the agent runs to create.
 type WorkspaceComposeSpec struct {
-	Source SourceConfig    `json:"source"`
-	Runs   []AgentRunEntry `json:"runs"`
-}
-
-// SourceConfig describes the workspace source (local, git, or emptyDir).
-type SourceConfig struct {
-	Type string `json:"type"`
-	// local
-	Path string `json:"path,omitempty"`
-	// git
-	URL string `json:"url,omitempty"`
-	Ref string `json:"ref,omitempty"`
+	Source cliutil.SourceConfig `json:"source"`
+	Runs   []AgentRunEntry      `json:"runs"`
 }
 
 // AgentRunEntry describes a single agent run in flattened form.

@@ -78,8 +78,19 @@ massctl workspace create git --name my-ws --url https://github.com/org/repo.git 
 # Empty dir
 massctl workspace create empty --name my-ws --wait
 
-# From YAML spec
+# From YAML spec (same shape as `massctl ws get -o yaml`)
 massctl workspace create -f workspace.yaml --wait
+```
+
+workspace.yaml format:
+```yaml
+metadata:
+  name: my-ws
+spec:
+  source:
+    type: local        # local | git | emptyDir
+    path: /path/to/code
+    # For git: url, ref, depth
 ```
 
 `--wait` blocks until workspace enters ready state. Without `--wait`, poll manually:
