@@ -1,0 +1,14 @@
+workspace:
+  source:
+    type: local
+    path: ./
+agentRuns:
+  a1:
+    agent: claude
+stages:
+  - name: s1
+    agentRun: a1
+    description: "do"
+    routes:
+      - when: success
+        goto: __done__

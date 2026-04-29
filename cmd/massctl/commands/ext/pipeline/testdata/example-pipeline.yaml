@@ -1,0 +1,88 @@
+# yaml-language-server: $schema=../schema/pipeline.schema.json
+#
+# Example MASS pipeline: plan → review → execute → code review
+# Customize the agent types, descriptions, and routes for your workflow.
+name: my-pipeline
+description: "Standard development pipeline: plan → review → execute → code review"
+
+workspace:
+  source:
+    type: local
+    path: ./
+
+agentRuns:
+  planner:
+    agent: claude
+    systemPrompt: |
+      You are a software architect. Produce detailed, actionable implementation plans.
+      Always write output files to the directory specified in your task.
+
+  reviewer:
+    agent: claude
+    systemPrompt: |
+      You are a senior engineer who reviews plans and code. Be decisive.
+      Always write output files to the directory specified in your task.
+
+  worker:
+    agent: claude
+    systemPrompt: |
+      You are a senior software developer. Implement plans faithfully.
+      Always write output files to the directory specified in your task.
+
+cleanup:
+  preserve_workspace: false
+
+stages:
+  - name: plan
+    agentRun: planner
+    description: "Analyze the requirements and write a detailed implementation plan to plan.md"
+    max_retries: 3
+    routes:
+      - when: success
+        goto: plan_review
+      - when: failed
+        goto: __escalate__
+      - when: needs_human
+        goto: __escalate__
+
+  - name: plan_review
+    agentRun: reviewer
+    description: "Review plan.md for completeness, correctness, and feasibility."
+    input_from: [plan]
+    max_retries: 3
+    routes:
+      - when: success
+        goto: execute
+      - when: failed
+        goto: plan
+      - when: needs_human
+        goto: __escalate__
+
+  - name: execute
+    agentRun: worker
+    description: "Implement the plan from plan.md. Write tests. Produce working code."
+    input_from: [plan, plan_review]
+    max_retries: 3
+    routes:
+      - when: success
+        goto: code_review
+      - when: failed
+        goto: plan
+      - when: needs_human
+        goto: __escalate__
+
+  - name: code_review
+    agentRun: reviewer
+    description: "Review the implemented code for correctness, quality, and test coverage."
+    input_from: [plan, execute]
+    max_retries: 3
+    routes:
+      - when: success
+        goto: __done__
+      - when: failed
+        goto: execute
+      - when: needs_human
+        goto: __escalate__
+
+output:
+  summary: true
