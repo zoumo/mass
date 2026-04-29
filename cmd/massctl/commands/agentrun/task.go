@@ -22,6 +22,7 @@ func newTaskCmd(getClient cliutil.ClientFn) *cobra.Command {
 	cmd.AddCommand(newTaskDoneCmd())
 	cmd.AddCommand(newTaskGetCmd(getClient))
 	cmd.AddCommand(newTaskRetryCmd(getClient))
+	cmd.AddCommand(newTaskWaitCmd(getClient))
 	return cmd
 }
 
