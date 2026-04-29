@@ -13,6 +13,7 @@ import (
 	"github.com/zoumo/mass/cmd/massctl/commands/agentrun"
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	"github.com/zoumo/mass/cmd/massctl/commands/compose"
+	"github.com/zoumo/mass/cmd/massctl/commands/ext"
 	"github.com/zoumo/mass/cmd/massctl/commands/version"
 	"github.com/zoumo/mass/cmd/massctl/commands/workspace"
 	"github.com/zoumo/mass/pkg/agentd"
@@ -107,5 +108,6 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(workspace.NewCommand(cliutil.ClientFn(getClient)))
 	root.AddCommand(compose.NewCommand(cliutil.ClientFn(getClient)))
 	root.AddCommand(version.NewCommand(cliutil.ClientFn(getClient)))
+	root.AddCommand(ext.NewCommand())
 	return root
 }

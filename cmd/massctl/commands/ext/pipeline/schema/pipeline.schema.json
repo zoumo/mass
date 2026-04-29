@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MASS Pipeline",
+  "description": "Schema for MASS multi-agent pipeline YAML configuration.",
+  "type": "object",
+  "required": ["name", "workspace", "agentRuns", "stages"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pipeline identifier; used as workspace name prefix."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable purpose of the pipeline."
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "agentRuns": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "Agent run definitions keyed by name.",
+      "additionalProperties": {
+        "$ref": "#/$defs/agentRun"
+      }
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordered list of execution stages.",
+      "items": {
+        "$ref": "#/$defs/stage"
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "type": "boolean",
+          "description": "Print execution summary on completion."
+        }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preserve_workspace": {
+          "type": "boolean",
+          "description": "Keep workspace and agentrun records after completion."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "workspace": {
+      "type": "object",
+      "required": ["source"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/workspaceSource"
+        }
+      }
+    },
+    "workspaceSource": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": ["local", "git", "empty"],
+          "description": "Workspace source type."
+        },
+        "path": {
+          "type": "string",
+          "description": "Absolute or relative path. Required for type 'local'."
+        },
+        "url": {
+          "type": "string",
+          "description": "Git repository URL. Required for type 'git'."
+        },
+        "ref": {
+          "type": "string",
+          "description": "Git ref (branch, tag, or commit SHA). Only valid for type 'git'."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "local" } },
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["path"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "git" } },
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["url"]
+          }
+        }
+      ]
+    },
+    "agentRun": {
+      "type": "object",
+      "required": ["agent"],
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Agent type identifier."
+        },
+        "systemPrompt": {
+          "type": "string",
+          "description": "System prompt for this agent."
+        },
+        "permissions": {
+          "type": "string",
+          "enum": ["approve_all", "approve_reads", "deny_all"],
+          "description": "Permission policy."
+        },
+        "mcpServers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mcpServer"
+          },
+          "description": "MCP server configurations."
+        },
+        "workflowFile": {
+          "type": "string",
+          "description": "Path to workflow file."
+        },
+        "fallback": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fallbackEntry"
+          },
+          "description": "Ordered fallback agent types."
+        }
+      }
+    },
+    "fallbackEntry": {
+      "type": "object",
+      "required": ["agent"],
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Fallback agent type."
+        }
+      }
+    },
+    "mcpServer": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["http", "sse", "stdio"],
+          "description": "Transport type."
+        },
+        "name": {
+          "type": "string",
+          "description": "Server name."
+        },
+        "url": {
+          "type": "string",
+          "description": "Server URL (http/sse)."
+        },
+        "command": {
+          "type": "string",
+          "description": "Executable path (stdio)."
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Command arguments (stdio)."
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/envVar"
+          },
+          "description": "Environment variables (stdio)."
+        }
+      }
+    },
+    "envVar": {
+      "type": "object",
+      "required": ["name", "value"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "string" }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "required": ["name", "routes"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique stage identifier."
+        },
+        "type": {
+          "enum": ["serial", "parallel"],
+          "default": "serial",
+          "description": "Stage execution type."
+        },
+        "agentRun": {
+          "type": "string",
+          "description": "Reference to agentRuns key. Required for serial stages."
+        },
+        "description": {
+          "type": "string",
+          "description": "Semantic task description. Required for serial stages."
+        },
+        "input_files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Static file paths."
+        },
+        "input_from": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Upstream stage names to collect artifacts from."
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Max re-entries via goto. Default: 3."
+        },
+        "routes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/route"
+          },
+          "description": "Routing rules evaluated in order."
+        },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/parallelTask"
+          },
+          "description": "Parallel sub-tasks. Required for parallel stages."
+        },
+        "wait": {
+          "enum": ["all", "any"],
+          "description": "Aggregation strategy for parallel stages."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "parallel" } },
+            "required": ["type"]
+          },
+          "then": {
+            "required": ["tasks"]
+          },
+          "else": {
+            "required": ["agentRun", "description"]
+          }
+        }
+      ]
+    },
+    "parallelTask": {
+      "type": "object",
+      "required": ["agentRun", "description"],
+      "additionalProperties": false,
+      "properties": {
+        "agentRun": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Reference to agentRuns key."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Semantic task description."
+        },
+        "input_files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Static file paths."
+        },
+        "input_from": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Upstream stage names."
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "required": ["when", "goto"],
+      "additionalProperties": false,
+      "properties": {
+        "when": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Condition to match against task reason."
+        },
+        "goto": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Target: stage name, __done__, or __escalate__."
+        }
+      }
+    }
+  }
+}
