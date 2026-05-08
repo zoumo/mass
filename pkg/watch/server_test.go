@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -20,6 +21,36 @@ type recordConn[T any] struct {
 	closed   bool
 	closedCh chan struct{}
 	sendCh   chan struct{} // receives a token after every successful Send
+}
+
+type blockingConn[T any] struct {
+	started  chan struct{}
+	release  chan struct{}
+	closedCh chan struct{}
+	once     sync.Once
+}
+
+func newBlockingConn[T any]() *blockingConn[T] {
+	return &blockingConn[T]{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		closedCh: make(chan struct{}),
+	}
+}
+
+func (b *blockingConn[T]) Send(watch.Event[T]) error {
+	b.once.Do(func() { close(b.started) })
+	<-b.release
+	return errors.New("released")
+}
+
+func (b *blockingConn[T]) Close() error {
+	select {
+	case <-b.closedCh:
+	default:
+		close(b.closedCh)
+	}
+	return nil
 }
 
 func newRecordConn[T any](failAt int) *recordConn[T] {
@@ -163,6 +194,42 @@ func TestWatchServer_BrokenWatcherIsRemoved(t *testing.T) {
 	assert.Contains(t, sent, ev2)
 
 	<-publishDone
+}
+
+func TestWatchServer_SlowWatcherIsClosedWithoutBlockingOthers(t *testing.T) {
+	srv := watch.NewWatchServer[int](watch.WithSendTimeout[int](20 * time.Millisecond))
+
+	slowConn := newBlockingConn[int]()
+	goodConn := newRecordConn[int](-1)
+
+	srv.Accept(slowConn)
+	srv.Accept(goodConn)
+
+	srv.Publish(watch.Event[int]{Seq: 0, Payload: 41})
+	<-slowConn.started
+	goodConn.waitSends(t, 1)
+
+	publishDone := make(chan struct{})
+	go func() {
+		srv.Publish(watch.Event[int]{Seq: 1, Payload: 42})
+		close(publishDone)
+	}()
+
+	goodConn.waitSends(t, 1)
+
+	select {
+	case <-slowConn.closedCh:
+	case <-time.After(time.Second):
+		t.Fatal("slow watcher was not closed")
+	}
+
+	select {
+	case <-publishDone:
+	case <-time.After(time.Second):
+		t.Fatal("publish remained blocked by slow watcher")
+	}
+
+	close(slowConn.release)
 }
 
 func TestWatchServer_NoWatchers_PublishIsNoop(t *testing.T) {

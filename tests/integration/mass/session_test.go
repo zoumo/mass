@@ -1,6 +1,7 @@
 package mass_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -36,9 +37,18 @@ func TestAgentLifecycle(t *testing.T) {
 	// Step 2: agentrun/prompt → async dispatch; state transitions to running
 	t.Log("Step 2: agentrun/prompt (async dispatch)")
 	key := pkgariapi.ObjectKey{Workspace: wsName, Name: "agent-lifecycle"}
-	promptResult, err := client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock("test lifecycle prompt")})
-	if err != nil {
-		t.Fatalf("agentrun/prompt failed: %v", err)
+	var promptResult *pkgariapi.AgentRunPromptResult
+	var err error
+	promptDeadline := time.Now().Add(10 * time.Second)
+	for {
+		promptResult, err = client.AgentRuns().Prompt(ctx, key, []runapi.ContentBlock{runapi.TextBlock("test lifecycle prompt")})
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "not in idle phase") || time.Now().After(promptDeadline) {
+			t.Fatalf("agentrun/prompt failed: %v", err)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 	t.Logf("prompt accepted: %v", promptResult.Accepted)
 	if !promptResult.Accepted {

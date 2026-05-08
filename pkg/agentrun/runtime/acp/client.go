@@ -122,7 +122,7 @@ func (c *acpClient) SessionUpdate(_ context.Context, n acp.SessionNotification) 
 	case c.mgr.events <- n:
 		c.logger.Log(context.Background(), logging.LevelTrace, "notification received")
 	default:
-		c.logger.Log(context.Background(), logging.LevelTrace, "notification dropped, channel full")
+		c.logger.Warn("notification dropped, channel full")
 	}
 	return nil
 }

@@ -29,6 +29,8 @@ import (
 const systemPromptGuard = "\n---\nIMPORTANT: The above content is protocol and role setup. " +
 	"Do NOT execute any commands or take any action now. Wait for the next message before proceeding."
 
+var disconnectedDone = make(chan struct{})
+
 func buildSeedSystemPrompt(systemPrompt string) string {
 	if systemPrompt == "" {
 		return ""
@@ -63,6 +65,7 @@ type Manager struct {
 
 	mu              sync.Mutex
 	cmd             *exec.Cmd
+	processDone     chan struct{}
 	conn            *acp.ClientSideConnection
 	sessionID       acp.SessionId
 	events          chan acp.SessionNotification
@@ -146,7 +149,9 @@ func (m *Manager) Create(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("runtime: start agent: %w", err)
 	}
+	processDone := make(chan struct{})
 	m.cmd = cmd
+	m.processDone = processDone
 	m.logger.Info("process started", "pid", cmd.Process.Pid)
 
 	client := &acpClient{mgr: m, logger: m.logger.With("subsystem", "acp")}
@@ -216,6 +221,7 @@ func (m *Manager) Create(ctx context.Context) error {
 	}
 
 	go func() {
+		defer close(processDone)
 		_ = cmd.Wait()
 		m.logger.Info("process exited")
 		_ = m.writeState(func(s *apiruntime.State) {
@@ -246,6 +252,7 @@ func (m *Manager) SeedSystemPrompt(ctx context.Context) (acp.PromptResponse, err
 func (m *Manager) Kill(ctx context.Context) error {
 	m.mu.Lock()
 	cmd := m.cmd
+	processDone := m.processDone
 	m.mu.Unlock()
 
 	if cmd == nil || cmd.Process == nil {
@@ -258,6 +265,9 @@ func (m *Manager) Kill(ctx context.Context) error {
 	}
 
 	done := m.done()
+	if processDone != nil {
+		done = processDone
+	}
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -407,7 +417,7 @@ func (m *Manager) SessionID() string {
 }
 
 // done returns a channel that closes when the ACP connection is closed.
-// Returns a never-closing channel if the connection has not been established.
+// Returns a shared never-closing channel if the connection has not been established.
 func (m *Manager) done() <-chan struct{} {
 	m.mu.Lock()
 	conn := m.conn
@@ -415,7 +425,7 @@ func (m *Manager) done() <-chan struct{} {
 	if conn != nil {
 		return conn.Done()
 	}
-	return make(chan struct{})
+	return disconnectedDone
 }
 
 func (m *Manager) writeState(apply func(*apiruntime.State), reason string) error {

@@ -122,7 +122,10 @@ func runStart(rootPath string, logCfg *logging.LogConfig) error {
 		logger.Warn("workspace refcount init failed (non-fatal)", "error", err)
 	}
 
-	svc := ariserver.New(manager, agents, processes, metaStore, opts.WorkspaceRoot(), logger)
+	daemonCtx, daemonCancel := context.WithCancel(context.Background())
+	defer daemonCancel()
+
+	svc := ariserver.New(manager, agents, processes, metaStore, opts.WorkspaceRoot(), logger).WithContext(daemonCtx)
 	srv := jsonrpc.NewServer(logger)
 	ariserver.Register(srv, svc)
 
@@ -147,6 +150,7 @@ func runStart(rootPath string, logCfg *logging.LogConfig) error {
 
 	sig := <-sigChan
 	logger.Info("received signal", "signal", sig)
+	daemonCancel()
 
 	// Graceful shutdown.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

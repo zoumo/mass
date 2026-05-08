@@ -783,6 +783,14 @@ func TestAgentRunTaskCreateLocalFailureRollsBackToIdle(t *testing.T) {
 	createAndWaitWorkspace(t, env.client, "task-fail-ws")
 	agentName := "task-agent"
 	seedAgent(t, env.store, "task-fail-ws", agentName, apiruntime.PhaseIdle)
+	require.NoError(t, env.store.UpdateAgentRunStatus(context.Background(), "task-fail-ws", agentName, pkgariapi.AgentRunStatus{
+		Phase:      apiruntime.PhaseIdle,
+		SocketPath: "/tmp/task-fail.sock",
+		StateDir:   "/tmp/task-fail-state",
+		PID:        12345,
+		SessionID:  "session-123",
+		EventPath:  "/tmp/task-fail-events.jsonl",
+	}))
 
 	bundlePath := env.processes.BundlePath("task-fail-ws", agentName)
 	require.NoError(t, os.MkdirAll(bundlePath, 0o755))
@@ -796,13 +804,21 @@ func TestAgentRunTaskCreateLocalFailureRollsBackToIdle(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "mkdir tasks")
 
+	var agent *pkgariapi.AgentRun
 	require.Eventually(t, func() bool {
-		agent, getErr := env.store.GetAgentRun(context.Background(), "task-fail-ws", agentName)
+		var getErr error
+		agent, getErr = env.store.GetAgentRun(context.Background(), "task-fail-ws", agentName)
 		if getErr != nil || agent == nil {
 			return false
 		}
 		return agent.Status.Phase == apiruntime.PhaseIdle
 	}, 2*time.Second, 20*time.Millisecond, "agent should roll back to idle after local task/do failure")
+	require.NotNil(t, agent)
+	assert.Equal(t, "/tmp/task-fail.sock", agent.Status.SocketPath)
+	assert.Equal(t, "/tmp/task-fail-state", agent.Status.StateDir)
+	assert.Equal(t, 12345, agent.Status.PID)
+	assert.Equal(t, "session-123", agent.Status.SessionID)
+	assert.Equal(t, "/tmp/task-fail-events.jsonl", agent.Status.EventPath)
 }
 
 func TestAgentRunTaskRetryDelivered(t *testing.T) {

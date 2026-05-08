@@ -62,6 +62,7 @@ type Service struct {
 	store     *store.Store
 	baseDir   string
 	logger    *slog.Logger
+	ctx       context.Context
 }
 
 // New creates a Service with the provided dependencies.
@@ -81,7 +82,16 @@ func New(
 		store:     s,
 		baseDir:   baseDir,
 		logger:    logger.With("component", "ari.server"),
+		ctx:       context.Background(),
 	}
+}
+
+// WithContext sets the service lifecycle context used by background work.
+func (s *Service) WithContext(ctx context.Context) *Service {
+	if ctx != nil {
+		s.ctx = ctx
+	}
+	return s
 }
 
 // Register wires all ARI service interfaces with the jsonrpc.Server.
@@ -157,7 +167,7 @@ func (a *workspaceAdapter) Create(ctx context.Context, ws *pkgariapi.Workspace) 
 		if wsSpec.PrepareTimeoutSeconds != nil {
 			prepareTimeout = time.Duration(*wsSpec.PrepareTimeoutSeconds) * time.Second
 		}
-		prepareCtx, cancel := context.WithTimeout(context.Background(), prepareTimeout)
+		prepareCtx, cancel := context.WithTimeout(a.ctx, prepareTimeout)
 		defer cancel()
 		path, err := a.manager.Prepare(prepareCtx, wsSpec, targetDir)
 		if err != nil {
@@ -395,7 +405,7 @@ func (a *agentRunAdapter) Create(ctx context.Context, ar *pkgariapi.AgentRun) (*
 	wsName := ar.Metadata.Workspace
 	agName := ar.Metadata.Name
 	go func() {
-		bgCtx := context.Background()
+		bgCtx := a.ctx
 		if _, err := a.processes.Start(bgCtx, wsName, agName); err != nil {
 			a.logger.Warn("agentrun/create: agent-run start failed",
 				"workspace", wsName, "name", agName, "error", err)
@@ -597,7 +607,7 @@ func (a *agentRunAdapter) Restart(ctx context.Context, wsName, name string) (*pk
 	needsStop := agent.Status.Phase != apiruntime.PhaseStopped && agent.Status.Phase != apiruntime.PhaseError
 
 	go func() {
-		bgCtx := context.Background()
+		bgCtx := a.ctx
 		if needsStop {
 			if err := a.processes.Stop(bgCtx, wsName, name); err != nil {
 				a.logger.Warn("agentrun/restart: stop failed",
@@ -850,6 +860,8 @@ func nextTaskPath(tasksDir string) (string, string, error) {
 		maxNum = n
 	}
 
+	// MASS intentionally keeps a four-digit rolling task namespace and retains
+	// at most 9999 historical task files per agent run.
 	nextNum := (maxNum + 1) % 10000
 	taskID := fmt.Sprintf("task-%04d", nextNum)
 	return taskID, filepath.Join(tasksDir, taskID+".json"), nil
@@ -1052,9 +1064,7 @@ func (s *Service) reserveIdleAgent(ctx context.Context, ws, name, entityLabel st
 func (s *Service) rollbackAgentToIdle(ws, name, op string, cause error) error {
 	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if updateErr := s.agents.UpdateStatus(rctx, ws, name, pkgariapi.AgentRunStatus{
-		Phase: apiruntime.PhaseIdle,
-	}); updateErr != nil {
+	if updateErr := s.agents.UpdatePhase(rctx, ws, name, apiruntime.PhaseIdle, ""); updateErr != nil {
 		s.logger.Warn(op+": failed to roll back to idle",
 			"workspace", ws, "name", name, "error", updateErr)
 	}

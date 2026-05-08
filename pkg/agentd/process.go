@@ -109,6 +109,9 @@ type RunProcess struct {
 	// consumer takes over reading from Events.
 	stopDrain chan struct{}
 
+	stopDrainOnce sync.Once
+	drainStopped  chan struct{}
+
 	// exitErr holds the error returned by cmd.Wait(). Set before Done is closed.
 	exitErr error
 
@@ -675,12 +678,13 @@ func (m *ProcessManager) forkRun(agent *pkgariapi.AgentRun, bundlePath, stateDir
 	m.logger.Debug("agent-run forked", "agent_key", key, "pid", cmd.Process.Pid)
 
 	sp := &RunProcess{
-		AgentKey:  key,
-		PID:       cmd.Process.Pid,
-		Cmd:       cmd,
-		Events:    make(chan runapi.AgentRunEvent, 1024), // buffered for async delivery
-		Done:      make(chan struct{}),
-		stopDrain: make(chan struct{}),
+		AgentKey:     key,
+		PID:          cmd.Process.Pid,
+		Cmd:          cmd,
+		Events:       make(chan runapi.AgentRunEvent, 1024), // buffered for async delivery
+		Done:         make(chan struct{}),
+		stopDrain:    make(chan struct{}),
+		drainStopped: make(chan struct{}),
 	}
 	go sp.drainEvents()
 	return sp, nil
@@ -690,6 +694,9 @@ func (m *ProcessManager) forkRun(agent *pkgariapi.AgentRun, bundlePath, stateDir
 // channel. It runs until stopDrain or Done is closed, preventing the channel
 // from filling up when no external consumer is reading.
 func (sp *RunProcess) drainEvents() {
+	if sp.drainStopped != nil {
+		defer close(sp.drainStopped)
+	}
 	for {
 		select {
 		case <-sp.stopDrain:
@@ -707,11 +714,11 @@ func (sp *RunProcess) drainEvents() {
 // StopDrain stops the default drain goroutine so an external consumer can
 // take over reading from Events without racing.
 func (sp *RunProcess) StopDrain() {
-	select {
-	case <-sp.stopDrain:
-		// already stopped
-	default:
+	sp.stopDrainOnce.Do(func() {
 		close(sp.stopDrain)
+	})
+	if sp.drainStopped != nil {
+		<-sp.drainStopped
 	}
 }
 

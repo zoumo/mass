@@ -189,14 +189,15 @@ func (m *ProcessManager) recoverAgent(ctx context.Context, agent *pkgariapi.Agen
 	// Create the RunProcess struct up-front so the notification handler can
 	// route events into its Events channel.
 	runProc := &RunProcess{
-		AgentKey:   key,
-		PID:        agent.Status.PID,
-		BundlePath: "", // not needed for recovered agents
-		StateDir:   agent.Status.StateDir,
-		SocketPath: agent.Status.SocketPath,
-		Events:     make(chan runapi.AgentRunEvent, 100),
-		Done:       make(chan struct{}),
-		stopDrain:  make(chan struct{}),
+		AgentKey:     key,
+		PID:          agent.Status.PID,
+		BundlePath:   "", // not needed for recovered agents
+		StateDir:     agent.Status.StateDir,
+		SocketPath:   agent.Status.SocketPath,
+		Events:       make(chan runapi.AgentRunEvent, 100),
+		Done:         make(chan struct{}),
+		stopDrain:    make(chan struct{}),
+		drainStopped: make(chan struct{}),
 		// Cmd is nil for recovered agents — we didn't fork the process.
 	}
 	go runProc.drainEvents()

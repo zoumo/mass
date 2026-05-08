@@ -2,7 +2,21 @@ package watch
 
 import (
 	"sync"
+	"time"
 )
+
+const defaultSendTimeout = 5 * time.Second
+
+// ServerOption customizes a WatchServer.
+type ServerOption[T any] func(*WatchServer[T])
+
+// WithSendTimeout configures how long Publish waits for a watcher to accept an
+// event before treating it as a slow consumer and closing it.
+func WithSendTimeout[T any](timeout time.Duration) ServerOption[T] {
+	return func(s *WatchServer[T]) {
+		s.sendTimeout = timeout
+	}
+}
 
 // ServerConn represents the server side of a single watcher connection.
 type ServerConn[T any] interface {
@@ -21,17 +35,23 @@ type watcher[T any] struct {
 // Each watcher gets its own goroutine, so one slow or broken connection
 // does not block the others.
 type WatchServer[T any] struct {
-	mu        sync.Mutex
-	watchers  map[uint64]*watcher[T]
-	nextID    uint64
-	publishMu sync.Mutex // serializes Publish calls to guarantee per-watcher event order
+	mu          sync.Mutex
+	watchers    map[uint64]*watcher[T]
+	nextID      uint64
+	publishMu   sync.Mutex // serializes Publish calls to guarantee per-watcher event order
+	sendTimeout time.Duration
 }
 
 // NewWatchServer creates an empty WatchServer.
-func NewWatchServer[T any]() *WatchServer[T] {
-	return &WatchServer[T]{
-		watchers: make(map[uint64]*watcher[T]),
+func NewWatchServer[T any](opts ...ServerOption[T]) *WatchServer[T] {
+	s := &WatchServer[T]{
+		watchers:    make(map[uint64]*watcher[T]),
+		sendTimeout: defaultSendTimeout,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Accept registers a new watcher connection and starts its send goroutine.
@@ -52,12 +72,12 @@ func (s *WatchServer[T]) Accept(conn ServerConn[T]) {
 			s.mu.Lock()
 			delete(s.watchers, id)
 			s.mu.Unlock()
+			close(w.done)
 		}()
 
 		for ev := range w.mailbox {
 			if err := conn.Send(ev); err != nil {
 				conn.Close()
-				close(w.done)
 				return
 			}
 		}
@@ -87,6 +107,8 @@ func (s *WatchServer[T]) Publish(ev Event[T]) {
 		select {
 		case w.mailbox <- ev:
 		case <-w.done:
+		case <-time.After(s.sendTimeout):
+			_ = w.conn.Close()
 		}
 	}
 }

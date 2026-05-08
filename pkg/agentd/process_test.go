@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -19,6 +20,37 @@ import (
 	pkgariapi "github.com/zoumo/mass/pkg/ari/api"
 	apiruntime "github.com/zoumo/mass/pkg/runtime-spec/api"
 )
+
+func TestRunProcessStopDrainConcurrent(t *testing.T) {
+	rp := &RunProcess{
+		Events:       make(chan runapi.AgentRunEvent, 1),
+		Done:         make(chan struct{}),
+		stopDrain:    make(chan struct{}),
+		drainStopped: make(chan struct{}),
+	}
+	go rp.drainEvents()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rp.StopDrain()
+		}()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("concurrent StopDrain calls did not return")
+	}
+}
 
 // TestProcessManagerStart tests the full Start workflow:
 // get AgentRun → resolve Agent definition from DB → generate config.json → create bundle
