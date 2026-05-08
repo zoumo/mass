@@ -334,16 +334,13 @@ Task JSON structure (`AgentTask`):
 }
 ```
 
-Polling example:
+Wait example:
 
 ```bash
-# Poll until done == true
-while true; do
-  done=$(cat /path/to/task.json | jq -r '.done')
-  [[ "$done" == "true" ]] && break
-  sleep 5
-done
-reason=$(cat /path/to/task.json | jq -r '.reason')
+# Wait until done == true, agent error/stopped, idle retries exhausted, or timeout.
+massctl ar task wait {task-id} -w {workspace} --run {agent} \
+  --timeout 15m --interval 10s > task-result.json
+reason=$(jq -r '.reason' task-result.json)
 echo "Task finished with reason: $reason"
 ```
 
@@ -378,8 +375,9 @@ massctl agentrun task do -w my-ws --run worker \
   --prompt "Fix nil pointer in pkg/auth/handler.go:42"
 # → returns task-id and taskPath
 
-# 3. Poll until complete (or use poll-task.sh)
-# done=true → read reason
+# 3. Wait until complete
+massctl ar task wait {task-id} -w my-ws --run worker > task-result.json
+# done=true -> read reason from task-result.json
 
 # 4. Clean up
 massctl agentrun stop worker -w my-ws

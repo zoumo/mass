@@ -5,12 +5,16 @@ description: |
   creates workspace, launches agents on demand with fallback support, executes tasks stage by stage, routes via .reason, collects outputs, and cleans up resources.
   Trigger: user runs /mass-pipeline, or mentions "execute with pipeline" or "multi-agent collaboration to complete a task".
   Built-in standard development workflow: plan → review → execute → code review → fix (using the dev-pipeline template).
-version: 0.3.0
+version: 0.4.0
 ---
 
 # mass-pipeline — Multi-Agent Pipeline Orchestrator
 
 Reads self-contained YAML pipeline config, orchestrates multi-agent execution. Built-in dev pipeline template included.
+
+Use MASS built-ins for deterministic pipeline operations:
+- Validate pipeline files with `massctl ext pipeline validate`.
+- Wait for tasks with `massctl ar task wait`.
 
 > **Prerequisite**: Depends on **mass-guide** for workspace/agent lifecycle. Confirm `mass daemon status` healthy before running.
 
@@ -20,10 +24,11 @@ Reads self-contained YAML pipeline config, orchestrates multi-agent execution. B
 
 ### DO
 - Make tasks via `massctl agentrun task do`
-- Poll via `scripts/poll-task.sh`
+- Wait via `massctl ar task wait`
 - Read `.reason`, route to next stage
 - Pass artifacts as `--input-files`
-- Call scripts (`validate-pipeline.sh`, `ensure-agentrun.sh`, `poll-task.sh`) for deterministic ops
+- Validate via `massctl ext pipeline validate`
+- Call `scripts/ensure-agentrun.sh` only for on-demand agentRun creation with fallback
 - Make routing decisions (next stage, when to escalate)
 
 ### DO NOT
@@ -118,12 +123,11 @@ WORKSPACE_NAME="{pipeline.name}-$(openssl rand -hex 2)"
 ### 0c. Pre-flight Validation (before startup)
 
 ```bash
-skills/mass-pipeline/scripts/validate-pipeline.sh {pipeline_file}
+massctl ext pipeline validate {pipeline_file}
 ```
 
 - Exit 0: passed. Show summary.
-- Exit 1: failed. Report errors, stop.
-- Exit 2: missing dependency. Report, stop.
+- Non-zero: failed. Report command output, stop.
 
 After validation: ask "Confirm execution?" Wait for confirmation.
 
@@ -239,16 +243,19 @@ task_id=$(massctl agentrun task do -w {workspace} --run {stage.agentRun} \
   | jq -r '.id')
 ```
 
-**③ Poll**
+**③ Wait**
 
 ```bash
-skills/mass-pipeline/scripts/poll-task.sh {workspace} {stage.agentRun} {task_id}
-poll_exit=$?
+wait_exit=0
+massctl ar task wait {task_id} -w {workspace} --run {stage.agentRun} \
+  --timeout 15m --interval 10s > "$STAGE_OUTPUT_DIR/task-result.json" || wait_exit=$?
 stage_elapsed=$(( $(date +%s) - stage_start_time ))
 stage_durations[{stage.name}]=$stage_elapsed
 ```
 
-| poll exit | handling |
+`massctl ar task wait` writes progress JSONL to stderr and final task JSON to stdout.
+
+| wait exit | handling |
 |-----------|----------|
 | 0 | read .reason, route |
 | 1 | idle retries exhausted → treat as `failed`, follow routes |
@@ -265,8 +272,14 @@ stage_artifacts[{stage.name}]=$(find "$STAGE_OUTPUT_DIR" -type f 2>/dev/null)
 **⑤ Read .reason, route**
 
 ```bash
-task_json=$(massctl agentrun task get -w {workspace} --run {stage.agentRun} {task_id} -o json)
-response_status=$(echo "$task_json" | jq -r '.reason // "unknown"')
+if [[ "$wait_exit" -eq 0 ]]; then
+  task_json=$(cat "$STAGE_OUTPUT_DIR/task-result.json")
+  response_status=$(echo "$task_json" | jq -r '.reason // "unknown"')
+elif [[ "$wait_exit" -eq 2 ]]; then
+  response_status="needs_human"
+else
+  response_status="failed"
+fi
 ```
 
 Match `when == response_status` in `stage.routes` order, first matching `goto`:
@@ -313,17 +326,19 @@ for sub_task in "${stage.tasks[@]}"; do
 done
 ```
 
-**② Concurrent polling** (background, wait all):
+**② Concurrent waiting** (background, wait all):
 
 ```bash
-declare -A sub_poll_exits
+declare -A sub_wait_exits
 for agent in "${!sub_task_ids[@]}"; do
   (
-    skills/mass-pipeline/scripts/poll-task.sh {workspace} "$agent" "${sub_task_ids[$agent]}"
-    echo $? > /tmp/poll_exit_{workspace}_{agent}
+    wait_exit=0
+    massctl ar task wait "${sub_task_ids[$agent]}" -w {workspace} --run "$agent" \
+      --timeout 15m --interval 10s > "/tmp/task_result_{workspace}_${agent}.json" || wait_exit=$?
+    echo "$wait_exit" > "/tmp/wait_exit_{workspace}_${agent}"
   ) &
 done
-wait  # wait: all — wait for all background polls to complete
+wait  # wait: all — wait for all background waits to complete
 # wait: any — use wait -n to wait for first to complete, cancel rest (if massctl supports task cancel)
 ```
 
@@ -442,11 +457,11 @@ Next steps:
 | Scenario | Behavior |
 |----------|----------|
 | YAML not found | Stop, report path error, make no resources |
-| YAML validation failed | Stop, report field errors, make no resources |
+| YAML validation failed | Stop, report `massctl ext pipeline validate` output, make no resources |
 | workspace creation failed | Stop, don't make agentrun |
 | ensure-agentrun failed (all fallbacks exhausted) | `__escalate__` directly |
-| poll exit 2 (agent error) | Skip routes → `__escalate__` directly |
-| poll exit 1/3 (idle/timeout) | Treat as `failed`, follow normal routes |
+| `massctl ar task wait` exit 2 (agent error) | Skip routes → `__escalate__` directly |
+| `massctl ar task wait` exit 1/3 (idle/timeout) | Treat as `failed`, follow normal routes |
 | retry limit exceeded | Force `__escalate__`, ignore routes |
 | `__escalate__` | Print full context, retain artifacts, clean up processes |
 | No matching route | Semantic judgment; if unable → `__escalate__` |
