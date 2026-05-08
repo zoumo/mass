@@ -328,8 +328,8 @@ func TestBuildCloneArgs(t *testing.T) {
 			target:        "/tmp/target",
 			ref:           "abc123def456789abc123def456789abc123def45",
 			depth:         5,
-			useBranchFlag: false, // SHA should not use --branch even with depth
-			wantArgs:      []string{"clone", "--depth", "5", "--single-branch", "https://github.com/example/repo.git", "/tmp/target"},
+			useBranchFlag: false, // SHA should not use --branch or shallow depth
+			wantArgs:      []string{"clone", "--single-branch", "https://github.com/example/repo.git", "/tmp/target"},
 		},
 	}
 

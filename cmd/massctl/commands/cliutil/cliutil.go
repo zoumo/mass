@@ -3,6 +3,7 @@ package cliutil
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,33 @@ import (
 
 // ClientFn is a factory for ARI clients, injected by the root command.
 type ClientFn func() (ariclient.Client, error)
+
+// ExitError carries a command-specific process exit code without forcing the
+// command to call os.Exit before deferred cleanup can run.
+type ExitError struct {
+	Code int
+	Err  error
+}
+
+func (e *ExitError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("exit code %d", e.Code)
+	}
+	return e.Err.Error()
+}
+
+func (e *ExitError) Unwrap() error {
+	return e.Err
+}
+
+// ExitCode returns err's requested process exit code, or 1 for ordinary errors.
+func ExitCode(err error) int {
+	var exitErr *ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.Code
+	}
+	return 1
+}
 
 // PrintJSON writes result as pretty JSON to w.
 func PrintJSON(w io.Writer, result any) error {

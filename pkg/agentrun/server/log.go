@@ -198,11 +198,13 @@ func lastValidOffset(path string) (nextSeq int, offset int64, err error) {
 	var lastValidEnd int64
 	lastSeq := -1
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		end := pos + int64(len(line)) + 1 // +1 for \n
+	r := bufio.NewReaderSize(f, 64*1024)
+	for {
+		line, readErr := r.ReadBytes('\n')
+		if len(line) == 0 && errors.Is(readErr, io.EOF) {
+			break
+		}
+		end := pos + int64(len(line))
 		if len(bytes.TrimSpace(line)) > 0 {
 			var e runapi.AgentRunEvent
 			if json.Unmarshal(line, &e) == nil {
@@ -211,9 +213,12 @@ func lastValidOffset(path string) (nextSeq int, offset int64, err error) {
 			}
 		}
 		pos = end
-	}
-	if scanErr := scanner.Err(); scanErr != nil {
-		return 0, 0, fmt.Errorf("events: scan %s: %w", path, scanErr)
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				break
+			}
+			return 0, 0, fmt.Errorf("events: scan %s: %w", path, readErr)
+		}
 	}
 	if lastSeq < 0 {
 		return 0, 0, nil

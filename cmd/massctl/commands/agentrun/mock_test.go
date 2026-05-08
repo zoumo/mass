@@ -2,6 +2,7 @@ package agentrun
 
 import (
 	"context"
+	"sync/atomic"
 
 	"github.com/zoumo/mass/cmd/massctl/commands/cliutil"
 	runapi "github.com/zoumo/mass/pkg/agentrun/api"
@@ -98,6 +99,7 @@ type mockClient struct {
 	agentRunOps  *mockAgentRunOps
 	workspaceOps *mockWorkspaceOps
 	systemOps    *mockSystemOps
+	closeCount   atomic.Int32
 }
 
 func newMockClient() *mockClient {
@@ -146,8 +148,11 @@ func (m *mockClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pk
 func (m *mockClient) AgentRuns() ariclient.AgentRunOps   { return m.agentRunOps }
 func (m *mockClient) Workspaces() ariclient.WorkspaceOps { return m.workspaceOps }
 func (m *mockClient) System() ariclient.SystemOps        { return m.systemOps }
-func (m *mockClient) Close() error                       { return nil }
-func (m *mockClient) DisconnectNotify() <-chan struct{}  { return make(chan struct{}) }
+func (m *mockClient) Close() error {
+	m.closeCount.Add(1)
+	return nil
+}
+func (m *mockClient) DisconnectNotify() <-chan struct{} { return make(chan struct{}) }
 
 // ── mock SystemOps ──────────────────────────────────────────────────────────────
 

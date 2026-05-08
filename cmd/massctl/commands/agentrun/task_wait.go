@@ -3,9 +3,9 @@ package agentrun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -110,7 +110,7 @@ Progress is reported as JSONL on stderr. Task result JSON is on stdout.`,
 						Attempt: task.Attempt,
 						Error:   errMsg,
 					})
-					os.Exit(2)
+					return &cliutil.ExitError{Code: 2, Err: errors.New(errMsg)}
 				}
 
 				if agentPhase == "idle" {
@@ -137,7 +137,7 @@ Progress is reported as JSONL on stderr. Task result JSON is on stdout.`,
 							Attempt: task.Attempt,
 							Error:   errMsg,
 						})
-						os.Exit(1)
+						return &cliutil.ExitError{Code: 1, Err: errors.New(errMsg)}
 					}
 				} else {
 					writeStatus(stderr, waitStatus{
@@ -157,7 +157,7 @@ Progress is reported as JSONL on stderr. Task result JSON is on stdout.`,
 						Attempt: task.Attempt,
 						Error:   errMsg,
 					})
-					os.Exit(3)
+					return &cliutil.ExitError{Code: 3, Err: errors.New(errMsg)}
 				}
 
 				time.Sleep(interval)

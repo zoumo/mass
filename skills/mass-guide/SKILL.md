@@ -344,6 +344,8 @@ reason=$(jq -r '.reason' task-result.json)
 echo "Task finished with reason: $reason"
 ```
 
+Exit codes: `0` means done, `1` means idle retries exhausted, `2` means the agent entered error/stopped, and `3` means timeout. Progress JSONL is written to stderr; the final task JSON is written to stdout only on success.
+
 #### List Tasks
 
 ```bash

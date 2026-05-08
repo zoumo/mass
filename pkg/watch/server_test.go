@@ -197,7 +197,7 @@ func TestWatchServer_BrokenWatcherIsRemoved(t *testing.T) {
 }
 
 func TestWatchServer_SlowWatcherIsClosedWithoutBlockingOthers(t *testing.T) {
-	srv := watch.NewWatchServer[int](watch.WithSendTimeout[int](20 * time.Millisecond))
+	srv := watch.NewWatchServer[int](watch.WithSendTimeout[int](200 * time.Millisecond))
 
 	slowConn := newBlockingConn[int]()
 	goodConn := newRecordConn[int](-1)
@@ -227,6 +227,19 @@ func TestWatchServer_SlowWatcherIsClosedWithoutBlockingOthers(t *testing.T) {
 	case <-publishDone:
 	case <-time.After(time.Second):
 		t.Fatal("publish remained blocked by slow watcher")
+	}
+
+	publishAgainDone := make(chan struct{})
+	go func() {
+		srv.Publish(watch.Event[int]{Seq: 2, Payload: 43})
+		close(publishAgainDone)
+	}()
+	goodConn.waitSends(t, 1)
+
+	select {
+	case <-publishAgainDone:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("closed slow watcher was not removed before next publish")
 	}
 
 	close(slowConn.release)

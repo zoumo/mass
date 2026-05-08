@@ -180,8 +180,9 @@ func isHexChar(c rune) bool {
 func buildCloneArgs(url, target, ref string, depth int, useBranchFlag bool) []string {
 	args := []string{"clone"}
 
-	// Add --depth for shallow clones.
-	if depth > 0 {
+	// Add --depth for shallow named-ref clones. For raw commit SHAs, shallow
+	// cloning only the default branch can omit the requested commit entirely.
+	if depth > 0 && useBranchFlag {
 		args = append(args, "--depth", fmt.Sprintf("%d", depth))
 	}
 

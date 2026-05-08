@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -287,6 +288,28 @@ func TestEventLog_LastSeq_AfterAppend(t *testing.T) {
 	assert.Equal(t, 2, log.LastSeq())
 	assert.Equal(t, 3, log.NextSeq())
 	require.NoError(t, log.Close())
+}
+
+func TestEventLog_ReopenAllowsLargeEventLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	log, err := OpenEventLog(path)
+	require.NoError(t, err)
+	ev := runapi.AgentRunEvent{
+		RunID:   "s1",
+		Seq:     0,
+		Time:    testTime(t),
+		Type:    runapi.EventTypeAgentMessage,
+		Payload: runapi.NewContentEvent(runapi.EventTypeAgentMessage, "", runapi.TextBlock(strings.Repeat("x", 70*1024))),
+	}
+	require.NoError(t, log.Append(ev))
+	require.NoError(t, log.Close())
+
+	reopened, err := OpenEventLog(path)
+	require.NoError(t, err)
+	assert.Equal(t, 1, reopened.NextSeq())
+	require.NoError(t, reopened.Close())
 }
 
 func TestEventLog_PartialWriteTruncation(t *testing.T) {

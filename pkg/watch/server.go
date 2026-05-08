@@ -26,9 +26,12 @@ type ServerConn[T any] interface {
 
 // watcher holds the per-connection state on the server side.
 type watcher[T any] struct {
+	id      uint64
 	conn    ServerConn[T]
 	mailbox chan Event[T]
+	closed  chan struct{}
 	done    chan struct{} // closed when watcher goroutine exits
+	once    sync.Once
 }
 
 // WatchServer fans out published events to all registered watchers.
@@ -60,8 +63,10 @@ func (s *WatchServer[T]) Accept(conn ServerConn[T]) {
 	id := s.nextID
 	s.nextID++
 	w := &watcher[T]{
+		id:      id,
 		conn:    conn,
 		mailbox: make(chan Event[T]), // unbuffered: Publish blocks per watcher
+		closed:  make(chan struct{}),
 		done:    make(chan struct{}),
 	}
 	s.watchers[id] = w
@@ -69,19 +74,38 @@ func (s *WatchServer[T]) Accept(conn ServerConn[T]) {
 
 	go func() {
 		defer func() {
-			s.mu.Lock()
-			delete(s.watchers, id)
-			s.mu.Unlock()
+			s.removeWatcher(w)
 			close(w.done)
 		}()
 
-		for ev := range w.mailbox {
-			if err := conn.Send(ev); err != nil {
-				conn.Close()
+		for {
+			select {
+			case ev := <-w.mailbox:
+				if err := conn.Send(ev); err != nil {
+					s.closeWatcher(w)
+					return
+				}
+			case <-w.closed:
 				return
 			}
 		}
 	}()
+}
+
+func (s *WatchServer[T]) removeWatcher(w *watcher[T]) {
+	s.mu.Lock()
+	if s.watchers[w.id] == w {
+		delete(s.watchers, w.id)
+	}
+	s.mu.Unlock()
+}
+
+func (s *WatchServer[T]) closeWatcher(w *watcher[T]) {
+	w.once.Do(func() {
+		s.removeWatcher(w)
+		close(w.closed)
+		_ = w.conn.Close()
+	})
 }
 
 // Publish sends ev to all registered watchers.
@@ -106,9 +130,10 @@ func (s *WatchServer[T]) Publish(ev Event[T]) {
 	for _, w := range ws {
 		select {
 		case w.mailbox <- ev:
+		case <-w.closed:
 		case <-w.done:
 		case <-time.After(s.sendTimeout):
-			_ = w.conn.Close()
+			s.closeWatcher(w)
 		}
 	}
 }
