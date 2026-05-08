@@ -55,6 +55,10 @@ coverage:
 	@echo "Coverage report written to coverage.out"
 	@go tool cover -func=coverage.out | tail -1
 
+.PHONY: race
+race:
+	go test -race ./...
+
 .PHONY: clean
 clean:
 	rm -rf $(BIN_DIR) coverage.out

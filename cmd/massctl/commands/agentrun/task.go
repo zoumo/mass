@@ -164,10 +164,7 @@ func newTaskGetCmd(getClient cliutil.ClientFn) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				items := make([]any, len(result.Items))
-				for i := range result.Items {
-					items[i] = result.Items[i]
-				}
+				items := cliutil.ToAnySlice(result.Items)
 				return printer.PrintList(cmd.OutOrStdout(), items, result)
 			}
 

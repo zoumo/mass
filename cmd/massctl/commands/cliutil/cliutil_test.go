@@ -2,69 +2,34 @@ package cliutil
 
 import (
 	"bytes"
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestOutputJSON_Struct(t *testing.T) {
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-
-	origStdout := os.Stdout
-	os.Stdout = w
-	defer func() { os.Stdout = origStdout }()
-
+func TestPrintJSON(t *testing.T) {
 	type sample struct {
 		Name  string `json:"name"`
 		Count int    `json:"count"`
 	}
-	OutputJSON(sample{Name: "test", Count: 42})
 
-	w.Close()
 	var buf bytes.Buffer
-	_, err = buf.ReadFrom(r)
-	require.NoError(t, err)
+	require.NoError(t, PrintJSON(&buf, sample{Name: "test", Count: 42}))
 
 	expected := "{\n  \"name\": \"test\",\n  \"count\": 42\n}\n"
 	assert.Equal(t, expected, buf.String())
 }
 
-func TestOutputJSON_Nil(t *testing.T) {
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-
-	origStdout := os.Stdout
-	os.Stdout = w
-	defer func() { os.Stdout = origStdout }()
-
-	OutputJSON(nil)
-
-	w.Close()
+func TestPrintJSONNil(t *testing.T) {
 	var buf bytes.Buffer
-	_, err = buf.ReadFrom(r)
-	require.NoError(t, err)
+	require.NoError(t, PrintJSON(&buf, nil))
 
 	assert.Equal(t, "null\n", buf.String())
 }
 
-func TestOutputJSON_Map(t *testing.T) {
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
+func TestToAnySlice(t *testing.T) {
+	got := ToAnySlice([]int{1, 2, 3})
 
-	origStdout := os.Stdout
-	os.Stdout = w
-	defer func() { os.Stdout = origStdout }()
-
-	OutputJSON(map[string]string{"key": "value"})
-
-	w.Close()
-	var buf bytes.Buffer
-	_, err = buf.ReadFrom(r)
-	require.NoError(t, err)
-
-	expected := "{\n  \"key\": \"value\"\n}\n"
-	assert.Equal(t, expected, buf.String())
+	assert.Equal(t, []any{1, 2, 3}, got)
 }

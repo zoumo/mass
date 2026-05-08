@@ -13,23 +13,20 @@ import (
 // ClientFn is a factory for ARI clients, injected by the root command.
 type ClientFn func() (ariclient.Client, error)
 
-// OutputJSON pretty-prints the result as JSON to stdout.
-//
-// Deprecated: prefer PrintJSON or ResourcePrinter for new commands.
-func OutputJSON(result any) {
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(result); err != nil {
-		fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
-		os.Exit(1)
-	}
-}
-
 // PrintJSON writes result as pretty JSON to w.
 func PrintJSON(w io.Writer, result any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(result)
+}
+
+// ToAnySlice converts a typed slice to []any for ResourcePrinter.
+func ToAnySlice[T any](items []T) []any {
+	out := make([]any, len(items))
+	for i := range items {
+		out[i] = items[i]
+	}
+	return out
 }
 
 // HandleError prints the error to stderr and exits with code 1.

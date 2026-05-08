@@ -40,8 +40,7 @@ func newEmptyCmd(getClient cliutil.ClientFn) *cobra.Command {
 					return err
 				}
 			}
-			cliutil.OutputJSON(ws)
-			return nil
+			return cliutil.PrintJSON(cmd.OutOrStdout(), ws)
 		},
 	}
 	cmd.Flags().StringVar(&name, "name", "", "Workspace name (required)")

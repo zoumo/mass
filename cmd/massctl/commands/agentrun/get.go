@@ -66,10 +66,7 @@ func listAgentRuns(ctx context.Context, client ariclient.Client, printer *cliuti
 		return err
 	}
 	list.Kind = pkgariapi.KindList
-	items := make([]any, len(list.Items))
-	for i := range list.Items {
-		items[i] = list.Items[i]
-	}
+	items := cliutil.ToAnySlice(list.Items)
 	return printer.PrintList(cmd.OutOrStdout(), items, list)
 }
 
@@ -82,10 +79,7 @@ func getAgentRuns(ctx context.Context, client ariclient.Client, printer *cliutil
 		}
 		list.Items = append(list.Items, ar)
 	}
-	items := make([]any, len(list.Items))
-	for i := range list.Items {
-		items[i] = list.Items[i]
-	}
+	items := cliutil.ToAnySlice(list.Items)
 	if len(items) == 1 {
 		return printer.Print(cmd.OutOrStdout(), items)
 	}
