@@ -79,6 +79,7 @@ MASS is a daemon-based runtime for managing AI agents on a single host. The core
 |---------|------|
 | `pkg/runtime-spec/api/` | Pure types: `Status`, `EnvVar`, runtime config/state, `SessionState` + all session metadata sub-types (`AgentInfo`, `AgentCapabilities`, `AvailableCommand`, `ConfigOption`, etc.) |
 | `pkg/workspace/` | Workspace provisioning: Git/EmptyDir/Local, hooks, ref-counting |
+| `pkg/watch/` | K8s-style watch helpers: server fan-out, retrying client watcher, cursor replay |
 | `pkg/jsonrpc/ndjson/` | NDJSON streaming (shared) |
 | `cmd/massctl/` | Management CLI (cobra, resource-first grammar) |
 
@@ -87,7 +88,7 @@ MASS is a daemon-based runtime for managing AI agents on a single host. The core
 | Binary | Purpose |
 |--------|---------|
 | `bin/mass` | Main daemon + `mass run` self-fork entrypoint + `mass mesh-mcp` |
-| `bin/massctl` | Management CLI (workspace, agent, agentrun, compose, daemon subcommands) |
+| `bin/massctl` | Management CLI (workspace, agent, agentrun, compose, ext, daemon subcommands) |
 
 ---
 
@@ -125,7 +126,7 @@ orchestrator → agentrun/prompt
 agentd start → RecoverSessions()
   for each non-terminal session:
     try runtime/status on persisted shim socket
-    if alive: DisconnectNotify watcher; re-subscribe from lastSeq
+    if alive: runtime/watch_event(fromSeq=0) for replay + live updates
     if dead:  mark stopped (fail-closed)
   set RecoveryPhase=Complete
   rebuild ProcessManager + WorkspaceManager refcounts from DB
@@ -134,6 +135,17 @@ agentd start → RecoverSessions()
 ### Event ordering
 
 Events carry `seq` (global monotonic dedup key) and `turnId` (assigned at `turn_start`, cleared at `turn_end`). `runtime/event_update` events are seq-only (not turn-ordered). Replay uses `turnId` within a turn, `seq` across turns.
+
+### Task delegation
+
+```
+orchestrator → agentrun/task/do
+  agentd: reserve idle agent, create .mass/.../tasks/task-NNNN.json
+          deliver task prompt with task file path
+  agent:  reads task JSON, writes artifacts, calls massctl agentrun task done
+caller → massctl agentrun task wait
+  client-side polling until task done, idle retries exhausted, agent error, or timeout
+```
 
 ### Session metadata pipeline (post-M014)
 
@@ -214,6 +226,7 @@ pkg/
                     AvailableCommand, ConfigOption, SessionInfo
   agentd/           ProcessManager, recovery, bbolt metadata store
   workspace/        WorkspaceManager, Git/EmptyDir/Local handlers, hooks
+  watch/            WatchServer, RetryWatcher, cursor-based event replay helpers
   tui/              Terminal UI components
 cmd/
   mass/             main daemon + run + mesh-mcp subcommands
@@ -227,6 +240,8 @@ cmd/
       agent/        agent CRUD
       workspace/    workspace management
       compose/      multi-agent compose
+      ext/          offline extension utilities
+        pipeline/   pipeline YAML validate/example/schema
       version/      version info
       cliutil/      CLI shared utilities
 internal/

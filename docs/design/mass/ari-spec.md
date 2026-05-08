@@ -22,7 +22,7 @@ It must not smuggle desired-state ownership into mass.
 ## Transport
 
 - protocol: JSON-RPC 2.0 over Unix domain socket
-- default path: `/run/mass/mass.sock`
+- default path: `$HOME/.mass/mass.sock` (derived from the daemon `--root`)
 
 ## Identity
 

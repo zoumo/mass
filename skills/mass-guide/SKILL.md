@@ -55,7 +55,7 @@ Daemon ships with built-in agents `claude`, `codex`, `gsd-pi`; users may define 
 
 ```
 health check → compose apply → all agents idle
-  → task do → poll until done → read reason
+  → task do → task wait until done → read reason
   → cleanup (stop agentruns → delete agentruns → delete workspace, or workspace delete --force)
 ```
 
@@ -364,6 +364,24 @@ Increments `attempt` counter, clears old response / reason / done, auto-re-promp
 massctl agentrun chat worker -w my-ws
 ```
 
+### Debug AgentRun
+
+```bash
+massctl agentrun debug worker -w my-ws
+```
+
+Runs runtime-level debug helpers against an agentrun.
+
+## Part 5: Offline Extension Utilities
+
+`massctl ext pipeline` does not require a running daemon.
+
+```bash
+massctl ext pipeline validate pipeline.yaml
+massctl ext pipeline example
+massctl ext pipeline example -o pipeline.yaml
+```
+
 ### End-to-End Example (compose + task)
 
 ```bash
@@ -387,7 +405,7 @@ massctl workspace delete my-ws
 
 ---
 
-## Part 5: Error Handling
+## Part 6: Error Handling
 
 For detailed error diagnosis, recovery procedures, decision trees, see [references/error-handling.md](references/error-handling.md).
 

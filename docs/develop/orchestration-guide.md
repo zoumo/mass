@@ -319,7 +319,7 @@ spec:
           args: ["${MASS_AGENT_NAME}", "${MASS_AGENT_STATE}"]
 ```
 
-详见 [Lifecycle Hooks 设计文档](./mass/lifecycle-hooks.md)。
+状态变化事件交付模型详见 [Watch Framework 设计文档](../design/mass/watch-framework.md)。
 
 ### 3. ARI Watch（未来规划）
 
