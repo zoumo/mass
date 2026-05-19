@@ -72,27 +72,34 @@ type ObjectMeta struct {
 // ────────────────────────────────────────────────────────────────────────────
 
 // AgentSpec describes how to launch an agent process for this named agent definition.
+//
+// All fields carry both `json` and `yaml` tags. Without explicit `yaml:` tags,
+// gopkg.in/yaml.v3 lowercases the Go field name (e.g. `StartupTimeoutSeconds`
+// → `startuptimeoutseconds`), which silently drops camelCase YAML keys that
+// users / tooling write to match the JSON tag (`startupTimeoutSeconds`). Each
+// camelCase field needs an explicit yaml tag for `massctl agent apply -f` to
+// preserve it round-trip.
 type AgentSpec struct {
 	// Disabled controls whether the agent is prevented from creating new agent runs.
 	// nil or false means not disabled (agent is usable). true means disabled.
-	Disabled *bool `json:"disabled,omitempty"`
+	Disabled *bool `json:"disabled,omitempty" yaml:"disabled,omitempty"`
 
 	// ClientProtocol selects the communication protocol adapter.
 	// Default: "acp".
-	ClientProtocol apiruntime.ClientProtocol `json:"clientProtocol,omitempty"`
+	ClientProtocol apiruntime.ClientProtocol `json:"clientProtocol,omitempty" yaml:"clientProtocol,omitempty"`
 
 	// Command is the agent executable.
-	Command string `json:"command"`
+	Command string `json:"command" yaml:"command"`
 
 	// Args are the command-line arguments passed to Command.
-	Args []string `json:"args,omitempty"`
+	Args []string `json:"args,omitempty" yaml:"args,omitempty"`
 
 	// Env is the list of environment variable overrides applied to the process.
-	Env []apiruntime.EnvVar `json:"env,omitempty"`
+	Env []apiruntime.EnvVar `json:"env,omitempty" yaml:"env,omitempty"`
 
 	// StartupTimeoutSeconds is the maximum time (in seconds) to wait for the
 	// agent-run to reach idle state. Nil means use the daemon default.
-	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty"`
+	StartupTimeoutSeconds *int `json:"startupTimeoutSeconds,omitempty" yaml:"startupTimeoutSeconds,omitempty"`
 }
 
 // IsDisabled reports whether the agent is disabled.

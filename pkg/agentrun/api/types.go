@@ -14,13 +14,27 @@ import (
 // SessionPromptParams is the JSON body for the "session/prompt" method.
 // Prompt is an array of ACP ContentBlocks supporting text, image, audio,
 // resource, and resource-link content types.
+//
+// SessionID is optional: when empty, the agent-run's initial session
+// (the one opened during Create's handshake) is used — preserves
+// backward compatibility for single-session callers. Multi-session
+// callers must pass an explicit SessionID obtained from session/new.
 type SessionPromptParams struct {
-	Prompt []ContentBlock `json:"prompt"`
+	SessionID string         `json:"sessionId,omitempty"`
+	Prompt    []ContentBlock `json:"prompt"`
 }
 
 // SessionPromptResult is returned by the "session/prompt" method.
 type SessionPromptResult struct {
 	StopReason string `json:"stopReason"`
+}
+
+// SessionCancelParams is the JSON body for the "session/cancel" method.
+// Optional SessionID — same semantics as SessionPromptParams.SessionID.
+// Pre-multi-session callers passed no params at all; both empty body and
+// missing SessionID work as "cancel the initial session".
+type SessionCancelParams struct {
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 // SessionLoadParams is the JSON body for the "session/load" RPC method.
@@ -55,12 +69,56 @@ type RuntimeStatusRecovery struct {
 }
 
 // SessionSetModelParams is the JSON body for "session/set_model".
+// Optional SessionID — same semantics as SessionPromptParams.SessionID.
 type SessionSetModelParams struct {
-	ModelID string `json:"modelId"`
+	SessionID string `json:"sessionId,omitempty"`
+	ModelID   string `json:"modelId"`
 }
 
 // SessionSetModelResult is returned by "session/set_model".
 type SessionSetModelResult struct{}
+
+// SessionNewParams is the JSON body for the "session/new" method —
+// opens an additional ACP session on the running agent.
+//
+// Cwd is required: each session is scoped to its own working directory.
+// McpServers is optional per-session MCP overrides layered on the
+// bundle-level config.
+type SessionNewParams struct {
+	Cwd        string                `json:"cwd"`
+	McpServers []SessionNewMcpServer `json:"mcpServers,omitempty"`
+}
+
+// SessionNewMcpServer mirrors acp.McpServer's wire shape for transport
+// over JSON-RPC. Kept minimal — extend as actual cases demand.
+type SessionNewMcpServer struct {
+	Name    string            `json:"name"`
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
+// SessionNewResult is returned by "session/new".
+type SessionNewResult struct {
+	SessionID string `json:"sessionId"`
+}
+
+// SessionEndParams is the JSON body for "session/end" — removes runtime
+// tracking of a session. The agent process's per-session state remains
+// until cancelled or the process exits (ACP has no explicit end-session
+// RPC); this method only releases the agent-run's local map entry.
+type SessionEndParams struct {
+	SessionID string `json:"sessionId"`
+}
+
+// SessionEndResult is returned by "session/end".
+type SessionEndResult struct{}
+
+// SessionListResult lists active session IDs on the agent. Used by
+// callers (e.g. massctl) to inspect the agent's current sessions.
+type SessionListResult struct {
+	SessionIDs []string `json:"sessionIds"`
+}
 
 // RuntimePhaseResult is returned by "runtime/status".
 type RuntimePhaseResult struct {

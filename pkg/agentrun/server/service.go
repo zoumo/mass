@@ -11,6 +11,15 @@ import (
 	"github.com/zoumo/mass/pkg/jsonrpc"
 )
 
+// resolveSessionID maps the wire-level optional sessionId string to the
+// typed acp.SessionId. Empty → resolved to the Manager's initial session
+// inside PromptSession / CancelSession / SetModelSession themselves. This
+// keeps the empty-string-means-initial convention in exactly one layer
+// (the runtime) rather than duplicating it across client / service / runtime.
+func resolveSessionID(s string) acp.SessionId {
+	return acp.SessionId(s)
+}
+
 // Service implements Handler.
 type Service struct {
 	mgr    *acpruntime.Manager
@@ -27,10 +36,14 @@ func (s *Service) Prompt(ctx context.Context, req *runapi.SessionPromptParams) (
 	if len(req.Prompt) == 0 {
 		return nil, jsonrpc.ErrInvalidParams("missing prompt")
 	}
-	s.logger.Debug("prompt", "blocks", len(req.Prompt))
-	s.trans.NotifyTurnStart()
-	s.trans.NotifyUserPrompt(req.Prompt)
-	resp, err := s.mgr.Prompt(ctx, req.Prompt)
+	s.logger.Debug("prompt", "sessionId", req.SessionID, "blocks", len(req.Prompt))
+	// Empty sessionID is resolved to the initial session inside PromptSession
+	// (and inside Translator's Notify* methods).
+	s.trans.NotifyTurnStart(req.SessionID)
+	s.trans.NotifyUserPrompt(req.SessionID, req.Prompt)
+
+	resp, err := s.mgr.PromptSession(ctx, resolveSessionID(req.SessionID), req.Prompt)
+
 	stopReason := "error"
 	if err == nil {
 		stopReason = string(resp.StopReason)
@@ -38,20 +51,27 @@ func (s *Service) Prompt(ctx context.Context, req *runapi.SessionPromptParams) (
 	if err != nil {
 		s.trans.NotifyError(err.Error())
 	}
-	s.trans.NotifyTurnEnd(acp.StopReason(stopReason))
-	s.logger.Debug("prompt done", "stopReason", stopReason)
+	s.trans.NotifyTurnEnd(req.SessionID, acp.StopReason(stopReason))
+	s.logger.Debug("prompt done", "sessionId", req.SessionID, "stopReason", stopReason)
 	if err != nil {
 		return nil, jsonrpc.ErrInternal(err.Error())
 	}
 	return &runapi.SessionPromptResult{StopReason: string(resp.StopReason)}, nil
 }
 
-func (s *Service) Cancel(ctx context.Context) (retErr error) {
-	s.logger.Debug("cancel")
+func (s *Service) Cancel(ctx context.Context, req *runapi.SessionCancelParams) (retErr error) {
+	sessionID := req.SessionID
+	s.logger.Debug("cancel", "sessionId", sessionID)
 	defer func() {
-		s.trans.NotifyOperationAudit("cancel", nil, retErr)
+		var auditArgs map[string]string
+		if sessionID != "" {
+			auditArgs = map[string]string{"sessionId": sessionID}
+		}
+		s.trans.NotifyOperationAudit("cancel", auditArgs, retErr)
 	}()
-	if err := s.mgr.Cancel(ctx); err != nil {
+
+	// Empty sessionID is resolved to the initial session inside CancelSession.
+	if err := s.mgr.CancelSession(ctx, resolveSessionID(sessionID)); err != nil {
 		retErr = jsonrpc.ErrInternal(err.Error())
 		return retErr
 	}
@@ -214,15 +234,20 @@ func (s *Service) Status(_ context.Context) (*runapi.RuntimePhaseResult, error) 
 }
 
 func (s *Service) SetModel(ctx context.Context, req *runapi.SessionSetModelParams) (_ *runapi.SessionSetModelResult, retErr error) {
-	s.logger.Debug("set_model", "modelID", req.ModelID)
+	s.logger.Debug("set_model", "sessionId", req.SessionID, "modelID", req.ModelID)
 	defer func() {
-		s.trans.NotifyOperationAudit("set_model", map[string]string{"modelId": req.ModelID}, retErr)
+		auditArgs := map[string]string{"modelId": req.ModelID}
+		if req.SessionID != "" {
+			auditArgs["sessionId"] = req.SessionID
+		}
+		s.trans.NotifyOperationAudit("set_model", auditArgs, retErr)
 	}()
 	if req.ModelID == "" {
 		retErr = jsonrpc.ErrInvalidParams("missing modelId")
 		return nil, retErr
 	}
-	if err := s.mgr.SetModel(ctx, req.ModelID); err != nil {
+	// Empty sessionID is resolved to the initial session inside SetModelSession.
+	if err := s.mgr.SetModelSession(ctx, resolveSessionID(req.SessionID), req.ModelID); err != nil {
 		retErr = jsonrpc.ErrInternal(err.Error())
 		return nil, retErr
 	}
@@ -233,4 +258,69 @@ func (s *Service) Stop(_ context.Context) error {
 	s.logger.Debug("stop")
 	s.trans.NotifyOperationAudit("stop", nil, nil)
 	return nil
+}
+
+// NewSession opens an additional ACP session on the running agent. See
+// runtime/acp Manager.NewSession for cwd / mcpServers semantics.
+func (s *Service) NewSession(ctx context.Context, req *runapi.SessionNewParams) (_ *runapi.SessionNewResult, retErr error) {
+	s.logger.Debug("session/new", "cwd", req.Cwd, "mcpServers", len(req.McpServers))
+	defer func() {
+		s.trans.NotifyOperationAudit("session/new", map[string]string{"cwd": req.Cwd}, retErr)
+	}()
+	if req.Cwd == "" {
+		retErr = jsonrpc.ErrInvalidParams("missing cwd")
+		return nil, retErr
+	}
+
+	mcp := make([]acp.McpServer, 0, len(req.McpServers))
+	for _, m := range req.McpServers {
+		envVars := make([]acp.EnvVariable, 0, len(m.Env))
+		for k, v := range m.Env {
+			envVars = append(envVars, acp.EnvVariable{Name: k, Value: v})
+		}
+		args := m.Args
+		if args == nil {
+			args = []string{}
+		}
+		mcp = append(mcp, acp.McpServer{Stdio: &acp.McpServerStdio{
+			Name:    m.Name,
+			Command: m.Command,
+			Args:    args,
+			Env:     envVars,
+		}})
+	}
+
+	sid, err := s.mgr.NewSession(ctx, req.Cwd, mcp)
+	if err != nil {
+		retErr = jsonrpc.ErrInternal(err.Error())
+		return nil, retErr
+	}
+	return &runapi.SessionNewResult{SessionID: string(sid)}, nil
+}
+
+// EndSession releases runtime tracking of a session id.
+func (s *Service) EndSession(_ context.Context, req *runapi.SessionEndParams) (_ *runapi.SessionEndResult, retErr error) {
+	s.logger.Debug("session/end", "sessionId", req.SessionID)
+	defer func() {
+		s.trans.NotifyOperationAudit("session/end", map[string]string{"sessionId": req.SessionID}, retErr)
+	}()
+	if req.SessionID == "" {
+		retErr = jsonrpc.ErrInvalidParams("missing sessionId")
+		return nil, retErr
+	}
+	if err := s.mgr.EndSession(resolveSessionID(req.SessionID)); err != nil {
+		retErr = jsonrpc.ErrInternal(err.Error())
+		return nil, retErr
+	}
+	return &runapi.SessionEndResult{}, nil
+}
+
+// ListSessions returns the active session IDs snapshot from the Manager.
+func (s *Service) ListSessions(_ context.Context) (*runapi.SessionListResult, error) {
+	ids := s.mgr.SessionIDs()
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = string(id)
+	}
+	return &runapi.SessionListResult{SessionIDs: out}, nil
 }

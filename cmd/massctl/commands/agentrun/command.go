@@ -64,5 +64,8 @@ Poll with: massctl ar get <name> -w <workspace>`,
 	cmd.AddCommand(newTaskCmd(getClient))
 	cmd.AddCommand(newChatCmd(getClient))
 	cmd.AddCommand(newDebugCmd())
+	cmd.AddCommand(newNewSessionCmd(getClient))
+	cmd.AddCommand(newEndSessionCmd(getClient))
+	cmd.AddCommand(newListSessionsCmd(getClient))
 	return cmd
 }

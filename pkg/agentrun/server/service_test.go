@@ -146,3 +146,24 @@ func TestService_SetModel_AuditOnValidationFailure(t *testing.T) {
 	assert.False(t, ru.OperationAudit.Success)
 	assert.NotEmpty(t, ru.OperationAudit.Error)
 }
+
+// TestService_NewSession_MissingCwdValidation verifies that the service layer
+// rejects a missing cwd before reaching the runtime layer. The contract is
+// cwd-required across all wire layers (CLI / ARI / agentrun); see runtime/acp
+// NewSession's matching guard for the symmetric runtime-side check.
+func TestService_NewSession_MissingCwdValidation(t *testing.T) {
+	svc := newTestService(t)
+	_, err := svc.NewSession(context.Background(), &runapi.SessionNewParams{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing cwd")
+}
+
+// TestService_EndSession_MissingSessionIDValidation pins the symmetric
+// validation for end-session — the runtime can't disambiguate "no sessionId
+// supplied" from "empty resolves to initial", so the wire layer rejects.
+func TestService_EndSession_MissingSessionIDValidation(t *testing.T) {
+	svc := newTestService(t)
+	_, err := svc.EndSession(context.Background(), &runapi.SessionEndParams{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing sessionId")
+}

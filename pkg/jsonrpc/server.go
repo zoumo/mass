@@ -150,7 +150,7 @@ func (h *serverHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *js
 
 	unmarshal := func(dst any) error {
 		if req.Params == nil {
-			return fmt.Errorf("missing params")
+			return ErrNoParams
 		}
 		return json.Unmarshal(*req.Params, dst)
 	}

@@ -28,7 +28,7 @@ type stubRunService struct {
 func (s *stubRunService) Prompt(_ context.Context, req *runapi.SessionPromptParams) (*runapi.SessionPromptResult, error) {
 	return &s.promptResult, nil
 }
-func (s *stubRunService) Cancel(_ context.Context) error { return nil }
+func (s *stubRunService) Cancel(_ context.Context, _ *runapi.SessionCancelParams) error { return nil }
 func (s *stubRunService) Load(_ context.Context, _ *runapi.SessionLoadParams) error {
 	return nil
 }
@@ -45,6 +45,18 @@ func (s *stubRunService) SetModel(_ context.Context, _ *runapi.SessionSetModelPa
 	return &runapi.SessionSetModelResult{}, nil
 }
 func (s *stubRunService) Stop(_ context.Context) error { return nil }
+
+func (s *stubRunService) NewSession(_ context.Context, req *runapi.SessionNewParams) (*runapi.SessionNewResult, error) {
+	return &runapi.SessionNewResult{SessionID: "stub-session-" + req.Cwd}, nil
+}
+
+func (s *stubRunService) EndSession(_ context.Context, _ *runapi.SessionEndParams) (*runapi.SessionEndResult, error) {
+	return &runapi.SessionEndResult{}, nil
+}
+
+func (s *stubRunService) ListSessions(_ context.Context) (*runapi.SessionListResult, error) {
+	return &runapi.SessionListResult{SessionIDs: []string{}}, nil
+}
 
 // startTestServer starts a jsonrpc.Server with Register on a temp socket.
 func startTestServer(t *testing.T, svc runserver.Handler) string {

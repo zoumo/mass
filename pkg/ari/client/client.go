@@ -143,9 +143,14 @@ func (c *ariClient) Delete(ctx context.Context, key pkgariapi.ObjectKey, obj pkg
 type agentRunOps struct{ c *jsonrpc.Client }
 
 func (o *agentRunOps) Prompt(ctx context.Context, key pkgariapi.ObjectKey, prompt []runapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
+	return o.PromptSession(ctx, key, "", prompt)
+}
+
+func (o *agentRunOps) PromptSession(ctx context.Context, key pkgariapi.ObjectKey, sessionID string, prompt []runapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
 	req := pkgariapi.AgentRunPromptParams{
 		Workspace: key.Workspace,
 		Name:      key.Name,
+		SessionID: sessionID,
 		Prompt:    prompt,
 	}
 	var result pkgariapi.AgentRunPromptResult
@@ -200,6 +205,33 @@ func (o *agentRunOps) TaskList(ctx context.Context, params *pkgariapi.AgentRunTa
 func (o *agentRunOps) TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error) {
 	var result pkgariapi.AgentTask
 	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunTaskRetry, params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (o *agentRunOps) NewSession(ctx context.Context, params *pkgariapi.AgentRunNewSessionParams) (*pkgariapi.AgentRunNewSessionResult, error) {
+	var result pkgariapi.AgentRunNewSessionResult
+	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunNewSession, params, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (o *agentRunOps) EndSession(ctx context.Context, key pkgariapi.ObjectKey, sessionID string) error {
+	req := pkgariapi.AgentRunEndSessionParams{
+		Workspace: key.Workspace,
+		Name:      key.Name,
+		SessionID: sessionID,
+	}
+	var raw json.RawMessage
+	return o.c.Call(ctx, pkgariapi.MethodAgentRunEndSession, req, &raw)
+}
+
+func (o *agentRunOps) ListSessions(ctx context.Context, key pkgariapi.ObjectKey) (*pkgariapi.AgentRunListSessionsResult, error) {
+	req := pkgariapi.AgentRunListSessionsParams{Workspace: key.Workspace, Name: key.Name}
+	var result pkgariapi.AgentRunListSessionsResult
+	if err := o.c.Call(ctx, pkgariapi.MethodAgentRunListSessions, req, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

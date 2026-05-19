@@ -48,8 +48,12 @@ type Client interface {
 
 // AgentRunOps provides non-CRUD operations on agent runs.
 type AgentRunOps interface {
-	// Prompt sends a multimodal prompt ([]runapi.ContentBlock) to an agent run.
+	// Prompt sends a multimodal prompt ([]runapi.ContentBlock) to an agent run's
+	// initial session. For multi-session, use PromptSession.
 	Prompt(ctx context.Context, key pkgariapi.ObjectKey, prompt []runapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error)
+
+	// PromptSession addresses a specific session id (opened via NewSession).
+	PromptSession(ctx context.Context, key pkgariapi.ObjectKey, sessionID string, prompt []runapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error)
 
 	// Cancel cancels the current turn of an agent run.
 	Cancel(ctx context.Context, key pkgariapi.ObjectKey) error
@@ -71,6 +75,16 @@ type AgentRunOps interface {
 
 	// TaskRetry retries an existing task by bumping its attempt count and re-prompting the agent.
 	TaskRetry(ctx context.Context, params *pkgariapi.AgentRunTaskRetryParams) (*pkgariapi.AgentTask, error)
+
+	// NewSession opens an additional ACP session on the running agent process
+	// (no fork+exec). Returns the agent-issued sessionId.
+	NewSession(ctx context.Context, params *pkgariapi.AgentRunNewSessionParams) (*pkgariapi.AgentRunNewSessionResult, error)
+
+	// EndSession releases runtime tracking of a session id.
+	EndSession(ctx context.Context, key pkgariapi.ObjectKey, sessionID string) error
+
+	// ListSessions enumerates active session ids on the agent.
+	ListSessions(ctx context.Context, key pkgariapi.ObjectKey) (*pkgariapi.AgentRunListSessionsResult, error)
 }
 
 // WorkspaceOps provides non-CRUD operations on workspaces.

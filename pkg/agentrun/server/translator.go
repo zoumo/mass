@@ -208,14 +208,19 @@ func (t *Translator) LastSeq() int {
 // NotifyTurnStart broadcasts a turn_start AgentRunEvent.
 // The new turnId is assigned atomically inside the broadcast callback,
 // which runs under mu.Lock.
-func (t *Translator) NotifyTurnStart() {
+//
+// sessionID identifies which ACP session this turn belongs to. Empty
+// resolves to the agentrun's initial session (back-compat for single-
+// session callers). Watchers filter events by sessionId; mis-stamping
+// would cause cross-session leakage on `--wait --session-id`.
+func (t *Translator) NotifyTurnStart(sessionID string) {
 	newTurnID := uuid.New().String()
-	t.logger.Debug("turn_start", "turnID", newTurnID)
+	t.logger.Debug("turn_start", "turnID", newTurnID, "sessionID", sessionID)
 	t.broadcast(func(seq int, at time.Time) runapi.AgentRunEvent {
 		t.currentTurnId = newTurnID
 		return runapi.AgentRunEvent{
 			RunID:     t.runID,
-			SessionID: t.sessionID,
+			SessionID: t.resolveSessionLocked(sessionID),
 			Seq:       seq,
 			Time:      at,
 			Type:      runapi.EventTypeTurnStart,
@@ -230,13 +235,16 @@ func (t *Translator) NotifyTurnStart() {
 // Each ContentBlock becomes a separate event, matching the per-block pattern
 // used on the response side (agent_message).
 // This must be called after NotifyTurnStart and before mgr.Prompt.
-func (t *Translator) NotifyUserPrompt(blocks []runapi.ContentBlock) {
+//
+// sessionID identifies which session the prompt is destined for. Empty
+// resolves to the agentrun's initial session.
+func (t *Translator) NotifyUserPrompt(sessionID string, blocks []runapi.ContentBlock) {
 	for _, block := range blocks {
 		b := block // capture for closure
 		t.broadcast(func(seq int, at time.Time) runapi.AgentRunEvent {
 			return runapi.AgentRunEvent{
 				RunID:     t.runID,
-				SessionID: t.sessionID,
+				SessionID: t.resolveSessionLocked(sessionID),
 				Seq:       seq,
 				Time:      at,
 				Type:      runapi.EventTypeUserMessage,
@@ -274,13 +282,16 @@ func (t *Translator) NotifyOperationAudit(op string, params map[string]string, e
 // Closes any open content block first, then emits turn_end.
 // The current turnId is included in the event and cleared AFTER use so the
 // turn_end event itself carries the identifier.
-func (t *Translator) NotifyTurnEnd(reason acp.StopReason) {
-	t.logger.Debug("turn_end", "turnID", t.currentTurnId, "reason", reason)
+//
+// sessionID identifies which session the turn ended on. Empty resolves to
+// the agentrun's initial session.
+func (t *Translator) NotifyTurnEnd(sessionID string, reason acp.StopReason) {
+	t.logger.Debug("turn_end", "turnID", t.currentTurnId, "sessionID", sessionID, "reason", reason)
 	t.closeOpenBlock()
 	t.broadcast(func(seq int, at time.Time) runapi.AgentRunEvent {
 		ae := runapi.AgentRunEvent{
 			RunID:     t.runID,
-			SessionID: t.sessionID,
+			SessionID: t.resolveSessionLocked(sessionID),
 			Seq:       seq,
 			Time:      at,
 			Type:      runapi.EventTypeTurnEnd,
@@ -354,7 +365,10 @@ func (t *Translator) run() {
 				t.closeOpenBlock()
 			}
 
-			t.broadcastEvent(ev)
+			// ACP SessionNotification carries the session id; stamp it on
+			// the resulting event so watchers can filter by session. Empty
+			// (unusual — pre-handshake) falls back to the initial session.
+			t.broadcastEventForSession(string(n.SessionId), ev)
 			t.maybeNotifyMetadata(ev)
 		}
 	}
@@ -392,14 +406,25 @@ func (t *Translator) closeOpenBlock() {
 	}
 }
 
-// broadcastEvent builds and broadcasts an AgentRunEvent.
+// broadcastEvent builds and broadcasts an AgentRunEvent stamped with the
+// initial session id. Use for process-wide events (runtime_update / error)
+// where session attribution doesn't apply. Per-session events should use
+// broadcastEventForSession.
+//
 // TurnID is applied to all events except runtime_update when an active turn exists.
 func (t *Translator) broadcastEvent(ev runapi.Event) {
+	t.broadcastEventForSession("", ev)
+}
+
+// broadcastEventForSession is broadcastEvent with explicit session attribution.
+// Empty sessionID resolves to the initial session — callers passing a non-
+// empty id stamp it directly, allowing watchers to filter by sessionId.
+func (t *Translator) broadcastEventForSession(sessionID string, ev runapi.Event) {
 	t.broadcast(func(seq int, at time.Time) runapi.AgentRunEvent {
 		eventType := runapi.EventTypeOf(ev)
 		ae := runapi.AgentRunEvent{
 			RunID:     t.runID,
-			SessionID: t.sessionID,
+			SessionID: t.resolveSessionLocked(sessionID),
 			Seq:       seq,
 			Time:      at,
 			Type:      eventType,
@@ -410,6 +435,16 @@ func (t *Translator) broadcastEvent(ev runapi.Event) {
 		}
 		return ae
 	})
+}
+
+// resolveSessionLocked maps empty sessionID to t.sessionID (the initial
+// session). Must be called from within a broadcast callback (which already
+// holds t.mu) or from a method holding t.mu.
+func (t *Translator) resolveSessionLocked(sessionID string) string {
+	if sessionID == "" {
+		return t.sessionID
+	}
+	return sessionID
 }
 
 // broadcast is the single fan-out entry point. The build callback runs under

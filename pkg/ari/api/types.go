@@ -89,6 +89,11 @@ type AgentRunPromptParams struct {
 	// Name is the agent run name (required).
 	Name string `json:"name"`
 
+	// SessionID addresses a specific session opened via agentrun/session/new.
+	// Empty (omitted) routes to the agentrun's initial session — preserves
+	// pre-multi-session caller behavior.
+	SessionID string `json:"sessionId,omitempty"`
+
 	// Prompt is an array of ACP ContentBlocks (text, image, audio, etc.) (required).
 	Prompt []runapi.ContentBlock `json:"prompt"`
 }
@@ -97,6 +102,46 @@ type AgentRunPromptParams struct {
 type AgentRunPromptResult struct {
 	// Accepted is true when the prompt was dispatched to the agent-run.
 	Accepted bool `json:"accepted"`
+}
+
+// AgentRunNewSessionParams is the request params for agentrun/session/new.
+// Opens an additional ACP session on an existing agentrun (no fork+exec).
+type AgentRunNewSessionParams struct {
+	Workspace string `json:"workspace"`
+	Name      string `json:"name"`
+	// Cwd is required — each session is scoped to its own working directory.
+	Cwd string `json:"cwd"`
+	// McpServers is optional per-session MCP overrides. Wire shape mirrors
+	// runapi.SessionNewMcpServer to avoid re-defining transports.
+	McpServers []runapi.SessionNewMcpServer `json:"mcpServers,omitempty"`
+}
+
+// AgentRunNewSessionResult is the response for agentrun/session/new.
+type AgentRunNewSessionResult struct {
+	// SessionID is the ACP session id the caller passes to subsequent
+	// agentrun/prompt (etc.) via the SessionID field.
+	SessionID string `json:"sessionId"`
+}
+
+// AgentRunEndSessionParams is the request params for agentrun/session/end.
+type AgentRunEndSessionParams struct {
+	Workspace string `json:"workspace"`
+	Name      string `json:"name"`
+	SessionID string `json:"sessionId"`
+}
+
+// AgentRunEndSessionResult is the response for agentrun/session/end.
+type AgentRunEndSessionResult struct{}
+
+// AgentRunListSessionsParams identifies the agentrun whose sessions to list.
+type AgentRunListSessionsParams struct {
+	Workspace string `json:"workspace"`
+	Name      string `json:"name"`
+}
+
+// AgentRunListSessionsResult enumerates the agentrun's active session ids.
+type AgentRunListSessionsResult struct {
+	SessionIDs []string `json:"sessionIds"`
 }
 
 // WorkspaceSendParams is the request params for workspace/send method.

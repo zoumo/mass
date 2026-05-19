@@ -17,7 +17,7 @@ type watchEventWire struct {
 // These are the methods exposed by agent-run over a Unix socket.
 type Handler interface {
 	Prompt(ctx context.Context, req *runapi.SessionPromptParams) (*runapi.SessionPromptResult, error)
-	Cancel(ctx context.Context) error
+	Cancel(ctx context.Context, req *runapi.SessionCancelParams) error
 	Load(ctx context.Context, req *runapi.SessionLoadParams) error
 	// WatchEvent implements K8s List-Watch style event subscription.
 	// When FromSeq is nil, only live events are streamed.
@@ -34,16 +34,26 @@ type Handler interface {
 	SetModel(ctx context.Context, req *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error)
 	Status(ctx context.Context) (*runapi.RuntimePhaseResult, error)
 	Stop(ctx context.Context) error
+
+	// Multi-session methods (see runtime/acp Manager.NewSession etc.).
+	NewSession(ctx context.Context, req *runapi.SessionNewParams) (*runapi.SessionNewResult, error)
+	EndSession(ctx context.Context, req *runapi.SessionEndParams) (*runapi.SessionEndResult, error)
+	ListSessions(ctx context.Context) (*runapi.SessionListResult, error)
 }
 
 // Register registers a Handler implementation with the server.
 func Register(s *jsonrpc.Server, svc Handler) {
 	s.RegisterService("session", &jsonrpc.ServiceDesc{
 		Methods: map[string]jsonrpc.Method{
-			"prompt":    jsonrpc.UnaryMethod(svc.Prompt),
-			"cancel":    jsonrpc.NullaryCommand(svc.Cancel),
+			"prompt": jsonrpc.UnaryMethod(svc.Prompt),
+			// cancel tolerates absent params (back-compat for callers that
+			// omit the field — pre-multi-session wire shape).
+			"cancel":    jsonrpc.OptionalUnaryCommand(svc.Cancel),
 			"load":      jsonrpc.UnaryCommand(svc.Load),
 			"set_model": jsonrpc.UnaryMethod(svc.SetModel),
+			"new":       jsonrpc.UnaryMethod(svc.NewSession),
+			"end":       jsonrpc.UnaryMethod(svc.EndSession),
+			"list":      jsonrpc.NullaryMethod(svc.ListSessions),
 		},
 	})
 	s.RegisterService("runtime", &jsonrpc.ServiceDesc{

@@ -516,15 +516,103 @@ func (a *agentRunAdapter) Prompt(ctx context.Context, req *pkgariapi.AgentRunPro
 	}
 
 	prompt := req.Prompt
-	if err := client.SendPrompt(ctx, &runapi.SessionPromptParams{Prompt: prompt}); err != nil {
+	if err := client.SendPrompt(ctx, &runapi.SessionPromptParams{
+		SessionID: req.SessionID,
+		Prompt:    prompt,
+	}); err != nil {
 		a.logger.Warn("agentrun/prompt: prompt delivery failed",
 			"workspace", req.Workspace, "name", req.Name, "error", err)
 		a.recordPromptDeliveryFailure(req.Workspace, req.Name, agent.Status, err, false)
 	}
 
 	a.logger.Info("agentrun/prompt: dispatched",
-		"workspace", req.Workspace, "name", req.Name)
+		"workspace", req.Workspace, "name", req.Name, "sessionId", req.SessionID)
 	return &pkgariapi.AgentRunPromptResult{Accepted: true}, nil
+}
+
+// NewSession forwards agentrun/session/new to the running agent-run's
+// session/new RPC. The agent reuses its process to host the new session
+// — no fork+exec. Returns the agent-issued sessionId.
+//
+// Rejects requests while the daemon is recovering agents — sessions opened
+// then would race with recovery's view of the agent process. Doesn't use
+// reserveIdleAgent because multi-session permits opening a session while
+// another is mid-prompt (Status=Running); only recovery is unsafe.
+func (a *agentRunAdapter) NewSession(ctx context.Context, req *pkgariapi.AgentRunNewSessionParams) (*pkgariapi.AgentRunNewSessionResult, error) {
+	if req.Workspace == "" || req.Name == "" || req.Cwd == "" {
+		return nil, jsonrpc.ErrInvalidParams("workspace, name, and cwd are required")
+	}
+	if err := a.rejectIfRecovering(); err != nil {
+		return nil, err
+	}
+	a.logger.Info("agentrun/session/new", "workspace", req.Workspace, "name", req.Name, "cwd", req.Cwd)
+
+	client, err := a.processes.Connect(ctx, req.Workspace, req.Name)
+	if err != nil {
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
+	}
+
+	out, err := client.NewSession(ctx, &runapi.SessionNewParams{
+		Cwd:        req.Cwd,
+		McpServers: req.McpServers,
+	})
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	a.logger.Info("agentrun/session/new: opened",
+		"workspace", req.Workspace, "name", req.Name, "sessionId", out.SessionID)
+	return &pkgariapi.AgentRunNewSessionResult{SessionID: out.SessionID}, nil
+}
+
+// EndSession forwards agentrun/session/end to release runtime tracking.
+func (a *agentRunAdapter) EndSession(ctx context.Context, req *pkgariapi.AgentRunEndSessionParams) (*pkgariapi.AgentRunEndSessionResult, error) {
+	if req.Workspace == "" || req.Name == "" || req.SessionID == "" {
+		return nil, jsonrpc.ErrInvalidParams("workspace, name, and sessionId are required")
+	}
+	if err := a.rejectIfRecovering(); err != nil {
+		return nil, err
+	}
+	a.logger.Info("agentrun/session/end", "workspace", req.Workspace, "name", req.Name, "sessionId", req.SessionID)
+
+	client, err := a.processes.Connect(ctx, req.Workspace, req.Name)
+	if err != nil {
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
+	}
+	if err := client.EndSession(ctx, req.SessionID); err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	return &pkgariapi.AgentRunEndSessionResult{}, nil
+}
+
+// ListSessions forwards agentrun/session/list to enumerate active sessions.
+func (a *agentRunAdapter) ListSessions(ctx context.Context, req *pkgariapi.AgentRunListSessionsParams) (*pkgariapi.AgentRunListSessionsResult, error) {
+	if req.Workspace == "" || req.Name == "" {
+		return nil, jsonrpc.ErrInvalidParams("workspace and name are required")
+	}
+	if err := a.rejectIfRecovering(); err != nil {
+		return nil, err
+	}
+
+	client, err := a.processes.Connect(ctx, req.Workspace, req.Name)
+	if err != nil {
+		return nil, &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "agent not running"}
+	}
+	out, err := client.ListSessions(ctx)
+	if err != nil {
+		return nil, jsonrpc.ErrInternal(err.Error())
+	}
+	return &pkgariapi.AgentRunListSessionsResult{SessionIDs: out.SessionIDs}, nil
+}
+
+// rejectIfRecovering returns CodeRecoveryBlocked when the daemon is mid-
+// recovery. Used by session-lifecycle handlers that can't go through
+// reserveIdleAgent (multi-session allows operations while another session
+// is Running) but still must serialize against the recovery sweep.
+func (a *agentRunAdapter) rejectIfRecovering() *jsonrpc.RPCError {
+	if a.processes.IsRecovering() {
+		return &jsonrpc.RPCError{Code: pkgariapi.CodeRecoveryBlocked, Message: "daemon is recovering agents"}
+	}
+	return nil
 }
 
 // Cancel handles agentrun/cancel.

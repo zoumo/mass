@@ -258,8 +258,8 @@ func TestNotifyTurnStartAndEnd(t *testing.T) {
 	tr.Start()
 	defer tr.Stop()
 
-	tr.NotifyTurnStart()
-	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	tr.NotifyTurnStart("")
+	tr.NotifyTurnEnd("", acp.StopReason("end_turn"))
 
 	first := drainEvent(t, ch)
 	second := drainEvent(t, ch)
@@ -400,13 +400,13 @@ func TestTurnAwareEvent_TurnIdAssigned(t *testing.T) {
 	tr.Start()
 	defer tr.Stop()
 
-	tr.NotifyTurnStart()
+	tr.NotifyTurnStart("")
 	tsEv := drainEvent(t, ch)
 
 	txt1Ev := sendAndDrainEvent(t, in, ch, "hello")
 	txt2Ev := sendAndDrainEvent(t, in, ch, "world")
 
-	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	tr.NotifyTurnEnd("", acp.StopReason("end_turn"))
 	blockEndEv := drainEvent(t, ch) // synthetic agent_message{end}
 	teEv := drainEvent(t, ch)       // turn_end
 
@@ -433,15 +433,15 @@ func TestTurnAwareEvent_TurnIDChangesPerTurn(t *testing.T) {
 	defer tr.Stop()
 
 	// Turn 1.
-	tr.NotifyTurnStart()
+	tr.NotifyTurnStart("")
 	ts1 := drainEvent(t, ch)
 	sendAndDrainEvent(t, in, ch, "turn1")
-	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	tr.NotifyTurnEnd("", acp.StopReason("end_turn"))
 	drainEvent(t, ch) // turn_end
 	drainEvent(t, ch) // synthetic content end
 
 	// Turn 2 — TurnID must differ.
-	tr.NotifyTurnStart()
+	tr.NotifyTurnStart("")
 	ts2 := drainEvent(t, ch)
 	assert.NotEqual(t, ts1.TurnID, ts2.TurnID, "turn 2 must have a different TurnID")
 }
@@ -455,7 +455,7 @@ func TestTurnAwareEvent_StateChangeExcludesTurnFields(t *testing.T) {
 	tr.Start()
 	defer tr.Stop()
 
-	tr.NotifyTurnStart()
+	tr.NotifyTurnStart("")
 	tsEv := drainEvent(t, ch)
 	require.NotEmpty(t, tsEv.TurnID)
 
@@ -477,7 +477,7 @@ func TestTurnAwareEvent_MetadataEventInTurn(t *testing.T) {
 	tr.Start()
 	defer tr.Stop()
 
-	tr.NotifyTurnStart()
+	tr.NotifyTurnStart("")
 	tsEv := drainEvent(t, ch)
 	require.NotEmpty(t, tsEv.TurnID)
 
@@ -634,20 +634,20 @@ func TestTurnAwareEvent_ReplayOrdering(t *testing.T) {
 	defer tr.Stop()
 
 	// Turn 1: turn_start + 2 text events + synthetic block end + turn_end.
-	tr.NotifyTurnStart()
+	tr.NotifyTurnStart("")
 	ts1Ev := drainEvent(t, ch)
 	t1aEv := sendAndDrainEvent(t, in, ch, "t1-a")
 	t1bEv := sendAndDrainEvent(t, in, ch, "t1-b")
-	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	tr.NotifyTurnEnd("", acp.StopReason("end_turn"))
 	t1EndEv := drainEvent(t, ch) // synthetic agent_message{end}
 	te1Ev := drainEvent(t, ch)   // turn_end
 	turn1 := []runapi.AgentRunEvent{ts1Ev, t1aEv, t1bEv, t1EndEv, te1Ev}
 
 	// Turn 2: turn_start + 1 text event + synthetic block end + turn_end.
-	tr.NotifyTurnStart()
+	tr.NotifyTurnStart("")
 	ts2Ev := drainEvent(t, ch)
 	t2aEv := sendAndDrainEvent(t, in, ch, "t2-a")
-	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	tr.NotifyTurnEnd("", acp.StopReason("end_turn"))
 	t2EndEv := drainEvent(t, ch) // synthetic agent_message{end}
 	te2Ev := drainEvent(t, ch)   // turn_end
 	turn2 := []runapi.AgentRunEvent{ts2Ev, t2aEv, t2EndEv, te2Ev}
@@ -688,11 +688,11 @@ func TestEventCounts_PromptTurn(t *testing.T) {
 	defer tr.Stop()
 
 	// turn_start
-	tr.NotifyTurnStart()
+	tr.NotifyTurnStart("")
 	drainEvent(t, ch)
 
 	// user_message
-	tr.NotifyUserPrompt([]runapi.ContentBlock{runapi.TextBlock("hello")})
+	tr.NotifyUserPrompt("", []runapi.ContentBlock{runapi.TextBlock("hello")})
 	drainEvent(t, ch)
 
 	// 2 text events (AgentMessageChunk)
@@ -707,7 +707,7 @@ func TestEventCounts_PromptTurn(t *testing.T) {
 	drainEvent(t, ch) // tool_call
 
 	// turn_end
-	tr.NotifyTurnEnd(acp.StopReason("end_turn"))
+	tr.NotifyTurnEnd("", acp.StopReason("end_turn"))
 	drainEvent(t, ch)
 
 	// state_change
@@ -898,4 +898,64 @@ func TestSessionMetadataHook_AllFourTypes(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	assert.Equal(t, []string{"runtime_update", "runtime_update", "runtime_update", "runtime_update"}, types)
+}
+
+// TestNotifyTurnStart_StampsSessionID verifies that NotifyTurnStart writes
+// the caller-supplied sessionID on the emitted event. This is what lets
+// CLI clients filter `--wait --session-id X` watches without cross-session
+// leakage between concurrent prompts on different sessions.
+func TestNotifyTurnStart_StampsSessionID(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("run-1", in, "", slog.Default())
+	tr.SetSessionID("initial-sid")
+	ch, _, _ := tr.Subscribe()
+
+	tr.NotifyTurnStart("session-abc")
+
+	ev := drainEvent(t, ch)
+	assert.Equal(t, "session-abc", ev.SessionID,
+		"caller-supplied sessionID must be stamped on the event")
+}
+
+// TestNotifyTurnStart_EmptySessionIDResolvesToInitial verifies that an
+// empty sessionID at the Translator API falls back to the initial session
+// id — back-compat for legacy single-session callers that don't pass one.
+func TestNotifyTurnStart_EmptySessionIDResolvesToInitial(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("run-1", in, "", slog.Default())
+	tr.SetSessionID("initial-sid")
+	ch, _, _ := tr.Subscribe()
+
+	tr.NotifyTurnStart("")
+
+	ev := drainEvent(t, ch)
+	assert.Equal(t, "initial-sid", ev.SessionID,
+		"empty sessionID must resolve to the initial session")
+}
+
+// TestRun_StampsSessionIDFromNotification verifies that content events
+// produced by translating ACP SessionNotifications carry the notification's
+// session id (not just the Translator's initial-session cache). Without
+// this, agent_message events from a non-initial session would all be
+// labelled with the initial id, defeating per-session watch filtering.
+func TestRun_StampsSessionIDFromNotification(t *testing.T) {
+	in := make(chan acp.SessionNotification, 1)
+	tr := NewTranslator("run-1", in, "", slog.Default())
+	tr.SetSessionID("initial-sid")
+	ch, _, _ := tr.Subscribe()
+	tr.Start()
+	defer tr.Stop()
+
+	in <- acp.SessionNotification{
+		SessionId: acp.SessionId("session-xyz"),
+		Update: acp.SessionUpdate{
+			AgentMessageChunk: &acp.SessionUpdateAgentMessageChunk{
+				Content: acp.TextBlock("hi"),
+			},
+		},
+	}
+
+	ev := drainEvent(t, ch)
+	assert.Equal(t, "session-xyz", ev.SessionID,
+		"content event should carry the notification's sessionID, not the initial")
 }

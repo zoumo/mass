@@ -223,6 +223,71 @@ func TestServer_PeerNotify(t *testing.T) {
 	}
 }
 
+// TestOptionalUnaryCommand_TolerateMissingParams verifies that
+// OptionalUnaryCommand tolerates a JSON-RPC request with no params field
+// (or null params) by delivering a zero-value Req to the handler instead
+// of returning -32602 InvalidParams. This pins the back-compat contract
+// for methods evolving from NullaryCommand → optional-params.
+func TestOptionalUnaryCommand_TolerateMissingParams(t *testing.T) {
+	type req struct {
+		Name string `json:"name,omitempty"`
+	}
+	var captured req
+	called := make(chan struct{}, 1)
+
+	srv := jsonrpc.NewServer(slog.Default())
+	srv.RegisterService("svc", &jsonrpc.ServiceDesc{
+		Methods: map[string]jsonrpc.Method{
+			"cancel": jsonrpc.OptionalUnaryCommand(func(_ context.Context, r *req) error {
+				captured = *r
+				called <- struct{}{}
+				return nil
+			}),
+		},
+	})
+
+	addr := startTestServer(t, srv)
+	client := dialTestClient(t, addr)
+
+	// Pass nil — client should send "params: null" or omit the field. Either
+	// way OptionalUnaryCommand must run the handler with zero-value Req.
+	err := client.Call(context.Background(), "svc/cancel", nil, nil)
+	require.NoError(t, err)
+
+	select {
+	case <-called:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler not invoked")
+	}
+	assert.Equal(t, "", captured.Name, "expected zero-value Req from missing params")
+}
+
+// TestOptionalUnaryCommand_SurfacesUnmarshalError verifies that malformed
+// params (not absent params) still surface as InvalidParams — the
+// tolerance is scoped to ErrNoParams, not all unmarshal failures.
+func TestOptionalUnaryCommand_SurfacesUnmarshalError(t *testing.T) {
+	type req struct {
+		Value int `json:"value"`
+	}
+
+	srv := jsonrpc.NewServer(slog.Default())
+	srv.RegisterService("svc", &jsonrpc.ServiceDesc{
+		Methods: map[string]jsonrpc.Method{
+			"op": jsonrpc.OptionalUnaryCommand(func(_ context.Context, _ *req) error {
+				return nil
+			}),
+		},
+	})
+
+	addr := startTestServer(t, srv)
+	client := dialTestClient(t, addr)
+
+	// Send malformed params — string where int expected.
+	err := client.Call(context.Background(), "svc/op", map[string]string{"value": "not-a-number"}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "-32602")
+}
+
 func TestServer_PeerDisconnect(t *testing.T) {
 	disconnectDetected := make(chan struct{})
 

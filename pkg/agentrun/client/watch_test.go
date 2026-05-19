@@ -30,8 +30,8 @@ type replayService struct {
 func (s *replayService) Prompt(context.Context, *runapi.SessionPromptParams) (*runapi.SessionPromptResult, error) {
 	return &runapi.SessionPromptResult{}, nil
 }
-func (s *replayService) Cancel(context.Context) error                          { return nil }
-func (s *replayService) Load(context.Context, *runapi.SessionLoadParams) error { return nil }
+func (s *replayService) Cancel(context.Context, *runapi.SessionCancelParams) error { return nil }
+func (s *replayService) Load(context.Context, *runapi.SessionLoadParams) error     { return nil }
 func (s *replayService) SetModel(context.Context, *runapi.SessionSetModelParams) (*runapi.SessionSetModelResult, error) {
 	return &runapi.SessionSetModelResult{}, nil
 }
@@ -40,6 +40,16 @@ func (s *replayService) Status(context.Context) (*runapi.RuntimePhaseResult, err
 	return &runapi.RuntimePhaseResult{}, nil
 }
 func (s *replayService) Stop(context.Context) error { return nil }
+
+func (s *replayService) NewSession(context.Context, *runapi.SessionNewParams) (*runapi.SessionNewResult, error) {
+	return &runapi.SessionNewResult{}, nil
+}
+func (s *replayService) EndSession(context.Context, *runapi.SessionEndParams) (*runapi.SessionEndResult, error) {
+	return &runapi.SessionEndResult{}, nil
+}
+func (s *replayService) ListSessions(context.Context) (*runapi.SessionListResult, error) {
+	return &runapi.SessionListResult{}, nil
+}
 
 func (s *replayService) WatchEvent(ctx context.Context, req *runapi.SessionWatchEventParams, watchID string) (*runapi.SessionWatchEventResult, error) {
 	peer := jsonrpc.PeerFromContext(ctx)

@@ -2,7 +2,18 @@
 // framework built on top of sourcegraph/jsonrpc2.
 package jsonrpc
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrNoParams is returned by the dispatcher's unmarshal callback when the
+// JSON-RPC request has no `params` field. UnaryCommand / UnaryMethod treat
+// this as InvalidParams (the typical case — handler expects params).
+// OptionalUnaryCommand tolerates it (leaves Req at zero value), letting a
+// method evolve from NullaryCommand → optional-params without breaking
+// callers that omit the field.
+var ErrNoParams = errors.New("missing params")
 
 // RPCError is a JSON-RPC 2.0 error with code, message, and optional data.
 // Method handlers return *RPCError to control the JSON-RPC error response;

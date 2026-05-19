@@ -141,8 +141,10 @@ func run(cmd *cobra.Command, bundle, stateDir, permissions, id string, logCfg *l
 	}
 
 	if cfg.Session.SystemPrompt != "" {
-		trans.NotifyTurnStart()
-		trans.NotifyUserPrompt([]runapi.ContentBlock{runapi.TextBlock(acpruntime.BuildSeedSystemPrompt(cfg.Session.SystemPrompt))})
+		// Seed prompt targets the initial session — empty sessionID resolves
+		// to it inside the Translator.
+		trans.NotifyTurnStart("")
+		trans.NotifyUserPrompt("", []runapi.ContentBlock{runapi.TextBlock(acpruntime.BuildSeedSystemPrompt(cfg.Session.SystemPrompt))})
 		resp, err := mgr.SeedSystemPrompt(ctx)
 		stopReason := "error"
 		if err == nil {
@@ -151,7 +153,7 @@ func run(cmd *cobra.Command, bundle, stateDir, permissions, id string, logCfg *l
 		if err != nil {
 			trans.NotifyError(err.Error())
 		}
-		trans.NotifyTurnEnd(acp.StopReason(stopReason))
+		trans.NotifyTurnEnd("", acp.StopReason(stopReason))
 		if err != nil {
 			return fmt.Errorf("agent-run: seed system prompt: %w", err)
 		}

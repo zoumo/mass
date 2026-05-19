@@ -52,8 +52,44 @@ func (c *Client) SendPrompt(ctx context.Context, req *runapi.SessionPromptParams
 	return c.c.CallAsync(ctx, runapi.MethodSessionPrompt, req)
 }
 
+// Cancel cancels in-flight work on the agent's initial session.
+// To cancel a specific session opened via NewSession, use CancelSession.
 func (c *Client) Cancel(ctx context.Context) error {
-	return c.c.Call(ctx, runapi.MethodSessionCancel, nil, nil)
+	return c.c.Call(ctx, runapi.MethodSessionCancel, &runapi.SessionCancelParams{}, nil)
+}
+
+// CancelSession cancels in-flight work on a specific session.
+func (c *Client) CancelSession(ctx context.Context, sessionID string) error {
+	return c.c.Call(ctx, runapi.MethodSessionCancel,
+		&runapi.SessionCancelParams{SessionID: sessionID}, nil)
+}
+
+// NewSession opens an additional ACP session on the running agent. cwd
+// scopes the session's working directory; mcpServers are optional per-
+// session MCP overrides. Returns the new session id which callers must
+// pass to Prompt / Cancel / SetModel via the params SessionID field.
+func (c *Client) NewSession(ctx context.Context, req *runapi.SessionNewParams) (*runapi.SessionNewResult, error) {
+	var result runapi.SessionNewResult
+	if err := c.c.Call(ctx, runapi.MethodSessionNew, req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// EndSession releases runtime tracking of a session. The agent process's
+// per-session state remains until cancelled or the process exits.
+func (c *Client) EndSession(ctx context.Context, sessionID string) error {
+	return c.c.Call(ctx, runapi.MethodSessionEnd,
+		&runapi.SessionEndParams{SessionID: sessionID}, nil)
+}
+
+// ListSessions returns the agent's active session ids.
+func (c *Client) ListSessions(ctx context.Context) (*runapi.SessionListResult, error) {
+	var result runapi.SessionListResult
+	if err := c.c.Call(ctx, runapi.MethodSessionList, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (c *Client) Load(ctx context.Context, req *runapi.SessionLoadParams) error {

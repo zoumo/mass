@@ -79,6 +79,23 @@ func (m *mockAgentRunOps) TaskRetry(ctx context.Context, params *pkgariapi.Agent
 	return &pkgariapi.AgentTask{}, nil
 }
 
+// Multi-session stubs — tests in this package don't exercise these yet.
+func (m *mockAgentRunOps) PromptSession(ctx context.Context, key pkgariapi.ObjectKey, sessionID string, prompt []runapi.ContentBlock) (*pkgariapi.AgentRunPromptResult, error) {
+	return m.Prompt(ctx, key, prompt)
+}
+
+func (m *mockAgentRunOps) NewSession(_ context.Context, _ *pkgariapi.AgentRunNewSessionParams) (*pkgariapi.AgentRunNewSessionResult, error) {
+	return &pkgariapi.AgentRunNewSessionResult{SessionID: "mock-session"}, nil
+}
+
+func (m *mockAgentRunOps) EndSession(_ context.Context, _ pkgariapi.ObjectKey, _ string) error {
+	return nil
+}
+
+func (m *mockAgentRunOps) ListSessions(_ context.Context, _ pkgariapi.ObjectKey) (*pkgariapi.AgentRunListSessionsResult, error) {
+	return &pkgariapi.AgentRunListSessionsResult{}, nil
+}
+
 // ── mock WorkspaceOps (stub — not used in agentrun tests) ────────────────────
 
 type mockWorkspaceOps struct{}
