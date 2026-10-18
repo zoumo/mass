@@ -1,0 +1,1366 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,40 +1,78 @@
++# Official d27764b crate; workspace inheritance resolved without changing dependencies.
+ [package]
+ name = "codex-app-server-client"
+-version.workspace = true
+-edition.workspace = true
+-license.workspace = true
+-
++version = "0.160.1"
++edition = "2024"
++license = "Apache-2.0"
++publish = false
+ [lib]
+ name = "codex_app_server_client"
+ path = "src/lib.rs"
+ doctest = false
+ 
+-[lints]
+-workspace = true
+-
+ [dependencies]
+-codex-app-server = { workspace = true }
+-codex-app-server-protocol = { workspace = true }
+-codex-arg0 = { workspace = true }
+-codex-config = { workspace = true }
+-codex-core = { workspace = true }
+-codex-exec-server = { workspace = true }
+-codex-feedback = { workspace = true }
+-codex-protocol = { workspace = true }
+-codex-uds = { workspace = true }
+-codex-utils-absolute-path = { workspace = true }
+-codex-utils-rustls-provider = { workspace = true }
+-futures = { workspace = true }
+-serde = { workspace = true }
+-serde_json = { workspace = true }
+-tokio = { workspace = true, features = ["sync", "time", "rt"] }
+-tokio-tungstenite = { workspace = true }
+-toml = { workspace = true }
+-tracing = { workspace = true }
+-url = { workspace = true }
++codex-app-server = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-app-server-protocol = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-arg0 = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-config = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-core = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-exec-server = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-feedback = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-protocol = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-uds = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-utils-absolute-path = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++codex-utils-rustls-provider = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
++futures = { version = "0.3", default-features = false }
++serde = { version = "1", features = ["rc"] }
++serde_json = { version = "1" }
++tokio = { version = "1", features = ["rt", "sync", "time"] }
++tokio-tungstenite = { version = "0.28.0", features = ["proxy", "rustls-tls-native-roots"] }
++toml = { version = "0.9.5" }
++tracing = { version = "0.1.44" }
++url = { version = "2" }
+ 
+ [dev-dependencies]
+-pretty_assertions = { workspace = true }
+-serde_json = { workspace = true }
+-tempfile = { workspace = true }
+-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
++pretty_assertions = { version = "1.4.1" }
++serde_json = { version = "1" }
++tempfile = { version = "3.23.0" }
++tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
++
++[lints.rust]
++
++[lints.clippy]
++await_holding_invalid_type = "deny"
++await_holding_lock = "deny"
++disallowed_methods = "deny"
++expect_used = "deny"
++identity_op = "deny"
++manual_clamp = "deny"
++manual_filter = "deny"
++manual_find = "deny"
++manual_flatten = "deny"
++manual_map = "deny"
++manual_memcpy = "deny"
++manual_non_exhaustive = "deny"
++manual_ok_or = "deny"
++manual_range_contains = "deny"
++manual_retain = "deny"
++manual_strip = "deny"
++manual_try_fold = "deny"
++manual_unwrap_or = "deny"
++needless_borrow = "deny"
++needless_borrowed_reference = "deny"
++needless_collect = "deny"
++needless_late_init = "deny"
++needless_option_as_deref = "deny"
++needless_question_mark = "deny"
++needless_update = "deny"
++redundant_clone = "deny"
++redundant_closure = "deny"
++redundant_closure_for_method_calls = "deny"
++redundant_static_lifetimes = "deny"
++trivially_copy_pass_by_ref = "deny"
++uninlined_format_args = "deny"
++unnecessary_filter_map = "deny"
++unnecessary_lazy_evaluations = "deny"
++unnecessary_sort_by = "deny"
++unnecessary_to_owned = "deny"
++unwrap_used = "deny"
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,6 @@
++// Optimized official in-process tests exceed rustc's default query depth.
++#![cfg_attr(test, recursion_limit = "256")]
++
+ //! Shared in-process app-server client facade for CLI surfaces.
+ //!
+ //! This crate wraps [`codex_app_server::in_process`] behind a single async API
+@@ -96,10 +99,24 @@
+ 
+ #[derive(Debug, Clone)]
+ pub enum AppServerEvent {
+-    Lagged { skipped: usize },
++    Lagged {
++        skipped: usize,
++    },
+     ServerNotification(Box<ServerNotification>),
+     ServerRequest(Box<ServerRequest>),
+-    Disconnected { message: String },
++    Disconnected {
++        message: String,
++    },
++    /// A valid JSON-RPC notification outside the fixed typed protocol.
++    UnsupportedNotification {
++        method: String,
++    },
++    /// Known method with invalid payload, attributed only by explicit threadId.
++    NotificationDecodeError {
++        method: String,
++        thread_id: Option<String>,
++        message: String,
++    },
+ }
+ 
+ impl From<InProcessServerEvent> for AppServerEvent {
+@@ -171,6 +188,7 @@
+ 
+ // Await transport in a separate statement before calling this: dropping the
+ // completed future must precede any caller-provided Deserialize implementation.
++#[allow(clippy::result_large_err)] // Preserve the official public error representation.
+ fn decode_typed_response<T>(
+     method: &str,
+     response: IoResult<RequestResult>,
+@@ -342,6 +360,7 @@
+     Remote(crate::remote::RemoteAppServerRequestHandle),
+ }
+ 
++#[allow(clippy::large_enum_variant)] // Preserve the official public enum ABI/API.
+ pub enum AppServerClient {
+     InProcess(InProcessAppServerClient),
+     Remote(RemoteAppServerClient),
+@@ -784,6 +803,7 @@
+ }
+ 
+ #[cfg(test)]
++#[allow(clippy::expect_used, clippy::result_large_err)] // Preserve official test helpers.
+ mod tests {
+     use super::*;
+     use codex_app_server_protocol::AccountUpdatedNotification;
+@@ -1105,6 +1125,8 @@
+             mcp_server_openai_form_elicitation: false,
+             opt_out_notification_methods: Vec::new(),
+             channel_capacity: 8,
++            event_byte_capacity: 32 << 20,
++            max_response_bytes: 128 << 20,
+         }
+     }
+ 
+@@ -1466,6 +1488,8 @@
+             mcp_server_openai_form_elicitation: false,
+             opt_out_notification_methods: Vec::new(),
+             channel_capacity: 8,
++            event_byte_capacity: 32 << 20,
++            max_response_bytes: 128 << 20,
+         })
+         .await
+         .expect("remote client should connect");
+@@ -1556,6 +1580,8 @@
+             mcp_server_openai_form_elicitation: false,
+             opt_out_notification_methods: Vec::new(),
+             channel_capacity: 8,
++            event_byte_capacity: 32 << 20,
++            max_response_bytes: 128 << 20,
+         })
+         .await
+         .expect("remote client should connect");
+@@ -1576,6 +1602,8 @@
+             mcp_server_openai_form_elicitation: false,
+             opt_out_notification_methods: Vec::new(),
+             channel_capacity: 8,
++            event_byte_capacity: 32 << 20,
++            max_response_bytes: 128 << 20,
+         })
+         .await;
+         let err = match result {
+@@ -1757,6 +1785,8 @@
+         .await;
+         let mut client = RemoteAppServerClient::connect(RemoteAppServerConnectArgs {
+             channel_capacity: 1,
++            event_byte_capacity: 32 << 20,
++            max_response_bytes: 128 << 20,
+             ..test_remote_connect_args(websocket_url)
+         })
+         .await
+@@ -2173,4 +2203,263 @@
+         client.shutdown().await.expect("shutdown should complete");
+         assert!(completed.load(Ordering::Acquire));
+     }
++    // MASS patch tests use the official public client and real WebSocket I/O.
++    #[tokio::test]
++    async fn remote_patch_unknown_and_damaged_known_notifications_differ() {
++        let endpoint = start_test_remote_server(|mut websocket| async move {
++            expect_remote_initialize(&mut websocket).await;
++            websocket
++                .send(Message::Text(
++                    r#"{"method":"future/legal","params":{}}"#.into(),
++                ))
++                .await
++                .expect("send unknown");
++            websocket
++                .send(Message::Text(
++                    r#"{"method":"item/completed","params":{}}"#.into(),
++                ))
++                .await
++                .expect("send damaged known");
++            let _ = websocket.next().await;
++        })
++        .await;
++        let mut client = RemoteAppServerClient::connect(test_remote_connect_args(endpoint))
++            .await
++            .expect("connect");
++        assert!(
++            matches!(client.next_event().await,Some(AppServerEvent::UnsupportedNotification{method}) if method=="future/legal")
++        );
++        assert!(
++            matches!(client.next_event().await,Some(AppServerEvent::NotificationDecodeError{method,thread_id:None,..}) if method=="item/completed")
++        );
++        client.shutdown().await.expect("shutdown");
++    }
++
++    #[tokio::test]
++    async fn remote_patch_bad_json_is_explicit_disconnect() {
++        let endpoint = start_test_remote_server(|mut websocket| async move {
++            expect_remote_initialize(&mut websocket).await;
++            websocket
++                .send(Message::Text("{bad json".into()))
++                .await
++                .expect("send bad JSON");
++            let _ = websocket.next().await;
++        })
++        .await;
++        let mut client = RemoteAppServerClient::connect(test_remote_connect_args(endpoint))
++            .await
++            .expect("connect");
++        assert!(
++            matches!(client.next_event().await,Some(AppServerEvent::Disconnected{message}) if message.contains("invalid JSON-RPC"))
++        );
++        client.shutdown().await.expect("shutdown");
++    }
++
++    #[tokio::test]
++    async fn remote_patch_initial_pending_events_are_count_and_byte_bounded() {
++        for bytes in [false, true] {
++            let endpoint = start_test_remote_server(move |mut websocket| async move {
++                let _ = read_websocket_message(&mut websocket).await;
++                let text = if bytes {
++                    "x".repeat(2048)
++                } else {
++                    "one".into()
++                };
++                for _ in 0..2 {
++                    let value = serde_json::to_value(agent_message_delta_notification(&text))
++                        .expect("notification");
++                    if websocket
++                        .send(Message::Text(value.to_string().into()))
++                        .await
++                        .is_err()
++                    {
++                        break;
++                    }
++                }
++            })
++            .await;
++            let mut args = test_remote_connect_args(endpoint);
++            args.channel_capacity = 1;
++            args.event_byte_capacity = 1024;
++            let result = timeout(Duration::from_secs(5), RemoteAppServerClient::connect(args))
++                .await
++                .expect("bounded initialize");
++            assert!(
++                result.is_err(),
++                "initial pending overflow must fail, never grow or wait for a nonexistent consumer"
++            );
++        }
++    }
++
++    #[tokio::test]
++    async fn remote_patch_event_byte_overflow_is_explicit_failure() {
++        let endpoint = start_test_remote_server(|mut websocket| async move {
++            expect_remote_initialize(&mut websocket).await;
++            let value = serde_json::to_value(agent_message_delta_notification(&"x".repeat(2048)))
++                .expect("notification");
++            websocket
++                .send(Message::Text(value.to_string().into()))
++                .await
++                .expect("send");
++            let _ = websocket.next().await;
++        })
++        .await;
++        let mut args = test_remote_connect_args(endpoint);
++        args.event_byte_capacity = 1024;
++        let mut client = RemoteAppServerClient::connect(args).await.expect("connect");
++        assert!(
++            matches!(client.next_event().await,Some(AppServerEvent::Disconnected{message}) if message.contains("1024 byte consumer budget"))
++        );
++        client.shutdown().await.expect("shutdown");
++    }
++
++    #[tokio::test]
++    async fn remote_patch_saturated_consumer_delays_shared_rpc_and_shutdown_remains_bounded() {
++        let endpoint = start_test_remote_server(|mut websocket| async move {
++            expect_remote_initialize(&mut websocket).await;
++            for _ in 0..8 {
++                let value = serde_json::to_value(agent_message_delta_notification("buffered"))
++                    .expect("notification");
++                if websocket
++                    .send(Message::Text(value.to_string().into()))
++                    .await
++                    .is_err()
++                {
++                    return;
++                }
++            }
++            let _ = websocket.next().await;
++        })
++        .await;
++        let mut args = test_remote_connect_args(endpoint);
++        args.channel_capacity = 1;
++        let client = RemoteAppServerClient::connect(args).await.expect("connect");
++        tokio::time::sleep(Duration::from_millis(50)).await;
++        assert!(
++            timeout(
++                Duration::from_millis(100),
++                client.notify(ClientNotification::Initialized)
++            )
++            .await
++            .is_err(),
++            "full official event queue must propagate shared transport pressure"
++        );
++        timeout(Duration::from_secs(6), client.shutdown())
++            .await
++            .expect("total bounded shutdown")
++            .expect("consumer close unblocks delivery");
++    }
++
++    #[tokio::test]
++    async fn remote_patch_oversize_frame_is_transport_failure() {
++        let endpoint = start_test_remote_server(|mut websocket| async move {
++            expect_remote_initialize(&mut websocket).await;
++            let _ = websocket
++                .send(Message::Text("x".repeat((128 << 20) + 1).into()))
++                .await;
++            let _ = websocket.next().await;
++        })
++        .await;
++        let mut client = RemoteAppServerClient::connect(test_remote_connect_args(endpoint))
++            .await
++            .expect("connect");
++        let event = timeout(Duration::from_secs(10), client.next_event())
++            .await
++            .expect("frame limit enforced");
++        assert!(
++            matches!(event,Some(AppServerEvent::Disconnected{message}) if message.contains("transport failed"))
++        );
++        client.shutdown().await.expect("shutdown");
++    }
++    #[tokio::test]
++    async fn remote_patch_damaged_payload_preserves_explicit_thread_attribution() {
++        let endpoint = start_test_remote_server(|mut websocket| async move {
++            expect_remote_initialize(&mut websocket).await;
++            websocket
++                .send(Message::Text(
++                    r#"{"method":"item/completed","params":{"threadId":"thread-attributed"}}"#
++                        .into(),
++                ))
++                .await
++                .expect("send damaged payload");
++            let value = serde_json::to_value(agent_message_delta_notification("still-readable"))
++                .expect("notification");
++            websocket
++                .send(Message::Text(value.to_string().into()))
++                .await
++                .expect("send healthy notification");
++            let _ = websocket.next().await;
++        })
++        .await;
++        let mut client = RemoteAppServerClient::connect(test_remote_connect_args(endpoint))
++            .await
++            .expect("connect");
++        assert!(
++            matches!(client.next_event().await,Some(AppServerEvent::NotificationDecodeError{thread_id:Some(id),..}) if id=="thread-attributed")
++        );
++        assert!(matches!(
++            client.next_event().await,
++            Some(AppServerEvent::ServerNotification(_))
++        ));
++        client.shutdown().await.expect("shutdown");
++    }
++
++    #[tokio::test]
++    async fn remote_patch_rpc_response_byte_limit_fails_pending_work_explicitly() {
++        let endpoint = start_test_remote_server(|mut websocket| async move {
++            expect_remote_initialize(&mut websocket).await;
++            let JSONRPCMessage::Request(request) = read_websocket_message(&mut websocket).await
++            else {
++                panic!("request");
++            };
++            write_websocket_message(
++                &mut websocket,
++                JSONRPCMessage::Response(JSONRPCResponse {
++                    id: request.id,
++                    result: serde_json::json!({"padding":"x".repeat(2048)}),
++                }),
++            )
++            .await;
++            let _ = websocket.next().await;
++        })
++        .await;
++        let mut args = test_remote_connect_args(endpoint);
++        args.max_response_bytes = 1024;
++        let mut client = RemoteAppServerClient::connect(args).await.expect("connect");
++        assert!(
++            client
++                .request(ClientRequest::GetAccount {
++                    request_id: RequestId::Integer(1),
++                    params: codex_app_server_protocol::GetAccountParams {
++                        refresh_token: false
++                    }
++                })
++                .await
++                .is_err()
++        );
++        assert!(
++            matches!(client.next_event().await,Some(AppServerEvent::Disconnected{message}) if message.contains("RPC result exceeds 1024 byte limit"))
++        );
++        client.shutdown().await.expect("shutdown");
++    }
++
++    #[tokio::test]
++    async fn remote_patch_binary_data_frame_is_explicitly_unsupported() {
++        let endpoint = start_test_remote_server(|mut websocket| async move {
++            expect_remote_initialize(&mut websocket).await;
++            websocket
++                .send(Message::Binary(vec![0, 1, 2].into()))
++                .await
++                .expect("binary frame");
++            let _ = websocket.next().await;
++        })
++        .await;
++        let mut client = RemoteAppServerClient::connect(test_remote_connect_args(endpoint))
++            .await
++            .expect("connect");
++        assert!(
++            matches!(client.next_event().await,Some(AppServerEvent::Disconnected{message}) if message.contains("unsupported binary"))
++        );
++        client.shutdown().await.expect("shutdown");
++    }
+ }
+--- a/src/remote.rs
++++ b/src/remote.rs
+@@ -10,12 +10,15 @@
+ higher-level session logic.
+ */
+ 
++include!("notification_methods.rs");
+ use std::collections::HashMap;
+ use std::collections::VecDeque;
+ use std::io::Error as IoError;
+ use std::io::ErrorKind;
+ use std::io::Result as IoResult;
++use std::sync::Arc;
+ use std::time::Duration;
++use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+ 
+ use crate::AppServerEvent;
+ use crate::RequestResult;
+@@ -62,6 +65,143 @@
+ use tracing::warn;
+ use url::Url;
+ 
++// MASS patch: queued and consumer in-flight typed events share these permits.
++const REMOTE_EVENT_BYTES: usize = 32 << 20;
++const REMOTE_EVENT_COUNT: usize = 32;
++
++fn encoded_len<T: serde::Serialize + ?Sized>(value: &T) -> IoResult<usize> {
++    struct Counter(usize);
++    impl std::io::Write for Counter {
++        fn write(&mut self, bytes: &[u8]) -> IoResult<usize> {
++            self.0 += bytes.len();
++            Ok(bytes.len())
++        }
++        fn flush(&mut self) -> IoResult<()> {
++            Ok(())
++        }
++    }
++    let mut counter = Counter(0);
++    serde_json::to_writer(&mut counter, value).map_err(IoError::other)?;
++    Ok(counter.0)
++}
++
++struct BufferedEvent {
++    event: AppServerEvent,
++    _count: OwnedSemaphorePermit,
++    _bytes: OwnedSemaphorePermit,
++}
++#[derive(Clone)]
++struct EventBudget {
++    count: Arc<Semaphore>,
++    bytes: Arc<Semaphore>,
++    limit: usize,
++    capacity: usize,
++    high_count: Arc<std::sync::atomic::AtomicUsize>,
++    high_bytes: Arc<std::sync::atomic::AtomicUsize>,
++}
++impl EventBudget {
++    fn new(capacity: usize, limit: usize) -> Self {
++        Self {
++            count: Arc::new(Semaphore::new(capacity)),
++            bytes: Arc::new(Semaphore::new(limit)),
++            limit,
++            capacity,
++            high_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
++            high_bytes: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
++        }
++    }
++    fn size(&self, event: &AppServerEvent) -> IoResult<usize> {
++        let bytes = match event {
++            AppServerEvent::ServerNotification(value) => encoded_len(value)?,
++            AppServerEvent::ServerRequest(value) => encoded_len(value)?,
++            AppServerEvent::Disconnected { message } => encoded_len(message)?,
++            AppServerEvent::UnsupportedNotification { method } => encoded_len(method)?,
++            AppServerEvent::NotificationDecodeError {
++                method,
++                thread_id,
++                message,
++            } => encoded_len(&(method, thread_id, message))?,
++            AppServerEvent::Lagged { skipped } => encoded_len(skipped)?,
++        };
++        if bytes > self.limit {
++            return Err(IoError::new(
++                ErrorKind::InvalidData,
++                format!(
++                    "remote event exceeds {} byte consumer budget; history incomplete",
++                    self.limit
++                ),
++            ));
++        }
++        Ok(bytes)
++    }
++    fn record_high_water(&self) {
++        self.high_count.fetch_max(
++            self.capacity - self.count.available_permits(),
++            std::sync::atomic::Ordering::Relaxed,
++        );
++        self.high_bytes.fetch_max(
++            self.limit - self.bytes.available_permits(),
++            std::sync::atomic::Ordering::Relaxed,
++        );
++    }
++    fn initial(&self, event: AppServerEvent) -> IoResult<BufferedEvent> {
++        if let AppServerEvent::Disconnected { message }
++        | AppServerEvent::NotificationDecodeError { message, .. } = &event
++        {
++            return Err(IoError::new(ErrorKind::InvalidData, message.clone()));
++        }
++        let bytes = self.size(&event)?;
++        let buffered = BufferedEvent {
++            event,
++            _count: self
++                .count
++                .clone()
++                .try_acquire_owned()
++                .map_err(IoError::other)?,
++            _bytes: self
++                .bytes
++                .clone()
++                .try_acquire_many_owned(bytes as u32)
++                .map_err(IoError::other)?,
++        };
++        self.record_high_water();
++        Ok(buffered)
++    }
++}
++struct EventSender {
++    sender: mpsc::Sender<BufferedEvent>,
++    budget: EventBudget,
++}
++
++// A shutdown future may be cancelled by its owner. Dropping its guard must
++// abort the official worker rather than detaching its JoinHandle.
++struct AbortOnDrop(tokio::task::JoinHandle<()>);
++impl std::ops::Deref for AbortOnDrop {
++    type Target = tokio::task::JoinHandle<()>;
++    fn deref(&self) -> &Self::Target {
++        &self.0
++    }
++}
++impl std::ops::DerefMut for AbortOnDrop {
++    fn deref_mut(&mut self) -> &mut Self::Target {
++        &mut self.0
++    }
++}
++impl std::future::Future for AbortOnDrop {
++    type Output = Result<(), tokio::task::JoinError>;
++    fn poll(
++        mut self: std::pin::Pin<&mut Self>,
++        cx: &mut std::task::Context<'_>,
++    ) -> std::task::Poll<Self::Output> {
++        std::pin::Pin::new(&mut self.0).poll(cx)
++    }
++}
++impl Drop for AbortOnDrop {
++    fn drop(&mut self) {
++        self.0.abort();
++    }
++}
++
+ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+ const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
+ const REMOTE_APP_SERVER_MAX_WEBSOCKET_MESSAGE_SIZE: usize = 128 << 20;
+@@ -89,6 +229,10 @@
+     pub mcp_server_openai_form_elicitation: bool,
+     pub opt_out_notification_methods: Vec<String>,
+     pub channel_capacity: usize,
++    /// MASS patch: queued + consumer in-flight serialized event bytes (1 KiB..32 MiB).
++    pub event_byte_capacity: usize,
++    /// Maximum serialized RPC result/error bytes; the WebSocket frame limit remains separate.
++    pub max_response_bytes: usize,
+ }
+ impl RemoteAppServerConnectArgs {
+     pub(crate) fn initialize_params(&self) -> InitializeParams {
+@@ -160,10 +304,12 @@
+ 
+ pub struct RemoteAppServerClient {
+     command_tx: mpsc::Sender<RemoteClientCommand>,
+-    event_rx: mpsc::UnboundedReceiver<AppServerEvent>,
+-    pending_events: VecDeque<AppServerEvent>,
++    event_rx: mpsc::Receiver<BufferedEvent>,
++    pending_events: VecDeque<BufferedEvent>,
++    event_budget: EventBudget,
++    in_flight: Option<(OwnedSemaphorePermit, OwnedSemaphorePermit)>,
+     metadata: RemoteServerMetadata,
+-    worker_handle: tokio::task::JoinHandle<()>,
++    worker_handle: AbortOnDrop,
+ }
+ 
+ #[derive(Clone)]
+@@ -199,7 +345,28 @@
+         args: RemoteAppServerConnectArgs,
+         peer_policy: SocketPeerPolicy,
+     ) -> IoResult<Self> {
+-        let channel_capacity = args.channel_capacity.max(1);
++        if !(1..=REMOTE_EVENT_COUNT).contains(&args.channel_capacity) {
++            return Err(IoError::new(
++                ErrorKind::InvalidInput,
++                "remote channel capacity must be 1..32",
++            ));
++        }
++        if !(1024..=REMOTE_EVENT_BYTES).contains(&args.event_byte_capacity) {
++            return Err(IoError::new(
++                ErrorKind::InvalidInput,
++                "event byte capacity must be 1 KiB..32 MiB",
++            ));
++        }
++        let channel_capacity = args.channel_capacity;
++        let event_byte_capacity = args.event_byte_capacity;
++        if !(1024..=REMOTE_APP_SERVER_MAX_WEBSOCKET_MESSAGE_SIZE).contains(&args.max_response_bytes)
++        {
++            return Err(IoError::new(
++                ErrorKind::InvalidInput,
++                "invalid RPC response byte limit",
++            ));
++        }
++        let max_response_bytes = args.max_response_bytes;
+         let initialize_params = args.initialize_params();
+         match args.endpoint {
+             RemoteAppServerEndpoint::WebSocket {
+@@ -208,14 +375,28 @@
+             } => {
+                 let (endpoint, stream) =
+                     connect_websocket_endpoint(websocket_url, auth_token).await?;
+-                Self::connect_with_stream(channel_capacity, endpoint, stream, initialize_params)
+-                    .await
++                Self::connect_with_stream(
++                    channel_capacity,
++                    event_byte_capacity,
++                    max_response_bytes,
++                    endpoint,
++                    stream,
++                    initialize_params,
++                )
++                .await
+             }
+             RemoteAppServerEndpoint::UnixSocket { socket_path } => {
+                 let (endpoint, stream) =
+                     connect_unix_socket_endpoint(socket_path, peer_policy).await?;
+-                Self::connect_with_stream(channel_capacity, endpoint, stream, initialize_params)
+-                    .await
++                Self::connect_with_stream(
++                    channel_capacity,
++                    event_byte_capacity,
++                    max_response_bytes,
++                    endpoint,
++                    stream,
++                    initialize_params,
++                )
++                .await
+             }
+         }
+     }
+@@ -238,6 +419,8 @@
+ 
+     async fn connect_with_stream<S>(
+         channel_capacity: usize,
++        event_byte_capacity: usize,
++        max_response_bytes: usize,
+         endpoint: String,
+         stream: WebSocketStream<S>,
+         initialize_params: InitializeParams,
+@@ -246,16 +429,23 @@
+         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+     {
+         let mut stream = stream;
++        let budget = EventBudget::new(channel_capacity, event_byte_capacity);
+         let (pending_events, metadata) = initialize_remote_connection(
+             &mut stream,
+             &endpoint,
+             initialize_params,
+             INITIALIZE_TIMEOUT,
++            &budget,
++            max_response_bytes,
+         )
+         .await?;
+ 
+         let (command_tx, mut command_rx) = mpsc::channel::<RemoteClientCommand>(channel_capacity);
+-        let (event_tx, event_rx) = mpsc::unbounded_channel::<AppServerEvent>();
++        let (sender, event_rx) = mpsc::channel::<BufferedEvent>(channel_capacity);
++        let event_tx = EventSender {
++            sender,
++            budget: budget.clone(),
++        };
+         let worker_handle = tokio::spawn(async move {
+             let mut pending_requests =
+                 HashMap::<RequestId, oneshot::Sender<IoResult<RequestResult>>>::new();
+@@ -297,7 +487,7 @@
+                                         AppServerEvent::Disconnected {
+                                             message: message.clone(),
+                                         },
+-                                    );
++                                    ).await;
+                                     worker_exit_error = Some((ErrorKind::BrokenPipe, message));
+                                     break;
+                                 }
+@@ -365,11 +555,21 @@
+                             Some(Ok(Message::Text(text))) => {
+                                 match serde_json::from_str::<JSONRPCMessage>(&text) {
+                                     Ok(JSONRPCMessage::Response(response)) => {
++                                        if encoded_len(&response.result).is_ok_and(|bytes|bytes>max_response_bytes) {
++                                            let message=format!("RPC result exceeds {max_response_bytes} byte limit; outcome unknown");
++                                            let _=deliver_event(&event_tx,AppServerEvent::Disconnected{message:message.clone()}).await;
++                                            worker_exit_error=Some((ErrorKind::InvalidData,message));break;
++                                        }
+                                         if let Some(response_tx) = pending_requests.remove(&response.id) {
+                                             let _ = response_tx.send(Ok(Ok(response.result)));
+                                         }
+                                     }
+                                     Ok(JSONRPCMessage::Error(error)) => {
++                                        if encoded_len(&error.error).is_ok_and(|bytes|bytes>max_response_bytes) {
++                                            let message=format!("RPC error exceeds {max_response_bytes} byte limit; outcome unknown");
++                                            let _=deliver_event(&event_tx,AppServerEvent::Disconnected{message:message.clone()}).await;
++                                            worker_exit_error=Some((ErrorKind::InvalidData,message));break;
++                                        }
+                                         if let Some(response_tx) = pending_requests.remove(&error.id) {
+                                             let _ = response_tx.send(Ok(Err(error.error)));
+                                         }
+@@ -380,7 +580,7 @@
+                                             && let Err(err) = deliver_event(
+                                                 &event_tx,
+                                                 event,
+-                                            )
++                                            ).await
+                                             {
+                                                 warn!(%err, "failed to deliver remote app-server event");
+                                                 break;
+@@ -394,7 +594,7 @@
+                                                 if let Err(err) = deliver_event(
+                                                     &event_tx,
+                                                     AppServerEvent::ServerRequest(Box::new(request)),
+-                                                )
++                                                ).await
+                                                 {
+                                                     warn!(%err, "failed to deliver remote app-server server request");
+                                                     break;
+@@ -427,7 +627,7 @@
+                                                         AppServerEvent::Disconnected {
+                                                             message: message.clone(),
+                                                         },
+-                                                    );
++                                                    ).await;
+                                                     worker_exit_error =
+                                                         Some((ErrorKind::BrokenPipe, message));
+                                                     break;
+@@ -444,7 +644,7 @@
+                                             AppServerEvent::Disconnected {
+                                                 message: message.clone(),
+                                             },
+-                                        );
++                                        ).await;
+                                         worker_exit_error =
+                                             Some((ErrorKind::InvalidData, message));
+                                         break;
+@@ -465,15 +665,19 @@
+                                     AppServerEvent::Disconnected {
+                                         message: message.clone(),
+                                     },
+-                                );
++                                ).await;
+                                 worker_exit_error = Some((
+                                     ErrorKind::ConnectionAborted,
+                                     message,
+                                 ));
+                                 break;
+                             }
+-                            Some(Ok(Message::Binary(_)))
+-                            | Some(Ok(Message::Ping(_)))
++                            Some(Ok(Message::Binary(_)))=> {
++                                let message="unsupported binary app-server frame".to_string();
++                                let _=deliver_event(&event_tx,AppServerEvent::Disconnected{message:message.clone()}).await;
++                                worker_exit_error=Some((ErrorKind::InvalidData,message));break;
++                            }
++                            Some(Ok(Message::Ping(_)))
+                             | Some(Ok(Message::Pong(_)))
+                             | Some(Ok(Message::Frame(_))) => {}
+                             Some(Err(err)) => {
+@@ -485,7 +689,7 @@
+                                     AppServerEvent::Disconnected {
+                                         message: message.clone(),
+                                     },
+-                                );
++                                ).await;
+                                 worker_exit_error = Some((ErrorKind::InvalidData, message));
+                                 break;
+                             }
+@@ -498,7 +702,7 @@
+                                     AppServerEvent::Disconnected {
+                                         message: message.clone(),
+                                     },
+-                                );
++                                ).await;
+                                 worker_exit_error = Some((ErrorKind::UnexpectedEof, message));
+                                 break;
+                             }
+@@ -522,8 +726,10 @@
+             command_tx,
+             event_rx,
+             pending_events: pending_events.into(),
++            event_budget: budget,
++            in_flight: None,
+             metadata,
+-            worker_handle,
++            worker_handle: AbortOnDrop(worker_handle),
+         })
+     }
+ 
+@@ -622,38 +828,74 @@
+         })?
+     }
+ 
++    /// Serialized event payload usage, including the caller's current event.
++    pub fn event_buffer_high_water(&self) -> (usize, usize) {
++        (
++            self.event_budget
++                .high_count
++                .load(std::sync::atomic::Ordering::Relaxed),
++            self.event_budget
++                .high_bytes
++                .load(std::sync::atomic::Ordering::Relaxed),
++        )
++    }
+     pub async fn next_event(&mut self) -> Option<AppServerEvent> {
+-        if let Some(event) = self.pending_events.pop_front() {
+-            return Some(event);
+-        }
+-        self.event_rx.recv().await
++        // Keep the current event charged until the caller asks for another one.
++        self.in_flight.take();
++        let event = match self.pending_events.pop_front() {
++            Some(event) => event,
++            None => self.event_rx.recv().await?,
++        };
++        let BufferedEvent {
++            event,
++            _count,
++            _bytes,
++        } = event;
++        self.in_flight = Some((_count, _bytes));
++        Some(event)
+     }
+ 
+     pub async fn shutdown(self) -> IoResult<()> {
+         let Self {
+             command_tx,
+             event_rx,
+-            pending_events: _pending_events,
++            pending_events,
++            event_budget: _,
++            in_flight,
+             metadata: _,
+-            worker_handle,
++            mut worker_handle,
+         } = self;
+-        let mut worker_handle = worker_handle;
+         drop(event_rx);
+-        let (response_tx, response_rx) = oneshot::channel();
+-        if command_tx
+-            .send(RemoteClientCommand::Shutdown { response_tx })
++        drop(pending_events);
++        drop(in_flight);
++        let deadline = tokio::time::Instant::now() + SHUTDOWN_TIMEOUT;
++        let close = tokio::time::timeout_at(deadline, async {
++            let (response_tx, response_rx) = oneshot::channel();
++            if command_tx
++                .send(RemoteClientCommand::Shutdown { response_tx })
++                .await
++                .is_ok()
++                && let Ok(result) = response_rx.await
++            {
++                result?;
++            }
++            Ok::<_, IoError>(())
++        })
++        .await;
++        if tokio::time::timeout_at(deadline, &mut worker_handle)
+             .await
+-            .is_ok()
+-            && let Ok(Ok(close_result)) = timeout(SHUTDOWN_TIMEOUT, response_rx).await
++            .is_err()
+         {
+-            close_result?;
+-        }
+-
+-        if let Err(_elapsed) = timeout(SHUTDOWN_TIMEOUT, &mut worker_handle).await {
+             worker_handle.abort();
+             let _ = worker_handle.await;
+         }
+-        Ok(())
++        match close {
++            Ok(result) => result,
++            Err(_) => Err(IoError::new(
++                ErrorKind::TimedOut,
++                "remote shutdown total deadline exceeded; worker aborted",
++            )),
++        }
+     }
+ }
+ 
+@@ -822,7 +1064,9 @@
+     endpoint: &str,
+     params: InitializeParams,
+     initialize_timeout: Duration,
+-) -> IoResult<(Vec<AppServerEvent>, RemoteServerMetadata)>
++    budget: &EventBudget,
++    max_response_bytes: usize,
++) -> IoResult<(Vec<BufferedEvent>, RemoteServerMetadata)>
+ where
+     S: AsyncRead + AsyncWrite + Unpin,
+ {
+@@ -852,6 +1096,7 @@
+                     })?;
+                     match message {
+                         JSONRPCMessage::Response(response) if response.id == initialize_request_id => {
++                            if encoded_len(&response.result)?>max_response_bytes {return Err(IoError::new(ErrorKind::InvalidData,"initialize result exceeds RPC byte limit"));}
+                             metadata.server_version = response
+                                 .result
+                                 .get("userAgent")
+@@ -880,7 +1125,7 @@
+                         }
+                         JSONRPCMessage::Notification(notification) => {
+                             if let Some(event) = app_server_event_from_notification(notification) {
+-                                pending_events.push(event);
++                                pending_events.push(budget.initial(event)?);
+                             }
+                         }
+                         JSONRPCMessage::Request(request) => {
+@@ -889,7 +1134,7 @@
+                             match ServerRequest::try_from(request) {
+                                 Ok(request) => {
+                                     pending_events
+-                                        .push(AppServerEvent::ServerRequest(Box::new(request)));
++                                        .push(budget.initial(AppServerEvent::ServerRequest(Box::new(request)))?);
+                                 }
+                                 Err(err) => {
+                                     warn!(%err, method, "rejecting unknown remote app-server request during initialize");
+@@ -914,8 +1159,8 @@
+                         JSONRPCMessage::Response(_) | JSONRPCMessage::Error(_) => {}
+                     }
+                 }
+-                Some(Ok(Message::Binary(_)))
+-                | Some(Ok(Message::Ping(_)))
++                Some(Ok(Message::Binary(_)))=>break Err(IoError::new(ErrorKind::InvalidData,"unsupported binary initialize frame")),
++                Some(Ok(Message::Ping(_)))
+                 | Some(Ok(Message::Pong(_)))
+                 | Some(Ok(Message::Frame(_))) => {}
+                 Some(Ok(Message::Close(frame))) => {
+@@ -966,22 +1211,81 @@
+ }
+ 
+ fn app_server_event_from_notification(notification: JSONRPCNotification) -> Option<AppServerEvent> {
++    let method = notification.method.clone();
++    if !KNOWN_NOTIFICATION_METHODS.contains(&method.as_str()) {
++        return Some(AppServerEvent::UnsupportedNotification { method });
++    }
++    let thread_id = if THREAD_NOTIFICATION_METHODS.contains(&method.as_str()) {
++        notification
++            .params
++            .as_ref()
++            .and_then(|params| params.get("threadId"))
++            .and_then(serde_json::Value::as_str)
++            .filter(|id| !id.is_empty() && id.len() <= 4096)
++            .map(str::to_owned)
++    } else {
++        None
++    };
+     match ServerNotification::try_from(notification) {
+         Ok(notification) => Some(AppServerEvent::ServerNotification(Box::new(notification))),
+-        Err(_) => None,
+-    }
+-}
+-
+-fn deliver_event(
+-    event_tx: &mpsc::UnboundedSender<AppServerEvent>,
+-    event: AppServerEvent,
+-) -> IoResult<()> {
+-    event_tx.send(event).map_err(|_| {
+-        IoError::new(
+-            ErrorKind::BrokenPipe,
+-            "remote app-server event consumer channel is closed",
+-        )
+-    })
++        Err(error) => Some(AppServerEvent::NotificationDecodeError {
++            message: format!(
++                "invalid known remote notification {method}: {error}; history incomplete"
++            ),
++            method,
++            thread_id,
++        }),
++    }
++}
++
++async fn deliver_event(event_tx: &EventSender, event: AppServerEvent) -> IoResult<()> {
++    let (event, bytes) = match event_tx.budget.size(&event) {
++        Ok(bytes) => (event, bytes),
++        Err(error) => {
++            let event = AppServerEvent::Disconnected {
++                message: error.to_string(),
++            };
++            let bytes = event_tx.budget.size(&event)?;
++            (event, bytes)
++        }
++    };
++    let fatal = matches!(event, AppServerEvent::Disconnected { .. });
++    let count = event_tx
++        .budget
++        .count
++        .clone()
++        .acquire_owned()
++        .await
++        .map_err(IoError::other)?;
++    let bytes = event_tx
++        .budget
++        .bytes
++        .clone()
++        .acquire_many_owned(bytes as u32)
++        .await
++        .map_err(IoError::other)?;
++    event_tx.budget.record_high_water();
++    event_tx
++        .sender
++        .send(BufferedEvent {
++            event,
++            _count: count,
++            _bytes: bytes,
++        })
++        .await
++        .map_err(|_| {
++            IoError::new(
++                ErrorKind::BrokenPipe,
++                "remote event consumer channel is closed",
++            )
++        })?;
++    if fatal {
++        return Err(IoError::new(
++            ErrorKind::InvalidData,
++            "remote event stream failed explicitly",
++        ));
++    }
++    Ok(())
+ }
+ 
+ fn jsonrpc_request_from_client_request(request: ClientRequest) -> JSONRPCRequest {
+@@ -1038,13 +1342,14 @@
+     }
+ }
+ #[cfg(test)]
++#[allow(clippy::expect_used)] // Match the official test assertion style.
+ mod tests {
+     use super::*;
+ 
+     #[tokio::test]
+     async fn shutdown_tolerates_worker_exit_after_command_is_queued() {
+         let (command_tx, mut command_rx) = mpsc::channel(1);
+-        let (_event_tx, event_rx) = mpsc::unbounded_channel::<AppServerEvent>();
++        let (_event_tx, event_rx) = mpsc::channel::<BufferedEvent>(1);
+         let worker_handle = tokio::spawn(async move {
+             let _ = command_rx.recv().await;
+         });
+@@ -1052,8 +1357,10 @@
+             command_tx,
+             event_rx,
+             pending_events: VecDeque::new(),
++            event_budget: EventBudget::new(1, REMOTE_EVENT_BYTES),
++            in_flight: None,
+             metadata: RemoteServerMetadata::default(),
+-            worker_handle,
++            worker_handle: AbortOnDrop(worker_handle),
+         };
+ 
+         client
+@@ -1061,4 +1368,48 @@
+             .await
+             .expect("shutdown should complete when worker exits first");
+     }
+-}
++    #[tokio::test]
++    async fn cancelled_shutdown_aborts_owned_official_worker() {
++        struct Done(Option<oneshot::Sender<()>>);
++        impl Drop for Done {
++            fn drop(&mut self) {
++                if let Some(tx) = self.0.take() {
++                    let _ = tx.send(());
++                }
++            }
++        }
++        let (done_tx, done_rx) = oneshot::channel();
++        let (command_tx, _command_rx) = mpsc::channel(1);
++        let (reply, _) = oneshot::channel();
++        command_tx
++            .try_send(RemoteClientCommand::Notify {
++                notification: ClientNotification::Initialized,
++                response_tx: reply,
++            })
++            .expect("fill command channel");
++        let (_sender, event_rx) = mpsc::channel(1);
++        let worker = tokio::spawn(async move {
++            let _done = Done(Some(done_tx));
++            std::future::pending::<()>().await;
++        });
++        tokio::task::yield_now().await;
++        let client = RemoteAppServerClient {
++            command_tx,
++            event_rx,
++            pending_events: VecDeque::new(),
++            event_budget: EventBudget::new(1, REMOTE_EVENT_BYTES),
++            in_flight: None,
++            metadata: RemoteServerMetadata::default(),
++            worker_handle: AbortOnDrop(worker),
++        };
++        assert!(
++            timeout(Duration::from_millis(30), client.shutdown())
++                .await
++                .is_err()
++        );
++        timeout(Duration::from_secs(1), done_rx)
++            .await
++            .expect("aborted worker released")
++            .expect("worker guard dropped");
++    }
++}
+--- /dev/null
++++ b/src/notification_methods.rs
+@@ -0,0 +1,163 @@
++// Generated from fixed protocol common.rs server_notification_definitions; not a second decoder.
++// Source SHA256: d0cca691d21ffe282d3ca3d8ca9eaee8afe9aab058b04a3d4ef579f72a6918c7
++const KNOWN_NOTIFICATION_METHODS: &[&str] = &[
++    "error",
++    "thread/started",
++    "thread/status/changed",
++    "thread/archived",
++    "thread/deleted",
++    "thread/unarchived",
++    "thread/closed",
++    "thread/reverted",
++    "skills/changed",
++    "thread/name/updated",
++    "thread/attachment/updated",
++    "thread/goal/updated",
++    "thread/goal/cleared",
++    "thread/queue/changed",
++    "project/changed",
++    "thread/project/updated",
++    "thread/environment/connected",
++    "thread/environment/disconnected",
++    "thread/settings/updated",
++    "thread/tokenUsage/updated",
++    "turn/started",
++    "hook/started",
++    "turn/completed",
++    "hook/completed",
++    "turn/diff/updated",
++    "turn/plan/updated",
++    "item/started",
++    "item/autoApprovalReview/started",
++    "item/autoApprovalReview/completed",
++    "autoApprovalReview/strictReviewRequired",
++    "item/completed",
++    "rawResponseItem/completed",
++    "rawResponse/completed",
++    "item/agentMessage/delta",
++    "item/plan/delta",
++    "command/exec/outputDelta",
++    "process/outputDelta",
++    "process/exited",
++    "item/commandExecution/outputDelta",
++    "item/commandExecution/terminalInteraction",
++    "item/fileChange/outputDelta",
++    "item/fileChange/patchUpdated",
++    "serverRequest/resolved",
++    "item/mcpToolCall/progress",
++    "mcpServer/oauthLogin/completed",
++    "mcpServer/startupStatus/updated",
++    "mcpServer/event/stream/notification",
++    "account/updated",
++    "account/gatewayOAuth/changed",
++    "account/rateLimits/updated",
++    "app/list/updated",
++    "remoteControl/status/changed",
++    "externalAgentConfig/import/progress",
++    "externalAgentConfig/import/completed",
++    "fs/changed",
++    "item/reasoning/summaryTextDelta",
++    "item/reasoning/summaryPartAdded",
++    "item/reasoning/textDelta",
++    "thread/compacted",
++    "model/rerouted",
++    "model/verification",
++    "modelProvider/authRecoveryStarted",
++    "modelProvider/authRecoveryCompleted",
++    "turn/moderationMetadata",
++    "model/safetyBuffering/updated",
++    "warning",
++    "guardianWarning",
++    "deprecationNotice",
++    "configWarning",
++    "fuzzyFileSearch/sessionUpdated",
++    "fuzzyFileSearch/sessionCompleted",
++    "thread/realtime/started",
++    "thread/realtime/itemAdded",
++    "thread/realtime/item/started",
++    "thread/realtime/item/transcript/delta",
++    "thread/realtime/item/completed",
++    "thread/realtime/transcript/delta",
++    "thread/realtime/transcript/done",
++    "thread/realtime/outputAudio/delta",
++    "thread/realtime/sdp",
++    "thread/realtime/error",
++    "thread/realtime/closed",
++    "windows/worldWritableWarning",
++    "windowsSandbox/setupCompleted",
++];
++
++// Attribution only for fixed payload types with a declared top-level thread_id.
++// protocol/v2/hook.rs: 430480763e7e5dee2c46aa6bb96fdf3566d616ca54767456625f71292d0f585b
++// protocol/v2/item.rs: cf58812aafce8d213090d430b62585477351738b5a90354ed07be338cf9ad06d
++// protocol/v2/mcp.rs: 591ee11cc30e8d21a03317df2ed1742af19c1a91c066ecb0f7a186cc813f5739
++// protocol/v2/model.rs: 1cdd2d3e0d4840dd58974d3960485b6f77e649b226e0656d84890b29a92c1a81
++// protocol/v2/notification.rs: c51b00e47732fe19e68110c42c4fe4212cc9bbbe20f252d6417e78a62b34afa7
++// protocol/v2/project.rs: ae6a4e421a71db946f851ffd44c07dc1889cb4a307e28f18c7df955a4b20d9cf
++// protocol/v2/realtime.rs: d86584ad3d3285672112ccc997b50579822d402a8d0ac2d058efba4ed976ca0c
++// protocol/v2/thread.rs: d5e626a8f3bade6865a6274642a607124bea49cf3ebdbc202f70e8d2a976dafb
++// protocol/v2/thread_attachment.rs: c4032983a5da5e0ecf71bcc3ef650a1074aaf0352ecefaec65860bff851d4b48
++// protocol/v2/turn.rs: 43fc4673df433892f0426b0fb7bac9cf3f429001fe1e05efcd6e4ae52e41d086
++const THREAD_NOTIFICATION_METHODS: &[&str] = &[
++    "error",
++    "thread/status/changed",
++    "thread/archived",
++    "thread/deleted",
++    "thread/unarchived",
++    "thread/closed",
++    "thread/reverted",
++    "thread/name/updated",
++    "thread/attachment/updated",
++    "thread/goal/updated",
++    "thread/goal/cleared",
++    "thread/queue/changed",
++    "thread/project/updated",
++    "thread/settings/updated",
++    "thread/tokenUsage/updated",
++    "turn/started",
++    "hook/started",
++    "turn/completed",
++    "hook/completed",
++    "turn/diff/updated",
++    "turn/plan/updated",
++    "item/started",
++    "item/autoApprovalReview/started",
++    "item/autoApprovalReview/completed",
++    "autoApprovalReview/strictReviewRequired",
++    "item/completed",
++    "rawResponseItem/completed",
++    "rawResponse/completed",
++    "item/agentMessage/delta",
++    "item/plan/delta",
++    "item/commandExecution/outputDelta",
++    "item/commandExecution/terminalInteraction",
++    "item/fileChange/outputDelta",
++    "item/fileChange/patchUpdated",
++    "serverRequest/resolved",
++    "item/mcpToolCall/progress",
++    "mcpServer/oauthLogin/completed",
++    "mcpServer/startupStatus/updated",
++    "item/reasoning/summaryTextDelta",
++    "item/reasoning/summaryPartAdded",
++    "item/reasoning/textDelta",
++    "thread/compacted",
++    "model/rerouted",
++    "model/verification",
++    "modelProvider/authRecoveryStarted",
++    "modelProvider/authRecoveryCompleted",
++    "turn/moderationMetadata",
++    "model/safetyBuffering/updated",
++    "warning",
++    "guardianWarning",
++    "thread/realtime/started",
++    "thread/realtime/itemAdded",
++    "thread/realtime/item/started",
++    "thread/realtime/item/transcript/delta",
++    "thread/realtime/item/completed",
++    "thread/realtime/transcript/delta",
++    "thread/realtime/transcript/done",
++    "thread/realtime/outputAudio/delta",
++    "thread/realtime/sdp",
++    "thread/realtime/error",
++    "thread/realtime/closed",
++];

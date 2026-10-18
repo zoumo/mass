@@ -1,0 +1,78 @@
+# Official d27764b crate; workspace inheritance resolved without changing dependencies.
+[package]
+name = "codex-app-server-client"
+version = "0.160.1"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+[lib]
+name = "codex_app_server_client"
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+codex-app-server = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-app-server-protocol = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-arg0 = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-config = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-core = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-exec-server = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-feedback = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-protocol = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-uds = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-utils-absolute-path = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+codex-utils-rustls-provider = { git = "https://github.com/openai/codex", rev = "d27764b82f7118f674371e6d6e76271d9d606edb" }
+futures = { version = "0.3", default-features = false }
+serde = { version = "1", features = ["rc"] }
+serde_json = { version = "1" }
+tokio = { version = "1", features = ["rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.28.0", features = ["proxy", "rustls-tls-native-roots"] }
+toml = { version = "0.9.5" }
+tracing = { version = "0.1.44" }
+url = { version = "2" }
+
+[dev-dependencies]
+pretty_assertions = { version = "1.4.1" }
+serde_json = { version = "1" }
+tempfile = { version = "3.23.0" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[lints.rust]
+
+[lints.clippy]
+await_holding_invalid_type = "deny"
+await_holding_lock = "deny"
+disallowed_methods = "deny"
+expect_used = "deny"
+identity_op = "deny"
+manual_clamp = "deny"
+manual_filter = "deny"
+manual_find = "deny"
+manual_flatten = "deny"
+manual_map = "deny"
+manual_memcpy = "deny"
+manual_non_exhaustive = "deny"
+manual_ok_or = "deny"
+manual_range_contains = "deny"
+manual_retain = "deny"
+manual_strip = "deny"
+manual_try_fold = "deny"
+manual_unwrap_or = "deny"
+needless_borrow = "deny"
+needless_borrowed_reference = "deny"
+needless_collect = "deny"
+needless_late_init = "deny"
+needless_option_as_deref = "deny"
+needless_question_mark = "deny"
+needless_update = "deny"
+redundant_clone = "deny"
+redundant_closure = "deny"
+redundant_closure_for_method_calls = "deny"
+redundant_static_lifetimes = "deny"
+trivially_copy_pass_by_ref = "deny"
+uninlined_format_args = "deny"
+unnecessary_filter_map = "deny"
+unnecessary_lazy_evaluations = "deny"
+unnecessary_sort_by = "deny"
+unnecessary_to_owned = "deny"
+unwrap_used = "deny"
