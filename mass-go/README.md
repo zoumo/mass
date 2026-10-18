@@ -278,6 +278,88 @@ queues; deprecated EventBuffer/EventQueue options are ignored. SDK CallTimeout
 remains 30 seconds; local expiration cannot recover a discarded late reply. These facts do not establish a whole-process memory bound
 or a total shutdown deadline.
 
+## Verified recovery and explicit close goals
+
+Construct a catalog with `catalog.NewWithBindings(hostStore)` to retain opaque
+`runtime.RecoveryBinding` values through the common `BindingStore` port. The
+host implements cancellation-aware `Save`/`Load`, copies bytes, keeps only the
+latest value per SessionKey, and serializes ownership of a Runtime name. Ordinary
+`catalog.New()` still supports creation and managed queries; recovery without a
+binding port returns `ErrUnverifiable`. No private session directory is scanned.
+
+Successful creation saves the binding before publishing the opened session.
+The versioned context binds the original native key to the configured protocol,
+executable path, effective working directory and exact explicit environment.
+An omitted Dir is pinned to the construction-time working directory. Environment
+values are not copied to binding bytes, snapshots or events; the context carries
+an execution-scope digest. This verifies configured scope, not external changes
+to account files, executable contents or native persistence. The host must retain
+its original absolute data/account configuration and protect the binding store.
+Bindings are not transferable credentials or a distributed ownership lock.
+
+After explicit local detach or Stop, call `worker.ResumeSession(ctx, savedKey)`.
+The Runtime must already be started. Missing, malformed, wrong-version or
+wrong-key bindings return `ErrUnverifiable`; changed configuration scope returns
+`ErrConflict`. Neither path sends native recovery or creation requests. Codex
+uses `thread/resume` with the original thread ID and excludes history. It reserves
+the private subscription/request route before the RPC so immediate post-reply
+facts cannot fall into a retired attachment. The adapter decodes the response
+through the public SDK typed Call to distinguish `ErrIdentityMismatch` from an
+unverifiable reply. No raw RPC is exposed to callers. Claude starts a fresh owned
+process with literal `--resume=<native ID>` and waits for an authoritative root
+system/result observation without sending input. If the CLI requires a prompt
+before producing identity, recovery times out as unverifiable; MASS sends no
+hidden prompt. A different root ID fails and the provisional process is reaped.
+Neither protocol falls back to create or replays user input.
+
+Successful recovery preserves SessionKey, creates a new ConnectionEpoch and
+replaces the managed attachment once. Old attachment objects and queued/replayed
+events retain their original epoch; their interaction references cannot answer
+through the new attachment. Resumed Codex requests for work not acknowledged
+from a submission on this attachment remain diagnostics carrying the observed
+work ID, without control authority. They are not attributed to a new work merely
+because the thread ID matches. Claude callback authority stays in its original
+process/connection; the existing limitation for callbacks without native work
+correlation still applies. SDK writes already handed off cannot be revoked.
+
+`GetSession`/`ListSessions` only query managed in-memory records. Snapshots report
+`freshness: cached`, the last observation time and `availability` separately
+from attachment state. Queries do not launch a process, check executable
+availability or load the binding store. Closed records remain queryable after
+Stop even if the executable has disappeared. A fresh Runtime has no inventory
+until an explicit verified recovery succeeds; a host binding store alone is not
+a durable inventory implementation.
+
+Use `worker.CloseSession(ctx, key, runtime.CloseDetach)` for an explicit local
+attachment close, or `runtime.CloseRelease` when the goal requires native
+release. `Session.Close()` is the local-detach convenience without a receipt.
+A CloseReceipt separates localAttachmentClosed, nativeRelease,
+ownedProcessReaped, incompleteFacts and outcome. The local close aborts delivery,
+so incompleteFacts is conservatively true; unfinished submission receipts retain
+unknown completion/outcome instead of a fabricated terminal result. Admission
+and response authority close immediately once local cleanup starts. Concurrent
+Session.Close calls join cleanup; concurrent CloseSession operations return a
+conflict. Closing remains distinct from closed until owned cleanup finishes.
+
+Both adapters currently declare `NativeRelease: false`. A shared Codex local
+subscription abort and a reaped Claude process do not prove native thread
+release, deletion or remote-effect rollback. `CloseRelease` therefore performs
+local cleanup but returns `close_unknown` / `ErrOutcomeUnknown`, even when local
+closure and process reaping are proven. The recovery binding is conservatively
+fenced before cleanup and stays fenced for unknown release, including across
+fresh Runtime construction. A subsequent narrower detach cannot erase that
+native-release uncertainty. A caller deadline or cleanup/store failure retains
+uncertainty rather than authorizing a replacement. A binding-store admission
+failure rejects close before local cleanup; the caller can inspect/retry the
+host failure or explicitly Stop its Runtime. Store implementations must honor
+the context; this module cannot bound arbitrary host code.
+
+A single-session close never closes the healthy shared Codex client. Claude
+closes only its own session process. Other managed sessions remain usable.
+Only local transports are registered in this experiment: external-server
+connections remain unsupported and external-server close behavior is unverified.
+No implementation here signals, restarts or deletes an external service.
+
 ## Offline verification
 
 ```sh
@@ -310,7 +392,12 @@ unsupported blocks, explicit failure evidence and parent completion without a
 tool result. Common serialization cases reject incompatible payloads and invalid
 schema/stage/content and preserve lossless JSON numbers. Cancellation,
 interaction and diagnostic cases also run through the named catalog and common
-Runtime interface.
+Runtime interface. Recovery tests cover both local cold resumes with host-retained
+bindings, same-Runtime epoch replacement, historical request quarantine, wrong
+identity/missing binding/configuration conflicts, offline inventory, explicit
+close goals, persisted unknown-release fences, pending open/submit/interaction
+cleanup and unread event delivery with owned PID checks. External-server closure
+is not claimed as covered.
 
 For mock usage, build `github.com/zoumo/agent-sdk-go/codex/cmd/mock` or
 `github.com/zoumo/agent-sdk-go/claude/cmd/mock` and pass its absolute path. Set

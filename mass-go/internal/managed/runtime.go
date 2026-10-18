@@ -16,6 +16,7 @@ import (
 type Driver interface {
 	Start(context.Context) (rt.Health, error)
 	CreateSession(context.Context, rt.SessionOptions) (rt.Session, error)
+	ResumeSession(context.Context, rt.SessionKey) (rt.Session, error)
 	RequiresInitialInput() bool
 	Stop() error
 }
@@ -28,22 +29,27 @@ type creation struct {
 	canceled bool
 }
 type Runtime struct {
-	operations map[string]*creation
-	limits     rt.CreationLimits
-	mu         sync.Mutex
-	driver     Driver
-	snapshot   rt.Snapshot
-	activation *attempt
-	stopping   *attempt
-	sessions   []rt.Session
-	creates    sync.WaitGroup
-	retired    bool
-	unsettled  bool
+	bindings     rt.BindingStore
+	scope        string
+	resuming     map[rt.SessionKey]bool
+	closing      map[rt.SessionKey]bool
+	closeUnknown map[rt.SessionKey]bool
+	operations   map[string]*creation
+	limits       rt.CreationLimits
+	mu           sync.Mutex
+	driver       Driver
+	snapshot     rt.Snapshot
+	activation   *attempt
+	stopping     *attempt
+	sessions     []rt.Session
+	creates      sync.WaitGroup
+	retired      bool
+	unsettled    bool
 }
 
-func New(name, kind string, revision uint64, driver Driver, limits rt.CreationLimits) *Runtime {
+func New(name, kind string, revision uint64, driver Driver, limits rt.CreationLimits, config rt.Config, bindings rt.BindingStore) *Runtime {
 	now := time.Now().UTC()
-	return &Runtime{operations: make(map[string]*creation), limits: limits.Effective(), driver: driver, snapshot: rt.Snapshot{Name: name, Type: kind, ConfigRevision: revision, Phase: "registered", ObservedAt: now, Health: rt.Health{Configured: rt.Known(true), Connected: rt.UnknownObservation(), ProtocolResponsive: rt.UnknownObservation(), ProbeScope: "configuration", ObservedAt: now}}}
+	return &Runtime{bindings: bindings, scope: recoveryScope(name, kind, config), resuming: map[rt.SessionKey]bool{}, closing: map[rt.SessionKey]bool{}, closeUnknown: map[rt.SessionKey]bool{}, operations: make(map[string]*creation), limits: limits.Effective(), driver: driver, snapshot: rt.Snapshot{Name: name, Type: kind, ConfigRevision: revision, Phase: "registered", ObservedAt: now, Health: rt.Health{Configured: rt.Known(true), Connected: rt.UnknownObservation(), ProtocolResponsive: rt.UnknownObservation(), ProbeScope: "configuration", ObservedAt: now}}}
 }
 func (r *Runtime) Status() rt.Snapshot {
 	r.mu.Lock()
@@ -213,6 +219,14 @@ func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 		ctx, cancel := context.WithTimeout(context.Background(), r.limits.Timeout)
 		defer cancel()
 		session, err := r.driver.CreateSession(ctx, options)
+		if err == nil {
+			if saveErr := r.saveBinding(ctx, session.Key()); saveErr != nil {
+				err = saveErr
+				if closeErr := session.Close(); closeErr != nil {
+					err = errors.Join(err, rt.ErrCleanupIncomplete)
+				}
+			}
+		}
 		r.mu.Lock()
 		if err != nil {
 			op.snapshot.Phase = "outcome_unknown"
@@ -231,6 +245,9 @@ func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 		op.snapshot.Evidence.NativeIdentity = rt.Known(true)
 		if options.InitialInput != nil {
 			op.snapshot.Evidence.InitialInputWritten = rt.Known(true)
+		}
+		if r.resuming[key] {
+			err = rt.ErrConflict
 		}
 		if key.SessionID == "" || key.RuntimeName != r.snapshot.Name {
 			err = rt.ErrInvalidInput
@@ -288,6 +305,10 @@ func (r *Runtime) ListSessions() []rt.SessionSnapshot {
 	for _, session := range sessions {
 		snapshot := session.Snapshot()
 		if snapshot.Key.SessionID != "" {
+			snapshot.Freshness = "cached"
+			if r.Status().Phase != "ready" {
+				snapshot.Availability = "unavailable"
+			}
 			snapshots = append(snapshots, snapshot)
 		}
 	}
@@ -363,7 +384,7 @@ func (r *Runtime) Retire() bool {
 			return false
 		}
 	}
-	if r.unsettled || len(r.sessions) > 0 || r.snapshot.Phase == "starting" || r.snapshot.Phase == "ready" || r.snapshot.Phase == "stopping" {
+	if r.unsettled || len(r.resuming) > 0 || len(r.sessions) > 0 || r.snapshot.Phase == "starting" || r.snapshot.Phase == "ready" || r.snapshot.Phase == "stopping" {
 		return false
 	}
 	r.retired = true

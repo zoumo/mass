@@ -106,7 +106,7 @@ func (s *runtimeSuite) TestMessagesToolsAndNativeCompletion() {
 		`server protocol {"type":"result","subtype":"success","session_id":"native-session","is_error":false,"result":"done"}`)
 	conn, session, ctx := s.open(frames)
 	s.Equal("native-session", session.Key().SessionID)
-	s.Equal(rt.Capabilities{}, session.Capabilities())
+	s.Equal(rt.Capabilities{VerifiedResume: true}, session.Capabilities())
 	event := s.next(session, ctx)
 	s.Equal(rt.SessionReady, event.Kind)
 	s.Equal("native-session", event.SessionID)
