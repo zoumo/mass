@@ -258,7 +258,7 @@ func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 			r.mu.Unlock()
 			return
 		}
-		r.sessions = append(r.sessions, session)
+		r.sessions = append(r.sessions, newPublishedSession(session))
 		op.snapshot.Key = &key
 		op.snapshot.Phase = "opened"
 		r.mu.Unlock()

@@ -59,3 +59,11 @@ func OpenSession(t *testing.T, worker rt.Runtime, ctx context.Context, options r
 	require.NoError(t, err)
 	return session
 }
+
+// MessageText reads one explicit text block without flattening a block list.
+func MessageText(event rt.Event) string {
+	if event.Message == nil || len(event.Message.Content.Blocks) == 0 || event.Message.Content.Blocks[0].Text == nil {
+		return ""
+	}
+	return *event.Message.Content.Blocks[0].Text
+}

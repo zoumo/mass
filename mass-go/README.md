@@ -160,22 +160,26 @@ remote effects.
 | Interactions | Command/file approval and user questions | Tool permission and AskUserQuestion |
 
 Submission success is neither native-recorded evidence nor completion. Cancel
-requests interruption; an ACK alone does not establish termination. Existing
-message/tool conversion, normalized completion statuses, bounded diagnostic kind
-and SHA-256, and connection-bound one-shot interaction handles remain available.
-Native stderr and unknown raw payloads are excluded from public events. Known
-message/tool content remains visible. Events include their owning Runtime name;
-session-scoped routing uses the native managed session identity. Child Claude
-observations remain diagnostic and cannot acquire root permission authority.
+requests interruption; an ACK alone does not establish termination. The event
+stream uses a versioned, data-only envelope and concrete payloads. See the
+[message and metadata contract](docs/events.md) for supported mappings, content
+presence, stream association and decode rules. Tool, work and interaction
+payloads retain their current baseline semantics; structured tool lifecycle,
+foreground admission control and stronger interaction authority are separate
+remaining work.
 
-Respond through the original interaction Handle once. A canceled response
-context does not consume it. Runtime Stop invalidates pending SDK handles;
-native resolution/cancellation follows the pinned SDK's semantics. This slice
-does not provide a data-only interaction event schema, identity-verified resume,
-foreground admission control, or durable
-history. It does not claim complete typed event coverage or production lifecycle
-and delivery guarantees. In particular, SDK queued-approval limitations remain,
-and local Codex detach does not prove native permission resolution.
+Interaction events contain a data reference, prompt and questions. The live
+attachment resolves its existing response authority through
+`session.ResponseHandle(event.Interaction.Ref)`; the event contains no handle.
+Respond once through that original authority. A canceled response context does
+not consume it. Runtime Stop invalidates pending SDK handles; native
+resolution/cancellation follows the pinned SDK's semantics. Serialization and
+replay create no authority. The current lookup is attachment-local and retains
+SDK queued-approval limitations; it does not claim the stronger lifecycle gate
+or typed response validation still required by the planned interaction work.
+Identity-verified resume, durable history and production lifecycle/delivery
+guarantees are also not implemented. Local Codex detach does not prove native
+permission resolution.
 
 Next has one consumer; its context stops only that wait. Session creation's
 context controls admission, not the native open or later attachment lifetime.
@@ -207,8 +211,13 @@ Pending tests additionally cover reversed concurrent Claude opens, explicit
 continuation, empty/operation session keys, late success after caller cancellation,
 canceled opens, provisional count/byte/deadline exhaustion with PID checks,
 child identity interference and ambiguous Codex opens without retry.
-The existing message/tool, cancellation, interaction and diagnostic cases also
-run through the named catalog and common Runtime interface.
+Message tests additionally cover native item/stream/full correlation, distinct
+frame and block coordinates, equal no-ID previews, replay provenance, user and
+tool-bearing messages, observed/redacted reasoning, native plans and collection
+clearing. Common serialization cases reject incompatible payloads and invalid
+schema/stage/content and preserve lossless JSON numbers. Cancellation,
+interaction and diagnostic cases also run through the named catalog and common
+Runtime interface.
 
 For mock usage, build `github.com/zoumo/agent-sdk-go/codex/cmd/mock` or
 `github.com/zoumo/agent-sdk-go/claude/cmd/mock` and pass its absolute path. Set
