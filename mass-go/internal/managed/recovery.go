@@ -65,6 +65,11 @@ func (r *Runtime) ResumeSession(ctx context.Context, key rt.SessionKey) (rt.Sess
 		r.mu.Unlock()
 		return nil, rt.ErrUnverifiable
 	}
+	if r.attachments >= 256 {
+		r.mu.Unlock()
+		return nil, rt.ErrBackpressure
+	}
+	r.attachments++
 	r.resuming[key] = true
 	r.creates.Add(1)
 	r.mu.Unlock()
@@ -90,18 +95,19 @@ func (r *Runtime) ResumeSession(ctx context.Context, key rt.SessionKey) (rt.Sess
 		return nil, err
 	}
 	if session.Key() != key {
-		_ = session.Close()
+		_ = AbandonSession(session)
 		return nil, rt.ErrIdentityMismatch
 	}
 	r.mu.Lock()
 	if r.snapshot.Phase != "ready" {
 		r.mu.Unlock()
-		_ = session.Close()
+		_ = AbandonSession(session)
 		return nil, rt.ErrUnavailable
 	}
 	replaced := false
 	for i, s := range r.sessions {
 		if s.Key() == key {
+			r.retiredSessions = append(r.retiredSessions, s)
 			r.sessions[i] = session
 			replaced = true
 			break

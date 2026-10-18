@@ -32,8 +32,9 @@ func (c *Catalog) Types() []rt.RuntimeType {
 	types := []rt.RuntimeType{{Name: "codex", SchemaVersion: 1, Topology: "shared_local_process"}, {Name: "claude", SchemaVersion: 1, Topology: "per_session_process"}}
 	for i := range types {
 		types[i].MaxNameBytes = maxNameBytes
+		types[i].DeliveryBounds = []rt.LimitField{{Name: "facts", Default: 256, Min: 1, Max: 4096}, {Name: "bytes", Default: 4 << 20, Min: 1, Max: 16 << 20}}
 		types[i].CreationBounds = []rt.LimitField{{Name: "facts", Default: 64, Min: 1, Max: 4096}, {Name: "bytes", Default: 1 << 20, Min: 1, Max: 16 << 20}, {Name: "timeoutNanoseconds", Default: int64(30 * time.Second), Min: int64(time.Millisecond), Max: int64(60 * time.Second)}}
-		types[i].ConfigFields = []rt.ConfigField{{Name: "executable", Type: "string", Required: true, AbsolutePath: true}, {Name: "env", Type: "string_array", Required: true}, {Name: "dir", Type: "string", AbsolutePath: true}, {Name: "creationLimits", Type: "object"}}
+		types[i].ConfigFields = []rt.ConfigField{{Name: "executable", Type: "string", Required: true, AbsolutePath: true}, {Name: "env", Type: "string_array", Required: true}, {Name: "dir", Type: "string", AbsolutePath: true}, {Name: "deliveryLimits", Type: "object"}, {Name: "creationLimits", Type: "object"}}
 	}
 	return types
 }
@@ -46,6 +47,17 @@ func (c *Catalog) Describe(name string) (rt.RuntimeType, error) {
 	return rt.RuntimeType{}, rt.ErrNotFound
 }
 func valid(reg rt.Registration) bool {
+	delivery := reg.Config.DeliveryLimits.Effective()
+	if delivery.Facts < 1 || delivery.Facts > 4096 || delivery.Bytes < 1 || delivery.Bytes > 16<<20 || len(reg.Config.Env) > 256 {
+		return false
+	}
+	configBytes := len(reg.Config.Executable) + len(reg.Config.Dir)
+	for _, v := range reg.Config.Env {
+		configBytes += len(v)
+	}
+	if configBytes > 1<<20 {
+		return false
+	}
 	limits := reg.Config.CreationLimits.Effective()
 	if limits.Facts < 1 || limits.Facts > 4096 || limits.Bytes < 1 || limits.Bytes > 16<<20 || limits.Timeout < time.Millisecond || limits.Timeout > 60*time.Second {
 		return false
@@ -84,6 +96,9 @@ func (c *Catalog) Register(reg rt.Registration) (rt.Snapshot, error) {
 	defer c.mu.Unlock()
 	if _, exists := c.runtimes[reg.Name]; exists {
 		return rt.Snapshot{}, rt.ErrConflict
+	}
+	if len(c.runtimes) >= 256 {
+		return rt.Snapshot{}, rt.ErrBackpressure
 	}
 	runtime := c.construct(reg, 1)
 	c.runtimes[reg.Name] = runtime

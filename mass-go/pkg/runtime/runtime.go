@@ -21,6 +21,7 @@ type Runtime interface {
 	GetSession(SessionKey) (Session, error)
 	ListSessions() []SessionSnapshot
 	Respond(context.Context, SessionKey, string, Response) (ResponseReceipt, error)
+	StopWith(context.Context, StopOptions) (StopReceipt, error)
 	Stop() error
 }
 
@@ -82,6 +83,7 @@ type CreationOperation struct {
 }
 
 type Config struct {
+	DeliveryLimits DeliveryLimits `json:"deliveryLimits,omitempty"`
 	CreationLimits CreationLimits `json:"creationLimits,omitempty"`
 	Executable     string         `json:"executable"`
 	Env            []string       `json:"-"` // Explicit child environment; never returned in status.
@@ -100,6 +102,7 @@ type RuntimeType struct {
 	Topology       string        `json:"topology"`
 	MaxNameBytes   int           `json:"maxNameBytes"`
 	ConfigFields   []ConfigField `json:"configFields"`
+	DeliveryBounds []LimitField  `json:"deliveryBounds"`
 	CreationBounds []LimitField  `json:"creationBounds"`
 }
 type LimitField struct {

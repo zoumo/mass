@@ -469,6 +469,21 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		Payload any `json:"payload"`
 	}{envelope(e), p})
 }
+
+// RetainedJSONBytes measures the envelope and payload before identity binding.
+// It does not validate or publish a provisional event as a session fact.
+func (e Event) RetainedJSONBytes() (int, error) {
+	p, err := e.payload()
+	if err != nil {
+		return 0, err
+	}
+	type envelope Event
+	data, err := json.Marshal(struct {
+		envelope
+		Payload any `json:"payload"`
+	}{envelope(e), p})
+	return len(data), err
+}
 func (e *Event) UnmarshalJSON(data []byte) error {
 	type envelope Event
 	var wire struct {

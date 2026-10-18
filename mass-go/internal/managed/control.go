@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	chanx "github.com/zoumo/golib/channx"
 	"time"
 
 	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -32,9 +33,13 @@ type command struct {
 
 const maxControlRecords = 256
 
-func NewSession(native NativeSession) rt.Session {
+func NewSession(native NativeSession, configured ...rt.DeliveryLimits) rt.Session {
+	limits := rt.DeliveryLimits{}.Effective()
+	if len(configured) > 0 {
+		limits = configured[0].Effective()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &publishedSession{native: native, epoch: rand.Text(), commands: map[string]*command{}, wake: make(chan struct{}), events: make(chan rt.Event, 64), finished: make(chan struct{}), closeFinished: make(chan struct{}), ctx: ctx, cancel: cancel, foreground: "idle", observedAt: time.Now().UTC()}
+	s := &publishedSession{native: native, epoch: rand.Text(), commands: map[string]*command{}, wake: make(chan struct{}), events: chanx.New(), limits: limits, finished: make(chan struct{}), closeFinished: make(chan struct{}), ctx: ctx, cancel: cancel, foreground: "idle", observedAt: time.Now().UTC()}
 	go s.receive()
 	return s
 }
@@ -346,6 +351,7 @@ func (s *publishedSession) Close() error {
 		return s.closeErr
 	}
 	s.closed = true
+	s.incomplete = true
 	s.observedAt = time.Now().UTC()
 	s.native.InvalidateInteractions("")
 	if s.active != nil && !s.active.finished {

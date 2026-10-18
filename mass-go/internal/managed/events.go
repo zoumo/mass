@@ -2,6 +2,9 @@ package managed
 
 import (
 	"context"
+	"errors"
+	chanx "github.com/zoumo/golib/channx"
+	"io"
 	"sync"
 	"time"
 
@@ -11,26 +14,31 @@ import (
 // One publication owner assigns final cursors and projects metadata. Adapter
 // receive positions retain their own meaning, including before identity binds.
 type publishedSession struct {
-	native        NativeSession
-	next          sync.Mutex
-	mu            sync.Mutex
-	epoch         string
-	seq           uint64
-	metadata      rt.MetadataPayload
-	background    backgroundProjection
-	commands      map[string]*command
-	active        *command
-	foreground    string
-	closed        bool
-	closeFinished chan struct{}
-	closeErr      error
-	wake          chan struct{}
-	events        chan rt.Event
-	finished      chan struct{}
-	terminal      error
-	observedAt    time.Time
-	ctx           context.Context
-	cancel        context.CancelFunc
+	native                   NativeSession
+	next                     sync.Mutex
+	mu                       sync.Mutex
+	epoch                    string
+	seq                      uint64
+	metadata                 rt.MetadataPayload
+	background               backgroundProjection
+	commands                 map[string]*command
+	active                   *command
+	foreground               string
+	closed                   bool
+	closeFinished            chan struct{}
+	closeErr                 error
+	wake                     chan struct{}
+	events                   *chanx.ChannX
+	limits                   rt.DeliveryLimits
+	queuedFacts, queuedBytes int
+	discardOnce              sync.Once
+	aborted                  bool
+	incomplete               bool
+	finished                 chan struct{}
+	terminal                 error
+	observedAt               time.Time
+	ctx                      context.Context
+	cancel                   context.CancelFunc
 }
 
 func (s *publishedSession) Snapshot() rt.SessionSnapshot {
@@ -63,6 +71,7 @@ func (s *publishedSession) Snapshot() rt.SessionSnapshot {
 }
 func (s *publishedSession) receive() {
 	defer close(s.finished)
+	defer s.events.Close()
 	for {
 		e, err := s.native.Next(s.ctx)
 		if err != nil {
@@ -70,13 +79,12 @@ func (s *publishedSession) receive() {
 			s.terminal = err
 			s.observedAt = time.Now().UTC()
 			if s.active != nil && !s.active.finished {
-				if !isKnown(s.active.receipt.NativeAcknowledged) && !isKnown(s.active.receipt.WriteCompleted) {
-					s.active.receipt.Outcome = "unknown"
-				}
+				s.active.receipt.Outcome = "unknown"
 				s.foreground = "unknown"
 			}
 			s.signal()
 			s.mu.Unlock()
+			s.native.InvalidateInteractions("")
 			return
 		}
 		s.mu.Lock()
@@ -101,16 +109,45 @@ func (s *publishedSession) receive() {
 		if err == nil {
 			s.observedAt = e.ObservedAt
 		}
-		s.mu.Unlock()
+
+		var size int
+		if err == nil {
+			size, err = e.RetainedJSONBytes()
+		}
+		if err == nil && (s.queuedFacts >= s.limits.Facts || s.queuedBytes+size > s.limits.Bytes) {
+			err = errors.Join(rt.ErrIncomplete, rt.ErrBackpressure)
+		}
 		if err != nil {
-			s.mu.Lock()
 			s.terminal = err
+			s.incomplete = true
+			if s.active != nil && !s.active.finished {
+				s.active.receipt.Outcome = "unknown"
+				s.foreground = "unknown"
+			}
+			s.signal()
 			s.mu.Unlock()
+			s.native.InvalidateInteractions("")
+			go s.native.Close()
 			return
 		}
-		select {
-		case s.events <- e:
-		case <-s.ctx.Done():
+		s.queuedFacts++
+		s.queuedBytes += size
+		s.mu.Unlock()
+		// Only this owner writes or closes the queue; ChannX never blocks on
+		// the public reader. Runtime quotas include its buffered output.
+		s.events.In() <- queuedEvent{event: e, bytes: size}
+		if e.Error != nil && e.Error.Category == "decode_error" {
+			s.mu.Lock()
+			s.terminal = errors.Join(rt.ErrIncomplete, e.Error)
+			s.incomplete = true
+			if s.active != nil && !s.active.finished {
+				s.active.receipt.Outcome = "unknown"
+				s.foreground = "unknown"
+			}
+			s.signal()
+			s.mu.Unlock()
+			s.native.InvalidateInteractions("")
+			go s.native.Close()
 			return
 		}
 	}
@@ -121,22 +158,37 @@ func (s *publishedSession) Next(ctx context.Context) (rt.Event, error) {
 	if err := ctx.Err(); err != nil {
 		return rt.Event{}, err
 	}
+
+	s.mu.Lock()
+	aborted := s.aborted
+	s.mu.Unlock()
+	if aborted {
+		return rt.Event{}, rt.ErrIncomplete
+	}
 	var e rt.Event
 	select {
-	case e = <-s.events:
-	case <-ctx.Done():
-		return rt.Event{}, ctx.Err()
-	case <-s.finished:
-		select {
-		case e = <-s.events:
-		default:
+	case item, ok := <-s.events.Out():
+		if !ok {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			if s.terminal != nil {
 				return rt.Event{}, s.terminal
 			}
-			return rt.Event{}, context.Canceled
+			return rt.Event{}, io.EOF
 		}
+		q := item.(queuedEvent)
+		s.mu.Lock()
+		s.queuedFacts--
+		s.queuedBytes -= q.bytes
+		s.signal()
+		aborted = s.aborted
+		s.mu.Unlock()
+		if aborted {
+			return rt.Event{}, rt.ErrIncomplete
+		}
+		e = q.event
+	case <-ctx.Done():
+		return rt.Event{}, ctx.Err()
 	}
 	// Claude can observe provisional facts before native identity. Only opened
 	// sessions are externally reachable; bind the final immutable key here.
@@ -197,4 +249,56 @@ func (s *publishedSession) publish(e rt.Event) (rt.Event, error) {
 		s.metadata.Apply(*e.Metadata)
 	}
 	return e, nil
+}
+
+type queuedEvent struct {
+	event rt.Event
+	bytes int
+}
+
+func (s *publishedSession) discard() {
+	s.mu.Lock()
+	s.aborted = true
+	s.incomplete = true
+	s.mu.Unlock()
+	// The producer has finished. One discard owner releases the ChannX
+	// terminator without extending a caller's expired total wait.
+	s.discardOnce.Do(func() {
+		go func() {
+			for item := range s.events.Out() {
+				q := item.(queuedEvent)
+				s.mu.Lock()
+				s.queuedFacts--
+				s.queuedBytes -= q.bytes
+				s.signal()
+				s.mu.Unlock()
+			}
+		}()
+	})
+}
+func (s *publishedSession) drain(ctx context.Context) error {
+	for {
+		s.mu.Lock()
+		n := s.queuedFacts
+		wake := s.wake
+		s.mu.Unlock()
+		if n == 0 {
+			return nil
+		}
+		select {
+		case <-wake:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// AbandonSession settles a publication attachment that will never be exposed to
+// a caller. No future reader can own its prefix, so release the delivery queue.
+func AbandonSession(session rt.Session) error {
+	err := session.Close()
+	if s, ok := session.(*publishedSession); ok {
+		s.discard()
+	}
+	return err
 }
