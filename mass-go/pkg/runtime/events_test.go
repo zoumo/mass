@@ -78,3 +78,32 @@ func (s *eventSuite) TestMetadataNullIsNotOmission() {
 		s.Error(json.Unmarshal([]byte(strings.Replace(string(data), `"payload":{}`, `"payload":`+payload, 1)), &decoded))
 	}
 }
+
+func (s *eventSuite) TestStructuredToolSchemaAndTruncationEvidence() {
+	e := eventWithMessage()
+	e.Kind = rt.ToolCompleted
+	e.Message = nil
+	e.Tool = &rt.ToolPayload{CallRef: "call", Name: "lookup", Category: "unknown", State: "completed", Input: rt.JSONValueContent(json.RawMessage(`null`), "completed", "complete"), Output: rt.TextContent("observed prefix", "completed", "truncated", nil), OutcomeEvidence: "native_result"}
+	_, err := json.Marshal(e)
+	s.Error(err, "truncation requires source evidence")
+	e.Tool.Output.TruncationEvidence = "native_explicit_truncation"
+	data, err := json.Marshal(e)
+	s.Require().NoError(err)
+	var decoded rt.Event
+	s.Require().NoError(json.Unmarshal(data, &decoded))
+	s.Equal(e, decoded)
+	s.Equal("provided", decoded.Tool.Input.Availability)
+	s.Equal("null", string(decoded.Tool.Input.Blocks[0].JSON))
+	for _, tc := range []struct{ name, from, to string }{
+		{"category", `"category":"unknown"`, `"category":"invented"`},
+		{"state", `"state":"completed"`, `"state":"running"`},
+		{"missing call", `"callRef":"call"`, `"callRef":""`},
+		{"updated terminal", `"type":"tool.completed"`, `"type":"tool.updated"`},
+		{"delta stage", `"output":`, `"inputJsonDelta":"{","output":`},
+	} {
+		s.Run(tc.name, func() {
+			var invalid rt.Event
+			s.Error(json.Unmarshal([]byte(strings.Replace(string(data), tc.from, tc.to, 1)), &invalid))
+		})
+	}
+}

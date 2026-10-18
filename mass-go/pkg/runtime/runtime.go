@@ -177,7 +177,9 @@ const (
 	MessageCompleted     EventKind = "message.completed"
 	MessageStarted       EventKind = "message.started"
 	MessageDelta         EventKind = "message.delta"
-	Tool                 EventKind = "tool"
+	ToolAnnounced        EventKind = "tool.announced"
+	ToolUpdated          EventKind = "tool.updated"
+	ToolCompleted        EventKind = "tool.completed"
 	InteractionRequested EventKind = "interaction_requested"
 	Failure              EventKind = "failure"
 	Unknown              EventKind = "diagnostic"
@@ -189,8 +191,10 @@ const (
 
 // Diagnostic retains correlation without exposing arbitrary native payloads.
 type Diagnostic struct {
-	NativeKind string `json:"sourceKind"`
-	SHA256     string `json:"sha256"`
+	Classification string `json:"classification,omitempty"`
+	CallRef        string `json:"callRef,omitempty"`
+	NativeKind     string `json:"sourceKind"`
+	SHA256         string `json:"sha256"`
 }
 type Interaction struct {
 	Ref       string     `json:"ref"`

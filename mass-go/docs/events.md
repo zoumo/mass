@@ -1,4 +1,4 @@
-# Go message and metadata events
+# Go Runtime events
 
 The experimental Go Runtime publishes schema version 1 through `Session.Next`.
 Each event has one `type` and one compatible concrete `payload`. Go callers use
@@ -69,9 +69,8 @@ clears it. A full message's own ID is authoritative for that full observation.
 
 A tool-bearing user/assistant message retains its role and ordered block
 positions. Tool blocks have explicit unsupported content placeholders in the
-message plus separate typed baseline tool observations, with distinct call,
-message and block-index fields. Tool IDs are never block IDs. Structured tool
-input/output and execution evidence remain outside this message slice.
+message plus separate typed tool observations, with distinct call, message and
+block-index fields. Tool IDs are never block IDs. See the tool contract below.
 
 `ContentSet.availability` distinguishes `missing`, `null`, `provided_empty`,
 `provided`, `redacted` and `unsupported`. An empty string has an explicit text
@@ -105,6 +104,75 @@ than an implicit empty replacement. `Session.Snapshot().Metadata` projects the
 published patches; reading it does not consume events or start a process. Returned
 snapshots own their field values and collections.
 
+## Structured tools
+
+`tool.announced`, `tool.updated` and `tool.completed` carry `ToolPayload`.
+`callRef` is the original native item/tool-use ID, scoped by Runtime, session and
+attachment epoch. Updates and results use that reference even when the result
+has no name, message ID or input snapshot. `messageRef` and `blockIndex` retain
+their separate native coordinates. A missing field stays unknown; consumers can
+associate observations by callRef without a Runtime-owned history cache.
+
+`name` is the semantic tool name, `category` is execute/read/write/search/network/
+other/unknown, and `displayLabel` is optional presentation text. Codex command
+execution uses name `commandExecution`, category execute and the actual command
+as its display label. Its input JSON keeps command, cwd and parsed actions;
+locations carry the working directory. File changes use category write and keep
+ordered changes/diffs in input JSON plus their paths in locations. MCP and
+dynamic calls keep tool name, server/namespace and structured arguments. Their
+category is unknown because a name does not establish the operation's semantics.
+Claude tool names likewise do not establish a semantic category.
+
+| Observation | Common state and evidence |
+| --- | --- |
+| Codex item-start or Claude tool-use | announced / call_observed |
+| Codex command/file output delta or MCP progress | running / native_progress |
+| Claude indexed input JSON delta or block-stop | announced / call_observed; input generation does not prove execution |
+| Native tool result or completed item | completed, failed, cancelled or unknown, according to observed outcome |
+| Permission acceptance or parent work completion | No tool state/result synthesized |
+
+Claude API input fragments use `inputJsonDelta`, an explicit JSON fragment string
+with missing/partial input. A fragment can be invalid standalone JSON; it never
+replaces a structured argument snapshot. The full tool-use message supplies the
+observed JSON input. Block-stop only ends input generation and has no invented
+result. The mapper retains one active API block's immutable identity, resets it
+at block/message boundaries, and never accumulates argument fragments. Stream
+previews and full observations may announce the same callRef again; they are
+observations of that call rather than two calls.
+
+`input`, `output` and optional `content` are independent ContentSets. Codex MCP
+result content keeps its ordered blocks in output; `structuredContent` is a JSON
+value in content, including an explicit JSON value null. Dynamic result content
+keeps text blocks and explicit unsupported placeholders. Claude tool-result
+strings keep their exact text, arrays keep ordered blocks, and explicit JSON
+blocks retain JSON values and lossless numbers. Unsupported media/unknown blocks
+make completeness partial; media data is not flattened or exported as text.
+The pinned Claude SDK rejects bare object tool-result content before producing a
+usable event. It accepts missing/null tool-result content inside an otherwise
+valid complete message; these remain distinct from an empty string or array.
+This does not change the complete message's stricter content boundary above.
+
+Missing/null output has no invented block. Empty strings have an actual empty
+text block; empty block arrays have no text block. MCP result absence/null is
+retained independently of a provided empty content array. No output length is
+interpreted as truncation. The common schema supports completeness truncated
+only with explicit `truncationEvidence`; round-trip tests verify that rule.
+The pinned SDK's supported tool schemas expose no recognized native truncation
+signal, so a positive native tool-truncation mapping remains unverified. Unknown
+extension fields and text that merely says truncated do not establish evidence.
+
+Codex nonzero exit codes, failed/declined statuses, MCP errors and dynamic
+`success:false` retain failure evidence, including terminal evidence carried by
+an item-start notification. Explicit outcome evidence takes precedence over
+that notification label. Exit code zero and duration zero retain
+presence via pointers. Claude `is_error:true` yields failed/native_is_error.
+Parent success cannot override a tool failure or complete an unresolved call.
+Unknown Codex item variants retain a safe diagnostic, digest and proven call
+reference; unknown Claude content remains explicitly unsupported. Malformed
+supported tool data yields a session decode failure when attributable data is
+available; shapes rejected earlier by the SDK terminate its stream with a safe
+error. Native error text is not copied into a public error/diagnostic.
+
 ## Verification and remaining scope
 
 Public-interface suites build the pinned SDK's mock CLI commands in temporary
@@ -113,7 +181,6 @@ both protocols' message and reasoning conversion, plans, metadata, identity and
 serialization. No agent/model or credentials are used. Passing these tests does
 not verify live CLI compatibility.
 
-Tool/work/interaction data use concrete baseline payloads in this envelope.
-Their richer execution, control, authority and failure guarantees remain separate
-work. Runtime-local publication does not establish whole-process memory bounds,
+Work/interaction data retain their baseline payloads in this envelope.
+Stronger control, authority and delivery guarantees remain separate work. Runtime-local publication does not establish whole-process memory bounds,
 complete agent/task attribution, durable replay or native causality.

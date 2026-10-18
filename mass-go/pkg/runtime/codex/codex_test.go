@@ -144,9 +144,10 @@ func (s *runtimeSuite) TestMessagesToolsAndCompletion() {
 	s.Equal(rt.MessageDelta, events[1].Kind)
 	s.Equal("hello back", testutil.MessageText(events[1]))
 	s.Equal("message-1", events[1].Message.MessageRef)
-	s.Equal(rt.Tool, events[2].Kind)
-	s.Equal("echo synthetic", events[2].Tool.Name)
-	s.Equal("synthetic output", events[3].Tool.Text)
+	s.Equal(rt.ToolAnnounced, events[2].Kind)
+	s.Equal("commandExecution", events[2].Tool.Name)
+	s.Equal("echo synthetic", *events[2].Tool.DisplayLabel)
+	s.Equal("synthetic output", *events[3].Tool.Output.Blocks[0].Text)
 	s.Equal(rt.TurnCompleted, events[4].Kind)
 	s.Equal("completed", events[4].Work.Status)
 	s.NoError(conn.Stop())
@@ -275,8 +276,8 @@ func (s *runtimeSuite) TestNativeItemKinds() {
 		name, item, tool string
 		kind             rt.EventKind
 	}{
-		{"MCP", `{"type":"mcpToolCall","id":"item","server":"synthetic","tool":"lookup","arguments":{},"status":"inProgress"}`, "lookup", rt.Tool},
-		{"dynamic", `{"type":"dynamicToolCall","id":"item","tool":"lookup","arguments":{},"status":"inProgress"}`, "lookup", rt.Tool},
+		{"MCP", `{"type":"mcpToolCall","id":"item","server":"synthetic","tool":"lookup","arguments":{},"status":"inProgress"}`, "lookup", rt.ToolAnnounced},
+		{"dynamic", `{"type":"dynamicToolCall","id":"item","tool":"lookup","arguments":{},"status":"inProgress"}`, "lookup", rt.ToolAnnounced},
 		{"reasoning", `{"type":"reasoning","id":"item","summary":[],"content":[]}`, "", rt.ReasoningDelta},
 	} {
 		s.Run(tc.name, func() {

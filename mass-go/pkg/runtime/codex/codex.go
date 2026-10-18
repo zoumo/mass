@@ -280,16 +280,15 @@ func mapEvent(native types.Event, id string) rt.Event {
 		event.Origin = rt.EventOrigin{Kind: "sdk_derived", Attribution: "unresolved", Completeness: "unknown"}
 		return event
 	}
+	if native.Method == "item/commandExecution/outputDelta" || native.Method == "item/fileChange/outputDelta" || native.Method == "item/mcpToolCall/progress" {
+		return toolUpdate(native, id)
+	}
 	if converted, ok := messageEvent(native, id); ok {
 		return converted
 	}
 	var data struct {
 		TurnID string
 		Turn   struct{ ID, Status string }
-		Item   struct {
-			ID, Type, Name, Tool, Command string
-			AggregatedOutput              *string
-		}
 	}
 	switch native.Method {
 	case "turn/started", "turn/completed", "item/started", "item/completed", "error":
@@ -311,22 +310,7 @@ func mapEvent(native types.Event, id string) rt.Event {
 		event.WorkRef = data.Turn.ID
 		event.Work = &rt.WorkPayload{Status: turnStatus(data.Turn.Status)}
 	case "item/started", "item/completed":
-		name := data.Item.Name
-		if name == "" {
-			name = data.Item.Tool
-		}
-		switch data.Item.Type {
-		case "commandExecution":
-			name = data.Item.Command
-		case "mcpToolCall", "dynamicToolCall":
-		default:
-			return event
-		}
-		event.Kind = rt.Tool
-		event.Tool = &rt.ToolPayload{CallRef: data.Item.ID, Name: name, State: native.Method}
-		if data.Item.AggregatedOutput != nil {
-			event.Tool.Text = *data.Item.AggregatedOutput
-		}
+		return toolEvent(native, id)
 	case "error":
 		event.Kind = rt.Failure
 		event.Error = &rt.SafeError{Category: "native_error", Scope: "session"}
