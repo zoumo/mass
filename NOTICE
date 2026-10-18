@@ -13,5 +13,5 @@ Provenance and reversible modifications: MASS-README.md and MASS.patch.
 
 The former Charmbracelet Crush Go subset was removed during root migration.
 Its historical attribution and license are recoverable at baseline commit
- e4f02efd7a645f6a67a00b904d34e6305b49b256 (NOTICE and
+ 1dae7c9f32ea87883ca4e2a15bf1af8f4d24bbdb (NOTICE and
 third_party/charmbracelet/crush/LICENSE.md). No Crush source remains distributed.
