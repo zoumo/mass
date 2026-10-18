@@ -9,58 +9,121 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	sdk "github.com/zoumo/agent-sdk-go/claude"
 	"github.com/zoumo/agent-sdk-go/claude/types"
+	"github.com/zoumo/mass/mass-go/internal/managed"
 	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-type Options struct {
-	Executable string
-	Env        []string
-	Dir        string
+type driver struct {
+	name        string
+	options     rt.Config
+	mu          sync.Mutex
+	closed      bool
+	connections []*connection
 }
+
+func New(name string, options rt.Config, revision uint64) *managed.Runtime {
+	options.Env = append([]string{}, options.Env...)
+	return managed.New(name, "claude", revision, &driver{name: name, options: options})
+}
+func (d *driver) Start(ctx context.Context) (rt.Health, error) {
+	if err := ctx.Err(); err != nil {
+		return rt.Health{}, err
+	}
+	info, err := os.Stat(d.options.Executable)
+	if err != nil || info.IsDir() || info.Mode()&0111 == 0 {
+		return rt.Health{}, rt.ErrUnavailable
+	}
+	d.mu.Lock()
+	d.closed = false
+	d.connections = nil
+	d.mu.Unlock()
+	return rt.Health{Configured: rt.Known(true), Connected: rt.UnknownObservation(), ProtocolResponsive: rt.UnknownObservation(), ProbeScope: "per_session_process_prepared", ObservedAt: time.Now().UTC()}, nil
+}
+func (d *driver) CreateSession(ctx context.Context) (rt.Session, error) {
+	lifetime, cancel := context.WithCancel(context.Background())
+	c := &connection{name: d.name, ctx: lifetime, cancel: cancel, events: make(chan rt.Event), finished: make(chan struct{})}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		cancel()
+		return nil, rt.ErrUnavailable
+	}
+	d.connections = append(d.connections, c)
+	d.mu.Unlock()
+	openCtx, stopOpen := context.WithCancel(ctx)
+	stopLifetime := context.AfterFunc(lifetime, stopOpen)
+	defer stopOpen()
+	defer stopLifetime()
+	if err := c.open(openCtx, d.options); err != nil {
+		cancel()
+		return nil, err
+	}
+	return &session{conn: c}, nil
+}
+func (d *driver) Stop() error {
+	d.mu.Lock()
+	d.closed = true
+	connections := append([]*connection(nil), d.connections...)
+	d.mu.Unlock()
+	var result error
+	for _, c := range connections {
+		if err := c.Close(); err != nil {
+			result = err
+		}
+	}
+	return result
+}
+
 type connection struct {
-	client   *sdk.Client
-	ctx      context.Context
-	cancel   context.CancelFunc
-	events   chan rt.Event
-	finished chan struct{}
-	mu       sync.Mutex
-	created  bool
-	terminal error
-	nativeID string
+	client    *sdk.Client
+	name      string
+	closeOnce sync.Once
+	closeErr  error
+	opening   sync.Mutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	events    chan rt.Event
+	finished  chan struct{}
+	mu        sync.Mutex
+	terminal  error
+	nativeID  string
 }
 type session struct {
 	conn *connection
 	next sync.Mutex
 }
 
-var _ rt.Connection = (*connection)(nil)
 var _ rt.Session = (*session)(nil)
 
-func Open(ctx context.Context, options Options) (rt.Connection, error) {
-	if options.Executable == "" || options.Env == nil {
-		return nil, errors.New("claude runtime requires an explicit executable and environment")
+func (c *connection) open(ctx context.Context, options rt.Config) error {
+	c.opening.Lock()
+	defer c.opening.Unlock()
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	lifetime, cancel := context.WithCancel(context.Background())
-	c := &connection{ctx: lifetime, cancel: cancel, events: make(chan rt.Event), finished: make(chan struct{})}
+	if c.ctx.Err() != nil {
+		return rt.ErrUnavailable
+	}
 	client, err := sdk.Open(ctx, sdk.Options{CLIPath: options.Executable, Env: options.Env, WorkDir: options.Dir, PermissionHandler: func(p *sdk.PermissionRequest) {
 		select {
 		case c.events <- c.permissionEvent(p):
 		case <-p.Context().Done():
-		case <-lifetime.Done():
+		case <-c.ctx.Done():
 		}
 	}})
 	if err != nil {
-		cancel()
-		return nil, safeError(ctx, "open")
+		return safeError(ctx, "open")
 	}
 	c.client = client
 	go c.receive()
-	return c, nil
+	return nil
 }
 func (c *connection) receive() {
 	defer close(c.finished)
@@ -94,41 +157,44 @@ func (c *connection) receive() {
 		}
 	}
 }
-func (c *connection) NewSession(ctx context.Context) (rt.Session, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.created {
-		return nil, errors.New("claude runtime supports one session per connection")
-	}
-	select {
-	case <-c.ctx.Done():
-		return nil, errors.New("claude runtime is closed")
-	default:
-	}
-	c.created = true
-	return &session{conn: c}, nil
-}
 func (c *connection) Close() error {
-	c.cancel()
-	err := c.client.Close()
-	<-c.finished
-	if err != nil {
-		return errors.New("claude runtime close failed")
-	}
-	return nil
+	c.closeOnce.Do(func() {
+		c.cancel()
+		c.opening.Lock()
+		client := c.client
+		c.opening.Unlock()
+		if client != nil {
+			if err := client.Close(); err != nil {
+				c.closeErr = errors.New("claude runtime close failed")
+			}
+			<-c.finished
+		}
+	})
+	return c.closeErr
 }
 func (s *session) Close() error { return s.conn.Close() }
-func (s *session) Identity() rt.Identity {
+func (s *session) Key() rt.SessionKey {
 	s.conn.mu.Lock()
 	defer s.conn.mu.Unlock()
-	id := s.conn.nativeID
-	return rt.Identity{Provider: "claude", SessionID: id, Pending: id == ""}
+	return rt.SessionKey{RuntimeName: s.conn.name, SessionID: s.conn.nativeID}
+}
+func (s *session) Snapshot() rt.SessionSnapshot {
+	state := "attached"
+	if s.Key().SessionID == "" {
+		state = "opening"
+	}
+	select {
+	case <-s.conn.ctx.Done():
+		state = "closed"
+	default:
+	}
+	return rt.SessionSnapshot{Key: s.Key(), Attachment: state, ObservedAt: time.Now().UTC()}
 }
 func (s *session) Capabilities() rt.Capabilities { return rt.Capabilities{} }
 func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error) {
+	if s.conn.ctx.Err() != nil {
+		return rt.Submission{}, rt.ErrUnavailable
+	}
 	if err := s.conn.client.Send(ctx, text); err != nil {
 		return rt.Submission{}, safeError(ctx, "submit")
 	}
@@ -151,6 +217,8 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 	}
 	select {
 	case event := <-s.conn.events:
+		event.RuntimeName = s.conn.name
+		event.SessionID = s.Key().SessionID
 		return event, nil
 	case <-ctx.Done():
 		return rt.Event{}, ctx.Err()

@@ -1,96 +1,155 @@
 # Experimental Go runtime
 
 This isolated module adapts the public Go SDK's Codex and Claude process
-transports to `pkg/runtime`. SDK commit
+transports to the common `pkg/runtime.Runtime` interface. SDK commit
 `6dbf3e9c8264e7d562ab7ffbf382490afb1aa8bc` is pinned by a normal module requirement,
 without replace or go.work. It has no daemon or HTTP service.
 
-## Use
+## Named Runtime instances
 
-Import `pkg/runtime/codex` or `pkg/runtime/claude`, then supply an explicitly
-chosen executable and environment. Each connection supports one session:
+`pkg/runtime/catalog` assembles the two system-provided protocol types. `Types`
+and `Describe` return their configuration fields and process topology. A caller
+registers a case-sensitive name, protocol type and configuration:
 
 ```go
-conn, err := codex.Open(ctx, codex.Options{
-    Executable: "/absolute/path/to/authorized/executable",
-    Env: []string{},
+registry := catalog.New()
+_, err := registry.Register(runtime.Registration{
+    Name: "local-codex",
+    Type: "codex",
+    Config: runtime.Config{
+        Executable: "/absolute/path/to/authorized/executable",
+        Env: []string{},
+    },
 })
 if err != nil { return err }
-defer conn.Close()
-session, err := conn.NewSession(ctx)
+worker, err := registry.Get("local-codex")
 if err != nil { return err }
-submission, err := session.Submit(ctx, "hello")
+if err := worker.Start(ctx); err != nil { return err }
+defer worker.Stop()
+a, err := worker.CreateSession(ctx)
 if err != nil { return err }
-_ = submission // Inspect evidence and optional native turn ID.
+b, err := worker.CreateSession(ctx)
+if err != nil { return err }
+if err := a.Close(); err != nil { return err }
+submission, err := b.Submit(ctx, "hello")
+if err != nil { return err }
+_ = submission // Inspect actual submission evidence.
 for {
-    event, err := session.Next(ctx)
+    event, err := b.Next(ctx)
     if err != nil { return err }
-    // Handle messages, tools, failures, unknown diagnostics and interactions.
     if event.Kind == runtime.TurnCompleted { break }
 }
 ```
 
-This function-body sketch uses a `context.Context` and imports the `codex`
-adapter and `runtime` package. Claude has the same options and interface.
-Only explicitly selected SDK mocks are used for the offline tests below.
-Build them with `go build -o /tmp/mock-codex github.com/zoumo/agent-sdk-go/codex/cmd/mock`
-or `go build -o /tmp/mock-claude github.com/zoumo/agent-sdk-go/claude/cmd/mock`.
-Pass that executable and `CODEX_MOCK_SCENARIO=/absolute/scenario.json` or
-`CLAUDE_MOCK_SCENARIO=/absolute/scenario.json` in Env. The pinned SDK's
-[mock guide](https://github.com/zoumo/agent-sdk-go/blob/6dbf3e9c8264e7d562ab7ffbf382490afb1aa8bc/docs/mock.md)
-describes synthetic scenario files; adapter test fixtures are local examples.
+This function-body sketch uses a `context.Context` and imports `pkg/runtime`
+and `pkg/runtime/catalog`. Claude uses the same interface with type `claude`.
+The old single-use Connection interface has been removed.
 
-| Contract | Codex | Claude |
+Registration validates the name (1–128 bytes without surrounding whitespace),
+known type, absolute executable path, explicit non-nil child environment and
+optional absolute working directory. Environment entries must be `KEY=value`.
+An empty environment replaces inherited variables. Get/List, type discovery and
+registration do not launch processes or probe credentials. Configuration is
+copied at registration; snapshots do not expose the environment.
+
+Concurrent Start calls share one activation attempt for a name. Separate names
+own independent resources. Runtime snapshots distinguish configuration revision
+from the revision actually activated, and retain timestamped health evidence:
+
+| Protocol | Start and health | Session resources |
 | --- | --- | --- |
-| Session identity | Native thread ID, not tree-shared SDK `Thread.SessionID` | Pending until root system/result session ID is observed |
-| Submission evidence | `native_acknowledged`, native turn ID | `sdk_write_success`, no native turn ID or acknowledgement |
-| Cancel | Requires native turn ID | Requires empty turn ID |
+| Codex | Starts one owned app-server and observes protocol initialization | Multiple native threads share the process; each has an independent SDK subscription and routed interaction queue |
+| Claude | Checks executable availability and prepares process creation; connection and protocol health remain unknown | Each CreateSession starts a separate owned process and initializes its protocol |
+
+Ready describes this activation scope. It does not prove model authentication,
+provider reachability, or current health of every session. Health is an
+observation at its recorded time; Status performs no live model probe.
+
+UpdateConfig requires the expected revision and rejects active instances or
+retained session ownership. Unregister has the same ownership restriction.
+Closed session records retain their original configuration scope. Updating or
+unregistering an unused instance retires old handles atomically; they cannot
+later activate against a replacement registration.
+
+## Native sessions and transport behavior
+
+A SessionKey has exactly `runtimeName` and `sessionId`. Codex uses the native
+thread ID, never the SDK tree-shared SessionID. Claude learns its ID from an
+authoritative root system/result observation. Before that observation, Key has
+an empty sessionId, and the attachment is absent from managed session queries.
+No native ID is generated and no input is injected. Callers supply the first
+input explicitly. GetSession rejects empty IDs and foreign Runtime names.
+GetSession/ListSessions observe only managed attachments, including closed
+records after Stop; they do not discover or adopt native account sessions.
+Inventory is in memory.
+
+Closing a Codex session aborts only its local SDK subscription. It does not
+archive/delete the native thread or stop the shared app-server. Closing a
+Claude session closes and reaps that session's process. Other sessions remain
+usable. Stop closes all remaining owned attachments and processes without
+unregistering configuration or deleting data. A fully stopped Runtime can be
+activated again. Neither session close nor process exit proves rollback of
+remote effects.
+
+| Behavior | Codex | Claude |
+| --- | --- | --- |
+| Text submission evidence | `native_acknowledged`, actual native turn ID | `sdk_write_success`, no fabricated native turn ID |
+| Cancel | Requires observed native turn ID | Requires empty turn ID |
 | Interactions | Command/file approval and user questions | Tool permission and AskUserQuestion |
 
-Submission success is neither `native_recorded` nor completion. Cancel requests
-interruption; Claude interrupt acknowledgement cannot establish an interrupted
-result. Turn lifecycle statuses normalize to `in_progress`, `completed`, `failed`,
-`interrupted`, or `unknown` for unrecognized Codex statuses. Claude success maps
-to completed; other results map to failed without guessing interruption. Other
-event statuses describe message/tool phases or errors.
+Submission success is neither native-recorded evidence nor completion. Cancel
+requests interruption; an ACK alone does not establish termination. Existing
+message/tool conversion, normalized completion statuses, bounded diagnostic kind
+and SHA-256, and connection-bound one-shot interaction handles remain available.
+Native stderr and unknown raw payloads are excluded from public events. Known
+message/tool content remains visible. Events include their owning Runtime name;
+session-scoped routing uses the native managed session identity. Child Claude
+observations remain diagnostic and cannot acquire root permission authority.
 
-Respond through the original interaction `Handle` once. Copies share its
-authority; a canceled response context does not consume it. Close invalidates
-pending handles. Tests also verify already-delivered Codex handles after a later
-native resolution and Claude handles after native cancellation. A queued Codex
-approval may remain writable if resolution arrives before dequeue. This is not a general
-production guard for every queued native resolution or timeout race; the SDK's
-approval semantics remain in effect. Claude question IDs are question text.
-Child Claude events and explicitly child-owned permissions remain Unknown,
-without granting root answer authority or implementing child scheduling.
-Unknown/failure diagnostics retain a bounded native kind and SHA-256 without
-raw payloads or native error text. Recognized message/tool text is exposed.
+Respond through the original interaction Handle once. A canceled response
+context does not consume it. Runtime Stop invalidates pending SDK handles;
+native resolution/cancellation follows the pinned SDK's semantics. This slice
+does not provide a data-only interaction event schema, operation-based pending
+creation, identity-verified resume, foreground admission control, or durable
+history. It does not claim complete typed event coverage or production lifecycle
+and delivery guarantees. In particular, SDK queued-approval limitations remain,
+and local Codex detach does not prove native permission resolution.
 
-`Next` has one consumer; its context stops only the wait. Session creation's
-context does not own the later subscription. Close terminates the owned
-connection/process even without event consumption; it is not a production
-per-thread archive. Codex Close uses SDK Abort to discard unread subscription
-data. The pinned SDK uses independent per-stream ChannX delivery: SDK Close
-drains accepted records and Abort discards unread records. Deprecated
-EventBuffer/EventQueue settings are ignored. CallTimeout remains 30 seconds;
-approval behavior is unchanged.
+Next has one consumer; its context stops only that wait. Session creation's
+context does not own the later attachment. Codex uses Abort on local detach to
+discard unread subscription data. Runtime Stop does not require callers to
+consume events. The per-session Codex interaction queue holds 64 requests;
+backpressure on an unread session can delay other interaction delivery until
+that session is read or closed. The SDK uses independent per-stream ChannX
+queues; deprecated EventBuffer/EventQueue options are ignored. SDK CallTimeout
+remains 30 seconds. These facts do not establish a whole-process memory bound
+or a total shutdown deadline.
 
-## Offline verification and limits
+## Offline verification
 
 ```sh
 cd mass-go
-go test ./...
-go test -race ./...
-go vet ./...
-go build ./...
+mise exec -- go test ./...
+mise exec -- go test -race ./...
+mise exec -- go vet ./...
+mise exec -- go build ./...
 ```
 
-Suites build both public SDK mock executables and replay synthetic scenarios
-through actual process transports. Coverage includes messages/tools, native
-completion, interruption, one-shot response handles, errors/unknown diagnostics,
-queued facts before disconnect, and owned mock PID reclamation. Tests never
-invoke real CLIs, models or credential discovery.
+Suites build both public SDK mock executables and replace the child environment
+with synthetic scenario configuration. Tests cover two sessions in each of two
+named instances, concurrent activation with process-count checks, unchanged
+native identity, shared-ID isolation between names, close-A/send-B, retained
+queries, ownership conflicts, stop/reactivation and owned PID reclamation.
+The existing message/tool, cancellation, interaction and diagnostic cases also
+run through the named catalog and common Runtime interface.
 
-No GitHub workflows are configured in the current repository; these are local
-Go checks, not remote Go CI evidence. This experiment has no Rust-equivalent
-resource budget, persistence, recovery, scheduling or production lifecycle.
+For mock usage, build `github.com/zoumo/agent-sdk-go/codex/cmd/mock` or
+`github.com/zoumo/agent-sdk-go/claude/cmd/mock` and pass its absolute path. Set
+CODEX_MOCK_SCENARIO or CLAUDE_MOCK_SCENARIO in Config.Env. The public SDK's
+[mock guide](https://github.com/zoumo/agent-sdk-go/blob/6dbf3e9c8264e7d562ab7ffbf382490afb1aa8bc/docs/mock.md)
+and the integration fixtures describe the synthetic scenario format.
+
+Tests never invoke real agents, models or credential discovery. Real-CLI
+compatibility remains unverified. No GitHub workflows are configured in this
+repository; local Go checks are not remote CI evidence. This experiment does
+not change the production Rust runtime.

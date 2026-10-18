@@ -10,102 +10,173 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	"github.com/zoumo/agent-sdk-go/codex/types"
+	"github.com/zoumo/mass/mass-go/internal/managed"
 	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-type Options struct {
-	Executable string
-	Env        []string
-	Dir        string
-}
-type connection struct {
-	client  *sdk.Client
-	mu      sync.Mutex
-	created bool
-	cancel  context.CancelFunc
-	sub     *sdk.Subscription
-	closed  bool
+type driver struct {
+	options  rt.Config
+	name     string
+	mu       sync.Mutex
+	client   *sdk.Client
+	sessions map[string]*session
+	cancel   context.CancelFunc
+	closed   bool
 }
 type session struct {
-	conn     *connection
+	conn     *driver
 	id       string
 	sub      *sdk.Subscription
 	ready    bool
 	next     sync.Mutex
-	requests <-chan sdk.Request
+	requests chan sdk.Request
+	done     chan struct{}
+	once     sync.Once
 }
 
-var _ rt.Connection = (*connection)(nil)
 var _ rt.Session = (*session)(nil)
 
-func Open(ctx context.Context, options Options) (rt.Connection, error) {
-	if options.Executable == "" || options.Env == nil {
-		return nil, errors.New("codex runtime requires an explicit executable and environment")
-	}
-	client, err := sdk.NewStdio(ctx, sdk.StdioOptions{Executable: options.Executable, Args: []string{"app-server"}, Env: options.Env, Dir: options.Dir, Initialize: types.InitializeParams{ClientInfo: types.ClientInfo{Name: "mass-go", Version: "experiment"}}})
-	if err != nil {
-		return nil, safeError(ctx, "open")
-	}
-	return &connection{client: client}, nil
+// New prepares a named Runtime without starting a native process.
+func New(name string, options rt.Config, revision uint64) *managed.Runtime {
+	options.Env = append([]string{}, options.Env...)
+	return managed.New(name, "codex", revision, &driver{name: name, options: options})
 }
-func (c *connection) NewSession(ctx context.Context) (rt.Session, error) {
-	c.mu.Lock()
-	if c.created || c.closed {
-		c.mu.Unlock()
-		return nil, errors.New("codex runtime supports one session per connection")
-	}
-	c.created = true
-	c.mu.Unlock()
-	result, err := c.client.StartThread(ctx, types.ThreadStartParams{Ephemeral: types.Some(true)})
-	if err != nil {
-		return nil, safeError(ctx, "create session")
-	}
+func (c *driver) Start(ctx context.Context) (rt.Health, error) {
 	lifetime, cancel := context.WithCancel(context.Background())
-	sub, err := c.client.Subscribe(lifetime, result.Thread.ID, types.SubscriptionOptions{})
+	c.mu.Lock()
+	c.cancel = cancel
+	c.closed = false
+	c.mu.Unlock()
+	client, err := sdk.NewStdio(ctx, sdk.StdioOptions{Executable: c.options.Executable, Args: []string{"app-server"}, Env: c.options.Env, Dir: c.options.Dir, Initialize: types.InitializeParams{ClientInfo: types.ClientInfo{Name: "mass-go", Version: "experiment"}}})
 	if err != nil {
 		cancel()
-		return nil, safeError(ctx, "subscribe")
+		return rt.Health{}, safeError(ctx, "start")
 	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		cancel()
-		_ = sub.Abort()
-		return nil, errors.New("codex runtime is closed")
+		_ = client.Close()
+		return rt.Health{}, rt.ErrUnavailable
 	}
-	c.cancel = cancel
-	c.sub = sub
+	c.client = client
+	c.sessions = make(map[string]*session)
 	c.mu.Unlock()
-	return &session{conn: c, id: result.Thread.ID, sub: sub, requests: c.client.Requests()}, nil
+	go c.routeRequests(lifetime, client)
+	return rt.Health{Configured: rt.Known(true), Connected: rt.Known(true), ProtocolResponsive: rt.Known(true), ProbeScope: "shared_protocol_initialize", ObservedAt: time.Now().UTC()}, nil
 }
-func (c *connection) Close() error {
+func (c *driver) routeRequests(ctx context.Context, client *sdk.Client) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case request, ok := <-client.Requests():
+			if !ok {
+				return
+			}
+			var params struct {
+				ThreadID string `json:"threadId"`
+			}
+			_ = json.Unmarshal(request.Params(), &params)
+			c.mu.Lock()
+			session := c.sessions[params.ThreadID]
+			c.mu.Unlock()
+			if session == nil {
+				continue
+			}
+			select {
+			case session.requests <- request:
+			case <-session.done:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+}
+func (c *driver) CreateSession(ctx context.Context) (rt.Session, error) {
+	c.mu.Lock()
+	client := c.client
+	closed := c.closed
+	c.mu.Unlock()
+	if closed || client == nil {
+		return nil, rt.ErrUnavailable
+	}
+	result, err := client.StartThread(ctx, types.ThreadStartParams{Ephemeral: types.Some(true)})
+	if err != nil {
+		return nil, safeError(ctx, "create session")
+	}
+	if result.Thread.ID == "" {
+		return nil, rt.ErrInvalidInput
+	}
+	sub, err := client.Subscribe(context.Background(), result.Thread.ID, types.SubscriptionOptions{})
+	if err != nil {
+		return nil, safeError(ctx, "subscribe")
+	}
+	s := &session{conn: c, id: result.Thread.ID, sub: sub, requests: make(chan sdk.Request, 64), done: make(chan struct{})}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		_ = s.Close()
+		return nil, rt.ErrUnavailable
+	}
+	if _, exists := c.sessions[s.id]; exists {
+		c.mu.Unlock()
+		_ = sub.Abort()
+		return nil, rt.ErrConflict
+	}
+	c.sessions[s.id] = s
+	c.mu.Unlock()
+	return s, nil
+}
+func (c *driver) Stop() error {
 	c.mu.Lock()
 	c.closed = true
-	cancel, sub := c.cancel, c.sub
+	client, cancel := c.client, c.cancel
+	sessions := make([]*session, 0, len(c.sessions))
+	for _, s := range c.sessions {
+		sessions = append(sessions, s)
+	}
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	if sub != nil {
-		_ = sub.Abort()
+	for _, s := range sessions {
+		_ = s.Close()
 	}
-	if err := c.client.Close(); err != nil {
-		return errors.New("codex runtime close failed")
+	if client != nil {
+		if err := client.Close(); err != nil {
+			return errors.New("codex runtime stop failed")
+		}
 	}
 	return nil
 }
-func (s *session) Close() error { _ = s.sub.Close(); return s.conn.Close() }
+func (s *session) Close() error { s.once.Do(func() { close(s.done); _ = s.sub.Abort() }); return nil }
+func (s *session) Key() rt.SessionKey {
+	return rt.SessionKey{RuntimeName: s.conn.name, SessionID: s.id}
+}
+func (s *session) Snapshot() rt.SessionSnapshot {
+	state := "attached"
+	select {
+	case <-s.done:
+		state = "closed"
+	default:
+	}
+	return rt.SessionSnapshot{Key: s.Key(), Attachment: state, ObservedAt: time.Now().UTC()}
+}
 
-// Identity uses the native thread ID as the runtime session unit; it is not
-// the SDK Thread.SessionID shared across a thread tree.
-func (s *session) Identity() rt.Identity { return rt.Identity{Provider: "codex", SessionID: s.id} }
 func (s *session) Capabilities() rt.Capabilities {
 	return rt.Capabilities{NativeTurnID: true, NativeAcknowledgement: true}
 }
 func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error) {
+	select {
+	case <-s.done:
+		return rt.Submission{}, rt.ErrUnavailable
+	default:
+	}
 	input := types.UserInput{Text: types.Ptr(types.TextUserInput{Type: types.TextUserInputTypeText, Text: text, TextElements: types.Some([]types.TextElement{})})}
 	result, err := s.conn.client.StartTurn(ctx, types.TurnStartParams{ThreadID: s.id, Input: []types.UserInput{input}})
 	if err != nil {
@@ -114,6 +185,11 @@ func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error
 	return rt.Submission{TurnID: result.Turn.ID, Evidence: rt.NativeAcknowledged}, nil
 }
 func (s *session) Cancel(ctx context.Context, turnID string) error {
+	select {
+	case <-s.done:
+		return rt.ErrUnavailable
+	default:
+	}
 	if turnID == "" {
 		return errors.New("codex runtime cancellation requires a native turn ID")
 	}
@@ -131,10 +207,12 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 	}
 	if !s.ready {
 		s.ready = true
-		return rt.Event{Kind: rt.SessionReady, SessionID: s.id}, nil
+		return rt.Event{Kind: rt.SessionReady, RuntimeName: s.conn.name, SessionID: s.id}, nil
 	}
 	for {
 		select {
+		case <-s.done:
+			return rt.Event{}, io.EOF
 		case <-ctx.Done():
 			return rt.Event{}, ctx.Err()
 		case request, ok := <-s.requests:
@@ -142,7 +220,9 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 				s.requests = nil
 				continue
 			}
-			return mapRequest(request, s.id), nil
+			event := mapRequest(request, s.id)
+			event.RuntimeName = s.conn.name
+			return event, nil
 		case native, ok := <-s.sub.Events():
 			if !ok {
 				if s.sub.Err() != nil {
@@ -150,7 +230,9 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 				}
 				return rt.Event{}, io.EOF
 			}
-			return mapEvent(native, s.id), nil
+			event := mapEvent(native, s.id)
+			event.RuntimeName = s.conn.name
+			return event, nil
 		}
 	}
 }
@@ -191,9 +273,6 @@ func mapEvent(native types.Event, id string) rt.Event {
 		event.Kind = rt.Failure
 		event.Status = "decode_error"
 		return event
-	}
-	if data.ThreadID != "" {
-		event.SessionID = data.ThreadID
 	}
 	event.TurnID = data.TurnID
 	event.ItemID = data.ItemID

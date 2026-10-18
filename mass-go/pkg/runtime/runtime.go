@@ -2,17 +2,93 @@
 // It does not promise parity with the production Rust runtime.
 package runtime
 
-import "context"
+import (
+	"context"
+	"errors"
+	"time"
+)
 
-// Connection owns a provider process and supports one session. Close releases it
-// even when no caller is consuming events.
-type Connection interface {
-	NewSession(context.Context) (Session, error)
-	Close() error
+// Runtime owns one named protocol instance and all of its native sessions.
+type Runtime interface {
+	Start(context.Context) error
+	Status() Snapshot
+	CreateSession(context.Context) (Session, error)
+	GetSession(SessionKey) (Session, error)
+	ListSessions() []SessionSnapshot
+	Stop() error
 }
 
+var (
+	ErrConflict     = errors.New("runtime ownership conflict")
+	ErrNotFound     = errors.New("runtime resource not found")
+	ErrUnavailable  = errors.New("runtime unavailable")
+	ErrInvalidInput = errors.New("invalid runtime configuration or session key")
+)
+
+type Config struct {
+	Executable string   `json:"executable"`
+	Env        []string `json:"-"` // Explicit child environment; never returned in status.
+	Dir        string   `json:"dir,omitempty"`
+}
+type Registration struct {
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+	Config Config `json:"config"`
+}
+
+// RuntimeType describes a fixed system implementation and its configuration.
+type RuntimeType struct {
+	Name          string        `json:"name"`
+	SchemaVersion int           `json:"schemaVersion"`
+	Topology      string        `json:"topology"`
+	MaxNameBytes  int           `json:"maxNameBytes"`
+	ConfigFields  []ConfigField `json:"configFields"`
+}
+type ConfigField struct {
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Required     bool   `json:"required"`
+	AbsolutePath bool   `json:"absolutePath,omitempty"`
+}
+type Observation struct {
+	State string `json:"state"`
+	Value *bool  `json:"value,omitempty"`
+}
+
+func Known(value bool) Observation    { return Observation{State: "known", Value: &value} }
+func UnknownObservation() Observation { return Observation{State: "unknown"} }
+
+type Health struct {
+	Configured         Observation `json:"configured"`
+	Connected          Observation `json:"connected"`
+	ProtocolResponsive Observation `json:"protocolResponsive"`
+	ProbeScope         string      `json:"probeScope"`
+	ObservedAt         time.Time   `json:"observedAt"`
+}
+type Snapshot struct {
+	Name             string    `json:"name"`
+	Type             string    `json:"type"`
+	ConfigRevision   uint64    `json:"configRevision"`
+	ObservedRevision uint64    `json:"observedRevision"`
+	Phase            string    `json:"phase"`
+	Health           Health    `json:"health"`
+	ObservedAt       time.Time `json:"observedAt"`
+}
+type SessionKey struct {
+	RuntimeName string `json:"runtimeName"`
+	SessionID   string `json:"sessionId"`
+}
+type SessionSnapshot struct {
+	Key        SessionKey `json:"key"`
+	Attachment string     `json:"attachment"`
+	ObservedAt time.Time  `json:"observedAt"`
+}
+
+// Session is a protocol-owned attachment. Before Claude observes native identity,
+// Key has no session ID and the attachment is absent from managed queries.
 type Session interface {
-	Identity() Identity
+	Key() SessionKey
+	Snapshot() SessionSnapshot
 	Capabilities() Capabilities
 	Submit(context.Context, string) (Submission, error)
 	// Cancel requests interruption. Its return is not completion evidence.
@@ -22,10 +98,6 @@ type Session interface {
 	Close() error
 }
 
-type Identity struct {
-	Provider, SessionID string
-	Pending             bool
-}
 type Capabilities struct{ NativeTurnID, NativeAcknowledgement bool }
 type Evidence string
 
@@ -52,10 +124,10 @@ const (
 )
 
 type Event struct {
-	Kind                                          EventKind
-	SessionID, TurnID, ItemID, Text, Tool, Status string
-	Diagnostic                                    Diagnostic
-	Interaction                                   *Interaction
+	Kind                                                       EventKind
+	RuntimeName, SessionID, TurnID, ItemID, Text, Tool, Status string
+	Diagnostic                                                 Diagnostic
+	Interaction                                                *Interaction
 }
 
 // Diagnostic retains correlation without exposing arbitrary native payloads.
