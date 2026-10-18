@@ -135,7 +135,7 @@ func (s *runtimeSuite) TestMessagesToolsAndCompletion() {
 	for len(events) < 5 {
 		event, err := session.Next(ctx)
 		s.Require().NoError(err)
-		if event.Kind != rt.Unknown {
+		if event.Kind != rt.Unknown && event.Kind != rt.ObservationChanged {
 			events = append(events, event)
 		}
 	}
@@ -223,7 +223,7 @@ func (s *runtimeSuite) nextMapped(session rt.Session, ctx context.Context) rt.Ev
 	for {
 		event, err := session.Next(ctx)
 		s.Require().NoError(err)
-		if event.Kind != rt.Unknown {
+		if event.Kind != rt.Unknown && event.Kind != rt.ObservationChanged {
 			return event
 		}
 	}

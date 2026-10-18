@@ -83,7 +83,7 @@ func (s *runtimeSuite) next(session rt.Session, ctx context.Context) rt.Event {
 	for {
 		event, err := session.Next(ctx)
 		s.Require().NoError(err)
-		if event.Kind != rt.Unknown {
+		if event.Kind != rt.Unknown && event.Kind != rt.ObservationChanged {
 			return event
 		}
 	}
@@ -196,13 +196,25 @@ func (s *runtimeSuite) TestChildFactsDoNotOwnRoot() {
 	for len(seen) < 2 {
 		event, err := session.Next(ctx)
 		s.Require().NoError(err)
-		if event.Diagnostic.NativeKind == "result/success" || event.Diagnostic.NativeKind == "control_request/" {
-			seen[event.Diagnostic.NativeKind] = true
+		if event.Origin.SourceKind == "result/success" {
+			seen["result/success"] = true
+			s.Equal(rt.AgentStateChanged, event.Kind)
+			s.Equal("child-agent", event.Subject.AgentID)
+			s.True(event.AgentState.Terminal)
+			s.Nil(event.Interaction)
+		}
+		if event.Diagnostic.NativeKind == "control_request/" {
+			seen["control_request/"] = true
 			s.Equal(rt.Unknown, event.Kind)
 			s.Nil(event.Interaction)
 		}
 	}
 	s.Equal("root", session.Key().SessionID)
+	snapshot := session.Snapshot()
+	s.Equal("running", snapshot.Foreground.State)
+	original, err := session.GetSubmission(snapshot.Foreground.OperationRef)
+	s.Require().NoError(err)
+	s.Equal("unknown", original.Completed.State)
 	s.NoError(conn.Stop())
 }
 

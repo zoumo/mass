@@ -160,6 +160,8 @@ type connection struct {
 	identityDeadline                   time.Time
 	provisionalFacts, provisionalBytes int
 	messages                           messageMapper
+	childMessages                      map[string]*messageMapper
+	childContextBytes                  int
 	authorities                        managed.Authorities
 }
 type session struct {
@@ -229,7 +231,7 @@ func (c *connection) receive() {
 				}
 			}
 
-			if (native.System != nil || native.Result != nil) && native.SessionID != "" && (native.AgentID == nil || *native.AgentID == "") && (native.ParentToolUseID == nil || *native.ParentToolUseID == "") {
+			if (native.Result != nil || (native.System != nil && native.System.TaskID == "")) && native.SessionID != "" && (native.AgentID == nil || *native.AgentID == "") && (native.ParentToolUseID == nil || *native.ParentToolUseID == "") {
 				c.mu.Lock()
 				if c.terminal != nil {
 					c.mu.Unlock()
@@ -268,9 +270,13 @@ func (c *connection) receive() {
 			if !c.reserveProvisional(len(data)) {
 				return
 			}
-			events = []rt.Event{{Kind: rt.Unknown, Diagnostic: diagnostic("sdk_derived/unsupported", nil), Origin: rt.EventOrigin{Kind: "sdk_derived", Attribution: "unresolved", Completeness: "unknown"}}}
+			events = derivedEvents(received)
 		}
 		for _, event := range events {
+			if event.Subject != nil {
+				subject := *event.Subject
+				event.Subject = &subject
+			}
 			event.ObservedAt = observedAt
 			event.SourcePosition = position
 			select {
@@ -422,25 +428,79 @@ func (c *connection) mapEvent(native types.Event) []rt.Event {
 	if native.Origin != nil {
 		base.Origin.SourceKind = native.Origin.Kind
 	}
-	if (native.AgentID != nil && *native.AgentID != "") || (native.ParentToolUseID != nil && *native.ParentToolUseID != "") {
+	base.Subject = nativeSubject(native)
+	child := base.Subject.AgentID != "" || base.Subject.ParentToolRef != "" || base.Subject.TaskID != ""
+	if child {
 		base.Origin.Attribution = "child"
-		return []rt.Event{base}
 	}
+	if events, ok := taskEvents(native, base); ok {
+		return events
+	}
+
 	if native.Result != nil {
 		base.Kind = rt.TurnCompleted
 		status := "failed"
 		if native.Result.Subtype == "success" && !native.Result.IsError {
 			status = "completed"
 		}
-		base.Work = &rt.WorkPayload{Status: status}
-		return []rt.Event{base}
+		if child {
+			base.Kind = rt.AgentStateChanged
+			base.AgentState = &rt.AgentStatePayload{State: "terminal", Terminal: true, Outcome: status, Completeness: "partial"}
+		} else {
+			base.Work = &rt.WorkPayload{Status: status}
+			if base.Subject.RunID == "" {
+				base.Subject = nil
+			}
+		}
+		return appendUsage([]rt.Event{base}, base, native.Result.Usage, "result")
 	}
 	if native.Error != nil || native.Type == "error" {
 		base.Kind = rt.Failure
 		base.Error = &rt.SafeError{Category: "native_error", Scope: "session"}
 		return []rt.Event{base}
 	}
-	if events, ok := c.messages.convert(native, base); ok {
+	mapper := &c.messages
+	if child {
+		// Full child messages are independent snapshots. Streaming child state is
+		// isolated by the exact observed source/run tuple, without lineage inference.
+		keyData, _ := json.Marshal(base.Subject)
+		key := string(keyData)
+		if c.childMessages == nil {
+			c.childMessages = map[string]*messageMapper{}
+		}
+		mapper = c.childMessages[key]
+		if mapper == nil {
+			if len(c.childMessages) >= 256 || c.childContextBytes+len(key) > 1<<20 {
+				base.Kind = rt.Failure
+				base.Error = &rt.SafeError{Category: "backpressure", Scope: "session"}
+				return []rt.Event{base}
+			}
+			mapper = &messageMapper{}
+			c.childMessages[key] = mapper
+			c.childContextBytes += len(key)
+		}
+	} else {
+		if base.Subject.RunID == "" {
+			base.Subject = nil
+		}
+	}
+	before := mapper.retainedBytes()
+	previous := *mapper
+	if events, ok := mapper.convert(native, base); ok {
+		if child {
+			retainedDelta := mapper.retainedBytes() - before
+			c.childContextBytes += retainedDelta
+			if c.childContextBytes > 1<<20 {
+				*mapper = previous
+				c.childContextBytes -= retainedDelta
+				base.Kind = rt.Failure
+				base.Error = &rt.SafeError{Category: "backpressure", Scope: "session"}
+				return []rt.Event{base}
+			}
+		}
+		if native.Assistant != nil {
+			events = appendUsage(events, base, native.Assistant.Usage, "message")
+		}
 		return events
 	}
 	return []rt.Event{base}

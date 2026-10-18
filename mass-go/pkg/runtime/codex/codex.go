@@ -43,6 +43,7 @@ type session struct {
 	resumed     bool
 	admitting   chan struct{}
 	works       map[string]bool
+	pending     []rt.Event
 }
 
 var _ managed.NativeSession = (*session)(nil)
@@ -127,7 +128,11 @@ func (c *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 	if result.Thread.ID == "" {
 		return nil, rt.ErrInvalidInput
 	}
-	s, err := c.attach(client, result.Thread.ID, false)
+	history, err := json.Marshal(result.Thread)
+	if err != nil {
+		return nil, rt.ErrUnverifiable
+	}
+	s, err := c.attach(client, result.Thread.ID, false, history)
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +145,8 @@ func (c *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 	}
 	return published, nil
 }
-func (c *driver) attach(client *sdk.Client, id string, resumed bool) (*session, error) {
-	sub, err := client.Subscribe(context.Background(), id, types.SubscriptionOptions{})
+func (c *driver) attach(client *sdk.Client, id string, resumed bool, history ...json.RawMessage) (*session, error) {
+	sub, err := client.Subscribe(context.Background(), id, types.SubscriptionOptions{History: history})
 	if err != nil {
 		return nil, rt.ErrUnavailable
 	}
@@ -293,6 +298,11 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 		return rt.Event{Kind: rt.SessionReady, RuntimeName: s.conn.name, SessionID: s.id, Origin: rt.EventOrigin{Kind: "runtime", Attribution: "root", Completeness: "complete"}}, nil
 	}
 	for {
+		if len(s.pending) > 0 {
+			event := s.pending[0]
+			s.pending = s.pending[1:]
+			return event, nil
+		}
 		select {
 		case <-s.done:
 			return rt.Event{}, io.EOF
@@ -341,21 +351,30 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 				}
 			}
 			if native.Method == "turn/completed" {
-				var data struct{ Turn struct{ ID string } }
-				if json.Unmarshal(native.Params, &data) == nil && data.Turn.ID != "" {
+				var data struct {
+					ThreadID string
+					Turn     struct{ ID string }
+				}
+				if json.Unmarshal(native.Params, &data) == nil && data.Turn.ID != "" && data.ThreadID == s.id {
 					s.authorities.Invalidate(data.Turn.ID)
 				}
 			}
-			event := mapEvent(native, s.id)
+			events := attributedEvents(native, s.id)
+			event := events[0]
 			if resolution != nil {
 				event.Kind = rt.InteractionResolved
 				event.Interaction = resolution
 			}
-			event.RuntimeName = s.conn.name
 			s.position++
-			event.SourcePosition = s.position
-			event.ObservedAt = time.Now().UTC()
-			return event, nil
+			observed := time.Now().UTC()
+			events[0] = event
+			for i := range events {
+				events[i].RuntimeName = s.conn.name
+				events[i].SourcePosition = s.position
+				events[i].ObservedAt = observed
+			}
+			s.pending = events[1:]
+			return events[0], nil
 		}
 	}
 }

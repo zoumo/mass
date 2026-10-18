@@ -17,6 +17,7 @@ type publishedSession struct {
 	epoch         string
 	seq           uint64
 	metadata      rt.MetadataPayload
+	background    backgroundProjection
 	commands      map[string]*command
 	active        *command
 	foreground    string
@@ -56,7 +57,7 @@ func (s *publishedSession) Snapshot() rt.SessionSnapshot {
 		snapshot.Foreground.OperationRef = s.active.receipt.OperationRef
 		snapshot.Foreground.WorkRef = s.active.receipt.WorkRef
 	}
-	snapshot.Background.Completeness = "unknown"
+	snapshot.Background = s.background.snapshot()
 	snapshot.Metadata.Apply(s.metadata)
 	return snapshot
 }
@@ -189,7 +190,10 @@ func (s *publishedSession) publish(e rt.Event) (rt.Event, error) {
 		}
 		e.Diagnostic = rt.Diagnostic{}
 	}
-	if e.Metadata != nil {
+	if err := s.background.apply(e); err != nil {
+		return rt.Event{}, err
+	}
+	if e.Metadata != nil && e.Origin.Attribution == "root" && e.Subject == nil {
 		s.metadata.Apply(*e.Metadata)
 	}
 	return e, nil

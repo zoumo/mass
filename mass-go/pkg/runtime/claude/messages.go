@@ -398,3 +398,11 @@ func metadata(raw json.RawMessage) (*rt.MetadataPayload, error) {
 	}
 	return p, nil
 }
+
+func (m *messageMapper) retainedBytes() int {
+	size := len(m.messageID) + len(m.role)
+	if m.tool != nil {
+		size += len(m.tool.callRef) + len(m.tool.name)
+	}
+	return size
+}

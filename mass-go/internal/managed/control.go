@@ -306,7 +306,7 @@ func (s *publishedSession) Cancel(ctx context.Context, target string) (rt.Cancel
 // observe only changes foreground for the matching root work. Child facts and
 // metadata/idle observations cannot finish a command or clear background state.
 func (s *publishedSession) observe(e *rt.Event) {
-	if e.Origin.Attribution == "child" || e.Origin.Attribution == "unresolved" {
+	if e.Origin.Attribution == "child" || e.Origin.Attribution == "unresolved" || e.Subject != nil {
 		return
 	}
 	var c *command

@@ -204,8 +204,8 @@ Session snapshots keep foreground, attachment and background observations
 separate. A receive worker projects facts without requiring Next; snapshots show
 the latest observed state and can be ahead of dequeued events. Foreground
 completion does not close the attachment, finish tools or clear background
-activity. Background inventory conversion remains a separate implementation
-slice; its summary is explicitly unknown here, including after completion.
+activity. Background inventories project observed task/run state and scoped
+replacements; missing inventory remains explicitly unknown.
 Native idle alone never settles an unresolved input. One common owner assigns
 publication sequence and preserves adapter observation timestamps. The public
 delivery queue holds 64 events; a stalled reader can delay further observation,
@@ -409,3 +409,15 @@ Tests never invoke real agents, models or credential discovery. Real-CLI
 compatibility remains unverified. No GitHub workflows are configured in this
 repository; local Go checks are not remote CI evidence. This experiment does
 not change the production Rust runtime.
+
+
+Subagent and background observations use the [common event contract](docs/events.md#agents-runs-tasks-and-accounting).
+SDK association and creation remain distinct; task/run/tool/agent identities and
+late run facts retain their original scope. Foreground completion leaves background
+inventories intact. Scoped empty snapshots replace only that source's inventory,
+and usage counters are never aggregated by the Runtime. Public mock scenarios
+cover live/resumed/replayed creation evidence, Codex history-seeded association,
+Claude enrichment and stale/no-ID runs, child message/metadata isolation, background
+replacement and lossless scoped accounting. Native stale classification is retained
+only where the public SDK exposes it; no history-import or universal child-observation
+coverage is claimed.

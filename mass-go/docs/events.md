@@ -3,7 +3,8 @@
 The experimental Go Runtime publishes schema version 1 through `Session.Next`.
 Each event has one `type` and one compatible concrete `payload`. Go callers use
 `Event.Message`, `Reasoning`, `Plan`, `Metadata`, `Tool`, `Work`, `Session`,
-`Interaction`, `Error` or `Diagnostic`. JSON uses a single `payload` member;
+`Interaction`, `Association`, `Creation`, `AgentState`, `Task`, `TaskSnapshot`,
+`Usage`, `Observation`, `Error` or `Diagnostic`. JSON uses a single `payload` member;
 it never serializes SDK objects, methods or response handles. Invalid unions,
 unsupported schema versions and invalid message/content discriminants fail JSON
 decode. Unknown envelope fields are ignored; unknown payload fields are rejected
@@ -30,8 +31,8 @@ native wire total order. Final `seq` is distinct from that source position.
 `origin` records native, SDK-derived or Runtime provenance, attribution and
 observation completeness. Claude's explicit `isReplay` and `isSynthetic` values
 retain presence, including explicit false. Known origin kind is retained;
-replay never implies a newly created entity. Child/unresolved observations keep
-the existing diagnostic behavior pending the separate agent-attribution work.
+replay never implies a newly created entity. Child/unresolved observations retain their actual subject and conservative
+provenance. A child observation cannot complete root work or change its identity.
 
 A message reference is a native message/item ID only when observed. A frame UUID
 is `frameRef`; it never becomes a message or block reference. Content block
@@ -200,8 +201,8 @@ A per-session receive worker assigns sequence and projects the latest snapshot.
 Next cancels only its consumer wait, and a snapshot may be ahead of delivered
 events. Metadata omission/explicit clearing still uses replacement patches.
 Foreground completion, attachment release and background completeness remain
-independent; the current background summary is unknown until background mapping
-is implemented. Cancellation ACK and terminal status remain separate observations.
+independent. Background inventories retain per-source completeness; absence of an
+inventory stays unknown. Cancellation ACK and terminal status remain separate observations.
 Only a native explicit interrupted status becomes interrupted; a generic error
 or failed result is never converted to cancellation by local intent.
 
@@ -236,3 +237,69 @@ evidence. Unknown writes consume the attempt and never permit automatic retry.
 No socket-write revocation or guarantee about unobserved native resolution is
 provided. See [Runtime limits](../README.md) for pinned SDK ID and Claude
 historical-target observability limits.
+
+## Agents, runs, tasks and accounting
+
+`subject` separates the observed agent, run, task, parent tool and native source
+session from the event envelope's owning SessionKey. Missing identities stay
+absent. SDK association references have `associationScope: sdk_attachment` and
+are meaningful only within Runtime name, native session and connection epoch.
+Neither an association reference nor a task/tool ID becomes a native agent ID.
+
+`agent.associated` and `agent.created` directly convert the pinned SDK's distinct
+records. MASS adds no relationship graph or creation inference. Association
+payloads preserve evidence, provenance, parent and enrichment/redirect references.
+A first observation, repeated init, resumed task, replay, or history association
+cannot by itself establish creation. Claude's pinned SDK creation criteria require
+its exact supported CLI version, builtin tool evidence and corroborating native
+local-agent observations; these synthetic tests do not verify an installed CLI.
+Codex successful spawn may produce Created without an additional Associated.
+Native thread snapshots returned during Codex creation seed the SDK subscription;
+historical relationships remain associated, never newly created. Resume keeps its
+pre-RPC subscription and excludes native turn history; no history-import API or
+Claude history-seed input is exposed by this Runtime.
+
+`agent.state_changed` describes observed source/run state. A terminal run does
+not delete the reusable agent. Claude's SDK-derived records preserve original run
+ID and stale qualifier; a missing run never inherits the newest run. Native frames
+preserve only their own observed identities; native stale classification remains
+unknown when the public SDK provides none. Codex retains child turn IDs separately
+from root WorkRef. Child and unresolved facts never acquire the current foreground
+operation association. Child message streaming contexts are isolated by exact
+observed source/run/tool identities; enrichment does not guess a stream merge.
+Child metadata cannot overwrite root metadata.
+
+`task.changed` retains original task identity, run, background evidence, observed
+status and optional progress/result. `stateObserved` distinguishes an absent
+status patch from an explicitly observed unknown native status: omission keeps
+the prior projection, while an unknown observed status replaces it with unknown.
+`task.snapshot` is an explicit replacement inventory for a source scope, including
+an empty inventory. Omitted tasks mean no update; null or malformed known inventory
+is a decode error. Root task notifications use the native session's inventory
+scope; explicitly sourced child inventories remain separate. Source-scope values
+are opaque. `Session.Snapshot().Background` includes task observations and per-source
+inventories/completeness independently of foreground and attachment state. Unknown
+inventory differs from an observed empty replacement. Global completeness stays
+partial even for a complete source inventory, since unseen child sources may exist.
+Terminal task observations are retained until their source replaces them.
+
+Background projection retains at most 256 task/run entries, 256 source scopes and
+1 MiB serialized state per attachment; overflow ends publication with explicit
+`ErrBackpressure`, preserving the prior snapshot. Claude child message contexts
+retain at most 256 distinct source/run contexts and 1 MiB of identity data; excess
+observations emit a scoped backpressure failure without guessing another context.
+These fixed local limits do not bound SDK queues or whole-process memory.
+
+`usage.updated` preserves native accounting counters as numeric JSON without
+float64 conversion, its accounting scope and cumulative/delta/unknown mode.
+Codex total and last counters are separate cumulative and delta observations;
+Claude message, task and result counters keep distinct accounting scopes and
+unknown mode. Native child inclusion is currently unknown in both adapters. The
+Runtime never sums accounting observations; root totals and child measurements
+must not be blindly added. Consumers must retain envelope/subject scope and source
+position when deciding whether a measurement is additive. Common serialization
+also represents explicit yes/no child inclusion when evidence is available.
+
+`observation.changed` preserves SDK forwarding/lineage/run observation information
+and completeness separately from native work termination. SDK startup uncertainty,
+unknown ancestry and local observation gaps cannot manufacture root authority.

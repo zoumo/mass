@@ -107,3 +107,78 @@ func (s *eventSuite) TestStructuredToolSchemaAndTruncationEvidence() {
 		})
 	}
 }
+
+func (s *eventSuite) TestAgentTaskAndUsageUnion() {
+	subject := &rt.EventSubject{AgentID: "agent", RunID: "old-run", TaskID: "task", ParentToolRef: "tool", AssociationRef: "sdk-key", AssociationScope: "sdk_attachment"}
+	task := rt.TaskPayload{TaskRef: "task", SourceScope: "source", Subject: *subject, Background: rt.Known(true), State: "running", Completeness: "partial"}
+	for _, tc := range []struct {
+		name string
+		set  func(*rt.Event)
+	}{
+		{"associated", func(e *rt.Event) {
+			e.Kind = rt.AgentAssociated
+			e.Association = &rt.AgentAssociationPayload{State: "enriched", Evidence: "native_identity", Provenance: "live", Completeness: "partial"}
+		}},
+		{"created", func(e *rt.Event) {
+			e.Kind = rt.AgentCreated
+			e.Creation = &rt.AgentCreatedPayload{Evidence: "sdk_creation", Provenance: "live"}
+		}},
+		{"run terminal", func(e *rt.Event) {
+			e.Kind = rt.AgentStateChanged
+			e.AgentState = &rt.AgentStatePayload{State: "terminal", Terminal: true, Outcome: "completed", Completeness: "partial"}
+		}},
+		{"task", func(e *rt.Event) { e.Kind = rt.TaskChanged; e.Task = &task }},
+		{"snapshot", func(e *rt.Event) {
+			e.Kind = rt.TaskSnapshot
+			e.TaskSnapshot = &rt.TaskSnapshotPayload{Mode: "replace", SourceScope: "source", Tasks: []rt.TaskPayload{task}, Completeness: "complete"}
+		}},
+		{"empty snapshot", func(e *rt.Event) {
+			e.Kind = rt.TaskSnapshot
+			e.TaskSnapshot = &rt.TaskSnapshotPayload{Mode: "replace", SourceScope: "source", Tasks: []rt.TaskPayload{}, Completeness: "complete"}
+		}},
+		{"usage cumulative", func(e *rt.Event) {
+			e.Kind = rt.UsageUpdated
+			e.Usage = &rt.UsagePayload{Counters: map[string]json.RawMessage{"tokens": json.RawMessage(`9007199254740993`)}, Mode: "cumulative", AccountingScope: "root", ChildInclusion: "yes"}
+		}},
+		{"usage delta", func(e *rt.Event) {
+			e.Kind = rt.UsageUpdated
+			e.Usage = &rt.UsagePayload{Counters: map[string]json.RawMessage{"tokens": json.RawMessage(`3`)}, Mode: "delta", AccountingScope: "child", ChildInclusion: "no"}
+		}},
+		{"observation", func(e *rt.Event) {
+			e.Kind = rt.ObservationChanged
+			e.Observation = &rt.ObservationPayload{State: "incomplete", Completeness: "partial"}
+		}},
+	} {
+		s.Run(tc.name, func() {
+			e := eventWithMessage()
+			e.Message = nil
+			e.Subject = subject
+			tc.set(&e)
+			data, err := json.Marshal(e)
+			s.Require().NoError(err)
+			var decoded rt.Event
+			s.Require().NoError(json.Unmarshal(data, &decoded))
+			s.Equal(e, decoded)
+			e.Work = &rt.WorkPayload{Status: "completed"}
+			_, err = json.Marshal(e)
+			s.Error(err)
+		})
+	}
+	for _, bad := range []rt.Event{
+		{Kind: rt.AgentAssociated, Association: &rt.AgentAssociationPayload{State: "created", Evidence: "label", Completeness: "partial"}},
+		{Kind: rt.TaskSnapshot, TaskSnapshot: &rt.TaskSnapshotPayload{Mode: "replace", SourceScope: "source", Tasks: nil, Completeness: "complete"}},
+		{Kind: rt.TaskChanged, Task: &rt.TaskPayload{TaskRef: "task", State: "deleted"}},
+		{Kind: rt.UsageUpdated, Usage: &rt.UsagePayload{Counters: map[string]json.RawMessage{}, Mode: "sum", AccountingScope: "root", ChildInclusion: "yes"}},
+	} {
+		e := eventWithMessage()
+		e.Message = nil
+		e.Subject = subject
+		e.Kind = bad.Kind
+		e.Association = bad.Association
+		e.Task = bad.Task
+		e.TaskSnapshot = bad.TaskSnapshot
+		e.Usage = bad.Usage
+		_, err := json.Marshal(e)
+		s.Error(err)
+	}
+}
