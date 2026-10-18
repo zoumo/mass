@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"time"
 
 	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -33,7 +34,7 @@ const maxControlRecords = 256
 
 func NewSession(native NativeSession) rt.Session {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &publishedSession{native: native, epoch: rand.Text(), commands: map[string]*command{}, wake: make(chan struct{}), events: make(chan rt.Event, 64), finished: make(chan struct{}), ctx: ctx, cancel: cancel, foreground: "idle"}
+	s := &publishedSession{native: native, epoch: rand.Text(), commands: map[string]*command{}, wake: make(chan struct{}), events: make(chan rt.Event, 64), finished: make(chan struct{}), closeFinished: make(chan struct{}), ctx: ctx, cancel: cancel, foreground: "idle", observedAt: time.Now().UTC()}
 	go s.receive()
 	return s
 }
@@ -339,16 +340,28 @@ func (s *publishedSession) observe(e *rt.Event) {
 }
 func (s *publishedSession) Close() error {
 	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		<-s.closeFinished
+		return s.closeErr
+	}
 	s.closed = true
+	s.observedAt = time.Now().UTC()
 	s.native.InvalidateInteractions("")
 	if s.active != nil && !s.active.finished {
 		s.foreground = "unknown"
+		s.active.receipt.Outcome = "unknown"
+		s.active.receipt.Failure = failure("outcome_unknown", s.active.receipt.OperationRef, s.Key())
 	}
 	s.signal()
 	s.mu.Unlock()
 	s.cancel()
 	err := s.native.Close()
 	<-s.finished
+	s.mu.Lock()
+	s.closeErr = err
+	close(s.closeFinished)
+	s.mu.Unlock()
 	return err
 }
 

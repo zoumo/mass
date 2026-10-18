@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -38,14 +39,25 @@ type session struct {
 	done        chan struct{}
 	once        sync.Once
 	authorities managed.Authorities
+	control     sync.Mutex
+	resumed     bool
+	admitting   chan struct{}
+	works       map[string]bool
 }
 
 var _ managed.NativeSession = (*session)(nil)
 
 // New prepares a named Runtime without starting a native process.
 func New(name string, options rt.Config, revision uint64) *managed.Runtime {
+	return NewWithBindings(name, options, revision, nil)
+}
+
+func NewWithBindings(name string, options rt.Config, revision uint64, bindings rt.BindingStore) *managed.Runtime {
 	options.Env = append([]string{}, options.Env...)
-	return managed.New(name, "codex", revision, &driver{name: name, options: options}, options.CreationLimits)
+	if options.Dir == "" {
+		options.Dir, _ = os.Getwd()
+	}
+	return managed.New(name, "codex", revision, &driver{name: name, options: options}, options.CreationLimits, options, bindings)
 }
 func (c *driver) Start(ctx context.Context) (rt.Health, error) {
 	lifetime, cancel := context.WithCancel(context.Background())
@@ -115,24 +127,10 @@ func (c *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 	if result.Thread.ID == "" {
 		return nil, rt.ErrInvalidInput
 	}
-	sub, err := client.Subscribe(context.Background(), result.Thread.ID, types.SubscriptionOptions{})
+	s, err := c.attach(client, result.Thread.ID, false)
 	if err != nil {
-		return nil, safeError(ctx, "subscribe")
+		return nil, err
 	}
-	s := &session{conn: c, id: result.Thread.ID, sub: sub, requests: make(chan sdk.Request, 64), done: make(chan struct{})}
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		_ = s.Close()
-		return nil, rt.ErrUnavailable
-	}
-	if _, exists := c.sessions[s.id]; exists {
-		c.mu.Unlock()
-		_ = sub.Abort()
-		return nil, rt.ErrConflict
-	}
-	c.sessions[s.id] = s
-	c.mu.Unlock()
 	published := managed.NewSession(s)
 	if options.InitialInput != nil {
 		if _, err := published.Submit(ctx, rt.TextInput(*options.InitialInput)); err != nil {
@@ -141,6 +139,54 @@ func (c *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 		}
 	}
 	return published, nil
+}
+func (c *driver) attach(client *sdk.Client, id string, resumed bool) (*session, error) {
+	sub, err := client.Subscribe(context.Background(), id, types.SubscriptionOptions{})
+	if err != nil {
+		return nil, rt.ErrUnavailable
+	}
+	s := &session{conn: c, id: id, resumed: resumed, works: map[string]bool{}, sub: sub, requests: make(chan sdk.Request, 64), done: make(chan struct{})}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		_ = s.Close()
+		return nil, rt.ErrUnavailable
+	}
+	if existing := c.sessions[s.id]; existing != nil && existing.Snapshot().Attachment != "closed" {
+		c.mu.Unlock()
+		_ = sub.Abort()
+		return nil, rt.ErrConflict
+	}
+	c.sessions[s.id] = s
+	c.mu.Unlock()
+	return s, nil
+}
+func (c *driver) ResumeSession(ctx context.Context, key rt.SessionKey) (rt.Session, error) {
+	c.mu.Lock()
+	client, closed := c.client, c.closed
+	c.mu.Unlock()
+	if closed || client == nil {
+		return nil, rt.ErrUnavailable
+	}
+	// Reserve the exact local route before native I/O: requests/notifications can
+	// follow the resume reply before the SDK Call returns. Nothing is public until
+	// identity is verified, and failure aborts only this provisional subscription.
+	s, err := c.attach(client, key.SessionID, true)
+	if err != nil {
+		return nil, err
+	}
+	// The public helper rejects mismatched identities before exposing the response.
+	// Use typed public Call to distinguish mismatch from malformed recovery.
+	var result types.ThreadResumeResponse
+	if err = client.Call(ctx, "thread/resume", types.ThreadResumeParams{ThreadID: key.SessionID, ExcludeTurns: types.Some(true)}, &result); err != nil {
+		_ = s.Close()
+		return nil, rt.ErrUnverifiable
+	}
+	if result.Thread.ID != key.SessionID {
+		_ = s.Close()
+		return nil, rt.ErrIdentityMismatch
+	}
+	return managed.NewSession(s), nil
 }
 func (c *driver) Stop() error {
 	c.mu.Lock()
@@ -182,7 +228,7 @@ func (s *session) Snapshot() rt.SessionSnapshot {
 }
 
 func (s *session) Capabilities() rt.Capabilities {
-	return rt.Capabilities{NativeTurnID: true, NativeAcknowledgement: true}
+	return rt.Capabilities{NativeTurnID: true, NativeAcknowledgement: true, VerifiedResume: true}
 }
 func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error) {
 	select {
@@ -193,9 +239,23 @@ func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error
 		return receipt, &rt.SafeError{Category: "unavailable", Scope: "operation", Message: "attachment is closed"}
 	default:
 	}
+	s.control.Lock()
+	if s.resumed {
+		s.admitting = make(chan struct{})
+	}
+	s.control.Unlock()
 	s.authorities.BeginWork()
 	input := types.UserInput{Text: types.Ptr(types.TextUserInput{Type: types.TextUserInputTypeText, Text: text, TextElements: types.Some([]types.TextElement{})})}
 	result, err := s.conn.client.StartTurn(ctx, types.TurnStartParams{ThreadID: s.id, Input: []types.UserInput{input}})
+	s.control.Lock()
+	if s.resumed {
+		if err == nil {
+			s.works[result.Turn.ID] = true
+		}
+		close(s.admitting)
+		s.admitting = nil
+	}
+	s.control.Unlock()
 	if err != nil {
 		return submissionError(err)
 	}
@@ -244,6 +304,10 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 				continue
 			}
 			event, handle := mapRequest(request, s.id)
+			if s.resumed && handle != nil && !s.currentAuthority(ctx, event.WorkRef) {
+				event = rt.Event{Kind: rt.Unknown, WorkRef: event.WorkRef, Diagnostic: diagnostic("request/previous_attachment_work", nil), Origin: rt.EventOrigin{Kind: "native", Attribution: "unresolved", Completeness: "unknown"}}
+				handle = nil
+			}
 			if handle != nil {
 				ref, err := s.authorities.Add(handle)
 				if err != nil {
@@ -294,6 +358,26 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 			return event, nil
 		}
 	}
+}
+
+// A resumed attachment cannot mint control authority for historical work.
+// Wait for an in-flight new submission's exact ACK before classifying a request.
+func (s *session) currentAuthority(ctx context.Context, work string) bool {
+	s.control.Lock()
+	pending := s.admitting
+	s.control.Unlock()
+	if pending != nil {
+		select {
+		case <-pending:
+		case <-ctx.Done():
+			return false
+		case <-s.done:
+			return false
+		}
+	}
+	s.control.Lock()
+	defer s.control.Unlock()
+	return work != "" && s.works[work]
 }
 func diagnostic(kind string, data []byte) rt.Diagnostic {
 	sum := sha256.Sum256(data)

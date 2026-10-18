@@ -16,11 +16,15 @@ import (
 )
 
 type Catalog struct {
+	bindings rt.BindingStore
 	mu       sync.Mutex
 	runtimes map[string]*managed.Runtime
 }
 
-func New() *Catalog { return &Catalog{runtimes: make(map[string]*managed.Runtime)} }
+func New() *Catalog { return NewWithBindings(nil) }
+func NewWithBindings(bindings rt.BindingStore) *Catalog {
+	return &Catalog{bindings: bindings, runtimes: make(map[string]*managed.Runtime)}
+}
 
 const maxNameBytes = 128
 
@@ -66,11 +70,11 @@ func valid(reg rt.Registration) bool {
 	}
 	return true
 }
-func construct(reg rt.Registration, revision uint64) *managed.Runtime {
+func (c *Catalog) construct(reg rt.Registration, revision uint64) *managed.Runtime {
 	if reg.Type == "codex" {
-		return codex.New(reg.Name, reg.Config, revision)
+		return codex.NewWithBindings(reg.Name, reg.Config, revision, c.bindings)
 	}
-	return claude.New(reg.Name, reg.Config, revision)
+	return claude.NewWithBindings(reg.Name, reg.Config, revision, c.bindings)
 }
 func (c *Catalog) Register(reg rt.Registration) (rt.Snapshot, error) {
 	if !valid(reg) {
@@ -81,7 +85,7 @@ func (c *Catalog) Register(reg rt.Registration) (rt.Snapshot, error) {
 	if _, exists := c.runtimes[reg.Name]; exists {
 		return rt.Snapshot{}, rt.ErrConflict
 	}
-	runtime := construct(reg, 1)
+	runtime := c.construct(reg, 1)
 	c.runtimes[reg.Name] = runtime
 	return runtime.Status(), nil
 }
@@ -123,7 +127,7 @@ func (c *Catalog) UpdateConfig(name string, config rt.Config, expectedRevision u
 	if !runtime.Retire() {
 		return rt.Snapshot{}, rt.ErrConflict
 	}
-	replacement := construct(reg, expectedRevision+1)
+	replacement := c.construct(reg, expectedRevision+1)
 	c.runtimes[name] = replacement
 	return replacement.Status(), nil
 }

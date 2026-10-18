@@ -11,29 +11,46 @@ import (
 // One publication owner assigns final cursors and projects metadata. Adapter
 // receive positions retain their own meaning, including before identity binds.
 type publishedSession struct {
-	native     NativeSession
-	next       sync.Mutex
-	mu         sync.Mutex
-	epoch      string
-	seq        uint64
-	metadata   rt.MetadataPayload
-	commands   map[string]*command
-	active     *command
-	foreground string
-	closed     bool
-	wake       chan struct{}
-	events     chan rt.Event
-	finished   chan struct{}
-	terminal   error
-	ctx        context.Context
-	cancel     context.CancelFunc
+	native        NativeSession
+	next          sync.Mutex
+	mu            sync.Mutex
+	epoch         string
+	seq           uint64
+	metadata      rt.MetadataPayload
+	commands      map[string]*command
+	active        *command
+	foreground    string
+	closed        bool
+	closeFinished chan struct{}
+	closeErr      error
+	wake          chan struct{}
+	events        chan rt.Event
+	finished      chan struct{}
+	terminal      error
+	observedAt    time.Time
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 func (s *publishedSession) Snapshot() rt.SessionSnapshot {
 	snapshot := s.native.Snapshot()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closed {
+		snapshot.Attachment = "closing"
+		select {
+		case <-s.closeFinished:
+			snapshot.Attachment = "closed"
+		default:
+		}
+	}
 	snapshot.ConnectionEpoch = s.epoch
+	snapshot.ObservedAt = s.observedAt
+	snapshot.Freshness = "cached"
+	snapshot.Availability = "available"
+	if s.closed || s.terminal != nil {
+		snapshot.Availability = "unavailable"
+	}
 	snapshot.Foreground.State = s.foreground
 	if s.active != nil {
 		snapshot.Foreground.OperationRef = s.active.receipt.OperationRef
@@ -50,6 +67,7 @@ func (s *publishedSession) receive() {
 		if err != nil {
 			s.mu.Lock()
 			s.terminal = err
+			s.observedAt = time.Now().UTC()
 			if s.active != nil && !s.active.finished {
 				if !isKnown(s.active.receipt.NativeAcknowledged) && !isKnown(s.active.receipt.WriteCompleted) {
 					s.active.receipt.Outcome = "unknown"
@@ -79,6 +97,9 @@ func (s *publishedSession) receive() {
 		}
 		s.observe(&e)
 		e, err = s.publish(e)
+		if err == nil {
+			s.observedAt = e.ObservedAt
+		}
 		s.mu.Unlock()
 		if err != nil {
 			s.mu.Lock()

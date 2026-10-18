@@ -28,8 +28,15 @@ type driver struct {
 }
 
 func New(name string, options rt.Config, revision uint64) *managed.Runtime {
+	return NewWithBindings(name, options, revision, nil)
+}
+
+func NewWithBindings(name string, options rt.Config, revision uint64, bindings rt.BindingStore) *managed.Runtime {
 	options.Env = append([]string{}, options.Env...)
-	return managed.New(name, "claude", revision, &driver{name: name, options: options}, options.CreationLimits)
+	if options.Dir == "" {
+		options.Dir, _ = os.Getwd()
+	}
+	return managed.New(name, "claude", revision, &driver{name: name, options: options}, options.CreationLimits, options, bindings)
 }
 func (d *driver) Start(ctx context.Context) (rt.Health, error) {
 	if err := ctx.Err(); err != nil {
@@ -85,6 +92,42 @@ func (d *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 		return nil, c.failCreation(rt.ErrOutcomeUnknown)
 	}
 }
+func (d *driver) ResumeSession(ctx context.Context, key rt.SessionKey) (rt.Session, error) {
+	lifetime, cancel := context.WithCancel(context.Background())
+	deadline, _ := ctx.Deadline()
+	c := &connection{name: d.name, ctx: lifetime, cancel: cancel, events: make(chan rt.Event, d.options.CreationLimits.Effective().Facts+1), finished: make(chan struct{}), identity: make(chan struct{}), limits: d.options.CreationLimits.Effective(), identityDeadline: deadline}
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		cancel()
+		return nil, rt.ErrUnavailable
+	}
+	d.connections = append(d.connections, c)
+	d.mu.Unlock()
+	openCtx, stopOpen := context.WithCancel(ctx)
+	stopLifetime := context.AfterFunc(lifetime, stopOpen)
+	defer stopOpen()
+	defer stopLifetime()
+	if err := c.openResume(openCtx, d.options, key.SessionID); err != nil {
+		return nil, c.failCreation(rt.ErrUnverifiable)
+	}
+	// Only authoritative native observation proves identity. ResumeID is a request,
+	// and sending a hidden prompt to obtain proof would replay unauthorized work.
+	select {
+	case <-c.identity:
+		c.mu.Lock()
+		id := c.nativeID
+		c.mu.Unlock()
+		if id != key.SessionID {
+			return nil, c.failCreation(rt.ErrIdentityMismatch)
+		}
+		return managed.NewSession(&session{conn: c}), nil
+	case <-ctx.Done():
+		return nil, c.failCreation(rt.ErrUnverifiable)
+	case <-c.finished:
+		return nil, c.failCreation(rt.ErrUnverifiable)
+	}
+}
 func (d *driver) Stop() error {
 	d.mu.Lock()
 	d.closed = true
@@ -127,6 +170,9 @@ type session struct {
 var _ managed.NativeSession = (*session)(nil)
 
 func (c *connection) open(ctx context.Context, options rt.Config) error {
+	return c.openResume(ctx, options, "")
+}
+func (c *connection) openResume(ctx context.Context, options rt.Config, resumeID string) error {
 	c.opening.Lock()
 	defer c.opening.Unlock()
 	if ctx.Err() != nil {
@@ -135,7 +181,7 @@ func (c *connection) open(ctx context.Context, options rt.Config) error {
 	if c.ctx.Err() != nil {
 		return rt.ErrUnavailable
 	}
-	client, err := sdk.Open(ctx, sdk.Options{CLIPath: options.Executable, Env: options.Env, WorkDir: options.Dir, PermissionHandler: func(p *sdk.PermissionRequest) {
+	client, err := sdk.Open(ctx, sdk.Options{ResumeID: resumeID, CLIPath: options.Executable, Env: options.Env, WorkDir: options.Dir, PermissionHandler: func(p *sdk.PermissionRequest) {
 		if !c.reserveProvisional(len(p.Raw())) {
 			c.cancel()
 			return
@@ -300,7 +346,7 @@ func (s *session) Snapshot() rt.SessionSnapshot {
 	}
 	return rt.SessionSnapshot{Key: s.Key(), Attachment: state, Interactions: s.conn.authorities.Summary(), ObservedAt: time.Now().UTC()}
 }
-func (s *session) Capabilities() rt.Capabilities { return rt.Capabilities{} }
+func (s *session) Capabilities() rt.Capabilities { return rt.Capabilities{VerifiedResume: true} }
 func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error) {
 	if s.conn.ctx.Err() != nil {
 		receipt := rt.UnknownSubmission()

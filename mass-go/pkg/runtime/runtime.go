@@ -16,6 +16,8 @@ type Runtime interface {
 	GetOperation(string) (CreationOperation, error)
 	ContinueCreation(context.Context, string, string) (CreationOperation, error)
 	CancelOperation(context.Context, string) (CreationOperation, error)
+	ResumeSession(context.Context, SessionKey) (Session, error)
+	CloseSession(context.Context, SessionKey, CloseGoal) (CloseReceipt, error)
 	GetSession(SessionKey) (Session, error)
 	ListSessions() []SessionSnapshot
 	Respond(context.Context, SessionKey, string, Response) (ResponseReceipt, error)
@@ -23,6 +25,8 @@ type Runtime interface {
 }
 
 var (
+	ErrIdentityMismatch   = errors.New("native session identity mismatch")
+	ErrUnverifiable       = errors.New("native session recovery unverifiable")
 	ErrInvalidInteraction = errors.New("interaction authority is invalid")
 	ErrBusy               = errors.New("foreground submission unresolved")
 	ErrBackpressure       = errors.New("runtime control record bound reached")
@@ -140,6 +144,8 @@ type SessionKey struct {
 }
 type SessionSnapshot struct {
 	Key             SessionKey         `json:"key"`
+	Freshness       string             `json:"freshness"`
+	Availability    string             `json:"availability"`
 	ConnectionEpoch string             `json:"connectionEpoch,omitempty"`
 	Foreground      ForegroundState    `json:"foreground"`
 	Interactions    InteractionSummary `json:"interactions"`
@@ -166,7 +172,7 @@ type Session interface {
 	Respond(context.Context, string, Response) (ResponseReceipt, error)
 }
 
-type Capabilities struct{ NativeTurnID, NativeAcknowledgement bool }
+type Capabilities struct{ NativeTurnID, NativeAcknowledgement, VerifiedResume, NativeRelease bool }
 type EventKind string
 
 const (
