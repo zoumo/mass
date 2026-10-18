@@ -26,7 +26,8 @@ ordering promise between sessions.
 `sourcePosition` is an attachment-local adapter receive cursor, scoped by the
 event's Runtime/session/epoch. Several converted facts can share one source
 position. Separate SDK event/request channels and callbacks do not establish a
-native wire total order. Final `seq` is distinct from that source position.
+native wire total order. Codex permissions from the separate request channel have no sourcePosition.
+Final `seq` is distinct from that source position.
 
 `origin` records native, SDK-derived or Runtime provenance, attribution and
 observation completeness. Claude's explicit `isReplay` and `isSynthetic` values
@@ -303,3 +304,24 @@ also represents explicit yes/no child inclusion when evidence is available.
 `observation.changed` preserves SDK forwarding/lineage/run observation information
 and completeness separately from native work termination. SDK startup uncertainty,
 unknown ancestry and local observation gaps cannot manufacture root authority.
+
+
+## Delivery settlement
+
+One per-session publication owner feeds the common ChannX queue. Configurable
+count/serialized-byte quotas include accepted unread output, and apply equally
+to previews, complete facts, interactions and lifecycle data. Capacity failure
+retains the accepted prefix and finishes Next with explicit incomplete/backpressure;
+it does not silently evict complete events. Unknown valid variants keep a
+classified diagnostic and digest, including valid non-object payloads. Known
+malformed facts publish decode_error at the proven session scope and then seal
+that attachment; unknown supported fields retain their documented availability
+and extension behavior. Safe error/diagnostic payloads exclude arbitrary native
+error text and raw unknown payloads. Recognized user/tool content remains content.
+
+StopDrain and StopAbort have distinct public delivery settlement and a total
+bounded wait; see the [Runtime stop contract](../README.md#ordered-delivery-failure-and-bounded-stop).
+A terminal SDK request channel is not evidence of event-stream EOF. Source
+channels and observation timestamps never establish a native global order.
+SDK queues and native truncation/timeout limits remain outside stronger Runtime
+guarantees. No local drain, EOF or ACK proves native release.

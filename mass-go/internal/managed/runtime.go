@@ -21,30 +21,34 @@ type Driver interface {
 	Stop() error
 }
 type attempt struct {
-	done chan struct{}
-	err  error
+	done      chan struct{}
+	err       error
+	sessions  []rt.Session
+	abandoned sync.Once
 }
 type creation struct {
 	snapshot rt.CreationOperation
 	canceled bool
 }
 type Runtime struct {
-	bindings     rt.BindingStore
-	scope        string
-	resuming     map[rt.SessionKey]bool
-	closing      map[rt.SessionKey]bool
-	closeUnknown map[rt.SessionKey]bool
-	operations   map[string]*creation
-	limits       rt.CreationLimits
-	mu           sync.Mutex
-	driver       Driver
-	snapshot     rt.Snapshot
-	activation   *attempt
-	stopping     *attempt
-	sessions     []rt.Session
-	creates      sync.WaitGroup
-	retired      bool
-	unsettled    bool
+	bindings        rt.BindingStore
+	scope           string
+	resuming        map[rt.SessionKey]bool
+	closing         map[rt.SessionKey]bool
+	closeUnknown    map[rt.SessionKey]bool
+	operations      map[string]*creation
+	limits          rt.CreationLimits
+	mu              sync.Mutex
+	driver          Driver
+	snapshot        rt.Snapshot
+	activation      *attempt
+	stopping        *attempt
+	sessions        []rt.Session
+	retiredSessions []rt.Session
+	attachments     int
+	creates         sync.WaitGroup
+	retired         bool
+	unsettled       bool
 }
 
 func New(name, kind string, revision uint64, driver Driver, limits rt.CreationLimits, config rt.Config, bindings rt.BindingStore) *Runtime {
@@ -91,6 +95,7 @@ func (r *Runtime) Start(ctx context.Context) error {
 	}
 	a := &attempt{done: make(chan struct{})}
 	r.activation = a
+	r.stopping = nil
 	r.snapshot.Phase = "starting"
 	r.mu.Unlock()
 	health, err := r.driver.Start(ctx)
@@ -119,6 +124,9 @@ func (r *Runtime) CreateSession(ctx context.Context, options rt.SessionOptions) 
 		return rt.CreationOperation{}, err
 	}
 	if options.InitialInput != nil {
+		if _, err := rt.TextInput(*options.InitialInput).Text(); err != nil {
+			return rt.CreationOperation{}, err
+		}
 		input := *options.InitialInput
 		options.InitialInput = &input
 	}
@@ -126,6 +134,9 @@ func (r *Runtime) CreateSession(ctx context.Context, options rt.SessionOptions) 
 	defer r.mu.Unlock()
 	if r.snapshot.Phase != "ready" {
 		return rt.CreationOperation{}, rt.ErrUnavailable
+	}
+	if len(r.operations) >= 256 || r.attachments >= 256 {
+		return rt.CreationOperation{}, rt.ErrBackpressure
 	}
 	var token [16]byte
 	if _, err := rand.Read(token[:]); err != nil {
@@ -136,6 +147,7 @@ func (r *Runtime) CreateSession(ctx context.Context, options rt.SessionOptions) 
 	if !r.driver.RequiresInitialInput() && options.InitialInput == nil {
 		op.snapshot.Evidence.InitialInputWritten = rt.Observation{State: "not_applicable"}
 	}
+	r.attachments++
 	r.operations[ref] = op
 	if r.driver.RequiresInitialInput() && options.InitialInput == nil {
 		op.snapshot.Phase = "awaiting_input"
@@ -168,6 +180,9 @@ func (r *Runtime) GetOperation(ref string) (rt.CreationOperation, error) {
 	return copyOperation(op.snapshot), nil
 }
 func (r *Runtime) ContinueCreation(ctx context.Context, ref, input string) (rt.CreationOperation, error) {
+	if _, err := rt.TextInput(input).Text(); err != nil {
+		return rt.CreationOperation{}, err
+	}
 	if err := ctx.Err(); err != nil {
 		return rt.CreationOperation{}, err
 	}
@@ -222,7 +237,7 @@ func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 		if err == nil {
 			if saveErr := r.saveBinding(ctx, session.Key()); saveErr != nil {
 				err = saveErr
-				if closeErr := session.Close(); closeErr != nil {
+				if closeErr := AbandonSession(session); closeErr != nil {
 					err = errors.Join(err, rt.ErrCleanupIncomplete)
 				}
 			}
@@ -261,7 +276,7 @@ func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 			op.snapshot.Phase = "cleaning_up"
 			op.snapshot.CleanupState = "pending"
 			r.mu.Unlock()
-			closeErr := session.Close()
+			closeErr := AbandonSession(session)
 			r.mu.Lock()
 			op.snapshot.Phase = "closed"
 			op.snapshot.CleanupState = "local_resources_released_native_unconfirmed"
@@ -316,36 +331,19 @@ func (r *Runtime) ListSessions() []rt.SessionSnapshot {
 }
 
 func (r *Runtime) Stop() error {
-	r.mu.Lock()
-	if a := r.stopping; a != nil {
-		r.mu.Unlock()
-		<-a.done
-		return a.err
-	}
-	if r.snapshot.Phase == "stopped" {
-		r.mu.Unlock()
-		return nil
-	}
-	a := &attempt{done: make(chan struct{})}
-	r.stopping = a
-	r.snapshot.Phase = "stopping"
-	for _, op := range r.operations {
-		if op.snapshot.Phase == "awaiting_input" {
-			op.canceled = true
-			op.snapshot.Phase = "closed"
-			op.snapshot.InputRequired = false
-			op.snapshot.CleanupState = "local_resources_released"
-		}
-	}
-	activation := r.activation
-	r.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), rt.DefaultStopTimeout)
+	defer cancel()
+	_, err := r.StopWith(ctx, rt.StopOptions{Policy: rt.StopAbort})
+	return err
+}
+func (r *Runtime) finishStop(a *attempt, activation *attempt) {
 	// Driver Stop interrupts outstanding SDK calls before waiting for creates.
 	err := r.driver.Stop()
-	r.mu.Lock()
-	sessions := append([]rt.Session(nil), r.sessions...)
-	r.mu.Unlock()
+	sessions := a.sessions
 	for _, session := range sessions {
-		_ = session.Close()
+		if closeErr := session.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 	}
 	if activation != nil {
 		<-activation.done
@@ -369,9 +367,9 @@ func (r *Runtime) Stop() error {
 	r.snapshot.ObservedAt = time.Now().UTC()
 	r.snapshot.Health.ObservedAt = r.snapshot.ObservedAt
 	close(a.done)
-	r.stopping = nil
+
 	r.mu.Unlock()
-	return err
+	return
 }
 
 // Retire atomically prevents old handles from activating after a catalog update.

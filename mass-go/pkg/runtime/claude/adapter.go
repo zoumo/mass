@@ -72,23 +72,23 @@ func (d *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 	if err := c.open(openCtx, d.options); err != nil {
 		return nil, c.failCreation(err)
 	}
-	s := managed.NewSession(&session{conn: c})
+	s := managed.NewSession(&session{conn: c}, d.options.DeliveryLimits)
 	if options.InitialInput == nil {
-		_ = s.Close()
+		_ = managed.AbandonSession(s)
 		return nil, c.failCreation(rt.ErrInvalidInput)
 	}
 	if _, err := s.Submit(ctx, rt.TextInput(*options.InitialInput)); err != nil {
-		_ = s.Close()
+		_ = managed.AbandonSession(s)
 		return nil, c.failCreation(err)
 	}
 	select {
 	case <-c.identity:
 		return s, nil
 	case <-ctx.Done():
-		_ = s.Close()
+		_ = managed.AbandonSession(s)
 		return nil, c.failCreation(rt.ErrOutcomeUnknown)
 	case <-c.finished:
-		_ = s.Close()
+		_ = managed.AbandonSession(s)
 		return nil, c.failCreation(rt.ErrOutcomeUnknown)
 	}
 }
@@ -121,7 +121,7 @@ func (d *driver) ResumeSession(ctx context.Context, key rt.SessionKey) (rt.Sessi
 		if id != key.SessionID {
 			return nil, c.failCreation(rt.ErrIdentityMismatch)
 		}
-		return managed.NewSession(&session{conn: c}), nil
+		return managed.NewSession(&session{conn: c}, d.options.DeliveryLimits), nil
 	case <-ctx.Done():
 		return nil, c.failCreation(rt.ErrUnverifiable)
 	case <-c.finished:
@@ -184,10 +184,8 @@ func (c *connection) openResume(ctx context.Context, options rt.Config, resumeID
 		return rt.ErrUnavailable
 	}
 	client, err := sdk.Open(ctx, sdk.Options{ResumeID: resumeID, CLIPath: options.Executable, Env: options.Env, WorkDir: options.Dir, PermissionHandler: func(p *sdk.PermissionRequest) {
-		if !c.reserveProvisional(len(p.Raw())) {
-			c.cancel()
-			return
-		}
+		// Budget the raw control observation in receive, exactly once. Callback
+		// cancellation must not preempt that queued fact or its failure cause.
 		event := c.permissionEvent(p)
 		event.ObservedAt = time.Now().UTC()
 		select {
@@ -211,7 +209,7 @@ func (c *connection) receive() {
 		if err != nil {
 			c.mu.Lock()
 			if c.terminal == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
-				c.terminal = errors.New("claude runtime event stream terminated")
+				c.terminal = errors.Join(rt.ErrIncomplete, &rt.SafeError{Category: "transport_error", Scope: "session", Message: "Claude session stream terminated"})
 			}
 			c.mu.Unlock()
 			return
@@ -421,7 +419,7 @@ func diagnostic(kind string, data []byte) rt.Diagnostic {
 	if len(kind) > 128 {
 		kind = kind[:128]
 	}
-	return rt.Diagnostic{NativeKind: kind, SHA256: hex.EncodeToString(sum[:])}
+	return rt.Diagnostic{Classification: "unknown_variant", NativeKind: kind, SHA256: hex.EncodeToString(sum[:])}
 }
 func (c *connection) mapEvent(native types.Event) []rt.Event {
 	base := rt.Event{Kind: rt.Unknown, SessionID: native.SessionID, FrameRef: native.UUID, Diagnostic: diagnostic(native.Type+"/"+native.Subtype, native.Raw), Origin: rt.EventOrigin{Kind: "native", Attribution: "root", Completeness: "complete", Replay: native.IsReplay, Synthetic: native.IsSynthetic}}
@@ -487,6 +485,12 @@ func (c *connection) mapEvent(native types.Event) []rt.Event {
 	before := mapper.retainedBytes()
 	previous := *mapper
 	if events, ok := mapper.convert(native, base); ok {
+		if !child && mapper.retainedBytes() > 1<<20 {
+			*mapper = previous
+			base.Kind = rt.Failure
+			base.Error = &rt.SafeError{Category: "backpressure", Scope: "session"}
+			return []rt.Event{base}
+		}
 		if child {
 			retainedDelta := mapper.retainedBytes() - before
 			c.childContextBytes += retainedDelta

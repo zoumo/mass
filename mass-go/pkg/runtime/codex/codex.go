@@ -20,13 +20,14 @@ import (
 )
 
 type driver struct {
-	options  rt.Config
-	name     string
-	mu       sync.Mutex
-	client   *sdk.Client
-	sessions map[string]*session
-	cancel   context.CancelFunc
-	closed   bool
+	options          rt.Config
+	name             string
+	mu               sync.Mutex
+	client           *sdk.Client
+	sessions         map[string]*session
+	cancel           context.CancelFunc
+	closed           bool
+	requestsFinished chan struct{}
 }
 type session struct {
 	conn        *driver
@@ -44,6 +45,9 @@ type session struct {
 	admitting   chan struct{}
 	works       map[string]bool
 	pending     []rt.Event
+	source      <-chan types.Event
+	sourceEnded bool
+	requestEnd  <-chan struct{}
 }
 
 var _ managed.NativeSession = (*session)(nil)
@@ -80,11 +84,13 @@ func (c *driver) Start(ctx context.Context) (rt.Health, error) {
 	}
 	c.client = client
 	c.sessions = make(map[string]*session)
+	c.requestsFinished = make(chan struct{})
 	c.mu.Unlock()
-	go c.routeRequests(lifetime, client)
+	go c.routeRequests(lifetime, client, c.requestsFinished)
 	return rt.Health{Configured: rt.Known(true), Connected: rt.Known(true), ProtocolResponsive: rt.Known(true), ProbeScope: "shared_protocol_initialize", ObservedAt: time.Now().UTC()}, nil
 }
-func (c *driver) routeRequests(ctx context.Context, client *sdk.Client) {
+func (c *driver) routeRequests(ctx context.Context, client *sdk.Client, finished chan struct{}) {
+	defer close(finished)
 	for {
 		select {
 		case <-ctx.Done():
@@ -136,10 +142,10 @@ func (c *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 	if err != nil {
 		return nil, err
 	}
-	published := managed.NewSession(s)
+	published := managed.NewSession(s, c.options.DeliveryLimits)
 	if options.InitialInput != nil {
 		if _, err := published.Submit(ctx, rt.TextInput(*options.InitialInput)); err != nil {
-			_ = published.Close()
+			_ = managed.AbandonSession(published)
 			return nil, err
 		}
 	}
@@ -150,7 +156,7 @@ func (c *driver) attach(client *sdk.Client, id string, resumed bool, history ...
 	if err != nil {
 		return nil, rt.ErrUnavailable
 	}
-	s := &session{conn: c, id: id, resumed: resumed, works: map[string]bool{}, sub: sub, requests: make(chan sdk.Request, 64), done: make(chan struct{})}
+	s := &session{source: sub.Events(), requestEnd: c.requestsFinished, conn: c, id: id, resumed: resumed, works: map[string]bool{}, sub: sub, requests: make(chan sdk.Request, 64), done: make(chan struct{})}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -191,7 +197,7 @@ func (c *driver) ResumeSession(ctx context.Context, key rt.SessionKey) (rt.Sessi
 		_ = s.Close()
 		return nil, rt.ErrIdentityMismatch
 	}
-	return managed.NewSession(s), nil
+	return managed.NewSession(s, c.options.DeliveryLimits), nil
 }
 func (c *driver) Stop() error {
 	c.mu.Lock()
@@ -245,6 +251,10 @@ func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error
 	default:
 	}
 	s.control.Lock()
+	if s.resumed && len(s.works) >= 256 {
+		s.control.Unlock()
+		return rt.UnknownSubmission(), &rt.SafeError{Category: "backpressure", Scope: "operation"}
+	}
 	if s.resumed {
 		s.admitting = make(chan struct{})
 	}
@@ -303,6 +313,12 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 			s.pending = s.pending[1:]
 			return event, nil
 		}
+		if s.sourceEnded && s.requestEnd == nil && len(s.requests) == 0 {
+			if s.sub.Err() != nil {
+				return rt.Event{}, errors.Join(rt.ErrIncomplete, &rt.SafeError{Category: "transport_error", Scope: "transport", Message: "Codex shared stream terminated"})
+			}
+			return rt.Event{}, io.EOF
+		}
 		select {
 		case <-s.done:
 			return rt.Event{}, io.EOF
@@ -327,16 +343,18 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 				}
 			}
 			event.RuntimeName = s.conn.name
-			s.position++
-			event.SourcePosition = s.position
+			event.SourcePosition = 0
 			event.ObservedAt = time.Now().UTC()
 			return event, nil
-		case native, ok := <-s.sub.Events():
+		case <-s.requestEnd:
+			// The request source has ended independently of the event stream.
+			// Drain this route before sealing; never infer native global order.
+			s.requestEnd = nil
+		case native, ok := <-s.source:
 			if !ok {
-				if s.sub.Err() != nil {
-					return rt.Event{}, errors.New("codex runtime event stream terminated")
-				}
-				return rt.Event{}, io.EOF
+				s.source = nil
+				s.sourceEnded = true
+				continue
 			}
 			var resolution *rt.Interaction
 			if native.Method == "serverRequest/resolved" {
@@ -403,7 +421,7 @@ func diagnostic(kind string, data []byte) rt.Diagnostic {
 	if len(kind) > 128 {
 		kind = kind[:128]
 	}
-	return rt.Diagnostic{NativeKind: kind, SHA256: hex.EncodeToString(sum[:])}
+	return rt.Diagnostic{Classification: "unknown_variant", NativeKind: kind, SHA256: hex.EncodeToString(sum[:])}
 }
 func safeError(ctx context.Context, operation string) error {
 	if err := ctx.Err(); err != nil {

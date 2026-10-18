@@ -21,7 +21,8 @@ func (s *catalogSuite) TestRegistrationIsSideEffectFree() {
 		s.Require().NoError(err)
 		s.Equal(description, described)
 		s.Equal(128, description.MaxNameBytes)
-		s.Len(description.ConfigFields, 4)
+		s.Len(description.ConfigFields, 5)
+		s.Len(description.DeliveryBounds, 2)
 		s.Len(description.CreationBounds, 3)
 	}
 	_, err := c.Describe("plugin")

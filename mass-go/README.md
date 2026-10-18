@@ -122,8 +122,9 @@ Config.CreationLimits and the type catalog expose finite provisional limits:
 | Timeout | 30 seconds for one native open, including explicit initial input | 1 millisecond–60 seconds |
 
 Zero selects the default. Timeout is a Go time.Duration (JSON nanoseconds).
-Native frames, permission callbacks and serialized SDK-derived observations
-share the provisional budget before root identity. The Claude delivery channel
+Native frames (including original permission requests) and serialized SDK-derived
+observations share the provisional budget before root identity. The asynchronous
+permission callback does not count the same original request a second time. The Claude delivery channel
 holds at most Facts+1 converted events; an early
 frame that expands beyond that capacity cannot block the open beyond Timeout.
 Overflow or expiry produces an explicit incomplete/unknown operation and owned
@@ -207,10 +208,17 @@ completion does not close the attachment, finish tools or clear background
 activity. Background inventories project observed task/run state and scoped
 replacements; missing inventory remains explicitly unknown.
 Native idle alone never settles an unresolved input. One common owner assigns
-publication sequence and preserves adapter observation timestamps. The public
-delivery queue holds 64 events; a stalled reader can delay further observation,
-so this is not an independent, unbounded status-observation guarantee. Close and
-Stop cancel this worker even when delivery is unread.
+publication sequence and preserves adapter observation timestamps. Each public stream has one publication owner and a golib ChannX queue, guarded
+by Runtime count and serialized-byte admission. Config.DeliveryLimits defaults
+to 256 retained facts and 4 MiB; nonzero ranges are 1–4096 facts and 1 byte–16 MiB.
+Zero selects the finite default. Dequeue releases the corresponding quota.
+Previews are retained under the same policy as complete facts; none are silently
+coalesced or dropped. On overflow, the accepted prefix remains readable, then
+Next returns ErrIncomplete joined with ErrBackpressure. The attachment stops
+observing and invalidates authorities without closing a healthy shared transport.
+Snapshots may precede public dequeue, and quota failure is explicit incompleteness.
+An upstream SDK queue can still accumulate; these are Runtime-owned bounds,
+not a whole-process memory guarantee.
 
 The event stream uses a versioned, data-only envelope and concrete payloads.
 See the [event contract](docs/events.md) for supported mappings, content presence,
@@ -421,3 +429,51 @@ Claude enrichment and stale/no-ID runs, child message/metadata isolation, backgr
 replacement and lossless scoped accounting. Native stale classification is retained
 only where the public SDK exposes it; no history-import or universal child-observation
 coverage is claimed.
+
+
+## Ordered delivery, failure and bounded stop
+
+`StopWith(ctx, StopOptions{Policy: StopDrain})` closes admission immediately and
+joins one cleanup owner. Local processes and attachments close independently of
+the public reader. Accepted public events remain available to a draining reader.
+If the reader does not drain before the total caller deadline, the receipt is
+`stop_unknown`, returns the deadline error and explicitly reports incomplete
+facts; unread delivery is then aborted. `StopAbort` explicitly discards unread
+public delivery and reports incomplete facts. It does not manufacture completion
+of native work. `Stop()` is the abort convenience with a five-second total wait.
+StopWith uses five seconds when its context has no deadline and caps a supplied
+wait at sixty seconds. Cleanup ownership continues after an expired wait;
+reactivation stays fenced until cleanup settles. Receipt ownedResources is known
+true only after successful local cleanup, otherwise unknown. Pending unknown
+creation outcomes remain visible through GetOperation and remainingOperations.
+No native release or remote-effect rollback is implied.
+
+Session.Close preserves its accepted public prefix; Runtime abort frees unread
+queues, including closed epochs retained across resume. Unpublished failed/canceled
+attachments release their queues because they can never acquire a public reader. A drain can report stopped with incompleteFacts=true: accepted delivery
+settled, but shutting a live native attachment cannot prove that every upstream
+fact was observed. A drain timeout never claims successful complete delivery.
+Other Runtime names remain independent. Session decode_error publishes the
+failure at the proven session scope, seals that attachment and preserves its
+prefix; shared Codex transport termination reaches each bound session with
+transport scope. Submitted work without a terminal result retains unknown
+completion/outcome even if its native ACK or local write was observed.
+
+The Codex SDK request channel and subscription stream settle independently.
+Closing requests does not terminate the subscription; event EOF does not hide
+already routed requests. Both sources settle before the terminal stream result.
+Permissions have observation timestamps but no sourcePosition that purports to
+order them against the separate event channel. Publication seq is the single
+per-session merge order; there is no native or cross-session total-order claim.
+
+Fixed admission limits also cover 256 registrations, 256 retained creation
+operations/attachment attempts per Runtime (including recovery), 256 environment entries and 1 MiB of executable/directory/
+environment text per config. Input and continuation strings are at most 1 MiB.
+Submission/authority/background/context bounds described above still apply;
+root Claude normalization identity data is bounded to 1 MiB. Exhaustion rejects
+admission or explicitly fails the scoped observation; retained complete facts
+are not evicted to make room. The pinned SDK's per-stream ChannX ignores its
+deprecated EventBuffer/EventQueue knobs. Its local CallTimeout can discard late
+replies; there is no timeout repair, automatic resend or SDK queue overflow claim.
+Native positive truncation remains unverified without reliable source evidence.
+External-server transport and S09 closure remain unsupported and unverified.
