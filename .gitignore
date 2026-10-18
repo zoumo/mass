@@ -19,33 +19,10 @@ coverage/
 # ── Generated slides ──
 docs/design_slides/
 
-# ── GSD runtime state (auto-generated) ──
-.gsd/auto.lock
-.gsd/completed-units.json
-.gsd/completed-units*.json
-.gsd/state-manifest.json
-.gsd/STATE.md
-.gsd/metrics.json
-.gsd/hook-state.json
-.gsd/notifications.jsonl
-.gsd/gsd.db*
-.gsd/doctor-history.jsonl
-.gsd/event-log.jsonl
-.gsd/activity/
-.gsd/journal/
-.gsd/runtime/
-.gsd/worktrees/
-.gsd/reports/
-.gsd/milestones/**/continue.md
-.gsd/milestones/**/*-CONTINUE.md
-.gsd/milestones/**/gsd.db*
-.gsd/milestones/**/*-META.json
-.gsd/milestones/**/*-VERIFY.json
-.gsd/milestones/**/*-PRE-EXEC-VERIFY.json
-.gsd/milestones/**/anchors/
+# Private scratch and planning state
+/.scratch/
+/.gsd/
 .gsd-id
-.gsd/mcp.json
-.gsd/CODEBASE.md
 
 # ── Tool output ──
 graphify-out/
@@ -88,3 +65,15 @@ tmp/
 .mcp.json
 .worktrees/
 .worktrees/
+
+# Retained runtime/cache state from earlier source layouts
+/data/
+/rustv2/data/
+/rustv2/target/
+/rustv2/dist/
+!/mass-rs/vendor/
+!/mass-rs/vendor/codex-app-server-client/
+!/mass-rs/vendor/codex-app-server-client/**
+
+# Rust workspace runtime default when launched from mass-rs (never source).
+/mass-rs/data/
