@@ -114,12 +114,14 @@ func (s *runtimeSuite) TestAuthorityLookupWhileNextWaits() {
 	// Allow the receive loop to enter its blocking read. This deadline is only
 	// a test coordination window; the lookup itself has no native I/O.
 	time.Sleep(20 * time.Millisecond)
-	authority := make(chan rt.ResponseHandle, 1)
-	go func() { authority <- session.ResponseHandle(e.Interaction.Ref) }()
+	authority := make(chan error, 1)
+	go func() {
+		_, err := session.Respond(ctx, e.Interaction.Ref, rt.Response{Decision: "allow_once"})
+		authority <- err
+	}()
 	select {
-	case handle := <-authority:
-		s.Require().NotNil(handle)
-		s.NoError(handle.Respond(ctx, rt.Response{Allow: true}))
+	case err := <-authority:
+		s.NoError(err)
 	case <-time.After(500 * time.Millisecond):
 		cancel()
 		<-finished

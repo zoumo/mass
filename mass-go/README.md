@@ -216,19 +216,55 @@ The event stream uses a versioned, data-only envelope and concrete payloads.
 See the [event contract](docs/events.md) for supported mappings, content presence,
 tool lifecycle, stream association and decode rules. Tools retain structured
 input/output, stable call references and explicit execution/failure evidence.
-Stronger interaction authority remains a separate slice.
+Interactions use `interaction.requested` data and Runtime-owned random references.
+Call `runtime.Respond(ctx, session.Key(), event.Interaction.Ref, response)` or
+`session.Respond(ctx, ref, response)` on the original live attachment. No public
+SDK handle or native request correlation is exposed. Permission decisions are
+`allow_once` and `deny_once`; permanent grants and native response objects are
+unsupported. Codex narrows these to its observed `availableDecisions` when
+present; an offer of only broader policy choices grants no one-time response.
+Questions retain option descriptions, single/multiple selection,
+free-text and secret constraints where observed. Nil constraint fields mean the
+native schema did not establish them. Claude's pinned question schema defines
+neither required nor secret fields; unknown native question/input fields stay
+private and survive answer conversion. Codex has no advertised multi-select
+question flag in this pinned schema.
 
-Interaction events contain a data reference, prompt and questions. The live
-attachment resolves its existing response authority through
-`session.ResponseHandle(event.Interaction.Ref)`; the event contains no handle.
-Respond once through that original authority. A canceled response context does
-not consume it. Runtime Stop invalidates pending SDK handles; native
-resolution/cancellation follows the pinned SDK's semantics. Serialization and
-replay create no authority. The current lookup is attachment-local and retains
-SDK queued-approval limitations; it does not claim the stronger lifecycle gate
-or typed response validation still required by the planned interaction work.
+```go
+receipt, err := worker.Respond(ctx, session.Key(), event.Interaction.Ref,
+    runtime.Response{Decision: "allow_once"})
+// Question alternative: Answers: map[string]runtime.Answer{
+//     questionRef: {Selections: []string{"A"}},
+// } (or Text: &text for a scalar/free-text answer).
+```
+
+The internal gate checks the original specification, attachment and native
+request state. Invalid answers and already-canceled contexts consume no authority.
+One concurrent caller reserves the response; every attempt handed to the SDK is
+single-use even after an unknown result. The receipt separates SDK handoff,
+completed write and native resolution. A completed write does not prove native
+acceptance. Observed native resolution/cancellation emits `interaction.resolved`
+when the original common reference is already known; otherwise it remains a safe
+diagnostic. The requested fact may still be dequeued later, with no usable authority.
+
+Session close, Runtime stop, target cancellation and observed root completion
+invalidate the original authority. Copied events and references cannot cross
+session or attachment epochs. Explicit child requests without proven ownership
+are diagnostic and receive no root authority. Invalidation is a gate before
+handoff; it cannot revoke an already handed-off SDK/socket write or an unobserved
+native decision. Claude provides no native work ID on a permission request:
+target invalidation covers requests observed on that attachment; a delayed SDK
+callback with no original work correlation cannot prove which historical work
+created it. No stronger historical attribution guarantee is advertised.
+Codex's pinned SDK rejects a duplicate active exact request ID on a shared
+connection; integer `7` and string `"7"` remain distinct. Claude's separate
+session processes may concurrently reuse the same request ID.
+
+Each attachment retains at most 256 authority records and 1 MiB of admitted native
+request bytes; it reports backpressure rather than evicting authority or
+silently allowing a decision. SDK queues are separate from these bounds.
 Identity-verified resume, durable history and production lifecycle/delivery
-guarantees are also not implemented. Local Codex detach does not prove native
+guarantees are not implemented. Local Codex detach does not prove native
 permission resolution.
 
 Next has one consumer; its context stops only that wait. Session creation's

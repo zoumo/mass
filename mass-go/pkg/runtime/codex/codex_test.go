@@ -157,8 +157,8 @@ func (s *runtimeSuite) TestInteractionAndInterruption() {
 		name, method, params, answer string
 		response                     rt.Response
 	}{
-		{"approval", "item/commandExecution/requestApproval", `{"threadId":"native-thread","turnId":"native-turn","itemId":"tool-1","startedAtMs":1,"command":"synthetic-only"}`, `{"decision":"accept"}`, rt.Response{Allow: true}},
-		{"question", "item/tool/requestUserInput", `{"threadId":"native-thread","turnId":"native-turn","itemId":"question-1","isBlocking":true,"questions":[{"id":"q","header":"Choice","question":"Pick?","isOther":false,"isSecret":false,"options":[]}]}`, `{"answers":{"q":{"answers":["blue"]}}}`, rt.Response{Answers: map[string][]string{"q": {"blue"}}}},
+		{"approval", "item/commandExecution/requestApproval", `{"threadId":"native-thread","turnId":"native-turn","itemId":"tool-1","startedAtMs":1,"command":"synthetic-only"}`, `{"decision":"accept"}`, rt.Response{Decision: "allow_once"}},
+		{"question", "item/tool/requestUserInput", `{"threadId":"native-thread","turnId":"native-turn","itemId":"question-1","isBlocking":true,"questions":[{"id":"q","header":"Choice","question":"Pick?","isOther":false,"isSecret":false,"options":[]}]}`, `{"answers":{"q":{"answers":["blue"]}}}`, rt.Response{Answers: map[string]rt.Answer{"q": {Text: strptr("blue")}}}},
 	} {
 		s.Run(tc.name, func() {
 			frames := append(startup(), turnStart()...)
@@ -171,15 +171,17 @@ func (s *runtimeSuite) TestInteractionAndInterruption() {
 			s.Require().NoError(err)
 			event := s.nextMapped(session, ctx)
 			s.Require().Equal(rt.InteractionRequested, event.Kind)
-			handle := session.ResponseHandle(event.Interaction.Ref)
-			s.Equal(`"original-request"`, handle.ID())
+			ref := event.Interaction.Ref
 			canceled, cancel := context.WithCancel(ctx)
 			cancel()
-			s.ErrorIs(handle.Respond(canceled, tc.response), context.Canceled)
-			s.NoError(handle.Err())
-			s.Require().NoError(handle.Respond(ctx, tc.response))
-			s.Error(handle.Respond(ctx, tc.response))
-			s.Error(handle.Err())
+			_, responseErr := session.Respond(canceled, ref, tc.response)
+			s.ErrorIs(responseErr, context.Canceled)
+			receipt, responseErr := session.Respond(ctx, ref, tc.response)
+			s.Require().NoError(responseErr)
+			s.Equal(rt.Known(true), receipt.WriteCompleted)
+			s.Equal("unknown", receipt.NativeResolution.State)
+			_, responseErr = session.Respond(ctx, ref, tc.response)
+			s.Error(responseErr)
 			_, cancelErr := session.Cancel(ctx, session.Snapshot().Foreground.OperationRef)
 			s.Require().NoError(cancelErr)
 			event = s.nextMapped(session, ctx)
@@ -209,15 +211,11 @@ func (s *runtimeSuite) TestPendingHandleExpiresOnClose() {
 	s.Require().NoError(err)
 	event := s.nextMapped(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
-	handle := session.ResponseHandle(event.Interaction.Ref)
+	ref := event.Interaction.Ref
 	s.NoError(conn.Stop())
-	select {
-	case <-handle.Done():
-	case <-ctx.Done():
-		s.FailNow("closed connection left interaction live")
-	}
-	s.Error(handle.Err())
-	s.Error(handle.Respond(ctx, rt.Response{Allow: true}))
+	receipt, responseErr := session.Respond(ctx, ref, rt.Response{Decision: "allow_once"})
+	s.Error(responseErr)
+	s.Equal(rt.Known(false), receipt.HandedToSDK)
 }
 
 func (s *runtimeSuite) nextMapped(session rt.Session, ctx context.Context) rt.Event {
@@ -261,16 +259,12 @@ func (s *runtimeSuite) TestNativeResolutionInvalidatesHandle() {
 	s.Require().NoError(err)
 	event := s.nextMapped(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
-	handle := session.ResponseHandle(event.Interaction.Ref)
+	ref := event.Interaction.Ref
 	_, cancelErr := session.Cancel(ctx, session.Snapshot().Foreground.OperationRef)
 	s.Require().NoError(cancelErr)
-	select {
-	case <-handle.Done():
-	case <-ctx.Done():
-		s.FailNow("native resolution left handle live")
-	}
-	s.Error(handle.Err())
-	s.Error(handle.Respond(ctx, rt.Response{Allow: true}))
+	receipt, responseErr := session.Respond(ctx, ref, rt.Response{Decision: "allow_once"})
+	s.Error(responseErr)
+	s.Equal(rt.Known(false), receipt.HandedToSDK)
 }
 
 func (s *runtimeSuite) TestNativeItemKinds() {
@@ -345,7 +339,14 @@ func (s *runtimeSuite) TestSharedRequestsStayWithTheirNativeSession() {
 		s.Equal(tc.session.Key().RuntimeName, tc.event.RuntimeName)
 		s.Equal(tc.session.Key().SessionID, tc.event.SessionID)
 		s.Require().NotNil(tc.event.Interaction)
-		s.Equal(tc.id, tc.session.ResponseHandle(tc.event.Interaction.Ref).ID())
-		s.NoError(tc.session.ResponseHandle(tc.event.Interaction.Ref).Respond(ctx, rt.Response{Allow: tc.allow}))
+		s.NotContains(tc.event.Interaction.Ref, tc.id)
+		decision := "deny_once"
+		if tc.allow {
+			decision = "allow_once"
+		}
+		_, responseErr := tc.session.Respond(ctx, tc.event.Interaction.Ref, rt.Response{Decision: decision})
+		s.NoError(responseErr)
 	}
 }
+
+func strptr(s string) *string { return &s }

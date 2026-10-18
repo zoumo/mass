@@ -181,8 +181,8 @@ both protocols' message and reasoning conversion, plans, metadata, identity and
 serialization. No agent/model or credentials are used. Passing these tests does
 not verify live CLI compatibility.
 
-Work data retain native status in this envelope. Stronger interaction authority
-and delivery guarantees remain separate work. Runtime-local publication does
+Work data retain native status in this envelope. Interaction authority follows
+the gate below; broader delivery guarantees remain separate work. Runtime-local publication does
 not establish whole-process memory bounds,
 complete agent/task attribution, durable replay or native causality.
 
@@ -204,3 +204,35 @@ independent; the current background summary is unknown until background mapping
 is implemented. Cancellation ACK and terminal status remain separate observations.
 Only a native explicit interrupted status becomes interrupted; a generic error
 or failed result is never converted to cancellation by local intent.
+
+## Questions and permissions
+
+`interaction.requested` carries only data: an attachment-scoped random
+`interactionRef`, permission/question kind, requested state, tool/call context,
+one-time decisions, or ordered questions. Codex decisions are restricted to the
+observed native offer when present; policy amendments and session-wide grants
+are never converted into one-time approval. `Question` retains labels and
+descriptions, selection multiplicity and nullable required/freeText/secret
+constraints. An absent constraint is unknown. Native request IDs, SDK handles,
+callbacks and native response objects are private.
+
+`Response` contains either a one-time permission `decision` or `answers` keyed
+by the observed question reference. An answer uses exactly one scalar `text` or
+`selections` array. Validation uses the retained original specification, so edits
+to a dequeued event do not change authority. Native Claude question/input unknown
+fields survive SDK answer conversion, without becoming a public RPC escape hatch.
+
+`interaction.resolved` carries the original reference and observed resolved or
+cancelled state when correlation is available. SDK response-write success alone
+never creates this event. A requested event can be read after its authority has
+been invalidated. Native resolution observed before local reference registration
+remains diagnostic, and SDK liveness is still checked at response admission.
+
+`Runtime.Respond` validates the exact SessionKey; the attachment owns the final
+single-attempt gate. It rejects cross-session/old-epoch references, spent or
+invalidated requests and unsupported permanent decisions before SDK handoff.
+`ResponseReceipt` separates handoff, completed write and native-resolution
+evidence. Unknown writes consume the attempt and never permit automatic retry.
+No socket-write revocation or guarantee about unobserved native resolution is
+provided. See [Runtime limits](../README.md) for pinned SDK ID and Claude
+historical-target observability limits.

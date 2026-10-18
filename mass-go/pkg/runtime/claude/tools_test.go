@@ -22,7 +22,8 @@ func (s *runtimeSuite) TestToolAnnouncementDoesNotClaimExecution() {
 			interaction = e.Interaction
 		}
 	}
-	s.Require().NoError(session.ResponseHandle(interaction.Ref).Respond(ctx, rt.Response{Allow: true}))
+	_, responseErr := session.Respond(ctx, interaction.Ref, rt.Response{Decision: "allow_once"})
+	s.Require().NoError(responseErr)
 	s.Equal("tool.announced", string(tool.Kind))
 	s.Equal("announced", tool.Tool.State)
 	data, err := json.Marshal(tool)

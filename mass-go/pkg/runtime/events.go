@@ -189,6 +189,8 @@ func (e *SafeError) Is(target error) bool {
 	switch e.Category {
 	case "outcome_unknown":
 		return target == ErrOutcomeUnknown
+	case "invalid_interaction":
+		return target == ErrInvalidInteraction
 	case "busy":
 		return target == ErrBusy
 	case "invalid_input":
@@ -242,7 +244,7 @@ func (e Event) payload() (any, error) {
 		p = e.Work
 	case SessionReady:
 		p = e.Session
-	case InteractionRequested:
+	case InteractionRequested, InteractionResolved:
 		p = e.Interaction
 	case Failure:
 		p = e.Error
@@ -268,6 +270,18 @@ func (e Event) validate() error {
 	}
 	if !oneOf(e.Origin.Attribution, "root", "child", "unresolved", "runtime") || !oneOf(e.Origin.Completeness, "complete", "partial", "unknown") {
 		return fmt.Errorf("invalid event provenance")
+	}
+	if e.Interaction != nil {
+		i := e.Interaction
+		if i.Ref == "" || !oneOf(i.Kind, "permission", "question") || !oneOf(i.State, "requested", "resolved", "cancelled", "invalidated") {
+			return fmt.Errorf("invalid interaction")
+		}
+		if e.Kind == InteractionRequested && i.State != "requested" {
+			return fmt.Errorf("invalid interaction state")
+		}
+		if e.Kind == InteractionResolved && i.State == "requested" {
+			return fmt.Errorf("invalid interaction state")
+		}
 	}
 	if e.Message != nil {
 		if string(e.Kind) != "message."+e.Message.Stage {
@@ -419,7 +433,7 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	case SessionReady:
 		candidate.Session = &SessionSnapshot{}
 		p = candidate.Session
-	case InteractionRequested:
+	case InteractionRequested, InteractionResolved:
 		candidate.Interaction = &Interaction{}
 		p = candidate.Interaction
 	case Failure:
