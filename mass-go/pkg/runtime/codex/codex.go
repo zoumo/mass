@@ -28,17 +28,16 @@ type driver struct {
 	closed   bool
 }
 type session struct {
-	conn      *driver
-	id        string
-	sub       *sdk.Subscription
-	position  uint64
-	ready     bool
-	next      sync.Mutex
-	requests  chan sdk.Request
-	done      chan struct{}
-	once      sync.Once
-	handles   map[string]rt.ResponseHandle
-	handlesMu sync.Mutex
+	conn        *driver
+	id          string
+	sub         *sdk.Subscription
+	position    uint64
+	ready       bool
+	next        sync.Mutex
+	requests    chan sdk.Request
+	done        chan struct{}
+	once        sync.Once
+	authorities managed.Authorities
 }
 
 var _ managed.NativeSession = (*session)(nil)
@@ -165,7 +164,10 @@ func (c *driver) Stop() error {
 	}
 	return nil
 }
-func (s *session) Close() error { s.once.Do(func() { close(s.done); _ = s.sub.Abort() }); return nil }
+func (s *session) Close() error {
+	s.once.Do(func() { s.authorities.Close(); close(s.done); _ = s.sub.Abort() })
+	return nil
+}
 func (s *session) Key() rt.SessionKey {
 	return rt.SessionKey{RuntimeName: s.conn.name, SessionID: s.id}
 }
@@ -176,7 +178,7 @@ func (s *session) Snapshot() rt.SessionSnapshot {
 		state = "closed"
 	default:
 	}
-	return rt.SessionSnapshot{Key: s.Key(), Attachment: state, ObservedAt: time.Now().UTC()}
+	return rt.SessionSnapshot{Key: s.Key(), Attachment: state, Interactions: s.authorities.Summary(), ObservedAt: time.Now().UTC()}
 }
 
 func (s *session) Capabilities() rt.Capabilities {
@@ -191,6 +193,7 @@ func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error
 		return receipt, &rt.SafeError{Category: "unavailable", Scope: "operation", Message: "attachment is closed"}
 	default:
 	}
+	s.authorities.BeginWork()
 	input := types.UserInput{Text: types.Ptr(types.TextUserInput{Type: types.TextUserInputTypeText, Text: text, TextElements: types.Some([]types.TextElement{})})}
 	result, err := s.conn.client.StartTurn(ctx, types.TurnStartParams{ThreadID: s.id, Input: []types.UserInput{input}})
 	if err != nil {
@@ -242,12 +245,12 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 			}
 			event, handle := mapRequest(request, s.id)
 			if handle != nil {
-				s.handlesMu.Lock()
-				if s.handles == nil {
-					s.handles = map[string]rt.ResponseHandle{}
+				ref, err := s.authorities.Add(handle)
+				if err != nil {
+					event = rt.Event{Kind: rt.Failure, Error: &rt.SafeError{Category: "backpressure", Scope: "session"}}
+				} else {
+					event.Interaction.Ref = ref
 				}
-				s.handles[event.Interaction.Ref] = handle
-				s.handlesMu.Unlock()
 			}
 			event.RuntimeName = s.conn.name
 			s.position++
@@ -261,7 +264,29 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 				}
 				return rt.Event{}, io.EOF
 			}
+			var resolution *rt.Interaction
+			if native.Method == "serverRequest/resolved" {
+				var data struct {
+					ThreadID  string
+					RequestID json.RawMessage
+				}
+				if json.Unmarshal(native.Params, &data) == nil && data.ThreadID == s.id {
+					if nativeID, err := sdk.ParseID(data.RequestID); err == nil {
+						resolution = s.authorities.Resolve(nativeID.String())
+					}
+				}
+			}
+			if native.Method == "turn/completed" {
+				var data struct{ Turn struct{ ID string } }
+				if json.Unmarshal(native.Params, &data) == nil && data.Turn.ID != "" {
+					s.authorities.Invalidate(data.Turn.ID)
+				}
+			}
 			event := mapEvent(native, s.id)
+			if resolution != nil {
+				event.Kind = rt.InteractionResolved
+				event.Interaction = resolution
+			}
 			event.RuntimeName = s.conn.name
 			s.position++
 			event.SourcePosition = s.position
@@ -326,12 +351,6 @@ func mapEvent(native types.Event, id string) rt.Event {
 		event.Error = &rt.SafeError{Category: "native_error", Scope: "session"}
 	}
 	return event
-}
-
-func (s *session) ResponseHandle(ref string) rt.ResponseHandle {
-	s.handlesMu.Lock()
-	defer s.handlesMu.Unlock()
-	return s.handles[ref]
 }
 
 func turnStatus(native string) string {

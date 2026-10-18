@@ -136,8 +136,8 @@ func (s *runtimeSuite) TestInteractionsAndInterrupt() {
 		name, tool, input, answer string
 		response                  rt.Response
 	}{
-		{"permission", "Read", `{}`, `{"behavior":"allow","updatedInput":{}}`, rt.Response{Allow: true}},
-		{"question", "AskUserQuestion", `{"questions":[{"question":"Which?","options":[{"label":"A"}]}]}`, `{"behavior":"allow","updatedInput":{"questions":[{"question":"Which?","options":[{"label":"A"}]}],"answers":{"Which?":"A"}}}`, rt.Response{Allow: true, Answers: map[string][]string{"Which?": {"A"}}}},
+		{"permission", "Read", `{}`, `{"behavior":"allow","updatedInput":{}}`, rt.Response{Decision: "allow_once"}},
+		{"question", "AskUserQuestion", `{"questions":[{"question":"Which?","options":[{"label":"A"}]}]}`, `{"behavior":"allow","updatedInput":{"questions":[{"question":"Which?","options":[{"label":"A"}]}],"answers":{"Which?":"A"}}}`, rt.Response{Answers: map[string]rt.Answer{"Which?": {Selections: []string{"A"}}}}},
 	} {
 		s.Run(tc.name, func() {
 			frames := append(startup(), send(), `server control {"type":"control_request","request_id":"original-request","request":{"subtype":"can_use_tool","tool_name":"`+tc.tool+`","tool_use_id":"tool-1","input":`+tc.input+`}}`,
@@ -148,21 +148,26 @@ func (s *runtimeSuite) TestInteractionsAndInterrupt() {
 			_, session, ctx := s.open(frames)
 			event := s.nextInteraction(session, ctx)
 			s.Require().Equal(rt.InteractionRequested, event.Kind)
-			handle := session.ResponseHandle(event.Interaction.Ref)
-			s.Equal("original-request", handle.ID())
+			ref := event.Interaction.Ref
 			canceled, cancel := context.WithCancel(ctx)
 			cancel()
-			s.ErrorIs(handle.Respond(canceled, tc.response), context.Canceled)
-			s.NoError(handle.Err())
-			s.Require().NoError(handle.Respond(ctx, tc.response))
-			s.Error(handle.Respond(ctx, tc.response))
-			s.Error(handle.Err())
+			_, responseErr := session.Respond(canceled, ref, tc.response)
+			s.ErrorIs(responseErr, context.Canceled)
+			receipt, responseErr := session.Respond(ctx, ref, tc.response)
+			s.Require().NoError(responseErr)
+			s.Equal(rt.Known(true), receipt.WriteCompleted)
+			s.Equal("unknown", receipt.NativeResolution.State)
+			_, responseErr = session.Respond(ctx, ref, tc.response)
+			s.Error(responseErr)
 			_, cancelErr := session.Cancel(ctx, "invented-turn")
 			s.ErrorIs(cancelErr, rt.ErrNotFound)
 			_, cancelErr = session.Cancel(ctx, session.Snapshot().Foreground.OperationRef)
 			s.Require().NoError(cancelErr)
 			event = s.next(session, ctx)
-			s.Equal(rt.TurnCompleted, event.Kind)
+			for event.Kind == rt.SessionReady {
+				event = s.next(session, ctx)
+			}
+			s.Require().Equal(rt.TurnCompleted, event.Kind)
 			s.Equal("failed", event.Work.Status)
 		})
 	}
@@ -206,15 +211,11 @@ func (s *runtimeSuite) TestPendingHandleExpiresOnClose() {
 	conn, session, ctx := s.open(frames)
 	event := s.nextInteraction(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
-	handle := session.ResponseHandle(event.Interaction.Ref)
+	ref := event.Interaction.Ref
 	s.NoError(conn.Stop())
-	select {
-	case <-handle.Done():
-	case <-ctx.Done():
-		s.FailNow("closed connection left interaction live")
-	}
-	s.Error(handle.Err())
-	s.Error(handle.Respond(ctx, rt.Response{Allow: true}))
+	receipt, responseErr := session.Respond(ctx, ref, rt.Response{Decision: "allow_once"})
+	s.Error(responseErr)
+	s.Equal(rt.Known(false), receipt.HandedToSDK)
 }
 func (s *runtimeSuite) TestUnknownAndNativeErrorDiagnostics() {
 	for _, tc := range []struct {
@@ -252,14 +253,10 @@ func (s *runtimeSuite) TestNativeCancellationInvalidatesHandle() {
 	_, session, ctx := s.open(frames)
 	event := s.nextInteraction(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
-	handle := session.ResponseHandle(event.Interaction.Ref)
+	ref := event.Interaction.Ref
 	_, cancelErr := session.Cancel(ctx, session.Snapshot().Foreground.OperationRef)
 	s.Require().NoError(cancelErr)
-	select {
-	case <-handle.Done():
-	case <-ctx.Done():
-		s.FailNow("native cancellation left handle live")
-	}
-	s.Error(handle.Err())
-	s.Error(handle.Respond(ctx, rt.Response{Allow: true}))
+	receipt, responseErr := session.Respond(ctx, ref, rt.Response{Decision: "allow_once"})
+	s.Error(responseErr)
+	s.Equal(rt.Known(false), receipt.HandedToSDK)
 }

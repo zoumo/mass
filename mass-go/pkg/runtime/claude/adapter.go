@@ -117,7 +117,7 @@ type connection struct {
 	identityDeadline                   time.Time
 	provisionalFacts, provisionalBytes int
 	messages                           messageMapper
-	handles                            map[string]rt.ResponseHandle
+	authorities                        managed.Authorities
 }
 type session struct {
 	conn *connection
@@ -173,6 +173,16 @@ func (c *connection) receive() {
 		var events []rt.Event
 		mismatch := false
 		if native, ok := received.(sdk.Event); ok {
+			var resolution *rt.Interaction
+			if native.Type == "control_cancel_request" {
+				var data struct {
+					RequestID string `json:"request_id"`
+				}
+				if json.Unmarshal(native.Raw, &data) == nil && data.RequestID != "" {
+					resolution = c.authorities.Resolve(data.RequestID)
+				}
+			}
+
 			if (native.System != nil || native.Result != nil) && native.SessionID != "" && (native.AgentID == nil || *native.AgentID == "") && (native.ParentToolUseID == nil || *native.ParentToolUseID == "") {
 				c.mu.Lock()
 				if c.terminal != nil {
@@ -198,7 +208,14 @@ func (c *connection) receive() {
 			if mismatch {
 				events = []rt.Event{{Kind: rt.Unknown, Diagnostic: diagnostic("identity_mismatch", nil)}}
 			} else {
+				if native.Result != nil && native.SessionID != "" && (native.AgentID == nil || *native.AgentID == "") && (native.ParentToolUseID == nil || *native.ParentToolUseID == "") {
+					c.authorities.Invalidate("")
+				}
 				events = c.mapEvent(native)
+				if resolution != nil {
+					resolution.State = "cancelled"
+					events = []rt.Event{{Kind: rt.InteractionResolved, Interaction: resolution, Diagnostic: diagnostic("control_cancel_request", nil)}}
+				}
 			}
 		} else {
 			data, _ := json.Marshal(received)
@@ -251,6 +268,7 @@ func (c *connection) failCreation(cause error) error {
 }
 func (c *connection) Close() error {
 	c.closeOnce.Do(func() {
+		c.authorities.Close()
 		c.cancel()
 		c.opening.Lock()
 		client := c.client
@@ -280,7 +298,7 @@ func (s *session) Snapshot() rt.SessionSnapshot {
 		state = "closed"
 	default:
 	}
-	return rt.SessionSnapshot{Key: s.Key(), Attachment: state, ObservedAt: time.Now().UTC()}
+	return rt.SessionSnapshot{Key: s.Key(), Attachment: state, Interactions: s.conn.authorities.Summary(), ObservedAt: time.Now().UTC()}
 }
 func (s *session) Capabilities() rt.Capabilities { return rt.Capabilities{} }
 func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error) {
@@ -290,6 +308,7 @@ func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error
 		receipt.WriteCompleted = rt.Known(false)
 		return receipt, &rt.SafeError{Category: "unavailable", Scope: "operation", Message: "attachment is closed"}
 	}
+	s.conn.authorities.BeginWork()
 	if err := s.conn.client.Send(ctx, text); err != nil {
 		return submissionError(err)
 	}
@@ -380,11 +399,6 @@ func (c *connection) mapEvent(native types.Event) []rt.Event {
 	}
 	return []rt.Event{base}
 }
-func (s *session) ResponseHandle(ref string) rt.ResponseHandle {
-	s.conn.mu.Lock()
-	defer s.conn.mu.Unlock()
-	return s.conn.handles[ref]
-}
 
 // Tool output can be a string or an ordered array of content blocks.
 func (c *connection) permissionEvent(p *sdk.PermissionRequest) rt.Event {
@@ -396,10 +410,12 @@ func (c *connection) permissionEvent(p *sdk.PermissionRequest) rt.Event {
 	c.mu.Lock()
 	event.SessionID = c.nativeID
 	if handle != nil {
-		if c.handles == nil {
-			c.handles = map[string]rt.ResponseHandle{}
+		ref, err := c.authorities.Add(handle)
+		if err != nil {
+			event = rt.Event{Kind: rt.Failure, Error: &rt.SafeError{Category: "backpressure", Scope: "session"}}
+		} else {
+			event.Interaction.Ref = ref
 		}
-		c.handles[event.Interaction.Ref] = handle
 	}
 	c.mu.Unlock()
 	return event

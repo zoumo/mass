@@ -17,7 +17,8 @@ type NativeSession interface {
 	Cancel(context.Context, string) error
 	Next(context.Context) (rt.Event, error)
 	Close() error
-	ResponseHandle(string) rt.ResponseHandle
+	Respond(context.Context, string, rt.Response) (rt.ResponseReceipt, error)
+	InvalidateInteractions(string)
 }
 type command struct {
 	receipt    rt.Submission
@@ -38,11 +39,8 @@ func NewSession(native NativeSession) rt.Session {
 }
 func (s *publishedSession) Key() rt.SessionKey            { return s.native.Key() }
 func (s *publishedSession) Capabilities() rt.Capabilities { return s.native.Capabilities() }
-func (s *publishedSession) ResponseHandle(ref string) rt.ResponseHandle {
-	return s.native.ResponseHandle(ref)
-}
-func (s *publishedSession) signal() { close(s.wake); s.wake = make(chan struct{}) }
-func isKnown(o rt.Observation) bool { return o.State == "known" && o.Value != nil && *o.Value }
+func (s *publishedSession) signal()                       { close(s.wake); s.wake = make(chan struct{}) }
+func isKnown(o rt.Observation) bool                       { return o.State == "known" && o.Value != nil && *o.Value }
 func copySubmission(r rt.Submission) rt.Submission {
 	// Copy pointer-bearing public records, including safe failure evidence.
 	for _, o := range []*rt.Observation{&r.HandedToSDK, &r.WriteCompleted, &r.NativeAcknowledged, &r.NativeRecorded, &r.Completed} {
@@ -240,6 +238,7 @@ func (s *publishedSession) Cancel(ctx context.Context, target string) (rt.Cancel
 		s.mu.Unlock()
 		return rt.Cancellation{}, rt.ErrUnavailable
 	}
+	s.native.InvalidateInteractions(c.receipt.WorkRef)
 	c.cancelling = true
 	s.foreground = "cancelling"
 	s.signal()
@@ -341,6 +340,7 @@ func (s *publishedSession) observe(e *rt.Event) {
 func (s *publishedSession) Close() error {
 	s.mu.Lock()
 	s.closed = true
+	s.native.InvalidateInteractions("")
 	if s.active != nil && !s.active.finished {
 		s.foreground = "unknown"
 	}

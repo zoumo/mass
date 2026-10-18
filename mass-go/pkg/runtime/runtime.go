@@ -18,20 +18,22 @@ type Runtime interface {
 	CancelOperation(context.Context, string) (CreationOperation, error)
 	GetSession(SessionKey) (Session, error)
 	ListSessions() []SessionSnapshot
+	Respond(context.Context, SessionKey, string, Response) (ResponseReceipt, error)
 	Stop() error
 }
 
 var (
-	ErrBusy              = errors.New("foreground submission unresolved")
-	ErrBackpressure      = errors.New("runtime control record bound reached")
-	ErrUnsupported       = errors.New("unsupported runtime capability")
-	ErrCleanupIncomplete = errors.New("owned creation cleanup unconfirmed")
-	ErrOutcomeUnknown    = errors.New("native operation outcome unknown")
-	ErrIncomplete        = errors.New("incomplete provisional observations")
-	ErrConflict          = errors.New("runtime ownership conflict")
-	ErrNotFound          = errors.New("runtime resource not found")
-	ErrUnavailable       = errors.New("runtime unavailable")
-	ErrInvalidInput      = errors.New("invalid runtime configuration or session key")
+	ErrInvalidInteraction = errors.New("interaction authority is invalid")
+	ErrBusy               = errors.New("foreground submission unresolved")
+	ErrBackpressure       = errors.New("runtime control record bound reached")
+	ErrUnsupported        = errors.New("unsupported runtime capability")
+	ErrCleanupIncomplete  = errors.New("owned creation cleanup unconfirmed")
+	ErrOutcomeUnknown     = errors.New("native operation outcome unknown")
+	ErrIncomplete         = errors.New("incomplete provisional observations")
+	ErrConflict           = errors.New("runtime ownership conflict")
+	ErrNotFound           = errors.New("runtime resource not found")
+	ErrUnavailable        = errors.New("runtime unavailable")
+	ErrInvalidInput       = errors.New("invalid runtime configuration or session key")
 )
 
 // CreationLimits bound adapter-owned provisional facts and the native open wait.
@@ -137,13 +139,14 @@ type SessionKey struct {
 	SessionID   string `json:"sessionId"`
 }
 type SessionSnapshot struct {
-	Key             SessionKey        `json:"key"`
-	ConnectionEpoch string            `json:"connectionEpoch,omitempty"`
-	Foreground      ForegroundState   `json:"foreground"`
-	Background      BackgroundSummary `json:"background"`
-	Metadata        MetadataPayload   `json:"metadata"`
-	Attachment      string            `json:"attachment"`
-	ObservedAt      time.Time         `json:"observedAt"`
+	Key             SessionKey         `json:"key"`
+	ConnectionEpoch string             `json:"connectionEpoch,omitempty"`
+	Foreground      ForegroundState    `json:"foreground"`
+	Interactions    InteractionSummary `json:"interactions"`
+	Background      BackgroundSummary  `json:"background"`
+	Metadata        MetadataPayload    `json:"metadata"`
+	Attachment      string             `json:"attachment"`
+	ObservedAt      time.Time          `json:"observedAt"`
 }
 
 // Session is an attachment with a proven, immutable native identity.
@@ -159,8 +162,8 @@ type Session interface {
 	// Next has one consumer. Context cancellation only stops this wait.
 	Next(context.Context) (Event, error)
 	Close() error
-	// ResponseHandle resolves authority on this live attachment, never from event data.
-	ResponseHandle(string) ResponseHandle
+	// Respond resolves original authority on this attachment. Event replay creates none.
+	Respond(context.Context, string, Response) (ResponseReceipt, error)
 }
 
 type Capabilities struct{ NativeTurnID, NativeAcknowledgement bool }
@@ -176,7 +179,8 @@ const (
 	ToolAnnounced        EventKind = "tool.announced"
 	ToolUpdated          EventKind = "tool.updated"
 	ToolCompleted        EventKind = "tool.completed"
-	InteractionRequested EventKind = "interaction_requested"
+	InteractionRequested EventKind = "interaction.requested"
+	InteractionResolved  EventKind = "interaction.resolved"
 	Failure              EventKind = "failure"
 	Unknown              EventKind = "diagnostic"
 	ReasoningCompleted   EventKind = "reasoning.completed"
@@ -191,28 +195,4 @@ type Diagnostic struct {
 	CallRef        string `json:"callRef,omitempty"`
 	NativeKind     string `json:"sourceKind"`
 	SHA256         string `json:"sha256"`
-}
-type Interaction struct {
-	Ref       string     `json:"ref"`
-	Kind      string     `json:"kind"`
-	Prompt    string     `json:"prompt"`
-	Questions []Question `json:"questions,omitempty"`
-}
-type Question struct {
-	ID      string   `json:"id"`
-	Prompt  string   `json:"prompt"`
-	Options []string `json:"options"`
-}
-type Response struct {
-	Allow   bool
-	Answers map[string][]string
-}
-
-// ResponseHandle is a connection-bound, one-shot capability. Copies refer to
-// the same native request. A successful response write is not native acceptance.
-type ResponseHandle interface {
-	ID() string
-	Respond(context.Context, Response) error
-	Done() <-chan struct{}
-	Err() error
 }
