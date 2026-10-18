@@ -258,7 +258,7 @@ func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 			r.mu.Unlock()
 			return
 		}
-		r.sessions = append(r.sessions, newPublishedSession(session))
+		r.sessions = append(r.sessions, session)
 		op.snapshot.Key = &key
 		op.snapshot.Phase = "opened"
 		r.mu.Unlock()
@@ -320,6 +320,12 @@ func (r *Runtime) Stop() error {
 	r.mu.Unlock()
 	// Driver Stop interrupts outstanding SDK calls before waiting for creates.
 	err := r.driver.Stop()
+	r.mu.Lock()
+	sessions := append([]rt.Session(nil), r.sessions...)
+	r.mu.Unlock()
+	for _, session := range sessions {
+		_ = session.Close()
+	}
 	if activation != nil {
 		<-activation.done
 		if second := r.driver.Stop(); err == nil {

@@ -155,18 +155,68 @@ remote effects.
 
 | Behavior | Codex | Claude |
 | --- | --- | --- |
-| Text submission evidence | `native_acknowledged`, actual native turn ID | `sdk_write_success`, no fabricated native turn ID |
-| Cancel | Requires observed native turn ID | Requires empty turn ID |
+| Text submission evidence | Native turn ACK and original work ID | Complete local Send write; no native turn ID or submission ACK |
+| Cancel | Resolves the original operation to its native work ID | Guards a session-wide interrupt against later work |
 | Interactions | Command/file approval and user questions | Tool permission and AskUserQuestion |
 
-Submission success is neither native-recorded evidence nor completion. Cancel
-requests interruption; an ACK alone does not establish termination. The event
-stream uses a versioned, data-only envelope and concrete payloads. See the
-[event contract](docs/events.md) for supported mappings, content
-presence, tool lifecycle, stream association and decode rules. Tools retain
-structured input/output, stable call references and explicit execution/failure
-evidence. Foreground admission control and stronger interaction authority remain
-separate work.
+Submit accepts `runtime.TextInput(text)` or an InputCommand containing exactly
+one text block, including explicit empty text. Text is limited to 1 MiB; rich
+blocks, extra fields and options fail before SDK handoff. Each attachment retains
+up to 256 submission records (and at most one cancellation per submission),
+then returns backpressure without evicting facts or sending another input.
+
+Submission returns serializable operationRef, key, admitted/rejected/unknown
+outcome, optional original workRef, and independent handedToSDK, writeCompleted,
+nativeAcknowledged, nativeRecorded and completed observations. Evidence uses
+known values, unknown or not_supported, never an inferred false default. Codex
+ACK does not claim local write instrumentation or completion. Claude write
+success does not claim a native ACK, recording or invented work ID. A Codex user
+record must match the acknowledged work ID before it contributes recording
+evidence; uncorrelated echoes do not. Native recording is not host durability.
+Use GetSubmission(operationRef) to inspect later evidence. Initial input follows
+the same admission gate and its events carry the submission operationRef.
+
+Only one unresolved foreground submission is admitted per session. Concurrent
+calls receive busy; other sessions progress independently. Completion-before-ACK
+is retained and reconciled against the exact returned native work ID. There is
+no current-work assignment of unproven native IDs. SDK local timeout, caller
+wait cancellation after handoff or disconnect can leave the original operation
+unknown. The SDK can discard late call replies; MASS neither repairs those
+replies nor automatically retries input. Rejected native requests and unknown
+delivery have distinct safe errors with operation scope and acceptance evidence.
+
+Cancel takes the original submission operationRef, never caller-supplied native
+turn parameters. It reserves one attempt, waits for a required late work ID and
+keeps its target fixed. Its receipt separates requested, nativeAcknowledged and
+targetFinished. GetCancellation observes later target termination. An interrupt
+ACK alone does not reopen admission. Terminal-first also retains the fence until
+the admitted interrupt call settles, so a late session-wide interrupt cannot
+reach a new input. If a Claude session-wide interrupt has an unknown ACK,
+its admission fence remains after the old result; a discarded late ACK cannot
+safely settle that responsibility. Close the attachment explicitly. Codex's fixed
+native target cannot redirect to later work. An unavailable native ID after an
+expired Codex call returns unknown promptly instead of waiting indefinitely.
+Reusing an existing cancellation returns conflict. Canceling
+an already finished submission sends no interrupt. Cancellation is not rollback
+or proof that a failed Claude result was interrupted.
+
+Session snapshots keep foreground, attachment and background observations
+separate. A receive worker projects facts without requiring Next; snapshots show
+the latest observed state and can be ahead of dequeued events. Foreground
+completion does not close the attachment, finish tools or clear background
+activity. Background inventory conversion remains a separate implementation
+slice; its summary is explicitly unknown here, including after completion.
+Native idle alone never settles an unresolved input. One common owner assigns
+publication sequence and preserves adapter observation timestamps. The public
+delivery queue holds 64 events; a stalled reader can delay further observation,
+so this is not an independent, unbounded status-observation guarantee. Close and
+Stop cancel this worker even when delivery is unread.
+
+The event stream uses a versioned, data-only envelope and concrete payloads.
+See the [event contract](docs/events.md) for supported mappings, content presence,
+tool lifecycle, stream association and decode rules. Tools retain structured
+input/output, stable call references and explicit execution/failure evidence.
+Stronger interaction authority remains a separate slice.
 
 Interaction events contain a data reference, prompt and questions. The live
 attachment resolves its existing response authority through
@@ -189,7 +239,7 @@ consume events. The per-session Codex interaction queue holds 64 requests;
 backpressure on an unread session can delay other interaction delivery until
 that session is read or closed. The SDK uses independent per-stream ChannX
 queues; deprecated EventBuffer/EventQueue options are ignored. SDK CallTimeout
-remains 30 seconds. These facts do not establish a whole-process memory bound
+remains 30 seconds; local expiration cannot recover a discarded late reply. These facts do not establish a whole-process memory bound
 or a total shutdown deadline.
 
 ## Offline verification
@@ -211,6 +261,10 @@ Pending tests additionally cover reversed concurrent Claude opens, explicit
 continuation, empty/operation session keys, late success after caller cancellation,
 canceled opens, provisional count/byte/deadline exhaustion with PID checks,
 child identity interference and ambiguous Codex opens without retry.
+Control tests cover independent acknowledgement/write/record/completion evidence,
+completion before acknowledgement, concurrent admission, both cancellation orders,
+late identity, safe native rejection/disconnection, caller wait cancellation and
+the actual 30-second SDK local timeout followed by a late reply.
 Message tests additionally cover native item/stream/full correlation, distinct
 frame and block coordinates, equal no-ID previews, replay provenance, user and
 tool-bearing messages, observed/redacted reasoning, native plans and collection

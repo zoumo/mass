@@ -14,7 +14,7 @@ func (s *runtimeSuite) TestTypedMessageCorrelation() {
 		`s2c {"method":"item/agentMessage/delta","params":{"threadId":"native-thread","turnId":"native-turn","itemId":"m","delta":"same"}}`,
 		`s2c {"method":"item/completed","params":{"threadId":"native-thread","turnId":"native-turn","startedAtMs":1,"completedAtMs":2,"item":{"type":"agentMessage","id":"m","text":"samesame"}}}`)
 	_, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
+	_, err := session.Submit(ctx, rt.TextInput("hello"))
 	s.Require().NoError(err)
 	for _, stage := range []string{"delta", "delta", "completed"} {
 		event := s.nextMapped(session, ctx)
@@ -81,7 +81,7 @@ func (s *runtimeSuite) TestReasoningPlansAndMetadata() {
 			frames := append(startup(), turnStart()...)
 			frames = append(frames, `s2c {"method":"`+tc.method+`","params":`+tc.params+`}`)
 			_, session, ctx := s.open(frames)
-			_, err := session.Submit(ctx, "hello")
+			_, err := session.Submit(ctx, rt.TextInput("hello"))
 			s.Require().NoError(err)
 			e := s.nextMapped(session, ctx)
 			s.Require().Equal(tc.kind, e.Kind)
@@ -103,7 +103,7 @@ func (s *runtimeSuite) TestAuthorityLookupWhileNextWaits() {
 		`s2c {"id":"permission","method":"item/commandExecution/requestApproval","params":{"threadId":"native-thread","turnId":"native-turn","itemId":"tool","startedAtMs":1,"command":"synthetic"}}`,
 		`c2s {"id":"permission","result":{"decision":"accept"}}`)
 	_, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
+	_, err := session.Submit(ctx, rt.TextInput("hello"))
 	s.Require().NoError(err)
 	e := s.nextMapped(session, ctx)
 	s.Require().NotNil(e.Interaction)

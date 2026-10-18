@@ -79,7 +79,7 @@ func (s *runtimeSuite) TestUnknownNativeErrorAndDisconnect() {
 			frames := append(startup(), turnStart()...)
 			frames = append(frames, `s2c {"method":"`+tc.method+`","params":`+tc.params+`}`, "disconnect")
 			_, session, ctx := s.open(frames)
-			_, err := session.Submit(ctx, "hello")
+			_, err := session.Submit(ctx, rt.TextInput("hello"))
 			s.Require().NoError(err)
 			found := false
 			for {
@@ -127,10 +127,10 @@ func (s *runtimeSuite) TestMessagesToolsAndCompletion() {
 		`s2c {"method":"turn/completed","params":{"threadId":"native-thread","turn":{"id":"native-turn","status":"completed","items":[],"error":null}}}`)
 	conn, session, ctx := s.open(frames)
 	s.Equal(rt.SessionKey{RuntimeName: "test-runtime", SessionID: "native-thread"}, session.Key())
-	submission, err := session.Submit(ctx, "hello")
+	submission, err := session.Submit(ctx, rt.TextInput("hello"))
 	s.Require().NoError(err)
-	s.Equal(rt.NativeAcknowledged, submission.Evidence)
-	s.Equal("native-turn", submission.TurnID)
+	s.Equal(rt.Known(true), submission.NativeAcknowledged)
+	s.Equal("native-turn", submission.WorkRef)
 	var events []rt.Event
 	for len(events) < 5 {
 		event, err := session.Next(ctx)
@@ -167,7 +167,7 @@ func (s *runtimeSuite) TestInteractionAndInterruption() {
 				`s2c {"id":4,"result":{}}`,
 				`s2c {"method":"turn/completed","params":{"threadId":"native-thread","turn":{"id":"native-turn","status":"interrupted","items":[],"error":null}}}`)
 			_, session, ctx := s.open(frames)
-			_, err := session.Submit(ctx, "hello")
+			_, err := session.Submit(ctx, rt.TextInput("hello"))
 			s.Require().NoError(err)
 			event := s.nextMapped(session, ctx)
 			s.Require().Equal(rt.InteractionRequested, event.Kind)
@@ -180,7 +180,8 @@ func (s *runtimeSuite) TestInteractionAndInterruption() {
 			s.Require().NoError(handle.Respond(ctx, tc.response))
 			s.Error(handle.Respond(ctx, tc.response))
 			s.Error(handle.Err())
-			s.Require().NoError(session.Cancel(ctx, "native-turn"))
+			_, cancelErr := session.Cancel(ctx, session.Snapshot().Foreground.OperationRef)
+			s.Require().NoError(cancelErr)
 			event = s.nextMapped(session, ctx)
 			s.Equal(rt.TurnCompleted, event.Kind)
 			s.Equal("interrupted", event.Work.Status)
@@ -193,7 +194,7 @@ func (s *runtimeSuite) TestCloseWithoutConsuming() {
 	s.executable = wrapper
 	defer func() { s.executable = original }()
 	conn, session, ctx := s.open(append(startup(), turnStart()...))
-	_, err := session.Submit(ctx, "hello")
+	_, err := session.Submit(ctx, rt.TextInput("hello"))
 	s.Require().NoError(err)
 	s.NoError(conn.Stop())
 	s.NoError(session.Close())
@@ -204,7 +205,7 @@ func (s *runtimeSuite) TestPendingHandleExpiresOnClose() {
 	frames := append(startup(), turnStart()...)
 	frames = append(frames, `s2c {"id":"pending","method":"item/commandExecution/requestApproval","params":{"threadId":"native-thread","turnId":"native-turn","itemId":"tool-1","startedAtMs":1,"command":"synthetic-only"}}`, `c2s {"id":"pending","result":{"decision":"decline"}}`)
 	conn, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
+	_, err := session.Submit(ctx, rt.TextInput("hello"))
 	s.Require().NoError(err)
 	event := s.nextMapped(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
@@ -256,12 +257,13 @@ func (s *runtimeSuite) TestNativeResolutionInvalidatesHandle() {
 		`s2c {"id":4,"result":{}}`,
 		`s2c {"method":"serverRequest/resolved","params":{"threadId":"native-thread","requestId":"resolved"}}`)
 	_, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
+	_, err := session.Submit(ctx, rt.TextInput("hello"))
 	s.Require().NoError(err)
 	event := s.nextMapped(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
 	handle := session.ResponseHandle(event.Interaction.Ref)
-	s.Require().NoError(session.Cancel(ctx, "native-turn"))
+	_, cancelErr := session.Cancel(ctx, session.Snapshot().Foreground.OperationRef)
+	s.Require().NoError(cancelErr)
 	select {
 	case <-handle.Done():
 	case <-ctx.Done():
@@ -284,7 +286,7 @@ func (s *runtimeSuite) TestNativeItemKinds() {
 			frames := append(startup(), turnStart()...)
 			frames = append(frames, `s2c {"method":"item/started","params":{"threadId":"native-thread","turnId":"native-turn","startedAtMs":1,"completedAtMs":null,"item":`+tc.item+`}}`)
 			_, session, ctx := s.open(frames)
-			_, err := session.Submit(ctx, "hello")
+			_, err := session.Submit(ctx, rt.TextInput("hello"))
 			s.Require().NoError(err)
 			for {
 				event, err := session.Next(ctx)
@@ -322,7 +324,7 @@ func (s *runtimeSuite) TestSharedRequestsStayWithTheirNativeSession() {
 	a := testutil.OpenSession(s.T(), worker, ctx, rt.SessionOptions{})
 	b := testutil.OpenSession(s.T(), worker, ctx, rt.SessionOptions{})
 	for _, session := range []rt.Session{a, b} {
-		_, err := session.Submit(ctx, "hello")
+		_, err := session.Submit(ctx, rt.TextInput("hello"))
 		s.Require().NoError(err)
 		event, err := session.Next(ctx)
 		s.Require().NoError(err)

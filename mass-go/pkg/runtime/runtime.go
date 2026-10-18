@@ -22,8 +22,11 @@ type Runtime interface {
 }
 
 var (
+	ErrBusy              = errors.New("foreground submission unresolved")
+	ErrBackpressure      = errors.New("runtime control record bound reached")
+	ErrUnsupported       = errors.New("unsupported runtime capability")
 	ErrCleanupIncomplete = errors.New("owned creation cleanup unconfirmed")
-	ErrOutcomeUnknown    = errors.New("native creation outcome unknown")
+	ErrOutcomeUnknown    = errors.New("native operation outcome unknown")
 	ErrIncomplete        = errors.New("incomplete provisional observations")
 	ErrConflict          = errors.New("runtime ownership conflict")
 	ErrNotFound          = errors.New("runtime resource not found")
@@ -134,11 +137,13 @@ type SessionKey struct {
 	SessionID   string `json:"sessionId"`
 }
 type SessionSnapshot struct {
-	Key             SessionKey      `json:"key"`
-	ConnectionEpoch string          `json:"connectionEpoch,omitempty"`
-	Metadata        MetadataPayload `json:"metadata"`
-	Attachment      string          `json:"attachment"`
-	ObservedAt      time.Time       `json:"observedAt"`
+	Key             SessionKey        `json:"key"`
+	ConnectionEpoch string            `json:"connectionEpoch,omitempty"`
+	Foreground      ForegroundState   `json:"foreground"`
+	Background      BackgroundSummary `json:"background"`
+	Metadata        MetadataPayload   `json:"metadata"`
+	Attachment      string            `json:"attachment"`
+	ObservedAt      time.Time         `json:"observedAt"`
 }
 
 // Session is an attachment with a proven, immutable native identity.
@@ -146,9 +151,11 @@ type Session interface {
 	Key() SessionKey
 	Snapshot() SessionSnapshot
 	Capabilities() Capabilities
-	Submit(context.Context, string) (Submission, error)
+	Submit(context.Context, InputCommand) (Submission, error)
 	// Cancel requests interruption. Its return is not completion evidence.
-	Cancel(context.Context, string) error
+	Cancel(context.Context, string) (Cancellation, error)
+	GetSubmission(string) (Submission, error)
+	GetCancellation(string) (Cancellation, error)
 	// Next has one consumer. Context cancellation only stops this wait.
 	Next(context.Context) (Event, error)
 	Close() error
@@ -157,17 +164,6 @@ type Session interface {
 }
 
 type Capabilities struct{ NativeTurnID, NativeAcknowledgement bool }
-type Evidence string
-
-const (
-	SDKWriteSuccess    Evidence = "sdk_write_success"
-	NativeAcknowledged Evidence = "native_acknowledged"
-)
-
-type Submission struct {
-	TurnID   string
-	Evidence Evidence
-}
 type EventKind string
 
 const (

@@ -23,6 +23,7 @@ type Event struct {
 	SourcePosition  uint64            `json:"sourcePosition,omitempty"`
 	Origin          EventOrigin       `json:"origin"`
 	FrameRef        string            `json:"frameRef,omitempty"`
+	OperationRef    string            `json:"operationRef,omitempty"`
 	WorkRef         string            `json:"workRef,omitempty"`
 	Message         *MessagePayload   `json:"-"`
 	Reasoning       *ReasoningPayload `json:"-"`
@@ -174,8 +175,36 @@ type WorkPayload struct {
 	Status string `json:"status"`
 }
 type SafeError struct {
-	Category string `json:"category"`
-	Scope    string `json:"scope"`
+	Category     string              `json:"category"`
+	Scope        string              `json:"scope"`
+	Message      string              `json:"message,omitempty"`
+	OperationRef string              `json:"operationRef,omitempty"`
+	Key          *SessionKey         `json:"key,omitempty"`
+	Acceptance   *SubmissionEvidence `json:"acceptance,omitempty"`
+	Recovery     string              `json:"recovery,omitempty"`
+}
+
+func (e *SafeError) Error() string { return e.Category + ": " + e.Message }
+func (e *SafeError) Is(target error) bool {
+	switch e.Category {
+	case "outcome_unknown":
+		return target == ErrOutcomeUnknown
+	case "busy":
+		return target == ErrBusy
+	case "invalid_input":
+		return target == ErrInvalidInput
+	case "unsupported_capability":
+		return target == ErrUnsupported
+	case "backpressure":
+		return target == ErrBackpressure
+	case "unavailable":
+		return target == ErrUnavailable
+	case "not_found":
+		return target == ErrNotFound
+	case "conflict":
+		return target == ErrConflict
+	}
+	return false
 }
 
 func TextContent(text, stage, completeness string, index *int) ContentSet {

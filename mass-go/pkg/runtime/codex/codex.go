@@ -41,7 +41,7 @@ type session struct {
 	handlesMu sync.Mutex
 }
 
-var _ rt.Session = (*session)(nil)
+var _ managed.NativeSession = (*session)(nil)
 
 // New prepares a named Runtime without starting a native process.
 func New(name string, options rt.Config, revision uint64) *managed.Runtime {
@@ -134,13 +134,14 @@ func (c *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 	}
 	c.sessions[s.id] = s
 	c.mu.Unlock()
+	published := managed.NewSession(s)
 	if options.InitialInput != nil {
-		if _, err := s.Submit(ctx, *options.InitialInput); err != nil {
-			_ = s.Close()
+		if _, err := published.Submit(ctx, rt.TextInput(*options.InitialInput)); err != nil {
+			_ = published.Close()
 			return nil, err
 		}
 	}
-	return s, nil
+	return published, nil
 }
 func (c *driver) Stop() error {
 	c.mu.Lock()
@@ -184,15 +185,23 @@ func (s *session) Capabilities() rt.Capabilities {
 func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error) {
 	select {
 	case <-s.done:
-		return rt.Submission{}, rt.ErrUnavailable
+		receipt := rt.UnknownSubmission()
+		receipt.HandedToSDK = rt.Known(false)
+		receipt.WriteCompleted = rt.Known(false)
+		return receipt, &rt.SafeError{Category: "unavailable", Scope: "operation", Message: "attachment is closed"}
 	default:
 	}
 	input := types.UserInput{Text: types.Ptr(types.TextUserInput{Type: types.TextUserInputTypeText, Text: text, TextElements: types.Some([]types.TextElement{})})}
 	result, err := s.conn.client.StartTurn(ctx, types.TurnStartParams{ThreadID: s.id, Input: []types.UserInput{input}})
 	if err != nil {
-		return rt.Submission{}, safeError(ctx, "submit")
+		return submissionError(err)
 	}
-	return rt.Submission{TurnID: result.Turn.ID, Evidence: rt.NativeAcknowledged}, nil
+	receipt := rt.UnknownSubmission()
+	receipt.WorkRef = result.Turn.ID
+	receipt.HandedToSDK = rt.Known(true)
+	receipt.NativeAcknowledged = rt.Known(true)
+	receipt.Outcome = "admitted"
+	return receipt, nil
 }
 func (s *session) Cancel(ctx context.Context, turnID string) error {
 	select {
@@ -205,7 +214,8 @@ func (s *session) Cancel(ctx context.Context, turnID string) error {
 	}
 	_, err := s.conn.client.InterruptTurn(ctx, types.TurnInterruptParams{ThreadID: s.id, TurnID: turnID})
 	if err != nil {
-		return safeError(ctx, "interrupt")
+		_, failure := submissionError(err)
+		return failure
 	}
 	return nil
 }
