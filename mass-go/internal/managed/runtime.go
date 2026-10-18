@@ -27,10 +27,12 @@ type attempt struct {
 	abandoned sync.Once
 }
 type creation struct {
+	kind     string
 	snapshot rt.CreationOperation
 	canceled bool
 }
 type Runtime struct {
+	lifecycle       *lifecycleQueue
 	bindings        rt.BindingStore
 	scope           string
 	resuming        map[rt.SessionKey]bool
@@ -53,12 +55,20 @@ type Runtime struct {
 
 func New(name, kind string, revision uint64, driver Driver, limits rt.CreationLimits, config rt.Config, bindings rt.BindingStore) *Runtime {
 	now := time.Now().UTC()
-	return &Runtime{bindings: bindings, scope: recoveryScope(name, kind, config), resuming: map[rt.SessionKey]bool{}, closing: map[rt.SessionKey]bool{}, closeUnknown: map[rt.SessionKey]bool{}, operations: make(map[string]*creation), limits: limits.Effective(), driver: driver, snapshot: rt.Snapshot{Name: name, Type: kind, ConfigRevision: revision, Phase: "registered", ObservedAt: now, Health: rt.Health{Configured: rt.Known(true), Connected: rt.UnknownObservation(), ProtocolResponsive: rt.UnknownObservation(), ProbeScope: "configuration", ObservedAt: now}}}
+	r := &Runtime{lifecycle: newLifecycleQueue(name, config.LifecycleLimits), bindings: bindings, scope: recoveryScope(name, kind, config), resuming: map[rt.SessionKey]bool{}, closing: map[rt.SessionKey]bool{}, closeUnknown: map[rt.SessionKey]bool{}, operations: make(map[string]*creation), limits: limits.Effective(), driver: driver, snapshot: rt.Snapshot{Name: name, Type: kind, ConfigRevision: revision, Phase: "registered", ObservedAt: now, Health: rt.Health{Configured: rt.Known(true), Connected: rt.UnknownObservation(), ProtocolResponsive: rt.UnknownObservation(), ProbeScope: "configuration", ObservedAt: now}}}
+	r.emitStatusLocked()
+	return r
 }
 func (r *Runtime) Status() rt.Snapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.statusLocked()
+}
+func (r *Runtime) statusLocked() rt.Snapshot {
 	snapshot := r.snapshot
+	snapshot.Retired = r.retired
+	snapshot.Capabilities = r.capabilitiesLocked()
+	snapshot.LifecycleDelivery = r.lifecycle.delivery()
 	for _, observation := range []*rt.Observation{&snapshot.Health.Configured, &snapshot.Health.Connected, &snapshot.Health.ProtocolResponsive} {
 		if observation.Value != nil {
 			value := *observation.Value
@@ -75,6 +85,10 @@ func (r *Runtime) Start(ctx context.Context) error {
 	if r.retired || r.unsettled {
 		r.mu.Unlock()
 		return rt.ErrConflict
+	}
+	if r.lifecycle.failed() {
+		r.mu.Unlock()
+		return rt.ErrBackpressure
 	}
 	if r.snapshot.Phase == "ready" {
 		r.mu.Unlock()
@@ -97,6 +111,17 @@ func (r *Runtime) Start(ctx context.Context) error {
 	r.activation = a
 	r.stopping = nil
 	r.snapshot.Phase = "starting"
+	r.lifecycle.setRunning(false)
+	r.lifecycle.reopen()
+	r.emitStatusLocked()
+	if r.lifecycle.failed() {
+		r.snapshot.Phase = "unavailable"
+		r.activation = nil
+		a.err = rt.ErrBackpressure
+		close(a.done)
+		r.mu.Unlock()
+		return a.err
+	}
 	r.mu.Unlock()
 	health, err := r.driver.Start(ctx)
 	r.mu.Lock()
@@ -111,7 +136,13 @@ func (r *Runtime) Start(ctx context.Context) error {
 		}
 	}
 	r.snapshot.ObservedAt = time.Now().UTC()
+	r.lifecycle.setRunning(r.snapshot.Phase == "ready" && err == nil)
 	r.activation = nil
+	r.emitStatusLocked()
+	if err == nil && r.lifecycle.failed() {
+		err = errors.Join(rt.ErrIncomplete, rt.ErrBackpressure)
+		a.err = err
+	}
 	close(a.done)
 	r.mu.Unlock()
 	return err
@@ -132,6 +163,9 @@ func (r *Runtime) CreateSession(ctx context.Context, options rt.SessionOptions) 
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.lifecycle.failed() {
+		return rt.CreationOperation{}, rt.ErrBackpressure
+	}
 	if r.snapshot.Phase != "ready" {
 		return rt.CreationOperation{}, rt.ErrUnavailable
 	}
@@ -152,8 +186,12 @@ func (r *Runtime) CreateSession(ctx context.Context, options rt.SessionOptions) 
 	if r.driver.RequiresInitialInput() && options.InitialInput == nil {
 		op.snapshot.Phase = "awaiting_input"
 		op.snapshot.InputRequired = true
+		r.emitOperationLocked(op)
 	} else {
 		r.launchCreation(op, options)
+	}
+	if r.lifecycle.failed() {
+		return copyOperation(op.snapshot), rt.ErrBackpressure
 	}
 	return copyOperation(op.snapshot), nil
 }
@@ -195,8 +233,14 @@ func (r *Runtime) ContinueCreation(ctx context.Context, ref, input string) (rt.C
 	if r.snapshot.Phase != "ready" || op.snapshot.Phase != "awaiting_input" {
 		return rt.CreationOperation{}, rt.ErrConflict
 	}
+	if r.lifecycle.failed() {
+		return copyOperation(op.snapshot), rt.ErrBackpressure
+	}
 	op.snapshot.InputRequired = false
 	r.launchCreation(op, rt.SessionOptions{InitialInput: &input})
+	if r.lifecycle.failed() {
+		return copyOperation(op.snapshot), rt.ErrBackpressure
+	}
 	return copyOperation(op.snapshot), nil
 }
 func (r *Runtime) CancelOperation(ctx context.Context, ref string) (rt.CreationOperation, error) {
@@ -222,12 +266,20 @@ func (r *Runtime) CancelOperation(ctx context.Context, ref string) (rt.CreationO
 	default:
 		return copyOperation(op.snapshot), rt.ErrConflict
 	}
+	r.emitOperationLocked(op)
 	return copyOperation(op.snapshot), nil
 }
 
 // launchCreation is called under mu, but performs all SDK work outside it.
 func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 	op.snapshot.Phase = "awaiting_native_identity"
+	r.emitOperationLocked(op)
+	if r.lifecycle.failed() {
+		op.snapshot.Phase = "rejected"
+		op.snapshot.Failure = "backpressure"
+		op.snapshot.CleanupState = "not_required"
+		return
+	}
 	r.creates.Add(1)
 	go func() {
 		defer r.creates.Done()
@@ -253,6 +305,7 @@ func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 			if errors.Is(err, rt.ErrCleanupIncomplete) {
 				op.snapshot.CleanupState = "unconfirmed"
 			}
+			r.emitOperationLocked(op)
 			r.mu.Unlock()
 			return
 		}
@@ -275,6 +328,7 @@ func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 		if op.canceled || r.snapshot.Phase != "ready" || err != nil {
 			op.snapshot.Phase = "cleaning_up"
 			op.snapshot.CleanupState = "pending"
+			r.emitOperationLocked(op)
 			r.mu.Unlock()
 			closeErr := AbandonSession(session)
 			r.mu.Lock()
@@ -287,12 +341,15 @@ func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
 				op.snapshot.Phase = "outcome_unknown"
 				op.snapshot.Failure = "outcome_unknown"
 			}
+			r.emitOperationLocked(op)
 			r.mu.Unlock()
 			return
 		}
 		r.sessions = append(r.sessions, session)
 		op.snapshot.Key = &key
 		op.snapshot.Phase = "opened"
+		r.emitOperationLocked(op)
+		r.attachSessionLocked(session, rt.SessionOpened, op.snapshot.OperationRef)
 		r.mu.Unlock()
 	}()
 }
@@ -366,6 +423,8 @@ func (r *Runtime) finishStop(a *attempt, activation *attempt) {
 	r.snapshot.Health.ProbeScope = "owned_resource_shutdown"
 	r.snapshot.ObservedAt = time.Now().UTC()
 	r.snapshot.Health.ObservedAt = r.snapshot.ObservedAt
+	r.emitStatusLocked()
+	r.lifecycle.settle()
 	close(a.done)
 
 	r.mu.Unlock()
@@ -386,5 +445,7 @@ func (r *Runtime) Retire() bool {
 		return false
 	}
 	r.retired = true
+	r.emitStatusLocked()
+	r.lifecycle.settle()
 	return true
 }

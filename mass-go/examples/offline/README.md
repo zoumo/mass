@@ -16,7 +16,9 @@ be available; no model, credential or account discovery is involved.
 The example queries system types, registers named configurations, activates each
 Runtime, creates native identity, continues Claude's explicit pending input,
 submits Codex text, reads and JSON-round-trips typed sequenced events, queries
-managed state and inspects close/stop evidence. The two protocols expose the same
+managed state and inspects close/stop evidence. It also checks dynamic creation
+availability and independently reads/JSON-round-trips the Runtime lifecycle stream
+through its final stopped observation and EOF. The two protocols expose the same
 common interfaces. Their native identity and submission evidence remain different.
 
 Both close lines must say `close=close_unknown nativeRelease=unsupported`.

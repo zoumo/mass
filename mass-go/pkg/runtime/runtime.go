@@ -11,6 +11,8 @@ import (
 // Runtime owns one named protocol instance and all of its native sessions.
 type Runtime interface {
 	Start(context.Context) error
+	// Next consumes Runtime/operation lifecycle observations, independently of session content.
+	Next(context.Context) (Event, error)
 	Status() Snapshot
 	CreateSession(context.Context, SessionOptions) (CreationOperation, error)
 	GetOperation(string) (CreationOperation, error)
@@ -83,11 +85,12 @@ type CreationOperation struct {
 }
 
 type Config struct {
-	DeliveryLimits DeliveryLimits `json:"deliveryLimits,omitempty"`
-	CreationLimits CreationLimits `json:"creationLimits,omitempty"`
-	Executable     string         `json:"executable"`
-	Env            []string       `json:"-"` // Explicit child environment; never returned in status.
-	Dir            string         `json:"dir,omitempty"`
+	LifecycleLimits DeliveryLimits `json:"lifecycleLimits,omitempty"`
+	DeliveryLimits  DeliveryLimits `json:"deliveryLimits,omitempty"`
+	CreationLimits  CreationLimits `json:"creationLimits,omitempty"`
+	Executable      string         `json:"executable"`
+	Env             []string       `json:"-"` // Explicit child environment; never returned in status.
+	Dir             string         `json:"dir,omitempty"`
 }
 type Registration struct {
 	Name   string `json:"name"`
@@ -97,13 +100,15 @@ type Registration struct {
 
 // RuntimeType describes a fixed system implementation and its configuration.
 type RuntimeType struct {
-	Name           string        `json:"name"`
-	SchemaVersion  int           `json:"schemaVersion"`
-	Topology       string        `json:"topology"`
-	MaxNameBytes   int           `json:"maxNameBytes"`
-	ConfigFields   []ConfigField `json:"configFields"`
-	DeliveryBounds []LimitField  `json:"deliveryBounds"`
-	CreationBounds []LimitField  `json:"creationBounds"`
+	Name            string              `json:"name"`
+	Features        []FeatureDefinition `json:"features"`
+	LifecycleBounds []LimitField        `json:"lifecycleBounds"`
+	SchemaVersion   int                 `json:"schemaVersion"`
+	Topology        string              `json:"topology"`
+	MaxNameBytes    int                 `json:"maxNameBytes"`
+	ConfigFields    []ConfigField       `json:"configFields"`
+	DeliveryBounds  []LimitField        `json:"deliveryBounds"`
+	CreationBounds  []LimitField        `json:"creationBounds"`
 }
 type LimitField struct {
 	Name    string `json:"name"`
@@ -133,29 +138,33 @@ type Health struct {
 	ObservedAt         time.Time   `json:"observedAt"`
 }
 type Snapshot struct {
-	Name             string    `json:"name"`
-	Type             string    `json:"type"`
-	ConfigRevision   uint64    `json:"configRevision"`
-	ObservedRevision uint64    `json:"observedRevision"`
-	Phase            string    `json:"phase"`
-	Health           Health    `json:"health"`
-	ObservedAt       time.Time `json:"observedAt"`
+	Retired           bool                     `json:"retired,omitempty"`
+	Capabilities      []CapabilityAvailability `json:"capabilities"`
+	LifecycleDelivery string                   `json:"lifecycleDelivery"`
+	Name              string                   `json:"name"`
+	Type              string                   `json:"type"`
+	ConfigRevision    uint64                   `json:"configRevision"`
+	ObservedRevision  uint64                   `json:"observedRevision"`
+	Phase             string                   `json:"phase"`
+	Health            Health                   `json:"health"`
+	ObservedAt        time.Time                `json:"observedAt"`
 }
 type SessionKey struct {
 	RuntimeName string `json:"runtimeName"`
 	SessionID   string `json:"sessionId"`
 }
 type SessionSnapshot struct {
-	Key             SessionKey         `json:"key"`
-	Freshness       string             `json:"freshness"`
-	Availability    string             `json:"availability"`
-	ConnectionEpoch string             `json:"connectionEpoch,omitempty"`
-	Foreground      ForegroundState    `json:"foreground"`
-	Interactions    InteractionSummary `json:"interactions"`
-	Background      BackgroundSummary  `json:"background"`
-	Metadata        MetadataPayload    `json:"metadata"`
-	Attachment      string             `json:"attachment"`
-	ObservedAt      time.Time          `json:"observedAt"`
+	Capabilities    []CapabilityAvailability `json:"capabilities"`
+	Key             SessionKey               `json:"key"`
+	Freshness       string                   `json:"freshness"`
+	Availability    string                   `json:"availability"`
+	ConnectionEpoch string                   `json:"connectionEpoch,omitempty"`
+	Foreground      ForegroundState          `json:"foreground"`
+	Interactions    InteractionSummary       `json:"interactions"`
+	Background      BackgroundSummary        `json:"background"`
+	Metadata        MetadataPayload          `json:"metadata"`
+	Attachment      string                   `json:"attachment"`
+	ObservedAt      time.Time                `json:"observedAt"`
 }
 
 // Session is an attachment with a proven, immutable native identity.
@@ -179,30 +188,36 @@ type Capabilities struct{ NativeTurnID, NativeAcknowledgement, VerifiedResume, N
 type EventKind string
 
 const (
-	AgentAssociated      EventKind = "agent.associated"
-	AgentCreated         EventKind = "agent.created"
-	AgentStateChanged    EventKind = "agent.state_changed"
-	TaskChanged          EventKind = "task.changed"
-	TaskSnapshot         EventKind = "task.snapshot"
-	UsageUpdated         EventKind = "usage.updated"
-	ObservationChanged   EventKind = "observation.changed"
-	SessionReady         EventKind = "session_ready"
-	TurnStarted          EventKind = "turn_started"
-	TurnCompleted        EventKind = "turn_completed"
-	MessageCompleted     EventKind = "message.completed"
-	MessageStarted       EventKind = "message.started"
-	MessageDelta         EventKind = "message.delta"
-	ToolAnnounced        EventKind = "tool.announced"
-	ToolUpdated          EventKind = "tool.updated"
-	ToolCompleted        EventKind = "tool.completed"
-	InteractionRequested EventKind = "interaction.requested"
-	InteractionResolved  EventKind = "interaction.resolved"
-	Failure              EventKind = "failure"
-	Unknown              EventKind = "diagnostic"
-	ReasoningCompleted   EventKind = "reasoning.completed"
-	ReasoningDelta       EventKind = "reasoning.delta"
-	Plan                 EventKind = "plan.updated"
-	Metadata             EventKind = "session.metadata_changed"
+	RuntimeStatusChanged  EventKind = "runtime.status_changed"
+	OperationStateChanged EventKind = "operation.state_changed"
+	OperationFailed       EventKind = "operation.failed"
+	SessionOpened         EventKind = "session.opened"
+	SessionResumed        EventKind = "session.resumed"
+	SessionStateChanged   EventKind = "session.state_changed"
+	AgentAssociated       EventKind = "agent.associated"
+	AgentCreated          EventKind = "agent.created"
+	AgentStateChanged     EventKind = "agent.state_changed"
+	TaskChanged           EventKind = "task.changed"
+	TaskSnapshot          EventKind = "task.snapshot"
+	UsageUpdated          EventKind = "usage.updated"
+	ObservationChanged    EventKind = "observation.changed"
+	SessionReady          EventKind = "session_ready"
+	TurnStarted           EventKind = "turn_started"
+	TurnCompleted         EventKind = "turn_completed"
+	MessageCompleted      EventKind = "message.completed"
+	MessageStarted        EventKind = "message.started"
+	MessageDelta          EventKind = "message.delta"
+	ToolAnnounced         EventKind = "tool.announced"
+	ToolUpdated           EventKind = "tool.updated"
+	ToolCompleted         EventKind = "tool.completed"
+	InteractionRequested  EventKind = "interaction.requested"
+	InteractionResolved   EventKind = "interaction.resolved"
+	Failure               EventKind = "failure"
+	Unknown               EventKind = "diagnostic"
+	ReasoningCompleted    EventKind = "reasoning.completed"
+	ReasoningDelta        EventKind = "reasoning.delta"
+	Plan                  EventKind = "plan.updated"
+	Metadata              EventKind = "session.metadata_changed"
 )
 
 // Diagnostic retains correlation without exposing arbitrary native payloads.

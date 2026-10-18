@@ -182,3 +182,57 @@ func (s *eventSuite) TestAgentTaskAndUsageUnion() {
 		s.Error(err)
 	}
 }
+
+func (s *eventSuite) TestLifecycleEnvelopeAndAvailabilityValidation() {
+	base := rt.Event{SchemaVersion: 1, Kind: rt.RuntimeStatusChanged, Scope: "runtime", RuntimeName: "named", Seq: 1, ObservedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), Origin: rt.EventOrigin{Kind: "runtime", Attribution: "runtime", Completeness: "complete"}, Runtime: &rt.Snapshot{Name: "named", Type: "codex", Phase: "ready", Capabilities: []rt.CapabilityAvailability{{Name: "managed_queries", Support: "supported", Availability: "available", Conditions: []string{}}}}}
+	data, err := json.Marshal(base)
+	s.Require().NoError(err)
+	var decoded rt.Event
+	s.Require().NoError(json.Unmarshal(data, &decoded))
+	s.Equal(base, decoded)
+	for _, tc := range []struct {
+		name   string
+		change func(*rt.Event)
+	}{
+		{"fake session header", func(e *rt.Event) { e.SessionID = "invented" }},
+		{"runtime in session scope", func(e *rt.Event) { e.Scope = "session"; e.SessionID = "native"; e.ConnectionEpoch = "epoch" }},
+		{"missing capability records", func(e *rt.Event) { e.Runtime.Capabilities = nil }},
+		{"unavailable without reason", func(e *rt.Event) { e.Runtime.Capabilities[0].Availability = "unavailable" }},
+		{"unsupported advertised available", func(e *rt.Event) { e.Runtime.Capabilities[0].Support = "unsupported" }},
+	} {
+		s.Run(tc.name, func() {
+			var e rt.Event
+			s.Require().NoError(json.Unmarshal(data, &e))
+			tc.change(&e)
+			_, err := json.Marshal(e)
+			s.Error(err)
+		})
+	}
+	creation := rt.CreationOperation{OperationRef: "create:operation", RuntimeName: "named", Phase: "awaiting_input", InputRequired: true, Evidence: rt.CreationEvidence{NativeIdentity: rt.UnknownObservation(), InitialInputWritten: rt.UnknownObservation()}}
+	base.Runtime = nil
+	base.Kind = rt.OperationStateChanged
+	base.Scope = "operation"
+	base.OperationRef = creation.OperationRef
+	base.Operation = &rt.OperationPayload{Kind: "creation", State: "awaiting_input", Creation: &creation}
+	data, err = json.Marshal(base)
+	s.Require().NoError(err)
+	s.Require().NoError(json.Unmarshal(data, &decoded))
+	s.Empty(decoded.SessionID)
+	s.Nil(decoded.Operation.Creation.Key)
+	for _, tc := range []struct {
+		name   string
+		change func(*rt.Event)
+	}{
+		{"wrong operation", func(e *rt.Event) { e.OperationRef = "another" }},
+		{"opened without native identity", func(e *rt.Event) { e.Operation.State = "opened"; e.Operation.Creation.Phase = "opened" }},
+		{"mixed receipts", func(e *rt.Event) { e.Operation.Response = &rt.ResponseReceipt{} }},
+	} {
+		s.Run(tc.name, func() {
+			var e rt.Event
+			s.Require().NoError(json.Unmarshal(data, &e))
+			tc.change(&e)
+			_, err := json.Marshal(e)
+			s.Error(err)
+		})
+	}
+}

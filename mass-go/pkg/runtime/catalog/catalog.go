@@ -31,10 +31,12 @@ const maxNameBytes = 128
 func (c *Catalog) Types() []rt.RuntimeType {
 	types := []rt.RuntimeType{{Name: "codex", SchemaVersion: 1, Topology: "shared_local_process"}, {Name: "claude", SchemaVersion: 1, Topology: "per_session_process"}}
 	for i := range types {
+		types[i].Features = managed.Features()
 		types[i].MaxNameBytes = maxNameBytes
 		types[i].DeliveryBounds = []rt.LimitField{{Name: "facts", Default: 256, Min: 1, Max: 4096}, {Name: "bytes", Default: 4 << 20, Min: 1, Max: 16 << 20}}
+		types[i].LifecycleBounds = append([]rt.LimitField{}, types[i].DeliveryBounds...)
 		types[i].CreationBounds = []rt.LimitField{{Name: "facts", Default: 64, Min: 1, Max: 4096}, {Name: "bytes", Default: 1 << 20, Min: 1, Max: 16 << 20}, {Name: "timeoutNanoseconds", Default: int64(30 * time.Second), Min: int64(time.Millisecond), Max: int64(60 * time.Second)}}
-		types[i].ConfigFields = []rt.ConfigField{{Name: "executable", Type: "string", Required: true, AbsolutePath: true}, {Name: "env", Type: "string_array", Required: true}, {Name: "dir", Type: "string", AbsolutePath: true}, {Name: "deliveryLimits", Type: "object"}, {Name: "creationLimits", Type: "object"}}
+		types[i].ConfigFields = []rt.ConfigField{{Name: "executable", Type: "string", Required: true, AbsolutePath: true}, {Name: "env", Type: "string_array", Required: true}, {Name: "dir", Type: "string", AbsolutePath: true}, {Name: "deliveryLimits", Type: "object"}, {Name: "creationLimits", Type: "object"}, {Name: "lifecycleLimits", Type: "object"}}
 	}
 	return types
 }
@@ -47,6 +49,10 @@ func (c *Catalog) Describe(name string) (rt.RuntimeType, error) {
 	return rt.RuntimeType{}, rt.ErrNotFound
 }
 func valid(reg rt.Registration) bool {
+	lifecycle := reg.Config.LifecycleLimits.Effective()
+	if lifecycle.Facts < 1 || lifecycle.Facts > 4096 || lifecycle.Bytes < 1 || lifecycle.Bytes > 16<<20 {
+		return false
+	}
 	delivery := reg.Config.DeliveryLimits.Effective()
 	if delivery.Facts < 1 || delivery.Facts > 4096 || delivery.Bytes < 1 || delivery.Bytes > 16<<20 || len(reg.Config.Env) > 256 {
 		return false

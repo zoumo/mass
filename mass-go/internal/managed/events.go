@@ -14,37 +14,45 @@ import (
 // One publication owner assigns final cursors and projects metadata. Adapter
 // receive positions retain their own meaning, including before identity binds.
 type publishedSession struct {
-	native                   NativeSession
-	next                     sync.Mutex
-	mu                       sync.Mutex
-	epoch                    string
-	seq                      uint64
-	metadata                 rt.MetadataPayload
-	background               backgroundProjection
-	commands                 map[string]*command
-	active                   *command
-	foreground               string
-	closed                   bool
-	closeFinished            chan struct{}
-	closeErr                 error
-	wake                     chan struct{}
-	events                   *chanx.ChannX
-	limits                   rt.DeliveryLimits
-	queuedFacts, queuedBytes int
-	discardOnce              sync.Once
-	aborted                  bool
-	incomplete               bool
-	finished                 chan struct{}
-	terminal                 error
-	observedAt               time.Time
-	ctx                      context.Context
-	cancel                   context.CancelFunc
+	lifecycle                        *lifecycleQueue
+	bindingAvailable, releaseUnknown bool
+	lastLifecycleState               string
+	commandFacts                     map[string]string
+	native                           NativeSession
+	next                             sync.Mutex
+	mu                               sync.Mutex
+	epoch                            string
+	seq                              uint64
+	metadata                         rt.MetadataPayload
+	background                       backgroundProjection
+	commands                         map[string]*command
+	active                           *command
+	foreground                       string
+	closed                           bool
+	closeFinished                    chan struct{}
+	closeErr                         error
+	wake                             chan struct{}
+	events                           *chanx.ChannX
+	limits                           rt.DeliveryLimits
+	queuedFacts, queuedBytes         int
+	discardOnce                      sync.Once
+	aborted                          bool
+	incomplete                       bool
+	finished                         chan struct{}
+	terminal                         error
+	observedAt                       time.Time
+	ctx                              context.Context
+	cancel                           context.CancelFunc
 }
 
 func (s *publishedSession) Snapshot() rt.SessionSnapshot {
 	snapshot := s.native.Snapshot()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.snapshotLocked(snapshot)
+}
+func (s *publishedSession) snapshotLocked(snapshot rt.SessionSnapshot) rt.SessionSnapshot {
+	snapshot.Capabilities = s.capabilitiesLocked()
 	if s.closed {
 		snapshot.Attachment = "closing"
 		select {
@@ -78,10 +86,7 @@ func (s *publishedSession) receive() {
 			s.mu.Lock()
 			s.terminal = err
 			s.observedAt = time.Now().UTC()
-			if s.active != nil && !s.active.finished {
-				s.active.receipt.Outcome = "unknown"
-				s.foreground = "unknown"
-			}
+			s.failForegroundLocked()
 			s.signal()
 			s.mu.Unlock()
 			s.native.InvalidateInteractions("")
@@ -120,16 +125,14 @@ func (s *publishedSession) receive() {
 		if err != nil {
 			s.terminal = err
 			s.incomplete = true
-			if s.active != nil && !s.active.finished {
-				s.active.receipt.Outcome = "unknown"
-				s.foreground = "unknown"
-			}
+			s.failForegroundLocked()
 			s.signal()
 			s.mu.Unlock()
 			s.native.InvalidateInteractions("")
 			go s.native.Close()
 			return
 		}
+		s.emitStateLocked()
 		s.queuedFacts++
 		s.queuedBytes += size
 		s.mu.Unlock()
@@ -140,10 +143,7 @@ func (s *publishedSession) receive() {
 			s.mu.Lock()
 			s.terminal = errors.Join(rt.ErrIncomplete, e.Error)
 			s.incomplete = true
-			if s.active != nil && !s.active.finished {
-				s.active.receipt.Outcome = "unknown"
-				s.foreground = "unknown"
-			}
+			s.failForegroundLocked()
 			s.signal()
 			s.mu.Unlock()
 			s.native.InvalidateInteractions("")

@@ -1,10 +1,10 @@
 # Go Runtime events
 
-The experimental Go Runtime publishes schema version 1 through `Session.Next`.
+The experimental Go Runtime publishes schema version 1 through `Session.Next` and `Runtime.Next`.
 Each event has one `type` and one compatible concrete `payload`. Go callers use
 `Event.Message`, `Reasoning`, `Plan`, `Metadata`, `Tool`, `Work`, `Session`,
 `Interaction`, `Association`, `Creation`, `AgentState`, `Task`, `TaskSnapshot`,
-`Usage`, `Observation`, `Error` or `Diagnostic`. JSON uses a single `payload` member;
+`Usage`, `Observation`, `Runtime`, `Operation`, `Error` or `Diagnostic`. JSON uses a single `payload` member;
 it never serializes SDK objects, methods or response handles. Invalid unions,
 unsupported schema versions and invalid message/content discriminants fail JSON
 decode. Unknown envelope fields are ignored; unknown payload fields are rejected
@@ -14,7 +14,7 @@ digest as diagnostics. Supported message facts are converted in the adapters.
 
 ## Envelope and identity
 
-Every current event stream is session-scoped and carries the configured Runtime
+Each Session.Next stream is session-scoped and carries the configured Runtime
 name and original native session ID. Codex uses its native thread ID. A random
 connection epoch marks this attachment, including observations buffered before
 Claude identity was known. The common publication owner assigns a positive
@@ -326,8 +326,45 @@ channels and observation timestamps never establish a native global order.
 SDK queues and native truncation/timeout limits remain outside stronger Runtime
 guarantees. No local drain, EOF or ACK proves native release.
 
-The available stream is session-scoped. Runtime/operation lifecycle event streams,
-distinct opened/resumed/attachment-state event families and dynamic capability
-availability records remain unavailable. Status/operation polling and close/stop
-receipts provide current lifecycle observations. See the
-[protocol Runtime contract](runtime-contract.md) for these remaining gaps.
+## Runtime and operation lifecycle stream
+
+`Runtime.Next` publishes the same schema-version-1 Event union with runtime or
+operation scope. The lifecycle stream has one Runtime-lifetime seq; Session.Next
+retains its independent per-attachment seq. No order across these streams or
+native wire order is implied. Existing session content envelopes remain
+session-scoped and keep their actual native session header and epoch.
+
+| Lifecycle type | Scope | Concrete payload |
+| --- | --- | --- |
+| runtime.status_changed | runtime | Runtime snapshot, including revisions, health and dynamic capabilities |
+| operation.state_changed | operation | OperationPayload: kind/state and exactly one creation/resume, submission, cancellation or response record |
+| operation.failed | operation | SafeError with the original operationRef, safe category and available acceptance evidence |
+| session.opened / session.resumed | runtime | Verified SessionSnapshot with native SessionKey, epoch and capability availability |
+| session.state_changed | runtime | Observed attachment/foreground/interaction/admission snapshot, without implicit background completion |
+
+Runtime-scope session lifecycle facts locate the actual session in payload.key;
+they do not copy the Runtime cursor into a session header or claim to be native
+session facts. Operation envelopes have operationRef and no sessionId/epoch.
+Their typed receipt may contain a SessionKey only after native identity is proven.
+Creation and resume are operation kinds with distinct provenance; a pending
+creation has no substitute key. Admission rejection without a reserved operation
+is a returned error/receipt, not an invented operation event. Input text, question
+answers and SDK response handles are not part of OperationPayload. Interrupted or
+failed work can settle a submission; operation state `settled` means termination
+was observed, not successful execution.
+
+All lifecycle events JSON-round-trip as common data. Scope/type mismatches, fake
+session headers, mismatched operation references, opened operations without native
+identity, mixed operation receipts and invalid/missing capability records fail
+serialization/decode. Unknown variants and payload fields follow the strict decode
+policy above. Snapshot capability records contain name, support, availability,
+conditions and a safe unavailable reason. They cannot grant response authority.
+
+Lifecycle count/encoded-byte quotas preserve the accepted prefix and expose a
+terminal incomplete/backpressure error on overflow. New work is fenced while
+original cleanup responsibility remains. Stop retains the bounded lifecycle
+prefix and does not wait for its consumer. After settled Stop and dequeue, EOF
+ends that observation cycle; explicit Start continues the same Runtime cursor.
+See the [Runtime contract](runtime-contract.md) and [usage guide](../README.md)
+for independent stream limits, conditional capability meanings and remaining
+native/SDK restrictions.

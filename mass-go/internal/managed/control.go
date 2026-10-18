@@ -45,8 +45,13 @@ func NewSession(native NativeSession, configured ...rt.DeliveryLimits) rt.Sessio
 }
 func (s *publishedSession) Key() rt.SessionKey            { return s.native.Key() }
 func (s *publishedSession) Capabilities() rt.Capabilities { return s.native.Capabilities() }
-func (s *publishedSession) signal()                       { close(s.wake); s.wake = make(chan struct{}) }
-func isKnown(o rt.Observation) bool                       { return o.State == "known" && o.Value != nil && *o.Value }
+func (s *publishedSession) signal() {
+	close(s.wake)
+	s.wake = make(chan struct{})
+	s.observedAt = time.Now().UTC()
+	s.emitStateLocked()
+}
+func isKnown(o rt.Observation) bool { return o.State == "known" && o.Value != nil && *o.Value }
 func copySubmission(r rt.Submission) rt.Submission {
 	// Copy pointer-bearing public records, including safe failure evidence.
 	for _, o := range []*rt.Observation{&r.HandedToSDK, &r.WriteCompleted, &r.NativeAcknowledged, &r.NativeRecorded, &r.Completed} {
@@ -116,6 +121,10 @@ func (s *publishedSession) settle(c *command) {
 		s.active = nil
 		s.foreground = "idle"
 	}
+	s.emitSubmissionLocked(c)
+	if c.cancel != nil {
+		s.emitCancellationLocked(*c.cancel)
+	}
 	s.signal()
 }
 func (s *publishedSession) reject(category string) (rt.Submission, error) {
@@ -142,6 +151,14 @@ func (s *publishedSession) Submit(ctx context.Context, input rt.InputCommand) (r
 		return s.reject(category)
 	}
 	s.mu.Lock()
+	if s.lifecycle != nil && s.lifecycle.failed() {
+		s.mu.Unlock()
+		return s.reject("backpressure")
+	}
+	if s.lifecycle != nil && !s.lifecycle.accepting() {
+		s.mu.Unlock()
+		return s.reject("unavailable")
+	}
 	if s.closed || s.terminal != nil {
 		s.mu.Unlock()
 		return s.reject("unavailable")
@@ -166,6 +183,20 @@ func (s *publishedSession) Submit(ctx context.Context, input rt.InputCommand) (r
 	s.commands[ref] = c
 	s.active = c
 	s.foreground = "running"
+	s.signal()
+	s.emitSubmissionLocked(c)
+	if s.lifecycle != nil && s.lifecycle.failed() {
+		c.submitting = false
+		c.finished = true
+		c.receipt.Outcome = "rejected"
+		c.receipt.HandedToSDK = rt.Known(false)
+		c.receipt.WriteCompleted = rt.Known(false)
+		c.receipt.Failure = failure("backpressure", ref, s.Key())
+		s.settle(c)
+		result := copySubmission(c.receipt)
+		s.mu.Unlock()
+		return result, result.Failure
+	}
 	s.mu.Unlock()
 	native, err := s.native.Submit(ctx, text)
 	s.mu.Lock()
@@ -247,6 +278,7 @@ func (s *publishedSession) Cancel(ctx context.Context, target string) (rt.Cancel
 	s.native.InvalidateInteractions(c.receipt.WorkRef)
 	c.cancelling = true
 	s.foreground = "cancelling"
+	s.emitCancellationLocked(*c.cancel)
 	s.signal()
 	// Waiting for a native ID cannot release the fixed target or admit new work.
 	for s.Capabilities().NativeTurnID && c.submitting && c.receipt.WorkRef == "" && !c.finished && !s.closed && s.terminal == nil && ctx.Err() == nil {
@@ -358,6 +390,7 @@ func (s *publishedSession) Close() error {
 		s.foreground = "unknown"
 		s.active.receipt.Outcome = "unknown"
 		s.active.receipt.Failure = failure("outcome_unknown", s.active.receipt.OperationRef, s.Key())
+		s.emitSubmissionLocked(s.active)
 	}
 	s.signal()
 	s.mu.Unlock()
@@ -366,7 +399,9 @@ func (s *publishedSession) Close() error {
 	<-s.finished
 	s.mu.Lock()
 	s.closeErr = err
+	s.observedAt = time.Now().UTC()
 	close(s.closeFinished)
+	s.emitStateLocked()
 	s.mu.Unlock()
 	return err
 }

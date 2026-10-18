@@ -176,14 +176,27 @@ func (s *publishedSession) Respond(ctx context.Context, ref string, r rt.Respons
 		return rt.ResponseReceipt{}, err
 	}
 	s.mu.Lock()
-	closed := s.closed
+	closed := s.closed || (s.lifecycle != nil && !s.lifecycle.accepting())
+	backpressure := s.lifecycle != nil && s.lifecycle.failed()
 	s.mu.Unlock()
+	if backpressure {
+		key := s.Key()
+		receipt := rt.ResponseReceipt{Key: key, InteractionRef: ref, Attempt: "not_started", Outcome: "rejected", HandedToSDK: rt.Known(false), WriteCompleted: rt.UnknownObservation(), NativeResolution: rt.UnknownObservation(), Failure: failure("backpressure", "", key)}
+		return receipt, receipt.Failure
+	}
 	if closed {
 		key := s.Key()
 		receipt := rt.ResponseReceipt{Key: key, InteractionRef: ref, Attempt: "not_started", Outcome: "rejected", HandedToSDK: rt.Known(false), WriteCompleted: rt.UnknownObservation(), NativeResolution: rt.UnknownObservation(), Failure: failure("invalid_interaction", "", key)}
 		return receipt, receipt.Failure
 	}
-	return s.native.Respond(ctx, ref, r)
+	receipt, err := s.native.Respond(ctx, ref, r)
+	s.mu.Lock()
+	if receipt.OperationRef != "" {
+		s.emitCommandLocked(receipt.OperationRef, rt.OperationPayload{Kind: "response", State: receipt.Outcome, Response: &receipt}, receipt.Failure)
+	}
+	s.emitStateLocked()
+	s.mu.Unlock()
+	return receipt, err
 }
 func (r *Runtime) Respond(ctx context.Context, key rt.SessionKey, ref string, response rt.Response) (rt.ResponseReceipt, error) {
 	s, err := r.GetSession(key)
