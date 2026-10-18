@@ -65,19 +65,23 @@ func (d *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 	if err := c.open(openCtx, d.options); err != nil {
 		return nil, c.failCreation(err)
 	}
-	s := &session{conn: c}
+	s := managed.NewSession(&session{conn: c})
 	if options.InitialInput == nil {
+		_ = s.Close()
 		return nil, c.failCreation(rt.ErrInvalidInput)
 	}
-	if _, err := s.Submit(ctx, *options.InitialInput); err != nil {
+	if _, err := s.Submit(ctx, rt.TextInput(*options.InitialInput)); err != nil {
+		_ = s.Close()
 		return nil, c.failCreation(err)
 	}
 	select {
 	case <-c.identity:
 		return s, nil
 	case <-ctx.Done():
+		_ = s.Close()
 		return nil, c.failCreation(rt.ErrOutcomeUnknown)
 	case <-c.finished:
+		_ = s.Close()
 		return nil, c.failCreation(rt.ErrOutcomeUnknown)
 	}
 }
@@ -120,7 +124,7 @@ type session struct {
 	next sync.Mutex
 }
 
-var _ rt.Session = (*session)(nil)
+var _ managed.NativeSession = (*session)(nil)
 
 func (c *connection) open(ctx context.Context, options rt.Config) error {
 	c.opening.Lock()
@@ -281,19 +285,28 @@ func (s *session) Snapshot() rt.SessionSnapshot {
 func (s *session) Capabilities() rt.Capabilities { return rt.Capabilities{} }
 func (s *session) Submit(ctx context.Context, text string) (rt.Submission, error) {
 	if s.conn.ctx.Err() != nil {
-		return rt.Submission{}, rt.ErrUnavailable
+		receipt := rt.UnknownSubmission()
+		receipt.HandedToSDK = rt.Known(false)
+		receipt.WriteCompleted = rt.Known(false)
+		return receipt, &rt.SafeError{Category: "unavailable", Scope: "operation", Message: "attachment is closed"}
 	}
 	if err := s.conn.client.Send(ctx, text); err != nil {
-		return rt.Submission{}, safeError(ctx, "submit")
+		return submissionError(err)
 	}
-	return rt.Submission{Evidence: rt.SDKWriteSuccess}, nil
+	receipt := rt.UnknownSubmission()
+	receipt.Outcome = "admitted"
+	receipt.HandedToSDK = rt.Known(true)
+	receipt.WriteCompleted = rt.Known(true)
+	receipt.NativeAcknowledged = rt.Observation{State: "not_supported"}
+	return receipt, nil
 }
 func (s *session) Cancel(ctx context.Context, turnID string) error {
 	if turnID != "" {
 		return errors.New("claude runtime has no native turn ID")
 	}
 	if err := s.conn.client.Interrupt(ctx); err != nil {
-		return safeError(ctx, "interrupt")
+		_, failure := submissionError(err)
+		return failure
 	}
 	return nil
 }

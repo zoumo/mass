@@ -18,7 +18,7 @@ func (s *runtimeSuite) TestStructuredToolLifecycle() {
 			frames = append(frames, `s2c {"method":"item/started","params":{"threadId":"native-thread","turnId":"native-turn","startedAtMs":1,"item":`+tc.call+`}}`,
 				`s2c {"method":"item/completed","params":{"threadId":"native-thread","turnId":"native-turn","completedAtMs":2,"item":`+tc.result+`}}`)
 			_, session, ctx := s.open(frames)
-			_, err := session.Submit(ctx, "hello")
+			_, err := session.Submit(ctx, rt.TextInput("hello"))
 			s.Require().NoError(err)
 			for _, kind := range []rt.EventKind{rt.ToolAnnounced, rt.ToolCompleted} {
 				e := s.nextMapped(session, ctx)
@@ -62,7 +62,7 @@ func (s *runtimeSuite) TestCommandOutputAvailability() {
 			frames := append(startup(), turnStart()...)
 			frames = append(frames, `s2c {"method":"item/completed","params":{"threadId":"native-thread","turnId":"native-turn","completedAtMs":2,"item":{"type":"commandExecution","id":"call","command":"synthetic","cwd":"/synthetic","commandActions":[],"status":"completed"`+tc.field+`}}}`)
 			_, session, ctx := s.open(frames)
-			_, err := session.Submit(ctx, "hello")
+			_, err := session.Submit(ctx, rt.TextInput("hello"))
 			s.Require().NoError(err)
 			e := s.nextMapped(session, ctx)
 			s.Require().NotNil(e.Tool)
@@ -78,7 +78,7 @@ func (s *runtimeSuite) TestToolOutputUpdateDoesNotInventSuccess() {
 		`s2c {"method":"item/commandExecution/outputDelta","params":{"threadId":"native-thread","turnId":"native-turn","itemId":"call","delta":"observed"}}`,
 		`s2c {"method":"turn/completed","params":{"threadId":"native-thread","turn":{"id":"native-turn","status":"completed","items":[],"error":null}}}`)
 	_, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
+	_, err := session.Submit(ctx, rt.TextInput("hello"))
 	s.Require().NoError(err)
 	e := s.nextMapped(session, ctx)
 	s.Require().Equal(rt.ToolUpdated, e.Kind)
@@ -106,7 +106,7 @@ func (s *runtimeSuite) TestUnknownAndMalformedToolsStayDistinct() {
 			frames := append(startup(), turnStart()...)
 			frames = append(frames, `s2c {"method":"item/started","params":{"threadId":"native-thread","turnId":"native-turn","startedAtMs":1,"item":`+tc.item+`}}`)
 			_, session, ctx := s.open(frames)
-			_, err := session.Submit(ctx, "hello")
+			_, err := session.Submit(ctx, rt.TextInput("hello"))
 			s.Require().NoError(err)
 			var e rt.Event
 			for {
@@ -144,7 +144,7 @@ func (s *runtimeSuite) TestMCPContentPresenceAndUnsupportedBlocks() {
 			frames := append(startup(), turnStart()...)
 			frames = append(frames, `s2c {"method":"item/completed","params":{"threadId":"native-thread","turnId":"native-turn","completedAtMs":2,"item":{"type":"mcpToolCall","id":"call","server":"synthetic","tool":"lookup","arguments":{},"status":"completed"`+tc.field+`}}}`)
 			_, session, ctx := s.open(frames)
-			_, err := session.Submit(ctx, "hello")
+			_, err := session.Submit(ctx, rt.TextInput("hello"))
 			s.Require().NoError(err)
 			e := s.nextMapped(session, ctx)
 			s.Require().NotNil(e.Tool)
@@ -170,7 +170,7 @@ func (s *runtimeSuite) TestExplicitFailureInStartedItemKeepsItsEvidence() {
 	frames := append(startup(), turnStart()...)
 	frames = append(frames, `s2c {"method":"item/started","params":{"threadId":"native-thread","turnId":"native-turn","startedAtMs":1,"item":{"type":"dynamicToolCall","id":"call","tool":"lookup","arguments":{},"status":"failed","success":false}}}`)
 	_, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
+	_, err := session.Submit(ctx, rt.TextInput("hello"))
 	s.Require().NoError(err)
 	e := s.nextMapped(session, ctx)
 	s.Equal(rt.ToolCompleted, e.Kind)

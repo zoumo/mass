@@ -157,8 +157,10 @@ func (s *runtimeSuite) TestInteractionsAndInterrupt() {
 			s.Require().NoError(handle.Respond(ctx, tc.response))
 			s.Error(handle.Respond(ctx, tc.response))
 			s.Error(handle.Err())
-			s.Error(session.Cancel(ctx, "invented-turn"))
-			s.Require().NoError(session.Cancel(ctx, ""))
+			_, cancelErr := session.Cancel(ctx, "invented-turn")
+			s.ErrorIs(cancelErr, rt.ErrNotFound)
+			_, cancelErr = session.Cancel(ctx, session.Snapshot().Foreground.OperationRef)
+			s.Require().NoError(cancelErr)
 			event = s.next(session, ctx)
 			s.Equal(rt.TurnCompleted, event.Kind)
 			s.Equal("failed", event.Work.Status)
@@ -251,7 +253,8 @@ func (s *runtimeSuite) TestNativeCancellationInvalidatesHandle() {
 	event := s.nextInteraction(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
 	handle := session.ResponseHandle(event.Interaction.Ref)
-	s.Require().NoError(session.Cancel(ctx, ""))
+	_, cancelErr := session.Cancel(ctx, session.Snapshot().Foreground.OperationRef)
+	s.Require().NoError(cancelErr)
 	select {
 	case <-handle.Done():
 	case <-ctx.Done():

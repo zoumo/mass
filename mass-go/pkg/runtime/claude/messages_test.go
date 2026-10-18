@@ -105,6 +105,7 @@ func (s *runtimeSuite) TestMetadataPresenceAndCollectionClearing() {
 		`server protocol {"type":"system","subtype":"init","session_id":"native-session","capabilities":["synthetic-feature"],"slash_commands":["help"],"tools":["Read"],"model":"synthetic-model"}`,
 		`server protocol {"type":"system","subtype":"init","session_id":"native-session","model":"next-model"}`,
 		`server protocol {"type":"system","subtype":"init","session_id":"native-session","capabilities":[],"slash_commands":[],"tools":[]}`))
+	var projection rt.MetadataPayload
 	for i := range 3 {
 		e := s.next(session, ctx)
 		for e.Metadata == nil {
@@ -115,23 +116,23 @@ func (s *runtimeSuite) TestMetadataPresenceAndCollectionClearing() {
 			s.Nil(e.Metadata.Commands)
 			s.Nil(e.Metadata.Tools)
 		}
-		snapshot := session.Snapshot().Metadata
-		s.Require().NotNil(snapshot.Commands)
-		s.Require().NotNil(snapshot.Capabilities)
+		projection.Apply(*e.Metadata)
 		if i < 2 {
-			s.Equal([]string{"help"}, *snapshot.Commands)
-			s.Equal([]string{"synthetic-feature"}, *snapshot.Capabilities)
+			s.Equal([]string{"help"}, *projection.Commands)
+			s.Equal([]string{"synthetic-feature"}, *projection.Capabilities)
 		} else {
-			s.Empty(*snapshot.Commands)
-			s.Empty(*snapshot.Capabilities)
-			s.Empty(*snapshot.Tools)
+			s.Empty(*projection.Commands)
+			s.Empty(*projection.Tools)
+			s.Empty(*projection.Capabilities)
 		}
-		if i > 0 {
-			s.Equal("next-model", *snapshot.Model)
-		}
-		// Get a copy: callers cannot mutate the next snapshot through prior data.
-		*snapshot.Model = "caller edit"
 	}
+	snapshot := session.Snapshot().Metadata
+	s.Empty(*snapshot.Commands)
+	s.Empty(*snapshot.Tools)
+	s.Empty(*snapshot.Capabilities)
+	s.Equal("next-model", *snapshot.Model)
+	*snapshot.Model = "caller edit"
+	s.Equal("next-model", *session.Snapshot().Metadata.Model)
 }
 
 func (s *runtimeSuite) TestStreamMissingVersusNullContent() {

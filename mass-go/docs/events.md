@@ -181,6 +181,26 @@ both protocols' message and reasoning conversion, plans, metadata, identity and
 serialization. No agent/model or credentials are used. Passing these tests does
 not verify live CLI compatibility.
 
-Work/interaction data retain their baseline payloads in this envelope.
-Stronger control, authority and delivery guarantees remain separate work. Runtime-local publication does not establish whole-process memory bounds,
+Work data retain native status in this envelope. Stronger interaction authority
+and delivery guarantees remain separate work. Runtime-local publication does
+not establish whole-process memory bounds,
 complete agent/task attribution, durable replay or native causality.
+
+## Submission association and live state
+
+Events carry operationRef only when the submission association is proven. Codex
+work references remain original native turn IDs and are matched to the SDK
+StartTurn reply, including notifications received before that reply. Claude
+root results use the exclusive admitted operation without fabricating a native
+work ID. Child and unresolved observations cannot settle root foreground work.
+A user echo alone does not prove native recording; Codex requires the matched
+work reference. Native-recorded evidence does not mean a durable host commit.
+
+A per-session receive worker assigns sequence and projects the latest snapshot.
+Next cancels only its consumer wait, and a snapshot may be ahead of delivered
+events. Metadata omission/explicit clearing still uses replacement patches.
+Foreground completion, attachment release and background completeness remain
+independent; the current background summary is unknown until background mapping
+is implemented. Cancellation ACK and terminal status remain separate observations.
+Only a native explicit interrupted status becomes interrupted; a generic error
+or failed result is never converted to cancellation by local intent.

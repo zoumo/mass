@@ -38,6 +38,10 @@ func (s *lifecycleSuite) scenario(kind string, frames []string) string {
 	s.T().Helper()
 	records := []map[string]any{}
 	for i, frame := range frames {
+		if frame == "disconnect" {
+			records = append(records, map[string]any{"ordinal": i + 1, "direction": "s2c", "channel": "protocol", "epoch": 1, "disconnect": true})
+			continue
+		}
 		delay := 0
 		if strings.HasPrefix(frame, "delay=") {
 			prefix, rest, _ := strings.Cut(frame, " ")
@@ -62,7 +66,11 @@ func (s *lifecycleSuite) scenario(kind string, frames []string) string {
 		}
 		records = append(records, record)
 	}
-	data, err := json.Marshal(map[string]any{"version": 1, "provenance": "synthetic", "frames": records})
+	scenario := map[string]any{"version": 1, "provenance": "synthetic", "frames": records}
+	if kind == "codex" {
+		scenario["timeoutMs"] = 60000
+	}
+	data, err := json.Marshal(scenario)
 	s.Require().NoError(err)
 	path := filepath.Join(s.T().TempDir(), "scenario.json")
 	s.Require().NoError(os.WriteFile(path, data, 0600))
@@ -114,12 +122,15 @@ func (s *lifecycleSuite) config(kind string) (rt.Config, []string) {
 		frames = append(frames, codexThread(3, "native-B")...)
 		frames = append(frames, codexTurn(4, "native-A")...)
 		frames = append(frames, codexTurn(5, "native-B")...)
+		frames = append(frames, codexFinishedFor("native-B", "different-work-id", "completed"))
 		frames = append(frames, codexTurn(6, "native-B")...)
 		path := s.scenario(kind, frames)
 		script += "export CODEX_MOCK_SCENARIO=" + quote(path) + "\nprintf '%s' \"$$\" > " + quote(pids[0]) + "\n"
 	} else {
 		pids = append(pids, filepath.Join(dir, "second.pid"))
-		a, b := s.scenario(kind, claudeFrames("native-A", false)), s.scenario(kind, claudeFrames("native-B", true))
+		second := claudeFrames("native-B", true)
+		second = append(second[:5:5], append([]string{`server protocol {"type":"result","subtype":"success","session_id":"native-B","is_error":false}`}, second[5:]...)...)
+		a, b := s.scenario(kind, claudeFrames("native-A", false)), s.scenario(kind, second)
 		script += "if mkdir " + quote(filepath.Join(dir, "first")) + " 2>/dev/null; then\nexport CLAUDE_MOCK_SCENARIO=" + quote(a) + "\nprintf '%s' \"$$\" > " + quote(pids[0]) + "\nelse\nexport CLAUDE_MOCK_SCENARIO=" + quote(b) + "\nprintf '%s' \"$$\" > " + quote(pids[1]) + "\nfi\n"
 	}
 	script += "exec " + quote(s.executables[kind]) + " \"$@\"\n"
@@ -208,9 +219,9 @@ func (s *lifecycleSuite) TestNamedRuntimeIsolation() {
 				b := testutil.OpenSession(s.T(), runtime, ctx, options)
 				for _, session := range []rt.Session{a, b} {
 					if kind == "codex" {
-						receipt, err := session.Submit(ctx, "hello")
+						receipt, err := session.Submit(ctx, rt.TextInput("hello"))
 						s.Require().NoError(err)
-						s.Equal(rt.NativeAcknowledged, receipt.Evidence)
+						s.Equal(rt.Known(true), receipt.NativeAcknowledged)
 					}
 					s.readReply(ctx, session)
 				}
@@ -235,9 +246,10 @@ func (s *lifecycleSuite) TestNamedRuntimeIsolation() {
 				if kind == "claude" {
 					s.assertExited(pidFiles[i][0])
 				}
-				_, err := a.Submit(ctx, "hello")
+				_, err := a.Submit(ctx, rt.TextInput("hello"))
 				s.Error(err)
-				_, err = b.Submit(ctx, "hello")
+				s.Require().Eventually(func() bool { return b.Snapshot().Foreground.State == "idle" }, time.Second, time.Millisecond)
+				_, err = b.Submit(ctx, rt.TextInput("hello"))
 				s.Require().NoError(err)
 				s.readReply(ctx, b)
 				s.NoError(runtime.Stop())
