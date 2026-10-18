@@ -30,7 +30,7 @@ type driver struct {
 
 func New(name string, options rt.Config, revision uint64) *managed.Runtime {
 	options.Env = append([]string{}, options.Env...)
-	return managed.New(name, "claude", revision, &driver{name: name, options: options})
+	return managed.New(name, "claude", revision, &driver{name: name, options: options}, options.CreationLimits)
 }
 func (d *driver) Start(ctx context.Context) (rt.Health, error) {
 	if err := ctx.Err(); err != nil {
@@ -46,9 +46,11 @@ func (d *driver) Start(ctx context.Context) (rt.Health, error) {
 	d.mu.Unlock()
 	return rt.Health{Configured: rt.Known(true), Connected: rt.UnknownObservation(), ProtocolResponsive: rt.UnknownObservation(), ProbeScope: "per_session_process_prepared", ObservedAt: time.Now().UTC()}, nil
 }
-func (d *driver) CreateSession(ctx context.Context) (rt.Session, error) {
+func (d *driver) RequiresInitialInput() bool { return true }
+func (d *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (rt.Session, error) {
 	lifetime, cancel := context.WithCancel(context.Background())
-	c := &connection{name: d.name, ctx: lifetime, cancel: cancel, events: make(chan rt.Event), finished: make(chan struct{})}
+	deadline, _ := ctx.Deadline()
+	c := &connection{name: d.name, ctx: lifetime, cancel: cancel, events: make(chan rt.Event, d.options.CreationLimits.Effective().Facts+1), finished: make(chan struct{}), identity: make(chan struct{}), limits: d.options.CreationLimits.Effective(), identityDeadline: deadline}
 	d.mu.Lock()
 	if d.closed {
 		d.mu.Unlock()
@@ -62,10 +64,23 @@ func (d *driver) CreateSession(ctx context.Context) (rt.Session, error) {
 	defer stopOpen()
 	defer stopLifetime()
 	if err := c.open(openCtx, d.options); err != nil {
-		cancel()
-		return nil, err
+		return nil, c.failCreation(err)
 	}
-	return &session{conn: c}, nil
+	s := &session{conn: c}
+	if options.InitialInput == nil {
+		return nil, c.failCreation(rt.ErrInvalidInput)
+	}
+	if _, err := s.Submit(ctx, *options.InitialInput); err != nil {
+		return nil, c.failCreation(err)
+	}
+	select {
+	case <-c.identity:
+		return s, nil
+	case <-ctx.Done():
+		return nil, c.failCreation(rt.ErrOutcomeUnknown)
+	case <-c.finished:
+		return nil, c.failCreation(rt.ErrOutcomeUnknown)
+	}
 }
 func (d *driver) Stop() error {
 	d.mu.Lock()
@@ -82,18 +97,22 @@ func (d *driver) Stop() error {
 }
 
 type connection struct {
-	client    *sdk.Client
-	name      string
-	closeOnce sync.Once
-	closeErr  error
-	opening   sync.Mutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	events    chan rt.Event
-	finished  chan struct{}
-	mu        sync.Mutex
-	terminal  error
-	nativeID  string
+	client                             *sdk.Client
+	name                               string
+	closeOnce                          sync.Once
+	closeErr                           error
+	opening                            sync.Mutex
+	ctx                                context.Context
+	cancel                             context.CancelFunc
+	events                             chan rt.Event
+	finished                           chan struct{}
+	mu                                 sync.Mutex
+	terminal                           error
+	nativeID                           string
+	identity                           chan struct{}
+	limits                             rt.CreationLimits
+	identityDeadline                   time.Time
+	provisionalFacts, provisionalBytes int
 }
 type session struct {
 	conn *connection
@@ -112,8 +131,14 @@ func (c *connection) open(ctx context.Context, options rt.Config) error {
 		return rt.ErrUnavailable
 	}
 	client, err := sdk.Open(ctx, sdk.Options{CLIPath: options.Executable, Env: options.Env, WorkDir: options.Dir, PermissionHandler: func(p *sdk.PermissionRequest) {
+		if !c.reserveProvisional(len(p.Raw())) {
+			c.cancel()
+			return
+		}
+		event := c.permissionEvent(p)
+		event.ObservedAt = time.Now().UTC()
 		select {
-		case c.events <- c.permissionEvent(p):
+		case c.events <- event:
 		case <-p.Context().Done():
 		case <-c.ctx.Done():
 		}
@@ -127,28 +152,59 @@ func (c *connection) open(ctx context.Context, options rt.Config) error {
 }
 func (c *connection) receive() {
 	defer close(c.finished)
+	var position uint64
 	for {
 		received, err := c.client.Receive(c.ctx)
 		if err != nil {
 			c.mu.Lock()
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
+			if c.terminal == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
 				c.terminal = errors.New("claude runtime event stream terminated")
 			}
 			c.mu.Unlock()
 			return
 		}
+		observedAt := time.Now().UTC()
+		position++
 		var events []rt.Event
+		mismatch := false
 		if native, ok := received.(sdk.Event); ok {
 			if (native.System != nil || native.Result != nil) && native.SessionID != "" && (native.AgentID == nil || *native.AgentID == "") && (native.ParentToolUseID == nil || *native.ParentToolUseID == "") {
 				c.mu.Lock()
-				c.nativeID = native.SessionID
+				if c.terminal != nil {
+					c.mu.Unlock()
+					return
+				}
+				if c.nativeID == "" && !c.identityDeadline.IsZero() && observedAt.After(c.identityDeadline) {
+					c.terminal = rt.ErrOutcomeUnknown
+					c.mu.Unlock()
+					return
+				}
+				if c.nativeID == "" {
+					c.nativeID = native.SessionID
+					close(c.identity)
+				} else if c.nativeID != native.SessionID {
+					mismatch = true
+				}
 				c.mu.Unlock()
 			}
-			events = mapEvent(native)
+			if !c.reserveProvisional(len(native.Raw)) {
+				return
+			}
+			if mismatch {
+				events = []rt.Event{{Kind: rt.Unknown, Diagnostic: diagnostic("identity_mismatch", nil)}}
+			} else {
+				events = mapEvent(native)
+			}
 		} else {
+			data, _ := json.Marshal(received)
+			if !c.reserveProvisional(len(data)) {
+				return
+			}
 			events = []rt.Event{{Kind: rt.Unknown, Diagnostic: diagnostic(fmt.Sprintf("sdk:%T", received), nil)}}
 		}
 		for _, event := range events {
+			event.ObservedAt = observedAt
+			event.SourcePosition = position
 			select {
 			case c.events <- event:
 			case <-c.ctx.Done():
@@ -156,6 +212,37 @@ func (c *connection) receive() {
 			}
 		}
 	}
+}
+
+// Both the receive loop and permission callbacks can observe provisional facts.
+func (c *connection) reserveProvisional(size int) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.terminal != nil {
+		return false
+	}
+	if c.nativeID != "" {
+		return true
+	}
+	c.provisionalFacts++
+	c.provisionalBytes += size
+	if c.provisionalFacts > c.limits.Facts || c.provisionalBytes > c.limits.Bytes {
+		c.terminal = rt.ErrIncomplete
+		return false
+	}
+	return true
+}
+func (c *connection) failCreation(cause error) error {
+	closeErr := c.Close()
+	c.mu.Lock()
+	if c.terminal != nil {
+		cause = c.terminal
+	}
+	c.mu.Unlock()
+	if closeErr != nil {
+		return errors.Join(cause, rt.ErrCleanupIncomplete)
+	}
+	return cause
 }
 func (c *connection) Close() error {
 	c.closeOnce.Do(func() {
@@ -223,6 +310,13 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 	case <-ctx.Done():
 		return rt.Event{}, ctx.Err()
 	case <-s.conn.finished:
+		select {
+		case event := <-s.conn.events:
+			event.RuntimeName = s.conn.name
+			event.SessionID = s.Key().SessionID
+			return event, nil
+		default:
+		}
 		s.conn.mu.Lock()
 		defer s.conn.mu.Unlock()
 		if s.conn.terminal != nil {

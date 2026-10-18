@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+	"github.com/zoumo/mass/mass-go/internal/testutil"
 	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/catalog"
 )
@@ -37,6 +38,13 @@ func (s *lifecycleSuite) scenario(kind string, frames []string) string {
 	s.T().Helper()
 	records := []map[string]any{}
 	for i, frame := range frames {
+		delay := 0
+		if strings.HasPrefix(frame, "delay=") {
+			prefix, rest, _ := strings.Cut(frame, " ")
+			_, err := fmt.Sscanf(prefix, "delay=%d", &delay)
+			s.Require().NoError(err)
+			frame = rest
+		}
 		direction, rest, _ := strings.Cut(frame, " ")
 		channel := "protocol"
 		key := "wire"
@@ -45,7 +53,11 @@ func (s *lifecycleSuite) scenario(kind string, frames []string) string {
 			key = "data"
 		}
 		record := map[string]any{"ordinal": i + 1, "direction": direction, "channel": channel, key: json.RawMessage(rest)}
+		if kind == "claude" {
+			record["delay_ms"] = delay
+		}
 		if kind == "codex" {
+			record["delayMs"] = delay
 			record["epoch"] = 1
 		}
 		records = append(records, record)
@@ -187,17 +199,18 @@ func (s *lifecycleSuite) TestNamedRuntimeIsolation() {
 				_, err := c.UpdateConfig(snapshot.Name, configs[i], snapshot.ConfigRevision)
 				s.ErrorIs(err, rt.ErrConflict)
 				s.ErrorIs(c.Unregister(snapshot.Name), rt.ErrConflict)
-				a, err := runtime.CreateSession(ctx)
-				s.Require().NoError(err)
-				b, err := runtime.CreateSession(ctx)
-				s.Require().NoError(err)
+				options := rt.SessionOptions{}
+				input := "hello"
+				if kind == "claude" {
+					options.InitialInput = &input
+				}
+				a := testutil.OpenSession(s.T(), runtime, ctx, options)
+				b := testutil.OpenSession(s.T(), runtime, ctx, options)
 				for _, session := range []rt.Session{a, b} {
-					receipt, err := session.Submit(ctx, "hello")
-					s.Require().NoError(err)
 					if kind == "codex" {
+						receipt, err := session.Submit(ctx, "hello")
+						s.Require().NoError(err)
 						s.Equal(rt.NativeAcknowledged, receipt.Evidence)
-					} else {
-						s.Equal(rt.SDKWriteSuccess, receipt.Evidence)
 					}
 					s.readReply(ctx, session)
 				}

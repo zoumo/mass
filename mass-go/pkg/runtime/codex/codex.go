@@ -43,7 +43,7 @@ var _ rt.Session = (*session)(nil)
 // New prepares a named Runtime without starting a native process.
 func New(name string, options rt.Config, revision uint64) *managed.Runtime {
 	options.Env = append([]string{}, options.Env...)
-	return managed.New(name, "codex", revision, &driver{name: name, options: options})
+	return managed.New(name, "codex", revision, &driver{name: name, options: options}, options.CreationLimits)
 }
 func (c *driver) Start(ctx context.Context) (rt.Health, error) {
 	lifetime, cancel := context.WithCancel(context.Background())
@@ -97,7 +97,8 @@ func (c *driver) routeRequests(ctx context.Context, client *sdk.Client) {
 		}
 	}
 }
-func (c *driver) CreateSession(ctx context.Context) (rt.Session, error) {
+func (c *driver) RequiresInitialInput() bool { return false }
+func (c *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (rt.Session, error) {
 	c.mu.Lock()
 	client := c.client
 	closed := c.closed
@@ -130,6 +131,12 @@ func (c *driver) CreateSession(ctx context.Context) (rt.Session, error) {
 	}
 	c.sessions[s.id] = s
 	c.mu.Unlock()
+	if options.InitialInput != nil {
+		if _, err := s.Submit(ctx, *options.InitialInput); err != nil {
+			_ = s.Close()
+			return nil, err
+		}
+	}
 	return s, nil
 }
 func (c *driver) Stop() error {

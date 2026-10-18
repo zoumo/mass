@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zoumo/mass/mass-go/internal/managed"
 	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -27,7 +28,8 @@ func (c *Catalog) Types() []rt.RuntimeType {
 	types := []rt.RuntimeType{{Name: "codex", SchemaVersion: 1, Topology: "shared_local_process"}, {Name: "claude", SchemaVersion: 1, Topology: "per_session_process"}}
 	for i := range types {
 		types[i].MaxNameBytes = maxNameBytes
-		types[i].ConfigFields = []rt.ConfigField{{Name: "executable", Type: "string", Required: true, AbsolutePath: true}, {Name: "env", Type: "string_array", Required: true}, {Name: "dir", Type: "string", AbsolutePath: true}}
+		types[i].CreationBounds = []rt.LimitField{{Name: "facts", Default: 64, Min: 1, Max: 4096}, {Name: "bytes", Default: 1 << 20, Min: 1, Max: 16 << 20}, {Name: "timeoutNanoseconds", Default: int64(30 * time.Second), Min: int64(time.Millisecond), Max: int64(60 * time.Second)}}
+		types[i].ConfigFields = []rt.ConfigField{{Name: "executable", Type: "string", Required: true, AbsolutePath: true}, {Name: "env", Type: "string_array", Required: true}, {Name: "dir", Type: "string", AbsolutePath: true}, {Name: "creationLimits", Type: "object"}}
 	}
 	return types
 }
@@ -40,6 +42,10 @@ func (c *Catalog) Describe(name string) (rt.RuntimeType, error) {
 	return rt.RuntimeType{}, rt.ErrNotFound
 }
 func valid(reg rt.Registration) bool {
+	limits := reg.Config.CreationLimits.Effective()
+	if limits.Facts < 1 || limits.Facts > 4096 || limits.Bytes < 1 || limits.Bytes > 16<<20 || limits.Timeout < time.Millisecond || limits.Timeout > 60*time.Second {
+		return false
+	}
 	if reg.Name == "" || len(reg.Name) > maxNameBytes || strings.TrimSpace(reg.Name) != reg.Name || strings.ContainsRune(reg.Name, 0) {
 		return false
 	}

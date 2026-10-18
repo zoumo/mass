@@ -12,23 +12,71 @@ import (
 type Runtime interface {
 	Start(context.Context) error
 	Status() Snapshot
-	CreateSession(context.Context) (Session, error)
+	CreateSession(context.Context, SessionOptions) (CreationOperation, error)
+	GetOperation(string) (CreationOperation, error)
+	ContinueCreation(context.Context, string, string) (CreationOperation, error)
+	CancelOperation(context.Context, string) (CreationOperation, error)
 	GetSession(SessionKey) (Session, error)
 	ListSessions() []SessionSnapshot
 	Stop() error
 }
 
 var (
-	ErrConflict     = errors.New("runtime ownership conflict")
-	ErrNotFound     = errors.New("runtime resource not found")
-	ErrUnavailable  = errors.New("runtime unavailable")
-	ErrInvalidInput = errors.New("invalid runtime configuration or session key")
+	ErrCleanupIncomplete = errors.New("owned creation cleanup unconfirmed")
+	ErrOutcomeUnknown    = errors.New("native creation outcome unknown")
+	ErrIncomplete        = errors.New("incomplete provisional observations")
+	ErrConflict          = errors.New("runtime ownership conflict")
+	ErrNotFound          = errors.New("runtime resource not found")
+	ErrUnavailable       = errors.New("runtime unavailable")
+	ErrInvalidInput      = errors.New("invalid runtime configuration or session key")
 )
 
+// CreationLimits bound adapter-owned provisional facts and the native open wait.
+// Zero selects finite defaults, never unlimited storage or time.
+type CreationLimits struct {
+	Facts   int           `json:"facts,omitempty"`
+	Bytes   int           `json:"bytes,omitempty"`
+	Timeout time.Duration `json:"timeout,omitempty"`
+}
+
+func (l CreationLimits) Effective() CreationLimits {
+	if l.Facts == 0 {
+		l.Facts = 64
+	}
+	if l.Bytes == 0 {
+		l.Bytes = 1 << 20
+	}
+	if l.Timeout == 0 {
+		l.Timeout = 30 * time.Second
+	}
+	return l
+}
+
+type SessionOptions struct {
+	InitialInput *string `json:"initialInput,omitempty"`
+}
+
+// CreationEvidence reports observations, not a promise of native persistence.
+type CreationEvidence struct {
+	NativeIdentity      Observation `json:"nativeIdentity"`
+	InitialInputWritten Observation `json:"initialInputWritten"`
+}
+type CreationOperation struct {
+	Evidence      CreationEvidence `json:"evidence"`
+	OperationRef  string           `json:"operationRef"`
+	RuntimeName   string           `json:"runtimeName"`
+	Phase         string           `json:"phase"`
+	InputRequired bool             `json:"inputRequired"`
+	Key           *SessionKey      `json:"key,omitempty"`
+	CleanupState  string           `json:"cleanupState"`
+	Failure       string           `json:"failure,omitempty"`
+}
+
 type Config struct {
-	Executable string   `json:"executable"`
-	Env        []string `json:"-"` // Explicit child environment; never returned in status.
-	Dir        string   `json:"dir,omitempty"`
+	CreationLimits CreationLimits `json:"creationLimits,omitempty"`
+	Executable     string         `json:"executable"`
+	Env            []string       `json:"-"` // Explicit child environment; never returned in status.
+	Dir            string         `json:"dir,omitempty"`
 }
 type Registration struct {
 	Name   string `json:"name"`
@@ -38,11 +86,18 @@ type Registration struct {
 
 // RuntimeType describes a fixed system implementation and its configuration.
 type RuntimeType struct {
-	Name          string        `json:"name"`
-	SchemaVersion int           `json:"schemaVersion"`
-	Topology      string        `json:"topology"`
-	MaxNameBytes  int           `json:"maxNameBytes"`
-	ConfigFields  []ConfigField `json:"configFields"`
+	Name           string        `json:"name"`
+	SchemaVersion  int           `json:"schemaVersion"`
+	Topology       string        `json:"topology"`
+	MaxNameBytes   int           `json:"maxNameBytes"`
+	ConfigFields   []ConfigField `json:"configFields"`
+	CreationBounds []LimitField  `json:"creationBounds"`
+}
+type LimitField struct {
+	Name    string `json:"name"`
+	Default int64  `json:"default"`
+	Min     int64  `json:"min"`
+	Max     int64  `json:"max"`
 }
 type ConfigField struct {
 	Name         string `json:"name"`
@@ -84,8 +139,7 @@ type SessionSnapshot struct {
 	ObservedAt time.Time  `json:"observedAt"`
 }
 
-// Session is a protocol-owned attachment. Before Claude observes native identity,
-// Key has no session ID and the attachment is absent from managed queries.
+// Session is an attachment with a proven, immutable native identity.
 type Session interface {
 	Key() SessionKey
 	Snapshot() SessionSnapshot
@@ -124,6 +178,10 @@ const (
 )
 
 type Event struct {
+	// ObservedAt and SourcePosition retain adapter receive order across pending
+	// identity binding. SourcePosition is local to that attachment, not native wire order.
+	ObservedAt                                                 time.Time
+	SourcePosition                                             uint64
 	Kind                                                       EventKind
 	RuntimeName, SessionID, TurnID, ItemID, Text, Tool, Status string
 	Diagnostic                                                 Diagnostic

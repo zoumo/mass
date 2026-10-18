@@ -4,6 +4,9 @@ package managed
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"sync"
 	"time"
 
@@ -12,14 +15,21 @@ import (
 
 type Driver interface {
 	Start(context.Context) (rt.Health, error)
-	CreateSession(context.Context) (rt.Session, error)
+	CreateSession(context.Context, rt.SessionOptions) (rt.Session, error)
+	RequiresInitialInput() bool
 	Stop() error
 }
 type attempt struct {
 	done chan struct{}
 	err  error
 }
+type creation struct {
+	snapshot rt.CreationOperation
+	canceled bool
+}
 type Runtime struct {
+	operations map[string]*creation
+	limits     rt.CreationLimits
 	mu         sync.Mutex
 	driver     Driver
 	snapshot   rt.Snapshot
@@ -31,9 +41,9 @@ type Runtime struct {
 	unsettled  bool
 }
 
-func New(name, kind string, revision uint64, driver Driver) *Runtime {
+func New(name, kind string, revision uint64, driver Driver, limits rt.CreationLimits) *Runtime {
 	now := time.Now().UTC()
-	return &Runtime{driver: driver, snapshot: rt.Snapshot{Name: name, Type: kind, ConfigRevision: revision, Phase: "registered", ObservedAt: now, Health: rt.Health{Configured: rt.Known(true), Connected: rt.UnknownObservation(), ProtocolResponsive: rt.UnknownObservation(), ProbeScope: "configuration", ObservedAt: now}}}
+	return &Runtime{operations: make(map[string]*creation), limits: limits.Effective(), driver: driver, snapshot: rt.Snapshot{Name: name, Type: kind, ConfigRevision: revision, Phase: "registered", ObservedAt: now, Health: rt.Health{Configured: rt.Known(true), Connected: rt.UnknownObservation(), ProtocolResponsive: rt.UnknownObservation(), ProbeScope: "configuration", ObservedAt: now}}}
 }
 func (r *Runtime) Status() rt.Snapshot {
 	r.mu.Lock()
@@ -95,35 +105,172 @@ func (r *Runtime) Start(ctx context.Context) error {
 	r.mu.Unlock()
 	return err
 }
-func (r *Runtime) CreateSession(ctx context.Context) (rt.Session, error) {
-	r.mu.Lock()
-	if r.snapshot.Phase != "ready" {
-		r.mu.Unlock()
-		return nil, rt.ErrUnavailable
+
+// CreateSession reserves ownership before starting native I/O. The caller context
+// controls admission only; GetOperation observes the independently owned result.
+func (r *Runtime) CreateSession(ctx context.Context, options rt.SessionOptions) (rt.CreationOperation, error) {
+	if err := ctx.Err(); err != nil {
+		return rt.CreationOperation{}, err
 	}
+	if options.InitialInput != nil {
+		input := *options.InitialInput
+		options.InitialInput = &input
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.snapshot.Phase != "ready" {
+		return rt.CreationOperation{}, rt.ErrUnavailable
+	}
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return rt.CreationOperation{}, rt.ErrUnavailable
+	}
+	ref := "create:" + hex.EncodeToString(token[:])
+	op := &creation{snapshot: rt.CreationOperation{OperationRef: ref, RuntimeName: r.snapshot.Name, Phase: "preparing", CleanupState: "not_required", Evidence: rt.CreationEvidence{NativeIdentity: rt.UnknownObservation(), InitialInputWritten: rt.UnknownObservation()}}}
+	if !r.driver.RequiresInitialInput() && options.InitialInput == nil {
+		op.snapshot.Evidence.InitialInputWritten = rt.Observation{State: "not_applicable"}
+	}
+	r.operations[ref] = op
+	if r.driver.RequiresInitialInput() && options.InitialInput == nil {
+		op.snapshot.Phase = "awaiting_input"
+		op.snapshot.InputRequired = true
+	} else {
+		r.launchCreation(op, options)
+	}
+	return copyOperation(op.snapshot), nil
+}
+func copyOperation(op rt.CreationOperation) rt.CreationOperation {
+	if op.Key != nil {
+		key := *op.Key
+		op.Key = &key
+	}
+	for _, observation := range []*rt.Observation{&op.Evidence.NativeIdentity, &op.Evidence.InitialInputWritten} {
+		if observation.Value != nil {
+			value := *observation.Value
+			observation.Value = &value
+		}
+	}
+	return op
+}
+func (r *Runtime) GetOperation(ref string) (rt.CreationOperation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	op := r.operations[ref]
+	if op == nil {
+		return rt.CreationOperation{}, rt.ErrNotFound
+	}
+	return copyOperation(op.snapshot), nil
+}
+func (r *Runtime) ContinueCreation(ctx context.Context, ref, input string) (rt.CreationOperation, error) {
+	if err := ctx.Err(); err != nil {
+		return rt.CreationOperation{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	op := r.operations[ref]
+	if op == nil {
+		return rt.CreationOperation{}, rt.ErrNotFound
+	}
+	if r.snapshot.Phase != "ready" || op.snapshot.Phase != "awaiting_input" {
+		return rt.CreationOperation{}, rt.ErrConflict
+	}
+	op.snapshot.InputRequired = false
+	r.launchCreation(op, rt.SessionOptions{InitialInput: &input})
+	return copyOperation(op.snapshot), nil
+}
+func (r *Runtime) CancelOperation(ctx context.Context, ref string) (rt.CreationOperation, error) {
+	if err := ctx.Err(); err != nil {
+		return rt.CreationOperation{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	op := r.operations[ref]
+	if op == nil {
+		return rt.CreationOperation{}, rt.ErrNotFound
+	}
+	switch op.snapshot.Phase {
+	case "awaiting_input":
+		op.canceled = true
+		op.snapshot.Phase = "closed"
+		op.snapshot.InputRequired = false
+		op.snapshot.CleanupState = "local_resources_released"
+	case "preparing", "awaiting_native_identity", "cleaning_up":
+		op.canceled = true
+		op.snapshot.Phase = "cleaning_up"
+		op.snapshot.CleanupState = "pending"
+	default:
+		return copyOperation(op.snapshot), rt.ErrConflict
+	}
+	return copyOperation(op.snapshot), nil
+}
+
+// launchCreation is called under mu, but performs all SDK work outside it.
+func (r *Runtime) launchCreation(op *creation, options rt.SessionOptions) {
+	op.snapshot.Phase = "awaiting_native_identity"
 	r.creates.Add(1)
-	r.mu.Unlock()
-	defer r.creates.Done()
-	session, err := r.driver.CreateSession(ctx)
-	if err != nil {
-		return nil, err
-	}
-	r.mu.Lock()
-	if r.snapshot.Phase != "ready" {
+	go func() {
+		defer r.creates.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), r.limits.Timeout)
+		defer cancel()
+		session, err := r.driver.CreateSession(ctx, options)
+		r.mu.Lock()
+		if err != nil {
+			op.snapshot.Phase = "outcome_unknown"
+			op.snapshot.Failure = "outcome_unknown"
+			if errors.Is(err, rt.ErrIncomplete) {
+				op.snapshot.Failure = "incomplete_stream"
+			}
+			op.snapshot.CleanupState = "local_resources_released_native_unconfirmed"
+			if errors.Is(err, rt.ErrCleanupIncomplete) {
+				op.snapshot.CleanupState = "unconfirmed"
+			}
+			r.mu.Unlock()
+			return
+		}
+		key := session.Key()
+		op.snapshot.Evidence.NativeIdentity = rt.Known(true)
+		if options.InitialInput != nil {
+			op.snapshot.Evidence.InitialInputWritten = rt.Known(true)
+		}
+		if key.SessionID == "" || key.RuntimeName != r.snapshot.Name {
+			err = rt.ErrInvalidInput
+		}
+		for _, existing := range r.sessions {
+			if existing.Key() == key {
+				err = rt.ErrConflict
+			}
+		}
+		if op.canceled || r.snapshot.Phase != "ready" || err != nil {
+			op.snapshot.Phase = "cleaning_up"
+			op.snapshot.CleanupState = "pending"
+			r.mu.Unlock()
+			closeErr := session.Close()
+			r.mu.Lock()
+			op.snapshot.Phase = "closed"
+			op.snapshot.CleanupState = "local_resources_released_native_unconfirmed"
+			if closeErr != nil {
+				op.snapshot.CleanupState = "unconfirmed"
+			}
+			if err != nil || closeErr != nil {
+				op.snapshot.Phase = "outcome_unknown"
+				op.snapshot.Failure = "outcome_unknown"
+			}
+			r.mu.Unlock()
+			return
+		}
+		r.sessions = append(r.sessions, session)
+		op.snapshot.Key = &key
+		op.snapshot.Phase = "opened"
 		r.mu.Unlock()
-		_ = session.Close()
-		return nil, rt.ErrUnavailable
-	}
-	r.sessions = append(r.sessions, session)
-	r.mu.Unlock()
-	return session, nil
+	}()
 }
 func (r *Runtime) GetSession(key rt.SessionKey) (rt.Session, error) {
 	r.mu.Lock()
 	sessions := append([]rt.Session(nil), r.sessions...)
 	name := r.snapshot.Name
+	_, operationRef := r.operations[key.SessionID]
 	r.mu.Unlock()
-	if key.RuntimeName != name || key.SessionID == "" {
+	if key.RuntimeName != name || key.SessionID == "" || operationRef {
 		return nil, rt.ErrNotFound
 	}
 	for _, session := range sessions {
@@ -161,6 +308,14 @@ func (r *Runtime) Stop() error {
 	a := &attempt{done: make(chan struct{})}
 	r.stopping = a
 	r.snapshot.Phase = "stopping"
+	for _, op := range r.operations {
+		if op.snapshot.Phase == "awaiting_input" {
+			op.canceled = true
+			op.snapshot.Phase = "closed"
+			op.snapshot.InputRequired = false
+			op.snapshot.CleanupState = "local_resources_released"
+		}
+	}
 	activation := r.activation
 	r.mu.Unlock()
 	// Driver Stop interrupts outstanding SDK calls before waiting for creates.
@@ -197,6 +352,11 @@ func (r *Runtime) Stop() error {
 func (r *Runtime) Retire() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for _, op := range r.operations {
+		if op.snapshot.Phase != "closed" && op.snapshot.Phase != "rejected" {
+			return false
+		}
+	}
 	if r.unsettled || len(r.sessions) > 0 || r.snapshot.Phase == "starting" || r.snapshot.Phase == "ready" || r.snapshot.Phase == "stopping" {
 		return false
 	}

@@ -58,9 +58,8 @@ func (s *runtimeSuite) connect(frames []string) (rt.Runtime, context.Context) {
 func (s *runtimeSuite) open(frames []string) (rt.Runtime, rt.Session, context.Context) {
 	conn, ctx := s.connect(frames)
 	creationCtx, creationCancel := context.WithCancel(ctx)
-	session, err := conn.CreateSession(creationCtx)
+	session := testutil.OpenSession(s.T(), conn, creationCtx, rt.SessionOptions{})
 	creationCancel()
-	s.Require().NoError(err)
 	ready, err := session.Next(ctx)
 	s.Require().NoError(err)
 	s.Equal(rt.SessionReady, ready.Kind)
@@ -230,24 +229,21 @@ func (s *runtimeSuite) nextMapped(session rt.Session, ctx context.Context) rt.Ev
 
 func (s *runtimeSuite) TestCloseInterruptsPendingCreation() {
 	conn, ctx := s.connect(startup()[:4])
-	creation := make(chan error, 1)
-	go func() { _, err := conn.CreateSession(ctx); creation <- err }()
-	// Give the mock time to enter its deliberately unanswered thread/start.
-	time.Sleep(20 * time.Millisecond)
+	op, err := conn.CreateSession(ctx, rt.SessionOptions{})
+	s.Require().NoError(err)
 	closed := make(chan error, 1)
 	go func() { closed <- conn.Stop() }()
 	select {
 	case err := <-closed:
 		s.NoError(err)
 	case <-time.After(time.Second):
-		s.FailNow("Close blocked by creation RPC")
+		s.FailNow("Stop blocked by creation")
 	}
-	select {
-	case err := <-creation:
-		s.Error(err)
-	case <-time.After(time.Second):
-		s.FailNow("creation RPC survived Close")
-	}
+	result, err := conn.GetOperation(op.OperationRef)
+	s.Require().NoError(err)
+	s.Equal("outcome_unknown", result.Phase)
+	s.Nil(result.Key)
+
 }
 
 func (s *runtimeSuite) TestNativeResolutionInvalidatesHandle() {
@@ -316,10 +312,8 @@ func (s *runtimeSuite) TestSharedRequestsStayWithTheirNativeSession() {
 		`c2s {"id":"permission-B","result":{"decision":"accept"}}`,
 		`c2s {"id":"permission-A","result":{"decision":"decline"}}`)
 	worker, ctx := s.connect(frames)
-	a, err := worker.CreateSession(ctx)
-	s.Require().NoError(err)
-	b, err := worker.CreateSession(ctx)
-	s.Require().NoError(err)
+	a := testutil.OpenSession(s.T(), worker, ctx, rt.SessionOptions{})
+	b := testutil.OpenSession(s.T(), worker, ctx, rt.SessionOptions{})
 	for _, session := range []rt.Session{a, b} {
 		_, err := session.Submit(ctx, "hello")
 		s.Require().NoError(err)
