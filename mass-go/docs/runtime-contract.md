@@ -36,8 +36,10 @@ They do not discover or adopt account sessions. Inventory is in memory. Recovery
 requires host-retained opaque binding context, original configuration scope and
 verified native identity. A request flag alone is insufficient. Mismatched or
 unverifiable recovery publishes no replacement session and sends no hidden input.
-A successful reattachment preserves identity and establishes a fresh attachment
-epoch. The host protects bindings and serializes ownership; they are not a
+A failed provisional recovery with unconfirmed cleanup retains its uncertainty
+and fences another attachment of that key. PID disappearance does not replace
+the cleanup receipt. A successful reattachment preserves identity and establishes
+a fresh attachment epoch. The host protects bindings and serializes ownership; they are not a
 credential, durable inventory or distributed lock.
 
 ## Lifecycle and evidence
@@ -80,9 +82,10 @@ configuration or delete workspace/account data.
 
 ## Common events and authorities
 
-Events are versioned discriminated data with concrete payloads, original native
-identity, attachment epoch, per-session sequence, observation time, provenance
-and separately scoped source position when available. The [event contract](events.md)
+Events are versioned discriminated data with concrete payloads, observation time
+and provenance. Session content carries original native identity, attachment epoch,
+per-session sequence and separately scoped source position when available.
+Runtime/operation lifecycle envelopes follow the independent scope rules below. The [event contract](events.md)
 defines message, reasoning, plan, metadata, tool, work, interaction, agent, task,
 usage, observation and diagnostic semantics. Consumers do not parse native RPC
 names, native tool encodings or SDK handles. Unknown native variants produce safe
@@ -133,13 +136,37 @@ server connection closure is unverified; local process tests provide no evidence
 for that topology. These are separate optional capabilities, not required local
 behavior emulated with prompts.
 
-The current event stream is session-scoped. Runtime/operation lifecycle streams
-and distinct opened/resumed/attachment-state event families are unavailable;
-callers inspect status, creation operations, snapshots and receipts instead.
-Dynamic per-feature availability/condition/reason records are also absent; current
-session capabilities expose only native work-ID, acknowledgement, verified-resume
-and native-release flags. Complete lifecycle-event and capability coverage remains
-unfinished.
+Lifecycle and content observation use the same pure-data event schema. The
+Runtime stream publishes runtime status, operation state/failure and distinct
+session opened/resumed/state observations. Runtime-scoped session observations
+contain the actual SessionKey and epoch in their snapshot payload. Unresolved
+operation observations do not fabricate a session header. Creation, resume,
+submission, cancellation and response receipts remain distinct typed data.
+Pre-admission rejection creates no operation identity.
+
+The lifecycle stream has one Runtime cursor, independent of each session's
+content cursor and native ordering. Runtime/operation scope describes the subject
+of a lifecycle observation; its publication sequence belongs to that Runtime
+stream. A single publication owner still sequences each session content stream.
+After settled Stop, accepted lifecycle observations remain readable, followed by
+EOF. Explicit reactivation continues the Runtime cursor. Ending a wait never
+ends ownership or authorizes replay.
+
+Lifecycle retention is independently bounded by count and encoded bytes. Overflow
+preserves accepted facts, then explicitly fails incomplete/backpressure and
+fences new work. Fixed-target cancellation and cleanup continue. Stop retains
+lifecycle evidence without waiting for its reader; drain/abort controls session
+content delivery. Retained lifecycle data are neither silently evicted nor a
+whole-process memory guarantee. A terminal lifecycle gap is not repaired by
+restarting the same handle.
+
+System types declare per-feature support and conditions. Runtime and session
+snapshots project current availability and a safe unavailable reason. These
+records reflect local readiness, ownership prerequisites, attachment/foreground
+state, interaction authority, retention and control capacity. They are conditional
+admission observations, not proof of native success, account authentication or
+future identity verification. Copying records does not grant control authority.
+Unsupported capabilities carry explicit reasons.
 
 Complete Claude messages with missing/null content and bare-object tool results
 are rejected by the pinned SDK before conversion. Stream-boundary missing/null

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,6 +74,11 @@ func exercise(kind, binary, scenario string) (result error) {
 	defer func() { result = errors.Join(result, worker.Stop()) }()
 	if err = worker.Start(ctx); err != nil {
 		return err
+	}
+	for _, feature := range worker.Status().Capabilities {
+		if feature.Name == "create_session" && feature.Availability != "available" {
+			return errors.New("create capability unavailable after activation")
+		}
 	}
 	// Claude stays awaiting_input without a process. Codex allocates identity
 	// without input. In either case only this explicit text is ever submitted.
@@ -153,6 +159,39 @@ func exercise(kind, binary, scenario string) (result error) {
 		return err
 	}
 	fmt.Printf("%s: stop=%s incompleteFacts=%t\n", kind, stop.Outcome, stop.IncompleteFacts)
+	var lifecycleSeq uint64
+	opened, stopped := false, false
+	for {
+		event, err := worker.Next(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		lifecycleSeq++
+		if event.Seq != lifecycleSeq || event.SessionID != "" {
+			return errors.New("invalid Runtime lifecycle envelope")
+		}
+		data, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		var decoded rt.Event
+		if err = json.Unmarshal(data, &decoded); err != nil {
+			return err
+		}
+		if event.Kind == rt.SessionOpened {
+			opened = event.Session != nil && event.Session.Key == session.Key()
+		}
+		if event.Kind == rt.RuntimeStatusChanged && event.Runtime.Phase == "stopped" {
+			stopped = true
+		}
+	}
+	if !opened || !stopped {
+		return errors.New("missing typed Runtime lifecycle facts")
+	}
+	fmt.Printf("%s: lifecycle=observed capability=conditional\n", kind)
 	return nil
 }
 

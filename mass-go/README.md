@@ -8,9 +8,9 @@ without replace or go.work. It has no daemon or HTTP service.
 The [language-independent Runtime contract](docs/runtime-contract.md) describes
 available behavior and remaining gaps. Run the [offline public consumer](examples/offline/README.md)
 with temporary synthetic SDK mock CLIs; it never selects an installed Agent.
-Complete Runtime/operation lifecycle events and dynamic capability availability
-records remain unfinished. Session-scoped integration does not establish full
-contract completion or production readiness.
+Runtime/operation lifecycle events and dynamic capability availability records
+use the same pure-data event schema as session content. Offline evidence does
+not establish native CLI compatibility or production readiness.
 
 ## Named Runtime instances
 
@@ -326,6 +326,9 @@ system/result observation without sending input. If the CLI requires a prompt
 before producing identity, recovery times out as unverifiable; MASS sends no
 hidden prompt. A different root ID fails and the provisional process is reaped.
 Neither protocol falls back to create or replays user input.
+A failed provisional recovery that reports unconfirmed cleanup retains that
+uncertainty in its operation and fences another attachment of the same key;
+PID disappearance alone does not turn an error receipt into confirmed cleanup.
 
 Successful recovery preserves SessionKey, creates a new ConnectionEpoch and
 replaces the managed attachment once. Old attachment objects and queued/replayed
@@ -502,3 +505,57 @@ commands and use strict synthetic scenarios with explicit child environments.
 These checks have been exercised on macOS arm64. Other platforms, live native
 CLIs, real models and external server connections remain unverified. Root Make
 targets are for the separate Rust workspace.
+
+## Lifecycle observations and capability availability
+
+`Runtime.Next(ctx)` consumes the instance's lifecycle stream. It publishes
+`runtime.status_changed`, `operation.state_changed`, `operation.failed`,
+`session.opened`, `session.resumed` and `session.state_changed`. Runtime-scope
+session observations carry the proven SessionKey and attachment epoch inside the
+SessionSnapshot payload; they have no fabricated session header. Operation-scope
+facts carry the original operationRef and a typed creation, resume, submission,
+cancellation or response receipt. A pending operation has no SessionKey.
+Admission rejection without a reserved operation returns its error/receipt and
+creates no operation identity. Snapshots and receipts remain independently queryable.
+
+The lifecycle publisher assigns one Runtime-lifetime sequence across its runtime
+and operation observations. `Session.Next` has its own per-attachment publication
+sequence. Neither sequence orders facts against the other stream or native wire
+order. Both streams use one consumer; canceling a wait does not stop resources.
+After Stop settles and the accepted lifecycle prefix is read, Runtime.Next
+returns EOF. A later explicit Start reopens observation and continues the same
+Runtime cursor. Old session events retain their original attachment epoch. Unregister or config
+replacement retires the original handle, publishes its final status with retired=true
+and ends its observation cycle; that handle cannot activate a replacement.
+
+`Config.LifecycleLimits` is independent of session `DeliveryLimits`: defaults are
+256 retained lifecycle facts and 4 MiB, with the same finite accepted ranges of
+1–4096 facts and 1 byte–16 MiB. Zero selects the default. The type catalog exposes
+these bounds. Events are encoded and retained under count/byte admission; callers
+receive independent decoded data. Lifecycle overflow preserves its accepted
+prefix, then returns ErrIncomplete plus ErrBackpressure. Status reports
+`lifecycleDelivery=incomplete`; new activation/create/resume/input/response
+admission is fenced. A reserved input whose lifecycle publication fails is
+rejected before SDK handoff. Previously handed-off work stays unknown as needed;
+fixed-target cancellation and cleanup remain possible. Stop never waits for a
+lifecycle reader and reports incomplete lifecycle delivery. The terminal stream
+cannot be repaired by dequeuing or restarting the same handle; inspect original
+operations and use explicit host ownership handling. These limits do not bound
+SDK queues or whole-process memory.
+
+Stop retains the bounded lifecycle prefix, including closing/stopped observations,
+for inspection. Drain/abort policies apply to session content delivery; retained
+lifecycle facts require no reader to release native resources and are not silently
+evicted by Stop. An unread lifecycle prefix still consumes its finite quota.
+
+`Catalog.Types/Describe().Features` declares each feature's support and conditions.
+`Runtime.Status().Capabilities` and `Session.Snapshot().Capabilities` report
+name, support, current availability, conditions and a safe unavailable reason.
+Runtime readiness, host bindings, attachment state, foreground admission, control
+capacity, interaction authority and lifecycle completeness determine availability.
+An available local admission does not promise native success or successful
+identity verification. Unsupported remote/native-release/discovery/rich-input/
+configuration mutation features include explicit reasons. The four static flags
+from Session.Capabilities describe native evidence support; they are not current
+admission. Returned records/conditions do not grant response authority and caller
+mutation cannot change retained policy.

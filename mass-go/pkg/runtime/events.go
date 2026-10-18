@@ -12,6 +12,8 @@ import (
 // Event is a data-only discriminated union. Exactly one payload is present.
 // SourcePosition is an adapter receive cursor, not native wire order or Seq.
 type Event struct {
+	Runtime         *Snapshot                `json:"-"`
+	Operation       *OperationPayload        `json:"-"`
 	SchemaVersion   int                      `json:"schemaVersion"`
 	Kind            EventKind                `json:"type"`
 	Scope           string                   `json:"scope"`
@@ -229,7 +231,7 @@ func (e Event) payload() (any, error) {
 	if e.Kind != Unknown && e.Diagnostic != (Diagnostic{}) {
 		return nil, fmt.Errorf("event has an extra diagnostic payload")
 	}
-	values := []any{e.Message, e.Reasoning, e.Plan, e.Metadata, e.Tool, e.Work, e.Session, e.Interaction, e.Error, e.Association, e.Creation, e.AgentState, e.Task, e.TaskSnapshot, e.Usage, e.Observation}
+	values := []any{e.Message, e.Reasoning, e.Plan, e.Metadata, e.Tool, e.Work, e.Session, e.Interaction, e.Error, e.Association, e.Creation, e.AgentState, e.Task, e.TaskSnapshot, e.Usage, e.Observation, e.Runtime, e.Operation}
 	count := 0
 	for _, v := range values {
 		if !reflect.ValueOf(v).IsNil() {
@@ -238,6 +240,12 @@ func (e Event) payload() (any, error) {
 	}
 	var p any
 	switch e.Kind {
+	case RuntimeStatusChanged:
+		p = e.Runtime
+	case OperationStateChanged:
+		p = e.Operation
+	case SessionOpened, SessionResumed, SessionStateChanged:
+		p = e.Session
 	case AgentAssociated:
 		p = e.Association
 	case AgentCreated:
@@ -268,7 +276,7 @@ func (e Event) payload() (any, error) {
 		p = e.Session
 	case InteractionRequested, InteractionResolved:
 		p = e.Interaction
-	case Failure:
+	case Failure, OperationFailed:
 		p = e.Error
 	case Unknown:
 		if count != 0 {
@@ -284,8 +292,11 @@ func (e Event) payload() (any, error) {
 	return p, nil
 }
 func (e Event) validate() error {
-	if e.SchemaVersion != 1 || e.Scope != "session" || e.RuntimeName == "" || e.SessionID == "" || e.ConnectionEpoch == "" || e.Seq == 0 || e.Seq > 9007199254740991 || e.ObservedAt.IsZero() {
+	if e.SchemaVersion != 1 || e.RuntimeName == "" || e.Seq == 0 || e.Seq > 9007199254740991 || e.ObservedAt.IsZero() {
 		return fmt.Errorf("invalid event envelope")
+	}
+	if err := e.validateLifecycleScope(); err != nil {
+		return err
 	}
 	if e.Origin.Kind != "native" && e.Origin.Kind != "runtime" && e.Origin.Kind != "sdk_derived" {
 		return fmt.Errorf("invalid event origin")
@@ -496,6 +507,15 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	candidate := Event(wire.envelope)
 	var p any
 	switch candidate.Kind {
+	case RuntimeStatusChanged:
+		candidate.Runtime = &Snapshot{}
+		p = candidate.Runtime
+	case OperationStateChanged:
+		candidate.Operation = &OperationPayload{}
+		p = candidate.Operation
+	case SessionOpened, SessionResumed, SessionStateChanged:
+		candidate.Session = &SessionSnapshot{}
+		p = candidate.Session
 	case AgentAssociated:
 		candidate.Association = &AgentAssociationPayload{}
 		p = candidate.Association
@@ -541,7 +561,7 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	case InteractionRequested, InteractionResolved:
 		candidate.Interaction = &Interaction{}
 		p = candidate.Interaction
-	case Failure:
+	case Failure, OperationFailed:
 		candidate.Error = &SafeError{}
 		p = candidate.Error
 	case Unknown:

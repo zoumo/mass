@@ -28,17 +28,27 @@ func (r *Runtime) StopWith(ctx context.Context, options rt.StopOptions) (rt.Stop
 		return receipt, rt.ErrInvalidInput
 	}
 	r.mu.Lock()
+	if r.retired {
+		r.mu.Unlock()
+		receipt.AdmissionClosed = true
+		receipt.Outcome = "stopped"
+		receipt.OwnedResources = rt.Known(true)
+		return receipt, nil
+	}
 	a := r.stopping
 	if a == nil {
 		a = &attempt{done: make(chan struct{}), sessions: append(append([]rt.Session(nil), r.retiredSessions...), r.sessions...)}
 		r.stopping = a
 		r.snapshot.Phase = "stopping"
+		r.lifecycle.setRunning(false)
+		r.emitStatusLocked()
 		for _, op := range r.operations {
 			if op.snapshot.Phase == "awaiting_input" {
 				op.canceled = true
 				op.snapshot.Phase = "closed"
 				op.snapshot.InputRequired = false
 				op.snapshot.CleanupState = "local_resources_released"
+				r.emitOperationLocked(op)
 			}
 		}
 		activation := r.activation
@@ -104,6 +114,10 @@ func (r *Runtime) StopWith(ctx context.Context, options rt.StopOptions) (rt.Stop
 				receipt.IncompleteFacts = true
 			}
 		}
+	}
+	if lifecycleErr := r.lifecycle.terminalError(); lifecycleErr != nil {
+		receipt.IncompleteFacts = true
+		err = errors.Join(err, lifecycleErr)
 	}
 	if err != nil {
 		receipt.Outcome = "stop_unknown"
