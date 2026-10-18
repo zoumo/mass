@@ -35,7 +35,9 @@ type ForegroundState struct {
 
 // Unknown background observation is independent of foreground completion.
 type BackgroundSummary struct {
-	Completeness string `json:"completeness"`
+	Tasks        []TaskPayload         `json:"tasks,omitempty"`
+	Scopes       []TaskSnapshotPayload `json:"scopes,omitempty"`
+	Completeness string                `json:"completeness"`
 }
 type SubmissionEvidence struct {
 	HandedToSDK        Observation `json:"handedToSDK"`

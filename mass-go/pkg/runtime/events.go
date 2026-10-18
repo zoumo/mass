@@ -12,29 +12,37 @@ import (
 // Event is a data-only discriminated union. Exactly one payload is present.
 // SourcePosition is an adapter receive cursor, not native wire order or Seq.
 type Event struct {
-	SchemaVersion   int               `json:"schemaVersion"`
-	Kind            EventKind         `json:"type"`
-	Scope           string            `json:"scope"`
-	RuntimeName     string            `json:"runtimeName"`
-	SessionID       string            `json:"sessionId,omitempty"`
-	ConnectionEpoch string            `json:"connectionEpoch,omitempty"`
-	Seq             uint64            `json:"seq"`
-	ObservedAt      time.Time         `json:"observedAt"`
-	SourcePosition  uint64            `json:"sourcePosition,omitempty"`
-	Origin          EventOrigin       `json:"origin"`
-	FrameRef        string            `json:"frameRef,omitempty"`
-	OperationRef    string            `json:"operationRef,omitempty"`
-	WorkRef         string            `json:"workRef,omitempty"`
-	Message         *MessagePayload   `json:"-"`
-	Reasoning       *ReasoningPayload `json:"-"`
-	Plan            *PlanPayload      `json:"-"`
-	Metadata        *MetadataPayload  `json:"-"`
-	Tool            *ToolPayload      `json:"-"`
-	Work            *WorkPayload      `json:"-"`
-	Session         *SessionSnapshot  `json:"-"`
-	Interaction     *Interaction      `json:"-"`
-	Error           *SafeError        `json:"-"`
-	Diagnostic      Diagnostic        `json:"-"`
+	SchemaVersion   int                      `json:"schemaVersion"`
+	Kind            EventKind                `json:"type"`
+	Scope           string                   `json:"scope"`
+	RuntimeName     string                   `json:"runtimeName"`
+	SessionID       string                   `json:"sessionId,omitempty"`
+	ConnectionEpoch string                   `json:"connectionEpoch,omitempty"`
+	Seq             uint64                   `json:"seq"`
+	ObservedAt      time.Time                `json:"observedAt"`
+	SourcePosition  uint64                   `json:"sourcePosition,omitempty"`
+	Origin          EventOrigin              `json:"origin"`
+	FrameRef        string                   `json:"frameRef,omitempty"`
+	Subject         *EventSubject            `json:"subject,omitempty"`
+	OperationRef    string                   `json:"operationRef,omitempty"`
+	WorkRef         string                   `json:"workRef,omitempty"`
+	Association     *AgentAssociationPayload `json:"-"`
+	Creation        *AgentCreatedPayload     `json:"-"`
+	AgentState      *AgentStatePayload       `json:"-"`
+	Task            *TaskPayload             `json:"-"`
+	TaskSnapshot    *TaskSnapshotPayload     `json:"-"`
+	Usage           *UsagePayload            `json:"-"`
+	Observation     *ObservationPayload      `json:"-"`
+	Message         *MessagePayload          `json:"-"`
+	Reasoning       *ReasoningPayload        `json:"-"`
+	Plan            *PlanPayload             `json:"-"`
+	Metadata        *MetadataPayload         `json:"-"`
+	Tool            *ToolPayload             `json:"-"`
+	Work            *WorkPayload             `json:"-"`
+	Session         *SessionSnapshot         `json:"-"`
+	Interaction     *Interaction             `json:"-"`
+	Error           *SafeError               `json:"-"`
+	Diagnostic      Diagnostic               `json:"-"`
 }
 type EventOrigin struct {
 	Kind         string `json:"kind"`
@@ -221,7 +229,7 @@ func (e Event) payload() (any, error) {
 	if e.Kind != Unknown && e.Diagnostic != (Diagnostic{}) {
 		return nil, fmt.Errorf("event has an extra diagnostic payload")
 	}
-	values := []any{e.Message, e.Reasoning, e.Plan, e.Metadata, e.Tool, e.Work, e.Session, e.Interaction, e.Error}
+	values := []any{e.Message, e.Reasoning, e.Plan, e.Metadata, e.Tool, e.Work, e.Session, e.Interaction, e.Error, e.Association, e.Creation, e.AgentState, e.Task, e.TaskSnapshot, e.Usage, e.Observation}
 	count := 0
 	for _, v := range values {
 		if !reflect.ValueOf(v).IsNil() {
@@ -230,6 +238,20 @@ func (e Event) payload() (any, error) {
 	}
 	var p any
 	switch e.Kind {
+	case AgentAssociated:
+		p = e.Association
+	case AgentCreated:
+		p = e.Creation
+	case AgentStateChanged:
+		p = e.AgentState
+	case TaskChanged:
+		p = e.Task
+	case TaskSnapshot:
+		p = e.TaskSnapshot
+	case UsageUpdated:
+		p = e.Usage
+	case ObservationChanged:
+		p = e.Observation
 	case MessageCompleted, MessageStarted, MessageDelta:
 		p = e.Message
 	case ReasoningCompleted, ReasoningDelta:
@@ -270,6 +292,53 @@ func (e Event) validate() error {
 	}
 	if !oneOf(e.Origin.Attribution, "root", "child", "unresolved", "runtime") || !oneOf(e.Origin.Completeness, "complete", "partial", "unknown") {
 		return fmt.Errorf("invalid event provenance")
+	}
+	if e.Subject != nil && e.Subject.AssociationRef != "" && e.Subject.AssociationScope != "sdk_attachment" {
+		return fmt.Errorf("invalid association scope")
+	}
+	if e.Association != nil && (e.Subject == nil || !oneOf(e.Association.State, "associated", "enriched", "redirected") || e.Association.Evidence == "" || !oneOf(e.Association.Completeness, "complete", "partial", "unknown")) {
+		return fmt.Errorf("invalid association")
+	}
+	if e.Creation != nil && (e.Subject == nil || e.Creation.Evidence == "" || e.Creation.Provenance == "") {
+		return fmt.Errorf("invalid creation")
+	}
+	if e.AgentState != nil && (e.Subject == nil || !oneOf(e.AgentState.State, "running", "waiting", "idle", "terminal", "unknown") || !oneOf(e.AgentState.Completeness, "complete", "partial", "unknown")) {
+		return fmt.Errorf("invalid agent state")
+	}
+	if e.AgentState != nil && (e.AgentState.Terminal != (e.AgentState.State == "terminal") || (e.AgentState.Outcome != "" && !oneOf(e.AgentState.Outcome, "completed", "failed", "cancelled", "interrupted", "unknown"))) {
+		return fmt.Errorf("invalid run terminal")
+	}
+	if e.Task != nil {
+		if err := validateTask(*e.Task); err != nil {
+			return err
+		}
+	}
+	if e.TaskSnapshot != nil {
+		p := e.TaskSnapshot
+		if p.Mode != "replace" || p.SourceScope == "" || p.Tasks == nil || !oneOf(p.Completeness, "complete", "partial", "unknown") {
+			return fmt.Errorf("invalid task snapshot")
+		}
+		seen := map[string]bool{}
+		for _, t := range p.Tasks {
+			keyBytes, _ := json.Marshal([]string{t.TaskRef, t.Subject.RunID})
+			key := string(keyBytes)
+			if seen[key] {
+				return fmt.Errorf("duplicate task identity")
+			}
+			seen[key] = true
+			if t.SourceScope != p.SourceScope {
+				return fmt.Errorf("task scope mismatch")
+			}
+			if err := validateTask(t); err != nil {
+				return err
+			}
+		}
+	}
+	if e.Usage != nil && (!oneOf(e.Usage.Mode, "cumulative", "delta", "unknown") || !oneOf(e.Usage.ChildInclusion, "yes", "no", "unknown") || e.Usage.AccountingScope == "" || e.Usage.Counters == nil) {
+		return fmt.Errorf("invalid usage")
+	}
+	if e.Observation != nil && (e.Observation.State == "" || !oneOf(e.Observation.Completeness, "complete", "partial", "unknown")) {
+		return fmt.Errorf("invalid observation")
 	}
 	if e.Interaction != nil {
 		i := e.Interaction
@@ -412,6 +481,27 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	candidate := Event(wire.envelope)
 	var p any
 	switch candidate.Kind {
+	case AgentAssociated:
+		candidate.Association = &AgentAssociationPayload{}
+		p = candidate.Association
+	case AgentCreated:
+		candidate.Creation = &AgentCreatedPayload{}
+		p = candidate.Creation
+	case AgentStateChanged:
+		candidate.AgentState = &AgentStatePayload{}
+		p = candidate.AgentState
+	case TaskChanged:
+		candidate.Task = &TaskPayload{}
+		p = candidate.Task
+	case TaskSnapshot:
+		candidate.TaskSnapshot = &TaskSnapshotPayload{}
+		p = candidate.TaskSnapshot
+	case UsageUpdated:
+		candidate.Usage = &UsagePayload{}
+		p = candidate.Usage
+	case ObservationChanged:
+		candidate.Observation = &ObservationPayload{}
+		p = candidate.Observation
 	case MessageCompleted, MessageStarted, MessageDelta:
 		candidate.Message = &MessagePayload{}
 		p = candidate.Message
@@ -467,5 +557,12 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*e = candidate
+	return nil
+}
+
+func validateTask(t TaskPayload) error {
+	if t.TaskRef == "" || t.SourceScope == "" || !oneOf(t.State, "pending", "running", "waiting", "completed", "failed", "cancelled", "unknown") || !oneOf(t.Completeness, "complete", "partial", "unknown") || (!oneOf(t.Background.State, "known", "unknown") || (t.Background.State == "known") != (t.Background.Value != nil)) {
+		return fmt.Errorf("invalid task")
+	}
 	return nil
 }

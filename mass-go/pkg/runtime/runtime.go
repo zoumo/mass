@@ -176,6 +176,13 @@ type Capabilities struct{ NativeTurnID, NativeAcknowledgement, VerifiedResume, N
 type EventKind string
 
 const (
+	AgentAssociated      EventKind = "agent.associated"
+	AgentCreated         EventKind = "agent.created"
+	AgentStateChanged    EventKind = "agent.state_changed"
+	TaskChanged          EventKind = "task.changed"
+	TaskSnapshot         EventKind = "task.snapshot"
+	UsageUpdated         EventKind = "usage.updated"
+	ObservationChanged   EventKind = "observation.changed"
 	SessionReady         EventKind = "session_ready"
 	TurnStarted          EventKind = "turn_started"
 	TurnCompleted        EventKind = "turn_completed"
