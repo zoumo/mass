@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/zoumo/mass/mass-go/internal/testutil"
 	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
-	adapter "github.com/zoumo/mass/mass-go/pkg/runtime/claude"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/catalog"
 )
 
 type runtimeSuite struct {
@@ -36,7 +36,7 @@ func startup() []string {
 func send() string {
 	return `client protocol {"type":"user","message":{"role":"user","content":"hello"},"parent_tool_use_id":null,"session_id":""}`
 }
-func (s *runtimeSuite) open(frames []string) (rt.Connection, rt.Session, context.Context) {
+func (s *runtimeSuite) open(frames []string) (rt.Runtime, rt.Session, context.Context) {
 	s.T().Helper()
 	var native []map[string]any
 	for i, frame := range frames {
@@ -50,10 +50,15 @@ func (s *runtimeSuite) open(frames []string) (rt.Connection, rt.Session, context
 	s.Require().NoError(os.WriteFile(path, data, 0600))
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	s.T().Cleanup(cancel)
-	conn, err := adapter.Open(ctx, adapter.Options{Executable: s.executable, Env: []string{"CLAUDE_MOCK_SCENARIO=" + path}})
+	registry := catalog.New()
+	_, err = registry.Register(rt.Registration{Name: "test-runtime", Type: "claude", Config: rt.Config{Executable: s.executable, Env: []string{"CLAUDE_MOCK_SCENARIO=" + path}}})
 	s.Require().NoError(err)
-	s.T().Cleanup(func() { s.NoError(conn.Close()) })
-	session, err := conn.NewSession(ctx)
+	conn, err := registry.Get("test-runtime")
+	s.Require().NoError(err)
+	err = conn.Start(ctx)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.NoError(conn.Stop()) })
+	session, err := conn.CreateSession(ctx)
 	s.Require().NoError(err)
 	return conn, session, ctx
 }
@@ -74,7 +79,7 @@ func (s *runtimeSuite) TestMessagesToolsAndNativeCompletion() {
 		`server protocol {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":[{"type":"text","text":"synthetic "},{"type":"text","text":"output"}],"is_error":false}]}}`,
 		`server protocol {"type":"result","subtype":"success","session_id":"native-session","is_error":false,"result":"done"}`)
 	conn, session, ctx := s.open(frames)
-	s.Equal(rt.Identity{Provider: "claude", Pending: true}, session.Identity())
+	s.Equal(rt.SessionKey{RuntimeName: "test-runtime"}, session.Key())
 	s.Equal(rt.Capabilities{}, session.Capabilities())
 	submission, err := session.Submit(ctx, "hello")
 	s.Require().NoError(err)
@@ -82,7 +87,7 @@ func (s *runtimeSuite) TestMessagesToolsAndNativeCompletion() {
 	event := s.next(session, ctx)
 	s.Equal(rt.SessionReady, event.Kind)
 	s.Equal("native-session", event.SessionID)
-	s.Equal(rt.Identity{Provider: "claude", SessionID: "native-session"}, session.Identity())
+	s.Equal(rt.SessionKey{RuntimeName: "test-runtime", SessionID: "native-session"}, session.Key())
 	event = s.next(session, ctx)
 	s.Equal(rt.Message, event.Kind)
 	s.Equal("hello back", event.Text)
@@ -97,7 +102,7 @@ func (s *runtimeSuite) TestMessagesToolsAndNativeCompletion() {
 	s.Equal(rt.TurnCompleted, event.Kind)
 	s.Empty(event.TurnID)
 	s.Equal("completed", event.Status)
-	s.NoError(conn.Close())
+	s.NoError(conn.Stop())
 }
 func (s *runtimeSuite) TestInteractionsAndInterrupt() {
 	for _, tc := range []struct {
@@ -144,7 +149,7 @@ func (s *runtimeSuite) TestCloseWithoutConsuming() {
 	conn, session, ctx := s.open(frames)
 	_, err := session.Submit(ctx, "hello")
 	s.Require().NoError(err)
-	s.NoError(conn.Close())
+	s.NoError(conn.Stop())
 	s.NoError(session.Close())
 	exited()
 }
@@ -169,8 +174,8 @@ func (s *runtimeSuite) TestChildFactsDoNotOwnRoot() {
 			s.Nil(event.Interaction)
 		}
 	}
-	s.Equal("root", session.Identity().SessionID)
-	s.NoError(conn.Close())
+	s.Equal("root", session.Key().SessionID)
+	s.NoError(conn.Stop())
 }
 
 func (s *runtimeSuite) TestPendingHandleExpiresOnClose() {
@@ -181,7 +186,7 @@ func (s *runtimeSuite) TestPendingHandleExpiresOnClose() {
 	event := s.next(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
 	handle := event.Interaction.Handle
-	s.NoError(conn.Close())
+	s.NoError(conn.Stop())
 	select {
 	case <-handle.Done():
 	case <-ctx.Done():

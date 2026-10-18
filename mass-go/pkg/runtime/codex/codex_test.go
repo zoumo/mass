@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	"github.com/zoumo/mass/mass-go/internal/testutil"
 	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
-	adapter "github.com/zoumo/mass/mass-go/pkg/runtime/codex"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/catalog"
 )
 
 type runtimeSuite struct {
@@ -28,7 +28,7 @@ func (s *runtimeSuite) SetupSuite() {
 	output, err := command.CombinedOutput()
 	s.Require().NoError(err, string(output))
 }
-func (s *runtimeSuite) connect(frames []string) (rt.Connection, context.Context) {
+func (s *runtimeSuite) connect(frames []string) (rt.Runtime, context.Context) {
 	s.T().Helper()
 	var native []map[string]any
 	for i, frame := range frames {
@@ -45,15 +45,20 @@ func (s *runtimeSuite) connect(frames []string) (rt.Connection, context.Context)
 	s.Require().NoError(os.WriteFile(scenario, data, 0600))
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	s.T().Cleanup(cancel)
-	conn, err := adapter.Open(ctx, adapter.Options{Executable: s.executable, Env: []string{"CODEX_MOCK_SCENARIO=" + scenario}})
+	registry := catalog.New()
+	_, err = registry.Register(rt.Registration{Name: "test-runtime", Type: "codex", Config: rt.Config{Executable: s.executable, Env: []string{"CODEX_MOCK_SCENARIO=" + scenario}}})
 	s.Require().NoError(err)
-	s.T().Cleanup(func() { s.NoError(conn.Close()) })
+	conn, err := registry.Get("test-runtime")
+	s.Require().NoError(err)
+	err = conn.Start(ctx)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.NoError(conn.Stop()) })
 	return conn, ctx
 }
-func (s *runtimeSuite) open(frames []string) (rt.Connection, rt.Session, context.Context) {
+func (s *runtimeSuite) open(frames []string) (rt.Runtime, rt.Session, context.Context) {
 	conn, ctx := s.connect(frames)
 	creationCtx, creationCancel := context.WithCancel(ctx)
-	session, err := conn.NewSession(creationCtx)
+	session, err := conn.CreateSession(creationCtx)
 	creationCancel()
 	s.Require().NoError(err)
 	ready, err := session.Next(ctx)
@@ -120,7 +125,7 @@ func (s *runtimeSuite) TestMessagesToolsAndCompletion() {
 		`s2c {"method":"item/completed","params":{"threadId":"native-thread","turnId":"native-turn","startedAtMs":1,"completedAtMs":2,"item":{"type":"commandExecution","id":"tool-1","command":"echo synthetic","cwd":"/synthetic","processId":null,"status":"completed","commandActions":[],"aggregatedOutput":"synthetic output","exitCode":0,"durationMs":1}}}`,
 		`s2c {"method":"turn/completed","params":{"threadId":"native-thread","turn":{"id":"native-turn","status":"completed","items":[],"error":null}}}`)
 	conn, session, ctx := s.open(frames)
-	s.Equal(rt.Identity{Provider: "codex", SessionID: "native-thread"}, session.Identity())
+	s.Equal(rt.SessionKey{RuntimeName: "test-runtime", SessionID: "native-thread"}, session.Key())
 	submission, err := session.Submit(ctx, "hello")
 	s.Require().NoError(err)
 	s.Equal(rt.NativeAcknowledged, submission.Evidence)
@@ -143,7 +148,7 @@ func (s *runtimeSuite) TestMessagesToolsAndCompletion() {
 	s.Equal("synthetic output", events[3].Text)
 	s.Equal(rt.TurnCompleted, events[4].Kind)
 	s.Equal("completed", events[4].Status)
-	s.NoError(conn.Close())
+	s.NoError(conn.Stop())
 }
 func (s *runtimeSuite) TestInteractionAndInterruption() {
 	for _, tc := range []struct {
@@ -188,7 +193,7 @@ func (s *runtimeSuite) TestCloseWithoutConsuming() {
 	conn, session, ctx := s.open(append(startup(), turnStart()...))
 	_, err := session.Submit(ctx, "hello")
 	s.Require().NoError(err)
-	s.NoError(conn.Close())
+	s.NoError(conn.Stop())
 	s.NoError(session.Close())
 	exited()
 }
@@ -202,7 +207,7 @@ func (s *runtimeSuite) TestPendingHandleExpiresOnClose() {
 	event := s.nextMapped(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
 	handle := event.Interaction.Handle
-	s.NoError(conn.Close())
+	s.NoError(conn.Stop())
 	select {
 	case <-handle.Done():
 	case <-ctx.Done():
@@ -226,11 +231,11 @@ func (s *runtimeSuite) nextMapped(session rt.Session, ctx context.Context) rt.Ev
 func (s *runtimeSuite) TestCloseInterruptsPendingCreation() {
 	conn, ctx := s.connect(startup()[:4])
 	creation := make(chan error, 1)
-	go func() { _, err := conn.NewSession(ctx); creation <- err }()
+	go func() { _, err := conn.CreateSession(ctx); creation <- err }()
 	// Give the mock time to enter its deliberately unanswered thread/start.
 	time.Sleep(20 * time.Millisecond)
 	closed := make(chan error, 1)
-	go func() { closed <- conn.Close() }()
+	go func() { closed <- conn.Stop() }()
 	select {
 	case err := <-closed:
 		s.NoError(err)
@@ -292,5 +297,52 @@ func (s *runtimeSuite) TestNativeItemKinds() {
 				}
 			}
 		})
+	}
+}
+
+func (s *runtimeSuite) TestSharedRequestsStayWithTheirNativeSession() {
+	frames := startup()
+	// A second native thread shares the same app-server, with a different tree ID.
+	second := strings.ReplaceAll(startup()[4], `"id":2`, `"id":3`)
+	second = strings.ReplaceAll(second, "native-thread", "other-thread")
+	second = strings.ReplaceAll(second, "native-session", "other-tree")
+	frames = append(frames, `c2s {"id":3,"method":"thread/start","params":{"ephemeral":true}}`, second)
+	frames = append(frames,
+		strings.ReplaceAll(turnStart()[0], `"id":3`, `"id":4`), strings.ReplaceAll(turnStart()[1], `"id":3`, `"id":4`),
+		`s2c {"id":"permission-A","method":"item/commandExecution/requestApproval","params":{"threadId":"native-thread","turnId":"native-turn","itemId":"tool-A","startedAtMs":1,"command":"synthetic-A"}}`,
+		`c2s {"id":5,"method":"turn/start","params":{"threadId":"other-thread","input":[{"type":"text","text":"hello","text_elements":[]}]}}`,
+		`s2c {"id":5,"result":{"turn":{"id":"other-turn","status":"inProgress","items":[],"error":null}}}`,
+		`s2c {"id":"permission-B","method":"item/commandExecution/requestApproval","params":{"threadId":"other-thread","turnId":"other-turn","itemId":"tool-B","startedAtMs":1,"command":"synthetic-B"}}`,
+		`c2s {"id":"permission-B","result":{"decision":"accept"}}`,
+		`c2s {"id":"permission-A","result":{"decision":"decline"}}`)
+	worker, ctx := s.connect(frames)
+	a, err := worker.CreateSession(ctx)
+	s.Require().NoError(err)
+	b, err := worker.CreateSession(ctx)
+	s.Require().NoError(err)
+	for _, session := range []rt.Session{a, b} {
+		_, err := session.Submit(ctx, "hello")
+		s.Require().NoError(err)
+		event, err := session.Next(ctx)
+		s.Require().NoError(err)
+		s.Equal(rt.SessionReady, event.Kind)
+	}
+	// Consume B first, while A's request remains unread.
+	eventB := s.nextMapped(b, ctx)
+	eventA := s.nextMapped(a, ctx)
+	for _, tc := range []struct {
+		session rt.Session
+		event   rt.Event
+		id      string
+		allow   bool
+	}{
+		{b, eventB, `"permission-B"`, true}, {a, eventA, `"permission-A"`, false},
+	} {
+		s.Equal(rt.InteractionRequested, tc.event.Kind)
+		s.Equal(tc.session.Key().RuntimeName, tc.event.RuntimeName)
+		s.Equal(tc.session.Key().SessionID, tc.event.SessionID)
+		s.Require().NotNil(tc.event.Interaction)
+		s.Equal(tc.id, tc.event.Interaction.Handle.ID())
+		s.NoError(tc.event.Interaction.Handle.Respond(ctx, rt.Response{Allow: tc.allow}))
 	}
 }
