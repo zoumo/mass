@@ -47,7 +47,7 @@ func (h *responseHandle) Respond(ctx context.Context, response rt.Response) erro
 	}
 	return nil
 }
-func mapRequest(request sdk.Request, id string) rt.Event {
+func mapRequest(request sdk.Request, id string) (rt.Event, rt.ResponseHandle) {
 	event := rt.Event{Kind: rt.Unknown, SessionID: id, Diagnostic: diagnostic(request.Method(), request.Params())}
 	kind := ""
 	switch request.Method() {
@@ -56,13 +56,13 @@ func mapRequest(request sdk.Request, id string) rt.Event {
 	case "item/tool/requestUserInput":
 		kind = "question"
 	default:
-		return event
+		return event, nil
 	}
 	if _, err := request.Data(); err != nil {
 		event.Kind = rt.Failure
-		event.Status = "decode_error"
+		event.Error = &rt.SafeError{Category: "decode_error", Scope: "session"}
 		event.SessionID = ""
-		return event
+		return event, nil
 	}
 	var data struct {
 		ThreadID, TurnID, ItemID string
@@ -74,17 +74,17 @@ func mapRequest(request sdk.Request, id string) rt.Event {
 	}
 	if err := json.Unmarshal(request.Params(), &data); err != nil {
 		event.Kind = rt.Failure
-		event.Status = "decode_error"
-		return event
+		event.Error = &rt.SafeError{Category: "decode_error", Scope: "session"}
+		return event, nil
 	}
 	if data.ThreadID == "" || data.ThreadID != id {
 		event.SessionID = ""
-		return event
+		return event, nil
 	}
 	event.Kind = rt.InteractionRequested
-	event.TurnID = data.TurnID
-	event.ItemID = data.ItemID
-	interaction := &rt.Interaction{Kind: kind, Prompt: data.Reason, Handle: &responseHandle{native: request.Handle(), id: request.ID().String(), method: request.Method()}}
+	event.WorkRef = data.TurnID
+	handle := &responseHandle{native: request.Handle(), id: request.ID().String(), method: request.Method()}
+	interaction := &rt.Interaction{Ref: request.ID().String(), Kind: kind, Prompt: data.Reason}
 	for _, q := range data.Questions {
 		question := rt.Question{ID: q.ID, Prompt: q.Question}
 		for _, o := range q.Options {
@@ -93,5 +93,5 @@ func mapRequest(request sdk.Request, id string) rt.Event {
 		interaction.Questions = append(interaction.Questions, question)
 	}
 	event.Interaction = interaction
-	return event
+	return event, handle
 }

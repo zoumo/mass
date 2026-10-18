@@ -112,19 +112,21 @@ func (s *runtimeSuite) TestMessagesToolsAndNativeCompletion() {
 	s.Equal("native-session", event.SessionID)
 	s.Equal(rt.SessionKey{RuntimeName: "test-runtime", SessionID: "native-session"}, session.Key())
 	event = s.next(session, ctx)
-	s.Equal(rt.Message, event.Kind)
-	s.Equal("hello back", event.Text)
+	s.Equal(rt.MessageCompleted, event.Kind)
+	s.Equal("hello back", testutil.MessageText(event))
 	event = s.next(session, ctx)
 	s.Equal(rt.Tool, event.Kind)
-	s.Equal("tool-1", event.ItemID)
-	s.Equal("Read", event.Tool)
+	s.Equal("tool-1", event.Tool.CallRef)
+	s.Equal("Read", event.Tool.Name)
+	event = s.next(session, ctx)
+	s.Equal(rt.MessageCompleted, event.Kind) // User message retains role and tool-result block.
 	event = s.next(session, ctx)
 	s.Equal(rt.Tool, event.Kind)
-	s.Equal("synthetic output", event.Text)
+	s.Equal("synthetic output", event.Tool.Text)
 	event = s.next(session, ctx)
 	s.Equal(rt.TurnCompleted, event.Kind)
-	s.Empty(event.TurnID)
-	s.Equal("completed", event.Status)
+	s.Empty(event.WorkRef)
+	s.Equal("completed", event.Work.Status)
 	s.NoError(conn.Stop())
 }
 func (s *runtimeSuite) TestInteractionsAndInterrupt() {
@@ -144,7 +146,7 @@ func (s *runtimeSuite) TestInteractionsAndInterrupt() {
 			_, session, ctx := s.open(frames)
 			event := s.nextInteraction(session, ctx)
 			s.Require().Equal(rt.InteractionRequested, event.Kind)
-			handle := event.Interaction.Handle
+			handle := session.ResponseHandle(event.Interaction.Ref)
 			s.Equal("original-request", handle.ID())
 			canceled, cancel := context.WithCancel(ctx)
 			cancel()
@@ -157,7 +159,7 @@ func (s *runtimeSuite) TestInteractionsAndInterrupt() {
 			s.Require().NoError(session.Cancel(ctx, ""))
 			event = s.next(session, ctx)
 			s.Equal(rt.TurnCompleted, event.Kind)
-			s.Equal("failed", event.Status)
+			s.Equal("failed", event.Work.Status)
 		})
 	}
 }
@@ -200,7 +202,7 @@ func (s *runtimeSuite) TestPendingHandleExpiresOnClose() {
 	conn, session, ctx := s.open(frames)
 	event := s.nextInteraction(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
-	handle := event.Interaction.Handle
+	handle := session.ResponseHandle(event.Interaction.Ref)
 	s.NoError(conn.Stop())
 	select {
 	case <-handle.Done():
@@ -224,10 +226,12 @@ func (s *runtimeSuite) TestUnknownAndNativeErrorDiagnostics() {
 			for {
 				event, err := session.Next(ctx)
 				s.Require().NoError(err)
-				if event.Diagnostic.NativeKind == tc.nativeKind {
+				if event.Diagnostic.NativeKind == tc.nativeKind || event.Origin.SourceKind == tc.nativeKind {
 					s.Equal(tc.kind, event.Kind)
-					s.Len(event.Diagnostic.SHA256, 64)
-					s.NotContains(event.Text, "synthetic-sensitive-marker")
+					if event.Kind == rt.Unknown {
+						s.Len(event.Diagnostic.SHA256, 64)
+					}
+					s.NotContains(testutil.MessageText(event), "synthetic-sensitive-marker")
 					break
 				}
 			}
@@ -244,7 +248,7 @@ func (s *runtimeSuite) TestNativeCancellationInvalidatesHandle() {
 	_, session, ctx := s.open(frames)
 	event := s.nextInteraction(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
-	handle := event.Interaction.Handle
+	handle := session.ResponseHandle(event.Interaction.Ref)
 	s.Require().NoError(session.Cancel(ctx, ""))
 	select {
 	case <-handle.Done():

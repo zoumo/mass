@@ -28,14 +28,17 @@ type driver struct {
 	closed   bool
 }
 type session struct {
-	conn     *driver
-	id       string
-	sub      *sdk.Subscription
-	ready    bool
-	next     sync.Mutex
-	requests chan sdk.Request
-	done     chan struct{}
-	once     sync.Once
+	conn      *driver
+	id        string
+	sub       *sdk.Subscription
+	position  uint64
+	ready     bool
+	next      sync.Mutex
+	requests  chan sdk.Request
+	done      chan struct{}
+	once      sync.Once
+	handles   map[string]rt.ResponseHandle
+	handlesMu sync.Mutex
 }
 
 var _ rt.Session = (*session)(nil)
@@ -214,7 +217,7 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 	}
 	if !s.ready {
 		s.ready = true
-		return rt.Event{Kind: rt.SessionReady, RuntimeName: s.conn.name, SessionID: s.id}, nil
+		return rt.Event{Kind: rt.SessionReady, RuntimeName: s.conn.name, SessionID: s.id, Origin: rt.EventOrigin{Kind: "runtime", Attribution: "root", Completeness: "complete"}}, nil
 	}
 	for {
 		select {
@@ -227,8 +230,19 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 				s.requests = nil
 				continue
 			}
-			event := mapRequest(request, s.id)
+			event, handle := mapRequest(request, s.id)
+			if handle != nil {
+				s.handlesMu.Lock()
+				if s.handles == nil {
+					s.handles = map[string]rt.ResponseHandle{}
+				}
+				s.handles[event.Interaction.Ref] = handle
+				s.handlesMu.Unlock()
+			}
 			event.RuntimeName = s.conn.name
+			s.position++
+			event.SourcePosition = s.position
+			event.ObservedAt = time.Now().UTC()
 			return event, nil
 		case native, ok := <-s.sub.Events():
 			if !ok {
@@ -239,6 +253,9 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 			}
 			event := mapEvent(native, s.id)
 			event.RuntimeName = s.conn.name
+			s.position++
+			event.SourcePosition = s.position
+			event.ObservedAt = time.Now().UTC()
 			return event, nil
 		}
 	}
@@ -259,66 +276,68 @@ func safeError(ctx context.Context, operation string) error {
 func mapEvent(native types.Event, id string) rt.Event {
 	event := rt.Event{Kind: rt.Unknown, SessionID: id, Diagnostic: diagnostic(native.Method, native.Params)}
 	if native.Method == "" {
-		event.Diagnostic.NativeKind = fmt.Sprintf("sdk:%T", native.Data)
+		event.Diagnostic.NativeKind = "sdk_derived/unsupported"
+		event.Origin = rt.EventOrigin{Kind: "sdk_derived", Attribution: "unresolved", Completeness: "unknown"}
 		return event
 	}
+	if converted, ok := messageEvent(native, id); ok {
+		return converted
+	}
+	var data struct {
+		TurnID string
+		Turn   struct{ ID, Status string }
+		Item   struct {
+			ID, Type, Name, Tool, Command string
+			AggregatedOutput              *string
+		}
+	}
 	switch native.Method {
-	case "turn/started", "turn/completed", "item/agentMessage/delta", "item/started", "item/completed", "error":
+	case "turn/started", "turn/completed", "item/started", "item/completed", "error":
 	default:
 		return event
 	}
-	var data struct {
-		ThreadID string `json:"threadId"`
-		TurnID   string `json:"turnId"`
-		ItemID   string `json:"itemId"`
-		Delta    string `json:"delta"`
-		Turn     struct{ ID, Status string }
-		Item     struct{ ID, Type, Text, Name, Tool, Command, AggregatedOutput string }
-		Error    struct{ Message string }
-	}
-	if err := json.Unmarshal(native.Params, &data); err != nil || native.DecodeError != nil {
+	if json.Unmarshal(native.Params, &data) != nil || native.DecodeError != nil {
 		event.Kind = rt.Failure
-		event.Status = "decode_error"
+		event.Error = &rt.SafeError{Category: "decode_error", Scope: "session"}
 		return event
 	}
-	event.TurnID = data.TurnID
-	event.ItemID = data.ItemID
+	event.WorkRef = data.TurnID
 	switch native.Method {
-	case "turn/started":
+	case "turn/started", "turn/completed":
 		event.Kind = rt.TurnStarted
-		event.TurnID = data.Turn.ID
-		event.Status = turnStatus(data.Turn.Status)
-	case "turn/completed":
-		event.Kind = rt.TurnCompleted
-		event.TurnID = data.Turn.ID
-		event.Status = turnStatus(data.Turn.Status)
-	case "item/agentMessage/delta":
-		event.Kind = rt.Message
-		event.Text = data.Delta
-		event.Status = "delta"
-	case "item/started", "item/completed":
-		event.ItemID = data.Item.ID
-		switch data.Item.Type {
-		case "agentMessage":
-			event.Kind = rt.Message
-			event.Text = data.Item.Text
-		case "commandExecution":
-			event.Kind = rt.Tool
-			event.Tool = data.Item.Command
-			event.Text = data.Item.AggregatedOutput
-		case "mcpToolCall", "dynamicToolCall":
-			event.Kind = rt.Tool
-			event.Tool = data.Item.Name
-			if event.Tool == "" {
-				event.Tool = data.Item.Tool
-			}
+		if native.Method == "turn/completed" {
+			event.Kind = rt.TurnCompleted
 		}
-		event.Status = native.Method
+		event.WorkRef = data.Turn.ID
+		event.Work = &rt.WorkPayload{Status: turnStatus(data.Turn.Status)}
+	case "item/started", "item/completed":
+		name := data.Item.Name
+		if name == "" {
+			name = data.Item.Tool
+		}
+		switch data.Item.Type {
+		case "commandExecution":
+			name = data.Item.Command
+		case "mcpToolCall", "dynamicToolCall":
+		default:
+			return event
+		}
+		event.Kind = rt.Tool
+		event.Tool = &rt.ToolPayload{CallRef: data.Item.ID, Name: name, State: native.Method}
+		if data.Item.AggregatedOutput != nil {
+			event.Tool.Text = *data.Item.AggregatedOutput
+		}
 	case "error":
 		event.Kind = rt.Failure
-		event.Status = "native_error"
+		event.Error = &rt.SafeError{Category: "native_error", Scope: "session"}
 	}
 	return event
+}
+
+func (s *session) ResponseHandle(ref string) rt.ResponseHandle {
+	s.handlesMu.Lock()
+	defer s.handlesMu.Unlock()
+	return s.handles[ref]
 }
 
 func turnStatus(native string) string {

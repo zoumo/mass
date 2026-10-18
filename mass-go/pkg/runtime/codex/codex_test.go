@@ -89,11 +89,13 @@ func (s *runtimeSuite) TestUnknownNativeErrorAndDisconnect() {
 					s.NotContains(err.Error(), "synthetic-sensitive-marker")
 					break
 				}
-				if event.Diagnostic.NativeKind == tc.method {
+				if event.Diagnostic.NativeKind == tc.method || event.Origin.SourceKind == tc.method {
 					found = true
 					s.Equal(tc.kind, event.Kind)
-					s.Len(event.Diagnostic.SHA256, 64)
-					s.NotContains(event.Text, "synthetic-sensitive-marker")
+					if event.Kind == rt.Unknown {
+						s.Len(event.Diagnostic.SHA256, 64)
+					}
+					s.NotContains(testutil.MessageText(event), "synthetic-sensitive-marker")
 				}
 			}
 			s.True(found, "queued native fact must survive disconnect")
@@ -138,15 +140,15 @@ func (s *runtimeSuite) TestMessagesToolsAndCompletion() {
 		}
 	}
 	s.Equal(rt.TurnStarted, events[0].Kind)
-	s.Equal("in_progress", events[0].Status)
-	s.Equal(rt.Message, events[1].Kind)
-	s.Equal("hello back", events[1].Text)
-	s.Equal("message-1", events[1].ItemID)
+	s.Equal("in_progress", events[0].Work.Status)
+	s.Equal(rt.MessageDelta, events[1].Kind)
+	s.Equal("hello back", testutil.MessageText(events[1]))
+	s.Equal("message-1", events[1].Message.MessageRef)
 	s.Equal(rt.Tool, events[2].Kind)
-	s.Equal("echo synthetic", events[2].Tool)
-	s.Equal("synthetic output", events[3].Text)
+	s.Equal("echo synthetic", events[2].Tool.Name)
+	s.Equal("synthetic output", events[3].Tool.Text)
 	s.Equal(rt.TurnCompleted, events[4].Kind)
-	s.Equal("completed", events[4].Status)
+	s.Equal("completed", events[4].Work.Status)
 	s.NoError(conn.Stop())
 }
 func (s *runtimeSuite) TestInteractionAndInterruption() {
@@ -168,7 +170,7 @@ func (s *runtimeSuite) TestInteractionAndInterruption() {
 			s.Require().NoError(err)
 			event := s.nextMapped(session, ctx)
 			s.Require().Equal(rt.InteractionRequested, event.Kind)
-			handle := event.Interaction.Handle
+			handle := session.ResponseHandle(event.Interaction.Ref)
 			s.Equal(`"original-request"`, handle.ID())
 			canceled, cancel := context.WithCancel(ctx)
 			cancel()
@@ -180,7 +182,7 @@ func (s *runtimeSuite) TestInteractionAndInterruption() {
 			s.Require().NoError(session.Cancel(ctx, "native-turn"))
 			event = s.nextMapped(session, ctx)
 			s.Equal(rt.TurnCompleted, event.Kind)
-			s.Equal("interrupted", event.Status)
+			s.Equal("interrupted", event.Work.Status)
 		})
 	}
 }
@@ -205,7 +207,7 @@ func (s *runtimeSuite) TestPendingHandleExpiresOnClose() {
 	s.Require().NoError(err)
 	event := s.nextMapped(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
-	handle := event.Interaction.Handle
+	handle := session.ResponseHandle(event.Interaction.Ref)
 	s.NoError(conn.Stop())
 	select {
 	case <-handle.Done():
@@ -257,7 +259,7 @@ func (s *runtimeSuite) TestNativeResolutionInvalidatesHandle() {
 	s.Require().NoError(err)
 	event := s.nextMapped(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
-	handle := event.Interaction.Handle
+	handle := session.ResponseHandle(event.Interaction.Ref)
 	s.Require().NoError(session.Cancel(ctx, "native-turn"))
 	select {
 	case <-handle.Done():
@@ -275,7 +277,7 @@ func (s *runtimeSuite) TestNativeItemKinds() {
 	}{
 		{"MCP", `{"type":"mcpToolCall","id":"item","server":"synthetic","tool":"lookup","arguments":{},"status":"inProgress"}`, "lookup", rt.Tool},
 		{"dynamic", `{"type":"dynamicToolCall","id":"item","tool":"lookup","arguments":{},"status":"inProgress"}`, "lookup", rt.Tool},
-		{"reasoning", `{"type":"reasoning","id":"item","summary":[],"content":[]}`, "", rt.Unknown},
+		{"reasoning", `{"type":"reasoning","id":"item","summary":[],"content":[]}`, "", rt.ReasoningDelta},
 	} {
 		s.Run(tc.name, func() {
 			frames := append(startup(), turnStart()...)
@@ -286,9 +288,13 @@ func (s *runtimeSuite) TestNativeItemKinds() {
 			for {
 				event, err := session.Next(ctx)
 				s.Require().NoError(err)
-				if event.Diagnostic.NativeKind == "item/started" {
+				if event.Origin.SourceKind == "item/started" {
 					s.Equal(tc.kind, event.Kind)
-					s.Equal(tc.tool, event.Tool)
+					if event.Tool != nil {
+						s.Equal(tc.tool, event.Tool.Name)
+					} else {
+						s.Require().NotNil(event.Reasoning)
+					}
 					break
 				}
 			}
@@ -336,7 +342,7 @@ func (s *runtimeSuite) TestSharedRequestsStayWithTheirNativeSession() {
 		s.Equal(tc.session.Key().RuntimeName, tc.event.RuntimeName)
 		s.Equal(tc.session.Key().SessionID, tc.event.SessionID)
 		s.Require().NotNil(tc.event.Interaction)
-		s.Equal(tc.id, tc.event.Interaction.Handle.ID())
-		s.NoError(tc.event.Interaction.Handle.Respond(ctx, rt.Response{Allow: tc.allow}))
+		s.Equal(tc.id, tc.session.ResponseHandle(tc.event.Interaction.Ref).ID())
+		s.NoError(tc.session.ResponseHandle(tc.event.Interaction.Ref).Respond(ctx, rt.Response{Allow: tc.allow}))
 	}
 }

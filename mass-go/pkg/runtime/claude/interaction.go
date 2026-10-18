@@ -61,16 +61,16 @@ func (h *responseHandle) Respond(ctx context.Context, response rt.Response) erro
 	}
 	return nil
 }
-func mapPermission(p *sdk.PermissionRequest) rt.Event {
-	event := rt.Event{Kind: rt.InteractionRequested, ItemID: p.ToolUseID(), Tool: p.ToolName(), Diagnostic: diagnostic("can_use_tool", p.Raw())}
+func mapPermission(p *sdk.PermissionRequest) (rt.Event, rt.ResponseHandle) {
+	event := rt.Event{Kind: rt.InteractionRequested, Diagnostic: diagnostic("can_use_tool", p.Raw())}
 	handle := &responseHandle{native: p}
-	interaction := &rt.Interaction{Kind: "approval", Prompt: p.ToolName(), Handle: handle}
+	interaction := &rt.Interaction{Ref: p.RequestID(), Kind: "approval", Prompt: p.ToolName()}
 	if p.ToolName() == "AskUserQuestion" {
 		input := new(sdk.AskUserQuestionInput)
 		if err := json.Unmarshal(p.Input(), input); err != nil {
 			event.Kind = rt.Failure
-			event.Status = "decode_error"
-			return event
+			event.Error = &rt.SafeError{Category: "decode_error", Scope: "session"}
+			return event, nil
 		}
 		handle.question = input
 		interaction.Kind = "question"
@@ -83,5 +83,5 @@ func mapPermission(p *sdk.PermissionRequest) rt.Event {
 		}
 	}
 	event.Interaction = interaction
-	return event
+	return event, handle
 }

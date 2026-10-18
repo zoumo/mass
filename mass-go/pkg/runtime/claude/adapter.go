@@ -113,6 +113,8 @@ type connection struct {
 	limits                             rt.CreationLimits
 	identityDeadline                   time.Time
 	provisionalFacts, provisionalBytes int
+	messages                           messageMapper
+	handles                            map[string]rt.ResponseHandle
 }
 type session struct {
 	conn *connection
@@ -193,14 +195,14 @@ func (c *connection) receive() {
 			if mismatch {
 				events = []rt.Event{{Kind: rt.Unknown, Diagnostic: diagnostic("identity_mismatch", nil)}}
 			} else {
-				events = mapEvent(native)
+				events = c.mapEvent(native)
 			}
 		} else {
 			data, _ := json.Marshal(received)
 			if !c.reserveProvisional(len(data)) {
 				return
 			}
-			events = []rt.Event{{Kind: rt.Unknown, Diagnostic: diagnostic(fmt.Sprintf("sdk:%T", received), nil)}}
+			events = []rt.Event{{Kind: rt.Unknown, Diagnostic: diagnostic("sdk_derived/unsupported", nil), Origin: rt.EventOrigin{Kind: "sdk_derived", Attribution: "unresolved", Completeness: "unknown"}}}
 		}
 		for _, event := range events {
 			event.ObservedAt = observedAt
@@ -338,86 +340,38 @@ func diagnostic(kind string, data []byte) rt.Diagnostic {
 	}
 	return rt.Diagnostic{NativeKind: kind, SHA256: hex.EncodeToString(sum[:])}
 }
-func mapEvent(native types.Event) []rt.Event {
-	base := rt.Event{Kind: rt.Unknown, SessionID: native.SessionID, ItemID: native.UUID, Diagnostic: diagnostic(native.Type+"/"+native.Subtype, native.Raw)}
+func (c *connection) mapEvent(native types.Event) []rt.Event {
+	base := rt.Event{Kind: rt.Unknown, SessionID: native.SessionID, FrameRef: native.UUID, Diagnostic: diagnostic(native.Type+"/"+native.Subtype, native.Raw), Origin: rt.EventOrigin{Kind: "native", Attribution: "root", Completeness: "complete", Replay: native.IsReplay, Synthetic: native.IsSynthetic}}
+	if native.Origin != nil {
+		base.Origin.SourceKind = native.Origin.Kind
+	}
 	if (native.AgentID != nil && *native.AgentID != "") || (native.ParentToolUseID != nil && *native.ParentToolUseID != "") {
+		base.Origin.Attribution = "child"
 		return []rt.Event{base}
 	}
 	if native.Result != nil {
 		base.Kind = rt.TurnCompleted
-		base.Status = "failed"
+		status := "failed"
 		if native.Result.Subtype == "success" && !native.Result.IsError {
-			base.Status = "completed"
+			status = "completed"
 		}
-		return []rt.Event{base}
-	}
-	if native.System != nil && native.Subtype == "init" && native.SessionID != "" {
-		base.Kind = rt.SessionReady
+		base.Work = &rt.WorkPayload{Status: status}
 		return []rt.Event{base}
 	}
 	if native.Error != nil || native.Type == "error" {
 		base.Kind = rt.Failure
-		base.Status = "native_error"
+		base.Error = &rt.SafeError{Category: "native_error", Scope: "session"}
 		return []rt.Event{base}
 	}
-	if native.Stream != nil && native.Stream.Delta != nil {
-		delta := native.Stream.Delta
-		if delta.Type == "content_block_delta" {
-			var text struct{ Type, Text string }
-			if json.Unmarshal(delta.Delta, &text) == nil && text.Type == "text_delta" {
-				base.Kind = rt.Message
-				base.Text = text.Text
-				base.Status = "delta"
-			}
-		}
-		return []rt.Event{base}
+	if events, ok := c.messages.convert(native, base); ok {
+		return events
 	}
-	message := native.Assistant
-	if message == nil {
-		message = native.User
-	}
-	if message == nil {
-		return []rt.Event{base}
-	}
-	base.ItemID = message.ID
-	if message.Content.Text != nil {
-		base.Kind = rt.Message
-		base.Text = *message.Content.Text
-		return []rt.Event{base}
-	}
-	var events []rt.Event
-	for _, block := range message.Content.Blocks {
-		event := base
-		switch {
-		case block.Text != nil:
-			event.Kind = rt.Message
-			event.Text = block.Text.Text
-		case block.ToolUse != nil:
-			event.Kind = rt.Tool
-			event.ItemID = block.ToolUse.ID
-			event.Tool = block.ToolUse.Name
-			event.Status = "started"
-		case block.ToolResult != nil:
-			event.Kind = rt.Tool
-			event.ItemID = block.ToolResult.ToolUseID
-			event.Status = "completed"
-			if block.ToolResult.IsError {
-				event.Status = "error"
-			}
-			text, known := toolResultText(block.ToolResult.Content)
-			event.Text = text
-			if !known {
-				events = append(events, rt.Event{Kind: rt.Unknown, SessionID: native.SessionID, ItemID: block.ToolResult.ToolUseID, Diagnostic: diagnostic("tool_result/content", block.ToolResult.Content)})
-			}
-		default:
-			event.Diagnostic = diagnostic("content/"+block.Type, block.Raw)
-		}
-		events = append(events, event)
-	}
-	if len(events) == 0 {
-		return []rt.Event{base}
-	}
-	return events
+	return []rt.Event{base}
+}
+func (s *session) ResponseHandle(ref string) rt.ResponseHandle {
+	s.conn.mu.Lock()
+	defer s.conn.mu.Unlock()
+	return s.conn.handles[ref]
 }
 
 // Tool output can be a string or an ordered array of content blocks.
@@ -446,9 +400,15 @@ func (c *connection) permissionEvent(p *sdk.PermissionRequest) rt.Event {
 	if err != nil || metadata.AgentID != "" {
 		return rt.Event{Kind: rt.Unknown, Diagnostic: diagnostic("can_use_tool/unowned", p.Raw())}
 	}
-	event := mapPermission(p)
+	event, handle := mapPermission(p)
 	c.mu.Lock()
 	event.SessionID = c.nativeID
+	if handle != nil {
+		if c.handles == nil {
+			c.handles = map[string]rt.ResponseHandle{}
+		}
+		c.handles[event.Interaction.Ref] = handle
+	}
 	c.mu.Unlock()
 	return event
 }

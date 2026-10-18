@@ -130,10 +130,10 @@ func (s *lifecycleSuite) readReply(ctx context.Context, session rt.Session) {
 	for {
 		event, err := session.Next(ctx)
 		s.Require().NoError(err)
-		if event.Kind == rt.Message {
+		if event.Message != nil {
 			s.Equal(session.Key().RuntimeName, event.RuntimeName)
 			s.Equal(session.Key().SessionID, event.SessionID)
-			s.Equal(session.Key().SessionID+" reply", event.Text)
+			s.Equal(session.Key().SessionID+" reply", testutil.MessageText(event))
 			return
 		}
 	}

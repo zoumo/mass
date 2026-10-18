@@ -174,7 +174,7 @@ func (s *lifecycleSuite) TestEarlyFactsAndImmutableRootIdentity() {
 		event, err := session.Next(ctx)
 		s.Require().NoError(err)
 		s.Equal("root", event.SessionID)
-		if event.Text == "early" {
+		if testutil.MessageText(event) == "early" {
 			seenEarly = true
 			early = event
 			s.False(event.ObservedAt.IsZero())

@@ -134,9 +134,11 @@ type SessionKey struct {
 	SessionID   string `json:"sessionId"`
 }
 type SessionSnapshot struct {
-	Key        SessionKey `json:"key"`
-	Attachment string     `json:"attachment"`
-	ObservedAt time.Time  `json:"observedAt"`
+	Key             SessionKey      `json:"key"`
+	ConnectionEpoch string          `json:"connectionEpoch,omitempty"`
+	Metadata        MetadataPayload `json:"metadata"`
+	Attachment      string          `json:"attachment"`
+	ObservedAt      time.Time       `json:"observedAt"`
 }
 
 // Session is an attachment with a proven, immutable native identity.
@@ -150,6 +152,8 @@ type Session interface {
 	// Next has one consumer. Context cancellation only stops this wait.
 	Next(context.Context) (Event, error)
 	Close() error
+	// ResponseHandle resolves authority on this live attachment, never from event data.
+	ResponseHandle(string) ResponseHandle
 }
 
 type Capabilities struct{ NativeTurnID, NativeAcknowledgement bool }
@@ -170,34 +174,34 @@ const (
 	SessionReady         EventKind = "session_ready"
 	TurnStarted          EventKind = "turn_started"
 	TurnCompleted        EventKind = "turn_completed"
-	Message              EventKind = "message"
+	MessageCompleted     EventKind = "message.completed"
+	MessageStarted       EventKind = "message.started"
+	MessageDelta         EventKind = "message.delta"
 	Tool                 EventKind = "tool"
 	InteractionRequested EventKind = "interaction_requested"
 	Failure              EventKind = "failure"
-	Unknown              EventKind = "unknown"
+	Unknown              EventKind = "diagnostic"
+	ReasoningCompleted   EventKind = "reasoning.completed"
+	ReasoningDelta       EventKind = "reasoning.delta"
+	Plan                 EventKind = "plan.updated"
+	Metadata             EventKind = "session.metadata_changed"
 )
 
-type Event struct {
-	// ObservedAt and SourcePosition retain adapter receive order across pending
-	// identity binding. SourcePosition is local to that attachment, not native wire order.
-	ObservedAt                                                 time.Time
-	SourcePosition                                             uint64
-	Kind                                                       EventKind
-	RuntimeName, SessionID, TurnID, ItemID, Text, Tool, Status string
-	Diagnostic                                                 Diagnostic
-	Interaction                                                *Interaction
-}
-
 // Diagnostic retains correlation without exposing arbitrary native payloads.
-type Diagnostic struct{ NativeKind, SHA256 string }
+type Diagnostic struct {
+	NativeKind string `json:"sourceKind"`
+	SHA256     string `json:"sha256"`
+}
 type Interaction struct {
-	Kind, Prompt string
-	Questions    []Question
-	Handle       ResponseHandle
+	Ref       string     `json:"ref"`
+	Kind      string     `json:"kind"`
+	Prompt    string     `json:"prompt"`
+	Questions []Question `json:"questions,omitempty"`
 }
 type Question struct {
-	ID, Prompt string
-	Options    []string
+	ID      string   `json:"id"`
+	Prompt  string   `json:"prompt"`
+	Options []string `json:"options"`
 }
 type Response struct {
 	Allow   bool
