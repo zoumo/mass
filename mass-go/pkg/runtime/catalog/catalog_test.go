@@ -3,6 +3,7 @@ package catalog_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -20,7 +21,8 @@ func (s *catalogSuite) TestRegistrationIsSideEffectFree() {
 		s.Require().NoError(err)
 		s.Equal(description, described)
 		s.Equal(128, description.MaxNameBytes)
-		s.Len(description.ConfigFields, 3)
+		s.Len(description.ConfigFields, 4)
+		s.Len(description.CreationBounds, 3)
 	}
 	_, err := c.Describe("plugin")
 	s.ErrorIs(err, rt.ErrNotFound)
@@ -76,5 +78,17 @@ func (s *catalogSuite) TestConfigurationRevisionAndRetiredHandles() {
 			_, err = c.Get("worker")
 			s.ErrorIs(err, rt.ErrNotFound)
 		})
+	}
+}
+
+func (s *catalogSuite) TestCreationLimitsAreFinite() {
+	for _, limits := range []rt.CreationLimits{
+		{Facts: -1}, {Facts: 4097}, {Bytes: -1}, {Bytes: (16 << 20) + 1},
+		{Timeout: -time.Second}, {Timeout: time.Nanosecond}, {Timeout: 61 * time.Second},
+	} {
+		c := catalog.New()
+		_, err := c.Register(rt.Registration{Name: "worker", Type: "claude", Config: rt.Config{Executable: "/synthetic/mock", Env: []string{}, CreationLimits: limits}})
+		s.ErrorIs(err, rt.ErrInvalidInput)
+		s.Empty(c.List())
 	}
 }

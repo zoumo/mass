@@ -38,6 +38,22 @@ func send() string {
 }
 func (s *runtimeSuite) open(frames []string) (rt.Runtime, rt.Session, context.Context) {
 	s.T().Helper()
+	for i, frame := range frames {
+		if frame == send() {
+			id := "native-session"
+			for _, f := range frames {
+				if strings.Contains(f, `"session_id":"root"`) {
+					id = "root"
+				}
+			}
+			if i+1 < len(frames) && strings.Contains(frames[i+1], `"subtype":"init"`) {
+				break
+			}
+			init := `server protocol {"type":"system","subtype":"init","session_id":"` + id + `"}`
+			frames = append(frames[:i+1:i+1], append([]string{init}, frames[i+1:]...)...)
+			break
+		}
+	}
 	var native []map[string]any
 	for i, frame := range frames {
 		direction, rest, _ := strings.Cut(frame, " ")
@@ -58,8 +74,8 @@ func (s *runtimeSuite) open(frames []string) (rt.Runtime, rt.Session, context.Co
 	err = conn.Start(ctx)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.NoError(conn.Stop()) })
-	session, err := conn.CreateSession(ctx)
-	s.Require().NoError(err)
+	input := "hello"
+	session := testutil.OpenSession(s.T(), conn, ctx, rt.SessionOptions{InitialInput: &input})
 	return conn, session, ctx
 }
 func (s *runtimeSuite) next(session rt.Session, ctx context.Context) rt.Event {
@@ -72,6 +88,16 @@ func (s *runtimeSuite) next(session rt.Session, ctx context.Context) rt.Event {
 		}
 	}
 }
+func (s *runtimeSuite) nextInteraction(session rt.Session, ctx context.Context) rt.Event {
+	s.T().Helper()
+	for {
+		event := s.next(session, ctx)
+		if event.Kind == rt.InteractionRequested {
+			return event
+		}
+		s.Require().Equal(rt.SessionReady, event.Kind)
+	}
+}
 func (s *runtimeSuite) TestMessagesToolsAndNativeCompletion() {
 	frames := append(startup(), send(),
 		`server protocol {"type":"system","subtype":"init","session_id":"native-session"}`,
@@ -79,11 +105,8 @@ func (s *runtimeSuite) TestMessagesToolsAndNativeCompletion() {
 		`server protocol {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":[{"type":"text","text":"synthetic "},{"type":"text","text":"output"}],"is_error":false}]}}`,
 		`server protocol {"type":"result","subtype":"success","session_id":"native-session","is_error":false,"result":"done"}`)
 	conn, session, ctx := s.open(frames)
-	s.Equal(rt.SessionKey{RuntimeName: "test-runtime"}, session.Key())
+	s.Equal("native-session", session.Key().SessionID)
 	s.Equal(rt.Capabilities{}, session.Capabilities())
-	submission, err := session.Submit(ctx, "hello")
-	s.Require().NoError(err)
-	s.Equal(rt.Submission{Evidence: rt.SDKWriteSuccess}, submission)
 	event := s.next(session, ctx)
 	s.Equal(rt.SessionReady, event.Kind)
 	s.Equal("native-session", event.SessionID)
@@ -119,9 +142,7 @@ func (s *runtimeSuite) TestInteractionsAndInterrupt() {
 				`server control {"type":"control_response","response":{"subtype":"success","request_id":"interrupt","response":{}}}`,
 				`server protocol {"type":"result","subtype":"error_during_execution","session_id":"native-session","is_error":true}`)
 			_, session, ctx := s.open(frames)
-			_, err := session.Submit(ctx, "hello")
-			s.Require().NoError(err)
-			event := s.next(session, ctx)
+			event := s.nextInteraction(session, ctx)
 			s.Require().Equal(rt.InteractionRequested, event.Kind)
 			handle := event.Interaction.Handle
 			s.Equal("original-request", handle.ID())
@@ -146,9 +167,7 @@ func (s *runtimeSuite) TestCloseWithoutConsuming() {
 	s.executable = wrapper
 	defer func() { s.executable = original }()
 	frames := append(startup(), send(), `server control {"type":"control_request","request_id":"pending","request":{"subtype":"can_use_tool","tool_name":"Read","tool_use_id":"tool-1","input":{}}}`, `client control {"type":"control_response","response":{"subtype":"success","request_id":"pending","response":{"behavior":"deny","message":""}}}`)
-	conn, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
-	s.Require().NoError(err)
+	conn, session, _ := s.open(frames)
 	s.NoError(conn.Stop())
 	s.NoError(session.Close())
 	exited()
@@ -161,14 +180,12 @@ func (s *runtimeSuite) TestChildFactsDoNotOwnRoot() {
 		`server control {"type":"control_request","request_id":"child-permission","request":{"subtype":"can_use_tool","tool_name":"Read","agent_id":"child-agent","tool_use_id":"child-tool","input":{}}}`,
 		`client control {"type":"control_response","response":{"subtype":"success","request_id":"child-permission","response":{"behavior":"deny","message":""}}}`)
 	conn, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
-	s.Require().NoError(err)
 	s.Equal(rt.SessionReady, s.next(session, ctx).Kind)
 	seen := map[string]bool{}
 	for len(seen) < 2 {
 		event, err := session.Next(ctx)
 		s.Require().NoError(err)
-		if event.Diagnostic.NativeKind == "result/success" || event.Diagnostic.NativeKind == "can_use_tool/unowned" {
+		if event.Diagnostic.NativeKind == "result/success" || event.Diagnostic.NativeKind == "control_request/" {
 			seen[event.Diagnostic.NativeKind] = true
 			s.Equal(rt.Unknown, event.Kind)
 			s.Nil(event.Interaction)
@@ -181,9 +198,7 @@ func (s *runtimeSuite) TestChildFactsDoNotOwnRoot() {
 func (s *runtimeSuite) TestPendingHandleExpiresOnClose() {
 	frames := append(startup(), send(), `server control {"type":"control_request","request_id":"pending","request":{"subtype":"can_use_tool","tool_name":"Read","tool_use_id":"tool-1","input":{}}}`, `client control {"type":"control_response","response":{"subtype":"success","request_id":"pending","response":{"behavior":"deny","message":""}}}`)
 	conn, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
-	s.Require().NoError(err)
-	event := s.next(session, ctx)
+	event := s.nextInteraction(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
 	handle := event.Interaction.Handle
 	s.NoError(conn.Stop())
@@ -206,8 +221,6 @@ func (s *runtimeSuite) TestUnknownAndNativeErrorDiagnostics() {
 	} {
 		s.Run(tc.name, func() {
 			_, session, ctx := s.open(append(startup(), send(), "server protocol "+tc.frame))
-			_, err := session.Submit(ctx, "hello")
-			s.Require().NoError(err)
 			for {
 				event, err := session.Next(ctx)
 				s.Require().NoError(err)
@@ -229,9 +242,7 @@ func (s *runtimeSuite) TestNativeCancellationInvalidatesHandle() {
 		`server control {"type":"control_response","response":{"subtype":"success","request_id":"interrupt","response":{}}}`,
 		`server control {"type":"control_cancel_request","request_id":"cancelled"}`)
 	_, session, ctx := s.open(frames)
-	_, err := session.Submit(ctx, "hello")
-	s.Require().NoError(err)
-	event := s.next(session, ctx)
+	event := s.nextInteraction(session, ctx)
 	s.Require().Equal(rt.InteractionRequested, event.Kind)
 	handle := event.Interaction.Handle
 	s.Require().NoError(session.Cancel(ctx, ""))

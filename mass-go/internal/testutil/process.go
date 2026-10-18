@@ -2,6 +2,8 @@
 package testutil
 
 import (
+	"context"
+	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -34,4 +36,26 @@ func TrackProcess(t *testing.T, executable string) (string, func()) {
 		require.NoError(t, err)
 		require.Eventually(t, func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH }, 2*time.Second, 10*time.Millisecond, "owned mock process survived Close")
 	}
+}
+
+// WaitCreation observes an operation without transferring its lifetime to a wait.
+func WaitCreation(t *testing.T, worker rt.Runtime, ref, phase string) rt.CreationOperation {
+	t.Helper()
+	var op rt.CreationOperation
+	require.Eventually(t, func() bool {
+		var err error
+		op, err = worker.GetOperation(ref)
+		return err == nil && op.Phase == phase
+	}, 6*time.Second, time.Millisecond, "creation did not reach %s", phase)
+	return op
+}
+func OpenSession(t *testing.T, worker rt.Runtime, ctx context.Context, options rt.SessionOptions) rt.Session {
+	t.Helper()
+	op, err := worker.CreateSession(ctx, options)
+	require.NoError(t, err)
+	op = WaitCreation(t, worker, op.OperationRef, "opened")
+	require.NotNil(t, op.Key)
+	session, err := worker.GetSession(*op.Key)
+	require.NoError(t, err)
+	return session
 }

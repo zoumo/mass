@@ -26,23 +26,34 @@ worker, err := registry.Get("local-codex")
 if err != nil { return err }
 if err := worker.Start(ctx); err != nil { return err }
 defer worker.Stop()
-a, err := worker.CreateSession(ctx)
+input := "hello" // The only initial input authorized by this caller.
+op, err := worker.CreateSession(ctx, runtime.SessionOptions{InitialInput: &input})
 if err != nil { return err }
-b, err := worker.CreateSession(ctx)
+ticker := time.NewTicker(10 * time.Millisecond)
+defer ticker.Stop()
+for op.Phase != "opened" {
+    if op.Phase == "outcome_unknown" || op.Phase == "closed" {
+        return errors.New("creation did not open; inspect its operation")
+    }
+    select {
+    case <-ctx.Done(): return ctx.Err()
+    case <-ticker.C:
+    }
+    op, err = worker.GetOperation(op.OperationRef)
+    if err != nil { return err }
+}
+session, err := worker.GetSession(*op.Key)
 if err != nil { return err }
-if err := a.Close(); err != nil { return err }
-submission, err := b.Submit(ctx, "hello")
-if err != nil { return err }
-_ = submission // Inspect actual submission evidence.
 for {
-    event, err := b.Next(ctx)
+    event, err := session.Next(ctx)
     if err != nil { return err }
     if event.Kind == runtime.TurnCompleted { break }
 }
 ```
 
-This function-body sketch uses a `context.Context` and imports `pkg/runtime`
-and `pkg/runtime/catalog`. Claude uses the same interface with type `claude`.
+This function-body sketch uses a `context.Context` and imports `errors`,
+`time`, `pkg/runtime` and `pkg/runtime/catalog`.
+Claude uses the same interface with type `claude`.
 The old single-use Connection interface has been removed.
 
 Registration validates the name (1–128 bytes without surrounding whitespace),
@@ -59,7 +70,7 @@ from the revision actually activated, and retain timestamped health evidence:
 | Protocol | Start and health | Session resources |
 | --- | --- | --- |
 | Codex | Starts one owned app-server and observes protocol initialization | Multiple native threads share the process; each has an independent SDK subscription and routed interaction queue |
-| Claude | Checks executable availability and prepares process creation; connection and protocol health remain unknown | Each CreateSession starts a separate owned process and initializes its protocol |
+| Claude | Checks executable availability and prepares process creation; connection and protocol health remain unknown | Each creation with explicit input starts a separate owned process and initializes its protocol |
 
 Ready describes this activation scope. It does not prove model authentication,
 provider reachability, or current health of every session. Health is an
@@ -75,13 +86,64 @@ later activate against a replacement registration.
 
 A SessionKey has exactly `runtimeName` and `sessionId`. Codex uses the native
 thread ID, never the SDK tree-shared SessionID. Claude learns its ID from an
-authoritative root system/result observation. Before that observation, Key has
-an empty sessionId, and the attachment is absent from managed session queries.
-No native ID is generated and no input is injected. Callers supply the first
-input explicitly. GetSession rejects empty IDs and foreign Runtime names.
+authoritative root system/result observation, binding it once. Child observations,
+message UUIDs and later conflicting root IDs cannot replace that identity.
+Conflicting root IDs produce a safe diagnostic. No native ID, session name,
+native turn ID or initial input is generated.
+
+CreateSession returns a JSON-serializable CreationOperation. Its operationRef
+identifies an operation and is rejected as a session address. Before native
+identity, Key is absent and no Session appears in GetSession/ListSessions.
+Claude creation without InitialInput returns `awaiting_input` without launching
+a process. ContinueCreation supplies exactly one explicit string, including an
+explicit empty string if desired; the same input can instead be supplied in
+SessionOptions at creation. A repeated continuation fails with conflict. Codex
+can obtain identity without any input, or submit the explicit initial input
+on the newly created native thread.
+
+GetOperation reports `awaiting_input`, `awaiting_native_identity`, `opened`,
+`cleaning_up`, `closed` or `outcome_unknown`, input requirements, optional real
+SessionKey, observed identity/input-write evidence and cleanup state. Unknown
+input-write evidence does not prove that input was never sent. Ending the
+CreateSession/ContinueCreation caller context after admission does not end the
+operation. The Runtime owns one completion/cleanup worker; it never retries an
+unknown native open. CancelOperation cancels unused preparation or marks an
+in-flight creation for cleanup when it settles. A late success then closes its
+original attachment instead of exposing a replacement session. Cancellation is
+not native rollback. A cancellation after an operation opened returns conflict;
+close that actual session explicitly.
+
+Config.CreationLimits and the type catalog expose finite provisional limits:
+
+| Field | Default | Accepted nonzero range |
+| --- | --- | --- |
+| Facts | 64 observations before Claude root identity | 1–4096 |
+| Bytes | 1 MiB cumulative provisional source bytes | 1 byte–16 MiB |
+| Timeout | 30 seconds for one native open, including explicit initial input | 1 millisecond–60 seconds |
+
+Zero selects the default. Timeout is a Go time.Duration (JSON nanoseconds).
+Native frames, permission callbacks and serialized SDK-derived observations
+share the provisional budget before root identity. The Claude delivery channel
+holds at most Facts+1 converted events; an early
+frame that expands beyond that capacity cannot block the open beyond Timeout.
+Overflow or expiry produces an explicit incomplete/unknown operation and owned
+process cleanup. Buffered observations retain their adapter receive timestamp
+and attachment-local source position when bound to the root. These positions
+do not promise native wire order. SDK queues and post-open delivery have their
+own limits; this is not a whole-process memory bound.
+
+Local cleanup is reported separately from native release. Claude reaps its
+owned process. Codex aborts the local subscription on a late canceled open;
+this does not delete or archive the native thread. If a native create reply
+arrives after the Runtime/SDK call deadline, the pinned SDK cannot recover that
+reply's identity. The operation remains outcome_unknown with native cleanup
+unconfirmed, and prevents configuration replacement/unregistration even after
+Stop. No duplicate create or substitute identity is exposed.
+
+GetSession rejects empty IDs, operation references and foreign Runtime names.
 GetSession/ListSessions observe only managed attachments, including closed
 records after Stop; they do not discover or adopt native account sessions.
-Inventory is in memory.
+Inventory and operation records are in memory.
 
 Closing a Codex session aborts only its local SDK subscription. It does not
 archive/delete the native thread or stop the shared app-server. Closing a
@@ -109,14 +171,15 @@ observations remain diagnostic and cannot acquire root permission authority.
 Respond through the original interaction Handle once. A canceled response
 context does not consume it. Runtime Stop invalidates pending SDK handles;
 native resolution/cancellation follows the pinned SDK's semantics. This slice
-does not provide a data-only interaction event schema, operation-based pending
-creation, identity-verified resume, foreground admission control, or durable
+does not provide a data-only interaction event schema, identity-verified resume,
+foreground admission control, or durable
 history. It does not claim complete typed event coverage or production lifecycle
 and delivery guarantees. In particular, SDK queued-approval limitations remain,
 and local Codex detach does not prove native permission resolution.
 
 Next has one consumer; its context stops only that wait. Session creation's
-context does not own the later attachment. Codex uses Abort on local detach to
+context controls admission, not the native open or later attachment lifetime.
+Codex uses Abort on local detach to
 discard unread subscription data. Runtime Stop does not require callers to
 consume events. The per-session Codex interaction queue holds 64 requests;
 backpressure on an unread session can delay other interaction delivery until
@@ -140,6 +203,10 @@ with synthetic scenario configuration. Tests cover two sessions in each of two
 named instances, concurrent activation with process-count checks, unchanged
 native identity, shared-ID isolation between names, close-A/send-B, retained
 queries, ownership conflicts, stop/reactivation and owned PID reclamation.
+Pending tests additionally cover reversed concurrent Claude opens, explicit
+continuation, empty/operation session keys, late success after caller cancellation,
+canceled opens, provisional count/byte/deadline exhaustion with PID checks,
+child identity interference and ambiguous Codex opens without retry.
 The existing message/tool, cancellation, interaction and diagnostic cases also
 run through the named catalog and common Runtime interface.
 
