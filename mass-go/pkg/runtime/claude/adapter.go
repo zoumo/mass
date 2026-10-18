@@ -286,7 +286,7 @@ func (c *connection) receive() {
 	}
 }
 
-// Both the receive loop and permission callbacks can observe provisional facts.
+// The receive owner budgets raw frames and SDK-derived provisional facts.
 func (c *connection) reserveProvisional(size int) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

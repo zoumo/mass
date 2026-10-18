@@ -184,7 +184,7 @@ serialization. No agent/model or credentials are used. Passing these tests does
 not verify live CLI compatibility.
 
 Work data retain native status in this envelope. Interaction authority follows
-the gate below; broader delivery guarantees remain separate work. Runtime-local publication does
+the gate below; bounded delivery follows the policy below. Runtime-local publication does
 not establish whole-process memory bounds,
 complete agent/task attribution, durable replay or native causality.
 
@@ -325,3 +325,9 @@ A terminal SDK request channel is not evidence of event-stream EOF. Source
 channels and observation timestamps never establish a native global order.
 SDK queues and native truncation/timeout limits remain outside stronger Runtime
 guarantees. No local drain, EOF or ACK proves native release.
+
+The available stream is session-scoped. Runtime/operation lifecycle event streams,
+distinct opened/resumed/attachment-state event families and dynamic capability
+availability records remain unavailable. Status/operation polling and close/stop
+receipts provide current lifecycle observations. See the
+[protocol Runtime contract](runtime-contract.md) for these remaining gaps.

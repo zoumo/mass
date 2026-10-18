@@ -1,6 +1,6 @@
 # 设计文档入口
 
-当前 Rust 产品是本地 Codex 和 codex-remote over HTTP/SSE。设计合同描述职责、数据含义、并发和失败规则；源码、依赖与构建步骤见[实现指南](../develop/README.md)。Go 实验的边界另见[说明](../../mass-go/README.md)。
+当前 Rust 产品是本地 Codex 和 codex-remote over HTTP/SSE。设计合同描述职责、数据含义、并发和失败规则；源码、依赖与构建步骤见[实现指南](../develop/README.md)。Go 实验的边界另见[说明](../../mass-go/README.md)和[协议 Runtime 合同](../../mass-go/docs/runtime-contract.md)。
 
 ## 当前合同
 

@@ -1,9 +1,16 @@
-# Experimental Go runtime
+# Go protocol Runtime
 
 This isolated module adapts the public Go SDK's Codex and Claude process
 transports to the common `pkg/runtime.Runtime` interface. SDK commit
 `6dbf3e9c8264e7d562ab7ffbf382490afb1aa8bc` is pinned by a normal module requirement,
 without replace or go.work. It has no daemon or HTTP service.
+
+The [language-independent Runtime contract](docs/runtime-contract.md) describes
+available behavior and remaining gaps. Run the [offline public consumer](examples/offline/README.md)
+with temporary synthetic SDK mock CLIs; it never selects an installed Agent.
+Complete Runtime/operation lifecycle events and dynamic capability availability
+records remain unfinished. Session-scoped integration does not establish full
+contract completion or production readiness.
 
 ## Named Runtime instances
 
@@ -271,9 +278,9 @@ session processes may concurrently reuse the same request ID.
 Each attachment retains at most 256 authority records and 1 MiB of admitted native
 request bytes; it reports backpressure rather than evicting authority or
 silently allowing a decision. SDK queues are separate from these bounds.
-Identity-verified resume, durable history and production lifecycle/delivery
-guarantees are not implemented. Local Codex detach does not prove native
-permission resolution.
+Identity-verified local resume requires the host binding port described below.
+Durable history and production guarantees are not implemented. Local Codex
+detach does not prove native permission resolution.
 
 Next has one consumer; its context stops only that wait. Session creation's
 context controls admission, not the native open or later attachment lifetime.
@@ -283,8 +290,8 @@ consume events. The per-session Codex interaction queue holds 64 requests;
 backpressure on an unread session can delay other interaction delivery until
 that session is read or closed. The SDK uses independent per-stream ChannX
 queues; deprecated EventBuffer/EventQueue options are ignored. SDK CallTimeout
-remains 30 seconds; local expiration cannot recover a discarded late reply. These facts do not establish a whole-process memory bound
-or a total shutdown deadline.
+remains 30 seconds; local expiration cannot recover a discarded late reply. These facts do not establish a whole-process memory bound or a bound on every
+upstream SDK activity. StopWith separately bounds the caller wait as described below.
 
 ## Verified recovery and explicit close goals
 
@@ -476,4 +483,22 @@ are not evicted to make room. The pinned SDK's per-stream ChannX ignores its
 deprecated EventBuffer/EventQueue knobs. Its local CallTimeout can discard late
 replies; there is no timeout repair, automatic resend or SDK queue overflow claim.
 Native positive truncation remains unverified without reliable source evidence.
-External-server transport and S09 closure remain unsupported and unverified.
+External-server transport and external connection closure remain unsupported and unverified.
+
+## Reproduce offline validation
+
+Use Go 1.26.9 through mise from this module directory:
+
+```sh
+mise exec go@1.26.9 -- go test -timeout=180s -count=1 ./...
+mise exec go@1.26.9 -- go test -race -p 1 -timeout=240s -count=1 ./...
+mise exec go@1.26.9 -- go vet ./...
+mise exec go@1.26.9 -- go build ./...
+mise exec go@1.26.9 -- go run ./examples/offline
+```
+
+Run ordinary and race suites sequentially. Tests build only the public SDK mock
+commands and use strict synthetic scenarios with explicit child environments.
+These checks have been exercised on macOS arm64. Other platforms, live native
+CLIs, real models and external server connections remain unverified. Root Make
+targets are for the separate Rust workspace.
