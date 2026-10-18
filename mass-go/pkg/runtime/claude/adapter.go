@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -375,26 +374,6 @@ func (s *session) ResponseHandle(ref string) rt.ResponseHandle {
 }
 
 // Tool output can be a string or an ordered array of content blocks.
-func toolResultText(data json.RawMessage) (string, bool) {
-	var text string
-	if json.Unmarshal(data, &text) == nil {
-		return text, true
-	}
-	var blocks []struct{ Type, Text string }
-	if json.Unmarshal(data, &blocks) != nil {
-		return "", false
-	}
-	var output strings.Builder
-	known := true
-	for _, block := range blocks {
-		if block.Type == "text" {
-			output.WriteString(block.Text)
-		} else {
-			known = false
-		}
-	}
-	return output.String(), known
-}
 func (c *connection) permissionEvent(p *sdk.PermissionRequest) rt.Event {
 	metadata, err := p.Metadata()
 	if err != nil || metadata.AgentID != "" {

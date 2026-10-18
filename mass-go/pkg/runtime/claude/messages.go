@@ -10,7 +10,22 @@ import (
 
 // Only message_start establishes the current native message. Frame UUIDs are
 // never message references. We retain no accumulated text and deduplicate none.
-type messageMapper struct{ messageID, role string }
+type messageMapper struct {
+	messageID, role string
+	tool            *streamTool
+}
+
+// The API streams one active block at a time. Retain only immutable identity,
+// not the payload buffers handed to callers, and reset it at every boundary.
+type streamTool struct {
+	callRef, name string
+	index         int
+}
+
+func (m *messageMapper) toolPayload() *rt.ToolPayload {
+	index := m.tool.index
+	return &rt.ToolPayload{MessageRef: m.messageID, BlockIndex: &index, CallRef: m.tool.callRef, Name: m.tool.name, Category: "unknown", State: "announced", Input: rt.ContentSet{Availability: "missing", Completeness: "unknown"}, Output: rt.ContentSet{Availability: "missing", Completeness: "unknown"}, OutcomeEvidence: "call_observed"}
+}
 
 func (m *messageMapper) convert(n types.Event, base rt.Event) ([]rt.Event, bool) {
 	fail := func() ([]rt.Event, bool) {
@@ -55,9 +70,10 @@ func (m *messageMapper) convert(n types.Event, base rt.Event) ([]rt.Event, bool)
 				Content  json.RawMessage
 			}
 			Delta struct {
-				Type     string
-				Text     *string
-				Thinking *string
+				Type        string
+				Text        *string
+				Thinking    *string
+				PartialJSON *string `json:"partial_json"`
 			}
 			ContentBlock json.RawMessage
 		}
@@ -77,6 +93,7 @@ func (m *messageMapper) convert(n types.Event, base rt.Event) ([]rt.Event, bool)
 			if stream.Message.ID == "" {
 				return fail()
 			}
+			m.tool = nil
 			m.messageID = stream.Message.ID
 			m.role = role(stream.Message.Role)
 			c, err := content(stream.Message.Content, "started", "partial")
@@ -91,6 +108,18 @@ func (m *messageMapper) convert(n types.Event, base rt.Event) ([]rt.Event, bool)
 			if json.Unmarshal(stream.ContentBlock, &header) != nil || header.Type == "" {
 				return fail()
 			}
+			m.tool = nil
+			if header.Type == "tool_use" {
+				var call types.ToolUseBlock
+				if json.Unmarshal(stream.ContentBlock, &call) != nil || call.ID == "" || call.Name == "" || stream.Index == nil {
+					return fail()
+				}
+				m.tool = &streamTool{callRef: call.ID, name: call.Name, index: *stream.Index}
+				base.Kind = rt.ToolAnnounced
+				base.Tool = m.toolPayload()
+				base.Tool.Input = rt.JSONContent(call.Input, "started", "partial")
+				return []rt.Event{base}, true
+			}
 			c, err := content(json.RawMessage("["+string(stream.ContentBlock)+"]"), "started", "partial")
 			if err != nil {
 				return fail()
@@ -103,6 +132,16 @@ func (m *messageMapper) convert(n types.Event, base rt.Event) ([]rt.Event, bool)
 			var text *string
 			kind := rt.MessageCompleted
 			switch stream.Delta.Type {
+			case "input_json_delta":
+				if stream.Delta.PartialJSON == nil || m.tool == nil || stream.Index == nil || m.tool.index != *stream.Index {
+					return fail()
+				}
+				t := m.toolPayload()
+				t.InputJSONDelta = stream.Delta.PartialJSON
+				t.Input = rt.ContentSet{Availability: "missing", Completeness: "partial"}
+				base.Kind = rt.ToolUpdated
+				base.Tool = t
+				return []rt.Event{base}, true
 			case "text_delta":
 				text = stream.Delta.Text
 			case "thinking_delta":
@@ -130,6 +169,14 @@ func (m *messageMapper) convert(n types.Event, base rt.Event) ([]rt.Event, bool)
 			if stream.Index == nil || *stream.Index < 0 {
 				return fail()
 			}
+			if m.tool != nil && m.tool.index == *stream.Index {
+				t := m.toolPayload()
+				t.Input = rt.ContentSet{Availability: "missing", Completeness: "unknown"}
+				base.Kind = rt.ToolUpdated
+				base.Tool = t
+				m.tool = nil
+				return []rt.Event{base}, true
+			}
 			base.Kind = rt.MessageCompleted
 			base.Message = &rt.MessagePayload{MessageRef: m.messageID, Role: m.currentRole(), Stage: "delta", BlockIndex: stream.Index, BlockStage: "completed", Content: rt.ContentSet{Availability: "missing", Completeness: "partial"}}
 			return []rt.Event{base}, true
@@ -142,6 +189,7 @@ func (m *messageMapper) convert(n types.Event, base rt.Event) ([]rt.Event, bool)
 			// supplies completion; do not manufacture one by concatenating previews.
 			ref := m.messageID
 			currentRole := m.currentRole()
+			m.tool = nil
 			m.messageID = ""
 			m.role = ""
 			base.Kind = rt.MessageCompleted
@@ -178,16 +226,27 @@ func (m *messageMapper) convert(n types.Event, base rt.Event) ([]rt.Event, bool)
 			e.Kind = rt.ReasoningCompleted
 			e.Reasoning = &rt.ReasoningPayload{MessageRef: message.ID, Stage: "completed", Content: rt.ContentSet{Availability: "redacted", Completeness: "complete", Blocks: []rt.ContentBlock{{Index: &i, Kind: "redacted", Stage: "completed", Completeness: "complete"}}}}
 		case b.ToolUse != nil:
-			e.Kind = rt.Tool
-			e.Tool = &rt.ToolPayload{MessageRef: message.ID, BlockIndex: &i, CallRef: b.ToolUse.ID, Name: b.ToolUse.Name, State: "started"}
-		case b.ToolResult != nil:
-			state := "completed"
-			if b.ToolResult.IsError {
-				state = "error"
+			if b.ToolUse.ID == "" || b.ToolUse.Name == "" {
+				return fail()
 			}
-			text, _ := toolResultText(b.ToolResult.Content)
-			e.Kind = rt.Tool
-			e.Tool = &rt.ToolPayload{MessageRef: message.ID, BlockIndex: &i, CallRef: b.ToolResult.ToolUseID, Text: text, State: state}
+			e.Kind = rt.ToolAnnounced
+			e.Tool = &rt.ToolPayload{MessageRef: message.ID, BlockIndex: &i, CallRef: b.ToolUse.ID, Name: b.ToolUse.Name, Category: "unknown", State: "announced", Input: rt.JSONContent(b.ToolUse.Input, "completed", "complete"), Output: rt.ContentSet{Availability: "missing", Completeness: "unknown"}, OutcomeEvidence: "call_observed"}
+		case b.ToolResult != nil:
+			if b.ToolResult.ToolUseID == "" {
+				return fail()
+			}
+			output, err := content(b.ToolResult.Content, "completed", "complete")
+			if err != nil {
+				return fail()
+			}
+			state := "completed"
+			evidence := "native_result"
+			if b.ToolResult.IsError {
+				state = "failed"
+				evidence = "native_is_error"
+			}
+			e.Kind = rt.ToolCompleted
+			e.Tool = &rt.ToolPayload{MessageRef: message.ID, BlockIndex: &i, CallRef: b.ToolResult.ToolUseID, Category: "unknown", State: state, Input: rt.ContentSet{Availability: "missing", Completeness: "unknown"}, Output: output, OutcomeEvidence: evidence}
 		default:
 			continue
 		}
@@ -235,6 +294,7 @@ func content(raw json.RawMessage, stage, completeness string) (rt.ContentSet, er
 		Type     string
 		Text     *string
 		Thinking *string
+		JSON     json.RawMessage `json:"json"`
 	}
 	if err := json.Unmarshal(raw, &blocks); err != nil {
 		return c, err
@@ -255,6 +315,13 @@ func content(raw json.RawMessage, stage, completeness string) (rt.ContentSet, er
 			}
 			block.Kind = "text"
 			block.Text = b.Text
+			block.Descriptor = ""
+		case "json":
+			if len(b.JSON) == 0 {
+				return c, fmt.Errorf("missing JSON value")
+			}
+			block.Kind = "json"
+			block.JSON = b.JSON
 			block.Descriptor = ""
 		case "thinking":
 			if b.Thinking == nil {

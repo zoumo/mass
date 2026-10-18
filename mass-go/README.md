@@ -162,11 +162,11 @@ remote effects.
 Submission success is neither native-recorded evidence nor completion. Cancel
 requests interruption; an ACK alone does not establish termination. The event
 stream uses a versioned, data-only envelope and concrete payloads. See the
-[message and metadata contract](docs/events.md) for supported mappings, content
-presence, stream association and decode rules. Tool, work and interaction
-payloads retain their current baseline semantics; structured tool lifecycle,
-foreground admission control and stronger interaction authority are separate
-remaining work.
+[event contract](docs/events.md) for supported mappings, content
+presence, tool lifecycle, stream association and decode rules. Tools retain
+structured input/output, stable call references and explicit execution/failure
+evidence. Foreground admission control and stronger interaction authority remain
+separate work.
 
 Interaction events contain a data reference, prompt and questions. The live
 attachment resolves its existing response authority through
@@ -214,7 +214,10 @@ child identity interference and ambiguous Codex opens without retry.
 Message tests additionally cover native item/stream/full correlation, distinct
 frame and block coordinates, equal no-ID previews, replay provenance, user and
 tool-bearing messages, observed/redacted reasoning, native plans and collection
-clearing. Common serialization cases reject incompatible payloads and invalid
+clearing. Tool tests cover announcements, indexed JSON input fragments, output
+updates, command/file/MCP/dynamic conversion, missing/null/empty content, mixed
+unsupported blocks, explicit failure evidence and parent completion without a
+tool result. Common serialization cases reject incompatible payloads and invalid
 schema/stage/content and preserve lossless JSON numbers. Cancellation,
 interaction and diagnostic cases also run through the named catalog and common
 Runtime interface.

@@ -44,9 +44,10 @@ type EventOrigin struct {
 	SourceKind   string `json:"sourceKind,omitempty"`
 }
 type ContentSet struct {
-	Availability string         `json:"availability"`
-	Completeness string         `json:"completeness"`
-	Blocks       []ContentBlock `json:"blocks,omitempty"`
+	Availability       string         `json:"availability"`
+	Completeness       string         `json:"completeness"`
+	TruncationEvidence string         `json:"truncationEvidence,omitempty"`
+	Blocks             []ContentBlock `json:"blocks,omitempty"`
 }
 type ContentBlock struct {
 	BlockRef     string          `json:"blockRef,omitempty"`
@@ -129,15 +130,46 @@ func (m *MetadataPayload) Apply(p MetadataPayload) {
 	}
 }
 
-// ToolPayload is the existing baseline; structured lifecycle is added separately.
+// ToolPayload keeps semantic identity, presentation, data and execution evidence separate.
+// Input/Output are snapshots of this observation; missing is not an empty value.
 type ToolPayload struct {
-	MessageRef string `json:"messageRef,omitempty"`
-	BlockIndex *int   `json:"blockIndex,omitempty"`
-	CallRef    string `json:"callRef"`
-	Name       string `json:"name,omitempty"`
-	Text       string `json:"text,omitempty"`
-	State      string `json:"state"`
+	MessageRef   string     `json:"messageRef,omitempty"`
+	BlockIndex   *int       `json:"blockIndex,omitempty"`
+	CallRef      string     `json:"callRef"`
+	Name         string     `json:"name,omitempty"`
+	Category     string     `json:"category"`
+	Namespace    *string    `json:"namespace,omitempty"`
+	DisplayLabel *string    `json:"displayLabel,omitempty"`
+	Input        ContentSet `json:"input"`
+	// InputJSONDelta is an observed JSON fragment, never a complete JSON value.
+	InputJSONDelta  *string        `json:"inputJsonDelta,omitempty"`
+	Output          ContentSet     `json:"output"`
+	Content         *ContentSet    `json:"content,omitempty"`
+	Locations       []ToolLocation `json:"locations,omitempty"`
+	State           string         `json:"state"`
+	ExitCode        *int32         `json:"exitCode,omitempty"`
+	DurationMS      *int64         `json:"durationMs,omitempty"`
+	OutcomeEvidence string         `json:"outcomeEvidence"`
 }
+type ToolLocation struct {
+	Path string `json:"path"`
+}
+
+// JSONContent preserves JSON numbers and nested nulls without string conversion.
+// A null field is unavailable; an explicit JSON null block uses JSONValueContent.
+func JSONContent(raw json.RawMessage, stage, completeness string) ContentSet {
+	if len(raw) == 0 {
+		return ContentSet{Availability: "missing", Completeness: completeness}
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return ContentSet{Availability: "null", Completeness: completeness}
+	}
+	return JSONValueContent(raw, stage, completeness)
+}
+func JSONValueContent(raw json.RawMessage, stage, completeness string) ContentSet {
+	return ContentSet{Availability: "provided", Completeness: completeness, Blocks: []ContentBlock{{Kind: "json", JSON: append(json.RawMessage(nil), raw...), Stage: stage, Completeness: completeness}}}
+}
+
 type WorkPayload struct {
 	Status string `json:"status"`
 }
@@ -175,7 +207,7 @@ func (e Event) payload() (any, error) {
 		p = e.Plan
 	case Metadata:
 		p = e.Metadata
-	case Tool:
+	case ToolAnnounced, ToolUpdated, ToolCompleted:
 		p = e.Tool
 	case TurnStarted, TurnCompleted:
 		p = e.Work
@@ -235,6 +267,30 @@ func (e Event) validate() error {
 		}
 		return validateContent(e.Reasoning.Content)
 	}
+	if e.Tool != nil {
+		t := e.Tool
+		if t.CallRef == "" || !oneOf(t.Category, "execute", "read", "write", "search", "network", "other", "unknown") || !oneOf(t.State, "announced", "running", "completed", "failed", "cancelled", "unknown") || t.OutcomeEvidence == "" {
+			return fmt.Errorf("invalid tool")
+		}
+		if (e.Kind == ToolUpdated && !oneOf(t.State, "announced", "running", "unknown")) || (e.Kind == ToolAnnounced && t.State != "announced") || (e.Kind == ToolCompleted && !oneOf(t.State, "completed", "failed", "cancelled", "unknown")) {
+			return fmt.Errorf("invalid tool lifecycle")
+		}
+		if t.InputJSONDelta != nil && (e.Kind != ToolUpdated || t.Input.Completeness != "partial" || t.Input.Availability != "missing" || len(t.Input.Blocks) > 0) {
+			return fmt.Errorf("invalid tool input fragment")
+		}
+		if t.BlockIndex != nil && *t.BlockIndex < 0 {
+			return fmt.Errorf("invalid tool block index")
+		}
+		if err := validateContent(t.Input); err != nil {
+			return err
+		}
+		if err := validateContent(t.Output); err != nil {
+			return err
+		}
+		if t.Content != nil {
+			return validateContent(*t.Content)
+		}
+	}
 	if e.Plan != nil {
 		if !oneOf(e.Plan.UpdateMode, "replace", "patch") || !oneOf(e.Plan.Completeness, "complete", "partial", "unknown") {
 			return fmt.Errorf("invalid plan")
@@ -261,6 +317,9 @@ func validateContent(c ContentSet) error {
 	}
 	if oneOf(c.Availability, "missing", "null") && len(c.Blocks) > 0 {
 		return fmt.Errorf("unavailable content has blocks")
+	}
+	if c.Completeness == "truncated" && c.TruncationEvidence == "" {
+		return fmt.Errorf("missing truncation evidence")
 	}
 	for _, b := range c.Blocks {
 		if b.Index != nil && *b.Index < 0 {
@@ -322,7 +381,7 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	case Metadata:
 		candidate.Metadata = &MetadataPayload{}
 		p = candidate.Metadata
-	case Tool:
+	case ToolAnnounced, ToolUpdated, ToolCompleted:
 		candidate.Tool = &ToolPayload{}
 		p = candidate.Tool
 	case TurnStarted, TurnCompleted:
