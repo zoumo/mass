@@ -1,0 +1,605 @@
+{
+  "status": "15 event categories; received complete-event commits; see complete-events-validation.md for actual adapter limits",
+  "version": "0.6",
+  "durableTypes": [
+    "user.message",
+    "agent.message",
+    "agent.thinking",
+    "agent.tool_call",
+    "agent.tool_result"
+  ],
+  "liveOnlyTypes": [
+    "agent.message_chunk",
+    "agent.thinking_chunk",
+    "agent.tool_call_chunk",
+    "agent.plan",
+    "session.state_update",
+    "session.error",
+    "session.info_update",
+    "session.config_option_update",
+    "session.available_commands_update",
+    "session.usage_update"
+  ],
+  "events": [
+    {
+      "type": "user.message",
+      "durable": true,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "user_1",
+        "seq": 1,
+        "type": "user.message",
+        "time": "2026-10-16T10:00:01Z",
+        "payload": {
+          "messageId": "user_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "请检查 README。"
+            }
+          ]
+        }
+      },
+      "stored": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "user_1",
+        "seq": 1,
+        "type": "user.message",
+        "time": "2026-10-16T10:00:01Z",
+        "payload": {
+          "messageId": "user_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "请检查 README。"
+            }
+          ]
+        }
+      },
+      "history": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "user_1",
+        "seq": 1,
+        "type": "user.message",
+        "time": "2026-10-16T10:00:01Z",
+        "payload": {
+          "messageId": "user_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "请检查 README。"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "agent.message",
+      "durable": true,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "msg_1",
+        "seq": 5,
+        "type": "agent.message",
+        "time": "2026-10-16T10:00:10Z",
+        "payload": {
+          "messageId": "msg_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "README 已检查。"
+            }
+          ],
+          "_meta": {
+            "messageCompleted": true
+          }
+        }
+      },
+      "stored": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "msg_1",
+        "seq": 5,
+        "type": "agent.message",
+        "time": "2026-10-16T10:00:10Z",
+        "payload": {
+          "messageId": "msg_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "README 已检查。"
+            }
+          ],
+          "_meta": {
+            "messageCompleted": true
+          }
+        }
+      },
+      "history": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "msg_1",
+        "seq": 5,
+        "type": "agent.message",
+        "time": "2026-10-16T10:00:10Z",
+        "payload": {
+          "messageId": "msg_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "README 已检查。"
+            }
+          ],
+          "_meta": {
+            "messageCompleted": true
+          }
+        }
+      }
+    },
+    {
+      "type": "agent.thinking",
+      "durable": true,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "thought_1",
+        "seq": 2,
+        "type": "agent.thinking",
+        "time": "2026-10-16T10:00:04Z",
+        "payload": {
+          "messageId": "thought_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "先查看项目说明。"
+            }
+          ],
+          "_meta": {
+            "messageCompleted": true
+          }
+        }
+      },
+      "stored": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "thought_1",
+        "seq": 2,
+        "type": "agent.thinking",
+        "time": "2026-10-16T10:00:04Z",
+        "payload": {
+          "messageId": "thought_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "先查看项目说明。"
+            }
+          ],
+          "_meta": {
+            "messageCompleted": true
+          }
+        }
+      },
+      "history": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "thought_1",
+        "seq": 2,
+        "type": "agent.thinking",
+        "time": "2026-10-16T10:00:04Z",
+        "payload": {
+          "messageId": "thought_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "先查看项目说明。"
+            }
+          ],
+          "_meta": {
+            "messageCompleted": true
+          }
+        }
+      }
+    },
+    {
+      "type": "agent.tool_call",
+      "durable": true,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "tool_1",
+        "seq": 3,
+        "type": "agent.tool_call",
+        "time": "2026-10-16T10:00:05Z",
+        "payload": {
+          "id": "tool_1",
+          "kind": "read",
+          "title": "读取 README",
+          "status": "in_progress",
+          "rawInput": {
+            "path": "README.md"
+          }
+        }
+      },
+      "stored": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "tool_1",
+        "seq": 3,
+        "type": "agent.tool_call",
+        "time": "2026-10-16T10:00:05Z",
+        "payload": {
+          "id": "tool_1",
+          "kind": "read",
+          "title": "读取 README",
+          "status": "in_progress",
+          "rawInput": {
+            "path": "README.md"
+          }
+        }
+      },
+      "history": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "tool_1",
+        "seq": 3,
+        "type": "agent.tool_call",
+        "time": "2026-10-16T10:00:05Z",
+        "payload": {
+          "id": "tool_1",
+          "kind": "read",
+          "title": "读取 README",
+          "status": "in_progress",
+          "rawInput": {
+            "path": "README.md"
+          }
+        }
+      }
+    },
+    {
+      "type": "agent.tool_result",
+      "durable": true,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "tool_1",
+        "seq": 4,
+        "type": "agent.tool_result",
+        "time": "2026-10-16T10:00:07Z",
+        "payload": {
+          "id": "tool_1",
+          "kind": "read",
+          "title": "读取 README",
+          "status": "completed",
+          "rawInput": {
+            "path": "README.md"
+          },
+          "content": [
+            {
+              "type": "content",
+              "content": {
+                "type": "text",
+                "text": "# Project\n"
+              }
+            },
+            {
+              "type": "content",
+              "content": {
+                "type": "text",
+                "text": "项目说明正文。\n"
+              }
+            }
+          ]
+        }
+      },
+      "stored": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "tool_1",
+        "seq": 4,
+        "type": "agent.tool_result",
+        "time": "2026-10-16T10:00:07Z",
+        "payload": {
+          "id": "tool_1",
+          "kind": "read",
+          "title": "读取 README",
+          "status": "completed",
+          "rawInput": {
+            "path": "README.md"
+          },
+          "content": [
+            {
+              "type": "content",
+              "content": {
+                "type": "text",
+                "text": "# Project\n"
+              }
+            },
+            {
+              "type": "content",
+              "content": {
+                "type": "text",
+                "text": "项目说明正文。\n"
+              }
+            }
+          ]
+        }
+      },
+      "history": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "tool_1",
+        "seq": 4,
+        "type": "agent.tool_result",
+        "time": "2026-10-16T10:00:07Z",
+        "payload": {
+          "id": "tool_1",
+          "kind": "read",
+          "title": "读取 README",
+          "status": "completed",
+          "rawInput": {
+            "path": "README.md"
+          },
+          "content": [
+            {
+              "type": "content",
+              "content": {
+                "type": "text",
+                "text": "# Project\n"
+              }
+            },
+            {
+              "type": "content",
+              "content": {
+                "type": "text",
+                "text": "项目说明正文。\n"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "agent.message_chunk",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "msg_1",
+        "type": "agent.message_chunk",
+        "time": "2026-10-16T10:00:09Z",
+        "payload": {
+          "messageId": "msg_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "README 已"
+            }
+          ]
+        }
+      },
+      "stored": null,
+      "history": null
+    },
+    {
+      "type": "agent.thinking_chunk",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "thought_1",
+        "type": "agent.thinking_chunk",
+        "time": "2026-10-16T10:00:03Z",
+        "payload": {
+          "messageId": "thought_1",
+          "content": [
+            {
+              "type": "text",
+              "text": "先查看"
+            }
+          ]
+        }
+      },
+      "stored": null,
+      "history": null
+    },
+    {
+      "type": "agent.tool_call_chunk",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "tool_1",
+        "type": "agent.tool_call_chunk",
+        "time": "2026-10-16T10:00:06Z",
+        "payload": {
+          "id": "tool_1",
+          "content": [
+            {
+              "type": "content",
+              "content": {
+                "type": "text",
+                "text": "# Project\n"
+              }
+            }
+          ]
+        }
+      },
+      "stored": null,
+      "history": null
+    },
+    {
+      "type": "agent.plan",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "itemId": "plan_1",
+        "type": "agent.plan",
+        "time": "2026-10-16T10:00:08Z",
+        "payload": {
+          "planId": "plan_1",
+          "entries": [
+            {
+              "content": "检查 README",
+              "priority": "medium",
+              "status": "completed"
+            }
+          ]
+        }
+      },
+      "stored": null,
+      "history": null
+    },
+    {
+      "type": "session.state_update",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "type": "session.state_update",
+        "time": "2026-10-16T10:00:11Z",
+        "payload": {
+          "previousState": "running",
+          "state": "idle",
+          "stopReason": "end_turn"
+        }
+      },
+      "stored": null,
+      "history": null
+    },
+    {
+      "type": "session.error",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "type": "session.error",
+        "time": "2026-10-16T10:00:12Z",
+        "payload": {
+          "message": "Agent process exited unexpectedly"
+        }
+      },
+      "stored": null,
+      "history": null
+    },
+    {
+      "type": "session.info_update",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "type": "session.info_update",
+        "time": "2026-10-16T10:00:00Z",
+        "payload": {
+          "title": "检查 README",
+          "updatedAt": "2026-10-16T10:00:00Z"
+        }
+      },
+      "stored": null,
+      "history": null
+    },
+    {
+      "type": "session.config_option_update",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "type": "session.config_option_update",
+        "time": "2026-10-16T10:00:00Z",
+        "payload": {
+          "configOptions": [
+            {
+              "id": "mode",
+              "name": "Mode",
+              "type": "select",
+              "currentValue": "default",
+              "options": [
+                {
+                  "value": "default",
+                  "name": "Default"
+                },
+                {
+                  "value": "read-only",
+                  "name": "Read Only"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "stored": null,
+      "history": null
+    },
+    {
+      "type": "session.available_commands_update",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "type": "session.available_commands_update",
+        "time": "2026-10-16T10:00:00Z",
+        "payload": {
+          "availableCommands": [
+            {
+              "name": "review",
+              "description": "检查当前改动"
+            }
+          ]
+        }
+      },
+      "stored": null,
+      "history": null
+    },
+    {
+      "type": "session.usage_update",
+      "durable": false,
+      "realtime": {
+        "sessionName": "demo",
+        "sessionId": "s1",
+        "type": "session.usage_update",
+        "time": "2026-10-16T10:00:00Z",
+        "payload": {
+          "used": 12000,
+          "size": 200000,
+          "cost": {
+            "amount": 0.03,
+            "currency": "USD"
+          }
+        }
+      },
+      "stored": null,
+      "history": null
+    }
+  ],
+  "variants": [
+    {
+      "name": "state error",
+      "payload": {
+        "previousState": "running",
+        "state": "idle",
+        "stopReason": "error",
+        "error": {
+          "code": -32603,
+          "message": "Agent execution failed"
+        }
+      }
+    },
+    {
+      "name": "initial state",
+      "payload": {
+        "previousState": null,
+        "state": "running"
+      }
+    }
+  ],
+  "unresolved": [
+    "real-model end-to-end verification belongs to ticket06"
+  ],
+  "baselineGrouping": "confirmed",
+  "historyTerminationReason": "not retained; confirmed by user 2026-10-16",
+  "_historicalNotice": "Archived ACP-era payload examples, before 2026-10-16 Native Ticket 01. Not the current native event contract; see events.md."
+}
