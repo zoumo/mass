@@ -17,7 +17,6 @@ coverage.html
 coverage/
 
 # ── Generated slides ──
-docs/design_slides/
 
 # Private scratch and planning state
 /.scratch/
@@ -77,3 +76,4 @@ tmp/
 
 # Rust workspace runtime default when launched from mass-rs (never source).
 /mass-rs/data/
+.archify

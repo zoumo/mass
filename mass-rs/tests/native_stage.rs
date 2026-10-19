@@ -21,8 +21,7 @@ fn hashes(repo: &Path) -> BTreeMap<String, String> {
             "--",
             "mass-rs",
             "Makefile",
-            "docs/test-migration.csv",
-            "docs/testing.md",
+            "harness",
         ])
         .output()
         .unwrap();

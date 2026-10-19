@@ -26,6 +26,9 @@ configuring its original absolute `dataDir`. Relative configured paths remain
 relative to the config file. No migration moves user data, credentials, caches
 or historical scratch evidence.
 
-See [test groups](../docs/testing.md),
-[architecture](../docs/architecture.md), [current API](../docs/http-api.md),
-[storage](../docs/storage.md) and [layout/rollback](../docs/root-migration.md).
+后续开发以 [harness](../harness/index.md) 为统一依据。本页仅说明当前 Rust 实现的运行与构建入口，不宣称新版设计已实现。
+
+See [testing principles](../harness/principles/testing.md),
+[architecture](../harness/architecture.md),
+[HTTP binding draft](../harness/bindings/http.md) and
+[storage binding draft](../harness/bindings/storage.md).
