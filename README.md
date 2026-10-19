@@ -3,7 +3,7 @@
 [harness](harness/index.md) 是指导当前项目演进和发展的唯一真相源，包括 [agent 工作原则](harness/principles/index.md)、架构、深层模块设计与 API 合同。agent 写入 harness 前须有人类明确要求或事先同意。
 以下运行与构建说明描述现有实现；不代表实现已符合新版设计。
 
-MASS serves native Codex text and commandExecution sessions over HTTP/SSE.
+The Rust implementation serves native Codex text and commandExecution sessions over HTTP/SSE.
 It supports isolated concurrent threads on one host per runtimeName, once-only
 command approvals, cancellation, per-thread archive, explicit strict recovery,
 bounded fact delivery and owned runtime Stop. See the [HTTP binding draft](harness/bindings/http.md)
@@ -12,17 +12,15 @@ implemented provider; configuration mutation, questions, background lifecycle an
 database projections remain unavailable. Rust contains no ACP transport/SDK/parser,
 configuration, fallback or executable ACP acceptance entry point. Retired v1 code, historical research and raw private evidence are absent from this source snapshot.
 
-The Go [massctl client](mass-go/docs/massctl.md) calls the Rust server. Build it
-with `make build-massctl` and run `./dist/massctl --help`. Root Make checks
-include this client and require Go 1.26.9.
-
-`make build-go` builds `dist/massd-go` and the CLI without Rust. The experimental
-[Go server](mass-go/docs/http-server.md) exposes Codex/Claude over HTTP+SSE.
-
-The isolated [experimental Go runtime](mass-go/README.md) provides Codex/Claude
-SDK adapters with offline tests and an explicit [real Agent validation group](mass-go/tests/native/README.md).
-It is separate from the Rust product and root Make targets.
-
+The [Go implementation](mass-go/README.md) currently provides the Ticket02
+Codex SDK-mock vertical path: no-input native identity, separate text input,
+file-persistent history and live Service observation. Production Go packages live
+under `mass-go/pkg/`; `cmd/` contains the entrypoints. `make build-go` builds
+`dist/massd-go` (the synthetic workflow) and `dist/massctl` (local read-only queries).
+The Go CLI no longer calls the Rust server; Go HTTP/Claude/recovery support belongs
+to later tickets. `make test-go` runs the offline SDK/Store/application suite;
+root Make checks include the Go slice and require Go 1.26.9. The independent
+[SDK protocol probes](mass-go/examples/sdkprobe/README.md) are retained.
 
 The Rust workspace lives entirely in [mass-rs](mass-rs/README.md), leaving the
 repository root available for other languages. Run `make fmt`, `make lint`,

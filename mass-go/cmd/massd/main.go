@@ -1,86 +1,91 @@
+// massd is the executable in-process vertical slice, not an HTTP daemon yet.
 package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
-	"os/signal"
-	"path/filepath"
-	"syscall"
 	"time"
 
-	"github.com/zoumo/mass/mass-go/internal/httpserver"
-	rt "github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
+	"github.com/zoumo/mass/mass-go/pkg/service"
+	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
-func main() {
-	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "massd-go:", err)
-		os.Exit(1)
-	}
-}
-
-func run() error {
-	listen := flag.String("listen", "127.0.0.1:24369", "HTTP JSON-RPC/SSE listener")
-	codex := flag.String("codex-bin", "", "absolute Codex executable; registers runtime codex")
-	claude := flag.String("claude-bin", "", "absolute Claude executable; registers runtime claude")
-	cwd := flag.String("cwd", "", "absolute working directory for the registered runtimes")
+func run() (result error) {
+	data := flag.String("data", "", "absolute data directory")
+	executable := flag.String("codex", "", "absolute SDK mock Codex executable")
+	scenario := flag.String("scenario", "", "absolute synthetic scenario")
+	cwd := flag.String("cwd", "/synthetic", "native workspace (must match strict scenario)")
+	input := flag.String("input", "hello", "independent text input")
 	flag.Parse()
-	if flag.NArg() != 0 {
-		return fmt.Errorf("unexpected positional arguments")
+	st, err := file.Open(*data, false)
+	if err != nil {
+		return err
 	}
-	if *cwd == "" {
-		var err error
-		*cwd, err = os.Getwd()
+	defer func() { result = errors.Join(result, st.Close()) }()
+	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{}}))
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		result = errors.Join(result, svc.Shutdown(ctx))
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": *executable, "scenario": *scenario}}}); err != nil {
+		return err
+	}
+	if _, err = svc.StartRuntime(ctx, "codex"); err != nil {
+		return err
+	}
+	session, err := svc.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "codex", SessionSpec: runtime.SessionSpec{Cwd: *cwd}}})
+	if err != nil {
+		return err
+	}
+	out := json.NewEncoder(os.Stdout)
+	if err = out.Encode(session); err != nil {
+		return err
+	}
+	ref := resource.SessionRef{SessionID: session.Status.SessionID}
+	sub, err := svc.SubscribeEvents(ref)
+	if err != nil {
+		return err
+	}
+	defer sub.Close()
+	receipt, err := svc.SendPrompt(ctx, ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text(*input)}})
+	if err != nil {
+		return err
+	}
+	if err = out.Encode(receipt); err != nil {
+		return err
+	}
+	started := false
+	for {
+		e, err := sub.Next(ctx)
 		if err != nil {
 			return err
 		}
-	}
-	if !filepath.IsAbs(*cwd) {
-		return fmt.Errorf("--cwd must be absolute")
-	}
-	info, err := os.Stat(*cwd)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("--cwd must name an existing directory")
-	}
-	registrations := []rt.Registration{}
-	for _, entry := range []struct{ name, path string }{{"codex", *codex}, {"claude", *claude}} {
-		if entry.path == "" {
-			continue
+		if err = out.Encode(e); err != nil {
+			return err
 		}
-		if !filepath.IsAbs(entry.path) {
-			return fmt.Errorf("--%s-bin must be absolute", entry.name)
+		if p, ok := e.Payload().(runtime.StateUpdate); ok && p.State != nil {
+			if *p.State == runtime.Running {
+				started = true
+			}
+			if started && *p.State == runtime.Idle {
+				return nil
+			}
 		}
-		registrations = append(registrations, rt.Registration{Name: entry.name, Type: entry.name, Config: rt.Config{Executable: entry.path, Dir: *cwd, Env: os.Environ()}})
 	}
-	if len(registrations) == 0 {
-		return fmt.Errorf("provide --codex-bin and/or --claude-bin")
+}
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	service, err := httpserver.New(registrations)
-	if err != nil {
-		return err
-	}
-	defer service.Close()
-	listener, err := net.Listen("tcp", *listen)
-	if err != nil {
-		return err
-	}
-	server := &http.Server{Handler: service.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdown)
-	}()
-	fmt.Printf("Listening on http://%s (Go HTTP+SSE)\n", listener.Addr())
-	err = server.Serve(listener)
-	if err == http.ErrServerClosed {
-		return nil
-	}
-	return err
 }

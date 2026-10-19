@@ -3,606 +3,323 @@ package runtime
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"reflect"
-	"strings"
+	"regexp"
 	"time"
 )
 
-// Event is a low-level protocol observation union, including control authority.
-// Exactly one payload is present. Public session consumers use PublicEvent;
-// do not publish this observation envelope directly to HTTP or history.
-// SourcePosition is an adapter receive cursor, not native wire order or Seq.
-type Event struct {
-	Runtime         *Snapshot                `json:"-"`
-	Operation       *OperationPayload        `json:"-"`
-	SchemaVersion   int                      `json:"schemaVersion"`
-	Kind            EventKind                `json:"type"`
-	Scope           string                   `json:"scope"`
-	RuntimeName     string                   `json:"runtimeName"`
-	SessionID       string                   `json:"sessionId,omitempty"`
-	ConnectionEpoch string                   `json:"connectionEpoch,omitempty"`
-	Seq             uint64                   `json:"seq"`
-	ObservedAt      time.Time                `json:"observedAt"`
-	SourcePosition  uint64                   `json:"sourcePosition,omitempty"`
-	Origin          EventOrigin              `json:"origin"`
-	FrameRef        string                   `json:"frameRef,omitempty"`
-	Subject         *EventSubject            `json:"subject,omitempty"`
-	OperationRef    string                   `json:"operationRef,omitempty"`
-	WorkRef         string                   `json:"workRef,omitempty"`
-	Association     *AgentAssociationPayload `json:"-"`
-	Creation        *AgentCreatedPayload     `json:"-"`
-	AgentState      *AgentStatePayload       `json:"-"`
-	Task            *TaskPayload             `json:"-"`
-	TaskSnapshot    *TaskSnapshotPayload     `json:"-"`
-	Usage           *UsagePayload            `json:"-"`
-	Observation     *ObservationPayload      `json:"-"`
-	Message         *MessagePayload          `json:"-"`
-	Reasoning       *ReasoningPayload        `json:"-"`
-	Plan            *PlanPayload             `json:"-"`
-	Metadata        *MetadataPayload         `json:"-"`
-	Tool            *ToolPayload             `json:"-"`
-	Work            *WorkPayload             `json:"-"`
-	Session         *SessionSnapshot         `json:"-"`
-	Interaction     *Interaction             `json:"-"`
-	Error           *SafeError               `json:"-"`
-	Diagnostic      Diagnostic               `json:"-"`
+type EventBase struct {
+	EventID     string         `json:"eventId"`
+	Namespace   string         `json:"namespace"`
+	SessionName string         `json:"sessionName"`
+	SessionID   string         `json:"sessionId"`
+	Time        time.Time      `json:"time"`
+	ItemID      string         `json:"itemId,omitempty"`
+	Meta        map[string]any `json:"_meta,omitempty"`
 }
-type EventOrigin struct {
-	Kind         string `json:"kind"`
-	Attribution  string `json:"attribution"`
-	Completeness string `json:"observationCompleteness"`
-	Replay       *bool  `json:"replay,omitempty"`
-	Synthetic    *bool  `json:"synthetic,omitempty"`
-	SourceKind   string `json:"sourceKind,omitempty"`
-}
-type ContentSet struct {
-	Availability       string         `json:"availability"`
-	Completeness       string         `json:"completeness"`
-	TruncationEvidence string         `json:"truncationEvidence,omitempty"`
-	Blocks             []ContentBlock `json:"blocks,omitempty"`
-}
-type ContentBlock struct {
-	BlockRef     string          `json:"blockRef,omitempty"`
-	Index        *int            `json:"index,omitempty"`
-	Namespace    string          `json:"namespace,omitempty"`
-	Kind         string          `json:"kind"`
-	Text         *string         `json:"text,omitempty"`
-	JSON         json.RawMessage `json:"json,omitempty"`
-	Descriptor   string          `json:"descriptor,omitempty"`
-	Stage        string          `json:"stage"`
-	Completeness string          `json:"completeness"`
-}
+
+// Payload is sealed. Each concrete branch fixes its event type at compile time.
+type Payload interface{ eventType() string }
 type MessagePayload struct {
-	Phase string `json:"phase,omitempty"`
-	// BlockIndex and BlockStage carry boundary-only observations without text.
-	BlockIndex *int       `json:"blockIndex,omitempty"`
-	BlockStage string     `json:"blockStage,omitempty"`
-	MessageRef string     `json:"messageRef,omitempty"`
-	Role       string     `json:"role"`
-	Stage      string     `json:"stage"`
-	Content    ContentSet `json:"content"`
+	MessageID string         `json:"messageId"`
+	Content   []ContentBlock `json:"content"`
+	Phase     string         `json:"phase,omitempty"`
 }
-type ReasoningPayload struct {
-	BlockIndex *int   `json:"blockIndex,omitempty"`
-	MessageRef string `json:"messageRef,omitempty"`
-	Stage      string `json:"stage"`
-	// Channel separates native summary and reasoning indexes.
-	Channel string     `json:"channel,omitempty"`
-	Content ContentSet `json:"content"`
-}
-type PlanEntry struct {
-	Text   string `json:"text"`
-	Status string `json:"status"`
-}
-type PlanPayload struct {
-	PlanRef      string      `json:"planRef,omitempty"`
-	Explanation  *string     `json:"explanation,omitempty"`
-	UpdateMode   string      `json:"updateMode"`
-	Entries      []PlanEntry `json:"entries"`
-	Completeness string      `json:"completeness"`
-	// Text is observed prose when the source supplies no structured checklist.
-	Text  *string `json:"text,omitempty"`
-	Stage string  `json:"stage,omitempty"`
+type UserMessage MessagePayload
+
+func (UserMessage) eventType() string { return "user.message" }
+
+type AgentMessage MessagePayload
+
+func (AgentMessage) eventType() string { return "agent.message" }
+
+type AgentThinking MessagePayload
+
+func (AgentThinking) eventType() string { return "agent.thinking" }
+
+type MessageChunk MessagePayload
+
+func (MessageChunk) eventType() string { return "agent.message_chunk" }
+
+type ThinkingChunk MessagePayload
+
+func (ThinkingChunk) eventType() string { return "agent.thinking_chunk" }
+
+type ToolCall struct {
+	ID       string `json:"id"`
+	Kind     string `json:"kind"`
+	RawInput any    `json:"rawInput"`
 }
 
-// Each present metadata field replaces its value. Nil means no update;
-// a non-nil pointer to an empty slice explicitly clears that collection.
-type MetadataPayload struct {
-	Capabilities     *[]string `json:"capabilities,omitempty"`
-	Commands         *[]string `json:"commands,omitempty"`
-	Tools            *[]string `json:"tools,omitempty"`
-	Model            *string   `json:"model,omitempty"`
-	WorkingDirectory *string   `json:"workingDirectory,omitempty"`
-	Title            *string   `json:"title,omitempty"`
+func (ToolCall) eventType() string { return "agent.tool_call" }
+
+type Output struct {
+	Availability string `json:"availability"`
+	Completeness string `json:"completeness"`
+}
+type ToolResult struct {
+	ExitCode   *int32         `json:"exitCode,omitempty"`
+	DurationMs *int64         `json:"durationMs,omitempty"`
+	ID         string         `json:"id"`
+	Kind       string         `json:"kind"`
+	Status     string         `json:"status"`
+	RawOutput  *any           `json:"rawOutput,omitempty"`
+	Content    []ContentBlock `json:"content,omitempty"`
+	Output     *Output        `json:"output,omitempty"`
 }
 
-func (m *MetadataPayload) Apply(p MetadataPayload) {
-	if p.Capabilities != nil {
-		v := append([]string{}, (*p.Capabilities)...)
-		m.Capabilities = &v
-	}
-	if p.Commands != nil {
-		v := append([]string{}, (*p.Commands)...)
-		m.Commands = &v
-	}
-	if p.Tools != nil {
-		v := append([]string{}, (*p.Tools)...)
-		m.Tools = &v
-	}
-	if p.Model != nil {
-		v := *p.Model
-		m.Model = &v
-	}
-	if p.WorkingDirectory != nil {
-		v := *p.WorkingDirectory
-		m.WorkingDirectory = &v
-	}
-	if p.Title != nil {
-		v := *p.Title
-		m.Title = &v
-	}
+func (ToolResult) eventType() string { return "agent.tool_result" }
+
+type StateUpdate struct {
+	PreviousState *SessionState `json:"previousState"`
+	State         *SessionState `json:"state"`
+	StopReason    string        `json:"stopReason,omitempty"`
 }
 
-// ToolPayload keeps semantic identity, presentation, data and execution evidence separate.
-// Input/Output are snapshots of this observation; missing is not an empty value.
-type ToolPayload struct {
-	// Status retains explicit native terminal evidence, including declined.
-	Status       string     `json:"status,omitempty"`
-	MessageRef   string     `json:"messageRef,omitempty"`
-	BlockIndex   *int       `json:"blockIndex,omitempty"`
-	CallRef      string     `json:"callRef"`
-	Name         string     `json:"name,omitempty"`
-	Category     string     `json:"category"`
-	Namespace    *string    `json:"namespace,omitempty"`
-	DisplayLabel *string    `json:"displayLabel,omitempty"`
-	Input        ContentSet `json:"input"`
-	// InputJSONDelta is an observed JSON fragment, never a complete JSON value.
-	InputJSONDelta  *string        `json:"inputJsonDelta,omitempty"`
-	Output          ContentSet     `json:"output"`
-	Content         *ContentSet    `json:"content,omitempty"`
-	Locations       []ToolLocation `json:"locations,omitempty"`
-	State           string         `json:"state"`
-	ExitCode        *int32         `json:"exitCode,omitempty"`
-	DurationMS      *int64         `json:"durationMs,omitempty"`
-	OutcomeEvidence string         `json:"outcomeEvidence"`
-}
-type ToolLocation struct {
-	Path string `json:"path"`
+func (StateUpdate) eventType() string { return "session.state_update" }
+
+// SessionEvent is the only event model. Source stays private and unserialized.
+type SessionEvent struct {
+	EventBase
+	payload Payload
+	source  Source
 }
 
-// JSONContent preserves JSON numbers and nested nulls without string conversion.
-// A null field is unavailable; an explicit JSON null block uses JSONValueContent.
-func JSONContent(raw json.RawMessage, stage, completeness string) ContentSet {
-	if len(raw) == 0 {
-		return ContentSet{Availability: "missing", Completeness: completeness}
+func NewEvent(base EventBase, payload Payload, source Source) (SessionEvent, error) {
+	e := SessionEvent{base, payload, source}
+	return e, e.Validate()
+}
+func (e SessionEvent) Type() string {
+	if e.payload == nil {
+		return ""
 	}
-	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return ContentSet{Availability: "null", Completeness: completeness}
-	}
-	return JSONValueContent(raw, stage, completeness)
+	return e.payload.eventType()
 }
-func JSONValueContent(raw json.RawMessage, stage, completeness string) ContentSet {
-	return ContentSet{Availability: "provided", Completeness: completeness, Blocks: []ContentBlock{{Kind: "json", JSON: append(json.RawMessage(nil), raw...), Stage: stage, Completeness: completeness}}}
-}
-
-type WorkPayload struct {
-	Status string `json:"status"`
-}
-type SafeError struct {
-	Category     string              `json:"category"`
-	Scope        string              `json:"scope"`
-	Message      string              `json:"message,omitempty"`
-	OperationRef string              `json:"operationRef,omitempty"`
-	Key          *SessionKey         `json:"key,omitempty"`
-	Acceptance   *SubmissionEvidence `json:"acceptance,omitempty"`
-	Recovery     string              `json:"recovery,omitempty"`
-}
-
-func (e *SafeError) Error() string { return e.Category + ": " + e.Message }
-func (e *SafeError) Is(target error) bool {
-	switch e.Category {
-	case "outcome_unknown":
-		return target == ErrOutcomeUnknown
-	case "invalid_interaction":
-		return target == ErrInvalidInteraction
-	case "busy":
-		return target == ErrBusy
-	case "invalid_input":
-		return target == ErrInvalidInput
-	case "unsupported_capability":
-		return target == ErrUnsupported
-	case "backpressure":
-		return target == ErrBackpressure
-	case "unavailable":
-		return target == ErrUnavailable
-	case "not_found":
-		return target == ErrNotFound
-	case "conflict":
-		return target == ErrConflict
+func (e SessionEvent) Payload() Payload { return e.payload }
+func (e SessionEvent) Source() Source   { return e.source }
+func (e SessionEvent) Persistent() bool {
+	switch e.Type() {
+	case "user.message", "agent.message", "agent.thinking", "agent.tool_call", "agent.tool_result":
+		return true
 	}
 	return false
 }
 
-func TextContent(text, stage, completeness string, index *int) ContentSet {
-	availability := "provided"
-	if text == "" {
-		availability = "provided_empty"
-	}
-	return ContentSet{Availability: availability, Completeness: completeness, Blocks: []ContentBlock{{Kind: "text", Text: &text, Index: index, Stage: stage, Completeness: completeness}}}
-}
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-func (e Event) payload() (any, error) {
-	if e.Kind != Unknown && e.Diagnostic != (Diagnostic{}) {
-		return nil, fmt.Errorf("event has an extra diagnostic payload")
+func (e SessionEvent) Validate() error {
+	if !uuidPattern.MatchString(e.EventID) || e.Namespace == "" || e.SessionName == "" || e.SessionID == "" || e.Time.IsZero() || e.payload == nil {
+		return errors.New("invalid event envelope")
 	}
-	values := []any{e.Message, e.Reasoning, e.Plan, e.Metadata, e.Tool, e.Work, e.Session, e.Interaction, e.Error, e.Association, e.Creation, e.AgentState, e.Task, e.TaskSnapshot, e.Usage, e.Observation, e.Runtime, e.Operation}
-	count := 0
-	for _, v := range values {
-		if !reflect.ValueOf(v).IsNil() {
-			count++
-		}
-	}
-	var p any
-	switch e.Kind {
-	case RuntimeStatusChanged:
-		p = e.Runtime
-	case OperationStateChanged:
-		p = e.Operation
-	case SessionOpened, SessionResumed, SessionStateChanged:
-		p = e.Session
-	case AgentAssociated:
-		p = e.Association
-	case AgentCreated:
-		p = e.Creation
-	case AgentStateChanged:
-		p = e.AgentState
-	case TaskChanged:
-		p = e.Task
-	case TaskSnapshot:
-		p = e.TaskSnapshot
-	case UsageUpdated:
-		p = e.Usage
-	case ObservationChanged:
-		p = e.Observation
-	case MessageCompleted, MessageStarted, MessageDelta:
-		p = e.Message
-	case ReasoningCompleted, ReasoningDelta:
-		p = e.Reasoning
-	case Plan:
-		p = e.Plan
-	case Metadata:
-		p = e.Metadata
-	case ToolAnnounced, ToolUpdated, ToolCompleted:
-		p = e.Tool
-	case TurnStarted, TurnCompleted:
-		p = e.Work
-	case SessionReady:
-		p = e.Session
-	case InteractionRequested, InteractionResolved:
-		p = e.Interaction
-	case Failure, OperationFailed:
-		p = e.Error
-	case Unknown:
-		if count != 0 {
-			return nil, fmt.Errorf("diagnostic has another payload")
-		}
-		return e.Diagnostic, nil
-	default:
-		return nil, fmt.Errorf("unsupported event type")
-	}
-	if count != 1 || reflect.ValueOf(p).IsNil() {
-		return nil, fmt.Errorf("event payload does not match type")
-	}
-	return p, nil
-}
-func (e Event) validate() error {
-	if e.SchemaVersion != 1 || e.RuntimeName == "" || e.Seq == 0 || e.Seq > 9007199254740991 || e.ObservedAt.IsZero() {
-		return fmt.Errorf("invalid event envelope")
-	}
-	if err := e.validateLifecycleScope(); err != nil {
+	if err := CheckDynamicJSON(map[string]any(e.Meta)); err != nil {
 		return err
 	}
-	if e.Origin.Kind != "native" && e.Origin.Kind != "runtime" && e.Origin.Kind != "sdk_derived" {
-		return fmt.Errorf("invalid event origin")
-	}
-	if !oneOf(e.Origin.Attribution, "root", "child", "unresolved", "runtime") || !oneOf(e.Origin.Completeness, "complete", "partial", "unknown") {
-		return fmt.Errorf("invalid event provenance")
-	}
-	if e.Subject != nil && e.Subject.AssociationRef != "" && e.Subject.AssociationScope != "sdk_attachment" {
-		return fmt.Errorf("invalid association scope")
-	}
-	if e.Association != nil && (e.Subject == nil || !oneOf(e.Association.State, "associated", "enriched", "redirected") || e.Association.Evidence == "" || !oneOf(e.Association.Completeness, "complete", "partial", "unknown")) {
-		return fmt.Errorf("invalid association")
-	}
-	if e.Creation != nil && (e.Subject == nil || e.Creation.Evidence == "" || e.Creation.Provenance == "") {
-		return fmt.Errorf("invalid creation")
-	}
-	if e.AgentState != nil && (e.Subject == nil || !oneOf(e.AgentState.State, "running", "waiting", "idle", "terminal", "unknown") || !oneOf(e.AgentState.Completeness, "complete", "partial", "unknown")) {
-		return fmt.Errorf("invalid agent state")
-	}
-	if e.AgentState != nil && (e.AgentState.Terminal != (e.AgentState.State == "terminal") || (e.AgentState.Outcome != "" && !oneOf(e.AgentState.Outcome, "completed", "failed", "cancelled", "interrupted", "unknown"))) {
-		return fmt.Errorf("invalid run terminal")
-	}
-	if e.Task != nil {
-		if err := validateTask(*e.Task); err != nil {
+	var m *MessagePayload
+	switch p := e.payload.(type) {
+	case UserMessage:
+		v := MessagePayload(p)
+		m = &v
+	case AgentMessage:
+		v := MessagePayload(p)
+		m = &v
+	case AgentThinking:
+		v := MessagePayload(p)
+		m = &v
+	case MessageChunk:
+		v := MessagePayload(p)
+		m = &v
+	case ThinkingChunk:
+		v := MessagePayload(p)
+		m = &v
+	case ToolCall:
+		if err := CheckDynamicJSON(p.RawInput); err != nil {
 			return err
 		}
-	}
-	if e.TaskSnapshot != nil {
-		p := e.TaskSnapshot
-		if p.Mode != "replace" || p.SourceScope == "" || p.Tasks == nil || !oneOf(p.Completeness, "complete", "partial", "unknown") {
-			return fmt.Errorf("invalid task snapshot")
+		if p.ID == "" || p.Kind == "" {
+			return errors.New("invalid tool call")
 		}
-		seen := map[string]bool{}
-		for _, t := range p.Tasks {
-			keyBytes, _ := json.Marshal([]string{t.TaskRef, t.Subject.RunID})
-			key := string(keyBytes)
-			if seen[key] {
-				return fmt.Errorf("duplicate task identity")
-			}
-			seen[key] = true
-			if t.SourceScope != p.SourceScope {
-				return fmt.Errorf("task scope mismatch")
-			}
-			if err := validateTask(t); err != nil {
+	case ToolResult:
+		if p.RawOutput != nil {
+			if err := CheckDynamicJSON(*p.RawOutput); err != nil {
 				return err
 			}
 		}
+		switch p.Status {
+		case "pending", "in_progress", "completed", "failed", "declined", "unknown":
+		default:
+			return errors.New("invalid tool status")
+		}
+		for _, b := range p.Content {
+			if b.Type != "text" {
+				return errors.New("unsupported tool content type")
+			}
+		}
+		if p.DurationMs != nil && *p.DurationMs < 0 {
+			return errors.New("negative tool duration")
+		}
+		if p.Output != nil {
+			if p.Output.Availability != "provided" && p.Output.Availability != "unavailable" {
+				return errors.New("invalid output availability")
+			}
+			if p.Output.Completeness != "retained" && p.Output.Completeness != "unknown" {
+				return errors.New("unsupported output completeness")
+			}
+		}
+		if p.ID == "" || p.Kind == "" || p.Status == "" {
+			return errors.New("invalid tool result")
+		}
+	case StateUpdate:
+		for _, s := range []*SessionState{p.State, p.PreviousState} {
+			if s != nil && *s != Idle && *s != Running && *s != RequiresAction {
+				return errors.New("invalid observed state")
+			}
+		}
+	default:
+		return errors.New("unsupported payload branch")
 	}
-	if e.Usage != nil && (!oneOf(e.Usage.Mode, "cumulative", "delta", "unknown") || !oneOf(e.Usage.ChildInclusion, "yes", "no", "unknown") || e.Usage.AccountingScope == "" || e.Usage.Counters == nil) {
-		return fmt.Errorf("invalid usage")
+	if e.Type() != "session.state_update" && e.ItemID == "" {
+		return errors.New("itemId required")
 	}
-	if e.Observation != nil && (e.Observation.State == "" || !oneOf(e.Observation.Completeness, "complete", "partial", "unknown")) {
-		return fmt.Errorf("invalid observation")
-	}
-	if e.Interaction != nil {
-		i := e.Interaction
-		if i.Ref == "" || !oneOf(i.Kind, "permission", "question") || !oneOf(i.State, "requested", "resolved", "cancelled", "invalidated") {
-			return fmt.Errorf("invalid interaction")
+	if m != nil {
+		if m.MessageID == "" || m.Content == nil {
+			return errors.New("invalid message")
 		}
-		if e.Kind == InteractionRequested && i.State != "requested" {
-			return fmt.Errorf("invalid interaction state")
-		}
-		if e.Kind == InteractionResolved && i.State == "requested" {
-			return fmt.Errorf("invalid interaction state")
-		}
-	}
-	if e.Message != nil {
-		if string(e.Kind) != "message."+e.Message.Stage {
-			return fmt.Errorf("message type and stage disagree")
-		}
-		if e.Message.BlockIndex != nil && *e.Message.BlockIndex < 0 {
-			return fmt.Errorf("invalid block index")
-		}
-		if e.Message.BlockStage != "" && !oneOf(e.Message.BlockStage, "started", "delta", "completed") {
-			return fmt.Errorf("invalid block stage")
-		}
-		if !oneOf(e.Message.Role, "user", "assistant", "system", "tool", "unknown") || !oneOf(e.Message.Stage, "started", "delta", "completed") {
-			return fmt.Errorf("invalid message")
-		}
-		return validateContent(e.Message.Content)
-	}
-	if e.Reasoning != nil {
-		if e.Reasoning.BlockIndex != nil && *e.Reasoning.BlockIndex < 0 {
-			return fmt.Errorf("invalid reasoning block index")
-		}
-		if !strings.HasSuffix(string(e.Kind), "."+e.Reasoning.Stage) {
-			return fmt.Errorf("reasoning type and stage disagree")
-		}
-		if !oneOf(e.Reasoning.Stage, "delta", "completed") {
-			return fmt.Errorf("invalid reasoning")
-		}
-		return validateContent(e.Reasoning.Content)
-	}
-	if e.Tool != nil {
-		t := e.Tool
-		if t.CallRef == "" || !oneOf(t.Category, "execute", "read", "write", "search", "network", "other", "unknown") || !oneOf(t.State, "announced", "running", "completed", "failed", "cancelled", "unknown") || t.OutcomeEvidence == "" {
-			return fmt.Errorf("invalid tool")
-		}
-		if (e.Kind == ToolUpdated && !oneOf(t.State, "announced", "running", "unknown")) || (e.Kind == ToolAnnounced && t.State != "announced") || (e.Kind == ToolCompleted && !oneOf(t.State, "completed", "failed", "cancelled", "unknown")) {
-			return fmt.Errorf("invalid tool lifecycle")
-		}
-		if t.InputJSONDelta != nil && (e.Kind != ToolUpdated || t.Input.Completeness != "partial" || t.Input.Availability != "missing" || len(t.Input.Blocks) > 0) {
-			return fmt.Errorf("invalid tool input fragment")
-		}
-		if t.BlockIndex != nil && *t.BlockIndex < 0 {
-			return fmt.Errorf("invalid tool block index")
-		}
-		if err := validateContent(t.Input); err != nil {
-			return err
-		}
-		if err := validateContent(t.Output); err != nil {
-			return err
-		}
-		if t.Content != nil {
-			return validateContent(*t.Content)
-		}
-	}
-	if e.Plan != nil {
-		if !oneOf(e.Plan.UpdateMode, "replace", "patch") || !oneOf(e.Plan.Completeness, "complete", "partial", "unknown") {
-			return fmt.Errorf("invalid plan")
-		}
-		for _, p := range e.Plan.Entries {
-			if !oneOf(p.Status, "pending", "in_progress", "completed", "unknown") {
-				return fmt.Errorf("invalid plan status")
+		for _, b := range m.Content {
+			if b.Type != "text" {
+				return errors.New("content type unsupported in this implementation")
 			}
 		}
 	}
 	return nil
 }
-func oneOf(v string, choices ...string) bool {
-	for _, c := range choices {
-		if v == c {
-			return true
-		}
-	}
-	return false
-}
-func validateContent(c ContentSet) error {
-	if !oneOf(c.Availability, "missing", "null", "provided_empty", "provided", "redacted", "unsupported") || !oneOf(c.Completeness, "complete", "partial", "truncated", "unknown") {
-		return fmt.Errorf("invalid content availability")
-	}
-	if oneOf(c.Availability, "missing", "null") && len(c.Blocks) > 0 {
-		return fmt.Errorf("unavailable content has blocks")
-	}
-	if c.Completeness == "truncated" && c.TruncationEvidence == "" {
-		return fmt.Errorf("missing truncation evidence")
-	}
-	for _, b := range c.Blocks {
-		if b.Index != nil && *b.Index < 0 {
-			return fmt.Errorf("invalid block index")
-		}
-		if b.Kind != "json" && len(b.JSON) != 0 {
-			return fmt.Errorf("content mismatch")
-		}
-		if !oneOf(b.Kind, "text", "json", "file_ref", "media_ref", "redacted", "unsupported") || !oneOf(b.Stage, "started", "delta", "completed") || !oneOf(b.Completeness, "complete", "partial", "truncated", "unknown") {
-			return fmt.Errorf("invalid content block")
-		}
-		if b.Kind == "text" && (b.Text == nil || len(b.JSON) != 0) {
-			return fmt.Errorf("invalid text block")
-		}
-		if b.Kind == "json" && (len(b.JSON) == 0 || !json.Valid(b.JSON) || b.Text != nil) {
-			return fmt.Errorf("invalid JSON block")
-		}
-		if b.Kind != "text" && b.Text != nil {
-			return fmt.Errorf("content mismatch")
-		}
-	}
-	return nil
-}
-func (e Event) MarshalJSON() ([]byte, error) {
-	p, err := e.payload()
-	if err != nil {
+func (e SessionEvent) MarshalJSON() ([]byte, error) {
+	if err := e.Validate(); err != nil {
 		return nil, err
 	}
-	if err = e.validate(); err != nil {
-		return nil, err
-	}
-	type envelope Event
 	return json.Marshal(struct {
-		envelope
-		Payload any `json:"payload"`
-	}{envelope(e), p})
+		EventBase
+		Type    string  `json:"type"`
+		Payload Payload `json:"payload"`
+	}{e.EventBase, e.Type(), e.payload})
 }
-
-// RetainedJSONBytes measures the envelope and payload before identity binding.
-// It does not validate or publish a provisional event as a session fact.
-func (e Event) RetainedJSONBytes() (int, error) {
-	p, err := e.payload()
-	if err != nil {
-		return 0, err
-	}
-	type envelope Event
-	data, err := json.Marshal(struct {
-		envelope
-		Payload any `json:"payload"`
-	}{envelope(e), p})
-	return len(data), err
-}
-func (e *Event) UnmarshalJSON(data []byte) error {
-	type envelope Event
-	var wire struct {
-		envelope
+func (e *SessionEvent) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		EventBase
+		Type    string          `json:"type"`
 		Payload json.RawMessage `json:"payload"`
 	}
-	if err := json.Unmarshal(data, &wire); err != nil {
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	d.UseNumber()
+	if err := d.Decode(&raw); err != nil {
 		return err
 	}
-	candidate := Event(wire.envelope)
-	var p any
-	switch candidate.Kind {
-	case RuntimeStatusChanged:
-		candidate.Runtime = &Snapshot{}
-		p = candidate.Runtime
-	case OperationStateChanged:
-		candidate.Operation = &OperationPayload{}
-		p = candidate.Operation
-	case SessionOpened, SessionResumed, SessionStateChanged:
-		candidate.Session = &SessionSnapshot{}
-		p = candidate.Session
-	case AgentAssociated:
-		candidate.Association = &AgentAssociationPayload{}
-		p = candidate.Association
-	case AgentCreated:
-		candidate.Creation = &AgentCreatedPayload{}
-		p = candidate.Creation
-	case AgentStateChanged:
-		candidate.AgentState = &AgentStatePayload{}
-		p = candidate.AgentState
-	case TaskChanged:
-		candidate.Task = &TaskPayload{}
-		p = candidate.Task
-	case TaskSnapshot:
-		candidate.TaskSnapshot = &TaskSnapshotPayload{}
-		p = candidate.TaskSnapshot
-	case UsageUpdated:
-		candidate.Usage = &UsagePayload{}
-		p = candidate.Usage
-	case ObservationChanged:
-		candidate.Observation = &ObservationPayload{}
-		p = candidate.Observation
-	case MessageCompleted, MessageStarted, MessageDelta:
-		candidate.Message = &MessagePayload{}
-		p = candidate.Message
-	case ReasoningCompleted, ReasoningDelta:
-		candidate.Reasoning = &ReasoningPayload{}
-		p = candidate.Reasoning
-	case Plan:
-		candidate.Plan = &PlanPayload{}
-		p = candidate.Plan
-	case Metadata:
-		candidate.Metadata = &MetadataPayload{}
-		p = candidate.Metadata
-	case ToolAnnounced, ToolUpdated, ToolCompleted:
-		candidate.Tool = &ToolPayload{}
-		p = candidate.Tool
-	case TurnStarted, TurnCompleted:
-		candidate.Work = &WorkPayload{}
-		p = candidate.Work
-	case SessionReady:
-		candidate.Session = &SessionSnapshot{}
-		p = candidate.Session
-	case InteractionRequested, InteractionResolved:
-		candidate.Interaction = &Interaction{}
-		p = candidate.Interaction
-	case Failure, OperationFailed:
-		candidate.Error = &SafeError{}
-		p = candidate.Error
-	case Unknown:
-		p = &candidate.Diagnostic
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw.Payload, &members); err != nil {
+		return err
+	}
+	required := []string{}
+	switch raw.Type {
+	case "agent.tool_call":
+		required = []string{"rawInput"}
+	case "session.state_update":
+		required = []string{"state", "previousState"}
+	}
+	for _, name := range required {
+		if _, ok := members[name]; !ok {
+			return fmt.Errorf("missing required payload field %s", name)
+		}
+	}
+	var p Payload
+	switch raw.Type {
+	case "user.message":
+		p = &UserMessage{}
+	case "agent.message":
+		p = &AgentMessage{}
+	case "agent.thinking":
+		p = &AgentThinking{}
+	case "agent.message_chunk":
+		p = &MessageChunk{}
+	case "agent.thinking_chunk":
+		p = &ThinkingChunk{}
+	case "agent.tool_call":
+		p = &ToolCall{}
+	case "agent.tool_result":
+		p = &ToolResult{}
+	case "session.state_update":
+		p = &StateUpdate{}
 	default:
-		return fmt.Errorf("unsupported event type")
+		return fmt.Errorf("unsupported event type %q", raw.Type)
 	}
-	if len(wire.Payload) == 0 || bytes.Equal(bytes.TrimSpace(wire.Payload), []byte("null")) {
-		return fmt.Errorf("missing payload")
-	}
-	if candidate.Kind == Metadata {
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(wire.Payload, &fields); err != nil {
-			return err
-		}
-		for _, value := range fields {
-			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-				return fmt.Errorf("null metadata field")
-			}
-		}
-	}
-	decoder := json.NewDecoder(bytes.NewReader(wire.Payload))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(p); err != nil {
+	d = json.NewDecoder(bytes.NewReader(raw.Payload))
+	d.DisallowUnknownFields()
+	d.UseNumber()
+	if err := d.Decode(p); err != nil {
 		return err
 	}
-	if err := candidate.validate(); err != nil {
-		return err
+	// Normalize pointer branches so callers see the same concrete payload on reads.
+	switch v := p.(type) {
+	case *UserMessage:
+		p = *v
+	case *AgentMessage:
+		p = *v
+	case *AgentThinking:
+		p = *v
+	case *MessageChunk:
+		p = *v
+	case *ThinkingChunk:
+		p = *v
+	case *ToolCall:
+		p = *v
+	case *ToolResult:
+		p = *v
+	case *StateUpdate:
+		p = *v
 	}
-	*e = candidate
-	return nil
+	result, err := NewEvent(raw.EventBase, p, Source{})
+	if err == nil {
+		*e = result
+	}
+	return err
 }
 
-func validateTask(t TaskPayload) error {
-	if t.TaskRef == "" || t.SourceScope == "" || !oneOf(t.State, "pending", "running", "waiting", "completed", "failed", "cancelled", "unknown") || !oneOf(t.Completeness, "complete", "partial", "unknown") || (!oneOf(t.Background.State, "known", "unknown") || (t.Background.State == "known") != (t.Background.Value != nil)) {
-		return fmt.Errorf("invalid task")
+// Clone detaches slices/maps without changing the source association.
+func (e SessionEvent) Clone() (SessionEvent, error) {
+	b, err := json.Marshal(e)
+	if err != nil {
+		return SessionEvent{}, err
 	}
+	var out SessionEvent
+	err = json.Unmarshal(b, &out)
+	out.source = e.source
+	return out, err
+}
+
+// A pointer field alone cannot distinguish omitted rawOutput from explicit null
+// during encoding/json decoding. Preserve the member's actual presence.
+func (p *ToolResult) UnmarshalJSON(data []byte) error {
+	type fields ToolResult
+	var out fields
+	d := json.NewDecoder(bytes.NewReader(data))
+	d.DisallowUnknownFields()
+	d.UseNumber()
+	if err := d.Decode(&out); err != nil {
+		return err
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(data, &members); err != nil {
+		return err
+	}
+	if raw, ok := members["rawOutput"]; ok {
+		var value any
+		d = json.NewDecoder(bytes.NewReader(raw))
+		d.UseNumber()
+		if err := d.Decode(&value); err != nil {
+			return err
+		}
+		out.RawOutput = &value
+	}
+	*p = ToolResult(out)
 	return nil
 }

@@ -48,25 +48,28 @@ check: check-massctl
 	RUST_MIN_STACK=$(RUST_MIN_STACK) RUST_TEST_THREADS=$(RUST_TEST_THREADS) cargo test --manifest-path $(RUST_MANIFEST) $(CARGO_FLAGS) --workspace --all-targets --locked
 	cargo build --manifest-path $(RUST_MANIFEST) $(CARGO_FLAGS) --workspace --all-targets --locked
 
-fmt-massctl:
-	cd mass-go && gofmt -w cmd/massctl internal/commands internal/client
+# Go entrypoints currently expose the Ticket02 SDK-fake vertical and local reads.
+.PHONY: fmt-go lint-go test-go build-go check-go
+fmt-go:
+	cd mass-go && gofmt -w cmd pkg tests examples/sdkprobe
 
-lint-massctl:
-	cd mass-go && go vet ./cmd/massctl ./internal/commands ./internal/client
+lint-go:
+	cd mass-go && go vet ./...
 
-test-massctl:
-	cd mass-go && go test -race ./cmd/massctl ./internal/commands ./internal/client
+test-go:
+	cd mass-go && go test -race -timeout=180s ./...
 
 build-massctl:
 	mkdir -p dist
 	cd mass-go && go build -trimpath -o ../dist/massctl ./cmd/massctl
 
-check-massctl: lint-massctl test-massctl build-massctl
-	cd mass-go && test -z "$$(gofmt -l cmd/massctl internal/commands internal/client)"
-
-.PHONY: build-go test-go
 build-go: build-massctl
 	cd mass-go && go build -trimpath -o ../dist/massd-go ./cmd/massd
 
-test-go: test-massctl
-	cd mass-go && go test ./...
+check-go: lint-go test-go build-go
+	cd mass-go && test -z "$$(gofmt -l cmd pkg tests examples/sdkprobe)"
+
+fmt-massctl: fmt-go
+lint-massctl: lint-go
+test-massctl: test-go
+check-massctl: check-go

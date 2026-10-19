@@ -1,229 +1,149 @@
-// Package runtime defines the experimental, provider-neutral runtime boundary.
-// It does not promise parity with the production Rust runtime.
+// Package runtime owns execution values and the single-consumer Driver contract.
+// It has no dependency on persistent resources, Store, or Service.
 package runtime
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
-	"time"
+	"fmt"
+	"sync"
 )
 
-// Runtime owns one named protocol instance and all of its native sessions.
-type Runtime interface {
-	Start(context.Context) error
-	// Next consumes Runtime/operation lifecycle observations, independently of session content.
-	Next(context.Context) (Event, error)
-	Status() Snapshot
-	CreateSession(context.Context, SessionOptions) (CreationOperation, error)
-	GetOperation(string) (CreationOperation, error)
-	ContinueCreation(context.Context, string, string) (CreationOperation, error)
-	CancelOperation(context.Context, string) (CreationOperation, error)
-	ResumeSession(context.Context, SessionKey) (Session, error)
-	CloseSession(context.Context, SessionKey, CloseGoal) (CloseReceipt, error)
-	GetSession(SessionKey) (Session, error)
-	ListSessions() []SessionSnapshot
-	Respond(context.Context, SessionKey, string, Response) (ResponseReceipt, error)
-	StopWith(context.Context, StopOptions) (StopReceipt, error)
-	Stop() error
-}
-
-var (
-	ErrIdentityMismatch   = errors.New("native session identity mismatch")
-	ErrUnverifiable       = errors.New("native session recovery unverifiable")
-	ErrInvalidInteraction = errors.New("interaction authority is invalid")
-	ErrBusy               = errors.New("foreground submission unresolved")
-	ErrBackpressure       = errors.New("runtime control record bound reached")
-	ErrUnsupported        = errors.New("unsupported runtime capability")
-	ErrCleanupIncomplete  = errors.New("owned creation cleanup unconfirmed")
-	ErrOutcomeUnknown     = errors.New("native operation outcome unknown")
-	ErrIncomplete         = errors.New("incomplete provisional observations")
-	ErrConflict           = errors.New("runtime ownership conflict")
-	ErrNotFound           = errors.New("runtime resource not found")
-	ErrUnavailable        = errors.New("runtime unavailable")
-	ErrInvalidInput       = errors.New("invalid runtime configuration or session key")
-)
-
-// CreationLimits bound adapter-owned provisional facts and the native open wait.
-// Zero selects finite defaults, never unlimited storage or time.
-type CreationLimits struct {
-	Facts   int           `json:"facts,omitempty"`
-	Bytes   int           `json:"bytes,omitempty"`
-	Timeout time.Duration `json:"timeout,omitempty"`
-}
-
-func (l CreationLimits) Effective() CreationLimits {
-	if l.Facts == 0 {
-		l.Facts = 64
+func UUID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(err)
 	}
-	if l.Bytes == 0 {
-		l.Bytes = 1 << 20
-	}
-	if l.Timeout == 0 {
-		l.Timeout = 30 * time.Second
-	}
-	return l
+	b[6] = (b[6] & 15) | 64
+	b[8] = (b[8] & 63) | 128
+	s := hex.EncodeToString(b[:])
+	return s[:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:]
 }
 
-type SessionOptions struct {
-	InitialInput *string `json:"initialInput,omitempty"`
-}
-
-// CreationEvidence reports observations, not a promise of native persistence.
-type CreationEvidence struct {
-	NativeIdentity      Observation `json:"nativeIdentity"`
-	InitialInputWritten Observation `json:"initialInputWritten"`
-}
-type CreationOperation struct {
-	Evidence      CreationEvidence `json:"evidence"`
-	OperationRef  string           `json:"operationRef"`
-	RuntimeName   string           `json:"runtimeName"`
-	Phase         string           `json:"phase"`
-	InputRequired bool             `json:"inputRequired"`
-	Key           *SessionKey      `json:"key,omitempty"`
-	CleanupState  string           `json:"cleanupState"`
-	Failure       string           `json:"failure,omitempty"`
-}
-
-type Config struct {
-	LifecycleLimits DeliveryLimits `json:"lifecycleLimits,omitempty"`
-	DeliveryLimits  DeliveryLimits `json:"deliveryLimits,omitempty"`
-	CreationLimits  CreationLimits `json:"creationLimits,omitempty"`
-	Executable      string         `json:"executable"`
-	Env             []string       `json:"-"` // Explicit child environment; never returned in status.
-	Dir             string         `json:"dir,omitempty"`
-}
-type Registration struct {
-	Name   string `json:"name"`
-	Type   string `json:"type"`
-	Config Config `json:"config"`
-}
-
-// RuntimeType describes a fixed system implementation and its configuration.
-type RuntimeType struct {
-	Name            string              `json:"name"`
-	Features        []FeatureDefinition `json:"features"`
-	LifecycleBounds []LimitField        `json:"lifecycleBounds"`
-	SchemaVersion   int                 `json:"schemaVersion"`
-	Topology        string              `json:"topology"`
-	MaxNameBytes    int                 `json:"maxNameBytes"`
-	ConfigFields    []ConfigField       `json:"configFields"`
-	DeliveryBounds  []LimitField        `json:"deliveryBounds"`
-	CreationBounds  []LimitField        `json:"creationBounds"`
-}
-type LimitField struct {
-	Name    string `json:"name"`
-	Default int64  `json:"default"`
-	Min     int64  `json:"min"`
-	Max     int64  `json:"max"`
-}
-type ConfigField struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	Required     bool   `json:"required"`
-	AbsolutePath bool   `json:"absolutePath,omitempty"`
-}
-type Observation struct {
-	State string `json:"state"`
-	Value *bool  `json:"value,omitempty"`
-}
-
-func Known(value bool) Observation    { return Observation{State: "known", Value: &value} }
-func UnknownObservation() Observation { return Observation{State: "unknown"} }
-
-type Health struct {
-	Configured         Observation `json:"configured"`
-	Connected          Observation `json:"connected"`
-	ProtocolResponsive Observation `json:"protocolResponsive"`
-	ProbeScope         string      `json:"probeScope"`
-	ObservedAt         time.Time   `json:"observedAt"`
-}
-type Snapshot struct {
-	Retired           bool                     `json:"retired,omitempty"`
-	Capabilities      []CapabilityAvailability `json:"capabilities"`
-	LifecycleDelivery string                   `json:"lifecycleDelivery"`
-	Name              string                   `json:"name"`
-	Type              string                   `json:"type"`
-	ConfigRevision    uint64                   `json:"configRevision"`
-	ObservedRevision  uint64                   `json:"observedRevision"`
-	Phase             string                   `json:"phase"`
-	Health            Health                   `json:"health"`
-	ObservedAt        time.Time                `json:"observedAt"`
-}
-type SessionKey struct {
-	RuntimeName string `json:"runtimeName"`
-	SessionID   string `json:"sessionId"`
-}
-type SessionSnapshot struct {
-	Capabilities    []CapabilityAvailability `json:"capabilities"`
-	Key             SessionKey               `json:"key"`
-	Freshness       string                   `json:"freshness"`
-	Availability    string                   `json:"availability"`
-	ConnectionEpoch string                   `json:"connectionEpoch,omitempty"`
-	Foreground      ForegroundState          `json:"foreground"`
-	Interactions    InteractionSummary       `json:"interactions"`
-	Background      BackgroundSummary        `json:"background"`
-	Metadata        MetadataPayload          `json:"metadata"`
-	Attachment      string                   `json:"attachment"`
-	ObservedAt      time.Time                `json:"observedAt"`
-}
-
-// Session is an attachment with a proven, immutable native identity.
-type Session interface {
-	Key() SessionKey
-	Snapshot() SessionSnapshot
-	Capabilities() Capabilities
-	Submit(context.Context, InputCommand) (Submission, error)
-	// Cancel requests interruption. Its return is not completion evidence.
-	Cancel(context.Context, string) (Cancellation, error)
-	GetSubmission(string) (Submission, error)
-	GetCancellation(string) (Cancellation, error)
-	// Next has one consumer. Context cancellation only stops this wait.
-	Next(context.Context) (Event, error)
-	Close() error
-	// Respond resolves original authority on this attachment. Event replay creates none.
-	Respond(context.Context, string, Response) (ResponseReceipt, error)
-}
-
-type Capabilities struct{ NativeTurnID, NativeAcknowledgement, VerifiedResume, NativeRelease bool }
-type EventKind string
+type Config map[string]any
+type Capabilities map[string]bool
+type SessionState string
 
 const (
-	RuntimeStatusChanged  EventKind = "runtime.status_changed"
-	OperationStateChanged EventKind = "operation.state_changed"
-	OperationFailed       EventKind = "operation.failed"
-	SessionOpened         EventKind = "session.opened"
-	SessionResumed        EventKind = "session.resumed"
-	SessionStateChanged   EventKind = "session.state_changed"
-	AgentAssociated       EventKind = "agent.associated"
-	AgentCreated          EventKind = "agent.created"
-	AgentStateChanged     EventKind = "agent.state_changed"
-	TaskChanged           EventKind = "task.changed"
-	TaskSnapshot          EventKind = "task.snapshot"
-	UsageUpdated          EventKind = "usage.updated"
-	ObservationChanged    EventKind = "observation.changed"
-	SessionReady          EventKind = "session_ready"
-	TurnStarted           EventKind = "turn_started"
-	TurnCompleted         EventKind = "turn_completed"
-	MessageCompleted      EventKind = "message.completed"
-	MessageStarted        EventKind = "message.started"
-	MessageDelta          EventKind = "message.delta"
-	ToolAnnounced         EventKind = "tool.announced"
-	ToolUpdated           EventKind = "tool.updated"
-	ToolCompleted         EventKind = "tool.completed"
-	InteractionRequested  EventKind = "interaction.requested"
-	InteractionResolved   EventKind = "interaction.resolved"
-	Failure               EventKind = "failure"
-	Unknown               EventKind = "diagnostic"
-	ReasoningCompleted    EventKind = "reasoning.completed"
-	ReasoningDelta        EventKind = "reasoning.delta"
-	Plan                  EventKind = "plan.updated"
-	Metadata              EventKind = "session.metadata_changed"
+	Unknown        SessionState = "unknown"
+	Idle           SessionState = "idle"
+	Running        SessionState = "running"
+	RequiresAction SessionState = "requires_action"
 )
 
-// Diagnostic retains correlation without exposing arbitrary native payloads.
-type Diagnostic struct {
-	Classification string `json:"classification,omitempty"`
-	CallRef        string `json:"callRef,omitempty"`
-	NativeKind     string `json:"sourceKind"`
-	SHA256         string `json:"sha256"`
+type Address struct {
+	Namespace   string `json:"namespace"`
+	SessionName string `json:"sessionName"`
 }
+type SessionSpec struct {
+	Cwd            string   `json:"cwd"`
+	SystemPrompt   string   `json:"systemPrompt,omitempty"`
+	AdditionalDirs []string `json:"additionalDirs,omitempty"`
+}
+
+// Source is execution-only association. It never enters event JSON/history.
+// A run token is fixed at open; work is the original native turn identity.
+type Source struct{ run, work string }
+
+func NewSource() Source                      { return Source{run: UUID()} }
+func (s Source) WithWork(work string) Source { return Source{run: s.run, work: work} }
+func (s Source) SameRun(other Source) bool   { return s.run != "" && s.run == other.run }
+func (s Source) Work() string                { return s.work }
+
+type DriverSession struct {
+	SessionID    string
+	Capabilities Capabilities
+	Source       Source
+}
+type ContentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func Text(text string) ContentBlock { return ContentBlock{Type: "text", Text: text} }
+
+type Input struct {
+	Content []ContentBlock `json:"content"`
+}
+type Acceptance struct {
+	Sent           *bool `json:"sent,omitempty"`
+	NativeAccepted *bool `json:"nativeAccepted,omitempty"`
+	NativeRecorded *bool `json:"nativeRecorded,omitempty"`
+}
+
+func Yes() *bool { v := true; return &v }
+
+type InputReceipt struct {
+	Submission string     `json:"submission"`
+	Acceptance Acceptance `json:"acceptance"`
+}
+type Stream interface {
+	Next(context.Context) (SessionEvent, error)
+}
+type Driver interface {
+	Events() (Stream, error)
+	Start(context.Context) (Capabilities, error)
+	OpenSession(context.Context, Address, SessionSpec) (DriverSession, error)
+	SendPrompt(context.Context, string, Input) (InputReceipt, error)
+	CloseSession(context.Context, string) error
+	Stop(context.Context) error
+}
+type Factory interface {
+	Validate(Config) error
+	New(Config) (Driver, error)
+}
+
+// Registry manages only type factories and unstarted/current Driver mappings.
+type Registry struct {
+	mu        sync.Mutex
+	factories map[string]Factory
+	drivers   map[string]Driver
+}
+
+func NewRegistry(factories map[string]Factory) *Registry {
+	copied := map[string]Factory{}
+	for k, v := range factories {
+		copied[k] = v
+	}
+	return &Registry{factories: copied, drivers: map[string]Driver{}}
+}
+func (r *Registry) ValidateConfig(kind string, c Config) error {
+	r.mu.Lock()
+	f := r.factories[kind]
+	r.mu.Unlock()
+	if f == nil {
+		return fmt.Errorf("unsupported runtime type %q", kind)
+	}
+	return f.Validate(c)
+}
+func (r *Registry) Create(kind, name string, c Config) (Driver, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.drivers[name] != nil {
+		return nil, errors.New("driver already registered")
+	}
+	f := r.factories[kind]
+	if f == nil {
+		return nil, errors.New("unsupported runtime type")
+	}
+	if err := f.Validate(c); err != nil {
+		return nil, err
+	}
+	d, err := f.New(c)
+	if err == nil {
+		r.drivers[name] = d
+	}
+	return d, err
+}
+func (r *Registry) Get(name string) (Driver, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d := r.drivers[name]
+	if d == nil {
+		return nil, errors.New("driver not registered")
+	}
+	return d, nil
+}
+func (r *Registry) Remove(name string) { r.mu.Lock(); defer r.mu.Unlock(); delete(r.drivers, name) }
