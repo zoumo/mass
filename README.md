@@ -1,16 +1,27 @@
 # MASS
 
+[harness](harness/index.md) 是指导当前项目演进和发展的唯一真相源，包括 [agent 工作原则](harness/principles/index.md)、架构、深层模块设计与 API 合同。agent 写入 harness 前须有人类明确要求或事先同意。
+以下运行与构建说明描述现有实现；不代表实现已符合新版设计。
+
 MASS serves native Codex text and commandExecution sessions over HTTP/SSE.
 It supports isolated concurrent threads on one host per runtimeName, once-only
 command approvals, cancellation, per-thread archive, explicit strict recovery,
-bounded fact delivery and owned runtime Stop. See the [current API](docs/http-api.md)
-and [testing](docs/testing.md). Codex is the only
+bounded fact delivery and owned runtime Stop. See the [HTTP binding draft](harness/bindings/http.md)
+and [testing principles](harness/principles/testing.md) for the development contract. Codex is the only
 implemented provider; configuration mutation, questions, background lifecycle and
 database projections remain unavailable. Rust contains no ACP transport/SDK/parser,
 configuration, fallback or executable ACP acceptance entry point. Retired v1 code, historical research and raw private evidence are absent from this source snapshot.
 
-The isolated [experimental Go runtime](mass-go/README.md) provides offline-tested
-Codex/Claude SDK adapters. It is separate from the Rust product and root Make targets.
+The Go [massctl client](mass-go/docs/massctl.md) calls the Rust server. Build it
+with `make build-massctl` and run `./dist/massctl --help`. Root Make checks
+include this client and require Go 1.26.9.
+
+`make build-go` builds `dist/massd-go` and the CLI without Rust. The experimental
+[Go server](mass-go/docs/http-server.md) exposes Codex/Claude over HTTP+SSE.
+
+The isolated [experimental Go runtime](mass-go/README.md) provides Codex/Claude
+SDK adapters with offline tests and an explicit [real Agent validation group](mass-go/tests/native/README.md).
+It is separate from the Rust product and root Make targets.
 
 
 The Rust workspace lives entirely in [mass-rs](mass-rs/README.md), leaving the
@@ -97,8 +108,7 @@ Only original native complete items enter the append-and-flush Journal. Preview 
 Rust native acceptance: set `MASS_TEST_CODEX` to the reviewed native binary and
 `MASS_TEST_CODEX_SHA256` to its reviewed digest, then run `make test-native`.
 It explicitly uses existing auth and real models. `make test` runs the offline
-module integration and official SDK transport group. See [test layout and
-execution groups](docs/testing.md).
+module integration and official SDK transport group. See [testing and acceptance principles](harness/principles/testing.md).
 The Rust aggregate records the selected test names, exit results, source hashes,
 SDK observations, and a second owned-process identity readback. Production massd
 has no acceptance recorder or fault configuration.
@@ -109,15 +119,15 @@ The full group also requires `MASS_TEST_MASSD` to name a native release `massd`
 with its adjacent manifest. `MASS_TEST_CODEX_HOME` optionally selects an existing
 absolute Codex auth/provider configuration directory for release acceptance.
 
-See [native contracts](docs/design/native-runtime-connectors.md) and the [glossary](docs/glossary.md). Database/query projections remain unavailable.
+See the [Runtime design](harness/modules/runtime/design.md) and [glossary](harness/glossary.md). Database/query projections remain unavailable.
 
 
 
-Official Rust client/protocol are fixed to Codex revision `d27764b82f7118f674371e6d6e76271d9d606edb`; runtime launches the fixed binary on a private Unix socket WebSocket endpoint and the official client owns handshake/routing. Rust 1.95+ is the supported build baseline. No /tmp path dependency, copied SDK, or hand-written framing is used. The upstream client transitively includes embedded-server crates even though MASS uses only its remote client. The retained official client has a reversible repository-local bounds/shutdown patch; its pristine source and patch are verified by make check. See the [precise capacity boundary](docs/design/native-runtime-connectors.md#native-ticket-06-bounded-core-delivery-and-shared-transport-pressure). `CARGO_FLAGS` defaults empty; any local `--ignore-rust-version` experiment must be explicit and is not a supported-toolchain pass.
+Official Rust client/protocol are fixed to Codex revision `d27764b82f7118f674371e6d6e76271d9d606edb`; runtime launches the fixed binary on a private Unix socket WebSocket endpoint and the official client owns handshake/routing. Rust 1.95+ is the supported build baseline. No /tmp path dependency, copied SDK, or hand-written framing is used. The upstream client transitively includes embedded-server crates even though MASS uses only its remote client. The retained official client has a reversible repository-local bounds/shutdown patch; its pristine source and patch are verified by make check. `CARGO_FLAGS` defaults empty; any local `--ignore-rust-version` experiment must be explicit and is not a supported-toolchain pass.
 
 The product is a Cargo workspace with seven responsibility crates and the daemon
-composition package. See [crate Interfaces and ownership](docs/design/crate-workspace.md)
-and [testing](docs/testing.md). Direct Cargo
+composition package. See the [module architecture](harness/architecture.md)
+and [testing principles](harness/principles/testing.md). Direct Cargo
 build/test commands from this directory require `--manifest-path mass-rs/Cargo.toml
 --workspace --all-targets`; the Make entry points include these flags. The
 acceptance source hash inventory includes every crate source and manifest.
@@ -135,9 +145,7 @@ assertions and orchestration execute in Rust. Tests use isolated workspaces and
 retain private evidence under `MASS_TEST_EVIDENCE` (or the system temporary
 folder). Keep failed attempts. Native children and explicit acceptance teardown
 are accounted separately by PID/start identity.
-The macOS native single-file release gate is separate; see its
-[build/run guide](docs/single-file-delivery.md) and
-[delivery design](docs/design/single-file-delivery.md). Stage acceptance alone
+The current macOS native release gate uses `make release` and `make verify-release`. Stage acceptance alone
 does not establish release linking or execution. Linux and cross-compilation
 were deferred by the user.
 
@@ -145,8 +153,7 @@ were deferred by the user.
 
 The root Makefile delegates to `mass-rs/Cargo.toml`; there is no root Cargo
 workspace. The daemon package/import names are `mass-daemon` / `mass_daemon`;
-the binary is `massd`. See the [documentation index](docs/README.md) and
-[layout, data and rollback guide](docs/root-migration.md).
+the binary is `massd`. See the [development documentation](harness/index.md).
 
 Existing data stays in its original directory, including local `data/` and
 `rustv2/data/`. Without a config, the daemon selects `<launch-cwd>/data`.

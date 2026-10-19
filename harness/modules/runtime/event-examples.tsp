@@ -1,0 +1,327 @@
+import "./session-events.tsp";
+
+namespace MASS.Design.Examples;
+
+/** Human-authored sample values; compiler checked and exported to event-examples.json. */
+@example(#{
+  events: #[
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      itemId: "user_1",
+      type: SessionEventType.userMessage,
+      time: utcDateTime.fromISO("2026-10-16T10:00:01Z"),
+      payload: #{
+        messageId: "user_1",
+        content: #[#{ type: "text", text: "请检查 README。" }],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c101",
+      _meta: #{ labels: #["example"], attempt: 1, preview: true, extra: null },
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      itemId: "msg_1",
+      type: SessionEventType.agentMessage,
+      time: utcDateTime.fromISO("2026-10-16T10:00:10Z"),
+      payload: #{
+        messageId: "msg_1",
+        content: #[#{ type: "text", text: "README 已检查。" }],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c102",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      itemId: "thought_1",
+      type: SessionEventType.agentThinking,
+      time: utcDateTime.fromISO("2026-10-16T10:00:04Z"),
+      payload: #{
+        messageId: "thought_1",
+        content: #[#{ type: "text", text: "先查看项目说明。" }],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c103",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      itemId: "tool_1",
+      type: SessionEventType.agentToolCall,
+      time: utcDateTime.fromISO("2026-10-16T10:00:05Z"),
+      payload: #{
+        id: "tool_1",
+        kind: "read",
+        title: "读取 README",
+        status: "in_progress",
+        rawInput: #{ path: "README.md" },
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c104",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      itemId: "tool_1",
+      type: SessionEventType.agentToolResult,
+      time: utcDateTime.fromISO("2026-10-16T10:00:07Z"),
+      payload: #{
+        id: "tool_1",
+        kind: "read",
+        title: "读取 README",
+        status: "completed",
+        rawInput: #{ path: "README.md" },
+        content: #[
+          #{ type: "text", text: "# Project\n" },
+          #{ type: "text", text: "项目说明正文。\n" }
+        ],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c105",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      itemId: "msg_1",
+      type: SessionEventType.agentMessageChunk,
+      time: utcDateTime.fromISO("2026-10-16T10:00:09Z"),
+      payload: #{
+        messageId: "msg_1",
+        content: #[#{ type: "text", text: "README 已" }],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c106",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      itemId: "thought_1",
+      type: SessionEventType.agentThinkingChunk,
+      time: utcDateTime.fromISO("2026-10-16T10:00:03Z"),
+      payload: #{
+        messageId: "thought_1",
+        content: #[#{ type: "text", text: "先查看" }],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c107",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      itemId: "tool_1",
+      type: SessionEventType.agentToolCallChunk,
+      time: utcDateTime.fromISO("2026-10-16T10:00:06Z"),
+      payload: #{
+        id: "tool_1",
+        content: #[#{ type: "text", text: "# Project\n" }],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c108",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      itemId: "plan_1",
+      type: SessionEventType.agentPlan,
+      time: utcDateTime.fromISO("2026-10-16T10:00:08Z"),
+      payload: #{
+        planId: "plan_1",
+        entries: #[
+          #{ content: "检查 README", priority: "medium", status: "completed" }
+        ],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c109",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      type: SessionEventType.sessionStateUpdate,
+      time: utcDateTime.fromISO("2026-10-16T10:00:11Z"),
+      payload: #{
+        previousState: SessionState.running,
+        state: SessionState.idle,
+        stopReason: "end_turn",
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c10a",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      type: SessionEventType.sessionError,
+      time: utcDateTime.fromISO("2026-10-16T10:00:12Z"),
+      payload: #{ message: "Agent process exited unexpectedly" },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c10b",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      type: SessionEventType.sessionInfoUpdate,
+      time: utcDateTime.fromISO("2026-10-16T10:00:00Z"),
+      payload: #{
+        title: "检查 README",
+        updatedAt: utcDateTime.fromISO("2026-10-16T10:00:00Z"),
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c10c",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      type: SessionEventType.sessionConfigOptionUpdate,
+      time: utcDateTime.fromISO("2026-10-16T10:00:00Z"),
+      payload: #{
+        configOptions: #[
+          #{
+            id: "mode",
+            name: "Mode",
+            type: "select",
+            currentValue: "default",
+            options: #[
+              #{ value: "default", name: "Default" },
+              #{ value: "read-only", name: "Read Only" }
+            ],
+          },
+          #{ id: "auto", name: "Auto", type: "boolean", currentValue: false },
+          #{
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: "fast",
+            options: #[
+              #{
+                group: "recommended",
+                name: "Recommended",
+                options: #[#{ value: "fast", name: "Fast" }],
+              }
+            ],
+          }
+        ],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c10d",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      type: SessionEventType.sessionAvailableCommandsUpdate,
+      time: utcDateTime.fromISO("2026-10-16T10:00:00Z"),
+      payload: #{
+        availableCommands: #[#{ name: "review", description: "检查当前改动" }],
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c10e",
+    },
+    #{
+      sessionName: "demo",
+      sessionId: "s1",
+      type: SessionEventType.sessionUsageUpdate,
+      time: utcDateTime.fromISO("2026-10-16T10:00:00Z"),
+      payload: #{
+        used: 12000,
+        size: 200000,
+        cost: #{ amount: 0.03, currency: "USD" },
+      },
+      `namespace`: "default",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c10f",
+    },
+    #{
+      `namespace`: "default",
+      sessionName: "demo",
+      sessionId: "s1",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c110",
+      time: utcDateTime.fromISO("2026-10-16T10:00:05Z"),
+      type: SessionEventType.interactionRequested,
+      payload: #{
+        interaction: "permission_1",
+        blocking: true,
+        request: #{
+          kind: "permission",
+          toolCallId: "tool_1",
+          title: "允许读取 README？",
+          options: #[
+            #{ optionId: "allow-once", name: "允许一次", kind: "allow_once" },
+            #{ optionId: "reject-once", name: "拒绝", kind: "reject_once" }
+          ],
+        },
+      },
+    },
+    #{
+      `namespace`: "default",
+      sessionName: "demo",
+      sessionId: "s1",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c111",
+      time: utcDateTime.fromISO("2026-10-16T10:00:06Z"),
+      type: SessionEventType.interactionClosed,
+      payload: #{ interaction: "permission_1", outcome: "answered" },
+    }
+  ],
+  interactionRequests: #[
+    #{
+      kind: "form",
+      message: "选择实现策略",
+      requestedSchema: #{
+        type: "object",
+        properties: #{ strategy: #{ type: "string" } },
+      },
+    },
+    #{
+      kind: "url",
+      message: "完成外部授权",
+      url: "https://example.com/authorize",
+    }
+  ],
+  contentBlocks: #[
+    #{
+      type: "text",
+      text: "# 检查结果\n文本可以包含 Markdown。",
+      annotations: #{ audience: #["user"], priority: 0.8 },
+    },
+    #{
+      type: "image",
+      mimeType: "image/png",
+      data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXioAAAAASUVORK5CYII=",
+      uri: "urn:mass:example:image",
+    },
+    #{
+      type: "audio",
+      mimeType: "audio/wav",
+      data: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQIAAAAAAA==",
+    },
+    #{
+      type: "resource",
+      resource: #{
+        uri: "urn:mass:example:result",
+        mimeType: "application/json",
+        text: "{\"passed\":12,\"failed\":0}",
+      },
+    },
+    #{
+      type: "resource",
+      resource: #{
+        uri: "urn:mass:example:binary",
+        mimeType: "application/octet-stream",
+        blob: "AAEC",
+      },
+    },
+    #{
+      type: "resource_link",
+      uri: "urn:mass:example:readme",
+      name: "README.md",
+      mimeType: "text/markdown",
+      title: "项目说明",
+      description: "仅引用资源，不内嵌正文。",
+      size: 1024,
+    }
+  ],
+})
+model SessionEventExamples {
+  events: SessionEvent[];
+  contentBlocks: ContentBlock[];
+  interactionRequests: InteractionRequest[];
+}

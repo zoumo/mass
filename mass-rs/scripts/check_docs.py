@@ -23,7 +23,11 @@ def anchors(text):
 def inspect():
     files = [PROJECT / name for name in ['README.md', 'AGENTS.md', 'GLOSSARY.md', 'CLAUDE.md',
                                         'skills/README.md', 'mass-rs/README.md', 'mass-go/README.md']]
-    files += sorted((PROJECT / 'docs').rglob('*.md'))
+    for root in ['harness', 'mass-go/docs', 'mass-go/examples', 'mass-go/tests']:
+        files += sorted(path for path in (PROJECT / root).rglob('*.md')
+                        if 'node_modules' not in path.parts)
+    assert not (PROJECT / 'docs').exists(), 'Root docs/ was retired; use harness/'
+    assert (PROJECT / 'harness/index.md').is_file(), 'Missing unified development entry point'
     failures = []
     checked = 0
     for path in files:

@@ -1,0 +1,19 @@
+{
+  "name": "mass-design-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Language-independent resource and runtime module contracts",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "check": "tsp compile ../modules/runtime/main.tsp --no-emit --warn-as-error && tsp compile ../modules/service/main.tsp --no-emit --warn-as-error && tsp compile ../modules/service/coordination.tsp --no-emit --warn-as-error && tsp compile ../modules/store/main.tsp --no-emit --warn-as-error && npm run examples:check",
+    "format": "tsp format \"../modules/**/*.tsp\" \"../shared/*.tsp\" \"*.tsp\"",
+    "format:check": "tsp format --check \"../modules/**/*.tsp\" \"../shared/*.tsp\" \"*.tsp\"",
+    "examples": "node export-examples.mjs",
+    "examples:check": "node export-examples.mjs --check"
+  },
+  "devDependencies": {
+    "@typespec/compiler": "1.17.0"
+  }
+}
