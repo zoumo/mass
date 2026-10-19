@@ -31,7 +31,9 @@ func (s *lifecycleSuite) TestProvisionalPermissionHasOneBudgetOwner() {
 				`client control {"type":"control_response","response":{"subtype":"success","request_id":"early-permission","response":{"behavior":"deny","message":""}}}`,
 				`server protocol {"type":"result","subtype":"success","session_id":"budget-root","is_error":false}`)
 			config := s.singleScenario("claude", frames)
-			config.CreationLimits = rt.CreationLimits{Facts: 2, Bytes: tc.bytes, Timeout: 2 * time.Second}
+			// This checks byte ownership, not process launch speed. The creation
+			// deadline also includes mock startup (notably under -race/load).
+			config.CreationLimits = rt.CreationLimits{Facts: 2, Bytes: tc.bytes, Timeout: 8 * time.Second}
 			wrapper, exited := testutil.TrackProcess(s.T(), config.Executable)
 			config.Executable = wrapper
 			_, worker := s.register("claude", config)
@@ -43,7 +45,7 @@ func (s *lifecycleSuite) TestProvisionalPermissionHasOneBudgetOwner() {
 					var err error
 					op, err = worker.GetOperation(op.OperationRef)
 					return err == nil && (op.Phase == "opened" || op.Phase == "outcome_unknown")
-				}, 6*time.Second, time.Millisecond)
+				}, 10*time.Second, time.Millisecond)
 				s.Require().Equal("opened", op.Phase, "%+v", op)
 				s.Require().NotNil(op.Key)
 				session, err := worker.GetSession(*op.Key)

@@ -31,6 +31,7 @@ func messageEvent(native types.Event, id string) (rt.Event, bool) {
 		ToModel     *string `json:"toModel"`
 		Item        struct {
 			ID, Type string
+			Phase    string `json:"phase"`
 			Text     json.RawMessage
 			Content  json.RawMessage
 			Summary  json.RawMessage
@@ -137,7 +138,7 @@ func messageEvent(native types.Event, id string) (rt.Event, bool) {
 				return fail()
 			}
 			e.Kind = rt.MessageCompleted
-			e.Message = &rt.MessagePayload{MessageRef: d.Item.ID, Role: role, Stage: stage, Content: content}
+			e.Message = &rt.MessagePayload{MessageRef: d.Item.ID, Role: role, Stage: stage, Content: content, Phase: d.Item.Phase}
 		case "reasoning":
 			if d.Item.ID == "" {
 				return fail()

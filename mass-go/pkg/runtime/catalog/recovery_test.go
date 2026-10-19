@@ -48,7 +48,7 @@ func (s *lifecycleSuite) recoveryConfig(kind, returned string, interactions ...b
 	var first, next []string
 	if kind == "codex" {
 		first = append(codexInit(), codexThread(2, "native-A")...)
-		result := strings.Replace(codexThread(2, returned)[1], `"ephemeral":true`, `"ephemeral":false`, 1)
+		result := codexThread(2, returned)[1]
 		next = append(codexInit(), `c2s {"id":2,"method":"thread/resume","params":{"threadId":"native-A","excludeTurns":true}}`, result)
 		turn := codexTurn(3, "native-A")
 		turn[0] = strings.Replace(turn[0], `"text":"hello"`, `"text":"after resume"`, 1)
@@ -440,7 +440,7 @@ func (s *lifecycleSuite) TestSharedResumeQuarantinesHistoricalRequests() {
 	frames := append(codexInit(), codexThread(2, "native-A")...)
 	frames = append(frames, codexTurn(3, "native-A")...)
 	// The resume response itself is the consumption witness for local detach.
-	frames = append(frames, `c2s {"id":4,"method":"thread/resume","params":{"threadId":"native-A","excludeTurns":true}}`, strings.Replace(codexThread(4, "native-A")[1], `"ephemeral":true`, `"ephemeral":false`, 1))
+	frames = append(frames, `c2s {"id":4,"method":"thread/resume","params":{"threadId":"native-A","excludeTurns":true}}`, codexThread(4, "native-A")[1])
 	frames = append(frames, permissionFrame("codex", `"old-request"`, "native-A"))
 	turn := codexTurn(5, "native-A")
 	for i := range turn {

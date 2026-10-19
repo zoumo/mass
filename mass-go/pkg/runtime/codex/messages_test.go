@@ -16,6 +16,7 @@ func (s *runtimeSuite) TestTypedMessageCorrelation() {
 	_, session, ctx := s.open(frames)
 	_, err := session.Submit(ctx, rt.TextInput("hello"))
 	s.Require().NoError(err)
+	projector := rt.NewEventProjector("demo", "/synthetic")
 	for _, stage := range []string{"delta", "delta", "completed"} {
 		event := s.nextMapped(session, ctx)
 		s.Require().NotNil(event.Message, "stage=%s event=%+v error=%+v", stage, event, event.Error)
@@ -26,6 +27,16 @@ func (s *runtimeSuite) TestTypedMessageCorrelation() {
 		s.Equal("session", event.Scope)
 		s.NotEmpty(event.ConnectionEpoch)
 		s.Positive(event.Seq)
+		public, err := projector.Project(event)
+		s.Require().NoError(err)
+		s.Require().NotNil(public)
+		if stage == "delta" {
+			s.Equal("agent.message_chunk", public.Type)
+			s.Zero(public.Seq)
+		} else {
+			s.Equal("agent.message", public.Type)
+			s.Equal(uint64(1), public.Seq)
+		}
 		data, err := json.Marshal(event)
 		s.Require().NoError(err)
 		var decoded rt.Event

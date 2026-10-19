@@ -240,8 +240,14 @@ func (s *publishedSession) failForegroundLocked() {
 	if s.active == nil || s.active.finished {
 		return
 	}
-	s.active.receipt.Outcome = "unknown"
 	s.foreground = "unknown"
+	// Stream termination says nothing about whether an in-flight Submit was
+	// accepted. Let its own result settle delivery evidence. A proven native ACK
+	// or completed write survives EOF; completion remains independently unknown.
+	if s.active.submitting || isKnown(s.active.receipt.NativeAcknowledged) || isKnown(s.active.receipt.WriteCompleted) {
+		return
+	}
+	s.active.receipt.Outcome = "unknown"
 	s.active.receipt.Failure = failure("outcome_unknown", s.active.receipt.OperationRef, s.Key())
 	s.emitSubmissionLocked(s.active)
 }

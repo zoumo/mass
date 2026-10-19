@@ -67,7 +67,7 @@ func (s *runtimeSuite) TestEventMutationCannotBroadenAuthority() {
 func (s *runtimeSuite) TestTaggedNativeIDsRemainDistinctAcrossSessions() {
 	second := strings.ReplaceAll(startup()[4], `"id":2`, `"id":3`)
 	second = strings.ReplaceAll(second, "native-thread", "other-thread")
-	frames := append(startup(), `c2s {"id":3,"method":"thread/start","params":{"ephemeral":true}}`, second)
+	frames := append(startup(), `c2s {"id":3,"method":"thread/start","params":{"ephemeral":false}}`, second)
 	frames = append(frames, strings.ReplaceAll(turnStart()[0], `"id":3`, `"id":4`), strings.ReplaceAll(turnStart()[1], `"id":3`, `"id":4`),
 		`s2c {"id":7,"method":"item/commandExecution/requestApproval","params":{"threadId":"native-thread","turnId":"native-turn","itemId":"tool","startedAtMs":1,"command":"synthetic"}}`,
 		`c2s {"id":5,"method":"turn/start","params":{"threadId":"other-thread","input":[{"type":"text","text":"hello","text_elements":[]}]}}`,

@@ -1,11 +1,18 @@
 # Go protocol Runtime
 
+Development follows [harness](../harness/index.md). This guide describes existing
+Go behavior and implementation gaps; it does not override the shared design.
+
 This isolated module adapts the public Go SDK's Codex and Claude process
 transports to the common `pkg/runtime.Runtime` interface. SDK commit
 `6dbf3e9c8264e7d562ab7ffbf382490afb1aa8bc` is pinned by a normal module requirement,
-without replace or go.work. It has no daemon or HTTP service.
+without replace or go.work. The experimental `cmd/massd` server exposes these
+runtimes through HTTP JSON-RPC and SSE; see [HTTP server](docs/http-server.md).
 
-The [language-independent Runtime contract](docs/runtime-contract.md) describes
+The [massctl CLI](docs/massctl.md) lives in `cmd/massctl` in this same Go module.
+`make build-go` at the repository root builds both Go programs.
+
+The [current Go Runtime behavior](docs/runtime-contract.md) describes
 available behavior and remaining gaps. Run the [offline public consumer](examples/offline/README.md)
 with temporary synthetic SDK mock CLIs; it never selects an installed Agent.
 Runtime/operation lifecycle events and dynamic capability availability records
@@ -98,6 +105,11 @@ message UUIDs and later conflicting root IDs cannot replace that identity.
 Conflicting root IDs produce a safe diagnostic. No native ID, session name,
 native turn ID or initial input is generated.
 
+Codex creates non-ephemeral native threads so the original identity can be
+recovered after its app-server exits. Native history stays in the configured
+Codex account/data scope; this is not MASS-owned durable history or native
+release. Stop and local detach do not delete that history.
+
 CreateSession returns a JSON-serializable CreationOperation. Its operationRef
 identifies an operation and is rejected as a session address. Before native
 identity, Key is absent and no Session appears in GetSession/ListSessions.
@@ -189,7 +201,10 @@ calls receive busy; other sessions progress independently. Completion-before-ACK
 is retained and reconciled against the exact returned native work ID. There is
 no current-work assignment of unproven native IDs. SDK local timeout, caller
 wait cancellation after handoff or disconnect can leave the original operation
-unknown. The SDK can discard late call replies; MASS neither repairs those
+unknown. A successfully observed native ACK (or complete Claude input write)
+survives a later stream EOF, including EOF racing the Submit return. The
+foreground/completion observation can still be unknown; acceptance never proves
+completion or native release. The SDK can discard late call replies; MASS neither repairs those
 replies nor automatically retries input. Rejected native requests and unknown
 delivery have distinct safe errors with operation scope and acceptance evidence.
 
@@ -227,7 +242,10 @@ Snapshots may precede public dequeue, and quota failure is explicit incompletene
 An upstream SDK queue can still accumulate; these are Runtime-owned bounds,
 not a whole-process memory guarantee.
 
-The event stream uses a versioned, data-only envelope and concrete payloads.
+The low-level protocol observation stream uses a versioned, data-only envelope and concrete payloads.
+Public HTTP/SSE events use `runtime.PublicEvent` and the repository's shared
+schemaVersion 2 contract via `runtime.EventProjector`; protocol observations must
+not be serialized directly into public history.
 See the [event contract](docs/events.md) for supported mappings, content presence,
 tool lifecycle, stream association and decode rules. Tools retain structured
 input/output, stable call references and explicit execution/failure evidence.
@@ -423,8 +441,9 @@ CODEX_MOCK_SCENARIO or CLAUDE_MOCK_SCENARIO in Config.Env. The public SDK's
 [mock guide](https://github.com/zoumo/agent-sdk-go/blob/6dbf3e9c8264e7d562ab7ffbf382490afb1aa8bc/docs/mock.md)
 and the integration fixtures describe the synthetic scenario format.
 
-Tests never invoke real agents, models or credential discovery. Real-CLI
-compatibility remains unverified. No GitHub workflows are configured in this
+Default tests never invoke real agents, models or credential discovery. The
+explicit [native group](tests/native/README.md) uses installed CLIs and real
+models. No GitHub workflows are configured in this
 repository; local Go checks are not remote CI evidence. This experiment does
 not change the production Rust runtime.
 
@@ -437,7 +456,10 @@ and usage counters are never aggregated by the Runtime. Public mock scenarios
 cover live/resumed/replayed creation evidence, Codex history-seeded association,
 Claude enrichment and stale/no-ID runs, child message/metadata isolation, background
 replacement and lossless scoped accounting. Native stale classification is retained
-only where the public SDK exposes it; no history-import or universal child-observation
+only where the public SDK exposes it. Codex descendant content requires an
+explicit SDK association/creation whose parent is already in the subscription
+tree. Expired unresolved foreign notifications become safe diagnostics; a
+different thread ID alone cannot establish child membership. No history-import or universal child-observation
 coverage is claimed.
 
 
@@ -502,8 +524,9 @@ mise exec go@1.26.9 -- go run ./examples/offline
 
 Run ordinary and race suites sequentially. Tests build only the public SDK mock
 commands and use strict synthetic scenarios with explicit child environments.
-These checks have been exercised on macOS arm64. Other platforms, live native
-CLIs, real models and external server connections remain unverified. Root Make
+These checks have been exercised on macOS arm64. Real CLI/model checks are
+separate and explicitly selected as described in the native group. Other
+platforms and external server connections remain unverified. Root Make
 targets are for the separate Rust workspace.
 
 ## Lifecycle observations and capability availability
