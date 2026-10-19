@@ -1,7 +1,7 @@
-# MASS Go — Ticket02 vertical slice
+# MASS Go — Ticket03 vertical slice
 
 The authoritative project design is [harness](../harness/index.md). This Go
-implementation currently delivers Codex no-input creation, independent text input,
+implementation currently delivers Codex/Claude no-input creation, independent text input,
 file-backed identity/history and live observation through Service. It replaces the
 old managed/catalog runtime and HTTP projection. There is no HTTP server yet.
 
@@ -9,7 +9,7 @@ Package responsibilities:
 
 - `pkg/resource`: shared persistent metadata/spec/status values.
 - `pkg/runtime`: Registry/Driver contracts, shared execution values and the single
-  sealed SessionEvent model; `pkg/runtime/codex` uses the pinned real SDK.
+  sealed SessionEvent model; `pkg/runtime/codex` and `pkg/runtime/claude` use the pinned real SDKs.
 - `pkg/store`: metadata/history interfaces; `pkg/store/file` holds complete authority.
 - `pkg/service`: creation, the exclusive Driver consumer, identity binding, ordered
   persistence and publication to independent bounded subscriptions.
@@ -17,8 +17,7 @@ Package responsibilities:
 
 All examples below are synthetic. The SDK mock never calls a model or executes a
 real tool. No account or personal configuration is required. The factory currently
-requires an explicit absolute mock executable and scenario; it declares only text
-input support. `examples/sdkprobe` remains the independent Ticket01 protocol probe.
+requires an explicit absolute mock executable and scenario; both adapters support text input and native permission/question handles. `examples/sdkprobe` remains the independent Ticket01 protocol probe.
 
 ## Run
 
@@ -67,10 +66,47 @@ Initial file layout, encoding and commit semantics are documented in
 [docs/file-store.md](docs/file-store.md). These are implementation choices while
 harness storage encoding and file protocol remain open.
 
-Not delivered or validated in Ticket02: Claude in the new core; permissions/user
-questions; production Agent/model/account behavior; full resource CRUD/listing and
+Not delivered or validated: production Agent/model/account behavior; full resource CRUD/listing and
 activation recovery; cancellation, archive/resume; uncertain-operation recovery,
 crash/power-loss injection, old-run/work isolation and overload/fault acceptance;
 HTTP/SSE/final CLI; SQLite; Linux or Rust. Later tickets own those capabilities.
 The old product/native tests were removed with their replaced API; their historical
 passes do not validate this implementation.
+
+## Claude and prototype permission policy
+
+Build `github.com/zoumo/agent-sdk-go/claude/cmd/mock` and select it with
+`massd -claude /absolute/mock-claude -scenario /absolute/claude-basic.json`.
+Use `tests/vertical/testdata/claude-basic.json` with a private absolute `-cwd`.
+The executable explicitly installs `prototype.AutoApprovePermissions` through
+`service.NewWithPolicy`. `service.New` has no automatic approval policy.
+AskUserQuestion and Codex requestUserInput are form interactions; this policy
+leaves them unanswered. Applications answer the observed interaction reference
+through `Service.AnswerInteraction`, using explicit native question answers in
+`{action: accept, content: {answers: ...}}`. No arbitrary JSON Schema validation
+is claimed. Responses always use the original SDK handle and are never replayed.
+
+Claude creation requires a native system/init before input. The supplied scenario
+provides it synthetically; missing init fails and cleans only the owned process.
+This does not establish real Claude's no-input behavior. Claude SDK Options do
+not support systemPrompt/additionalDirs; these are rejected. Claude input accepts
+one text block. Text/thinking multi-block arrays retain order within each event
+kind, native message identity and empty text. Tool input must be an object under
+the pinned SDK; tool result content accepts string/array/null or absence. Dynamic
+values are decoded with UseNumber, including nested null/empty values. Unsupported
+complete content types fail the Session rather than silently becoming text.
+Only message identity is retained for partials, never accumulated content.
+
+Permission replies prove local writes (`sent=true`) only. They do not prove native
+acceptance, tool execution or successful completion. These SDK paths lack an
+explicit native acceptance acknowledgment for replies, so no interaction_closed
+is fabricated from the write. Automatic cancellation/expiry notifications and
+pending-interaction queries are not yet implemented. At most one answer is sent
+per reference; invalid or uncertain attempts cannot be retried under that same
+reference. Questions must be answered before normal shutdown of unsettled work.
+
+Ticket03 `tests/vertical` covers both agents' automatic and manual permission
+paths, explicit questions, native initialization, durable publication, Claude
+multi-block thinking/text, delta-only exclusion, dynamic tool values, and failed
+opens that leave a healthy session usable. Normal/failure cleanup reads back the
+process table. These scenarios are synthetic; no real account/model is accessed.

@@ -2,6 +2,7 @@
 package codex
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,20 +58,22 @@ type session struct {
 	active  bool
 	sending bool
 	state   *runtime.SessionState
+	err     error
 	done    chan struct{}
 }
 type Driver struct {
-	mu       sync.Mutex
-	op       sync.Mutex
-	options  options
-	pipe     *runtime.EventPipe
-	taken    bool
-	client   *sdk.Client
-	sessions map[string]*session
-	stopped  bool
-	life     context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	mu           sync.Mutex
+	op           sync.Mutex
+	options      options
+	pipe         *runtime.EventPipe
+	taken        bool
+	client       *sdk.Client
+	sessions     map[string]*session
+	stopped      bool
+	life         context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	interactions runtime.PendingInteractions
 }
 
 func (d *Driver) Events() (runtime.Stream, error) {
@@ -82,7 +85,9 @@ func (d *Driver) Events() (runtime.Stream, error) {
 	d.taken = true
 	return d.pipe, nil
 }
-func caps() runtime.Capabilities { return runtime.Capabilities{"textInput": true} }
+func caps() runtime.Capabilities {
+	return runtime.Capabilities{"textInput": true, "permission": true, "form": true}
+}
 func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	d.op.Lock()
 	defer d.op.Unlock()
@@ -107,6 +112,8 @@ func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	d.life = life
 	d.cancel = cancel
 	d.mu.Unlock()
+	d.wg.Add(1)
+	go d.requests(c)
 	return caps(), nil
 }
 func (d *Driver) OpenSession(ctx context.Context, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
@@ -166,7 +173,7 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	d.mu.Lock()
 	s := d.sessions[id]
 	c := d.client
-	if s == nil || d.stopped || s.active || s.sending {
+	if s == nil || d.stopped || s.active || s.sending || s.err != nil {
 		d.mu.Unlock()
 		return runtime.InputReceipt{}, errors.New("session unavailable or work unsettled")
 	}
@@ -211,12 +218,12 @@ func (d *Driver) observe(id string, s *session) {
 	defer close(s.done)
 	for event := range s.sub.Events() {
 		if err := d.adapt(id, s, event); err != nil {
-			d.pipe.End(err)
+			d.observationFailed(id, s, err)
 			return
 		}
 	}
 	if err := s.sub.Err(); err != nil {
-		d.pipe.End(fmt.Errorf("Codex observation ended: %w", err))
+		d.observationFailed(id, s, err)
 	}
 }
 func (d *Driver) adapt(id string, s *session, event ct.Event) error {
@@ -251,7 +258,7 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 			Phase            string                 `json:"phase"`
 			ExitCode         *int32                 `json:"exitCode"`
 			DurationMs       *int64                 `json:"durationMs"`
-			AggregatedOutput *string                `json:"aggregatedOutput"`
+			AggregatedOutput json.RawMessage        `json:"aggregatedOutput"`
 		} `json:"item"`
 	}
 	if err := json.Unmarshal(event.Params, &v); err != nil {
@@ -317,9 +324,16 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 			}
 			p := runtime.ToolResult{ExitCode: item.ExitCode, DurationMs: item.DurationMs, ID: item.ID, Kind: "execute", Status: status, Output: &runtime.Output{Availability: "unavailable", Completeness: "unknown"}}
 			if item.AggregatedOutput != nil {
-				value := any(*item.AggregatedOutput)
+				var value any
+				dec := json.NewDecoder(bytes.NewReader(item.AggregatedOutput))
+				dec.UseNumber()
+				if err := dec.Decode(&value); err != nil {
+					return err
+				}
 				p.RawOutput = &value
-				p.Content = []runtime.ContentBlock{runtime.Text(*item.AggregatedOutput)}
+				if text, ok := value.(string); ok {
+					p.Content = []runtime.ContentBlock{runtime.Text(text)}
+				}
 				p.Output = &runtime.Output{Availability: "provided", Completeness: "retained"}
 			}
 			return emit(item.ID, p, v.TurnID)
@@ -334,7 +348,7 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 		d.mu.Unlock()
 		return nil
 	}
-	if s.active || s.sending {
+	if (s.active || s.sending) && s.err == nil {
 		d.mu.Unlock()
 		return errors.New("work unsettled")
 	}
@@ -349,6 +363,7 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	}
 	d.mu.Lock()
 	delete(d.sessions, id)
+	d.interactions.RemoveSession(id)
 	d.mu.Unlock()
 	return nil
 }
@@ -372,10 +387,104 @@ func (d *Driver) Stop(ctx context.Context) error {
 			return err
 		}
 	}
-	d.wg.Wait()
-	d.pipe.End(nil)
 	if d.cancel != nil {
 		d.cancel()
 	}
+	d.wg.Wait()
+	d.pipe.End(nil)
 	return nil
+}
+
+// Requests is independent of observation; only original SDK handles may reply.
+func (d *Driver) requests(c *sdk.Client) {
+	defer d.wg.Done()
+	for {
+		select {
+		case <-d.life.Done():
+			return
+		case r, ok := <-c.Requests():
+			if !ok {
+				return
+			}
+			var v struct{ ThreadID, TurnID, ItemID string }
+			if json.Unmarshal(r.Params(), &v) != nil {
+				continue
+			}
+			d.mu.Lock()
+			s := d.sessions[v.ThreadID]
+			d.mu.Unlock()
+			if s == nil {
+				continue
+			}
+			request := runtime.PermissionRequest(v.ItemID, r.Method())
+			method := r.Method()
+			switch method {
+			case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
+			case "item/tool/requestUserInput":
+				var schema map[string]any
+				if json.Unmarshal(r.Params(), &schema) != nil {
+					continue
+				}
+				request = runtime.InteractionRequest{Kind: "form", Message: "Answer native Codex questions", RequestedSchema: schema}
+			default:
+				_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "unsupported native interaction", Reason: method}, v.TurnID)
+				continue
+			}
+			ref, err := d.interactions.Add(v.ThreadID, func(ctx context.Context, a map[string]any) error {
+				var response any
+				if method == "item/tool/requestUserInput" {
+					if len(a) != 2 || a["action"] != "accept" {
+						return errors.New("expected explicit form accept/content")
+					}
+					content, ok := a["content"].(map[string]any)
+					if !ok || content["answers"] == nil {
+						return errors.New("expected native question answers")
+					}
+					response = content
+				} else {
+					allow, err := runtime.PermissionAllowed(a)
+					if err != nil {
+						return err
+					}
+					decision := "decline"
+					if allow {
+						decision = "accept"
+					}
+					response = map[string]any{"decision": decision}
+				}
+				return r.Handle().Answer(ctx, response)
+			})
+			if err == nil {
+				state := runtime.RequiresAction
+				d.mu.Lock()
+				previous := s.state
+				s.state = &state
+				d.mu.Unlock()
+				err = d.emit(s, v.ThreadID, "", runtime.StateUpdate{PreviousState: previous, State: &state}, v.TurnID)
+			}
+			if err == nil {
+				err = d.emit(s, v.ThreadID, "", runtime.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, v.TurnID)
+			}
+			if err != nil {
+				_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "interaction delivery failed"}, v.TurnID)
+			}
+		}
+	}
+}
+func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, a map[string]any) (runtime.Acceptance, error) {
+	if err := d.interactions.Answer(ctx, id, ref, a); err != nil {
+		return runtime.Acceptance{}, err
+	}
+	// SDK Answer proves a write, not native acceptance or tool success.
+	return runtime.Acceptance{Sent: runtime.Yes()}, nil
+}
+
+func (d *Driver) observationFailed(id string, s *session, err error) {
+	d.mu.Lock()
+	s.err = err
+	previous := s.state
+	s.state = nil
+	d.mu.Unlock()
+	_ = d.emit(s, id, "", runtime.SessionError{Message: "Codex session observation failed"}, "")
+	_ = d.emit(s, id, "", runtime.StateUpdate{PreviousState: previous}, "")
 }
