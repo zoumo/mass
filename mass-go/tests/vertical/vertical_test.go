@@ -139,7 +139,7 @@ func TestCodexVertical(t *testing.T) {
 	dir := t.TempDir()
 	st, err := file.Open(dir, false)
 	require.NoError(t, err)
-	defer st.Close()
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	registry := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}})
 	gate := &identityGate{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
 	var releaseOnce sync.Once
@@ -189,6 +189,7 @@ func TestCodexVertical(t *testing.T) {
 	require.Equal(t, "codex-session", session.Status.SessionID)
 	id := resource.SessionRef{SessionID: session.Status.SessionID}
 	name := resource.SessionRef{Namespace: "default", Name: "demo"}
+	require.Eventually(t, func() bool { r, e := svc.GetSession(id); return e == nil && r.Status.State == runtime.Idle }, time.Second, 5*time.Millisecond)
 	byID, err := svc.GetSession(id)
 	require.NoError(t, err)
 	byName, err := svc.GetSession(name)

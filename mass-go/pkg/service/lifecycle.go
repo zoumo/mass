@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -97,7 +98,7 @@ func (s *Service) drainLane(ctx context.Context, l *lane) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return l.err
+	return l.commitErr
 }
 
 func offlineStatus(r *resource.Session, archived bool) {
@@ -150,6 +151,9 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 	s.mu.Lock()
 	l.closing = true
 	s.mu.Unlock()
+	if err = waitAdmission(ctx, &run.admission); err != nil {
+		return r, err
+	}
 	if _, err = s.sessionStatus(ref, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
 		return r, err
 	}
@@ -163,6 +167,9 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 	if err == nil {
 		s.mu.Lock()
 		delete(run.lanes, r.Status.SessionID)
+		if len(l.subscribers) == 0 {
+			delete(s.observers, r.Status.SessionID)
+		}
 		close(l.queue)
 		s.mu.Unlock()
 		<-l.done
@@ -177,8 +184,10 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 	}
 	s.mu.Lock()
 	run := s.runs[name]
-	if run != nil {
+	first := run != nil && !run.stopping
+	if first {
 		run.stopping = true
+		run.stopStarted = make(chan struct{})
 	}
 	s.mu.Unlock()
 	if run == nil {
@@ -187,8 +196,31 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		}
 		return r, errors.New("runtime release not confirmed in this process")
 	}
-	run.op.Lock()
+	if first {
+		_, statusErr := s.runtimeStatus(name, resource.RuntimeStatus{State: "stopping", AppliedGeneration: r.Status.AppliedGeneration, Capabilities: r.Status.Capabilities})
+		s.mu.Lock()
+		run.stopStatusErr = statusErr
+		close(run.stopStarted)
+		s.mu.Unlock()
+	}
+	select {
+	case <-run.stopStarted:
+	case <-ctx.Done():
+		return r, fmtUnknown(ctx.Err())
+	}
+	s.mu.Lock()
+	statusErr := run.stopStatusErr
+	s.mu.Unlock()
+	if first && statusErr != nil {
+		return r, statusErr
+	}
+	if err = lockOperation(ctx, &run.op); err != nil {
+		return r, err
+	}
 	defer run.op.Unlock()
+	if err = waitAdmission(ctx, &run.admission); err != nil {
+		return r, err
+	}
 	if run.drained {
 		return s.meta.GetRuntime(name)
 	}
@@ -203,6 +235,25 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		return r, err
 	}
 	s.mu.Lock()
+	pending := make([]*opening, 0, len(run.pending))
+	for _, op := range run.pending {
+		pending = append(pending, op)
+	}
+	s.mu.Unlock()
+	for _, op := range pending {
+		select {
+		case <-op.done:
+		case <-ctx.Done():
+			return r, ctx.Err()
+		}
+	}
+	s.mu.Lock()
+	if len(run.pending) != 0 || run.blocked != nil {
+		s.mu.Unlock()
+		return r, errors.New("outcome_unknown: original opening or stream responsibility remains")
+	}
+	s.mu.Unlock()
+	s.mu.Lock()
 	lanes := make(map[string]*lane, len(run.lanes))
 	for id, l := range run.lanes {
 		l.closing = true
@@ -210,7 +261,10 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 	}
 	s.mu.Unlock()
 	for id, l := range lanes {
-		if err = run.driver.CloseSession(ctx, id); err != nil {
+		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
+			return r, err
+		}
+		if err = s.closeForStop(ctx, run, id); err != nil {
 			return r, err
 		}
 		if err = s.drainLane(ctx, l); err != nil {
@@ -238,7 +292,10 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		return r, err
 	}
 	s.mu.Lock()
-	for _, l := range lanes {
+	for id, l := range lanes {
+		if len(l.subscribers) == 0 {
+			delete(s.observers, id)
+		}
 		close(l.queue)
 	}
 	run.drained = true
@@ -251,7 +308,7 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 	return r, nil
 }
 
-func (s *Service) ResumeSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
+func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
 	r, err := s.meta.GetSession(ref)
 	if err != nil {
 		return r, err
@@ -300,26 +357,36 @@ func (s *Service) ResumeSession(ctx context.Context, ref resource.SessionRef) (r
 	if err != nil {
 		return r, err
 	}
-	if r.Status.State == "closing" {
-		return r, errors.New("session close remains unsettled")
+	if r.Status.State == "closing" || r.Status.AppliedGeneration != 0 {
+		return r, errors.New("previous session release remains unsettled")
 	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
 	k := addressKey(a)
-	op := &opening{address: a}
+	op := &opening{address: a, done: make(chan struct{})}
+	defer close(op.done)
 	s.mu.Lock()
+	if run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
+		s.mu.Unlock()
+		return r, errors.New("original restore responsibility remains or capacity exhausted")
+	}
 	run.pending[k] = op
 	s.mu.Unlock()
 	native, err := run.driver.ResumeSession(ctx, r.Status.SessionID, a, r.Spec.SessionSpec)
 	if err != nil {
 		s.mu.Lock()
-		delete(run.pending, k)
+		op.err = err
+		if errors.Is(err, runtime.ErrResourcesReleased) {
+			delete(run.pending, k)
+		}
 		s.mu.Unlock()
 		return r, err
 	}
 	if native.SessionID != r.Status.SessionID {
 		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
 		s.mu.Lock()
-		delete(run.pending, k)
+		if cleanup == nil {
+			delete(run.pending, k)
+		}
 		s.mu.Unlock()
 		return r, errors.Join(errors.New("resume returned a replacement identity"), cleanup)
 	}
@@ -329,7 +396,7 @@ func (s *Service) ResumeSession(ctx context.Context, ref resource.SessionRef) (r
 	if err != nil {
 		return r, errors.Join(err, run.driver.CloseSession(context.Background(), native.SessionID))
 	}
-	l := &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
+	l := &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
 	s.mu.Lock()
 	l.err = op.err
 	if subs := s.observers[r.Status.SessionID]; subs != nil {
@@ -356,30 +423,139 @@ func (s *Service) ResumeSession(ctx context.Context, ref resource.SessionRef) (r
 func (s *Service) control(r resource.Session) (*runBinding, *lane, error) {
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
+	var original *lane
+	if run != nil {
+		original = run.lanes[r.Status.SessionID]
+	}
 	s.mu.Unlock()
 	if run == nil {
 		return nil, nil, errors.New("session unavailable")
 	}
-	run.op.Lock()
+	run.admission.RLock()
 	s.mu.Lock()
 	l := run.lanes[r.Status.SessionID]
-	available := !s.closing && !run.stopping && run.err == nil && run.started && l != nil && l.err == nil && !l.closing
+	available := !s.closing && !run.stopping && run.err == nil && run.started && l != nil && l == original && l.err == nil && !l.closing
 	s.mu.Unlock()
 	if !available {
-		run.op.Unlock()
+		run.admission.RUnlock()
 		return nil, nil, errors.New("session unavailable")
 	}
 	return run, l, nil
+}
+
+type sessionOperation struct {
+	sync.Mutex
+	users int
 }
 
 func (s *Service) sessionOperation(id string) func() {
 	s.mu.Lock()
 	op := s.sessionOps[id]
 	if op == nil {
-		op = &sync.Mutex{}
+		op = &sessionOperation{}
 		s.sessionOps[id] = op
 	}
+	op.users++
 	s.mu.Unlock()
 	op.Lock()
-	return op.Unlock
+	return func() {
+		op.Unlock()
+		s.mu.Lock()
+		op.users--
+		if op.users == 0 {
+			delete(s.sessionOps, id)
+		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *Service) closeForStop(ctx context.Context, run *runBinding, id string) error {
+	err := run.driver.CloseSession(ctx, id)
+	if !errors.Is(err, runtime.ErrWorkUnsettled) {
+		return err
+	}
+	if _, err = run.driver.Cancel(ctx, id); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return fmtUnknown(ctx.Err())
+		case <-ticker.C:
+		}
+		err = run.driver.CloseSession(ctx, id)
+		if !errors.Is(err, runtime.ErrWorkUnsettled) {
+			return err
+		}
+	}
+}
+func fmtUnknown(err error) error {
+	return errors.Join(errors.New("outcome_unknown: drain incomplete"), err)
+}
+
+// Caller cancellation abandons only the wait. A bounded original restore owner
+// keeps settling its SDK operation; no replacement resume is dispatched.
+func (s *Service) ResumeSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return resource.Session{}, err
+	}
+	select {
+	case s.resumeSlots <- struct{}{}:
+	default:
+		return resource.Session{}, errors.New("resume capacity exhausted")
+	}
+	type result struct {
+		value resource.Session
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		defer func() { <-s.resumeSlots }()
+		value, err := s.resumeSession(context.WithoutCancel(ctx), ref)
+		done <- result{value, err}
+	}()
+	select {
+	case value := <-done:
+		return value.value, value.err
+	case <-ctx.Done():
+		return resource.Session{}, fmtUnknown(ctx.Err())
+	}
+}
+func lockOperation(ctx context.Context, op *sync.Mutex) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if op.TryLock() {
+		return nil
+	}
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return fmtUnknown(ctx.Err())
+		case <-ticker.C:
+			if op.TryLock() {
+				return nil
+			}
+		}
+	}
+}
+
+func waitAdmission(ctx context.Context, gate *sync.RWMutex) error {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if gate.TryLock() {
+			gate.Unlock()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmtUnknown(ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }

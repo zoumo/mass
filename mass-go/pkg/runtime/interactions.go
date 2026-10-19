@@ -52,10 +52,11 @@ type PendingInteractions struct {
 }
 type pendingInteraction struct {
 	session string
+	source  Source
 	answer  func(context.Context, map[string]any) error
 }
 
-func (p *PendingInteractions) Add(session string, answer func(context.Context, map[string]any) error) (string, error) {
+func (p *PendingInteractions) Add(session string, source Source, answer func(context.Context, map[string]any) error) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.entries == nil {
@@ -65,13 +66,13 @@ func (p *PendingInteractions) Add(session string, answer func(context.Context, m
 		return "", errors.New("pending interaction limit")
 	}
 	ref := UUID()
-	p.entries[ref] = pendingInteraction{session, answer}
+	p.entries[ref] = pendingInteraction{session, source, answer}
 	return ref, nil
 }
-func (p *PendingInteractions) Answer(ctx context.Context, session, ref string, answer map[string]any) error {
+func (p *PendingInteractions) Answer(ctx context.Context, session string, source Source, ref string, answer map[string]any) error {
 	p.mu.Lock()
 	entry, ok := p.entries[ref]
-	if !ok || entry.session != session {
+	if !ok || entry.session != session || !entry.source.SameRun(source) || entry.source.Work() != source.Work() {
 		p.mu.Unlock()
 		return errors.New("interaction is not pending for this session")
 	}

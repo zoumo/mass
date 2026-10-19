@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "provenance": "synthetic",
+  "source": "Ticket05 strict SDK-owned mock; no model/tool execution",
+  "frames": [
+    {
+      "ordinal": 1,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 91,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "mass",
+            "version": "2"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 91,
+        "result": {
+          "userAgent": "synthetic",
+          "codexHome": "/synthetic",
+          "platformFamily": "unix",
+          "platformOs": "linux"
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "method": "initialized"
+      }
+    },
+    {
+      "ordinal": 4,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 92,
+        "method": "thread/start",
+        "params": {
+          "cwd": "/synthetic",
+          "ephemeral": false
+        }
+      }
+    },
+    {
+      "ordinal": 5,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 92,
+        "result": {
+          "thread": {
+            "id": "codex-session",
+            "turns": [],
+            "cliVersion": "synthetic",
+            "createdAt": 1,
+            "updatedAt": 1,
+            "cwd": "/synthetic",
+            "ephemeral": false,
+            "modelProvider": "synthetic",
+            "preview": "",
+            "projectId": null,
+            "source": "appServer",
+            "status": {
+              "type": "idle"
+            },
+            "sessionId": "codex-session"
+          },
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "user",
+          "cwd": "/synthetic",
+          "model": "synthetic",
+          "modelProvider": "synthetic",
+          "sandbox": {
+            "type": "readOnly"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 6,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 93,
+        "method": "turn/start",
+        "params": {
+          "threadId": "codex-session",
+          "input": [
+            {
+              "type": "text",
+              "text": "hello",
+              "text_elements": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ordinal": 7,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 93,
+        "result": {
+          "turn": {
+            "id": "turn-1",
+            "status": "inProgress",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/started",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {
+            "id": "turn-1",
+            "status": "inProgress",
+            "items": []
+          }
+        }
+      },
+      "ordinal": 8
+    },
+    {
+      "direction": "c2s",
+      "epoch": 1,
+      "channel": "protocol",
+      "wire": {
+        "id": 200,
+        "method": "turn/interrupt",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1"
+        }
+      },
+      "ordinal": 9
+    },
+    {
+      "direction": "s2c",
+      "epoch": 1,
+      "channel": "protocol",
+      "wire": {
+        "id": 200,
+        "result": {}
+      },
+      "ordinal": 10
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {
+            "id": "turn-1",
+            "status": "completed",
+            "items": []
+          }
+        }
+      },
+      "ordinal": 11,
+      "delayMs": 400
+    },
+    {
+      "direction": "c2s",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 190,
+        "method": "thread/unsubscribe",
+        "params": {
+          "threadId": "codex-session"
+        }
+      },
+      "ordinal": 12
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 190,
+        "result": {
+          "status": "unsubscribed"
+        }
+      },
+      "ordinal": 13
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "method": "thread/closed",
+        "params": {
+          "threadId": "codex-session"
+        }
+      },
+      "ordinal": 14
+    }
+  ]
+}

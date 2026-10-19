@@ -73,3 +73,5 @@ func (s *Subscription) Next(ctx context.Context) (runtime.SessionEvent, error) {
 	}
 }
 func (s *Subscription) Close() error { s.finish(nil); s.remove(s); return nil }
+
+func (s *Subscription) ended() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.closed }

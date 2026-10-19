@@ -237,7 +237,7 @@ func TestClaudeFailedOpenIsolation(t *testing.T) {
 	// Same native ID on a second process: reject only that new process.
 	_, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "duplicate"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: t.TempDir()}}})
 	require.Error(t, err)
-	path, work := nativeScenario(t, "claude", "no-identity")
+	path, work := nativeScenario(t, "claude", "missing-disconnect")
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "missing"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "missing")
@@ -245,7 +245,7 @@ func TestClaudeFailedOpenIsolation(t *testing.T) {
 	wait, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
 	_, err = svc.CreateSession(wait, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "missing"}, Spec: resource.SessionSpec{RuntimeRef: "missing", SessionSpec: runtime.SessionSpec{Cwd: work}}})
-	require.ErrorContains(t, err, "missing native init identity")
+	require.ErrorContains(t, err, "outcome_unknown")
 	_, err = svc.GetSession(resource.SessionRef{Namespace: "default", Name: "missing"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 	d, err := reg.Get("healthy")
