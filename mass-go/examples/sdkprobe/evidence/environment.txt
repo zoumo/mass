@@ -1,0 +1,10 @@
+Time: 2026-10-20T03:12:28.509848+08:00
+Command: go version
+go version go1.26.9 darwin/arm64
+Command: go env GOOS GOARCH
+darwin
+arm64
+Command: git rev-parse HEAD
+b263dfc1e3c136f6a7db4ddff6df60503f436ca6
+Command: git branch --show-current
+v2

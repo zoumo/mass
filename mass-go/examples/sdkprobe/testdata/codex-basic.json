@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "provenance": "synthetic",
+  "frames": [
+    {
+      "ordinal": 1,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 91,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "probe",
+            "version": "1"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 91,
+        "result": {
+          "userAgent": "synthetic",
+          "codexHome": "/synthetic",
+          "platformFamily": "unix",
+          "platformOs": "linux"
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "method": "initialized"
+      }
+    },
+    {
+      "ordinal": 4,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 92,
+        "method": "thread/start",
+        "params": {}
+      }
+    },
+    {
+      "ordinal": 5,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 92,
+        "result": {
+          "thread": {
+            "id": "codex-session",
+            "turns": [],
+            "cliVersion": "synthetic",
+            "createdAt": 1,
+            "updatedAt": 1,
+            "cwd": "/synthetic",
+            "ephemeral": true,
+            "modelProvider": "synthetic",
+            "preview": "",
+            "projectId": null,
+            "source": "appServer",
+            "status": {
+              "type": "idle"
+            },
+            "sessionId": "codex-session"
+          },
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "user",
+          "cwd": "/synthetic",
+          "model": "synthetic",
+          "modelProvider": "synthetic",
+          "sandbox": {
+            "type": "readOnly"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 6,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 93,
+        "method": "turn/start",
+        "params": {
+          "threadId": "codex-session",
+          "input": [
+            {
+              "type": "text",
+              "text": "hello",
+              "text_elements": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ordinal": 7,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 93,
+        "result": {
+          "turn": {
+            "id": "turn-1",
+            "status": "inProgress",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 8,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": "command-approval",
+        "method": "item/commandExecution/requestApproval",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "itemId": "tool-1"
+        }
+      }
+    },
+    {
+      "ordinal": 9,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": "command-approval",
+        "result": {
+          "decision": "accept"
+        }
+      }
+    },
+    {
+      "ordinal": 10,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": "file-approval",
+        "method": "item/fileChange/requestApproval",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "itemId": "tool-1"
+        }
+      }
+    },
+    {
+      "ordinal": 11,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": "file-approval",
+        "result": {
+          "decision": "accept"
+        }
+      }
+    },
+    {
+      "ordinal": 12,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "commandExecution",
+            "id": "tool-1",
+            "command": "echo synthetic",
+            "cwd": "/synthetic",
+            "status": "completed",
+            "aggregatedOutput": "synthetic output",
+            "exitCode": 0
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 13,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-1",
+            "text": "complete answer"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 14,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {
+            "id": "turn-1",
+            "status": "completed",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 15,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 94,
+        "method": "turn/interrupt",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1"
+        }
+      }
+    },
+    {
+      "ordinal": 16,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 94,
+        "result": {}
+      }
+    }
+  ]
+}
