@@ -1,0 +1,381 @@
+// Package codex adapts native SDK observations directly into SessionEvent.
+package codex
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"sync"
+	"time"
+
+	sdk "github.com/zoumo/agent-sdk-go/codex"
+	ct "github.com/zoumo/agent-sdk-go/codex/types"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+)
+
+type options struct{ executable, scenario string }
+
+func parse(c runtime.Config) (options, error) {
+	var o options
+	for k, v := range c {
+		s, ok := v.(string)
+		if !ok {
+			return o, fmt.Errorf("%s must be a string", k)
+		}
+		switch k {
+		case "executable":
+			o.executable = s
+		case "scenario":
+			o.scenario = s
+		default:
+			return o, fmt.Errorf("unknown Codex config %q", k)
+		}
+	}
+	if !filepath.IsAbs(o.executable) || !filepath.IsAbs(o.scenario) {
+		return o, errors.New("explicit absolute executable and synthetic scenario required")
+	}
+	return o, nil
+}
+
+type Factory struct{}
+
+func (Factory) Validate(c runtime.Config) error { _, err := parse(c); return err }
+func (Factory) New(c runtime.Config) (runtime.Driver, error) {
+	o, err := parse(c)
+	if err != nil {
+		return nil, err
+	}
+	return &Driver{options: o, pipe: runtime.NewEventPipe(128), sessions: map[string]*session{}}, nil
+}
+
+type session struct {
+	address runtime.Address
+	source  runtime.Source
+	sub     *sdk.Subscription
+	active  bool
+	sending bool
+	state   *runtime.SessionState
+	done    chan struct{}
+}
+type Driver struct {
+	mu       sync.Mutex
+	op       sync.Mutex
+	options  options
+	pipe     *runtime.EventPipe
+	taken    bool
+	client   *sdk.Client
+	sessions map[string]*session
+	stopped  bool
+	life     context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+}
+
+func (d *Driver) Events() (runtime.Stream, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.taken {
+		return nil, errors.New("Driver events already acquired")
+	}
+	d.taken = true
+	return d.pipe, nil
+}
+func caps() runtime.Capabilities { return runtime.Capabilities{"textInput": true} }
+func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
+	d.op.Lock()
+	defer d.op.Unlock()
+	d.mu.Lock()
+	if d.client != nil {
+		d.mu.Unlock()
+		return caps(), nil
+	}
+	if d.stopped {
+		d.mu.Unlock()
+		return nil, errors.New("driver stopped")
+	}
+	d.mu.Unlock()
+	life, cancel := context.WithCancel(context.Background())
+	c, err := sdk.NewStdio(ctx, sdk.StdioOptions{Executable: d.options.executable, Args: []string{"app-server"}, Env: []string{"CODEX_MOCK_SCENARIO=" + d.options.scenario}, Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}}})
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	d.mu.Lock()
+	d.client = c
+	d.life = life
+	d.cancel = cancel
+	d.mu.Unlock()
+	return caps(), nil
+}
+func (d *Driver) OpenSession(ctx context.Context, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
+	d.op.Lock()
+	defer d.op.Unlock()
+	if !filepath.IsAbs(spec.Cwd) {
+		return runtime.DriverSession{}, errors.New("absolute cwd required")
+	}
+	if len(spec.AdditionalDirs) > 0 {
+		return runtime.DriverSession{}, errors.New("additionalDirs not supported yet")
+	}
+	d.mu.Lock()
+	c := d.client
+	stopped := d.stopped
+	d.mu.Unlock()
+	if c == nil || stopped {
+		return runtime.DriverSession{}, errors.New("driver not running")
+	}
+	params := ct.ThreadStartParams{Cwd: ct.Some(spec.Cwd), Ephemeral: ct.Some(false)}
+	if spec.SystemPrompt != "" {
+		params.BaseInstructions = ct.Some(spec.SystemPrompt)
+	}
+	response, err := c.StartThread(ctx, params)
+	if err != nil {
+		return runtime.DriverSession{}, err
+	}
+	id := response.Thread.ID
+	if id == "" || response.Thread.SessionID == "" || response.Thread.SessionID != id {
+		return runtime.DriverSession{}, errors.New("outcome_unknown: missing or mismatched native identity")
+	}
+	sub, err := c.Subscribe(d.life, id, ct.SubscriptionOptions{EventQueue: 128})
+	if err != nil {
+		return runtime.DriverSession{}, err
+	}
+	s := &session{address: address, source: runtime.NewSource(), sub: sub, done: make(chan struct{})}
+	d.mu.Lock()
+	if _, ok := d.sessions[id]; ok {
+		d.mu.Unlock()
+		sub.Abort()
+		return runtime.DriverSession{}, errors.New("duplicate native identity")
+	}
+	d.sessions[id] = s
+	d.mu.Unlock()
+	// Only the native response's idle observation permits an initial idle event.
+	if response.Thread.Status.Idle != nil {
+		state := runtime.Idle
+		s.state = &state
+		if err = d.emit(s, id, "", runtime.StateUpdate{State: &state}, ""); err != nil {
+			return runtime.DriverSession{}, err
+		}
+	}
+	d.wg.Add(1)
+	go d.observe(id, s)
+	return runtime.DriverSession{SessionID: id, Capabilities: caps(), Source: s.source}, nil
+}
+func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
+	d.mu.Lock()
+	s := d.sessions[id]
+	c := d.client
+	if s == nil || d.stopped || s.active || s.sending {
+		d.mu.Unlock()
+		return runtime.InputReceipt{}, errors.New("session unavailable or work unsettled")
+	}
+	s.sending = true
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); s.sending = false; d.mu.Unlock() }()
+	if len(input.Content) == 0 {
+		return runtime.InputReceipt{}, errors.New("empty input")
+	}
+	items := make([]ct.UserInput, 0, len(input.Content))
+	for _, b := range input.Content {
+		if b.Type != "text" {
+			return runtime.InputReceipt{}, errors.New("unsupported input content")
+		}
+		items = append(items, ct.UserInput{Text: &ct.TextUserInput{Type: "text", Text: b.Text, TextElements: ct.Some([]ct.TextElement{})}})
+	}
+	d.mu.Lock()
+	s.active = true // reserve unsettled work before dispatch; receipt alone is not running evidence
+	d.mu.Unlock()
+	result, err := c.StartTurn(ctx, ct.TurnStartParams{ThreadID: id, Input: items})
+	if err != nil {
+		return runtime.InputReceipt{}, err
+	}
+	if result.Turn.ID == "" {
+		return runtime.InputReceipt{}, errors.New("outcome_unknown: missing turn identity")
+	}
+	return runtime.InputReceipt{Submission: result.Turn.ID, Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}, nil
+}
+func (d *Driver) emit(s *session, id, item string, p runtime.Payload, work string, observedAt ...time.Time) error {
+	eventTime := time.Now().UTC()
+	if len(observedAt) > 0 && !observedAt[0].IsZero() {
+		eventTime = observedAt[0]
+	}
+	e, err := runtime.NewEvent(runtime.EventBase{EventID: runtime.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: id, ItemID: item, Time: eventTime}, p, s.source.WithWork(work))
+	if err != nil {
+		return err
+	}
+	return d.pipe.Send(d.life, e)
+}
+func (d *Driver) observe(id string, s *session) {
+	defer d.wg.Done()
+	defer close(s.done)
+	for event := range s.sub.Events() {
+		if err := d.adapt(id, s, event); err != nil {
+			d.pipe.End(err)
+			return
+		}
+	}
+	if err := s.sub.Err(); err != nil {
+		d.pipe.End(fmt.Errorf("Codex observation ended: %w", err))
+	}
+}
+func (d *Driver) adapt(id string, s *session, event ct.Event) error {
+	// SDK observation diagnostics are not native session facts.
+	if event.DecodeError != nil {
+		return fmt.Errorf("invalid native observation: %w", event.DecodeError)
+	}
+	if event.Method == "" {
+		return nil
+	}
+	var v struct {
+		CompletedAtMs *int64    `json:"completedAtMs"`
+		StartedAtMs   *int64    `json:"startedAtMs"`
+		Time          time.Time `json:"time"`
+		ThreadID      string    `json:"threadId"`
+		TurnID        string    `json:"turnId"`
+		ItemID        string    `json:"itemId"`
+		Delta         string    `json:"delta"`
+		Turn          struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"turn"`
+		Item struct {
+			ID               string                 `json:"id"`
+			Type             string                 `json:"type"`
+			Text             string                 `json:"text"`
+			Content          []runtime.ContentBlock `json:"content"`
+			Summary          []string               `json:"summary"`
+			Command          string                 `json:"command"`
+			Status           string                 `json:"status"`
+			Cwd              string                 `json:"cwd"`
+			Phase            string                 `json:"phase"`
+			ExitCode         *int32                 `json:"exitCode"`
+			DurationMs       *int64                 `json:"durationMs"`
+			AggregatedOutput *string                `json:"aggregatedOutput"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(event.Params, &v); err != nil {
+		return err
+	}
+	if v.ThreadID != id {
+		return nil
+	} // descendants require later explicit association support
+	if v.CompletedAtMs != nil {
+		v.Time = time.UnixMilli(*v.CompletedAtMs).UTC()
+	} else if v.StartedAtMs != nil {
+		v.Time = time.UnixMilli(*v.StartedAtMs).UTC()
+	}
+	emit := func(item string, p runtime.Payload, work string) error { return d.emit(s, id, item, p, work, v.Time) }
+	switch event.Method {
+	case "turn/started", "turn/completed":
+		if v.Turn.ID == "" {
+			return errors.New("native turn event missing identity")
+		}
+		state := runtime.Running
+		if event.Method == "turn/completed" {
+			state = runtime.Idle
+		}
+		d.mu.Lock()
+		previous := s.state
+		s.state = &state
+		s.active = state == runtime.Running
+		d.mu.Unlock()
+		return emit("", runtime.StateUpdate{PreviousState: previous, State: &state, StopReason: v.Turn.Status}, v.Turn.ID)
+	case "item/agentMessage/delta":
+		return emit(v.ItemID, runtime.MessageChunk{MessageID: v.ItemID, Content: []runtime.ContentBlock{runtime.Text(v.Delta)}}, v.TurnID)
+	case "item/reasoning/summaryTextDelta":
+		return emit(v.ItemID, runtime.ThinkingChunk{MessageID: v.ItemID, Content: []runtime.ContentBlock{runtime.Text(v.Delta)}}, v.TurnID)
+	case "item/started", "item/completed":
+		item := v.Item
+		if item.ID == "" {
+			return errors.New("native item missing identity")
+		}
+		switch item.Type {
+		case "agentMessage":
+			if event.Method == "item/completed" {
+				return emit(item.ID, runtime.AgentMessage{MessageID: item.ID, Phase: item.Phase, Content: []runtime.ContentBlock{runtime.Text(item.Text)}}, v.TurnID)
+			}
+		case "userMessage":
+			if event.Method == "item/completed" {
+				return emit(item.ID, runtime.UserMessage{MessageID: item.ID, Content: item.Content}, v.TurnID)
+			}
+		case "reasoning":
+			if event.Method == "item/completed" {
+				content := []runtime.ContentBlock{}
+				for _, text := range item.Summary {
+					content = append(content, runtime.Text(text))
+				}
+				return emit(item.ID, runtime.AgentThinking{MessageID: item.ID, Content: content}, v.TurnID)
+			}
+		case "commandExecution":
+			if event.Method == "item/started" {
+				return emit(item.ID, runtime.ToolCall{ID: item.ID, Kind: "execute", RawInput: map[string]any{"command": item.Command, "cwd": item.Cwd}}, v.TurnID)
+			}
+			status := "unknown"
+			if item.Status == "completed" || item.Status == "failed" || item.Status == "declined" {
+				status = item.Status
+			}
+			p := runtime.ToolResult{ExitCode: item.ExitCode, DurationMs: item.DurationMs, ID: item.ID, Kind: "execute", Status: status, Output: &runtime.Output{Availability: "unavailable", Completeness: "unknown"}}
+			if item.AggregatedOutput != nil {
+				value := any(*item.AggregatedOutput)
+				p.RawOutput = &value
+				p.Content = []runtime.ContentBlock{runtime.Text(*item.AggregatedOutput)}
+				p.Output = &runtime.Output{Availability: "provided", Completeness: "retained"}
+			}
+			return emit(item.ID, p, v.TurnID)
+		}
+	}
+	return nil
+}
+func (d *Driver) CloseSession(ctx context.Context, id string) error {
+	d.mu.Lock()
+	s := d.sessions[id]
+	if s == nil {
+		d.mu.Unlock()
+		return nil
+	}
+	if s.active || s.sending {
+		d.mu.Unlock()
+		return errors.New("work unsettled")
+	}
+	d.mu.Unlock()
+	if err := s.sub.Close(); err != nil {
+		return err
+	}
+	select {
+	case <-s.done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	d.mu.Lock()
+	delete(d.sessions, id)
+	d.mu.Unlock()
+	return nil
+}
+func (d *Driver) Stop(ctx context.Context) error {
+	d.op.Lock()
+	defer d.op.Unlock()
+	d.mu.Lock()
+	if d.stopped {
+		d.mu.Unlock()
+		return nil
+	}
+	if len(d.sessions) != 0 {
+		d.mu.Unlock()
+		return errors.New("close sessions before stopping")
+	}
+	c := d.client
+	d.stopped = true
+	d.mu.Unlock()
+	if c != nil {
+		if err := c.Close(); err != nil {
+			return err
+		}
+	}
+	d.wg.Wait()
+	d.pipe.End(nil)
+	if d.cancel != nil {
+		d.cancel()
+	}
+	return nil
+}
