@@ -24,7 +24,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
-var mock, app, ctl, root string
+var mock, claudeMock, app, ctl, root string
 
 // Blocks the identity commit while the real adapter already emitted initial idle.
 type identityGate struct {
@@ -93,7 +93,7 @@ func TestMain(m *testing.M) {
 				code = 1
 			}
 		}()
-		for name, target := range map[string]string{"mock": "github.com/zoumo/agent-sdk-go/codex/cmd/mock", "massd": "../../cmd/massd", "massctl": "../../cmd/massctl"} {
+		for name, target := range map[string]string{"claude-mock": "github.com/zoumo/agent-sdk-go/claude/cmd/mock", "mock": "github.com/zoumo/agent-sdk-go/codex/cmd/mock", "massd": "../../cmd/massd", "massctl": "../../cmd/massctl"} {
 			bin := filepath.Join(root, name)
 			cmd := exec.Command("go", "build", "-o", bin, target)
 			if out, err := cmd.CombinedOutput(); err != nil {
@@ -101,6 +101,8 @@ func TestMain(m *testing.M) {
 				return
 			}
 			switch name {
+			case "claude-mock":
+				claudeMock = bin
 			case "mock":
 				mock = bin
 			case "massd":

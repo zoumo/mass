@@ -28,6 +28,7 @@ type SessionService interface {
 	CreateSession(context.Context, resource.Session) (resource.Session, error)
 	GetSession(resource.SessionRef) (resource.Session, error)
 	SendPrompt(context.Context, resource.SessionRef, runtime.Input) (runtime.InputReceipt, error)
+	AnswerInteraction(context.Context, resource.SessionRef, string, map[string]any) (runtime.Acceptance, error)
 	ListHistoryEvents(resource.SessionRef, store.HistoryQuery) (store.HistoryPage, error)
 	SubscribeEvents(resource.SessionRef) (*Subscription, error)
 }
@@ -56,7 +57,10 @@ type lane struct {
 	work        string
 	subscribers map[*Subscription]bool
 }
+type InteractionPolicy func(runtime.InteractionRequested) (map[string]any, bool)
+
 type Service struct {
+	policy   InteractionPolicy
 	meta     store.MetaStore
 	history  store.HistoryStore
 	registry *runtime.Registry
@@ -67,6 +71,33 @@ type Service struct {
 
 func New(meta store.MetaStore, history store.HistoryStore, registry *runtime.Registry) *Service {
 	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}}
+}
+
+// NewWithPolicy explicitly enables an application-owned interaction policy.
+func NewWithPolicy(meta store.MetaStore, history store.HistoryStore, registry *runtime.Registry, policy InteractionPolicy) *Service {
+	s := New(meta, history, registry)
+	s.policy = policy
+	return s
+}
+func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef, interaction string, answer map[string]any) (runtime.Acceptance, error) {
+	r, err := s.meta.GetSession(ref)
+	if err != nil {
+		return runtime.Acceptance{}, err
+	}
+	s.mu.Lock()
+	run := s.runs[r.Spec.RuntimeRef]
+	if s.closing || run == nil || run.err != nil {
+		s.mu.Unlock()
+		return runtime.Acceptance{}, errors.New("runtime unavailable")
+	}
+	l := run.lanes[r.Status.SessionID]
+	if l == nil || l.err != nil {
+		s.mu.Unlock()
+		return runtime.Acceptance{}, errors.New("session unavailable")
+	}
+	d := run.driver
+	s.mu.Unlock()
+	return d.AnswerInteraction(ctx, r.Status.SessionID, interaction, answer)
 }
 
 var label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -398,6 +429,13 @@ func (s *Service) process(run *runBinding, l *lane) {
 			sub.publish(copy)
 		}
 		s.mu.Unlock()
+		if request, ok := e.Payload().(runtime.InteractionRequested); ok && s.policy != nil {
+			if answer, handled := s.policy(request); handled {
+				if _, err := run.driver.AnswerInteraction(context.Background(), e.SessionID, request.Interaction, answer); err != nil {
+					s.fail(l, err)
+				}
+			}
+		}
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -169,6 +170,27 @@ func (e SessionEvent) Validate() error {
 		if p.ID == "" || p.Kind == "" || p.Status == "" {
 			return errors.New("invalid tool result")
 		}
+	case InteractionRequested:
+		if p.Interaction == "" || (p.Request.Kind != "permission" && p.Request.Kind != "form") {
+			return errors.New("invalid interaction")
+		}
+		if p.Request.Kind == "form" && (p.Request.Message == "" || p.Request.RequestedSchema == nil) {
+			return errors.New("invalid form request")
+		}
+		if p.Request.Kind == "permission" && (p.Request.ToolCallID == "" || len(p.Request.Options) == 0) {
+			return errors.New("invalid permission request")
+		}
+		if err := CheckDynamicJSON(p.Request.RequestedSchema); err != nil {
+			return err
+		}
+	case InteractionClosed:
+		if p.Interaction == "" || p.Outcome != "answered" {
+			return errors.New("invalid interaction closure")
+		}
+	case SessionError:
+		if p.Message == "" {
+			return errors.New("empty session error")
+		}
 	case StateUpdate:
 		for _, s := range []*SessionState{p.State, p.PreviousState} {
 			if s != nil && *s != Idle && *s != Running && *s != RequiresAction {
@@ -178,7 +200,7 @@ func (e SessionEvent) Validate() error {
 	default:
 		return errors.New("unsupported payload branch")
 	}
-	if e.Type() != "session.state_update" && e.ItemID == "" {
+	if !strings.HasPrefix(e.Type(), "session.") && e.ItemID == "" {
 		return errors.New("itemId required")
 	}
 	if m != nil {
@@ -247,6 +269,12 @@ func (e *SessionEvent) UnmarshalJSON(data []byte) error {
 		p = &ToolCall{}
 	case "agent.tool_result":
 		p = &ToolResult{}
+	case "session.interaction_requested":
+		p = &InteractionRequested{}
+	case "session.interaction_closed":
+		p = &InteractionClosed{}
+	case "session.error":
+		p = &SessionError{}
 	case "session.state_update":
 		p = &StateUpdate{}
 	default:
@@ -273,6 +301,12 @@ func (e *SessionEvent) UnmarshalJSON(data []byte) error {
 	case *ToolCall:
 		p = *v
 	case *ToolResult:
+		p = *v
+	case *InteractionRequested:
+		p = *v
+	case *InteractionClosed:
+		p = *v
+	case *SessionError:
 		p = *v
 	case *StateUpdate:
 		p = *v
@@ -322,4 +356,25 @@ func (p *ToolResult) UnmarshalJSON(data []byte) error {
 	}
 	*p = ToolResult(out)
 	return nil
+}
+
+// An explicitly supplied empty content array is distinct from omitted content.
+func (p ToolResult) MarshalJSON() ([]byte, error) {
+	type fields ToolResult
+	data, err := json.Marshal(fields(p))
+	if err != nil {
+		return nil, err
+	}
+	if p.Content == nil {
+		return data, nil
+	}
+	var members map[string]json.RawMessage
+	if err = json.Unmarshal(data, &members); err != nil {
+		return nil, err
+	}
+	members["content"], err = json.Marshal(p.Content)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(members)
 }

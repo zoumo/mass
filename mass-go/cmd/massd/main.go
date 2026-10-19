@@ -10,8 +10,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/claude"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
@@ -20,6 +22,7 @@ import (
 func run() (result error) {
 	data := flag.String("data", "", "absolute data directory")
 	executable := flag.String("codex", "", "absolute SDK mock Codex executable")
+	claudeExecutable := flag.String("claude", "", "absolute SDK mock Claude executable")
 	scenario := flag.String("scenario", "", "absolute synthetic scenario")
 	cwd := flag.String("cwd", "/synthetic", "native workspace (must match strict scenario)")
 	input := flag.String("input", "hello", "independent text input")
@@ -29,7 +32,15 @@ func run() (result error) {
 		return err
 	}
 	defer func() { result = errors.Join(result, st.Close()) }()
-	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{}}))
+	kind := "codex"
+	if *claudeExecutable != "" {
+		if *executable != "" {
+			return errors.New("choose exactly one mock executable")
+		}
+		kind = "claude"
+		executable = claudeExecutable
+	}
+	svc := service.NewWithPolicy(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{}, "claude": claude.Factory{}}), prototype.AutoApprovePermissions)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -37,13 +48,13 @@ func run() (result error) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if _, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": *executable, "scenario": *scenario}}}); err != nil {
+	if _, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: kind}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": *executable, "scenario": *scenario}}}); err != nil {
 		return err
 	}
-	if _, err = svc.StartRuntime(ctx, "codex"); err != nil {
+	if _, err = svc.StartRuntime(ctx, kind); err != nil {
 		return err
 	}
-	session, err := svc.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "codex", SessionSpec: runtime.SessionSpec{Cwd: *cwd}}})
+	session, err := svc.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: kind, SessionSpec: runtime.SessionSpec{Cwd: *cwd}}})
 	if err != nil {
 		return err
 	}

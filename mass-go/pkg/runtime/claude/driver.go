@@ -1,0 +1,505 @@
+// Package claude converts actual SDK observations directly into SessionEvent.
+package claude
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"sync"
+	"time"
+
+	sdk "github.com/zoumo/agent-sdk-go/claude"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+)
+
+type options struct{ executable, scenario string }
+
+func parse(c runtime.Config) (options, error) {
+	var o options
+	for k, v := range c {
+		s, ok := v.(string)
+		if !ok {
+			return o, fmt.Errorf("%s must be a string", k)
+		}
+		switch k {
+		case "executable":
+			o.executable = s
+		case "scenario":
+			o.scenario = s
+		default:
+			return o, fmt.Errorf("unknown Claude config %q", k)
+		}
+	}
+	if !filepath.IsAbs(o.executable) || !filepath.IsAbs(o.scenario) {
+		return o, errors.New("explicit absolute executable and synthetic scenario required")
+	}
+	return o, nil
+}
+
+type Factory struct{}
+
+func (Factory) Validate(c runtime.Config) error { _, err := parse(c); return err }
+func (Factory) New(c runtime.Config) (runtime.Driver, error) {
+	o, err := parse(c)
+	if err != nil {
+		return nil, err
+	}
+	return &Driver{options: o, pipe: runtime.NewEventPipe(128), sessions: map[string]*session{}}, nil
+}
+
+type session struct {
+	mu                       sync.Mutex
+	address                  runtime.Address
+	source                   runtime.Source
+	client                   *sdk.Client
+	id                       string
+	ready                    chan struct{}
+	done                     chan struct{}
+	closing, active, sending bool
+	err                      error
+	state                    *runtime.SessionState
+	// Native message identity for partial events; no content is accumulated.
+	messageID string
+	tools     map[string]string
+}
+type Driver struct {
+	mu                      sync.Mutex
+	op                      sync.Mutex
+	options                 options
+	pipe                    *runtime.EventPipe
+	taken, started, stopped bool
+	sessions                map[string]*session
+	interactions            runtime.PendingInteractions
+}
+
+func caps() runtime.Capabilities {
+	return runtime.Capabilities{"textInput": true, "permission": true, "form": true}
+}
+func (d *Driver) Events() (runtime.Stream, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.taken {
+		return nil, errors.New("Driver events already acquired")
+	}
+	d.taken = true
+	return d.pipe, nil
+}
+func (d *Driver) Start(context.Context) (runtime.Capabilities, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.stopped {
+		return nil, errors.New("driver stopped")
+	}
+	d.started = true
+	return caps(), nil
+}
+func (d *Driver) OpenSession(ctx context.Context, a runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
+	d.op.Lock()
+	defer d.op.Unlock()
+	if !filepath.IsAbs(spec.Cwd) {
+		return runtime.DriverSession{}, errors.New("absolute cwd required")
+	}
+	if spec.SystemPrompt != "" || len(spec.AdditionalDirs) > 0 {
+		return runtime.DriverSession{}, errors.New("Claude SDK does not support systemPrompt or additionalDirs")
+	}
+	d.mu.Lock()
+	running := d.started && !d.stopped
+	d.mu.Unlock()
+	if !running {
+		return runtime.DriverSession{}, errors.New("driver not running")
+	}
+	s := &session{address: a, source: runtime.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}}
+	c, err := sdk.Open(ctx, sdk.Options{CLIPath: d.options.executable, WorkDir: spec.Cwd, Env: []string{"CLAUDE_MOCK_SCENARIO=" + d.options.scenario}, PermissionHandler: func(p *sdk.PermissionRequest) {
+		select {
+		case <-s.ready:
+		case <-p.Context().Done():
+			return
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.id == "" || s.closing {
+			return
+		}
+		if err := d.permission(s, p); err != nil {
+			s.err = err
+			_ = d.emit(s, "", runtime.SessionError{Message: "Claude permission delivery failed"}, time.Time{})
+		}
+	}})
+	if err != nil {
+		close(s.ready)
+		return runtime.DriverSession{}, err
+	}
+	s.client = c
+	// No hidden input: only a native system/init can establish creation identity.
+	for {
+		event, receiveErr := c.Receive(ctx)
+		if receiveErr != nil {
+			close(s.ready)
+			return runtime.DriverSession{}, errors.Join(fmt.Errorf("Claude missing native init identity: %w", receiveErr), c.Close())
+		}
+		e, ok := event.(sdk.Event)
+		if !ok {
+			continue
+		}
+		if e.Type == "system" && e.Subtype == "init" && e.SessionID != "" {
+			s.id = e.SessionID
+			break
+		}
+		// Pre-identity content is unsupported, rather than lost or given a fake ID.
+		if e.Type == "assistant" || e.Type == "user" || e.Type == "stream_event" || e.Type == "result" {
+			close(s.ready)
+			return runtime.DriverSession{}, errors.Join(errors.New("Claude content before native init identity"), c.Close())
+		}
+	}
+	d.mu.Lock()
+	if d.sessions[s.id] != nil {
+		d.mu.Unlock()
+		close(s.ready)
+		return runtime.DriverSession{}, errors.Join(errors.New("duplicate native identity"), c.Close())
+	}
+	d.sessions[s.id] = s
+	d.mu.Unlock()
+	close(s.ready)
+	go d.observe(s)
+	return runtime.DriverSession{SessionID: s.id, Capabilities: caps(), Source: s.source}, nil
+}
+func (d *Driver) get(id string) (*session, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	s := d.sessions[id]
+	if s == nil || d.stopped {
+		return nil, errors.New("session unavailable")
+	}
+	return s, nil
+}
+func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
+	s, err := d.get(id)
+	if err != nil {
+		return runtime.InputReceipt{}, err
+	}
+	if len(input.Content) != 1 || input.Content[0].Type != "text" {
+		return runtime.InputReceipt{}, errors.New("Claude supports exactly one text input block")
+	}
+	s.mu.Lock()
+	if s.active || s.sending || s.closing || s.err != nil {
+		s.mu.Unlock()
+		return runtime.InputReceipt{}, errors.New("session unavailable or work unsettled")
+	}
+	s.active = true
+	s.sending = true
+	s.mu.Unlock()
+	err = s.client.Send(ctx, input.Content[0].Text)
+	s.mu.Lock()
+	s.sending = false
+	s.mu.Unlock()
+	if err != nil {
+		return runtime.InputReceipt{}, err
+	}
+	return runtime.InputReceipt{Submission: "sent", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+}
+func (d *Driver) emit(s *session, item string, p runtime.Payload, at time.Time) error {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	e, err := runtime.NewEvent(runtime.EventBase{EventID: runtime.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at}, p, s.source)
+	if err != nil {
+		return err
+	}
+	return d.pipe.Send(context.Background(), e)
+}
+func (d *Driver) state(s *session, state *runtime.SessionState, reason string) error {
+	previous := s.state
+	s.state = state
+	return d.emit(s, "", runtime.StateUpdate{PreviousState: previous, State: state, StopReason: reason}, time.Time{})
+}
+func (d *Driver) observe(s *session) {
+	defer close(s.done)
+	for {
+		event, err := s.client.Receive(context.Background())
+		s.mu.Lock()
+		if err == nil {
+			if e, ok := event.(sdk.Event); ok {
+				err = d.adapt(s, e)
+			}
+		}
+		if err != nil {
+			if !s.closing {
+				s.err = err
+				_ = d.emit(s, "", runtime.SessionError{Message: "Claude observation failed", Reason: err.Error()}, time.Time{})
+				_ = d.state(s, nil, "")
+			}
+			s.mu.Unlock()
+			return
+		}
+		s.mu.Unlock()
+	}
+}
+func decode(raw json.RawMessage) (any, error) {
+	var value any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	err := dec.Decode(&value)
+	return value, err
+}
+func (d *Driver) adapt(s *session, e sdk.Event) error {
+	if e.SessionID != "" && e.SessionID != s.id {
+		return nil
+	} // unproven descendants are not this Session
+	var raw struct {
+		Time    time.Time `json:"timestamp"`
+		Message struct {
+			ID      string          `json:"id"`
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+		UUID  string `json:"uuid"`
+		Event struct {
+			Type    string `json:"type"`
+			Message struct {
+				ID string `json:"id"`
+			} `json:"message"`
+			Delta struct{ Type, Text, Thinking string } `json:"delta"`
+		} `json:"event"`
+	}
+	if err := json.Unmarshal(e.Raw, &raw); err != nil {
+		return err
+	}
+	switch e.Type {
+	case "stream_event":
+		switch raw.Event.Type {
+		case "message_start":
+			s.messageID = raw.Event.Message.ID
+			state := runtime.Running
+			return d.state(s, &state, "")
+		case "content_block_delta":
+			if s.messageID == "" {
+				return errors.New("partial message missing native identity")
+			}
+			switch raw.Event.Delta.Type {
+			case "text_delta":
+				return d.emit(s, s.messageID, runtime.MessageChunk{MessageID: s.messageID, Content: []runtime.ContentBlock{runtime.Text(raw.Event.Delta.Text)}}, raw.Time)
+			case "thinking_delta":
+				return d.emit(s, s.messageID, runtime.ThinkingChunk{MessageID: s.messageID, Content: []runtime.ContentBlock{runtime.Text(raw.Event.Delta.Thinking)}}, raw.Time)
+			case "input_json_delta", "signature_delta":
+				return nil // unsupported preview, never reconstruct full content
+			default:
+				return errors.New("unsupported Claude delta type")
+			}
+		}
+	case "assistant", "user":
+		id := raw.Message.ID
+		if id == "" {
+			id = raw.UUID
+		}
+		var blocks []map[string]json.RawMessage
+		if len(raw.Message.Content) > 0 && raw.Message.Content[0] == '"' {
+			var text string
+			if err := json.Unmarshal(raw.Message.Content, &text); err != nil {
+				return err
+			}
+			blocks = []map[string]json.RawMessage{{"type": json.RawMessage(`"text"`), "text": raw.Message.Content}}
+		} else if err := json.Unmarshal(raw.Message.Content, &blocks); err != nil {
+			return err
+		}
+		text, thinking := []runtime.ContentBlock{}, []runtime.ContentBlock{}
+		for _, b := range blocks {
+			str := func(key string) string { var v string; _ = json.Unmarshal(b[key], &v); return v }
+			switch str("type") {
+			case "text":
+				var value *string
+				if err := json.Unmarshal(b["text"], &value); err != nil || value == nil {
+					return errors.New("missing or invalid text")
+				}
+				text = append(text, runtime.Text(*value))
+			case "thinking":
+				var value *string
+				if err := json.Unmarshal(b["thinking"], &value); err != nil || value == nil {
+					return errors.New("missing or invalid thinking")
+				}
+				thinking = append(thinking, runtime.Text(*value))
+			case "tool_use":
+				tool := str("id")
+				kind := str("name")
+				if kind == "" || tool == "" {
+					return errors.New("tool use missing identity")
+				}
+				input, err := decode(b["input"])
+				if err != nil {
+					return err
+				}
+				if len(s.tools) >= 128 {
+					return errors.New("pending tool limit")
+				}
+				s.tools[tool] = kind
+				if err = d.emit(s, tool, runtime.ToolCall{ID: tool, Kind: kind, RawInput: input}, raw.Time); err != nil {
+					return err
+				}
+			case "tool_result":
+				tool := str("tool_use_id")
+				kind := s.tools[tool]
+				if kind == "" {
+					return errors.New("tool result has no observed tool use")
+				}
+				p := runtime.ToolResult{ID: tool, Kind: kind, Status: "completed", Output: &runtime.Output{Availability: "unavailable", Completeness: "unknown"}}
+				var failed bool
+				if value, ok := b["is_error"]; ok {
+					if err := json.Unmarshal(value, &failed); err != nil {
+						return err
+					}
+				}
+				if failed {
+					p.Status = "failed"
+				}
+				if content, ok := b["content"]; ok {
+					value, err := decode(content)
+					if err != nil {
+						return err
+					}
+					p.RawOutput = &value
+					p.Output = &runtime.Output{Availability: "provided", Completeness: "retained"}
+					if str, ok := value.(string); ok {
+						p.Content = []runtime.ContentBlock{runtime.Text(str)}
+					}
+					if _, ok := value.([]any); ok {
+						p.Content = []runtime.ContentBlock{}
+						for _, block := range value.([]any) {
+							m, ok := block.(map[string]any)
+							if !ok || m["type"] != "text" {
+								return errors.New("unsupported tool result content")
+							}
+							v, ok := m["text"].(string)
+							if !ok {
+								return errors.New("invalid text block")
+							}
+							p.Content = append(p.Content, runtime.Text(v))
+						}
+					}
+				}
+				delete(s.tools, tool)
+				if err := d.emit(s, tool, p, raw.Time); err != nil {
+					return err
+				}
+			default:
+				return errors.New("unsupported Claude complete content block")
+			}
+		}
+		if len(text) > 0 || len(thinking) > 0 {
+			if id == "" {
+				return errors.New("complete message missing native identity")
+			}
+			if len(thinking) > 0 {
+				if err := d.emit(s, id, runtime.AgentThinking{MessageID: id, Content: thinking}, raw.Time); err != nil {
+					return err
+				}
+			}
+			if len(text) > 0 {
+				p := runtime.MessagePayload{MessageID: id, Content: text}
+				if e.Type == "user" {
+					return d.emit(s, id, runtime.UserMessage(p), raw.Time)
+				}
+				return d.emit(s, id, runtime.AgentMessage(p), raw.Time)
+			}
+		}
+	case "result":
+		s.active = false
+		s.messageID = ""
+		state := runtime.Idle
+		return d.state(s, &state, e.Subtype)
+	}
+	return nil
+}
+func (d *Driver) permission(s *session, p *sdk.PermissionRequest) error {
+	request := runtime.PermissionRequest(p.ToolUseID(), p.ToolName())
+	if p.ToolName() == "AskUserQuestion" {
+		value, err := decode(p.Input())
+		if err != nil {
+			return err
+		}
+		schema, ok := value.(map[string]any)
+		if !ok {
+			return errors.New("invalid question input")
+		}
+		request = runtime.InteractionRequest{Kind: "form", Message: "Answer native Claude questions", RequestedSchema: schema}
+	}
+	ref, err := d.interactions.Add(s.id, func(ctx context.Context, a map[string]any) error {
+		answer := sdk.PermissionAnswer{Behavior: sdk.PermissionAllow, UpdatedInput: p.Input()}
+		if request.Kind == "form" {
+			if len(a) != 2 || a["action"] != "accept" {
+				return errors.New("expected explicit form accept/content")
+			}
+			content, ok := a["content"].(map[string]any)
+			if !ok || content["answers"] == nil {
+				return errors.New("expected native question answers")
+			}
+			data, err := json.Marshal(content)
+			if err != nil {
+				return err
+			}
+			answer.UpdatedInput = data
+		} else {
+			allow, err := runtime.PermissionAllowed(a)
+			if err != nil {
+				return err
+			}
+			if !allow {
+				answer = sdk.PermissionAnswer{Behavior: sdk.PermissionDeny, Message: "Rejected"}
+			}
+		}
+		return p.Answer(ctx, answer)
+	})
+	if err != nil {
+		return err
+	}
+	state := runtime.RequiresAction
+	if err := d.state(s, &state, ""); err != nil {
+		return err
+	}
+	return d.emit(s, "", runtime.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, time.Time{})
+}
+func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, a map[string]any) (runtime.Acceptance, error) {
+	if _, err := d.get(id); err != nil {
+		return runtime.Acceptance{}, err
+	}
+	if err := d.interactions.Answer(ctx, id, ref, a); err != nil {
+		return runtime.Acceptance{}, err
+	}
+	return runtime.Acceptance{Sent: runtime.Yes()}, nil
+}
+func (d *Driver) CloseSession(ctx context.Context, id string) error {
+	s, err := d.get(id)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if (s.active || s.sending) && s.err == nil {
+		s.mu.Unlock()
+		return errors.New("work unsettled")
+	}
+	s.closing = true
+	s.mu.Unlock()
+	err = s.client.Close()
+	select {
+	case <-s.done:
+	case <-ctx.Done():
+		return errors.Join(err, ctx.Err())
+	}
+	d.mu.Lock()
+	delete(d.sessions, id)
+	d.mu.Unlock()
+	d.interactions.RemoveSession(id)
+	return err
+}
+func (d *Driver) Stop(context.Context) error {
+	d.op.Lock()
+	defer d.op.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.sessions) > 0 {
+		return errors.New("close sessions before stopping")
+	}
+	d.stopped = true
+	d.pipe.End(nil)
+	return nil
+}

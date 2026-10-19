@@ -87,6 +87,7 @@ type Driver interface {
 	Start(context.Context) (Capabilities, error)
 	OpenSession(context.Context, Address, SessionSpec) (DriverSession, error)
 	SendPrompt(context.Context, string, Input) (InputReceipt, error)
+	AnswerInteraction(context.Context, string, string, map[string]any) (Acceptance, error)
 	CloseSession(context.Context, string) error
 	Stop(context.Context) error
 }
