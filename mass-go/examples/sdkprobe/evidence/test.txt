@@ -1,0 +1,68 @@
+SDK github.com/zoumo/agent-sdk-go v0.0.0-20261018163950-6dbf3e9c8264
+=== RUN   TestCodex
+=== RUN   TestCodex/basic
+    probe_test.go:133: PASS no-input native thread identity: codex-session (synthetic)
+    probe_test.go:142: PASS independent input turn acknowledged
+    probe_test.go:166: PASS original handle answered: command-approval item/commandExecution/requestApproval
+    probe_test.go:166: PASS original handle answered: file-approval item/fileChange/requestApproval
+    probe_test.go:222: PASS complete message, tool result, round-trip barrier and SDK Close
+=== RUN   TestCodex/question
+    probe_test.go:133: PASS no-input native thread identity: codex-session (synthetic)
+    probe_test.go:142: PASS independent input turn acknowledged
+    probe_test.go:166: PASS original handle answered: question-1 item/tool/requestUserInput
+    probe_test.go:222: PASS complete message, tool result, round-trip barrier and SDK Close
+--- PASS: TestCodex (0.78s)
+    --- PASS: TestCodex/basic (0.76s)
+    --- PASS: TestCodex/question (0.01s)
+=== RUN   TestClaude
+=== RUN   TestClaude/basic
+    probe_test.go:275: PASS no-input native system init identity: claude-session (synthetic only)
+    probe_test.go:278: PASS subsequent independent nonempty input sent
+    probe_test.go:292: PASS original handle answered: permission-1 Bash tool-1
+    probe_test.go:334: PASS complete message, tool result, round-trip barrier and SDK Close
+=== RUN   TestClaude/question
+    probe_test.go:275: PASS no-input native system init identity: claude-session (synthetic only)
+    probe_test.go:278: PASS subsequent independent nonempty input sent
+    probe_test.go:292: PASS original handle answered: question-1 AskUserQuestion question-tool
+    probe_test.go:334: PASS complete message, tool result, round-trip barrier and SDK Close
+=== RUN   TestClaude/no-identity
+    probe_test.go:262: PASS no-input missing identity explicitly observed; creation must fail if identity is required
+    probe_test.go:278: PASS subsequent independent nonempty input sent
+    probe_test.go:292: PASS original handle answered: permission-1 Bash tool-1
+    probe_test.go:334: PASS complete message, tool result, round-trip barrier and SDK Close
+--- PASS: TestClaude (0.62s)
+    --- PASS: TestClaude/basic (0.50s)
+    --- PASS: TestClaude/question (0.01s)
+    --- PASS: TestClaude/no-identity (0.11s)
+=== RUN   TestPeerExit
+=== RUN   TestPeerExit/codex/complete
+    probe_test.go:394: PASS strict scenario complete, exit=0, child waited/reaped
+=== RUN   TestPeerExit/codex/mismatch
+    probe_test.go:394: PASS strict scenario mismatch, exit=1, child waited/reaped
+=== RUN   TestPeerExit/codex/incomplete
+    probe_test.go:394: PASS strict scenario incomplete, exit=1, child waited/reaped
+=== RUN   TestPeerExit/claude/complete
+    probe_test.go:394: PASS strict scenario complete, exit=0, child waited/reaped
+=== RUN   TestPeerExit/claude/mismatch
+    probe_test.go:394: PASS strict scenario mismatch, exit=1, child waited/reaped
+=== RUN   TestPeerExit/claude/incomplete
+    probe_test.go:394: PASS strict scenario incomplete, exit=1, child waited/reaped
+--- PASS: TestPeerExit (0.07s)
+    --- PASS: TestPeerExit/codex/complete (0.02s)
+    --- PASS: TestPeerExit/codex/mismatch (0.01s)
+    --- PASS: TestPeerExit/codex/incomplete (0.01s)
+    --- PASS: TestPeerExit/claude/complete (0.01s)
+    --- PASS: TestPeerExit/claude/mismatch (0.01s)
+    --- PASS: TestPeerExit/claude/incomplete (0.01s)
+=== RUN   TestSDKInitializationFailure
+=== RUN   TestSDKInitializationFailure/codex
+    probe_test.go:440: PASS SDK initialization mismatch returned an error; cleanup readback follows
+=== RUN   TestSDKInitializationFailure/claude
+    probe_test.go:440: PASS SDK initialization mismatch returned an error; cleanup readback follows
+--- PASS: TestSDKInitializationFailure (0.02s)
+    --- PASS: TestSDKInitializationFailure/codex (0.01s)
+    --- PASS: TestSDKInitializationFailure/claude (0.01s)
+PASS
+PASS cleanup: no owned peer process remains
+PASS cleanup: temporary binaries removed
+ok  	github.com/zoumo/mass/mass-go/examples/sdkprobe	3.127s
