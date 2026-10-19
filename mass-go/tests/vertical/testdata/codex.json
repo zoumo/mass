@@ -281,6 +281,43 @@
         }
       },
       "ordinal": 15
+    },
+    {
+      "direction": "c2s",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 190,
+        "method": "thread/unsubscribe",
+        "params": {
+          "threadId": "codex-session"
+        }
+      },
+      "ordinal": 16
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 190,
+        "result": {
+          "status": "unsubscribed"
+        }
+      },
+      "ordinal": 17
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "method": "thread/closed",
+        "params": {
+          "threadId": "codex-session"
+        }
+      },
+      "ordinal": 18
     }
   ]
 }

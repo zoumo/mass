@@ -8,9 +8,14 @@ import (
 	"sync/atomic"
 )
 
+type streamEntry struct {
+	event   SessionEvent
+	barrier chan struct{}
+}
+
 // EventPipe is a bounded, single-consumer stream. End preserves queued facts.
 type EventPipe struct {
-	queue   chan SessionEvent
+	queue   chan streamEntry
 	done    chan struct{}
 	mu      sync.Mutex
 	err     error
@@ -19,7 +24,7 @@ type EventPipe struct {
 }
 
 func NewEventPipe(capacity int) *EventPipe {
-	return &EventPipe{queue: make(chan SessionEvent, capacity), done: make(chan struct{})}
+	return &EventPipe{queue: make(chan streamEntry, capacity), done: make(chan struct{})}
 }
 func (p *EventPipe) Send(ctx context.Context, e SessionEvent) error {
 	copy, err := e.Clone()
@@ -32,7 +37,7 @@ func (p *EventPipe) Send(ctx context.Context, e SessionEvent) error {
 	default:
 	}
 	select {
-	case p.queue <- copy:
+	case p.queue <- streamEntry{event: copy}:
 		return nil
 	case <-p.done:
 		return errors.New("event stream ended")
@@ -48,28 +53,55 @@ func (p *EventPipe) Next(ctx context.Context) (SessionEvent, error) {
 		return SessionEvent{}, errors.New("concurrent stream Next")
 	}
 	defer p.reading.Store(false)
+	return p.next(ctx)
+}
+func (p *EventPipe) next(ctx context.Context) (SessionEvent, error) {
+	for {
+		var entry streamEntry
+		select {
+		case entry = <-p.queue:
+		default:
+			select {
+			case entry = <-p.queue:
+			case <-p.done:
+				select {
+				case entry = <-p.queue:
+				default:
+					p.mu.Lock()
+					err := p.err
+					p.mu.Unlock()
+					if err == nil {
+						err = io.EOF
+					}
+					return SessionEvent{}, err
+				}
+			case <-ctx.Done():
+				return SessionEvent{}, ctx.Err()
+			}
+		}
+		if entry.barrier != nil {
+			close(entry.barrier)
+			continue
+		}
+		return entry.event, nil
+	}
+}
+
+// Flush waits until the sole consumer has routed every preceding entry.
+// Call after a Session producer has ended; it is not a business event.
+func (p *EventPipe) Flush(ctx context.Context) error {
+	b := make(chan struct{})
 	select {
-	case e := <-p.queue:
-		return e, nil
-	default:
+	case p.queue <- streamEntry{barrier: b}:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.done:
+		return errors.New("stream ended before drain")
 	}
 	select {
-	case e := <-p.queue:
-		return e, nil
-	case <-p.done:
-		select {
-		case e := <-p.queue:
-			return e, nil
-		default:
-		}
-		p.mu.Lock()
-		err := p.err
-		p.mu.Unlock()
-		if err == nil {
-			err = io.EOF
-		}
-		return SessionEvent{}, err
+	case <-b:
+		return nil
 	case <-ctx.Done():
-		return SessionEvent{}, ctx.Err()
+		return ctx.Err()
 	}
 }

@@ -86,6 +86,7 @@ type Driver interface {
 	Events() (Stream, error)
 	Start(context.Context) (Capabilities, error)
 	OpenSession(context.Context, Address, SessionSpec) (DriverSession, error)
+	ResumeSession(context.Context, string, Address, SessionSpec) (DriverSession, error)
 	SendPrompt(context.Context, string, Input) (InputReceipt, error)
 	AnswerInteraction(context.Context, string, string, map[string]any) (Acceptance, error)
 	CloseSession(context.Context, string) error
@@ -93,7 +94,7 @@ type Driver interface {
 }
 type Factory interface {
 	Validate(Config) error
-	New(Config) (Driver, error)
+	New(string, Config) (Driver, error)
 }
 
 // Registry manages only type factories and unstarted/current Driver mappings.
@@ -132,7 +133,7 @@ func (r *Registry) Create(kind, name string, c Config) (Driver, error) {
 	if err := f.Validate(c); err != nil {
 		return nil, err
 	}
-	d, err := f.New(c)
+	d, err := f.New(name, c)
 	if err == nil {
 		r.drivers[name] = d
 	}

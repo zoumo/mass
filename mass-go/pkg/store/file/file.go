@@ -215,11 +215,11 @@ func initial(m resource.Metadata) (resource.Metadata, error) {
 	return m, nil
 }
 func updated(old, m resource.Metadata, specChanged, changed bool) (resource.Metadata, error) {
-	if old.Namespace != m.Namespace || old.Name != m.Name || old.UID != m.UID || !old.CreatedAt.Equal(m.CreatedAt) || old.Generation != m.Generation {
-		return m, errors.New("immutable metadata changed")
-	}
 	if old.ResourceVersion != m.ResourceVersion {
 		return m, store.ErrConflict
+	}
+	if old.Namespace != m.Namespace || old.Name != m.Name || old.UID != m.UID || !old.CreatedAt.Equal(m.CreatedAt) || old.Generation != m.Generation {
+		return m, errors.New("immutable metadata changed")
 	}
 	if specChanged {
 		m.Generation++

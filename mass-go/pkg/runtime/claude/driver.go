@@ -13,6 +13,7 @@ import (
 
 	sdk "github.com/zoumo/agent-sdk-go/claude"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/recovery"
 )
 
 type options struct{ executable, scenario string }
@@ -39,15 +40,15 @@ func parse(c runtime.Config) (options, error) {
 	return o, nil
 }
 
-type Factory struct{}
+type Factory struct{ RecoveryDir string }
 
 func (Factory) Validate(c runtime.Config) error { _, err := parse(c); return err }
-func (Factory) New(c runtime.Config) (runtime.Driver, error) {
+func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	o, err := parse(c)
 	if err != nil {
 		return nil, err
 	}
-	return &Driver{options: o, pipe: runtime.NewEventPipe(128), sessions: map[string]*session{}}, nil
+	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "claude", Owner: name, Executable: o.executable}, options: o, pipe: runtime.NewEventPipe(128), sessions: map[string]*session{}}, nil
 }
 
 type session struct {
@@ -66,6 +67,7 @@ type session struct {
 	tools     map[string]string
 }
 type Driver struct {
+	vault                   recovery.Vault
 	mu                      sync.Mutex
 	op                      sync.Mutex
 	options                 options
@@ -97,8 +99,17 @@ func (d *Driver) Start(context.Context) (runtime.Capabilities, error) {
 	return caps(), nil
 }
 func (d *Driver) OpenSession(ctx context.Context, a runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
+	return d.open(ctx, "", a, spec)
+}
+func (d *Driver) ResumeSession(ctx context.Context, id string, a runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
+	return d.open(ctx, id, a, spec)
+}
+func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.op.Lock()
 	defer d.op.Unlock()
+	if err := d.vault.Check(); err != nil {
+		return runtime.DriverSession{}, err
+	}
 	if !filepath.IsAbs(spec.Cwd) {
 		return runtime.DriverSession{}, errors.New("absolute cwd required")
 	}
@@ -111,8 +122,24 @@ func (d *Driver) OpenSession(ctx context.Context, a runtime.Address, spec runtim
 	if !running {
 		return runtime.DriverSession{}, errors.New("driver not running")
 	}
+	if resume != "" {
+		m, err := d.vault.Load(resume, a, spec)
+		if err != nil {
+			return runtime.DriverSession{}, err
+		}
+		var saved struct {
+			ID  string `json:"id"`
+			Cwd string `json:"cwd"`
+		}
+		if err = json.Unmarshal(m.Context, &saved); err != nil {
+			return runtime.DriverSession{}, err
+		}
+		if saved.ID != resume || saved.Cwd != spec.Cwd {
+			return runtime.DriverSession{}, errors.New("invalid Claude recovery context")
+		}
+	}
 	s := &session{address: a, source: runtime.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}}
-	c, err := sdk.Open(ctx, sdk.Options{CLIPath: d.options.executable, WorkDir: spec.Cwd, Env: []string{"CLAUDE_MOCK_SCENARIO=" + d.options.scenario}, PermissionHandler: func(p *sdk.PermissionRequest) {
+	c, err := sdk.Open(ctx, sdk.Options{ResumeID: resume, CLIPath: d.options.executable, WorkDir: spec.Cwd, Env: []string{"CLAUDE_MOCK_SCENARIO=" + d.options.scenario}, PermissionHandler: func(p *sdk.PermissionRequest) {
 		select {
 		case <-s.ready:
 		case <-p.Context().Done():
@@ -145,6 +172,17 @@ func (d *Driver) OpenSession(ctx context.Context, a runtime.Address, spec runtim
 			continue
 		}
 		if e.Type == "system" && e.Subtype == "init" && e.SessionID != "" {
+			if resume != "" && e.SessionID != resume {
+				close(s.ready)
+				return runtime.DriverSession{}, errors.Join(errors.New("native resume identity mismatch"), c.Close())
+			}
+			var init struct {
+				Cwd string `json:"cwd"`
+			}
+			if err := json.Unmarshal(e.Raw, &init); err != nil || init.Cwd != spec.Cwd {
+				close(s.ready)
+				return runtime.DriverSession{}, errors.Join(errors.New("native init cwd mismatch"), c.Close())
+			}
 			s.id = e.SessionID
 			break
 		}
@@ -152,6 +190,12 @@ func (d *Driver) OpenSession(ctx context.Context, a runtime.Address, spec runtim
 		if e.Type == "assistant" || e.Type == "user" || e.Type == "stream_event" || e.Type == "result" {
 			close(s.ready)
 			return runtime.DriverSession{}, errors.Join(errors.New("Claude content before native init identity"), c.Close())
+		}
+	}
+	if resume == "" {
+		if err := d.vault.Save(s.id, a, spec, map[string]string{"id": s.id, "cwd": spec.Cwd}); err != nil {
+			close(s.ready)
+			return runtime.DriverSession{}, errors.Join(err, c.Close())
 		}
 	}
 	d.mu.Lock()
@@ -484,6 +528,9 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	case <-s.done:
 	case <-ctx.Done():
 		return errors.Join(err, ctx.Err())
+	}
+	if err := d.pipe.Flush(ctx); err != nil {
+		return err
 	}
 	d.mu.Lock()
 	delete(d.sessions, id)

@@ -65,7 +65,7 @@ func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *r
 	dir := t.TempDir()
 	st, err := file.Open(dir, false)
 	require.NoError(t, err)
-	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{}, "codex": codex.Factory{}})
+	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}})
 	svc := service.NewWithPolicy(st, st, reg, policy)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
 	return svc, reg, dir
