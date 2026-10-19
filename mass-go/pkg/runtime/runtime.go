@@ -22,6 +22,10 @@ func UUID() string {
 	return s[:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:]
 }
 
+var ErrResourcesReleased = errors.New("owned resources released")
+
+var ErrWorkUnsettled = errors.New("work unsettled")
+
 type Config map[string]any
 type Capabilities map[string]bool
 type SessionState string
@@ -88,6 +92,7 @@ type Driver interface {
 	OpenSession(context.Context, Address, SessionSpec) (DriverSession, error)
 	ResumeSession(context.Context, string, Address, SessionSpec) (DriverSession, error)
 	SendPrompt(context.Context, string, Input) (InputReceipt, error)
+	Cancel(context.Context, string) (Acceptance, error)
 	AnswerInteraction(context.Context, string, string, map[string]any) (Acceptance, error)
 	CloseSession(context.Context, string) error
 	Stop(context.Context) error

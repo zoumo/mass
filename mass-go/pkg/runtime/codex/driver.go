@@ -53,6 +53,9 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 }
 
 type session struct {
+	command     sync.Mutex
+	work        string
+	retired     map[string]bool
 	address     runtime.Address
 	source      runtime.Source
 	sub         *sdk.Subscription
@@ -65,6 +68,7 @@ type session struct {
 	releaseOnce sync.Once
 }
 type Driver struct {
+	opening      int
 	vault        recovery.Vault
 	mu           sync.Mutex
 	op           sync.Mutex
@@ -74,6 +78,7 @@ type Driver struct {
 	client       *sdk.Client
 	sessions     map[string]*session
 	stopped      bool
+	stopping     bool
 	life         context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
@@ -96,6 +101,10 @@ func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	d.op.Lock()
 	defer d.op.Unlock()
 	d.mu.Lock()
+	if d.stopping {
+		d.mu.Unlock()
+		return nil, errors.New("driver stopping")
+	}
 	if d.client != nil {
 		d.mu.Unlock()
 		return caps(), nil
@@ -127,36 +136,42 @@ func (d *Driver) ResumeSession(ctx context.Context, id string, address runtime.A
 	return d.open(ctx, id, address, spec)
 }
 func (d *Driver) open(ctx context.Context, resume string, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
-	d.op.Lock()
-	defer d.op.Unlock()
+	d.mu.Lock()
+	if d.stopped || d.stopping || len(d.sessions)+d.opening >= 128 {
+		d.mu.Unlock()
+		return runtime.DriverSession{}, noResources("driver unavailable or session capacity exhausted")
+	}
+	d.opening++
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); d.opening--; d.mu.Unlock() }()
 	if err := d.vault.Check(); err != nil {
-		return runtime.DriverSession{}, err
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	if !filepath.IsAbs(spec.Cwd) {
-		return runtime.DriverSession{}, errors.New("absolute cwd required")
+		return runtime.DriverSession{}, noResources("absolute cwd required")
 	}
 	if len(spec.AdditionalDirs) > 0 {
-		return runtime.DriverSession{}, errors.New("additionalDirs not supported yet")
+		return runtime.DriverSession{}, noResources("additionalDirs not supported yet")
 	}
 	d.mu.Lock()
 	c := d.client
 	stopped := d.stopped
 	d.mu.Unlock()
 	if c == nil || stopped {
-		return runtime.DriverSession{}, errors.New("driver not running")
+		return runtime.DriverSession{}, noResources("driver not running")
 	}
 	var thread ct.Thread
 	if resume != "" {
 		material, err := d.vault.Load(resume, address, spec)
 		if err != nil {
-			return runtime.DriverSession{}, err
+			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
 		var saved ct.Thread
 		if err = json.Unmarshal(material.Context, &saved); err != nil {
-			return runtime.DriverSession{}, err
+			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
 		if saved.ID != resume || saved.SessionID != resume || saved.Ephemeral || string(saved.Cwd) != spec.Cwd {
-			return runtime.DriverSession{}, errors.New("invalid native recovery context")
+			return runtime.DriverSession{}, noResources("invalid native recovery context")
 		}
 		response, err := c.ResumeThread(ctx, ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)})
 		if err != nil {
@@ -191,7 +206,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	if err != nil {
 		return runtime.DriverSession{}, err
 	}
-	s := &session{address: address, source: runtime.NewSource(), sub: sub, done: make(chan struct{}), released: make(chan struct{})}
+	s := &session{address: address, source: runtime.NewSource(), sub: sub, done: make(chan struct{}), released: make(chan struct{}), retired: map[string]bool{}}
 	d.mu.Lock()
 	if _, ok := d.sessions[id]; ok {
 		d.mu.Unlock()
@@ -203,7 +218,9 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	// Only the native response's idle observation permits an initial idle event.
 	if thread.Status.Idle != nil {
 		state := runtime.Idle
+		d.mu.Lock()
 		s.state = &state
+		d.mu.Unlock()
 		if err = d.emit(s, id, "", runtime.StateUpdate{State: &state}, ""); err != nil {
 			return runtime.DriverSession{}, err
 		}
@@ -215,8 +232,15 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
 	d.mu.Lock()
 	s := d.sessions[id]
+	d.mu.Unlock()
+	if s == nil {
+		return runtime.InputReceipt{}, errors.New("session unavailable")
+	}
+	s.command.Lock()
+	defer s.command.Unlock()
+	d.mu.Lock()
 	c := d.client
-	if s == nil || d.stopped || s.active || s.sending || s.err != nil {
+	if d.sessions[id] != s || d.stopped || d.stopping || s.active || s.sending || s.err != nil || len(s.retired) >= 128 {
 		d.mu.Unlock()
 		return runtime.InputReceipt{}, errors.New("session unavailable or work unsettled")
 	}
@@ -238,11 +262,16 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	d.mu.Unlock()
 	result, err := c.StartTurn(ctx, ct.TurnStartParams{ThreadID: id, Input: items})
 	if err != nil {
-		return runtime.InputReceipt{}, err
+		return runtime.InputReceipt{Acceptance: runtime.Acceptance{}}, fmt.Errorf("outcome_unknown: start turn: %w", err)
 	}
 	if result.Turn.ID == "" {
 		return runtime.InputReceipt{}, errors.New("outcome_unknown: missing turn identity")
 	}
+	d.mu.Lock()
+	if s.work == "" && !s.retired[result.Turn.ID] {
+		s.work = result.Turn.ID
+	}
+	d.mu.Unlock()
 	return runtime.InputReceipt{Submission: result.Turn.ID, Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}, nil
 }
 func (d *Driver) emit(s *session, id, item string, p runtime.Payload, work string, observedAt ...time.Time) error {
@@ -267,6 +296,12 @@ func (d *Driver) observe(id string, s *session) {
 	}
 	if err := s.sub.Err(); err != nil {
 		d.observationFailed(id, s, err)
+	} else {
+		select {
+		case <-s.released:
+		default:
+			d.observationFailed(id, s, errors.New("unexpected native EOF"))
+		}
 	}
 }
 func (d *Driver) adapt(id string, s *session, event ct.Event) error {
@@ -328,6 +363,14 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 	} else if v.StartedAtMs != nil {
 		v.Time = time.UnixMilli(*v.StartedAtMs).UTC()
 	}
+	if v.TurnID != "" {
+		d.mu.Lock()
+		owned := s.work == v.TurnID || s.retired[v.TurnID]
+		d.mu.Unlock()
+		if !owned {
+			return nil
+		}
+	}
 	emit := func(item string, p runtime.Payload, work string) error { return d.emit(s, id, item, p, work, v.Time) }
 	switch event.Method {
 	case "turn/started", "turn/completed":
@@ -339,10 +382,24 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 			state = runtime.Idle
 		}
 		d.mu.Lock()
+		if s.retired[v.Turn.ID] || (!s.active && s.work == "") || (s.work != "" && s.work != v.Turn.ID) {
+			d.mu.Unlock()
+			return nil
+		}
+		if s.work == "" {
+			s.work = v.Turn.ID
+		}
 		previous := s.state
 		s.state = &state
 		s.active = state == runtime.Running
+		if !s.active {
+			s.retired[v.Turn.ID] = true
+			s.work = ""
+		}
 		d.mu.Unlock()
+		if state == runtime.Idle {
+			d.interactions.RemoveSession(id)
+		}
 		return emit("", runtime.StateUpdate{PreviousState: previous, State: &state, StopReason: v.Turn.Status}, v.Turn.ID)
 	case "item/agentMessage/delta":
 		return emit(v.ItemID, runtime.MessageChunk{MessageID: v.ItemID, Content: []runtime.ContentBlock{runtime.Text(v.Delta)}}, v.TurnID)
@@ -406,7 +463,7 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	}
 	if (s.active || s.sending) && s.err == nil {
 		d.mu.Unlock()
-		return errors.New("work unsettled")
+		return runtime.ErrWorkUnsettled
 	}
 	d.mu.Unlock()
 	var release ct.ThreadUnsubscribeResponse
@@ -449,12 +506,12 @@ func (d *Driver) Stop(ctx context.Context) error {
 		d.mu.Unlock()
 		return nil
 	}
-	if len(d.sessions) != 0 {
+	if len(d.sessions) != 0 || d.opening != 0 {
 		d.mu.Unlock()
 		return errors.New("close sessions before stopping")
 	}
 	c := d.client
-	d.stopped = true
+	d.stopping = true
 	d.mu.Unlock()
 	if c != nil {
 		if err := c.Close(); err != nil {
@@ -465,6 +522,9 @@ func (d *Driver) Stop(ctx context.Context) error {
 		d.cancel()
 	}
 	d.wg.Wait()
+	d.mu.Lock()
+	d.stopped = true
+	d.mu.Unlock()
 	d.pipe.End(nil)
 	return nil
 }
@@ -486,8 +546,9 @@ func (d *Driver) requests(c *sdk.Client) {
 			}
 			d.mu.Lock()
 			s := d.sessions[v.ThreadID]
+			valid := s != nil && s.err == nil && v.TurnID != "" && s.work == v.TurnID && !s.retired[v.TurnID]
 			d.mu.Unlock()
-			if s == nil {
+			if !valid {
 				continue
 			}
 			request := runtime.PermissionRequest(v.ItemID, r.Method())
@@ -504,7 +565,7 @@ func (d *Driver) requests(c *sdk.Client) {
 				_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "unsupported native interaction", Reason: method}, v.TurnID)
 				continue
 			}
-			ref, err := d.interactions.Add(v.ThreadID, func(ctx context.Context, a map[string]any) error {
+			ref, err := d.interactions.Add(v.ThreadID, s.source.WithWork(v.TurnID), func(ctx context.Context, a map[string]any) error {
 				var response any
 				if method == "item/tool/requestUserInput" {
 					if len(a) != 2 || a["action"] != "accept" {
@@ -546,7 +607,22 @@ func (d *Driver) requests(c *sdk.Client) {
 	}
 }
 func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, a map[string]any) (runtime.Acceptance, error) {
-	if err := d.interactions.Answer(ctx, id, ref, a); err != nil {
+	d.mu.Lock()
+	s := d.sessions[id]
+	d.mu.Unlock()
+	if s == nil {
+		return runtime.Acceptance{}, errors.New("session unavailable")
+	}
+	s.command.Lock()
+	defer s.command.Unlock()
+	d.mu.Lock()
+	source := s.source.WithWork(s.work)
+	valid := d.sessions[id] == s && !d.stopping && !d.stopped && s.err == nil
+	d.mu.Unlock()
+	if !valid {
+		return runtime.Acceptance{}, errors.New("original interaction run unavailable")
+	}
+	if err := d.interactions.Answer(ctx, id, source, ref, a); err != nil {
 		return runtime.Acceptance{}, err
 	}
 	// SDK Answer proves a write, not native acceptance or tool success.
@@ -564,3 +640,33 @@ func (d *Driver) observationFailed(id string, s *session, err error) {
 }
 
 func marshal(v any) []byte { b, _ := json.Marshal(v); return b }
+
+func (d *Driver) Cancel(ctx context.Context, id string) (runtime.Acceptance, error) {
+	d.mu.Lock()
+	s := d.sessions[id]
+	d.mu.Unlock()
+	if s == nil {
+		return runtime.Acceptance{}, errors.New("session unavailable")
+	}
+	s.command.Lock()
+	defer s.command.Unlock()
+	d.mu.Lock()
+	work, c := s.work, d.client
+	active := s.active
+	d.mu.Unlock()
+	if !active {
+		return runtime.Acceptance{}, nil
+	}
+	if work == "" {
+		return runtime.Acceptance{}, errors.New("outcome_unknown: no confirmed native turn to cancel")
+	}
+	_, err := c.InterruptTurn(ctx, ct.TurnInterruptParams{ThreadID: id, TurnID: work})
+	if err != nil {
+		return runtime.Acceptance{}, fmt.Errorf("outcome_unknown: cancel: %w", err)
+	}
+	return runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}, nil
+}
+
+func noResources(message string) error {
+	return errors.Join(runtime.ErrResourcesReleased, errors.New(message))
+}

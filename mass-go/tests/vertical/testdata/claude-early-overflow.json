@@ -1,0 +1,4693 @@
+{
+  "version": 1,
+  "provenance": "synthetic",
+  "source": "Ticket05 strict SDK-owned mock; no model/tool execution",
+  "frames": [
+    {
+      "ordinal": 1,
+      "channel": "protocol",
+      "direction": "client",
+      "data": {
+        "type": "control_request",
+        "request_id": "init",
+        "request": {
+          "subtype": "initialize",
+          "hooks": null,
+          "forwardSubagentText": true
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "control_response",
+        "response": {
+          "subtype": "success",
+          "request_id": "init",
+          "response": {}
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 4,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 5,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 6,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 7,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 8,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 9,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 10,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 11,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 12,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 13,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 14,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 15,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 16,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 17,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 18,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 19,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 20,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 21,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 22,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 23,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 24,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 25,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 26,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 27,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 28,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 29,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 30,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 31,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 32,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 33,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 34,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 35,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 36,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 37,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 38,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 39,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 40,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 41,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 42,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 43,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 44,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 45,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 46,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 47,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 48,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 49,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 50,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 51,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 52,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 53,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 54,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 55,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 56,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 57,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 58,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 59,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 60,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 61,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 62,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 63,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 64,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 65,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 66,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 67,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 68,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 69,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 70,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 71,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 72,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 73,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 74,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 75,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 76,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 77,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 78,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 79,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 80,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 81,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 82,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 83,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 84,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 85,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 86,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 87,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 88,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 89,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 90,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 91,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 92,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 93,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 94,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 95,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 96,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 97,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 98,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 99,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 100,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 101,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 102,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 103,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 104,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 105,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 106,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 107,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 108,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 109,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 110,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 111,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 112,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 113,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 114,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 115,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 116,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 117,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 118,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 119,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 120,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 121,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 122,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 123,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 124,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 125,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 126,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 127,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 128,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 129,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 130,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 131,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "reason one"
+            },
+            {
+              "type": "thinking",
+              "thinking": ""
+            },
+            {
+              "type": "text",
+              "text": "complete answer"
+            },
+            {
+              "type": "text",
+              "text": ""
+            },
+            {
+              "type": "text",
+              "text": "second block"
+            }
+          ],
+          "id": "msg-8"
+        },
+        "timestamp": "2026-10-20T01:02:03Z"
+      }
+    },
+    {
+      "ordinal": 132,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "claude-session",
+        "cwd": "/synthetic",
+        "model": "synthetic",
+        "tools": [
+          "Bash"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,3244 @@
+{
+  "version": 1,
+  "provenance": "synthetic",
+  "source": "Ticket05 strict SDK-owned mock; no model/tool execution",
+  "frames": [
+    {
+      "ordinal": 1,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 91,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "mass",
+            "version": "2"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 91,
+        "result": {
+          "userAgent": "synthetic",
+          "codexHome": "/synthetic",
+          "platformFamily": "unix",
+          "platformOs": "linux"
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "method": "initialized"
+      }
+    },
+    {
+      "ordinal": 4,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 92,
+        "method": "thread/start",
+        "params": {
+          "cwd": "/synthetic",
+          "ephemeral": false
+        }
+      }
+    },
+    {
+      "ordinal": 5,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 92,
+        "result": {
+          "thread": {
+            "id": "codex-session",
+            "turns": [],
+            "cliVersion": "synthetic",
+            "createdAt": 1,
+            "updatedAt": 1,
+            "cwd": "/synthetic",
+            "ephemeral": false,
+            "modelProvider": "synthetic",
+            "preview": "",
+            "projectId": null,
+            "source": "appServer",
+            "status": {
+              "type": "idle"
+            },
+            "sessionId": "codex-session"
+          },
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "user",
+          "cwd": "/synthetic",
+          "model": "synthetic",
+          "modelProvider": "synthetic",
+          "sandbox": {
+            "type": "readOnly"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 6,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 93,
+        "method": "turn/start",
+        "params": {
+          "threadId": "codex-session",
+          "input": [
+            {
+              "type": "text",
+              "text": "hello",
+              "text_elements": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ordinal": 7,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 93,
+        "result": {
+          "turn": {
+            "id": "turn-1",
+            "status": "inProgress",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/started",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {
+            "id": "turn-1",
+            "status": "inProgress",
+            "items": []
+          }
+        }
+      },
+      "ordinal": 8
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-0",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 9
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-1",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 10
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-2",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 11
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-3",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 12
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-4",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 13
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-5",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 14
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-6",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 15
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-7",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 16
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-8",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 17
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-9",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 18
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-10",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 19
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-11",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 20
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-12",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 21
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-13",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 22
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-14",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 23
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-15",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 24
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-16",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 25
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-17",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 26
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-18",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 27
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-19",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 28
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-20",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 29
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-21",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 30
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-22",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 31
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-23",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 32
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-24",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 33
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-25",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 34
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-26",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 35
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-27",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 36
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-28",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 37
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-29",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 38
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-30",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 39
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-31",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 40
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-32",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 41
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-33",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 42
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-34",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 43
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-35",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 44
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-36",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 45
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-37",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 46
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-38",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 47
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-39",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 48
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-40",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 49
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-41",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 50
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-42",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 51
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-43",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 52
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-44",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 53
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-45",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 54
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-46",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 55
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-47",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 56
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-48",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 57
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-49",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 58
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-50",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 59
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-51",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 60
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-52",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 61
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-53",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 62
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-54",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 63
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-55",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 64
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-56",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 65
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-57",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 66
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-58",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 67
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-59",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 68
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-60",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 69
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-61",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 70
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-62",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 71
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-63",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 72
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-64",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 73
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-65",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 74
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-66",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 75
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-67",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 76
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-68",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 77
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-69",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 78
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-70",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 79
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-71",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 80
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-72",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 81
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-73",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 82
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-74",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 83
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-75",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 84
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-76",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 85
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-77",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 86
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-78",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 87
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-79",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 88
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-80",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 89
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-81",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 90
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-82",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 91
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-83",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 92
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-84",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 93
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-85",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 94
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-86",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 95
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-87",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 96
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-88",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 97
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-89",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 98
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-90",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 99
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-91",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 100
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-92",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 101
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-93",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 102
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-94",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 103
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-95",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 104
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-96",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 105
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-97",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 106
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-98",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 107
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-99",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 108
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-100",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 109
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-101",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 110
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-102",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 111
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-103",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 112
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-104",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 113
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-105",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 114
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-106",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 115
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-107",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 116
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-108",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 117
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-109",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 118
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-110",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 119
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-111",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 120
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-112",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 121
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-113",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 122
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-114",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 123
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-115",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 124
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-116",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 125
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-117",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 126
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-118",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 127
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-119",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 128
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-120",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 129
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-121",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 130
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-122",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 131
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-123",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 132
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-124",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 133
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-125",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 134
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-126",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 135
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-127",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 136
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-128",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 137
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-129",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 138
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-130",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 139
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-131",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 140
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-132",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 141
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-133",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 142
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-134",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 143
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-135",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 144
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-136",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 145
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-137",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 146
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-138",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 147
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-139",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 148
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-140",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 149
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-141",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 150
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-142",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 151
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-143",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 152
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-144",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 153
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-145",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 154
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-146",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 155
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-147",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 156
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-148",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 157
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-149",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 158
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-150",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 159
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-151",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 160
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-152",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 161
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-153",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 162
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-154",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 163
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-155",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 164
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-156",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 165
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-157",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 166
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-158",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 167
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-159",
+            "text": "complete answer"
+          },
+          "completedAtMs": 1792458123000
+        }
+      },
+      "ordinal": 168
+    },
+    {
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {
+            "id": "turn-1",
+            "status": "completed",
+            "items": []
+          }
+        }
+      },
+      "ordinal": 169
+    },
+    {
+      "direction": "c2s",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 190,
+        "method": "thread/unsubscribe",
+        "params": {
+          "threadId": "codex-session"
+        }
+      },
+      "ordinal": 170
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 190,
+        "result": {
+          "status": "unsubscribed"
+        }
+      },
+      "ordinal": 171
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "method": "thread/closed",
+        "params": {
+          "threadId": "codex-session"
+        }
+      },
+      "ordinal": 172
+    }
+  ]
+}

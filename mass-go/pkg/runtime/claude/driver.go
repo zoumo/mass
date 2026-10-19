@@ -52,6 +52,9 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 }
 
 type session struct {
+	command                  sync.Mutex
+	work                     string
+	used                     bool
 	mu                       sync.Mutex
 	address                  runtime.Address
 	source                   runtime.Source
@@ -67,6 +70,7 @@ type session struct {
 	tools     map[string]string
 }
 type Driver struct {
+	opening                 int
 	vault                   recovery.Vault
 	mu                      sync.Mutex
 	op                      sync.Mutex
@@ -105,37 +109,43 @@ func (d *Driver) ResumeSession(ctx context.Context, id string, a runtime.Address
 	return d.open(ctx, id, a, spec)
 }
 func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
-	d.op.Lock()
-	defer d.op.Unlock()
+	d.mu.Lock()
+	if d.stopped || len(d.sessions)+d.opening >= 128 {
+		d.mu.Unlock()
+		return runtime.DriverSession{}, noResources("driver unavailable or session capacity exhausted")
+	}
+	d.opening++
+	d.mu.Unlock()
+	defer func() { d.mu.Lock(); d.opening--; d.mu.Unlock() }()
 	if err := d.vault.Check(); err != nil {
-		return runtime.DriverSession{}, err
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	if !filepath.IsAbs(spec.Cwd) {
-		return runtime.DriverSession{}, errors.New("absolute cwd required")
+		return runtime.DriverSession{}, noResources("absolute cwd required")
 	}
 	if spec.SystemPrompt != "" || len(spec.AdditionalDirs) > 0 {
-		return runtime.DriverSession{}, errors.New("Claude SDK does not support systemPrompt or additionalDirs")
+		return runtime.DriverSession{}, noResources("Claude SDK does not support systemPrompt or additionalDirs")
 	}
 	d.mu.Lock()
 	running := d.started && !d.stopped
 	d.mu.Unlock()
 	if !running {
-		return runtime.DriverSession{}, errors.New("driver not running")
+		return runtime.DriverSession{}, noResources("driver not running")
 	}
 	if resume != "" {
 		m, err := d.vault.Load(resume, a, spec)
 		if err != nil {
-			return runtime.DriverSession{}, err
+			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
 		var saved struct {
 			ID  string `json:"id"`
 			Cwd string `json:"cwd"`
 		}
 		if err = json.Unmarshal(m.Context, &saved); err != nil {
-			return runtime.DriverSession{}, err
+			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
 		if saved.ID != resume || saved.Cwd != spec.Cwd {
-			return runtime.DriverSession{}, errors.New("invalid Claude recovery context")
+			return runtime.DriverSession{}, noResources("invalid Claude recovery context")
 		}
 	}
 	s := &session{address: a, source: runtime.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}}
@@ -160,12 +170,13 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		return runtime.DriverSession{}, err
 	}
 	s.client = c
+	early := []sdk.Event{}
 	// No hidden input: only a native system/init can establish creation identity.
 	for {
 		event, receiveErr := c.Receive(ctx)
 		if receiveErr != nil {
 			close(s.ready)
-			return runtime.DriverSession{}, errors.Join(fmt.Errorf("Claude missing native init identity: %w", receiveErr), c.Close())
+			return runtime.DriverSession{}, releasedOpenError(fmt.Errorf("Claude missing native init identity: %w", receiveErr), c)
 		}
 		e, ok := event.(sdk.Event)
 		if !ok {
@@ -174,40 +185,43 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		if e.Type == "system" && e.Subtype == "init" && e.SessionID != "" {
 			if resume != "" && e.SessionID != resume {
 				close(s.ready)
-				return runtime.DriverSession{}, errors.Join(errors.New("native resume identity mismatch"), c.Close())
+				return runtime.DriverSession{}, releasedOpenError(errors.New("native resume identity mismatch"), c)
 			}
 			var init struct {
 				Cwd string `json:"cwd"`
 			}
 			if err := json.Unmarshal(e.Raw, &init); err != nil || init.Cwd != spec.Cwd {
 				close(s.ready)
-				return runtime.DriverSession{}, errors.Join(errors.New("native init cwd mismatch"), c.Close())
+				return runtime.DriverSession{}, releasedOpenError(errors.New("native init cwd mismatch"), c)
 			}
 			s.id = e.SessionID
 			break
 		}
 		// Pre-identity content is unsupported, rather than lost or given a fake ID.
 		if e.Type == "assistant" || e.Type == "user" || e.Type == "stream_event" || e.Type == "result" {
-			close(s.ready)
-			return runtime.DriverSession{}, errors.Join(errors.New("Claude content before native init identity"), c.Close())
+			if len(early) == 128 {
+				close(s.ready)
+				return runtime.DriverSession{}, releasedOpenError(errors.New("pre-identity buffer exhausted"), c)
+			}
+			early = append(early, e)
 		}
 	}
 	if resume == "" {
 		if err := d.vault.Save(s.id, a, spec, map[string]string{"id": s.id, "cwd": spec.Cwd}); err != nil {
 			close(s.ready)
-			return runtime.DriverSession{}, errors.Join(err, c.Close())
+			return runtime.DriverSession{}, releasedOpenError(err, c)
 		}
 	}
 	d.mu.Lock()
 	if d.sessions[s.id] != nil {
 		d.mu.Unlock()
 		close(s.ready)
-		return runtime.DriverSession{}, errors.Join(errors.New("duplicate native identity"), c.Close())
+		return runtime.DriverSession{}, releasedOpenError(errors.New("duplicate native identity"), c)
 	}
 	d.sessions[s.id] = s
 	d.mu.Unlock()
 	close(s.ready)
-	go d.observe(s)
+	go d.observe(s, early)
 	return runtime.DriverSession{SessionID: s.id, Capabilities: caps(), Source: s.source}, nil
 }
 func (d *Driver) get(id string) (*session, error) {
@@ -224,15 +238,23 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
+	s.command.Lock()
+	defer s.command.Unlock()
 	if len(input.Content) != 1 || input.Content[0].Type != "text" {
 		return runtime.InputReceipt{}, errors.New("Claude supports exactly one text input block")
 	}
 	s.mu.Lock()
-	if s.active || s.sending || s.closing || s.err != nil {
+	if s.used && !s.active && !s.sending {
+		s.mu.Unlock()
+		return runtime.InputReceipt{}, errors.New("Claude has no native work identity: close/resume required before another input")
+	}
+	if s.active || s.sending || s.closing || s.err != nil || s.used {
 		s.mu.Unlock()
 		return runtime.InputReceipt{}, errors.New("session unavailable or work unsettled")
 	}
 	s.active = true
+	s.used = true
+	s.work = runtime.UUID()
 	s.sending = true
 	s.mu.Unlock()
 	err = s.client.Send(ctx, input.Content[0].Text)
@@ -248,7 +270,7 @@ func (d *Driver) emit(s *session, item string, p runtime.Payload, at time.Time) 
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	e, err := runtime.NewEvent(runtime.EventBase{EventID: runtime.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at}, p, s.source)
+	e, err := runtime.NewEvent(runtime.EventBase{EventID: runtime.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at}, p, s.source.WithWork(s.work))
 	if err != nil {
 		return err
 	}
@@ -259,8 +281,19 @@ func (d *Driver) state(s *session, state *runtime.SessionState, reason string) e
 	s.state = state
 	return d.emit(s, "", runtime.StateUpdate{PreviousState: previous, State: state, StopReason: reason}, time.Time{})
 }
-func (d *Driver) observe(s *session) {
+func (d *Driver) observe(s *session, early []sdk.Event) {
 	defer close(s.done)
+	for _, event := range early {
+		s.mu.Lock()
+		err := d.adapt(s, event)
+		if err != nil {
+			s.err = err
+		}
+		s.mu.Unlock()
+		if err != nil {
+			return
+		}
+	}
 	for {
 		event, err := s.client.Receive(context.Background())
 		s.mu.Lock()
@@ -447,6 +480,7 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 			}
 		}
 	case "result":
+		d.interactions.RemoveSession(s.id)
 		s.active = false
 		s.messageID = ""
 		state := runtime.Idle
@@ -467,7 +501,7 @@ func (d *Driver) permission(s *session, p *sdk.PermissionRequest) error {
 		}
 		request = runtime.InteractionRequest{Kind: "form", Message: "Answer native Claude questions", RequestedSchema: schema}
 	}
-	ref, err := d.interactions.Add(s.id, func(ctx context.Context, a map[string]any) error {
+	ref, err := d.interactions.Add(s.id, s.source.WithWork(s.work), func(ctx context.Context, a map[string]any) error {
 		answer := sdk.PermissionAnswer{Behavior: sdk.PermissionAllow, UpdatedInput: p.Input()}
 		if request.Kind == "form" {
 			if len(a) != 2 || a["action"] != "accept" {
@@ -503,10 +537,20 @@ func (d *Driver) permission(s *session, p *sdk.PermissionRequest) error {
 	return d.emit(s, "", runtime.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, time.Time{})
 }
 func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, a map[string]any) (runtime.Acceptance, error) {
-	if _, err := d.get(id); err != nil {
+	s, err := d.get(id)
+	if err != nil {
 		return runtime.Acceptance{}, err
 	}
-	if err := d.interactions.Answer(ctx, id, ref, a); err != nil {
+	s.command.Lock()
+	defer s.command.Unlock()
+	s.mu.Lock()
+	source := s.source.WithWork(s.work)
+	valid := !s.closing && s.err == nil
+	s.mu.Unlock()
+	if !valid {
+		return runtime.Acceptance{}, errors.New("original interaction run unavailable")
+	}
+	if err := d.interactions.Answer(ctx, id, source, ref, a); err != nil {
 		return runtime.Acceptance{}, err
 	}
 	return runtime.Acceptance{Sent: runtime.Yes()}, nil
@@ -519,7 +563,7 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	s.mu.Lock()
 	if (s.active || s.sending) && s.err == nil {
 		s.mu.Unlock()
-		return errors.New("work unsettled")
+		return runtime.ErrWorkUnsettled
 	}
 	s.closing = true
 	s.mu.Unlock()
@@ -530,6 +574,9 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 		return errors.Join(err, ctx.Err())
 	}
 	if err := d.pipe.Flush(ctx); err != nil {
+		return err
+	}
+	if err != nil {
 		return err
 	}
 	d.mu.Lock()
@@ -543,10 +590,42 @@ func (d *Driver) Stop(context.Context) error {
 	defer d.op.Unlock()
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if len(d.sessions) > 0 {
+	if len(d.sessions) > 0 || d.opening != 0 {
 		return errors.New("close sessions before stopping")
 	}
 	d.stopped = true
 	d.pipe.End(nil)
 	return nil
+}
+
+func (d *Driver) Cancel(ctx context.Context, id string) (runtime.Acceptance, error) {
+	s, err := d.get(id)
+	if err != nil {
+		return runtime.Acceptance{}, err
+	}
+	s.command.Lock()
+	defer s.command.Unlock()
+	s.mu.Lock()
+	active := s.active
+	s.mu.Unlock()
+	if !active {
+		return runtime.Acceptance{}, nil
+	}
+	if err := s.client.Interrupt(ctx); err != nil {
+		return runtime.Acceptance{}, fmt.Errorf("outcome_unknown: interrupt: %w", err)
+	}
+	return runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}, nil
+}
+
+func releasedOpenError(cause error, c *sdk.Client) error {
+	cleanup := c.Close()
+	var native *sdk.Error
+	if cleanup == nil || (errors.As(cleanup, &native) && native.ExitCode != nil) {
+		return errors.Join(runtime.ErrResourcesReleased, cause, cleanup)
+	}
+	return errors.Join(cause, cleanup)
+}
+
+func noResources(message string) error {
+	return errors.Join(runtime.ErrResourcesReleased, errors.New(message))
 }

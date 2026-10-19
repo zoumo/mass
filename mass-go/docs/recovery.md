@@ -51,11 +51,14 @@ new input. Codex's strict fake additionally matches the explicit thread/resume
 request. Both paths preserve all existing public UUIDs and append order; old input,
 tools, responses and business actions are never replayed.
 
+Ticket05 failure settlement, bounded queues, original-operation ownership,
+explicit reconciliation, stop retry and conservative Claude work admission are
+specified in [failure-settlement.md](failure-settlement.md). Claude accepts one
+input per run because the fixed stream cannot prove native work identity for all
+late results/interrupts; close and same-ID resume are required before further input.
+
 Limits: no real Agent/account/data ownership or native durable-storage acceptance;
-no crash/power-loss or private-file fault injection; no private uncommitted-tail
-reconciliation or complete private per-fact evidence journal; no automatic pending
-interaction restoration. Native resume mismatch/timeout and storage failures still
-need Ticket05's complete unknown-operation ownership/late cleanup protocol. Normal
-stop refuses active work instead of cancelling it. It does not claim the later
-fault, concurrency-isolation and overload acceptance matrix has passed. HTTP and
-final CLI exposure remain Ticket06. SQLite is not implemented or needed for reads.
+no kernel crash/power-loss acceptance or crash-recoverable private per-fact outbox.
+Unconfirmed persisted ownership is refused on cold activation rather than silently
+reopened. Manual cross-process settlement remains unimplemented. HTTP and final
+CLI exposure remain Ticket06. SQLite is not implemented or needed for file reads.

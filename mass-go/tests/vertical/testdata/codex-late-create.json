@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "provenance": "synthetic",
+  "source": "Ticket05 strict SDK-owned mock; no model/tool execution",
+  "frames": [
+    {
+      "ordinal": 1,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 91,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "mass",
+            "version": "2"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 91,
+        "result": {
+          "userAgent": "synthetic",
+          "codexHome": "/synthetic",
+          "platformFamily": "unix",
+          "platformOs": "linux"
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "method": "initialized"
+      }
+    },
+    {
+      "ordinal": 4,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 92,
+        "method": "thread/start",
+        "params": {
+          "cwd": "/synthetic",
+          "ephemeral": false
+        }
+      }
+    },
+    {
+      "ordinal": 5,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 300,
+        "method": "thread/start",
+        "params": {
+          "cwd": "/synthetic",
+          "ephemeral": false
+        }
+      }
+    },
+    {
+      "ordinal": 6,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 300,
+        "result": {
+          "thread": {
+            "id": "codex-second",
+            "turns": [],
+            "cliVersion": "synthetic",
+            "createdAt": 1,
+            "updatedAt": 1,
+            "cwd": "/synthetic",
+            "ephemeral": false,
+            "modelProvider": "synthetic",
+            "preview": "",
+            "projectId": null,
+            "source": "appServer",
+            "status": {
+              "type": "idle"
+            },
+            "sessionId": "codex-second"
+          },
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "user",
+          "cwd": "/synthetic",
+          "model": "synthetic",
+          "modelProvider": "synthetic",
+          "sandbox": {
+            "type": "readOnly"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 7,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 92,
+        "result": {
+          "thread": {
+            "id": "codex-session",
+            "turns": [],
+            "cliVersion": "synthetic",
+            "createdAt": 1,
+            "updatedAt": 1,
+            "cwd": "/synthetic",
+            "ephemeral": false,
+            "modelProvider": "synthetic",
+            "preview": "",
+            "projectId": null,
+            "source": "appServer",
+            "status": {
+              "type": "idle"
+            },
+            "sessionId": "codex-session"
+          },
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "user",
+          "cwd": "/synthetic",
+          "model": "synthetic",
+          "modelProvider": "synthetic",
+          "sandbox": {
+            "type": "readOnly"
+          }
+        }
+      },
+      "delayMs": 250
+    },
+    {
+      "direction": "c2s",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 190,
+        "method": "thread/unsubscribe",
+        "params": {
+          "threadId": "codex-session"
+        }
+      },
+      "ordinal": 8
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 190,
+        "result": {
+          "status": "unsubscribed"
+        }
+      },
+      "ordinal": 9
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "method": "thread/closed",
+        "params": {
+          "threadId": "codex-session"
+        }
+      },
+      "ordinal": 10
+    },
+    {
+      "direction": "c2s",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 301,
+        "method": "thread/unsubscribe",
+        "params": {
+          "threadId": "codex-second"
+        }
+      },
+      "ordinal": 11
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "id": 301,
+        "result": {
+          "status": "unsubscribed"
+        }
+      },
+      "ordinal": 12
+    },
+    {
+      "direction": "s2c",
+      "channel": "protocol",
+      "epoch": 1,
+      "wire": {
+        "method": "thread/closed",
+        "params": {
+          "threadId": "codex-second"
+        }
+      },
+      "ordinal": 13
+    }
+  ]
+}

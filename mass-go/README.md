@@ -149,3 +149,8 @@ Codex configuration races, native release gating, cold same-ID recovery,
 Runtime UID replacement, missing/mismatched material, original history prefix,
 explicit new input, Claude recovery and preserved live observation. These tests
 validate synthetic protocol behavior, not real native persistence or model behavior.
+
+Ticket05 experimental failure/overload/stop behavior and explicit recovery APIs:
+[docs/failure-settlement.md](docs/failure-settlement.md). The Claude adapter admits
+one input per run; further inputs require explicit close and same-ID resume.
+Synthetic verification does not establish real CLI/model/account capability.

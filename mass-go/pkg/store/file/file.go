@@ -530,3 +530,58 @@ func (s *Store) GetSyncProgress(id string) (*string, error) {
 	p, err := s.ListHistory(id, store.HistoryQuery{Limit: 1})
 	return p.SyncedEventID, err
 }
+
+// Reconcile explicitly reloads and validates the authoritative snapshot under the
+// original writer lock. It never creates a second writer or edits corrupt data.
+// Service admission remains sealed until its independent responsibility settles.
+func (s *Store) Reconcile() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.readOnly {
+		return errors.New("active writer required")
+	}
+	s.uncertain = true
+	b, err := os.ReadFile(filepath.Join(s.dir, "state.json"))
+	if err != nil {
+		return err
+	}
+	var next snapshot
+	if err := decode(b, &next); err != nil {
+		return err
+	}
+	old := s.data
+	for id, committed := range old.History {
+		candidate := next.History[id]
+		if len(candidate) < len(committed) {
+			return errors.New("committed history prefix missing")
+		}
+		for i, e := range committed {
+			if !equal(e, candidate[i]) {
+				return errors.New("committed history prefix changed")
+			}
+		}
+	}
+	s.data = next
+	if err := s.validate(); err != nil {
+		s.data = old
+		return err
+	}
+	f, err := os.Open(filepath.Join(s.dir, "state.json"))
+	if err == nil {
+		err = errors.Join(f.Sync(), f.Close())
+	}
+	if err != nil {
+		s.data = old
+		return err
+	}
+	dir, err := os.Open(s.dir)
+	if err == nil {
+		err = errors.Join(dir.Sync(), dir.Close())
+	}
+	if err != nil {
+		s.data = old
+		return err
+	}
+	s.uncertain = false
+	return nil
+}

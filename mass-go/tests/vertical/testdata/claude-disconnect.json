@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "provenance": "synthetic",
+  "source": "Ticket05 strict SDK-owned mock; no model/tool execution",
+  "frames": [
+    {
+      "ordinal": 1,
+      "channel": "protocol",
+      "direction": "client",
+      "data": {
+        "type": "control_request",
+        "request_id": "init",
+        "request": {
+          "subtype": "initialize",
+          "hooks": null,
+          "forwardSubagentText": true
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "control_response",
+        "response": {
+          "subtype": "success",
+          "request_id": "init",
+          "response": {}
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "system",
+        "subtype": "init",
+        "session_id": "claude-session",
+        "cwd": "/synthetic",
+        "model": "synthetic",
+        "tools": [
+          "Bash"
+        ]
+      }
+    },
+    {
+      "ordinal": 4,
+      "channel": "protocol",
+      "direction": "client",
+      "data": {
+        "type": "user",
+        "message": {
+          "role": "user",
+          "content": "hello"
+        },
+        "parent_tool_use_id": null,
+        "session_id": ""
+      }
+    },
+    {
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "stream_event",
+        "session_id": "claude-session",
+        "event": {
+          "type": "message_start",
+          "message": {
+            "id": "delta-only",
+            "role": "assistant",
+            "content": []
+          }
+        }
+      },
+      "ordinal": 5
+    },
+    {
+      "direction": "disconnect",
+      "channel": "protocol",
+      "delay_ms": 100,
+      "ordinal": 6
+    }
+  ]
+}

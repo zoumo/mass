@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "provenance": "synthetic",
+  "frames": [
+    {
+      "ordinal": 1,
+      "channel": "protocol",
+      "direction": "client",
+      "data": {
+        "type": "control_request",
+        "request_id": "init",
+        "request": {
+          "subtype": "initialize",
+          "hooks": null,
+          "forwardSubagentText": true
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "control_response",
+        "response": {
+          "subtype": "success",
+          "request_id": "init",
+          "response": {}
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "direction": "disconnect",
+      "channel": "protocol",
+      "delay_ms": 300
+    }
+  ]
+}

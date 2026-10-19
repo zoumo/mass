@@ -2,7 +2,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,26 +37,37 @@ type SessionService interface {
 	ArchiveSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ResumeSession(context.Context, resource.SessionRef) (resource.Session, error)
 	SendPrompt(context.Context, resource.SessionRef, runtime.Input) (runtime.InputReceipt, error)
+	Cancel(context.Context, resource.SessionRef) (runtime.Acceptance, error)
 	AnswerInteraction(context.Context, resource.SessionRef, string, map[string]any) (runtime.Acceptance, error)
 	ListHistoryEvents(resource.SessionRef, store.HistoryQuery) (store.HistoryPage, error)
 	SubscribeEvents(resource.SessionRef) (*Subscription, error)
 }
 type runBinding struct {
-	driver     runtime.Driver
-	generation uint64
-	done       chan struct{}
-	err        error
-	pending    map[string]*opening
-	lanes      map[string]*lane
-	op         sync.Mutex
-	started    bool
-	stopping   bool
-	drained    bool
+	driver        runtime.Driver
+	stream        runtime.Stream
+	generation    uint64
+	done          chan struct{}
+	err           error
+	pending       map[string]*opening
+	lanes         map[string]*lane
+	op            sync.Mutex
+	admission     sync.RWMutex
+	started       bool
+	stopping      bool
+	stopStarted   chan struct{}
+	stopStatusErr error
+	drained       bool
+	blocked       *runtime.SessionEvent
 }
 type opening struct {
-	address runtime.Address
-	events  []runtime.SessionEvent
-	err     error
+	address   runtime.Address
+	events    []runtime.SessionEvent
+	err       error
+	done      chan struct{}
+	abandoned bool
+	native    runtime.DriverSession
+	requested resource.Session
+	released  bool
 }
 type delivery struct {
 	event   runtime.SessionEvent
@@ -68,24 +81,27 @@ type lane struct {
 	err         error
 	work        string
 	closing     bool
+	retry       chan chan error
+	commitErr   error
 	subscribers map[*Subscription]bool
 }
 type InteractionPolicy func(runtime.InteractionRequested) (map[string]any, bool)
 
 type Service struct {
-	policy     InteractionPolicy
-	meta       store.MetaStore
-	history    store.HistoryStore
-	registry   *runtime.Registry
-	mu         sync.Mutex
-	runs       map[string]*runBinding
-	observers  map[string]map[*Subscription]bool
-	sessionOps map[string]*sync.Mutex
-	closing    bool
+	policy      InteractionPolicy
+	meta        store.MetaStore
+	history     store.HistoryStore
+	registry    *runtime.Registry
+	mu          sync.Mutex
+	runs        map[string]*runBinding
+	observers   map[string]map[*Subscription]bool
+	sessionOps  map[string]*sessionOperation
+	closing     bool
+	resumeSlots chan struct{}
 }
 
 func New(meta store.MetaStore, history store.HistoryStore, registry *runtime.Registry) *Service {
-	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, observers: map[string]map[*Subscription]bool{}, sessionOps: map[string]*sync.Mutex{}}
+	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, observers: map[string]map[*Subscription]bool{}, sessionOps: map[string]*sessionOperation{}, resumeSlots: make(chan struct{}, queueCapacity)}
 }
 
 // NewWithPolicy explicitly enables an application-owned interaction policy.
@@ -103,7 +119,7 @@ func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef
 	if err != nil {
 		return runtime.Acceptance{}, err
 	}
-	defer run.op.Unlock()
+	defer run.admission.RUnlock()
 	return run.driver.AnswerInteraction(ctx, r.Status.SessionID, interaction, answer)
 }
 
@@ -156,8 +172,14 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		return r, errors.New("service closing")
 	}
 	if existing := s.runs[name]; existing != nil {
+		if existing.stopping {
+			s.mu.Unlock()
+			return r, errors.New("runtime stopping")
+		}
 		s.mu.Unlock()
-		existing.op.Lock()
+		if err := lockOperation(ctx, &existing.op); err != nil {
+			return r, err
+		}
 		defer existing.op.Unlock()
 		s.mu.Lock()
 		err := existing.err
@@ -170,6 +192,14 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 			return r, errors.New("runtime start not confirmed")
 		}
 		return s.meta.GetRuntime(name)
+	}
+	if r.Status.State != "stopped" {
+		s.mu.Unlock()
+		return r, errors.New("previous runtime release not confirmed; explicit reconciliation required")
+	}
+	if len(s.runs) >= queueCapacity {
+		s.mu.Unlock()
+		return r, errors.New("runtime capacity exhausted")
 	}
 	// Reserve the original owner before constructing or starting any Driver.
 	run := &runBinding{done: make(chan struct{}), pending: map[string]*opening{}, lanes: map[string]*lane{}}
@@ -202,16 +232,34 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		close(run.done)
 		return r, err
 	}
+	run.stream = stream
 	go s.consume(run, stream)
-	capabilities, err := d.Start(ctx)
-	if err != nil {
+	if _, err = s.runtimeStatus(name, resource.RuntimeStatus{State: "starting"}); err != nil {
 		s.mu.Lock()
 		run.err = err
 		s.mu.Unlock()
 		return r, err
 	}
+	capabilities, err := d.Start(ctx)
+	if err != nil {
+		s.mu.Lock()
+		run.err = err
+		state := "unknown"
+		if run.stopping {
+			state = "stopping"
+		}
+		s.mu.Unlock()
+		_, statusErr := s.runtimeStatus(name, resource.RuntimeStatus{State: state})
+		return r, errors.Join(err, statusErr)
+	}
 	applied := r.Metadata.Generation
-	r, err = s.runtimeStatus(name, resource.RuntimeStatus{State: "running", AppliedGeneration: applied, Capabilities: capabilities})
+	s.mu.Lock()
+	state := "running"
+	if run.stopping || s.closing {
+		state = "stopping"
+	}
+	s.mu.Unlock()
+	r, err = s.runtimeStatus(name, resource.RuntimeStatus{State: state, AppliedGeneration: applied, Capabilities: capabilities})
 	s.mu.Lock()
 	if err != nil {
 		run.err = err
@@ -239,20 +287,26 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 	if run == nil || closing {
 		return r, errors.New("runtime not started or service closing")
 	}
-	run.op.Lock()
-	defer run.op.Unlock()
 	s.mu.Lock()
 	if s.closing || run.err != nil || !run.started || run.stopping {
 		s.mu.Unlock()
 		return r, errors.New("runtime unavailable")
 	}
+	pendingCount := 0
+	for _, owner := range s.runs {
+		pendingCount += len(owner.pending)
+	}
+	if len(s.observers)+pendingCount >= queueCapacity*queueCapacity {
+		s.mu.Unlock()
+		return r, errors.New("observation ownership capacity exhausted")
+	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
 	k := addressKey(a)
-	if run.pending[k] != nil {
+	if run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
 		s.mu.Unlock()
 		return r, store.ErrConflict
 	}
-	op := &opening{address: a}
+	op := &opening{address: a, done: make(chan struct{})}
 	run.pending[k] = op
 	s.mu.Unlock()
 	removePending := func() { s.mu.Lock(); delete(run.pending, k); s.mu.Unlock() }
@@ -263,39 +317,94 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 		}
 		return r, err
 	}
-	native, err := run.driver.OpenSession(ctx, a, r.Spec.SessionSpec)
-	if err != nil {
-		removePending()
-		return r, err
+	type result struct {
+		session resource.Session
+		err     error
 	}
-	r.Status = resource.SessionStatus{SessionID: native.SessionID, State: runtime.Unknown, AppliedGeneration: 1, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
-	r, err = s.meta.CreateSession(r)
-	if err != nil {
-		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
-		removePending()
-		return resource.Session{}, errors.Join(err, cleanup)
+	resultCh := make(chan result, 1)
+	go func() {
+		defer close(op.done)
+		value, err := func() (resource.Session, error) {
+			native, err := run.driver.OpenSession(context.WithoutCancel(ctx), a, r.Spec.SessionSpec)
+			if err != nil {
+				if errors.Is(err, runtime.ErrResourcesReleased) {
+					removePending()
+					return r, err
+				}
+				// Unknown opens retain the original reservation.
+				s.mu.Lock()
+				op.err = err
+				s.mu.Unlock()
+				return r, err
+			}
+			s.mu.Lock()
+			op.native = native
+			abandoned := op.abandoned || run.stopping
+			s.mu.Unlock()
+			if abandoned {
+				cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+				if cleanup == nil {
+					removePending()
+				}
+				return resource.Session{}, errors.Join(errors.New("outcome_unknown: abandoned create settled against original owner"), cleanup)
+			}
+			r.Status = resource.SessionStatus{SessionID: native.SessionID, State: runtime.Unknown, AppliedGeneration: 1, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
+			s.mu.Lock()
+			op.requested = r
+			s.mu.Unlock()
+			r, err = s.meta.CreateSession(r)
+			if err != nil {
+				cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+				s.mu.Lock()
+				op.released = cleanup == nil
+				s.mu.Unlock()
+				// Metadata may already be committed: retain reservation until explicit readback.
+				return resource.Session{}, errors.Join(err, cleanup)
+			}
+			l := &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
+			s.mu.Lock()
+			l.err = op.err
+			s.observers[native.SessionID] = l.subscribers
+			run.lanes[native.SessionID] = l
+			for _, e := range op.events {
+				if !native.Source.SameRun(e.Source()) {
+					l.err = errors.New("creation event source mismatch")
+					break
+				}
+				l.queue <- delivery{event: e}
+			}
+			abandoned = op.abandoned || run.stopping
+			if !abandoned {
+				delete(run.pending, k)
+			}
+			creationErr := l.err
+			s.mu.Unlock()
+			go s.process(run, l)
+			if abandoned {
+				cleanup := s.settleAbandoned(run, l)
+				if cleanup == nil {
+					removePending()
+				}
+				return resource.Session{}, errors.Join(errors.New("outcome_unknown: late creation archived by original owner"), cleanup)
+			}
+			if creationErr != nil {
+				return resource.Session{}, creationErr
+			}
+			return r, nil
+		}()
+		resultCh <- result{value, err}
+	}()
+	select {
+	case value := <-resultCh:
+		return value.session, value.err
+	case <-ctx.Done():
+		s.mu.Lock()
+		op.abandoned = true
+		s.mu.Unlock()
+		return resource.Session{}, fmt.Errorf("outcome_unknown: creation continues under original reservation: %w", ctx.Err())
 	}
-	l := &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
-	s.mu.Lock()
-	l.err = op.err
-	s.observers[native.SessionID] = l.subscribers
-	run.lanes[native.SessionID] = l
-	for _, e := range op.events {
-		if !native.Source.SameRun(e.Source()) {
-			l.err = errors.New("creation event source mismatch")
-			break
-		}
-		l.queue <- delivery{event: e}
-	}
-	delete(run.pending, k)
-	creationErr := l.err
-	s.mu.Unlock()
-	go s.process(run, l)
-	if creationErr != nil {
-		return resource.Session{}, creationErr
-	}
-	return r, nil
 }
+
 func (s *Service) GetSession(ref resource.SessionRef) (resource.Session, error) {
 	return s.meta.GetSession(ref)
 }
@@ -308,7 +417,7 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	defer run.op.Unlock()
+	defer run.admission.RUnlock()
 	return run.driver.SendPrompt(ctx, r.Status.SessionID, input)
 }
 func (s *Service) ListHistoryEvents(ref resource.SessionRef, q store.HistoryQuery) (store.HistoryPage, error) {
@@ -330,11 +439,19 @@ func (s *Service) SubscribeEvents(ref resource.SessionRef) (*Subscription, error
 		return nil, errors.New("runtime not observed")
 	}
 	l := run.lanes[r.Status.SessionID]
-	if l == nil || l.err != nil || l.closing {
+	if l == nil || l.err != nil || l.closing || len(l.subscribers) >= queueCapacity {
 		return nil, errors.New("session not observed")
 	}
-	sub := newSubscription(func(sub *Subscription) { s.mu.Lock(); delete(l.subscribers, sub); s.mu.Unlock() })
+	sub := newSubscription(func(sub *Subscription) {
+		s.mu.Lock()
+		delete(l.subscribers, sub)
+		if len(l.subscribers) == 0 {
+			delete(s.observers, r.Status.SessionID)
+		}
+		s.mu.Unlock()
+	})
 	l.subscribers[sub] = true
+	s.observers[r.Status.SessionID] = l.subscribers
 	return sub, nil
 }
 func (s *Service) consume(run *runBinding, stream runtime.Stream) {
@@ -342,8 +459,14 @@ func (s *Service) consume(run *runBinding, stream runtime.Stream) {
 	for {
 		e, err := stream.Next(context.Background())
 		if err != nil {
-			if err != io.EOF {
+			s.mu.Lock()
+			stopping := run.stopping
+			s.mu.Unlock()
+			if err != io.EOF || !stopping {
 				s.mu.Lock()
+				if err == io.EOF {
+					err = errors.New("outcome_unknown: unexpected driver EOF")
+				}
 				run.err = err
 				for _, l := range run.lanes {
 					for sub := range l.subscribers {
@@ -360,25 +483,36 @@ func (s *Service) consume(run *runBinding, stream runtime.Stream) {
 			op := run.pending[addressKey(runtime.Address{Namespace: e.Namespace, SessionName: e.SessionName})]
 			if op != nil {
 				if len(op.events) == queueCapacity {
-					op.err = errors.New("creation event buffer exhausted")
+					op.err = errors.New("creation event buffer exhausted; stream responsibility retained")
+					run.err = op.err
+					run.blocked = &e
+					s.mu.Unlock()
+					return
 				} else {
 					op.events = append(op.events, e)
 				}
 			} else {
-				run.err = errors.New("unbound session event")
+				run.err = errors.New("unbound session event; original delivery retained")
+				run.blocked = &e
+				s.mu.Unlock()
+				return
 			}
 			s.mu.Unlock()
 			continue
 		}
 		if !l.source.SameRun(e.Source()) || e.Namespace != l.session.Metadata.Namespace || e.SessionName != l.session.Metadata.Name {
-			l.err = errors.New("event source or name mismatch")
+			// Old run facts cannot mutate or poison the current lane.
 			s.mu.Unlock()
 			continue
 		}
 		select {
 		case l.queue <- delivery{event: e}:
 		default:
-			l.err = errors.New("session event queue exhausted")
+			l.err = errors.New("session event queue exhausted; stream responsibility retained")
+			run.err = l.err
+			run.blocked = &e
+			s.mu.Unlock()
+			return
 		}
 		s.mu.Unlock()
 	}
@@ -399,21 +533,28 @@ func (s *Service) process(run *runBinding, l *lane) {
 			continue
 		}
 		e := entry.event
-		s.mu.Lock()
-		failed := l.err
-		s.mu.Unlock()
-		if failed != nil {
-			continue
-		}
 		if e.Persistent() {
 			if _, err := s.history.Append(e.SessionID, []runtime.SessionEvent{e}); err != nil {
 				s.fail(l, fmt.Errorf("history commit failed: %w", err))
-				continue
+				s.mu.Lock()
+				l.commitErr = err
+				s.mu.Unlock()
+				for {
+					response := <-l.retry
+					err = s.reconcileEvent(e)
+					response <- err
+					if err == nil {
+						s.mu.Lock()
+						l.commitErr = nil
+						s.mu.Unlock()
+						break
+					}
+				}
 			}
 		}
 		if state, ok := e.Payload().(runtime.StateUpdate); ok {
 			work := e.Source().Work()
-			if state.State != nil && *state.State == runtime.Running {
+			if state.State != nil && *state.State == runtime.Running && (l.work == "" || l.work == work) {
 				l.work = work
 			}
 			if work == "" || l.work == "" || work == l.work {
@@ -427,7 +568,9 @@ func (s *Service) process(run *runBinding, l *lane) {
 				})
 				if err != nil {
 					s.fail(l, err)
-					continue
+				}
+				if state.State != nil && *state.State == runtime.Idle && l.work == work {
+					l.work = ""
 				}
 			}
 		}
@@ -439,14 +582,25 @@ func (s *Service) process(run *runBinding, l *lane) {
 				continue
 			}
 			sub.publish(copy)
+			if sub.ended() {
+				delete(l.subscribers, sub)
+				if len(l.subscribers) == 0 {
+					delete(s.observers, e.SessionID)
+				}
+			}
 		}
 		s.mu.Unlock()
 		if request, ok := e.Payload().(runtime.InteractionRequested); ok && s.policy != nil {
-			if answer, handled := s.policy(request); handled {
+			run.admission.RLock()
+			s.mu.Lock()
+			allowed := !s.closing && !run.stopping && !l.closing && l.err == nil
+			s.mu.Unlock()
+			if answer, handled := s.policy(request); handled && allowed {
 				if _, err := run.driver.AnswerInteraction(context.Background(), e.SessionID, request.Interaction, answer); err != nil {
 					s.fail(l, err)
 				}
 			}
+			run.admission.RUnlock()
 		}
 	}
 }
@@ -460,10 +614,188 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		names = append(names, name)
 	}
 	s.mu.Unlock()
-	var result error
+	// Independent runtimes drain concurrently within the bounded runtime limit.
+	results := make(chan error, len(names))
 	for _, name := range names {
-		_, err := s.StopRuntime(ctx, name)
-		result = errors.Join(result, err)
+		go func(name string) { _, err := s.StopRuntime(ctx, name); results <- err }(name)
+	}
+	var result error
+	for range names {
+		result = errors.Join(result, <-results)
 	}
 	return result
+}
+
+// Cancel targets the original lane and remains available during drain. A receipt
+// records only dispatch/acknowledgment; native termination must still be observed.
+func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.Acceptance, error) {
+	r, err := s.meta.GetSession(ref)
+	if err != nil {
+		return runtime.Acceptance{}, err
+	}
+	s.mu.Lock()
+	run := s.runs[r.Spec.RuntimeRef]
+	var original *lane
+	if run != nil {
+		original = run.lanes[r.Status.SessionID]
+	}
+	s.mu.Unlock()
+	if run == nil {
+		return runtime.Acceptance{}, errors.New("session unavailable")
+	}
+	if err := lockOperation(ctx, &run.op); err != nil {
+		return runtime.Acceptance{}, err
+	}
+	defer run.op.Unlock()
+	s.mu.Lock()
+	l := run.lanes[r.Status.SessionID]
+	s.mu.Unlock()
+	if l == nil || l != original {
+		return runtime.Acceptance{}, errors.New("session unavailable")
+	}
+	return run.driver.Cancel(ctx, r.Status.SessionID)
+}
+
+// ReconcileHistory is an explicit experiment-only settlement operation. It does
+// not reopen input admission. No original UUID or event content is regenerated.
+func (s *Service) ReconcileHistory(ctx context.Context, ref resource.SessionRef) error {
+	r, err := s.meta.GetSession(ref)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	run := s.runs[r.Spec.RuntimeRef]
+	if run == nil {
+		s.mu.Unlock()
+		return errors.New("original owner unavailable")
+	}
+	l := run.lanes[r.Status.SessionID]
+	if l == nil || l.commitErr == nil {
+		s.mu.Unlock()
+		return errors.New("no pending history commit")
+	}
+	s.mu.Unlock()
+	response := make(chan error, 1)
+	select {
+	case l.retry <- response:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-response:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (s *Service) reconcileEvent(e runtime.SessionEvent) error {
+	// Validate the whole committed prefix before retrying, including partial writes.
+	q := store.HistoryQuery{}
+	for {
+		page, err := s.history.ListHistory(e.SessionID, q)
+		if err != nil {
+			return err
+		}
+		for _, saved := range page.Events {
+			if saved.SessionID != e.SessionID || saved.Namespace != e.Namespace || saved.SessionName != e.SessionName || !saved.Persistent() {
+				return errors.New("committed history identity mismatch")
+			}
+			if err := saved.Validate(); err != nil {
+				return err
+			}
+			if saved.EventID == e.EventID {
+				a, err := json.Marshal(saved)
+				if err != nil {
+					return err
+				}
+				b, err := json.Marshal(e)
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(a, b) {
+					return errors.New("history UUID content conflict")
+				}
+			}
+		}
+		if page.Next == "" {
+			break
+		}
+		q.After = page.Next
+	}
+	_, err := s.history.Append(e.SessionID, []runtime.SessionEvent{e})
+	return err
+}
+
+// ReconcileDelivery resumes the original sole consumer after explicit overload
+// settlement. It does not reacquire Events or reopen runtime/input admission.
+func (s *Service) ReconcileDelivery(ctx context.Context, name string) error {
+	s.mu.Lock()
+	run := s.runs[name]
+	s.mu.Unlock()
+	if run == nil {
+		return errors.New("original owner unavailable")
+	}
+	run.op.Lock()
+	defer run.op.Unlock()
+	s.mu.Lock()
+	retained := run.blocked != nil
+	s.mu.Unlock()
+	if !retained {
+		return errors.New("no retained delivery")
+	}
+	select {
+	case <-run.done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	s.mu.Lock()
+	e := run.blocked
+	if e == nil {
+		s.mu.Unlock()
+		return errors.New("no retained delivery")
+	}
+	l := run.lanes[e.SessionID]
+	if l == nil || !l.source.SameRun(e.Source()) {
+		s.mu.Unlock()
+		return errors.New("original lane not settled")
+	}
+	s.mu.Unlock()
+	select {
+	case l.queue <- delivery{event: *e}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	s.mu.Lock()
+	run.blocked = nil
+	run.done = make(chan struct{})
+	s.mu.Unlock()
+	go s.consume(run, run.stream)
+	return nil
+}
+
+// Called only by the original opening owner. Stop waits op.done before touching
+// this lane, so late cleanup must not wait on Stop's runtime operation mutex.
+func (s *Service) settleAbandoned(run *runBinding, l *lane) error {
+	s.mu.Lock()
+	l.closing = true
+	s.mu.Unlock()
+	ref := resource.SessionRef{SessionID: l.session.Status.SessionID}
+	if _, err := s.sessionStatus(ref, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
+		return err
+	}
+	if err := run.driver.CloseSession(context.Background(), ref.SessionID); err != nil {
+		return err
+	}
+	if err := s.drainLane(context.Background(), l); err != nil {
+		return err
+	}
+	if _, err := s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) }); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	delete(run.lanes, ref.SessionID)
+	close(l.queue)
+	s.mu.Unlock()
+	<-l.done
+	return nil
 }
