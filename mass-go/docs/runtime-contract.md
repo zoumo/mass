@@ -1,5 +1,8 @@
 # Protocol Runtime contract
 
+Future development follows [harness](../../harness/index.md). This page records
+the existing Go boundary; differences from the shared design are implementation gaps.
+
 This contract describes the available protocol Runtime boundary. It is separate
 from the native service's API and storage contract. A host registers named
 instances of system-provided protocol types. Each instance manages several
@@ -82,6 +85,12 @@ configuration or delete workspace/account data.
 
 ## Common events and authorities
 
+The following describes the internal protocol observation API. The public
+session event boundary currently uses legacy schemaVersion 2 `PublicEvent` through
+`EventProjector`. Future development follows the [SessionEvent contract](../../harness/modules/runtime/events.md);
+this legacy representation is an implementation gap.
+HTTP never exposes protocol lifecycle or authority records as session history.
+
 Events are versioned discriminated data with concrete payloads, observation time
 and provenance. Session content carries original native identity, attachment epoch,
 per-session sequence and separately scoped source position when available.
@@ -122,6 +131,9 @@ process cleanup.
 Session failures seal the affected attachment. Shared transport failures affect
 its bound sessions. Other Runtime names remain usable. Failure does not fabricate
 successful tool results, interrupted work, native release or new session identity.
+EOF does not erase observed submission acceptance. A successful native ACK or
+complete local input write remains known even if the stream ends before Submit
+returns; foreground execution and completion can independently remain unknown.
 Late SDK replies may be discarded after local timeout; no reply repair, automatic
 replay or stronger timeout guarantee is provided.
 
@@ -135,6 +147,13 @@ rich outbound content and native configuration mutation are unavailable. Externa
 server connection closure is unverified; local process tests provide no evidence
 for that topology. These are separate optional capabilities, not required local
 behavior emulated with prompts.
+
+Codex creation requests a non-ephemeral native thread, enabling native history
+recovery after app-server exit. The host must separately retain the opaque
+binding and original execution scope. Local detach/Stop never deletes native
+history or proves native release. Codex child content requires explicit SDK
+relationship evidence to this root or a proven descendant; unrelated or
+unresolved thread notifications retain only safe diagnostics.
 
 Lifecycle and content observation use the same pure-data event schema. The
 Runtime stream publishes runtime status, operation state/failure and distinct

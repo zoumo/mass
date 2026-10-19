@@ -172,6 +172,7 @@ func toolEvent(n types.Event, id string) rt.Event {
 	if e.Kind == rt.ToolAnnounced {
 		t.Output.Completeness = "partial"
 	}
+	t.Status = status
 	if t.Name == "" {
 		return fail()
 	}

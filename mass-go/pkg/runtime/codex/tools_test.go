@@ -20,12 +20,28 @@ func (s *runtimeSuite) TestStructuredToolLifecycle() {
 			_, session, ctx := s.open(frames)
 			_, err := session.Submit(ctx, rt.TextInput("hello"))
 			s.Require().NoError(err)
+			projector := rt.NewEventProjector("demo", "/synthetic")
+			var publicCall *rt.PublicEvent
 			for _, kind := range []rt.EventKind{rt.ToolAnnounced, rt.ToolCompleted} {
 				e := s.nextMapped(session, ctx)
 				s.Require().Equal(kind, e.Kind, "%+v", e)
 				s.Require().NotNil(e.Tool)
 				s.Equal("call", e.Tool.CallRef)
 				s.Equal(tc.category, e.Tool.Category)
+				if tc.name == "command" {
+					public, err := projector.Project(e)
+					s.Require().NoError(err)
+					s.Require().NotNil(public)
+					if kind == rt.ToolAnnounced {
+						publicCall = public
+						s.Equal("agent.tool_call", public.Type)
+					} else {
+						s.Equal("agent.tool_result", public.Type)
+						s.Equal(publicCall.ItemID, public.ItemID)
+						s.Equal("failed", public.Payload.(rt.PublicTool).Status)
+						s.Equal(publicCall.Payload, public.Payload.(rt.PublicTool).CallContext)
+					}
+				}
 				if kind == rt.ToolAnnounced {
 					s.Equal("announced", e.Tool.State)
 				} else {

@@ -9,7 +9,9 @@ import (
 	"time"
 )
 
-// Event is a data-only discriminated union. Exactly one payload is present.
+// Event is a low-level protocol observation union, including control authority.
+// Exactly one payload is present. Public session consumers use PublicEvent;
+// do not publish this observation envelope directly to HTTP or history.
 // SourcePosition is an adapter receive cursor, not native wire order or Seq.
 type Event struct {
 	Runtime         *Snapshot                `json:"-"`
@@ -72,6 +74,7 @@ type ContentBlock struct {
 	Completeness string          `json:"completeness"`
 }
 type MessagePayload struct {
+	Phase string `json:"phase,omitempty"`
 	// BlockIndex and BlockStage carry boundary-only observations without text.
 	BlockIndex *int       `json:"blockIndex,omitempty"`
 	BlockStage string     `json:"blockStage,omitempty"`
@@ -144,6 +147,8 @@ func (m *MetadataPayload) Apply(p MetadataPayload) {
 // ToolPayload keeps semantic identity, presentation, data and execution evidence separate.
 // Input/Output are snapshots of this observation; missing is not an empty value.
 type ToolPayload struct {
+	// Status retains explicit native terminal evidence, including declined.
+	Status       string     `json:"status,omitempty"`
 	MessageRef   string     `json:"messageRef,omitempty"`
 	BlockIndex   *int       `json:"blockIndex,omitempty"`
 	CallRef      string     `json:"callRef"`

@@ -85,8 +85,8 @@ func codexInit() []string {
 }
 func codexThread(id int, session string) []string {
 	return []string{
-		fmt.Sprintf(`c2s {"id":%d,"method":"thread/start","params":{"ephemeral":true}}`, id),
-		fmt.Sprintf(`s2c {"id":%d,"result":{"thread":{"id":%q,"sessionId":"different-tree-group","cliVersion":"synthetic","createdAt":1,"updatedAt":1,"cwd":"/synthetic","ephemeral":true,"modelProvider":"mock","preview":"","projectId":null,"source":"appServer","status":{"type":"idle"},"turns":[]},"approvalPolicy":"never","approvalsReviewer":"user","cwd":"/synthetic","model":"fake","modelProvider":"mock","sandbox":{"type":"readOnly"}}}`, id, session),
+		fmt.Sprintf(`c2s {"id":%d,"method":"thread/start","params":{"ephemeral":false}}`, id),
+		fmt.Sprintf(`s2c {"id":%d,"result":{"thread":{"id":%q,"sessionId":"different-tree-group","cliVersion":"synthetic","createdAt":1,"updatedAt":1,"cwd":"/synthetic","ephemeral":false,"modelProvider":"mock","preview":"","projectId":null,"source":"appServer","status":{"type":"idle"},"turns":[]},"approvalPolicy":"never","approvalsReviewer":"user","cwd":"/synthetic","model":"fake","modelProvider":"mock","sandbox":{"type":"readOnly"}}}`, id, session),
 	}
 }
 func codexTurn(id int, session string) []string {

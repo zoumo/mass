@@ -1,6 +1,42 @@
 # Go Runtime events
 
-The experimental Go Runtime publishes schema version 1 through `Session.Next` and `Runtime.Next`.
+Development follows the [SessionEvent contract](../../harness/modules/runtime/events.md).
+This page records existing Go behavior and gaps; its legacy seq/projector model does not replace that contract.
+
+## Public session events
+
+HTTP history and SSE currently use the legacy schemaVersion 2 envelope,
+represented by `runtime.PublicEvent`. `runtime.EventProjector` converts protocol
+observations for one named session. Complete user/agent text, thinking and shell
+call/result facts receive consecutive public `seq` values. Preview chunks, observed
+state and sanitized errors have no `seq` and never enter history. History and SSE
+share the same encoded complete event; history is still memory-only, not a durable
+Journal commit. Public item IDs are opaque hashes, stable across attachment epochs;
+call and result share an item ID. Native message references, tool names such as
+`commandExecution`, turn IDs, frame IDs, source positions and origin records do not
+enter the public envelope. Native session identity remains unchanged.
+
+Full snapshots replace previews; preview text is never accumulated into a complete
+fact. Reasoning retains summary/content channels and indexes. Message-stop and
+redacted-only observations do not create a complete text event. Shell input is
+normalized to command/cwd and public name `shell`; raw native action metadata is
+excluded. Missing/null output is unavailable/unknown, with no rawOutput/content;
+explicit empty output remains provided/retained. Results retain the observed public
+call context or `missing`. At most 128 pending call contexts and 1 MiB of their
+encoded data are retained per projector.
+
+The current shared execution payload does not define mappings for arbitrary MCP,
+file-change or Claude tools. Unsupported tool projections, missing execution input,
+and truncation without byte evidence fail explicitly: HTTP marks history incomplete
+and closes the attachment. They are never serialized using the old observation
+schema or mislabeled as complete shell facts. This is the same public payload
+boundary as the current Rust shell implementation, not full provider feature parity.
+
+## Protocol observation model
+
+The low-level experimental protocol API carries schema version 1 through `Session.Next` and `Runtime.Next`.
+These records include control and authority observations and are not the shared
+public session event API. Do not serialize them directly to HTTP or history.
 Each event has one `type` and one compatible concrete `payload`. Go callers use
 `Event.Message`, `Reasoning`, `Plan`, `Metadata`, `Tool`, `Work`, `Session`,
 `Interaction`, `Association`, `Creation`, `AgentState`, `Task`, `TaskSnapshot`,

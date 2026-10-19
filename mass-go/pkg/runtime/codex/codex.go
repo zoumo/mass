@@ -48,6 +48,7 @@ type session struct {
 	source      <-chan types.Event
 	sourceEnded bool
 	requestEnd  <-chan struct{}
+	children    map[string]bool
 }
 
 var _ managed.NativeSession = (*session)(nil)
@@ -127,7 +128,9 @@ func (c *driver) CreateSession(ctx context.Context, options rt.SessionOptions) (
 	if closed || client == nil {
 		return nil, rt.ErrUnavailable
 	}
-	result, err := client.StartThread(ctx, types.ThreadStartParams{Ephemeral: types.Some(true)})
+	// Native persistence is required for a later cold resume of this identity.
+	// The host binding still proves scope, not durability or native release.
+	result, err := client.StartThread(ctx, types.ThreadStartParams{Ephemeral: types.Some(false)})
 	if err != nil {
 		return nil, safeError(ctx, "create session")
 	}
@@ -377,7 +380,7 @@ func (s *session) Next(ctx context.Context) (rt.Event, error) {
 					s.authorities.Invalidate(data.Turn.ID)
 				}
 			}
-			events := attributedEvents(native, s.id)
+			events := s.projectEvents(native)
 			event := events[0]
 			if resolution != nil {
 				event.Kind = rt.InteractionResolved

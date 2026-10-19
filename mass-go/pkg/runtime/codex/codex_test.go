@@ -107,8 +107,8 @@ func startup() []string {
 		`c2s {"id":1,"method":"initialize","params":{"clientInfo":{"name":"mass-go","version":"experiment"}}}`,
 		`s2c {"id":1,"result":{"userAgent":"synthetic","codexHome":"/synthetic","platformFamily":"unix","platformOs":"linux"}}`,
 		`c2s {"method":"initialized"}`,
-		`c2s {"id":2,"method":"thread/start","params":{"ephemeral":true}}`,
-		`s2c {"id":2,"result":{"thread":{"id":"native-thread","sessionId":"native-session","cliVersion":"synthetic","createdAt":1,"updatedAt":1,"cwd":"/synthetic","ephemeral":true,"modelProvider":"mock","preview":"","projectId":null,"source":"appServer","status":{"type":"idle"},"turns":[]},"approvalPolicy":"never","approvalsReviewer":"user","cwd":"/synthetic","model":"fake","modelProvider":"mock","sandbox":{"type":"readOnly"}}}`,
+		`c2s {"id":2,"method":"thread/start","params":{"ephemeral":false}}`,
+		`s2c {"id":2,"result":{"thread":{"id":"native-thread","sessionId":"native-session","cliVersion":"synthetic","createdAt":1,"updatedAt":1,"cwd":"/synthetic","ephemeral":false,"modelProvider":"mock","preview":"","projectId":null,"source":"appServer","status":{"type":"idle"},"turns":[]},"approvalPolicy":"never","approvalsReviewer":"user","cwd":"/synthetic","model":"fake","modelProvider":"mock","sandbox":{"type":"readOnly"}}}`,
 	}
 }
 func turnStart() []string {
@@ -305,7 +305,7 @@ func (s *runtimeSuite) TestSharedRequestsStayWithTheirNativeSession() {
 	second := strings.ReplaceAll(startup()[4], `"id":2`, `"id":3`)
 	second = strings.ReplaceAll(second, "native-thread", "other-thread")
 	second = strings.ReplaceAll(second, "native-session", "other-tree")
-	frames = append(frames, `c2s {"id":3,"method":"thread/start","params":{"ephemeral":true}}`, second)
+	frames = append(frames, `c2s {"id":3,"method":"thread/start","params":{"ephemeral":false}}`, second)
 	frames = append(frames,
 		strings.ReplaceAll(turnStart()[0], `"id":3`, `"id":4`), strings.ReplaceAll(turnStart()[1], `"id":3`, `"id":4`),
 		`s2c {"id":"permission-A","method":"item/commandExecution/requestApproval","params":{"threadId":"native-thread","turnId":"native-turn","itemId":"tool-A","startedAtMs":1,"command":"synthetic-A"}}`,
