@@ -45,22 +45,22 @@ type Session struct {
 	Status   SessionStatus `json:"status"`
 }
 type SessionRef struct {
-	Namespace string
-	Name      string
-	SessionID string
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 type RuntimeQuery struct {
-	Type  string
-	State string
+	Type  string `json:"type,omitempty"`
+	State string `json:"state,omitempty"`
 }
 type SessionQuery struct {
 	Namespace  string               `json:"namespace,omitempty"`
 	RuntimeRef string               `json:"runtimeRef,omitempty"`
 	State      runtime.SessionState `json:"state,omitempty"`
 	SessionID  string               `json:"sessionId,omitempty"`
-	After      string               `json:"-"`
-	Limit      int                  `json:"-"`
+	After      string               `json:"after,omitempty"`
+	Limit      int                  `json:"limit,omitempty"`
 }
 type SessionPage struct {
 	Items []Session `json:"items"`

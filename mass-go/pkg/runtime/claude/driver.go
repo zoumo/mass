@@ -229,7 +229,7 @@ func (d *Driver) get(id string) (*session, error) {
 	defer d.mu.Unlock()
 	s := d.sessions[id]
 	if s == nil || d.stopped {
-		return nil, errors.New("session unavailable")
+		return nil, runtime.FailedPrecondition("session unavailable")
 	}
 	return s, nil
 }
@@ -241,16 +241,16 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	s.command.Lock()
 	defer s.command.Unlock()
 	if len(input.Content) != 1 || input.Content[0].Type != "text" {
-		return runtime.InputReceipt{}, errors.New("Claude supports exactly one text input block")
+		return runtime.InputReceipt{}, runtime.InvalidArgument("Claude supports exactly one text input block")
 	}
 	s.mu.Lock()
 	if s.used && !s.active && !s.sending {
 		s.mu.Unlock()
-		return runtime.InputReceipt{}, errors.New("Claude has no native work identity: close/resume required before another input")
+		return runtime.InputReceipt{}, runtime.FailedPrecondition("Claude has no native work identity: close/resume required before another input")
 	}
 	if s.active || s.sending || s.closing || s.err != nil || s.used {
 		s.mu.Unlock()
-		return runtime.InputReceipt{}, errors.New("session unavailable or work unsettled")
+		return runtime.InputReceipt{}, runtime.FailedPrecondition("session unavailable or work unsettled")
 	}
 	s.active = true
 	s.used = true
@@ -305,7 +305,7 @@ func (d *Driver) observe(s *session, early []sdk.Event) {
 		if err != nil {
 			if !s.closing {
 				s.err = err
-				_ = d.emit(s, "", runtime.SessionError{Message: "Claude observation failed", Reason: err.Error()}, time.Time{})
+				_ = d.emit(s, "", runtime.SessionError{Message: "Claude observation failed", Reason: "native_observation_failed"}, time.Time{})
 				_ = d.state(s, nil, "")
 			}
 			s.mu.Unlock()
@@ -505,11 +505,11 @@ func (d *Driver) permission(s *session, p *sdk.PermissionRequest) error {
 		answer := sdk.PermissionAnswer{Behavior: sdk.PermissionAllow, UpdatedInput: p.Input()}
 		if request.Kind == "form" {
 			if len(a) != 2 || a["action"] != "accept" {
-				return errors.New("expected explicit form accept/content")
+				return runtime.InvalidArgument("expected explicit form accept/content")
 			}
 			content, ok := a["content"].(map[string]any)
 			if !ok || content["answers"] == nil {
-				return errors.New("expected native question answers")
+				return runtime.InvalidArgument("expected native question answers")
 			}
 			data, err := json.Marshal(content)
 			if err != nil {

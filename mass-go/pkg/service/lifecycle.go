@@ -65,14 +65,14 @@ func (s *Service) DeleteRuntime(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.runs[name] != nil {
-		return errors.New("runtime still owns running or unsettled resources")
+		return runtime.FailedPrecondition("runtime still owns running or unsettled resources")
 	}
 	page, err := s.meta.ListSessions(resource.SessionQuery{RuntimeRef: name, Limit: 1})
 	if err != nil {
 		return err
 	}
 	if len(page.Items) != 0 {
-		return errors.New("runtime has persistent session references")
+		return runtime.FailedPrecondition("runtime has persistent session references")
 	}
 	r, err := s.meta.GetRuntime(name)
 	if err != nil {
@@ -80,7 +80,7 @@ func (s *Service) DeleteRuntime(name string) error {
 	}
 	// A cold process cannot infer release from an old running status.
 	if r.Status.State != "stopped" {
-		return errors.New("runtime release not confirmed")
+		return runtime.FailedPrecondition("runtime release not confirmed")
 	}
 	return s.meta.DeleteRuntime(name, r.Metadata.ResourceVersion)
 }
@@ -129,7 +129,7 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 			return r, nil
 		}
 		if r.Status.AppliedGeneration != 0 {
-			return r, errors.New("session release not confirmed in this process")
+			return r, runtime.FailedPrecondition("session release not confirmed in this process")
 		}
 		return s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
 	}
@@ -144,7 +144,7 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 	s.mu.Unlock()
 	if l == nil {
 		if r.Status.AppliedGeneration != 0 {
-			return r, errors.New("session release not confirmed")
+			return r, runtime.FailedPrecondition("session release not confirmed")
 		}
 		return s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
 	}
@@ -194,7 +194,7 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		if r.Status.State == "stopped" {
 			return r, nil
 		}
-		return r, errors.New("runtime release not confirmed in this process")
+		return r, runtime.FailedPrecondition("runtime release not confirmed in this process")
 	}
 	if first {
 		_, statusErr := s.runtimeStatus(name, resource.RuntimeStatus{State: "stopping", AppliedGeneration: r.Status.AppliedGeneration, Capabilities: r.Status.Capabilities})
@@ -343,14 +343,14 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	run := s.runs[r.Spec.RuntimeRef]
 	s.mu.Unlock()
 	if run == nil {
-		return r, errors.New("start original runtime before resume")
+		return r, runtime.FailedPrecondition("start original runtime before resume")
 	}
 	run.op.Lock()
 	defer run.op.Unlock()
 	s.mu.Lock()
 	if s.closing || run.stopping || run.err != nil || !run.started || run.lanes[r.Status.SessionID] != nil {
 		s.mu.Unlock()
-		return r, errors.New("runtime unavailable or session already controlled")
+		return r, runtime.FailedPrecondition("runtime unavailable or session already controlled")
 	}
 	s.mu.Unlock()
 	r, err = s.meta.GetSession(ref)
@@ -358,7 +358,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		return r, err
 	}
 	if r.Status.State == "closing" || r.Status.AppliedGeneration != 0 {
-		return r, errors.New("previous session release remains unsettled")
+		return r, runtime.FailedPrecondition("previous session release remains unsettled")
 	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
 	k := addressKey(a)
@@ -367,7 +367,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	s.mu.Lock()
 	if run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
 		s.mu.Unlock()
-		return r, errors.New("original restore responsibility remains or capacity exhausted")
+		return r, runtime.FailedPrecondition("original restore responsibility remains or capacity exhausted")
 	}
 	run.pending[k] = op
 	s.mu.Unlock()
@@ -429,7 +429,7 @@ func (s *Service) control(r resource.Session) (*runBinding, *lane, error) {
 	}
 	s.mu.Unlock()
 	if run == nil {
-		return nil, nil, errors.New("session unavailable")
+		return nil, nil, runtime.FailedPrecondition("session unavailable")
 	}
 	run.admission.RLock()
 	s.mu.Lock()
@@ -438,7 +438,7 @@ func (s *Service) control(r resource.Session) (*runBinding, *lane, error) {
 	s.mu.Unlock()
 	if !available {
 		run.admission.RUnlock()
-		return nil, nil, errors.New("session unavailable")
+		return nil, nil, runtime.FailedPrecondition("session unavailable")
 	}
 	return run, l, nil
 }
@@ -504,7 +504,7 @@ func (s *Service) ResumeSession(ctx context.Context, ref resource.SessionRef) (r
 	select {
 	case s.resumeSlots <- struct{}{}:
 	default:
-		return resource.Session{}, errors.New("resume capacity exhausted")
+		return resource.Session{}, runtime.FailedPrecondition("resume capacity exhausted")
 	}
 	type result struct {
 		value resource.Session

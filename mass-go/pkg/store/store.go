@@ -26,7 +26,7 @@ type MetaStore interface {
 	DeleteSession(resource.SessionRef, string) error
 }
 type HistoryQuery struct {
-	Types []string `json:"types,omitempty"`
+	Types []string `json:"types,omitzero"`
 	After string   `json:"after,omitempty"`
 	Limit int      `json:"limit,omitempty"`
 }

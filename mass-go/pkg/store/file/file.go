@@ -206,7 +206,7 @@ func (s *Store) next() (snapshot, error) {
 }
 func initial(m resource.Metadata) (resource.Metadata, error) {
 	if m.UID != "" || !m.CreatedAt.IsZero() || m.Generation != 0 || m.ResourceVersion != "" {
-		return m, errors.New("system metadata is read-only")
+		return m, runtime.InvalidArgument("system metadata is read-only")
 	}
 	m.UID = runtime.UUID()
 	m.CreatedAt = time.Now().UTC()
@@ -250,7 +250,7 @@ func (s *Store) CreateRuntime(r resource.Runtime) (resource.Runtime, error) {
 		return r, store.ErrConflict
 	}
 	if r.Metadata.Namespace != "" || r.Metadata.Name == "" {
-		return r, errors.New("invalid runtime key")
+		return r, runtime.InvalidArgument("invalid runtime key")
 	}
 	r.Metadata, err = initial(r.Metadata)
 	if err != nil {
@@ -318,7 +318,7 @@ func (s *Store) CreateSession(r resource.Session) (resource.Session, error) {
 		}
 	}
 	if r.Metadata.Namespace == "" || r.Metadata.Name == "" || r.Status.SessionID == "" {
-		return r, errors.New("invalid session identity")
+		return r, runtime.InvalidArgument("invalid session identity")
 	}
 	r.Metadata, err = initial(r.Metadata)
 	if err != nil {
@@ -333,7 +333,7 @@ func (s *Store) CreateSession(r resource.Session) (resource.Session, error) {
 func resolve(d snapshot, ref resource.SessionRef) (resource.Session, error) {
 	if ref.SessionID != "" {
 		if ref.Namespace != "" || ref.Name != "" {
-			return resource.Session{}, errors.New("session reference forms are mutually exclusive")
+			return resource.Session{}, runtime.InvalidArgument("session reference forms are mutually exclusive")
 		}
 		for _, r := range d.Sessions {
 			if r.Status.SessionID == ref.SessionID {
@@ -345,7 +345,7 @@ func resolve(d snapshot, ref resource.SessionRef) (resource.Session, error) {
 			return r, nil
 		}
 	} else {
-		return resource.Session{}, errors.New("invalid session reference")
+		return resource.Session{}, runtime.InvalidArgument("invalid session reference")
 	}
 	return resource.Session{}, store.ErrNotFound
 }
@@ -457,7 +457,7 @@ func (s *Store) encodeCursor(c cursor) string {
 }
 func normalized(types []string) ([]string, error) {
 	if types != nil && len(types) == 0 {
-		return nil, errors.New("empty types filter")
+		return nil, runtime.InvalidArgument("empty types filter")
 	}
 	out := append([]string(nil), types...)
 	sort.Strings(out)
@@ -482,23 +482,23 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 		limit = 100
 	}
 	if limit < 1 {
-		return empty, errors.New("limit must be positive")
+		return empty, runtime.InvalidArgument("limit must be positive")
 	}
 	events := s.data.History[id]
 	start := 0
 	if q.After != "" {
 		b, err := base64.RawURLEncoding.DecodeString(q.After)
 		if err != nil || len(b) <= 32 {
-			return empty, errors.New("invalid history cursor")
+			return empty, runtime.InvalidArgument("invalid history cursor")
 		}
 		mac := hmac.New(sha256.New, []byte(s.data.CursorKey))
 		mac.Write(b[32:])
 		if !hmac.Equal(b[:32], mac.Sum(nil)) {
-			return empty, errors.New("invalid history cursor")
+			return empty, runtime.InvalidArgument("invalid history cursor")
 		}
 		var c cursor
 		if decode(b[32:], &c) != nil || c.Session != id || !reflect.DeepEqual(c.Types, types) || c.Position < 1 || c.Position > len(events) {
-			return empty, errors.New("cursor does not match query")
+			return empty, runtime.InvalidArgument("cursor does not match query")
 		}
 		start = c.Position
 	}

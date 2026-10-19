@@ -54,6 +54,8 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 
 type session struct {
 	command     sync.Mutex
+	requests    chan sdk.Request
+	wake        chan struct{}
 	work        string
 	retired     map[string]bool
 	address     runtime.Address
@@ -206,7 +208,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	if err != nil {
 		return runtime.DriverSession{}, err
 	}
-	s := &session{address: address, source: runtime.NewSource(), sub: sub, done: make(chan struct{}), released: make(chan struct{}), retired: map[string]bool{}}
+	s := &session{requests: make(chan sdk.Request, 128), wake: make(chan struct{}, 1), address: address, source: runtime.NewSource(), sub: sub, done: make(chan struct{}), released: make(chan struct{}), retired: map[string]bool{}}
 	d.mu.Lock()
 	if _, ok := d.sessions[id]; ok {
 		d.mu.Unlock()
@@ -234,7 +236,7 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	s := d.sessions[id]
 	d.mu.Unlock()
 	if s == nil {
-		return runtime.InputReceipt{}, errors.New("session unavailable")
+		return runtime.InputReceipt{}, runtime.FailedPrecondition("session unavailable")
 	}
 	s.command.Lock()
 	defer s.command.Unlock()
@@ -242,18 +244,26 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	c := d.client
 	if d.sessions[id] != s || d.stopped || d.stopping || s.active || s.sending || s.err != nil || len(s.retired) >= 128 {
 		d.mu.Unlock()
-		return runtime.InputReceipt{}, errors.New("session unavailable or work unsettled")
+		return runtime.InputReceipt{}, runtime.FailedPrecondition("session unavailable or work unsettled")
 	}
 	s.sending = true
 	d.mu.Unlock()
-	defer func() { d.mu.Lock(); s.sending = false; d.mu.Unlock() }()
+	defer func() {
+		d.mu.Lock()
+		s.sending = false
+		d.mu.Unlock()
+		select {
+		case s.wake <- struct{}{}:
+		default:
+		}
+	}()
 	if len(input.Content) == 0 {
-		return runtime.InputReceipt{}, errors.New("empty input")
+		return runtime.InputReceipt{}, runtime.InvalidArgument("empty input")
 	}
 	items := make([]ct.UserInput, 0, len(input.Content))
 	for _, b := range input.Content {
 		if b.Type != "text" {
-			return runtime.InputReceipt{}, errors.New("unsupported input content")
+			return runtime.InputReceipt{}, runtime.InvalidArgument("unsupported input content")
 		}
 		items = append(items, ct.UserInput{Text: &ct.TextUserInput{Type: "text", Text: b.Text, TextElements: ct.Some([]ct.TextElement{})}})
 	}
@@ -288,12 +298,46 @@ func (d *Driver) emit(s *session, id, item string, p runtime.Payload, work strin
 func (d *Driver) observe(id string, s *session) {
 	defer d.wg.Done()
 	defer close(s.done)
-	for event := range s.sub.Events() {
-		if err := d.adapt(id, s, event); err != nil {
-			d.observationFailed(id, s, err)
+	pending := []sdk.Request{}
+	flush := func() {
+		d.mu.Lock()
+		waiting := s.sending && s.work == ""
+		d.mu.Unlock()
+		if waiting {
 			return
 		}
+		for _, request := range pending {
+			d.handleRequest(s, request)
+		}
+		pending = nil
 	}
+	observing := true
+	for observing {
+		select {
+		case <-d.life.Done():
+			return
+		case <-s.wake:
+			flush()
+		case request := <-s.requests:
+			if len(pending) >= 128 {
+				d.observationFailed(id, s, errors.New("pending native request capacity exhausted"))
+				return
+			}
+			pending = append(pending, request)
+			flush()
+		case event, ok := <-s.sub.Events():
+			if !ok {
+				observing = false
+				break
+			}
+			if err := d.adapt(id, s, event); err != nil {
+				d.observationFailed(id, s, err)
+				return
+			}
+			flush()
+		}
+	}
+
 	if err := s.sub.Err(); err != nil {
 		d.observationFailed(id, s, err)
 	} else {
@@ -540,70 +584,90 @@ func (d *Driver) requests(c *sdk.Client) {
 			if !ok {
 				return
 			}
-			var v struct{ ThreadID, TurnID, ItemID string }
-			if json.Unmarshal(r.Params(), &v) != nil {
+			var target struct{ ThreadID string }
+			if json.Unmarshal(r.Params(), &target) != nil {
 				continue
 			}
 			d.mu.Lock()
-			s := d.sessions[v.ThreadID]
-			valid := s != nil && s.err == nil && v.TurnID != "" && s.work == v.TurnID && !s.retired[v.TurnID]
+			original := d.sessions[target.ThreadID]
 			d.mu.Unlock()
-			if !valid {
+			if original == nil {
 				continue
 			}
-			request := runtime.PermissionRequest(v.ItemID, r.Method())
-			method := r.Method()
-			switch method {
-			case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
-			case "item/tool/requestUserInput":
-				var schema map[string]any
-				if json.Unmarshal(r.Params(), &schema) != nil {
-					continue
-				}
-				request = runtime.InteractionRequest{Kind: "form", Message: "Answer native Codex questions", RequestedSchema: schema}
-			default:
-				_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "unsupported native interaction", Reason: method}, v.TurnID)
-				continue
-			}
-			ref, err := d.interactions.Add(v.ThreadID, s.source.WithWork(v.TurnID), func(ctx context.Context, a map[string]any) error {
-				var response any
-				if method == "item/tool/requestUserInput" {
-					if len(a) != 2 || a["action"] != "accept" {
-						return errors.New("expected explicit form accept/content")
-					}
-					content, ok := a["content"].(map[string]any)
-					if !ok || content["answers"] == nil {
-						return errors.New("expected native question answers")
-					}
-					response = content
-				} else {
-					allow, err := runtime.PermissionAllowed(a)
-					if err != nil {
-						return err
-					}
-					decision := "decline"
-					if allow {
-						decision = "accept"
-					}
-					response = map[string]any{"decision": decision}
-				}
-				return r.Handle().Answer(ctx, response)
-			})
-			if err == nil {
-				state := runtime.RequiresAction
-				d.mu.Lock()
-				previous := s.state
-				s.state = &state
-				d.mu.Unlock()
-				err = d.emit(s, v.ThreadID, "", runtime.StateUpdate{PreviousState: previous, State: &state}, v.TurnID)
-			}
-			if err == nil {
-				err = d.emit(s, v.ThreadID, "", runtime.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, v.TurnID)
-			}
-			if err != nil {
-				_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "interaction delivery failed"}, v.TurnID)
+			select {
+			case original.requests <- r:
+			case <-original.done:
+			case <-d.life.Done():
+				return
 			}
 		}
+	}
+}
+
+// Request and observation queues are consumed by the original Session worker.
+// A bounded early request waits for ACK/native work identity, never a guessed ID.
+func (d *Driver) handleRequest(s *session, r sdk.Request) {
+	var v struct{ ThreadID, TurnID, ItemID string }
+	if json.Unmarshal(r.Params(), &v) != nil {
+		return
+	}
+	d.mu.Lock()
+	valid := s != nil && d.sessions[v.ThreadID] == s && s.err == nil && v.TurnID != "" && s.work == v.TurnID && !s.retired[v.TurnID]
+	d.mu.Unlock()
+	if !valid {
+		return
+	}
+	request := runtime.PermissionRequest(v.ItemID, r.Method())
+	method := r.Method()
+	switch method {
+	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
+	case "item/tool/requestUserInput":
+		var schema map[string]any
+		if json.Unmarshal(r.Params(), &schema) != nil {
+			return
+		}
+		request = runtime.InteractionRequest{Kind: "form", Message: "Answer native Codex questions", RequestedSchema: schema}
+	default:
+		_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "unsupported native interaction", Reason: "unsupported_native_interaction"}, v.TurnID)
+		return
+	}
+	ref, err := d.interactions.Add(v.ThreadID, s.source.WithWork(v.TurnID), func(ctx context.Context, a map[string]any) error {
+		var response any
+		if method == "item/tool/requestUserInput" {
+			if len(a) != 2 || a["action"] != "accept" {
+				return runtime.InvalidArgument("expected explicit form accept/content")
+			}
+			content, ok := a["content"].(map[string]any)
+			if !ok || content["answers"] == nil {
+				return runtime.InvalidArgument("expected native question answers")
+			}
+			response = content
+		} else {
+			allow, err := runtime.PermissionAllowed(a)
+			if err != nil {
+				return err
+			}
+			decision := "decline"
+			if allow {
+				decision = "accept"
+			}
+			response = map[string]any{"decision": decision}
+		}
+		return r.Handle().Answer(ctx, response)
+	})
+	if err == nil {
+		state := runtime.RequiresAction
+		d.mu.Lock()
+		previous := s.state
+		s.state = &state
+		d.mu.Unlock()
+		err = d.emit(s, v.ThreadID, "", runtime.StateUpdate{PreviousState: previous, State: &state}, v.TurnID)
+	}
+	if err == nil {
+		err = d.emit(s, v.ThreadID, "", runtime.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, v.TurnID)
+	}
+	if err != nil {
+		_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "interaction delivery failed"}, v.TurnID)
 	}
 }
 func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, a map[string]any) (runtime.Acceptance, error) {
@@ -611,7 +675,7 @@ func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, a map[st
 	s := d.sessions[id]
 	d.mu.Unlock()
 	if s == nil {
-		return runtime.Acceptance{}, errors.New("session unavailable")
+		return runtime.Acceptance{}, runtime.FailedPrecondition("session unavailable")
 	}
 	s.command.Lock()
 	defer s.command.Unlock()
@@ -646,7 +710,7 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.Acceptance, err
 	s := d.sessions[id]
 	d.mu.Unlock()
 	if s == nil {
-		return runtime.Acceptance{}, errors.New("session unavailable")
+		return runtime.Acceptance{}, runtime.FailedPrecondition("session unavailable")
 	}
 	s.command.Lock()
 	defer s.command.Unlock()

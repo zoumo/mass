@@ -5,11 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"sort"
 	"strings"
 
 	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
 
@@ -51,7 +51,7 @@ func (s *Store) ListSessions(q resource.SessionQuery) (resource.SessionPage, err
 		limit = 100
 	}
 	if limit < 1 {
-		return empty, errors.New("limit must be positive")
+		return empty, runtime.InvalidArgument("limit must be positive")
 	}
 	after := q.After
 	q.After, q.Limit = "", 0
@@ -59,13 +59,13 @@ func (s *Store) ListSessions(q resource.SessionQuery) (resource.SessionPage, err
 	if after != "" {
 		b, err := base64.RawURLEncoding.DecodeString(after)
 		if err != nil || len(b) <= 32 {
-			return empty, errors.New("invalid resource cursor")
+			return empty, runtime.InvalidArgument("invalid resource cursor")
 		}
 		mac := hmac.New(sha256.New, []byte(s.data.CursorKey))
 		mac.Write(b[32:])
 		var c directoryCursor
 		if !hmac.Equal(b[:32], mac.Sum(nil)) || decode(b[32:], &c) != nil || c.Kind != "sessions" || !equal(c.Query, q) || c.Position == "" {
-			return empty, errors.New("cursor does not match resource query")
+			return empty, runtime.InvalidArgument("cursor does not match resource query")
 		}
 		position = c.Position
 	}

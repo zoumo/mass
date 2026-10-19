@@ -138,14 +138,14 @@ func validName(name string) bool {
 }
 func validateMetadata(m resource.Metadata, session bool) error {
 	if !validName(m.Name) {
-		return errors.New("invalid DNS resource name")
+		return runtime.InvalidArgument("invalid DNS resource name")
 	}
 	if session {
 		if len(m.Namespace) > 63 || !label.MatchString(m.Namespace) {
-			return errors.New("invalid DNS namespace")
+			return runtime.InvalidArgument("invalid DNS namespace")
 		}
 	} else if m.Namespace != "" {
-		return errors.New("runtime namespace must be empty")
+		return runtime.InvalidArgument("runtime namespace must be empty")
 	}
 	return nil
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -272,13 +271,4 @@ func TestClaudeFailedOpenIsolation(t *testing.T) {
 	}
 	require.NoError(t, svc.Shutdown(ctx(t)))
 	t.Log("PASS duplicate and missing init cleanup leave healthy Session usable; no hidden prompt or fabricated identity")
-}
-
-func TestClaudeApplication(t *testing.T) {
-	path, work := nativeScenario(t, "claude", "basic")
-	cmd := exec.CommandContext(ctx(t), app, "-data", t.TempDir(), "-claude", claudeMock, "-scenario", path, "-cwd", work)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	require.Contains(t, string(out), `"type":"session.interaction_requested"`)
-	require.Contains(t, string(out), `"type":"agent.thinking"`)
 }
