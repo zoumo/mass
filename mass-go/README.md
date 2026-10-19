@@ -1,8 +1,9 @@
-# MASS Go — Ticket03 vertical slice
+# MASS Go — Ticket04 resource lifecycle
 
 The authoritative project design is [harness](../harness/index.md). This Go
 implementation currently delivers Codex/Claude no-input creation, independent text input,
-file-backed identity/history and live observation through Service. It replaces the
+file-backed identity/history, resource directories, desired configuration updates,
+archive/stop and same-ID recovery through Service. It replaces the
 old managed/catalog runtime and HTTP projection. There is no HTTP server yet.
 
 Package responsibilities:
@@ -66,8 +67,8 @@ Initial file layout, encoding and commit semantics are documented in
 [docs/file-store.md](docs/file-store.md). These are implementation choices while
 harness storage encoding and file protocol remain open.
 
-Not delivered or validated: production Agent/model/account behavior; full resource CRUD/listing and
-activation recovery; cancellation, archive/resume; uncertain-operation recovery,
+Not delivered or validated: production Agent/model/account behavior;
+cancellation; uncertain-operation recovery,
 crash/power-loss injection, old-run/work isolation and overload/fault acceptance;
 HTTP/SSE/final CLI; SQLite; Linux or Rust. Later tickets own those capabilities.
 The old product/native tests were removed with their replaced API; their historical
@@ -110,3 +111,41 @@ paths, explicit questions, native initialization, durable publication, Claude
 multi-block thinking/text, delta-only exclusion, dynamic tool values, and failed
 opens that leave a healthy session usable. Normal/failure cleanup reads back the
 process table. These scenarios are synthetic; no real account/model is accessed.
+
+## Configuration, directory and normal lifecycle
+
+`Service.UpdateRuntime(name, spec)` replaces the desired type/config only. Store
+allocates generation and resourceVersion atomically. Status writes retry a known
+CAS conflict from a fresh resource and never reuse a stale spec. The active Driver
+and appliedGeneration remain fixed; repeated start returns that original run.
+Sessions opened during configuration changes bind its original effective version.
+Only confirmed stop/removal followed by start applies the new desired version.
+
+`ListRuntimes` returns all matching resources without pagination. `ListSessions`
+queries the entire persistent directory, including stopped and archived records,
+with optional namespace/runtime/state filters and an opaque exclusive cursor.
+Ordering is namespace/name/uid lexical order. No cross-page snapshot is held;
+limit may change but filter changes invalidate the cursor. Queries and history
+never activate a Driver. Runtime deletion requires no persistent or in-flight
+Session references and confirmed release; archiving a Session retains its reference.
+
+Archive and resume serialize on persistent Session identity, including across
+Runtime generations. Stop seals open/resume/input/answer admission, closes idle
+Sessions, drains routed facts through their persistence workers, then stops and
+removes the original Driver. Archive becomes archived only after confirmed native
+release and history drain. Stop retains resources/history with unknown Session
+state and clears current running versions/capabilities. Existing live observers
+survive archive/resume and stop/start in the same Service; shutdown terminates them.
+Active or uncertain work is rejected for closure rather than declared released.
+Full cancellation, late settlement and fault/overload handling remain Ticket05.
+
+Both adapter factories require an application-owned absolute `RecoveryDir`, set
+by `massd` to `<data>/private`. The Registry passes the Runtime name when constructing
+the Driver. Material is adapter-private; Service and Store do not receive it.
+See [the Go recovery protocol](docs/recovery.md) for exact ownership checks and limits.
+
+`tests/vertical/lifecycle_test.go` runs the pinned SDK-owned fake processes for
+Codex configuration races, native release gating, cold same-ID recovery,
+Runtime UID replacement, missing/mismatched material, original history prefix,
+explicit new input, Claude recovery and preserved live observation. These tests
+validate synthetic protocol behavior, not real native persistence or model behavior.

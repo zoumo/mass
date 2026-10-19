@@ -62,4 +62,13 @@ session has one persistence worker; the Driver receive loop performs no Store I/
 Overflow is an explicit failure; broader isolation, pending-fact settlement and
 stop/failure guarantees remain Ticket05 acceptance work. Normal Shutdown drains the
 stream and workers and releases the owned SDK child; it is not a substitute for
-the full resource lifecycle and recovery API in Ticket04.
+fault, late-result and unknown-operation settlement in Ticket05.
+
+
+Ticket04 adds complete resource directory queries and conditional deletion to
+MetaStore. Session cursors are separately tagged/signed, bound to all filters,
+and store namespace/name/uid exclusive positions, never UUID ordering. History
+cursors cannot serve as resource cursors or vice versa. No SQLite index is used;
+all directory/history reads come from the complete authoritative snapshot. Opening
+a Store validates the entire committed history, including records beyond a first
+page. Removing a future/redundant index cannot remove any required current data.

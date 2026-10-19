@@ -49,3 +49,20 @@ type SessionRef struct {
 	Name      string
 	SessionID string
 }
+
+type RuntimeQuery struct {
+	Type  string
+	State string
+}
+type SessionQuery struct {
+	Namespace  string               `json:"namespace,omitempty"`
+	RuntimeRef string               `json:"runtimeRef,omitempty"`
+	State      runtime.SessionState `json:"state,omitempty"`
+	SessionID  string               `json:"sessionId,omitempty"`
+	After      string               `json:"-"`
+	Limit      int                  `json:"-"`
+}
+type SessionPage struct {
+	Items []Session `json:"items"`
+	Next  string    `json:"next,omitempty"`
+}

@@ -22,11 +22,18 @@ const queueCapacity = 128
 type RuntimeService interface {
 	CreateRuntime(resource.Runtime) (resource.Runtime, error)
 	GetRuntime(string) (resource.Runtime, error)
+	ListRuntimes(resource.RuntimeQuery) ([]resource.Runtime, error)
+	UpdateRuntime(string, resource.RuntimeSpec) (resource.Runtime, error)
+	DeleteRuntime(string) error
+	StopRuntime(context.Context, string) (resource.Runtime, error)
 	StartRuntime(context.Context, string) (resource.Runtime, error)
 }
 type SessionService interface {
 	CreateSession(context.Context, resource.Session) (resource.Session, error)
 	GetSession(resource.SessionRef) (resource.Session, error)
+	ListSessions(resource.SessionQuery) (resource.SessionPage, error)
+	ArchiveSession(context.Context, resource.SessionRef) (resource.Session, error)
+	ResumeSession(context.Context, resource.SessionRef) (resource.Session, error)
 	SendPrompt(context.Context, resource.SessionRef, runtime.Input) (runtime.InputReceipt, error)
 	AnswerInteraction(context.Context, resource.SessionRef, string, map[string]any) (runtime.Acceptance, error)
 	ListHistoryEvents(resource.SessionRef, store.HistoryQuery) (store.HistoryPage, error)
@@ -41,6 +48,7 @@ type runBinding struct {
 	lanes      map[string]*lane
 	op         sync.Mutex
 	started    bool
+	stopping   bool
 	drained    bool
 }
 type opening struct {
@@ -48,29 +56,36 @@ type opening struct {
 	events  []runtime.SessionEvent
 	err     error
 }
+type delivery struct {
+	event   runtime.SessionEvent
+	barrier chan struct{}
+}
 type lane struct {
 	session     resource.Session
 	source      runtime.Source
-	queue       chan runtime.SessionEvent
+	queue       chan delivery
 	done        chan struct{}
 	err         error
 	work        string
+	closing     bool
 	subscribers map[*Subscription]bool
 }
 type InteractionPolicy func(runtime.InteractionRequested) (map[string]any, bool)
 
 type Service struct {
-	policy   InteractionPolicy
-	meta     store.MetaStore
-	history  store.HistoryStore
-	registry *runtime.Registry
-	mu       sync.Mutex
-	runs     map[string]*runBinding
-	closing  bool
+	policy     InteractionPolicy
+	meta       store.MetaStore
+	history    store.HistoryStore
+	registry   *runtime.Registry
+	mu         sync.Mutex
+	runs       map[string]*runBinding
+	observers  map[string]map[*Subscription]bool
+	sessionOps map[string]*sync.Mutex
+	closing    bool
 }
 
 func New(meta store.MetaStore, history store.HistoryStore, registry *runtime.Registry) *Service {
-	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}}
+	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, observers: map[string]map[*Subscription]bool{}, sessionOps: map[string]*sync.Mutex{}}
 }
 
 // NewWithPolicy explicitly enables an application-owned interaction policy.
@@ -84,20 +99,12 @@ func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef
 	if err != nil {
 		return runtime.Acceptance{}, err
 	}
-	s.mu.Lock()
-	run := s.runs[r.Spec.RuntimeRef]
-	if s.closing || run == nil || run.err != nil {
-		s.mu.Unlock()
-		return runtime.Acceptance{}, errors.New("runtime unavailable")
+	run, _, err := s.control(r)
+	if err != nil {
+		return runtime.Acceptance{}, err
 	}
-	l := run.lanes[r.Status.SessionID]
-	if l == nil || l.err != nil {
-		s.mu.Unlock()
-		return runtime.Acceptance{}, errors.New("session unavailable")
-	}
-	d := run.driver
-	s.mu.Unlock()
-	return d.AnswerInteraction(ctx, r.Status.SessionID, interaction, answer)
+	defer run.op.Unlock()
+	return run.driver.AnswerInteraction(ctx, r.Status.SessionID, interaction, answer)
 }
 
 var label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -154,7 +161,7 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		defer existing.op.Unlock()
 		s.mu.Lock()
 		err := existing.err
-		started := existing.started
+		started := existing.started && !existing.stopping
 		s.mu.Unlock()
 		if err != nil {
 			return r, err
@@ -170,6 +177,14 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 	s.runs[name] = run
 	s.mu.Unlock()
 	defer run.op.Unlock()
+	r, err = s.meta.GetRuntime(name)
+	if err != nil {
+		close(run.done)
+		s.mu.Lock()
+		run.err = err
+		s.mu.Unlock()
+		return r, err
+	}
 	d, err := s.registry.Create(r.Spec.Type, name, r.Spec.Config)
 	if err != nil {
 		s.mu.Lock()
@@ -195,8 +210,8 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		s.mu.Unlock()
 		return r, err
 	}
-	r.Status = resource.RuntimeStatus{State: "running", AppliedGeneration: r.Metadata.Generation, Capabilities: capabilities}
-	r, err = s.meta.UpdateRuntime(r)
+	applied := r.Metadata.Generation
+	r, err = s.runtimeStatus(name, resource.RuntimeStatus{State: "running", AppliedGeneration: applied, Capabilities: capabilities})
 	s.mu.Lock()
 	if err != nil {
 		run.err = err
@@ -227,7 +242,7 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 	run.op.Lock()
 	defer run.op.Unlock()
 	s.mu.Lock()
-	if s.closing || run.err != nil || !run.started {
+	if s.closing || run.err != nil || !run.started || run.stopping {
 		s.mu.Unlock()
 		return r, errors.New("runtime unavailable")
 	}
@@ -260,16 +275,17 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 		removePending()
 		return resource.Session{}, errors.Join(err, cleanup)
 	}
-	l := &lane{session: r, source: native.Source, queue: make(chan runtime.SessionEvent, queueCapacity), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
+	l := &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
 	s.mu.Lock()
 	l.err = op.err
+	s.observers[native.SessionID] = l.subscribers
 	run.lanes[native.SessionID] = l
 	for _, e := range op.events {
 		if !native.Source.SameRun(e.Source()) {
 			l.err = errors.New("creation event source mismatch")
 			break
 		}
-		l.queue <- e
+		l.queue <- delivery{event: e}
 	}
 	delete(run.pending, k)
 	creationErr := l.err
@@ -288,19 +304,12 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	s.mu.Lock()
-	run := s.runs[r.Spec.RuntimeRef]
-	var l *lane
-	if run != nil {
-		l = run.lanes[r.Status.SessionID]
+	run, _, err := s.control(r)
+	if err != nil {
+		return runtime.InputReceipt{}, err
 	}
-	if s.closing || run == nil || run.err != nil || l == nil || l.err != nil {
-		s.mu.Unlock()
-		return runtime.InputReceipt{}, errors.New("session is not available in this process")
-	}
-	d := run.driver
-	s.mu.Unlock()
-	return d.SendPrompt(ctx, r.Status.SessionID, input)
+	defer run.op.Unlock()
+	return run.driver.SendPrompt(ctx, r.Status.SessionID, input)
 }
 func (s *Service) ListHistoryEvents(ref resource.SessionRef, q store.HistoryQuery) (store.HistoryPage, error) {
 	r, err := s.meta.GetSession(ref)
@@ -317,11 +326,11 @@ func (s *Service) SubscribeEvents(ref resource.SessionRef) (*Subscription, error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	run := s.runs[r.Spec.RuntimeRef]
-	if s.closing || run == nil || run.err != nil {
+	if s.closing || run == nil || run.err != nil || run.stopping {
 		return nil, errors.New("runtime not observed")
 	}
 	l := run.lanes[r.Status.SessionID]
-	if l == nil || l.err != nil {
+	if l == nil || l.err != nil || l.closing {
 		return nil, errors.New("session not observed")
 	}
 	sub := newSubscription(func(sub *Subscription) { s.mu.Lock(); delete(l.subscribers, sub); s.mu.Unlock() })
@@ -367,7 +376,7 @@ func (s *Service) consume(run *runBinding, stream runtime.Stream) {
 			continue
 		}
 		select {
-		case l.queue <- e:
+		case l.queue <- delivery{event: e}:
 		default:
 			l.err = errors.New("session event queue exhausted")
 		}
@@ -384,7 +393,12 @@ func (s *Service) fail(l *lane, err error) {
 }
 func (s *Service) process(run *runBinding, l *lane) {
 	defer close(l.done)
-	for e := range l.queue {
+	for entry := range l.queue {
+		if entry.barrier != nil {
+			close(entry.barrier)
+			continue
+		}
+		e := entry.event
 		s.mu.Lock()
 		failed := l.err
 		s.mu.Unlock()
@@ -403,16 +417,14 @@ func (s *Service) process(run *runBinding, l *lane) {
 				l.work = work
 			}
 			if work == "" || l.work == "" || work == l.work {
-				r, err := s.meta.GetSession(resource.SessionRef{SessionID: e.SessionID})
-				if err == nil {
-					if r.Status.State != "closing" && r.Status.State != "archived" {
+				_, err := s.sessionStatus(resource.SessionRef{SessionID: e.SessionID}, func(r *resource.Session) {
+					if r.Status.State != "closing" && r.Status.State != "archived" && r.Status.AppliedGeneration != 0 {
 						r.Status.State = runtime.Unknown
 						if state.State != nil {
 							r.Status.State = *state.State
 						}
-						_, err = s.meta.UpdateSession(r)
 					}
-				}
+				})
 				if err != nil {
 					s.fail(l, err)
 					continue
@@ -439,70 +451,19 @@ func (s *Service) process(run *runBinding, l *lane) {
 	}
 }
 
-// Shutdown is the normal-path application cleanup for this vertical slice.
-// Full stop/recovery, cancellation and unknown-operation settlement are later tickets.
+// Shutdown seals application admission and uses the same normal stop coordinator.
 func (s *Service) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.closing = true
-	runs := make([]*runBinding, 0, len(s.runs))
-	for _, r := range s.runs {
-		runs = append(runs, r)
+	names := make([]string, 0, len(s.runs))
+	for name := range s.runs {
+		names = append(names, name)
 	}
 	s.mu.Unlock()
 	var result error
-	for _, run := range runs {
-		run.op.Lock()
-		if run.drained {
-			run.op.Unlock()
-			continue
-		}
-		if run.driver == nil {
-			run.op.Unlock()
-			continue
-		}
-		s.mu.Lock()
-		ids := make([]string, 0, len(run.lanes))
-		for id := range run.lanes {
-			ids = append(ids, id)
-		}
-		s.mu.Unlock()
-		for _, id := range ids {
-			if err := run.driver.CloseSession(ctx, id); err != nil {
-				result = errors.Join(result, err)
-			}
-		}
-		if err := run.driver.Stop(ctx); err != nil {
-			result = errors.Join(result, err)
-			run.op.Unlock()
-			continue
-		}
-		select {
-		case <-run.done:
-		case <-ctx.Done():
-			run.op.Unlock()
-			return errors.Join(result, ctx.Err())
-		}
-		s.mu.Lock()
-		for _, l := range run.lanes {
-			close(l.queue)
-		}
-		s.mu.Unlock()
-		for _, l := range run.lanes {
-			select {
-			case <-l.done:
-			case <-ctx.Done():
-				run.op.Unlock()
-				return errors.Join(result, ctx.Err())
-			}
-			s.mu.Lock()
-			result = errors.Join(result, l.err)
-			for sub := range l.subscribers {
-				sub.finish(io.EOF)
-			}
-			s.mu.Unlock()
-		}
-		run.drained = true
-		run.op.Unlock()
+	for _, name := range names {
+		_, err := s.StopRuntime(ctx, name)
+		result = errors.Join(result, err)
 	}
 	return result
 }

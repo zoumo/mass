@@ -140,7 +140,7 @@ func TestCodexVertical(t *testing.T) {
 	st, err := file.Open(dir, false)
 	require.NoError(t, err)
 	defer st.Close()
-	registry := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{}})
+	registry := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}})
 	gate := &identityGate{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(gate.release) }) }

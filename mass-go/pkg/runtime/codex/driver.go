@@ -14,6 +14,7 @@ import (
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/recovery"
 )
 
 type options struct{ executable, scenario string }
@@ -40,28 +41,31 @@ func parse(c runtime.Config) (options, error) {
 	return o, nil
 }
 
-type Factory struct{}
+type Factory struct{ RecoveryDir string }
 
 func (Factory) Validate(c runtime.Config) error { _, err := parse(c); return err }
-func (Factory) New(c runtime.Config) (runtime.Driver, error) {
+func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	o, err := parse(c)
 	if err != nil {
 		return nil, err
 	}
-	return &Driver{options: o, pipe: runtime.NewEventPipe(128), sessions: map[string]*session{}}, nil
+	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "codex", Owner: name, Executable: o.executable}, options: o, pipe: runtime.NewEventPipe(128), sessions: map[string]*session{}}, nil
 }
 
 type session struct {
-	address runtime.Address
-	source  runtime.Source
-	sub     *sdk.Subscription
-	active  bool
-	sending bool
-	state   *runtime.SessionState
-	err     error
-	done    chan struct{}
+	address     runtime.Address
+	source      runtime.Source
+	sub         *sdk.Subscription
+	active      bool
+	sending     bool
+	state       *runtime.SessionState
+	err         error
+	done        chan struct{}
+	released    chan struct{}
+	releaseOnce sync.Once
 }
 type Driver struct {
+	vault        recovery.Vault
 	mu           sync.Mutex
 	op           sync.Mutex
 	options      options
@@ -117,8 +121,17 @@ func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	return caps(), nil
 }
 func (d *Driver) OpenSession(ctx context.Context, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
+	return d.open(ctx, "", address, spec)
+}
+func (d *Driver) ResumeSession(ctx context.Context, id string, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
+	return d.open(ctx, id, address, spec)
+}
+func (d *Driver) open(ctx context.Context, resume string, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.op.Lock()
 	defer d.op.Unlock()
+	if err := d.vault.Check(); err != nil {
+		return runtime.DriverSession{}, err
+	}
 	if !filepath.IsAbs(spec.Cwd) {
 		return runtime.DriverSession{}, errors.New("absolute cwd required")
 	}
@@ -132,23 +145,53 @@ func (d *Driver) OpenSession(ctx context.Context, address runtime.Address, spec 
 	if c == nil || stopped {
 		return runtime.DriverSession{}, errors.New("driver not running")
 	}
-	params := ct.ThreadStartParams{Cwd: ct.Some(spec.Cwd), Ephemeral: ct.Some(false)}
-	if spec.SystemPrompt != "" {
-		params.BaseInstructions = ct.Some(spec.SystemPrompt)
+	var thread ct.Thread
+	if resume != "" {
+		material, err := d.vault.Load(resume, address, spec)
+		if err != nil {
+			return runtime.DriverSession{}, err
+		}
+		var saved ct.Thread
+		if err = json.Unmarshal(material.Context, &saved); err != nil {
+			return runtime.DriverSession{}, err
+		}
+		if saved.ID != resume || saved.SessionID != resume || saved.Ephemeral || string(saved.Cwd) != spec.Cwd {
+			return runtime.DriverSession{}, errors.New("invalid native recovery context")
+		}
+		response, err := c.ResumeThread(ctx, ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)})
+		if err != nil {
+			return runtime.DriverSession{}, err
+		}
+		thread = response.Thread
+		if thread.ID != saved.ID || thread.SessionID != saved.SessionID || thread.Cwd != saved.Cwd || thread.CreatedAt != saved.CreatedAt || thread.ModelProvider != saved.ModelProvider || thread.Ephemeral || !bytes.Equal(marshal(thread.Path), marshal(saved.Path)) {
+			return runtime.DriverSession{}, errors.New("native recovery ownership mismatch")
+		}
+		// Resume metadata may contain old turns: they are never adapted or replayed.
+	} else {
+		params := ct.ThreadStartParams{Cwd: ct.Some(spec.Cwd), Ephemeral: ct.Some(false)}
+		if spec.SystemPrompt != "" {
+			params.BaseInstructions = ct.Some(spec.SystemPrompt)
+		}
+		response, err := c.StartThread(ctx, params)
+		if err != nil {
+			return runtime.DriverSession{}, err
+		}
+		thread = response.Thread
 	}
-	response, err := c.StartThread(ctx, params)
-	if err != nil {
-		return runtime.DriverSession{}, err
+	id := thread.ID
+	if id == "" || thread.SessionID != id || thread.Ephemeral || string(thread.Cwd) != spec.Cwd {
+		return runtime.DriverSession{}, errors.New("outcome_unknown: missing or mismatched native identity/context")
 	}
-	id := response.Thread.ID
-	if id == "" || response.Thread.SessionID == "" || response.Thread.SessionID != id {
-		return runtime.DriverSession{}, errors.New("outcome_unknown: missing or mismatched native identity")
+	if resume == "" {
+		if err := d.vault.Save(id, address, spec, thread); err != nil {
+			return runtime.DriverSession{}, fmt.Errorf("outcome_unknown: save recovery material: %w", err)
+		}
 	}
 	sub, err := c.Subscribe(d.life, id, ct.SubscriptionOptions{EventQueue: 128})
 	if err != nil {
 		return runtime.DriverSession{}, err
 	}
-	s := &session{address: address, source: runtime.NewSource(), sub: sub, done: make(chan struct{})}
+	s := &session{address: address, source: runtime.NewSource(), sub: sub, done: make(chan struct{}), released: make(chan struct{})}
 	d.mu.Lock()
 	if _, ok := d.sessions[id]; ok {
 		d.mu.Unlock()
@@ -158,7 +201,7 @@ func (d *Driver) OpenSession(ctx context.Context, address runtime.Address, spec 
 	d.sessions[id] = s
 	d.mu.Unlock()
 	// Only the native response's idle observation permits an initial idle event.
-	if response.Thread.Status.Idle != nil {
+	if thread.Status.Idle != nil {
 		state := runtime.Idle
 		s.state = &state
 		if err = d.emit(s, id, "", runtime.StateUpdate{State: &state}, ""); err != nil {
@@ -227,10 +270,23 @@ func (d *Driver) observe(id string, s *session) {
 	}
 }
 func (d *Driver) adapt(id string, s *session, event ct.Event) error {
-	// SDK observation diagnostics are not native session facts.
 	if event.DecodeError != nil {
 		return fmt.Errorf("invalid native observation: %w", event.DecodeError)
 	}
+	if event.Method == "thread/closed" {
+		var v struct {
+			ThreadID string `json:"threadId"`
+		}
+		if err := json.Unmarshal(event.Params, &v); err != nil {
+			return err
+		}
+		if v.ThreadID != id {
+			return errors.New("release identity mismatch")
+		}
+		s.releaseOnce.Do(func() { close(s.released) })
+		return nil
+	}
+	// SDK observation diagnostics are not native session facts.
 	if event.Method == "" {
 		return nil
 	}
@@ -353,6 +409,21 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 		return errors.New("work unsettled")
 	}
 	d.mu.Unlock()
+	var release ct.ThreadUnsubscribeResponse
+	if err := d.client.Call(ctx, "thread/unsubscribe", ct.ThreadUnsubscribeParams{ThreadID: id}, &release); err != nil {
+		return err
+	}
+	switch release.Status {
+	case ct.ThreadUnsubscribeStatusNotLoaded:
+	case ct.ThreadUnsubscribeStatusUnsubscribed:
+		select {
+		case <-s.released:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	default:
+		return errors.New("native resource release not confirmed")
+	}
 	if err := s.sub.Close(); err != nil {
 		return err
 	}
@@ -360,6 +431,9 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	case <-s.done:
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+	if err := d.pipe.Flush(ctx); err != nil {
+		return err
 	}
 	d.mu.Lock()
 	delete(d.sessions, id)
@@ -488,3 +562,5 @@ func (d *Driver) observationFailed(id string, s *session, err error) {
 	_ = d.emit(s, id, "", runtime.SessionError{Message: "Codex session observation failed"}, "")
 	_ = d.emit(s, id, "", runtime.StateUpdate{PreviousState: previous}, "")
 }
+
+func marshal(v any) []byte { b, _ := json.Marshal(v); return b }

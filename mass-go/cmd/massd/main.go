@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
@@ -40,7 +41,7 @@ func run() (result error) {
 		kind = "claude"
 		executable = claudeExecutable
 	}
-	svc := service.NewWithPolicy(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{}, "claude": claude.Factory{}}), prototype.AutoApprovePermissions)
+	svc := service.NewWithPolicy(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(*data, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(*data, "private")}}), prototype.AutoApprovePermissions)
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
