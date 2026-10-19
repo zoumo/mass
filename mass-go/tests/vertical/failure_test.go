@@ -3,7 +3,11 @@ package vertical_test
 import (
 	"context"
 	"errors"
+	"github.com/zoumo/mass/mass-go/pkg/transport"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -343,7 +347,6 @@ func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
 	s.Require().NoError(err)
 	defer sub.Close()
 	s.input(ref)
-	s.until(sub, runtime.Running)
 	handle := ""
 	for handle == "" {
 		e, err := sub.Next(ctx(s.T()))
@@ -512,4 +515,53 @@ func (s *failureSuite) TestConcurrentStopSharesOriginalResponsibility() {
 	r, err := s.svc.GetRuntime("agent")
 	s.Require().NoError(err)
 	s.Equal("stopped", r.Status.State)
+}
+
+// This gate delays a transport write, not native observations or Store commits.
+type pausedSSE struct {
+	*httptest.ResponseRecorder
+	ready   chan struct{}
+	release chan struct{}
+	first   bool
+}
+
+func (w *pausedSSE) Flush() {
+	if !w.first {
+		w.first = true
+		close(w.ready)
+		<-w.release
+	}
+	w.ResponseRecorder.Flush()
+}
+
+var _ http.Flusher = (*pausedSSE)(nil)
+
+func (s *failureSuite) TestSSEOverflowIsExplicit() {
+	s.start("codex", "slow-subscriber", s.st)
+	ref := s.open("demo")
+	w := &pausedSSE{ResponseRecorder: httptest.NewRecorder(), ready: make(chan struct{}), release: make(chan struct{})}
+	request := httptest.NewRequest("POST", "/experimental/observe", strings.NewReader(`{"sessionId":"`+ref.SessionID+`"}`))
+	done := make(chan struct{})
+	go func() { defer close(done); transport.New(s.svc).ServeHTTP(w, request) }()
+	<-w.ready
+	// Always release the writer on a failed assertion too.
+	defer func() {
+		select {
+		case <-w.release:
+		default:
+			close(w.release)
+		}
+		<-done
+	}()
+	s.input(ref)
+	s.Require().Eventually(func() bool {
+		p, e := s.st.ListHistory(ref.SessionID, store.HistoryQuery{Limit: 1000})
+		return e == nil && len(p.Events) == 140
+	}, 6*time.Second, 5*time.Millisecond)
+	close(w.release)
+	<-done
+	s.Contains(w.Body.String(), "event: error")
+	s.NotContains(w.Body.String(), "event: end")
+	s.NotContains(w.Body.String(), "slow subscriber")
+	s.T().Log("PASS synthetic transport write stall => Service overflow => explicit redacted SSE error, full 140-fact history preserved")
 }

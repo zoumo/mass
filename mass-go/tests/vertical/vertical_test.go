@@ -296,26 +296,3 @@ func TestCodexVertical(t *testing.T) {
 	require.Error(t, err)
 	t.Log("PASS reopened read-only identity/history with no Registry or Driver")
 }
-
-func TestApplicationEntrypoints(t *testing.T) {
-	path, work := scenario(t)
-	dir := t.TempDir()
-	cmd := exec.CommandContext(ctx(t), app, "-data", dir, "-codex", mock, "-scenario", path, "-cwd", work)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	require.Contains(t, string(out), `"type":"agent.message"`)
-	require.Contains(t, string(out), "complete answer")
-	cmd = exec.CommandContext(ctx(t), ctl, "-data", dir, "-id", "codex-session", "-history")
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	var page store.HistoryPage
-	require.NoError(t, json.Unmarshal(out, &page))
-	require.Len(t, page.Events, 4)
-	cmd = exec.CommandContext(ctx(t), ctl, "-data", dir, "-namespace", "default", "-name", "demo")
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	var identity resource.Session
-	require.NoError(t, json.Unmarshal(out, &identity))
-	require.Equal(t, "codex-session", identity.Status.SessionID)
-	t.Log("PASS built massd workflow and offline massctl readback")
-}

@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"sync"
 )
 
@@ -121,9 +120,12 @@ func (r *Registry) ValidateConfig(kind string, c Config) error {
 	f := r.factories[kind]
 	r.mu.Unlock()
 	if f == nil {
-		return fmt.Errorf("unsupported runtime type %q", kind)
+		return InvalidArgument("unsupported runtime type")
 	}
-	return f.Validate(c)
+	if err := f.Validate(c); err != nil {
+		return errors.Join(ErrInvalidArgument, err)
+	}
+	return nil
 }
 func (r *Registry) Create(kind, name string, c Config) (Driver, error) {
 	r.mu.Lock()

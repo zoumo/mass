@@ -48,7 +48,7 @@ check: check-massctl
 	RUST_MIN_STACK=$(RUST_MIN_STACK) RUST_TEST_THREADS=$(RUST_TEST_THREADS) cargo test --manifest-path $(RUST_MANIFEST) $(CARGO_FLAGS) --workspace --all-targets --locked
 	cargo build --manifest-path $(RUST_MANIFEST) $(CARGO_FLAGS) --workspace --all-targets --locked
 
-# Go entrypoints currently expose the Ticket02 SDK-fake vertical and local reads.
+# Go experimental Service-backed CLI and HTTP/SSE.
 .PHONY: fmt-go lint-go test-go build-go check-go
 fmt-go:
 	cd mass-go && gofmt -w cmd pkg tests examples/sdkprobe
@@ -73,3 +73,9 @@ fmt-massctl: fmt-go
 lint-massctl: lint-go
 test-massctl: test-go
 check-massctl: check-go
+
+# Isolated synthetic end-to-end acceptance. Builds both pinned SDK mocks plus
+# massd/massctl, exercises the product entrypoints, and reads cleanup back.
+.PHONY: prototype-go
+prototype-go:
+	cd mass-go && GOWORK=off GOPROXY=off go test -count=1 -v -timeout=180s ./tests/vertical -run '^TestEntrypointSuite$$'

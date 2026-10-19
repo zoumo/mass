@@ -113,5 +113,6 @@ there is no crash-recoverable private per-fact outbox. After process loss,
 unconfirmed ownership is refused rather than reconstructed, resent or declared
 clean. Manual forensic recovery/cross-process settlement, kernel crash/power
 loss, SQLite, real Agent/model/account behavior and Linux remain unverified.
-HTTP/final CLI exposure is Ticket06 and is not implemented here. User questions
-remain separately tested by the existing actual-SDK synthetic suites.
+HTTP/final CLI exposure is implemented by Ticket06; see [the experimental mapping](http-experiment.md)
+and [the final product acceptance](acceptance.md). User questions remain separately tested
+through the product CLI/HTTP+SSE and the existing actual-SDK synthetic suites.
