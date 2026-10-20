@@ -102,12 +102,12 @@ Requires **Go 1.26.9 or later**.
 
 ```sh
 make build
-# Produces bin/massctl and bin/massd-go
+# Produces bin/massctl and bin/massd
 ```
 
 | Binary | Role |
 |---|---|
-| `bin/massd-go` | 🛠️ Daemon — serves the API and manages runtimes, sessions, and history. |
+| `bin/massd` | 🛠️ Daemon — serves the API and manages runtimes, sessions, and history. |
 | `bin/massctl` | ⌨️ CLI — talks to the daemon over HTTP. |
 
 ## Quick start
@@ -127,7 +127,7 @@ must already be cached.
 To start the local service separately:
 
 ```sh
-bin/massd-go --local
+bin/massd --local
 ```
 
 In another terminal:

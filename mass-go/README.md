@@ -55,7 +55,7 @@ listen: 127.0.0.1:24368
 local: true
 ```
 
-Then run `bin/massd-go` without flags. Optional fields are `data` (an absolute
+Then run `bin/massd` without flags. Optional fields are `data` (an absolute
 owned directory), `tokenFile`, `tlsCert`, `tlsKey`, and
 `prototypeAutoApprovePermissions`. Automatic permission approval is off by default.
 Existing data is not moved into the default directory.
@@ -63,7 +63,7 @@ Existing data is not moved into the default directory.
 ```sh
 make build-go
 # Supply a fresh, absolute, application-owned data directory.
-bin/massd-go --data /absolute/owned/data --listen 127.0.0.1:24368 --local \
+bin/massd --data /absolute/owned/data --listen 127.0.0.1:24368 --local \
   --prototype-auto-approve-permissions
 bin/massctl runtime list
 ```
