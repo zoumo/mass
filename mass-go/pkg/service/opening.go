@@ -40,6 +40,12 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 	native, released := op.native, op.released
 	s.mu.Unlock()
 	if native.SessionID == "" {
+		if op.restoring && released {
+			if _, err := s.sessionStatus(resource.SessionRef{SessionID: op.requested.Status.SessionID}, func(r *resource.Session) { r.Status = op.requested.Status }); err != nil {
+				return err
+			}
+			return s.settleFailedRestore(ctx, run, op, key)
+		}
 		return errors.New("outcome_unknown: native identity remains unknown")
 	}
 	if !released {
@@ -58,6 +64,9 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 			if _, err := s.sessionStatus(resource.SessionRef{SessionID: op.requested.Status.SessionID}, func(r *resource.Session) { r.Status = op.requested.Status }); err != nil {
 				return err
 			}
+		}
+		if op.restoring {
+			return s.settleFailedRestore(ctx, run, op, key)
 		}
 		s.mu.Lock()
 		delete(run.pending, key)
@@ -145,6 +154,9 @@ func (s *Service) flushOpening(ctx context.Context, run *runBinding, l *lane, op
 		if len(op.events) == 0 {
 			op.buffering = false
 			err := op.err
+			if err != nil {
+				l.err = errors.Join(l.err, err)
+			}
 			s.mu.Unlock()
 			return err
 		}
@@ -169,9 +181,42 @@ func (s *Service) flushOpening(ctx context.Context, run *runBinding, l *lane, op
 				s.mu.Lock()
 				op.events = append(batch[i:], op.events...)
 				op.err = err
+				l.err = errors.Join(l.err, err)
 				s.mu.Unlock()
 				return err
 			}
 		}
+	}
+}
+
+// A failed restore does not own the retired run's already accepted facts. Return
+// those facts to its original queue before releasing the reservation. Facts from
+// an explicitly rejected identity are unpublished; an unproven source stays owned.
+func (s *Service) settleFailedRestore(ctx context.Context, run *runBinding, op *opening, key string) error {
+	for {
+		s.mu.Lock()
+		if len(op.events) == 0 {
+			delete(run.pending, key)
+			s.mu.Unlock()
+			return nil
+		}
+		e := op.events[0]
+		original := run.retired[e.Source().WithWork("")]
+		rejected := op.native.SessionID != "" && op.native.SessionID != op.requested.Status.SessionID && op.native.Source.SameRun(e.Source()) && e.SessionID == op.native.SessionID
+		if original == nil && !rejected {
+			s.mu.Unlock()
+			return &runtime.OperationError{Code: "outcome_unknown", Reason: "restore_facts_unsettled", Message: "Unpublished restore facts remain with the original operation"}
+		}
+		s.mu.Unlock()
+		if original != nil {
+			select {
+			case original.queue <- delivery{event: e}:
+			case <-ctx.Done():
+				return fmtUnknown(ctx.Err())
+			}
+		}
+		s.mu.Lock()
+		op.events = op.events[1:]
+		s.mu.Unlock()
 	}
 }
