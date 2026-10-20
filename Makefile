@@ -22,7 +22,7 @@ build-massctl:
 	cd mass-go && go build -trimpath -o ../bin/massctl ./cmd/massctl
 
 build-go: build-massctl
-	cd mass-go && go build -trimpath -o ../bin/massd-go ./cmd/massd
+	cd mass-go && go build -trimpath -o ../bin/massd ./cmd/massd
 
 check-go: lint-go test-go build-go
 	cd mass-go && golangci-lint fmt --diff
