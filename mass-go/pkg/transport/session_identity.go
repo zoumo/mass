@@ -14,10 +14,10 @@ type sessionCreated struct {
 	Location string `header:"Location"`
 	Body     resource.Session
 }
-type sessionIDPath struct {
+type SessionIDPath struct {
 	SessionID string `path:"sessionId"`
 }
-type sessionNameOrIDPath struct {
+type SessionNameOrIDPath struct {
 	Namespace string `path:"namespace"`
 	NameOrID  string `path:"nameOrID"`
 }
@@ -39,14 +39,14 @@ func (s *Server) registerSessionIdentity(api huma.API) {
 		r, err := s.api.ListSessions(resource.SessionQuery{Namespace: in.Namespace, RuntimeRef: in.RuntimeRef, State: in.State, After: in.After, Limit: in.Limit})
 		return &sessionListOutput{Body: r}, err
 	})
-	register(api, huma.Operation{Method: "GET", Path: "/apis/v1/sessions/{sessionId}", OperationID: "getSessionByID"}, func(_ context.Context, in *sessionIDPath) (*sessionOutput, error) {
+	register(api, huma.Operation{Method: "GET", Path: "/apis/v1/sessions/{sessionId}", OperationID: "getSessionByID"}, func(_ context.Context, in *SessionIDPath) (*sessionOutput, error) {
 		if err := resource.ValidateSessionID(in.SessionID); err != nil {
 			return nil, err
 		}
 		r, err := s.api.GetSession(resource.SessionRef{SessionID: in.SessionID})
 		return &sessionOutput{Body: r}, err
 	})
-	register(api, huma.Operation{Method: "GET", Path: "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}", OperationID: "getSessionByNameOrID"}, func(_ context.Context, in *sessionNameOrIDPath) (*sessionOutput, error) {
+	register(api, huma.Operation{Method: "GET", Path: "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}", OperationID: "getSessionByNameOrID"}, func(_ context.Context, in *SessionNameOrIDPath) (*sessionOutput, error) {
 		ref, err := s.api.ResolveSession(in.Namespace, in.NameOrID)
 		if err != nil {
 			return nil, err

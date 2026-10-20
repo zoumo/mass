@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -114,17 +115,33 @@ func NewWithPolicy(meta store.MetaStore, history store.HistoryStore, registry *r
 }
 
 func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef, interaction string, answer any) (runtime.InteractionReceipt, error) {
-	r, err := s.GetSession(ref)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return runtime.InteractionReceipt{}, err
 	}
-	run, err := s.control(r)
-	if err != nil {
-		return runtime.InteractionReceipt{}, err
+	r, resolveErr := s.GetSession(ref)
+	if resolveErr != nil {
+		return runtime.InteractionReceipt{}, resolveErr
 	}
-	defer run.admission.RUnlock()
-	evidence, err := run.driver.AnswerInteraction(ctx, r.Status.SessionID, interaction, answer)
-	return runtime.InteractionReceipt{Interaction: interaction, Evidence: evidence}, err
+	ref = resource.SessionRef{SessionID: r.Status.SessionID}
+	if interaction == "" || !utf8.ValidString(interaction) {
+		return runtime.InteractionReceipt{}, runtime.InvalidArgument("invalid interaction reference")
+	}
+	if err := events.CheckDynamicJSON(answer); err != nil {
+		return runtime.InteractionReceipt{}, runtime.InvalidArgument("invalid JSON answer")
+	}
+	raw, err := json.Marshal(answer)
+	if err != nil {
+		return runtime.InteractionReceipt{}, runtime.InvalidArgument("invalid JSON answer")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err = decoder.Decode(&answer); err != nil {
+		return runtime.InteractionReceipt{}, runtime.InvalidArgument("invalid JSON answer")
+	}
+	return sessionWork(ctx, s, ref, false, func(owner context.Context, run *runBinding, id string) (runtime.InteractionReceipt, error) {
+		evidence, err := run.driver.AnswerInteraction(owner, id, interaction, answer)
+		return runtime.InteractionReceipt{Interaction: interaction, Evidence: evidence}, err
+	})
 }
 
 var label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -447,16 +464,34 @@ func (s *Service) GetSession(ref resource.SessionRef) (resource.Session, error) 
 }
 
 func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input) (runtime.InputReceipt, error) {
-	r, err := s.GetSession(ref)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	run, err := s.control(r)
-	if err != nil {
-		return runtime.InputReceipt{}, err
+	r, resolveErr := s.GetSession(ref)
+	if resolveErr != nil {
+		return runtime.InputReceipt{}, resolveErr
 	}
-	defer run.admission.RUnlock()
-	return run.driver.SendPrompt(ctx, r.Status.SessionID, input)
+	ref = resource.SessionRef{SessionID: r.Status.SessionID}
+	if len(input.Content) == 0 {
+		return runtime.InputReceipt{}, runtime.InvalidArgument("empty input")
+	}
+	content := make([]events.ContentBlock, len(input.Content))
+	for i, block := range input.Content {
+		if err := block.Validate(); err != nil {
+			return runtime.InputReceipt{}, runtime.InvalidArgument("invalid content block")
+		}
+		raw, err := json.Marshal(block)
+		if err != nil {
+			return runtime.InputReceipt{}, runtime.InvalidArgument("invalid content block")
+		}
+		if err = json.Unmarshal(raw, &content[i]); err != nil {
+			return runtime.InputReceipt{}, runtime.InvalidArgument("invalid content block")
+		}
+	}
+	input.Content = content
+	return sessionWork(ctx, s, ref, false, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
+		return run.driver.SendPrompt(owner, id, input)
+	})
 }
 
 func (s *Service) ListHistoryEvents(ref resource.SessionRef, q store.HistoryQuery) (store.HistoryPage, error) {
@@ -675,31 +710,9 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // Cancel targets the original lane and remains available during drain. A receipt
 // records only dispatch/acknowledgment; native termination must still be observed.
 func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.CancelReceipt, error) {
-	r, err := s.GetSession(ref)
-	if err != nil {
-		return runtime.CancelReceipt{}, err
-	}
-	s.mu.Lock()
-	run := s.runs[r.Spec.RuntimeRef]
-	var original *lane
-	if run != nil {
-		original = run.lanes[r.Status.SessionID]
-	}
-	s.mu.Unlock()
-	if run == nil {
-		return runtime.CancelReceipt{}, errors.New("session unavailable")
-	}
-	if err := lockOperation(ctx, &run.op); err != nil {
-		return runtime.CancelReceipt{}, err
-	}
-	defer run.op.Unlock()
-	s.mu.Lock()
-	l := run.lanes[r.Status.SessionID]
-	s.mu.Unlock()
-	if l == nil || l != original {
-		return runtime.CancelReceipt{}, errors.New("session unavailable")
-	}
-	return run.driver.Cancel(ctx, r.Status.SessionID)
+	return sessionWork(ctx, s, ref, true, func(owner context.Context, run *runBinding, id string) (runtime.CancelReceipt, error) {
+		return run.driver.Cancel(owner, id)
+	})
 }
 
 // ReconcileHistory is an explicit experiment-only settlement operation. It does

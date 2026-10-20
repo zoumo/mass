@@ -5,8 +5,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"strconv"
+	"math/big"
 	"time"
+	"unicode/utf8"
 )
 
 // ContentBlock keeps the public union intact. Adapters may reject unsupported kinds.
@@ -88,11 +89,10 @@ func (b *ContentBlock) UnmarshalJSON(data []byte) error {
 		if !ok {
 			return errors.New("invalid size")
 		}
-		v, err := strconv.ParseUint(string(n), 10, 64)
-		if err != nil {
+		v, valid := new(big.Rat).SetString(string(n))
+		if !valid || !v.IsInt() || v.Sign() < 0 {
 			return errors.New("invalid size")
 		}
-		_ = v
 	}
 	if kind == "resource" {
 		r, ok := fields["resource"].(map[string]any)
@@ -166,4 +166,18 @@ func (b *ContentBlock) UnmarshalJSON(data []byte) error {
 		b.fields = nil
 	}
 	return nil
+}
+
+// Validate checks the same public union used by the JSON decoder, including
+// directly constructed Go values before encoding can replace invalid UTF-8.
+func (b ContentBlock) Validate() error {
+	if !utf8.ValidString(b.Type) || !utf8.ValidString(b.Text) {
+		return errors.New("invalid content UTF-8")
+	}
+	raw, err := b.MarshalJSON()
+	if err != nil {
+		return err
+	}
+	var parsed ContentBlock
+	return parsed.UnmarshalJSON(raw)
 }

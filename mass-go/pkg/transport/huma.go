@@ -73,6 +73,7 @@ func (s *Server) routes() (http.Handler, huma.API) {
 	cfg.Components.SecuritySchemes = map[string]*huma.SecurityScheme{"bearerAuth": {Type: "http", Scheme: "bearer"}}
 	api := humachi.New(router, cfg)
 	api.UseMiddleware(protocol)
+	registerWorkSchemas(api.OpenAPI().Components.Schemas)
 	s.registerRuntimes(api)
 	s.registerSessions(api, router)
 	for _, probe := range []string{"livez", "readyz"} {
