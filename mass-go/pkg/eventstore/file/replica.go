@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -22,9 +23,11 @@ import (
 // One connection owns the event-only disk projection. No metadata database is
 // attached; a transaction commits event rows and progress together.
 type replicas struct {
-	db        *sql.DB
-	conn      *sql.Conn
-	temporary string
+	db          *sql.DB
+	conn        *sql.Conn
+	temporary   string
+	version     int64
+	hasTriggers bool
 }
 
 func (r *replicas) close() error {
@@ -103,9 +106,12 @@ func (s *Store) openReplicas() error {
  PRAGMA temp_store=FILE;
  CREATE TABLE event (session_id TEXT NOT NULL, position INTEGER NOT NULL, event_id TEXT NOT NULL, type TEXT NOT NULL, payload BLOB NOT NULL, PRIMARY KEY(session_id,position), UNIQUE(session_id,event_id));
  CREATE INDEX event_type ON event(session_id,type,position);
- CREATE TABLE sync_progress (session_id TEXT PRIMARY KEY, event_id TEXT);
+ CREATE TABLE sync_progress (session_id TEXT PRIMARY KEY, event_id TEXT, file_count INTEGER NOT NULL, file_end INTEGER NOT NULL, file_hash TEXT NOT NULL);
  `)
-	return err
+	if err != nil {
+		return err
+	}
+	return r.conn.QueryRowContext(context.Background(), "PRAGMA data_version").Scan(&r.version)
 }
 
 func insertEvent(tx *sql.Tx, id string, position int, e events.SessionEvent, line []byte) error {
@@ -128,6 +134,9 @@ func (s *Store) loadHistories() error {
 			return err
 		}
 		err = s.restoreHistory(f, r, index)
+		if err == nil {
+			err = s.checkCommit(r, index)
+		}
 		if err := errors.Join(err, f.Close()); err != nil {
 			return err
 		}
@@ -173,7 +182,12 @@ func (s *Store) restoreBeforeAppend(intent appendIntent) (*historyIndex, error) 
 				return e
 			}
 			if r.SessionID == intent.SessionID {
+				if err := s.checkPendingCommit(f, r, intent, index); err != nil {
+					return err
+				}
 				target = index
+			} else if err := s.checkCommit(r, index); err != nil {
+				return err
 			}
 			return nil
 		}()
@@ -197,7 +211,7 @@ func (s *Store) restoreHistory(f io.Reader, r identity, index *historyIndex) err
 	}()
 	// Every restored batch advances public progress in the same transaction.
 	flush := func() error {
-		if _, err := tx.ExecContext(context.Background(), "UPDATE sync_progress SET event_id=? WHERE session_id=?", index.progress(), r.SessionID); err != nil {
+		if err := checkpoint(tx, r.SessionID, index); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -234,30 +248,30 @@ func (s *Store) restoreHistory(f io.Reader, r identity, index *historyIndex) err
 	return nil
 }
 
-func (s *Store) syncAppend(r identity, intent appendIntent, old *historyIndex) error {
-	tx, err := s.sql.conn.BeginTx(context.Background(), nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	position := old.Count
-	var last string
+func (s *Store) syncAppend(tx *sql.Tx, r identity, intent appendIntent, old *historyIndex) error {
+	updated := *old
 	if err := eachEvent(bytes.NewReader(intent.Data), r, func(e events.SessionEvent, line []byte) error {
-		position++
-		last = e.EventID
-		return insertEvent(tx, r.SessionID, position, e, line)
+		if err := updated.add(e, line); err != nil {
+			return err
+		}
+		return insertEvent(tx, r.SessionID, updated.Count, e, line)
 	}); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(context.Background(), "UPDATE sync_progress SET event_id=? WHERE session_id=?", last, r.SessionID); err != nil {
+	if err := checkpoint(tx, r.SessionID, &updated); err != nil {
 		return err
+	}
+	if s.sql.hasTriggers {
+		if err := s.verifyAppend(tx, r.SessionID, &updated); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
 
-func (s *Store) storedEvent(id, eventID string) (events.SessionEvent, bool, error) {
+func (s *Store) storedEvent(q sqlQueryer, id, eventID string) (events.SessionEvent, bool, error) {
 	var b []byte
-	err := s.sql.conn.QueryRowContext(context.Background(), "SELECT payload FROM event WHERE session_id=? AND event_id=?", id, eventID).Scan(&b)
+	err := q.QueryRowContext(context.Background(), "SELECT payload FROM event WHERE session_id=? AND event_id=?", id, eventID).Scan(&b)
 	if errors.Is(err, sql.ErrNoRows) {
 		return events.SessionEvent{}, false, nil
 	}
@@ -269,17 +283,17 @@ func (s *Store) storedEvent(id, eventID string) (events.SessionEvent, bool, erro
 	return e, true, err
 }
 
-func (s *Store) sqlProgress(id string) (*string, error) {
+func (s *Store) sqlProgress(q sqlQueryer, id string) (*string, error) {
 	var idValue *string
-	err := s.sql.conn.QueryRowContext(context.Background(), "SELECT event_id FROM sync_progress WHERE session_id=?", id).Scan(&idValue)
+	err := q.QueryRowContext(context.Background(), "SELECT event_id FROM sync_progress WHERE session_id=?", id).Scan(&idValue)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	return idValue, err
 }
 
-func (s *Store) sqlHistory(id string, types []string, start, limit int) (store.HistoryPage, error) {
-	progress, err := s.sqlProgress(id)
+func (s *Store) sqlHistory(q sqlQueryer, id string, types []string, start, limit int) (store.HistoryPage, error) {
+	progress, err := s.sqlProgress(q, id)
 	if err != nil {
 		return store.HistoryPage{}, err
 	}
@@ -294,7 +308,7 @@ func (s *Store) sqlHistory(id string, types []string, start, limit int) (store.H
 	}
 	query += " ORDER BY position LIMIT ?"
 	args = append(args, int64(limit)+1)
-	rows, err := s.sql.conn.QueryContext(context.Background(), query, args...)
+	rows, err := q.QueryContext(context.Background(), query, args...)
 	if err != nil {
 		return page, err
 	}
@@ -330,9 +344,180 @@ func (s *Store) seedProgress() error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	for id := range s.identities {
-		if _, err := tx.ExecContext(context.Background(), "INSERT INTO sync_progress VALUES(?,NULL)", id); err != nil {
+		if _, err := tx.ExecContext(context.Background(), "INSERT INTO sync_progress VALUES(?,NULL,0,0,?)", id, hex.EncodeToString(make([]byte, 32))); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// Event rows and their consumed file boundary advance in one SQL transaction.
+// These values are disposable checks, never authority for skipping file validation.
+func checkpoint(tx *sql.Tx, id string, index *historyIndex) error {
+	result, err := tx.ExecContext(context.Background(), "UPDATE sync_progress SET event_id=?,file_count=?,file_end=?,file_hash=? WHERE session_id=?", index.progress(), index.Count, index.End, hex.EncodeToString(index.Hash[:]), id)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return errors.New("event SQL checkpoint update did not affect one Session")
+	}
+	return nil
+}
+
+// Every public operation uses one SQLite snapshot. An external connection may
+// create harmless triggers or alter derived data: data_version makes the common
+// path constant-cost, while changes require a bounded verification of all rows.
+type sqlQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func (s *Store) projectionTx() (*sql.Tx, error) {
+	tx, err := s.sql.conn.BeginTx(context.Background(), nil)
+	if err == nil {
+		err = s.verifyProjection(tx)
+	}
+	if err != nil {
+		if tx != nil {
+			_ = tx.Rollback()
+		}
+		s.uncertain = true
+		return nil, fmt.Errorf("outcome_unknown: event SQL projection unavailable: %w", err)
+	}
+	return tx, nil
+}
+
+func (s *Store) verifyProjection(tx *sql.Tx) error {
+	var version int64
+	if err := tx.QueryRowContext(context.Background(), "PRAGMA data_version").Scan(&version); err != nil {
+		return err
+	}
+	if version == s.sql.version {
+		return nil
+	}
+	if err := s.verifyRows(tx); err != nil {
+		return err
+	}
+	if err := s.verifyProgress(tx); err != nil {
+		return err
+	}
+	var triggers int
+	if err := tx.QueryRowContext(context.Background(), "SELECT count(*) FROM sqlite_schema WHERE type='trigger'").Scan(&triggers); err != nil {
+		return err
+	}
+	s.sql.hasTriggers = triggers != 0
+	s.sql.version = version
+	return nil
+}
+
+func (s *Store) verifyRows(tx *sql.Tx) error {
+	rows, err := tx.QueryContext(context.Background(), "SELECT session_id,position,event_id,type,payload FROM event ORDER BY session_id,position")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	current := ""
+	index := emptyHistory()
+	finish := func() error {
+		if current != "" && (s.histories[current] == nil || *s.histories[current] != *index) {
+			return errors.New("event SQL rows differ from file checkpoint")
+		}
+		return nil
+	}
+	for rows.Next() {
+		var id, eventID, kind string
+		var position int
+		var line []byte
+		if err := rows.Scan(&id, &position, &eventID, &kind, &line); err != nil {
+			return err
+		}
+		if id != current {
+			if err := finish(); err != nil {
+				return err
+			}
+			current, index = id, emptyHistory()
+		}
+		r, ok := s.identities[id]
+		if !ok {
+			return errors.New("SQL-only Session")
+		}
+		var e events.SessionEvent
+		if err := fileio.Decode(line, &e); err != nil {
+			return err
+		}
+		if err := validateEvent(r, e); err != nil {
+			return err
+		}
+		if position != index.Count+1 || eventID != e.EventID || kind != e.Type() {
+			return errors.New("event SQL identity or order differs from file")
+		}
+		if err := index.add(e, line); err != nil {
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := finish(); err != nil {
+		return err
+	}
+	// Missing entire Sessions must also fail; an indexed count catches absent rows
+	// without retaining any event identity or payload in application memory.
+	for id, expected := range s.histories {
+		var count int
+		if err := tx.QueryRowContext(context.Background(), "SELECT count(*) FROM event WHERE session_id=?", id).Scan(&count); err != nil {
+			return err
+		}
+		if count != expected.Count {
+			return errors.New("event SQL count differs from file")
+		}
+	}
+	return nil
+}
+
+func (s *Store) verifyProgress(tx *sql.Tx) error {
+	rows, err := tx.QueryContext(context.Background(), "SELECT session_id,event_id,file_count,file_end,file_hash FROM sync_progress")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var id, hash string
+		var last *string
+		var n int
+		var end int64
+		if err := rows.Scan(&id, &last, &n, &end, &hash); err != nil {
+			return err
+		}
+		expected := s.histories[id]
+		if expected == nil || n != expected.Count || end != expected.End || hash != hex.EncodeToString(expected.Hash[:]) || (last == nil) != (expected.Count == 0) || last != nil && *last != expected.Last {
+			return errors.New("event SQL progress differs from file checkpoint")
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if count != len(s.histories) {
+		return errors.New("missing event SQL progress")
+	}
+	return nil
+}
+
+// External triggers can silently change rows in this connection, which does not
+// change data_version. For that exceptional schema, verify the transaction's
+// actual result against the new file boundary before acknowledging its commit.
+func (s *Store) verifyAppend(tx *sql.Tx, id string, updated *historyIndex) error {
+	old := s.histories[id]
+	s.histories[id] = updated
+	defer func() { s.histories[id] = old }()
+	if err := s.verifyRows(tx); err != nil {
+		return err
+	}
+	return s.verifyProgress(tx)
 }

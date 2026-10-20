@@ -3,6 +3,7 @@ package file
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -236,7 +237,7 @@ func (s *Store) bind(id string, records []events.SessionEvent) (identity, error)
 	if err := fileio.AtomicFile(filepath.Join(path, "identity.json"), r); err != nil {
 		return r, err
 	}
-	if _, err := s.sql.conn.ExecContext(context.Background(), "INSERT INTO sync_progress VALUES(?,NULL)", id); err != nil {
+	if _, err := s.sql.conn.ExecContext(context.Background(), "INSERT INTO sync_progress VALUES(?,NULL,0,0,?)", id, hex.EncodeToString(make([]byte, 32))); err != nil {
 		return r, err
 	}
 	s.identities[id] = r

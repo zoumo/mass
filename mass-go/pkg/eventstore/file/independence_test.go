@@ -13,6 +13,9 @@ import (
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore/file"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
+	"github.com/zoumo/mass/mass-go/pkg/metastore/backend"
+	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
 
@@ -39,7 +42,7 @@ func TestIndependentHistoryRebuildAndIdentity(t *testing.T) {
 	require.NoError(t, st.Close())
 	require.NoError(t, os.Remove(filepath.Join(dir, "history.sqlite")))
 	// Metadata paths are unavailable: reconstruction must use event materials only.
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "metadata.sqlite"), 0o700))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "metadata-authority.sqlite"), 0o700))
 	st, err = file.Open(dir, false)
 	require.NoError(t, err)
 	defer st.Close()
@@ -83,4 +86,45 @@ func TestInterruptedEmptyLogCreationCanBeRetried(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Events, 1)
 	require.Equal(t, fact.EventID, page.Events[0].EventID)
+}
+
+func TestEventRebuildCannotResetMetadataAuthority(t *testing.T) {
+	dir := t.TempDir()
+	meta, err := backend.Open(dir, metastore.Config{}, false)
+	require.NoError(t, err)
+	defer meta.Close()
+	rt, err := meta.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "runtime"}, Spec: resource.RuntimeSpec{Type: "fixture"}})
+	require.NoError(t, err)
+	st, err := file.Open(dir, false)
+	require.NoError(t, err)
+	defer st.Close()
+	fact := event(t, "native", "one", events.AgentMessage{MessageID: "one", Content: []events.ContentBlock{events.Text("independent")}})
+	_, err = st.Append("native", []events.SessionEvent{fact})
+	require.NoError(t, err)
+	require.NoError(t, st.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "history.sqlite"), []byte("corrupt projection"), 0o600))
+	rt.Spec.Config = map[string]any{"marker": "authority"}
+	rt, err = meta.UpdateRuntime(rt)
+	require.NoError(t, err)
+	before := readBytes(t, filepath.Join(dir, "metadata-authority.sqlite"))
+	restored, err := file.Open(dir, false)
+	require.NoError(t, err)
+	defer restored.Close()
+	require.Equal(t, before, readBytes(t, filepath.Join(dir, "metadata-authority.sqlite")))
+	got, err := meta.GetRuntime("runtime")
+	require.NoError(t, err)
+	require.Equal(t, rt, got)
+	require.NoError(t, meta.Close())
+	_, err = restored.Append("native", []events.SessionEvent{fact})
+	require.NoError(t, err)
+	progress, err := restored.GetSyncProgress("native")
+	require.NoError(t, err)
+	require.Equal(t, fact.EventID, *progress)
+	require.NoError(t, restored.Close())
+	reopened, err := backend.Open(dir, metastore.Config{}, false)
+	require.NoError(t, err)
+	defer reopened.Close()
+	got, err = reopened.GetRuntime("runtime")
+	require.NoError(t, err)
+	require.Equal(t, rt, got)
 }

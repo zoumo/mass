@@ -162,7 +162,12 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 	if err := s.noPending(); err != nil {
 		return empty, err
 	}
-	return s.sqlHistory(id, types, start, limit)
+	tx, err := s.projectionTx()
+	if err != nil {
+		return empty, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	return s.sqlHistory(tx, id, types, start, limit)
 }
 
 // GetSyncProgress reads the same committed view as history queries.
@@ -175,7 +180,20 @@ func (s *Store) GetSyncProgress(id string) (*string, error) {
 	if err := resource.ValidateSessionID(id); err != nil {
 		return nil, err
 	}
-	return s.sqlProgress(id)
+	lock, err := s.layoutLock(false)
+	if err != nil {
+		return nil, err
+	}
+	defer lock.Close()
+	if err := s.noPending(); err != nil {
+		return nil, err
+	}
+	tx, err := s.projectionTx()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	return s.sqlProgress(tx, id)
 }
 
 // Reconcile validates original committed checkpoints before completing an append.

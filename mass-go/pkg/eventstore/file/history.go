@@ -19,10 +19,10 @@ import (
 
 // A checkpoint is constant size per Session; event identities and bodies live in SQL.
 type historyIndex struct {
-	Count int
-	Last  string
-	End   int64
-	Hash  [sha256.Size]byte
+	Count int               `json:"count"`
+	Last  string            `json:"last"`
+	End   int64             `json:"end"`
+	Hash  [sha256.Size]byte `json:"hash"`
 }
 
 func emptyHistory() *historyIndex { return &historyIndex{} }
@@ -146,6 +146,11 @@ func (s *Store) Append(id string, records []events.SessionEvent) (*string, error
 	if err != nil {
 		return nil, err
 	}
+	tx, err := s.projectionTx()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	f, err := openHistory(s.historyPath(r), os.O_RDONLY)
 	if err != nil {
 		return nil, err
@@ -165,7 +170,7 @@ func (s *Store) Append(id string, records []events.SessionEvent) (*string, error
 		if err := validateEvent(r, e); err != nil {
 			return nil, err
 		}
-		if stored, exists, err := s.storedEvent(id, e.EventID); err != nil {
+		if stored, exists, err := s.storedEvent(tx, id, e.EventID); err != nil {
 			return nil, err
 		} else if exists {
 			if !fileio.Equal(stored, e) {
@@ -188,16 +193,19 @@ func (s *Store) Append(id string, records []events.SessionEvent) (*string, error
 		data.WriteByte('\n')
 	}
 	if data.Len() == 0 {
-		return s.sqlProgress(id)
+		return s.sqlProgress(tx, id)
 	}
 	intent := appendIntent{Format: 1, Namespace: r.Namespace, Name: r.Name, SessionID: id, UID: r.SessionID, Offset: index.End, PrefixHash: hex.EncodeToString(index.Hash[:]), Data: data.Bytes()}
 	s.uncertain = true
 	if err := fileio.AtomicFile(filepath.Join(s.dir, ".events.append.pending.json"), intent); err != nil {
 		return nil, fmt.Errorf("outcome_unknown: append intent: %w", err)
 	}
-	updated, err := s.applyAppend(r, intent, index)
+	updated, err := s.applyAppend(tx, r, intent, index)
 	if err == nil {
-		err = s.syncAppend(r, intent, index)
+		err = s.syncAppend(tx, r, intent, index)
+	}
+	if err == nil {
+		err = s.saveCommit(r, updated)
 	}
 	if err == nil {
 		err = s.finishAppend()
@@ -212,7 +220,7 @@ func (s *Store) Append(id string, records []events.SessionEvent) (*string, error
 // applyAppend validates the committed prefix and all new records before writing.
 // If a previous attempt wrote only part of Data, that exact prefix is retained
 // and only the missing suffix is appended. Divergent tails are never truncated.
-func (s *Store) applyAppend(r identity, intent appendIntent, known *historyIndex) (_ *historyIndex, result error) {
+func (s *Store) applyAppend(q sqlQueryer, r identity, intent appendIntent, known *historyIndex) (_ *historyIndex, result error) {
 	if intent.Format != 1 || intent.Namespace != r.Namespace || intent.Name != r.Name || intent.SessionID != r.SessionID || intent.UID != r.SessionID || intent.Offset < 0 || len(intent.Data) == 0 {
 		return nil, errors.New("invalid append intent identity")
 	}
@@ -239,7 +247,7 @@ func (s *Store) applyAppend(r identity, intent appendIntent, known *historyIndex
 			return errors.New("duplicate event identity in intent")
 		}
 		batchIDs[e.EventID] = true
-		if _, exists, err := s.storedEvent(r.SessionID, e.EventID); err != nil {
+		if _, exists, err := s.storedEvent(q, r.SessionID, e.EventID); err != nil {
 			return err
 		} else if exists {
 			return errors.New("duplicate event identity in intent")
@@ -309,9 +317,66 @@ func (s *Store) recoverAppend(write bool) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.applyAppend(r, intent, known); err != nil {
+	updated, err := s.applyAppend(s.sql.conn, r, intent, known)
+	if err != nil {
+		return err
+	}
+	if err := s.saveCommit(r, updated); err != nil {
 		return err
 	}
 	// Open/Reconcile clear evidence after all file and replica checks succeed.
+	return nil
+}
+
+// commit.json is a compact durable boundary, independent of disposable SQL.
+// It detects syntactically valid changes and removal of whole committed records.
+func (s *Store) commitPath(r identity) string {
+	return filepath.Join(filepath.Dir(s.historyPath(r)), "commit.json")
+}
+
+func (s *Store) saveCommit(r identity, index *historyIndex) error {
+	return fileio.AtomicFile(s.commitPath(r), index)
+}
+
+func (s *Store) checkCommit(r identity, index *historyIndex) error {
+	var committed historyIndex
+	err := fileio.ReadJSON(s.commitPath(r), &committed)
+	if os.IsNotExist(err) && index.Count == 0 {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if committed != *index {
+		return errors.New("committed history checkpoint mismatch")
+	}
+	return nil
+}
+
+// During recovery the durable checkpoint may describe either the old prefix or
+// the completed batch (SQL/response outcome was unknown). Verify either before
+// extending any tail; never rewrite a divergent committed prefix.
+func (s *Store) checkPendingCommit(f *os.File, r identity, intent appendIntent, prefix *historyIndex) error {
+	var committed historyIndex
+	err := fileio.ReadJSON(s.commitPath(r), &committed)
+	if os.IsNotExist(err) && prefix.Count == 0 {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if committed.End == intent.Offset {
+		return s.checkCommit(r, prefix)
+	}
+	if committed.End != intent.Offset+int64(len(intent.Data)) {
+		return errors.New("committed checkpoint outside append boundary")
+	}
+	actual, err := scanHistory(io.NewSectionReader(f, 0, committed.End), r)
+	if err != nil {
+		return err
+	}
+	if committed != *actual {
+		return errors.New("committed history checkpoint mismatch")
+	}
 	return nil
 }
