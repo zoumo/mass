@@ -96,7 +96,7 @@ func respond(w http.ResponseWriter, status int, value any, err error) {
 		w.WriteHeader(status)
 		return
 	}
-	if err := validateOutput(reflect.ValueOf(value), 0); err != nil {
+	if err := validateOutput(reflect.ValueOf(value)); err != nil {
 		fail(w, 500, &Error{Code: "internal", Reason: "encoding_failed", Message: "Response could not be encoded"})
 		return
 	}

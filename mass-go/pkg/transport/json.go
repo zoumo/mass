@@ -98,7 +98,7 @@ func ValidateJSON(b []byte) error { return validateJSON(b) }
 func validateJSON(b []byte) error {
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.UseNumber()
-	if jsonValue(d, 0) != nil {
+	if jsonValue(d) != nil {
 		return Invalid()
 	}
 	if _, err := d.Token(); err != io.EOF {
@@ -107,7 +107,7 @@ func validateJSON(b []byte) error {
 	return nil
 }
 
-func jsonValue(d *json.Decoder, depth int) error {
+func jsonValue(d *json.Decoder) error {
 	token, err := d.Token()
 	if err != nil {
 		return err
@@ -129,7 +129,7 @@ func jsonValue(d *json.Decoder, depth int) error {
 				return Invalid()
 			}
 			seen[s] = true
-			if err := jsonValue(d, depth+1); err != nil {
+			if err := jsonValue(d); err != nil {
 				return err
 			}
 		}
@@ -139,7 +139,7 @@ func jsonValue(d *json.Decoder, depth int) error {
 		}
 	case '[':
 		for d.More() {
-			if err := jsonValue(d, depth+1); err != nil {
+			if err := jsonValue(d); err != nil {
 				return err
 			}
 		}
@@ -226,7 +226,7 @@ func modelFields(t reflect.Type, out map[string]reflect.StructField) {
 
 // Dynamic positions must already be JSON values; encoding/json must not coerce
 // language objects, byte slices or custom marshalers into a different value.
-func validateOutput(value reflect.Value, depth int) error {
+func validateOutput(value reflect.Value) error {
 	if !value.IsValid() {
 		return nil
 	}
@@ -240,7 +240,7 @@ func validateOutput(value reflect.Value, depth int) error {
 		if value.IsNil() {
 			return nil
 		}
-		return validateOutput(value.Elem(), depth+1)
+		return validateOutput(value.Elem())
 	}
 	switch value.Kind() {
 	case reflect.Map:
@@ -252,26 +252,26 @@ func validateOutput(value reflect.Value, depth int) error {
 			return events.CheckDynamicJSON(dynamic)
 		}
 		for _, k := range value.MapKeys() {
-			if err := validateOutput(value.MapIndex(k), depth+1); err != nil {
+			if err := validateOutput(value.MapIndex(k)); err != nil {
 				return err
 			}
 		}
 	case reflect.Slice, reflect.Array:
 		for i := range value.Len() {
-			if err := validateOutput(value.Index(i), depth+1); err != nil {
+			if err := validateOutput(value.Index(i)); err != nil {
 				return err
 			}
 		}
 	case reflect.Struct:
 		for i := range value.NumField() {
 			if value.Type().Field(i).IsExported() {
-				if err := validateOutput(value.Field(i), depth+1); err != nil {
+				if err := validateOutput(value.Field(i)); err != nil {
 					return err
 				}
 			}
 		}
 		if event, ok := value.Interface().(events.SessionEvent); ok {
-			if err := validateOutput(reflect.ValueOf(event.Payload()), depth+1); err != nil {
+			if err := validateOutput(reflect.ValueOf(event.Payload())); err != nil {
 				return err
 			}
 		}

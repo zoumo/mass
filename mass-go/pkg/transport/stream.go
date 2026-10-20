@@ -35,7 +35,7 @@ func (s *Server) observe(w http.ResponseWriter, r *http.Request, ref resource.Se
 		return rc.Flush()
 	}
 	send := func(kind string, value any) error {
-		if err := validateOutput(reflect.ValueOf(value), 0); err != nil {
+		if err := validateOutput(reflect.ValueOf(value)); err != nil {
 			return err
 		}
 		b, err := json.Marshal(value)
