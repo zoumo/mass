@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/client/generated"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/service"
@@ -34,7 +33,7 @@ func (s *generatedHTTPSuite) TestRawIDsThroughActualHTTP() {
 	defer handler.Shutdown()
 	h := httptest.NewServer(handler)
 	defer h.Close()
-	c := client.Client{URL: h.URL, Token: "test-token"}
+	c := newHTTPClient(s.T(), h.URL, "test-token")
 	for i, id := range []string{"a/b", "a%2Fb", "a b?#", "空间/会话", "a..b", "  "} {
 		name := fmt.Sprintf("session-%d", i)
 		_, err = st.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: name}, Spec: resource.SessionSpec{RuntimeRef: "agent"}, Status: resource.SessionStatus{SessionID: id, State: "offline"}})
@@ -80,7 +79,7 @@ func (s *generatedHTTPSuite) TestAllEventBranchesStreamAndGeneratedModelRoundTri
 		fmt.Fprint(w, "event:subscription.closed\ndata:{}\n\n")
 	}))
 	defer h.Close()
-	observer, err := (client.Client{URL: h.URL}).Observe(context.Background(), resource.SessionRef{SessionID: "s1"})
+	observer, err := newHTTPClient(s.T(), h.URL, "").Observe(context.Background(), resource.SessionRef{SessionID: "s1"})
 	s.Require().NoError(err)
 	defer observer.Close()
 	for _, raw := range examples.Events {

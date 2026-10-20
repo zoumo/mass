@@ -114,7 +114,9 @@ http://%s {
 	t.Logf("ready received after %s", time.Since(started))
 	// A second, generated-client subscription receives each business frame before
 	// shutdown; this would hang if Observe used a WithResponse full-body decoder.
-	observer, err := (massclient.Client{URL: "http://" + address, Token: "test-token"}).Observe(ctx, resource.SessionRef{SessionID: "original"})
+	massHTTP := massclient.New("http://"+address, "test-token")
+	defer massHTTP.Close()
+	observer, err := massHTTP.Observe(ctx, resource.SessionRef{SessionID: "original"})
 	require.NoError(t, err)
 	defer observer.Close()
 	for i := range 2 {

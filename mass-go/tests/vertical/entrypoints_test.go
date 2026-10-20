@@ -19,7 +19,6 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -81,7 +80,7 @@ func (s *entrypointSuite) call(op string, p workflowParams, out any) {
 	s.T().Helper()
 	// HTTP-only capabilities stay covered without exposing CLI compatibility flags.
 	if op == "session.answer" || len(p.History.Types) > 0 || p.SessionQuery.Namespace != "" || p.SessionQuery.RuntimeRef != "" || p.SessionQuery.State != "" {
-		s.Require().NoError(workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), op, p, out))
+		s.Require().NoError(workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), op, p, out))
 		return
 	}
 	parts := strings.Split(op, ".")
@@ -277,18 +276,18 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 func (s *entrypointSuite) basic(kind string) {
 	ref, original, work := s.open(kind, "basic")
 	// Closing a registered observer does not archive or cancel the native session.
-	watch, e := (client.Client{URL: s.url}).Observe(ctx(s.T()), ref)
+	watch, e := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
 	s.Require().NoError(e)
 	s.Require().NoError(watch.Close())
 	s.runWork(ref, "hello", false)
 	if kind == "claude" {
 		var out any
-		e = workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("forbidden second input")}}}, &out)
+		e = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("forbidden second input")}}}, &out)
 		s.Require().Error(e)
 		s.T().Log("PASS Claude second input rejected; close and original-ID resume required")
 	}
 	for _, q := range []store.HistoryQuery{{Types: []string{}}, {Limit: -1}, {After: "not-a-cursor"}} {
-		e = workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), "session.history", workflowParams{Session: ref, History: q}, nil)
+		e = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.history", workflowParams{Session: ref, History: q}, nil)
 		var public *transport.Error
 		s.Require().ErrorAs(e, &public)
 		s.Equal("invalid_argument", public.Code)
@@ -362,7 +361,7 @@ func (s *entrypointSuite) cancel(kind string) {
 		}
 	}
 	// Disconnect while work remains executing, then cancel through another client.
-	o, e := (client.Client{URL: s.url}).Observe(ctx(s.T()), ref)
+	o, e := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
 	s.Require().NoError(e)
 	s.Require().NoError(o.Close())
 	var state resource.Session
@@ -383,7 +382,7 @@ func (s *entrypointSuite) cancel(kind string) {
 func (s *entrypointSuite) TestCodexCancellation()  { s.cancel("codex") }
 func (s *entrypointSuite) TestClaudeCancellation() { s.cancel("claude") }
 func (s *entrypointSuite) TestParametersAndDirectory() {
-	c := client.Client{URL: s.url}
+	c := newHTTPClient(s.T(), s.url, "")
 	var out any
 	for _, op := range []string{"unknown", "session.get", "runtime.get"} {
 		e := workflowHTTP(c, ctx(s.T()), op, workflowParams{}, &out)
@@ -436,7 +435,7 @@ func (s *entrypointSuite) TestFailedCreateCleanup() {
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
 	create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: "session"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}}
-	c := client.Client{URL: s.url}
+	c := newHTTPClient(s.T(), s.url, "")
 	e := workflowHTTP(c, ctx(s.T()), "session.create", workflowParams{Create: &create}, nil)
 	s.Require().Error(e)
 	var public *transport.Error
@@ -479,7 +478,7 @@ func (s *entrypointSuite) TestDualAgentDirectory() {
 	s.Require().Len(second.Items, 1)
 	s.Empty(second.Next)
 	s.NotEqual(first.Items[0].Status.SessionID, second.Items[0].Status.SessionID)
-	e := workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), "session.list", workflowParams{SessionQuery: resource.SessionQuery{Namespace: "other", After: first.Next, Limit: 1}}, nil)
+	e := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.list", workflowParams{SessionQuery: resource.SessionQuery{Namespace: "other", After: first.Next, Limit: 1}}, nil)
 	var public *transport.Error
 	s.Require().ErrorAs(e, &public)
 	s.Equal("invalid_argument", public.Code)
@@ -499,7 +498,7 @@ func (s *entrypointSuite) unsupportedMedia(kind string) {
 	var input runtime.Input
 	err := json.Unmarshal([]byte(`{"content":[{"type":"image","data":"YQ==","mimeType":"image/png"}]}`), &input)
 	s.Require().NoError(err)
-	err = (client.Client{URL: s.url}).SendPrompt(ctx(s.T()), ref, input, nil)
+	err = newHTTPClient(s.T(), s.url, "").SendPrompt(ctx(s.T()), ref, input, nil)
 	var public *transport.Error
 	s.Require().ErrorAs(err, &public)
 	s.Equal("unsupported", public.Code)
@@ -510,9 +509,9 @@ func (s *entrypointSuite) unsupportedMedia(kind string) {
 	s.Equal("noActiveWork", canceled.Result)
 	s.Empty(canceled.Target)
 	s.call("session.archive", workflowParams{Session: ref}, nil)
-	err = workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), "session.get", workflowParams{Session: ref}, nil)
+	err = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.get", workflowParams{Session: ref}, nil)
 	s.Require().NoError(err)
-	_, err = (client.Client{URL: s.url}).Observe(ctx(s.T()), ref)
+	_, err = newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
 	s.Require().ErrorAs(err, &public)
 	s.Equal("unavailable", public.Code)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)

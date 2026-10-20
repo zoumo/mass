@@ -6,4 +6,4 @@
 - [测试与验收原则](testing.md) — 定义公开接口验证、真实 Agent 验收、测试隔离与结果声明的要求。
 
 - [Go 项目目录结构](go/directory-structure.md) — 强制 cmd 子目录放二进制入口，pkg 子目录放模块。
-- [Go 项目技术选型](go/technology-stack.md) — CLI、测试、HTTP、结构化日志、lint 与可观测性选型及使用要求。
+- [Go 项目技术选型](go/technology-stack.md) — CLI、测试、HTTP 框架与客户端、结构化日志、lint 与可观测性选型及使用要求。

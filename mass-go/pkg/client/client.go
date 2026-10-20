@@ -15,24 +15,57 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"resty.dev/v3"
+
+	"github.com/zoumo/mass/mass-go/pkg/client/generated"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 type Client struct {
-	URL   string
-	Token string
-	HTTP  *http.Client
+	url string
+	// HTTP is configured once before use and shared by JSON and SSE requests.
+	// Custom configuration must preserve the no-retry and no-redirect policy.
+	HTTP *resty.Client
 }
 
-func (c Client) http() *http.Client {
-	base := http.Client{}
-	if c.HTTP != nil {
-		base = *c.HTTP
+// New creates a client with Bearer authentication and no automatic replay.
+// Request contexts control deadlines; SSE contexts must span the observation.
+func New(serverURL, token string) *Client {
+	if !strings.HasSuffix(serverURL, "/") {
+		serverURL += "/"
 	}
-	base.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &base
+	return &Client{
+		url: serverURL,
+		HTTP: resty.New().
+			SetAuthToken(token).
+			SetRedirectPolicy(resty.RedirectNoPolicy()).
+			SetRetryCount(0).
+			SetResponseDoNotParse(true),
+	}
+}
+
+// Close releases Resty client resources after all requests and observers end.
+func (c *Client) Close() error { return c.HTTP.Close() }
+
+// execute leaves Resty's wrapped response body to the JSON decoder or Observer.
+func (c *Client) execute(ctx context.Context, accept string, req *http.Request) (*resty.Response, error) {
+	r := c.HTTP.R().SetContext(ctx).SetContentLength(req.ContentLength)
+	r.Header = req.Header.Clone()
+	r.SetHeader("Accept", accept)
+	if req.Body != nil {
+		defer req.Body.Close()
+		r.SetBody(req.Body)
+	}
+	response, err := r.Execute(req.Method, req.URL.String())
+	if err != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		return nil, err
+	}
+	return response, nil
 }
 
 func SessionPath(ref resource.SessionRef) (string, error) {
@@ -45,12 +78,12 @@ func SessionPath(ref resource.SessionRef) (string, error) {
 	return "", invalid()
 }
 
-func decodeResponse(response *http.Response, err error, expected int, out any) error {
+func decodeResponse(response *resty.Response, err error, expected int, out any) error {
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
+	if response.StatusCode() < 200 || response.StatusCode() >= 300 {
 		var v runtime.OperationError
 		if json.NewDecoder(response.Body).Decode(&v) != nil || v.Code == "" {
 			return errors.New("unexpected HTTP response")
@@ -58,7 +91,7 @@ func decodeResponse(response *http.Response, err error, expected int, out any) e
 		return &v
 	}
 
-	if response.StatusCode != expected {
+	if response.StatusCode() != expected {
 		return errors.New("unexpected HTTP status")
 	}
 	if expected == 204 {
@@ -82,24 +115,25 @@ type Observer struct {
 	closeErr  error
 }
 
-func (c Client) Observe(ctx context.Context, ref resource.SessionRef) (*Observer, error) {
+func (c *Client) Observe(ctx context.Context, ref resource.SessionRef) (*Observer, error) {
 	if _, e := SessionPath(ref); e != nil {
 		return nil, e
 	}
-	api, e := c.generated("text/event-stream")
-	if e != nil {
-		return nil, e
-	}
-	var r *http.Response
+	var req *http.Request
+	var e error
 	if ref.SessionID != "" {
-		r, e = api.ObserveSessionByID(ctx, ref.SessionID, nil)
+		req, e = generated.NewObserveSessionByIDRequest(c.url, ref.SessionID, nil)
 	} else {
-		r, e = api.ObserveSessionByNameOrID(ctx, ref.Namespace, ref.Name, nil)
+		req, e = generated.NewObserveSessionByNameOrIDRequest(c.url, ref.Namespace, ref.Name, nil)
 	}
 	if e != nil {
 		return nil, e
 	}
-	if r.StatusCode != http.StatusOK {
+	r, e := c.execute(ctx, "text/event-stream", req)
+	if e != nil {
+		return nil, e
+	}
+	if r.StatusCode() != http.StatusOK {
 		defer r.Body.Close()
 		var v runtime.OperationError
 		if json.NewDecoder(r.Body).Decode(&v) == nil && v.Code != "" {
@@ -107,7 +141,7 @@ func (c Client) Observe(ctx context.Context, ref resource.SessionRef) (*Observer
 		}
 		return nil, errors.New("observe rejected")
 	}
-	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	media, _, err := mime.ParseMediaType(r.Header().Get("Content-Type"))
 	if err != nil || media != "text/event-stream" {
 		r.Body.Close()
 		return nil, errors.New("unexpected observation media type")
