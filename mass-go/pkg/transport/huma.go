@@ -118,7 +118,7 @@ func register[I, O any](api huma.API, op huma.Operation, handler func(context.Co
 		if err != nil {
 			return nil, asHTTPError(err)
 		}
-		if err = validateOutput(reflect.ValueOf(value), 0); err != nil {
+		if err = validateOutput(reflect.ValueOf(value)); err != nil {
 			return nil, &responseError{public: &Error{Code: "internal", Reason: "encoding_failed", Message: "Response could not be encoded"}, status: 500}
 		}
 		return value, nil
