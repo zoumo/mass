@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"sync"
 	"syscall"
@@ -487,6 +488,7 @@ func normalized(types []string) ([]string, error) {
 	}
 	out := append([]string(nil), types...)
 	sort.Strings(out)
+	out = slices.Compact(out)
 	return out, nil
 }
 

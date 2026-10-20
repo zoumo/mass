@@ -237,6 +237,19 @@ func validateOutput(value reflect.Value) error {
 	if !value.IsValid() {
 		return nil
 	}
+	if value.Type() == reflect.TypeFor[events.ConfigOption]() {
+		option := value.Interface().(events.ConfigOption)
+		if err := option.Validate(); err != nil {
+			return err
+		}
+		for _, v := range []any{option.ID, option.Name, option.Description, option.Category, option.Type, option.CurrentValue} {
+			if err := events.CheckDynamicJSON(v); err != nil {
+				return err
+			}
+		}
+		return validateOutput(reflect.ValueOf(option.Options))
+	}
+
 	if value.Kind() == reflect.Interface {
 		if value.IsNil() {
 			return nil

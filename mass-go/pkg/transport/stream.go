@@ -10,21 +10,13 @@ import (
 	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/service"
 )
 
-func (s *Server) observe(w http.ResponseWriter, r *http.Request, ref resource.SessionRef) {
-	if _, ok := w.(http.Flusher); !ok {
-		fail(w, 503, &Error{Code: "unavailable", Reason: "stream_unavailable", Message: "Streaming unavailable"})
-		return
-	}
-	sub, err := s.api.SubscribeEvents(ref)
-	if err != nil {
-		respond(w, 0, nil, err)
-		return
-	}
+func (s *Server) observe(w http.ResponseWriter, r *http.Request, sub *service.Subscription) {
 	defer sub.Close()
 	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store, no-transform")
 	w.Header().Set("X-Accel-Buffering", "no")
 	rc := http.NewResponseController(w)
 	write := func(text string) error {

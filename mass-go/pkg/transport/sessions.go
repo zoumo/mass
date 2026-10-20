@@ -1,128 +1,107 @@
 package transport
 
-// Event operations retain explicit chi handlers until their
-// owning tickets migrate their request and response schemas.
 import (
-	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
-	"unicode/utf8"
-
+	"context"
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/go-chi/chi/v5"
+	"github.com/danielgtaylor/huma/v2/adapters/humachi"
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/store"
+	"reflect"
 )
 
-func (s *Server) registerSessions(api huma.API, r chi.Router) {
+type HistoryQuery struct {
+	After string   `query:"after"`
+	Limit int      `query:"limit" minimum:"1" default:"100"`
+	Types []string `query:"types,explode" nullable:"false" minItems:"1"`
+}
+type historyByID struct {
+	SessionIDPath
+	HistoryQuery
+}
+type historyByNameOrID struct {
+	SessionNameOrIDPath
+	HistoryQuery
+}
+type historyOutput struct{ Body store.HistoryPage }
+type streamByID struct {
+	SessionIDPath
+	LastEventID string `header:"Last-Event-ID"`
+}
+type streamByNameOrID struct {
+	SessionNameOrIDPath
+	LastEventID string `header:"Last-Event-ID"`
+}
+
+func (q HistoryQuery) query() (store.HistoryQuery, error) {
+	for _, kind := range q.Types {
+		if !eventTypes[kind] {
+			return store.HistoryQuery{}, Invalid()
+		}
+	}
+	return store.HistoryQuery{After: q.After, Limit: q.Limit, Types: q.Types}, nil
+}
+func (s *Server) registerSessions(api huma.API) {
 	s.registerSessionIdentity(api)
 	s.registerSessionWork(api)
 	s.registerSessionRecovery(api)
-	for _, base := range []string{"/apis/v1/sessions/{sessionId}", "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}"} {
-		r.MethodFunc("GET", base+"/events", s.sessionHandler([]string{"after", "limit", "types"}, func(w http.ResponseWriter, r *http.Request, ref resource.SessionRef, q url.Values) {
-			v, e := s.api.ListHistoryEvents(ref, store.HistoryQuery{After: q.Get("after"), Limit: queryLimit(q), Types: q["types"]})
-			respond(w, 200, v, e)
-		}))
-		r.MethodFunc("GET", base+"/events/stream", s.sessionHandler(nil, func(w http.ResponseWriter, r *http.Request, ref resource.SessionRef, _ url.Values) {
-			if r.Header.Get("Last-Event-ID") != "" {
-				fail(w, 400, Invalid())
-				return
-			}
-			s.observe(w, r, ref)
-		}))
-	}
+	registerEventSchemas(api.OpenAPI().Components.Schemas)
+	register(api, huma.Operation{Method: "GET", Path: "/apis/v1/sessions/{sessionId}/events", OperationID: "listHistoryByID"}, func(_ context.Context, in *historyByID) (*historyOutput, error) {
+		ref, err := in.resolve(s)
+		if err != nil {
+			return nil, err
+		}
+		return s.history(ref, in.HistoryQuery)
+	})
+	register(api, huma.Operation{Method: "GET", Path: "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events", OperationID: "listHistoryByNameOrID"}, func(_ context.Context, in *historyByNameOrID) (*historyOutput, error) {
+		ref, err := in.resolve(s)
+		if err != nil {
+			return nil, err
+		}
+		return s.history(ref, in.HistoryQuery)
+	})
+	register(api, streamOperation(api.OpenAPI().Components.Schemas, "/apis/v1/sessions/{sessionId}/events/stream", "observeSessionByID"), func(_ context.Context, in *streamByID) (*huma.StreamResponse, error) {
+		if in.LastEventID != "" {
+			return nil, Invalid()
+		}
+		ref, err := in.resolve(s)
+		if err != nil {
+			return nil, err
+		}
+		return s.stream(ref)
+	})
+	register(api, streamOperation(api.OpenAPI().Components.Schemas, "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events/stream", "observeSessionByNameOrID"), func(_ context.Context, in *streamByNameOrID) (*huma.StreamResponse, error) {
+		if in.LastEventID != "" {
+			return nil, Invalid()
+		}
+		ref, err := in.resolve(s)
+		if err != nil {
+			return nil, err
+		}
+		return s.stream(ref)
+	})
 }
-func (s *Server) sessionHandler(allowed []string, handler func(http.ResponseWriter, *http.Request, resource.SessionRef, url.Values)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ref := resource.SessionRef{}
-		if id := chi.URLParam(r, "sessionId"); id != "" {
-			decoded, e := url.PathUnescape(id)
-			if e == nil {
-				e = resource.ValidateSessionID(decoded)
-			}
-			if e != nil {
-				respond(w, 0, nil, e)
-				return
-			}
-			ref.SessionID = decoded
-		}
-		if name := chi.URLParam(r, "nameOrID"); name != "" {
-			namespace, err := url.PathUnescape(chi.URLParam(r, "namespace"))
-			target, targetErr := url.PathUnescape(name)
-			if err != nil || targetErr != nil {
-				respond(w, 0, nil, Invalid())
-				return
-			}
-			ref, err = s.api.ResolveSession(namespace, target)
-			if err != nil {
-				respond(w, 0, nil, err)
-				return
-			}
-		}
-		media := "application/json"
-		if strings.HasSuffix(r.URL.Path, "/events/stream") {
-			media = "text/event-stream"
-		}
-		if !accepts(r.Header.Get("Accept"), media) {
-			fail(w, 406, Invalid())
-			return
-		}
-		q, e := sessionQuery(r.URL.RawQuery, allowed)
-		if e != nil {
-			respond(w, 0, nil, e)
-			return
-		}
-		if r.Context().Err() != nil {
-			fail(w, 504, &Error{Code: "deadline_exceeded", Reason: "request_expired", Message: "Request expired before dispatch"})
-			return
-		}
-		handler(w, r, ref, q)
+func (s *Server) history(ref resource.SessionRef, q HistoryQuery) (*historyOutput, error) {
+	query, err := q.query()
+	if err != nil {
+		return nil, err
 	}
+	page, err := s.api.ListHistoryEvents(ref, query)
+	return &historyOutput{Body: page}, err
 }
-func sessionQuery(raw string, allowed []string) (url.Values, error) {
-	q, e := url.ParseQuery(raw)
-	if e != nil {
-		return nil, Invalid()
+func (s *Server) stream(ref resource.SessionRef) (*huma.StreamResponse, error) {
+	sub, err := s.api.SubscribeEvents(ref)
+	if err != nil {
+		return nil, err
 	}
-	for key, values := range q {
-		valid := false
-		for _, v := range allowed {
-			valid = valid || v == key
-		}
-		if !valid || (key != "types" && len(values) != 1) {
-			return nil, Invalid()
-		}
-		for _, v := range values {
-			if v == "" || !utf8.ValidString(v) {
-				return nil, Invalid()
-			}
-		}
-	}
-	if limit := q.Get("limit"); limit != "" {
-		for _, c := range limit {
-			if c < '0' || c > '9' {
-				return nil, Invalid()
-			}
-		}
-		n, e := strconv.Atoi(limit)
-		if e != nil || n < 1 {
-			return nil, Invalid()
-		}
-	}
-	if state := q.Get("state"); state != "" {
-		valid := false
-		for _, v := range []string{"offline", "opening", "idle", "running", "requires_action", "closing", "archived", "unknown"} {
-			valid = valid || state == v
-		}
-		if !valid {
-			return nil, Invalid()
-		}
-	}
-	for _, kind := range q["types"] {
-		if !eventTypes[kind] {
-			return nil, Invalid()
-		}
-	}
-	return q, nil
+	return &huma.StreamResponse{Body: func(ctx huma.Context) { r, w := humachi.Unwrap(ctx); s.observe(w, r, sub) }}, nil
+}
+func streamOperation(r huma.Registry, path, id string) huma.Operation {
+	return huma.Operation{Method: "GET", Path: path, OperationID: id, Responses: map[string]*huma.Response{
+		"200": {Description: "Live SSE only. Frames: subscription.ready {}, session.event SessionEvent, subscription.closed {}, subscription.error Error; comment heartbeat at least every 15 seconds. No id, retry, replay or automatic reconnect. EOF without a terminal frame is abnormal.", Content: map[string]*huma.MediaType{"text/event-stream": {Schema: &huma.Schema{Type: "string"}, Extensions: map[string]any{"x-sse-events": map[string]any{
+			"subscription.ready":  map[string]any{"type": "object", "additionalProperties": false},
+			"session.event":       r.Schema(reflect.TypeFor[events.SessionEvent](), true, ""),
+			"subscription.closed": map[string]any{"type": "object", "additionalProperties": false},
+			"subscription.error":  r.Schema(reflect.TypeFor[Error](), true, ""),
+		}}}}}}}
 }

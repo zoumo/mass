@@ -493,7 +493,12 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 			if item.Status == "completed" || item.Status == "failed" || item.Status == "declined" {
 				status = item.Status
 			}
-			p := events.ToolResult{ExitCode: item.ExitCode, DurationMs: item.DurationMs, ID: item.ID, Kind: "execute", Status: status, Output: &events.Output{Availability: "unavailable", Completeness: "unknown"}}
+			var duration *float64
+			if item.DurationMs != nil {
+				value := float64(*item.DurationMs)
+				duration = &value
+			}
+			p := events.ToolResult{ExitCode: item.ExitCode, DurationMs: duration, ID: item.ID, Kind: "execute", Status: status, Output: &events.Output{Availability: "unavailable", Completeness: "unknown"}}
 			if item.AggregatedOutput != nil {
 				var value any
 				dec := json.NewDecoder(bytes.NewReader(item.AggregatedOutput))

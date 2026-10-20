@@ -8,7 +8,6 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -119,11 +118,3 @@ var eventTypes = func() map[string]bool {
 	}
 	return out
 }()
-
-func queryLimit(q url.Values) int {
-	if q.Get("limit") == "" {
-		return 100
-	}
-	n, _ := strconv.Atoi(q.Get("limit"))
-	return n
-}
