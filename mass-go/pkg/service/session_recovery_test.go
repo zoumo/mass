@@ -341,7 +341,7 @@ func (s *RecoverySuite) TestSameSessionArchiveAndResumeHaveOneController() {
 	s.NotZero(r.Status.AppliedGeneration)
 }
 
-func (s *RecoverySuite) TestLateOriginalFactsKeepIdentityAndDoNotChangeRecoveredState() {
+func (s *RecoverySuite) TestLateOriginalFactsKeepIdentityWithoutGrantingRunControl() {
 	ref := resource.SessionRef{SessionID: "fast"}
 	old := s.d.source
 	sub, err := s.svc.SubscribeEvents(ref)
@@ -369,7 +369,12 @@ func (s *RecoverySuite) TestLateOriginalFactsKeepIdentityAndDoNotChangeRecovered
 	s.Require().NoError(err)
 	saved, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
-	s.Equal(current.Status, saved.Status)
+	// Observations are Session-scoped and may lag across resume. They cannot
+	// replace the synchronous lifecycle identity or its applied configuration.
+	s.Equal(current.Status.SessionID, saved.Status.SessionID)
+	s.Equal(current.Status.AppliedGeneration, saved.Status.AppliedGeneration)
+	s.Equal(current.Status.RuntimeGeneration, saved.Status.RuntimeGeneration)
+	s.Equal(current.Status.Capabilities, saved.Status.Capabilities)
 	page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Require().Len(page.Events, 1)

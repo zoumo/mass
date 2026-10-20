@@ -113,3 +113,115 @@ func (s *SessionWorkSuite) TestNoSubscribersStillPersistHistory() {
 	s.Empty(sub.Events())
 	s.Require().NoError(sub.Close())
 }
+
+func (s *RuntimeStopSuite) TestShutdownCleansSettledBroadcastWhenAnotherRuntimeFails() {
+	original, err := s.svc.SubscribeEvents(s.ref)
+	s.Require().NoError(err)
+	defer original.Close()
+	offline, err := s.meta.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: "two", Name: "offline"}, Spec: resource.SessionSpec{RuntimeRef: "unstarted"}, Status: resource.SessionStatus{SessionID: "offline", State: "offline"}})
+	s.Require().NoError(err)
+	other, err := s.svc.SubscribeEvents(resource.SessionRef{SessionID: offline.Status.SessionID})
+	s.Require().NoError(err)
+	defer other.Close()
+	s.d.failStop.Store(true)
+	s.Require().Error(s.svc.Shutdown(context.Background()))
+	select {
+	case _, ok := <-other.Events():
+		s.False(ok, "settled Broadcast should close")
+	default:
+		s.Fail("failed Runtime prevented unrelated cleanup")
+	}
+	select {
+	case <-original.Events():
+		s.Fail("unsettled upstream Broadcast was closed")
+	default:
+	}
+	s.d.failStop.Store(false)
+	s.Require().NoError(s.svc.Shutdown(context.Background()))
+	_, ok := <-original.Events()
+	s.False(ok)
+}
+
+func (s *RuntimeStopSuite) TestArchiveSettlesFinalDeliveryFenceAndKeepsRealtimeObjects() {
+	b, err := s.svc.EventBroadcast(s.ref)
+	s.Require().NoError(err)
+	sub, err := s.svc.SubscribeEvents(s.ref)
+	s.Require().NoError(err)
+	defer sub.Close()
+	final, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "demo", SessionID: "original", ItemID: "final", Time: time.Now()}, events.AgentMessage{MessageID: "final", Content: []events.ContentBlock{events.Text("final before release")}}, s.d.source)
+	s.Require().NoError(err)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	publishEntered := make(chan struct{})
+	publishRelease := make(chan struct{})
+	release := func(ch chan struct{}) {
+		select {
+		case <-ch:
+		default:
+			close(ch)
+		}
+	}
+	defer release(s.history.release)
+	defer release(publishRelease)
+	s.Require().NoError(b.AddHandler(&observingHandler{handle: func(events.SessionEvent) error {
+		close(publishEntered)
+		select {
+		case <-publishRelease:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}))
+	s.history.blocked.Store(true)
+	// Match the existing Codex/Claude CloseSession delivery fence. This peer and
+	// all facts are synthetic; the history append still uses a real temporary file.
+	s.d.onClose = func(ctx context.Context) error {
+		if err := s.d.pipe.Send(ctx, final); err != nil {
+			return err
+		}
+		return s.d.pipe.Flush(ctx)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := s.svc.ArchiveSession(context.Background(), s.ref); done <- err }()
+	select {
+	case <-s.history.entered:
+	case <-time.After(time.Second):
+		s.FailNow("final history did not enter")
+	}
+	select {
+	case err := <-done:
+		s.Fail("archive completed before history/publish settled", "%v", err)
+	default:
+	}
+	release(s.history.release)
+	select {
+	case <-publishEntered:
+	case <-ctx.Done():
+		s.FailNow("final publish did not enter")
+	}
+	select {
+	case err := <-done:
+		s.Fail("archive completed before publish settled", "%v", err)
+	default:
+	}
+	release(publishRelease)
+	s.Require().NoError(<-done)
+	got, err := nextSubscription(sub, ctx)
+	s.Require().NoError(err)
+	s.Equal(final.EventID, got.EventID)
+	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{})
+	s.Require().NoError(err)
+	s.Require().Len(page.Events, 1)
+	again, err := s.svc.EventBroadcast(s.ref)
+	s.Require().NoError(err)
+	s.Same(b, again)
+	s.d.onClose = nil
+	_, err = s.svc.ResumeSession(context.Background(), s.ref)
+	s.Require().NoError(err)
+	again, err = s.svc.EventBroadcast(s.ref)
+	s.Require().NoError(err)
+	s.Same(b, again)
+	// Restoring keeps the same Subscription alive; cancellation is its own
+	// terminal action and does not close the restored Session.
+	s.Require().NoError(sub.Close())
+}

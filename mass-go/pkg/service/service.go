@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -23,7 +24,12 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
 
-const queueCapacity = 128
+const (
+	queueCapacity = 128
+	// Assembly budget for an in-flight observational write. Expiry reports
+	// incomplete cleanup and retains the Handler for an explicit retry.
+	stateHandlerCloseTimeout = time.Second
+)
 
 // RuntimeService and SessionService share an owner, without transport objects.
 type RuntimeService interface {
@@ -98,6 +104,11 @@ type lane struct {
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
+type sessionBroadcast struct {
+	broadcast   *events.EventBroadcast
+	runtimeName string
+}
+
 type Service struct {
 	policy      InteractionPolicy
 	meta        metastore.MetaStore
@@ -105,14 +116,14 @@ type Service struct {
 	registry    *runtime.Registry
 	mu          sync.Mutex
 	runs        map[string]*runBinding
-	broadcasts  map[string]*events.EventBroadcast
+	broadcasts  map[string]*sessionBroadcast
 	sessionOps  map[string]*sessionOperation
 	closing     bool
 	resumeSlots chan struct{}
 }
 
 func New(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry) *Service {
-	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, broadcasts: map[string]*events.EventBroadcast{}, sessionOps: map[string]*sessionOperation{}, resumeSlots: make(chan struct{}, queueCapacity)}
+	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, broadcasts: map[string]*sessionBroadcast{}, sessionOps: map[string]*sessionOperation{}, resumeSlots: make(chan struct{}, queueCapacity)}
 }
 
 // NewWithPolicy explicitly enables an application-owned interaction policy.
@@ -630,8 +641,6 @@ func (s *Service) fail(l *lane, err error) {
 
 func (s *Service) process(run *runBinding, l *lane) {
 	defer close(l.done)
-	var workSource events.Source
-	workID := ""
 	for entry := range l.queue {
 		if entry.barrier != nil {
 			close(entry.barrier)
@@ -654,38 +663,6 @@ func (s *Service) process(run *runBinding, l *lane) {
 						s.mu.Unlock()
 						break
 					}
-				}
-			}
-		}
-		s.mu.Lock()
-		currentSource := l.source.SameRun(e.Source())
-		s.mu.Unlock()
-		if state, ok := e.Payload().(events.StateUpdate); ok && currentSource {
-			if !workSource.SameRun(e.Source()) {
-				workSource = e.Source()
-				workID = ""
-			}
-			work := e.Source().Work()
-			if state.State != nil && *state.State == events.Running && (workID == "" || workID == work) {
-				workID = work
-			}
-			if work == "" || workID == "" || work == workID {
-				_, err := s.sessionStatus(resource.SessionRef{SessionID: e.SessionID}, func(r *resource.Session) {
-					s.mu.Lock()
-					current := run.lanes[e.SessionID] == l && !l.closing && l.source.SameRun(e.Source())
-					s.mu.Unlock()
-					if current && r.Status.State != "closing" && r.Status.State != "archived" && r.Status.AppliedGeneration != 0 {
-						r.Status.State = events.Unknown
-						if state.State != nil {
-							r.Status.State = *state.State
-						}
-					}
-				})
-				if err != nil {
-					s.fail(l, err)
-				}
-				if state.State != nil && *state.State == events.Idle && workID == work {
-					workID = ""
 				}
 			}
 		}
@@ -740,16 +717,16 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	broadcasts := make([]*events.EventBroadcast, 0, len(s.broadcasts))
-	for _, b := range s.broadcasts {
-		broadcasts = append(broadcasts, b)
+	for _, owned := range s.broadcasts {
+		// Failed Runtime stops retain their live delivery owners. Independently
+		// settled upstreams can still release their own realtime resources.
+		if s.runs[owned.runtimeName] == nil {
+			broadcasts = append(broadcasts, owned.broadcast)
+		}
 	}
 	s.mu.Unlock()
-	// Only close once upstream obligations have settled. A failed shutdown retains
-	// live objects for an explicit settlement attempt.
-	if result == nil {
-		for _, b := range broadcasts {
-			result = errors.Join(result, b.Close())
-		}
+	for _, b := range broadcasts {
+		result = errors.Join(result, b.Close())
 	}
 	return result
 }
@@ -919,12 +896,17 @@ func (s *Service) broadcastForSession(r resource.Session) (*events.EventBroadcas
 // sessionBroadcastLocked requires s.mu; public admission and ongoing publication
 // share construction without sealing final events during shutdown.
 func (s *Service) sessionBroadcastLocked(r resource.Session) (*events.EventBroadcast, error) {
-	if b := s.broadcasts[r.Status.SessionID]; b != nil {
-		return b, nil
+	if owned := s.broadcasts[r.Status.SessionID]; owned != nil {
+		return owned.broadcast, nil
 	}
 	b, err := events.NewBroadcast(r.Metadata.Namespace, r.Metadata.Name, r.Status.SessionID, queueCapacity)
-	if err == nil {
-		s.broadcasts[r.Status.SessionID] = b
+	if err != nil {
+		return nil, err
 	}
-	return b, err
+	h := newStateHandler(s.meta, r, queueCapacity, stateHandlerCloseTimeout)
+	if err := b.AddHandler(h); err != nil {
+		return nil, errors.Join(err, h.Close())
+	}
+	s.broadcasts[r.Status.SessionID] = &sessionBroadcast{broadcast: b, runtimeName: r.Spec.RuntimeRef}
+	return b, nil
 }

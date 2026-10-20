@@ -303,9 +303,10 @@ func (s *SessionWorkSuite) TestCancelAcknowledgmentDoesNotTerminateObservedWork(
 	receipt, err := s.svc.Cancel(ctx, s.ref)
 	s.Require().NoError(err)
 	s.Equal("controlAcknowledged", receipt.Result)
-	current, err := s.svc.GetSession(s.ref)
-	s.Require().NoError(err)
-	s.Equal(events.Running, current.Status.State)
+	s.Require().Eventually(func() bool {
+		current, err := s.svc.GetSession(s.ref)
+		return err == nil && current.Status.State == events.Running
+	}, time.Second, time.Millisecond)
 }
 
 func (s *SessionWorkSuite) TestOfflineWorkIsRejectedWithoutDriverDispatch() {
