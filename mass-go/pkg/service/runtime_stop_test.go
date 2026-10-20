@@ -124,6 +124,7 @@ type RuntimeStopSuite struct {
 
 func TestRuntimeStopSuite(t *testing.T) { suite.Run(t, new(RuntimeStopSuite)) }
 func (s *RuntimeStopSuite) SetupTest() {
+	s.unknown = false
 	st, err := file.Open(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.NoError(st.Close()) })
