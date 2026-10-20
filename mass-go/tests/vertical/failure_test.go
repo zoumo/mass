@@ -93,7 +93,7 @@ func (s *failureSuite) input(ref resource.SessionRef) runtime.InputReceipt {
 
 func (s *failureSuite) until(sub *service.Subscription, state events.SessionState) {
 	for {
-		e, err := sub.Next(ctx(s.T()))
+		e, err := nextSubscription(sub, ctx(s.T()))
 		s.Require().NoError(err)
 		if p, ok := e.Payload().(events.StateUpdate); ok && ((p.State == nil && state == events.Unknown) || (p.State != nil && *p.State == state)) {
 			return
@@ -201,7 +201,17 @@ func (s *failureSuite) TestUnknownAppendExplicitSettlement() {
 	case <-ctx(s.T()).Done():
 		s.FailNow("missing append fault")
 	}
-	s.Require().Eventually(func() bool { _, err := sub.Next(ctx(s.T())); return err != nil }, time.Second, 5*time.Millisecond)
+	// No uncommitted fact is published; the healthy realtime stream remains open.
+	wait, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	for {
+		_, err := nextSubscription(sub, wait)
+		if err != nil {
+			s.Require().ErrorIs(err, context.DeadlineExceeded)
+			break
+		}
+	}
+	s.Require().NoError(sub.Err())
 	page, err := s.st.ListHistory(ref.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Require().Len(page.Events, 1)
@@ -321,7 +331,15 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 	case <-ctx(s.T()).Done():
 		s.FailNow("storage gate")
 	}
-	s.Require().Eventually(func() bool { _, err := s.svc.SubscribeEvents(ref); return err != nil }, time.Second, 5*time.Millisecond)
+	// Realtime subscription health is independent of Service delivery overload.
+	// With the append gate held, an explicit settlement attempt can only block
+	// once the original bounded lane has retained an overflowing event.
+	s.Require().Eventually(func() bool {
+		wait, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		err := s.svc.ReconcileDelivery(wait, "agent")
+		return errors.Is(err, context.DeadlineExceeded)
+	}, 2*time.Second, 5*time.Millisecond)
 	_, err := s.svc.StopRuntime(ctx(s.T()), "agent")
 	s.Require().ErrorContains(err, "responsibility remains")
 	release()
@@ -368,11 +386,13 @@ func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
 	defer sub.Close()
 	s.input(ref)
 	s.requireHistoryAfterTurn(ref, 140)
-	_, err = sub.Next(ctx(s.T()))
-	var public *runtime.OperationError
-	s.Require().ErrorAs(err, &public)
-	s.Equal("resource_exhausted", public.Code)
-	s.Equal("slow_subscriber", public.Reason)
+
+	for range 128 {
+		_, err = nextSubscription(sub, ctx(s.T()))
+		s.Require().NoError(err)
+	}
+	_, err = nextSubscription(sub, ctx(s.T()))
+	s.Require().ErrorIs(err, events.ErrSlowSubscriber)
 }
 
 func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
@@ -384,7 +404,7 @@ func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
 	s.input(ref)
 	handle := ""
 	for handle == "" {
-		e, err := sub.Next(ctx(s.T()))
+		e, err := nextSubscription(sub, ctx(s.T()))
 		s.Require().NoError(err)
 		if p, ok := e.Payload().(events.InteractionRequested); ok {
 			handle = p.Interaction
@@ -489,7 +509,7 @@ func (s *failureSuite) TestLateAnswerCannotControlRecoveredRun() {
 	s.input(ref)
 	old := ""
 	for old == "" {
-		e, err := sub.Next(ctx(s.T()))
+		e, err := nextSubscription(sub, ctx(s.T()))
 		s.Require().NoError(err)
 		if p, ok := e.Payload().(events.InteractionRequested); ok {
 			old = p.Interaction

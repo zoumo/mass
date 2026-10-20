@@ -285,7 +285,7 @@ func (s *RecoverySuite) TestLateArchivedEventDoesNotPoisonRuntime() {
 	s.Require().NoError(s.d.pipe.Send(context.Background(), makeEvent("slow", s.d.slowSource)))
 	c, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err = sub.Next(c)
+	_, err = nextSubscription(sub, c)
 	s.Require().NoError(err, "old released source must not stop shared delivery")
 	r, err := s.svc.GetSession(fast)
 	s.Require().NoError(err)
@@ -360,10 +360,12 @@ func (s *RecoverySuite) TestLateOriginalFactsKeepIdentityAndDoNotChangeRecovered
 	s.Require().NoError(s.d.pipe.Send(context.Background(), update))
 	c, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	delivered, err := sub.Next(c)
+	delivered, err := nextSubscription(sub, c)
 	s.Require().NoError(err)
-	s.Equal(message, delivered)
-	_, err = sub.Next(c)
+	s.Equal(message.EventBase, delivered.EventBase)
+	s.Equal(message.Payload(), delivered.Payload())
+	s.Equal(events.Source{}, delivered.Source())
+	_, err = nextSubscription(sub, c)
 	s.Require().NoError(err)
 	saved, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
@@ -468,7 +470,7 @@ func (s *RecoverySuite) assertFailedRestoreKeepsOldFact(mode string) {
 		}
 		c, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		if _, err := barrier.Next(c); err != nil {
+		if _, err := nextSubscription(barrier, c); err != nil {
 			return err
 		}
 		if mode == "released" {

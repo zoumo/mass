@@ -85,11 +85,15 @@ func TestSQLReplicaFailureNeverPublishesUncoordinatedFact(t *testing.T) {
 	fact, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: "one", SessionName: "demo", SessionID: "original", ItemID: "fact", Time: time.Now().UTC()}, events.AgentMessage{MessageID: "fact", Content: []events.ContentBlock{events.Text("committed before SQL failure")}}, d.source)
 	require.NoError(t, err)
 	require.NoError(t, d.pipe.Send(ctx, fact))
-	frame, err := readFrame(reader)
-	require.NoError(t, err)
-	require.Contains(t, frame, "subscription.error")
-	require.NotContains(t, frame, "event: session.event")
-	require.NotContains(t, frame, fact.EventID)
+
+	frames := make(chan string, 1)
+	go func() { frame, _ := readFrame(reader); frames <- frame }()
+	require.Eventually(t, func() bool { _, e := os.Stat(filepath.Join(dir, ".events.append.pending.json")); return e == nil }, time.Second, time.Millisecond)
+	select {
+	case frame := <-frames:
+		t.Fatalf("uncommitted publication: %s", frame)
+	case <-time.After(100 * time.Millisecond):
+	}
 	bytes, err := os.ReadFile(filepath.Join(dir, "sessions", "one", "demo", "eventlogs", base64.RawURLEncoding.EncodeToString([]byte("original")), "events.jsonl"))
 	require.NoError(t, err)
 	require.Contains(t, string(bytes), fact.EventID)
@@ -117,6 +121,13 @@ func TestSQLReplicaFailureNeverPublishesUncoordinatedFact(t *testing.T) {
 	// The failed lane retains the original UUID. Explicit settlement is allowed
 	// only after Store repair and never invokes Driver.OpenSession again.
 	require.NoError(t, svc.ReconcileHistory(ctx, resource.SessionRef{SessionID: "original"}))
+
+	select {
+	case frame := <-frames:
+		require.Contains(t, frame, fact.EventID)
+	case <-ctx.Done():
+		t.Fatal("settled event was not published")
+	}
 	page, err := svc.ListHistoryEvents(resource.SessionRef{SessionID: "original"}, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 1)

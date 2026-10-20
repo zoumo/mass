@@ -523,11 +523,11 @@ func (s *entrypointSuite) unsupportedMedia(kind string) {
 	s.call("session.archive", workflowParams{Session: ref}, nil)
 	err = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.get", workflowParams{Session: ref}, nil)
 	s.Require().NoError(err)
-	_, err = newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
-	s.Require().ErrorAs(err, &public)
-	s.Equal("unavailable", public.Code)
+	observation, err := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
+	s.Require().NoError(err)
+	s.Require().NoError(observation.Close())
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
-	s.T().Log("PASS valid unsupported media rejected before native input; text still works; idle cancellation has no target; archived observation explicitly unavailable")
+	s.T().Log("PASS valid unsupported media rejected before native input; text still works; idle cancellation has no target; archived observation remains available")
 }
 func (s *entrypointSuite) TestCodexUnsupportedMedia()  { s.unsupportedMedia("codex") }
 func (s *entrypointSuite) TestClaudeUnsupportedMedia() { s.unsupportedMedia("claude") }

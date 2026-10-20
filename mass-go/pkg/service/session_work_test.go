@@ -297,7 +297,7 @@ func (s *SessionWorkSuite) TestCancelAcknowledgmentDoesNotTerminateObservedWork(
 	s.Require().NoError(s.driver.pipe.Send(context.Background(), event))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_, err = observation.Next(ctx)
+	_, err = nextSubscription(observation, ctx)
 	s.Require().NoError(err)
 	close(s.driver.release)
 	receipt, err := s.svc.Cancel(ctx, s.ref)

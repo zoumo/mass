@@ -112,7 +112,7 @@ func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, in
 	require.NoError(t, err)
 	message := false
 	for {
-		e, err := sub.Next(ctx(t))
+		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.SessionError); ok {
 			t.Fatalf("session failed: %s %s", p.Message, p.Reason)
@@ -388,7 +388,7 @@ func (lifecycleSuite *LifecycleSuite) TestArchiveResumeKeepsObserversAndIdentity
 	require.NoError(t, err)
 	message := false
 	for {
-		e, err := sub.Next(ctx(t))
+		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.AgentMessage); ok {
 			require.Equal(t, "new answer", p.Content[0].Text)

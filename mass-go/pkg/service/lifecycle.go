@@ -187,9 +187,6 @@ func (s *Service) archiveSession(ctx context.Context, ref resource.SessionRef) (
 	if err == nil {
 		s.mu.Lock()
 		retireLane(run, l)
-		if len(l.subscribers) == 0 {
-			delete(s.observers, r.Status.SessionID)
-		}
 		s.mu.Unlock()
 	}
 	return r, err
@@ -378,10 +375,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		return r, err
 	}
 	s.mu.Lock()
-	for id, l := range lanes {
-		if len(l.subscribers) == 0 {
-			delete(s.observers, id)
-		}
+	for _, l := range lanes {
 		close(l.queue)
 	}
 	for _, l := range retired {
@@ -535,17 +529,12 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	}
 	fresh := l == nil
 	if fresh {
-		l = &lane{session: r, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
+		l = &lane{session: r, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{})}
 	}
 	l.source = native.Source
 	l.closing = false
 	l.releasing = false
 	l.err = errors.Join(l.err, op.err)
-	if subs := s.observers[r.Status.SessionID]; subs != nil {
-		l.subscribers = subs
-	} else {
-		s.observers[r.Status.SessionID] = l.subscribers
-	}
 	run.lanes[r.Status.SessionID] = l
 	s.mu.Unlock()
 	if fresh {

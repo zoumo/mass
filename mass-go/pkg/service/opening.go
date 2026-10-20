@@ -109,14 +109,11 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 		}
 		fresh := l == nil
 		if fresh {
-			l = &lane{session: r, queue: make(chan delivery, queueCapacity), done: make(chan struct{}), retry: make(chan chan error), subscribers: map[*Subscription]bool{}}
+			l = &lane{session: r, queue: make(chan delivery, queueCapacity), done: make(chan struct{}), retry: make(chan chan error)}
 		}
 		l.source = native.Source
 		l.closing = true
 		l.releasing = true
-		if subs := s.observers[native.SessionID]; subs != nil {
-			l.subscribers = subs
-		}
 		run.lanes[native.SessionID] = l
 		if fresh {
 			go s.process(run, l)

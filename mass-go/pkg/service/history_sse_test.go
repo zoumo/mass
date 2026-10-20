@@ -17,7 +17,6 @@ import (
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
@@ -42,7 +41,7 @@ func (s *SessionWorkSuite) TestHistoryHTTPFilteringAndIndependentCursors() {
 	}
 	for _, e := range facts {
 		s.Require().NoError(s.driver.pipe.Send(ctx, e))
-		got, err := sub.Next(ctx)
+		got, err := nextSubscription(sub, ctx)
 		s.Require().NoError(err)
 		s.Equal(e.EventID, got.EventID)
 	}
@@ -107,21 +106,23 @@ func (s *SessionWorkSuite) TestBoundedIndependentObservationDoesNotCancelWork() 
 	for i := range 140 {
 		e := s.fact(strconv.Itoa(i), events.AgentMessage{MessageID: strconv.Itoa(i), Content: []events.ContentBlock{events.Text("committed")}})
 		s.Require().NoError(s.driver.pipe.Send(ctx, e))
-		got, err := healthy.Next(ctx)
+		got, err := nextSubscription(healthy, ctx)
 		s.Require().NoError(err)
 		s.Equal(e.EventID, got.EventID)
 	}
-	_, err = slow.Next(ctx)
-	var public *runtime.OperationError
-	s.Require().ErrorAs(err, &public)
-	s.Equal("resource_exhausted", public.Code)
-	s.Equal("slow_subscriber", public.Reason)
+
+	for range 128 {
+		_, err = nextSubscription(slow, ctx)
+		s.Require().NoError(err)
+	}
+	_, err = nextSubscription(slow, ctx)
+	s.Require().ErrorIs(err, events.ErrSlowSubscriber)
 	s.Require().NoError(slow.Close())
-	_, err = slow.Next(ctx)
-	s.Require().ErrorAs(err, &public)
+	_, err = nextSubscription(slow, ctx)
+	s.Require().ErrorIs(err, events.ErrSlowSubscriber)
 	s.Require().NoError(healthy.Close())
 	s.Require().NoError(healthy.Close())
-	_, err = healthy.Next(ctx)
+	_, err = nextSubscription(healthy, ctx)
 	s.Require().ErrorIs(err, io.EOF)
 	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{Limit: 200})
 	s.Require().NoError(err)
@@ -167,9 +168,11 @@ func (s *SessionWorkSuite) TestSSEEstablishmentErrorsRemainJSON() {
 	res, err := server.Client().Do(req)
 	s.Require().NoError(err)
 	defer res.Body.Close()
-	s.Equal(503, res.StatusCode)
-	s.Equal("application/json", res.Header.Get("Content-Type"))
-	s.Empty(res.Header.Get("X-Accel-Buffering"))
+	s.Equal(200, res.StatusCode)
+	s.Equal("text/event-stream", res.Header.Get("Content-Type"))
+	frame, err := readFrame(bufio.NewReader(res.Body))
+	s.Require().NoError(err)
+	s.Contains(frame, "subscription.ready")
 }
 
 func readFrame(reader *bufio.Reader) (string, error) {
@@ -193,7 +196,7 @@ func (s *SessionWorkSuite) TestSSEReadyLiveOnlyArchiveAndServerShutdown() {
 	s.Require().NoError(err)
 	e := s.fact("old", events.AgentMessage{MessageID: "old", Content: []events.ContentBlock{events.Text("old")}})
 	s.Require().NoError(s.driver.pipe.Send(ctx, e))
-	_, err = prior.Next(ctx)
+	_, err = nextSubscription(prior, ctx)
 	s.Require().NoError(err)
 	s.Require().NoError(prior.Close())
 	handler, err := transport.New(s.svc, transport.Options{Token: "test-token"})
@@ -344,4 +347,15 @@ func (s *SessionWorkSuite) TestHistoryServiceRejectsUnknownTypes() {
 		_, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{Types: types})
 		s.Require().Error(err)
 	}
+}
+
+func (s *SessionWorkSuite) TestSessionBroadcastIdentity() {
+	byID, err := s.svc.EventBroadcast(s.ref)
+	s.Require().NoError(err)
+	byName, err := s.svc.EventBroadcast(resource.SessionRef{Namespace: "one", Name: "demo"})
+	s.Require().NoError(err)
+	s.Same(byID, byName)
+	sub, err := s.svc.SubscribeEvents(s.ref)
+	s.Require().NoError(err)
+	s.Require().NoError(sub.Close())
 }

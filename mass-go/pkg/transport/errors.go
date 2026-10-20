@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
@@ -23,6 +24,8 @@ func PublicError(err error) *Error {
 		return public
 	}
 	switch {
+	case errors.Is(err, events.ErrSlowSubscriber):
+		return &Error{Code: "resource_exhausted", Reason: "slow_subscriber", Message: "Observation capacity exceeded"}
 	case errors.Is(err, runtime.ErrResourcesReleased):
 		return &Error{Code: "conflict", Reason: "native_open_failed", Message: "Native open failed; owned resources released"}
 	case errors.Is(err, runtime.ErrInvalidArgument):

@@ -226,13 +226,11 @@ func (verticalSuite *VerticalSuite) TestCodexVertical() {
 	chunks := []string{}
 	running := false
 	for {
-		event, err := sub.Next(c)
+		event, err := nextSubscription(sub, c)
 		require.NoError(t, err)
 		require.Equal(t, "default", event.Namespace)
 		require.Equal(t, "demo", event.SessionName)
-		if event.Type() != "session.state_update" {
-			require.Equal(t, "turn-1", event.Source().Work())
-		}
+		require.Equal(t, events.Source{}, event.Source(), "realtime consumers receive no Runtime work association")
 		wire, err := json.Marshal(event)
 		require.NoError(t, err)
 		for _, forbidden := range []string{`"seq"`, `"schemaVersion"`, `"run"`, `"work"`, `"turn-1"`} {

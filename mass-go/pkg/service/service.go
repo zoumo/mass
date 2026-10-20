@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -94,7 +95,6 @@ type lane struct {
 	closing      bool
 	retry        chan chan error
 	commitErr    error
-	subscribers  map[*Subscription]bool
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
@@ -105,14 +105,14 @@ type Service struct {
 	registry    *runtime.Registry
 	mu          sync.Mutex
 	runs        map[string]*runBinding
-	observers   map[string]map[*Subscription]bool
+	broadcasts  map[string]*events.EventBroadcast
 	sessionOps  map[string]*sessionOperation
 	closing     bool
 	resumeSlots chan struct{}
 }
 
 func New(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry) *Service {
-	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, observers: map[string]map[*Subscription]bool{}, sessionOps: map[string]*sessionOperation{}, resumeSlots: make(chan struct{}, queueCapacity)}
+	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, broadcasts: map[string]*events.EventBroadcast{}, sessionOps: map[string]*sessionOperation{}, resumeSlots: make(chan struct{}, queueCapacity)}
 }
 
 // NewWithPolicy explicitly enables an application-owned interaction policy.
@@ -344,7 +344,7 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 	for _, owner := range s.runs {
 		pendingCount += len(owner.pending)
 	}
-	if len(s.observers)+pendingCount >= queueCapacity*queueCapacity {
+	if len(s.broadcasts)+pendingCount >= queueCapacity*queueCapacity {
 		s.mu.Unlock()
 		return r, errors.New("observation ownership capacity exhausted")
 	}
@@ -422,10 +422,9 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 				// Metadata may already be committed: retain reservation until explicit readback.
 				return resource.Session{}, errors.Join(err, cleanup)
 			}
-			l := &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
+			l := &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{})}
 			s.mu.Lock()
 			l.err = op.err
-			s.observers[native.SessionID] = l.subscribers
 			run.lanes[native.SessionID] = l
 			for _, e := range op.events {
 				if !native.Source.SameRun(e.Source()) {
@@ -523,35 +522,27 @@ func (s *Service) ListHistoryEvents(ref resource.SessionRef, q store.HistoryQuer
 	return s.history.ListHistory(r.Status.SessionID, q)
 }
 
-func (s *Service) SubscribeEvents(ref resource.SessionRef) (*Subscription, error) {
+// EventBroadcast resolves both Session references to the same realtime object.
+// Resolving an offline Session never starts its Runtime.
+func (s *Service) EventBroadcast(ref resource.SessionRef) (*events.EventBroadcast, error) {
 	r, err := s.GetSession(ref)
 	if err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	run := s.runs[r.Spec.RuntimeRef]
-	if s.closing || run == nil || run.err != nil || run.stopping {
-		return nil, runtime.Unavailable("runtime_not_observed")
+	if s.closing {
+		return nil, runtime.Unavailable("service_closing")
 	}
-	l := run.lanes[r.Status.SessionID]
-	if l == nil || l.err != nil || l.closing {
-		return nil, runtime.Unavailable("session_not_observed")
+	return s.sessionBroadcastLocked(r)
+}
+
+func (s *Service) SubscribeEvents(ref resource.SessionRef) (*Subscription, error) {
+	b, err := s.EventBroadcast(ref)
+	if err != nil {
+		return nil, err
 	}
-	if len(l.subscribers) >= queueCapacity {
-		return nil, runtime.Exhausted("subscription_limit")
-	}
-	sub := newSubscription(func(sub *Subscription) {
-		s.mu.Lock()
-		delete(l.subscribers, sub)
-		if len(l.subscribers) == 0 {
-			delete(s.observers, r.Status.SessionID)
-		}
-		s.mu.Unlock()
-	})
-	l.subscribers[sub] = true
-	s.observers[r.Status.SessionID] = l.subscribers
-	return sub, nil
+	return b.Subscribe()
 }
 
 func (s *Service) consume(run *runBinding, stream events.Stream) {
@@ -569,11 +560,6 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 				}
 				run.err = err
 				run.streamErr = err
-				for _, l := range run.lanes {
-					for sub := range l.subscribers {
-						sub.finish(err)
-					}
-				}
 				s.mu.Unlock()
 			}
 			return
@@ -640,9 +626,6 @@ func (s *Service) fail(l *lane, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l.err = err
-	for sub := range l.subscribers {
-		sub.finish(err)
-	}
 }
 
 func (s *Service) process(run *runBinding, l *lane) {
@@ -706,22 +689,16 @@ func (s *Service) process(run *runBinding, l *lane) {
 				}
 			}
 		}
-		s.mu.Lock()
-		for sub := range l.subscribers {
-			cloned, err := e.Clone()
-			if err != nil {
-				sub.finish(err)
-				continue
-			}
-			sub.publish(cloned)
-			if sub.ended() {
-				delete(l.subscribers, sub)
-				if len(l.subscribers) == 0 {
-					delete(s.observers, e.SessionID)
-				}
-			}
+		b, err := s.broadcastForSession(l.session)
+		if err == nil {
+			err = b.Publish(e)
 		}
-		s.mu.Unlock()
+		// Publish can fail after partial delivery. History is already committed;
+		// diagnose this event and continue without retrying it.
+		if err != nil {
+			slog.Warn("realtime publication failed", "error", err, "session_id", e.SessionID)
+		}
+
 		if request, ok := e.Payload().(events.InteractionRequested); ok && s.policy != nil {
 			run.admission.RLock()
 			s.mu.Lock()
@@ -760,6 +737,19 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	var result error
 	for range names {
 		result = errors.Join(result, <-results)
+	}
+	s.mu.Lock()
+	broadcasts := make([]*events.EventBroadcast, 0, len(s.broadcasts))
+	for _, b := range s.broadcasts {
+		broadcasts = append(broadcasts, b)
+	}
+	s.mu.Unlock()
+	// Only close once upstream obligations have settled. A failed shutdown retains
+	// live objects for an explicit settlement attempt.
+	if result == nil {
+		for _, b := range broadcasts {
+			result = errors.Join(result, b.Close())
+		}
 	}
 	return result
 }
@@ -918,4 +908,23 @@ func (s *Service) settleAbandoned(run *runBinding, l *lane) error {
 	retireLane(run, l)
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *Service) broadcastForSession(r resource.Session) (*events.EventBroadcast, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionBroadcastLocked(r)
+}
+
+// sessionBroadcastLocked requires s.mu; public admission and ongoing publication
+// share construction without sealing final events during shutdown.
+func (s *Service) sessionBroadcastLocked(r resource.Session) (*events.EventBroadcast, error) {
+	if b := s.broadcasts[r.Status.SessionID]; b != nil {
+		return b, nil
+	}
+	b, err := events.NewBroadcast(r.Metadata.Namespace, r.Metadata.Name, r.Status.SessionID, queueCapacity)
+	if err == nil {
+		s.broadcasts[r.Status.SessionID] = b
+	}
+	return b, err
 }

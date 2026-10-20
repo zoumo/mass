@@ -1,15 +1,12 @@
 package transport
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"reflect"
 	"time"
 
-	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 )
 
@@ -39,26 +36,6 @@ func (s *Server) observe(w http.ResponseWriter, r *http.Request, sub *service.Su
 	if send("subscription.ready", struct{}{}) != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	type delivery struct {
-		event events.SessionEvent
-		err   error
-	}
-	next := make(chan delivery, 1)
-	go func() {
-		for {
-			event, err := sub.Next(ctx)
-			select {
-			case next <- delivery{event, err}:
-			case <-ctx.Done():
-				return
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
 	heartbeat := time.NewTicker(10 * time.Second)
 	defer heartbeat.Stop()
 	for {
@@ -72,16 +49,16 @@ func (s *Server) observe(w http.ResponseWriter, r *http.Request, sub *service.Su
 			if write(": heartbeat\n\n") != nil {
 				return
 			}
-		case value := <-next:
-			if value.err != nil {
-				if errors.Is(value.err, io.EOF) {
-					_ = send("subscription.closed", struct{}{})
+		case event, ok := <-sub.Events():
+			if !ok {
+				if err := sub.Err(); err != nil {
+					_ = send("subscription.error", PublicError(err))
 				} else {
-					_ = send("subscription.error", PublicError(value.err))
+					_ = send("subscription.closed", struct{}{})
 				}
 				return
 			}
-			if err := send("session.event", value.event); err != nil {
+			if err := send("session.event", event); err != nil {
 				_ = send("subscription.error", &Error{Code: "internal", Reason: "event_encoding_failed", Message: "Event delivery failed"})
 				return
 			}

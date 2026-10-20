@@ -120,7 +120,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				seen := map[string]int{}
 				var interaction string
 				for {
-					e, err := sub.Next(ctx(t))
+					e, err := nextSubscription(sub, ctx(t))
 					require.NoError(t, err)
 					if problem, ok := e.Payload().(events.SessionError); ok {
 						t.Fatalf("native session failure: %s %s", problem.Message, problem.Reason)
@@ -268,7 +268,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	require.NoError(t, err)
 	for {
-		e, err := sub.Next(ctx(t))
+		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.InteractionRequested); ok {
 			_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": "json"}}})
