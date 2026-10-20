@@ -17,12 +17,10 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 )
 
-const maxBody = 1 << 20
-
 // Creation DTOs contain only writable fields; output resource models stay unchanged.
 type createMetadata struct {
 	Namespace string `json:"namespace,omitempty"`
-	Name      string `json:"name"`
+	Name      string `json:"name" minLength:"1" maxLength:"253" pattern:"^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"`
 }
 type runtimeCreate struct {
 	Metadata createMetadata       `json:"metadata"`
@@ -35,7 +33,7 @@ type sessionCreate struct {
 
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	rc := http.NewResponseController(w)
-	_ = rc.SetReadDeadline(time.Now().Add(10 * time.Second))
+
 	complete := false
 	defer func() {
 		if complete {
@@ -45,11 +43,8 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 			_ = r.Body.Close()
 		}
 	}()
-	b, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
-	complete = err == nil && len(b) <= maxBody
-	if len(b) > maxBody {
-		return nil, &protocolError{413, &Error{Code: "resource_exhausted", Reason: "body_too_large", Message: "Request body exceeds capacity"}}
-	}
+	b, err := io.ReadAll(r.Body)
+	complete = err == nil
 	if err != nil {
 		var timeout net.Error
 		if errors.As(err, &timeout) && timeout.Timeout() {
@@ -94,25 +89,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request, out any) error {
 	if err != nil {
 		return err
 	}
-	if err := validateJSON(b); err != nil {
-		return err
-	}
-	var value any
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.UseNumber()
-	if d.Decode(&value) != nil {
-		return Invalid()
-	}
-	if err := validateShape(value, reflect.TypeOf(out).Elem()); err != nil {
-		return err
-	}
-	d = json.NewDecoder(bytes.NewReader(b))
-	d.UseNumber()
-	d.DisallowUnknownFields()
-	if d.Decode(out) != nil {
-		return Invalid()
-	}
-	return nil
+	return decodeJSON(b, out)
 }
 
 // ValidateJSON rejects duplicate members at every depth, including open maps.
@@ -131,9 +108,6 @@ func validateJSON(b []byte) error {
 }
 
 func jsonValue(d *json.Decoder, depth int) error {
-	if depth > 128 {
-		return Invalid()
-	}
 	token, err := d.Token()
 	if err != nil {
 		return err
@@ -255,9 +229,6 @@ func modelFields(t reflect.Type, out map[string]reflect.StructField) {
 func validateOutput(value reflect.Value, depth int) error {
 	if !value.IsValid() {
 		return nil
-	}
-	if depth > 128 {
-		return errors.New("response nesting exceeds capacity")
 	}
 	if value.Kind() == reflect.Interface {
 		if value.IsNil() {

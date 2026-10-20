@@ -10,18 +10,18 @@ import (
 
 type Metadata struct {
 	Namespace       string    `json:"namespace"`
-	Name            string    `json:"name"`
-	UID             string    `json:"uid"`
-	CreatedAt       time.Time `json:"createdAt"`
-	Generation      uint64    `json:"generation"`
-	ResourceVersion string    `json:"resourceVersion"`
+	Name            string    `json:"name" minLength:"1" maxLength:"253" pattern:"^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"`
+	UID             string    `json:"uid" readOnly:"true"`
+	CreatedAt       time.Time `json:"createdAt" readOnly:"true"`
+	Generation      uint64    `json:"generation" readOnly:"true" minimum:"1"`
+	ResourceVersion string    `json:"resourceVersion" readOnly:"true"`
 }
 type RuntimeSpec struct {
 	Type   string         `json:"type"`
-	Config runtime.Config `json:"config"`
+	Config runtime.Config `json:"config" nullable:"false"`
 }
 type RuntimeStatus struct {
-	State             string               `json:"state"`
+	State             string               `json:"state" enum:"stopped,starting,running,stopping,unknown"`
 	AppliedGeneration uint64               `json:"appliedGeneration,omitempty"`
 	Capabilities      runtime.Capabilities `json:"capabilities,omitempty"`
 }
