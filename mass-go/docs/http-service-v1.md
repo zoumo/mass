@@ -1,4 +1,4 @@
-# HTTP v1 implementation: Runtime and Session identity (tickets 01–02)
+# HTTP v1 implementation: Runtime, Session identity and work (tickets 01–03)
 
 The contract is [harness/bindings/http.md](../../harness/bindings/http.md).
 This note records implementation coverage, not a replacement contract.
@@ -26,23 +26,18 @@ rtk proxy go run ./cmd/massd openapi > /tmp/mass-openapi.json
 ```
 
 The exporter runs exactly the server's type registration. Current OpenAPI covers
-Runtime operations, Session creation/listing, both Session lookup paths and probes. Creation accepts only writable metadata/spec;
+Runtime operations, Session creation/listing, both Session lookup paths, both sets of work operations and probes. Creation accepts only writable metadata/spec;
 PUT accepts RuntimeSpec directly. Error schemas use `{code, reason, message}`,
 with the same application/json media as runtime responses. Output metadata
 marks generated fields read-only. No manually maintained OpenAPI schema is used.
 
 ## Incremental migration boundary
 
-Ticket 01 establishes the shared entry and Runtime configuration behavior.
-Runtime start/stop/delete retain the existing Service lifecycle implementation;
-ticket 02 supplies its remaining acceptance. Session routes are explicit chi
-registrations under `/apis/v1`, preserving existing operations while removing
-the string dispatcher. Raw session IDs are escaped per segment and decoded once;
-full Service identity/nameOrID resolution and Session Huma models belong to
-03. Session/history/SSE operations are not yet in generated OpenAPI. History
-schemas (04), SSE registration/headers/real-proxy acceptance (05), generated
-client and daemon/CLI completion (06–07) remain outstanding. This export is not
-a claim that the full HTTP v1 surface is implemented.
+Tickets 01–03 register Runtime resources and lifecycle entry points, Session
+creation/directory/lookup, and input/answer/cancel operations with Huma. Recovery,
+history and SSE retain explicit chi registrations pending tickets 04–06; generated
+client completion belongs to 07. This export does not yet cover the full HTTP v1
+surface. Existing recovery and event behavior remains under regression tests.
 
 Deterministic tests use public Service methods and real HTTP with owned temporary
 Store directories; the fixture rejects Driver construction on config-only paths.
@@ -67,6 +62,28 @@ Session queries validate filters and include offline/archived persistent records
 without starting a Runtime. Typed and explicit paths preserve encoded segment
 boundaries and decode once; no base64 Session ID alias is provided.
 
-Input/recovery/history/SSE operation schema migration and generated clients
-remain assigned to tickets 03–07. Default verification uses isolated SDK mock
+Recovery/history/SSE operation schema migration and generated clients
+remain assigned to tickets 04–07. Default verification uses isolated SDK mock
 processes and real HTTP, not personal Agent data or model calls.
+
+
+Session work (ticket 03) resolves a name once to a fixed ID, pins the original
+Driver/lane under the Service admission gate, and retains that gate until native
+dispatch settles. Caller cancellation abandons only its wait and returns
+outcome_unknown; no automatic retry or compensating cancel is sent. Cancellation
+remains available during drain and its receipt does not update Session state.
+Native work and interaction identity checks remain with the original Driver.
+
+Service validates public content and JSON answers before dispatch. Content is
+snapshotted through its union codec; answers retain json.Number and may be any
+JSON value, including null. HTTP requires an answer body, so literal null differs
+from missing input. Both URL sets use typed Huma request/receipt models; the
+transport schema registry describes ContentBlock's five private-codec branches,
+including the mutually exclusive embedded text/blob resources. The domain module
+has no Huma/chi dependency. Acceptance evidence retains absent, false and true.
+
+New fault fixtures verify Service ownership and real HTTP disconnect/SSE/history
+continuation. Protocol fixtures cover authentication, Idempotency-Key rejection,
+strict bodies, canonical interaction base64url, content unions and open JSON
+precision. These are deterministic contract checks; they are not real Agent/model
+or proxy acceptance. No massctl answer command is implemented.

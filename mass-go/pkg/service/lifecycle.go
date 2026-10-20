@@ -441,7 +441,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 }
 
 // control holds the original Runtime operation lock through a native dispatch.
-func (s *Service) control(r resource.Session) (*runBinding, error) {
+func (s *Service) controlWork(r resource.Session, cancelling bool) (*runBinding, error) {
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
 	var original *lane
@@ -455,7 +455,10 @@ func (s *Service) control(r resource.Session) (*runBinding, error) {
 	run.admission.RLock()
 	s.mu.Lock()
 	l := run.lanes[r.Status.SessionID]
-	available := !s.closing && !run.stopping && run.err == nil && run.started && l != nil && l == original && l.err == nil && !l.closing
+	available := run.started && l != nil && l == original
+	if !cancelling {
+		available = available && !s.closing && !run.stopping && run.err == nil && l.err == nil && !l.closing
+	}
 	s.mu.Unlock()
 	if !available {
 		run.admission.RUnlock()
