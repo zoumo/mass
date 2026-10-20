@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,7 +21,8 @@ import (
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	eventfile "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
-	metafile "github.com/zoumo/mass/mass-go/pkg/metastore/file"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
+	"github.com/zoumo/mass/mass-go/pkg/metastore/backend"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
@@ -31,8 +33,18 @@ import (
 // Real file/SQLite failure through the existing synthetic Driver seam. No model
 // or native Agent behavior is claimed by these HTTP/SSE assertions.
 func TestSQLReplicaFailureNeverPublishesUncoordinatedFact(t *testing.T) {
+	for _, authority := range []string{"", "file"} {
+		name := authority
+		if name == "" {
+			name = "default-sqlite"
+		}
+		t.Run(name, func(t *testing.T) { sqlReplicaFailureNeverPublishes(t, authority) })
+	}
+}
+
+func sqlReplicaFailureNeverPublishes(t *testing.T, authority string) {
 	dir := t.TempDir()
-	meta, err := metafile.Open(dir, false)
+	meta, err := backend.Open(dir, metastore.Config{Backend: authority}, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, meta.Close()) })
 	st, err := eventfile.Open(dir, false)
@@ -144,10 +156,25 @@ func TestSQLReplicaFailureNeverPublishesUncoordinatedFact(t *testing.T) {
 	defer reopened.Close()
 	// An empty registry makes any accidental Runtime activation fail. Startup and
 	// HTTP history queries still return the original full fact without replay.
-	restoredMeta, err := metafile.Open(dir, false)
+	restoredMeta, err := backend.Open(dir, metastore.Config{Backend: authority}, false)
 	require.NoError(t, err)
 	defer restoredMeta.Close()
 	queryOnly := service.New(restoredMeta, reopened, runtime.NewRegistry(nil))
+	defer func() { require.NoError(t, queryOnly.Shutdown(ctx)) }()
+	ref := resource.SessionRef{SessionID: "original"}
+	broadcast, err := queryOnly.EventBroadcast(ref)
+	require.NoError(t, err)
+	var replayed atomic.Int32
+	require.NoError(t, broadcast.AddHandler(&observingHandler{handle: func(events.SessionEvent) error {
+		replayed.Add(1)
+		return nil
+	}}))
+	sub, err := queryOnly.SubscribeEvents(ref)
+	require.NoError(t, err)
+	defer sub.Close()
+	// Rebuild while consumers are registered: projection is independent of both
+	// handlers and the (empty) Runtime registry, not just a quiet startup path.
+	require.NoError(t, reopened.Reconcile())
 	readHandler, err := transport.New(queryOnly, transport.Options{Token: "fixture"})
 	require.NoError(t, err)
 	defer readHandler.Shutdown()
@@ -165,4 +192,6 @@ func TestSQLReplicaFailureNeverPublishesUncoordinatedFact(t *testing.T) {
 	require.Len(t, restored.Events, 1)
 	require.Equal(t, fact.EventID, restored.Events[0].EventID)
 	require.NotContains(t, string(after), "agent.message_chunk")
+	require.Zero(t, replayed.Load(), "history/rebuild must not invoke ordinary handlers")
+	require.Empty(t, sub.Events(), "history/rebuild must not supplement realtime delivery")
 }
