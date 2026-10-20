@@ -4,8 +4,8 @@ package store
 import (
 	"errors"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 var (
@@ -32,12 +32,12 @@ type HistoryQuery struct {
 	Limit int      `json:"limit,omitempty"`
 }
 type HistoryPage struct {
-	Events        []runtime.SessionEvent `json:"events"`
-	Next          string                 `json:"next,omitempty"`
-	SyncedEventID *string                `json:"syncedEventId"`
+	Events        []events.SessionEvent `json:"events"`
+	Next          string                `json:"next,omitempty"`
+	SyncedEventID *string               `json:"syncedEventId"`
 }
 type HistoryStore interface {
 	GetSyncProgress(string) (*string, error)
-	Append(string, []runtime.SessionEvent) (*string, error)
+	Append(string, []events.SessionEvent) (*string, error)
 	ListHistory(string, HistoryQuery) (HistoryPage, error)
 }

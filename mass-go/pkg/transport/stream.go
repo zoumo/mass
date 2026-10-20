@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 func (s *Server) observe(w http.ResponseWriter, r *http.Request, ref resource.SessionRef) {
@@ -50,7 +50,7 @@ func (s *Server) observe(w http.ResponseWriter, r *http.Request, ref resource.Se
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	type delivery struct {
-		event runtime.SessionEvent
+		event events.SessionEvent
 		err   error
 	}
 	next := make(chan delivery, 1)

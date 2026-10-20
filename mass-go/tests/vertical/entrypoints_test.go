@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
@@ -102,7 +103,7 @@ func (s *entrypointSuite) open(kind, mode string) (resource.SessionRef, resource
 	s.Eventually(func() bool {
 		var v resource.Session
 		s.call("session.get", client.Params{Session: ref}, &v)
-		return v.Status.State == runtime.Idle || (kind == "claude" && v.Status.State == runtime.Unknown)
+		return v.Status.State == events.Idle || (kind == "claude" && v.Status.State == events.Unknown)
 	}, 2*time.Second, 10*time.Millisecond)
 	var page store.HistoryPage
 	s.call("session.history", client.Params{Session: ref}, &page)
@@ -145,17 +146,17 @@ func (s *entrypointSuite) history(ref resource.SessionRef) store.HistoryPage {
 	return all
 }
 
-func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question bool) []runtime.SessionEvent {
+func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question bool) []events.SessionEvent {
 	_, scan := s.observer(ref)
 	var receipt runtime.InputReceipt
-	s.call("session.input", client.Params{Session: ref, Input: runtime.Input{Content: []runtime.ContentBlock{runtime.Text(text)}}}, &receipt)
+	s.call("session.input", client.Params{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text(text)}}}, &receipt)
 	s.NotEmpty(receipt.Submission)
-	seen := []runtime.SessionEvent{}
+	seen := []events.SessionEvent{}
 	questions := 0
 	chunks := 0
 	permissions := 0
 	for scan.Scan() {
-		var e runtime.SessionEvent
+		var e events.SessionEvent
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
 		seen = append(seen, e)
 		if e.Persistent() {
@@ -170,7 +171,7 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 			s.True(found, "publish after persist")
 		}
 		switch p := e.Payload().(type) {
-		case runtime.InteractionRequested:
+		case events.InteractionRequested:
 			if p.Request.Kind == "form" {
 				questions++
 				s.Require().True(question, "questions are never permission-approved")
@@ -182,10 +183,10 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 			} else {
 				permissions++
 			}
-		case runtime.MessageChunk:
+		case events.MessageChunk:
 			chunks++
-		case runtime.StateUpdate:
-			if p.State != nil && *p.State == runtime.Idle {
+		case events.StateUpdate:
+			if p.State != nil && *p.State == events.Idle {
 				if question {
 					s.Equal(1, questions)
 					s.T().Log("PASS synthetic explicit user question via CLI/HTTP and original SDK handle")
@@ -216,7 +217,7 @@ func (s *entrypointSuite) basic(kind string) {
 	s.runWork(ref, "hello", false)
 	if kind == "claude" {
 		var out any
-		e = (client.Client{URL: s.url}).Call(ctx(s.T()), "session.input", client.Params{Session: ref, Input: runtime.Input{Content: []runtime.ContentBlock{runtime.Text("forbidden second input")}}}, &out)
+		e = (client.Client{URL: s.url}).Call(ctx(s.T()), "session.input", client.Params{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("forbidden second input")}}}, &out)
 		s.Require().Error(e)
 		s.T().Log("PASS Claude second input rejected; close and original-ID resume required")
 	}
@@ -286,11 +287,11 @@ func (s *entrypointSuite) TestClaudeQuestion() { s.question("claude") }
 func (s *entrypointSuite) cancel(kind string) {
 	ref, _, _ := s.open(kind, "cancel")
 	_, scan := s.observer(ref)
-	s.call("session.input", client.Params{Session: ref, Input: runtime.Input{Content: []runtime.ContentBlock{runtime.Text("hello")}}}, nil)
+	s.call("session.input", client.Params{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}}, nil)
 	for scan.Scan() {
-		var e runtime.SessionEvent
+		var e events.SessionEvent
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
-		if p, ok := e.Payload().(runtime.StateUpdate); ok && p.State != nil && *p.State == runtime.Running {
+		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Running {
 			break
 		}
 	}
@@ -300,14 +301,14 @@ func (s *entrypointSuite) cancel(kind string) {
 	s.Require().NoError(o.Close())
 	var state resource.Session
 	s.call("session.get", client.Params{Session: ref}, &state)
-	s.Equal(runtime.Running, state.Status.State)
+	s.Equal(events.Running, state.Status.State)
 	var ack runtime.CancelReceipt
 	s.call("session.cancel", client.Params{Session: ref}, &ack)
 	s.Equal("controlAcknowledged", ack.Result)
 	s.NotEmpty(ack.Target)
 	s.Eventually(func() bool {
 		s.call("session.get", client.Params{Session: ref}, &state)
-		return state.Status.State == runtime.Idle
+		return state.Status.State == events.Idle
 	}, 3*time.Second, 10*time.Millisecond)
 	s.call("session.archive", client.Params{Session: ref}, nil)
 	s.call("runtime.stop", client.Params{Name: "agent"}, nil)

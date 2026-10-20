@@ -13,6 +13,7 @@ import (
 
 	sdk "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/recovery"
 )
@@ -49,7 +50,7 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "claude", Owner: name, Executable: o.executable}, options: o, pipe: runtime.NewEventPipe(128), sessions: map[string]*session{}}, nil
+	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "claude", Owner: name, Executable: o.executable}, options: o, pipe: events.NewEventPipe(128), sessions: map[string]*session{}}, nil
 }
 
 type session struct {
@@ -60,14 +61,14 @@ type session struct {
 	used                     bool
 	mu                       sync.Mutex
 	address                  runtime.Address
-	source                   runtime.Source
+	source                   events.Source
 	client                   *sdk.Client
 	id                       string
 	ready                    chan struct{}
 	done                     chan struct{}
 	closing, active, sending bool
 	err                      error
-	state                    *runtime.SessionState
+	state                    *events.SessionState
 	// Native message identity for partial events; no content is accumulated.
 	messageID string
 	tools     map[string]string
@@ -78,7 +79,7 @@ type Driver struct {
 	mu                      sync.Mutex
 	op                      sync.Mutex
 	options                 options
-	pipe                    *runtime.EventPipe
+	pipe                    *events.EventPipe
 	taken, started, stopped bool
 	sessions                map[string]*session
 	interactions            runtime.PendingInteractions
@@ -88,7 +89,7 @@ func caps() runtime.Capabilities {
 	return runtime.Capabilities{"textInput": true, "permission": true, "form": true}
 }
 
-func (d *Driver) Events() (runtime.Stream, error) {
+func (d *Driver) Events() (events.Stream, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.taken {
@@ -156,7 +157,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 			return runtime.DriverSession{}, noResources("invalid Claude recovery context")
 		}
 	}
-	s := &session{address: a, source: runtime.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}}
+	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}}
 	c, err := sdk.Open(ctx, sdk.Options{ResumeID: resume, CLIPath: d.options.executable, WorkDir: spec.Cwd, Env: []string{"CLAUDE_MOCK_SCENARIO=" + d.options.scenario}, PermissionHandler: func(p *sdk.PermissionRequest) {
 		select {
 		case <-s.ready:
@@ -170,7 +171,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		}
 		if err := d.permission(s, p); err != nil {
 			s.err = err
-			_ = d.emit(s, "", runtime.SessionError{Message: "Claude permission delivery failed"}, time.Time{})
+			_ = d.emit(s, "", events.SessionError{Message: "Claude permission delivery failed"}, time.Time{})
 		}
 	}})
 	if err != nil {
@@ -264,7 +265,7 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	}
 	s.active = true
 	s.used = true
-	s.work = runtime.UUID()
+	s.work = events.UUID()
 	s.sending = true
 	s.mu.Unlock()
 	err = s.client.Send(ctx, input.Content[0].Text)
@@ -277,21 +278,21 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	return runtime.InputReceipt{Submission: "sent", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
 }
 
-func (d *Driver) emit(s *session, item string, p runtime.Payload, at time.Time) error {
+func (d *Driver) emit(s *session, item string, p events.Payload, at time.Time) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	e, err := runtime.NewEvent(runtime.EventBase{EventID: runtime.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at}, p, s.source.WithWork(s.work))
+	e, err := events.NewEvent(events.EventBase{EventID: events.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at}, p, s.source.WithWork(s.work))
 	if err != nil {
 		return err
 	}
 	return d.pipe.Send(context.Background(), e)
 }
 
-func (d *Driver) state(s *session, state *runtime.SessionState, reason string) error {
+func (d *Driver) state(s *session, state *events.SessionState, reason string) error {
 	previous := s.state
 	s.state = state
-	return d.emit(s, "", runtime.StateUpdate{PreviousState: previous, State: state, StopReason: reason}, time.Time{})
+	return d.emit(s, "", events.StateUpdate{PreviousState: previous, State: state, StopReason: reason}, time.Time{})
 }
 
 func (d *Driver) observe(s *session, early []sdk.Event) {
@@ -318,7 +319,7 @@ func (d *Driver) observe(s *session, early []sdk.Event) {
 		if err != nil {
 			if !s.closing {
 				s.err = err
-				_ = d.emit(s, "", runtime.SessionError{Message: "Claude observation failed", Reason: "native_observation_failed"}, time.Time{})
+				_ = d.emit(s, "", events.SessionError{Message: "Claude observation failed", Reason: "native_observation_failed"}, time.Time{})
 				_ = d.state(s, nil, "")
 			}
 			s.mu.Unlock()
@@ -363,7 +364,7 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 		switch raw.Event.Type {
 		case "message_start":
 			s.messageID = raw.Event.Message.ID
-			state := runtime.Running
+			state := events.Running
 			return d.state(s, &state, "")
 		case "content_block_delta":
 			if s.messageID == "" {
@@ -371,9 +372,9 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 			}
 			switch raw.Event.Delta.Type {
 			case "text_delta":
-				return d.emit(s, s.messageID, runtime.MessageChunk{MessageID: s.messageID, Content: []runtime.ContentBlock{runtime.Text(raw.Event.Delta.Text)}}, raw.Time)
+				return d.emit(s, s.messageID, events.MessageChunk{MessageID: s.messageID, Content: []events.ContentBlock{events.Text(raw.Event.Delta.Text)}}, raw.Time)
 			case "thinking_delta":
-				return d.emit(s, s.messageID, runtime.ThinkingChunk{MessageID: s.messageID, Content: []runtime.ContentBlock{runtime.Text(raw.Event.Delta.Thinking)}}, raw.Time)
+				return d.emit(s, s.messageID, events.ThinkingChunk{MessageID: s.messageID, Content: []events.ContentBlock{events.Text(raw.Event.Delta.Thinking)}}, raw.Time)
 			case "input_json_delta", "signature_delta":
 				return nil // unsupported preview, never reconstruct full content
 			default:
@@ -395,7 +396,7 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 		} else if err := json.Unmarshal(raw.Message.Content, &blocks); err != nil {
 			return err
 		}
-		text, thinking := []runtime.ContentBlock{}, []runtime.ContentBlock{}
+		text, thinking := []events.ContentBlock{}, []events.ContentBlock{}
 		for _, b := range blocks {
 			str := func(key string) string { var v string; _ = json.Unmarshal(b[key], &v); return v }
 			switch str("type") {
@@ -404,13 +405,13 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 				if err := json.Unmarshal(b["text"], &value); err != nil || value == nil {
 					return errors.New("missing or invalid text")
 				}
-				text = append(text, runtime.Text(*value))
+				text = append(text, events.Text(*value))
 			case "thinking":
 				var value *string
 				if err := json.Unmarshal(b["thinking"], &value); err != nil || value == nil {
 					return errors.New("missing or invalid thinking")
 				}
-				thinking = append(thinking, runtime.Text(*value))
+				thinking = append(thinking, events.Text(*value))
 			case "tool_use":
 				tool := str("id")
 				kind := str("name")
@@ -425,7 +426,7 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 					return errors.New("pending tool limit")
 				}
 				s.tools[tool] = kind
-				if err := d.emit(s, tool, runtime.ToolCall{ID: tool, Kind: kind, RawInput: input}, raw.Time); err != nil {
+				if err := d.emit(s, tool, events.ToolCall{ID: tool, Kind: kind, RawInput: input}, raw.Time); err != nil {
 					return err
 				}
 			case "tool_result":
@@ -434,7 +435,7 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 				if kind == "" {
 					return errors.New("tool result has no observed tool use")
 				}
-				p := runtime.ToolResult{ID: tool, Kind: kind, Status: "completed", Output: &runtime.Output{Availability: "unavailable", Completeness: "unknown"}}
+				p := events.ToolResult{ID: tool, Kind: kind, Status: "completed", Output: &events.Output{Availability: "unavailable", Completeness: "unknown"}}
 				var failed bool
 				if value, ok := b["is_error"]; ok {
 					if err := json.Unmarshal(value, &failed); err != nil {
@@ -450,12 +451,12 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 						return err
 					}
 					p.RawOutput = &value
-					p.Output = &runtime.Output{Availability: "provided", Completeness: "retained"}
+					p.Output = &events.Output{Availability: "provided", Completeness: "retained"}
 					if str, ok := value.(string); ok {
-						p.Content = []runtime.ContentBlock{runtime.Text(str)}
+						p.Content = []events.ContentBlock{events.Text(str)}
 					}
 					if _, ok := value.([]any); ok {
-						p.Content = []runtime.ContentBlock{}
+						p.Content = []events.ContentBlock{}
 						for _, block := range value.([]any) {
 							m, ok := block.(map[string]any)
 							if !ok || m["type"] != "text" {
@@ -465,7 +466,7 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 							if !ok {
 								return errors.New("invalid text block")
 							}
-							p.Content = append(p.Content, runtime.Text(v))
+							p.Content = append(p.Content, events.Text(v))
 						}
 					}
 				}
@@ -482,30 +483,30 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 				return errors.New("complete message missing native identity")
 			}
 			if len(thinking) > 0 {
-				if err := d.emit(s, id, runtime.AgentThinking{MessageID: id, Content: thinking}, raw.Time); err != nil {
+				if err := d.emit(s, id, events.AgentThinking{MessageID: id, Content: thinking}, raw.Time); err != nil {
 					return err
 				}
 			}
 			if len(text) > 0 {
-				p := runtime.MessagePayload{MessageID: id, Content: text}
+				p := events.MessagePayload{MessageID: id, Content: text}
 				if e.Type == "user" {
-					return d.emit(s, id, runtime.UserMessage(p), raw.Time)
+					return d.emit(s, id, events.UserMessage(p), raw.Time)
 				}
-				return d.emit(s, id, runtime.AgentMessage(p), raw.Time)
+				return d.emit(s, id, events.AgentMessage(p), raw.Time)
 			}
 		}
 	case "result":
 		d.interactions.RemoveSession(s.id)
 		s.active = false
 		s.messageID = ""
-		state := runtime.Idle
+		state := events.Idle
 		return d.state(s, &state, e.Subtype)
 	}
 	return nil
 }
 
 func (d *Driver) permission(s *session, p *sdk.PermissionRequest) error {
-	request := runtime.PermissionRequest(p.ToolUseID(), p.ToolName())
+	request := events.PermissionRequest(p.ToolUseID(), p.ToolName())
 	if p.ToolName() == "AskUserQuestion" {
 		value, err := decode(p.Input())
 		if err != nil {
@@ -515,7 +516,7 @@ func (d *Driver) permission(s *session, p *sdk.PermissionRequest) error {
 		if !ok {
 			return errors.New("invalid question input")
 		}
-		request = runtime.InteractionRequest{Kind: "form", Message: "Answer native Claude questions", RequestedSchema: schema}
+		request = events.InteractionRequest{Kind: "form", Message: "Answer native Claude questions", RequestedSchema: schema}
 	}
 	ref, err := d.interactions.Add(s.id, s.source.WithWork(s.work), func(ctx context.Context, a map[string]any) error {
 		answer := sdk.PermissionAnswer{Behavior: sdk.PermissionAllow, UpdatedInput: p.Input()}
@@ -546,11 +547,11 @@ func (d *Driver) permission(s *session, p *sdk.PermissionRequest) error {
 	if err != nil {
 		return err
 	}
-	state := runtime.RequiresAction
+	state := events.RequiresAction
 	if err := d.state(s, &state, ""); err != nil {
 		return err
 	}
-	return d.emit(s, "", runtime.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, time.Time{})
+	return d.emit(s, "", events.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, time.Time{})
 }
 
 func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer any) (runtime.Acceptance, error) {
@@ -631,7 +632,7 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	s.mu.Lock()
 	active := s.active
 	if active && (s.cancelTarget == "" || s.cancelWork != s.work) {
-		s.cancelWork, s.cancelTarget = s.work, runtime.UUID()
+		s.cancelWork, s.cancelTarget = s.work, events.UUID()
 	}
 	target := s.cancelTarget
 	s.mu.Unlock()

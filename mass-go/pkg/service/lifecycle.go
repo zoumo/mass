@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
@@ -108,7 +109,7 @@ func (s *Service) drainLane(ctx context.Context, l *lane) error {
 }
 
 func offlineStatus(r *resource.Session, archived bool) {
-	r.Status.State = runtime.Unknown
+	r.Status.State = events.Unknown
 	if archived {
 		r.Status.State = "archived"
 	}
@@ -398,7 +399,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		return r, errors.Join(errors.New("resume returned a replacement identity"), cleanup)
 	}
 	r, err = s.sessionStatus(ref, func(r *resource.Session) {
-		r.Status = resource.SessionStatus{SessionID: r.Status.SessionID, State: runtime.Unknown, AppliedGeneration: r.Metadata.Generation, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
+		r.Status = resource.SessionStatus{SessionID: r.Status.SessionID, State: events.Unknown, AppliedGeneration: r.Metadata.Generation, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
 	})
 	if err != nil {
 		return r, errors.Join(err, run.driver.CloseSession(context.Background(), native.SessionID))

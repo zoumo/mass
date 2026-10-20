@@ -1,4 +1,4 @@
-package runtime
+package events
 
 import (
 	"context"
@@ -7,6 +7,11 @@ import (
 	"sync"
 	"sync/atomic"
 )
+
+// Stream delivers ordered events to a single consumer.
+type Stream interface {
+	Next(context.Context) (SessionEvent, error)
+}
 
 type streamEntry struct {
 	event   SessionEvent

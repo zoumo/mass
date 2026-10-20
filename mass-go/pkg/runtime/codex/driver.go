@@ -15,6 +15,7 @@ import (
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/recovery"
 )
@@ -51,7 +52,7 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "codex", Owner: name, Executable: o.executable}, options: o, pipe: runtime.NewEventPipe(128), sessions: map[string]*session{}}, nil
+	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "codex", Owner: name, Executable: o.executable}, options: o, pipe: events.NewEventPipe(128), sessions: map[string]*session{}}, nil
 }
 
 type session struct {
@@ -63,11 +64,11 @@ type session struct {
 	cancelTarget string
 	retired      map[string]bool
 	address      runtime.Address
-	source       runtime.Source
+	source       events.Source
 	sub          *sdk.Subscription
 	active       bool
 	sending      bool
-	state        *runtime.SessionState
+	state        *events.SessionState
 	err          error
 	done         chan struct{}
 	released     chan struct{}
@@ -79,7 +80,7 @@ type Driver struct {
 	mu           sync.Mutex
 	op           sync.Mutex
 	options      options
-	pipe         *runtime.EventPipe
+	pipe         *events.EventPipe
 	taken        bool
 	client       *sdk.Client
 	sessions     map[string]*session
@@ -91,7 +92,7 @@ type Driver struct {
 	interactions runtime.PendingInteractions
 }
 
-func (d *Driver) Events() (runtime.Stream, error) {
+func (d *Driver) Events() (events.Stream, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.taken {
@@ -217,7 +218,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	if err != nil {
 		return runtime.DriverSession{}, err
 	}
-	s := &session{requests: make(chan sdk.Request, 128), wake: make(chan struct{}, 1), address: address, source: runtime.NewSource(), sub: sub, done: make(chan struct{}), released: make(chan struct{}), retired: map[string]bool{}}
+	s := &session{requests: make(chan sdk.Request, 128), wake: make(chan struct{}, 1), address: address, source: events.NewSource(), sub: sub, done: make(chan struct{}), released: make(chan struct{}), retired: map[string]bool{}}
 	d.mu.Lock()
 	if _, ok := d.sessions[id]; ok {
 		d.mu.Unlock()
@@ -227,11 +228,11 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	d.mu.Unlock()
 	// Only the native response's idle observation permits an initial idle event.
 	if thread.Status.Idle != nil {
-		state := runtime.Idle
+		state := events.Idle
 		d.mu.Lock()
 		s.state = &state
 		d.mu.Unlock()
-		if err := d.emit(s, id, "", runtime.StateUpdate{State: &state}, ""); err != nil {
+		if err := d.emit(s, id, "", events.StateUpdate{State: &state}, ""); err != nil {
 			return runtime.DriverSession{}, err
 		}
 	}
@@ -294,12 +295,12 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	return runtime.InputReceipt{Submission: result.Turn.ID, Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}, nil
 }
 
-func (d *Driver) emit(s *session, id, item string, p runtime.Payload, work string, observedAt ...time.Time) error {
+func (d *Driver) emit(s *session, id, item string, p events.Payload, work string, observedAt ...time.Time) error {
 	eventTime := time.Now().UTC()
 	if len(observedAt) > 0 && !observedAt[0].IsZero() {
 		eventTime = observedAt[0]
 	}
-	e, err := runtime.NewEvent(runtime.EventBase{EventID: runtime.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: id, ItemID: item, Time: eventTime}, p, s.source.WithWork(work))
+	e, err := events.NewEvent(events.EventBase{EventID: events.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: id, ItemID: item, Time: eventTime}, p, s.source.WithWork(work))
 	if err != nil {
 		return err
 	}
@@ -394,18 +395,18 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 			Status string `json:"status"`
 		} `json:"turn"`
 		Item struct {
-			ID               string                 `json:"id"`
-			Type             string                 `json:"type"`
-			Text             string                 `json:"text"`
-			Content          []runtime.ContentBlock `json:"content"`
-			Summary          []string               `json:"summary"`
-			Command          string                 `json:"command"`
-			Status           string                 `json:"status"`
-			Cwd              string                 `json:"cwd"`
-			Phase            string                 `json:"phase"`
-			ExitCode         *int32                 `json:"exitCode"`
-			DurationMs       *int64                 `json:"durationMs"`
-			AggregatedOutput json.RawMessage        `json:"aggregatedOutput"`
+			ID               string                `json:"id"`
+			Type             string                `json:"type"`
+			Text             string                `json:"text"`
+			Content          []events.ContentBlock `json:"content"`
+			Summary          []string              `json:"summary"`
+			Command          string                `json:"command"`
+			Status           string                `json:"status"`
+			Cwd              string                `json:"cwd"`
+			Phase            string                `json:"phase"`
+			ExitCode         *int32                `json:"exitCode"`
+			DurationMs       *int64                `json:"durationMs"`
+			AggregatedOutput json.RawMessage       `json:"aggregatedOutput"`
 		} `json:"item"`
 	}
 	if err := json.Unmarshal(event.Params, &v); err != nil {
@@ -427,15 +428,15 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 			return nil
 		}
 	}
-	emit := func(item string, p runtime.Payload, work string) error { return d.emit(s, id, item, p, work, v.Time) }
+	emit := func(item string, p events.Payload, work string) error { return d.emit(s, id, item, p, work, v.Time) }
 	switch event.Method {
 	case "turn/started", "turn/completed":
 		if v.Turn.ID == "" {
 			return errors.New("native turn event missing identity")
 		}
-		state := runtime.Running
+		state := events.Running
 		if event.Method == "turn/completed" {
-			state = runtime.Idle
+			state = events.Idle
 		}
 		d.mu.Lock()
 		if s.retired[v.Turn.ID] || (!s.active && s.work == "") || (s.work != "" && s.work != v.Turn.ID) {
@@ -447,20 +448,20 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 		}
 		previous := s.state
 		s.state = &state
-		s.active = state == runtime.Running
+		s.active = state == events.Running
 		if !s.active {
 			s.retired[v.Turn.ID] = true
 			s.work = ""
 		}
 		d.mu.Unlock()
-		if state == runtime.Idle {
+		if state == events.Idle {
 			d.interactions.RemoveSession(id)
 		}
-		return emit("", runtime.StateUpdate{PreviousState: previous, State: &state, StopReason: v.Turn.Status}, v.Turn.ID)
+		return emit("", events.StateUpdate{PreviousState: previous, State: &state, StopReason: v.Turn.Status}, v.Turn.ID)
 	case "item/agentMessage/delta":
-		return emit(v.ItemID, runtime.MessageChunk{MessageID: v.ItemID, Content: []runtime.ContentBlock{runtime.Text(v.Delta)}}, v.TurnID)
+		return emit(v.ItemID, events.MessageChunk{MessageID: v.ItemID, Content: []events.ContentBlock{events.Text(v.Delta)}}, v.TurnID)
 	case "item/reasoning/summaryTextDelta":
-		return emit(v.ItemID, runtime.ThinkingChunk{MessageID: v.ItemID, Content: []runtime.ContentBlock{runtime.Text(v.Delta)}}, v.TurnID)
+		return emit(v.ItemID, events.ThinkingChunk{MessageID: v.ItemID, Content: []events.ContentBlock{events.Text(v.Delta)}}, v.TurnID)
 	case "item/started", "item/completed":
 		item := v.Item
 		if item.ID == "" {
@@ -469,29 +470,29 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 		switch item.Type {
 		case "agentMessage":
 			if event.Method == "item/completed" {
-				return emit(item.ID, runtime.AgentMessage{MessageID: item.ID, Phase: item.Phase, Content: []runtime.ContentBlock{runtime.Text(item.Text)}}, v.TurnID)
+				return emit(item.ID, events.AgentMessage{MessageID: item.ID, Phase: item.Phase, Content: []events.ContentBlock{events.Text(item.Text)}}, v.TurnID)
 			}
 		case "userMessage":
 			if event.Method == "item/completed" {
-				return emit(item.ID, runtime.UserMessage{MessageID: item.ID, Content: item.Content}, v.TurnID)
+				return emit(item.ID, events.UserMessage{MessageID: item.ID, Content: item.Content}, v.TurnID)
 			}
 		case "reasoning":
 			if event.Method == "item/completed" {
-				content := []runtime.ContentBlock{}
+				content := []events.ContentBlock{}
 				for _, text := range item.Summary {
-					content = append(content, runtime.Text(text))
+					content = append(content, events.Text(text))
 				}
-				return emit(item.ID, runtime.AgentThinking{MessageID: item.ID, Content: content}, v.TurnID)
+				return emit(item.ID, events.AgentThinking{MessageID: item.ID, Content: content}, v.TurnID)
 			}
 		case "commandExecution":
 			if event.Method == "item/started" {
-				return emit(item.ID, runtime.ToolCall{ID: item.ID, Kind: "execute", RawInput: map[string]any{"command": item.Command, "cwd": item.Cwd}}, v.TurnID)
+				return emit(item.ID, events.ToolCall{ID: item.ID, Kind: "execute", RawInput: map[string]any{"command": item.Command, "cwd": item.Cwd}}, v.TurnID)
 			}
 			status := "unknown"
 			if item.Status == "completed" || item.Status == "failed" || item.Status == "declined" {
 				status = item.Status
 			}
-			p := runtime.ToolResult{ExitCode: item.ExitCode, DurationMs: item.DurationMs, ID: item.ID, Kind: "execute", Status: status, Output: &runtime.Output{Availability: "unavailable", Completeness: "unknown"}}
+			p := events.ToolResult{ExitCode: item.ExitCode, DurationMs: item.DurationMs, ID: item.ID, Kind: "execute", Status: status, Output: &events.Output{Availability: "unavailable", Completeness: "unknown"}}
 			if item.AggregatedOutput != nil {
 				var value any
 				dec := json.NewDecoder(bytes.NewReader(item.AggregatedOutput))
@@ -501,9 +502,9 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 				}
 				p.RawOutput = &value
 				if text, ok := value.(string); ok {
-					p.Content = []runtime.ContentBlock{runtime.Text(text)}
+					p.Content = []events.ContentBlock{events.Text(text)}
 				}
-				p.Output = &runtime.Output{Availability: "provided", Completeness: "retained"}
+				p.Output = &events.Output{Availability: "provided", Completeness: "retained"}
 			}
 			return emit(item.ID, p, v.TurnID)
 		}
@@ -631,7 +632,7 @@ func (d *Driver) handleRequest(s *session, r sdk.Request) {
 	if !valid {
 		return
 	}
-	request := runtime.PermissionRequest(v.ItemID, r.Method())
+	request := events.PermissionRequest(v.ItemID, r.Method())
 	method := r.Method()
 	switch method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
@@ -640,9 +641,9 @@ func (d *Driver) handleRequest(s *session, r sdk.Request) {
 		if json.Unmarshal(r.Params(), &schema) != nil {
 			return
 		}
-		request = runtime.InteractionRequest{Kind: "form", Message: "Answer native Codex questions", RequestedSchema: schema}
+		request = events.InteractionRequest{Kind: "form", Message: "Answer native Codex questions", RequestedSchema: schema}
 	default:
-		_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "unsupported native interaction", Reason: "unsupported_native_interaction"}, v.TurnID)
+		_ = d.emit(s, v.ThreadID, "", events.SessionError{Message: "unsupported native interaction", Reason: "unsupported_native_interaction"}, v.TurnID)
 		return
 	}
 	ref, err := d.interactions.Add(v.ThreadID, s.source.WithWork(v.TurnID), func(ctx context.Context, a map[string]any) error {
@@ -670,18 +671,18 @@ func (d *Driver) handleRequest(s *session, r sdk.Request) {
 		return r.Handle().Answer(ctx, response)
 	})
 	if err == nil {
-		state := runtime.RequiresAction
+		state := events.RequiresAction
 		d.mu.Lock()
 		previous := s.state
 		s.state = &state
 		d.mu.Unlock()
-		err = d.emit(s, v.ThreadID, "", runtime.StateUpdate{PreviousState: previous, State: &state}, v.TurnID)
+		err = d.emit(s, v.ThreadID, "", events.StateUpdate{PreviousState: previous, State: &state}, v.TurnID)
 	}
 	if err == nil {
-		err = d.emit(s, v.ThreadID, "", runtime.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, v.TurnID)
+		err = d.emit(s, v.ThreadID, "", events.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, v.TurnID)
 	}
 	if err != nil {
-		_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "interaction delivery failed"}, v.TurnID)
+		_ = d.emit(s, v.ThreadID, "", events.SessionError{Message: "interaction delivery failed"}, v.TurnID)
 	}
 }
 
@@ -718,8 +719,8 @@ func (d *Driver) observationFailed(id string, s *session, err error) {
 	previous := s.state
 	s.state = nil
 	d.mu.Unlock()
-	_ = d.emit(s, id, "", runtime.SessionError{Message: "Codex session observation failed"}, "")
-	_ = d.emit(s, id, "", runtime.StateUpdate{PreviousState: previous}, "")
+	_ = d.emit(s, id, "", events.SessionError{Message: "Codex session observation failed"}, "")
+	_ = d.emit(s, id, "", events.StateUpdate{PreviousState: previous}, "")
 }
 
 func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {
@@ -735,7 +736,7 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	work, c := s.work, d.client
 	active := s.active
 	if active && s.cancelWork != work {
-		s.cancelWork, s.cancelTarget = work, runtime.UUID()
+		s.cancelWork, s.cancelTarget = work, events.UUID()
 	}
 	target := s.cancelTarget
 	d.mu.Unlock()

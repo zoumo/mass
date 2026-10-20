@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -83,16 +84,16 @@ func (s *failureSuite) open(name string) resource.SessionRef {
 }
 
 func (s *failureSuite) input(ref resource.SessionRef) runtime.InputReceipt {
-	r, err := s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("hello")}})
+	r, err := s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	s.Require().NoError(err)
 	return r
 }
 
-func (s *failureSuite) until(sub *service.Subscription, state runtime.SessionState) {
+func (s *failureSuite) until(sub *service.Subscription, state events.SessionState) {
 	for {
 		e, err := sub.Next(ctx(s.T()))
 		s.Require().NoError(err)
-		if p, ok := e.Payload().(runtime.StateUpdate); ok && ((p.State == nil && state == runtime.Unknown) || (p.State != nil && *p.State == state)) {
+		if p, ok := e.Payload().(events.StateUpdate); ok && ((p.State == nil && state == events.Unknown) || (p.State != nil && *p.State == state)) {
 			return
 		}
 	}
@@ -106,18 +107,18 @@ func (s *failureSuite) cancel(kind string) {
 	defer sub.Close()
 	receipt := s.input(ref)
 	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
-	s.until(sub, runtime.Running)
+	s.until(sub, events.Running)
 	ack, err := s.svc.Cancel(ctx(s.T()), ref)
 	s.Require().NoError(err)
 	s.Equal("controlAcknowledged", ack.Result)
 	current, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
-	s.Equal(runtime.Running, current.Status.State)
-	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("must not resend")}})
+	s.Equal(events.Running, current.Status.State)
+	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("must not resend")}})
 	s.Require().Error(err)
-	s.until(sub, runtime.Idle)
+	s.until(sub, events.Idle)
 	if kind == "claude" {
-		_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("hello")}})
+		_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 		s.Require().ErrorContains(err, "close/resume required")
 	}
 	s.T().Log("PASS matched interrupt receipt does not terminate work or admit another input")
@@ -133,14 +134,14 @@ func (s *failureSuite) disconnect(kind string) {
 	defer sub.Close()
 	receipt := s.input(ref)
 	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
-	s.until(sub, runtime.Running)
-	s.until(sub, runtime.Unknown)
+	s.until(sub, events.Running)
+	s.until(sub, events.Unknown)
 	// The returned ACK/write evidence is independent of subsequent observation loss.
 	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
 	if kind == "codex" {
 		s.Equal(runtime.Yes(), receipt.Acceptance.NativeAccepted)
 	}
-	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("must not resend")}})
+	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("must not resend")}})
 	s.Require().Error(err)
 	_, err = s.svc.StopRuntime(ctx(s.T()), "agent")
 	s.Require().Error(err)
@@ -160,9 +161,9 @@ func (s *failureSuite) TestUnknownInputIsNotResent() {
 	s.start("codex", "unknown-input", s.st)
 	s.unknown = true
 	ref := s.open("demo")
-	_, err := s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("hello")}})
+	_, err := s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	s.Require().ErrorContains(err, "outcome_unknown")
-	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("hello")}})
+	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	s.Require().Error(err)
 }
 
@@ -174,10 +175,10 @@ type unknownAppend struct {
 	entered chan struct{}
 }
 
-func (g *unknownAppend) Append(id string, events []runtime.SessionEvent) (*string, error) {
+func (g *unknownAppend) Append(id string, records []events.SessionEvent) (*string, error) {
 	fail := false
 	g.once.Do(func() { fail = true })
-	result, err := g.HistoryStore.Append(id, events)
+	result, err := g.HistoryStore.Append(id, records)
 	if fail && err == nil {
 		close(g.entered)
 		return result, errors.New("injected outcome_unknown after durable append")
@@ -211,7 +212,7 @@ func (s *failureSuite) TestUnknownAppendExplicitSettlement() {
 	page, err = s.st.ListHistory(ref.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Equal(original, page.Events[0].EventID)
-	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("sealed")}})
+	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("sealed")}})
 	s.Require().Error(err)
 	s.T().Log("PASS written-but-unknown event not published; explicit full-prefix validation and same UUID settlement; admission stays sealed")
 }
@@ -222,11 +223,11 @@ type slowAppend struct {
 	entered, release chan struct{}
 }
 
-func (g *slowAppend) Append(id string, events []runtime.SessionEvent) (*string, error) {
+func (g *slowAppend) Append(id string, records []events.SessionEvent) (*string, error) {
 	if id == "codex-session" {
 		g.once.Do(func() { close(g.entered); <-g.release })
 	}
-	return g.HistoryStore.Append(id, events)
+	return g.HistoryStore.Append(id, records)
 }
 
 func (s *failureSuite) TestSlowStorageDoesNotBlockOtherSession() {
@@ -247,8 +248,8 @@ func (s *failureSuite) TestSlowStorageDoesNotBlockOtherSession() {
 	s.Require().NoError(err)
 	defer sub.Close()
 	s.input(b)
-	s.until(sub, runtime.Running)
-	s.until(sub, runtime.Idle)
+	s.until(sub, events.Running)
+	s.until(sub, events.Idle)
 	p, err := s.st.ListHistory(b.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(p.Events, 4)
@@ -289,11 +290,11 @@ func (s *failureSuite) TestOldWorkCannotControlNewWork() {
 	s.Require().NoError(err)
 	defer sub.Close()
 	s.input(ref)
-	s.until(sub, runtime.Running)
-	s.until(sub, runtime.Idle)
+	s.until(sub, events.Running)
+	s.until(sub, events.Idle)
 	receipt := s.input(ref)
 	s.Equal("turn-2", receipt.Submission)
-	s.until(sub, runtime.Running)
+	s.until(sub, events.Running)
 	// The strict script puts turn-1 started/completed before turn-2 interrupt.
 	time.Sleep(200 * time.Millisecond)
 	ack, err := s.svc.Cancel(ctx(s.T()), ref)
@@ -301,8 +302,8 @@ func (s *failureSuite) TestOldWorkCannotControlNewWork() {
 	s.Equal("controlAcknowledged", ack.Result)
 	current, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
-	s.Equal(runtime.Running, current.Status.State)
-	s.until(sub, runtime.Idle)
+	s.Equal(events.Running, current.Status.State)
+	s.until(sub, events.Idle)
 }
 
 func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
@@ -368,7 +369,7 @@ func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
 	for handle == "" {
 		e, err := sub.Next(ctx(s.T()))
 		s.Require().NoError(err)
-		if p, ok := e.Payload().(runtime.InteractionRequested); ok {
+		if p, ok := e.Payload().(events.InteractionRequested); ok {
 			handle = p.Interaction
 		}
 	}
@@ -381,7 +382,7 @@ func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
 	s.Equal("stopping", r.Status.State)
 	_, err = s.svc.CreateSession(ctx(s.T()), s.spec("other"))
 	s.Require().Error(err)
-	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("sealed")}})
+	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("sealed")}})
 	s.Require().Error(err)
 	_, err = s.svc.ResumeSession(ctx(s.T()), ref)
 	s.Require().Error(err)
@@ -390,7 +391,7 @@ func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
 	time.Sleep(450 * time.Millisecond)
 	session, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
-	s.Equal(runtime.SessionState("closing"), session.Status.State)
+	s.Equal(events.SessionState("closing"), session.Status.State)
 	_, err = s.svc.StopRuntime(ctx(s.T()), "agent")
 	s.Require().NoError(err)
 	s.T().Log("PASS stop timeout preserves stopping/closing and closed admission; late idle does not reopen; original release completes explicit retry")
@@ -452,7 +453,7 @@ func (s *failureSuite) TestTimeoutDuringIdentityCommitSettlesOriginalOwner() {
 	s.Require().NoError(err)
 	r, err := s.svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().NoError(err)
-	s.Equal(runtime.SessionState("archived"), r.Status.State)
+	s.Equal(events.SessionState("archived"), r.Status.State)
 	p, err := s.st.ListHistory(r.Status.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(p.Events, 2)
@@ -469,21 +470,21 @@ func (s *failureSuite) TestLateAnswerCannotControlRecoveredRun() {
 	for old == "" {
 		e, err := sub.Next(ctx(s.T()))
 		s.Require().NoError(err)
-		if p, ok := e.Payload().(runtime.InteractionRequested); ok {
+		if p, ok := e.Payload().(events.InteractionRequested); ok {
 			old = p.Interaction
 		}
 	}
-	s.until(sub, runtime.Idle)
+	s.until(sub, events.Idle)
 	_, err = s.svc.ArchiveSession(ctx(s.T()), ref)
 	s.Require().NoError(err)
 	_, err = s.svc.ResumeSession(ctx(s.T()), ref)
 	s.Require().NoError(err)
-	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("continue")}})
+	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("continue")}})
 	s.Require().NoError(err)
-	s.until(sub, runtime.Running)
+	s.until(sub, events.Running)
 	_, err = s.svc.AnswerInteraction(ctx(s.T()), ref, old, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": map[string]any{"answers": []string{"json"}}}}})
 	s.Require().Error(err)
-	s.until(sub, runtime.Idle)
+	s.until(sub, events.Idle)
 	s.T().Log("PASS native resolved original handle and old turn notifications cannot answer or terminate the recovered run")
 }
 
@@ -511,7 +512,7 @@ func (s *failureSuite) TestUnknownIdentityCommitReconcilesOriginalFacts() {
 	s.Require().NoError(err)
 	r, err := s.svc.GetSession(resource.SessionRef{SessionID: "claude-session"})
 	s.Require().NoError(err)
-	s.Equal(runtime.SessionState("archived"), r.Status.State)
+	s.Equal(events.SessionState("archived"), r.Status.State)
 	page, err = s.st.ListHistory("claude-session", store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(page.Events, 2)
@@ -525,7 +526,7 @@ func (s *failureSuite) TestConcurrentStopSharesOriginalResponsibility() {
 	s.Require().NoError(err)
 	defer sub.Close()
 	s.input(ref)
-	s.until(sub, runtime.Running)
+	s.until(sub, events.Running)
 	done := make(chan error, 2)
 	for range 2 {
 		go func() { _, err := s.svc.StopRuntime(ctx(s.T()), "agent"); done <- err }()

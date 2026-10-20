@@ -1,4 +1,5 @@
-package runtime
+// Package events defines the unified session event envelope and payloads.
+package events
 
 import (
 	"bytes"

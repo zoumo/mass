@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
@@ -179,7 +180,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "session.list":
-		value, err = s.api.ListSessions(resource.SessionQuery{Namespace: query.Get("namespace"), RuntimeRef: query.Get("runtimeRef"), State: runtime.SessionState(query.Get("state")), After: query.Get("after"), Limit: queryLimit(query)})
+		value, err = s.api.ListSessions(resource.SessionQuery{Namespace: query.Get("namespace"), RuntimeRef: query.Get("runtimeRef"), State: events.SessionState(query.Get("state")), After: query.Get("after"), Limit: queryLimit(query)})
 	case "session.get":
 		value, err = s.api.GetSession(route.ref)
 	case "session.history":

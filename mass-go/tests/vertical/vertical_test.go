@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
@@ -199,7 +200,7 @@ func (verticalSuite *VerticalSuite) TestCodexVertical() {
 	require.Equal(t, "codex-session", session.Status.SessionID)
 	id := resource.SessionRef{SessionID: session.Status.SessionID}
 	name := resource.SessionRef{Namespace: "default", Name: "demo"}
-	require.Eventually(t, func() bool { r, e := svc.GetSession(id); return e == nil && r.Status.State == runtime.Idle }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { r, e := svc.GetSession(id); return e == nil && r.Status.State == events.Idle }, time.Second, 5*time.Millisecond)
 	byID, err := svc.GetSession(id)
 	require.NoError(t, err)
 	byName, err := svc.GetSession(name)
@@ -216,11 +217,11 @@ func (verticalSuite *VerticalSuite) TestCodexVertical() {
 	observer, err := svc.SubscribeEvents(id)
 	require.NoError(t, err)
 	require.NoError(t, observer.Close())
-	receipt, err := svc.SendPrompt(c, id, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("hello")}})
+	receipt, err := svc.SendPrompt(c, id, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	require.NoError(t, err)
 	require.Equal(t, "turn-1", receipt.Submission)
 	require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
-	persisted := []runtime.SessionEvent{}
+	persisted := []events.SessionEvent{}
 	chunks := []string{}
 	running := false
 	for {
@@ -257,22 +258,22 @@ func (verticalSuite *VerticalSuite) TestCodexVertical() {
 			require.True(t, found, "publication must follow durable readable file commit")
 			persisted = append(persisted, event)
 		}
-		if chunk, ok := event.Payload().(runtime.MessageChunk); ok {
+		if chunk, ok := event.Payload().(events.MessageChunk); ok {
 			require.Equal(t, "message-1", event.ItemID)
 			chunks = append(chunks, chunk.Content[0].Text)
 		}
-		if state, ok := event.Payload().(runtime.StateUpdate); ok && state.State != nil {
-			if *state.State == runtime.Running {
+		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil {
+			if *state.State == events.Running {
 				running = true
 			}
-			if running && *state.State == runtime.Idle {
+			if running && *state.State == events.Idle {
 				break
 			}
 		}
 	}
 	require.Equal(t, []string{"preview ", "only"}, chunks)
 	require.Len(t, persisted, 4)
-	require.Equal(t, "complete answer", persisted[3].Payload().(runtime.AgentMessage).Content[0].Text)
+	require.Equal(t, "complete answer", persisted[3].Payload().(events.AgentMessage).Content[0].Text)
 	page, err := svc.ListHistoryEvents(id, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 4)
@@ -302,7 +303,7 @@ func (verticalSuite *VerticalSuite) TestCodexVertical() {
 	history, err := offline.ListHistoryEvents(id, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Equal(t, page2, history)
-	_, err = offline.SendPrompt(c, id, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("no")}})
+	_, err = offline.SendPrompt(c, id, runtime.Input{Content: []events.ContentBlock{events.Text("no")}})
 	require.Error(t, err)
 	t.Log("PASS reopened read-only identity/history with no Registry or Driver")
 }

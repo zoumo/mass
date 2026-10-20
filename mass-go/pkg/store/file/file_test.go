@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
@@ -32,12 +33,12 @@ func open(t *testing.T) (*file.Store, string) {
 }
 
 func session(ns, name, id string) resource.Session {
-	return resource.Session{Metadata: resource.Metadata{Namespace: ns, Name: name}, Spec: resource.SessionSpec{RuntimeRef: "codex", SessionSpec: runtime.SessionSpec{Cwd: "/synthetic"}}, Status: resource.SessionStatus{SessionID: id, State: runtime.Unknown}}
+	return resource.Session{Metadata: resource.Metadata{Namespace: ns, Name: name}, Spec: resource.SessionSpec{RuntimeRef: "codex", SessionSpec: runtime.SessionSpec{Cwd: "/synthetic"}}, Status: resource.SessionStatus{SessionID: id, State: events.Unknown}}
 }
 
-func event(t *testing.T, id, item string, p runtime.Payload) runtime.SessionEvent {
+func event(t *testing.T, id, item string, p events.Payload) events.SessionEvent {
 	t.Helper()
-	e, err := runtime.NewEvent(runtime.EventBase{EventID: runtime.UUID(), Namespace: "default", SessionName: "demo", SessionID: id, Time: time.Date(2026, 10, 20, 1, 2, 3, 0, time.UTC), ItemID: item, Meta: map[string]any{"nested": map[string]any{"number": json.Number("9007199254740993"), "null": nil, "list": []any{false, "x"}}}}, p, runtime.NewSource().WithWork("private-work"))
+	e, err := events.NewEvent(events.EventBase{EventID: events.UUID(), Namespace: "default", SessionName: "demo", SessionID: id, Time: time.Date(2026, 10, 20, 1, 2, 3, 0, time.UTC), ItemID: item, Meta: map[string]any{"nested": map[string]any{"number": json.Number("9007199254740993"), "null": nil, "list": []any{false, "x"}}}}, p, events.NewSource().WithWork("private-work"))
 	require.NoError(t, err)
 	return e
 }
@@ -131,18 +132,18 @@ func (fileSuite *FileSuite) TestHistoryIdentityPaginationAndRestart() {
 	s, dir := open(t)
 	identity, err := s.CreateSession(session("default", "demo", "native"))
 	require.NoError(t, err)
-	input := event(t, "native", "user", runtime.UserMessage{MessageID: "user", Content: []runtime.ContentBlock{runtime.Text("hello")}})
-	call := event(t, "native", "tool", runtime.ToolCall{ID: "tool", Kind: "execute", RawInput: map[string]any{"n": json.Number("9007199254740993"), "nil": nil}})
+	input := event(t, "native", "user", events.UserMessage{MessageID: "user", Content: []events.ContentBlock{events.Text("hello")}})
+	call := event(t, "native", "tool", events.ToolCall{ID: "tool", Kind: "execute", RawInput: map[string]any{"n": json.Number("9007199254740993"), "nil": nil}})
 	null := any(nil)
-	result := event(t, "native", "tool", runtime.ToolResult{ID: "tool", Kind: "execute", Status: "completed", RawOutput: &null})
-	answer := event(t, "native", "message", runtime.AgentMessage{MessageID: "message", Content: []runtime.ContentBlock{runtime.Text("full")}})
-	events := []runtime.SessionEvent{input, call, result, answer}
-	p, err := s.Append("native", events)
+	result := event(t, "native", "tool", events.ToolResult{ID: "tool", Kind: "execute", Status: "completed", RawOutput: &null})
+	answer := event(t, "native", "message", events.AgentMessage{MessageID: "message", Content: []events.ContentBlock{events.Text("full")}})
+	records := []events.SessionEvent{input, call, result, answer}
+	p, err := s.Append("native", records)
 	require.NoError(t, err)
 	require.Equal(t, &answer.EventID, p)
 	// Consumer mutations cannot modify file authority or a later read.
 	input.Meta["nested"].(map[string]any)["number"] = "mutation"
-	p, err = s.Append("native", events[1:3])
+	p, err = s.Append("native", records[1:3])
 	require.NoError(t, err)
 	require.Equal(t, &answer.EventID, p)
 	first, err := s.ListHistory("native", store.HistoryQuery{Types: []string{"agent.tool_call", "agent.message"}, Limit: 1})
@@ -181,20 +182,20 @@ func (fileSuite *FileSuite) TestHistoryIdentityPaginationAndRestart() {
 	require.Contains(t, string(wire), `"rawOutput":null`)
 	conflict := answer
 	conflict.Time = answer.Time.Add(time.Second)
-	_, err = s.Append("native", []runtime.SessionEvent{conflict})
+	_, err = s.Append("native", []events.SessionEvent{conflict})
 	require.Error(t, err)
 	wrong := answer
 	wrong.Namespace = "other"
-	wrong.EventID = runtime.UUID()
-	_, err = s.Append("native", []runtime.SessionEvent{wrong})
+	wrong.EventID = events.UUID()
+	_, err = s.Append("native", []events.SessionEvent{wrong})
 	require.Error(t, err)
-	chunk := event(t, "native", "message", runtime.MessageChunk{MessageID: "message", Content: []runtime.ContentBlock{runtime.Text("delta")}})
-	_, err = s.Append("native", []runtime.SessionEvent{chunk})
+	chunk := event(t, "native", "message", events.MessageChunk{MessageID: "message", Content: []events.ContentBlock{events.Text("delta")}})
+	_, err = s.Append("native", []events.SessionEvent{chunk})
 	require.Error(t, err)
 	invalid := answer
-	invalid.EventID = runtime.UUID()
+	invalid.EventID = events.UUID()
 	invalid.Meta = map[string]any{"unsupported": make(chan int)}
-	_, err = s.Append("native", []runtime.SessionEvent{invalid})
+	_, err = s.Append("native", []events.SessionEvent{invalid})
 	require.Error(t, err)
 	end, err := s.ListHistory("native", store.HistoryQuery{})
 	require.NoError(t, err)
@@ -223,7 +224,7 @@ func (fileSuite *FileSuite) TestFullDirectoryCursorsAndConditionalDelete() {
 	s, dir := open(t)
 	for _, v := range []struct{ ns, name, id, state string }{{"z", "a", "native-z", "archived"}, {"a", "z", "native-a-z", "unknown"}, {"a", "a", "native-a-a", "idle"}} {
 		r := session(v.ns, v.name, v.id)
-		r.Status.State = runtime.SessionState(v.state)
+		r.Status.State = events.SessionState(v.state)
 		_, err := s.CreateSession(r)
 		require.NoError(t, err)
 	}
@@ -278,11 +279,11 @@ func (fileSuite *FileSuite) TestCommittedHistoryTailIsValidatedBeforeFirstPage()
 	s, dir := open(t)
 	_, err := s.CreateSession(session("default", "demo", "native"))
 	require.NoError(t, err)
-	events := make([]runtime.SessionEvent, 105)
-	for i := range events {
-		events[i] = event(t, "native", fmt.Sprintf("message-%d", i), runtime.AgentMessage{MessageID: fmt.Sprintf("message-%d", i), Content: []runtime.ContentBlock{runtime.Text("synthetic")}})
+	records := make([]events.SessionEvent, 105)
+	for i := range records {
+		records[i] = event(t, "native", fmt.Sprintf("message-%d", i), events.AgentMessage{MessageID: fmt.Sprintf("message-%d", i), Content: []events.ContentBlock{events.Text("synthetic")}})
 	}
-	_, err = s.Append("native", events)
+	_, err = s.Append("native", records)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 	p := filepath.Join(dir, "state.json")
