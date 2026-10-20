@@ -343,6 +343,7 @@ func (serverSuite *ServerSuite) TestAuthenticationMediaAndProbes() {
 	s.Shutdown()
 	require.Equal(t, 503, request(s, "GET", "/readyz", "").Code)
 	require.Equal(t, 200, request(s, "GET", "/livez", "").Code)
+	require.Equal(t, 405, request(s, "POST", "/readyz", "").Code)
 	require.Equal(t, 503, request(s, "GET", "/apis/v1/runtimes", "").Code)
 	_, err := transport.New(a, transport.Options{})
 	require.Error(t, err)
