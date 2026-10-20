@@ -70,10 +70,7 @@ tmp/
 /rustv2/data/
 /rustv2/target/
 /rustv2/dist/
-!/mass-rs/vendor/
-!/mass-rs/vendor/codex-app-server-client/
-!/mass-rs/vendor/codex-app-server-client/**
 
-# Rust workspace runtime default when launched from mass-rs (never source).
+# Retained runtime state from the removed Rust source layout.
 /mass-rs/data/
 .archify

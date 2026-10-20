@@ -2,6 +2,14 @@
 
 ## 2026-10-20
 
+- **保存 Go lint 配置模板**：将当前 Go 实现的 golangci-lint 配置原样复制到 principles/go/templates/golangci-lint.yaml，作为通用 v2 配置基线；技术选型增加模板入口，目录规则明确通用模板归属。项目实际配置保持独立维护。
+
+- **确定日志、lint 与可观测性选型**：采用标准库 log/slog、golangci-lint 和 OpenTelemetry Go，补充通用使用要求；技术栈按领域分节、不使用表格，第三方库和工具均提供官方链接。具体版本、执行命令与部署配置留在实现资料，本次不代表日志或遥测接入已完成。
+
+- **清理原则中的项目关联规则**：逐篇检查 principles，将 agent-workflow.md 的知识读取、写入授权和工作流程合并至 harness/AGENTS.md，删除原页并更新入口链接；测试原则不再依赖 Runtime 领域名，Go 目录与选型规则继续作为通用语言级规范保留。
+
+- **明确 principles 内容边界**：新增目录 AGENTS.md，原则仅维护跨项目可复用的工作、编码、测试与语言级规范；将当前 Go 实现的路径、构建命令和运行数据注意事项从原则正文移至根 AGENTS.md，同步原则索引。
+
 - **修正 Go 命令代码归属**：负责人确认二进制入口放在 cmd/<程序名>/main.go，程序专属命令代码放在 cmd/<程序名>/subcommand/；pkg 保留可复用业务模块。同步 massctl 设计并迁移命令实现，不改变命令行为。
 
 - **确认 massctl 首版范围并启动实现**：配置 flag 首版提供 --executable，其余字段走完整 config；配置 flag/文件/内联 JSON 三种方式互斥，多个字段 flag 可组合，无配置更新为参数错误。不提供完整资源文件创建、completion 或 answer 命令。负责人授权按已确认模块范围开始改造，human 字段和本地错误分类可继续细化，文档保持 draft。

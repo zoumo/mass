@@ -4,13 +4,6 @@ Copyright 2026 jim.zoumo@gmail.com
 This product is licensed under the Apache License, Version 2.0.
 See LICENSE for details.
 
-Vendored official Codex app-server client:
-Location: mass-rs/vendor/codex-app-server-client/
-Source: https://github.com/openai/codex
-Revision: d27764b82f7118f674371e6d6e76271d9d606edb
-License: Apache-2.0; see that directory's LICENSE and NOTICE.
-Provenance and reversible modifications: MASS-README.md and MASS.patch.
-
 The former Charmbracelet Crush Go subset was removed during root migration.
 Its historical attribution and license are recoverable at baseline commit
  1dae7c9f32ea87883ca4e2a15bf1af8f4d24bbdb (NOTICE and

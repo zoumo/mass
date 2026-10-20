@@ -6,12 +6,12 @@ okf_version: "0.2"
 
 本目录是指导当前项目演进和发展的唯一真相源，按 OKF v0.2 组织与管理。它维护 agent 在仓库内工作的原则，以及当前项目的架构、深层模块、API 与数据合同。源码、测试和实现资料用于核对实现状态，不能覆盖这里的设计。
 
-agent 写入本目录之前，须有人类明确要求或事先同意；具体范围与工具写入规则见 [harness 写入授权](principles/agent-workflow.md#harness-写入授权)。已授权范围内无需重复确认。
+agent 写入本目录之前，须有人类明确要求或事先同意；具体范围与工具写入规则见 [harness 写入授权](AGENTS.md#harness-写入授权)。已授权范围内无需重复确认。
 
 ## Agent 如何工作
 
-- [工作原则索引](principles/index.md) — 工作方式、编码原则与测试验收要求。
-- [工作方式](principles/agent-workflow.md) — 读取顺序、写入授权、CLI 优先、修改边界与实现命令入口。
+- [工作原则索引](principles/index.md) — 通用编码、测试验收与语言级规范。
+- [harness 工作规则](AGENTS.md) — 读取顺序、写入授权、CLI 优先与修改边界。
 
 ## 当前项目设计
 
