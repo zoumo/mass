@@ -14,28 +14,30 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 	claude "github.com/zoumo/agent-sdk-go/claude"
 	codex "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
 )
 
+type ProbeSuite struct{ suite.Suite }
+
 var bins map[string]string
-var probeRoot string
 
 // Build by public import path from this consumer module, using its pinned SDK.
 func TestMain(m *testing.M) {
+	mainCtx, mainCancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	dir, err := os.MkdirTemp("", "mass-sdk-probe-")
 	if err != nil {
 		panic(err)
 	}
-	probeRoot = dir
 	bins = make(map[string]string)
 	code := 1
 	func() {
 		defer func() {
 			// SDK Close waits for its owned child. Independently read back the process
 			// table before deleting binaries so leaked children cannot hide in cleanup.
-			output, err := exec.Command("ps", "-axo", "pid=,args=").Output()
+			output, err := exec.CommandContext(mainCtx, "ps", "-axo", "pid=,args=").Output()
 			if err != nil || bytes.Contains(output, []byte(dir+"/")) {
 				fmt.Fprintln(os.Stderr, "FAIL process cleanup readback", err)
 				code = 1
@@ -52,7 +54,7 @@ func TestMain(m *testing.M) {
 			}
 		}()
 		// Refuse a workspace/module replacement or an accidentally upgraded SDK.
-		output, err := exec.Command("go", "list", "-m", "-json", "github.com/zoumo/agent-sdk-go").Output()
+		output, err := exec.CommandContext(mainCtx, "go", "list", "-m", "-json", "github.com/zoumo/agent-sdk-go").Output()
 		var module struct {
 			Version string
 			Replace *json.RawMessage
@@ -65,23 +67,24 @@ func TestMain(m *testing.M) {
 		for _, native := range []string{"codex", "claude"} {
 			bins[native] = filepath.Join(dir, "mock-"+native)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
 			cmd := exec.CommandContext(ctx, "go", "build", "-o", bins[native], "github.com/zoumo/agent-sdk-go/"+native+"/cmd/mock")
-			if output, err := cmd.CombinedOutput(); err != nil {
+			output, err := cmd.CombinedOutput()
+			cancel()
+			if err != nil {
 				fmt.Fprintf(os.Stderr, "build %s: %v\n%s", native, err, output)
 				return
 			}
 		}
 		code = m.Run()
 	}()
+	mainCancel()
 	os.Exit(code)
 }
 
 // Every owned directory is removed and read back even after a failed assertion.
 func workDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp(probeRoot, "work-")
-	require.NoError(t, err)
+	dir := t.TempDir()
 	t.Cleanup(func() {
 		require.NoError(t, os.RemoveAll(dir))
 		_, err := os.Stat(dir)
@@ -96,12 +99,14 @@ func scenario(t *testing.T, name string) string {
 	require.NoError(t, err)
 	return path
 }
+
 func deadline(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
 	return ctx
 }
+
 func openCodex(t *testing.T, ctx context.Context, name string) *codex.Client {
 	t.Helper()
 	c, err := codex.NewStdio(ctx, codex.StdioOptions{
@@ -121,9 +126,10 @@ func openCodex(t *testing.T, ctx context.Context, name string) *codex.Client {
 	return c
 }
 
-func TestCodex(t *testing.T) {
+func (probeSuite *ProbeSuite) TestCodex() {
 	for _, mode := range []string{"basic", "question"} {
-		t.Run(mode, func(t *testing.T) {
+		probeSuite.Run(mode, func() {
+			t := probeSuite.T()
 			ctx := deadline(t)
 			c := openCodex(t, ctx, "codex-"+mode)
 			thread, err := c.StartThread(ctx, ct.ThreadStartParams{})
@@ -224,9 +230,10 @@ func TestCodex(t *testing.T) {
 	}
 }
 
-func TestClaude(t *testing.T) {
+func (probeSuite *ProbeSuite) TestClaude() {
 	for _, mode := range []string{"basic", "question", "no-identity"} {
-		t.Run(mode, func(t *testing.T) {
+		probeSuite.Run(mode, func() {
+			t := probeSuite.T()
 			ctx := deadline(t)
 			requests := make(chan *claude.PermissionRequest, 1)
 			c, err := claude.Open(ctx, claude.Options{CLIPath: bins["claude"], WorkDir: workDir(t), Env: []string{"CLAUDE_MOCK_SCENARIO=" + scenario(t, "claude-"+mode)}, PermissionHandler: func(p *claude.PermissionRequest) {
@@ -338,10 +345,11 @@ func TestClaude(t *testing.T) {
 
 // Independently verify the exact CLI exit contract with complete native input.
 // This also checks failures are reaped, rather than treating shutdown as success.
-func TestPeerExit(t *testing.T) {
+func (probeSuite *ProbeSuite) TestPeerExit() {
 	for _, native := range []string{"codex", "claude"} {
 		for _, mode := range []string{"complete", "mismatch", "incomplete"} {
-			t.Run(native+"/"+mode, func(t *testing.T) {
+			probeSuite.Run(native+"/"+mode, func() {
+				t := probeSuite.T()
 				ctx := deadline(t)
 				var fixture struct {
 					Frames []struct {
@@ -400,9 +408,10 @@ func TestPeerExit(t *testing.T) {
 // Exercise SDK-owned initialization failure, not just direct peer failures.
 // Each strict scenario expects initialization; malformed script-side fields
 // force the SDK open to fail. TestMain reads back process and directory cleanup.
-func TestSDKInitializationFailure(t *testing.T) {
+func (probeSuite *ProbeSuite) TestSDKInitializationFailure() {
 	for _, native := range []string{"codex", "claude"} {
-		t.Run(native, func(t *testing.T) {
+		probeSuite.Run(native, func() {
+			t := probeSuite.T()
 			data, err := os.ReadFile(scenario(t, native+"-basic"))
 			require.NoError(t, err)
 			var fixture map[string]any
@@ -416,7 +425,7 @@ func TestSDKInitializationFailure(t *testing.T) {
 			data, err = json.Marshal(fixture)
 			require.NoError(t, err)
 			path := filepath.Join(workDir(t), "mismatch.json")
-			require.NoError(t, os.WriteFile(path, data, 0600))
+			require.NoError(t, os.WriteFile(path, data, 0o600))
 			ctx := deadline(t)
 			if native == "codex" {
 				c, err := codex.NewStdio(ctx, codex.StdioOptions{
@@ -441,3 +450,5 @@ func TestSDKInitializationFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestProbeSuite(t *testing.T) { suite.Run(t, new(ProbeSuite)) }

@@ -6,10 +6,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-func TestEventWireContract(t *testing.T) {
+type EventsSuite struct{ suite.Suite }
+
+func (eventsSuite *EventsSuite) TestEventWireContract() {
+	t := eventsSuite.T()
 	base := runtime.EventBase{EventID: runtime.UUID(), Namespace: "default", SessionName: "demo", SessionID: "native", Time: time.Now().UTC(), ItemID: "tool"}
 	call, err := runtime.NewEvent(base, runtime.ToolCall{ID: "tool", Kind: "execute", RawInput: nil}, runtime.NewSource())
 	require.NoError(t, err)
@@ -41,3 +46,5 @@ func TestEventWireContract(t *testing.T) {
 	_, err = runtime.NewEvent(base, runtime.AgentMessage{MessageID: "message", Content: []runtime.ContentBlock{runtime.Text("full")}}, runtime.NewSource())
 	require.Error(t, err)
 }
+
+func TestEventsSuite(t *testing.T) { suite.Run(t, new(EventsSuite)) }

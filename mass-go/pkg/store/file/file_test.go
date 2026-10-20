@@ -12,11 +12,15 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
+
+type FileSuite struct{ suite.Suite }
 
 func open(t *testing.T) (*file.Store, string) {
 	t.Helper()
@@ -26,24 +30,29 @@ func open(t *testing.T) (*file.Store, string) {
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	return s, dir
 }
+
 func session(ns, name, id string) resource.Session {
 	return resource.Session{Metadata: resource.Metadata{Namespace: ns, Name: name}, Spec: resource.SessionSpec{RuntimeRef: "codex", SessionSpec: runtime.SessionSpec{Cwd: "/synthetic"}}, Status: resource.SessionStatus{SessionID: id, State: runtime.Unknown}}
 }
+
 func event(t *testing.T, id, item string, p runtime.Payload) runtime.SessionEvent {
 	t.Helper()
 	e, err := runtime.NewEvent(runtime.EventBase{EventID: runtime.UUID(), Namespace: "default", SessionName: "demo", SessionID: id, Time: time.Date(2026, 10, 20, 1, 2, 3, 0, time.UTC), ItemID: item, Meta: map[string]any{"nested": map[string]any{"number": json.Number("9007199254740993"), "null": nil, "list": []any{false, "x"}}}}, p, runtime.NewSource().WithWork("private-work"))
 	require.NoError(t, err)
 	return e
 }
-func TestAtomicIdentityAndWriterOwnership(t *testing.T) {
+
+func (fileSuite *FileSuite) TestAtomicIdentityAndWriterOwnership() {
+	t := fileSuite.T()
 	s, dir := open(t)
 	_, err := file.Open(dir, false)
 	require.Error(t, err, "a second file Store cannot create an independent writer cache")
 	for _, mode := range []string{"name", "native-id"} {
-		t.Run(mode, func(t *testing.T) {
+		fileSuite.Run(mode, func() {
+			subT := fileSuite.T()
 			var winners atomic.Int32
 			var wg sync.WaitGroup
-			for i := 0; i < 24; i++ {
+			for i := range 24 {
 				wg.Go(func() {
 					ns, name, id := "default", fmt.Sprintf("demo-%s-%d", mode, i), fmt.Sprintf("native-%s-%d", mode, i)
 					if mode == "name" {
@@ -55,12 +64,12 @@ func TestAtomicIdentityAndWriterOwnership(t *testing.T) {
 					if err == nil {
 						winners.Add(1)
 					} else if !errors.Is(err, store.ErrConflict) {
-						t.Errorf("unexpected create error: %v", err)
+						subT.Errorf("unexpected create error: %v", err)
 					}
 				})
 			}
 			wg.Wait()
-			require.EqualValues(t, 1, winners.Load())
+			require.EqualValues(subT, 1, winners.Load())
 		})
 	}
 	_, err = s.CreateSession(session("other", "other", "same-native-id"))
@@ -71,7 +80,9 @@ func TestAtomicIdentityAndWriterOwnership(t *testing.T) {
 	_, err = readonly.CreateSession(session("other", "new", "fresh"))
 	require.ErrorIs(t, err, store.ErrReadOnly)
 }
-func TestResourceVersionsSnapshotsAndEncoding(t *testing.T) {
+
+func (fileSuite *FileSuite) TestResourceVersionsSnapshotsAndEncoding() {
+	t := fileSuite.T()
 	s, dir := open(t)
 	r, err := s.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"nested": map[string]any{"value": "one"}}}, Status: resource.RuntimeStatus{State: "stopped"}})
 	require.NoError(t, err)
@@ -114,7 +125,9 @@ func TestResourceVersionsSnapshotsAndEncoding(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, next, saved)
 }
-func TestHistoryIdentityPaginationAndRestart(t *testing.T) {
+
+func (fileSuite *FileSuite) TestHistoryIdentityPaginationAndRestart() {
+	t := fileSuite.T()
 	s, dir := open(t)
 	identity, err := s.CreateSession(session("default", "demo", "native"))
 	require.NoError(t, err)
@@ -190,20 +203,23 @@ func TestHistoryIdentityPaginationAndRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, end.SyncedEventID, progress)
 }
-func TestCorruptFileFailsClosed(t *testing.T) {
+
+func (fileSuite *FileSuite) TestCorruptFileFailsClosed() {
+	t := fileSuite.T()
 	s, dir := open(t)
 	require.NoError(t, s.Close())
 	path := filepath.Join(dir, "state.json")
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, append(b, []byte(" trailing garbage")...), 0600))
+	require.NoError(t, os.WriteFile(path, append(b, []byte(" trailing garbage")...), 0o600))
 	_, err = file.Open(dir, true)
 	require.Error(t, err)
 	_, err = file.Open(dir, false)
 	require.Error(t, err, "writer must not discard or repair unreadable authority silently")
 }
 
-func TestFullDirectoryCursorsAndConditionalDelete(t *testing.T) {
+func (fileSuite *FileSuite) TestFullDirectoryCursorsAndConditionalDelete() {
+	t := fileSuite.T()
 	s, dir := open(t)
 	for _, v := range []struct{ ns, name, id, state string }{{"z", "a", "native-z", "archived"}, {"a", "z", "native-a-z", "unknown"}, {"a", "a", "native-a-a", "idle"}} {
 		r := session(v.ns, v.name, v.id)
@@ -257,7 +273,8 @@ func TestFullDirectoryCursorsAndConditionalDelete(t *testing.T) {
 	require.NoError(t, reopened.DeleteRuntime("offline", runtimeRecord.Metadata.ResourceVersion))
 }
 
-func TestCommittedHistoryTailIsValidatedBeforeFirstPage(t *testing.T) {
+func (fileSuite *FileSuite) TestCommittedHistoryTailIsValidatedBeforeFirstPage() {
+	t := fileSuite.T()
 	s, dir := open(t)
 	_, err := s.CreateSession(session("default", "demo", "native"))
 	require.NoError(t, err)
@@ -277,9 +294,11 @@ func TestCommittedHistoryTailIsValidatedBeforeFirstPage(t *testing.T) {
 	tail["namespace"] = "foreign"
 	b, err = json.Marshal(snapshot)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(p, b, 0600))
+	require.NoError(t, os.WriteFile(p, b, 0o600))
 	_, err = file.Open(dir, true)
 	require.ErrorContains(t, err, "identity mismatch", "even a first-page reader must reject corrupt committed tail")
 	_, err = file.Open(dir, false)
 	require.ErrorContains(t, err, "identity mismatch", "recovery cannot silently repair committed data")
 }
+
+func TestFileSuite(t *testing.T) { suite.Run(t, new(FileSuite)) }
