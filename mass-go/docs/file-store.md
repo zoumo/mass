@@ -13,6 +13,8 @@ no extra `data/` level:
 ├── session_index.jsonl
 ├── .store.json
 ├── writer.lock
+├── metadata.sqlite           # Disposable complete resource replica
+├── history.sqlite            # Disposable complete event/progress replica
 ├── snapshot.lock
 ├── sessions/
 │   └── <namespace>/
@@ -37,8 +39,8 @@ preserve the existing file. It changes when Session membership or these locating
 fields change, and is rebuilt on writable Open from validated
 Session state files. A missing, stale or corrupt index cannot lose a Session;
 read-only Open ignores it and never repairs it. Resource metadata is loaded into
-memory; event bodies are read from the requested Session file on demand. The
-disk Session index is not authoritative and is not an event-body cache.
+memory for file mutation coordination; normal get/list queries decode full resources
+from SQLite. The disk Session index is not authoritative and is not an event-body cache.
 
 Session paths use literal namespace/name components, not hashes or native IDs.
 Empty, dot, dot-dot and separator-containing components are rejected. Store-owned
@@ -67,8 +69,7 @@ Writable reopen/Reconcile idempotently finishes an interrupted metadata commit.
 ## Append-only history and recovery
 
 Append validates the incoming batch and skips equal existing event IDs. Existing
-IDs are looked up in an offset index and their original event is read from disk
-for exact semantic comparison; conflicting contents fail before committing any
+IDs are looked up in the complete SQL replica for exact semantic comparison; conflicting contents fail before committing any
 new member of the batch. Duplicate new IDs within a batch are likewise checked.
 If the entire batch already exists, no file is written and sync progress remains
 at the final committed event, even when an old event is retried.
@@ -77,8 +78,9 @@ at the final committed event, even when an old event is retried.
 base64-encoded), Session address/UID/ID, original file byte offset, and a digest of
 the already committed prefix. It is atomically written and fsynced before touching
 the event log. The existing `events.jsonl` is opened with `O_APPEND`, written,
-fsynced and closed. Only then is the intent removed and the root synced, the
-in-memory offset index advanced, and success returned. Service publishes facts
+fsynced and closed. The complete SQL event rows and sync progress are then committed
+in one transaction. Only then is the intent removed and the root synced, the
+Session checkpoint advanced, and success returned. Service publishes facts
 only after Append succeeds. No rename, replacement or truncation of an event log
 occurs during append/recovery.
 
@@ -96,20 +98,40 @@ authorization to discard data.
 
 ## Memory and reads
 
-Store retains resource metadata and per-event ID/type/offset/length/digest indexes,
-not event bodies. Opening/reconciliation streams each log one record at a time to
-validate the entire committed history and rebuild these indexes. Memory still
-grows with the number of indexed events, not the total payload size. There is no
-full-history array or snapshot, including in temporary commit records. Append
-buffers only the incoming new batch. History queries seek/read only the indexed
-records required for the requested page; progress uses the last committed ID in
-the index. Content hashes detect changes to records read after Open.
+Store retains resource metadata for file commits and a constant-size checkpoint
+(count, last ID, byte boundary and prefix digest) per Session. Event IDs, filter
+fields, stable append positions and complete event JSON live in `history.sqlite`;
+`metadata.sqlite` holds complete Runtime/Session JSON plus query fields. Startup
+always streams and validates every authoritative record, including records beyond
+the first page, and reconstructs both databases before returning a usable Store.
+Recovery inserts at most 128 events per transaction. No per-event Go index, body
+cache, in-memory database or full-history recovery snapshot is retained. Append
+buffers only the incoming batch; history queries decode only the requested page
+and one lookahead row. Cursors use file-derived append ordinals, never SQL rowids.
 
-A read-only Store holds the metadata/offset view captured on Open; later appends
-do not change that view. Reopen to refresh. It does not retain deleted file bodies:
-removing a Session may make subsequent reads through an older view fail.
+Store uses one dedicated `database/sql` connection with the history database
+attached to the metadata database. Both databases use disk rollback journals
+(`DELETE`) and `synchronous=FULL`, with bounded 2 MiB page caches per database.
+Metadata replication and deleted-Session history cleanup share one transaction;
+event rows and sync progress share one transaction. The Store mutex protects the
+file/SQL view. Files commit first; SQL failure seals reads and writes with
+`outcome_unknown` until explicit Reconcile or writable reopen. SQL never creates
+independent business facts. The replicas are disposable and rebuilt every Open.
 
-There is no SQLite or automatic format migration. Legacy `state.json` at the root
+A read-only Store streams its captured file view into two private temporary disk
+databases, removed on Close or failed Open. It never edits persistent replicas or
+authoritative files and rejects pending commits. Later writer changes do not
+change the reader's snapshot. Runtime queries use SQL and do not revalidate file
+bytes on each page; reopening validates authoritative history again.
+
+Driver: [modernc.org/sqlite v1.60.1](https://pkg.go.dev/modernc.org/sqlite@v1.60.1),
+[official source](https://gitlab.com/cznic/sqlite). This pure-Go driver requires
+Go 1.26.0 and no CGO. The module currently builds with Go 1.26.9. Attached-database
+transaction conditions are documented by [SQLite](https://www.sqlite.org/lang_attach.html);
+WAL is deliberately not used. Store owns connections, replicas and cleanup; callers
+continue to use the unchanged Store interfaces.
+
+There is no automatic authoritative-file format migration. Legacy `state.json` at the root
 (or the previous default `data/state.json`) is rejected when initializing a new
 root and left untouched. Old full-history recovery snapshots are not converted.
 Temporary `.write-*` files are ignored. The root is application-owned; this is
@@ -159,7 +181,7 @@ fault, late-result and unknown-operation settlement in Ticket05.
 Ticket04 adds complete resource directory queries and conditional deletion to
 MetaStore. Session cursors are separately tagged/signed, bound to all filters,
 and store namespace/name/uid exclusive positions, never UUID ordering. History
-cursors cannot serve as resource cursors or vice versa. No SQLite index is used;
-all directory/history reads come from the complete authoritative file set. Opening
-a Store validates the entire committed history, including records beyond a first
-page. Removing a future/redundant index cannot remove any required current data.
+cursors cannot serve as resource cursors or vice versa. Directory/history reads use
+complete SQLite replicas derived from authoritative files. Opening a Store validates
+the entire committed history, including records beyond a first page. Removing a
+replica cannot remove required authoritative data.

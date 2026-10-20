@@ -261,7 +261,7 @@ func (fileSuite *FileSuite) TestFullDirectoryCursorsAndConditionalDelete() {
 	require.Len(t, last.Items, 1)
 	require.Equal(t, "native-a-z", last.Items[0].Status.SessionID)
 	require.Empty(t, last.Next)
-	// No index exists or is needed. Full records and cursors survive reopen.
+	// The legacy index path is unused; the two complete replicas survive rebuilding.
 	_, err = os.Stat(filepath.Join(dir, "index.sqlite"))
 	require.True(t, os.IsNotExist(err))
 	require.NoError(t, reopened.DeleteSession(resource.SessionRef{SessionID: r.Status.SessionID}, r.Metadata.ResourceVersion))
@@ -318,4 +318,115 @@ func TestRejectIllegalPersistentSessionIDs(t *testing.T) {
 			require.Error(t, err)
 		})
 	}
+}
+
+func (fileSuite *FileSuite) TestCompleteDiskReplicasServeHistoryWithoutSourceReads() {
+	t := fileSuite.T()
+	st, dir := open(t)
+	_, err := st.CreateSession(session("default", "demo", "native"))
+	require.NoError(t, err)
+	fact := event(t, "native", "one", events.AgentMessage{MessageID: "one", Content: []events.ContentBlock{events.Text("SQL complete body")}})
+	_, err = st.Append("native", []events.SessionEvent{fact})
+	require.NoError(t, err)
+	for _, name := range []string{"metadata.sqlite", "history.sqlite"} {
+		f, err := os.Open(filepath.Join(dir, name))
+		require.NoError(t, err)
+		header := make([]byte, 16)
+		_, err = f.Read(header)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		require.Equal(t, "SQLite format 3\x00", string(header))
+	}
+	path := filepath.Join(dir, "sessions", "default", "demo", "events.jsonl")
+	require.NoError(t, os.Rename(path, path+".held"))
+	t.Cleanup(func() { require.NoError(t, os.Rename(path+".held", path)) })
+	page, err := st.ListHistory("native", store.HistoryQuery{})
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+	require.Equal(t, fact.EventID, page.Events[0].EventID)
+	wire, err := json.Marshal(page.Events[0])
+	require.NoError(t, err)
+	require.Contains(t, string(wire), "SQL complete body")
+	require.Contains(t, string(wire), "9007199254740993")
+	progress, err := st.GetSyncProgress("native")
+	require.NoError(t, err)
+	require.Equal(t, &fact.EventID, progress)
+}
+
+func (fileSuite *FileSuite) TestReplicaPathsPreserveSpecialCharacters() {
+	t := fileSuite.T()
+	dir := filepath.Join(t.TempDir(), "data?percent%hash#")
+	st, err := file.Open(dir, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	r, err := st.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "special"}, Spec: resource.RuntimeSpec{Type: "codex"}})
+	require.NoError(t, err)
+	got, err := st.GetRuntime("special")
+	require.NoError(t, err)
+	require.Equal(t, r, got)
+	require.NoError(t, st.Close())
+	for _, name := range []string{"metadata.sqlite", "history.sqlite"} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		require.NoError(t, err)
+		require.True(t, bytes.HasPrefix(b, []byte("SQLite format 3\x00")), "complete replica must be at its exact configured path")
+	}
+	st, err = file.Open(dir, false)
+	require.NoError(t, err)
+	got, err = st.GetRuntime("special")
+	require.NoError(t, err)
+	require.Equal(t, r, got)
+}
+
+func (fileSuite *FileSuite) TestRestartRestoresEverySessionAcrossHistoryBatches() {
+	t := fileSuite.T()
+	st, dir := open(t)
+	identity, err := st.CreateSession(session("default", "demo", "native"))
+	require.NoError(t, err)
+	other, err := st.CreateSession(session("other", "second", "second-native"))
+	require.NoError(t, err)
+	_, err = st.CreateSession(session("other", "empty", "empty-native"))
+	require.NoError(t, err)
+	records := make([]events.SessionEvent, 260)
+	for i := range records {
+		records[i] = event(t, "native", fmt.Sprintf("item-%d", i), events.AgentMessage{MessageID: fmt.Sprintf("message-%d", i), Content: []events.ContentBlock{events.Text("complete payload")}})
+	}
+	_, err = st.Append("native", records)
+	require.NoError(t, err)
+	second := records[0]
+	second.EventID = uuid.NewString()
+	second.Namespace, second.SessionName, second.SessionID = "other", "second", "second-native"
+	_, err = st.Append("second-native", []events.SessionEvent{second})
+	require.NoError(t, err)
+	first, err := st.ListHistory("native", store.HistoryQuery{Limit: 129})
+	require.NoError(t, err)
+	require.Len(t, first.Events, 129)
+	require.NotEmpty(t, first.Next)
+	require.NoError(t, st.Close())
+	st, err = file.Open(dir, false)
+	require.NoError(t, err)
+	defer st.Close()
+	restored, err := st.GetSession(resource.SessionRef{SessionID: "native"})
+	require.NoError(t, err)
+	require.Equal(t, identity, restored)
+	restored, err = st.GetSession(resource.SessionRef{Namespace: "other", Name: "second"})
+	require.NoError(t, err)
+	require.Equal(t, other, restored)
+	tail, err := st.ListHistory("native", store.HistoryQuery{After: first.Next, Limit: 200})
+	require.NoError(t, err)
+	require.Len(t, tail.Events, 131)
+	require.Empty(t, tail.Next)
+	for i, fact := range tail.Events {
+		require.Equal(t, records[i+129].EventID, fact.EventID)
+	}
+	require.Equal(t, &records[259].EventID, tail.SyncedEventID)
+	page, err := st.ListHistory("second-native", store.HistoryQuery{})
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+	require.Equal(t, second.EventID, page.Events[0].EventID)
+	progress, err := st.GetSyncProgress("empty-native")
+	require.NoError(t, err)
+	require.Nil(t, progress)
+	progress, err = st.Append("native", records[:1])
+	require.NoError(t, err)
+	require.Equal(t, &records[259].EventID, progress)
 }

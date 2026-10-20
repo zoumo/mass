@@ -1,11 +1,11 @@
 package file
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"sort"
 	"strings"
 
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -19,14 +19,24 @@ func (s *Store) ListRuntimes(q resource.RuntimeQuery) ([]resource.Runtime, error
 	if err := s.usable(false); err != nil {
 		return nil, err
 	}
-	items := []resource.Runtime{}
-	for _, r := range s.data.Runtimes {
-		if (q.Type == "" || r.Spec.Type == q.Type) && (q.State == "" || r.Status.State == q.State) {
-			items = append(items, r)
-		}
+	rows, err := s.sql.conn.QueryContext(context.Background(), `SELECT payload FROM runtime WHERE (?='' OR type=?) AND (?='' OR state=?) ORDER BY name`, q.Type, q.Type, q.State, q.State)
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Metadata.Name < items[j].Metadata.Name })
-	return copyValue(items)
+	defer rows.Close()
+	items := []resource.Runtime{}
+	for rows.Next() {
+		var b []byte
+		if err := rows.Scan(&b); err != nil {
+			return nil, err
+		}
+		var r resource.Runtime
+		if err := decode(b, &r); err != nil {
+			return nil, err
+		}
+		items = append(items, r)
+	}
+	return items, rows.Err()
 }
 
 type directoryCursor struct {
@@ -69,13 +79,26 @@ func (s *Store) ListSessions(q resource.SessionQuery) (resource.SessionPage, err
 		}
 		position = c.Position
 	}
-	items := []resource.Session{}
-	for _, r := range s.data.Sessions {
-		if (q.Namespace == "" || r.Metadata.Namespace == q.Namespace) && (q.RuntimeRef == "" || r.Spec.RuntimeRef == q.RuntimeRef) && (q.State == "" || r.Status.State == q.State) && (q.SessionID == "" || r.Status.SessionID == q.SessionID) && sessionOrder(r) > position {
-			items = append(items, r)
-		}
+	rows, err := s.sql.conn.QueryContext(context.Background(), `SELECT payload FROM session WHERE (?='' OR namespace=?) AND (?='' OR runtime_ref=?) AND (?='' OR state=?) AND (?='' OR session_id=?) AND sort_key>? ORDER BY sort_key LIMIT ?`, q.Namespace, q.Namespace, q.RuntimeRef, q.RuntimeRef, q.State, q.State, q.SessionID, q.SessionID, position, int64(limit)+1)
+	if err != nil {
+		return empty, err
 	}
-	sort.Slice(items, func(i, j int) bool { return sessionOrder(items[i]) < sessionOrder(items[j]) })
+	defer rows.Close()
+	items := []resource.Session{}
+	for rows.Next() {
+		var b []byte
+		if err := rows.Scan(&b); err != nil {
+			return empty, err
+		}
+		var r resource.Session
+		if err := decode(b, &r); err != nil {
+			return empty, err
+		}
+		items = append(items, r)
+	}
+	if err := rows.Err(); err != nil {
+		return empty, err
+	}
 	page := resource.SessionPage{Items: items}
 	if len(items) > limit {
 		page.Items = items[:limit]

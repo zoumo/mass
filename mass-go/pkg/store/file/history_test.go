@@ -207,7 +207,7 @@ func (s *appendSuite) TestConflictingTailAndCommittedPrefixArePreserved() {
 	}
 }
 
-func (s *appendSuite) TestReadsUseDiskAndMetadataRedoDoesNotContainHistory() {
+func (s *appendSuite) TestStartupValidatesDiskAndMetadataRedoDoesNotContainHistory() {
 	old := s.fact("unique-historical-body")
 	_, err := s.st.Append("native", []events.SessionEvent{old})
 	s.Require().NoError(err)
@@ -237,12 +237,20 @@ func (s *appendSuite) TestReadsUseDiskAndMetadataRedoDoesNotContainHistory() {
 	s.Require().NoError(err)
 	s.True(os.SameFile(before, after))
 	s.Equal(before.ModTime(), after.ModTime())
-	// Disk corruption after Open is visible to a query, proving that event bodies
-	// are read from disk rather than returned from an in-memory history cache.
+	// Runtime reads use the verified SQL replica; reopening still validates all
+	// authoritative file records before exposing any history.
 	changed := bytes.Replace(content, []byte("unique-historical-body"), []byte("broken-historical-body"), 1)
 	s.Require().NoError(os.WriteFile(path, changed, 0o600))
-	_, err = s.st.ListHistory("native", store.HistoryQuery{})
-	s.Require().ErrorContains(err, "committed history record changed")
+	page, err := s.st.ListHistory("native", store.HistoryQuery{})
+	s.Require().NoError(err)
+	s.Require().Len(page.Events, 1)
+	s.Equal(old.EventID, page.Events[0].EventID)
+	s.Require().ErrorContains(s.st.Reconcile(), "committed history prefix changed")
+	s.Require().NoError(s.st.Close())
+	// Syntactically invalid committed history is rejected even with a complete cache.
+	s.Require().NoError(os.WriteFile(path, append(changed, []byte("broken\n")...), 0o600))
+	_, err = Open(s.dir, false)
+	s.Require().Error(err)
 }
 
 func (s *appendSuite) TestSnapshotReadersAndConflictingBatch() {

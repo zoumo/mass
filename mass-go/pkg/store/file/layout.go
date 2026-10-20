@@ -259,8 +259,7 @@ func (s *Store) load(write bool) error {
 			return err
 		}
 		s.data = next
-		s.histories = map[string]*historyIndex{}
-		return nil
+		return s.loadHistories()
 	}
 	if err != nil {
 		return err
@@ -453,6 +452,9 @@ func (s *Store) commit(next snapshot) error {
 			index = emptyHistory()
 		}
 		indexes[r.Status.SessionID] = index
+	}
+	if err := s.syncMetadata(canonical); err != nil {
+		return fmt.Errorf("outcome_unknown: metadata replica: %w", err)
 	}
 	s.data, s.histories, s.uncertain = canonical, indexes, false
 	return nil

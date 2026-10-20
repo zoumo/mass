@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 
@@ -17,50 +16,26 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 )
 
-// The index retains locations and identities, never event bodies.
-type eventIndex struct {
-	ID     string
-	Type   string
-	Offset int64
-	Length int64
-	Hash   [sha256.Size]byte
-}
-
+// A checkpoint is constant size per Session; event identities and bodies live in SQL.
 type historyIndex struct {
-	Records []eventIndex
-	ByID    map[string]int
-	End     int64
-	Hash    [sha256.Size]byte
+	Count int
+	Last  string
+	End   int64
+	Hash  [sha256.Size]byte
 }
 
-func emptyHistory() *historyIndex { return &historyIndex{ByID: map[string]int{}} }
-
+func emptyHistory() *historyIndex { return &historyIndex{} }
 func (h *historyIndex) progress() *string {
-	if len(h.Records) == 0 {
+	if h.Count == 0 {
 		return nil
 	}
-	id := h.Records[len(h.Records)-1].ID
+	id := h.Last
 	return &id
 }
 
-func (h *historyIndex) extends(old *historyIndex) bool {
-	if len(h.Records) < len(old.Records) || h.End < old.End {
-		return false
-	}
-	for i, record := range old.Records {
-		if record != h.Records[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func (h *historyIndex) add(e events.SessionEvent, line []byte) error {
-	if _, exists := h.ByID[e.EventID]; exists {
-		return errors.New("duplicate event identity in file")
-	}
-	h.ByID[e.EventID] = len(h.Records)
-	h.Records = append(h.Records, eventIndex{ID: e.EventID, Type: e.Type(), Offset: h.End, Length: int64(len(line)), Hash: sha256.Sum256(line)})
+	h.Count++
+	h.Last = e.EventID
 	h.End += int64(len(line))
 	digest := sha256.New()
 	digest.Write(h.Hash[:])
@@ -113,41 +88,6 @@ func scanHistory(reader io.Reader, r resource.Session) (*historyIndex, error) {
 		return nil, err
 	}
 	return index, nil
-}
-
-func (s *Store) loadHistories() error {
-	indexes := make(map[string]*historyIndex, len(s.data.Sessions))
-	for _, r := range s.data.Sessions {
-		f, err := openHistory(s.historyPath(r), os.O_RDONLY)
-		if err != nil {
-			return err
-		}
-		index, err := scanHistory(f, r)
-		if err := errors.Join(err, f.Close()); err != nil {
-			return err
-		}
-		indexes[r.Status.SessionID] = index
-	}
-	s.histories = indexes
-	return nil
-}
-
-func readIndexedEvent(f *os.File, r resource.Session, entry eventIndex) (events.SessionEvent, error) {
-	line := make([]byte, entry.Length)
-	if _, err := f.ReadAt(line, entry.Offset); err != nil {
-		return events.SessionEvent{}, err
-	}
-	if sha256.Sum256(line) != entry.Hash {
-		return events.SessionEvent{}, errors.New("committed history record changed")
-	}
-	var e events.SessionEvent
-	if err := decode(line, &e); err != nil {
-		return events.SessionEvent{}, err
-	}
-	if err := validateEvent(r, e); err != nil {
-		return events.SessionEvent{}, err
-	}
-	return e, nil
 }
 
 // Data contains only newly accepted JSONL bytes. Offset and PrefixHash protect
@@ -224,11 +164,9 @@ func (s *Store) Append(id string, records []events.SessionEvent) (*string, error
 		if err := validateEvent(r, e); err != nil {
 			return nil, err
 		}
-		if position, exists := index.ByID[e.EventID]; exists {
-			stored, err := readIndexedEvent(f, r, index.Records[position])
-			if err != nil {
-				return nil, err
-			}
+		if stored, exists, err := s.storedEvent(id, e.EventID); err != nil {
+			return nil, err
+		} else if exists {
 			if !equal(stored, e) {
 				return nil, errors.New("eventId content conflict")
 			}
@@ -249,7 +187,7 @@ func (s *Store) Append(id string, records []events.SessionEvent) (*string, error
 		data.WriteByte('\n')
 	}
 	if data.Len() == 0 {
-		return index.progress(), nil
+		return s.sqlProgress(id)
 	}
 	intent := appendIntent{Format: 1, Namespace: r.Metadata.Namespace, Name: r.Metadata.Name, SessionID: id, UID: r.Metadata.UID, Offset: index.End, PrefixHash: hex.EncodeToString(index.Hash[:]), Data: data.Bytes()}
 	s.uncertain = true
@@ -257,6 +195,9 @@ func (s *Store) Append(id string, records []events.SessionEvent) (*string, error
 		return nil, fmt.Errorf("outcome_unknown: append intent: %w", err)
 	}
 	updated, err := s.applyAppend(r, intent, index)
+	if err == nil {
+		err = s.syncAppend(r, intent, index)
+	}
 	if err == nil {
 		err = s.finishAppend()
 	}
@@ -287,16 +228,36 @@ func (s *Store) applyAppend(r resource.Session, intent appendIntent, known *hist
 		return nil, errors.New("append file length does not match intent")
 	}
 	if known == nil {
-		known, err = scanHistory(io.NewSectionReader(f, 0, intent.Offset), r)
-		if err != nil {
+		// Recovery validates prefix identities on disk before extending the file.
+		if err := s.openReplicas(); err != nil {
+			return nil, err
+		}
+		if err := s.syncMetadata(s.data); err != nil {
+			return nil, err
+		}
+		known = emptyHistory()
+		if err := s.restoreHistory(io.NewSectionReader(f, 0, intent.Offset), r, known); err != nil {
 			return nil, err
 		}
 	}
 	if known.End != intent.Offset || hex.EncodeToString(known.Hash[:]) != intent.PrefixHash {
 		return nil, errors.New("committed history prefix does not match intent")
 	}
-	updated := &historyIndex{Records: append([]eventIndex(nil), known.Records...), ByID: maps.Clone(known.ByID), End: known.End, Hash: known.Hash}
-	if err := eachEvent(bytes.NewReader(intent.Data), r, updated.add); err != nil {
+	checkpoint := *known
+	updated := &checkpoint
+	batchIDs := map[string]bool{}
+	if err := eachEvent(bytes.NewReader(intent.Data), r, func(e events.SessionEvent, line []byte) error {
+		if batchIDs[e.EventID] {
+			return errors.New("duplicate event identity in intent")
+		}
+		batchIDs[e.EventID] = true
+		if _, exists, err := s.storedEvent(r.Status.SessionID, e.EventID); err != nil {
+			return err
+		} else if exists {
+			return errors.New("duplicate event identity in intent")
+		}
+		return updated.add(e, line)
+	}); err != nil {
 		return nil, err
 	}
 	present := info.Size() - intent.Offset

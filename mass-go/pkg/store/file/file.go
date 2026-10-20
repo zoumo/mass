@@ -43,6 +43,7 @@ type Store struct {
 	closed     bool
 	uncertain  bool
 	data       snapshot
+	sql        *replicas
 	histories  map[string]*historyIndex
 	appendOpen func(string) (appendFile, error)
 }
@@ -134,11 +135,12 @@ func (s *Store) Close() error {
 		return nil
 	}
 	s.closed = true
+	replicaErr := s.sql.close()
 	if s.lock != nil {
 		err := syscall.Flock(int(s.lock.Fd()), syscall.LOCK_UN)
-		return errors.Join(err, s.lock.Close())
+		return errors.Join(replicaErr, err, s.lock.Close())
 	}
-	return nil
+	return replicaErr
 }
 
 func (s *Store) usable(write bool) error {
@@ -235,11 +237,7 @@ func (s *Store) GetRuntime(name string) (resource.Runtime, error) {
 	if err := s.usable(false); err != nil {
 		return resource.Runtime{}, err
 	}
-	r, ok := s.data.Runtimes[name]
-	if !ok {
-		return r, store.ErrNotFound
-	}
-	return copyValue(r)
+	return s.sqlRuntime(name)
 }
 
 func (s *Store) UpdateRuntime(r resource.Runtime) (resource.Runtime, error) {
@@ -325,11 +323,7 @@ func (s *Store) GetSession(ref resource.SessionRef) (resource.Session, error) {
 	if err := s.usable(false); err != nil {
 		return resource.Session{}, err
 	}
-	r, err := resolve(s.data, ref)
-	if err != nil {
-		return r, err
-	}
-	return copyValue(r)
+	return s.sqlSession(ref)
 }
 
 func (s *Store) UpdateSession(r resource.Session) (resource.Session, error) {
@@ -409,7 +403,7 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 	if err := s.usable(false); err != nil {
 		return empty, err
 	}
-	if _, err := resolve(s.data, resource.SessionRef{SessionID: id}); err != nil {
+	if _, err := s.sqlSession(resource.SessionRef{SessionID: id}); err != nil {
 		return empty, err
 	}
 	types, err := normalized(q.Types)
@@ -424,7 +418,6 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 		return empty, runtime.InvalidArgument("limit must be positive")
 	}
 	index := s.histories[id]
-	records := index.Records
 	start := 0
 	if q.After != "" {
 		b, err := base64.RawURLEncoding.DecodeString(q.After)
@@ -437,13 +430,11 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 			return empty, runtime.InvalidArgument("invalid history cursor")
 		}
 		var c cursor
-		if decode(b[32:], &c) != nil || c.Session != id || !reflect.DeepEqual(c.Types, types) || c.Position < 1 || c.Position > len(records) {
+		if decode(b[32:], &c) != nil || c.Session != id || !reflect.DeepEqual(c.Types, types) || c.Position < 1 || c.Position > index.Count {
 			return empty, runtime.InvalidArgument("cursor does not match query")
 		}
 		start = c.Position
 	}
-	page := store.HistoryPage{Events: []events.SessionEvent{}, SyncedEventID: index.progress()}
-	last := start
 	lock, err := s.layoutLock(false)
 	if err != nil {
 		return empty, err
@@ -452,42 +443,7 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 	if err := s.noPending(); err != nil {
 		return empty, err
 	}
-	r, err := resolve(s.data, resource.SessionRef{SessionID: id})
-	if err != nil {
-		return empty, err
-	}
-	f, err := openHistory(s.historyPath(r), os.O_RDONLY)
-	if err != nil {
-		return empty, err
-	}
-	defer f.Close()
-	for i := start; i < len(records); i++ {
-		entry := records[i]
-		matches := len(types) == 0
-		for _, t := range types {
-			if t == entry.Type {
-				matches = true
-			}
-		}
-		if !matches {
-			continue
-		}
-		if len(page.Events) == limit {
-			next, err := s.encodeCursor(cursor{id, types, last})
-			if err != nil {
-				return store.HistoryPage{}, err
-			}
-			page.Next = next
-			break
-		}
-		e, err := readIndexedEvent(f, r, entry)
-		if err != nil {
-			return empty, err
-		}
-		page.Events = append(page.Events, e)
-		last = i + 1
-	}
-	return copyValue(page)
+	return s.sqlHistory(id, types, start, limit)
 }
 
 // GetSyncProgress reads the same committed view as history queries.
@@ -497,10 +453,10 @@ func (s *Store) GetSyncProgress(id string) (*string, error) {
 	if err := s.usable(false); err != nil {
 		return nil, err
 	}
-	if _, err := resolve(s.data, resource.SessionRef{SessionID: id}); err != nil {
+	if _, err := s.sqlSession(resource.SessionRef{SessionID: id}); err != nil {
 		return nil, err
 	}
-	return s.histories[id].progress(), nil
+	return s.sqlProgress(id)
 }
 
 // Reconcile explicitly reloads and validates the authoritative snapshot under the
@@ -523,7 +479,18 @@ func (s *Store) Reconcile() error {
 		if !exists {
 			continue
 		} // An explicitly committed Session deletion removes its log.
-		if !candidate.extends(committed) {
+
+		r, err := resolve(s.data, resource.SessionRef{SessionID: id})
+		if err != nil {
+			return err
+		}
+		f, err := openHistory(s.historyPath(r), os.O_RDONLY)
+		if err != nil {
+			return err
+		}
+		prefix, scanErr := scanHistory(io.NewSectionReader(f, 0, committed.End), r)
+		scanErr = errors.Join(scanErr, f.Close())
+		if scanErr != nil || candidate.End < committed.End || prefix == nil || prefix.Hash != committed.Hash {
 			s.data, s.histories = old, oldHistories
 			return errors.New("committed history prefix changed or missing")
 		}
