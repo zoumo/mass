@@ -65,6 +65,7 @@ type runBinding struct {
 }
 type opening struct {
 	restoring bool
+	buffering bool
 	address   runtime.Address
 	events    []events.SessionEvent
 	err       error
@@ -560,6 +561,19 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			return
 		}
 		s.mu.Lock()
+		pending := run.pending[addressKey(runtime.Address{Namespace: e.Namespace, SessionName: e.SessionName})]
+		if pending != nil && pending.buffering {
+			if len(pending.events) >= queueCapacity {
+				pending.err = errors.New("restore event buffer exhausted; stream responsibility retained")
+				run.err = pending.err
+				run.blocked = &e
+				s.mu.Unlock()
+				return
+			}
+			pending.events = append(pending.events, e)
+			s.mu.Unlock()
+			continue
+		}
 		l := run.lanes[e.SessionID]
 		if original := run.retired[e.Source().WithWork("")]; original != nil {
 			l = original

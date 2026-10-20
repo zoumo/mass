@@ -91,6 +91,7 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 	s.mu.Lock()
 	l := run.lanes[native.SessionID]
 	if l == nil {
+		op.buffering = true
 		for _, previous := range run.retired {
 			if previous.session.Status.SessionID == native.SessionID {
 				l = previous
@@ -107,13 +108,6 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 		if subs := s.observers[native.SessionID]; subs != nil {
 			l.subscribers = subs
 		}
-		for _, event := range op.events {
-			if !native.Source.SameRun(event.Source()) {
-				s.mu.Unlock()
-				return errors.New("opening source mismatch")
-			}
-			l.queue <- delivery{event: event}
-		}
 		run.lanes[native.SessionID] = l
 		if fresh {
 			go s.process(run, l)
@@ -123,6 +117,9 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 		return errors.New("original lane replaced")
 	}
 	s.mu.Unlock()
+	if err := s.flushOpening(ctx, run, l, op); err != nil {
+		return err
+	}
 	if _, err = s.sessionStatus(resource.SessionRef{SessionID: native.SessionID}, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
 		return err
 	}
@@ -137,4 +134,44 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 	delete(run.pending, key)
 	s.mu.Unlock()
 	return nil
+}
+
+// A restoring Session keeps all arriving sources in its original bounded buffer
+// until the buffered prefix has entered the one delivery queue. Never wait for
+// queue capacity while holding the Service mutex: its consumer also needs it.
+func (s *Service) flushOpening(ctx context.Context, run *runBinding, l *lane, op *opening) error {
+	for {
+		s.mu.Lock()
+		if len(op.events) == 0 {
+			op.buffering = false
+			err := op.err
+			s.mu.Unlock()
+			return err
+		}
+		batch := op.events
+		op.events = nil
+		s.mu.Unlock()
+		for i, e := range batch {
+			s.mu.Lock()
+			valid := l.source.SameRun(e.Source()) || run.retired[e.Source().WithWork("")] == l
+			s.mu.Unlock()
+			var err error
+			if !valid {
+				err = errors.New("opening event source mismatch")
+			} else {
+				select {
+				case l.queue <- delivery{event: e}:
+				case <-ctx.Done():
+					err = ctx.Err()
+				}
+			}
+			if err != nil {
+				s.mu.Lock()
+				op.events = append(batch[i:], op.events...)
+				op.err = err
+				s.mu.Unlock()
+				return err
+			}
+		}
+	}
 }

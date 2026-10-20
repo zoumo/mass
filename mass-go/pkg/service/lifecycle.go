@@ -399,7 +399,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
 	k := addressKey(a)
-	op := &opening{address: a, done: make(chan struct{}), requested: r, restoring: true}
+	op := &opening{address: a, done: make(chan struct{}), requested: r, restoring: true, buffering: true}
 	defer close(op.done)
 	s.mu.Lock()
 	if run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
@@ -486,20 +486,18 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	} else {
 		s.observers[r.Status.SessionID] = l.subscribers
 	}
-	for _, e := range op.events {
-		if !native.Source.SameRun(e.Source()) {
-			l.err = errors.New("resume event source mismatch")
-			break
-		}
-		l.queue <- delivery{event: e}
-	}
 	run.lanes[r.Status.SessionID] = l
-	delete(run.pending, k)
-	resumeErr := l.err
 	s.mu.Unlock()
 	if fresh {
 		go s.process(run, l)
 	}
+	if err := s.flushOpening(ctx, run, l, op); err != nil {
+		return r, err
+	}
+	s.mu.Lock()
+	delete(run.pending, k)
+	resumeErr := l.err
+	s.mu.Unlock()
 	return r, resumeErr
 }
 

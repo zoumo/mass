@@ -27,6 +27,7 @@ type recoveryDriver struct {
 	source       events.Source
 	slowSource   events.Source
 	onResume     func() error
+	resumeSource events.Source
 }
 
 func (d *recoveryDriver) Events() (events.Stream, error) { return d.pipe, nil }
@@ -46,7 +47,11 @@ func (d *recoveryDriver) ResumeSession(_ context.Context, id string, _ runtime.A
 			return runtime.DriverSession{}, err
 		}
 	}
-	return runtime.DriverSession{SessionID: id, Source: events.NewSource()}, nil
+	source := d.resumeSource
+	if source == (events.Source{}) {
+		source = events.NewSource()
+	}
+	return runtime.DriverSession{SessionID: id, Source: source}, nil
 }
 func (d *recoveryDriver) CloseSession(ctx context.Context, id string) error {
 	if d.closeErr != nil {
@@ -69,6 +74,22 @@ type recoveryFactory struct{ d *recoveryDriver }
 func (f recoveryFactory) Validate(runtime.Config) error                      { return nil }
 func (f recoveryFactory) New(string, runtime.Config) (runtime.Driver, error) { return f.d, nil }
 
+type recoveryHistory struct {
+	store.HistoryStore
+	blocked atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (h *recoveryHistory) Append(id string, records []events.SessionEvent) (*string, error) {
+	if h.blocked.Load() {
+		h.once.Do(func() { close(h.entered) })
+		<-h.release
+	}
+	return h.HistoryStore.Append(id, records)
+}
+
 type recoveryMeta struct {
 	store.MetaStore
 	failPublication atomic.Bool
@@ -84,6 +105,7 @@ func (m *recoveryMeta) UpdateSession(r resource.Session) (resource.Session, erro
 type RecoverySuite struct {
 	meta *recoveryMeta
 	suite.Suite
+	history *recoveryHistory
 	svc     *service.Service
 	d       *recoveryDriver
 	release func()
@@ -97,9 +119,15 @@ func (s *RecoverySuite) SetupTest() {
 	var once sync.Once
 	s.release = func() { once.Do(func() { close(s.d.closeRelease) }) }
 	s.meta = &recoveryMeta{MetaStore: st}
-	s.svc = service.New(s.meta, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": recoveryFactory{s.d}}))
+	s.history = &recoveryHistory{HistoryStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	s.svc = service.New(s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": recoveryFactory{s.d}}))
 	s.T().Cleanup(func() {
 		s.release()
+		select {
+		case <-s.history.release:
+		default:
+			close(s.history.release)
+		}
 		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		s.NoError(s.svc.Shutdown(c))
@@ -334,4 +362,67 @@ func (s *RecoverySuite) TestLateOriginalFactsKeepIdentityAndDoNotChangeRecovered
 	s.Require().Len(page.Events, 1)
 	s.Equal(message.EventID, page.Events[0].EventID)
 	s.Equal("fast", page.Events[0].SessionID)
+}
+
+func (s *RecoverySuite) TestRestoreBacklogDoesNotBlockAnotherSession() {
+	ref := resource.SessionRef{SessionID: "fast"}
+	old := s.d.source
+	_, err := s.svc.ArchiveSession(context.Background(), ref)
+	s.Require().NoError(err)
+	s.history.blocked.Store(true)
+	message, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "fast", SessionID: "fast", ItemID: "backlog", Time: time.Now().UTC()}, events.AgentMessage{MessageID: "backlog", Content: []events.ContentBlock{events.Text("old complete fact")}}, old)
+	s.Require().NoError(err)
+	s.Require().NoError(s.d.pipe.Send(context.Background(), message))
+	select {
+	case <-s.history.entered:
+	case <-time.After(time.Second):
+		s.FailNow("history did not block")
+	}
+	state := events.Running
+	update := func(source events.Source) events.SessionEvent {
+		e, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ac", Namespace: "one", SessionName: "fast", SessionID: "fast", Time: time.Now().UTC()}, events.StateUpdate{State: &state}, source)
+		s.Require().NoError(err)
+		return e
+	}
+	for range 100 {
+		s.Require().NoError(s.d.pipe.Send(context.Background(), update(old)))
+	}
+	s.d.resumeSource = events.NewSource()
+	early := update(s.d.resumeSource)
+	entered := make(chan struct{})
+	s.d.onResume = func() error {
+		for range 60 {
+			if err := s.d.pipe.Send(context.Background(), early); err != nil {
+				return err
+			}
+		}
+		close(entered)
+		return nil
+	}
+	resumed := make(chan error, 1)
+	go func() { _, err := s.svc.ResumeSession(context.Background(), ref); resumed <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		s.FailNow("resume notifications not delivered")
+	}
+	s.release()
+	unrelated := make(chan error, 1)
+	go func() {
+		_, err := s.svc.ArchiveSession(context.Background(), resource.SessionRef{SessionID: "slow"})
+		unrelated <- err
+	}()
+	select {
+	case err := <-unrelated:
+		s.Require().NoError(err)
+	case <-time.After(time.Second):
+		s.FailNow("backlog handoff held global Service ownership")
+	}
+	close(s.history.release)
+	select {
+	case err := <-resumed:
+		s.NoError(err)
+	case <-time.After(time.Second):
+		s.FailNow("restore did not finish after backlog release")
+	}
 }
