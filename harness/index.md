@@ -32,7 +32,7 @@ Service 的详细职责：[Session](modules/service/session.md)、[历史](modul
 ## 接口与承载映射
 
 - [TypeSpec 入口](typespec/README.md)：当前接口版本、声明和校验工具。
-- [HTTP](bindings/http.md)：Service 输入输出的 HTTP 映射。
+- [HTTP v1](bindings/http.md)：已定稿的资源式 REST JSON API、错误映射与可选 SSE 实时观察。
 - [持久化](bindings/storage.md)：资源与历史的存储表示。
 
 ## 原则与验收

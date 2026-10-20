@@ -2,6 +2,8 @@
 
 ## 2026-10-20
 
+- **定稿 HTTP v1**：按负责人“先起草、由另一 agent 审阅，无问题后写入 harness”的条件授权，经独立 agent 审阅、修订与复核通过，确定资源式 REST JSON API 与可选 SSE，不采用公共 JSON-RPC。明确 Runtime/Session 路由、两种会话寻址、输入/回答/取消回执、历史分页、错误映射、SSE ready/终止边界、实例级 Bearer 认证与健康探针。不透明 Session ID/交互引用的路径片段使用规范 base64url，JSON 中保留原值；错误 code 保持开放。接口知识包修订为 v0.2.0，Service/Runtime/Store 签名未改。幂等键、Operation 查询、细粒度授权、待决交互补查、webhook 与连续续传不在本版；定稿和 agent 文档审阅不代表实现或真实 Agent 验收完成。
+
 - **更新确认状态**：按负责人要求，将已确认的整体架构、模块设计、事件与共享结构、工作原则、词汇及知识管理/合同入口从 draft 更新为 stable。HTTP 与持久化承载保留 draft，页面内的待决事项继续保持未确认；状态不代表实现或运行验收完成。
 
 - **明确设计文档命名**：整体逻辑架构统一为 architecture.md，Service、Store、Runtime 的主设计统一为模块目录下的 design.md；补充整体架构的范围说明，同步索引与仓库引用。TypeSpec 工具使用入口保留 README.md。

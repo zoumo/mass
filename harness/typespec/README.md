@@ -3,7 +3,7 @@ type: Contract
 title: TypeSpec 合同入口
 description: Service、Runtime 与 Store 的接口版本与统一校验工具。
 status: stable
-interface_version: v0.1.0
+interface_version: v0.2.0
 sources:
 - id: direction
   resource: 项目负责人在 2026-10-19 关于应用服务与运行时拆分的讨论
@@ -13,6 +13,8 @@ sources:
 # TypeSpec 合同入口
 
 当前接口版本记录在本页元数据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
+
+v0.2.0 定稿 [HTTP v1 承载](../bindings/http.md)：资源式 REST、直接 JSON 结果、操作回执与错误映射，以及可选 SSE。Service、Runtime、Store 的 TypeSpec 签名保持不变；HTTP 路由版本 `/v1` 与本包接口修订版本分别管理。TypeSpec 编译不验证 HTTP 路由或 SSE 实现。
 
 - [资源管理接口](../modules/service/main.tsp)：RuntimeService、SessionService；进程内 EventHandlerService 提供处理器登记、停用与重新启用。
 - [运行时接口](../modules/runtime/main.tsp)：RuntimeRegistry、RuntimeDriver；Driver.events() 返回单消费者 EventStream<SessionEvent>，多个 Session 共用。
@@ -42,6 +44,6 @@ rtk proxy npm run examples --prefix harness/typespec
 
 校验分别编译 Service、Runtime、Store 三个模块及资源内部协调，开启 noEmit 与 warningAsError；固定编译器和依赖锁，需要 Node.js 22 或更新版本。编译成功不代表并发、资源释放或实际 Agent 行为已经验证。
 
-Store 的职责见 [Store](../modules/store/design.md)，已区分 MetaStore 与 HistoryStore；MetaStore CRUD、资源分页和实时订阅均已定义 TypeSpec；共享基础类型见 [types.tsp](../shared/types.tsp)，其开放值不是待决占位。Service 与 Store 共用 [历史模型](../shared/history-models.tsp)，保留类型过滤、历史游标和同步进度。SessionEvent 已定义统一信封和按 type 绑定的 payload，adapter 补齐名称后交付；内容块已定义，消息与思考按条目 ID 定位，不增加块坐标；交互与配置的适配细节见运行时事件文档。准确错误 code 及文件提交协议仍需细化。编译检查不表示已有存储实现。
+Store 的职责见 [Store](../modules/store/design.md)，已区分 MetaStore 与 HistoryStore；MetaStore CRUD、资源分页和实时订阅均已定义 TypeSpec；共享基础类型见 [types.tsp](../shared/types.tsp)，其开放值不是待决占位。Service 与 Store 共用 [历史模型](../shared/history-models.tsp)，保留类型过滤、历史游标和同步进度。SessionEvent 已定义统一信封和按 type 绑定的 payload，adapter 补齐名称后交付；内容块已定义，消息与思考按条目 ID 定位，不增加块坐标；交互与配置的适配细节见运行时事件文档。HTTP 已定义已知错误 code 的状态码映射，code 仍开放；各业务拒绝场景的准确分类及文件提交协议仍需细化。编译检查不表示已有存储实现。
 
 事件预览通过标准 @example 编写，使用编译器校验并序列化。npm run check 同时检查示例是否覆盖所有事件类型、UUID 格式及生成 JSON 是否过期；它不验证所有跨字段业务条件或媒体正文的实际有效性。导出工具不增加额外依赖。
