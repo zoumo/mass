@@ -42,6 +42,9 @@ func checkDynamic(v any, active map[jsonContainer]bool) error {
 		}
 		return nil
 	case json.Number:
+		if x == "" {
+			return errors.New("empty JSON number")
+		}
 		_, err := json.Marshal(x)
 		return err
 	case float32:

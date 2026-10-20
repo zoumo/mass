@@ -86,4 +86,21 @@ func (s *RuntimeConfigSuite) TestDeepJSONAcceptedAndCyclesRejected() {
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "cycle"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{"value": cycle}}})
 	s.ErrorIs(err, runtime.ErrInvalidArgument)
 }
+func (s *RuntimeConfigSuite) TestEmptyJSONNumberCannotBeRewrittenAsZero() {
+	input := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{"number": json.Number("")}}}
+	_, err := s.svc.CreateRuntime(input)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
+	items, err := s.svc.ListRuntimes(resource.RuntimeQuery{})
+	s.Require().NoError(err)
+	s.Empty(items)
+	input.Spec.Config["number"] = json.Number("9007199254740993")
+	created, err := s.svc.CreateRuntime(input)
+	s.Require().NoError(err)
+	input.Spec.Config["number"] = json.Number("")
+	_, err = s.svc.UpdateRuntime("agent", input.Spec)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
+	unchanged, err := s.svc.GetRuntime("agent")
+	s.Require().NoError(err)
+	s.Equal(created, unchanged)
+}
 func TestRuntimeConfigSuite(t *testing.T) { suite.Run(t, new(RuntimeConfigSuite)) }
