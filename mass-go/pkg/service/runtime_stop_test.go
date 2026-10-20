@@ -519,3 +519,33 @@ func (s *RuntimeStopSuite) TestAbnormalFinalStreamCannotProveFactDrain() {
 	_, err = s.svc.StartRuntime(context.Background(), "agent")
 	s.ErrorIs(err, runtime.ErrFailedPrecondition)
 }
+
+func (s *RuntimeStopSuite) TestStopCommitsArchivedFactsBeforeDriverRelease() {
+	source := s.d.source
+	_, err := s.svc.ArchiveSession(context.Background(), s.ref)
+	s.Require().NoError(err)
+	s.history.blocked.Store(true)
+	var once sync.Once
+	release := func() { once.Do(func() { close(s.history.release) }) }
+	defer release()
+	message, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "demo", SessionID: "original", ItemID: "retired", Time: time.Now().UTC()}, events.AgentMessage{MessageID: "retired", Content: []events.ContentBlock{events.Text("original complete fact")}}, source)
+	s.Require().NoError(err)
+	s.Require().NoError(s.d.pipe.Send(context.Background(), message))
+	select {
+	case <-s.history.entered:
+	case <-time.After(time.Second):
+		s.FailNow("old fact commit gate")
+	}
+	c, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err = s.svc.StopRuntime(c, "agent")
+	s.Require().Error(err)
+	s.Equal(int32(0), s.d.stops.Load(), "retired accepted facts must commit before Driver release")
+	release()
+	_, err = s.svc.StopRuntime(context.Background(), "agent")
+	s.Require().NoError(err)
+	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{})
+	s.Require().NoError(err)
+	s.Require().Len(page.Events, 1)
+	s.Equal(message.EventID, page.Events[0].EventID)
+}
