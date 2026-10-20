@@ -392,6 +392,9 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		s.mu.Unlock()
 		return r, err
 	}
+	s.mu.Lock()
+	op.native = native
+	s.mu.Unlock()
 	identityErr := resource.ValidateSessionID(native.SessionID)
 	if identityErr == nil && native.SessionID != r.Status.SessionID {
 		identityErr = errors.New("resume returned a replacement identity")

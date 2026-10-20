@@ -95,6 +95,12 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 		response *http.Response
 		err      error
 	}
+	released := false
+	defer func() {
+		if !released {
+			close(gate.release)
+		}
+	}()
 	done := make(chan result, 1)
 	go func() { res, e := http.DefaultClient.Do(req); done <- result{res, e} }()
 	select {
@@ -102,12 +108,6 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 	case <-c.Done():
 		t.Fatal(c.Err())
 	}
-	released := false
-	defer func() {
-		if !released {
-			close(gate.release)
-		}
-	}()
 	select {
 	case early := <-done:
 		if early.response != nil {
