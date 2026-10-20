@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -75,10 +76,67 @@ func (s *entrypointSuite) SetupTest() {
 
 func (s *entrypointSuite) call(op string, p client.Params, out any) {
 	s.T().Helper()
-	b, e := client.EncodeParams(op, p)
-	s.Require().NoError(e)
-	cmd := exec.CommandContext(ctx(s.T()), ctl, "--url", s.url, "--op", op)
-	cmd.Stdin = bytes.NewReader(b)
+	// HTTP-only capabilities stay covered without exposing CLI compatibility flags.
+	if op == "session.answer" || len(p.History.Types) > 0 || p.SessionQuery.Namespace != "" || p.SessionQuery.RuntimeRef != "" || p.SessionQuery.State != "" {
+		s.Require().NoError((client.Client{URL: s.url}).Call(ctx(s.T()), op, p, out))
+		return
+	}
+	parts := strings.Split(op, ".")
+	action := parts[1]
+	if action == "input" {
+		action = "prompt"
+	}
+	args := []string{"--url", s.url, "-o", "json", parts[0], action}
+	if parts[0] == "runtime" && action != "list" {
+		name := p.Name
+		if p.Runtime != nil {
+			name = p.Runtime.Metadata.Name
+		}
+		args = append(args, name)
+	}
+	if parts[0] == "session" && action != "list" && action != "create" {
+		if p.Session.SessionID != "" {
+			args = append(args, p.Session.SessionID)
+		} else {
+			args = append(args, p.Session.Name, "-n", p.Session.Namespace)
+		}
+	}
+	switch op {
+	case "runtime.create":
+		config, e := json.Marshal(p.Runtime.Spec.Config)
+		s.Require().NoError(e)
+		args = append(args, "--type", p.Runtime.Spec.Type, "--config-json", string(config))
+	case "runtime.update":
+		config, e := json.Marshal(p.Spec.Config)
+		s.Require().NoError(e)
+		args = append(args, "--config-json", string(config))
+	case "session.create":
+		v := p.Create
+		args = append(args, v.Metadata.Name, "-n", v.Metadata.Namespace, "--runtime", v.Spec.RuntimeRef, "--cwd", v.Spec.Cwd)
+	case "session.input":
+		b, e := json.Marshal(p.Input.Content[0])
+		s.Require().NoError(e)
+		var text struct {
+			Text string `json:"text"`
+		}
+		s.Require().NoError(json.Unmarshal(b, &text))
+		args = append(args, "--text", text.Text)
+	case "session.history":
+		if p.History.Limit > 0 {
+			args = append(args, "--limit", strconv.Itoa(p.History.Limit))
+		}
+		if p.History.After != "" {
+			args = append(args, "--after", p.History.After)
+		}
+	case "session.list":
+		if p.SessionQuery.Limit > 0 {
+			args = append(args, "--limit", strconv.Itoa(p.SessionQuery.Limit))
+		}
+		if p.SessionQuery.After != "" {
+			args = append(args, "--after", p.SessionQuery.After)
+		}
+	}
+	cmd := exec.CommandContext(ctx(s.T()), ctl, args...)
 	v, e := cmd.CombinedOutput()
 	s.Require().NoError(e, "%s: %s", op, v)
 	if out != nil {
@@ -114,18 +172,23 @@ func (s *entrypointSuite) open(kind, mode string) (resource.SessionRef, resource
 }
 
 func (s *entrypointSuite) observer(ref resource.SessionRef) (*exec.Cmd, *bufio.Scanner) {
-	b, e := json.Marshal(ref)
-	s.Require().NoError(e)
-	cmd := exec.CommandContext(ctx(s.T()), ctl, "--url", s.url, "--op", "observe")
-	cmd.Stdin = bytes.NewReader(b)
+	args := []string{"--url", s.url, "-o", "json", "session", "watch"}
+	if ref.SessionID != "" {
+		args = append(args, ref.SessionID)
+	} else {
+		args = append(args, ref.Name, "-n", ref.Namespace)
+	}
+	cmd := exec.CommandContext(ctx(s.T()), ctl, args...)
 	out, e := cmd.StdoutPipe()
 	s.Require().NoError(e)
-	cmd.Stderr = os.Stderr
+	diagnostics, e := cmd.StderrPipe()
+	s.Require().NoError(e)
 	s.Require().NoError(cmd.Start())
+	ready := bufio.NewScanner(diagnostics)
+	s.Require().True(ready.Scan())
+	s.Equal("subscription.ready", ready.Text())
 	scan := bufio.NewScanner(out)
 	scan.Buffer(make([]byte, 4096), 16<<20)
-	s.Require().True(scan.Scan())
-	s.JSONEq(`{"ready":true}`, scan.Text())
 	s.T().Cleanup(func() { _ = cmd.Process.Signal(syscall.SIGTERM); _ = cmd.Wait() })
 	return cmd, scan
 }
@@ -189,7 +252,7 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 			if p.State != nil && *p.State == events.Idle {
 				if question {
 					s.Equal(1, questions)
-					s.T().Log("PASS synthetic explicit user question via CLI/HTTP and original SDK handle")
+					s.T().Log("PASS synthetic explicit user question via HTTP and original SDK handle")
 				} else {
 					if text != "continue" || strings.HasPrefix(ref.SessionID, "claude") {
 						s.Positive(permissions)
@@ -335,13 +398,13 @@ func (s *entrypointSuite) TestParametersAndDirectory() {
 	var public *transport.Error
 	s.Require().ErrorAs(e, &public)
 	s.Equal("not_found", public.Code)
-	cmd := exec.CommandContext(ctx(s.T()), ctl, "--url", s.url, "--op", "session.get")
+	cmd := exec.CommandContext(ctx(s.T()), ctl, "--url", s.url, "session", "get")
 	cmd.Stdin = strings.NewReader(`{"unexpected":"secret"}`)
 	v, e := cmd.CombinedOutput()
 	s.Require().Error(e)
 	s.NotContains(string(v), "secret")
 	for _, body := range []string{`null`, `{} {}`, `{"metadata":{}}`, `{"unexpected":"private-diagnostic"}`} {
-		request, e := http.NewRequestWithContext(ctx(s.T()), http.MethodPost, s.url+"/v1/sessions", strings.NewReader(body))
+		request, e := http.NewRequestWithContext(ctx(s.T()), http.MethodPost, s.url+"/apis/v1/sessions", strings.NewReader(body))
 		s.Require().NoError(e)
 		request.Header.Set("Content-Type", "application/json")
 		response, e := http.DefaultClient.Do(request)
@@ -453,3 +516,39 @@ func (s *entrypointSuite) unsupportedMedia(kind string) {
 }
 func (s *entrypointSuite) TestCodexUnsupportedMedia()  { s.unsupportedMedia("codex") }
 func (s *entrypointSuite) TestClaudeUnsupportedMedia() { s.unsupportedMedia("claude") }
+
+// The first CLI release has the same command workflow for both supported drivers.
+// Keep this explicit name-addressed path alongside the existing raw-ID scenarios.
+func (s *entrypointSuite) TestNamedSessionCommandWorkflow() {
+	for _, kind := range []string{"codex", "claude"} {
+		s.Run(kind, func() {
+			path, work := nativeScenario(s.T(), kind, "basic")
+			bin := mock
+			if kind == "claude" {
+				bin = claudeMock
+			}
+			name := "named-" + kind
+			r := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
+			s.call("runtime.create", client.Params{Runtime: &r}, nil)
+			s.call("runtime.start", client.Params{Name: name}, nil)
+			create := resource.Session{Metadata: resource.Metadata{Namespace: "cli", Name: kind}, Spec: resource.SessionSpec{RuntimeRef: name, SessionSpec: runtime.SessionSpec{Cwd: work}}}
+			var created resource.Session
+			s.call("session.create", client.Params{Create: &create}, &created)
+			s.NotEmpty(created.Status.SessionID)
+			ref := resource.SessionRef{Namespace: "cli", Name: kind}
+			s.Eventually(func() bool {
+				var current resource.Session
+				s.call("session.get", client.Params{Session: ref}, &current)
+				return current.Status.State == events.Idle || (kind == "claude" && current.Status.State == events.Unknown)
+			}, 2*time.Second, 10*time.Millisecond)
+			var before store.HistoryPage
+			s.call("session.history", client.Params{Session: ref}, &before)
+			for _, event := range before.Events {
+				s.NotEqual("user.message", event.Type())
+			}
+			s.runWork(ref, "hello", false)
+			s.call("session.archive", client.Params{Session: ref}, nil)
+			s.call("runtime.stop", client.Params{Name: name}, nil)
+		})
+	}
+}

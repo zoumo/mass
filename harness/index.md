@@ -21,6 +21,7 @@ agent 写入本目录之前，须有人类明确要求或事先同意；具体�
 
 ## 模块
 
+- [massctl](modules/massctl/design.md)：资源与操作两级子命令、目标寻址、输入输出、请求等待及实时观察的客户端能力草案。
 - [Service](modules/service/design.md)：RuntimeService、SessionService，负责业务输入输出、资源状态和操作编排。
 - [Store](modules/store/design.md)：MetaStore 管理资源 CRUD 与 generation，HistoryStore 提供批量追加、查询与同步进度；文件保存完整数据，SQLite 为可重建索引。
 - [Runtime](modules/runtime/design.md)：RuntimeRegistry、RuntimeDriver，按类型校验配置并执行实际运行操作。

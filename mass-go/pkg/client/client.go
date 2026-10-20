@@ -102,11 +102,11 @@ func (c Client) request(ctx context.Context, method, path string, body json.RawM
 }
 
 func SessionPath(ref resource.SessionRef) (string, error) {
-	if ref.SessionID != "" && ref.Namespace == "" && ref.Name == "" && utf8.ValidString(ref.SessionID) {
-		return "/v1/sessions/" + base64.RawURLEncoding.EncodeToString([]byte(ref.SessionID)), nil
+	if ref.SessionID != "" && ref.SessionID != "." && ref.SessionID != ".." && ref.Namespace == "" && ref.Name == "" && utf8.ValidString(ref.SessionID) {
+		return "/apis/v1/sessions/" + url.PathEscape(ref.SessionID), nil
 	}
-	if ref.SessionID == "" && ref.Namespace != "" && ref.Name != "" {
-		return "/v1/namespaces/" + url.PathEscape(ref.Namespace) + "/sessions/" + url.PathEscape(ref.Name), nil
+	if ref.SessionID == "" && ref.Namespace != "" && ref.Name != "" && ref.Name != "." && ref.Name != ".." {
+		return "/apis/v1/namespaces/" + url.PathEscape(ref.Namespace) + "/sessions/" + url.PathEscape(ref.Name), nil
 	}
 	return "", transport.Invalid()
 }
@@ -189,7 +189,7 @@ func (c Client) CallJSON(ctx context.Context, op string, p json.RawMessage, out 
 		if decode("name", &name) != nil || name == "" {
 			return transport.Invalid()
 		}
-		path = "/v1/runtimes/" + url.PathEscape(name)
+		path = "/apis/v1/runtimes/" + url.PathEscape(name)
 	}
 	if strings.HasPrefix(op, "session.") && op != "session.create" && op != "session.list" {
 		var ref resource.SessionRef
@@ -204,10 +204,10 @@ func (c Client) CallJSON(ctx context.Context, op string, p json.RawMessage, out 
 	}
 	switch op {
 	case "runtime.create":
-		path = "/v1/runtimes"
+		path = "/apis/v1/runtimes"
 		body = fields["runtime"]
 	case "runtime.list":
-		path = "/v1/runtimes"
+		path = "/apis/v1/runtimes"
 		method = "GET"
 		if _, ok := fields["runtimeQuery"]; ok {
 			var q resource.RuntimeQuery
@@ -225,7 +225,6 @@ func (c Client) CallJSON(ctx context.Context, op string, p json.RawMessage, out 
 		method = "GET"
 	case "runtime.update":
 		method = "PUT"
-		path += "/spec"
 		body = fields["spec"]
 	case "runtime.start":
 		path += "/start"
@@ -234,10 +233,10 @@ func (c Client) CallJSON(ctx context.Context, op string, p json.RawMessage, out 
 	case "runtime.delete":
 		method = "DELETE"
 	case "session.create":
-		path = "/v1/sessions"
+		path = "/apis/v1/sessions"
 		body = fields["create"]
 	case "session.list":
-		path = "/v1/sessions"
+		path = "/apis/v1/sessions"
 		method = "GET"
 		if _, ok := fields["sessionQuery"]; ok {
 			var q struct {
