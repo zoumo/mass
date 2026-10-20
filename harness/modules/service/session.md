@@ -18,9 +18,17 @@ sources:
 
 本文是 [应用服务模块](design.md) 内部 sessionManager 的职责展开。它统一管理全部 Runtime 实例的持久 Session，负责会话目录、名称预留、Runtime 名称归属、命令路由、创建发布、归档和恢复编排。调用者使用独立的 SessionService 公共接口。SessionService 实现通过运行时模块提供的 RuntimeDriver 协调原生控制与会话历史。[^direction]
 
-Agent 生成 sessionId，MASS 原样保存；用户命名 sessionName 与它独立。sessionId 在本模块管理的全部 Runtime 和 namespace 中唯一；Runtime 名称归属仍用于路由与恢复验证。内部存储定位符不成为第二个公共会话 ID。
+Agent 生成 sessionId，MASS 校验其合法性后原样保存；用户命名 sessionName 与它独立。sessionId 在本模块管理的全部 Runtime 和 namespace 中唯一；Runtime 名称归属仍用于路由与恢复验证。内部存储定位符不成为第二个公共会话 ID。
 
 Session 的持久存在与连接状态独立。断线或归档不删除身份和历史。恢复重新建立运行连接，同一持久会话不能同时具有两个相互竞争的有效运行控制者。
+
+## Session ID 合法性
+
+sessionId 的完整原始值不得等于 `.` 或 `..`。这是身份合法性规则，适用于创建、恢复、持久身份和所有按 ID 的操作；不通过 URL 编码、裁剪、改名或生成替代 ID 绕过。包含点号的其他值（例如 `a.b`、`a..b`）不因本规则被拒绝。
+
+客户端在构造 URL 前校验原始 ID；HTTP 对路径参数完成一次 URL 解码后校验，非法值返回 400 invalid_argument，reason=invalid_session_id。SessionService 的进程内 ID 引用也必须在资源查询或副作用之前拒绝同样的值。nameOrID 解码后等于 `.` 或 `..` 时同样拒绝，不进入名称/ID 匹配。
+
+原生打开或恢复若返回上述非法 ID，不得公开创建或恢复成功、登记为合法持久身份或发布对应会话事件；按原操作的资源清理与未知结果规则结算，不伪造新 ID。读取到这类非法持久身份时明确失败，不能将其恢复为合法会话。
 
 ## 对外保证
 
@@ -58,10 +66,10 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 
 ## 创建与公开成功
 
-1. 校验名称、实例、会话参数和已知能力；预留 namespace/name 唯一键及实例引用，固定 Runtime 名称、原 Driver 与配置。
+1. 校验名称（包括下述禁止 UUID 形式的规则）、实例、会话参数和已知能力；预留 namespace/name 唯一键及实例引用，固定 Runtime 名称、原 Driver 与配置。
 2. 在产生副作用前分配本次操作关联。此时尚无 sessionId，也不伪造一个。
 3. 通过Service 模块的运行绑定取得 Driver，再由 RuntimeDriver 接收 namespace/name 并请求 adapter 打开会话。原生打开期间不阻止所有其他名称的操作。
-4. 收到真实 sessionId 和能力后，从Service 侧运行绑定取得生效配置修订，原子检查并登记 sessionId 全局唯一索引，与 namespace/name、spec.runtimeRef 和会话配置一起持久保存。保存不能覆盖其他操作或实例的记录；冲突时不公开成功，并只清理本次取得的运行资源。
+4. 收到真实 sessionId 和能力后，先校验 [Session ID 合法性](#session-id-合法性)，再从Service 侧运行绑定取得生效配置修订，原子检查并登记 sessionId 全局唯一索引，与 namespace/name、spec.runtimeRef 和会话配置一起持久保存。保存不能覆盖其他操作或实例的记录；冲突时不公开成功，并只清理本次取得的运行资源。
 5. 保存成功后安装连接、接受消费者并公开会话成功。原生连接建立不等于已经完成这一步。
 
 会话创建不隐式发送输入。名称预留、持久记录和运行资源必须始终能归属于具体操作。
@@ -86,10 +94,10 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 恢复在同一 Session 内与归档和其他打开操作串行协调；已在线、关闭未确定或仍有打开结算的会话不能建立替代运行连接。
 
 1. 读取并校验未被替换的持久元信息、Runtime 名称归属及配置绑定。
-2. 由会话历史验证全部已提交公共记录的格式、身份和连续顺序。
+2. 先校验持久 sessionId 的合法性，再由会话历史验证全部已提交公共记录的格式、身份和连续顺序。
 3. 由 adapter 校验公共记录所需的私有事实证据；验证通过后才处理未提交尾部。
 4. 通过Service 模块的运行绑定取得 Driver，传入原会话的 namespace/name 并调用 resumeSession；Driver 在内部验证恢复材料，再连接原会话。恢复材料验证失败不得连接或新建会话。
-5. 验证返回的 sessionId 与保存身份相同，再启用本次会话运行，保留历史顺序与已存事件的 UUID，同步位置从完整文件恢复。
+5. 验证返回的 sessionId 合法且与保存身份相同，再启用本次会话运行，保留历史顺序与已存事件的 UUID，同步位置从完整文件恢复。
 
 失败不新建替代会话，不将旧输入、工具动作或处理器动作重新执行，不把原生旧内容自动导入为新历史。返回不同 ID 的运行资源要按原操作所有权清理，不能替换持久身份。
 
@@ -97,7 +105,7 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 
 ## 资源结构与版本
 
-Session 名称遵循 DNS subdomain 规则，namespace 遵循 DNS label 规则；namespace/name 唯一。namespace 用于分组寻址，不替代权限隔离。createdAt 在首次持久创建时写入，之后不因恢复或归档修改。查询默认跨 namespace，可显式筛选。Session 的 Runtime 归属仅使用 spec.runtimeRef 名称。接纳操作时固定原 Driver 和具体运行/工作目标，名称复用不会改变已接纳操作的目标。
+Session 名称遵循 DNS subdomain 规则，namespace 遵循 DNS label 规则；namespace/name 唯一。创建时 metadata.name 还必须通过[名称校验](#创建名称校验)。namespace 用于分组寻址，不替代权限隔离。createdAt 在首次持久创建时写入，之后不因恢复或归档修改。查询默认跨 namespace，可显式筛选。Session 的 Runtime 归属仅使用 spec.runtimeRef 名称。接纳操作时固定原 Driver 和具体运行/工作目标，名称复用不会改变已接纳操作的目标。
 
 Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs；status 保存 Agent 返回的 sessionId、统一的 SessionState 与运行能力。sessionId 即使离线也必须持久保留。
 
@@ -106,6 +114,18 @@ Session.status.appliedGeneration 表示本次会话运行应用的 Session spec 
 当前未增加 updateSession。归档、恢复、输入、交互与状态变化不改变 Session spec 或 generation。Runtime 更新不自动改变 Session spec；重新启动 Runtime 后恢复 Session，需要验证新运行配置与原会话兼容。
 
 Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir 保留内部管理，_meta 不作为透传入口。systemPrompt 只用于会话配置，创建与恢复不隐式发送用户 prompt。详见[字段合同](design.md#session-spec-与-agentrun-的参考关系)。
+
+## 创建名称校验
+
+创建 Session 时，metadata.name 必须满足 ResourceName 的 DNS subdomain 约束，并且不得是 UUID 形式。UUID 形式按以下完整字符串模式识别；保留所有版本位与 variant 位组合，包括全零值，不依赖某个 UUID 库支持的版本：
+
+```text
+^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
+```
+
+该规则由 SessionService 在名称预留、持久写入与调用 RuntimeDriver 之前执行，HTTP、CLI 和进程内调用采用相同约束。拒绝时返回 code=invalid_argument、reason=session_name_is_uuid；HTTP 映射为 400。此限制仅针对 Session 创建名称，不改变 Runtime 名称约束，也不把原生 sessionId 限制为 UUID。
+
+禁止 UUID 形式的名称可以避免 UUID ID 与新名称重叠，但原生 ID 仍可能是其他字符串；[HTTP nameOrID 解析](../../bindings/http.md#nameorid-解析)继续处理非 UUID ID 与名称冲突。查询、恢复、归档和历史读取不重新应用创建名称校验，既有持久身份不因此失去可访问性。
 
 ## 并发与资源隔离
 
@@ -118,7 +138,9 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 | 场景 | 应观察到的行为 |
 |---|---|
 | 不同 namespace 使用同名 Session | 分别创建与查询，按 namespace/name 隔离寻址 |
+| 创建 UUID 形式的名称（含全零值） | invalid_argument / session_name_is_uuid；不预留名称、不写入资源、不调用 Driver；各调用入口一致 |
 | 同一 namespace 重复创建同名 Session | 唯一键冲突，不覆盖已有资源 |
+| 原始 sessionId 为 `.` 或 `..` | ID 引用在查询或副作用前拒绝；原生返回时不公开成功或登记身份，并结算该操作的资源责任 |
 | 两实例返回相同 sessionId | 拒绝第二次登记，不覆盖已有记录；按原操作清理本次运行资源 |
 | 通过 sessionId 与 namespace/name 查询同一会话 | 两种引用返回同一身份，均无需提供 Runtime |
 | 同时提供 sessionId 和名称字段 | 拒绝含糊引用 |

@@ -3,7 +3,7 @@ type: Contract
 title: TypeSpec 合同入口
 description: Service、Runtime 与 Store 的接口版本与统一校验工具。
 status: stable
-interface_version: v0.2.0
+interface_version: v0.2.5
 sources:
 - id: direction
   resource: 项目负责人在 2026-10-19 关于应用服务与运行时拆分的讨论
@@ -14,7 +14,7 @@ sources:
 
 当前接口版本记录在本页元数据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
 
-v0.2.0 定稿 [HTTP v1 承载](../bindings/http.md)：资源式 REST、直接 JSON 结果、操作回执与错误映射，以及可选 SSE。Service、Runtime、Store 的 TypeSpec 签名保持不变；HTTP 路由版本 `/v1` 与本包接口修订版本分别管理。TypeSpec 编译不验证 HTTP 路由或 SSE 实现。
+v0.2.5 在 v0.2.0 定稿的 [HTTP v1 承载](../bindings/http.md)基础上，将全部业务路径及创建响应 Location 统一为 `/apis/v1` 前缀；Runtime 在资源路径上 PUT 更新配置，Session 支持 namespace 下的 nameOrID 寻址，原始 Session ID 使用 URL escape，完整值 `.`、`..` 非法，须在创建、恢复和寻址时拒绝。创建 Session 禁止 UUID 形式的名称；SSE 明确禁止缓存、内容转换与代理缓冲。请求体大小等 HTTP 容量边界按 [ADR-0001](../adr/0001-defer-http-capacity-limits.md)暂不设置强制限制。HTTP 继续采用资源式 REST、直接 JSON 结果、操作回执与错误映射，以及可选 SSE。Service、Runtime、Store 的 TypeSpec 签名保持不变；HTTP 路由版本 `v1`（路径前缀 `/apis/v1`）与本包接口修订版本分别管理。TypeSpec 编译不验证 HTTP 路由或 SSE 实现。HTTP 文档只维护 URL 与处理语义；具体请求/响应 schema 和 OpenAPI 文档由代码生成，生成产物须符合业务合同。
 
 - [资源管理接口](../modules/service/main.tsp)：RuntimeService、SessionService；进程内 EventHandlerService 提供处理器登记、停用与重新启用。
 - [运行时接口](../modules/runtime/main.tsp)：RuntimeRegistry、RuntimeDriver；Driver.events() 返回单消费者 EventStream<SessionEvent>，多个 Session 共用。
