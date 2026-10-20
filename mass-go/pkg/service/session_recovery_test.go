@@ -28,6 +28,7 @@ type recoveryDriver struct {
 	slowSource   events.Source
 	onResume     func() error
 	resumeSource events.Source
+	resumeID     string
 }
 
 func (d *recoveryDriver) Events() (events.Stream, error) { return d.pipe, nil }
@@ -50,6 +51,9 @@ func (d *recoveryDriver) ResumeSession(_ context.Context, id string, _ runtime.A
 	source := d.resumeSource
 	if source == (events.Source{}) {
 		source = events.NewSource()
+	}
+	if d.resumeID != "" {
+		id = d.resumeID
 	}
 	return runtime.DriverSession{SessionID: id, Source: source}, nil
 }
@@ -425,4 +429,66 @@ func (s *RecoverySuite) TestRestoreBacklogDoesNotBlockAnotherSession() {
 	case <-time.After(time.Second):
 		s.FailNow("restore did not finish after backlog release")
 	}
+}
+
+func (s *RecoverySuite) assertFailedRestoreKeepsOldFact(mode string) {
+	ref := resource.SessionRef{SessionID: "fast"}
+	old := s.d.source
+	original, err := s.svc.ArchiveSession(context.Background(), ref)
+	s.Require().NoError(err)
+	// A slow-Session subscriber supplies an ordered shared-stream barrier.
+	barrier, err := s.svc.SubscribeEvents(resource.SessionRef{SessionID: "slow"})
+	s.Require().NoError(err)
+	defer barrier.Close()
+	message, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "fast", SessionID: "fast", ItemID: "late-original", Time: time.Now().UTC()}, events.AgentMessage{MessageID: "late-original", Content: []events.ContentBlock{events.Text("original accepted fact")}}, old)
+	s.Require().NoError(err)
+	state := events.Running
+	update, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ac", Namespace: "one", SessionName: "slow", SessionID: "slow", Time: time.Now().UTC()}, events.StateUpdate{State: &state}, s.d.slowSource)
+	s.Require().NoError(err)
+	if mode != "released" {
+		s.d.resumeID = "replacement"
+		s.d.resumeSource = events.NewSource()
+	}
+	if mode == "cleanup" {
+		s.d.closeErr = errors.New("replacement release unknown")
+	}
+	s.d.onResume = func() error {
+		if err := s.d.pipe.Send(context.Background(), message); err != nil {
+			return err
+		}
+		if err := s.d.pipe.Send(context.Background(), update); err != nil {
+			return err
+		}
+		c, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if _, err := barrier.Next(c); err != nil {
+			return err
+		}
+		if mode == "released" {
+			return errors.Join(runtime.ErrResourcesReleased, errors.New("private restore rejected"))
+		}
+		return nil
+	}
+	_, err = s.svc.ResumeSession(context.Background(), ref)
+	s.Require().Error(err)
+	if mode == "cleanup" {
+		s.d.closeErr = nil
+		s.Require().NoError(s.svc.ReconcileOpening(context.Background(), "agent", runtime.Address{Namespace: "one", SessionName: "fast"}))
+	}
+	s.Eventually(func() bool {
+		page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{})
+		return err == nil && len(page.Events) == 1 && page.Events[0].EventID == message.EventID
+	}, time.Second, time.Millisecond, "rejected restore must not discard original complete fact")
+	saved, err := s.svc.GetSession(ref)
+	s.Require().NoError(err)
+	s.Equal(original.Status, saved.Status)
+}
+func (s *RecoverySuite) TestResourceFreeRestoreFailureKeepsOldFact() {
+	s.assertFailedRestoreKeepsOldFact("released")
+}
+func (s *RecoverySuite) TestReplacementRestoreFailureKeepsOldFact() {
+	s.assertFailedRestoreKeepsOldFact("replacement")
+}
+func (s *RecoverySuite) TestReplacementCleanupSettlementKeepsOldFact() {
+	s.assertFailedRestoreKeepsOldFact("cleanup")
 }

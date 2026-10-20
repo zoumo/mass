@@ -418,9 +418,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	if err != nil {
 		s.mu.Lock()
 		op.err = err
-		if errors.Is(err, runtime.ErrResourcesReleased) {
-			delete(run.pending, k)
-		}
+		op.released = errors.Is(err, runtime.ErrResourcesReleased)
 		s.mu.Unlock()
 		_, statusErr := s.sessionStatus(ref, func(r *resource.Session) {
 			r.Status.State = events.Unknown
@@ -428,7 +426,11 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 				r.Status = op.requested.Status
 			}
 		})
-		return r, errors.Join(err, statusErr)
+		var deliveryErr error
+		if errors.Is(err, runtime.ErrResourcesReleased) && statusErr == nil {
+			deliveryErr = s.settleFailedRestore(ctx, run, op, k)
+		}
+		return r, errors.Join(err, statusErr, deliveryErr)
 	}
 	s.mu.Lock()
 	op.native = native
@@ -440,9 +442,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	if identityErr != nil {
 		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
 		s.mu.Lock()
-		if cleanup == nil {
-			delete(run.pending, k)
-		}
+		op.released = cleanup == nil
 		s.mu.Unlock()
 		_, statusErr := s.sessionStatus(ref, func(r *resource.Session) {
 			r.Status.State = events.Unknown
@@ -453,7 +453,11 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		if cleanup != nil {
 			return r, errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_identity_cleanup_unknown", Message: "Unexpected resume identity cleanup remains unsettled"}, cleanup, statusErr)
 		}
-		return r, errors.Join(identityErr, statusErr)
+		var deliveryErr error
+		if statusErr == nil {
+			deliveryErr = s.settleFailedRestore(ctx, run, op, k)
+		}
+		return r, errors.Join(identityErr, statusErr, deliveryErr)
 	}
 	r, err = s.sessionStatus(ref, func(r *resource.Session) {
 		r.Status = resource.SessionStatus{SessionID: r.Status.SessionID, State: events.Unknown, AppliedGeneration: r.Metadata.Generation, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
