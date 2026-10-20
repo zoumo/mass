@@ -27,34 +27,52 @@ import (
 )
 
 type options struct {
-	data, listen, tokenFile, tlsCert, tlsKey string
-	approve, local                           bool
+	Data      string `mapstructure:"data"`
+	Listen    string `mapstructure:"listen"`
+	TokenFile string `mapstructure:"tokenFile"`
+	TLSCert   string `mapstructure:"tlsCert"`
+	TLSKey    string `mapstructure:"tlsKey"`
+	Approve   bool   `mapstructure:"prototypeAutoApprovePermissions"`
+	Local     bool   `mapstructure:"local"`
 }
 
 func newCommand() *cobra.Command {
 	var o options
+	var configPath string
+	home, homeErr := os.UserHomeDir()
+	defaultConfig := filepath.Join(home, ".mass", "config.yaml")
 	cmd := &cobra.Command{
 		Use:           "massd",
 		Short:         "Serve MASS resources and agent sessions",
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		RunE:          func(cmd *cobra.Command, _ []string) error { return run(cmd.Context(), o) },
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if homeErr != nil {
+				return homeErr
+			}
+			configured, err := readOptions(cmd, configPath)
+			if err != nil {
+				return err
+			}
+			return run(cmd.Context(), configured)
+		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.data, "data", "", "absolute owned data directory")
-	f.StringVar(&o.listen, "listen", "127.0.0.1:8787", "loopback listen address (port 0 supported)")
-	f.BoolVar(&o.approve, "prototype-auto-approve-permissions", false, "explicit synthetic prototype policy; questions remain manual")
-	f.BoolVar(&o.local, "local", false, "explicit trusted single-user loopback mode without authentication")
-	f.StringVar(&o.tokenFile, "token-file", "", "file containing an instance Bearer token")
-	f.StringVar(&o.tlsCert, "tls-cert", "", "TLS certificate for direct remote access")
-	f.StringVar(&o.tlsKey, "tls-key", "", "TLS private key for direct remote access")
+	f.StringVar(&configPath, "config", defaultConfig, "YAML configuration file (flags override configuration)")
+	f.StringVar(&o.Data, "data", filepath.Join(home, ".mass", "data"), "absolute owned data directory")
+	f.StringVar(&o.Listen, "listen", "127.0.0.1:24368", "loopback listen address (port 0 supported)")
+	f.BoolVar(&o.Approve, "prototype-auto-approve-permissions", false, "explicit synthetic prototype policy; questions remain manual")
+	f.BoolVar(&o.Local, "local", false, "explicit trusted single-user loopback mode without authentication")
+	f.StringVar(&o.TokenFile, "token-file", "", "file containing an instance Bearer token")
+	f.StringVar(&o.TLSCert, "tls-cert", "", "TLS certificate for direct remote access")
+	f.StringVar(&o.TLSKey, "tls-key", "", "TLS private key for direct remote access")
 	cmd.AddCommand(newOpenAPICommand())
 	return cmd
 }
 
 func run(parent context.Context, o options) (result error) {
-	host, _, err := net.SplitHostPort(o.listen)
+	host, _, err := net.SplitHostPort(o.Listen)
 	if err != nil {
 		return err
 	}
@@ -63,8 +81,8 @@ func run(parent context.Context, o options) (result error) {
 		return errors.New("listen address must be an IP literal")
 	}
 	token := ""
-	if o.tokenFile != "" {
-		b, e := os.ReadFile(o.tokenFile)
+	if o.TokenFile != "" {
+		b, e := os.ReadFile(o.TokenFile)
 		if e != nil {
 			return errors.New("cannot read token file")
 		}
@@ -73,41 +91,41 @@ func run(parent context.Context, o options) (result error) {
 			return errors.New("empty token file")
 		}
 	}
-	if o.local && !ip.IsLoopback() {
+	if o.Local && !ip.IsLoopback() {
 		return errors.New("local mode requires loopback address")
 	}
-	if !ip.IsLoopback() && (token == "" || o.tlsCert == "" || o.tlsKey == "") {
+	if !ip.IsLoopback() && (token == "" || o.TLSCert == "" || o.TLSKey == "") {
 		return errors.New("remote access requires a token and TLS")
 	}
-	if (o.tlsCert == "") != (o.tlsKey == "") {
+	if (o.TLSCert == "") != (o.TLSKey == "") {
 		return errors.New("TLS requires both certificate and key")
 	}
-	if (o.local && token != "") || (!o.local && token == "") {
+	if (o.Local && token != "") || (!o.Local && token == "") {
 		return errors.New("select local mode or token authentication")
 	}
-	st, err := file.Open(o.data, false)
+	st, err := file.Open(o.Data, false)
 	if err != nil {
 		return err
 	}
 	defer func() { result = errors.Join(result, st.Close()) }()
 	var policy service.InteractionPolicy
-	if o.approve {
+	if o.Approve {
 		policy = prototype.AutoApprovePermissions
 	}
-	svc := service.NewWithPolicy(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(o.data, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(o.data, "private")}}), policy)
+	svc := service.NewWithPolicy(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(o.Data, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(o.Data, "private")}}), policy)
 	defer func() {
 		ctx, c := context.WithTimeout(context.Background(), 10*time.Second)
 		defer c()
 		result = errors.Join(result, svc.Shutdown(ctx))
 	}()
-	listener, err := (&net.ListenConfig{}).Listen(parent, "tcp", o.listen)
+	listener, err := (&net.ListenConfig{}).Listen(parent, "tcp", o.Listen)
 	if err != nil {
 		return err
 	}
 	defer listener.Close()
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	handler, err := transport.New(svc, transport.Options{Token: token, LocalOnly: o.local})
+	handler, err := transport.New(svc, transport.Options{Token: token, LocalOnly: o.Local})
 	if err != nil {
 		return err
 	}
@@ -115,14 +133,14 @@ func run(parent context.Context, o options) (result error) {
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	done := make(chan error, 1)
 	go func() {
-		if o.tlsCert != "" {
-			done <- server.ServeTLS(listener, o.tlsCert, o.tlsKey)
+		if o.TLSCert != "" {
+			done <- server.ServeTLS(listener, o.TLSCert, o.TLSKey)
 		} else {
 			done <- server.Serve(listener)
 		}
 	}()
 	scheme := "http://"
-	if o.tlsCert != "" {
+	if o.TLSCert != "" {
 		scheme = "https://"
 	}
 	if err = json.NewEncoder(os.Stdout).Encode(map[string]string{"url": scheme + listener.Addr().String()}); err != nil {

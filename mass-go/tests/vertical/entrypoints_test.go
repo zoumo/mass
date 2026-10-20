@@ -39,10 +39,10 @@ func (s *entrypointSuite) SetupTest() {
 	daemonCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	s.T().Cleanup(cancel)
 	s.data = s.T().TempDir()
-	config := filepath.Join(s.data, "daemon-config.json")
-	s.Require().NoError(os.WriteFile(config, []byte("{}"), 0o600))
+	config := filepath.Join(s.data, "daemon-config.yaml")
+	s.Require().NoError(os.WriteFile(config, []byte("listen: 127.0.0.1:0\nlocal: true\nprototypeAutoApprovePermissions: true\n"), 0o600))
 	s.stderr.Reset()
-	s.daemon = exec.CommandContext(daemonCtx, app, "--config", config, "--data", s.data, "--listen", "127.0.0.1:0", "--local", "--prototype-auto-approve-permissions")
+	s.daemon = exec.CommandContext(daemonCtx, app, "--config", config, "--data", s.data)
 	s.daemon.Stderr = &s.stderr
 	out, e := s.daemon.StdoutPipe()
 	s.Require().NoError(e)

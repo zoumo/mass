@@ -1,7 +1,7 @@
 ---
 type: Development Standard
 title: Go 项目技术选型
-description: 规定 Go 项目的 CLI、测试、HTTP 框架与客户端、结构化日志、lint 和可观测性选型。
+description: 规定 Go 项目的 CLI、配置读取、测试、HTTP 框架与客户端、结构化日志、lint 和可观测性选型。
 status: stable
 sources:
   - id: direction
@@ -13,6 +13,9 @@ sources:
   - id: http-client-direction
     resource: 项目负责人在 2026-10-20 指定 Resty 为默认 HTTP 客户端
     title: HTTP 客户端选型
+  - id: configuration-direction
+    resource: 项目负责人在 2026-10-20 指定 Viper 读取配置，默认配置格式采用 YAML
+    title: 配置读取选型
 ---
 
 # Go 项目技术选型
@@ -26,6 +29,12 @@ sources:
 选型：[Cobra](https://github.com/spf13/cobra)。
 
 使用 Cobra 组织命令及管理 flag。
+
+## 配置读取
+
+选型：[Viper](https://github.com/spf13/viper)。
+
+使用 Viper 读取配置，默认配置文件采用 YAML 格式。通过绑定 Cobra flag 统一处理配置优先级：显式命令行参数覆盖配置文件，配置文件覆盖默认值。使用独立 Viper 实例，避免全局配置状态相互影响。
 
 ## 测试
 
