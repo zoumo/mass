@@ -1,4 +1,4 @@
-package massctl_test
+package subcommand_test
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/mass/mass-go/pkg/massctl"
+	"github.com/zoumo/mass/mass-go/cmd/massctl/subcommand"
 )
 
 type CommandSuite struct{ suite.Suite }
@@ -38,7 +38,7 @@ func (s *CommandSuite) TestRuntimeCreateUsesResourceHTTP() {
 	}))
 	defer h.Close()
 	var out, stderr bytes.Buffer
-	s.Equal(0, massctl.Run(s.T().Context(), []string{"--url", h.URL, "-o", "json", "runtime", "create", "agent", "--type", "codex"}, strings.NewReader(""), &out, &stderr), stderr.String())
+	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-o", "json", "runtime", "create", "agent", "--type", "codex"}, strings.NewReader(""), &out, &stderr), stderr.String())
 	s.Contains(out.String(), `"stopped"`)
 	s.Empty(stderr.String())
 }
@@ -66,7 +66,7 @@ func (s *CommandSuite) TestUpdatePreservesTypeAndConfigFlagsOrReplacesCompleteCo
 			defer h.Close()
 			var out, stderr bytes.Buffer
 			args := append([]string{"--url", h.URL, "runtime", "update", "agent"}, input...)
-			s.Equal(0, massctl.Run(s.T().Context(), args, strings.NewReader(""), &out, &stderr), stderr.String())
+			s.Equal(0, subcommand.Run(s.T().Context(), args, strings.NewReader(""), &out, &stderr), stderr.String())
 			s.Equal([]string{"GET", "PUT"}, methods)
 		})
 	}
@@ -98,7 +98,7 @@ func (s *CommandSuite) TestInvalidInputNeverDispatches() {
 	for _, args := range cases {
 		s.Run(strings.Join(args, " "), func() {
 			var out, stderr bytes.Buffer
-			s.Equal(2, massctl.Run(s.T().Context(), append([]string{"--url", h.URL, "-o", "json"}, args...), strings.NewReader(""), &out, &stderr), stderr.String())
+			s.Equal(2, subcommand.Run(s.T().Context(), append([]string{"--url", h.URL, "-o", "json"}, args...), strings.NewReader(""), &out, &stderr), stderr.String())
 			s.Empty(out.String())
 			var e map[string]string
 			s.Require().NoError(json.Unmarshal(stderr.Bytes(), &e))
@@ -127,7 +127,7 @@ func (s *CommandSuite) TestAddressingAndPagination() {
 			defer h.Close()
 			s.T().Setenv("MASS_URL", h.URL)
 			var out, stderr bytes.Buffer
-			s.Equal(0, massctl.Run(s.T().Context(), test.args, strings.NewReader(""), &out, &stderr), stderr.String())
+			s.Equal(0, subcommand.Run(s.T().Context(), test.args, strings.NewReader(""), &out, &stderr), stderr.String())
 			s.Equal(1, calls)
 			s.Contains(out.String(), "opaque")
 		})
@@ -173,7 +173,7 @@ func (s *CommandSuite) TestWatchReadyTimeoutEndsAtReadyAndInterruptOnlyClosesSub
 			stderr := new(readyWriter)
 			done := make(chan int, 1)
 			go func() {
-				done <- massctl.Run(ctx, []string{"--url", h.URL, "-o", "json", "--timeout", "100ms", "session", "watch", "a/b"}, strings.NewReader(""), &out, stderr)
+				done <- subcommand.Run(ctx, []string{"--url", h.URL, "-o", "json", "--timeout", "100ms", "session", "watch", "a/b"}, strings.NewReader(""), &out, stderr)
 			}()
 			if mode != "no-ready" {
 				<-ready
@@ -223,7 +223,7 @@ func (w *readyWriter) isReady() bool  { return strings.Contains(w.String(), "sub
 
 func (s *CommandSuite) TestOutputFailureIsNotAUsageError() {
 	var stderr bytes.Buffer
-	s.Equal(1, massctl.Run(s.T().Context(), []string{"version"}, strings.NewReader(""), brokenWriter{}, &stderr))
+	s.Equal(1, subcommand.Run(s.T().Context(), []string{"version"}, strings.NewReader(""), brokenWriter{}, &stderr))
 	s.Contains(stderr.String(), "output_failed")
 }
 
@@ -253,11 +253,11 @@ func (s *CommandSuite) TestSessionCreationAndPromptDoNotReadImplicitInput() {
 	defer h.Close()
 	var out, stderr bytes.Buffer
 	args := []string{"--url", h.URL, "-o", "json", "session", "create", "review", "-n", "demo", "--runtime", "agent", "--cwd", "/remote/work", "--system-prompt-file", "-", "--additional-dir", "/remote/a", "--additional-dir", "/remote/b"}
-	s.Equal(0, massctl.Run(s.T().Context(), args, strings.NewReader("rules\n"), &out, &stderr), stderr.String())
+	s.Equal(0, subcommand.Run(s.T().Context(), args, strings.NewReader("rules\n"), &out, &stderr), stderr.String())
 	s.Len(requests, 1, "creation must not send prompt")
 	out.Reset()
 	args = []string{"--url", h.URL, "-o", "json", "session", "prompt", "review", "-n", "demo", "--text", "{raw text}"}
-	s.Equal(0, massctl.Run(s.T().Context(), args, unreadableInput{}, &out, &stderr), stderr.String())
+	s.Equal(0, subcommand.Run(s.T().Context(), args, unreadableInput{}, &out, &stderr), stderr.String())
 	s.JSONEq(`{"submission":"receipt","acceptance":{"sent":true,"nativeAccepted":false}}`, out.String())
 }
 
@@ -273,7 +273,7 @@ func (s *CommandSuite) TestDeleteHasEmptyJSONResultAndNeverStops() {
 	}))
 	defer h.Close()
 	var out, stderr bytes.Buffer
-	s.Equal(0, massctl.Run(s.T().Context(), []string{"--url", h.URL, "-o", "json", "runtime", "delete", "agent"}, unreadableInput{}, &out, &stderr), stderr.String())
+	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-o", "json", "runtime", "delete", "agent"}, unreadableInput{}, &out, &stderr), stderr.String())
 	s.Empty(out.String())
 	s.Empty(stderr.String())
 	s.Equal([]string{"DELETE /apis/v1/runtimes/agent"}, methods)
@@ -289,7 +289,7 @@ func (s *CommandSuite) TestGetFailurePreventsUpdateAndPreservesPublicError() {
 	}))
 	defer h.Close()
 	var out, stderr bytes.Buffer
-	s.Equal(1, massctl.Run(s.T().Context(), []string{"--url", h.URL, "-o", "json", "runtime", "update", "agent", "--executable", "new"}, unreadableInput{}, &out, &stderr))
+	s.Equal(1, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-o", "json", "runtime", "update", "agent", "--executable", "new"}, unreadableInput{}, &out, &stderr))
 	s.Equal(1, calls)
 	s.Empty(out.String())
 	s.JSONEq(`{"code":"not_found","reason":"missing_runtime","message":"Runtime is absent"}`, stderr.String())
@@ -300,7 +300,7 @@ func (s *CommandSuite) TestMutationTimeoutHasUnknownOutcomeAndNoRetry() {
 	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); <-r.Context().Done() }))
 	defer h.Close()
 	var out, stderr bytes.Buffer
-	s.Equal(1, massctl.Run(s.T().Context(), []string{"--url", h.URL, "-o", "json", "--timeout", "20ms", "runtime", "start", "agent"}, unreadableInput{}, &out, &stderr))
+	s.Equal(1, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-o", "json", "--timeout", "20ms", "runtime", "start", "agent"}, unreadableInput{}, &out, &stderr))
 	s.Empty(out.String())
 	s.Contains(stderr.String(), `"code":"outcome_unknown"`)
 	s.Equal(int32(1), calls.Load())
@@ -309,7 +309,7 @@ func (s *CommandSuite) TestMutationTimeoutHasUnknownOutcomeAndNoRetry() {
 func (s *CommandSuite) TestHelpExplainsRequiredInputsAndExclusiveModes() {
 	for _, args := range [][]string{{"--help"}, {"runtime", "--help"}, {"runtime", "create", "--help"}, {"session", "create", "--help"}} {
 		var out, stderr bytes.Buffer
-		s.Equal(0, massctl.Run(s.T().Context(), args, unreadableInput{}, &out, &stderr))
+		s.Equal(0, subcommand.Run(s.T().Context(), args, unreadableInput{}, &out, &stderr))
 		s.Contains(out.String(), "Examples:")
 		if len(args) > 2 {
 			s.Contains(out.String(), "mutually exclusive")
@@ -330,7 +330,7 @@ func (s *CommandSuite) TestInterruptedMutationRetainsUnknownOutcome() {
 	var out, stderr bytes.Buffer
 	done := make(chan int, 1)
 	go func() {
-		done <- massctl.Run(ctx, []string{"--url", h.URL, "-o", "json", "session", "prompt", "id", "--text", "hello"}, unreadableInput{}, &out, &stderr)
+		done <- subcommand.Run(ctx, []string{"--url", h.URL, "-o", "json", "session", "prompt", "id", "--text", "hello"}, unreadableInput{}, &out, &stderr)
 	}()
 	<-dispatched
 	cancel()

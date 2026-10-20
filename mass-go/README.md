@@ -58,8 +58,8 @@ admission only. The CLI reads the Bearer token from `MASS_TOKEN`.
 `massctl <resource> <operation>` uses the `/apis/v1` HTTP contract. Run
 `massctl --help`, `massctl runtime --help`, or `massctl session --help` for the
 complete command tree; `massctl version` reports the client build. The old `--op`
-interface is removed. CLI implementation lives in `pkg/massctl`; `cmd/massctl`
-only assembles process I/O and signals.
+interface is removed. CLI implementation lives in `cmd/massctl/subcommand`, organized by resource
+subcommands; `cmd/massctl/main.go` only assembles process I/O and signals.
 
 Address precedence is `--url`, then `MASS_URL`, then `http://127.0.0.1:24368`.
 Authentication uses `MASS_TOKEN`. Output defaults to human summaries/tables;

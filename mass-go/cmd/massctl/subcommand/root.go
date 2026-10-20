@@ -1,5 +1,5 @@
-// Package massctl owns the terminal interface to the MASS HTTP service.
-package massctl
+// Package subcommand owns the terminal interface to the MASS HTTP service.
+package subcommand
 
 import (
 	"context"

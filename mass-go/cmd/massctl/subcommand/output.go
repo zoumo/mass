@@ -1,4 +1,4 @@
-package massctl
+package subcommand
 
 import (
 	"bytes"

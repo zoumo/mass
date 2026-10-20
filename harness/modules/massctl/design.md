@@ -17,6 +17,8 @@ sources:
 
 ## 职责与依赖
 
+Go 实现的二进制入口位于 cmd/massctl/main.go，Cobra 命令树、参数、执行与终端输出代码位于 cmd/massctl/subcommand/，按 Runtime、Session 子命令组织；不放入 pkg/massctl。可复用的 HTTP 客户端与业务模块继续位于 pkg/，遵循 [Go 目录规范](../../principles/go/directory-structure.md)。
+
 massctl 是面向终端用户和脚本的客户端模块，提供 `massctl <resource> <operation> [target] [flags]` 形式的 interface。模块隐藏请求构造、Session 引用转换、HTTP 路径编码、认证头、响应解析与 SSE 帧处理，使调用者无需理解内部操作字符串或调用 envelope。
 
 massctl 通过 [HTTP v1](../../bindings/http.md) 调用 [RuntimeService](../service/runtime-service.tsp) 与 [SessionService](../service/session-service.tsp)。业务 API 使用 `/apis/v1`。Service 拥有业务校验、生命周期、持久化和操作编排；massctl 不直接访问 Store、Registry、Driver、原生 Agent 或服务端数据目录，不维护另一套资源状态。
