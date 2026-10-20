@@ -51,10 +51,10 @@ check: check-massctl
 # Go experimental Service-backed CLI and HTTP/SSE.
 .PHONY: fmt-go lint-go test-go build-go check-go
 fmt-go:
-	cd mass-go && gofmt -w cmd pkg tests examples/sdkprobe
+	cd mass-go && golangci-lint fmt
 
 lint-go:
-	cd mass-go && go vet ./...
+	cd mass-go && golangci-lint run ./...
 
 test-go:
 	cd mass-go && go test -race -timeout=180s ./...
@@ -67,7 +67,7 @@ build-go: build-massctl
 	cd mass-go && go build -trimpath -o ../dist/massd-go ./cmd/massd
 
 check-go: lint-go test-go build-go
-	cd mass-go && test -z "$$(gofmt -l cmd pkg tests examples/sdkprobe)"
+	cd mass-go && golangci-lint fmt --diff
 
 fmt-massctl: fmt-go
 lint-massctl: lint-go

@@ -3,6 +3,7 @@ package store
 
 import (
 	"errors"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )

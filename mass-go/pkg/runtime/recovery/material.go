@@ -38,6 +38,7 @@ func (v Vault) path(id string) (string, error) {
 
 // Check validates configuration without reading or changing persistent material.
 func (v Vault) Check() error { _, err := v.path("check"); return err }
+
 func (v Vault) Save(id string, a runtime.Address, spec runtime.SessionSpec, native any) error {
 	p, err := v.path(id)
 	if err != nil {
@@ -59,7 +60,7 @@ func (v Vault) Save(id string, a runtime.Address, spec runtime.SessionSpec, nati
 	} else if !os.IsNotExist(e) {
 		return e
 	}
-	if err = os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
 	f, err := os.CreateTemp(filepath.Dir(p), ".material-*")
@@ -74,7 +75,7 @@ func (v Vault) Save(id string, a runtime.Address, spec runtime.SessionSpec, nati
 	if err != nil {
 		return err
 	}
-	if err = os.Rename(f.Name(), p); err != nil {
+	if err := os.Rename(f.Name(), p); err != nil {
 		return err
 	}
 	d, err := os.Open(filepath.Dir(p))
@@ -83,6 +84,7 @@ func (v Vault) Save(id string, a runtime.Address, spec runtime.SessionSpec, nati
 	}
 	return errors.Join(d.Sync(), d.Close())
 }
+
 func (v Vault) Load(id string, a runtime.Address, spec runtime.SessionSpec) (Material, error) {
 	p, err := v.path(id)
 	if err != nil {
@@ -95,7 +97,7 @@ func (v Vault) Load(id string, a runtime.Address, spec runtime.SessionSpec) (Mat
 	var m Material
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
-	if err = d.Decode(&m); err != nil {
+	if err := d.Decode(&m); err != nil {
 		return m, err
 	}
 	if d.Decode(new(any)) != io.EOF {

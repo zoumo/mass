@@ -26,8 +26,9 @@ type EventPipe struct {
 func NewEventPipe(capacity int) *EventPipe {
 	return &EventPipe{queue: make(chan streamEntry, capacity), done: make(chan struct{})}
 }
+
 func (p *EventPipe) Send(ctx context.Context, e SessionEvent) error {
-	copy, err := e.Clone()
+	cloned, err := e.Clone()
 	if err != nil {
 		return err
 	}
@@ -37,7 +38,7 @@ func (p *EventPipe) Send(ctx context.Context, e SessionEvent) error {
 	default:
 	}
 	select {
-	case p.queue <- streamEntry{event: copy}:
+	case p.queue <- streamEntry{event: cloned}:
 		return nil
 	case <-p.done:
 		return errors.New("event stream ended")
@@ -45,9 +46,11 @@ func (p *EventPipe) Send(ctx context.Context, e SessionEvent) error {
 		return ctx.Err()
 	}
 }
+
 func (p *EventPipe) End(err error) {
 	p.once.Do(func() { p.mu.Lock(); p.err = err; p.mu.Unlock(); close(p.done) })
 }
+
 func (p *EventPipe) Next(ctx context.Context) (SessionEvent, error) {
 	if !p.reading.CompareAndSwap(false, true) {
 		return SessionEvent{}, errors.New("concurrent stream Next")
@@ -55,6 +58,7 @@ func (p *EventPipe) Next(ctx context.Context) (SessionEvent, error) {
 	defer p.reading.Store(false)
 	return p.next(ctx)
 }
+
 func (p *EventPipe) next(ctx context.Context) (SessionEvent, error) {
 	for {
 		var entry streamEntry
