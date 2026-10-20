@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -19,6 +21,8 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
+
+type ClaudeSuite struct{ suite.Suite }
 
 func nativeScenario(t *testing.T, kind, mode string) (string, string) {
 	t.Helper()
@@ -56,9 +60,10 @@ func nativeScenario(t *testing.T, kind, mode string) (string, string) {
 	data, err = json.Marshal(scenario)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "scenario.json")
-	require.NoError(t, os.WriteFile(path, data, 0600))
+	require.NoError(t, os.WriteFile(path, data, 0o600))
 	return path, work
 }
+
 func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *runtime.Registry, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -69,6 +74,7 @@ func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *r
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
 	return svc, reg, dir
 }
+
 func openNative(t *testing.T, svc *service.Service, kind, mode, name string) resource.Session {
 	t.Helper()
 	path, work := nativeScenario(t, kind, mode)
@@ -85,10 +91,11 @@ func openNative(t *testing.T, svc *service.Service, kind, mode, name string) res
 	return r
 }
 
-func TestBothAgentsInteractions(t *testing.T) {
+func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 	for _, kind := range []string{"claude", "codex"} {
 		for _, mode := range []string{"basic", "question", "manual"} {
-			t.Run(kind+"/"+mode, func(t *testing.T) {
+			claudeSuite.Run(kind+"/"+mode, func() {
+				t := claudeSuite.T()
 				policy := service.InteractionPolicy(prototype.AutoApprovePermissions)
 				scenarioMode := mode
 				if mode == "manual" {
@@ -134,8 +141,8 @@ func TestBothAgentsInteractions(t *testing.T) {
 							}
 							accepted, err := svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": content})
 							require.NoError(t, err)
-							require.Equal(t, runtime.Yes(), accepted.Sent)
-							require.Nil(t, accepted.NativeAccepted)
+							require.Equal(t, runtime.Yes(), accepted.Evidence.Sent)
+							require.Nil(t, accepted.Evidence.NativeAccepted)
 							_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": content})
 							require.Error(t, err, "no double answer")
 						} else {
@@ -148,8 +155,8 @@ func TestBothAgentsInteractions(t *testing.T) {
 								}
 								acceptance, err := svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"outcome": "selected", "optionId": "allow-once"})
 								require.NoError(t, err)
-								require.Equal(t, runtime.Yes(), acceptance.Sent)
-								require.Nil(t, acceptance.NativeAccepted)
+								require.Equal(t, runtime.Yes(), acceptance.Evidence.Sent)
+								require.Nil(t, acceptance.Evidence.NativeAccepted)
 							}
 						}
 					}
@@ -209,7 +216,7 @@ func TestBothAgentsInteractions(t *testing.T) {
 								require.NotNil(t, p.RawOutput)
 								require.Nil(t, *p.RawOutput)
 							case "value-2":
-								require.Equal(t, "", *p.RawOutput)
+								require.Empty(t, *p.RawOutput)
 								require.Equal(t, []runtime.ContentBlock{runtime.Text("")}, p.Content)
 							case "value-3":
 								require.Equal(t, []any{}, *p.RawOutput)
@@ -230,7 +237,8 @@ func TestBothAgentsInteractions(t *testing.T) {
 	}
 }
 
-func TestClaudeFailedOpenIsolation(t *testing.T) {
+func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
+	t := claudeSuite.T()
 	svc, reg, _ := setup(t, prototype.AutoApprovePermissions)
 	healthy := openNative(t, svc, "claude", "question", "healthy")
 	// Same native ID on a second process: reject only that new process.
@@ -272,3 +280,5 @@ func TestClaudeFailedOpenIsolation(t *testing.T) {
 	require.NoError(t, svc.Shutdown(ctx(t)))
 	t.Log("PASS duplicate and missing init cleanup leave healthy Session usable; no hidden prompt or fabricated identity")
 }
+
+func TestClaudeSuite(t *testing.T) { suite.Run(t, new(ClaudeSuite)) }

@@ -1,266 +1,500 @@
-// Package transport implements the experimental Go HTTP mapping, not a finalized harness binding.
+// Package transport maps the HTTP v1 contract to application services.
 package transport
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
+	"crypto/subtle"
+	"encoding/base64"
+	"mime"
+	"net"
+	"net/http"
+	"net/url"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+	"unicode/utf8"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 	"github.com/zoumo/mass/mass-go/pkg/store"
-	"io"
-	"net/http"
 )
 
 type API interface {
 	service.RuntimeService
 	service.SessionService
 }
-type Error struct {
-	Code    string `json:"code"`
-	Reason  string `json:"reason"`
-	Message string `json:"message"`
+
+// Options selects either authenticated instance access or explicit trusted local access.
+type Options struct {
+	Token     string
+	LocalOnly bool
+}
+type Server struct {
+	api     API
+	options Options
+	ready   atomic.Bool
+	life    context.Context
+	stop    context.CancelFunc
 }
 
-func (e *Error) Error() string { return e.Code + ": " + e.Reason }
-
-// Never expose native errors, paths, configuration or dynamic diagnostics.
-func PublicError(err error) *Error {
-	var public *Error
-	if errors.As(err, &public) {
-		return public
-	}
-	switch {
-	case errors.Is(err, runtime.ErrResourcesReleased):
-		return &Error{"failed_precondition", "native_open_failed", "Native session open failed; owned resources released"}
-	case errors.Is(err, runtime.ErrInvalidArgument):
-		return &Error{"invalid_argument", "invalid_request", "Invalid request"}
-	case errors.Is(err, runtime.ErrFailedPrecondition):
-		return &Error{"failed_precondition", "operation_rejected", "Operation rejected by current resource state"}
-	case errors.Is(err, store.ErrNotFound):
-		return &Error{"not_found", "resource_not_found", "Resource not found"}
-	case errors.Is(err, store.ErrConflict):
-		return &Error{"conflict", "resource_conflict", "Resource conflict"}
-	case errors.Is(err, store.ErrReadOnly):
-		return &Error{"unavailable", "read_only", "Store is read only"}
-	default:
-		return &Error{"outcome_unknown", "operation_unconfirmed", "Operation failed; side effects may remain. Inspect state before any further action"}
-	}
-}
-func Invalid() *Error { return &Error{"invalid_argument", "invalid_request", "Invalid request"} }
-
-type Response struct {
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *Error          `json:"error,omitempty"`
-}
-
-// Params is a transport request only; each operation decodes its own strict shape.
-type Params struct {
-	Name         string                `json:"name,omitempty"`
-	Session      resource.SessionRef   `json:"session,omitempty"`
-	Runtime      *resource.Runtime     `json:"runtime,omitempty"`
-	Create       *resource.Session     `json:"create,omitempty"`
-	Spec         *resource.RuntimeSpec `json:"spec,omitempty"`
-	RuntimeQuery resource.RuntimeQuery `json:"runtimeQuery,omitempty"`
-	SessionQuery resource.SessionQuery `json:"sessionQuery,omitempty"`
-	History      store.HistoryQuery    `json:"history,omitempty"`
-	Input        runtime.Input         `json:"input,omitempty"`
-	Interaction  string                `json:"interaction,omitempty"`
-	Answer       map[string]any        `json:"answer,omitempty"`
-}
-
-func validRef(r resource.SessionRef) bool {
-	return (r.SessionID != "" && r.Namespace == "" && r.Name == "") || (r.SessionID == "" && r.Namespace != "" && r.Name != "")
-}
-func Dispatch(ctx context.Context, s API, op string, p Params) (any, error) {
-	switch op {
-	case "runtime.create":
-		if p.Runtime == nil {
-			return nil, Invalid()
-		}
-		return s.CreateRuntime(*p.Runtime)
-	case "runtime.list":
-		return s.ListRuntimes(p.RuntimeQuery)
-	case "session.create":
-		if p.Create == nil {
-			return nil, Invalid()
-		}
-		return s.CreateSession(ctx, *p.Create)
-	case "session.list":
-		return s.ListSessions(p.SessionQuery)
-	}
-	switch op {
-	case "runtime.get", "runtime.update", "runtime.start", "runtime.stop", "runtime.delete":
-		if p.Name == "" {
-			return nil, Invalid()
-		}
-		switch op {
-		case "runtime.get":
-			return s.GetRuntime(p.Name)
-		case "runtime.update":
-			if p.Spec == nil {
-				return nil, Invalid()
-			}
-			return s.UpdateRuntime(p.Name, *p.Spec)
-		case "runtime.start":
-			return s.StartRuntime(ctx, p.Name)
-		case "runtime.stop":
-			return s.StopRuntime(ctx, p.Name)
-		case "runtime.delete":
-			return nil, s.DeleteRuntime(p.Name)
-		}
-	}
-	if !validRef(p.Session) {
+func New(api API, opts Options) (*Server, error) {
+	if (opts.LocalOnly && opts.Token != "") || (!opts.LocalOnly && opts.Token == "") || strings.ContainsAny(opts.Token, " \t\r\n") {
 		return nil, Invalid()
 	}
-	switch op {
-	case "session.get":
-		return s.GetSession(p.Session)
-	case "session.archive":
-		return s.ArchiveSession(ctx, p.Session)
-	case "session.resume":
-		return s.ResumeSession(ctx, p.Session)
-	case "session.input":
-		return s.SendPrompt(ctx, p.Session, p.Input)
-	case "session.answer":
-		if p.Interaction == "" || p.Answer == nil {
-			return nil, Invalid()
-		}
-		return s.AnswerInteraction(ctx, p.Session, p.Interaction, p.Answer)
-	case "session.cancel":
-		return s.Cancel(ctx, p.Session)
-	case "session.history":
-		return s.ListHistoryEvents(p.Session, p.History)
-	}
-	return nil, Invalid()
-}
-func decode(r *http.Request, v any) error {
-	b, e := io.ReadAll(io.LimitReader(r.Body, (1<<20)+1))
-	if e != nil || len(b) > 1<<20 {
-		return Invalid()
-	}
-	trimmed := bytes.TrimSpace(b)
-	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return Invalid()
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(b, &fields) != nil {
-		return Invalid()
-	}
-	for _, key := range []string{"history", "sessionQuery"} {
-		if raw, ok := fields[key]; ok {
-			var query map[string]json.RawMessage
-			if json.Unmarshal(raw, &query) != nil {
-				return Invalid()
-			}
-			if limit, ok := query["limit"]; ok {
-				var n int
-				if json.Unmarshal(limit, &n) != nil || n < 1 {
-					return Invalid()
-				}
-			}
-		}
-	}
-	d := json.NewDecoder(bytes.NewReader(b))
-	d.UseNumber()
-	d.DisallowUnknownFields()
-	if d.Decode(v) != nil {
-		return Invalid()
-	}
-	if d.Decode(new(any)) != io.EOF {
-		return Invalid()
-	}
-	return nil
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &Server{api: api, options: opts, life: ctx, stop: cancel}
+	s.ready.Store(true)
+	return s, nil
 }
 
-func respond(w http.ResponseWriter, v any, err error) {
-	w.Header().Set("Content-Type", "application/json")
+// Shutdown closes admission and observation only. Service retains all operation ownership.
+func (s *Server) Shutdown() { s.ready.Store(false); s.stop() }
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	// Early rejections may leave an unread body; close it under an expired read
+	// deadline so net/http cannot block draining it after this handler returns.
+	if hasBody(r) {
+		defer func() { _ = http.NewResponseController(w).SetReadDeadline(time.Now()); _ = r.Body.Close() }()
+	}
+	if r.URL.Path == "/livez" || r.URL.Path == "/readyz" {
+		if r.Method != http.MethodGet {
+			methodError(w, "GET")
+			return
+		}
+		if r.URL.RawQuery != "" || hasBody(r) {
+			fail(w, 400, Invalid())
+			return
+		}
+		if r.URL.Path == "/readyz" && !s.ready.Load() {
+			fail(w, 503, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
+			return
+		}
+		state := "alive"
+		if r.URL.Path == "/readyz" {
+			state = "ready"
+		}
+		respond(w, 200, map[string]string{"status": state}, nil)
+		return
+	}
+	if !s.authorized(r) {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		fail(w, 401, &Error{Code: "unauthenticated", Reason: "invalid_credentials", Message: "Valid instance credentials required"})
+		return
+	}
+	if !s.ready.Load() {
+		fail(w, 503, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
+		return
+	}
+	if _, ok := r.Header["Idempotency-Key"]; ok {
+		fail(w, 400, Invalid())
+		return
+	}
+	route, ok := matchRoute(r.URL.Path)
+	if !ok {
+		fail(w, 404, &Error{Code: "not_found", Reason: "route_not_found", Message: "Route not found"})
+		return
+	}
+	allowed := route.method
+	resolveMethod(&route, r.Method)
+	if r.Method != route.method {
+		methodError(w, allowed)
+		return
+	}
+	if route.err != nil {
+		fail(w, 400, PublicError(route.err))
+		return
+	}
+	media := "application/json"
+	if route.op == "session.observe" {
+		media = "text/event-stream"
+	}
+	if !accepts(r.Header.Get("Accept"), media) {
+		fail(w, 406, Invalid())
+		return
+	}
+	if (r.Method == http.MethodGet || r.Method == http.MethodDelete) && hasBody(r) {
+		fail(w, 400, Invalid())
+		return
+	}
+	query, err := parseQuery(r.URL.RawQuery, route.op)
 	if err != nil {
-		public := PublicError(err)
-		status := http.StatusInternalServerError
-		switch public.Code {
-		case "invalid_argument":
-			status = 400
-		case "not_found":
-			status = 404
-		case "conflict", "failed_precondition":
-			status = 409
-		case "unavailable":
-			status = 503
+		respond(w, 0, nil, err)
+		return
+	}
+	if err = r.Context().Err(); err != nil {
+		fail(w, 504, &Error{Code: "deadline_exceeded", Reason: "request_expired", Message: "Request expired before dispatch"})
+		return
+	}
+	// Request cancellation ends only observation. An admitted mutation remains owned by Service.
+	ctx := context.WithoutCancel(r.Context())
+	var value any
+	status := 200
+	switch route.op {
+	case "runtime.create":
+		var input runtimeCreate
+		if err = decodeBody(w, r, &input); err == nil {
+			var v resource.Runtime
+			v, err = s.api.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: input.Metadata.Name, Namespace: input.Metadata.Namespace}, Spec: input.Spec})
+			value = v
+			if err == nil {
+				w.Header().Set("Location", "/v1/runtimes/"+url.PathEscape(v.Metadata.Name))
+				status = 201
+			}
 		}
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(Response{Error: public})
+	case "runtime.list":
+		value, err = s.api.ListRuntimes(resource.RuntimeQuery{Type: query.Get("type"), State: query.Get("state")})
+	case "runtime.get":
+		value, err = s.api.GetRuntime(route.name)
+	case "runtime.update":
+		var spec resource.RuntimeSpec
+		if err = decodeBody(w, r, &spec); err == nil {
+			value, err = s.api.UpdateRuntime(route.name, spec)
+		}
+	case "runtime.start", "runtime.stop", "runtime.delete":
+		if err = emptyBody(w, r); err == nil {
+			switch route.op {
+			case "runtime.start":
+				value, err = s.api.StartRuntime(ctx, route.name)
+			case "runtime.stop":
+				value, err = s.api.StopRuntime(ctx, route.name)
+			case "runtime.delete":
+				err = s.api.DeleteRuntime(route.name)
+				status = 204
+			}
+		}
+	case "session.create":
+		var input sessionCreate
+		if err = decodeBody(w, r, &input); err == nil {
+			var v resource.Session
+			v, err = s.api.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Name: input.Metadata.Name, Namespace: input.Metadata.Namespace}, Spec: input.Spec})
+			value = v
+			if err == nil {
+				status = 201
+				w.Header().Set("Location", "/v1/namespaces/"+url.PathEscape(v.Metadata.Namespace)+"/sessions/"+url.PathEscape(v.Metadata.Name))
+			}
+		}
+	case "session.list":
+		value, err = s.api.ListSessions(resource.SessionQuery{Namespace: query.Get("namespace"), RuntimeRef: query.Get("runtimeRef"), State: runtime.SessionState(query.Get("state")), After: query.Get("after"), Limit: queryLimit(query)})
+	case "session.get":
+		value, err = s.api.GetSession(route.ref)
+	case "session.history":
+		value, err = s.api.ListHistoryEvents(route.ref, store.HistoryQuery{After: query.Get("after"), Limit: queryLimit(query), Types: query["types"]})
+	case "session.input":
+		var input runtime.Input
+		if err = decodeBody(w, r, &input); err == nil {
+			value, err = s.api.SendPrompt(ctx, route.ref, input)
+		}
+	case "session.answer":
+		var answer any
+		if err = decodeBody(w, r, &answer); err == nil {
+			value, err = s.api.AnswerInteraction(ctx, route.ref, route.interaction, answer)
+		}
+	case "session.archive", "session.resume", "session.cancel":
+		if err = emptyBody(w, r); err == nil {
+			switch route.op {
+			case "session.archive":
+				value, err = s.api.ArchiveSession(ctx, route.ref)
+			case "session.resume":
+				value, err = s.api.ResumeSession(ctx, route.ref)
+			case "session.cancel":
+				value, err = s.api.Cancel(ctx, route.ref)
+			}
+		}
+	case "session.observe":
+		if r.Header.Get("Last-Event-ID") != "" {
+			fail(w, 400, Invalid())
+			return
+		}
+		s.observe(w, r, route.ref)
 		return
 	}
-	b, e := json.Marshal(v)
-	if e != nil {
-		respond(w, nil, e)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(Response{Result: b})
+	respond(w, status, value, err)
 }
-func New(s API) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /experimental/operations/{operation}", func(w http.ResponseWriter, r *http.Request) {
-		var p Params
-		if err := decode(r, &p); err != nil {
-			respond(w, nil, err)
-			return
-		}
-		v, e := Dispatch(r.Context(), s, r.PathValue("operation"), p)
-		respond(w, v, e)
-	})
-	mux.HandleFunc("POST /experimental/observe", func(w http.ResponseWriter, r *http.Request) {
-		var ref resource.SessionRef
-		if decode(r, &ref) != nil || !validRef(ref) {
-			respond(w, nil, Invalid())
-			return
-		}
-		sub, err := s.SubscribeEvents(ref)
+
+func (s *Server) authorized(r *http.Request) bool {
+	if s.options.LocalOnly {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		return err == nil && net.ParseIP(host).IsLoopback()
+	}
+	headers := r.Header.Values("Authorization")
+	if len(headers) != 1 {
+		return false
+	}
+	parts := strings.Fields(headers[0])
+	return len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && subtle.ConstantTimeCompare([]byte(parts[1]), []byte(s.options.Token)) == 1
+}
+
+func hasBody(r *http.Request) bool {
+	return r.Body != nil && r.Body != http.NoBody && (r.ContentLength != 0 || len(r.TransferEncoding) > 0)
+}
+
+func accepts(header, media string) bool {
+	if header == "" {
+		return true
+	}
+	best := -1
+	quality := 0.0
+	for part := range strings.SplitSeq(header, ",") {
+		kind, params, err := mime.ParseMediaType(strings.TrimSpace(part))
 		if err != nil {
-			respond(w, nil, err)
-			return
+			continue
 		}
-		defer sub.Close()
-		if _, ok := w.(http.Flusher); !ok {
-			respond(w, nil, errors.New("stream unavailable"))
-			return
-		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		rc := http.NewResponseController(w)
-		send := func(kind string, v any) error {
-			b, e := json.Marshal(v)
-			if e != nil {
-				return e
-			}
-			if _, e = io.WriteString(w, "event: "+kind+"\ndata: "+string(b)+"\n\n"); e != nil {
-				return e
-			}
-			return rc.Flush()
-		}
-		if send("ready", struct{}{}) != nil {
-			return
-		}
-		for {
-			e, err := sub.Next(r.Context())
-			if err != nil {
-				if r.Context().Err() != nil {
-					return
-				}
-				if errors.Is(err, io.EOF) {
-					_ = send("end", struct{}{})
-				} else {
-					_ = send("error", &Error{"observation_failed", "subscription_terminated", "Observation delivery ended abnormally; inspect committed history"})
-				}
-				return
-			}
-			if send("session", e) != nil {
-				return
+		q := 1.0
+		if raw, ok := params["q"]; ok {
+			q, err = strconv.ParseFloat(raw, 64)
+			if err != nil || q < 0 || q > 1 {
+				continue
 			}
 		}
-	})
-	return mux
+		specificity := -1
+		switch {
+		case kind == media:
+			specificity = 2
+		case kind == strings.Split(media, "/")[0]+"/*":
+			specificity = 1
+		case kind == "*/*":
+			specificity = 0
+		}
+		if specificity > best {
+			best = specificity
+			quality = q
+		}
+	}
+	return best >= 0 && quality > 0
+}
+
+type route struct {
+	method, op, name, interaction string
+	ref                           resource.SessionRef
+	err                           error
+}
+
+var (
+	resourceName  = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+	namespaceName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+)
+
+func validName(v string) bool      { return len(v) > 0 && len(v) <= 253 && resourceName.MatchString(v) }
+func validNamespace(v string) bool { return len(v) > 0 && len(v) <= 63 && namespaceName.MatchString(v) }
+func decodeRef(v string) (string, error) {
+	b, e := base64.RawURLEncoding.Strict().DecodeString(v)
+	if e != nil || len(b) == 0 || !utf8.Valid(b) || base64.RawURLEncoding.EncodeToString(b) != v {
+		return "", Invalid()
+	}
+	return string(b), nil
+}
+
+func matchRoute(path string) (route, bool) {
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	r := route{}
+	if len(parts) < 2 || parts[0] != "v1" {
+		return r, false
+	}
+	if len(parts) == 2 {
+		switch parts[1] {
+		case "runtimes":
+			r.method = "GET, POST"
+			r.op = "runtime.collection"
+		case "sessions":
+			r.method = "GET, POST"
+			r.op = "session.collection"
+		default:
+			return r, false
+		}
+		return r, true
+	}
+	var rest []string
+	switch parts[1] {
+	case "runtimes":
+		r.name = parts[2]
+		if !validName(r.name) {
+			r.err = Invalid()
+		}
+		if len(parts) == 3 {
+			r.method = "GET, DELETE"
+			r.op = "runtime.resource"
+			return r, true
+		}
+		if len(parts) != 4 {
+			return r, false
+		}
+		r.method = "POST"
+		switch parts[3] {
+		case "spec":
+			r.method = "PUT"
+			r.op = "runtime.update"
+		case "start":
+			r.op = "runtime.start"
+		case "stop":
+			r.op = "runtime.stop"
+		default:
+			return r, false
+		}
+		return r, true
+	case "sessions":
+		r.ref.SessionID, r.err = decodeRef(parts[2])
+		rest = parts[3:]
+	case "namespaces":
+		if len(parts) < 5 || parts[3] != "sessions" {
+			return r, false
+		}
+		r.ref = resource.SessionRef{Namespace: parts[2], Name: parts[4]}
+		if !validNamespace(parts[2]) || !validName(parts[4]) {
+			r.err = Invalid()
+		}
+		rest = parts[5:]
+	default:
+		return r, false
+	}
+	r.method = "POST"
+	if len(rest) == 0 {
+		r.method = "GET"
+		r.op = "session.get"
+		return r, true
+	}
+	if len(rest) == 1 {
+		switch rest[0] {
+		case "resume", "archive", "cancel":
+			r.op = "session." + rest[0]
+		case "inputs":
+			r.op = "session.input"
+		case "events":
+			r.method = "GET"
+			r.op = "session.history"
+		default:
+			return r, false
+		}
+		return r, true
+	}
+	if len(rest) == 2 && rest[0] == "events" && rest[1] == "stream" {
+		r.method = "GET"
+		r.op = "session.observe"
+		return r, true
+	}
+	if len(rest) == 3 && rest[0] == "interactions" && rest[2] == "answer" {
+		r.op = "session.answer"
+		var err error
+		r.interaction, err = decodeRef(rest[1])
+		if err != nil {
+			r.err = err
+		}
+		return r, true
+	}
+	return r, false
+}
+
+func parseQuery(raw, op string) (url.Values, error) {
+	q, err := url.ParseQuery(raw)
+	if err != nil {
+		return nil, Invalid()
+	}
+	allowed := map[string]bool{}
+	switch op {
+	case "runtime.list":
+		allowed = map[string]bool{"type": true, "state": true}
+	case "session.list":
+		allowed = map[string]bool{"namespace": true, "runtimeRef": true, "state": true, "after": true, "limit": true}
+	case "session.history":
+		allowed = map[string]bool{"after": true, "limit": true, "types": true}
+	}
+	for key, values := range q {
+		if !allowed[key] || len(values) == 0 || (key != "types" && len(values) != 1) {
+			return nil, Invalid()
+		}
+		if slices.Contains(values, "") {
+			return nil, Invalid()
+		}
+	}
+	if v := q.Get("limit"); v != "" {
+		for _, c := range v {
+			if c < '0' || c > '9' {
+				return nil, Invalid()
+			}
+		}
+		n, e := strconv.Atoi(v)
+		if e != nil || n < 1 {
+			return nil, Invalid()
+		}
+	}
+	if ns := q.Get("namespace"); ns != "" && !validNamespace(ns) {
+		return nil, Invalid()
+	}
+	if state := q.Get("state"); state != "" {
+		valid := false
+		states := []string{"stopped", "starting", "running", "stopping", "unknown"}
+		if op == "session.list" {
+			states = []string{"offline", "opening", "idle", "running", "requires_action", "closing", "archived", "unknown"}
+		}
+		for _, v := range states {
+			valid = valid || state == v
+		}
+		if !valid {
+			return nil, Invalid()
+		}
+	}
+	for _, kind := range q["types"] {
+		if !eventTypes[kind] {
+			return nil, Invalid()
+		}
+	}
+	return q, nil
+}
+
+var eventTypes = func() map[string]bool {
+	out := map[string]bool{}
+	for s := range strings.FieldsSeq("user.message agent.message agent.thinking agent.tool_call agent.tool_result agent.message_chunk agent.thinking_chunk agent.tool_call_chunk agent.plan session.state_update session.error session.info_update session.config_option_update session.available_commands_update session.usage_update session.interaction_requested session.interaction_closed") {
+		out[s] = true
+	}
+	return out
+}()
+
+func queryLimit(q url.Values) int {
+	if q.Get("limit") == "" {
+		return 100
+	}
+	n, _ := strconv.Atoi(q.Get("limit"))
+	return n
+}
+
+func methodError(w http.ResponseWriter, allowed string) {
+	w.Header().Set("Allow", allowed)
+	fail(w, 405, Invalid())
+}
+
+// resolveMethod chooses collection/resource operations without redirects or ServeMux method fallbacks.
+func resolveMethod(r *route, method string) {
+	switch r.op {
+	case "runtime.collection":
+		switch method {
+		case "POST":
+			r.method = "POST"
+			r.op = "runtime.create"
+		case "GET":
+			r.method = "GET"
+			r.op = "runtime.list"
+		}
+	case "session.collection":
+		switch method {
+		case "POST":
+			r.method = "POST"
+			r.op = "session.create"
+		case "GET":
+			r.method = "GET"
+			r.op = "session.list"
+		}
+	case "runtime.resource":
+		switch method {
+		case "DELETE":
+			r.method = "DELETE"
+			r.op = "runtime.delete"
+		case "GET":
+			r.method = "GET"
+			r.op = "runtime.get"
+		}
+	}
 }

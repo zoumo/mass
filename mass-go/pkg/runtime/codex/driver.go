@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
+
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/recovery"
 )
@@ -53,21 +55,23 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 }
 
 type session struct {
-	command     sync.Mutex
-	requests    chan sdk.Request
-	wake        chan struct{}
-	work        string
-	retired     map[string]bool
-	address     runtime.Address
-	source      runtime.Source
-	sub         *sdk.Subscription
-	active      bool
-	sending     bool
-	state       *runtime.SessionState
-	err         error
-	done        chan struct{}
-	released    chan struct{}
-	releaseOnce sync.Once
+	command      sync.Mutex
+	requests     chan sdk.Request
+	wake         chan struct{}
+	work         string
+	cancelWork   string
+	cancelTarget string
+	retired      map[string]bool
+	address      runtime.Address
+	source       runtime.Source
+	sub          *sdk.Subscription
+	active       bool
+	sending      bool
+	state        *runtime.SessionState
+	err          error
+	done         chan struct{}
+	released     chan struct{}
+	releaseOnce  sync.Once
 }
 type Driver struct {
 	opening      int
@@ -96,9 +100,11 @@ func (d *Driver) Events() (runtime.Stream, error) {
 	d.taken = true
 	return d.pipe, nil
 }
+
 func caps() runtime.Capabilities {
 	return runtime.Capabilities{"textInput": true, "permission": true, "form": true}
 }
+
 func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	d.op.Lock()
 	defer d.op.Unlock()
@@ -131,12 +137,15 @@ func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	go d.requests(c)
 	return caps(), nil
 }
+
 func (d *Driver) OpenSession(ctx context.Context, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
 	return d.open(ctx, "", address, spec)
 }
+
 func (d *Driver) ResumeSession(ctx context.Context, id string, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
 	return d.open(ctx, id, address, spec)
 }
+
 func (d *Driver) open(ctx context.Context, resume string, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.mu.Lock()
 	if d.stopped || d.stopping || len(d.sessions)+d.opening >= 128 {
@@ -169,10 +178,10 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
 		var saved ct.Thread
-		if err = json.Unmarshal(material.Context, &saved); err != nil {
+		if err := json.Unmarshal(material.Context, &saved); err != nil {
 			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
-		if saved.ID != resume || saved.SessionID != resume || saved.Ephemeral || string(saved.Cwd) != spec.Cwd {
+		if saved.ID != resume || saved.SessionID != resume || saved.Ephemeral || saved.Cwd != spec.Cwd {
 			return runtime.DriverSession{}, noResources("invalid native recovery context")
 		}
 		response, err := c.ResumeThread(ctx, ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)})
@@ -180,7 +189,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 			return runtime.DriverSession{}, err
 		}
 		thread = response.Thread
-		if thread.ID != saved.ID || thread.SessionID != saved.SessionID || thread.Cwd != saved.Cwd || thread.CreatedAt != saved.CreatedAt || thread.ModelProvider != saved.ModelProvider || thread.Ephemeral || !bytes.Equal(marshal(thread.Path), marshal(saved.Path)) {
+		if thread.ID != saved.ID || thread.SessionID != saved.SessionID || thread.Cwd != saved.Cwd || thread.CreatedAt != saved.CreatedAt || thread.ModelProvider != saved.ModelProvider || thread.Ephemeral || !reflect.DeepEqual(thread.Path, saved.Path) {
 			return runtime.DriverSession{}, errors.New("native recovery ownership mismatch")
 		}
 		// Resume metadata may contain old turns: they are never adapted or replayed.
@@ -196,7 +205,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		thread = response.Thread
 	}
 	id := thread.ID
-	if id == "" || thread.SessionID != id || thread.Ephemeral || string(thread.Cwd) != spec.Cwd {
+	if id == "" || thread.SessionID != id || thread.Ephemeral || thread.Cwd != spec.Cwd {
 		return runtime.DriverSession{}, errors.New("outcome_unknown: missing or mismatched native identity/context")
 	}
 	if resume == "" {
@@ -212,8 +221,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	d.mu.Lock()
 	if _, ok := d.sessions[id]; ok {
 		d.mu.Unlock()
-		sub.Abort()
-		return runtime.DriverSession{}, errors.New("duplicate native identity")
+		return runtime.DriverSession{}, errors.Join(errors.New("duplicate native identity"), sub.Abort())
 	}
 	d.sessions[id] = s
 	d.mu.Unlock()
@@ -223,7 +231,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		d.mu.Lock()
 		s.state = &state
 		d.mu.Unlock()
-		if err = d.emit(s, id, "", runtime.StateUpdate{State: &state}, ""); err != nil {
+		if err := d.emit(s, id, "", runtime.StateUpdate{State: &state}, ""); err != nil {
 			return runtime.DriverSession{}, err
 		}
 	}
@@ -231,6 +239,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	go d.observe(id, s)
 	return runtime.DriverSession{SessionID: id, Capabilities: caps(), Source: s.source}, nil
 }
+
 func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
 	d.mu.Lock()
 	s := d.sessions[id]
@@ -263,7 +272,7 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	items := make([]ct.UserInput, 0, len(input.Content))
 	for _, b := range input.Content {
 		if b.Type != "text" {
-			return runtime.InputReceipt{}, runtime.InvalidArgument("unsupported input content")
+			return runtime.InputReceipt{}, runtime.Unsupported()
 		}
 		items = append(items, ct.UserInput{Text: &ct.TextUserInput{Type: "text", Text: b.Text, TextElements: ct.Some([]ct.TextElement{})}})
 	}
@@ -284,6 +293,7 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	d.mu.Unlock()
 	return runtime.InputReceipt{Submission: result.Turn.ID, Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}, nil
 }
+
 func (d *Driver) emit(s *session, id, item string, p runtime.Payload, work string, observedAt ...time.Time) error {
 	eventTime := time.Now().UTC()
 	if len(observedAt) > 0 && !observedAt[0].IsZero() {
@@ -295,6 +305,7 @@ func (d *Driver) emit(s *session, id, item string, p runtime.Payload, work strin
 	}
 	return d.pipe.Send(d.life, e)
 }
+
 func (d *Driver) observe(id string, s *session) {
 	defer d.wg.Done()
 	defer close(s.done)
@@ -348,6 +359,7 @@ func (d *Driver) observe(id string, s *session) {
 		}
 	}
 }
+
 func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 	if event.DecodeError != nil {
 		return fmt.Errorf("invalid native observation: %w", event.DecodeError)
@@ -498,6 +510,7 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 	}
 	return nil
 }
+
 func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	d.mu.Lock()
 	s := d.sessions[id]
@@ -542,6 +555,7 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	d.mu.Unlock()
 	return nil
 }
+
 func (d *Driver) Stop(ctx context.Context) error {
 	d.op.Lock()
 	defer d.op.Unlock()
@@ -670,7 +684,12 @@ func (d *Driver) handleRequest(s *session, r sdk.Request) {
 		_ = d.emit(s, v.ThreadID, "", runtime.SessionError{Message: "interaction delivery failed"}, v.TurnID)
 	}
 }
-func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, a map[string]any) (runtime.Acceptance, error) {
+
+func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer any) (runtime.Acceptance, error) {
+	a, ok := answer.(map[string]any)
+	if !ok || a == nil {
+		return runtime.Acceptance{}, runtime.InvalidArgument("interaction requires an object answer")
+	}
 	d.mu.Lock()
 	s := d.sessions[id]
 	d.mu.Unlock()
@@ -703,32 +722,34 @@ func (d *Driver) observationFailed(id string, s *session, err error) {
 	_ = d.emit(s, id, "", runtime.StateUpdate{PreviousState: previous}, "")
 }
 
-func marshal(v any) []byte { b, _ := json.Marshal(v); return b }
-
-func (d *Driver) Cancel(ctx context.Context, id string) (runtime.Acceptance, error) {
+func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {
 	d.mu.Lock()
 	s := d.sessions[id]
 	d.mu.Unlock()
 	if s == nil {
-		return runtime.Acceptance{}, runtime.FailedPrecondition("session unavailable")
+		return runtime.CancelReceipt{}, runtime.FailedPrecondition("session unavailable")
 	}
 	s.command.Lock()
 	defer s.command.Unlock()
 	d.mu.Lock()
 	work, c := s.work, d.client
 	active := s.active
+	if active && s.cancelWork != work {
+		s.cancelWork, s.cancelTarget = work, runtime.UUID()
+	}
+	target := s.cancelTarget
 	d.mu.Unlock()
 	if !active {
-		return runtime.Acceptance{}, nil
+		return runtime.CancelReceipt{Result: "noActiveWork"}, nil
 	}
 	if work == "" {
-		return runtime.Acceptance{}, errors.New("outcome_unknown: no confirmed native turn to cancel")
+		return runtime.CancelReceipt{}, errors.New("outcome_unknown: no confirmed native turn to cancel")
 	}
 	_, err := c.InterruptTurn(ctx, ct.TurnInterruptParams{ThreadID: id, TurnID: work})
 	if err != nil {
-		return runtime.Acceptance{}, fmt.Errorf("outcome_unknown: cancel: %w", err)
+		return runtime.CancelReceipt{}, fmt.Errorf("outcome_unknown: cancel: %w", err)
 	}
-	return runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}, nil
+	return runtime.CancelReceipt{Target: target, Result: "controlAcknowledged"}, nil
 }
 
 func noResources(message string) error {

@@ -69,17 +69,19 @@ func (p *PendingInteractions) Add(session string, source Source, answer func(con
 	p.entries[ref] = pendingInteraction{session, source, answer}
 	return ref, nil
 }
+
 func (p *PendingInteractions) Answer(ctx context.Context, session string, source Source, ref string, answer map[string]any) error {
 	p.mu.Lock()
 	entry, ok := p.entries[ref]
 	if !ok || entry.session != session || !entry.source.SameRun(source) || entry.source.Work() != source.Work() {
 		p.mu.Unlock()
-		return errors.New("interaction is not pending for this session")
+		return FailedPrecondition("interaction is not pending for this session")
 	}
 	delete(p.entries, ref)
 	p.mu.Unlock()
 	return entry.answer(ctx, answer)
 }
+
 func (p *PendingInteractions) RemoveSession(session string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -93,6 +95,7 @@ func (p *PendingInteractions) RemoveSession(session string) {
 func PermissionRequest(tool, title string) InteractionRequest {
 	return InteractionRequest{Kind: "permission", ToolCallID: tool, Title: title, Options: []PermissionOption{{"allow-once", "Allow once", "allow_once"}, {"reject-once", "Reject once", "reject_once"}}}
 }
+
 func PermissionAllowed(answer map[string]any) (bool, error) {
 	if len(answer) != 2 || answer["outcome"] != "selected" {
 		return false, errors.New("expected selected permission option")

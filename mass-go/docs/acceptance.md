@@ -13,7 +13,7 @@ make prototype-go
 
 这条命令实际构建两个 SDK mock、massd 和 massctl，然后运行
 `TestEntrypointSuite`。不是调用 SDK probe 来代替最终产品入口。
-测试通过 CLI 发出 JSON 请求，经实验 HTTP 操作调用 Service；实时观察来自
+测试通过 CLI 发出请求，经 HTTP v1 REST 调用 Service；实时观察来自
 CLI → SSE → Service 独立订阅。测试包含原 ID 恢复后的独立新输入。
 
 | 场景 | Codex | Claude | 直接证据/含义 |
@@ -54,7 +54,7 @@ CLI → SSE → Service 独立订阅。测试包含原 ID 恢复后的独立新�
 | 崩溃/掉电/跨进程未知责任 | 未验证且跨进程未知操作自动结算未实现；已持久 unknown/未确认运行不静默当作可恢复 |
 | 真实 CLI、原生持久恢复、模型、账户、工具执行 | 未验证；fake 不证明 Claude 真实无输入 init、真实 resume ID 消费或模型行为 |
 | Linux、Rust | 本次未验证；本次是 macOS 离线 Go 实验，不声明生产发布 |
-| HTTP 正式合同、远程认证、ready 健康聚合 | 未定稿/未实现；URL/envelope/SSE 是本语言实验映射，harness 保持只读 |
+| HTTP v1 | 已按定稿合同迁移 REST/JSON/SSE、实例 Bearer 认证、TLS 入口和 HTTP 接纳探针；本页六票记录为先前合成验收，新增协议验收见 [HTTP v1 验收](http-v1-acceptance.md) |
 
 没有把失败或未验证写为通过。开发期全量检查曾暴露一个 Codex 双 SDK 队列时序问题：
 请求可能先于工作确认到达；当前由原 Session 的有界工作队列处理并增加早到问答场景。

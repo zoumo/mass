@@ -37,8 +37,8 @@ type SessionService interface {
 	ArchiveSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ResumeSession(context.Context, resource.SessionRef) (resource.Session, error)
 	SendPrompt(context.Context, resource.SessionRef, runtime.Input) (runtime.InputReceipt, error)
-	Cancel(context.Context, resource.SessionRef) (runtime.Acceptance, error)
-	AnswerInteraction(context.Context, resource.SessionRef, string, map[string]any) (runtime.Acceptance, error)
+	Cancel(context.Context, resource.SessionRef) (runtime.CancelReceipt, error)
+	AnswerInteraction(context.Context, resource.SessionRef, string, any) (runtime.InteractionReceipt, error)
 	ListHistoryEvents(resource.SessionRef, store.HistoryQuery) (store.HistoryPage, error)
 	SubscribeEvents(resource.SessionRef) (*Subscription, error)
 }
@@ -110,17 +110,19 @@ func NewWithPolicy(meta store.MetaStore, history store.HistoryStore, registry *r
 	s.policy = policy
 	return s
 }
-func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef, interaction string, answer map[string]any) (runtime.Acceptance, error) {
+
+func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef, interaction string, answer any) (runtime.InteractionReceipt, error) {
 	r, err := s.meta.GetSession(ref)
 	if err != nil {
-		return runtime.Acceptance{}, err
+		return runtime.InteractionReceipt{}, err
 	}
-	run, _, err := s.control(r)
+	run, err := s.control(r)
 	if err != nil {
-		return runtime.Acceptance{}, err
+		return runtime.InteractionReceipt{}, err
 	}
 	defer run.admission.RUnlock()
-	return run.driver.AnswerInteraction(ctx, r.Status.SessionID, interaction, answer)
+	evidence, err := run.driver.AnswerInteraction(ctx, r.Status.SessionID, interaction, answer)
+	return runtime.InteractionReceipt{Interaction: interaction, Evidence: evidence}, err
 }
 
 var label = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -129,13 +131,14 @@ func validName(name string) bool {
 	if len(name) == 0 || len(name) > 253 {
 		return false
 	}
-	for _, p := range strings.Split(name, ".") {
+	for p := range strings.SplitSeq(name, ".") {
 		if len(p) > 63 || !label.MatchString(p) {
 			return false
 		}
 	}
 	return true
 }
+
 func validateMetadata(m resource.Metadata, session bool) error {
 	if !validName(m.Name) {
 		return runtime.InvalidArgument("invalid DNS resource name")
@@ -270,6 +273,7 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 	s.mu.Unlock()
 	return r, err
 }
+
 func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resource.Session, error) {
 	if err := validateMetadata(r.Metadata, true); err != nil {
 		return r, err
@@ -408,18 +412,20 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 func (s *Service) GetSession(ref resource.SessionRef) (resource.Session, error) {
 	return s.meta.GetSession(ref)
 }
+
 func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input) (runtime.InputReceipt, error) {
 	r, err := s.meta.GetSession(ref)
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	run, _, err := s.control(r)
+	run, err := s.control(r)
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
 	defer run.admission.RUnlock()
 	return run.driver.SendPrompt(ctx, r.Status.SessionID, input)
 }
+
 func (s *Service) ListHistoryEvents(ref resource.SessionRef, q store.HistoryQuery) (store.HistoryPage, error) {
 	r, err := s.meta.GetSession(ref)
 	if err != nil {
@@ -427,6 +433,7 @@ func (s *Service) ListHistoryEvents(ref resource.SessionRef, q store.HistoryQuer
 	}
 	return s.history.ListHistory(r.Status.SessionID, q)
 }
+
 func (s *Service) SubscribeEvents(ref resource.SessionRef) (*Subscription, error) {
 	r, err := s.meta.GetSession(ref)
 	if err != nil {
@@ -436,11 +443,14 @@ func (s *Service) SubscribeEvents(ref resource.SessionRef) (*Subscription, error
 	defer s.mu.Unlock()
 	run := s.runs[r.Spec.RuntimeRef]
 	if s.closing || run == nil || run.err != nil || run.stopping {
-		return nil, errors.New("runtime not observed")
+		return nil, runtime.Unavailable("runtime_not_observed")
 	}
 	l := run.lanes[r.Status.SessionID]
-	if l == nil || l.err != nil || l.closing || len(l.subscribers) >= queueCapacity {
-		return nil, errors.New("session not observed")
+	if l == nil || l.err != nil || l.closing {
+		return nil, runtime.Unavailable("session_not_observed")
+	}
+	if len(l.subscribers) >= queueCapacity {
+		return nil, runtime.Exhausted("subscription_limit")
 	}
 	sub := newSubscription(func(sub *Subscription) {
 		s.mu.Lock()
@@ -454,6 +464,7 @@ func (s *Service) SubscribeEvents(ref resource.SessionRef) (*Subscription, error
 	s.observers[r.Status.SessionID] = l.subscribers
 	return sub, nil
 }
+
 func (s *Service) consume(run *runBinding, stream runtime.Stream) {
 	defer close(run.done)
 	for {
@@ -462,9 +473,9 @@ func (s *Service) consume(run *runBinding, stream runtime.Stream) {
 			s.mu.Lock()
 			stopping := run.stopping
 			s.mu.Unlock()
-			if err != io.EOF || !stopping {
+			if !errors.Is(err, io.EOF) || !stopping {
 				s.mu.Lock()
-				if err == io.EOF {
+				if errors.Is(err, io.EOF) {
 					err = errors.New("outcome_unknown: unexpected driver EOF")
 				}
 				run.err = err
@@ -517,6 +528,7 @@ func (s *Service) consume(run *runBinding, stream runtime.Stream) {
 		s.mu.Unlock()
 	}
 }
+
 func (s *Service) fail(l *lane, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -525,6 +537,7 @@ func (s *Service) fail(l *lane, err error) {
 		sub.finish(err)
 	}
 }
+
 func (s *Service) process(run *runBinding, l *lane) {
 	defer close(l.done)
 	for entry := range l.queue {
@@ -576,12 +589,12 @@ func (s *Service) process(run *runBinding, l *lane) {
 		}
 		s.mu.Lock()
 		for sub := range l.subscribers {
-			copy, err := e.Clone()
+			cloned, err := e.Clone()
 			if err != nil {
 				sub.finish(err)
 				continue
 			}
-			sub.publish(copy)
+			sub.publish(cloned)
 			if sub.ended() {
 				delete(l.subscribers, sub)
 				if len(l.subscribers) == 0 {
@@ -628,10 +641,10 @@ func (s *Service) Shutdown(ctx context.Context) error {
 
 // Cancel targets the original lane and remains available during drain. A receipt
 // records only dispatch/acknowledgment; native termination must still be observed.
-func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.Acceptance, error) {
+func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.CancelReceipt, error) {
 	r, err := s.meta.GetSession(ref)
 	if err != nil {
-		return runtime.Acceptance{}, err
+		return runtime.CancelReceipt{}, err
 	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
@@ -641,17 +654,17 @@ func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.
 	}
 	s.mu.Unlock()
 	if run == nil {
-		return runtime.Acceptance{}, errors.New("session unavailable")
+		return runtime.CancelReceipt{}, errors.New("session unavailable")
 	}
 	if err := lockOperation(ctx, &run.op); err != nil {
-		return runtime.Acceptance{}, err
+		return runtime.CancelReceipt{}, err
 	}
 	defer run.op.Unlock()
 	s.mu.Lock()
 	l := run.lanes[r.Status.SessionID]
 	s.mu.Unlock()
 	if l == nil || l != original {
-		return runtime.Acceptance{}, errors.New("session unavailable")
+		return runtime.CancelReceipt{}, errors.New("session unavailable")
 	}
 	return run.driver.Cancel(ctx, r.Status.SessionID)
 }
@@ -688,6 +701,7 @@ func (s *Service) ReconcileHistory(ctx context.Context, ref resource.SessionRef)
 		return ctx.Err()
 	}
 }
+
 func (s *Service) reconcileEvent(e runtime.SessionEvent) error {
 	// Validate the whole committed prefix before retrying, including partial writes.
 	q := store.HistoryQuery{}

@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
@@ -23,6 +25,8 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
+
+type VerticalSuite struct{ suite.Suite }
 
 var mock, claudeMock, app, ctl, root string
 
@@ -40,6 +44,7 @@ func (g *identityGate) CreateSession(r resource.Session) (resource.Session, erro
 }
 
 func TestMain(m *testing.M) {
+	mainCtx, mainCancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	var err error
 	root, err = os.MkdirTemp("", "mass-vertical-")
 	if err != nil {
@@ -48,13 +53,13 @@ func TestMain(m *testing.M) {
 	code := 1
 	func() {
 		defer func() {
-			output, err := exec.Command("ps", "-axo", "pid=,args=").Output()
+			output, err := exec.CommandContext(mainCtx, "ps", "-axo", "pid=,args=").Output()
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "FAIL process readback", err)
 				code = 1
 			}
 			leaked := false
-			for _, line := range strings.Split(string(output), "\n") {
+			for line := range strings.SplitSeq(string(output), "\n") {
 				fields := strings.Fields(line)
 				if len(fields) > 1 && strings.HasPrefix(fields[1], root+"/") {
 					leaked = true
@@ -70,7 +75,7 @@ func TestMain(m *testing.M) {
 			}
 			deadline := time.Now().Add(2 * time.Second)
 			for {
-				output, err = exec.Command("ps", "-axo", "pid=,args=").Output()
+				output, err = exec.CommandContext(mainCtx, "ps", "-axo", "pid=,args=").Output()
 				if err != nil {
 					code = 1
 					break
@@ -95,7 +100,7 @@ func TestMain(m *testing.M) {
 		}()
 		for name, target := range map[string]string{"claude-mock": "github.com/zoumo/agent-sdk-go/claude/cmd/mock", "mock": "github.com/zoumo/agent-sdk-go/codex/cmd/mock", "massd": "../../cmd/massd", "massctl": "../../cmd/massctl"} {
 			bin := filepath.Join(root, name)
-			cmd := exec.Command("go", "build", "-o", bin, target)
+			cmd := exec.CommandContext(mainCtx, "go", "build", "-o", bin, target)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				fmt.Fprintf(os.Stderr, "build %s: %v\n%s", name, err, out)
 				return
@@ -113,14 +118,17 @@ func TestMain(m *testing.M) {
 		}
 		code = m.Run()
 	}()
+	mainCancel()
 	os.Exit(code)
 }
+
 func ctx(t *testing.T) context.Context {
 	t.Helper()
 	c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 	return c
 }
+
 func scenario(t *testing.T) (string, string) {
 	t.Helper()
 	work := t.TempDir()
@@ -130,10 +138,12 @@ func scenario(t *testing.T) (string, string) {
 	require.NoError(t, err)
 	data = bytes.ReplaceAll(data, []byte(`"/synthetic"`), quoted)
 	path := filepath.Join(t.TempDir(), "scenario.json")
-	require.NoError(t, os.WriteFile(path, data, 0600))
+	require.NoError(t, os.WriteFile(path, data, 0o600))
 	return path, work
 }
-func TestCodexVertical(t *testing.T) {
+
+func (verticalSuite *VerticalSuite) TestCodexVertical() {
+	t := verticalSuite.T()
 	c := ctx(t)
 	path, work := scenario(t)
 	dir := t.TempDir()
@@ -296,3 +306,5 @@ func TestCodexVertical(t *testing.T) {
 	require.Error(t, err)
 	t.Log("PASS reopened read-only identity/history with no Registry or Driver")
 }
+
+func TestVerticalSuite(t *testing.T) { suite.Run(t, new(VerticalSuite)) }

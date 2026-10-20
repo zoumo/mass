@@ -5,30 +5,47 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
+	"io"
+	"os"
+
+	"github.com/spf13/cobra"
+
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
-	"io"
 )
 
 func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer) error {
-	f := flag.NewFlagSet("massctl", flag.ContinueOnError)
-	f.SetOutput(stderr)
-	url := f.String("url", "http://127.0.0.1:8787", "experimental daemon URL")
-	op := f.String("op", "", "Service operation, e.g. session.create; observe streams future events")
-	if e := f.Parse(args); e != nil {
-		return e
+	var url, op string
+	cmd := &cobra.Command{
+		Use:           "massctl",
+		Short:         "Call the MASS HTTP v1 service",
+		Args:          cobra.NoArgs,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if op == "" {
+				return transport.Invalid()
+			}
+			return call(cmd.Context(), url, op, cmd.InOrStdin(), cmd.OutOrStdout())
+		},
 	}
-	if f.NArg() != 0 || *op == "" {
-		return transport.Invalid()
-	}
-	c := client.Client{URL: *url}
+	cmd.SetArgs(args)
+	cmd.SetIn(in)
+	cmd.SetOut(out)
+	cmd.SetErr(stderr)
+	cmd.Flags().StringVar(&url, "url", "http://127.0.0.1:8787", "HTTP v1 daemon URL")
+	cmd.Flags().StringVar(&op, "op", "", "Service operation, e.g. session.create; observe streams future events")
+	return cmd.ExecuteContext(ctx)
+}
+
+func call(ctx context.Context, url, op string, in io.Reader, out io.Writer) error {
+	c := client.Client{URL: url, Token: os.Getenv("MASS_TOKEN")}
 	enc := json.NewEncoder(out)
 	d := json.NewDecoder(in)
 	d.UseNumber()
 	d.DisallowUnknownFields()
-	if *op == "observe" {
+	if op == "observe" {
 		var ref resource.SessionRef
 		if d.Decode(&ref) != nil {
 			return transport.Invalid()
@@ -42,7 +59,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		}
 		defer o.Close()
 		// Ready is emitted only after the server registered the independent subscription.
-		if e = enc.Encode(map[string]bool{"ready": true}); e != nil {
+		if e := enc.Encode(map[string]bool{"ready": true}); e != nil {
 			return e
 		}
 		for {
@@ -53,7 +70,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 			if e != nil {
 				return e
 			}
-			if e = enc.Encode(v); e != nil {
+			if e := enc.Encode(v); e != nil {
 				return e
 			}
 		}
@@ -66,7 +83,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer
 		return transport.Invalid()
 	}
 	var result json.RawMessage
-	if e := c.CallJSON(ctx, *op, p, &result); e != nil {
+	if e := c.CallJSON(ctx, op, p, &result); e != nil {
 		return e
 	}
 	return enc.Encode(result)
