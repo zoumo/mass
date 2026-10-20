@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"sync"
 )
 
@@ -25,9 +26,11 @@ var ErrResourcesReleased = errors.New("owned resources released")
 
 var ErrWorkUnsettled = errors.New("work unsettled")
 
-type Config map[string]any
-type Capabilities map[string]bool
-type SessionState string
+type (
+	Config       map[string]any
+	Capabilities map[string]bool
+	SessionState string
+)
 
 const (
 	Unknown        SessionState = "unknown"
@@ -60,12 +63,6 @@ type DriverSession struct {
 	Capabilities Capabilities
 	Source       Source
 }
-type ContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-func Text(text string) ContentBlock { return ContentBlock{Type: "text", Text: text} }
 
 type Input struct {
 	Content []ContentBlock `json:"content"`
@@ -82,6 +79,14 @@ type InputReceipt struct {
 	Submission string     `json:"submission"`
 	Acceptance Acceptance `json:"acceptance"`
 }
+type InteractionReceipt struct {
+	Interaction string     `json:"interaction"`
+	Evidence    Acceptance `json:"evidence"`
+}
+type CancelReceipt struct {
+	Target string `json:"target,omitempty"`
+	Result string `json:"result"`
+}
 type Stream interface {
 	Next(context.Context) (SessionEvent, error)
 }
@@ -91,8 +96,8 @@ type Driver interface {
 	OpenSession(context.Context, Address, SessionSpec) (DriverSession, error)
 	ResumeSession(context.Context, string, Address, SessionSpec) (DriverSession, error)
 	SendPrompt(context.Context, string, Input) (InputReceipt, error)
-	Cancel(context.Context, string) (Acceptance, error)
-	AnswerInteraction(context.Context, string, string, map[string]any) (Acceptance, error)
+	Cancel(context.Context, string) (CancelReceipt, error)
+	AnswerInteraction(context.Context, string, string, any) (Acceptance, error)
 	CloseSession(context.Context, string) error
 	Stop(context.Context) error
 }
@@ -110,11 +115,10 @@ type Registry struct {
 
 func NewRegistry(factories map[string]Factory) *Registry {
 	copied := map[string]Factory{}
-	for k, v := range factories {
-		copied[k] = v
-	}
+	maps.Copy(copied, factories)
 	return &Registry{factories: copied, drivers: map[string]Driver{}}
 }
+
 func (r *Registry) ValidateConfig(kind string, c Config) error {
 	r.mu.Lock()
 	f := r.factories[kind]
@@ -127,6 +131,7 @@ func (r *Registry) ValidateConfig(kind string, c Config) error {
 	}
 	return nil
 }
+
 func (r *Registry) Create(kind, name string, c Config) (Driver, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -146,6 +151,7 @@ func (r *Registry) Create(kind, name string, c Config) (Driver, error) {
 	}
 	return d, err
 }
+
 func (r *Registry) Get(name string) (Driver, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

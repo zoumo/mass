@@ -95,7 +95,7 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 	if _, err = s.sessionStatus(resource.SessionRef{SessionID: native.SessionID}, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
 		return err
 	}
-	if err = s.drainLane(ctx, l); err != nil {
+	if err := s.drainLane(ctx, l); err != nil {
 		return err
 	}
 	if _, err = s.sessionStatus(resource.SessionRef{SessionID: native.SessionID}, func(r *resource.Session) { offlineStatus(r, true) }); err != nil {

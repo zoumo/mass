@@ -2,10 +2,10 @@ package service
 
 import (
 	"context"
-	"errors"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"io"
 	"sync"
+
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 // Subscription observes future events only. Closing it has no Agent side effect.
@@ -21,6 +21,7 @@ type Subscription struct {
 func newSubscription(remove func(*Subscription)) *Subscription {
 	return &Subscription{queue: make(chan runtime.SessionEvent, queueCapacity), done: make(chan struct{}), remove: remove}
 }
+
 func (s *Subscription) finish(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -31,6 +32,7 @@ func (s *Subscription) finish(err error) {
 	s.err = err
 	close(s.done)
 }
+
 func (s *Subscription) publish(e runtime.SessionEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -40,11 +42,12 @@ func (s *Subscription) publish(e runtime.SessionEvent) {
 	select {
 	case s.queue <- e:
 	default:
-		s.err = errors.New("slow subscriber overflow")
+		s.err = runtime.Exhausted("slow_subscriber")
 		s.closed = true
 		close(s.done)
 	}
 }
+
 func (s *Subscription) Next(ctx context.Context) (runtime.SessionEvent, error) {
 	select {
 	case <-s.done:

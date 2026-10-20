@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -19,6 +21,8 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
+
+type LifecycleSuite struct{ suite.Suite }
 
 type runtimeStatusGate struct {
 	store.MetaStore
@@ -32,7 +36,9 @@ func (g *runtimeStatusGate) UpdateRuntime(r resource.Runtime) (resource.Runtime,
 	}
 	return g.MetaStore.UpdateRuntime(r)
 }
-func TestConcurrentDesiredSpecAndStartStatus(t *testing.T) {
+
+func (lifecycleSuite *LifecycleSuite) TestConcurrentDesiredSpecAndStartStatus() {
+	t := lifecycleSuite.T()
 	dir := t.TempDir()
 	st, err := file.Open(dir, false)
 	require.NoError(t, err)
@@ -55,7 +61,7 @@ func TestConcurrentDesiredSpecAndStartStatus(t *testing.T) {
 		t.Fatal("start did not reach status write")
 	}
 	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -94,6 +100,7 @@ func lifecycleService(t *testing.T, dir string) (*service.Service, *file.Store, 
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
 	return svc, st, reg
 }
+
 func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, input string) {
 	t.Helper()
 	sub, err := svc.SubscribeEvents(ref)
@@ -117,7 +124,8 @@ func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, in
 	}
 }
 
-func TestCodexConfigurationStopAndColdResume(t *testing.T) {
+func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() {
+	t := lifecycleSuite.T()
 	dir := t.TempDir()
 	svc, st, reg := lifecycleService(t, dir)
 	createPath, work := nativeScenario(t, "codex", "lifecycle-create")
@@ -133,7 +141,7 @@ func TestCodexConfigurationStopAndColdResume(t *testing.T) {
 	r, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: spec})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, r.Metadata.Generation)
-	r, err = svc.StartRuntime(ctx(t), "agent")
+	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
 	driver, err := reg.Get("agent")
 	require.NoError(t, err)
@@ -243,10 +251,10 @@ func TestCodexConfigurationStopAndColdResume(t *testing.T) {
 		m["owner"] = "another-runtime"
 		bad, e := json.Marshal(m)
 		require.NoError(t, e)
-		require.NoError(t, os.WriteFile(p, bad, 0600))
+		require.NoError(t, os.WriteFile(p, bad, 0o600))
 		_, e = cold.ResumeSession(ctx(t), ref)
 		require.ErrorContains(t, e, "context mismatch")
-		require.NoError(t, os.WriteFile(p, original, 0600))
+		require.NoError(t, os.WriteFile(p, original, 0o600))
 	}
 	resumed, err := cold.ResumeSession(ctx(t), resource.SessionRef{Namespace: "z", Name: "same"})
 	require.NoError(t, err)
@@ -298,11 +306,12 @@ func replaceWorkspace(t *testing.T, path, work string) string {
 	replace(scenario)
 	b, err = json.Marshal(scenario)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, b, 0600))
+	require.NoError(t, os.WriteFile(path, b, 0o600))
 	return path
 }
 
-func TestClaudeStopAndColdResume(t *testing.T) {
+func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
+	t := lifecycleSuite.T()
 	dir := t.TempDir()
 	svc, st, _ := lifecycleService(t, dir)
 	path, work := nativeScenario(t, "claude", "basic")
@@ -349,7 +358,8 @@ func TestClaudeStopAndColdResume(t *testing.T) {
 	t.Log("PASS actual SDK/fake Claude ResumeID startup, observed init same ID/cwd, durable history prefix and separate new input; fake validates argv compatibility, not real native persistence")
 }
 
-func TestArchiveResumeKeepsObserversAndIdentity(t *testing.T) {
+func (lifecycleSuite *LifecycleSuite) TestArchiveResumeKeepsObserversAndIdentity() {
+	t := lifecycleSuite.T()
 	svc, _, _ := lifecycleService(t, t.TempDir())
 	path, work := nativeScenario(t, "codex", "archive-resume")
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
@@ -385,3 +395,5 @@ func TestArchiveResumeKeepsObserversAndIdentity(t *testing.T) {
 	require.NoError(t, err)
 	t.Log("PASS original live subscriber survives archive/resume and receives only subsequent live facts on the original persistent identity")
 }
+
+func TestLifecycleSuite(t *testing.T) { suite.Run(t, new(LifecycleSuite)) }

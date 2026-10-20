@@ -3,16 +3,16 @@ package vertical_test
 import (
 	"context"
 	"errors"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -21,6 +21,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/service"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
+	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 type failureSuite struct {
@@ -44,6 +45,7 @@ func (s *failureSuite) SetupTest() {
 	s.svc = nil
 	s.unknown = false
 }
+
 func (s *failureSuite) TearDownTest() {
 	if s.svc != nil {
 		err := s.svc.Shutdown(ctx(s.T()))
@@ -55,6 +57,7 @@ func (s *failureSuite) TearDownTest() {
 	}
 	s.Require().NoError(s.st.Close())
 }
+
 func (s *failureSuite) start(kind, name string, history store.HistoryStore) {
 	path, work := nativeScenario(s.T(), kind, name)
 	s.work = work
@@ -68,19 +71,23 @@ func (s *failureSuite) start(kind, name string, history store.HistoryStore) {
 	_, err = s.svc.StartRuntime(ctx(s.T()), "agent")
 	s.Require().NoError(err)
 }
+
 func (s *failureSuite) spec(name string) resource.Session {
 	return resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: name}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: s.work}}}
 }
+
 func (s *failureSuite) open(name string) resource.SessionRef {
 	r, err := s.svc.CreateSession(ctx(s.T()), s.spec(name))
 	s.Require().NoError(err)
 	return resource.SessionRef{SessionID: r.Status.SessionID}
 }
+
 func (s *failureSuite) input(ref resource.SessionRef) runtime.InputReceipt {
 	r, err := s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("hello")}})
 	s.Require().NoError(err)
 	return r
 }
+
 func (s *failureSuite) until(sub *service.Subscription, state runtime.SessionState) {
 	for {
 		e, err := sub.Next(ctx(s.T()))
@@ -90,6 +97,7 @@ func (s *failureSuite) until(sub *service.Subscription, state runtime.SessionSta
 		}
 	}
 }
+
 func (s *failureSuite) cancel(kind string) {
 	s.start(kind, "cancel", s.st)
 	ref := s.open("demo")
@@ -101,7 +109,7 @@ func (s *failureSuite) cancel(kind string) {
 	s.until(sub, runtime.Running)
 	ack, err := s.svc.Cancel(ctx(s.T()), ref)
 	s.Require().NoError(err)
-	s.Equal(runtime.Yes(), ack.NativeAccepted)
+	s.Equal("controlAcknowledged", ack.Result)
 	current, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
 	s.Equal(runtime.Running, current.Status.State)
@@ -176,6 +184,7 @@ func (g *unknownAppend) Append(id string, events []runtime.SessionEvent) (*strin
 	}
 	return result, err
 }
+
 func (s *failureSuite) TestUnknownAppendExplicitSettlement() {
 	fault := &unknownAppend{HistoryStore: s.st, entered: make(chan struct{})}
 	s.start("codex", "basic", fault)
@@ -219,6 +228,7 @@ func (g *slowAppend) Append(id string, events []runtime.SessionEvent) (*string, 
 	}
 	return g.HistoryStore.Append(id, events)
 }
+
 func (s *failureSuite) TestSlowStorageDoesNotBlockOtherSession() {
 	gate := &slowAppend{HistoryStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
@@ -252,6 +262,7 @@ func (s *failureSuite) TestSlowStorageDoesNotBlockOtherSession() {
 	s.Require().NoError(err)
 	s.T().Log("PASS B completes and persists while A append remains blocked in its own lane")
 }
+
 func (s *failureSuite) TestLateCreateKeepsOriginalReservation() {
 	s.start("codex", "late-create", s.st)
 	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -270,6 +281,7 @@ func (s *failureSuite) TestLateCreateKeepsOriginalReservation() {
 	s.Require().ErrorIs(err, store.ErrNotFound)
 	s.T().Log("PASS slow A does not block B; late A ID released under original owner before stop")
 }
+
 func (s *failureSuite) TestOldWorkCannotControlNewWork() {
 	s.start("codex", "old-work", s.st)
 	ref := s.open("demo")
@@ -286,12 +298,13 @@ func (s *failureSuite) TestOldWorkCannotControlNewWork() {
 	time.Sleep(200 * time.Millisecond)
 	ack, err := s.svc.Cancel(ctx(s.T()), ref)
 	s.Require().NoError(err)
-	s.Equal(runtime.Yes(), ack.NativeAccepted)
+	s.Equal("controlAcknowledged", ack.Result)
 	current, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
 	s.Equal(runtime.Running, current.Status.State)
 	s.until(sub, runtime.Idle)
 }
+
 func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 	gate := &slowAppend{HistoryStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
@@ -325,6 +338,7 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 	s.Require().Equal(160, count)
 	s.T().Log("PASS bounded overload explicitly fails, retains overflow plus upstream responsibility, and settles all 160 original facts")
 }
+
 func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
 	s.start("codex", "slow-subscriber", s.st)
 	ref := s.open("demo")
@@ -337,7 +351,10 @@ func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
 		return e == nil && len(p.Events) == 140
 	}, 6*time.Second, 5*time.Millisecond)
 	_, err = sub.Next(ctx(s.T()))
-	s.Require().ErrorContains(err, "slow subscriber")
+	var public *runtime.OperationError
+	s.Require().ErrorAs(err, &public)
+	s.Equal("resource_exhausted", public.Code)
+	s.Equal("slow_subscriber", public.Reason)
 }
 
 func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
@@ -405,6 +422,7 @@ func (s *failureSuite) TestEarlyFactsWaitForIdentityCommit() {
 	}, time.Second, 5*time.Millisecond)
 	s.T().Log("PASS SDK-native pre-init complete facts stay bounded and invisible until persistent identity commit")
 }
+
 func (s *failureSuite) TestEarlyCapacityFailsExplicitlyAndReleases() {
 	s.start("claude", "early-overflow", s.st)
 	_, err := s.svc.CreateSession(ctx(s.T()), s.spec("demo"))
@@ -412,6 +430,7 @@ func (s *failureSuite) TestEarlyCapacityFailsExplicitlyAndReleases() {
 	_, err = s.svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().ErrorIs(err, store.ErrNotFound)
 }
+
 func (s *failureSuite) TestTimeoutDuringIdentityCommitSettlesOriginalOwner() {
 	gate := &identityGate{MetaStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
@@ -438,6 +457,7 @@ func (s *failureSuite) TestTimeoutDuringIdentityCommitSettlesOriginalOwner() {
 	s.Require().NoError(err)
 	s.Len(p.Events, 2)
 }
+
 func (s *failureSuite) TestLateAnswerCannotControlRecoveredRun() {
 	s.start("codex", "late-answer", s.st)
 	ref := s.open("demo")
@@ -476,6 +496,7 @@ func (g unknownIdentity) CreateSession(r resource.Session) (resource.Session, er
 	}
 	return value, errors.New("injected unknown identity commit")
 }
+
 func (s *failureSuite) TestUnknownIdentityCommitReconcilesOriginalFacts() {
 	s.meta = unknownIdentity{s.st}
 	s.start("claude", "early", s.st)
@@ -540,9 +561,15 @@ func (s *failureSuite) TestSSEOverflowIsExplicit() {
 	s.start("codex", "slow-subscriber", s.st)
 	ref := s.open("demo")
 	w := &pausedSSE{ResponseRecorder: httptest.NewRecorder(), ready: make(chan struct{}), release: make(chan struct{})}
-	request := httptest.NewRequest("POST", "/experimental/observe", strings.NewReader(`{"sessionId":"`+ref.SessionID+`"}`))
+	path, err := client.SessionPath(ref)
+	s.Require().NoError(err)
+	request := httptest.NewRequestWithContext(context.Background(), http.MethodGet, path+"/events/stream", nil)
+	request.RemoteAddr = "127.0.0.1:1234"
+	handler, err := transport.New(s.svc, transport.Options{LocalOnly: true})
+	s.Require().NoError(err)
+	defer handler.Shutdown()
 	done := make(chan struct{})
-	go func() { defer close(done); transport.New(s.svc).ServeHTTP(w, request) }()
+	go func() { defer close(done); handler.ServeHTTP(w, request) }()
 	<-w.ready
 	// Always release the writer on a failed assertion too.
 	defer func() {
@@ -560,8 +587,8 @@ func (s *failureSuite) TestSSEOverflowIsExplicit() {
 	}, 6*time.Second, 5*time.Millisecond)
 	close(w.release)
 	<-done
-	s.Contains(w.Body.String(), "event: error")
-	s.NotContains(w.Body.String(), "event: end")
+	s.Contains(w.Body.String(), "event: subscription.error")
+	s.NotContains(w.Body.String(), "event: subscription.closed")
 	s.NotContains(w.Body.String(), "slow subscriber")
 	s.T().Log("PASS synthetic transport write stall => Service overflow => explicit redacted SSE error, full 140-fact history preserved")
 }

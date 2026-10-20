@@ -26,6 +26,7 @@ func (s *Service) runtimeStatus(name string, status resource.RuntimeStatus) (res
 		}
 	}
 }
+
 func (s *Service) sessionStatus(ref resource.SessionRef, change func(*resource.Session)) (resource.Session, error) {
 	for {
 		r, err := s.meta.GetSession(ref)
@@ -39,6 +40,7 @@ func (s *Service) sessionStatus(ref resource.SessionRef, change func(*resource.S
 		}
 	}
 }
+
 func (s *Service) UpdateRuntime(name string, spec resource.RuntimeSpec) (resource.Runtime, error) {
 	if err := s.registry.ValidateConfig(spec.Type, spec.Config); err != nil {
 		return resource.Runtime{}, err
@@ -55,12 +57,15 @@ func (s *Service) UpdateRuntime(name string, spec resource.RuntimeSpec) (resourc
 		}
 	}
 }
+
 func (s *Service) ListRuntimes(q resource.RuntimeQuery) ([]resource.Runtime, error) {
 	return s.meta.ListRuntimes(q)
 }
+
 func (s *Service) ListSessions(q resource.SessionQuery) (resource.SessionPage, error) {
 	return s.meta.ListSessions(q)
 }
+
 func (s *Service) DeleteRuntime(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -84,6 +89,7 @@ func (s *Service) DeleteRuntime(name string) error {
 	}
 	return s.meta.DeleteRuntime(name, r.Metadata.ResourceVersion)
 }
+
 func (s *Service) drainLane(ctx context.Context, l *lane) error {
 	b := make(chan struct{})
 	select {
@@ -110,6 +116,7 @@ func offlineStatus(r *resource.Session, archived bool) {
 	r.Status.RuntimeGeneration = 0
 	r.Status.Capabilities = nil
 }
+
 func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
 	r, err := s.meta.GetSession(ref)
 	if err != nil {
@@ -151,16 +158,16 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 	s.mu.Lock()
 	l.closing = true
 	s.mu.Unlock()
-	if err = waitAdmission(ctx, &run.admission); err != nil {
+	if err := waitAdmission(ctx, &run.admission); err != nil {
 		return r, err
 	}
 	if _, err = s.sessionStatus(ref, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
 		return r, err
 	}
-	if err = run.driver.CloseSession(ctx, r.Status.SessionID); err != nil {
+	if err := run.driver.CloseSession(ctx, r.Status.SessionID); err != nil {
 		return r, err
 	}
-	if err = s.drainLane(ctx, l); err != nil {
+	if err := s.drainLane(ctx, l); err != nil {
 		return r, err
 	}
 	r, err = s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
@@ -214,11 +221,11 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 	if first && statusErr != nil {
 		return r, statusErr
 	}
-	if err = lockOperation(ctx, &run.op); err != nil {
+	if err := lockOperation(ctx, &run.op); err != nil {
 		return r, err
 	}
 	defer run.op.Unlock()
-	if err = waitAdmission(ctx, &run.admission); err != nil {
+	if err := waitAdmission(ctx, &run.admission); err != nil {
 		return r, err
 	}
 	if run.drained {
@@ -264,14 +271,14 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
 			return r, err
 		}
-		if err = s.closeForStop(ctx, run, id); err != nil {
+		if err := s.closeForStop(ctx, run, id); err != nil {
 			return r, err
 		}
-		if err = s.drainLane(ctx, l); err != nil {
+		if err := s.drainLane(ctx, l); err != nil {
 			return r, err
 		}
 	}
-	if err = run.driver.Stop(ctx); err != nil {
+	if err := run.driver.Stop(ctx); err != nil {
 		return r, err
 	}
 	select {
@@ -280,7 +287,7 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		return r, ctx.Err()
 	}
 	for id, l := range lanes {
-		if err = s.drainLane(ctx, l); err != nil {
+		if err := s.drainLane(ctx, l); err != nil {
 			return r, err
 		}
 		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { offlineStatus(r, false) }); err != nil {
@@ -327,7 +334,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 			return r, e
 		}
 		for _, event := range page.Events {
-			if e = event.Validate(); e != nil {
+			if e := event.Validate(); e != nil {
 				return r, e
 			}
 			if event.SessionID != r.Status.SessionID || event.Namespace != r.Metadata.Namespace || event.SessionName != r.Metadata.Name || !event.Persistent() {
@@ -420,7 +427,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 }
 
 // control holds the original Runtime operation lock through a native dispatch.
-func (s *Service) control(r resource.Session) (*runBinding, *lane, error) {
+func (s *Service) control(r resource.Session) (*runBinding, error) {
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
 	var original *lane
@@ -429,7 +436,7 @@ func (s *Service) control(r resource.Session) (*runBinding, *lane, error) {
 	}
 	s.mu.Unlock()
 	if run == nil {
-		return nil, nil, runtime.FailedPrecondition("session unavailable")
+		return nil, runtime.FailedPrecondition("session unavailable")
 	}
 	run.admission.RLock()
 	s.mu.Lock()
@@ -438,9 +445,9 @@ func (s *Service) control(r resource.Session) (*runBinding, *lane, error) {
 	s.mu.Unlock()
 	if !available {
 		run.admission.RUnlock()
-		return nil, nil, runtime.FailedPrecondition("session unavailable")
+		return nil, runtime.FailedPrecondition("session unavailable")
 	}
-	return run, l, nil
+	return run, nil
 }
 
 type sessionOperation struct {
@@ -491,6 +498,7 @@ func (s *Service) closeForStop(ctx context.Context, run *runBinding, id string) 
 		}
 	}
 }
+
 func fmtUnknown(err error) error {
 	return errors.Join(errors.New("outcome_unknown: drain incomplete"), err)
 }
@@ -523,6 +531,7 @@ func (s *Service) ResumeSession(ctx context.Context, ref resource.SessionRef) (r
 		return resource.Session{}, fmtUnknown(ctx.Err())
 	}
 }
+
 func lockOperation(ctx context.Context, op *sync.Mutex) error {
 	if err := ctx.Err(); err != nil {
 		return err
