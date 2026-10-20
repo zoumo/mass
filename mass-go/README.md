@@ -40,6 +40,26 @@ real CLI native persistence or consumption of resume IDs.
 
 ## Daemon and CLI
 
+The default listen address is `127.0.0.1:24368`. The daemon uses [Viper](https://github.com/spf13/viper) to read
+`~/.mass/config.yaml` when present and defaults its data directory to `~/.mass/data`.
+Use `--config /absolute/config.yaml` to select another file; an explicitly selected
+file must exist. Command-line flags override file values, including explicit
+boolean `false`. Unknown fields, invalid field types and malformed YAML are rejected.
+The old default `~/.mass/config.json` is no longer discovered; convert its contents
+to YAML and save them as `~/.mass/config.yaml`.
+
+For local single-user use, create `~/.mass/config.yaml` with:
+
+```yaml
+listen: 127.0.0.1:24368
+local: true
+```
+
+Then run `bin/massd-go` without flags. Optional fields are `data` (an absolute
+owned directory), `tokenFile`, `tlsCert`, `tlsKey`, and
+`prototypeAutoApprovePermissions`. Automatic permission approval is off by default.
+Existing data is not moved into the default directory.
+
 ```sh
 make build-go
 # Supply a fresh, absolute, application-owned data directory.
