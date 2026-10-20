@@ -1,4 +1,4 @@
-# HTTP v1 implementation: Runtime, Session identity, work and recovery (tickets 01–04)
+# HTTP v1 implementation: Runtime, Session identity, work and recovery (tickets 01–05)
 
 The contract is [harness/bindings/http.md](../../harness/bindings/http.md).
 This note records implementation coverage, not a replacement contract.
@@ -33,7 +33,7 @@ marks generated fields read-only. No manually maintained OpenAPI schema is used.
 
 ## Incremental migration boundary
 
-Tickets 01–04 register Runtime resources and lifecycle entry points, Session
+Tickets 01–05 register Runtime resources and lifecycle entry points, Session
 creation/directory/lookup, and input/answer/cancel/archive/resume operations with Huma.
 History and SSE retain explicit chi registrations pending tickets 04–06; generated
 client completion belongs to 07. This export does not yet cover the full HTTP v1
@@ -111,3 +111,23 @@ releases these retained delivery owners; they do not represent native connection
 The four recovery URLs are typed and generated from the same registration as the
 server. Deterministic Service/HTTP and SDK mock checks do not prove real Agent/model
 behavior or final generated-client/production-proxy acceptance.
+
+
+Runtime stop (ticket 05) belongs to Service for both in-process and HTTP callers.
+It atomically seals admission and shares the original stop attempt between callers;
+request cancellation returns outcome_unknown and ends only that caller's wait.
+Original opening/restore and input/answer/cancel/policy dispatches settle before
+Session release. Release seals cancel admission too. Failed release retains stopping
+and the original Driver; explicit settlement does not resend confirmed Session or
+Driver releases. Final stream routing is checked again after Driver stop, including
+retained overflow on archived or recovered sources. Delivery settlement preserves
+the original queue, event identity and append order.
+
+Successful stop leaves Sessions offline and preserves the Runtime configuration,
+Session identity, history and subscribers. Explicit restart captures the latest
+configuration generation. Delete requires no live/unsettled binding, no persistent
+Session reference (including archives), and confirmed stopped status; it never
+cascades or implicitly stops. Typed HTTP registration returns 204 with no body for
+successful deletion. The existing generated lifecycle schema remains applicable.
+Deterministic Service/real HTTP and SDK mock verification does not prove native
+Agent/model or deployment-proxy behavior.

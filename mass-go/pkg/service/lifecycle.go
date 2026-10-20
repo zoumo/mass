@@ -69,6 +69,9 @@ func (s *Service) ListSessions(q resource.SessionQuery) (resource.SessionPage, e
 }
 
 func (s *Service) DeleteRuntime(name string) error {
+	if !validName(name) {
+		return runtime.InvalidArgument("invalid runtime name")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.runs[name] != nil {
@@ -110,7 +113,7 @@ func (s *Service) drainLane(ctx context.Context, l *lane) error {
 }
 
 func offlineStatus(r *resource.Session, archived bool) {
-	r.Status.State = events.Unknown
+	r.Status.State = "offline"
 	if archived {
 		r.Status.State = "archived"
 	}
@@ -192,42 +195,66 @@ func (s *Service) archiveSession(ctx context.Context, ref resource.SessionRef) (
 	return r, err
 }
 
+// One attempt belongs to the original run; callers share its result and may
+// abandon only their wait. Failed attempts retain stopping and can be explicitly
+// settled by a later call without replacing the Driver.
+type runtimeStop struct {
+	done  chan struct{}
+	value resource.Runtime
+	err   error
+}
+
 func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtime, error) {
-	r, err := s.meta.GetRuntime(name)
+	if err := ctx.Err(); err != nil {
+		return resource.Runtime{}, err
+	}
+	r, err := s.GetRuntime(name)
 	if err != nil {
 		return r, err
 	}
 	s.mu.Lock()
 	run := s.runs[name]
-	first := run != nil && !run.stopping
-	if first {
-		run.stopping = true
-		run.stopStarted = make(chan struct{})
-	}
-	s.mu.Unlock()
 	if run == nil {
+		s.mu.Unlock()
 		if r.Status.State == "stopped" {
 			return r, nil
 		}
 		return r, runtime.FailedPrecondition("runtime release not confirmed in this process")
 	}
-	if first {
-		_, statusErr := s.runtimeStatus(name, resource.RuntimeStatus{State: "stopping", AppliedGeneration: r.Status.AppliedGeneration, Capabilities: r.Status.Capabilities})
-		s.mu.Lock()
-		run.stopStatusErr = statusErr
-		close(run.stopStarted)
-		s.mu.Unlock()
+	attempt := run.stop
+	if attempt != nil {
+		select {
+		case <-attempt.done:
+			attempt = nil
+		default:
+		}
 	}
-	select {
-	case <-run.stopStarted:
-	case <-ctx.Done():
-		return r, fmtUnknown(ctx.Err())
+	if attempt == nil {
+		attempt = &runtimeStop{done: make(chan struct{})}
+		run.stop = attempt
+		run.stopping = true
+		go func() {
+			attempt.value, attempt.err = s.stopRuntime(context.WithoutCancel(ctx), name, run)
+			close(attempt.done)
+		}()
 	}
-	s.mu.Lock()
-	statusErr := run.stopStatusErr
 	s.mu.Unlock()
-	if first && statusErr != nil {
-		return r, statusErr
+	select {
+	case <-attempt.done:
+		return attempt.value, attempt.err
+	case <-ctx.Done():
+		return r, &runtime.OperationError{Code: "outcome_unknown", Reason: "runtime_stop_wait_abandoned", Message: "Stop remains owned by the original Runtime; inspect state before further action"}
+	}
+}
+
+func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding) (resource.Runtime, error) {
+	r, err := s.meta.GetRuntime(name)
+	if err != nil {
+		return r, err
+	}
+	// Publish the admission seal even while an original start is still settling.
+	if _, err = s.runtimeStatus(name, resource.RuntimeStatus{State: "stopping", AppliedGeneration: r.Status.AppliedGeneration, Capabilities: r.Status.Capabilities}); err != nil {
+		return r, err
 	}
 	if err := lockOperation(ctx, &run.op); err != nil {
 		return r, err
@@ -279,15 +306,27 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
 			return r, err
 		}
-		if err := s.closeForStop(ctx, run, id); err != nil {
+		if err := s.sealLane(ctx, l); err != nil {
 			return r, err
+		}
+		if !l.nativeClosed {
+			if err := s.closeForStop(ctx, run, id); err != nil {
+				s.mu.Lock()
+				l.releasing = false
+				s.mu.Unlock()
+				return r, err
+			}
+			l.nativeClosed = true
 		}
 		if err := s.drainLane(ctx, l); err != nil {
 			return r, err
 		}
 	}
-	if err := run.driver.Stop(ctx); err != nil {
-		return r, err
+	if !run.driverStopped {
+		if err := run.driver.Stop(ctx); err != nil {
+			return r, err
+		}
+		run.driverStopped = true
 	}
 	select {
 	case <-run.done:
@@ -295,6 +334,10 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		return r, ctx.Err()
 	}
 	s.mu.Lock()
+	if run.blocked != nil {
+		s.mu.Unlock()
+		return r, &runtime.OperationError{Code: "outcome_unknown", Reason: "runtime_delivery_unsettled", Message: "Original stream delivery remains unsettled after Driver release"}
+	}
 	retired := make([]*lane, 0, len(run.retired))
 	seen := map[*lane]bool{}
 	for _, l := range run.retired {

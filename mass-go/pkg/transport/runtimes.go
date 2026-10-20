@@ -53,7 +53,7 @@ func (s *Server) registerRuntimes(api huma.API) {
 		return &runtimeOutput{Body: r}, err
 	})
 	register(api, huma.Operation{Method: "POST", Path: "/apis/v1/runtimes/{runtime}/stop", OperationID: "stopRuntime"}, func(ctx context.Context, in *runtimeAction) (*runtimeOutput, error) {
-		r, err := s.api.StopRuntime(context.WithoutCancel(ctx), in.Name)
+		r, err := s.api.StopRuntime(ctx, in.Name)
 		return &runtimeOutput{Body: r}, err
 	})
 	register(api, huma.Operation{Method: "DELETE", Path: "/apis/v1/runtimes/{runtime}", OperationID: "deleteRuntime", DefaultStatus: 204}, func(_ context.Context, in *runtimePath) (*emptyOutput, error) {

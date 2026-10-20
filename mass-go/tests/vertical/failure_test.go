@@ -388,13 +388,13 @@ func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
 	s.Require().Error(err)
 	_, err = s.svc.AnswerInteraction(ctx(s.T()), ref, handle, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": "json"}}})
 	s.Require().Error(err)
-	time.Sleep(450 * time.Millisecond)
-	session, err := s.svc.GetSession(ref)
-	s.Require().NoError(err)
-	s.Equal(events.SessionState("closing"), session.Status.State)
+	s.Require().Eventually(func() bool {
+		session, err := s.svc.GetSession(ref)
+		return err == nil && session.Status.State == "offline"
+	}, 2*time.Second, 5*time.Millisecond, "original stop owner continues after caller timeout")
 	_, err = s.svc.StopRuntime(ctx(s.T()), "agent")
 	s.Require().NoError(err)
-	s.T().Log("PASS stop timeout preserves stopping/closing and closed admission; late idle does not reopen; original release completes explicit retry")
+	s.T().Log("PASS stop timeout preserves stopping/closing and closed admission; late idle does not reopen; original release continues after caller timeout")
 }
 
 func (s *failureSuite) TestEarlyFactsWaitForIdentityCommit() {

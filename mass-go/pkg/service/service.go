@@ -58,8 +58,8 @@ type runBinding struct {
 	admission     sync.RWMutex
 	started       bool
 	stopping      bool
-	stopStarted   chan struct{}
-	stopStatusErr error
+	stop          *runtimeStop
+	driverStopped bool
 	drained       bool
 	blocked       *events.SessionEvent
 }
@@ -80,17 +80,18 @@ type delivery struct {
 	barrier chan struct{}
 }
 type lane struct {
-	admission   sync.RWMutex
-	releasing   bool
-	session     resource.Session
-	source      events.Source
-	queue       chan delivery
-	done        chan struct{}
-	err         error
-	closing     bool
-	retry       chan chan error
-	commitErr   error
-	subscribers map[*Subscription]bool
+	admission    sync.RWMutex
+	releasing    bool
+	nativeClosed bool
+	session      resource.Session
+	source       events.Source
+	queue        chan delivery
+	done         chan struct{}
+	err          error
+	closing      bool
+	retry        chan chan error
+	commitErr    error
+	subscribers  map[*Subscription]bool
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
@@ -181,7 +182,7 @@ func validateMetadata(m resource.Metadata, session bool) error {
 }
 func addressKey(a runtime.Address) string { return a.Namespace + "/" + a.SessionName }
 func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runtime, error) {
-	r, err := s.meta.GetRuntime(name)
+	r, err := s.GetRuntime(name)
 	if err != nil {
 		return r, err
 	}
@@ -193,7 +194,7 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 	if existing := s.runs[name]; existing != nil {
 		if existing.stopping {
 			s.mu.Unlock()
-			return r, errors.New("runtime stopping")
+			return r, runtime.FailedPrecondition("runtime stopping")
 		}
 		s.mu.Unlock()
 		if err := lockOperation(ctx, &existing.op); err != nil {
@@ -854,7 +855,12 @@ func (s *Service) ReconcileDelivery(ctx context.Context, name string) error {
 		return errors.New("no retained delivery")
 	}
 	l := run.lanes[e.SessionID]
-	if l == nil || !l.source.SameRun(e.Source()) {
+	if original := run.retired[e.Source().WithWork("")]; original != nil {
+		l = original
+	} else if l != nil && !l.source.SameRun(e.Source()) {
+		l = nil
+	}
+	if l == nil {
 		s.mu.Unlock()
 		return errors.New("original lane not settled")
 	}
