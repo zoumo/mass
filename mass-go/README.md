@@ -3,7 +3,7 @@
 [harness](../harness/index.md) is the read-only project contract. This implementation
 uses **CLI → HTTP/SSE → Service → Store / Runtime**. It has one SessionEvent model,
 one Driver consumer, independent live observers, and file-authoritative history.
-Executable assembly and CLI commands live under `cmd/`; library packages live under `pkg/`.
+Executable assembly lives under `cmd/`; CLI and other library modules live under `pkg/`.
 
 ## One-command synthetic demonstration
 
@@ -27,6 +27,7 @@ history and pagination/filtering, explicit user questions for each Agent,
 request-before-ACK handling, cancel receipt versus observed termination,
 archive/stop and original-ID resume followed by fresh input. It tests CLI parse
 errors, Runtime operations, disconnect isolation and failed-creation cleanup.
+Answer and filtered queries are tested through HTTP because they are not CLI commands.
 Each persistent event read from SSE is compared with a committed history query.
 SDK probe passes are reported separately and do not stand in for this suite.
 
@@ -42,9 +43,9 @@ real CLI native persistence or consumption of resume IDs.
 ```sh
 make build-go
 # Supply a fresh, absolute, application-owned data directory.
-dist/massd-go --data /absolute/owned/data --listen 127.0.0.1:8787 --local \
+dist/massd-go --data /absolute/owned/data --listen 127.0.0.1:24368 --local \
   --prototype-auto-approve-permissions
-printf '%s\n' '{}' | dist/massctl --url http://127.0.0.1:8787 --op runtime.list
+dist/massctl runtime list
 ```
 
 The permission flag is explicit prototype assembly policy; it leaves form/user
@@ -54,13 +55,83 @@ failure exits nonzero. Select explicit `--local` trusted loopback mode or
 `--token-file`; direct remote access requires TLS. `/readyz` measures HTTP
 admission only. The CLI reads the Bearer token from `MASS_TOKEN`.
 
-`massctl --op OPERATION` consumes one JSON object on stdin and prints the raw
-Service result as JSON; errors go to stderr with nonzero exit. `--op observe`
-consumes a SessionRef and prints `{"ready":true}` followed by SessionEvent JSON
-lines. SIGINT/SIGTERM disconnects observation; it does not cancel Agent work.
-The CLI owns no local Store, Session directory, projection or retry policy.
-See [the Go HTTP v1 implementation](docs/http-experiment.md) for all operations,
-request shapes, errors and SSE termination semantics.
+`massctl <resource> <operation>` uses the `/apis/v1` HTTP contract. Run
+`massctl --help`, `massctl runtime --help`, or `massctl session --help` for the
+complete command tree; `massctl version` reports the client build. The old `--op`
+interface is removed. CLI implementation lives in `pkg/massctl`; `cmd/massctl`
+only assembles process I/O and signals.
+
+Address precedence is `--url`, then `MASS_URL`, then `http://127.0.0.1:24368`.
+Authentication uses `MASS_TOKEN`. Output defaults to human summaries/tables;
+`-o json` returns the complete business result, and watch emits SessionEvent
+JSONL. Errors retain `code/reason/message` on stderr; watch readiness is also on
+stderr. Exit codes are 0 (success), 1 (operation/I/O failure or unknown result),
+2 (invalid arguments), and 130 (interrupted wait). Ordinary requests default to
+30 seconds; `--timeout 0` disables the timeout. Watch applies that timeout only
+through `subscription.ready`, then observes until explicitly closed or interrupted.
+Neither timeout nor Ctrl-C cancels Agent work; requests are never retried.
+
+For Codex, explicitly create and start a Runtime, then create a Session without
+sending input (the working directory is interpreted on the Agent host):
+
+```sh
+dist/massctl runtime create codex-local --type codex --executable /absolute/path/to/codex
+dist/massctl runtime start codex-local
+dist/massctl session create review -n demo --runtime codex-local --cwd /absolute/owned/workspace
+# Keep this running in one terminal; wait for subscription.ready on stderr.
+dist/massctl -o json session watch review -n demo
+# In another terminal:
+dist/massctl session prompt review -n demo --text 'Describe this workspace'
+dist/massctl session history review -n demo --limit 100
+dist/massctl session archive review -n demo
+dist/massctl session resume review -n demo
+dist/massctl runtime stop codex-local
+```
+
+For Claude, use the installed Claude executable with the same resource commands:
+
+```sh
+dist/massctl runtime create claude-local --type claude --executable /absolute/path/to/claude
+dist/massctl runtime start claude-local
+dist/massctl session create review -n demo --runtime claude-local --cwd /absolute/owned/workspace \
+  --system-prompt-file /absolute/system.txt --additional-dir /absolute/owned/context
+dist/massctl session prompt review -n demo --text 'Describe this workspace'
+# Claude currently accepts one input per running connection; release and resume
+# the original identity before another input.
+dist/massctl session archive review -n demo
+dist/massctl session resume review -n demo
+```
+
+Both drivers currently accept text input; Claude requires exactly one text block.
+These command examples describe supported interfaces, not proof of real CLI/model
+execution. Authentication, real native recovery, accounts and models must be
+validated separately in owned test directories. Permission auto-approval remains
+an explicit daemon prototype policy; pending form/question interactions require
+the HTTP answer API. This CLI version deliberately has no answer command.
+
+Existing Session commands use `NAME -n NAMESPACE` or a raw global `SESSION_ID`
+without namespace, with no default namespace, `--id`, guessing or lookup fallback.
+IDs are encoded as one URL path segment. `session list` and `session history`
+accept only `--limit` (default 100) and `--after`; one page is returned, including
+its next cursor. History and watch are independent: watch shows only future
+events, never fills history or reconnects, and unexpected EOF is a failure.
+
+Runtime create requires NAME and `--type`; absent configuration sends `{}`.
+`--executable`, `--config-file` and `--config-json` are mutually exclusive input
+modes. Files contain RuntimeConfig itself; `-` reads stdin. Runtime update first
+GETs the resource, preserves its type, and PUTs a complete spec at the resource
+path. `--executable` preserves other config fields; a complete JSON config replaces
+them. Empty updates fail locally. There is no conditional-update protection:
+concurrent edits can be overwritten. Updates never restart running instances.
+Runtime delete never stops or cascades: Service rejects running/unreleased
+resources and persistent Session references. Stop explicitly first; archived
+Sessions retain their references and history. Successful delete has empty JSON
+stdout. Test-only driver configuration stays in complete JSON, not public flags.
+
+The client owns no local Store, Session directory, projection or retry policy.
+See [the Go HTTP v1 implementation](docs/http-experiment.md) for server migration
+status and protocol details. Server implementation and client contract can migrate
+in separate commits; integration checks must use a daemon providing these routes.
 
 ## Verification and boundaries
 

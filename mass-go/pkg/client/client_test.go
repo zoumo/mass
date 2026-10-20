@@ -87,7 +87,7 @@ func (clientSuite *ClientSuite) TestAuthenticatedRESTClientAndNoReplay() {
 		if r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Error("missing token")
 		}
-		if r.Method != http.MethodGet || r.URL.Path != "/v1/runtimes" {
+		if r.Method != http.MethodGet || r.URL.Path != "/apis/v1/runtimes" {
 			t.Error("not a REST request")
 		}
 		w.Header().Set("Location", "/replayed")
@@ -104,7 +104,7 @@ func (clientSuite *ClientSuite) TestAuthenticatedRESTClientAndNoReplay() {
 func (clientSuite *ClientSuite) TestObserverIgnoresHeartbeatAndPreservesError() {
 	t := clientSuite.T()
 	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "/YS9i/events/stream") || r.Header.Get("Authorization") != "Bearer test-token" {
+		if r.Method != http.MethodGet || !strings.Contains(r.URL.EscapedPath(), "/a%2Fb/events/stream") || r.Header.Get("Authorization") != "Bearer test-token" {
 			t.Error("incorrect observation request")
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -127,7 +127,7 @@ func (clientSuite *ClientSuite) TestRESTCallPreservesNumbersAndExplicitNull() {
 	t := clientSuite.T()
 	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/v1/sessions/YS9i/interactions/Li4/answer" || r.Method != http.MethodPost {
+		if r.URL.EscapedPath() != "/apis/v1/sessions/a%2Fb/interactions/Li4/answer" || r.Method != http.MethodPost {
 			t.Error("incorrect answer route")
 		}
 		data, _ := io.ReadAll(r.Body)

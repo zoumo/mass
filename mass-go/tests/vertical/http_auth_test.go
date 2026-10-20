@@ -75,7 +75,12 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 	var ready struct {
 		URL string `json:"url"`
 	}
-	require.NoError(t, json.NewDecoder(stdout).Decode(&ready), stderr.String())
+	if err := json.NewDecoder(stdout).Decode(&ready); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		waited = true
+		require.NoError(t, err, stderr.String())
+	}
 	require.True(t, strings.HasPrefix(ready.URL, "https://"))
 	roots := x509.NewCertPool()
 	require.True(t, roots.AppendCertsFromPEM(certPEM))
@@ -126,6 +131,7 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 		{"--data", filepath.Join(owned, "denied"), "--listen", "0.0.0.0:0", "--token-file", tokenPath},
 	} {
 		invalid := exec.CommandContext(ctx, app, args...)
+		invalid.Env = cmd.Env
 		require.Error(t, invalid.Run(), "unsafe or unspecified access mode must fail startup")
 	}
 	t.Log("PASS authenticated TLS daemon/client, unauthenticated aliases and stream rejected, probes, direct JSON, explicit access-mode rejection and listener cleanup")

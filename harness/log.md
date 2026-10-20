@@ -2,6 +2,14 @@
 
 ## 2026-10-20
 
+- **确认 massctl 首版范围并启动实现**：配置 flag 首版提供 --executable，其余字段走完整 config；配置 flag/文件/内联 JSON 三种方式互斥，多个字段 flag 可组合，无配置更新为参数错误。不提供完整资源文件创建、completion 或 answer 命令。负责人授权按已确认模块范围开始改造，human 字段和本地错误分类可继续细化，文档保持 draft。
+
+- **确认 CLI 全局约定**：服务地址采用 --url > MASS_URL > 本机 24368，认证读取 MASS_TOKEN；默认 human，JSON 输出完整结果、watch 输出 JSONL，错误走 stderr。分页默认 100、不自动翻页；退出码为 0/1/2/130。普通请求默认超时 30 秒，0 表示不限时，watch 仅限制建连就绪等待；提供 help/version，首版无健康检查和配置管理命令。
+
+- **确认 Session 创建、历史与观察参数**：创建必填 NAME、namespace、runtime、cwd，可选互斥的系统提示文本/文件与可重复额外目录，不发送 prompt；history 首版只保留 --limit/--after，不提供类型筛选；watch 无专属参数，观察订阅后的事件，不补历史、不自动重连，Ctrl-C 只关闭观察。
+
+- **简化 Session 输入范围**：prompt 首版仅接受 --text 文本，构造单个 text 内容块，不提供文件、JSON、多模态输入或隐式 stdin；Service/HTTP 输入合同不变。answer 延后讨论，参数不定稿。
+
 - **Go 规则独立与通用化**：目录结构与技术选型改为项目无关、单文件可读的通用规则，移除 MASS 路径、业务模块示例、项目合同及其他文档引用；保留 cmd/pkg 强制布局和已确认的三项技术选型。
 
 - **建立 Go 工程规则**：按负责人要求在 principles/go 下新增目录结构与技术选型两份规则；强制 cmd 的子目录对应可编译二进制，pkg 的子目录对应模块。技术选型先确定 Cobra 管理 CLI/flag、testify 测试并尽可能使用 suite、Huma v2 + chi 承载 HTTP。同步原则索引与读取入口。
@@ -10,11 +18,31 @@
 
 - **拒绝点号 Session ID**：按负责人确认，原始 sessionId 恰为 `.` 或 `..` 时非法；同步 Service/Runtime 的创建、恢复、持久身份与引用校验，以及 HTTP/客户端的编码前和单次解码后校验。更新 Huma/OpenAPI 调研结论，这两个值不再是需兼容的合法 ID；普通含点号 ID 仍按原值处理。接口知识包修订为 v0.2.5，本次仅更新规范与调研资料。
 
+- **确认 Session 统一寻址与列表范围**：已有单个 Session 的命令统一使用 NAME_OR_ID，显式 namespace 时按名称，不提供时按全局 ID；无默认 namespace、--id 或查询回退。Session 列表首版不提供筛选，只保留 --limit/--after 分页。
+
+- **确认 Runtime 删除命令**：`runtime delete NAME` 无专属参数，不允许删除正在运行的 Runtime，不自动停止，保留 Service 的 Session 引用与资源释放检查；不级联、不提供 --force、不交互确认。成功时 human 显示提示，JSON stdout 留空，退出码为 0。
+
+- **确认 Runtime 停止命令**：`runtime stop NAME` 不增加专属参数，由 Service 协调排空与释放，成功返回 Runtime 并保留配置、Session 身份和历史；未知结果或超时不宣告停止成功，首版不提供 --force。
+
+- **确认 Runtime 启动命令**：`runtime start NAME` 不增加专属参数，停止状态按最新配置启动，已运行时返回当前资源，不隐式重启；首版不提供 --restart，应用新配置使用独立 stop/start。成功返回 Runtime，JSON 模式输出完整资源。
+
+- **确认 Runtime 配置更新语义**：显式配置 flag 覆盖对应字段并保留其他旧字段；--config-file/--config-json 提供完整配置，直接替换原 config，不递归合并。输入混用和空更新规则继续讨论。
+
 - **暂缓 HTTP 容量限制**：按负责人要求记录 ADR-0001，当前不对请求体大小等 HTTP 容量边界设置强制限制，遇到具体问题再讨论。同步移除 HTTP 合同的请求体超限 413 强制要求，保留实际资源耗尽的错误映射；接口知识包修订为 v0.2.4。本次仅更新决策与合同。
+
+- **确认 Runtime CLI 更新流程**：`runtime update` 先获取当前 spec，保留 type，接受部分配置并合并后提交完整 spec；不提供 --type，不修改 Service/HTTP 的完整替换合同。具体配置合并规则待确认，当前 HTTP 无条件更新保护。
+
+- **确认 Runtime 列表范围**：massctl 首版 `runtime list` 不提供筛选参数，列出全部 Runtime；Service/HTTP 的筛选能力保持不变。
+
+- **确认 Runtime 创建默认行为**：NAME 与 --type 必填，不默认选择类型；配置可省略，此时提交 `{}`，由 Runtime 类型校验并应用默认值。创建只登记资源，启动使用独立命令；配置输入组合与覆盖规则尚未确认。
+
+- **确认 Runtime 创建输入方向**：massctl 使用 `runtime create NAME --type TYPE`，常用配置字段暴露为 flag，预设 flag 不足时推荐 `--config-file` 或 `--config-json`；具体字段与输入组合规则继续讨论，模块保持 draft。
 
 - **Session 名称校验与 SSE 代理要求**：按负责人要求，创建 Session 时拒绝 UUID 形式的名称，由 Service 在副作用前统一校验；原生 sessionId 不限于 UUID，因此保留非 UUID ID 与名称冲突的保护。SSE 明确发送 `Cache-Control: no-cache, no-store, no-transform` 与 `X-Accel-Buffering: no`，部署同时关闭代理缓存及响应缓冲，并通过真实代理链路验收逐帧交付。接口知识包修订为 v0.2.3；本次为合同变更，未实现或运行验收。
 
 - **简化 HTTP 资源路径**：按负责人要求，将 Runtime 配置更新改为 `PUT /apis/v1/runtimes/{runtime}`，请求体仍为 RuntimeSpec；namespace 下的 Session 路径改为 `{nameOrID}`，接受名称或原始 sessionId。两种 Session 路径统一使用 URL escape 与单次解码，补充 namespace 校验、名称/ID 歧义冲突和特殊字符验收；创建 Location 使用无歧义的全局 ID 路径。交互引用仍使用 base64url。接口知识包修订为 v0.2.2，TypeSpec 签名不变；本次只修改规范。
+
+- **起草 massctl 模块**：按负责人要求新增 CLI 能力设计，采用资源、操作两级子命令，列出 Runtime/Session 操作、统一寻址、文件输入、输出与错误、分页和实时观察边界及验收场景。除子命令方向外，具体能力、命名、默认值和进程 I/O 约定保持 draft，待逐项确认；不代表实现完成，不修改 Service/HTTP 合同或 TypeSpec 接口版本。
 
 - **统一 HTTP API 前缀**：按负责人要求，业务 URL 从 `/v1` 调整为 `/apis/v1`，覆盖 Runtime、Session 的 ID/名称寻址、历史、SSE 与创建响应 Location；旧路径不提供兼容别名或重定向。健康探针保持 `/livez`、`/readyz`。同步路径验收要求，接口知识包修订为 v0.2.1；Service/Runtime/Store 的 TypeSpec 签名不变。本次为规范变更，不代表语言实现已完成迁移。
 
