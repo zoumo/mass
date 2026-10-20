@@ -20,7 +20,8 @@ type SessionHTTPSuite struct {
 }
 
 func (s *SessionHTTPSuite) call(method, path, body string) (int, http.Header, string) {
-	helper := RuntimeHTTPSuite{Suite: s.Suite, url: s.url}
+	helper := RuntimeHTTPSuite{url: s.url}
+	helper.SetT(s.T())
 	return helper.call(method, path, body)
 }
 func (s *SessionHTTPSuite) SetupTest() {

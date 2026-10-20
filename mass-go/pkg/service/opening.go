@@ -50,6 +50,15 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 		op.released = true
 		s.mu.Unlock()
 	}
+	// An illegal native identity was never eligible for persistence. Once the
+	// original resource is released, discard its unpublished facts and reservation;
+	// an existing persistent Session (on restore) remains untouched.
+	if resource.ValidateSessionID(native.SessionID) != nil {
+		s.mu.Lock()
+		delete(run.pending, key)
+		s.mu.Unlock()
+		return nil
+	}
 	r, err := s.meta.GetSession(resource.SessionRef{Namespace: address.Namespace, Name: address.SessionName})
 	if errors.Is(err, store.ErrNotFound) {
 		s.mu.Lock()
