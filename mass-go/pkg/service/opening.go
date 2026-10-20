@@ -53,7 +53,12 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 	// An illegal native identity was never eligible for persistence. Once the
 	// original resource is released, discard its unpublished facts and reservation;
 	// an existing persistent Session (on restore) remains untouched.
-	if resource.ValidateSessionID(native.SessionID) != nil {
+	if resource.ValidateSessionID(native.SessionID) != nil || op.restoring && native.SessionID != op.requested.Status.SessionID {
+		if op.restoring {
+			if _, err := s.sessionStatus(resource.SessionRef{SessionID: op.requested.Status.SessionID}, func(r *resource.Session) { r.Status = op.requested.Status }); err != nil {
+				return err
+			}
+		}
 		s.mu.Lock()
 		delete(run.pending, key)
 		s.mu.Unlock()
@@ -86,7 +91,22 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 	s.mu.Lock()
 	l := run.lanes[native.SessionID]
 	if l == nil {
-		l = &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), done: make(chan struct{}), retry: make(chan chan error), closing: true, subscribers: map[*Subscription]bool{}}
+		for _, previous := range run.retired {
+			if previous.session.Status.SessionID == native.SessionID {
+				l = previous
+				break
+			}
+		}
+		fresh := l == nil
+		if fresh {
+			l = &lane{session: r, queue: make(chan delivery, queueCapacity), done: make(chan struct{}), retry: make(chan chan error), subscribers: map[*Subscription]bool{}}
+		}
+		l.source = native.Source
+		l.closing = true
+		l.releasing = true
+		if subs := s.observers[native.SessionID]; subs != nil {
+			l.subscribers = subs
+		}
 		for _, event := range op.events {
 			if !native.Source.SameRun(event.Source()) {
 				s.mu.Unlock()
@@ -95,7 +115,9 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 			l.queue <- delivery{event: event}
 		}
 		run.lanes[native.SessionID] = l
-		go s.process(run, l)
+		if fresh {
+			go s.process(run, l)
+		}
 	} else if !l.source.SameRun(native.Source) {
 		s.mu.Unlock()
 		return errors.New("original lane replaced")
@@ -111,10 +133,8 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 		return err
 	}
 	s.mu.Lock()
-	delete(run.lanes, native.SessionID)
+	retireLane(run, l)
 	delete(run.pending, key)
-	close(l.queue)
 	s.mu.Unlock()
-	<-l.done
 	return nil
 }

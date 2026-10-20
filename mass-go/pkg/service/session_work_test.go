@@ -309,3 +309,37 @@ func (s *SessionWorkSuite) TestOfflineWorkIsRejectedWithoutDriverDispatch() {
 	s.ErrorIs(err, runtime.ErrFailedPrecondition)
 	s.Zero(s.driver.calls.Load())
 }
+
+func (s *SessionWorkSuite) TestArchiveWaitsForOriginalAnswerAndCancelDispatch() {
+	for _, operation := range []string{"answer", "cancel"} {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			var err error
+			if operation == "answer" {
+				_, err = s.svc.AnswerInteraction(ctx, s.ref, "old", nil)
+			} else {
+				_, err = s.svc.Cancel(ctx, s.ref)
+			}
+			done <- err
+		}()
+		select {
+		case <-s.driver.entered:
+		case <-time.After(time.Second):
+			s.FailNow("work not admitted")
+		}
+		cancel()
+		s.Error(<-done)
+	}
+	archived := make(chan error, 1)
+	go func() { _, err := s.svc.ArchiveSession(context.Background(), s.ref); archived <- err }()
+	select {
+	case err := <-archived:
+		s.Fail("archive completed with old dispatch outstanding", "%v", err)
+		close(s.driver.release)
+		return
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(s.driver.release)
+	s.NoError(<-archived)
+}

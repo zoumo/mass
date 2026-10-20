@@ -1,4 +1,4 @@
-# HTTP v1 implementation: Runtime, Session identity and work (tickets 01–03)
+# HTTP v1 implementation: Runtime, Session identity, work and recovery (tickets 01–04)
 
 The contract is [harness/bindings/http.md](../../harness/bindings/http.md).
 This note records implementation coverage, not a replacement contract.
@@ -26,16 +26,16 @@ rtk proxy go run ./cmd/massd openapi > /tmp/mass-openapi.json
 ```
 
 The exporter runs exactly the server's type registration. Current OpenAPI covers
-Runtime operations, Session creation/listing, both Session lookup paths, both sets of work operations and probes. Creation accepts only writable metadata/spec;
+Runtime operations, Session creation/listing, both Session lookup paths, both sets of work and recovery operations and probes. Creation accepts only writable metadata/spec;
 PUT accepts RuntimeSpec directly. Error schemas use `{code, reason, message}`,
 with the same application/json media as runtime responses. Output metadata
 marks generated fields read-only. No manually maintained OpenAPI schema is used.
 
 ## Incremental migration boundary
 
-Tickets 01–03 register Runtime resources and lifecycle entry points, Session
-creation/directory/lookup, and input/answer/cancel operations with Huma. Recovery,
-history and SSE retain explicit chi registrations pending tickets 04–06; generated
+Tickets 01–04 register Runtime resources and lifecycle entry points, Session
+creation/directory/lookup, and input/answer/cancel/archive/resume operations with Huma.
+History and SSE retain explicit chi registrations pending tickets 04–06; generated
 client completion belongs to 07. This export does not yet cover the full HTTP v1
 surface. Existing recovery and event behavior remains under regression tests.
 
@@ -62,8 +62,8 @@ Session queries validate filters and include offline/archived persistent records
 without starting a Runtime. Typed and explicit paths preserve encoded segment
 boundaries and decode once; no base64 Session ID alias is provided.
 
-Recovery/history/SSE operation schema migration and generated clients
-remain assigned to tickets 04–07. Default verification uses isolated SDK mock
+History/SSE operation schema migration and generated clients
+remain assigned to tickets 06–07. Default verification uses isolated SDK mock
 processes and real HTTP, not personal Agent data or model calls.
 
 
@@ -87,3 +87,27 @@ continuation. Protocol fixtures cover authentication, Idempotency-Key rejection,
 strict bodies, canonical interaction base64url, content unions and open JSON
 precision. These are deterministic contract checks; they are not real Agent/model
 or proxy acceptance. No massctl answer command is implemented.
+
+Session recovery (ticket 04) uses per-Session lifecycle coordination and dispatch
+admission. An unrelated Session can archive/resume while another close waits.
+Archive seals new inputs/answers, waits for admitted input/answer/cancel and policy
+responses, confirms Driver close and commits queued facts before clearing applied
+versions. Unknown close retains the original lane and prevents restore. Caller
+cancellation ends only the wait, with outcome_unknown; the Service owner continues.
+
+Restore validates the complete committed public history before Driver dispatch;
+the Driver validates its private recovery material. Opening is observable; a
+confirmed resource-free failure restores the prior status. Uncertain restore or
+status publication retains the original reservation for explicit settlement.
+Unexpected native identities are released under that reservation without replacing
+the saved identity. Identity, creation time, spec, history UUIDs and sync position
+remain unchanged by successful restore, and no business input is replayed.
+
+One persistent delivery queue survives archive/restore. Old source bindings remain
+associated with that queue until the original Driver stream ends, so late facts
+retain append order and original identity. Only the active source can update
+current resource state or dispatch a policy response. Runtime stop drains and
+releases these retained delivery owners; they do not represent native connections.
+The four recovery URLs are typed and generated from the same registration as the
+server. Deterministic Service/HTTP and SDK mock checks do not prove real Agent/model
+behavior or final generated-client/production-proxy acceptance.
