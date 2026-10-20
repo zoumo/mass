@@ -26,9 +26,16 @@ type runtimeCreate struct {
 	Metadata createMetadata       `json:"metadata"`
 	Spec     resource.RuntimeSpec `json:"spec"`
 }
+
+// Service validates Session names, including the UUID rejection reason, before
+// applying DNS rules. Keep that semantic check out of framework validation.
+type sessionCreateMetadata struct {
+	Namespace string `json:"namespace" minLength:"1" maxLength:"63"`
+	Name      string `json:"name" minLength:"1" maxLength:"253" doc:"DNS subdomain name; UUID-shaped names are rejected by Service"`
+}
 type sessionCreate struct {
-	Metadata createMetadata       `json:"metadata"`
-	Spec     resource.SessionSpec `json:"spec"`
+	Metadata sessionCreateMetadata `json:"metadata"`
+	Spec     resource.SessionSpec  `json:"spec"`
 }
 
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {

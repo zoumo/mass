@@ -235,6 +235,14 @@ func protocol(ctx huma.Context, next func(huma.Context)) {
 			}
 		}
 	}
+	if limit := q.Get("limit"); limit != "" {
+		for _, c := range limit {
+			if c < '0' || c > '9' {
+				reject(400)
+				return
+			}
+		}
+	}
 	if err := r.Context().Err(); err != nil {
 		fail(w, 504, &Error{Code: "deadline_exceeded", Reason: "request_expired", Message: "Request expired before dispatch"})
 		return

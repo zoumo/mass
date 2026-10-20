@@ -1,4 +1,4 @@
-# HTTP v1 implementation: Runtime configuration (ticket 01)
+# HTTP v1 implementation: Runtime and Session identity (tickets 01–02)
 
 The contract is [harness/bindings/http.md](../../harness/bindings/http.md).
 This note records implementation coverage, not a replacement contract.
@@ -26,7 +26,7 @@ rtk proxy go run ./cmd/massd openapi > /tmp/mass-openapi.json
 ```
 
 The exporter runs exactly the server's type registration. Current OpenAPI covers
-Runtime operations and probes. Creation accepts only writable metadata/spec;
+Runtime operations, Session creation/listing, both Session lookup paths and probes. Creation accepts only writable metadata/spec;
 PUT accepts RuntimeSpec directly. Error schemas use `{code, reason, message}`,
 with the same application/json media as runtime responses. Output metadata
 marks generated fields read-only. No manually maintained OpenAPI schema is used.
@@ -48,3 +48,25 @@ Deterministic tests use public Service methods and real HTTP with owned temporar
 Store directories; the fixture rejects Driver construction on config-only paths.
 Existing synthetic lifecycle tests additionally verify concurrent updates versus
 applied generation. These results do not prove native Agent/model behavior.
+
+
+Session identity and directory (ticket 02) use the same Huma registration.
+Creation waits for native open and persistent identity, returns 201 with a global
+raw-ID Location escaped as one path segment, and sends no input. Service rejects
+UUID-shaped creation names before runtime access. Complete `.` and `..` IDs are
+invalid at Service entry, native open/resume and persistence boundaries. Invalid
+native identity cleanup stays with its original operation; unknown cleanup keeps
+its reservation and returns outcome_unknown.
+
+Service.ResolveSession(namespace, nameOrID) checks exact name and global ID
+candidates, constrains ID matches to the namespace, rejects ambiguity, preserves
+directory failures and returns an exclusive fixed-ID SessionRef. Both typed GET
+routes and remaining explicit Session action routes use this resolver. The
+original mutually exclusive SessionRef forms remain available in process.
+Session queries validate filters and include offline/archived persistent records
+without starting a Runtime. Typed and explicit paths preserve encoded segment
+boundaries and decode once; no base64 Session ID alias is provided.
+
+Input/recovery/history/SSE operation schema migration and generated clients
+remain assigned to tickets 03–07. Default verification uses isolated SDK mock
+processes and real HTTP, not personal Agent data or model calls.

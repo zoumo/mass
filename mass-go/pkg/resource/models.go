@@ -3,6 +3,7 @@ package resource
 
 import (
 	"time"
+	"unicode/utf8"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -67,4 +68,13 @@ type SessionQuery struct {
 type SessionPage struct {
 	Items []Session `json:"items"`
 	Next  string    `json:"next,omitempty"`
+}
+
+// ValidateSessionID preserves opaque native identity, including whitespace and
+// embedded separators, while rejecting empty, non-UTF-8 and dot-segment IDs.
+func ValidateSessionID(id string) error {
+	if id == "" || id == "." || id == ".." || !utf8.ValidString(id) {
+		return &runtime.OperationError{Code: "invalid_argument", Reason: "invalid_session_id", Message: "Invalid session ID"}
+	}
+	return nil
 }

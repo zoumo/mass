@@ -115,7 +115,7 @@ func (s *Store) validate() error {
 		}
 	}
 	for k, r := range d.Sessions {
-		if k != key(r.Metadata.Namespace, r.Metadata.Name) || r.Metadata.Namespace == "" || r.Metadata.UID == "" || r.Metadata.ResourceVersion == "" || r.Metadata.Generation == 0 || r.Metadata.CreatedAt.IsZero() || r.Status.SessionID == "" {
+		if k != key(r.Metadata.Namespace, r.Metadata.Name) || r.Metadata.Namespace == "" || r.Metadata.UID == "" || r.Metadata.ResourceVersion == "" || r.Metadata.Generation == 0 || r.Metadata.CreatedAt.IsZero() || resource.ValidateSessionID(r.Status.SessionID) != nil {
 			return errors.New("invalid session record")
 		}
 		if _, ok := ids[r.Status.SessionID]; ok {
@@ -333,7 +333,7 @@ func (s *Store) CreateSession(r resource.Session) (resource.Session, error) {
 			return r, store.ErrConflict
 		}
 	}
-	if r.Metadata.Namespace == "" || r.Metadata.Name == "" || r.Status.SessionID == "" {
+	if r.Metadata.Namespace == "" || r.Metadata.Name == "" || resource.ValidateSessionID(r.Status.SessionID) != nil {
 		return r, runtime.InvalidArgument("invalid session identity")
 	}
 	r.Metadata, err = initial(r.Metadata)
