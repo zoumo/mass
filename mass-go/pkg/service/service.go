@@ -133,7 +133,7 @@ func validName(name string) bool {
 		return false
 	}
 	for p := range strings.SplitSeq(name, ".") {
-		if len(p) > 63 || !label.MatchString(p) {
+		if !label.MatchString(p) {
 			return false
 		}
 	}
@@ -154,17 +154,6 @@ func validateMetadata(m resource.Metadata, session bool) error {
 	return nil
 }
 func addressKey(a runtime.Address) string { return a.Namespace + "/" + a.SessionName }
-func (s *Service) CreateRuntime(r resource.Runtime) (resource.Runtime, error) {
-	if err := validateMetadata(r.Metadata, false); err != nil {
-		return r, err
-	}
-	if err := s.registry.ValidateConfig(r.Spec.Type, r.Spec.Config); err != nil {
-		return r, err
-	}
-	r.Status = resource.RuntimeStatus{State: "stopped"}
-	return s.meta.CreateRuntime(r)
-}
-func (s *Service) GetRuntime(name string) (resource.Runtime, error) { return s.meta.GetRuntime(name) }
 func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runtime, error) {
 	r, err := s.meta.GetRuntime(name)
 	if err != nil {

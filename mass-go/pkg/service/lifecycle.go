@@ -42,27 +42,6 @@ func (s *Service) sessionStatus(ref resource.SessionRef, change func(*resource.S
 	}
 }
 
-func (s *Service) UpdateRuntime(name string, spec resource.RuntimeSpec) (resource.Runtime, error) {
-	if err := s.registry.ValidateConfig(spec.Type, spec.Config); err != nil {
-		return resource.Runtime{}, err
-	}
-	for {
-		r, err := s.meta.GetRuntime(name)
-		if err != nil {
-			return r, err
-		}
-		r.Spec = spec
-		r, err = s.meta.UpdateRuntime(r)
-		if !errors.Is(err, store.ErrConflict) {
-			return r, err
-		}
-	}
-}
-
-func (s *Service) ListRuntimes(q resource.RuntimeQuery) ([]resource.Runtime, error) {
-	return s.meta.ListRuntimes(q)
-}
-
 func (s *Service) ListSessions(q resource.SessionQuery) (resource.SessionPage, error) {
 	return s.meta.ListSessions(q)
 }

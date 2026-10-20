@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
@@ -66,6 +67,7 @@ func statusFor(code string) int {
 }
 
 func fail(w http.ResponseWriter, status int, err *Error) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now())
 	w.Header().Del("Location")
 	// Do not let net/http drain an unread body before sending an error.
 	w.Header().Set("Connection", "close")

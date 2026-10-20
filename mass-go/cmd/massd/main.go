@@ -49,6 +49,7 @@ func newCommand() *cobra.Command {
 	f.StringVar(&o.tokenFile, "token-file", "", "file containing an instance Bearer token")
 	f.StringVar(&o.tlsCert, "tls-cert", "", "TLS certificate for direct remote access")
 	f.StringVar(&o.tlsKey, "tls-key", "", "TLS private key for direct remote access")
+	cmd.AddCommand(newOpenAPICommand())
 	return cmd
 }
 

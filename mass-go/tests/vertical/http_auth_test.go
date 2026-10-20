@@ -1,6 +1,7 @@
 package vertical_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -52,6 +53,15 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, app, "--data", filepath.Join(owned, "data"), "--listen", "127.0.0.1:0", "--token-file", tokenPath, "--tls-cert", certPath, "--tls-key", keyPath)
+	// Isolate daemon default configuration without relying on a particular CLI flag.
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "HOME=") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	cmd.Env = append(cmd.Env, "HOME="+owned)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
@@ -65,14 +75,14 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 	var ready struct {
 		URL string `json:"url"`
 	}
-	require.NoError(t, json.NewDecoder(stdout).Decode(&ready))
+	require.NoError(t, json.NewDecoder(stdout).Decode(&ready), stderr.String())
 	require.True(t, strings.HasPrefix(ready.URL, "https://"))
 	roots := x509.NewCertPool()
 	require.True(t, roots.AppendCertsFromPEM(certPEM))
 	wire := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}}
 	defer wire.CloseIdleConnections()
 	httpClient := &http.Client{Transport: wire, Timeout: 5 * time.Second}
-	for _, path := range []string{"/v1/runtimes", "/v1/sessions/YS9i", "/v1/namespaces/demo/sessions/task/events/stream"} {
+	for _, path := range []string{"/apis/v1/runtimes", "/apis/v1/sessions/YS9i", "/apis/v1/namespaces/demo/sessions/task/events/stream"} {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, ready.URL+path, http.NoBody)
 		require.NoError(t, err)
 		response, err := httpClient.Do(request)
@@ -92,7 +102,7 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 	require.NoError(t, c.Call(ctx, "runtime.list", client.Params{}, &rows))
 	require.NotNil(t, rows)
 	require.Empty(t, rows)
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, ready.URL+"/v1/runtimes", http.NoBody)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, ready.URL+"/apis/v1/runtimes", http.NoBody)
 	require.NoError(t, err)
 	request.Header.Set("Authorization", "Bearer synthetic-http-token")
 	response, err = httpClient.Do(request)
