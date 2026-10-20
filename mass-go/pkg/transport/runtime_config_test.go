@@ -121,4 +121,19 @@ func (s *RuntimeHTTPSuite) TestOpenAPIDeclaresRuntimeContract() {
 	s.ElementsMatch([]any{"code", "reason", "message"}, errors["required"])
 	s.NotContains(string(raw), "application/problem+json")
 }
+func (s *RuntimeHTTPSuite) TestConfigurationQueriesFailExplicitly() {
+	for _, path := range []string{"/apis/v1/runtimes?state=imaginary", "/apis/v1/runtimes?type=fixture&type=fixture", "/apis/v1/runtimes?limit=10", "/apis/v1/runtimes?type=", "/apis/v1/runtimes?type=%FF"} {
+		status, headers, body := s.call("GET", path, "")
+		s.Equal(400, status, body)
+		s.Equal("no-store", headers.Get("Cache-Control"))
+		s.Contains(body, `"code":"invalid_argument"`)
+	}
+	status, _, body := s.call("GET", "/apis/v1/runtimes/missing", "")
+	s.Equal(404, status, body)
+	status, _, body = s.call("POST", "/apis/v1/runtimes", `{"metadata":{"name":"agent"},"spec":{"type":"not-installed","config":{}}}`)
+	s.Equal(400, status, body)
+	status, _, body = s.call("GET", "/apis/v1/runtimes", "")
+	s.Equal(200, status)
+	s.JSONEq("[]", body)
+}
 func TestRuntimeHTTPSuite(t *testing.T) { suite.Run(t, new(RuntimeHTTPSuite)) }

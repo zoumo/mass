@@ -176,7 +176,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			fail(w, 401, &Error{Code: "unauthenticated", Reason: "invalid_credentials", Message: "Valid instance credentials required"})
 			return
 		}
-		if (!probe || r.URL.Path == "/readyz") && !s.ready.Load() {
+		if (!probe || r.URL.Path == "/readyz" && r.Method == http.MethodGet) && !s.ready.Load() {
 			fail(w, 503, &Error{Code: "unavailable", Reason: "not_ready", Message: "API admission is closed"})
 			return
 		}
