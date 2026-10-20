@@ -340,6 +340,23 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 	s.T().Log("PASS bounded overload explicitly fails, retains overflow plus upstream responsibility, and settles all 160 original facts")
 }
 
+// Poll the cheap resource projection while the turn runs; cloning the entire
+// growing history every 5ms competes with Store commits under the race detector.
+func (s *failureSuite) requireHistoryAfterTurn(ref resource.SessionRef, count int) {
+	s.Require().Eventually(func() bool {
+		current, err := s.svc.GetSession(ref)
+		if err != nil || current.Status.State != events.Idle {
+			return false
+		}
+		// The initial idle has no history; only this turn produces persistent facts.
+		page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 1})
+		return err == nil && len(page.Events) != 0
+	}, 6*time.Second, 5*time.Millisecond)
+	page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 1000})
+	s.Require().NoError(err)
+	s.Require().Len(page.Events, count)
+}
+
 func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
 	s.start("codex", "slow-subscriber", s.st)
 	ref := s.open("demo")
@@ -347,10 +364,7 @@ func (s *failureSuite) TestSlowSubscriberDoesNotChangeHistory() {
 	s.Require().NoError(err)
 	defer sub.Close()
 	s.input(ref)
-	s.Require().Eventually(func() bool {
-		p, e := s.st.ListHistory(ref.SessionID, store.HistoryQuery{Limit: 1000})
-		return e == nil && len(p.Events) == 140
-	}, 6*time.Second, 5*time.Millisecond)
+	s.requireHistoryAfterTurn(ref, 140)
 	_, err = sub.Next(ctx(s.T()))
 	var public *runtime.OperationError
 	s.Require().ErrorAs(err, &public)
@@ -582,10 +596,7 @@ func (s *failureSuite) TestSSEOverflowIsExplicit() {
 		<-done
 	}()
 	s.input(ref)
-	s.Require().Eventually(func() bool {
-		p, e := s.st.ListHistory(ref.SessionID, store.HistoryQuery{Limit: 1000})
-		return e == nil && len(p.Events) == 140
-	}, 6*time.Second, 5*time.Millisecond)
+	s.requireHistoryAfterTurn(ref, 140)
 	close(w.release)
 	<-done
 	s.Contains(w.Body.String(), "event: subscription.error")
