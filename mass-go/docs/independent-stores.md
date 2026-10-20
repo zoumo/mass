@@ -1,0 +1,13 @@
+# Independent stores (ticket 01)
+
+`massd` opens `pkg/metastore/file` and `pkg/eventstore/file` separately at the configured absolute data root, injects their independent interfaces into Service, shuts Service down before closing either store, and joins cleanup errors. Service directly appends persistent facts before realtime publication. No storage backend starts an Agent.
+
+This ticket keeps file-authoritative metadata. The default authoritative SQLite metadata backend is still planned for ticket 02. Metadata resources keep `.store.json`, `runtime.jsonl`, `session_index.jsonl` and `sessions/<namespace>/<name>/state.json`. The metadata-only SQLite query replica remains disposable in this file backend; it is not the future authoritative SQLite backend.
+
+EventStore owns `.events.json` (format and cursor signing key), `events.writer.lock`, `events.snapshot.lock`, `.events.append.pending.json`, `history.sqlite`, and `sessions/<namespace>/<name>/eventlogs/<base64url-sessionId>/{identity.json,events.jsonl}`. The reversible sessionId directory isolates same-name identities; it is not a hash. Identity materials contain only sessionId and names, not a resource snapshot. Empty history does not require a metadata read or an empty event log. Queries validate their public sessionId; Service validates resource existence before delegating.
+
+Each module opens, recovers, locks and closes its own state. Event SQL rebuild reads event identity files and streams complete events in bounded batches. Metadata changes do not read, close, clean or recover event files/SQL. Deleting a metadata resource does not perform an implicit cross-store cascade. Event retention after product-level Session deletion remains undecided; EventStore exposes no deletion API.
+
+The old combined `pkg/store/file` implementation is retained for historical regression tests and unfinished prior-ticket evidence. Production does not use it. Its existing `docs/file-store.md` describes that older implementation. New EventStore rejects the old combined `events.jsonl` layout with an explicit migration error. Opening a new layout does not move/import personal data; a separately approved migration is required for existing combined data. Configure existing absolute data roots explicitly; source directory changes do not relocate data.
+
+Offline suites and synthetic CLI/HTTP/SSE checks exercise real temporary files/SQLite with a synthetic Driver. They do not establish real Agent/model execution or settle the outstanding Driver-private-evidence prerequisite for physical tail repair. Realtime Broadcast remains a later ticket.

@@ -15,6 +15,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/eventstore"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
@@ -98,8 +100,8 @@ type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
 type Service struct {
 	policy      InteractionPolicy
-	meta        store.MetaStore
-	history     store.HistoryStore
+	meta        metastore.MetaStore
+	history     eventstore.EventStore
 	registry    *runtime.Registry
 	mu          sync.Mutex
 	runs        map[string]*runBinding
@@ -109,12 +111,12 @@ type Service struct {
 	resumeSlots chan struct{}
 }
 
-func New(meta store.MetaStore, history store.HistoryStore, registry *runtime.Registry) *Service {
+func New(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry) *Service {
 	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, observers: map[string]map[*Subscription]bool{}, sessionOps: map[string]*sessionOperation{}, resumeSlots: make(chan struct{}, queueCapacity)}
 }
 
 // NewWithPolicy explicitly enables an application-owned interaction policy.
-func NewWithPolicy(meta store.MetaStore, history store.HistoryStore, registry *runtime.Registry, policy InteractionPolicy) *Service {
+func NewWithPolicy(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry, policy InteractionPolicy) *Service {
 	s := New(meta, history, registry)
 	s.policy = policy
 	return s

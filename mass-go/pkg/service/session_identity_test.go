@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
@@ -135,7 +136,7 @@ func (s *SessionIdentitySuite) TestSessionCreateRejectsSystemStatusBeforeSideEff
 	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 }
 
-type failingIDDirectory struct{ store.MetaStore }
+type failingIDDirectory struct{ metastore.MetaStore }
 
 func (f failingIDDirectory) GetSession(ref resource.SessionRef) (resource.Session, error) {
 	if ref.SessionID != "" {

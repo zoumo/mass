@@ -17,12 +17,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	eventfile "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
+	metafile "github.com/zoumo/mass/mass-go/pkg/metastore/file"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/claude"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
 	"github.com/zoumo/mass/mass-go/pkg/service"
-	"github.com/zoumo/mass/mass-go/pkg/store/file"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
@@ -103,16 +104,21 @@ func run(parent context.Context, o options) (result error) {
 	if (o.Local && token != "") || (!o.Local && token == "") {
 		return errors.New("select local mode or token authentication")
 	}
-	st, err := file.Open(o.Data, false)
+	meta, err := metafile.Open(o.Data, false)
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, st.Close()) }()
+	defer func() { result = errors.Join(result, meta.Close()) }()
+	history, err := eventfile.Open(o.Data, false)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, history.Close()) }()
 	var policy service.InteractionPolicy
 	if o.Approve {
 		policy = prototype.AutoApprovePermissions
 	}
-	svc := service.NewWithPolicy(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(o.Data, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(o.Data, "private")}}), policy)
+	svc := service.NewWithPolicy(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(o.Data, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(o.Data, "private")}}), policy)
 	defer func() {
 		ctx, c := context.WithTimeout(context.Background(), 10*time.Second)
 		defer c()

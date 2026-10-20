@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/eventstore"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
@@ -83,7 +85,7 @@ func (f recoveryFactory) Validate(runtime.Config) error                      { r
 func (f recoveryFactory) New(string, runtime.Config) (runtime.Driver, error) { return f.d, nil }
 
 type recoveryHistory struct {
-	store.HistoryStore
+	eventstore.EventStore
 	blocked atomic.Bool
 	entered chan struct{}
 	release chan struct{}
@@ -95,11 +97,11 @@ func (h *recoveryHistory) Append(id string, records []events.SessionEvent) (*str
 		h.once.Do(func() { close(h.entered) })
 		<-h.release
 	}
-	return h.HistoryStore.Append(id, records)
+	return h.EventStore.Append(id, records)
 }
 
 type recoveryMeta struct {
-	store.MetaStore
+	metastore.MetaStore
 	failPublication atomic.Bool
 }
 
@@ -127,7 +129,7 @@ func (s *RecoverySuite) SetupTest() {
 	var once sync.Once
 	s.release = func() { once.Do(func() { close(s.d.closeRelease) }) }
 	s.meta = &recoveryMeta{MetaStore: st}
-	s.history = &recoveryHistory{HistoryStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	s.history = &recoveryHistory{EventStore: st, entered: make(chan struct{}), release: make(chan struct{})}
 	s.svc = service.New(s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": recoveryFactory{s.d}}))
 	s.T().Cleanup(func() {
 		s.release()

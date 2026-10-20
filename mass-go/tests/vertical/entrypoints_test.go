@@ -20,10 +20,10 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	file "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
-	"github.com/zoumo/mass/mass-go/pkg/store/file"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 

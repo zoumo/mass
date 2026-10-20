@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
@@ -133,7 +134,7 @@ func (s *RuntimeStopSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	s.factory = &stopFactory{}
-	s.history = &recoveryHistory{HistoryStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	s.history = &recoveryHistory{EventStore: st, entered: make(chan struct{}), release: make(chan struct{})}
 	s.meta = &stopMeta{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
 	s.svc = service.New(s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": s.factory}))
 	s.T().Cleanup(func() {
@@ -449,7 +450,7 @@ func (s *RuntimeStopSuite) assertStopRetainsOverflow(recovered bool) {
 }
 
 type stopMeta struct {
-	store.MetaStore
+	metastore.MetaStore
 	pauseWrite atomic.Bool
 	pauseRead  atomic.Bool
 	entered    chan struct{}

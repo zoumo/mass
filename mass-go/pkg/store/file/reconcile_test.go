@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/eventstore"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
@@ -34,10 +35,10 @@ func (s *reconcileSuite) SetupTest() {
 
 // A failing batch implementation is allowed to persist a prefix. This injects
 // that allowed Store outcome, not an Agent fact or a file crash guarantee.
-type partialBatch struct{ store.HistoryStore }
+type partialBatch struct{ eventstore.EventStore }
 
 func (p partialBatch) Append(id string, records []events.SessionEvent) (*string, error) {
-	result, err := p.HistoryStore.Append(id, records[:1])
+	result, err := p.EventStore.Append(id, records[:1])
 	if err != nil {
 		return result, err
 	}

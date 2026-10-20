@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
@@ -33,7 +34,7 @@ var mock, claudeMock, app, ctl, root string
 
 // Blocks the identity commit while the real adapter already emitted initial idle.
 type identityGate struct {
-	store.MetaStore
+	metastore.MetaStore
 	entered chan struct{}
 	release chan struct{}
 }

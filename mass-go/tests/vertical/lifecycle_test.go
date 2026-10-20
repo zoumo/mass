@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -26,7 +27,7 @@ import (
 type LifecycleSuite struct{ suite.Suite }
 
 type runtimeStatusGate struct {
-	store.MetaStore
+	metastore.MetaStore
 	once             sync.Once
 	entered, release chan struct{}
 }

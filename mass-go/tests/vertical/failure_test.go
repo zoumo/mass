@@ -14,6 +14,8 @@ import (
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/eventstore"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -28,7 +30,7 @@ import (
 type failureSuite struct {
 	suite.Suite
 	st      *file.Store
-	meta    store.MetaStore
+	meta    metastore.MetaStore
 	svc     *service.Service
 	reg     *runtime.Registry
 	unknown bool
@@ -59,7 +61,7 @@ func (s *failureSuite) TearDownTest() {
 	s.Require().NoError(s.st.Close())
 }
 
-func (s *failureSuite) start(kind, name string, history store.HistoryStore) {
+func (s *failureSuite) start(kind, name string, history eventstore.EventStore) {
 	path, work := nativeScenario(s.T(), kind, name)
 	s.work = work
 	s.svc = service.NewWithPolicy(s.meta, history, s.reg, prototype.AutoApprovePermissions)
@@ -170,7 +172,7 @@ func (s *failureSuite) TestUnknownInputIsNotResent() {
 // The fault injects a successful authoritative file append followed by an unknown
 // return. It does not synthesize Agent observations or replace the SDK Driver.
 type unknownAppend struct {
-	store.HistoryStore
+	eventstore.EventStore
 	once    sync.Once
 	entered chan struct{}
 }
@@ -178,7 +180,7 @@ type unknownAppend struct {
 func (g *unknownAppend) Append(id string, records []events.SessionEvent) (*string, error) {
 	fail := false
 	g.once.Do(func() { fail = true })
-	result, err := g.HistoryStore.Append(id, records)
+	result, err := g.EventStore.Append(id, records)
 	if fail && err == nil {
 		close(g.entered)
 		return result, errors.New("injected outcome_unknown after durable append")
@@ -187,7 +189,7 @@ func (g *unknownAppend) Append(id string, records []events.SessionEvent) (*strin
 }
 
 func (s *failureSuite) TestUnknownAppendExplicitSettlement() {
-	fault := &unknownAppend{HistoryStore: s.st, entered: make(chan struct{})}
+	fault := &unknownAppend{EventStore: s.st, entered: make(chan struct{})}
 	s.start("codex", "basic", fault)
 	ref := s.open("demo")
 	sub, err := s.svc.SubscribeEvents(ref)
@@ -218,7 +220,7 @@ func (s *failureSuite) TestUnknownAppendExplicitSettlement() {
 }
 
 type slowAppend struct {
-	store.HistoryStore
+	eventstore.EventStore
 	once             sync.Once
 	entered, release chan struct{}
 }
@@ -227,11 +229,11 @@ func (g *slowAppend) Append(id string, records []events.SessionEvent) (*string, 
 	if id == "codex-session" {
 		g.once.Do(func() { close(g.entered); <-g.release })
 	}
-	return g.HistoryStore.Append(id, records)
+	return g.EventStore.Append(id, records)
 }
 
 func (s *failureSuite) TestSlowStorageDoesNotBlockOtherSession() {
-	gate := &slowAppend{HistoryStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &slowAppend{EventStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
 	release := func() { once.Do(func() { close(gate.release) }) }
 	defer release()
@@ -307,7 +309,7 @@ func (s *failureSuite) TestOldWorkCannotControlNewWork() {
 }
 
 func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
-	gate := &slowAppend{HistoryStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
+	gate := &slowAppend{EventStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
 	release := func() { once.Do(func() { close(gate.release) }) }
 	defer release()
@@ -447,24 +449,28 @@ func (s *failureSuite) TestEarlyCapacityFailsExplicitlyAndReleases() {
 	s.Require().ErrorIs(err, store.ErrNotFound)
 }
 
-func (s *failureSuite) TestTimeoutDuringIdentityCommitSettlesOriginalOwner() {
+func (s *failureSuite) TestCancellationDuringIdentityCommitSettlesOriginalOwner() {
 	gate := &identityGate{MetaStore: s.st, entered: make(chan struct{}), release: make(chan struct{})}
 	var once sync.Once
 	release := func() { once.Do(func() { close(gate.release) }) }
 	defer release()
 	s.meta = gate
 	s.start("claude", "early", s.st)
-	short, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	caller, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, err := s.svc.CreateSession(short, s.spec("demo"))
-	s.Require().ErrorContains(err, "outcome_unknown")
+	done := make(chan error, 1)
+	go func() { _, err := s.svc.CreateSession(caller, s.spec("demo")); done <- err }()
+	// Start caller cancellation only after native open reached the identity
+	// commit boundary; process startup time must not select a different scenario.
 	select {
 	case <-gate.entered:
-	default:
-		s.FailNow("native open must precede identity timeout")
+	case <-ctx(s.T()).Done():
+		s.FailNow("native open did not reach identity commit")
 	}
+	cancel()
+	s.Require().ErrorContains(<-done, "outcome_unknown")
 	release()
-	_, err = s.svc.StopRuntime(ctx(s.T()), "agent")
+	_, err := s.svc.StopRuntime(ctx(s.T()), "agent")
 	s.Require().NoError(err)
 	r, err := s.svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().NoError(err)
@@ -503,7 +509,7 @@ func (s *failureSuite) TestLateAnswerCannotControlRecoveredRun() {
 	s.T().Log("PASS native resolved original handle and old turn notifications cannot answer or terminate the recovered run")
 }
 
-type unknownIdentity struct{ store.MetaStore }
+type unknownIdentity struct{ metastore.MetaStore }
 
 func (g unknownIdentity) CreateSession(r resource.Session) (resource.Session, error) {
 	value, err := g.MetaStore.CreateSession(r)
