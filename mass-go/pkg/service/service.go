@@ -53,6 +53,7 @@ type runBinding struct {
 	err           error
 	pending       map[string]*opening
 	lanes         map[string]*lane
+	retired       map[events.Source]*lane
 	op            sync.Mutex
 	admission     sync.RWMutex
 	started       bool
@@ -63,6 +64,7 @@ type runBinding struct {
 	blocked       *events.SessionEvent
 }
 type opening struct {
+	restoring bool
 	address   runtime.Address
 	events    []events.SessionEvent
 	err       error
@@ -77,12 +79,13 @@ type delivery struct {
 	barrier chan struct{}
 }
 type lane struct {
+	admission   sync.RWMutex
+	releasing   bool
 	session     resource.Session
 	source      events.Source
 	queue       chan delivery
 	done        chan struct{}
 	err         error
-	work        string
 	closing     bool
 	retry       chan chan error
 	commitErr   error
@@ -558,6 +561,9 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 		}
 		s.mu.Lock()
 		l := run.lanes[e.SessionID]
+		if original := run.retired[e.Source().WithWork("")]; original != nil {
+			l = original
+		}
 		if l == nil {
 			op := run.pending[addressKey(runtime.Address{Namespace: e.Namespace, SessionName: e.SessionName})]
 			if op != nil {
@@ -579,7 +585,8 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			s.mu.Unlock()
 			continue
 		}
-		if !l.source.SameRun(e.Source()) || e.Namespace != l.session.Metadata.Namespace || e.SessionName != l.session.Metadata.Name {
+		oldSource := run.retired[e.Source().WithWork("")] == l
+		if !oldSource && !l.source.SameRun(e.Source()) || e.Namespace != l.session.Metadata.Namespace || e.SessionName != l.session.Metadata.Name {
 			// Old run facts cannot mutate or poison the current lane.
 			s.mu.Unlock()
 			continue
@@ -608,6 +615,8 @@ func (s *Service) fail(l *lane, err error) {
 
 func (s *Service) process(run *runBinding, l *lane) {
 	defer close(l.done)
+	var workSource events.Source
+	workID := ""
 	for entry := range l.queue {
 		if entry.barrier != nil {
 			close(entry.barrier)
@@ -633,14 +642,24 @@ func (s *Service) process(run *runBinding, l *lane) {
 				}
 			}
 		}
-		if state, ok := e.Payload().(events.StateUpdate); ok {
-			work := e.Source().Work()
-			if state.State != nil && *state.State == events.Running && (l.work == "" || l.work == work) {
-				l.work = work
+		s.mu.Lock()
+		currentSource := l.source.SameRun(e.Source())
+		s.mu.Unlock()
+		if state, ok := e.Payload().(events.StateUpdate); ok && currentSource {
+			if !workSource.SameRun(e.Source()) {
+				workSource = e.Source()
+				workID = ""
 			}
-			if work == "" || l.work == "" || work == l.work {
+			work := e.Source().Work()
+			if state.State != nil && *state.State == events.Running && (workID == "" || workID == work) {
+				workID = work
+			}
+			if work == "" || workID == "" || work == workID {
 				_, err := s.sessionStatus(resource.SessionRef{SessionID: e.SessionID}, func(r *resource.Session) {
-					if r.Status.State != "closing" && r.Status.State != "archived" && r.Status.AppliedGeneration != 0 {
+					s.mu.Lock()
+					current := run.lanes[e.SessionID] == l && !l.closing && l.source.SameRun(e.Source())
+					s.mu.Unlock()
+					if current && r.Status.State != "closing" && r.Status.State != "archived" && r.Status.AppliedGeneration != 0 {
 						r.Status.State = events.Unknown
 						if state.State != nil {
 							r.Status.State = *state.State
@@ -650,8 +669,8 @@ func (s *Service) process(run *runBinding, l *lane) {
 				if err != nil {
 					s.fail(l, err)
 				}
-				if state.State != nil && *state.State == events.Idle && l.work == work {
-					l.work = ""
+				if state.State != nil && *state.State == events.Idle && workID == work {
+					workID = ""
 				}
 			}
 		}
@@ -674,12 +693,18 @@ func (s *Service) process(run *runBinding, l *lane) {
 		if request, ok := e.Payload().(events.InteractionRequested); ok && s.policy != nil {
 			run.admission.RLock()
 			s.mu.Lock()
-			allowed := !s.closing && !run.stopping && !l.closing && l.err == nil
+			allowed := !s.closing && !run.stopping && !l.closing && l.err == nil && l.source.SameRun(e.Source())
+			if allowed {
+				l.admission.RLock()
+			}
 			s.mu.Unlock()
-			if answer, handled := s.policy(request); handled && allowed {
-				if _, err := run.driver.AnswerInteraction(context.Background(), e.SessionID, request.Interaction, answer); err != nil {
-					s.fail(l, err)
+			if allowed {
+				if answer, handled := s.policy(request); handled {
+					if _, err := run.driver.AnswerInteraction(context.Background(), e.SessionID, request.Interaction, answer); err != nil {
+						s.fail(l, err)
+					}
 				}
+				l.admission.RUnlock()
 			}
 			run.admission.RUnlock()
 		}
@@ -853,9 +878,7 @@ func (s *Service) settleAbandoned(run *runBinding, l *lane) error {
 		return err
 	}
 	s.mu.Lock()
-	delete(run.lanes, ref.SessionID)
-	close(l.queue)
+	retireLane(run, l)
 	s.mu.Unlock()
-	<-l.done
 	return nil
 }

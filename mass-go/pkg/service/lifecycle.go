@@ -119,7 +119,7 @@ func offlineStatus(r *resource.Session, archived bool) {
 	r.Status.Capabilities = nil
 }
 
-func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
+func (s *Service) archiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
 	r, err := s.GetSession(ref)
 	if err != nil {
 		return r, err
@@ -143,13 +143,17 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 		}
 		return s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
 	}
-	run.op.Lock()
-	defer run.op.Unlock()
+	run.admission.RLock()
+	defer run.admission.RUnlock()
 	r, err = s.GetSession(ref)
 	if err != nil {
 		return r, err
 	}
 	s.mu.Lock()
+	if s.runs[r.Spec.RuntimeRef] != run || run.stopping || run.pending[addressKey(runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name})] != nil {
+		s.mu.Unlock()
+		return r, runtime.FailedPrecondition("original lifecycle responsibility remains")
+	}
 	l := run.lanes[r.Status.SessionID]
 	s.mu.Unlock()
 	if l == nil {
@@ -161,13 +165,16 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 	s.mu.Lock()
 	l.closing = true
 	s.mu.Unlock()
-	if err := waitAdmission(ctx, &run.admission); err != nil {
-		return r, err
-	}
 	if _, err = s.sessionStatus(ref, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
 		return r, err
 	}
+	if err := s.sealLane(ctx, l); err != nil {
+		return r, err
+	}
 	if err := run.driver.CloseSession(ctx, r.Status.SessionID); err != nil {
+		s.mu.Lock()
+		l.releasing = false // Explicit cancel can still settle the original work.
+		s.mu.Unlock()
 		return r, err
 	}
 	if err := s.drainLane(ctx, l); err != nil {
@@ -176,13 +183,11 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 	r, err = s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
 	if err == nil {
 		s.mu.Lock()
-		delete(run.lanes, r.Status.SessionID)
+		retireLane(run, l)
 		if len(l.subscribers) == 0 {
 			delete(s.observers, r.Status.SessionID)
 		}
-		close(l.queue)
 		s.mu.Unlock()
-		<-l.done
 	}
 	return r, err
 }
@@ -289,6 +294,21 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 	case <-ctx.Done():
 		return r, ctx.Err()
 	}
+	s.mu.Lock()
+	retired := make([]*lane, 0, len(run.retired))
+	seen := map[*lane]bool{}
+	for _, l := range run.retired {
+		if !seen[l] && run.lanes[l.session.Status.SessionID] != l {
+			retired = append(retired, l)
+			seen[l] = true
+		}
+	}
+	s.mu.Unlock()
+	for _, l := range retired {
+		if err := s.drainLane(ctx, l); err != nil {
+			return r, err
+		}
+	}
 	for id, l := range lanes {
 		if err := s.drainLane(ctx, l); err != nil {
 			return r, err
@@ -308,11 +328,17 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 		}
 		close(l.queue)
 	}
+	for _, l := range retired {
+		close(l.queue)
+	}
 	run.drained = true
 	s.registry.Remove(name)
 	delete(s.runs, name)
 	s.mu.Unlock()
 	for _, l := range lanes {
+		<-l.done
+	}
+	for _, l := range retired {
 		<-l.done
 	}
 	return r, nil
@@ -356,8 +382,8 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	if run == nil {
 		return r, runtime.FailedPrecondition("start original runtime before resume")
 	}
-	run.op.Lock()
-	defer run.op.Unlock()
+	run.admission.RLock()
+	defer run.admission.RUnlock()
 	s.mu.Lock()
 	if s.closing || run.stopping || run.err != nil || !run.started || run.lanes[r.Status.SessionID] != nil {
 		s.mu.Unlock()
@@ -373,7 +399,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
 	k := addressKey(a)
-	op := &opening{address: a, done: make(chan struct{})}
+	op := &opening{address: a, done: make(chan struct{}), requested: r, restoring: true}
 	defer close(op.done)
 	s.mu.Lock()
 	if run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
@@ -382,6 +408,12 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	}
 	run.pending[k] = op
 	s.mu.Unlock()
+	if _, err = s.sessionStatus(ref, func(r *resource.Session) { r.Status.State = "opening" }); err != nil {
+		s.mu.Lock()
+		delete(run.pending, k)
+		s.mu.Unlock()
+		return r, err
+	}
 	native, err := run.driver.ResumeSession(ctx, r.Status.SessionID, a, r.Spec.SessionSpec)
 	if err != nil {
 		s.mu.Lock()
@@ -390,7 +422,13 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 			delete(run.pending, k)
 		}
 		s.mu.Unlock()
-		return r, err
+		_, statusErr := s.sessionStatus(ref, func(r *resource.Session) {
+			r.Status.State = events.Unknown
+			if errors.Is(err, runtime.ErrResourcesReleased) {
+				r.Status = op.requested.Status
+			}
+		})
+		return r, errors.Join(err, statusErr)
 	}
 	s.mu.Lock()
 	op.native = native
@@ -406,20 +444,43 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 			delete(run.pending, k)
 		}
 		s.mu.Unlock()
+		_, statusErr := s.sessionStatus(ref, func(r *resource.Session) {
+			r.Status.State = events.Unknown
+			if cleanup == nil {
+				r.Status = op.requested.Status
+			}
+		})
 		if cleanup != nil {
-			return r, errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_identity_cleanup_unknown", Message: "Unexpected resume identity cleanup remains unsettled"}, cleanup)
+			return r, errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_identity_cleanup_unknown", Message: "Unexpected resume identity cleanup remains unsettled"}, cleanup, statusErr)
 		}
-		return r, identityErr
+		return r, errors.Join(identityErr, statusErr)
 	}
 	r, err = s.sessionStatus(ref, func(r *resource.Session) {
 		r.Status = resource.SessionStatus{SessionID: r.Status.SessionID, State: events.Unknown, AppliedGeneration: r.Metadata.Generation, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
 	})
 	if err != nil {
-		return r, errors.Join(err, run.driver.CloseSession(context.Background(), native.SessionID))
+		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+		s.mu.Lock()
+		op.released = cleanup == nil
+		s.mu.Unlock()
+		return r, errors.Join(err, cleanup)
 	}
-	l := &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
 	s.mu.Lock()
-	l.err = op.err
+	var l *lane
+	for _, previous := range run.retired {
+		if previous.session.Status.SessionID == r.Status.SessionID {
+			l = previous
+			break
+		}
+	}
+	fresh := l == nil
+	if fresh {
+		l = &lane{session: r, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{}), subscribers: map[*Subscription]bool{}}
+	}
+	l.source = native.Source
+	l.closing = false
+	l.releasing = false
+	l.err = errors.Join(l.err, op.err)
 	if subs := s.observers[r.Status.SessionID]; subs != nil {
 		l.subscribers = subs
 	} else {
@@ -436,12 +497,14 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	delete(run.pending, k)
 	resumeErr := l.err
 	s.mu.Unlock()
-	go s.process(run, l)
+	if fresh {
+		go s.process(run, l)
+	}
 	return r, resumeErr
 }
 
 // control holds the original Runtime operation lock through a native dispatch.
-func (s *Service) controlWork(r resource.Session, cancelling bool) (*runBinding, error) {
+func (s *Service) controlWork(r resource.Session, cancelling bool) (*runBinding, *lane, error) {
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
 	var original *lane
@@ -450,21 +513,24 @@ func (s *Service) controlWork(r resource.Session, cancelling bool) (*runBinding,
 	}
 	s.mu.Unlock()
 	if run == nil {
-		return nil, runtime.FailedPrecondition("session unavailable")
+		return nil, nil, runtime.FailedPrecondition("session unavailable")
 	}
 	run.admission.RLock()
 	s.mu.Lock()
 	l := run.lanes[r.Status.SessionID]
-	available := run.started && l != nil && l == original
+	available := run.started && l != nil && l == original && !l.releasing
 	if !cancelling {
 		available = available && !s.closing && !run.stopping && run.err == nil && l.err == nil && !l.closing
+	}
+	if available {
+		l.admission.RLock()
 	}
 	s.mu.Unlock()
 	if !available {
 		run.admission.RUnlock()
-		return nil, runtime.FailedPrecondition("session unavailable")
+		return nil, nil, runtime.FailedPrecondition("session unavailable")
 	}
-	return run, nil
+	return run, l, nil
 }
 
 type sessionOperation struct {
@@ -531,22 +597,10 @@ func (s *Service) ResumeSession(ctx context.Context, ref resource.SessionRef) (r
 	default:
 		return resource.Session{}, runtime.FailedPrecondition("resume capacity exhausted")
 	}
-	type result struct {
-		value resource.Session
-		err   error
-	}
-	done := make(chan result, 1)
-	go func() {
+	return awaitSessionLifecycle(ctx, func(owner context.Context) (resource.Session, error) {
 		defer func() { <-s.resumeSlots }()
-		value, err := s.resumeSession(context.WithoutCancel(ctx), ref)
-		done <- result{value, err}
-	}()
-	select {
-	case value := <-done:
-		return value.value, value.err
-	case <-ctx.Done():
-		return resource.Session{}, fmtUnknown(ctx.Err())
-	}
+		return s.resumeSession(owner, ref)
+	})
 }
 
 func lockOperation(ctx context.Context, op *sync.Mutex) error {
@@ -584,4 +638,67 @@ func waitAdmission(ctx context.Context, gate *sync.RWMutex) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// Closing seals inputs/answers first. Cancels admitted during drain still belong
+// to this lane; seal their admission atomically once all dispatches have settled.
+func (s *Service) sealLane(ctx context.Context, l *lane) error {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		s.mu.Lock()
+		ready := l.admission.TryLock()
+		if ready {
+			l.releasing = true
+			l.admission.Unlock()
+		}
+		s.mu.Unlock()
+		if ready {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmtUnknown(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+// Accepted lifecycle operations retain their original owner after the caller
+// stops waiting. A late result remains observable through the persistent resource.
+func awaitSessionLifecycle(ctx context.Context, operation func(context.Context) (resource.Session, error)) (resource.Session, error) {
+	type result struct {
+		value resource.Session
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() { r, err := operation(context.WithoutCancel(ctx)); done <- result{r, err} }()
+	select {
+	case r := <-done:
+		return r.value, r.err
+	case <-ctx.Done():
+		select {
+		case r := <-done:
+			return r.value, r.err
+		default:
+		}
+		return resource.Session{}, &runtime.OperationError{Code: "outcome_unknown", Reason: "lifecycle_wait_abandoned", Message: "Lifecycle operation remains owned by its original Session; inspect state before further action"}
+	}
+}
+func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return resource.Session{}, err
+	}
+	return awaitSessionLifecycle(ctx, func(owner context.Context) (resource.Session, error) { return s.archiveSession(owner, ref) })
+}
+
+// Keep the original delivery owner until its Driver stream ends. Close confirms
+// native release, but facts already in the shared stream may still arrive here.
+// Caller holds s.mu; state projection is sealed by l.closing.
+func retireLane(run *runBinding, l *lane) {
+	if run.retired == nil {
+		run.retired = map[events.Source]*lane{}
+	}
+	run.retired[l.source.WithWork("")] = l
+	delete(run.lanes, l.session.Status.SessionID)
 }

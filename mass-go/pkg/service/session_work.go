@@ -17,11 +17,12 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	if err != nil {
 		return zero, err
 	}
-	run, err := s.controlWork(r, cancelling)
+	run, l, err := s.controlWork(r, cancelling)
 	if err != nil {
 		return zero, err
 	}
 	if err := ctx.Err(); err != nil {
+		l.admission.RUnlock()
 		run.admission.RUnlock()
 		return zero, err
 	}
@@ -32,6 +33,7 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	done := make(chan result, 1)
 	go func() {
 		defer run.admission.RUnlock()
+		defer l.admission.RUnlock()
 		value, err := dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
 		done <- result{value, err}
 	}()

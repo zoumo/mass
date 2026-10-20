@@ -1,9 +1,8 @@
 package transport
 
-// Recovery and event operations retain explicit chi handlers until their
+// Event operations retain explicit chi handlers until their
 // owning tickets migrate their request and response schemas.
 import (
-	"context"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -19,23 +18,8 @@ import (
 func (s *Server) registerSessions(api huma.API, r chi.Router) {
 	s.registerSessionIdentity(api)
 	s.registerSessionWork(api)
+	s.registerSessionRecovery(api)
 	for _, base := range []string{"/apis/v1/sessions/{sessionId}", "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}"} {
-		r.MethodFunc("POST", base+"/resume", s.sessionHandler(nil, func(w http.ResponseWriter, r *http.Request, ref resource.SessionRef, _ url.Values) {
-			if e := emptyBody(w, r); e != nil {
-				respond(w, 0, nil, e)
-				return
-			}
-			v, e := s.api.ResumeSession(context.WithoutCancel(r.Context()), ref)
-			respond(w, 200, v, e)
-		}))
-		r.MethodFunc("POST", base+"/archive", s.sessionHandler(nil, func(w http.ResponseWriter, r *http.Request, ref resource.SessionRef, _ url.Values) {
-			if e := emptyBody(w, r); e != nil {
-				respond(w, 0, nil, e)
-				return
-			}
-			v, e := s.api.ArchiveSession(context.WithoutCancel(r.Context()), ref)
-			respond(w, 200, v, e)
-		}))
 		r.MethodFunc("GET", base+"/events", s.sessionHandler([]string{"after", "limit", "types"}, func(w http.ResponseWriter, r *http.Request, ref resource.SessionRef, q url.Values) {
 			v, e := s.api.ListHistoryEvents(ref, store.HistoryQuery{After: q.Get("after"), Limit: queryLimit(q), Types: q["types"]})
 			respond(w, 200, v, e)
