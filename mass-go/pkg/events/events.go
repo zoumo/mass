@@ -52,6 +52,7 @@ type ThinkingChunk MessagePayload
 
 func (ThinkingChunk) eventType() string { return "agent.thinking_chunk" }
 
+//nolint:recvcheck // JSON decoding mutates; event encoding accepts immutable values.
 type ToolCall struct {
 	Name                string         `json:"name,omitempty"`
 	Title               string         `json:"title,omitempty"`
@@ -198,7 +199,7 @@ func (e SessionEvent) Validate() error {
 			return err
 		}
 	case InteractionClosed:
-		if p.Interaction == "" || !oneOf(p.Outcome, "answered", "completed", "cancelled", "expired", "failed") {
+		if p.Interaction == "" || !oneOf(p.Outcome, "answered", "completed", "cancelled", "expired", "failed") { //nolint:misspell // Public event contract uses cancelled.
 			return errors.New("invalid interaction closure")
 		}
 	case SessionError:
@@ -508,10 +509,12 @@ func (p *ToolCall) UnmarshalJSON(data []byte) error {
 	*p = ToolCall(out)
 	return nil
 }
+
 func (p ToolCall) MarshalJSON() ([]byte, error) {
 	type fields ToolCall
 	return marshalToolContent(fields(p), p.Content)
 }
+
 func marshalToolContent(value any, content []ContentBlock) ([]byte, error) {
 	data, err := json.Marshal(value)
 	if err != nil || content == nil {

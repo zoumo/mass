@@ -95,10 +95,12 @@ func OpenAPI() ([]byte, error) {
 	return json.MarshalIndent(api.OpenAPI(), "", "  ")
 }
 
-type noInput struct{}
-type probeStatus struct {
-	Status string `json:"status"`
-}
+type (
+	noInput     struct{}
+	probeStatus struct {
+		Status string `json:"status"`
+	}
+)
 type probeOutput struct{ Body probeStatus }
 
 func register[I, O any](api huma.API, op huma.Operation, handler func(context.Context, *I) (*O, error)) {
@@ -127,6 +129,7 @@ func register[I, O any](api huma.API, op huma.Operation, handler func(context.Co
 		return value, nil
 	})
 }
+
 func asHTTPError(err error) error {
 	var protocol *protocolError
 	if errors.As(err, &protocol) {
@@ -135,6 +138,7 @@ func asHTTPError(err error) error {
 	p := PublicError(err)
 	return &responseError{public: p, status: statusFor(p.Code)}
 }
+
 func decodeJSON(b []byte, out any) error {
 	if !utf8.Valid(b) {
 		return Invalid()
@@ -187,7 +191,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			fail(w, 400, Invalid())
 			return
 		}
-		if (r.Method == "GET" || r.Method == "DELETE" || r.Method == "HEAD") && hasBody(r) {
+		if (r.Method == http.MethodGet || r.Method == http.MethodDelete || r.Method == http.MethodHead) && hasBody(r) {
 			fail(w, 400, Invalid())
 			return
 		}

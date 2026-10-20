@@ -4,14 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"github.com/stretchr/testify/suite"
-	"github.com/zoumo/mass/mass-go/pkg/events"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
-	"github.com/zoumo/mass/mass-go/pkg/service"
-	"github.com/zoumo/mass/mass-go/pkg/store"
-	"github.com/zoumo/mass/mass-go/pkg/store/file"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 	"io"
 	"math"
 	"net/http"
@@ -20,6 +12,16 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/service"
+	"github.com/zoumo/mass/mass-go/pkg/store"
+	"github.com/zoumo/mass/mass-go/pkg/store/file"
+	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 type workDriver struct {
@@ -36,6 +38,7 @@ func (d *workDriver) Events() (events.Stream, error) { return d.pipe, nil }
 func (d *workDriver) Start(context.Context) (runtime.Capabilities, error) {
 	return runtime.Capabilities{}, nil
 }
+
 func (d *workDriver) OpenSession(context.Context, runtime.Address, runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.source = events.NewSource()
 	return runtime.DriverSession{SessionID: "original", Source: d.source}, nil
@@ -74,7 +77,7 @@ type SessionWorkSuite struct {
 func (s *SessionWorkSuite) SetupTest() {
 	st, err := file.Open(s.T().TempDir(), false)
 	s.Require().NoError(err)
-	s.T().Cleanup(func() { s.NoError(st.Close()) })
+	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	d := &workDriver{pipe: events.NewEventPipe(16), entered: make(chan context.Context, 64), release: make(chan struct{})}
 	s.driver = d
 	s.svc = service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": workFactory{d}}))
@@ -86,7 +89,7 @@ func (s *SessionWorkSuite) SetupTest() {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.NoError(s.svc.Shutdown(ctx))
+		s.Require().NoError(s.svc.Shutdown(ctx))
 	})
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
 	s.Require().NoError(err)
@@ -96,6 +99,7 @@ func (s *SessionWorkSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.ref = resource.SessionRef{SessionID: r.Status.SessionID}
 }
+
 func (s *SessionWorkSuite) TestAbandonedWaitKeepsAcceptedInputOwnedByService() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -119,10 +123,11 @@ func (s *SessionWorkSuite) TestAbandonedWaitKeepsAcceptedInputOwnedByService() {
 	case <-time.After(time.Second):
 		s.FailNow("caller wait did not end")
 	}
-	s.NoError(owner.Err(), "request cancellation must not cancel the admitted native input")
+	s.Require().NoError(owner.Err(), "request cancellation must not cancel the admitted native input")
 	close(s.driver.release)
 	s.Equal(int32(1), s.driver.calls.Load(), "no implicit resend")
 }
+
 func (s *SessionWorkSuite) TestReceiptPreservesUnknownFalseAndTrue() {
 	close(s.driver.release)
 	receipt, err := s.svc.SendPrompt(context.Background(), s.ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
@@ -137,7 +142,7 @@ func (s *SessionWorkSuite) TestInvalidInputRejectedBeforeDispatch() {
 	close(s.driver.release)
 	for _, input := range []runtime.Input{{}, {Content: []events.ContentBlock{{Type: "image"}}}, {Content: []events.ContentBlock{events.Text(string([]byte{0xff}))}}} {
 		_, err := s.svc.SendPrompt(context.Background(), s.ref, input)
-		s.ErrorIs(err, runtime.ErrInvalidArgument)
+		s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	}
 	s.Equal(int32(0), s.driver.calls.Load())
 }
@@ -146,10 +151,12 @@ func (d *workDriver) AnswerInteraction(ctx context.Context, id, ref string, answ
 	receipt, err := d.SendPrompt(ctx, id, runtime.Input{})
 	return receipt.Acceptance, err
 }
+
 func (d *workDriver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {
 	_, err := d.SendPrompt(ctx, id, runtime.Input{})
 	return runtime.CancelReceipt{Target: "work-1", Result: "controlAcknowledged"}, err
 }
+
 func (s *SessionWorkSuite) TestAnswerAndCancelOwnAdmittedOperationsAfterCallerLeaves() {
 	for _, operation := range []string{"answer", "cancel"} {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -178,21 +185,22 @@ func (s *SessionWorkSuite) TestAnswerAndCancelOwnAdmittedOperationsAfterCallerLe
 		case <-time.After(time.Second):
 			s.FailNow("caller wait did not end")
 		}
-		s.NoError(owner.Err())
+		s.Require().NoError(owner.Err())
 	}
 	close(s.driver.release)
 }
+
 func (s *SessionWorkSuite) TestNonJSONAnswersAndInvalidReferencesRejectedBeforeDispatch() {
 	close(s.driver.release)
 	cycle := map[string]any{}
 	cycle["self"] = cycle
 	for _, answer := range []any{math.NaN(), math.Inf(1), cycle, []byte("coercion"), struct{ Value string }{"coercion"}} {
 		_, err := s.svc.AnswerInteraction(context.Background(), s.ref, "interaction", answer)
-		s.ErrorIs(err, runtime.ErrInvalidArgument)
+		s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	}
 	for _, ref := range []string{"", string([]byte{0xff})} {
 		_, err := s.svc.AnswerInteraction(context.Background(), s.ref, ref, nil)
-		s.ErrorIs(err, runtime.ErrInvalidArgument)
+		s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	}
 	s.Equal(int32(0), s.driver.calls.Load())
 }
@@ -205,7 +213,7 @@ func (s *SessionWorkSuite) TestHTTPDisconnectedInputStillPublishesCommittedEvent
 	s.T().Cleanup(server.Close)
 	observed, cancelObserve := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelObserve()
-	watch, err := http.NewRequestWithContext(observed, "GET", server.URL+"/apis/v1/sessions/original/events/stream", nil)
+	watch, err := http.NewRequestWithContext(observed, http.MethodGet, server.URL+"/apis/v1/sessions/original/events/stream", http.NoBody)
 	s.Require().NoError(err)
 	watch.Header.Set("Authorization", "Bearer test-token")
 	response, err := http.DefaultClient.Do(watch)
@@ -224,7 +232,7 @@ func (s *SessionWorkSuite) TestHTTPDisconnectedInputStillPublishesCommittedEvent
 	s.driver.onFinish = func() error { return s.driver.pipe.Send(context.Background(), event) }
 	waiting, cancelWait := context.WithCancel(context.Background())
 	defer cancelWait()
-	request, err := http.NewRequestWithContext(waiting, "POST", server.URL+"/apis/v1/namespaces/one/sessions/demo/inputs", strings.NewReader(`{"content":[{"type":"text","text":"hello"}]}`))
+	request, err := http.NewRequestWithContext(waiting, http.MethodPost, server.URL+"/apis/v1/namespaces/one/sessions/demo/inputs", strings.NewReader(`{"content":[{"type":"text","text":"hello"}]}`))
 	s.Require().NoError(err)
 	request.Header.Set("Authorization", "Bearer test-token")
 	request.Header.Set("Content-Type", "application/json")
@@ -246,11 +254,11 @@ func (s *SessionWorkSuite) TestHTTPDisconnectedInputStillPublishesCommittedEvent
 	cancelWait()
 	select {
 	case err := <-done:
-		s.ErrorIs(err, context.Canceled)
+		s.Require().ErrorIs(err, context.Canceled)
 	case <-observed.Done():
 		s.FailNow("HTTP wait did not end")
 	}
-	s.NoError(owner.Err())
+	s.Require().NoError(owner.Err())
 	close(s.driver.release)
 	found := false
 	for scanner.Scan() {
@@ -266,15 +274,16 @@ func (s *SessionWorkSuite) TestHTTPDisconnectedInputStillPublishesCommittedEvent
 	s.Equal("agent.message", page.Events[0].Type())
 	s.Equal(int32(1), s.driver.calls.Load())
 }
+
 func (s *SessionWorkSuite) TestExpiredCallerDoesNotDispatchWork() {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := s.svc.SendPrompt(ctx, s.ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
-	s.ErrorIs(err, context.Canceled)
+	s.Require().ErrorIs(err, context.Canceled)
 	_, err = s.svc.AnswerInteraction(ctx, s.ref, "interaction", nil)
-	s.ErrorIs(err, context.Canceled)
+	s.Require().ErrorIs(err, context.Canceled)
 	_, err = s.svc.Cancel(ctx, s.ref)
-	s.ErrorIs(err, context.Canceled)
+	s.Require().ErrorIs(err, context.Canceled)
 	s.Zero(s.driver.calls.Load())
 }
 
@@ -298,15 +307,16 @@ func (s *SessionWorkSuite) TestCancelAcknowledgmentDoesNotTerminateObservedWork(
 	s.Require().NoError(err)
 	s.Equal(events.Running, current.Status.State)
 }
+
 func (s *SessionWorkSuite) TestOfflineWorkIsRejectedWithoutDriverDispatch() {
 	_, err := s.svc.ArchiveSession(context.Background(), s.ref)
 	s.Require().NoError(err)
 	_, err = s.svc.SendPrompt(context.Background(), s.ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
-	s.ErrorIs(err, runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
 	_, err = s.svc.AnswerInteraction(context.Background(), s.ref, "old-interaction", nil)
-	s.ErrorIs(err, runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
 	_, err = s.svc.Cancel(context.Background(), s.ref)
-	s.ErrorIs(err, runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
 	s.Zero(s.driver.calls.Load())
 }
 
@@ -329,7 +339,7 @@ func (s *SessionWorkSuite) TestArchiveWaitsForOriginalAnswerAndCancelDispatch() 
 			s.FailNow("work not admitted")
 		}
 		cancel()
-		s.Error(<-done)
+		s.Require().Error(<-done)
 	}
 	archived := make(chan error, 1)
 	go func() { _, err := s.svc.ArchiveSession(context.Background(), s.ref); archived <- err }()
@@ -341,5 +351,5 @@ func (s *SessionWorkSuite) TestArchiveWaitsForOriginalAnswerAndCancelDispatch() 
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(s.driver.release)
-	s.NoError(<-archived)
+	s.Require().NoError(<-archived)
 }

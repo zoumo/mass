@@ -2,6 +2,7 @@ package subcommand
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
@@ -108,10 +108,11 @@ func (o *options) runtimeCommands() *cobra.Command {
 			_ = cmd.MarkFlagRequired("type")
 		}
 		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			p := client.Params{}
+			name := ""
+			var call func(context.Context, any) error
 			if len(args) > 0 {
-				p.Name = args[0]
-				if p.Name == "" {
+				name = args[0]
+				if name == "" {
 					return invalid("Runtime name is required")
 				}
 			}
@@ -124,7 +125,8 @@ func (o *options) runtimeCommands() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				p.Runtime = &resource.Runtime{Metadata: resource.Metadata{Name: p.Name}, Spec: resource.RuntimeSpec{Type: kind, Config: config}}
+				v := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: kind, Config: config}}
+				call = func(ctx context.Context, out any) error { return o.client.CreateRuntime(ctx, v, out) }
 			case "update":
 				if !input.provided(cmd) {
 					return invalid("Runtime update requires configuration input")
@@ -135,7 +137,7 @@ func (o *options) runtimeCommands() *cobra.Command {
 					return err
 				}
 				var current resource.Runtime
-				if err := o.request(cmd, "runtime.get", p, &current); err != nil {
+				if err := o.request(cmd, "runtime.get", func(ctx context.Context, out any) error { return o.client.GetRuntime(ctx, name, out) }, &current); err != nil {
 					return err
 				}
 				if cmd.Flags().Changed("executable") {
@@ -144,9 +146,22 @@ func (o *options) runtimeCommands() *cobra.Command {
 						return err
 					}
 				}
-				p.Spec = &resource.RuntimeSpec{Type: current.Spec.Type, Config: config}
+				spec := resource.RuntimeSpec{Type: current.Spec.Type, Config: config}
+				call = func(ctx context.Context, out any) error { return o.client.UpdateRuntime(ctx, name, spec, out) }
+			case "get":
+				call = func(ctx context.Context, out any) error { return o.client.GetRuntime(ctx, name, out) }
+			case "list":
+				call = func(ctx context.Context, out any) error {
+					return o.client.ListRuntimes(ctx, resource.RuntimeQuery{}, out)
+				}
+			case "start":
+				call = func(ctx context.Context, out any) error { return o.client.StartRuntime(ctx, name, out) }
+			case "stop":
+				call = func(ctx context.Context, out any) error { return o.client.StopRuntime(ctx, name, out) }
+			case "delete":
+				call = func(ctx context.Context, _ any) error { return o.client.DeleteRuntime(ctx, name) }
 			}
-			return o.result(cmd, "runtime."+action, p)
+			return o.result(cmd, "runtime."+action, name, call)
 		}
 		root.AddCommand(cmd)
 	}

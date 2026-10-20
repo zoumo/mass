@@ -4,13 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/stretchr/testify/require"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
-	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
-	"github.com/zoumo/mass/mass-go/pkg/service"
-	"github.com/zoumo/mass/mass-go/pkg/store/file"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +12,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
+	"github.com/zoumo/mass/mass-go/pkg/service"
+	"github.com/zoumo/mass/mass-go/pkg/store/file"
+	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 func TestIllegalNativeIdentityNeverBecomesPersistentSession(t *testing.T) {
@@ -62,7 +64,7 @@ func identityOnlyScenario(t *testing.T, id string) (string, string) {
 	require.NoError(t, err)
 	b = bytes.ReplaceAll(b, []byte("codex-session"), []byte(id))
 	path = filepath.Join(t.TempDir(), "invalid-id.json")
-	require.NoError(t, os.WriteFile(path, b, 0600))
+	require.NoError(t, os.WriteFile(path, b, 0o600))
 	return path, work
 }
 
@@ -87,7 +89,7 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 	defer server.Close()
 	body, err := json.Marshal(map[string]any{"metadata": map[string]string{"namespace": "one", "name": "demo"}, "spec": map[string]string{"runtimeRef": "agent", "cwd": work}})
 	require.NoError(t, err)
-	req, err := http.NewRequestWithContext(c, "POST", server.URL+"/apis/v1/sessions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(c, http.MethodPost, server.URL+"/apis/v1/sessions", bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer test-token")
 	req.Header.Set("Content-Type", "application/json")
@@ -102,7 +104,10 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 		}
 	}()
 	done := make(chan result, 1)
-	go func() { res, e := http.DefaultClient.Do(req); done <- result{res, e} }()
+	go func() {
+		res, e := http.DefaultClient.Do(req) //nolint:bodyclose // Ownership transfers to the receiving test, which closes both early and committed responses.
+		done <- result{res, e}
+	}()
 	select {
 	case <-gate.entered:
 	case <-c.Done():
@@ -133,7 +138,7 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 	require.Equal(t, 201, out.response.StatusCode, string(raw))
 	require.Equal(t, "/apis/v1/sessions/a%2Fb%20%25%E7%A9%BA%E9%97%B4", out.response.Header.Get("Location"))
 	for _, target := range []string{out.response.Header.Get("Location"), "/apis/v1/namespaces/one/sessions/a%2Fb%20%25%E7%A9%BA%E9%97%B4", "/apis/v1/namespaces/one/sessions/demo"} {
-		request, err := http.NewRequestWithContext(c, "GET", server.URL+target, nil)
+		request, err := http.NewRequestWithContext(c, http.MethodGet, server.URL+target, http.NoBody)
 		require.NoError(t, err)
 		request.Header.Set("Authorization", "Bearer test-token")
 		res, err := http.DefaultClient.Do(request)
@@ -144,7 +149,7 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 		require.Equal(t, 200, res.StatusCode, string(b))
 		require.Contains(t, string(b), `"sessionId":"a/b %空间"`)
 	}
-	req, err = http.NewRequestWithContext(context.Background(), "POST", server.URL+"/apis/v1/namespaces/one/sessions/demo/archive", strings.NewReader("{}"))
+	req, err = http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/apis/v1/namespaces/one/sessions/demo/archive", strings.NewReader("{}"))
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer test-token")
 	req.Header.Set("Content-Type", "application/json")

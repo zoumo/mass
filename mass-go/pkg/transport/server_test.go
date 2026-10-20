@@ -492,7 +492,6 @@ func (serverSuite *ServerSuite) TestBodyReadDoesNotImposeDeadline() {
 	for _, deadline := range w.deadlines {
 		require.True(t, deadline.IsZero() || !deadline.After(time.Now()), "transport must not impose a positive body-read timeout")
 	}
-
 }
 
 func (serverSuite *ServerSuite) TestSlowBodyCompletesWithoutImplicitCapacityLimit() {

@@ -3,13 +3,15 @@ package service_test
 import (
 	"context"
 	"errors"
+	"testing"
+
 	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
-	"testing"
 )
 
 type SessionIdentitySuite struct {
@@ -22,9 +24,10 @@ func (s *SessionIdentitySuite) SetupTest() {
 	st, err := file.Open(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.st = st
-	s.T().Cleanup(func() { s.NoError(st.Close()) })
+	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	s.svc = service.New(st, st, nil)
 }
+
 func (s *SessionIdentitySuite) TestUUIDCreateNameRejectedBeforeRuntimeAccess() {
 	for _, name := range []string{"00000000-0000-0000-0000-000000000000", "12345678-abcd-ffff-0000-123456789abc", "12345678-ABCD-FFFF-0000-123456789ABC"} {
 		_, err := s.svc.CreateSession(context.Background(), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: name}, Spec: resource.SessionSpec{RuntimeRef: "missing", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}})
@@ -44,6 +47,7 @@ func (s *SessionIdentitySuite) seed(ns, name, id string) resource.Session {
 	s.Require().NoError(err)
 	return r
 }
+
 func (s *SessionIdentitySuite) TestNameOrIDResolvesNamespaceAndDetectsAmbiguity() {
 	first := s.seed("one", "alpha", "beta")
 	s.seed("two", "beta", "elsewhere")
@@ -56,10 +60,10 @@ func (s *SessionIdentitySuite) TestNameOrIDResolvesNamespaceAndDetectsAmbiguity(
 		s.Equal(first, got)
 	}
 	_, err := s.svc.ResolveSession("two", "alpha")
-	s.ErrorIs(err, store.ErrNotFound)
+	s.Require().ErrorIs(err, store.ErrNotFound)
 	s.seed("one", "beta", "other")
 	_, err = s.svc.ResolveSession("one", "beta")
-	s.ErrorIs(err, store.ErrConflict)
+	s.Require().ErrorIs(err, store.ErrConflict)
 	same := s.seed("one", "same", "same")
 	ref, err := s.svc.ResolveSession("one", "same")
 	s.Require().NoError(err)
@@ -91,6 +95,7 @@ func (s *SessionIdentitySuite) TestInvalidIDsRejectedAtEveryServiceEntry() {
 		s.invalidID(err)
 	}
 }
+
 func (s *SessionIdentitySuite) invalidID(err error) {
 	var public *runtime.OperationError
 	s.Require().ErrorAs(err, &public)
@@ -121,13 +126,13 @@ func (s *SessionIdentitySuite) TestDirectoryFiltersAndPaginationWorkOffline() {
 	s.Equal("a/b", filtered.Items[0].Status.SessionID)
 	for _, q := range []resource.SessionQuery{{Namespace: "../bad"}, {RuntimeRef: "/bad"}, {State: "invented"}, {Limit: -1}} {
 		_, err := s.svc.ListSessions(q)
-		s.ErrorIs(err, runtime.ErrInvalidArgument)
+		s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	}
 }
 
 func (s *SessionIdentitySuite) TestSessionCreateRejectsSystemStatusBeforeSideEffects() {
 	_, err := s.svc.CreateSession(context.Background(), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "missing", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}, Status: resource.SessionStatus{SessionID: "forged"}})
-	s.ErrorIs(err, runtime.ErrInvalidArgument)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 }
 
 type failingIDDirectory struct{ store.MetaStore }
@@ -138,6 +143,7 @@ func (f failingIDDirectory) GetSession(ref resource.SessionRef) (resource.Sessio
 	}
 	return f.MetaStore.GetSession(ref)
 }
+
 func (s *SessionIdentitySuite) TestNameHitDoesNotHideDirectoryFailure() {
 	s.seed("one", "demo", "native")
 	svc := service.New(failingIDDirectory{s.st}, s.st, nil)
@@ -145,10 +151,11 @@ func (s *SessionIdentitySuite) TestNameHitDoesNotHideDirectoryFailure() {
 	s.Require().ErrorContains(err, "injected directory failure")
 	s.NotErrorIs(err, store.ErrNotFound)
 }
+
 func (s *SessionIdentitySuite) TestReferenceFormsRemainExclusive() {
 	s.seed("one", "demo", "native")
 	for _, ref := range []resource.SessionRef{{SessionID: "native", Namespace: "one"}, {SessionID: "native", Name: "demo"}, {Namespace: "one"}, {Name: "demo"}, {}} {
 		_, err := s.svc.GetSession(ref)
-		s.ErrorIs(err, runtime.ErrInvalidArgument)
+		s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	}
 }

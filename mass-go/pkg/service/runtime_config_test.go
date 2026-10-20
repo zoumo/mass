@@ -2,13 +2,15 @@ package service_test
 
 import (
 	"encoding/json"
+	"strings"
+	"testing"
+
 	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
-	"strings"
-	"testing"
 )
 
 type RuntimeConfigSuite struct {
@@ -29,6 +31,7 @@ func (configFactory) Validate(runtime.Config) error { return nil }
 func (configFactory) New(string, runtime.Config) (runtime.Driver, error) {
 	panic("configuration must not construct a Driver")
 }
+
 func (s *RuntimeConfigSuite) TestCreationRejectsReadOnlyStatus() {
 	_, err := s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}, Status: resource.RuntimeStatus{State: "running"}})
 	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
@@ -36,14 +39,16 @@ func (s *RuntimeConfigSuite) TestCreationRejectsReadOnlyStatus() {
 	s.Require().NoError(err)
 	s.Empty(items)
 }
+
 func (s *RuntimeConfigSuite) TestQueriesValidateBusinessArguments() {
 	_, err := s.svc.GetRuntime("../agent")
-	s.ErrorIs(err, runtime.ErrInvalidArgument)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	_, err = s.svc.ListRuntimes(resource.RuntimeQuery{State: "imaginary"})
-	s.ErrorIs(err, runtime.ErrInvalidArgument)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	_, err = s.svc.UpdateRuntime("../agent", resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}})
-	s.ErrorIs(err, runtime.ErrInvalidArgument)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 }
+
 func (s *RuntimeConfigSuite) TestConfigurationIsJSONAndReplacesWholeSpec() {
 	for _, config := range []runtime.Config{nil, {"value": make(chan int)}} {
 		_, err := s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: config}})
@@ -69,11 +74,13 @@ func (s *RuntimeConfigSuite) TestConfigurationIsJSONAndReplacesWholeSpec() {
 	s.Require().NoError(err)
 	s.Equal([]resource.Runtime{got}, list)
 }
+
 func (s *RuntimeConfigSuite) TestConfigurationNamesFollowDeclaredSubdomainConstraint() {
 	name := strings.Repeat("a", 64)
 	_, err := s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
 	s.Require().NoError(err)
 }
+
 func (s *RuntimeConfigSuite) TestDeepJSONAcceptedAndCyclesRejected() {
 	var deep any = "leaf"
 	for range 256 {
@@ -84,8 +91,9 @@ func (s *RuntimeConfigSuite) TestDeepJSONAcceptedAndCyclesRejected() {
 	cycle := map[string]any{}
 	cycle["self"] = cycle
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "cycle"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{"value": cycle}}})
-	s.ErrorIs(err, runtime.ErrInvalidArgument)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 }
+
 func (s *RuntimeConfigSuite) TestEmptyJSONNumberCannotBeRewrittenAsZero() {
 	input := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{"number": json.Number("")}}}
 	_, err := s.svc.CreateRuntime(input)

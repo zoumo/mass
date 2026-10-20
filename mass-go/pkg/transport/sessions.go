@@ -2,12 +2,14 @@ package transport
 
 import (
 	"context"
+	"reflect"
+
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/store"
-	"reflect"
 )
 
 type HistoryQuery struct {
@@ -23,11 +25,14 @@ type historyByNameOrID struct {
 	SessionNameOrIDPath
 	HistoryQuery
 }
-type historyOutput struct{ Body store.HistoryPage }
-type streamByID struct {
-	SessionIDPath
-	LastEventID string `header:"Last-Event-ID"`
-}
+type (
+	historyOutput struct{ Body store.HistoryPage }
+	streamByID    struct {
+		SessionIDPath
+		LastEventID string `header:"Last-Event-ID"`
+	}
+)
+
 type streamByNameOrID struct {
 	SessionNameOrIDPath
 	LastEventID string `header:"Last-Event-ID"`
@@ -41,6 +46,7 @@ func (q HistoryQuery) query() (store.HistoryQuery, error) {
 	}
 	return store.HistoryQuery{After: q.After, Limit: q.Limit, Types: q.Types}, nil
 }
+
 func (s *Server) registerSessions(api huma.API) {
 	s.registerSessionIdentity(api)
 	s.registerSessionWork(api)
@@ -81,6 +87,7 @@ func (s *Server) registerSessions(api huma.API) {
 		return s.stream(ref)
 	})
 }
+
 func (s *Server) history(ref resource.SessionRef, q HistoryQuery) (*historyOutput, error) {
 	query, err := q.query()
 	if err != nil {
@@ -89,6 +96,7 @@ func (s *Server) history(ref resource.SessionRef, q HistoryQuery) (*historyOutpu
 	page, err := s.api.ListHistoryEvents(ref, query)
 	return &historyOutput{Body: page}, err
 }
+
 func (s *Server) stream(ref resource.SessionRef) (*huma.StreamResponse, error) {
 	sub, err := s.api.SubscribeEvents(ref)
 	if err != nil {
@@ -96,6 +104,7 @@ func (s *Server) stream(ref resource.SessionRef) (*huma.StreamResponse, error) {
 	}
 	return &huma.StreamResponse{Body: func(ctx huma.Context) { r, w := humachi.Unwrap(ctx); s.observe(w, r, sub) }}, nil
 }
+
 func streamOperation(r huma.Registry, path, id string) huma.Operation {
 	return huma.Operation{Method: "GET", Path: path, OperationID: id, Responses: map[string]*huma.Response{
 		"200": {Description: "Live SSE only. Frames: subscription.ready {}, session.event SessionEvent, subscription.closed {}, subscription.error Error; comment heartbeat at least every 15 seconds. No id, retry, replay or automatic reconnect. EOF without a terminal frame is abnormal.", Content: map[string]*huma.MediaType{"text/event-stream": {Schema: &huma.Schema{Type: "string"}, Extensions: map[string]any{"x-sse-events": map[string]any{
@@ -103,5 +112,6 @@ func streamOperation(r huma.Registry, path, id string) huma.Operation {
 			"session.event":       r.Schema(reflect.TypeFor[events.SessionEvent](), true, ""),
 			"subscription.closed": map[string]any{"type": "object", "additionalProperties": false},
 			"subscription.error":  r.Schema(reflect.TypeFor[Error](), true, ""),
-		}}}}}}}
+		}}}}},
+	}}
 }

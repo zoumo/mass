@@ -2,9 +2,11 @@ package transport_test
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/require"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 func TestHistoryAndStreamOpenAPI(t *testing.T) {

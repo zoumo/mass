@@ -152,14 +152,14 @@ func (v *singleValue) Set(s string) error {
 	return v.Value.Set(s)
 }
 
-func (o *options) request(cmd *cobra.Command, op string, p client.Params, out any) error {
+func (o *options) request(cmd *cobra.Command, op string, call func(context.Context, any) error, out any) error {
 	ctx := cmd.Context()
 	cancel := func() {}
 	if o.timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, o.timeout)
 	}
 	defer cancel()
-	if err := o.client.Call(ctx, op, p, out); err != nil {
+	if err := call(ctx, out); err != nil {
 		return requestError(err, op)
 	}
 	return nil
@@ -186,14 +186,14 @@ func group(name, short string) *cobra.Command {
 	return c
 }
 
-func (o *options) result(cmd *cobra.Command, op string, p client.Params) error {
+func (o *options) result(cmd *cobra.Command, op, name string, call func(context.Context, any) error) error {
 	var raw json.RawMessage
-	if err := o.request(cmd, op, p, &raw); err != nil {
+	if err := o.request(cmd, op, call, &raw); err != nil {
 		return err
 	}
 	if op == "runtime.delete" {
 		if o.output == "human" {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "Deleted Runtime %s\n", p.Name)
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "Deleted Runtime %s\n", name)
 			return err
 		}
 		return nil

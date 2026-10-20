@@ -2,7 +2,9 @@ package transport
 
 import (
 	"context"
+
 	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -33,9 +35,11 @@ type answerByNameOrID struct {
 	Interaction64 string `path:"interaction64" minLength:"1" pattern:"^[A-Za-z0-9_-]+$"`
 	Body          any
 }
-type inputOutput struct{ Body runtime.InputReceipt }
-type answerOutput struct{ Body runtime.InteractionReceipt }
-type cancelOutput struct{ Body runtime.CancelReceipt }
+type (
+	inputOutput  struct{ Body runtime.InputReceipt }
+	answerOutput struct{ Body runtime.InteractionReceipt }
+	cancelOutput struct{ Body runtime.CancelReceipt }
+)
 
 func (p SessionIDPath) resolve(_ *Server) (resource.SessionRef, error) {
 	if err := resource.ValidateSessionID(p.SessionID); err != nil {
@@ -43,6 +47,7 @@ func (p SessionIDPath) resolve(_ *Server) (resource.SessionRef, error) {
 	}
 	return resource.SessionRef{SessionID: p.SessionID}, nil
 }
+
 func (p SessionNameOrIDPath) resolve(s *Server) (resource.SessionRef, error) {
 	return s.api.ResolveSession(p.Namespace, p.NameOrID)
 }
@@ -95,6 +100,7 @@ func (s *Server) registerSessionWork(api huma.API) {
 		return s.answer(ctx, ref, in.Interaction64, in.Body)
 	})
 }
+
 func (s *Server) answer(ctx context.Context, ref resource.SessionRef, encoded string, body any) (*answerOutput, error) {
 	interaction, err := decodeRef(encoded)
 	if err != nil {

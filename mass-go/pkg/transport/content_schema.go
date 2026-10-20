@@ -1,10 +1,12 @@
 package transport
 
 import (
+	"reflect"
+
 	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
-	"reflect"
 )
 
 // ContentBlock has private union fields and a custom JSON codec. Describe that

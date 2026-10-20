@@ -3,12 +3,6 @@ package service_test
 import (
 	"context"
 	"errors"
-	"github.com/stretchr/testify/suite"
-	"github.com/zoumo/mass/mass-go/pkg/events"
-	"github.com/zoumo/mass/mass-go/pkg/service"
-	"github.com/zoumo/mass/mass-go/pkg/store"
-	"github.com/zoumo/mass/mass-go/pkg/store/file"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,8 +12,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/suite"
+
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/service"
+	"github.com/zoumo/mass/mass-go/pkg/store"
+	"github.com/zoumo/mass/mass-go/pkg/store/file"
+	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 // The public RuntimeService must retain stop ownership after its caller leaves.
@@ -42,7 +43,7 @@ func (s *RecoverySuite) TestStopCallerLeavesButOriginalOwnerCompletes() {
 	case <-time.After(time.Second):
 		s.FailNow("caller wait did not end")
 	}
-	s.NoError(owner.Err(), "original stop must outlive caller cancellation")
+	s.Require().NoError(owner.Err(), "original stop must outlive caller cancellation")
 	s.release()
 	s.Eventually(func() bool {
 		r, err := s.svc.GetRuntime("agent")
@@ -72,10 +73,12 @@ func (d *stopDriver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	}
 	return runtime.Capabilities{"proof": true}, nil
 }
+
 func (d *stopDriver) ResumeSession(_ context.Context, id string, _ runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.source = events.NewSource()
 	return runtime.DriverSession{SessionID: id, Source: d.source}, nil
 }
+
 func (d *stopDriver) CloseSession(ctx context.Context, _ string) error {
 	d.closes.Add(1)
 	if d.onClose != nil {
@@ -83,6 +86,7 @@ func (d *stopDriver) CloseSession(ctx context.Context, _ string) error {
 	}
 	return nil
 }
+
 func (d *stopDriver) Stop(ctx context.Context) error {
 	if d.onStop != nil {
 		if err := d.onStop(ctx); err != nil {
@@ -127,7 +131,7 @@ func (s *RuntimeStopSuite) SetupTest() {
 	s.unknown = false
 	st, err := file.Open(s.T().TempDir(), false)
 	s.Require().NoError(err)
-	s.T().Cleanup(func() { s.NoError(st.Close()) })
+	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	s.factory = &stopFactory{}
 	s.history = &recoveryHistory{HistoryStore: st, entered: make(chan struct{}), release: make(chan struct{})}
 	s.meta = &stopMeta{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
@@ -145,9 +149,9 @@ func (s *RuntimeStopSuite) SetupTest() {
 		defer cancel()
 		err := s.svc.Shutdown(c)
 		if s.unknown {
-			s.Error(err)
+			s.Require().Error(err)
 		} else {
-			s.NoError(err)
+			s.Require().NoError(err)
 		}
 	})
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
@@ -159,6 +163,7 @@ func (s *RuntimeStopSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.ref = resource.SessionRef{SessionID: r.Status.SessionID}
 }
+
 func (s *RuntimeStopSuite) TestConfirmedSessionReleaseIsNotRedispatchedAfterDriverFailure() {
 	s.d.failStop.Store(true)
 	_, err := s.svc.StopRuntime(context.Background(), "agent")
@@ -167,9 +172,9 @@ func (s *RuntimeStopSuite) TestConfirmedSessionReleaseIsNotRedispatchedAfterDriv
 	s.Require().NoError(err)
 	s.Equal("stopping", r.Status.State)
 	s.NotZero(r.Status.AppliedGeneration)
-	s.Error(s.svc.DeleteRuntime("agent"))
+	s.Require().Error(s.svc.DeleteRuntime("agent"))
 	_, err = s.svc.StartRuntime(context.Background(), "agent")
-	s.Error(err)
+	s.Require().Error(err)
 	s.d.failStop.Store(false)
 	r, err = s.svc.StopRuntime(context.Background(), "agent")
 	s.Require().NoError(err)
@@ -180,10 +185,10 @@ func (s *RuntimeStopSuite) TestConfirmedSessionReleaseIsNotRedispatchedAfterDriv
 
 func (s *RuntimeConfigSuite) TestRuntimeLifecycleValidatesNamesBeforeStoreAccess() {
 	_, err := s.svc.StartRuntime(context.Background(), "../agent")
-	s.ErrorIs(err, runtime.ErrInvalidArgument)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	_, err = s.svc.StopRuntime(context.Background(), "../agent")
-	s.ErrorIs(err, runtime.ErrInvalidArgument)
-	s.ErrorIs(s.svc.DeleteRuntime("../agent"), runtime.ErrInvalidArgument)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
+	s.Require().ErrorIs(s.svc.DeleteRuntime("../agent"), runtime.ErrInvalidArgument)
 }
 
 func (s *RuntimeStopSuite) TestCancelCannotEnterSessionAlreadyBeingReleased() {
@@ -202,10 +207,11 @@ func (s *RuntimeStopSuite) TestCancelCannotEnterSessionAlreadyBeingReleased() {
 	c, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_, err := s.svc.Cancel(c, s.ref)
-	s.ErrorIs(err, runtime.ErrFailedPrecondition, "release must atomically seal cancel dispatch too")
+	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition, "release must atomically seal cancel dispatch too")
 	unblock()
-	s.NoError(<-done)
+	s.Require().NoError(<-done)
 }
+
 func (s *SessionWorkSuite) TestStopWaitsForAllOriginalDispatchesAndTheirFacts() {
 	for _, kind := range []string{"input", "answer", "cancel"} {
 		c, cancel := context.WithCancel(context.Background())
@@ -228,7 +234,7 @@ func (s *SessionWorkSuite) TestStopWaitsForAllOriginalDispatchesAndTheirFacts() 
 			s.FailNow("dispatch not entered")
 		}
 		cancel()
-		s.Error(<-done)
+		s.Require().Error(<-done)
 	}
 	e, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "demo", SessionID: "original", ItemID: "accepted", Time: time.Now().UTC()}, events.AgentMessage{MessageID: "accepted", Content: []events.ContentBlock{events.Text("complete fact")}}, s.driver.source)
 	s.Require().NoError(err)
@@ -252,6 +258,7 @@ func (s *SessionWorkSuite) TestStopWaitsForAllOriginalDispatchesAndTheirFacts() 
 	s.Require().Len(page.Events, 1)
 	s.Equal(e.EventID, page.Events[0].EventID)
 }
+
 func (s *RuntimeStopSuite) TestConcurrentStopWaitersShareOneDriverRelease() {
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -269,11 +276,12 @@ func (s *RuntimeStopSuite) TestConcurrentStopWaitersShareOneDriverRelease() {
 	}
 	unblock()
 	for range 8 {
-		s.NoError(<-done)
+		s.Require().NoError(<-done)
 	}
 	s.Equal(int32(1), s.d.stops.Load())
 	s.Equal(int32(1), s.d.closes.Load())
 }
+
 func (s *RuntimeStopSuite) TestRestartUsesNewConfigurationAndRetainsDirectory() {
 	original, err := s.svc.GetSession(s.ref)
 	s.Require().NoError(err)
@@ -285,7 +293,7 @@ func (s *RuntimeStopSuite) TestRestartUsesNewConfigurationAndRetainsDirectory() 
 	s.Require().Len(s.factory.drivers, 1)
 	_, err = s.svc.StopRuntime(context.Background(), "agent")
 	s.Require().NoError(err)
-	s.ErrorIs(s.svc.DeleteRuntime("agent"), runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(s.svc.DeleteRuntime("agent"), runtime.ErrFailedPrecondition)
 	current, err := s.svc.GetSession(s.ref)
 	s.Require().NoError(err)
 	s.Equal(original.Metadata.UID, current.Metadata.UID)
@@ -300,6 +308,7 @@ func (s *RuntimeStopSuite) TestRestartUsesNewConfigurationAndRetainsDirectory() 
 	s.Equal(true, s.factory.drivers[1].config["next"])
 	s.Empty(s.d.config)
 }
+
 func (s *RuntimeStopSuite) TestFailureLeavesOtherRuntimeIndependent() {
 	s.d.failStop.Store(true)
 	_, err := s.svc.StopRuntime(context.Background(), "agent")
@@ -309,15 +318,16 @@ func (s *RuntimeStopSuite) TestFailureLeavesOtherRuntimeIndependent() {
 	r, err := s.svc.StartRuntime(context.Background(), "healthy")
 	s.Require().NoError(err)
 	s.Equal("running", r.Status.State)
-	s.ErrorIs(s.svc.DeleteRuntime("healthy"), runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(s.svc.DeleteRuntime("healthy"), runtime.ErrFailedPrecondition)
 	r, err = s.svc.StopRuntime(context.Background(), "healthy")
 	s.Require().NoError(err)
 	s.Equal("stopped", r.Status.State)
-	s.NoError(s.svc.DeleteRuntime("healthy"))
+	s.Require().NoError(s.svc.DeleteRuntime("healthy"))
 	r, err = s.svc.GetRuntime("agent")
 	s.Require().NoError(err)
 	s.Equal("stopping", r.Status.State)
 }
+
 func (s *RuntimeStopSuite) TestHTTPStopRestartAndSafeDelete() {
 	h, err := transport.New(s.svc, transport.Options{Token: "test-token"})
 	s.Require().NoError(err)
@@ -325,7 +335,7 @@ func (s *RuntimeStopSuite) TestHTTPStopRestartAndSafeDelete() {
 	server := httptest.NewServer(h)
 	defer server.Close()
 	call := func(method, path, body string) (int, string) {
-		req, err := http.NewRequest(method, server.URL+"/apis/v1"+path, strings.NewReader(body))
+		req, err := http.NewRequestWithContext(s.T().Context(), method, server.URL+"/apis/v1"+path, strings.NewReader(body))
 		s.Require().NoError(err)
 		req.Header.Set("Authorization", "Bearer test-token")
 		if body != "" {
@@ -384,9 +394,11 @@ func (s *RuntimeStopSuite) TestHTTPStopRestartAndSafeDelete() {
 func (s *RuntimeStopSuite) TestStopRetainsOverflowArrivingDuringDriverRelease() {
 	s.assertStopRetainsOverflow(false)
 }
+
 func (s *RuntimeStopSuite) TestStopRetainsRetiredSourceOverflowAfterRecovery() {
 	s.assertStopRetainsOverflow(true)
 }
+
 func (s *RuntimeStopSuite) assertStopRetainsOverflow(recovered bool) {
 	source := s.d.source
 	if recovered {
@@ -451,6 +463,7 @@ func (m *stopMeta) UpdateRuntime(r resource.Runtime) (resource.Runtime, error) {
 	}
 	return m.MetaStore.UpdateRuntime(r)
 }
+
 func (m *stopMeta) GetRuntime(name string) (resource.Runtime, error) {
 	r, err := m.MetaStore.GetRuntime(name)
 	if err == nil && m.pauseRead.CompareAndSwap(true, false) {
@@ -459,6 +472,7 @@ func (m *stopMeta) GetRuntime(name string) (resource.Runtime, error) {
 	}
 	return r, err
 }
+
 func (s *RuntimeStopSuite) TestStopRetainsFactsConfirmedByConcurrentStart() {
 	entered, startRelease := make(chan struct{}), make(chan struct{})
 	var startOnce, metaOnce sync.Once
@@ -489,15 +503,16 @@ func (s *RuntimeStopSuite) TestStopRetainsFactsConfirmedByConcurrentStart() {
 		s.FailNow("stopping status gate")
 	}
 	releaseStart()
-	s.NoError(<-startDone)
+	s.Require().NoError(<-startDone)
 	releaseMeta()
-	s.Error(<-stopDone)
+	s.Require().Error(<-stopDone)
 	r, err := s.svc.GetRuntime("starting")
 	s.Require().NoError(err)
 	s.Equal("stopping", r.Status.State)
 	s.Equal(uint64(1), r.Status.AppliedGeneration, "stale stopping snapshot must preserve newly confirmed start")
 	s.Equal(runtime.Capabilities{"proof": true}, r.Status.Capabilities)
 }
+
 func (s *RuntimeStopSuite) TestConcurrentStopReadingOldStateStillObservesCompletedRelease() {
 	entered, driverRelease := make(chan struct{}), make(chan struct{})
 	var driverOnce, metaOnce sync.Once
@@ -523,7 +538,7 @@ func (s *RuntimeStopSuite) TestConcurrentStopReadingOldStateStillObservesComplet
 	unblockDriver()
 	s.Require().NoError(<-first)
 	unblockMeta()
-	s.NoError(<-second, "completed shared stop must not be rejected using stale stopping state")
+	s.Require().NoError(<-second, "completed shared stop must not be rejected using stale stopping state")
 }
 
 func (s *RuntimeStopSuite) TestAbnormalFinalStreamCannotProveFactDrain() {
@@ -534,9 +549,9 @@ func (s *RuntimeStopSuite) TestAbnormalFinalStreamCannotProveFactDrain() {
 	r, err := s.svc.GetRuntime("agent")
 	s.Require().NoError(err)
 	s.Equal("stopping", r.Status.State)
-	s.ErrorIs(s.svc.DeleteRuntime("agent"), runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(s.svc.DeleteRuntime("agent"), runtime.ErrFailedPrecondition)
 	_, err = s.svc.StartRuntime(context.Background(), "agent")
-	s.ErrorIs(err, runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
 }
 
 func (s *RuntimeStopSuite) TestStopCommitsArchivedFactsBeforeDriverRelease() {

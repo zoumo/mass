@@ -5,12 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"mime"
-	"net"
-	"net/http"
 	"reflect"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -36,67 +32,6 @@ type sessionCreateMetadata struct {
 type sessionCreate struct {
 	Metadata sessionCreateMetadata `json:"metadata"`
 	Spec     resource.SessionSpec  `json:"spec"`
-}
-
-func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
-	rc := http.NewResponseController(w)
-
-	complete := false
-	defer func() {
-		if complete {
-			_ = rc.SetReadDeadline(time.Time{})
-		} else {
-			_ = rc.SetReadDeadline(time.Now())
-			_ = r.Body.Close()
-		}
-	}()
-	b, err := io.ReadAll(r.Body)
-	complete = err == nil
-	if err != nil {
-		var timeout net.Error
-		if errors.As(err, &timeout) && timeout.Timeout() {
-			return nil, &protocolError{504, &Error{Code: "deadline_exceeded", Reason: "body_read_timeout", Message: "Request body was not received before the deadline"}}
-		}
-		return nil, Invalid()
-	}
-	if len(b) > 0 {
-		media, params, e := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if e != nil || media != "application/json" || (params["charset"] != "" && !strings.EqualFold(params["charset"], "utf-8")) {
-			return nil, &protocolError{415, Invalid()}
-		}
-	}
-	if !utf8.Valid(b) {
-		return nil, Invalid()
-	}
-	return b, nil
-}
-
-func emptyBody(w http.ResponseWriter, r *http.Request) error {
-	b, err := readBody(w, r)
-	if err != nil {
-		return err
-	}
-	if len(b) == 0 {
-		return nil
-	}
-	if err := validateJSON(b); err != nil {
-		return err
-	}
-	if string(bytes.TrimSpace(b)) != "{}" { // whitespace inside an empty object is legal
-		var v map[string]json.RawMessage
-		if json.Unmarshal(b, &v) != nil || v == nil || len(v) != 0 {
-			return Invalid()
-		}
-	}
-	return nil
-}
-
-func decodeBody(w http.ResponseWriter, r *http.Request, out any) error {
-	b, err := readBody(w, r)
-	if err != nil {
-		return err
-	}
-	return decodeJSON(b, out)
 }
 
 // ValidateJSON rejects duplicate members at every depth, including open maps.

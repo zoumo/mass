@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"reflect"
 	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -79,35 +78,6 @@ func fail(w http.ResponseWriter, status int, err *Error) {
 	if encodeErr := json.NewEncoder(w).Encode(err); encodeErr != nil {
 		return // The response is already committed; the client may have disconnected.
 	}
-}
-
-func respond(w http.ResponseWriter, status int, value any, err error) {
-	if err != nil {
-		public := PublicError(err)
-		var protocol *protocolError
-		if errors.As(err, &protocol) {
-			fail(w, protocol.status, protocol.public)
-			return
-		}
-		fail(w, statusFor(public.Code), public)
-		return
-	}
-	if status == 204 {
-		w.WriteHeader(status)
-		return
-	}
-	if err := validateOutput(reflect.ValueOf(value)); err != nil {
-		fail(w, 500, &Error{Code: "internal", Reason: "encoding_failed", Message: "Response could not be encoded"})
-		return
-	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		fail(w, 500, &Error{Code: "internal", Reason: "encoding_failed", Message: "Response could not be encoded"})
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(append(data, '\n'))
 }
 
 type protocolError struct {

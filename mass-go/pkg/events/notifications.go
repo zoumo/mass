@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"slices"
 	"time"
 )
 
@@ -56,6 +57,8 @@ type ConfigOptionGroup struct {
 
 // Options holds either []ConfigOptionValue or []ConfigOptionGroup; decoding uses
 // the same union and preserves order. CurrentValue is string or bool by Type.
+//
+//nolint:recvcheck // JSON decoding mutates; event encoding accepts immutable values.
 type ConfigOption struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -74,13 +77,13 @@ func (o ConfigOption) Validate() error {
 	}
 	if o.Type == "select" {
 		if _, ok := o.CurrentValue.(string); ok {
-			switch o.Options.(type) {
+			switch options := o.Options.(type) {
 			case []ConfigOptionValue:
-				if values := o.Options.([]ConfigOptionValue); values != nil {
+				if values := options; values != nil {
 					return nil
 				}
 			case []ConfigOptionGroup:
-				if groups := o.Options.([]ConfigOptionGroup); groups != nil {
+				if groups := options; groups != nil {
 					for _, group := range groups {
 						if group.Options == nil {
 							return errors.New("missing group options")
@@ -93,6 +96,7 @@ func (o ConfigOption) Validate() error {
 	}
 	return errors.New("invalid config option")
 }
+
 func (o *ConfigOption) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		ID           string          `json:"id"`
@@ -200,18 +204,14 @@ type UsageUpdate struct {
 
 func (UsageUpdate) eventType() string { return "session.usage_update" }
 func oneOf(value string, values ...string) bool {
-	for _, v := range values {
-		if value == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, value)
 }
 
 func jsonInteger(n json.Number) bool {
 	v, ok := new(big.Rat).SetString(string(n))
 	return ok && v.IsInt()
 }
+
 func validateTool(status string, raw *any, content []ContentBlock, duration *float64, output *Output) error {
 	if status != "" && !oneOf(status, "pending", "in_progress", "completed", "failed", "declined", "unknown") {
 		return errors.New("invalid tool status")
