@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -112,7 +113,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				sub, err := svc.SubscribeEvents(ref)
 				require.NoError(t, err)
 				defer sub.Close()
-				receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("hello")}})
+				receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 				require.NoError(t, err)
 				require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
 				requests, chunks := 0, 0
@@ -121,11 +122,11 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				for {
 					e, err := sub.Next(ctx(t))
 					require.NoError(t, err)
-					if problem, ok := e.Payload().(runtime.SessionError); ok {
+					if problem, ok := e.Payload().(events.SessionError); ok {
 						t.Fatalf("native session failure: %s %s", problem.Message, problem.Reason)
 					}
 					seen[e.Type()]++
-					if p, ok := e.Payload().(runtime.InteractionRequested); ok {
+					if p, ok := e.Payload().(events.InteractionRequested); ok {
 						requests++
 						interaction = p.Interaction
 						require.False(t, e.Persistent())
@@ -172,7 +173,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 						require.NoError(t, reopened.Close())
 						a, err := json.Marshal(e)
 						require.NoError(t, err)
-						var saved runtime.SessionEvent
+						var saved events.SessionEvent
 						for _, candidate := range page.Events {
 							if candidate.EventID == e.EventID {
 								saved = candidate
@@ -183,7 +184,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 						require.NoError(t, err)
 						require.JSONEq(t, string(a), string(b))
 					}
-					if p, ok := e.Payload().(runtime.StateUpdate); ok && p.State != nil && *p.State == runtime.Idle && seen["agent.message"] > 0 {
+					if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && seen["agent.message"] > 0 {
 						break
 					}
 				}
@@ -201,12 +202,12 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 					for _, e := range page.Events {
 						require.NotEqual(t, "delta-only", e.ItemID, "delta-only content must not enter history")
 						switch p := e.Payload().(type) {
-						case runtime.AgentMessage:
-							require.Equal(t, []runtime.ContentBlock{runtime.Text("complete answer"), runtime.Text(""), runtime.Text("second block")}, p.Content)
+						case events.AgentMessage:
+							require.Equal(t, []events.ContentBlock{events.Text("complete answer"), events.Text(""), events.Text("second block")}, p.Content)
 							require.Equal(t, "msg-8", e.ItemID)
-						case runtime.AgentThinking:
-							require.Equal(t, []runtime.ContentBlock{runtime.Text("reason one"), runtime.Text("")}, p.Content)
-						case runtime.ToolResult:
+						case events.AgentThinking:
+							require.Equal(t, []events.ContentBlock{events.Text("reason one"), events.Text("")}, p.Content)
+						case events.ToolResult:
 							switch p.ID {
 							case "value-0":
 								require.Nil(t, p.RawOutput)
@@ -217,10 +218,10 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 								require.Nil(t, *p.RawOutput)
 							case "value-2":
 								require.Empty(t, *p.RawOutput)
-								require.Equal(t, []runtime.ContentBlock{runtime.Text("")}, p.Content)
+								require.Equal(t, []events.ContentBlock{events.Text("")}, p.Content)
 							case "value-3":
 								require.Equal(t, []any{}, *p.RawOutput)
-								require.Equal(t, []runtime.ContentBlock{}, p.Content)
+								require.Equal(t, []events.ContentBlock{}, p.Content)
 							case "value-4":
 								require.Equal(t, json.Number("9007199254740993"), (*p.RawOutput).([]any)[0].(map[string]any)["value"].(map[string]any)["large"])
 							}
@@ -264,16 +265,16 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 	sub, err := svc.SubscribeEvents(ref)
 	require.NoError(t, err)
 	defer sub.Close()
-	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("hello")}})
+	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	require.NoError(t, err)
 	for {
 		e, err := sub.Next(ctx(t))
 		require.NoError(t, err)
-		if p, ok := e.Payload().(runtime.InteractionRequested); ok {
+		if p, ok := e.Payload().(events.InteractionRequested); ok {
 			_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": "json"}}})
 			require.NoError(t, err)
 		}
-		if p, ok := e.Payload().(runtime.StateUpdate); ok && p.State != nil && *p.State == runtime.Idle {
+		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {
 			break
 		}
 	}

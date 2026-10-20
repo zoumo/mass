@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
@@ -17,7 +17,7 @@ type reconcileSuite struct {
 	suite.Suite
 	st     *file.Store
 	dir    string
-	events []runtime.SessionEvent
+	events []events.SessionEvent
 }
 
 func TestReconcileSuite(t *testing.T) { suite.Run(t, new(reconcileSuite)) }
@@ -26,9 +26,9 @@ func (s *reconcileSuite) SetupTest() {
 	s.st, s.dir = open(s.T())
 	_, err = s.st.CreateSession(session("default", "demo", "native"))
 	s.Require().NoError(err)
-	s.events = []runtime.SessionEvent{
-		event(s.T(), "native", "one", runtime.AgentMessage{MessageID: "one", Content: []runtime.ContentBlock{runtime.Text("first")}}),
-		event(s.T(), "native", "two", runtime.AgentMessage{MessageID: "two", Content: []runtime.ContentBlock{runtime.Text("second")}}),
+	s.events = []events.SessionEvent{
+		event(s.T(), "native", "one", events.AgentMessage{MessageID: "one", Content: []events.ContentBlock{events.Text("first")}}),
+		event(s.T(), "native", "two", events.AgentMessage{MessageID: "two", Content: []events.ContentBlock{events.Text("second")}}),
 	}
 }
 
@@ -36,8 +36,8 @@ func (s *reconcileSuite) SetupTest() {
 // that allowed Store outcome, not an Agent fact or a file crash guarantee.
 type partialBatch struct{ store.HistoryStore }
 
-func (p partialBatch) Append(id string, events []runtime.SessionEvent) (*string, error) {
-	result, err := p.HistoryStore.Append(id, events[:1])
+func (p partialBatch) Append(id string, records []events.SessionEvent) (*string, error) {
+	result, err := p.HistoryStore.Append(id, records[:1])
 	if err != nil {
 		return result, err
 	}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
@@ -44,7 +45,7 @@ type SessionService interface {
 }
 type runBinding struct {
 	driver        runtime.Driver
-	stream        runtime.Stream
+	stream        events.Stream
 	generation    uint64
 	done          chan struct{}
 	err           error
@@ -57,11 +58,11 @@ type runBinding struct {
 	stopStarted   chan struct{}
 	stopStatusErr error
 	drained       bool
-	blocked       *runtime.SessionEvent
+	blocked       *events.SessionEvent
 }
 type opening struct {
 	address   runtime.Address
-	events    []runtime.SessionEvent
+	events    []events.SessionEvent
 	err       error
 	done      chan struct{}
 	abandoned bool
@@ -70,12 +71,12 @@ type opening struct {
 	released  bool
 }
 type delivery struct {
-	event   runtime.SessionEvent
+	event   events.SessionEvent
 	barrier chan struct{}
 }
 type lane struct {
 	session     resource.Session
-	source      runtime.Source
+	source      events.Source
 	queue       chan delivery
 	done        chan struct{}
 	err         error
@@ -85,7 +86,7 @@ type lane struct {
 	commitErr   error
 	subscribers map[*Subscription]bool
 }
-type InteractionPolicy func(runtime.InteractionRequested) (map[string]any, bool)
+type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
 type Service struct {
 	policy      InteractionPolicy
@@ -352,7 +353,7 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 				}
 				return resource.Session{}, errors.Join(errors.New("outcome_unknown: abandoned create settled against original owner"), cleanup)
 			}
-			r.Status = resource.SessionStatus{SessionID: native.SessionID, State: runtime.Unknown, AppliedGeneration: 1, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
+			r.Status = resource.SessionStatus{SessionID: native.SessionID, State: events.Unknown, AppliedGeneration: 1, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
 			s.mu.Lock()
 			op.requested = r
 			s.mu.Unlock()
@@ -465,7 +466,7 @@ func (s *Service) SubscribeEvents(ref resource.SessionRef) (*Subscription, error
 	return sub, nil
 }
 
-func (s *Service) consume(run *runBinding, stream runtime.Stream) {
+func (s *Service) consume(run *runBinding, stream events.Stream) {
 	defer close(run.done)
 	for {
 		e, err := stream.Next(context.Background())
@@ -547,7 +548,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 		}
 		e := entry.event
 		if e.Persistent() {
-			if _, err := s.history.Append(e.SessionID, []runtime.SessionEvent{e}); err != nil {
+			if _, err := s.history.Append(e.SessionID, []events.SessionEvent{e}); err != nil {
 				s.fail(l, fmt.Errorf("history commit failed: %w", err))
 				s.mu.Lock()
 				l.commitErr = err
@@ -565,15 +566,15 @@ func (s *Service) process(run *runBinding, l *lane) {
 				}
 			}
 		}
-		if state, ok := e.Payload().(runtime.StateUpdate); ok {
+		if state, ok := e.Payload().(events.StateUpdate); ok {
 			work := e.Source().Work()
-			if state.State != nil && *state.State == runtime.Running && (l.work == "" || l.work == work) {
+			if state.State != nil && *state.State == events.Running && (l.work == "" || l.work == work) {
 				l.work = work
 			}
 			if work == "" || l.work == "" || work == l.work {
 				_, err := s.sessionStatus(resource.SessionRef{SessionID: e.SessionID}, func(r *resource.Session) {
 					if r.Status.State != "closing" && r.Status.State != "archived" && r.Status.AppliedGeneration != 0 {
-						r.Status.State = runtime.Unknown
+						r.Status.State = events.Unknown
 						if state.State != nil {
 							r.Status.State = *state.State
 						}
@@ -582,7 +583,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 				if err != nil {
 					s.fail(l, err)
 				}
-				if state.State != nil && *state.State == runtime.Idle && l.work == work {
+				if state.State != nil && *state.State == events.Idle && l.work == work {
 					l.work = ""
 				}
 			}
@@ -603,7 +604,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 			}
 		}
 		s.mu.Unlock()
-		if request, ok := e.Payload().(runtime.InteractionRequested); ok && s.policy != nil {
+		if request, ok := e.Payload().(events.InteractionRequested); ok && s.policy != nil {
 			run.admission.RLock()
 			s.mu.Lock()
 			allowed := !s.closing && !run.stopping && !l.closing && l.err == nil
@@ -702,7 +703,7 @@ func (s *Service) ReconcileHistory(ctx context.Context, ref resource.SessionRef)
 	}
 }
 
-func (s *Service) reconcileEvent(e runtime.SessionEvent) error {
+func (s *Service) reconcileEvent(e events.SessionEvent) error {
 	// Validate the whole committed prefix before retrying, including partial writes.
 	q := store.HistoryQuery{}
 	for {
@@ -736,7 +737,7 @@ func (s *Service) reconcileEvent(e runtime.SessionEvent) error {
 		}
 		q.After = page.Next
 	}
-	_, err := s.history.Append(e.SessionID, []runtime.SessionEvent{e})
+	_, err := s.history.Append(e.SessionID, []events.SessionEvent{e})
 	return err
 }
 

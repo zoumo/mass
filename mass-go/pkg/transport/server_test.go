@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
@@ -127,7 +128,7 @@ func (a *recordingAPI) ListHistoryEvents(ref resource.SessionRef, q store.Histor
 	a.record("session.history")
 	a.ref = ref
 	a.history = q
-	return store.HistoryPage{Events: []runtime.SessionEvent{}}, a.err
+	return store.HistoryPage{Events: []events.SessionEvent{}}, a.err
 }
 
 func (a *recordingAPI) SubscribeEvents(resource.SessionRef) (*service.Subscription, error) {

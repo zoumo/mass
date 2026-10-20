@@ -4,6 +4,7 @@ package resource
 import (
 	"time"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
@@ -35,7 +36,7 @@ type SessionSpec struct {
 }
 type SessionStatus struct {
 	SessionID         string               `json:"sessionId"`
-	State             runtime.SessionState `json:"state"`
+	State             events.SessionState  `json:"state"`
 	AppliedGeneration uint64               `json:"appliedGeneration,omitempty"`
 	RuntimeGeneration uint64               `json:"runtimeGeneration,omitempty"`
 	Capabilities      runtime.Capabilities `json:"capabilities,omitempty"`
@@ -56,12 +57,12 @@ type RuntimeQuery struct {
 	State string `json:"state,omitempty"`
 }
 type SessionQuery struct {
-	Namespace  string               `json:"namespace,omitempty"`
-	RuntimeRef string               `json:"runtimeRef,omitempty"`
-	State      runtime.SessionState `json:"state,omitempty"`
-	SessionID  string               `json:"sessionId,omitempty"`
-	After      string               `json:"after,omitempty"`
-	Limit      int                  `json:"limit,omitempty"`
+	Namespace  string              `json:"namespace,omitempty"`
+	RuntimeRef string              `json:"runtimeRef,omitempty"`
+	State      events.SessionState `json:"state,omitempty"`
+	SessionID  string              `json:"sessionId,omitempty"`
+	After      string              `json:"after,omitempty"`
+	Limit      int                 `json:"limit,omitempty"`
 }
 type SessionPage struct {
 	Items []Session `json:"items"`

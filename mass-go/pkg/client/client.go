@@ -17,6 +17,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
@@ -419,35 +420,35 @@ func (o *Observer) frame() (string, []byte, error) {
 	return "", nil, io.ErrUnexpectedEOF
 }
 
-func (o *Observer) Next() (runtime.SessionEvent, error) {
+func (o *Observer) Next() (events.SessionEvent, error) {
 	o.mu.Lock()
 	terminal := o.terminal
 	o.mu.Unlock()
 	if terminal != nil {
-		return runtime.SessionEvent{}, terminal
+		return events.SessionEvent{}, terminal
 	}
 	k, b, e := o.frame()
 	if e != nil {
-		return runtime.SessionEvent{}, o.finish(e)
+		return events.SessionEvent{}, o.finish(e)
 	}
 	switch k {
 	case "subscription.closed":
-		return runtime.SessionEvent{}, o.finish(io.EOF)
+		return events.SessionEvent{}, o.finish(io.EOF)
 	case "subscription.error":
 		var v transport.Error
 		if json.Unmarshal(b, &v) != nil {
-			return runtime.SessionEvent{}, o.finish(errors.New("invalid stream error"))
+			return events.SessionEvent{}, o.finish(errors.New("invalid stream error"))
 		}
-		return runtime.SessionEvent{}, o.finish(&v)
+		return events.SessionEvent{}, o.finish(&v)
 	case "session.event":
-		var v runtime.SessionEvent
+		var v events.SessionEvent
 		e = json.Unmarshal(b, &v)
 		if e != nil {
 			return v, o.finish(e)
 		}
 		return v, nil
 	}
-	return runtime.SessionEvent{}, o.finish(errors.New("invalid stream frame"))
+	return events.SessionEvent{}, o.finish(errors.New("invalid stream frame"))
 }
 
 func (o *Observer) finish(err error) error {

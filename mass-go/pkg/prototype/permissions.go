@@ -1,11 +1,13 @@
 // Package prototype contains explicit policies for the offline prototype.
 package prototype
 
-import "github.com/zoumo/mass/mass-go/pkg/runtime"
+import (
+	"github.com/zoumo/mass/mass-go/pkg/events"
+)
 
 // AutoApprovePermissions handles permission options only. Questions require
 // an explicit user answer through Service.AnswerInteraction.
-func AutoApprovePermissions(p runtime.InteractionRequested) (map[string]any, bool) {
+func AutoApprovePermissions(p events.InteractionRequested) (map[string]any, bool) {
 	if p.Request.Kind != "permission" {
 		return nil, false
 	}

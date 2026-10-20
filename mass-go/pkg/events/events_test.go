@@ -1,4 +1,4 @@
-package runtime_test
+package events_test
 
 import (
 	"encoding/json"
@@ -8,15 +8,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/events"
 )
 
 type EventsSuite struct{ suite.Suite }
 
 func (eventsSuite *EventsSuite) TestEventWireContract() {
 	t := eventsSuite.T()
-	base := runtime.EventBase{EventID: runtime.UUID(), Namespace: "default", SessionName: "demo", SessionID: "native", Time: time.Now().UTC(), ItemID: "tool"}
-	call, err := runtime.NewEvent(base, runtime.ToolCall{ID: "tool", Kind: "execute", RawInput: nil}, runtime.NewSource())
+	base := events.EventBase{EventID: events.UUID(), Namespace: "default", SessionName: "demo", SessionID: "native", Time: time.Now().UTC(), ItemID: "tool"}
+	call, err := events.NewEvent(base, events.ToolCall{ID: "tool", Kind: "execute", RawInput: nil}, events.NewSource())
 	require.NoError(t, err)
 	wire, err := json.Marshal(call)
 	require.NoError(t, err)
@@ -26,13 +26,13 @@ func (eventsSuite *EventsSuite) TestEventWireContract() {
 	delete(payload, "rawInput")
 	missing, err := json.Marshal(value)
 	require.NoError(t, err)
-	var decoded runtime.SessionEvent
+	var decoded events.SessionEvent
 	require.Error(t, json.Unmarshal(missing, &decoded), "missing rawInput cannot become explicit null")
 	payload["rawInput"] = nil
 	valid, err := json.Marshal(value)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(valid, &decoded))
-	require.IsType(t, runtime.ToolCall{}, decoded.Payload())
+	require.IsType(t, events.ToolCall{}, decoded.Payload())
 	value["type"] = "agent.message"
 	wrong, err := json.Marshal(value)
 	require.NoError(t, err)
@@ -43,7 +43,7 @@ func (eventsSuite *EventsSuite) TestEventWireContract() {
 	require.NoError(t, err)
 	require.Error(t, json.Unmarshal(missing, &decoded), "unknown state still requires previousState member")
 	base.Meta = map[string]any{"bad": make(chan int)}
-	_, err = runtime.NewEvent(base, runtime.AgentMessage{MessageID: "message", Content: []runtime.ContentBlock{runtime.Text("full")}}, runtime.NewSource())
+	_, err = events.NewEvent(base, events.AgentMessage{MessageID: "message", Content: []events.ContentBlock{events.Text("full")}}, events.NewSource())
 	require.Error(t, err)
 }
 

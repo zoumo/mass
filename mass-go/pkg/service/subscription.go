@@ -5,13 +5,14 @@ import (
 	"io"
 	"sync"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 // Subscription observes future events only. Closing it has no Agent side effect.
 type Subscription struct {
 	mu     sync.Mutex
-	queue  chan runtime.SessionEvent
+	queue  chan events.SessionEvent
 	done   chan struct{}
 	err    error
 	closed bool
@@ -19,7 +20,7 @@ type Subscription struct {
 }
 
 func newSubscription(remove func(*Subscription)) *Subscription {
-	return &Subscription{queue: make(chan runtime.SessionEvent, queueCapacity), done: make(chan struct{}), remove: remove}
+	return &Subscription{queue: make(chan events.SessionEvent, queueCapacity), done: make(chan struct{}), remove: remove}
 }
 
 func (s *Subscription) finish(err error) {
@@ -33,7 +34,7 @@ func (s *Subscription) finish(err error) {
 	close(s.done)
 }
 
-func (s *Subscription) publish(e runtime.SessionEvent) {
+func (s *Subscription) publish(e events.SessionEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -48,7 +49,7 @@ func (s *Subscription) publish(e runtime.SessionEvent) {
 	}
 }
 
-func (s *Subscription) Next(ctx context.Context) (runtime.SessionEvent, error) {
+func (s *Subscription) Next(ctx context.Context) (events.SessionEvent, error) {
 	select {
 	case <-s.done:
 		s.mu.Lock()
@@ -57,7 +58,7 @@ func (s *Subscription) Next(ctx context.Context) (runtime.SessionEvent, error) {
 		if err == nil {
 			err = io.EOF
 		}
-		return runtime.SessionEvent{}, err
+		return events.SessionEvent{}, err
 	default:
 	}
 	select {
@@ -70,9 +71,9 @@ func (s *Subscription) Next(ctx context.Context) (runtime.SessionEvent, error) {
 		if err == nil {
 			err = io.EOF
 		}
-		return runtime.SessionEvent{}, err
+		return events.SessionEvent{}, err
 	case <-ctx.Done():
-		return runtime.SessionEvent{}, ctx.Err()
+		return events.SessionEvent{}, ctx.Err()
 	}
 }
 func (s *Subscription) Close() error { s.finish(nil); s.remove(s); return nil }

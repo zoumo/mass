@@ -4,23 +4,12 @@ package runtime
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"maps"
 	"sync"
-)
 
-func UUID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(err)
-	}
-	b[6] = (b[6] & 15) | 64
-	b[8] = (b[8] & 63) | 128
-	s := hex.EncodeToString(b[:])
-	return s[:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:]
-}
+	"github.com/zoumo/mass/mass-go/pkg/events"
+)
 
 var ErrResourcesReleased = errors.New("owned resources released")
 
@@ -29,14 +18,6 @@ var ErrWorkUnsettled = errors.New("work unsettled")
 type (
 	Config       map[string]any
 	Capabilities map[string]bool
-	SessionState string
-)
-
-const (
-	Unknown        SessionState = "unknown"
-	Idle           SessionState = "idle"
-	Running        SessionState = "running"
-	RequiresAction SessionState = "requires_action"
 )
 
 type Address struct {
@@ -49,23 +30,14 @@ type SessionSpec struct {
 	AdditionalDirs []string `json:"additionalDirs,omitempty"`
 }
 
-// Source is execution-only association. It never enters event JSON/history.
-// A run token is fixed at open; work is the original native turn identity.
-type Source struct{ run, work string }
-
-func NewSource() Source                      { return Source{run: UUID()} }
-func (s Source) WithWork(work string) Source { return Source{run: s.run, work: work} }
-func (s Source) SameRun(other Source) bool   { return s.run != "" && s.run == other.run }
-func (s Source) Work() string                { return s.work }
-
 type DriverSession struct {
 	SessionID    string
 	Capabilities Capabilities
-	Source       Source
+	Source       events.Source
 }
 
 type Input struct {
-	Content []ContentBlock `json:"content"`
+	Content []events.ContentBlock `json:"content"`
 }
 type Acceptance struct {
 	Sent           *bool `json:"sent,omitempty"`
@@ -87,11 +59,8 @@ type CancelReceipt struct {
 	Target string `json:"target,omitempty"`
 	Result string `json:"result"`
 }
-type Stream interface {
-	Next(context.Context) (SessionEvent, error)
-}
 type Driver interface {
-	Events() (Stream, error)
+	Events() (events.Stream, error)
 	Start(context.Context) (Capabilities, error)
 	OpenSession(context.Context, Address, SessionSpec) (DriverSession, error)
 	ResumeSession(context.Context, string, Address, SessionSpec) (DriverSession, error)

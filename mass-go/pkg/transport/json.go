@@ -13,8 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 const maxBody = 1 << 20
@@ -190,7 +190,7 @@ func validateShape(value any, t reflect.Type) error {
 	if value == nil {
 		return Invalid()
 	}
-	if t.PkgPath() == "github.com/zoumo/mass/mass-go/pkg/runtime" && t.Name() == "ContentBlock" {
+	if t == reflect.TypeFor[events.ContentBlock]() {
 		return nil
 	} // The union decoder validates its own branch.
 	switch t.Kind() {
@@ -263,7 +263,7 @@ func validateOutput(value reflect.Value, depth int) error {
 		if value.IsNil() {
 			return nil
 		}
-		return runtime.CheckDynamicJSON(value.Interface())
+		return events.CheckDynamicJSON(value.Interface())
 	}
 	if value.Kind() == reflect.Pointer {
 		if value.IsNil() {
@@ -278,7 +278,7 @@ func validateOutput(value reflect.Value, depth int) error {
 			for _, k := range value.MapKeys() {
 				dynamic[k.String()] = value.MapIndex(k).Interface()
 			}
-			return runtime.CheckDynamicJSON(dynamic)
+			return events.CheckDynamicJSON(dynamic)
 		}
 		for _, k := range value.MapKeys() {
 			if err := validateOutput(value.MapIndex(k), depth+1); err != nil {
@@ -299,7 +299,7 @@ func validateOutput(value reflect.Value, depth int) error {
 				}
 			}
 		}
-		if event, ok := value.Interface().(runtime.SessionEvent); ok {
+		if event, ok := value.Interface().(events.SessionEvent); ok {
 			if err := validateOutput(reflect.ValueOf(event.Payload()), depth+1); err != nil {
 				return err
 			}

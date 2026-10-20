@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -106,19 +107,19 @@ func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, in
 	sub, err := svc.SubscribeEvents(ref)
 	require.NoError(t, err)
 	defer sub.Close()
-	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text(input)}})
+	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text(input)}})
 	require.NoError(t, err)
 	message := false
 	for {
 		e, err := sub.Next(ctx(t))
 		require.NoError(t, err)
-		if p, ok := e.Payload().(runtime.SessionError); ok {
+		if p, ok := e.Payload().(events.SessionError); ok {
 			t.Fatalf("session failed: %s %s", p.Message, p.Reason)
 		}
 		if e.Type() == "agent.message" {
 			message = true
 		}
-		if p, ok := e.Payload().(runtime.StateUpdate); ok && p.State != nil && *p.State == runtime.Idle && message {
+		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && message {
 			break
 		}
 	}
@@ -192,7 +193,7 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	require.NoError(t, <-archived)
 	saved, err := svc.GetSession(ref)
 	require.NoError(t, err)
-	require.Equal(t, runtime.SessionState("archived"), saved.Status.State)
+	require.Equal(t, events.SessionState("archived"), saved.Status.State)
 	require.Zero(t, saved.Status.AppliedGeneration)
 	_, err = svc.StopRuntime(ctx(t), "agent")
 	require.NoError(t, err)
@@ -201,7 +202,7 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	offline, err := svc.GetSession(resource.SessionRef{SessionID: second.Status.SessionID})
 	require.NoError(t, err)
 	require.Zero(t, offline.Status.RuntimeGeneration)
-	require.Equal(t, runtime.Unknown, offline.Status.State)
+	require.Equal(t, events.Unknown, offline.Status.State)
 	stopped, err := svc.GetRuntime("agent")
 	require.NoError(t, err)
 	require.Equal(t, "stopped", stopped.Status.State)
@@ -377,17 +378,17 @@ func (lifecycleSuite *LifecycleSuite) TestArchiveResumeKeepsObserversAndIdentity
 	require.NoError(t, err)
 	_, err = svc.ResumeSession(ctx(t), ref)
 	require.NoError(t, err)
-	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []runtime.ContentBlock{runtime.Text("continue")}})
+	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("continue")}})
 	require.NoError(t, err)
 	message := false
 	for {
 		e, err := sub.Next(ctx(t))
 		require.NoError(t, err)
-		if p, ok := e.Payload().(runtime.AgentMessage); ok {
+		if p, ok := e.Payload().(events.AgentMessage); ok {
 			require.Equal(t, "new answer", p.Content[0].Text)
 			message = true
 		}
-		if p, ok := e.Payload().(runtime.StateUpdate); ok && p.State != nil && *p.State == runtime.Idle && message {
+		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && message {
 			break
 		}
 	}

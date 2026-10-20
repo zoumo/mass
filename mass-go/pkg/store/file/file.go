@@ -20,17 +20,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
 
 type snapshot struct {
-	Format    int                               `json:"format"`
-	CursorKey string                            `json:"cursorKey"`
-	Runtimes  map[string]resource.Runtime       `json:"runtimes"`
-	Sessions  map[string]resource.Session       `json:"sessions"`
-	History   map[string][]runtime.SessionEvent `json:"history"`
+	Format    int                              `json:"format"`
+	CursorKey string                           `json:"cursorKey"`
+	Runtimes  map[string]resource.Runtime      `json:"runtimes"`
+	Sessions  map[string]resource.Session      `json:"sessions"`
+	History   map[string][]events.SessionEvent `json:"history"`
 }
 type Store struct {
 	mu        sync.Mutex
@@ -85,7 +86,7 @@ func Open(dir string, readOnly bool) (*Store, error) {
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "state.json"))
 	if os.IsNotExist(err) && !readOnly {
-		s.data = snapshot{Format: 1, CursorKey: runtime.UUID(), Runtimes: map[string]resource.Runtime{}, Sessions: map[string]resource.Session{}, History: map[string][]runtime.SessionEvent{}}
+		s.data = snapshot{Format: 1, CursorKey: events.UUID(), Runtimes: map[string]resource.Runtime{}, Sessions: map[string]resource.Session{}, History: map[string][]events.SessionEvent{}}
 		err = s.commit(s.data)
 	} else if err == nil {
 		err = decode(b, &s.data)
@@ -120,13 +121,13 @@ func (s *Store) validate() error {
 		}
 		ids[r.Status.SessionID] = r
 	}
-	for id, events := range d.History {
+	for id, records := range d.History {
 		r, ok := ids[id]
 		if !ok {
 			return errors.New("history without identity")
 		}
 		seen := map[string]bool{}
-		for _, e := range events {
+		for _, e := range records {
 			if err := validateEvent(r, e); err != nil {
 				return err
 			}
@@ -215,10 +216,10 @@ func initial(m resource.Metadata) (resource.Metadata, error) {
 	if m.UID != "" || !m.CreatedAt.IsZero() || m.Generation != 0 || m.ResourceVersion != "" {
 		return m, runtime.InvalidArgument("system metadata is read-only")
 	}
-	m.UID = runtime.UUID()
+	m.UID = events.UUID()
 	m.CreatedAt = time.Now().UTC()
 	m.Generation = 1
-	m.ResourceVersion = runtime.UUID()
+	m.ResourceVersion = events.UUID()
 	return m, nil
 }
 
@@ -233,7 +234,7 @@ func updated(old, m resource.Metadata, specChanged, changed bool) (resource.Meta
 		m.Generation++
 	}
 	if changed {
-		m.ResourceVersion = runtime.UUID()
+		m.ResourceVersion = events.UUID()
 	}
 	return m, nil
 }
@@ -246,7 +247,7 @@ func equal(a, b any) bool {
 
 func (s *Store) CreateRuntime(r resource.Runtime) (resource.Runtime, error) {
 	for _, value := range r.Spec.Config {
-		if err := runtime.CheckDynamicJSON(value); err != nil {
+		if err := events.CheckDynamicJSON(value); err != nil {
 			return resource.Runtime{}, err
 		}
 	}
@@ -289,7 +290,7 @@ func (s *Store) GetRuntime(name string) (resource.Runtime, error) {
 
 func (s *Store) UpdateRuntime(r resource.Runtime) (resource.Runtime, error) {
 	for _, value := range r.Spec.Config {
-		if err := runtime.CheckDynamicJSON(value); err != nil {
+		if err := events.CheckDynamicJSON(value); err != nil {
 			return resource.Runtime{}, err
 		}
 	}
@@ -403,7 +404,7 @@ func (s *Store) UpdateSession(r resource.Session) (resource.Session, error) {
 	return copyValue(r)
 }
 
-func validateEvent(r resource.Session, e runtime.SessionEvent) error {
+func validateEvent(r resource.Session, e events.SessionEvent) error {
 	if err := e.Validate(); err != nil {
 		return err
 	}
@@ -416,29 +417,29 @@ func validateEvent(r resource.Session, e runtime.SessionEvent) error {
 	return nil
 }
 
-func progress(events []runtime.SessionEvent) *string {
-	if len(events) == 0 {
+func progress(records []events.SessionEvent) *string {
+	if len(records) == 0 {
 		return nil
 	}
-	v := events[len(events)-1].EventID
+	v := records[len(records)-1].EventID
 	return &v
 }
 
-func (s *Store) Append(id string, events []runtime.SessionEvent) (*string, error) {
+func (s *Store) Append(id string, records []events.SessionEvent) (*string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n, err := s.next()
 	if err != nil {
 		return nil, err
 	}
-	if len(events) == 0 {
+	if len(records) == 0 {
 		return nil, errors.New("empty history batch")
 	}
 	r, err := resolve(n, resource.SessionRef{SessionID: id})
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range events {
+	for _, e := range records {
 		if err := validateEvent(r, e); err != nil {
 			return nil, err
 		}
@@ -508,7 +509,7 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 	if limit < 1 {
 		return empty, runtime.InvalidArgument("limit must be positive")
 	}
-	events := s.data.History[id]
+	records := s.data.History[id]
 	start := 0
 	if q.After != "" {
 		b, err := base64.RawURLEncoding.DecodeString(q.After)
@@ -521,15 +522,15 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 			return empty, runtime.InvalidArgument("invalid history cursor")
 		}
 		var c cursor
-		if decode(b[32:], &c) != nil || c.Session != id || !reflect.DeepEqual(c.Types, types) || c.Position < 1 || c.Position > len(events) {
+		if decode(b[32:], &c) != nil || c.Session != id || !reflect.DeepEqual(c.Types, types) || c.Position < 1 || c.Position > len(records) {
 			return empty, runtime.InvalidArgument("cursor does not match query")
 		}
 		start = c.Position
 	}
-	page := store.HistoryPage{Events: []runtime.SessionEvent{}, SyncedEventID: progress(events)}
+	page := store.HistoryPage{Events: []events.SessionEvent{}, SyncedEventID: progress(records)}
 	last := start
-	for i := start; i < len(events); i++ {
-		e := events[i]
+	for i := start; i < len(records); i++ {
+		e := records[i]
 		matches := len(types) == 0
 		for _, t := range types {
 			if t == e.Type() {
