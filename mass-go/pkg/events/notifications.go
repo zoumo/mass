@@ -75,15 +75,25 @@ func (o ConfigOption) Validate() error {
 	if o.Type == "select" {
 		if _, ok := o.CurrentValue.(string); ok {
 			switch o.Options.(type) {
-			case []ConfigOptionValue, []ConfigOptionGroup:
-				return nil
+			case []ConfigOptionValue:
+				if values := o.Options.([]ConfigOptionValue); values != nil {
+					return nil
+				}
+			case []ConfigOptionGroup:
+				if groups := o.Options.([]ConfigOptionGroup); groups != nil {
+					for _, group := range groups {
+						if group.Options == nil {
+							return errors.New("missing group options")
+						}
+					}
+					return nil
+				}
 			}
 		}
 	}
 	return errors.New("invalid config option")
 }
 func (o *ConfigOption) UnmarshalJSON(data []byte) error {
-	type fields ConfigOption
 	var raw struct {
 		ID           string          `json:"id"`
 		Name         string          `json:"name"`
@@ -102,6 +112,9 @@ func (o *ConfigOption) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(raw.CurrentValue, &out.CurrentValue); err != nil {
 		return err
 	}
+	if err := requireJSONMembers(data, "id", "name", "type", "currentValue"); err != nil {
+		return err
+	}
 	if raw.Options != nil {
 		var values []map[string]json.RawMessage
 		if err := json.Unmarshal(raw.Options, &values); err != nil {
@@ -109,6 +122,30 @@ func (o *ConfigOption) UnmarshalJSON(data []byte) error {
 		}
 		if values == nil {
 			return errors.New("null config options")
+		}
+		for _, value := range values {
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				return err
+			}
+			if _, group := value["group"]; group {
+				if err := requireJSONMembers(encoded, "group", "name", "options"); err != nil {
+					return err
+				}
+				var entries []json.RawMessage
+				if err := json.Unmarshal(value["options"], &entries); err != nil {
+					return err
+				}
+				for _, entry := range entries {
+					if err := requireJSONMembers(entry, "value", "name"); err != nil {
+						return err
+					}
+				}
+			} else {
+				if err := requireJSONMembers(encoded, "value", "name"); err != nil {
+					return err
+				}
+			}
 		}
 		var target any
 		if len(values) > 0 && values[0]["group"] != nil {
@@ -198,6 +235,22 @@ func validateTool(status string, raw *any, content []ContentBlock, duration *flo
 		}
 		if t := output.Truncation; t != nil && (t.RetainedBytes < 0 || t.OmittedBytes != nil && *t.OmittedBytes < 0) {
 			return errors.New("invalid truncation")
+		}
+	}
+	return nil
+}
+
+// JSON presence is checked before decoding can replace missing/null with a Go
+// zero value. These fixed config fields have no nullable members.
+func requireJSONMembers(data []byte, names ...string) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for _, name := range names {
+		value, ok := fields[name]
+		if !ok || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return errors.New("missing or null config field: " + name)
 		}
 	}
 	return nil

@@ -527,3 +527,12 @@ func marshalToolContent(value any, content []ContentBlock) ([]byte, error) {
 	}
 	return json.Marshal(members)
 }
+
+// ValidType recognizes the closed set shared by history queries and live events.
+func ValidType(kind string) bool {
+	switch kind {
+	case "user.message", "agent.message", "agent.thinking", "agent.tool_call", "agent.tool_result", "agent.message_chunk", "agent.thinking_chunk", "agent.tool_call_chunk", "agent.plan", "session.state_update", "session.error", "session.info_update", "session.config_option_update", "session.available_commands_update", "session.usage_update", "session.interaction_requested", "session.interaction_closed":
+		return true
+	}
+	return false
+}

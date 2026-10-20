@@ -3,6 +3,7 @@ package transport
 import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/store"
 	"reflect"
 	"strings"
 )
@@ -26,6 +27,7 @@ func registerEventSchemas(r huma.Registry) {
 	// select values. Its codec preserves these shapes without domain/Huma coupling.
 	optionValue := r.Schema(reflect.TypeFor[events.ConfigOptionValue](), true, "")
 	optionGroup := r.Schema(reflect.TypeFor[events.ConfigOptionGroup](), true, "")
+	r.Schema(reflect.TypeFor[events.ConfigOptionGroup](), false, "").Properties["options"].Nullable = false
 	configBranches := []*huma.Schema{}
 	for _, kind := range []string{"select", "boolean"} {
 		p := map[string]*huma.Schema{"id": text(), "name": text(), "description": text(), "category": text(), "type": {Type: "string", Const: kind}}
@@ -67,11 +69,15 @@ func registerEventSchemas(r huma.Registry) {
 	interaction := r.Schema(reflect.TypeFor[events.InteractionRequest](), false, "")
 	*interaction = huma.Schema{OneOf: interactionBranches, Discriminator: &huma.Discriminator{PropertyName: "kind"}}
 	branches := []*huma.Schema{}
-	payloads := []events.Payload{events.UserMessage{}, events.AgentMessage{}, events.AgentThinking{}, events.MessageChunk{}, events.ThinkingChunk{}, events.ToolCall{}, events.ToolResult{}, events.ToolChunk{}, events.Plan{}, events.StateUpdate{}, events.SessionError{}, events.InfoUpdate{}, events.ConfigOptionUpdate{}, events.AvailableCommandsUpdate{}, events.UsageUpdate{}, events.InteractionRequested{}, events.InteractionClosed{}}
-	kinds := []string{"user.message", "agent.message", "agent.thinking", "agent.message_chunk", "agent.thinking_chunk", "agent.tool_call", "agent.tool_result", "agent.tool_call_chunk", "agent.plan", "session.state_update", "session.error", "session.info_update", "session.config_option_update", "session.available_commands_update", "session.usage_update", "session.interaction_requested", "session.interaction_closed"}
+	branchesByType := []struct {
+		kind    string
+		payload events.Payload
+	}{
+		{"user.message", events.UserMessage{}}, {"agent.message", events.AgentMessage{}}, {"agent.thinking", events.AgentThinking{}}, {"agent.message_chunk", events.MessageChunk{}}, {"agent.thinking_chunk", events.ThinkingChunk{}}, {"agent.tool_call", events.ToolCall{}}, {"agent.tool_result", events.ToolResult{}}, {"agent.tool_call_chunk", events.ToolChunk{}}, {"agent.plan", events.Plan{}}, {"session.state_update", events.StateUpdate{}}, {"session.error", events.SessionError{}}, {"session.info_update", events.InfoUpdate{}}, {"session.config_option_update", events.ConfigOptionUpdate{}}, {"session.available_commands_update", events.AvailableCommandsUpdate{}}, {"session.usage_update", events.UsageUpdate{}}, {"session.interaction_requested", events.InteractionRequested{}}, {"session.interaction_closed", events.InteractionClosed{}},
+	}
 	base := r.Schema(reflect.TypeFor[events.EventBase](), false, "")
-	for i, value := range payloads {
-		kind := kinds[i]
+	for _, branch := range branchesByType {
+		kind, value := branch.kind, branch.payload
 		payload := r.Schema(reflect.TypeOf(value), false, "")
 		// Slices required by the contract encode as arrays, never null.
 		for _, name := range []string{"content", "entries", "configOptions", "availableCommands"} {
@@ -114,6 +120,7 @@ func registerEventSchemas(r huma.Registry) {
 		}
 		branches = append(branches, object(props, required...))
 	}
+	r.Schema(reflect.TypeFor[store.HistoryPage](), false, "").Properties["events"].Nullable = false
 	schema := r.Schema(reflect.TypeFor[events.SessionEvent](), false, "")
 	*schema = huma.Schema{OneOf: branches, Discriminator: &huma.Discriminator{PropertyName: "type"}}
 }

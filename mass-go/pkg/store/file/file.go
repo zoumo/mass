@@ -486,6 +486,11 @@ func normalized(types []string) ([]string, error) {
 	if types != nil && len(types) == 0 {
 		return nil, runtime.InvalidArgument("empty types filter")
 	}
+	for _, kind := range types {
+		if !events.ValidType(kind) {
+			return nil, runtime.InvalidArgument("unknown event type")
+		}
+	}
 	out := append([]string(nil), types...)
 	sort.Strings(out)
 	out = slices.Compact(out)
