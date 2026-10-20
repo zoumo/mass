@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
@@ -42,6 +43,7 @@ func (p partialBatch) Append(id string, events []runtime.SessionEvent) (*string,
 	}
 	return result, errors.New("injected unknown after partial batch")
 }
+
 func (s *reconcileSuite) TestPartialBatchRetainsUUIDAndOrder() {
 	_, err := (partialBatch{s.st}).Append("native", s.events)
 	s.Require().Error(err)
@@ -63,15 +65,16 @@ func (s *reconcileSuite) TestPartialBatchRetainsUUIDAndOrder() {
 	s.Require().NoError(err)
 	s.Equal(s.events[1].EventID, *progress)
 }
+
 func (s *reconcileSuite) TestFailedValidationDoesNotReopenWriter() {
 	_, err := s.st.Append("native", s.events[:1])
 	s.Require().NoError(err)
 	path := filepath.Join(s.dir, "state.json")
 	original, err := os.ReadFile(path)
 	s.Require().NoError(err)
-	s.Require().NoError(os.WriteFile(path, []byte("corrupt"), 0600))
+	s.Require().NoError(os.WriteFile(path, []byte("corrupt"), 0o600))
 	s.Require().Error(s.st.Reconcile())
-	s.Require().NoError(os.WriteFile(path, original, 0600))
+	s.Require().NoError(os.WriteFile(path, original, 0o600))
 	_, err = s.st.Append("native", s.events)
 	s.Require().ErrorContains(err, "outcome_unknown")
 	s.Require().NoError(s.st.Reconcile())
