@@ -10,7 +10,7 @@ it does not create another protocol. The former `/experimental/operations/*` and
 Choose an explicit access mode. For a trusted single-user machine:
 
 ```sh
-bin/massd-go --data /absolute/owned/data --listen 127.0.0.1:8787 --local
+bin/massd-go --data /absolute/owned/data --listen 127.0.0.1:24368 --local
 ```
 
 For authenticated access, provide `--token-file /absolute/private/token` instead
@@ -31,13 +31,13 @@ fields, invalid/duplicate query parameters and non-JSON bodies are rejected.
 Dynamic JSON uses json.Number to retain large integer precision.
 
 ```sh
-curl --fail-with-body http://127.0.0.1:8787/v1/runtimes
+curl --fail-with-body http://127.0.0.1:24368/v1/runtimes
 curl --fail-with-body -H 'Content-Type: application/json' \
   -d '{"metadata":{"namespace":"demo","name":"task"},"spec":{"runtimeRef":"agent","cwd":"/agent/work"}}' \
-  http://127.0.0.1:8787/v1/sessions
+  http://127.0.0.1:24368/v1/sessions
 curl --fail-with-body -H 'Content-Type: application/json' \
   -d '{"content":[{"type":"text","text":"hello"}]}' \
-  http://127.0.0.1:8787/v1/namespaces/demo/sessions/task/inputs
+  http://127.0.0.1:24368/v1/namespaces/demo/sessions/task/inputs
 ```
 
 Creation returns 201 and Location; reads and action receipts return 200; Runtime
