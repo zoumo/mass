@@ -60,11 +60,11 @@ test-go:
 	cd mass-go && go test -race -timeout=180s ./...
 
 build-massctl:
-	mkdir -p dist
-	cd mass-go && go build -trimpath -o ../dist/massctl ./cmd/massctl
+	mkdir -p bin
+	cd mass-go && go build -trimpath -o ../bin/massctl ./cmd/massctl
 
 build-go: build-massctl
-	cd mass-go && go build -trimpath -o ../dist/massd-go ./cmd/massd
+	cd mass-go && go build -trimpath -o ../bin/massd-go ./cmd/massd
 
 check-go: lint-go test-go build-go
 	cd mass-go && golangci-lint fmt --diff

@@ -43,9 +43,9 @@ real CLI native persistence or consumption of resume IDs.
 ```sh
 make build-go
 # Supply a fresh, absolute, application-owned data directory.
-dist/massd-go --data /absolute/owned/data --listen 127.0.0.1:24368 --local \
+bin/massd-go --data /absolute/owned/data --listen 127.0.0.1:24368 --local \
   --prototype-auto-approve-permissions
-dist/massctl runtime list
+bin/massctl runtime list
 ```
 
 The permission flag is explicit prototype assembly policy; it leaves form/user
@@ -75,31 +75,31 @@ For Codex, explicitly create and start a Runtime, then create a Session without
 sending input (the working directory is interpreted on the Agent host):
 
 ```sh
-dist/massctl runtime create codex-local --type codex --executable /absolute/path/to/codex
-dist/massctl runtime start codex-local
-dist/massctl session create review -n demo --runtime codex-local --cwd /absolute/owned/workspace
+bin/massctl runtime create codex-local --type codex --executable /absolute/path/to/codex
+bin/massctl runtime start codex-local
+bin/massctl session create review -n demo --runtime codex-local --cwd /absolute/owned/workspace
 # Keep this running in one terminal; wait for subscription.ready on stderr.
-dist/massctl -o json session watch review -n demo
+bin/massctl -o json session watch review -n demo
 # In another terminal:
-dist/massctl session prompt review -n demo --text 'Describe this workspace'
-dist/massctl session history review -n demo --limit 100
-dist/massctl session archive review -n demo
-dist/massctl session resume review -n demo
-dist/massctl runtime stop codex-local
+bin/massctl session prompt review -n demo --text 'Describe this workspace'
+bin/massctl session history review -n demo --limit 100
+bin/massctl session archive review -n demo
+bin/massctl session resume review -n demo
+bin/massctl runtime stop codex-local
 ```
 
 For Claude, use the installed Claude executable with the same resource commands:
 
 ```sh
-dist/massctl runtime create claude-local --type claude --executable /absolute/path/to/claude
-dist/massctl runtime start claude-local
-dist/massctl session create review -n demo --runtime claude-local --cwd /absolute/owned/workspace \
+bin/massctl runtime create claude-local --type claude --executable /absolute/path/to/claude
+bin/massctl runtime start claude-local
+bin/massctl session create review -n demo --runtime claude-local --cwd /absolute/owned/workspace \
   --system-prompt-file /absolute/system.txt --additional-dir /absolute/owned/context
-dist/massctl session prompt review -n demo --text 'Describe this workspace'
+bin/massctl session prompt review -n demo --text 'Describe this workspace'
 # Claude currently accepts one input per running connection; release and resume
 # the original identity before another input.
-dist/massctl session archive review -n demo
-dist/massctl session resume review -n demo
+bin/massctl session archive review -n demo
+bin/massctl session resume review -n demo
 ```
 
 Both drivers currently accept text input; Claude requires exactly one text block.

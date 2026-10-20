@@ -10,7 +10,7 @@ it does not create another protocol. The former `/experimental/operations/*` and
 Choose an explicit access mode. For a trusted single-user machine:
 
 ```sh
-dist/massd-go --data /absolute/owned/data --listen 127.0.0.1:8787 --local
+bin/massd-go --data /absolute/owned/data --listen 127.0.0.1:8787 --local
 ```
 
 For authenticated access, provide `--token-file /absolute/private/token` instead
