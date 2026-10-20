@@ -1,4 +1,4 @@
-package commands_test
+package main
 
 import (
 	"bytes"
@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
-
-	"github.com/zoumo/mass/mass-go/pkg/commands"
 )
 
 type commandSuite struct{ suite.Suite }
@@ -20,7 +18,7 @@ func (s *commandSuite) TestHelpAndInvalidArguments() {
 	for _, args := range [][]string{{"--help"}, nil, {"--unknown"}, {"--op"}, {"extra"}, {"--op", "runtime.list", "extra"}} {
 		s.Run(strings.Join(args, " "), func() {
 			var out, stderr bytes.Buffer
-			err := commands.Run(s.T().Context(), args, strings.NewReader("{}"), &out, &stderr)
+			err := runCommand(s.T().Context(), args, strings.NewReader("{}"), &out, &stderr)
 			if len(args) == 1 && args[0] == "--help" {
 				s.Require().NoError(err)
 				s.Contains(out.String(), "--op")
@@ -47,7 +45,7 @@ func (s *commandSuite) TestFlagsAndIO() {
 	defer server.Close()
 	for range 2 {
 		var out, stderr bytes.Buffer
-		s.Require().NoError(commands.Run(s.T().Context(), []string{"--url=" + server.URL, "--op", "runtime.list"}, strings.NewReader("{}"), &out, &stderr))
+		s.Require().NoError(runCommand(s.T().Context(), []string{"--url=" + server.URL, "--op", "runtime.list"}, strings.NewReader("{}"), &out, &stderr))
 		s.JSONEq("[]", out.String())
 		s.Empty(stderr.String())
 	}

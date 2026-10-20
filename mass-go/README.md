@@ -3,7 +3,7 @@
 [harness](../harness/index.md) is the read-only project contract. This implementation
 uses **CLI → HTTP/SSE → Service → Store / Runtime**. It has one SessionEvent model,
 one Driver consumer, independent live observers, and file-authoritative history.
-All production packages except executable assembly are under `pkg/`.
+Executable assembly and CLI commands live under `cmd/`; library packages live under `pkg/`.
 
 ## One-command synthetic demonstration
 
