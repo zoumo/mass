@@ -180,6 +180,6 @@ rtk proxy npm run examples:check --prefix harness/typespec
 
 ## 剩余待决
 
-当前不增加思考块坐标，不在内存保存累计 delta，按 type 绑定 payload、独立交互和 ACP 风格配置选项均已有声明。动态业务值与扩展值的具体编码、持久格式版本承载，以及断线后待决交互查询仍需单独定义。接口版本继续集中记录在 [TypeSpec 入口](../../typespec/README.md)，不从旧示例复制逐事件版本字段。
+当前不增加思考块坐标，不在内存保存累计 delta，按 type 绑定 payload、独立交互和 ACP 风格配置选项均已有声明。动态业务值与扩展值的 HTTP JSON 编码见 [HTTP 承载](../../bindings/http.md#基础规则)；持久化编码、持久格式版本承载，以及断线后待决交互查询仍需单独定义。接口版本继续集中记录在 [TypeSpec 入口](../../typespec/README.md)，不从旧示例复制逐事件版本字段。
 
 [^direction]: 当前确认 type 位于公共信封、每种 type 绑定 payload，顶层 _meta 对应 map[string]any；删除消息完成标志。

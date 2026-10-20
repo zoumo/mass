@@ -97,4 +97,4 @@ agent 只有在人类明确要求或事先同意的范围内才能写入本目�
 
 ## 明确允许的动态值
 
-统一事件的顶层 _meta 明确采用 Record<unknown>，即字符串键、任意类型值的扩展 map，对应 Go map[string]any。此处 unknown 不是待决标记，不限制为 JsonValue。工具 rawInput/rawOutput 表达动态业务值；其具体编码仍有待决；共享 ContentBlock 已定义 ACP 五种类型。RuntimeConfig、InteractionAnswer 等开放值见 [共享类型](shared/types.tsp)；当前没有显式未定义的公共类型。
+统一事件的顶层 _meta 明确采用 Record<unknown>，即字符串键、任意类型值的扩展 map，对应 Go map[string]any。此处 unknown 不是待决标记，不限制为 JsonValue。工具 rawInput/rawOutput 表达动态业务值；[HTTP 承载](bindings/http.md#基础规则)已定义 JSON 编码边界，不能承载的语言值须明确转换或报错，持久化编码仍按存储合同另行定义；共享 ContentBlock 已定义 ACP 五种类型。RuntimeConfig、InteractionAnswer 等开放值见 [共享类型](shared/types.tsp)；当前没有显式未定义的公共类型。
