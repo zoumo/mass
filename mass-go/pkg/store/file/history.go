@@ -292,7 +292,7 @@ func compareAppendPrefix(f io.ReaderAt, offset int64, expected []byte) error {
 }
 
 func (s *Store) finishAppend() error {
-	if err := os.Remove(filepath.Join(s.dir, ".append.pending.json")); err != nil {
+	if err := os.Remove(filepath.Join(s.dir, ".append.pending.json")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return syncDirectory(s.dir)
@@ -320,5 +320,6 @@ func (s *Store) recoverAppend(write bool) error {
 	if _, err := s.applyAppend(r, intent, nil); err != nil {
 		return err
 	}
-	return s.finishAppend()
+	// Open/Reconcile clear evidence after all file and replica checks succeed.
+	return nil
 }

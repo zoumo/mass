@@ -229,12 +229,6 @@ func (s *Store) load(write bool) error {
 		if err := s.syncLayoutDirectories(); err != nil {
 			return err
 		}
-		if err := os.Remove(pending); err != nil {
-			return err
-		}
-		if err := syncDirectory(s.dir); err != nil {
-			return err
-		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -456,6 +450,9 @@ func (s *Store) commit(next snapshot) error {
 	if err := s.syncMetadata(canonical); err != nil {
 		return fmt.Errorf("outcome_unknown: metadata replica: %w", err)
 	}
+	if err := s.finishMetadata(); err != nil {
+		return fmt.Errorf("outcome_unknown: metadata completion: %w", err)
+	}
 	s.data, s.histories, s.uncertain = canonical, indexes, false
 	return nil
 }
@@ -476,7 +473,12 @@ func (s *Store) install(next snapshot) error {
 	if err := s.materialize(next, created); err != nil {
 		return err
 	}
-	if err := os.Remove(pending); err != nil {
+	return nil
+}
+
+// Retain resource-only redo evidence until the verified SQL view is complete.
+func (s *Store) finishMetadata() error {
+	if err := os.Remove(filepath.Join(s.dir, ".pending.json")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return syncDirectory(s.dir)

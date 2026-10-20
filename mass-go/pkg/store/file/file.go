@@ -98,6 +98,9 @@ func Open(dir string, readOnly bool) (*Store, error) {
 		s.lock = f
 	}
 	err := s.load(!readOnly)
+	if err == nil && !readOnly {
+		err = s.finishRecovery()
+	}
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -495,10 +498,19 @@ func (s *Store) Reconcile() error {
 			return errors.New("committed history prefix changed or missing")
 		}
 	}
-	if err := syncDirectory(s.dir); err != nil {
+	if err := s.finishRecovery(); err != nil {
 		s.data, s.histories = old, oldHistories
 		return err
 	}
 	s.uncertain = false
 	return nil
+}
+
+// Complete only after the caller's entire authoritative view is verified,
+// including Reconcile's comparison with previously committed checkpoints.
+func (s *Store) finishRecovery() error {
+	if err := s.finishAppend(); err != nil {
+		return err
+	}
+	return s.finishMetadata()
 }

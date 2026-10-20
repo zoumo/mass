@@ -63,8 +63,12 @@ mode-0600 temporary files, file fsync, rename and directory fsync. Unchanged fil
 retain their inodes. Runtime and Session directory JSONL files may be rewritten
 as whole lists. New Sessions get an empty `events.jsonl`; existing logs are never
 rewritten by metadata commits. Explicit Session deletion removes its state/event
-files and directory. The metadata intent is removed only after application succeeds.
+files and directory. The metadata intent is removed only after authoritative file application and the
+attached metadata/history SQL transaction both succeed.
 Writable reopen/Reconcile idempotently finishes an interrupted metadata commit.
+On recovery, metadata and append intents remain until all authoritative histories
+and both complete replicas have been validated, so a later corrupt Session does
+not discard earlier recovery responsibility. Failed recovery keeps admission sealed.
 
 ## Append-only history and recovery
 
@@ -141,7 +145,11 @@ Tests cover real-file partial/short writes, fsync/close failures, in-process and
 cold recovery, forced child-process exits during a partial append or after sync,
 idempotent retries, cursor preservation, and corruption rejection. These tests
 do not establish sudden power-loss behavior on every filesystem or recovery of
-native Agent side effects.
+native Agent side effects. Additional public Store regressions cover missing,
+corrupt, incompatible and stale replicas, SQL-only events and incorrect progress,
+real SQL trigger aborts during event/progress updates and attached deletion,
+read-only persistent-tree immutability and temporary cleanup, lifecycle identity
+isolation, and a child killed during startup after recovery batches reach disk.
 
 Store allocates UID, creation time, generation=1 and opaque resourceVersion on
 create. Update compares the expected version and immutable metadata atomically.
