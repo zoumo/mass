@@ -2,6 +2,8 @@
 
 ## 2026-10-20
 
+- **修正 Go 命令代码归属**：负责人确认二进制入口放在 cmd/<程序名>/main.go，程序专属命令代码放在 cmd/<程序名>/subcommand/；pkg 保留可复用业务模块。同步 massctl 设计并迁移命令实现，不改变命令行为。
+
 - **确认 massctl 首版范围并启动实现**：配置 flag 首版提供 --executable，其余字段走完整 config；配置 flag/文件/内联 JSON 三种方式互斥，多个字段 flag 可组合，无配置更新为参数错误。不提供完整资源文件创建、completion 或 answer 命令。负责人授权按已确认模块范围开始改造，human 字段和本地错误分类可继续细化，文档保持 draft。
 
 - **确认 CLI 全局约定**：服务地址采用 --url > MASS_URL > 本机 24368，认证读取 MASS_TOKEN；默认 human，JSON 输出完整结果、watch 输出 JSONL，错误走 stderr。分页默认 100、不自动翻页；退出码为 0/1/2/130。普通请求默认超时 30 秒，0 表示不限时，watch 仅限制建连就绪等待；提供 help/version，首版无健康检查和配置管理命令。
