@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,11 +9,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
+	"resty.dev/v3"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/client/generated"
@@ -26,6 +30,63 @@ import (
 type ClientSuite struct{ suite.Suite }
 
 type framingSuite struct{ suite.Suite }
+
+func (s *ClientSuite) TestJSONResponseKeepsDecompressionAndTimeoutCleanup() {
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		writer := gzip.NewWriter(w)
+		fmt.Fprint(writer, `{"large":9007199254740993}`)
+		writer.Close()
+	}))
+	defer h.Close()
+	c := newHTTPClient(s.T(), h.URL, "")
+	var observedResponse *resty.Response
+	c.HTTP.SetTimeout(time.Minute).SetHeader("Accept-Encoding", "gzip").
+		AddResponseMiddleware(func(_ *resty.Client, response *resty.Response) error {
+			observedResponse = response
+			return nil
+		})
+	var result map[string]any
+	s.Require().NoError(c.GetRuntime(s.T().Context(), "agent", &result))
+	s.Equal(json.Number("9007199254740993"), result["large"])
+	s.Require().NotNil(observedResponse)
+	requestContext := observedResponse.RawResponse.Request.Context()
+	s.ErrorIs(requestContext.Err(), context.Canceled, "closing the wrapped body must release the request timer")
+}
+
+func (s *ClientSuite) TestObservationRetainsTimeoutUntilBodyClose() {
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: subscription.ready\ndata: {}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer h.Close()
+	c := newHTTPClient(s.T(), h.URL, "")
+	var observedResponse *resty.Response
+	c.HTTP.SetTimeout(time.Minute).AddResponseMiddleware(func(_ *resty.Client, response *resty.Response) error {
+		observedResponse = response
+		return nil
+	})
+	observer, err := c.Observe(s.T().Context(), resource.SessionRef{SessionID: "synthetic"})
+	s.Require().NoError(err)
+	defer observer.Close()
+	s.Require().NotNil(observedResponse)
+	requestContext := observedResponse.RawResponse.Request.Context()
+	s.NoError(requestContext.Err(), "receiving headers must not cancel a live SSE stream")
+	s.Require().NoError(observer.Close())
+	s.ErrorIs(requestContext.Err(), context.Canceled)
+}
+
+func (s *ClientSuite) TestCloseRunsRestyCleanupOnce() {
+	c := newHTTPClient(s.T(), "http://localhost", "")
+	var closed atomic.Int32
+	c.HTTP.OnClose(func() { closed.Add(1) })
+	s.Require().NoError(c.Close())
+	s.Require().NoError(c.Close())
+	s.Equal(int32(1), closed.Load())
+}
 
 func TestFramingSuite(t *testing.T) { suite.Run(t, new(framingSuite)) }
 func (s *framingSuite) TestTermination() {
@@ -46,7 +107,7 @@ data: {"code":"outcome_unknown","reason":"operation_unconfirmed","message":"Oper
 				}
 			}))
 			defer h.Close()
-			o, e := (client.Client{URL: h.URL}).Observe(context.Background(), resource.SessionRef{SessionID: "synthetic"})
+			o, e := newHTTPClient(s.T(), h.URL, "").Observe(context.Background(), resource.SessionRef{SessionID: "synthetic"})
 			s.Require().NoError(e)
 			_, first := o.Next()
 			s.Require().Error(first)
@@ -75,7 +136,7 @@ func (s *framingSuite) TestCloseReleasesBlockedNext() {
 		<-r.Context().Done()
 	}))
 	defer h.Close()
-	o, e := (client.Client{URL: h.URL}).Observe(context.Background(), resource.SessionRef{SessionID: "synthetic"})
+	o, e := newHTTPClient(s.T(), h.URL, "").Observe(context.Background(), resource.SessionRef{SessionID: "synthetic"})
 	s.Require().NoError(e)
 	done := make(chan error, 1)
 	go func() { _, e := o.Next(); done <- e }()
@@ -98,11 +159,102 @@ func (s *ClientSuite) TestAuthenticatedRESTClientAndNoReplay() {
 		w.WriteHeader(http.StatusTemporaryRedirect)
 	}))
 	defer h.Close()
-	custom := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return nil }}
-	err := (client.Client{URL: h.URL, Token: "test-token", HTTP: custom}).ListRuntimes(context.Background(), resource.RuntimeQuery{}, nil)
+	c := newHTTPClient(s.T(), h.URL, "test-token")
+	err := c.ListRuntimes(context.Background(), resource.RuntimeQuery{}, nil)
 	if err == nil || calls.Load() != 1 {
 		t.Fatalf("redirect was not rejected: %v, %d", err, calls.Load())
 	}
+}
+
+func (s *ClientSuite) TestMutationDoesNotRetryOrFollowRedirects() {
+	for _, status := range []int{0, http.StatusServiceUnavailable, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		s.Run(strconv.Itoa(status), func() {
+			var calls atomic.Int32
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				s.Equal(http.MethodPost, r.Method)
+				s.Zero(r.ContentLength, "bodyless actions must stay bodyless")
+				s.Empty(r.TransferEncoding)
+				if status == 0 {
+					conn, _, err := w.(http.Hijacker).Hijack()
+					if s.NoError(err) {
+						conn.Close()
+					}
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Location", "/replayed")
+				w.WriteHeader(status)
+				fmt.Fprint(w, `{"code":"unavailable","reason":"synthetic","message":"Unavailable"}`)
+			}))
+			defer h.Close()
+			err := newHTTPClient(s.T(), h.URL, "").StartRuntime(s.T().Context(), "agent", nil)
+			s.Require().Error(err)
+			if status != 0 {
+				var public *runtime.OperationError
+				s.Require().ErrorAs(err, &public)
+				s.Equal("unavailable", public.Code)
+				s.Equal("synthetic", public.Reason)
+			}
+			s.Equal(int32(1), calls.Load())
+		})
+	}
+}
+
+func (s *ClientSuite) TestCustomHTTPTransportAndTimeoutArePreserved() {
+	h := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/apis/v1/runtimes/slow" {
+			<-r.Context().Done()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[]`)
+	}))
+	defer h.Close()
+	c := newHTTPClient(s.T(), h.URL, "")
+	c.HTTP.SetTransport(h.Client().Transport).SetTimeout(time.Second)
+	s.Require().NoError(c.ListRuntimes(s.T().Context(), resource.RuntimeQuery{}, nil))
+	s.Require().ErrorIs(c.GetRuntime(s.T().Context(), "slow", nil), context.DeadlineExceeded)
+	s.Equal(time.Second, c.HTTP.Timeout())
+}
+
+func (s *ClientSuite) TestSharedRestyClientServesJSONWhileObserving() {
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.Equal("Bearer test-token", r.Header.Get("Authorization"))
+		s.Equal("configured", r.Header.Get("X-Client"))
+		if r.URL.Path == "/prefix/apis/v1/runtimes" {
+			s.Equal("application/json", r.Header.Get("Accept"))
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `[]`)
+			return
+		}
+		s.Equal("/prefix/apis/v1/sessions/a%2Fb/events/stream", r.URL.EscapedPath())
+		s.Equal("text/event-stream", r.Header.Get("Accept"))
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "event: subscription.ready\ndata: {}\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer h.Close()
+	c := newHTTPClient(s.T(), h.URL+"/prefix", "test-token")
+	var calls atomic.Int32
+	c.HTTP.SetHeader("X-Client", "configured").AddRequestMiddleware(func(rc *resty.Client, _ *resty.Request) error {
+		s.Same(c.HTTP, rc)
+		calls.Add(1)
+		return nil
+	})
+	observer, err := c.Observe(s.T().Context(), resource.SessionRef{SessionID: "a/b"})
+	s.Require().NoError(err)
+	defer observer.Close()
+	results := make(chan error, 4)
+	for range 4 {
+		go func() { results <- c.ListRuntimes(s.T().Context(), resource.RuntimeQuery{}, nil) }()
+	}
+	for range 4 {
+		s.Require().NoError(<-results)
+	}
+	s.Equal(int32(5), calls.Load())
+	s.Require().NoError(observer.Close())
 }
 
 func (s *ClientSuite) TestObserverIgnoresHeartbeatAndPreservesError() {
@@ -115,7 +267,7 @@ func (s *ClientSuite) TestObserverIgnoresHeartbeatAndPreservesError() {
 		fmt.Fprint(w, "event: subscription.ready\ndata: {}\n\n: heartbeat\n\nevent: subscription.error\ndata: {\"code\":\"unavailable\",\"reason\":\"shutdown\",\"message\":\"Observation ended\"}\n\n")
 	}))
 	defer h.Close()
-	o, err := (client.Client{URL: h.URL, Token: "test-token"}).Observe(context.Background(), resource.SessionRef{SessionID: "a/b"})
+	o, err := newHTTPClient(s.T(), h.URL, "test-token").Observe(context.Background(), resource.SessionRef{SessionID: "a/b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +294,7 @@ func (s *ClientSuite) TestRESTCallPreservesNumbersAndExplicitNull() {
 	}))
 	defer h.Close()
 	var out map[string]any
-	err := (client.Client{URL: h.URL}).Answer(context.Background(), resource.SessionRef{SessionID: "a/b"}, "..", nil, &out)
+	err := newHTTPClient(s.T(), h.URL, "").Answer(context.Background(), resource.SessionRef{SessionID: "a/b"}, "..", nil, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +320,7 @@ func (s *ClientSuite) TestGeneratedRuntimeRoundTrip() {
 	}))
 	defer h.Close()
 	var out map[string]any
-	err := (client.Client{URL: h.URL}).CreateRuntime(context.Background(), resource.Runtime{Metadata: resource.Metadata{Name: "test", UID: "must-not-send"}, Spec: resource.RuntimeSpec{Type: "codex", Config: map[string]any{"large": json.Number("9007199254740993"), "nested": []any{nil, true}}}}, &out)
+	err := newHTTPClient(s.T(), h.URL, "").CreateRuntime(context.Background(), resource.Runtime{Metadata: resource.Metadata{Name: "test", UID: "must-not-send"}, Spec: resource.RuntimeSpec{Type: "codex", Config: map[string]any{"large": json.Number("9007199254740993"), "nested": []any{nil, true}}}}, &out)
 	s.Require().NoError(err)
 	s.Equal(json.Number("9007199254740993"), out["spec"].(map[string]any)["config"].(map[string]any)["large"])
 }
@@ -188,7 +340,7 @@ func (s *ClientSuite) TestGeneratedResourceWorkflow() {
 		fmt.Fprint(w, `{}`)
 	}))
 	defer h.Close()
-	c := client.Client{URL: h.URL}
+	c := newHTTPClient(s.T(), h.URL, "")
 	ctx := context.Background()
 	ref := resource.SessionRef{SessionID: "a/b% 空"}
 	s.Require().NoError(c.GetRuntime(ctx, "agent", nil))
@@ -219,7 +371,7 @@ func (s *framingSuite) TestLargeFrameHasNoInventedLimit() {
 		fmt.Fprintf(w, "event: session.event\ndata: %s\n\nevent: subscription.closed\ndata: {}\n\n", raw)
 	}))
 	defer h.Close()
-	observer, err := (client.Client{URL: h.URL}).Observe(context.Background(), resource.SessionRef{SessionID: "test"})
+	observer, err := newHTTPClient(s.T(), h.URL, "").Observe(context.Background(), resource.SessionRef{SessionID: "test"})
 	s.Require().NoError(err)
 	defer observer.Close()
 	event, err := observer.Next()
@@ -245,7 +397,7 @@ func (s *ClientSuite) TestAnswersRejectValuesThatJSONWouldSilentlyRewrite() {
 	for _, v := range []any{string([]byte{0xff}), []byte{1, 2}, struct {
 		Hidden string `json:"-"`
 	}{Hidden: "lost"}} {
-		err := (client.Client{URL: h.URL}).Answer(context.Background(), resource.SessionRef{SessionID: "id"}, "interaction", v, nil)
+		err := newHTTPClient(s.T(), h.URL, "").Answer(context.Background(), resource.SessionRef{SessionID: "id"}, "interaction", v, nil)
 		s.Require().Error(err)
 	}
 	s.Zero(calls.Load())
@@ -255,9 +407,21 @@ func (s *ClientSuite) TestPromptRejectsInvalidUTF8BeforeSending() {
 	var calls atomic.Int32
 	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); fmt.Fprint(w, `{}`) }))
 	defer h.Close()
-	err := (client.Client{URL: h.URL}).SendPrompt(s.T().Context(), resource.SessionRef{SessionID: "test"}, runtime.Input{Content: []events.ContentBlock{events.Text(string([]byte{0xff}))}}, nil)
+	err := newHTTPClient(s.T(), h.URL, "").SendPrompt(s.T().Context(), resource.SessionRef{SessionID: "test"}, runtime.Input{Content: []events.ContentBlock{events.Text(string([]byte{0xff}))}}, nil)
 	var public *transport.Error
 	s.Require().ErrorAs(err, &public)
 	s.Equal("invalid_argument", public.Code)
 	s.Zero(calls.Load())
+}
+
+// newHTTPClient binds client resource cleanup to the current test.
+func newHTTPClient(t *testing.T, serverURL, token string) *client.Client {
+	t.Helper()
+	c := client.New(serverURL, token)
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("close HTTP client: %v", err)
+		}
+	})
+	return c
 }

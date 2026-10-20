@@ -2,6 +2,7 @@ package vertical_test
 
 import (
 	"context"
+	"testing"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -25,7 +26,7 @@ type workflowParams struct {
 	Answer       any
 }
 
-func workflowHTTP(c client.Client, ctx context.Context, op string, p workflowParams, out any) error {
+func workflowHTTP(c *client.Client, ctx context.Context, op string, p workflowParams, out any) error {
 	switch op {
 	case "runtime.create":
 		return c.CreateRuntime(ctx, *p.Runtime, out)
@@ -61,4 +62,16 @@ func workflowHTTP(c client.Client, ctx context.Context, op string, p workflowPar
 		return c.ResumeSession(ctx, p.Session, out)
 	}
 	return transport.Invalid()
+}
+
+// newHTTPClient binds client resource cleanup to the current test.
+func newHTTPClient(t *testing.T, serverURL, token string) *client.Client {
+	t.Helper()
+	c := client.New(serverURL, token)
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("close HTTP client: %v", err)
+		}
+	})
+	return c
 }

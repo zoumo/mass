@@ -1,7 +1,7 @@
 ---
 type: Development Standard
 title: Go 项目技术选型
-description: 规定 Go 项目的 CLI、测试、HTTP、结构化日志、lint 和可观测性选型。
+description: 规定 Go 项目的 CLI、测试、HTTP 框架与客户端、结构化日志、lint 和可观测性选型。
 status: stable
 sources:
   - id: direction
@@ -10,6 +10,9 @@ sources:
   - id: observability-direction
     resource: 项目负责人在 2026-10-20 确定结构化日志、lint 和可观测性选型，并要求依赖提供链接
     title: 日志、质量检查与可观测性选型
+  - id: http-client-direction
+    resource: 项目负责人在 2026-10-20 指定 Resty 为默认 HTTP 客户端
+    title: HTTP 客户端选型
 ---
 
 # Go 项目技术选型
@@ -35,6 +38,12 @@ sources:
 选型：[Huma v2](https://huma.rocks/) + [chi](https://github.com/go-chi/chi)。
 
 使用 chi 路由，配合 Huma 定义 HTTP 接口并生成 OpenAPI。通过统一脚手架注册路由与请求、响应类型，由代码生成具体 schema 和 OpenAPI 文档，避免手工维护重复的接口定义。
+
+## HTTP 客户端
+
+选型：[Resty](https://github.com/go-resty/resty)。
+
+默认使用 Resty 发送 HTTP 请求。超时、重试、重定向与流式响应处理须遵守所调用接口的合同。
 
 ## 结构化日志
 

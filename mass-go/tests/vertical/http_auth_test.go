@@ -26,7 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 )
 
@@ -103,7 +102,8 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 	require.Equal(t, 200, response.StatusCode)
 	response.Body.Close()
 	var rows []resource.Runtime
-	c := client.Client{URL: ready.URL, Token: "synthetic-http-token", HTTP: httpClient}
+	c := newHTTPClient(t, ready.URL, "synthetic-http-token")
+	c.HTTP.SetTransport(wire).SetTimeout(5 * time.Second)
 	require.NoError(t, c.ListRuntimes(ctx, resource.RuntimeQuery{}, &rows))
 	require.NotNil(t, rows)
 	require.Empty(t, rows)

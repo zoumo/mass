@@ -37,13 +37,18 @@ func fileError() error {
 type options struct {
 	url, output string
 	timeout     time.Duration
-	client      client.Client
+	client      *client.Client
 }
 
 // Run executes one command. It writes results to stdout and diagnostics to stderr.
 // A canceled context releases only this invocation, never Agent work.
 func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer) int {
 	o := &options{}
+	defer func() {
+		if o.client != nil {
+			_ = o.client.Close()
+		}
+	}()
 	root := o.command()
 	root.SetArgs(args)
 	root.SetIn(in)
@@ -90,7 +95,7 @@ func (o *options) command() *cobra.Command {
 		if o.timeout < 0 {
 			return invalid("Timeout must be nonnegative")
 		}
-		o.client = client.Client{URL: o.url, Token: os.Getenv("MASS_TOKEN")}
+		o.client = client.New(o.url, os.Getenv("MASS_TOKEN"))
 		return nil
 	}
 	root.AddCommand(o.runtimeCommands(), o.sessionCommands(), &cobra.Command{Use: "version", Example: "  massctl version", Short: "Print client version", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {

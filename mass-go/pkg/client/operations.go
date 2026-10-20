@@ -14,18 +14,8 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
 
-func (c Client) generated(accept string) (*generated.Client, error) {
-	return generated.NewClient(c.URL, generated.WithHTTPClient(c.http()), generated.WithRequestEditorFn(func(_ context.Context, r *http.Request) error {
-		r.Header.Set("Accept", accept)
-		if c.Token != "" {
-			r.Header.Set("Authorization", "Bearer "+c.Token)
-		}
-		return nil
-	}))
-}
-
 // Answer sends one JSON value, including literal null for nil. It never replays.
-func (c Client) Answer(ctx context.Context, ref resource.SessionRef, interaction string, answer, out any) error {
+func (c *Client) Answer(ctx context.Context, ref resource.SessionRef, interaction string, answer, out any) error {
 	if _, err := SessionPath(ref); err != nil {
 		return err
 	}
@@ -40,21 +30,21 @@ func (c Client) Answer(ctx context.Context, ref resource.SessionRef, interaction
 		return err
 	}
 	encoded := base64.RawURLEncoding.EncodeToString([]byte(interaction))
-	return c.jsonResponse(http.StatusOK, out, func(api *generated.Client) (*http.Response, error) {
+	return c.jsonResponse(ctx, http.StatusOK, out, func() (*http.Request, error) {
 		if ref.SessionID != "" {
-			return api.AnswerInteractionByID(ctx, ref.SessionID, encoded, b)
+			return generated.NewAnswerInteractionByIDRequest(c.url, ref.SessionID, encoded, b)
 		}
-		return api.AnswerInteractionByNameOrID(ctx, ref.Namespace, ref.Name, encoded, b)
+		return generated.NewAnswerInteractionByNameOrIDRequest(c.url, ref.Namespace, ref.Name, encoded, b)
 	})
 }
 
 // jsonResponse keeps all open response values as json.Number, never float64.
-func (c Client) jsonResponse(expected int, out any, call func(*generated.Client) (*http.Response, error)) error {
-	api, err := c.generated("application/json")
+func (c *Client) jsonResponse(ctx context.Context, expected int, out any, build func() (*http.Request, error)) error {
+	req, err := build()
 	if err != nil {
 		return err
 	}
-	response, err := call(api)
+	response, err := c.execute(ctx, "application/json", req)
 	return decodeResponse(response, err, expected, out)
 }
 
@@ -68,7 +58,7 @@ func generatedValue[T any](v any) (T, error) {
 	return out, err
 }
 
-func (c Client) CreateRuntime(ctx context.Context, v resource.Runtime, out any) error {
+func (c *Client) CreateRuntime(ctx context.Context, v resource.Runtime, out any) error {
 	if err := events.CheckDynamicJSON(map[string]any(v.Spec.Config)); err != nil {
 		return invalid()
 	}
@@ -77,47 +67,47 @@ func (c Client) CreateRuntime(ctx context.Context, v resource.Runtime, out any) 
 		return err
 	}
 	body := generated.RuntimeCreate{Metadata: generated.CreateMetadata{Name: v.Metadata.Name, Namespace: &v.Metadata.Namespace}, Spec: spec}
-	return c.jsonResponse(201, out, func(api *generated.Client) (*http.Response, error) { return api.CreateRuntime(ctx, body) })
+	return c.jsonResponse(ctx, 201, out, func() (*http.Request, error) { return generated.NewCreateRuntimeRequest(c.url, body) })
 }
 
-func (c Client) GetRuntime(ctx context.Context, name string, out any) error {
+func (c *Client) GetRuntime(ctx context.Context, name string, out any) error {
 	if !validSegment(name) {
 		return invalid()
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) { return api.GetRuntime(ctx, name) })
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) { return generated.NewGetRuntimeRequest(c.url, name) })
 }
 
-func (c Client) StartRuntime(ctx context.Context, name string, out any) error {
+func (c *Client) StartRuntime(ctx context.Context, name string, out any) error {
 	if !validSegment(name) {
 		return invalid()
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) {
-		return api.StartRuntimeWithBody(ctx, name, "application/json", nil)
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
+		return generated.NewStartRuntimeRequestWithBody(c.url, name, "application/json", nil)
 	})
 }
 
-func (c Client) StopRuntime(ctx context.Context, name string, out any) error {
+func (c *Client) StopRuntime(ctx context.Context, name string, out any) error {
 	if !validSegment(name) {
 		return invalid()
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) {
-		return api.StopRuntimeWithBody(ctx, name, "application/json", nil)
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
+		return generated.NewStopRuntimeRequestWithBody(c.url, name, "application/json", nil)
 	})
 }
 
-func (c Client) DeleteRuntime(ctx context.Context, name string) error {
+func (c *Client) DeleteRuntime(ctx context.Context, name string) error {
 	if !validSegment(name) {
 		return invalid()
 	}
-	return c.jsonResponse(204, nil, func(api *generated.Client) (*http.Response, error) { return api.DeleteRuntime(ctx, name) })
+	return c.jsonResponse(ctx, 204, nil, func() (*http.Request, error) { return generated.NewDeleteRuntimeRequest(c.url, name) })
 }
 
-func (c Client) ListRuntimes(ctx context.Context, q resource.RuntimeQuery, out any) error {
+func (c *Client) ListRuntimes(ctx context.Context, q resource.RuntimeQuery, out any) error {
 	p := generated.ListRuntimesParams{Type: optional(q.Type), State: optional(generated.ListRuntimesParamsState(q.State))}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) { return api.ListRuntimes(ctx, &p) })
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) { return generated.NewListRuntimesRequest(c.url, &p) })
 }
 
-func (c Client) UpdateRuntime(ctx context.Context, name string, spec resource.RuntimeSpec, out any) error {
+func (c *Client) UpdateRuntime(ctx context.Context, name string, spec resource.RuntimeSpec, out any) error {
 	if err := events.CheckDynamicJSON(map[string]any(spec.Config)); err != nil {
 		return invalid()
 	}
@@ -128,24 +118,24 @@ func (c Client) UpdateRuntime(ctx context.Context, name string, spec resource.Ru
 	if err != nil {
 		return err
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) { return api.UpdateRuntime(ctx, name, body) })
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) { return generated.NewUpdateRuntimeRequest(c.url, name, body) })
 }
 
-func (c Client) CreateSession(ctx context.Context, v resource.Session, out any) error {
+func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any) error {
 	spec, err := generatedValue[generated.SessionSpec](v.Spec)
 	if err != nil {
 		return err
 	}
 	body := generated.SessionCreate{Metadata: generated.SessionCreateMetadata{Name: v.Metadata.Name, Namespace: v.Metadata.Namespace}, Spec: spec}
-	return c.jsonResponse(201, out, func(api *generated.Client) (*http.Response, error) { return api.CreateSession(ctx, body) })
+	return c.jsonResponse(ctx, 201, out, func() (*http.Request, error) { return generated.NewCreateSessionRequest(c.url, body) })
 }
 
-func (c Client) ListSessions(ctx context.Context, q resource.SessionQuery, out any) error {
+func (c *Client) ListSessions(ctx context.Context, q resource.SessionQuery, out any) error {
 	if q.Limit < 0 || q.SessionID != "" {
 		return invalid()
 	}
 	p := generated.ListSessionsParams{Namespace: optional(q.Namespace), RuntimeRef: optional(q.RuntimeRef), State: optional(generated.ListSessionsParamsState(q.State)), After: optional(q.After), Limit: optional(int64(q.Limit))}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) { return api.ListSessions(ctx, &p) })
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) { return generated.NewListSessionsRequest(c.url, &p) })
 }
 
 func optional[T comparable](v T) *T {
@@ -157,55 +147,55 @@ func optional[T comparable](v T) *T {
 }
 func validSegment(v string) bool { return v != "" && v != "." && v != ".." && utf8.ValidString(v) }
 
-func (c Client) GetSession(ctx context.Context, ref resource.SessionRef, out any) error {
+func (c *Client) GetSession(ctx context.Context, ref resource.SessionRef, out any) error {
 	if _, err := SessionPath(ref); err != nil {
 		return err
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) {
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
 		if ref.SessionID != "" {
-			return api.GetSessionByID(ctx, ref.SessionID)
+			return generated.NewGetSessionByIDRequest(c.url, ref.SessionID)
 		}
-		return api.GetSessionByNameOrID(ctx, ref.Namespace, ref.Name)
+		return generated.NewGetSessionByNameOrIDRequest(c.url, ref.Namespace, ref.Name)
 	})
 }
 
-func (c Client) ArchiveSession(ctx context.Context, ref resource.SessionRef, out any) error {
+func (c *Client) ArchiveSession(ctx context.Context, ref resource.SessionRef, out any) error {
 	if _, err := SessionPath(ref); err != nil {
 		return err
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) {
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
 		if ref.SessionID != "" {
-			return api.ArchiveSessionByIDWithBody(ctx, ref.SessionID, "application/json", nil)
+			return generated.NewArchiveSessionByIDRequestWithBody(c.url, ref.SessionID, "application/json", nil)
 		}
-		return api.ArchiveSessionByNameOrIDWithBody(ctx, ref.Namespace, ref.Name, "application/json", nil)
+		return generated.NewArchiveSessionByNameOrIDRequestWithBody(c.url, ref.Namespace, ref.Name, "application/json", nil)
 	})
 }
 
-func (c Client) ResumeSession(ctx context.Context, ref resource.SessionRef, out any) error {
+func (c *Client) ResumeSession(ctx context.Context, ref resource.SessionRef, out any) error {
 	if _, err := SessionPath(ref); err != nil {
 		return err
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) {
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
 		if ref.SessionID != "" {
-			return api.ResumeSessionByIDWithBody(ctx, ref.SessionID, "application/json", nil)
+			return generated.NewResumeSessionByIDRequestWithBody(c.url, ref.SessionID, "application/json", nil)
 		}
-		return api.ResumeSessionByNameOrIDWithBody(ctx, ref.Namespace, ref.Name, "application/json", nil)
+		return generated.NewResumeSessionByNameOrIDRequestWithBody(c.url, ref.Namespace, ref.Name, "application/json", nil)
 	})
 }
 
-func (c Client) Cancel(ctx context.Context, ref resource.SessionRef, out any) error {
+func (c *Client) Cancel(ctx context.Context, ref resource.SessionRef, out any) error {
 	if _, err := SessionPath(ref); err != nil {
 		return err
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) {
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
 		if ref.SessionID != "" {
-			return api.CancelByIDWithBody(ctx, ref.SessionID, "application/json", nil)
+			return generated.NewCancelByIDRequestWithBody(c.url, ref.SessionID, "application/json", nil)
 		}
-		return api.CancelByNameOrIDWithBody(ctx, ref.Namespace, ref.Name, "application/json", nil)
+		return generated.NewCancelByNameOrIDRequestWithBody(c.url, ref.Namespace, ref.Name, "application/json", nil)
 	})
 }
 
-func (c Client) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
+func (c *Client) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
 	for _, block := range input.Content {
 		if err := block.Validate(); err != nil {
 			return invalid()
@@ -218,22 +208,22 @@ func (c Client) SendPrompt(ctx context.Context, ref resource.SessionRef, input r
 	if err != nil {
 		return err
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) {
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
 		if ref.SessionID != "" {
-			return api.SendPromptByID(ctx, ref.SessionID, body)
+			return generated.NewSendPromptByIDRequest(c.url, ref.SessionID, body)
 		}
-		return api.SendPromptByNameOrID(ctx, ref.Namespace, ref.Name, body)
+		return generated.NewSendPromptByNameOrIDRequest(c.url, ref.Namespace, ref.Name, body)
 	})
 }
 
-func (c Client) History(ctx context.Context, ref resource.SessionRef, q store.HistoryQuery, out any) error {
+func (c *Client) History(ctx context.Context, ref resource.SessionRef, q store.HistoryQuery, out any) error {
 	if _, err := SessionPath(ref); err != nil {
 		return err
 	}
 	if q.Limit < 0 || (q.Types != nil && len(q.Types) == 0) {
 		return invalid()
 	}
-	return c.jsonResponse(200, out, func(api *generated.Client) (*http.Response, error) {
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
 		if ref.SessionID != "" {
 			p := generated.ListHistoryByIDParams{After: optional(q.After), Limit: optional(int64(q.Limit))}
 			if q.Types != nil {
@@ -243,7 +233,7 @@ func (c Client) History(ctx context.Context, ref resource.SessionRef, q store.Hi
 				}
 				p.Types = &types
 			}
-			return api.ListHistoryByID(ctx, ref.SessionID, &p)
+			return generated.NewListHistoryByIDRequest(c.url, ref.SessionID, &p)
 		}
 		p := generated.ListHistoryByNameOrIDParams{After: optional(q.After), Limit: optional(int64(q.Limit))}
 		if q.Types != nil {
@@ -253,7 +243,7 @@ func (c Client) History(ctx context.Context, ref resource.SessionRef, q store.Hi
 			}
 			p.Types = &types
 		}
-		return api.ListHistoryByNameOrID(ctx, ref.Namespace, ref.Name, &p)
+		return generated.NewListHistoryByNameOrIDRequest(c.url, ref.Namespace, ref.Name, &p)
 	})
 }
 
