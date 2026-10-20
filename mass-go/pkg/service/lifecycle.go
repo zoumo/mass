@@ -14,13 +14,13 @@ import (
 
 // Retry only a known conditional-write conflict, always from a fresh snapshot.
 // Never retry a possibly committed file mutation or an Agent operation.
-func (s *Service) runtimeStatus(name string, status resource.RuntimeStatus) (resource.Runtime, error) {
+func (s *Service) runtimeStatus(name string, change func(*resource.RuntimeStatus)) (resource.Runtime, error) {
 	for {
 		r, err := s.meta.GetRuntime(name)
 		if err != nil {
 			return r, err
 		}
-		r.Status = status
+		change(&r.Status)
 		r, err = s.meta.UpdateRuntime(r)
 		if !errors.Is(err, store.ErrConflict) {
 			return r, err
@@ -215,7 +215,11 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 	s.mu.Lock()
 	run := s.runs[name]
 	if run == nil {
+		r, err = s.meta.GetRuntime(name)
 		s.mu.Unlock()
+		if err != nil {
+			return r, err
+		}
 		if r.Status.State == "stopped" {
 			return r, nil
 		}
@@ -253,7 +257,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		return r, err
 	}
 	// Publish the admission seal even while an original start is still settling.
-	if _, err = s.runtimeStatus(name, resource.RuntimeStatus{State: "stopping", AppliedGeneration: r.Status.AppliedGeneration, Capabilities: r.Status.Capabilities}); err != nil {
+	if _, err = s.runtimeStatus(name, func(status *resource.RuntimeStatus) { status.State = "stopping" }); err != nil {
 		return r, err
 	}
 	if err := lockOperation(ctx, &run.op); err != nil {
@@ -273,7 +277,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	if run.driver == nil {
 		return r, errors.New("runtime start failed without confirmed cleanup")
 	}
-	if _, err = s.runtimeStatus(name, resource.RuntimeStatus{State: "stopping", AppliedGeneration: r.Status.AppliedGeneration, Capabilities: r.Status.Capabilities}); err != nil {
+	if _, err = s.runtimeStatus(name, func(status *resource.RuntimeStatus) { status.State = "stopping" }); err != nil {
 		return r, err
 	}
 	s.mu.Lock()
@@ -334,7 +338,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		return r, ctx.Err()
 	}
 	s.mu.Lock()
-	if run.blocked != nil {
+	if run.blocked != nil || run.streamErr != nil {
 		s.mu.Unlock()
 		return r, &runtime.OperationError{Code: "outcome_unknown", Reason: "runtime_delivery_unsettled", Message: "Original stream delivery remains unsettled after Driver release"}
 	}
@@ -360,7 +364,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 			return r, err
 		}
 	}
-	r, err = s.runtimeStatus(name, resource.RuntimeStatus{State: "stopped"})
+	r, err = s.runtimeStatus(name, func(status *resource.RuntimeStatus) { *status = resource.RuntimeStatus{State: "stopped"} })
 	if err != nil {
 		return r, err
 	}

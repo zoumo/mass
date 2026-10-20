@@ -63,8 +63,15 @@ type stopDriver struct {
 	onClose  func(context.Context) error
 	onStop   func(context.Context) error
 	config   runtime.Config
+	onStart  func(context.Context) (runtime.Capabilities, error)
 }
 
+func (d *stopDriver) Start(ctx context.Context) (runtime.Capabilities, error) {
+	if d.onStart != nil {
+		return d.onStart(ctx)
+	}
+	return runtime.Capabilities{"proof": true}, nil
+}
 func (d *stopDriver) ResumeSession(_ context.Context, id string, _ runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.source = events.NewSource()
 	return runtime.DriverSession{SessionID: id, Source: d.source}, nil
@@ -90,12 +97,16 @@ func (d *stopDriver) Stop(ctx context.Context) error {
 	return nil
 }
 
-type stopFactory struct{ drivers []*stopDriver }
+type stopFactory struct {
+	drivers []*stopDriver
+	onStart func(context.Context) (runtime.Capabilities, error)
+}
 
 func (f *stopFactory) Validate(runtime.Config) error { return nil }
 func (f *stopFactory) New(_ string, config runtime.Config) (runtime.Driver, error) {
 	d := &stopDriver{workDriver: workDriver{pipe: events.NewEventPipe(32), entered: make(chan context.Context, 16), release: make(chan struct{})}}
 	d.config = config
+	d.onStart = f.onStart
 	f.drivers = append(f.drivers, d)
 	return d, nil
 }
@@ -107,6 +118,8 @@ type RuntimeStopSuite struct {
 	d       *stopDriver
 	ref     resource.SessionRef
 	history *recoveryHistory
+	meta    *stopMeta
+	unknown bool
 }
 
 func TestRuntimeStopSuite(t *testing.T) { suite.Run(t, new(RuntimeStopSuite)) }
@@ -116,7 +129,8 @@ func (s *RuntimeStopSuite) SetupTest() {
 	s.T().Cleanup(func() { s.NoError(st.Close()) })
 	s.factory = &stopFactory{}
 	s.history = &recoveryHistory{HistoryStore: st, entered: make(chan struct{}), release: make(chan struct{})}
-	s.svc = service.New(st, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": s.factory}))
+	s.meta = &stopMeta{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	s.svc = service.New(s.meta, s.history, runtime.NewRegistry(map[string]runtime.Factory{"fixture": s.factory}))
 	s.T().Cleanup(func() {
 		for _, d := range s.factory.drivers {
 			d.failStop.Store(false)
@@ -128,7 +142,12 @@ func (s *RuntimeStopSuite) SetupTest() {
 		}
 		c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		s.NoError(s.svc.Shutdown(c))
+		err := s.svc.Shutdown(c)
+		if s.unknown {
+			s.Error(err)
+		} else {
+			s.NoError(err)
+		}
 	})
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
 	s.Require().NoError(err)
@@ -395,4 +414,107 @@ func (s *RuntimeStopSuite) assertStopRetainsOverflow(recovered bool) {
 	s.Require().Len(page.Events, 1)
 	s.Equal(message.EventID, page.Events[0].EventID)
 	s.Equal(int32(1), s.d.stops.Load(), "confirmed Driver release must survive delivery settlement")
+}
+
+type stopMeta struct {
+	store.MetaStore
+	pauseWrite atomic.Bool
+	pauseRead  atomic.Bool
+	entered    chan struct{}
+	release    chan struct{}
+}
+
+func (m *stopMeta) UpdateRuntime(r resource.Runtime) (resource.Runtime, error) {
+	if r.Status.State == "stopping" && r.Status.AppliedGeneration == 0 && m.pauseWrite.CompareAndSwap(true, false) {
+		close(m.entered)
+		<-m.release
+	}
+	return m.MetaStore.UpdateRuntime(r)
+}
+func (m *stopMeta) GetRuntime(name string) (resource.Runtime, error) {
+	r, err := m.MetaStore.GetRuntime(name)
+	if err == nil && m.pauseRead.CompareAndSwap(true, false) {
+		close(m.entered)
+		<-m.release
+	}
+	return r, err
+}
+func (s *RuntimeStopSuite) TestStopRetainsFactsConfirmedByConcurrentStart() {
+	entered, startRelease := make(chan struct{}), make(chan struct{})
+	var startOnce, metaOnce sync.Once
+	releaseStart := func() { startOnce.Do(func() { close(startRelease) }) }
+	defer releaseStart()
+	releaseMeta := func() { metaOnce.Do(func() { close(s.meta.release) }) }
+	defer releaseMeta()
+	s.factory.onStart = func(context.Context) (runtime.Capabilities, error) {
+		close(entered)
+		<-startRelease
+		return runtime.Capabilities{"proof": true}, nil
+	}
+	_, err := s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "starting"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
+	s.Require().NoError(err)
+	startDone, stopDone := make(chan error, 1), make(chan error, 1)
+	go func() { _, err := s.svc.StartRuntime(context.Background(), "starting"); startDone <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		s.FailNow("start gate")
+	}
+	s.factory.drivers[1].failStop.Store(true)
+	s.meta.pauseWrite.Store(true)
+	go func() { _, err := s.svc.StopRuntime(context.Background(), "starting"); stopDone <- err }()
+	select {
+	case <-s.meta.entered:
+	case <-time.After(time.Second):
+		s.FailNow("stopping status gate")
+	}
+	releaseStart()
+	s.NoError(<-startDone)
+	releaseMeta()
+	s.Error(<-stopDone)
+	r, err := s.svc.GetRuntime("starting")
+	s.Require().NoError(err)
+	s.Equal("stopping", r.Status.State)
+	s.Equal(uint64(1), r.Status.AppliedGeneration, "stale stopping snapshot must preserve newly confirmed start")
+	s.Equal(runtime.Capabilities{"proof": true}, r.Status.Capabilities)
+}
+func (s *RuntimeStopSuite) TestConcurrentStopReadingOldStateStillObservesCompletedRelease() {
+	entered, driverRelease := make(chan struct{}), make(chan struct{})
+	var driverOnce, metaOnce sync.Once
+	unblockDriver := func() { driverOnce.Do(func() { close(driverRelease) }) }
+	defer unblockDriver()
+	unblockMeta := func() { metaOnce.Do(func() { close(s.meta.release) }) }
+	defer unblockMeta()
+	s.d.onStop = func(context.Context) error { close(entered); <-driverRelease; return nil }
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() { _, err := s.svc.StopRuntime(context.Background(), "agent"); first <- err }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		s.FailNow("driver gate")
+	}
+	s.meta.pauseRead.Store(true)
+	go func() { _, err := s.svc.StopRuntime(context.Background(), "agent"); second <- err }()
+	select {
+	case <-s.meta.entered:
+	case <-time.After(time.Second):
+		s.FailNow("read gate")
+	}
+	unblockDriver()
+	s.Require().NoError(<-first)
+	unblockMeta()
+	s.NoError(<-second, "completed shared stop must not be rejected using stale stopping state")
+}
+
+func (s *RuntimeStopSuite) TestAbnormalFinalStreamCannotProveFactDrain() {
+	s.unknown = true
+	s.d.onStop = func(context.Context) error { s.d.pipe.End(errors.New("final stream failed")); return nil }
+	_, err := s.svc.StopRuntime(context.Background(), "agent")
+	s.Require().Error(err)
+	r, err := s.svc.GetRuntime("agent")
+	s.Require().NoError(err)
+	s.Equal("stopping", r.Status.State)
+	s.ErrorIs(s.svc.DeleteRuntime("agent"), runtime.ErrFailedPrecondition)
+	_, err = s.svc.StartRuntime(context.Background(), "agent")
+	s.ErrorIs(err, runtime.ErrFailedPrecondition)
 }

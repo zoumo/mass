@@ -60,6 +60,7 @@ type runBinding struct {
 	stopping      bool
 	stop          *runtimeStop
 	driverStopped bool
+	streamErr     error
 	drained       bool
 	blocked       *events.SessionEvent
 }
@@ -254,7 +255,11 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 	}
 	run.stream = stream
 	go s.consume(run, stream)
-	if _, err = s.runtimeStatus(name, resource.RuntimeStatus{State: "starting"}); err != nil {
+	if _, err = s.runtimeStatus(name, func(status *resource.RuntimeStatus) {
+		if status.State != "stopping" {
+			*status = resource.RuntimeStatus{State: "starting"}
+		}
+	}); err != nil {
 		s.mu.Lock()
 		run.err = err
 		s.mu.Unlock()
@@ -269,7 +274,11 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 			state = "stopping"
 		}
 		s.mu.Unlock()
-		_, statusErr := s.runtimeStatus(name, resource.RuntimeStatus{State: state})
+		_, statusErr := s.runtimeStatus(name, func(status *resource.RuntimeStatus) {
+			if status.State != "stopping" {
+				*status = resource.RuntimeStatus{State: state}
+			}
+		})
 		return r, errors.Join(err, statusErr)
 	}
 	applied := r.Metadata.Generation
@@ -279,7 +288,12 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		state = "stopping"
 	}
 	s.mu.Unlock()
-	r, err = s.runtimeStatus(name, resource.RuntimeStatus{State: state, AppliedGeneration: applied, Capabilities: capabilities})
+	r, err = s.runtimeStatus(name, func(status *resource.RuntimeStatus) {
+		if status.State == "stopping" {
+			state = "stopping"
+		}
+		*status = resource.RuntimeStatus{State: state, AppliedGeneration: applied, Capabilities: capabilities}
+	})
 	s.mu.Lock()
 	if err != nil {
 		run.err = err
@@ -552,6 +566,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 					err = errors.New("outcome_unknown: unexpected driver EOF")
 				}
 				run.err = err
+				run.streamErr = err
 				for _, l := range run.lanes {
 					for sub := range l.subscribers {
 						sub.finish(err)
