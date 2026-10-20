@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type EventBase struct {
@@ -115,10 +116,8 @@ func (e SessionEvent) Persistent() bool {
 	return false
 }
 
-var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-
 func (e SessionEvent) Validate() error {
-	if !uuidPattern.MatchString(e.EventID) || e.Namespace == "" || e.SessionName == "" || e.SessionID == "" || e.Time.IsZero() || e.payload == nil {
+	if len(e.EventID) != 36 || uuid.Validate(e.EventID) != nil || e.Namespace == "" || e.SessionName == "" || e.SessionID == "" || e.Time.IsZero() || e.payload == nil {
 		return errors.New("invalid event envelope")
 	}
 	if err := CheckDynamicJSON(e.Meta); err != nil {

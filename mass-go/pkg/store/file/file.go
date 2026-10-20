@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -86,7 +88,7 @@ func Open(dir string, readOnly bool) (*Store, error) {
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "state.json"))
 	if os.IsNotExist(err) && !readOnly {
-		s.data = snapshot{Format: 1, CursorKey: events.UUID(), Runtimes: map[string]resource.Runtime{}, Sessions: map[string]resource.Session{}, History: map[string][]events.SessionEvent{}}
+		s.data = snapshot{Format: 1, CursorKey: uuid.NewString(), Runtimes: map[string]resource.Runtime{}, Sessions: map[string]resource.Session{}, History: map[string][]events.SessionEvent{}}
 		err = s.commit(s.data)
 	} else if err == nil {
 		err = decode(b, &s.data)
@@ -216,10 +218,10 @@ func initial(m resource.Metadata) (resource.Metadata, error) {
 	if m.UID != "" || !m.CreatedAt.IsZero() || m.Generation != 0 || m.ResourceVersion != "" {
 		return m, runtime.InvalidArgument("system metadata is read-only")
 	}
-	m.UID = events.UUID()
+	m.UID = uuid.NewString()
 	m.CreatedAt = time.Now().UTC()
 	m.Generation = 1
-	m.ResourceVersion = events.UUID()
+	m.ResourceVersion = uuid.NewString()
 	return m, nil
 }
 
@@ -234,7 +236,7 @@ func updated(old, m resource.Metadata, specChanged, changed bool) (resource.Meta
 		m.Generation++
 	}
 	if changed {
-		m.ResourceVersion = events.UUID()
+		m.ResourceVersion = uuid.NewString()
 	}
 	return m, nil
 }

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 )
 
@@ -29,7 +31,7 @@ func (p *PendingInteractions) Add(session string, source events.Source, answer f
 	if len(p.entries) >= 128 {
 		return "", errors.New("pending interaction limit")
 	}
-	ref := events.UUID()
+	ref := uuid.NewString()
 	p.entries[ref] = pendingInteraction{session, source, answer}
 	return ref, nil
 }

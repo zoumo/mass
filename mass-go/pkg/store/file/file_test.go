@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -38,7 +39,7 @@ func session(ns, name, id string) resource.Session {
 
 func event(t *testing.T, id, item string, p events.Payload) events.SessionEvent {
 	t.Helper()
-	e, err := events.NewEvent(events.EventBase{EventID: events.UUID(), Namespace: "default", SessionName: "demo", SessionID: id, Time: time.Date(2026, 10, 20, 1, 2, 3, 0, time.UTC), ItemID: item, Meta: map[string]any{"nested": map[string]any{"number": json.Number("9007199254740993"), "null": nil, "list": []any{false, "x"}}}}, p, events.NewSource().WithWork("private-work"))
+	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: "default", SessionName: "demo", SessionID: id, Time: time.Date(2026, 10, 20, 1, 2, 3, 0, time.UTC), ItemID: item, Meta: map[string]any{"nested": map[string]any{"number": json.Number("9007199254740993"), "null": nil, "list": []any{false, "x"}}}}, p, events.NewSource().WithWork("private-work"))
 	require.NoError(t, err)
 	return e
 }
@@ -186,14 +187,14 @@ func (fileSuite *FileSuite) TestHistoryIdentityPaginationAndRestart() {
 	require.Error(t, err)
 	wrong := answer
 	wrong.Namespace = "other"
-	wrong.EventID = events.UUID()
+	wrong.EventID = uuid.NewString()
 	_, err = s.Append("native", []events.SessionEvent{wrong})
 	require.Error(t, err)
 	chunk := event(t, "native", "message", events.MessageChunk{MessageID: "message", Content: []events.ContentBlock{events.Text("delta")}})
 	_, err = s.Append("native", []events.SessionEvent{chunk})
 	require.Error(t, err)
 	invalid := answer
-	invalid.EventID = events.UUID()
+	invalid.EventID = uuid.NewString()
 	invalid.Meta = map[string]any{"unsupported": make(chan int)}
 	_, err = s.Append("native", []events.SessionEvent{invalid})
 	require.Error(t, err)

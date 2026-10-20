@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
 
@@ -300,7 +301,7 @@ func (d *Driver) emit(s *session, id, item string, p events.Payload, work string
 	if len(observedAt) > 0 && !observedAt[0].IsZero() {
 		eventTime = observedAt[0]
 	}
-	e, err := events.NewEvent(events.EventBase{EventID: events.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: id, ItemID: item, Time: eventTime}, p, s.source.WithWork(work))
+	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: id, ItemID: item, Time: eventTime}, p, s.source.WithWork(work))
 	if err != nil {
 		return err
 	}
@@ -736,7 +737,7 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	work, c := s.work, d.client
 	active := s.active
 	if active && s.cancelWork != work {
-		s.cancelWork, s.cancelTarget = work, events.UUID()
+		s.cancelWork, s.cancelTarget = work, uuid.NewString()
 	}
 	target := s.cancelTarget
 	d.mu.Unlock()

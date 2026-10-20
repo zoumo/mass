@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	sdk "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -265,7 +266,7 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	}
 	s.active = true
 	s.used = true
-	s.work = events.UUID()
+	s.work = uuid.NewString()
 	s.sending = true
 	s.mu.Unlock()
 	err = s.client.Send(ctx, input.Content[0].Text)
@@ -282,7 +283,7 @@ func (d *Driver) emit(s *session, item string, p events.Payload, at time.Time) e
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	e, err := events.NewEvent(events.EventBase{EventID: events.UUID(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at}, p, s.source.WithWork(s.work))
+	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at}, p, s.source.WithWork(s.work))
 	if err != nil {
 		return err
 	}
@@ -632,7 +633,7 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	s.mu.Lock()
 	active := s.active
 	if active && (s.cancelTarget == "" || s.cancelWork != s.work) {
-		s.cancelWork, s.cancelTarget = s.work, events.UUID()
+		s.cancelWork, s.cancelTarget = s.work, uuid.NewString()
 	}
 	target := s.cancelTarget
 	s.mu.Unlock()

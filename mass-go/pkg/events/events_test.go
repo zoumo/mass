@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -15,7 +16,7 @@ type EventsSuite struct{ suite.Suite }
 
 func (eventsSuite *EventsSuite) TestEventWireContract() {
 	t := eventsSuite.T()
-	base := events.EventBase{EventID: events.UUID(), Namespace: "default", SessionName: "demo", SessionID: "native", Time: time.Now().UTC(), ItemID: "tool"}
+	base := events.EventBase{EventID: uuid.NewString(), Namespace: "default", SessionName: "demo", SessionID: "native", Time: time.Now().UTC(), ItemID: "tool"}
 	call, err := events.NewEvent(base, events.ToolCall{ID: "tool", Kind: "execute", RawInput: nil}, events.NewSource())
 	require.NoError(t, err)
 	wire, err := json.Marshal(call)
