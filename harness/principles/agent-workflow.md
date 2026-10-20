@@ -13,7 +13,7 @@ sources:
 
 ## 读取顺序与唯一真相源
 
-[harness 入口](../index.md)是指导本项目当前演进和发展的唯一真相源。先读取本目录的[原则索引](index.md)，再读取任务相关的[总体架构](../architecture.md)、模块设计和 [API/TypeSpec 合同](../typespec/README.md)。知识组织和维护遵循 [OKF 文档约定](../conventions.md)。
+[harness 入口](../index.md)是指导本项目当前演进和发展的唯一真相源。先读取本目录的[原则索引](index.md)，再读取任务相关的[总体架构](../architecture.md)、模块设计和 [API/TypeSpec 合同](../typespec/README.md)。涉及 Go 实现时，还须读取 [Go 目录结构](go/directory-structure.md)和[Go 技术选型](go/technology-stack.md)。知识组织和维护遵循 [OKF 文档约定](../conventions.md)。
 
 根 AGENTS.md、README、GLOSSARY.md 和语言专属资料提供入口、实现事实或操作说明，不形成另一套原则与设计。实现与 harness 不一致时报告实现差距；不能因现有代码、测试或其他资料的行为而擅自改写设计。遇到待决合同或相互冲突的要求，应明确指出问题，由人类决定。
 

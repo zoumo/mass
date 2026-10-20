@@ -32,15 +32,20 @@ Service 的详细职责：[Session](modules/service/session.md)、[历史](modul
 ## 接口与承载映射
 
 - [TypeSpec 入口](typespec/README.md)：当前接口版本、声明和校验工具。
-- [HTTP v1](bindings/http.md)：已定稿的资源式 REST JSON API、错误映射与可选 SSE 实时观察。
+- [HTTP v1](bindings/http.md)：以 `/apis/v1` 为业务路径前缀的资源式 REST JSON API、错误映射与可选 SSE 实时观察。
 - [持久化](bindings/storage.md)：资源与历史的存储表示。
 
 ## 原则与验收
 
 - [测试与验收原则](principles/testing.md)：公开接口验证、真实 Agent 验收、测试隔离与结果声明。
 - [语言无关编码原则](principles/code-principles.md)：清晰、简单、简洁、可维护、一致与避免重复。
+- Go 实现规则：[目录结构](principles/go/directory-structure.md)、[技术选型](principles/go/technology-stack.md)。
 
 远端认证、秘密、身份与资源所有权要求随 [Runtime](modules/runtime/design.md#远端安全要求) 维护。
+
+## 架构决策
+
+- [ADR-0001：暂不强制限制 HTTP 请求体大小等容量边界](adr/0001-defer-http-capacity-limits.md)。
 
 ## 更新记录
 

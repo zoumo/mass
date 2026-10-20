@@ -10,7 +10,9 @@ model DriverSessionSpec {
 }
 
 model DriverSession {
+  /** 原生会话 ID；不得为 . 或 ..，非法 ID 不得作为打开或恢复成功结果发布。 */
   sessionId: string;
+
   capabilities: CapabilitySet;
 }
 

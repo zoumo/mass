@@ -23,12 +23,12 @@ interface RuntimeDriver {
    * 仍有在途使用时拒绝，结果未知时保留清理责任，不假装正常终止。 */
   stop(): void | OperationError;
 
-  /** 接纳时固定名称；adapter 补齐事件名称与真实 sessionId 后才向共享流交付。 */
+  /** 接纳时固定名称；原生 ID 不得为 . 或 ..；adapter 校验 ID 并补齐事件名称后才向共享流交付，非法返回须结算原操作资源。 */
   openSession(address: DriverSessionAddress, spec: DriverSessionSpec):
     | DriverSession
     | OperationError;
 
-  /** 内部验证和读取恢复材料；恢复原会话，不能以新建替代。 */
+  /** 内部验证和读取恢复材料；输入与返回 ID 均不得为 . 或 ..；恢复原会话，不能以新建替代。 */
   resumeSession(
     sessionId: string,
     address: DriverSessionAddress,

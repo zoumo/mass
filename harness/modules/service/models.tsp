@@ -58,7 +58,9 @@ union SessionRef {
     sessionId?: never,
   },
   byId: {
+    /** 原始 ID 不得为 . 或 ..；由 Service 在查询或副作用前校验。 */
     sessionId: string,
+
     `namespace`?: never,
     name?: never,
   },
@@ -106,6 +108,7 @@ model SessionSpec extends Execution.DriverSessionSpec {
   runtimeRef: string;
 }
 
+/** 创建名称须符合 ResourceName 且不得为 UUID 形式；由 SessionService 按 session.md 的创建名称校验规则在副作用前拒绝。 */
 model SessionCreate {
   metadata: ObjectMetadata;
   spec: SessionSpec;
@@ -127,7 +130,7 @@ model Session {
 }
 
 model SessionStatus {
-  /** 跨 Runtime 全局唯一的会话标识；归档、离线与恢复均保留。 */
+  /** 跨 Runtime 全局唯一的会话标识；原始值不得为 . 或 ..；归档、离线与恢复均保留。 */
   sessionId: string;
 
   state: SessionState;
