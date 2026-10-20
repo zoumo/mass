@@ -16,7 +16,7 @@ The [Go implementation](mass-go/README.md) currently provides the Ticket02
 Codex SDK-mock vertical path: no-input native identity, separate text input,
 file-persistent history and live Service observation. Production Go packages live
 under `mass-go/pkg/`; `cmd/` contains the entrypoints. `make build-go` builds
-`dist/massd-go` (the synthetic workflow) and `dist/massctl` (local read-only queries).
+`bin/massd-go` (the synthetic workflow) and `bin/massctl` (local read-only queries).
 The Go CLI no longer calls the Rust server; Go HTTP/Claude/recovery support belongs
 to later tickets. `make test-go` runs the offline SDK/Store/application suite;
 root Make checks include the Go slice and require Go 1.26.9. The independent
