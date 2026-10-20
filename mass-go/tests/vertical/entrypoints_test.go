@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -39,8 +40,10 @@ func (s *entrypointSuite) SetupTest() {
 	daemonCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	s.T().Cleanup(cancel)
 	s.data = s.T().TempDir()
+	config := filepath.Join(s.data, "daemon-config.json")
+	s.Require().NoError(os.WriteFile(config, []byte("{}"), 0o600))
 	s.stderr.Reset()
-	s.daemon = exec.CommandContext(daemonCtx, app, "--data", s.data, "--listen", "127.0.0.1:0", "--local", "--prototype-auto-approve-permissions")
+	s.daemon = exec.CommandContext(daemonCtx, app, "--config", config, "--data", s.data, "--listen", "127.0.0.1:0", "--local", "--prototype-auto-approve-permissions")
 	s.daemon.Stderr = &s.stderr
 	out, e := s.daemon.StdoutPipe()
 	s.Require().NoError(e)
@@ -74,11 +77,11 @@ func (s *entrypointSuite) SetupTest() {
 	})
 }
 
-func (s *entrypointSuite) call(op string, p client.Params, out any) {
+func (s *entrypointSuite) call(op string, p workflowParams, out any) {
 	s.T().Helper()
 	// HTTP-only capabilities stay covered without exposing CLI compatibility flags.
 	if op == "session.answer" || len(p.History.Types) > 0 || p.SessionQuery.Namespace != "" || p.SessionQuery.RuntimeRef != "" || p.SessionQuery.State != "" {
-		s.Require().NoError((client.Client{URL: s.url}).Call(ctx(s.T()), op, p, out))
+		s.Require().NoError(workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), op, p, out))
 		return
 	}
 	parts := strings.Split(op, ".")
@@ -151,20 +154,20 @@ func (s *entrypointSuite) open(kind, mode string) (resource.SessionRef, resource
 		bin = claudeMock
 	}
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
-	s.call("runtime.create", client.Params{Runtime: &r}, nil)
-	s.call("runtime.start", client.Params{Name: "agent"}, nil)
+	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
+	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
 	var session resource.Session
 	create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: "session"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}}
-	s.call("session.create", client.Params{Create: &create}, &session)
+	s.call("session.create", workflowParams{Create: &create}, &session)
 	s.NotEmpty(session.Status.SessionID)
 	ref := resource.SessionRef{SessionID: session.Status.SessionID}
 	s.Eventually(func() bool {
 		var v resource.Session
-		s.call("session.get", client.Params{Session: ref}, &v)
+		s.call("session.get", workflowParams{Session: ref}, &v)
 		return v.Status.State == events.Idle || (kind == "claude" && v.Status.State == events.Unknown)
 	}, 2*time.Second, 10*time.Millisecond)
 	var page store.HistoryPage
-	s.call("session.history", client.Params{Session: ref}, &page)
+	s.call("session.history", workflowParams{Session: ref}, &page)
 	for _, e := range page.Events {
 		s.NotEqual("user.message", e.Type(), "creation must not submit input")
 	}
@@ -198,7 +201,7 @@ func (s *entrypointSuite) history(ref resource.SessionRef) store.HistoryPage {
 	after := ""
 	for {
 		var page store.HistoryPage
-		s.call("session.history", client.Params{Session: ref, History: store.HistoryQuery{Limit: 2, After: after}}, &page)
+		s.call("session.history", workflowParams{Session: ref, History: store.HistoryQuery{Limit: 2, After: after}}, &page)
 		all.Events = append(all.Events, page.Events...)
 		all.SyncedEventID = page.SyncedEventID
 		if page.Next == "" {
@@ -212,7 +215,7 @@ func (s *entrypointSuite) history(ref resource.SessionRef) store.HistoryPage {
 func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question bool) []events.SessionEvent {
 	_, scan := s.observer(ref)
 	var receipt runtime.InputReceipt
-	s.call("session.input", client.Params{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text(text)}}}, &receipt)
+	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text(text)}}}, &receipt)
 	s.NotEmpty(receipt.Submission)
 	seen := []events.SessionEvent{}
 	questions := 0
@@ -242,7 +245,7 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 				if strings.HasPrefix(ref.SessionID, "claude") {
 					answer = map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": "json"}}}
 				}
-				s.call("session.answer", client.Params{Session: ref, Interaction: p.Interaction, Answer: answer}, nil)
+				s.call("session.answer", workflowParams{Session: ref, Interaction: p.Interaction, Answer: answer}, nil)
 			} else {
 				permissions++
 			}
@@ -280,12 +283,12 @@ func (s *entrypointSuite) basic(kind string) {
 	s.runWork(ref, "hello", false)
 	if kind == "claude" {
 		var out any
-		e = (client.Client{URL: s.url}).Call(ctx(s.T()), "session.input", client.Params{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("forbidden second input")}}}, &out)
+		e = workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("forbidden second input")}}}, &out)
 		s.Require().Error(e)
 		s.T().Log("PASS Claude second input rejected; close and original-ID resume required")
 	}
 	for _, q := range []store.HistoryQuery{{Types: []string{}}, {Limit: -1}, {After: "not-a-cursor"}} {
-		e = (client.Client{URL: s.url}).Call(ctx(s.T()), "session.history", client.Params{Session: ref, History: q}, nil)
+		e = workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), "session.history", workflowParams{Session: ref, History: q}, nil)
 		var public *transport.Error
 		s.Require().ErrorAs(e, &public)
 		s.Equal("invalid_argument", public.Code)
@@ -297,10 +300,10 @@ func (s *entrypointSuite) basic(kind string) {
 		s.NotContains(e.Type(), "chunk")
 	}
 	var filtered store.HistoryPage
-	s.call("session.history", client.Params{Session: ref, History: store.HistoryQuery{Types: []string{"agent.message"}, Limit: 1}}, &filtered)
+	s.call("session.history", workflowParams{Session: ref, History: store.HistoryQuery{Types: []string{"agent.message"}, Limit: 1}}, &filtered)
 	s.Require().Len(filtered.Events, 1)
 	s.Equal("agent.message", filtered.Events[0].Type())
-	s.call("session.archive", client.Params{Session: ref}, nil)
+	s.call("session.archive", workflowParams{Session: ref}, nil)
 	resumePath, _ := nativeScenario(s.T(), kind, "lifecycle-resume")
 	resumePath = replaceWorkspace(s.T(), resumePath, work)
 	bin := mock
@@ -308,8 +311,8 @@ func (s *entrypointSuite) basic(kind string) {
 		bin = claudeMock
 	}
 	spec := resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": resumePath}}
-	s.call("runtime.update", client.Params{Name: "agent", Spec: &spec}, nil)
-	s.call("runtime.stop", client.Params{Name: "agent"}, nil)
+	s.call("runtime.update", workflowParams{Name: "agent", Spec: &spec}, nil)
+	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	// Durable full history readback uses the file Store, with no driver construction.
 	st, e := file.Open(s.data, true)
 	s.Require().NoError(e)
@@ -317,9 +320,9 @@ func (s *entrypointSuite) basic(kind string) {
 	s.Require().NoError(e)
 	s.Equal(before, disk)
 	s.Require().NoError(st.Close())
-	s.call("runtime.start", client.Params{Name: "agent"}, nil)
+	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
 	var resumed resource.Session
-	s.call("session.resume", client.Params{Session: ref}, &resumed)
+	s.call("session.resume", workflowParams{Session: ref}, &resumed)
 	s.Equal(original.Metadata.UID, resumed.Metadata.UID)
 	s.Equal(original.Status.SessionID, resumed.Status.SessionID)
 	s.Equal(before, s.history(ref))
@@ -327,13 +330,13 @@ func (s *entrypointSuite) basic(kind string) {
 	after := s.history(ref)
 	s.Greater(len(after.Events), len(before.Events))
 	s.Equal(before.Events, after.Events[:len(before.Events)])
-	s.call("session.archive", client.Params{Session: ref}, nil)
-	s.call("runtime.stop", client.Params{Name: "agent"}, nil)
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	var byName resource.Session
-	s.call("session.get", client.Params{Session: resource.SessionRef{Namespace: "demo", Name: "session"}}, &byName)
+	s.call("session.get", workflowParams{Session: resource.SessionRef{Namespace: "demo", Name: "session"}}, &byName)
 	s.Equal(ref.SessionID, byName.Status.SessionID)
 	var sessions resource.SessionPage
-	s.call("session.list", client.Params{SessionQuery: resource.SessionQuery{Namespace: "demo", State: "archived", Limit: 1}}, &sessions)
+	s.call("session.list", workflowParams{SessionQuery: resource.SessionQuery{Namespace: "demo", State: "archived", Limit: 1}}, &sessions)
 	s.Len(sessions.Items, 1)
 	s.T().Log("PASS synthetic no-input identity, independent input, live chunks, persisted complete facts, filtering/pagination, unsubscribe isolation, archive/stop/same-ID resume and fresh input via product CLI/HTTP+SSE")
 }
@@ -342,15 +345,15 @@ func (s *entrypointSuite) TestClaudeBasicRecovery() { s.basic("claude") }
 func (s *entrypointSuite) question(kind string) {
 	ref, _, _ := s.open(kind, "question")
 	s.runWork(ref, "hello", true)
-	s.call("session.archive", client.Params{Session: ref}, nil)
-	s.call("runtime.stop", client.Params{Name: "agent"}, nil)
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 }
 func (s *entrypointSuite) TestCodexQuestion()  { s.question("codex") }
 func (s *entrypointSuite) TestClaudeQuestion() { s.question("claude") }
 func (s *entrypointSuite) cancel(kind string) {
 	ref, _, _ := s.open(kind, "cancel")
 	_, scan := s.observer(ref)
-	s.call("session.input", client.Params{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}}, nil)
+	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}}, nil)
 	for scan.Scan() {
 		var e events.SessionEvent
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
@@ -363,18 +366,18 @@ func (s *entrypointSuite) cancel(kind string) {
 	s.Require().NoError(e)
 	s.Require().NoError(o.Close())
 	var state resource.Session
-	s.call("session.get", client.Params{Session: ref}, &state)
+	s.call("session.get", workflowParams{Session: ref}, &state)
 	s.Equal(events.Running, state.Status.State)
 	var ack runtime.CancelReceipt
-	s.call("session.cancel", client.Params{Session: ref}, &ack)
+	s.call("session.cancel", workflowParams{Session: ref}, &ack)
 	s.Equal("controlAcknowledged", ack.Result)
 	s.NotEmpty(ack.Target)
 	s.Eventually(func() bool {
-		s.call("session.get", client.Params{Session: ref}, &state)
+		s.call("session.get", workflowParams{Session: ref}, &state)
 		return state.Status.State == events.Idle
 	}, 3*time.Second, 10*time.Millisecond)
-	s.call("session.archive", client.Params{Session: ref}, nil)
-	s.call("runtime.stop", client.Params{Name: "agent"}, nil)
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	s.T().Log("PASS synthetic disconnect during running work does not cancel; explicit cancellation acknowledged and later termination confirmed before closure")
 }
 func (s *entrypointSuite) TestCodexCancellation()  { s.cancel("codex") }
@@ -383,18 +386,18 @@ func (s *entrypointSuite) TestParametersAndDirectory() {
 	c := client.Client{URL: s.url}
 	var out any
 	for _, op := range []string{"unknown", "session.get", "runtime.get"} {
-		e := c.Call(ctx(s.T()), op, client.Params{}, &out)
+		e := workflowHTTP(c, ctx(s.T()), op, workflowParams{}, &out)
 		var public *transport.Error
 		s.Require().ErrorAs(e, &public)
 		s.Equal("invalid_argument", public.Code)
 	}
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "unused"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": filepath.Join(s.T().TempDir(), "absent")}}}
-	s.call("runtime.create", client.Params{Runtime: &r}, nil)
+	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	var rs []resource.Runtime
-	s.call("runtime.list", client.Params{}, &rs)
+	s.call("runtime.list", workflowParams{}, &rs)
 	s.Len(rs, 1)
-	s.call("runtime.delete", client.Params{Name: "unused"}, nil)
-	e := c.Call(ctx(s.T()), "runtime.get", client.Params{Name: "unused"}, nil)
+	s.call("runtime.delete", workflowParams{Name: "unused"}, nil)
+	e := workflowHTTP(c, ctx(s.T()), "runtime.get", workflowParams{Name: "unused"}, nil)
 	var public *transport.Error
 	s.Require().ErrorAs(e, &public)
 	s.Equal("not_found", public.Code)
@@ -422,33 +425,33 @@ func (s *entrypointSuite) TestParametersAndDirectory() {
 func (s *entrypointSuite) TestCodexQuestionBeforeACK() {
 	ref, _, _ := s.open("codex", "question-before-ack")
 	s.runWork(ref, "hello", true)
-	s.call("session.archive", client.Params{Session: ref}, nil)
-	s.call("runtime.stop", client.Params{Name: "agent"}, nil)
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	s.T().Log("PASS synthetic native request preceding turn ACK is bounded and retained with original handle")
 }
 
 func (s *entrypointSuite) TestFailedCreateCleanup() {
 	path, work := nativeScenario(s.T(), "claude", "missing-disconnect")
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}}
-	s.call("runtime.create", client.Params{Runtime: &r}, nil)
-	s.call("runtime.start", client.Params{Name: "agent"}, nil)
+	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
+	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
 	create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: "session"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}}
 	c := client.Client{URL: s.url}
-	e := c.Call(ctx(s.T()), "session.create", client.Params{Create: &create}, nil)
+	e := workflowHTTP(c, ctx(s.T()), "session.create", workflowParams{Create: &create}, nil)
 	s.Require().Error(e)
 	var public *transport.Error
 	s.Require().ErrorAs(e, &public)
 	s.NotContains(public.Message, work)
 	s.NotContains(public.Message, "EOF")
 	var page resource.SessionPage
-	s.call("session.list", client.Params{}, &page)
+	s.call("session.list", workflowParams{}, &page)
 	s.Empty(page.Items)
-	s.call("runtime.stop", client.Params{Name: "agent"}, nil)
-	s.call("runtime.delete", client.Params{Name: "agent"}, nil)
+	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
+	s.call("runtime.delete", workflowParams{Name: "agent"}, nil)
 	ref, _, _ := s.open("claude", "basic")
 	s.runWork(ref, "hello", false)
-	s.call("session.archive", client.Params{Session: ref}, nil)
-	s.call("runtime.stop", client.Params{Name: "agent"}, nil)
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	s.T().Log("PASS synthetic missing native identity fails without publishing a Session; original resources settle, same name can be recreated and used")
 }
 
@@ -461,57 +464,58 @@ func (s *entrypointSuite) TestDualAgentDirectory() {
 			bin = claudeMock
 		}
 		r := resource.Runtime{Metadata: resource.Metadata{Name: kind}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
-		s.call("runtime.create", client.Params{Runtime: &r}, nil)
-		s.call("runtime.start", client.Params{Name: kind}, nil)
+		s.call("runtime.create", workflowParams{Runtime: &r}, nil)
+		s.call("runtime.start", workflowParams{Name: kind}, nil)
 		create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: kind}, Spec: resource.SessionSpec{RuntimeRef: kind, SessionSpec: runtime.SessionSpec{Cwd: work}}}
 		var session resource.Session
-		s.call("session.create", client.Params{Create: &create}, &session)
+		s.call("session.create", workflowParams{Create: &create}, &session)
 		refs[kind] = resource.SessionRef{SessionID: session.Status.SessionID}
 	}
 	var first, second resource.SessionPage
-	s.call("session.list", client.Params{SessionQuery: resource.SessionQuery{Namespace: "demo", Limit: 1}}, &first)
+	s.call("session.list", workflowParams{SessionQuery: resource.SessionQuery{Namespace: "demo", Limit: 1}}, &first)
 	s.Require().Len(first.Items, 1)
 	s.Require().NotEmpty(first.Next)
-	s.call("session.list", client.Params{SessionQuery: resource.SessionQuery{Namespace: "demo", After: first.Next, Limit: 2}}, &second)
+	s.call("session.list", workflowParams{SessionQuery: resource.SessionQuery{Namespace: "demo", After: first.Next, Limit: 2}}, &second)
 	s.Require().Len(second.Items, 1)
 	s.Empty(second.Next)
 	s.NotEqual(first.Items[0].Status.SessionID, second.Items[0].Status.SessionID)
-	e := (client.Client{URL: s.url}).Call(ctx(s.T()), "session.list", client.Params{SessionQuery: resource.SessionQuery{Namespace: "other", After: first.Next, Limit: 1}}, nil)
+	e := workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), "session.list", workflowParams{SessionQuery: resource.SessionQuery{Namespace: "other", After: first.Next, Limit: 1}}, nil)
 	var public *transport.Error
 	s.Require().ErrorAs(e, &public)
 	s.Equal("invalid_argument", public.Code)
 	var rs []resource.Runtime
-	s.call("runtime.list", client.Params{}, &rs)
+	s.call("runtime.list", workflowParams{}, &rs)
 	s.Len(rs, 2)
 	for _, kind := range []string{"codex", "claude"} {
 		s.runWork(refs[kind], "hello", false)
-		s.call("session.archive", client.Params{Session: refs[kind]}, nil)
-		s.call("runtime.stop", client.Params{Name: kind}, nil)
+		s.call("session.archive", workflowParams{Session: refs[kind]}, nil)
+		s.call("runtime.stop", workflowParams{Name: kind}, nil)
 	}
 	s.T().Log("PASS synthetic two SDK peers on one daemon; cross-Runtime Session pages preserve both IDs, exclusive next and filter binding; each input/live/history path stays independent")
 }
 
 func (s *entrypointSuite) unsupportedMedia(kind string) {
 	ref, _, _ := s.open(kind, "basic")
-	body, err := json.Marshal(map[string]any{"session": ref, "input": map[string]any{"content": []any{map[string]any{"type": "image", "data": "YQ==", "mimeType": "image/png"}}}})
+	var input runtime.Input
+	err := json.Unmarshal([]byte(`{"content":[{"type":"image","data":"YQ==","mimeType":"image/png"}]}`), &input)
 	s.Require().NoError(err)
-	err = (client.Client{URL: s.url}).CallJSON(ctx(s.T()), "session.input", body, nil)
+	err = (client.Client{URL: s.url}).SendPrompt(ctx(s.T()), ref, input, nil)
 	var public *transport.Error
 	s.Require().ErrorAs(err, &public)
 	s.Equal("unsupported", public.Code)
 	// Unsupported content must fail before native submission, leaving the first text input usable.
 	s.runWork(ref, "hello", false)
 	var canceled runtime.CancelReceipt
-	s.call("session.cancel", client.Params{Session: ref}, &canceled)
+	s.call("session.cancel", workflowParams{Session: ref}, &canceled)
 	s.Equal("noActiveWork", canceled.Result)
 	s.Empty(canceled.Target)
-	s.call("session.archive", client.Params{Session: ref}, nil)
-	err = (client.Client{URL: s.url}).Call(ctx(s.T()), "session.get", client.Params{Session: ref}, nil)
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+	err = workflowHTTP(client.Client{URL: s.url}, ctx(s.T()), "session.get", workflowParams{Session: ref}, nil)
 	s.Require().NoError(err)
 	_, err = (client.Client{URL: s.url}).Observe(ctx(s.T()), ref)
 	s.Require().ErrorAs(err, &public)
 	s.Equal("unavailable", public.Code)
-	s.call("runtime.stop", client.Params{Name: "agent"}, nil)
+	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	s.T().Log("PASS valid unsupported media rejected before native input; text still works; idle cancellation has no target; archived observation explicitly unavailable")
 }
 func (s *entrypointSuite) TestCodexUnsupportedMedia()  { s.unsupportedMedia("codex") }
@@ -529,26 +533,49 @@ func (s *entrypointSuite) TestNamedSessionCommandWorkflow() {
 			}
 			name := "named-" + kind
 			r := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
-			s.call("runtime.create", client.Params{Runtime: &r}, nil)
-			s.call("runtime.start", client.Params{Name: name}, nil)
+			s.call("runtime.create", workflowParams{Runtime: &r}, nil)
+			s.call("runtime.start", workflowParams{Name: name}, nil)
 			create := resource.Session{Metadata: resource.Metadata{Namespace: "cli", Name: kind}, Spec: resource.SessionSpec{RuntimeRef: name, SessionSpec: runtime.SessionSpec{Cwd: work}}}
 			var created resource.Session
-			s.call("session.create", client.Params{Create: &create}, &created)
+			s.call("session.create", workflowParams{Create: &create}, &created)
 			s.NotEmpty(created.Status.SessionID)
 			ref := resource.SessionRef{Namespace: "cli", Name: kind}
 			s.Eventually(func() bool {
 				var current resource.Session
-				s.call("session.get", client.Params{Session: ref}, &current)
+				s.call("session.get", workflowParams{Session: ref}, &current)
 				return current.Status.State == events.Idle || (kind == "claude" && current.Status.State == events.Unknown)
 			}, 2*time.Second, 10*time.Millisecond)
 			var before store.HistoryPage
-			s.call("session.history", client.Params{Session: ref}, &before)
+			s.call("session.history", workflowParams{Session: ref}, &before)
 			for _, event := range before.Events {
 				s.NotEqual("user.message", event.Type())
 			}
 			s.runWork(ref, "hello", false)
-			s.call("session.archive", client.Params{Session: ref}, nil)
-			s.call("runtime.stop", client.Params{Name: name}, nil)
+			s.call("session.archive", workflowParams{Session: ref}, nil)
+			s.call("runtime.stop", workflowParams{Name: name}, nil)
 		})
 	}
+}
+
+func (s *entrypointSuite) TestOpaqueIDCommandRoundTrip() {
+	for i, id := range []string{"a/b", "a%2Fb", "a b?#", "空间/会话"} {
+		path, work := identityOnlyScenario(s.T(), id)
+		name := fmt.Sprintf("opaque-%d", i)
+		v := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}}
+		s.call("runtime.create", workflowParams{Runtime: &v}, nil)
+		s.call("runtime.start", workflowParams{Name: name}, nil)
+		create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: name}, Spec: resource.SessionSpec{RuntimeRef: name, SessionSpec: runtime.SessionSpec{Cwd: work}}}
+		var created resource.Session
+		s.call("session.create", workflowParams{Create: &create}, &created)
+		s.Equal(id, created.Status.SessionID)
+		ref := resource.SessionRef{SessionID: id}
+		var got resource.Session
+		s.call("session.get", workflowParams{Session: ref}, &got)
+		s.Equal(id, got.Status.SessionID)
+		var history store.HistoryPage
+		s.call("session.history", workflowParams{Session: ref}, &history)
+		s.call("session.archive", workflowParams{Session: ref}, nil)
+		s.call("runtime.stop", workflowParams{Name: name}, nil)
+	}
+	s.T().Log("PASS raw slash/percent/space/Unicode IDs through fixed SDK mock, daemon, generated client and CLI")
 }

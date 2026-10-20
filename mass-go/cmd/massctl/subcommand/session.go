@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -68,15 +67,16 @@ func (o *options) sessionCommands() *cobra.Command {
 			if (action == "list" || action == "history") && limit < 1 {
 				return invalid("Limit must be positive")
 			}
-			p := client.Params{}
+			ref := resource.SessionRef{}
+			var call func(context.Context, any) error
 			if len(args) > 0 {
 				if !utf8.ValidString(args[0]) || args[0] == "" || args[0] == "." || args[0] == ".." {
 					return invalid("Invalid Session target")
 				}
 				if cmd.Flags().Changed("namespace") {
-					p.Session = resource.SessionRef{Namespace: namespace, Name: args[0]}
+					ref = resource.SessionRef{Namespace: namespace, Name: args[0]}
 				} else {
-					p.Session = resource.SessionRef{SessionID: args[0]}
+					ref = resource.SessionRef{SessionID: args[0]}
 				}
 			}
 			switch action {
@@ -91,21 +91,36 @@ func (o *options) sessionCommands() *cobra.Command {
 					}
 					systemPrompt = string(b)
 				}
-				p.Create = &resource.Session{Metadata: resource.Metadata{Namespace: namespace, Name: args[0]}, Spec: resource.SessionSpec{RuntimeRef: runtimeRef, SessionSpec: runtime.SessionSpec{Cwd: cwd, SystemPrompt: systemPrompt, AdditionalDirs: dirs}}}
+				v := resource.Session{Metadata: resource.Metadata{Namespace: namespace, Name: args[0]}, Spec: resource.SessionSpec{RuntimeRef: runtimeRef, SessionSpec: runtime.SessionSpec{Cwd: cwd, SystemPrompt: systemPrompt, AdditionalDirs: dirs}}}
+				call = func(ctx context.Context, out any) error { return o.client.CreateSession(ctx, v, out) }
 			case "list":
-				p.SessionQuery = resource.SessionQuery{Limit: limit, After: after}
+				call = func(ctx context.Context, out any) error {
+					return o.client.ListSessions(ctx, resource.SessionQuery{Limit: limit, After: after}, out)
+				}
 			case "history":
-				p.History = store.HistoryQuery{Limit: limit, After: after}
+				call = func(ctx context.Context, out any) error {
+					return o.client.History(ctx, ref, store.HistoryQuery{Limit: limit, After: after}, out)
+				}
 			case "prompt":
-				p.Input = runtime.Input{Content: []events.ContentBlock{events.Text(text)}}
+				call = func(ctx context.Context, out any) error {
+					return o.client.SendPrompt(ctx, ref, runtime.Input{Content: []events.ContentBlock{events.Text(text)}}, out)
+				}
+			case "get":
+				call = func(ctx context.Context, out any) error { return o.client.GetSession(ctx, ref, out) }
+			case "archive":
+				call = func(ctx context.Context, out any) error { return o.client.ArchiveSession(ctx, ref, out) }
+			case "resume":
+				call = func(ctx context.Context, out any) error { return o.client.ResumeSession(ctx, ref, out) }
+			case "cancel":
+				call = func(ctx context.Context, out any) error { return o.client.Cancel(ctx, ref, out) }
 			case "watch":
-				return o.watch(cmd, p.Session)
+				return o.watch(cmd, ref)
 			}
 			op := action
 			if op == "prompt" {
 				op = "input"
 			}
-			return o.result(cmd, "session."+op, p)
+			return o.result(cmd, "session."+op, "", call)
 		}
 		root.AddCommand(cmd)
 	}

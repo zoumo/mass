@@ -2,11 +2,13 @@ package events_test
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/require"
-	"github.com/zoumo/mass/mass-go/pkg/events"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/zoumo/mass/mass-go/pkg/events"
 )
 
 func TestHarnessEventExamplesRoundTrip(t *testing.T) {

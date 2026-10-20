@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
@@ -25,17 +26,20 @@ type workAPI struct {
 func (a *workAPI) ResolveSession(ns, target string) (resource.SessionRef, error) {
 	return resource.SessionRef{SessionID: "a%2Fb"}, nil
 }
+
 func (a *workAPI) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input) (runtime.InputReceipt, error) {
 	a.refs <- ref
 	raw, err := json.Marshal(input.Content)
 	no := false
 	return runtime.InputReceipt{Submission: string(raw), Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: &no}}, err
 }
+
 func (a *workAPI) AnswerInteraction(ctx context.Context, ref resource.SessionRef, interaction string, answer any) (runtime.InteractionReceipt, error) {
 	a.refs <- ref
 	a.answers <- answer
 	return runtime.InteractionReceipt{Interaction: interaction}, nil
 }
+
 func (a *workAPI) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.CancelReceipt, error) {
 	a.refs <- ref
 	return runtime.CancelReceipt{Target: "original-work", Result: "controlAcknowledged"}, nil
@@ -56,8 +60,9 @@ func (s *WorkHTTPSuite) SetupTest() {
 	s.T().Cleanup(server.Close)
 	s.url = server.URL
 }
+
 func (s *WorkHTTPSuite) call(path, body string) (int, string) {
-	req, err := http.NewRequest("POST", s.url+path, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(s.T().Context(), http.MethodPost, s.url+path, strings.NewReader(body))
 	s.Require().NoError(err)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer test-token")
@@ -69,6 +74,7 @@ func (s *WorkHTTPSuite) call(path, body string) (int, string) {
 	s.Equal("no-store", response.Header.Get("Cache-Control"))
 	return response.StatusCode, string(raw)
 }
+
 func (s *WorkHTTPSuite) TestWorkOperationsHaveTypedSchemasOnBothURLs() {
 	raw, err := transport.OpenAPI()
 	s.Require().NoError(err)
@@ -98,6 +104,7 @@ func (s *WorkHTTPSuite) TestOpenAnswersPreserveNullScalarArrayObjectAndLargeNumb
 		s.Equal(400, status, body)
 	}
 }
+
 func (s *WorkHTTPSuite) TestContentSchemaDescribesPublicUnion() {
 	raw, err := transport.OpenAPI()
 	s.Require().NoError(err)
@@ -145,6 +152,7 @@ func (s *WorkHTTPSuite) TestAllContentBranchesRoundTripOnBothURLs() {
 		}
 	}
 }
+
 func (s *WorkHTTPSuite) TestWorkRequestsRejectMalformedStructuresWithoutDispatch() {
 	for _, base := range []string{"/apis/v1/sessions/a%252Fb", "/apis/v1/namespaces/one/sessions/demo"} {
 		for _, body := range []string{`null`, `{}`, `{"content":null}`, `{"content":[]}`, `{"content":[{"type":"image","data":"aGk=","mimeType":"image/png","text":"extra"}]}`, `{"content":[{"type":"resource","resource":{"uri":"x","text":"a","blob":""}}]}`, `{"content":[{"type":"text","text":"a","text":"b"}]}`, `{"content":[],"sessionId":"other"}`} {
@@ -174,7 +182,7 @@ func (s *WorkHTTPSuite) TestAuthenticationAndIdempotencyRejectBeforeDispatch() {
 	for _, base := range []string{"/apis/v1/sessions/a%252Fb", "/apis/v1/namespaces/one/sessions/demo"} {
 		for _, suffix := range []string{"/inputs", "/cancel", "/interactions/YS9i/answer"} {
 			for _, authenticated := range []bool{false, true} {
-				req, err := http.NewRequest("POST", s.url+base+suffix, strings.NewReader(`{}`))
+				req, err := http.NewRequestWithContext(s.T().Context(), http.MethodPost, s.url+base+suffix, strings.NewReader(`{}`))
 				s.Require().NoError(err)
 				req.Header.Set("Content-Type", "application/json")
 				expected := 401
@@ -195,6 +203,7 @@ func (s *WorkHTTPSuite) TestAuthenticationAndIdempotencyRejectBeforeDispatch() {
 	s.Empty(s.api.refs)
 	s.Empty(s.api.answers)
 }
+
 func (s *WorkHTTPSuite) TestCancelAndDotInteractionAreControlReceipts() {
 	for _, base := range []string{"/apis/v1/sessions/a%252Fb", "/apis/v1/namespaces/one/sessions/demo"} {
 		for _, body := range []string{"", `{}`, `{ }`} {

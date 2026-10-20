@@ -2,13 +2,14 @@ package service
 
 import (
 	"context"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 // Admission pins the resolved identity and original run until dispatch settles.
 // Caller cancellation ends only the wait; the owner retains the admission gate.
-func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef, cancelling bool, dispatch func(context.Context, *runBinding, string) (T, error)) (T, error) {
+func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef, canceling bool, dispatch func(context.Context, *runBinding, string) (T, error)) (T, error) {
 	var zero T
 	if err := ctx.Err(); err != nil {
 		return zero, err
@@ -17,7 +18,7 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	if err != nil {
 		return zero, err
 	}
-	run, l, err := s.controlWork(r, cancelling)
+	run, l, err := s.controlWork(r, canceling)
 	if err != nil {
 		return zero, err
 	}

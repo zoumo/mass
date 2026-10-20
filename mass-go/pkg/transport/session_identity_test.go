@@ -2,15 +2,17 @@ package transport_test
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/suite"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/service"
-	"github.com/zoumo/mass/mass-go/pkg/store/file"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/service"
+	"github.com/zoumo/mass/mass-go/pkg/store/file"
+	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 type SessionHTTPSuite struct {
@@ -24,11 +26,12 @@ func (s *SessionHTTPSuite) call(method, path, body string) (int, http.Header, st
 	helper.SetT(s.T())
 	return helper.call(method, path, body)
 }
+
 func (s *SessionHTTPSuite) SetupTest() {
 	st, err := file.Open(s.T().TempDir(), false)
 	s.Require().NoError(err)
 	s.st = st
-	s.T().Cleanup(func() { s.NoError(st.Close()) })
+	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	handler, err := transport.New(service.New(st, st, nil), transport.Options{Token: "test-token"})
 	s.Require().NoError(err)
 	s.T().Cleanup(handler.Shutdown)
@@ -36,10 +39,12 @@ func (s *SessionHTTPSuite) SetupTest() {
 	s.T().Cleanup(server.Close)
 	s.url = server.URL
 }
+
 func (s *SessionHTTPSuite) seed(ns, name, id string) {
 	_, err := s.st.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: ns, Name: name}, Spec: resource.SessionSpec{RuntimeRef: "agent"}, Status: resource.SessionStatus{SessionID: id, State: "offline"}})
 	s.Require().NoError(err)
 }
+
 func (s *SessionHTTPSuite) TestRawIDAndNameOrIDAddressSamePersistentSession() {
 	ids := []string{"a/b", "a%2Fb", "a b?#", "空间/会话", "a..b"}
 	for i, id := range ids {

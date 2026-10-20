@@ -4,21 +4,23 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"os"
-	"strings"
-	"time"
 )
 
 func (s *SessionWorkSuite) fact(id string, p events.Payload) events.SessionEvent {
@@ -26,6 +28,7 @@ func (s *SessionWorkSuite) fact(id string, p events.Payload) events.SessionEvent
 	s.Require().NoError(err)
 	return e
 }
+
 func (s *SessionWorkSuite) TestHistoryHTTPFilteringAndIndependentCursors() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -49,7 +52,7 @@ func (s *SessionWorkSuite) TestHistoryHTTPFilteringAndIndependentCursors() {
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	get := func(path string, status int) store.HistoryPage {
-		req, err := http.NewRequestWithContext(ctx, "GET", server.URL+path, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+path, http.NoBody)
 		s.Require().NoError(err)
 		req.Header.Set("Authorization", "Bearer test-token")
 		res, err := server.Client().Do(req)
@@ -91,6 +94,7 @@ func (s *SessionWorkSuite) TestHistoryHTTPFilteringAndIndependentCursors() {
 	s.Require().NoError(err)
 	s.Equal("stopped", r.Status.State)
 }
+
 func (s *SessionWorkSuite) TestBoundedIndependentObservationDoesNotCancelWork() {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
 	defer cancel()
@@ -100,8 +104,8 @@ func (s *SessionWorkSuite) TestBoundedIndependentObservationDoesNotCancelWork() 
 	healthy, err := s.svc.SubscribeEvents(s.ref)
 	s.Require().NoError(err)
 	defer healthy.Close()
-	for i := 0; i < 140; i++ {
-		e := s.fact(fmt.Sprint(i), events.AgentMessage{MessageID: fmt.Sprint(i), Content: []events.ContentBlock{events.Text("committed")}})
+	for i := range 140 {
+		e := s.fact(strconv.Itoa(i), events.AgentMessage{MessageID: strconv.Itoa(i), Content: []events.ContentBlock{events.Text("committed")}})
 		s.Require().NoError(s.driver.pipe.Send(ctx, e))
 		got, err := healthy.Next(ctx)
 		s.Require().NoError(err)
@@ -112,13 +116,13 @@ func (s *SessionWorkSuite) TestBoundedIndependentObservationDoesNotCancelWork() 
 	s.Require().ErrorAs(err, &public)
 	s.Equal("resource_exhausted", public.Code)
 	s.Equal("slow_subscriber", public.Reason)
-	s.NoError(slow.Close())
+	s.Require().NoError(slow.Close())
 	_, err = slow.Next(ctx)
 	s.Require().ErrorAs(err, &public)
-	s.NoError(healthy.Close())
-	s.NoError(healthy.Close())
+	s.Require().NoError(healthy.Close())
+	s.Require().NoError(healthy.Close())
 	_, err = healthy.Next(ctx)
-	s.ErrorIs(err, io.EOF)
+	s.Require().ErrorIs(err, io.EOF)
 	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{Limit: 200})
 	s.Require().NoError(err)
 	s.Len(page.Events, 140)
@@ -126,6 +130,7 @@ func (s *SessionWorkSuite) TestBoundedIndependentObservationDoesNotCancelWork() 
 	s.Require().NoError(err)
 	s.NotContains([]events.SessionState{"closing", "archived"}, session.Status.State)
 }
+
 func (s *SessionWorkSuite) TestSSEEstablishmentErrorsRemainJSON() {
 	handler, err := transport.New(s.svc, transport.Options{Token: "test-token"})
 	s.Require().NoError(err)
@@ -134,7 +139,7 @@ func (s *SessionWorkSuite) TestSSEEstablishmentErrorsRemainJSON() {
 	defer server.Close()
 	for _, base := range []string{"/apis/v1/sessions/original", "/apis/v1/namespaces/one/sessions/demo"} {
 		for _, suffix := range []string{"?after=x", "?lastEventId=x", "?retry=1", "?types=agent.message"} {
-			req, err := http.NewRequest("GET", server.URL+base+"/events/stream"+suffix, nil)
+			req, err := http.NewRequestWithContext(s.T().Context(), http.MethodGet, server.URL+base+"/events/stream"+suffix, http.NoBody)
 			s.Require().NoError(err)
 			req.Header.Set("Authorization", "Bearer test-token")
 			res, err := server.Client().Do(req)
@@ -147,7 +152,7 @@ func (s *SessionWorkSuite) TestSSEEstablishmentErrorsRemainJSON() {
 		}
 	}
 	for _, headers := range []http.Header{{"Last-Event-Id": []string{"resume"}, "Authorization": []string{"Bearer test-token"}}, {"Authorization": []string{"Bearer wrong"}}} {
-		req, _ := http.NewRequest("GET", server.URL+"/apis/v1/sessions/original/events/stream", nil)
+		req, _ := http.NewRequestWithContext(s.T().Context(), http.MethodGet, server.URL+"/apis/v1/sessions/original/events/stream", http.NoBody)
 		req.Header = headers
 		res, err := server.Client().Do(req)
 		s.Require().NoError(err)
@@ -157,7 +162,7 @@ func (s *SessionWorkSuite) TestSSEEstablishmentErrorsRemainJSON() {
 	}
 	_, err = s.svc.StopRuntime(context.Background(), "agent")
 	s.Require().NoError(err)
-	req, _ := http.NewRequest("GET", server.URL+"/apis/v1/sessions/original/events/stream", nil)
+	req, _ := http.NewRequestWithContext(s.T().Context(), http.MethodGet, server.URL+"/apis/v1/sessions/original/events/stream", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	res, err := server.Client().Do(req)
 	s.Require().NoError(err)
@@ -180,6 +185,7 @@ func readFrame(reader *bufio.Reader) (string, error) {
 		}
 	}
 }
+
 func (s *SessionWorkSuite) TestSSEReadyLiveOnlyArchiveAndServerShutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -189,13 +195,13 @@ func (s *SessionWorkSuite) TestSSEReadyLiveOnlyArchiveAndServerShutdown() {
 	s.Require().NoError(s.driver.pipe.Send(ctx, e))
 	_, err = prior.Next(ctx)
 	s.Require().NoError(err)
-	s.NoError(prior.Close())
+	s.Require().NoError(prior.Close())
 	handler, err := transport.New(s.svc, transport.Options{Token: "test-token"})
 	s.Require().NoError(err)
 	defer handler.Shutdown()
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/apis/v1/namespaces/one/sessions/demo/events/stream", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/apis/v1/namespaces/one/sessions/demo/events/stream", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	res, err := server.Client().Do(req)
 	s.Require().NoError(err)
@@ -227,7 +233,7 @@ func (s *SessionWorkSuite) TestSSEReadyLiveOnlyArchiveAndServerShutdown() {
 	s.Contains(frame, "event: subscription.error")
 	s.Contains(frame, "server_shutdown")
 	_, err = reader.ReadByte()
-	s.ErrorIs(err, io.EOF)
+	s.Require().ErrorIs(err, io.EOF)
 	session, err := s.svc.GetSession(resource.SessionRef{SessionID: "original"})
 	s.Require().NoError(err)
 	s.Equal(events.SessionState("archived"), session.Status.State)
@@ -247,6 +253,7 @@ func (a captureObservation) SubscribeEvents(ref resource.SessionRef) (*service.S
 	}
 	return sub, err
 }
+
 func (s *SessionWorkSuite) TestSSEExplicitObserverCloseSendsClosed() {
 	captured := captureObservation{s.svc, make(chan *service.Subscription, 1)}
 	handler, err := transport.New(captured, transport.Options{Token: "test-token"})
@@ -256,7 +263,7 @@ func (s *SessionWorkSuite) TestSSEExplicitObserverCloseSendsClosed() {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/apis/v1/sessions/original/events/stream", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/apis/v1/sessions/original/events/stream", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	res, err := server.Client().Do(req)
 	s.Require().NoError(err)
@@ -267,7 +274,7 @@ func (s *SessionWorkSuite) TestSSEExplicitObserverCloseSendsClosed() {
 	s.Contains(ready, "subscription.ready")
 	select {
 	case sub := <-captured.subscriptions:
-		s.NoError(sub.Close())
+		s.Require().NoError(sub.Close())
 	case <-ctx.Done():
 		s.FailNow("subscription handle missing")
 	}
@@ -275,7 +282,7 @@ func (s *SessionWorkSuite) TestSSEExplicitObserverCloseSendsClosed() {
 	s.Require().NoError(err)
 	s.Equal("event: subscription.closed\ndata: {}\n\n", frame)
 	_, err = reader.ReadByte()
-	s.ErrorIs(err, io.EOF)
+	s.Require().ErrorIs(err, io.EOF)
 	session, err := s.svc.GetSession(s.ref)
 	s.Require().NoError(err)
 	s.NotContains([]events.SessionState{"archived", "closing"}, session.Status.State)
@@ -296,7 +303,7 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/apis/v1/sessions/original/events/stream", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/apis/v1/sessions/original/events/stream", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	res, err := server.Client().Do(req)
 	s.Require().NoError(err)
@@ -335,6 +342,6 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 func (s *SessionWorkSuite) TestHistoryServiceRejectsUnknownTypes() {
 	for _, types := range [][]string{{"unknown"}, {""}, {}} {
 		_, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{Types: types})
-		s.Error(err)
+		s.Require().Error(err)
 	}
 }

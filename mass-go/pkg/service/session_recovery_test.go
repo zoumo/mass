@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -35,6 +36,7 @@ func (d *recoveryDriver) Events() (events.Stream, error) { return d.pipe, nil }
 func (d *recoveryDriver) Start(context.Context) (runtime.Capabilities, error) {
 	return runtime.Capabilities{}, nil
 }
+
 func (d *recoveryDriver) OpenSession(_ context.Context, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.source = events.NewSource()
 	if a.SessionName == "slow" {
@@ -42,6 +44,7 @@ func (d *recoveryDriver) OpenSession(_ context.Context, a runtime.Address, _ run
 	}
 	return runtime.DriverSession{SessionID: a.SessionName, Source: d.source}, nil
 }
+
 func (d *recoveryDriver) ResumeSession(_ context.Context, id string, _ runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	if d.onResume != nil {
 		if err := d.onResume(); err != nil {
@@ -57,6 +60,7 @@ func (d *recoveryDriver) ResumeSession(_ context.Context, id string, _ runtime.A
 	}
 	return runtime.DriverSession{SessionID: id, Source: source}, nil
 }
+
 func (d *recoveryDriver) CloseSession(ctx context.Context, id string) error {
 	if d.closeErr != nil {
 		return d.closeErr
@@ -118,7 +122,7 @@ type RecoverySuite struct {
 func (s *RecoverySuite) SetupTest() {
 	st, err := file.Open(s.T().TempDir(), false)
 	s.Require().NoError(err)
-	s.T().Cleanup(func() { s.NoError(st.Close()) })
+	s.T().Cleanup(func() { s.Require().NoError(st.Close()) })
 	s.d = &recoveryDriver{pipe: events.NewEventPipe(32), closeEntered: make(chan context.Context, 16), closeRelease: make(chan struct{})}
 	var once sync.Once
 	s.release = func() { once.Do(func() { close(s.d.closeRelease) }) }
@@ -134,7 +138,7 @@ func (s *RecoverySuite) SetupTest() {
 		}
 		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.NoError(s.svc.Shutdown(c))
+		s.Require().NoError(s.svc.Shutdown(c))
 	})
 	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}}})
 	s.Require().NoError(err)
@@ -145,6 +149,7 @@ func (s *RecoverySuite) SetupTest() {
 		s.Require().NoError(err)
 	}
 }
+
 func (s *RecoverySuite) TestSlowArchiveDoesNotBlockAnotherSessionsLifecycle() {
 	done := make(chan error, 1)
 	go func() {
@@ -166,7 +171,7 @@ func (s *RecoverySuite) TestSlowArchiveDoesNotBlockAnotherSessionsLifecycle() {
 	}()
 	select {
 	case err := <-fast:
-		s.NoError(err)
+		s.Require().NoError(err)
 	case <-time.After(time.Second):
 		s.Fail("unrelated Session lifecycle blocked")
 	}
@@ -174,7 +179,7 @@ func (s *RecoverySuite) TestSlowArchiveDoesNotBlockAnotherSessionsLifecycle() {
 	s.Require().NoError(err)
 	s.Equal(events.SessionState("closing"), r.Status.State)
 	s.release()
-	s.NoError(<-done)
+	s.Require().NoError(<-done)
 }
 func TestRecoverySuite(t *testing.T) { suite.Run(t, new(RecoverySuite)) }
 
@@ -198,7 +203,7 @@ func (s *RecoverySuite) TestArchiveCallerCancellationOnlyEndsWait() {
 	case <-time.After(time.Second):
 		s.FailNow("caller wait did not end")
 	}
-	s.NoError(owner.Err(), "original release must outlive HTTP/caller cancellation")
+	s.Require().NoError(owner.Err(), "original release must outlive HTTP/caller cancellation")
 	r, err := s.svc.GetSession(resource.SessionRef{SessionID: "slow"})
 	s.Require().NoError(err)
 	s.Equal(events.SessionState("closing"), r.Status.State)
@@ -233,7 +238,7 @@ func (s *RecoverySuite) TestResumePublishesOpeningAndRestoresReleasedFailure() {
 	s.Require().NoError(err)
 	s.Equal(events.SessionState("opening"), r.Status.State)
 	unblock()
-	s.Error(<-done)
+	s.Require().Error(<-done)
 	r, err = s.svc.GetSession(ref)
 	s.Require().NoError(err)
 	s.Equal(original.Status, r.Status)
@@ -250,7 +255,7 @@ func (s *RecoverySuite) TestUnknownCloseRetainsOwnershipAndPreventsRestore() {
 	s.Equal(events.SessionState("closing"), r.Status.State)
 	s.NotZero(r.Status.AppliedGeneration)
 	_, err = s.svc.ResumeSession(context.Background(), ref)
-	s.ErrorIs(err, runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
 	s.d.closeErr = nil
 	r, err = s.svc.ArchiveSession(context.Background(), ref)
 	s.Require().NoError(err)
@@ -284,7 +289,7 @@ func (s *RecoverySuite) TestLateArchivedEventDoesNotPoisonRuntime() {
 	s.Require().NoError(err)
 	s.Equal(events.SessionState("archived"), r.Status.State)
 	_, err = s.svc.ResumeSession(context.Background(), fast)
-	s.NoError(err)
+	s.Require().NoError(err)
 }
 
 func (s *RecoverySuite) TestResumePublicationFailureSettlesWithoutReplacingIdentity() {
@@ -295,7 +300,7 @@ func (s *RecoverySuite) TestResumePublicationFailureSettlesWithoutReplacingIdent
 	_, err = s.svc.ResumeSession(context.Background(), ref)
 	s.Require().Error(err)
 	_, err = s.svc.ResumeSession(context.Background(), ref)
-	s.ErrorIs(err, runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
 	s.Require().NoError(s.svc.ReconcileOpening(context.Background(), "agent", runtime.Address{Namespace: "one", SessionName: "fast"}))
 	saved, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
@@ -303,7 +308,7 @@ func (s *RecoverySuite) TestResumePublicationFailureSettlesWithoutReplacingIdent
 	s.Equal(original.Spec, saved.Spec)
 	s.Equal(original.Metadata.UID, saved.Metadata.UID)
 	_, err = s.svc.ResumeSession(context.Background(), ref)
-	s.NoError(err)
+	s.Require().NoError(err)
 }
 
 func (s *RecoverySuite) TestSameSessionArchiveAndResumeHaveOneController() {
@@ -324,10 +329,10 @@ func (s *RecoverySuite) TestSameSessionArchiveAndResumeHaveOneController() {
 	case <-time.After(50 * time.Millisecond):
 	}
 	s.release()
-	s.NoError(<-archived)
-	s.NoError(<-restored)
+	s.Require().NoError(<-archived)
+	s.Require().NoError(<-restored)
 	_, err := s.svc.ResumeSession(context.Background(), ref)
-	s.ErrorIs(err, runtime.ErrFailedPrecondition)
+	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
 	r, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
 	s.Equal("slow", r.Status.SessionID)
@@ -425,7 +430,7 @@ func (s *RecoverySuite) TestRestoreBacklogDoesNotBlockAnotherSession() {
 	close(s.history.release)
 	select {
 	case err := <-resumed:
-		s.NoError(err)
+		s.Require().NoError(err)
 	case <-time.After(time.Second):
 		s.FailNow("restore did not finish after backlog release")
 	}
@@ -483,12 +488,15 @@ func (s *RecoverySuite) assertFailedRestoreKeepsOldFact(mode string) {
 	s.Require().NoError(err)
 	s.Equal(original.Status, saved.Status)
 }
+
 func (s *RecoverySuite) TestResourceFreeRestoreFailureKeepsOldFact() {
 	s.assertFailedRestoreKeepsOldFact("released")
 }
+
 func (s *RecoverySuite) TestReplacementRestoreFailureKeepsOldFact() {
 	s.assertFailedRestoreKeepsOldFact("replacement")
 }
+
 func (s *RecoverySuite) TestReplacementCleanupSettlementKeepsOldFact() {
 	s.assertFailedRestoreKeepsOldFact("cleanup")
 }

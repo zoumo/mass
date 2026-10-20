@@ -22,12 +22,14 @@ func (s *Service) CreateRuntime(r resource.Runtime) (resource.Runtime, error) {
 	r.Status = resource.RuntimeStatus{State: "stopped"}
 	return s.meta.CreateRuntime(r)
 }
+
 func (s *Service) GetRuntime(name string) (resource.Runtime, error) {
 	if !validName(name) {
 		return resource.Runtime{}, runtime.InvalidArgument("invalid runtime name")
 	}
 	return s.meta.GetRuntime(name)
 }
+
 func (s *Service) UpdateRuntime(name string, spec resource.RuntimeSpec) (resource.Runtime, error) {
 	if !validName(name) {
 		return resource.Runtime{}, runtime.InvalidArgument("invalid runtime name")

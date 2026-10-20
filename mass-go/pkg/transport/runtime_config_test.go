@@ -2,16 +2,18 @@ package transport_test
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/suite"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
-	"github.com/zoumo/mass/mass-go/pkg/service"
-	"github.com/zoumo/mass/mass-go/pkg/store/file"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/suite"
+
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/service"
+	"github.com/zoumo/mass/mass-go/pkg/store/file"
+	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 type RuntimeHTTPSuite struct {
@@ -24,6 +26,7 @@ func (httpConfigFactory) Validate(runtime.Config) error { return nil }
 func (httpConfigFactory) New(string, runtime.Config) (runtime.Driver, error) {
 	panic("HTTP config access must not construct a Driver")
 }
+
 func (s *RuntimeHTTPSuite) SetupTest() {
 	st, err := file.Open(s.T().TempDir(), false)
 	s.Require().NoError(err)
@@ -36,8 +39,9 @@ func (s *RuntimeHTTPSuite) SetupTest() {
 	s.T().Cleanup(server.Close)
 	s.url = server.URL
 }
+
 func (s *RuntimeHTTPSuite) call(method, path, body string) (int, http.Header, string) {
-	req, err := http.NewRequest(method, s.url+path, strings.NewReader(body))
+	req, err := http.NewRequestWithContext(s.T().Context(), method, s.url+path, strings.NewReader(body))
 	s.Require().NoError(err)
 	req.Header.Set("Authorization", "Bearer test-token")
 	if body != "" {
@@ -50,6 +54,7 @@ func (s *RuntimeHTTPSuite) call(method, path, body string) (int, http.Header, st
 	s.Require().NoError(err)
 	return res.StatusCode, res.Header, string(b)
 }
+
 func (s *RuntimeHTTPSuite) TestRuntimeConfigurationRoundTrip() {
 	status, headers, body := s.call("POST", "/apis/v1/runtimes", `{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{"old":true,"large":9007199254740993}}}`)
 	s.Require().Equal(201, status, body)
@@ -70,6 +75,7 @@ func (s *RuntimeHTTPSuite) TestRuntimeConfigurationRoundTrip() {
 	status, _, body = s.call("GET", "/v1/runtimes", "")
 	s.Equal(404, status, body)
 }
+
 func (s *RuntimeHTTPSuite) TestLargeConfigurationPreservesJSONNumbers() {
 	body := `{"metadata":{"name":"large"},"spec":{"type":"fixture","config":{"integer":9007199254740993,"fraction":0.12345678901234567890123456789,"nested":[null,true,{"value":18446744073709551616}],"payload":"` + strings.Repeat("x", (1<<20)+1) + `"}}}`
 	status, headers, response := s.call("POST", "/apis/v1/runtimes", body)
@@ -83,6 +89,7 @@ func (s *RuntimeHTTPSuite) TestLargeConfigurationPreservesJSONNumbers() {
 	s.Contains(response, "9007199254740993")
 	s.Contains(response, "0.12345678901234567890123456789")
 }
+
 func (s *RuntimeHTTPSuite) TestStrictConfigurationBoundary() {
 	for _, body := range []string{
 		`null`, `{}`, `{"metadata":{"name":"agent","uid":""},"spec":{"type":"fixture","config":{}}}`,
@@ -100,6 +107,7 @@ func (s *RuntimeHTTPSuite) TestStrictConfigurationBoundary() {
 	s.Equal(200, status)
 	s.JSONEq("[]", response)
 }
+
 func (s *RuntimeHTTPSuite) TestOpenAPIDeclaresRuntimeContract() {
 	raw, err := transport.OpenAPI()
 	s.Require().NoError(err)
@@ -121,6 +129,7 @@ func (s *RuntimeHTTPSuite) TestOpenAPIDeclaresRuntimeContract() {
 	s.ElementsMatch([]any{"code", "reason", "message"}, errors["required"])
 	s.NotContains(string(raw), "application/problem+json")
 }
+
 func (s *RuntimeHTTPSuite) TestConfigurationQueriesFailExplicitly() {
 	for _, path := range []string{"/apis/v1/runtimes?state=imaginary", "/apis/v1/runtimes?type=fixture&type=fixture", "/apis/v1/runtimes?limit=10", "/apis/v1/runtimes?type=", "/apis/v1/runtimes?type=%FF"} {
 		status, headers, body := s.call("GET", path, "")

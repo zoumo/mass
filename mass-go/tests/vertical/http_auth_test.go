@@ -104,7 +104,7 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 	response.Body.Close()
 	var rows []resource.Runtime
 	c := client.Client{URL: ready.URL, Token: "synthetic-http-token", HTTP: httpClient}
-	require.NoError(t, c.Call(ctx, "runtime.list", client.Params{}, &rows))
+	require.NoError(t, c.ListRuntimes(ctx, resource.RuntimeQuery{}, &rows))
 	require.NotNil(t, rows)
 	require.Empty(t, rows)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, ready.URL+"/apis/v1/runtimes", http.NoBody)

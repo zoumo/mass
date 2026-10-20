@@ -2,9 +2,11 @@ package transport
 
 import (
 	"context"
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"net/url"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/zoumo/mass/mass-go/pkg/resource"
 )
 
 type runtimePath struct {
@@ -14,21 +16,29 @@ type runtimeList struct {
 	Type  string `query:"type"`
 	State string `query:"state" enum:"stopped,starting,running,stopping,unknown"`
 }
-type runtimeCreateInput struct{ Body runtimeCreate }
-type runtimeUpdateInput struct {
-	Name string `path:"runtime"`
-	Body resource.RuntimeSpec
-}
-type runtimeOutput struct{ Body resource.Runtime }
-type runtimeCreated struct {
-	Location string `header:"Location"`
-	Body     resource.Runtime
-}
-type runtimeListOutput struct{ Body []resource.Runtime }
-type runtimeAction struct {
-	Name string `path:"runtime"`
-	Body *struct{}
-}
+type (
+	runtimeCreateInput struct{ Body runtimeCreate }
+	runtimeUpdateInput struct {
+		Name string `path:"runtime"`
+		Body resource.RuntimeSpec
+	}
+)
+
+type (
+	runtimeOutput  struct{ Body resource.Runtime }
+	runtimeCreated struct {
+		Location string `header:"Location"`
+		Body     resource.Runtime
+	}
+)
+
+type (
+	runtimeListOutput struct{ Body []resource.Runtime }
+	runtimeAction     struct {
+		Name string `path:"runtime"`
+		Body *struct{}
+	}
+)
 type emptyOutput struct{}
 
 func (s *Server) registerRuntimes(api huma.API) {

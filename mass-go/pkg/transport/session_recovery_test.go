@@ -3,6 +3,7 @@ package transport_test
 import (
 	"context"
 	"encoding/json"
+
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
@@ -11,10 +12,12 @@ func (a *workAPI) ArchiveSession(_ context.Context, ref resource.SessionRef) (re
 	a.refs <- ref
 	return resource.Session{Status: resource.SessionStatus{SessionID: ref.SessionID, State: "archived"}}, nil
 }
+
 func (a *workAPI) ResumeSession(_ context.Context, ref resource.SessionRef) (resource.Session, error) {
 	a.refs <- ref
 	return resource.Session{Status: resource.SessionStatus{SessionID: ref.SessionID, State: "unknown"}}, nil
 }
+
 func (s *WorkHTTPSuite) TestRecoveryOperationsHaveTypedSchemasOnBothURLs() {
 	raw, err := transport.OpenAPI()
 	s.Require().NoError(err)
@@ -28,6 +31,7 @@ func (s *WorkHTTPSuite) TestRecoveryOperationsHaveTypedSchemasOnBothURLs() {
 		}
 	}
 }
+
 func (s *WorkHTTPSuite) TestRecoveryURLsResolveOneOpaqueIdentityAndStrictEmptyBodies() {
 	for _, base := range []string{"/apis/v1/sessions/a%252Fb", "/apis/v1/namespaces/one/sessions/demo"} {
 		for _, action := range []string{"archive", "resume"} {

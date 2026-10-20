@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -27,9 +28,11 @@ func (d *invalidRestoreDriver) Events() (events.Stream, error) { return d.pipe, 
 func (d *invalidRestoreDriver) Start(context.Context) (runtime.Capabilities, error) {
 	return runtime.Capabilities{}, nil
 }
+
 func (d *invalidRestoreDriver) ResumeSession(context.Context, string, runtime.Address, runtime.SessionSpec) (runtime.DriverSession, error) {
 	return runtime.DriverSession{SessionID: d.id}, nil
 }
+
 func (d *invalidRestoreDriver) CloseSession(_ context.Context, id string) error {
 	if id != d.id {
 		return errors.New("wrong cleanup identity")

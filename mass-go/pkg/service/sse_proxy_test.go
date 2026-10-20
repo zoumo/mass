@@ -6,9 +6,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/stretchr/testify/require"
-	"github.com/zoumo/mass/mass-go/pkg/events"
-	"github.com/zoumo/mass/mass-go/pkg/transport"
 	"io"
 	"net"
 	"net/http"
@@ -19,6 +16,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	massclient "github.com/zoumo/mass/mass-go/pkg/client"
+	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
 // Explicit integration target: requires the actual Caddy CLI, never substitutes
@@ -51,7 +56,7 @@ http://%s {
   stream_timeout 1m
  }
 }
-`, address, strings.TrimPrefix(origin.URL, "http://"))), 0600))
+`, address, strings.TrimPrefix(origin.URL, "http://"))), 0o600))
 	log, err := os.Create(filepath.Join(dir, "caddy.log"))
 	require.NoError(t, err)
 	defer log.Close()
@@ -107,7 +112,12 @@ http://%s {
 	require.Equal(t, "event: subscription.ready\ndata: {}\n\n", frame)
 	require.Less(t, time.Since(started), 2*time.Second)
 	t.Logf("ready received after %s", time.Since(started))
-	for i := 0; i < 2; i++ {
+	// A second, generated-client subscription receives each business frame before
+	// shutdown; this would hang if Observe used a WithResponse full-body decoder.
+	observer, err := (massclient.Client{URL: "http://" + address, Token: "test-token"}).Observe(ctx, resource.SessionRef{SessionID: "original"})
+	require.NoError(t, err)
+	defer observer.Close()
+	for i := range 2 {
 		e := fixture.fact(fmt.Sprint(i), events.AgentMessage{MessageID: fmt.Sprint(i), Content: []events.ContentBlock{events.Text("proxy frame")}})
 		sent := time.Now()
 		require.NoError(t, fixture.driver.pipe.Send(ctx, e))
@@ -117,7 +127,11 @@ http://%s {
 		require.NotContains(t, frame, "\nid:")
 		require.NotContains(t, frame, "\nretry:")
 		require.Less(t, time.Since(sent), 2*time.Second)
-		t.Logf("business frame %d received after %s", i, time.Since(sent))
+		got, err := observer.Next()
+		require.NoError(t, err)
+		require.Equal(t, e.EventID, got.EventID)
+		require.Less(t, time.Since(sent), 2*time.Second)
+		t.Logf("business frame %d delivered to raw and generated clients after %s", i, time.Since(sent))
 	}
 	idle := time.Now()
 	frame, err = readFrame(reader)
@@ -130,6 +144,10 @@ http://%s {
 	require.NoError(t, err)
 	require.Contains(t, frame, "subscription.error")
 	require.Contains(t, frame, "server_shutdown")
+	_, err = observer.Next()
+	var public *runtime.OperationError
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "server_shutdown", public.Reason)
 	_, err = reader.ReadByte()
 	require.ErrorIs(t, err, io.EOF)
 }

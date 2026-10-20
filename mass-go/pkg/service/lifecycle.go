@@ -562,7 +562,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 }
 
 // control holds the original Runtime operation lock through a native dispatch.
-func (s *Service) controlWork(r resource.Session, cancelling bool) (*runBinding, *lane, error) {
+func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, *lane, error) {
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
 	var original *lane
@@ -577,7 +577,7 @@ func (s *Service) controlWork(r resource.Session, cancelling bool) (*runBinding,
 	s.mu.Lock()
 	l := run.lanes[r.Status.SessionID]
 	available := run.started && l != nil && l == original && !l.releasing
-	if !cancelling {
+	if !canceling {
 		available = available && !s.closing && !run.stopping && run.err == nil && l.err == nil && !l.closing
 	}
 	if available {
@@ -743,6 +743,7 @@ func awaitSessionLifecycle(ctx context.Context, operation func(context.Context) 
 		return resource.Session{}, &runtime.OperationError{Code: "outcome_unknown", Reason: "lifecycle_wait_abandoned", Message: "Lifecycle operation remains owned by its original Session; inspect state before further action"}
 	}
 }
+
 func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
 	if err := ctx.Err(); err != nil {
 		return resource.Session{}, err

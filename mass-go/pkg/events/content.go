@@ -11,6 +11,8 @@ import (
 )
 
 // ContentBlock keeps the public union intact. Adapters may reject unsupported kinds.
+//
+//nolint:recvcheck // JSON decoding mutates; event encoding accepts immutable values.
 type ContentBlock struct {
 	Type   string `json:"type"`
 	Text   string `json:"text"`

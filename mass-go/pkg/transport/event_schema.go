@@ -1,11 +1,14 @@
 package transport
 
 import (
-	"github.com/danielgtaylor/huma/v2"
-	"github.com/zoumo/mass/mass-go/pkg/events"
-	"github.com/zoumo/mass/mass-go/pkg/store"
+	"maps"
 	"reflect"
 	"strings"
+
+	"github.com/danielgtaylor/huma/v2"
+
+	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/store"
 )
 
 // SessionEvent's payload is private. Register its actual JSON union, reusing
@@ -99,17 +102,15 @@ func registerEventSchemas(r huma.Registry) {
 		case "session.info_update":
 			payload.AnyOf = []*huma.Schema{{Required: []string{"title"}}, {Required: []string{"updatedAt"}}}
 		case "session.interaction_closed":
-			payload.Properties["outcome"] = enum("answered", "completed", "cancelled", "expired", "failed")
+			payload.Properties["outcome"] = enum("answered", "completed", "cancelled", "expired", "failed") //nolint:misspell // Public event contract uses cancelled.
 		case "session.usage_update":
 			payload.Properties["cost"] = object(map[string]*huma.Schema{"amount": {Type: "number"}, "currency": text()}, "amount", "currency")
 		}
 		props := map[string]*huma.Schema{}
-		for k, v := range base.Properties {
-			props[k] = v
-		}
+		maps.Copy(props, base.Properties)
 		props["eventId"] = &huma.Schema{Type: "string", Format: "uuid"}
 		for _, name := range []string{"namespace", "sessionName", "sessionId"} {
-			props[name] = &huma.Schema{Type: "string", MinLength: ptr(1)}
+			props[name] = &huma.Schema{Type: "string", MinLength: new(1)}
 		}
 		props["_meta"] = &huma.Schema{Type: "object", AdditionalProperties: true}
 		props["type"] = &huma.Schema{Type: "string", Const: kind}
@@ -124,4 +125,3 @@ func registerEventSchemas(r huma.Registry) {
 	schema := r.Schema(reflect.TypeFor[events.SessionEvent](), false, "")
 	*schema = huma.Schema{OneOf: branches, Discriminator: &huma.Discriminator{PropertyName: "type"}}
 }
-func ptr[T any](v T) *T { return &v }

@@ -2,18 +2,23 @@ package transport
 
 import (
 	"context"
+	"net/url"
+
 	"github.com/danielgtaylor/huma/v2"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"net/url"
 )
 
-type sessionCreateInput struct{ Body sessionCreate }
-type sessionOutput struct{ Body resource.Session }
-type sessionCreated struct {
-	Location string `header:"Location"`
-	Body     resource.Session
-}
+type (
+	sessionCreateInput struct{ Body sessionCreate }
+	sessionOutput      struct{ Body resource.Session }
+	sessionCreated     struct {
+		Location string `header:"Location"`
+		Body     resource.Session
+	}
+)
+
 type SessionIDPath struct {
 	SessionID string `path:"sessionId"`
 }
