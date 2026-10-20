@@ -2,8 +2,9 @@
 package resource
 
 import (
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"time"
+
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 type Metadata struct {

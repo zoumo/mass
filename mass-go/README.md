@@ -42,23 +42,24 @@ real CLI native persistence or consumption of resume IDs.
 ```sh
 make build-go
 # Supply a fresh, absolute, application-owned data directory.
-dist/massd-go -data /absolute/owned/data -listen 127.0.0.1:8787 \
-  -prototype-auto-approve-permissions
-printf '%s\n' '{}' | dist/massctl -url http://127.0.0.1:8787 -op runtime.list
+dist/massd-go --data /absolute/owned/data --listen 127.0.0.1:8787 --local \
+  --prototype-auto-approve-permissions
+printf '%s\n' '{}' | dist/massctl --url http://127.0.0.1:8787 --op runtime.list
 ```
 
 The permission flag is explicit prototype assembly policy; it leaves form/user
 questions pending. Without it permissions are manual too. `massd` prints its bound
-URL as JSON, supports port 0, accepts loopback addresses only, and settles Service
-on SIGINT/SIGTERM. Shutdown failure exits nonzero. There is no production
-remote/authentication mapping or readiness claim.
+URL as JSON, supports port 0, and settles Service on SIGINT/SIGTERM. Shutdown
+failure exits nonzero. Select explicit `--local` trusted loopback mode or
+`--token-file`; direct remote access requires TLS. `/readyz` measures HTTP
+admission only. The CLI reads the Bearer token from `MASS_TOKEN`.
 
-`massctl -op OPERATION` consumes one JSON object on stdin and prints the raw
-Service result as JSON; errors go to stderr with nonzero exit. `-op observe`
+`massctl --op OPERATION` consumes one JSON object on stdin and prints the raw
+Service result as JSON; errors go to stderr with nonzero exit. `--op observe`
 consumes a SessionRef and prints `{"ready":true}` followed by SessionEvent JSON
 lines. SIGINT/SIGTERM disconnects observation; it does not cancel Agent work.
 The CLI owns no local Store, Session directory, projection or retry policy.
-See [the experimental HTTP mapping](docs/http-experiment.md) for all operations,
+See [the Go HTTP v1 implementation](docs/http-experiment.md) for all operations,
 request shapes, errors and SSE termination semantics.
 
 ## Verification and boundaries
@@ -67,9 +68,23 @@ request shapes, errors and SSE termination semantics.
 cd mass-go
 GOWORK=off GOPROXY=off go test -count=1 -v -timeout=180s ./...
 GOWORK=off GOPROXY=off go test -race -count=1 -v -timeout=240s ./...
-GOWORK=off GOPROXY=off go vet ./...
+golangci-lint run ./...
+golangci-lint fmt --diff
 GOWORK=off GOPROXY=off go build ./...
 ```
+
+Tests use `testify/suite`, including SDK probes and vertical scenarios.
+Both executables parse flags with Cobra; use `--help` to list options.
+
+Lint uses golangci-lint v2.12.2 and the unchanged `.golangci.yaml` copied from
+agentrun. Install the pinned tool with:
+
+```sh
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+```
+
+From the repository root, `make fmt-go`, `make lint-go`, and `make check-go`
+format, lint, and verify the Go implementation respectively.
 
 The public module tests, SDK protocol probes and `tests/vertical` additionally
 cover Store concurrency/cursors, lifecycle, uncertain operations, original work
@@ -78,7 +93,8 @@ write gate proves that 140 committed facts survive observer overflow, which emit
 an explicit error. Client framing tests distinguish end, abnormal error and
 unexpected disconnection, preserve terminal errors and release blocked reads.
 
-Supported input/content is text only; Claude accepts exactly one text block.
+The HTTP input codec preserves all five ContentBlock shapes; existing native
+adapters execute text input only. Claude accepts exactly one text block.
 Complete text/thinking, tool calls/results, permission/form interactions, state
 and sanitized Session errors are mapped; deltas are previews and never fabricated
 into complete history. Unsupported complete content fails explicitly. Images,
@@ -93,7 +109,8 @@ Whole-file writes do not establish crash/power-loss guarantees. Uncertain origin
 operations/pending UUIDs are retained within the original process; cross-process
 unknown-operation settlement/outbox recovery is not implemented. Real Agent CLIs,
 accounts/models/tools, native durable recovery, Linux and Rust validation are
-outside these synthetic results. This is not a production or harness HTTP release.
+outside these synthetic results. The HTTP v1 binding is implemented; these synthetic results do not establish
+production readiness or real Agent execution.
 
 The six-ticket scenario matrix, commit map and evidence guide are in
 [acceptance](docs/acceptance.md).

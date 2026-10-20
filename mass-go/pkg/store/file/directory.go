@@ -79,7 +79,10 @@ func (s *Store) ListSessions(q resource.SessionQuery) (resource.SessionPage, err
 	page := resource.SessionPage{Items: items}
 	if len(items) > limit {
 		page.Items = items[:limit]
-		b, _ := json.Marshal(directoryCursor{Kind: "sessions", Query: q, Position: sessionOrder(items[limit-1])})
+		b, err := json.Marshal(directoryCursor{Kind: "sessions", Query: q, Position: sessionOrder(items[limit-1])})
+		if err != nil {
+			return empty, err
+		}
 		mac := hmac.New(sha256.New, []byte(s.data.CursorKey))
 		mac.Write(b)
 		page.Next = base64.RawURLEncoding.EncodeToString(append(mac.Sum(nil), b...))
@@ -104,6 +107,7 @@ func (s *Store) DeleteRuntime(name, version string) error {
 	delete(n.Runtimes, name)
 	return s.commit(n)
 }
+
 func (s *Store) DeleteSession(ref resource.SessionRef, version string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

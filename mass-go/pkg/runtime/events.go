@@ -21,12 +21,14 @@ type EventBase struct {
 }
 
 // Payload is sealed. Each concrete branch fixes its event type at compile time.
-type Payload interface{ eventType() string }
-type MessagePayload struct {
-	MessageID string         `json:"messageId"`
-	Content   []ContentBlock `json:"content"`
-	Phase     string         `json:"phase,omitempty"`
-}
+type (
+	Payload        interface{ eventType() string }
+	MessagePayload struct {
+		MessageID string         `json:"messageId"`
+		Content   []ContentBlock `json:"content"`
+		Phase     string         `json:"phase,omitempty"`
+	}
+)
 type UserMessage MessagePayload
 
 func (UserMessage) eventType() string { return "user.message" }
@@ -59,6 +61,8 @@ type Output struct {
 	Availability string `json:"availability"`
 	Completeness string `json:"completeness"`
 }
+
+//nolint:recvcheck // JSON unmarshaling needs a pointer; payload values implement the event contract.
 type ToolResult struct {
 	ExitCode   *int32         `json:"exitCode,omitempty"`
 	DurationMs *int64         `json:"durationMs,omitempty"`
@@ -81,6 +85,8 @@ type StateUpdate struct {
 func (StateUpdate) eventType() string { return "session.state_update" }
 
 // SessionEvent is the only event model. Source stays private and unserialized.
+//
+//nolint:recvcheck // JSON unmarshaling mutates an event; reads and marshaling support event values.
 type SessionEvent struct {
 	EventBase
 	payload Payload
@@ -91,6 +97,7 @@ func NewEvent(base EventBase, payload Payload, source Source) (SessionEvent, err
 	e := SessionEvent{base, payload, source}
 	return e, e.Validate()
 }
+
 func (e SessionEvent) Type() string {
 	if e.payload == nil {
 		return ""
@@ -113,7 +120,7 @@ func (e SessionEvent) Validate() error {
 	if !uuidPattern.MatchString(e.EventID) || e.Namespace == "" || e.SessionName == "" || e.SessionID == "" || e.Time.IsZero() || e.payload == nil {
 		return errors.New("invalid event envelope")
 	}
-	if err := CheckDynamicJSON(map[string]any(e.Meta)); err != nil {
+	if err := CheckDynamicJSON(e.Meta); err != nil {
 		return err
 	}
 	var m *MessagePayload
@@ -215,6 +222,7 @@ func (e SessionEvent) Validate() error {
 	}
 	return nil
 }
+
 func (e SessionEvent) MarshalJSON() ([]byte, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
@@ -225,6 +233,7 @@ func (e SessionEvent) MarshalJSON() ([]byte, error) {
 		Payload Payload `json:"payload"`
 	}{e.EventBase, e.Type(), e.payload})
 }
+
 func (e *SessionEvent) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		EventBase
@@ -369,7 +378,7 @@ func (p ToolResult) MarshalJSON() ([]byte, error) {
 		return data, nil
 	}
 	var members map[string]json.RawMessage
-	if err = json.Unmarshal(data, &members); err != nil {
+	if err := json.Unmarshal(data, &members); err != nil {
 		return nil, err
 	}
 	members["content"], err = json.Marshal(p.Content)

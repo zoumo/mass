@@ -54,6 +54,7 @@ func decode(b []byte, out any) error {
 	}
 	return nil
 }
+
 func copyValue[T any](v T) (T, error) {
 	var out T
 	b, err := json.Marshal(v)
@@ -69,14 +70,14 @@ func Open(dir string, readOnly bool) (*Store, error) {
 	}
 	s := &Store{dir: dir, readOnly: readOnly}
 	if !readOnly {
-		if err := os.MkdirAll(dir, 0700); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, err
 		}
-		f, err := os.OpenFile(filepath.Join(dir, "writer.lock"), os.O_CREATE|os.O_RDWR, 0600)
+		f, err := os.OpenFile(filepath.Join(dir, "writer.lock"), os.O_CREATE|os.O_RDWR, 0o600)
 		if err != nil {
 			return nil, err
 		}
-		if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 			f.Close()
 			return nil, fmt.Errorf("writer already owns directory: %w", err)
 		}
@@ -98,6 +99,7 @@ func Open(dir string, readOnly bool) (*Store, error) {
 	}
 	return s, nil
 }
+
 func (s *Store) validate() error {
 	d := s.data
 	if d.Format != 1 || d.CursorKey == "" || d.Runtimes == nil || d.Sessions == nil || d.History == nil {
@@ -136,6 +138,7 @@ func (s *Store) validate() error {
 	}
 	return nil
 }
+
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -149,6 +152,7 @@ func (s *Store) Close() error {
 	}
 	return nil
 }
+
 func (s *Store) usable(write bool) error {
 	if s.closed {
 		return errors.New("store closed")
@@ -161,6 +165,7 @@ func (s *Store) usable(write bool) error {
 	}
 	return nil
 }
+
 func (s *Store) commit(next snapshot) error {
 	b, err := json.Marshal(next)
 	if err != nil {
@@ -179,7 +184,7 @@ func (s *Store) commit(next snapshot) error {
 	if err != nil {
 		return err
 	}
-	if err = os.Rename(tmp, filepath.Join(s.dir, "state.json")); err != nil {
+	if err := os.Rename(tmp, filepath.Join(s.dir, "state.json")); err != nil {
 		return err
 	}
 	directory, err := os.Open(s.dir)
@@ -198,12 +203,14 @@ func (s *Store) commit(next snapshot) error {
 	s.data = canonical
 	return nil
 }
+
 func (s *Store) next() (snapshot, error) {
 	if err := s.usable(true); err != nil {
 		return snapshot{}, err
 	}
 	return copyValue(s.data)
 }
+
 func initial(m resource.Metadata) (resource.Metadata, error) {
 	if m.UID != "" || !m.CreatedAt.IsZero() || m.Generation != 0 || m.ResourceVersion != "" {
 		return m, runtime.InvalidArgument("system metadata is read-only")
@@ -214,6 +221,7 @@ func initial(m resource.Metadata) (resource.Metadata, error) {
 	m.ResourceVersion = runtime.UUID()
 	return m, nil
 }
+
 func updated(old, m resource.Metadata, specChanged, changed bool) (resource.Metadata, error) {
 	if old.ResourceVersion != m.ResourceVersion {
 		return m, store.ErrConflict
@@ -229,11 +237,13 @@ func updated(old, m resource.Metadata, specChanged, changed bool) (resource.Meta
 	}
 	return m, nil
 }
+
 func equal(a, b any) bool {
 	x, e := json.Marshal(a)
 	y, f := json.Marshal(b)
 	return e == nil && f == nil && bytes.Equal(x, y)
 }
+
 func (s *Store) CreateRuntime(r resource.Runtime) (resource.Runtime, error) {
 	for _, value := range r.Spec.Config {
 		if err := runtime.CheckDynamicJSON(value); err != nil {
@@ -263,6 +273,7 @@ func (s *Store) CreateRuntime(r resource.Runtime) (resource.Runtime, error) {
 	}
 	return copyValue(r)
 }
+
 func (s *Store) GetRuntime(name string) (resource.Runtime, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -275,6 +286,7 @@ func (s *Store) GetRuntime(name string) (resource.Runtime, error) {
 	}
 	return copyValue(r)
 }
+
 func (s *Store) UpdateRuntime(r resource.Runtime) (resource.Runtime, error) {
 	for _, value := range r.Spec.Config {
 		if err := runtime.CheckDynamicJSON(value); err != nil {
@@ -296,11 +308,12 @@ func (s *Store) UpdateRuntime(r resource.Runtime) (resource.Runtime, error) {
 		return r, err
 	}
 	n.Runtimes[r.Metadata.Name] = r
-	if err = s.commit(n); err != nil {
+	if err := s.commit(n); err != nil {
 		return resource.Runtime{}, err
 	}
 	return copyValue(r)
 }
+
 func (s *Store) CreateSession(r resource.Session) (resource.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -325,11 +338,12 @@ func (s *Store) CreateSession(r resource.Session) (resource.Session, error) {
 		return r, err
 	}
 	n.Sessions[k] = r
-	if err = s.commit(n); err != nil {
+	if err := s.commit(n); err != nil {
 		return resource.Session{}, err
 	}
 	return copyValue(r)
 }
+
 func resolve(d snapshot, ref resource.SessionRef) (resource.Session, error) {
 	if ref.SessionID != "" {
 		if ref.Namespace != "" || ref.Name != "" {
@@ -349,6 +363,7 @@ func resolve(d snapshot, ref resource.SessionRef) (resource.Session, error) {
 	}
 	return resource.Session{}, store.ErrNotFound
 }
+
 func (s *Store) GetSession(ref resource.SessionRef) (resource.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -361,6 +376,7 @@ func (s *Store) GetSession(ref resource.SessionRef) (resource.Session, error) {
 	}
 	return copyValue(r)
 }
+
 func (s *Store) UpdateSession(r resource.Session) (resource.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -381,11 +397,12 @@ func (s *Store) UpdateSession(r resource.Session) (resource.Session, error) {
 		return r, err
 	}
 	n.Sessions[k] = r
-	if err = s.commit(n); err != nil {
+	if err := s.commit(n); err != nil {
 		return resource.Session{}, err
 	}
 	return copyValue(r)
 }
+
 func validateEvent(r resource.Session, e runtime.SessionEvent) error {
 	if err := e.Validate(); err != nil {
 		return err
@@ -398,6 +415,7 @@ func validateEvent(r resource.Session, e runtime.SessionEvent) error {
 	}
 	return nil
 }
+
 func progress(events []runtime.SessionEvent) *string {
 	if len(events) == 0 {
 		return nil
@@ -405,6 +423,7 @@ func progress(events []runtime.SessionEvent) *string {
 	v := events[len(events)-1].EventID
 	return &v
 }
+
 func (s *Store) Append(id string, events []runtime.SessionEvent) (*string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -420,7 +439,7 @@ func (s *Store) Append(id string, events []runtime.SessionEvent) (*string, error
 		return nil, err
 	}
 	for _, e := range events {
-		if err = validateEvent(r, e); err != nil {
+		if err := validateEvent(r, e); err != nil {
 			return nil, err
 		}
 		duplicate := false
@@ -437,7 +456,7 @@ func (s *Store) Append(id string, events []runtime.SessionEvent) (*string, error
 			n.History[id] = append(n.History[id], e)
 		}
 	}
-	if err = s.commit(n); err != nil {
+	if err := s.commit(n); err != nil {
 		return nil, err
 	}
 	return progress(n.History[id]), nil
@@ -449,12 +468,16 @@ type cursor struct {
 	Position int      `json:"position"`
 }
 
-func (s *Store) encodeCursor(c cursor) string {
-	b, _ := json.Marshal(c)
+func (s *Store) encodeCursor(c cursor) (string, error) {
+	b, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
 	mac := hmac.New(sha256.New, []byte(s.data.CursorKey))
 	mac.Write(b)
-	return base64.RawURLEncoding.EncodeToString(append(mac.Sum(nil), b...))
+	return base64.RawURLEncoding.EncodeToString(append(mac.Sum(nil), b...)), nil
 }
+
 func normalized(types []string) ([]string, error) {
 	if types != nil && len(types) == 0 {
 		return nil, runtime.InvalidArgument("empty types filter")
@@ -463,6 +486,7 @@ func normalized(types []string) ([]string, error) {
 	sort.Strings(out)
 	return out, nil
 }
+
 func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -516,7 +540,11 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 			continue
 		}
 		if len(page.Events) == limit {
-			page.Next = s.encodeCursor(cursor{id, types, last})
+			next, err := s.encodeCursor(cursor{id, types, last})
+			if err != nil {
+				return store.HistoryPage{}, err
+			}
+			page.Next = next
 			break
 		}
 		page.Events = append(page.Events, e)
