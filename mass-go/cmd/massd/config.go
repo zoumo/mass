@@ -41,11 +41,25 @@ func readOptions(cmd *cobra.Command, path string) (options, error) {
 }
 
 func decodeOptions(config *viper.Viper) (options, error) {
+	if fields, ok := config.Get("metaStore").(map[string]any); ok {
+		if raw, present := fields["backend"]; present {
+			name, valid := raw.(string)
+			if !valid || (name != "sqlite" && name != "file") {
+				return options{}, errors.New("MetaStore backend must be sqlite or file")
+			}
+		}
+	}
+
 	var configured options
 	if err := config.UnmarshalExact(&configured, func(c *mapstructure.DecoderConfig) {
 		c.WeaklyTypedInput = false
 	}); err != nil {
 		return options{}, errors.New("configuration must contain known fields with valid types")
+	}
+	switch configured.MetaStore.Backend {
+	case "", "sqlite", "file":
+	default:
+		return options{}, errors.New("unknown MetaStore backend: select sqlite or file")
 	}
 	return configured, nil
 }

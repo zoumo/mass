@@ -1,4 +1,4 @@
-// massd owns Service and its file Store; the transport owns no resource directory.
+// massd composes Service and independently owned metadata and event stores.
 package main
 
 import (
@@ -18,7 +18,8 @@ import (
 	"github.com/spf13/cobra"
 
 	eventfile "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
-	metafile "github.com/zoumo/mass/mass-go/pkg/metastore/file"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
+	"github.com/zoumo/mass/mass-go/pkg/metastore/backend"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/claude"
@@ -28,13 +29,14 @@ import (
 )
 
 type options struct {
-	Data      string `mapstructure:"data"`
-	Listen    string `mapstructure:"listen"`
-	TokenFile string `mapstructure:"tokenFile"`
-	TLSCert   string `mapstructure:"tlsCert"`
-	TLSKey    string `mapstructure:"tlsKey"`
-	Approve   bool   `mapstructure:"prototypeAutoApprovePermissions"`
-	Local     bool   `mapstructure:"local"`
+	MetaStore metastore.Config `mapstructure:"metaStore"`
+	Data      string           `mapstructure:"data"`
+	Listen    string           `mapstructure:"listen"`
+	TokenFile string           `mapstructure:"tokenFile"`
+	TLSCert   string           `mapstructure:"tlsCert"`
+	TLSKey    string           `mapstructure:"tlsKey"`
+	Approve   bool             `mapstructure:"prototypeAutoApprovePermissions"`
+	Local     bool             `mapstructure:"local"`
 }
 
 func newCommand() *cobra.Command {
@@ -104,7 +106,7 @@ func run(parent context.Context, o options) (result error) {
 	if (o.Local && token != "") || (!o.Local && token == "") {
 		return errors.New("select local mode or token authentication")
 	}
-	meta, err := metafile.Open(o.Data, false)
+	meta, err := backend.Open(o.Data, o.MetaStore, false)
 	if err != nil {
 		return err
 	}

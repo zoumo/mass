@@ -30,17 +30,29 @@ import (
 type entrypointSuite struct {
 	suite.Suite
 	url, data string
+	backend   string
+	daemonCtx context.Context
 	daemon    *exec.Cmd
 	stderr    bytes.Buffer
 }
 
-func TestEntrypointSuite(t *testing.T) { suite.Run(t, new(entrypointSuite)) }
+func TestEntrypointSuite(t *testing.T)     { suite.Run(t, new(entrypointSuite)) }
+func TestFileEntrypointSuite(t *testing.T) { suite.Run(t, &entrypointSuite{backend: "file"}) }
 func (s *entrypointSuite) SetupTest() {
 	daemonCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	s.T().Cleanup(cancel)
+	s.daemonCtx = daemonCtx
 	s.data = s.T().TempDir()
 	config := filepath.Join(s.data, "daemon-config.yaml")
 	s.Require().NoError(os.WriteFile(config, []byte("listen: 127.0.0.1:0\nlocal: true\nprototypeAutoApprovePermissions: true\n"), 0o600))
+	if s.backend != "" {
+		f, e := os.OpenFile(config, os.O_APPEND|os.O_WRONLY, 0o600)
+		s.Require().NoError(e)
+		_, e = f.WriteString("metaStore:\n  backend: " + s.backend + "\n")
+		s.Require().NoError(e)
+		s.Require().NoError(f.Close())
+		s.Require().NoError(os.Mkdir(filepath.Join(s.data, "metadata.sqlite"), 0o700), "file authority requires no metadata SQL")
+	}
 	s.stderr.Reset()
 	s.daemon = exec.CommandContext(daemonCtx, app, "--config", config, "--data", s.data)
 	s.daemon.Stderr = &s.stderr
@@ -577,4 +589,38 @@ func (s *entrypointSuite) TestOpaqueIDCommandRoundTrip() {
 		s.call("runtime.stop", workflowParams{Name: name}, nil)
 	}
 	s.T().Log("PASS raw slash/percent/space/Unicode IDs through fixed SDK mock, daemon, generated client and CLI")
+}
+
+func (s *entrypointSuite) TestMetadataRestartAndEventRebuild() {
+	ref, _, _ := s.open("codex", "basic")
+	s.runWork(ref, "hello", false)
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
+	var before resource.Session
+	s.call("session.get", workflowParams{Session: ref}, &before)
+	history := s.history(ref)
+	s.Require().NoError(s.daemon.Process.Signal(syscall.SIGTERM))
+	s.Require().NoError(s.daemon.Wait(), s.stderr.String())
+	s.Require().NoError(os.Remove(filepath.Join(s.data, "history.sqlite")))
+	s.daemon = exec.CommandContext(s.daemonCtx, app, "--config", filepath.Join(s.data, "daemon-config.yaml"), "--data", s.data)
+	s.stderr.Reset()
+	s.daemon.Stderr = &s.stderr
+	out, err := s.daemon.StdoutPipe()
+	s.Require().NoError(err)
+	s.Require().NoError(s.daemon.Start())
+	var ready struct {
+		URL string `json:"url"`
+	}
+	s.Require().NoError(json.NewDecoder(out).Decode(&ready))
+	s.url = ready.URL
+	var after resource.Session
+	s.call("session.get", workflowParams{Session: ref}, &after)
+	s.Equal(before, after, "event rebuild must preserve complete authoritative metadata and versions")
+	s.Equal(history, s.history(ref))
+	if s.backend == "" {
+		for _, name := range []string{"runtime.jsonl", ".store.json", filepath.Join("sessions", "demo", "session", "state.json")} {
+			_, err := os.Stat(filepath.Join(s.data, name))
+			s.True(os.IsNotExist(err), "SQLite must not require resource file copies: "+name)
+		}
+	}
 }

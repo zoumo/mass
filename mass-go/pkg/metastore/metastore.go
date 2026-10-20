@@ -15,3 +15,8 @@ type MetaStore interface {
 	ListSessions(resource.SessionQuery) (resource.SessionPage, error)
 	DeleteSession(resource.SessionRef, string) error
 }
+
+// Config selects one metadata authority. The zero value selects SQLite.
+type Config struct {
+	Backend string `mapstructure:"backend"`
+}

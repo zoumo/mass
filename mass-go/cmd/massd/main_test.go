@@ -108,3 +108,18 @@ prototypeAutoApprovePermissions: true
 	s.Equal(options{Data: filepath.Join(home, ".mass"), Listen: "127.0.0.1:24368"}, got,
 		"configuration and flags must not leak between command instances")
 }
+
+func (s *commandSuite) TestMetadataConfiguration() {
+	path := filepath.Join(s.T().TempDir(), "daemon.yaml")
+	for _, backend := range []string{"sqlite", "file"} {
+		s.Require().NoError(os.WriteFile(path, []byte("metaStore:\n  backend: "+backend+"\n"), 0o600))
+		got, err := readOptions(newCommand(), path)
+		s.Require().NoError(err)
+		s.Equal(backend, got.MetaStore.Backend)
+	}
+	for _, value := range []string{"bogus", "123", "true", "[]", `""`, "null"} {
+		s.Require().NoError(os.WriteFile(path, []byte("metaStore:\n  backend: "+value+"\n"), 0o600))
+		_, err := readOptions(newCommand(), path)
+		s.Require().Error(err, value)
+	}
+}

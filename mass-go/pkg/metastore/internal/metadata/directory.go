@@ -1,11 +1,11 @@
-package file
+package metadata
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/zoumo/mass/mass-go/pkg/internal/fileio"
@@ -20,24 +20,14 @@ func (s *Store) ListRuntimes(q resource.RuntimeQuery) ([]resource.Runtime, error
 	if err := s.usable(false); err != nil {
 		return nil, err
 	}
-	rows, err := s.sql.conn.QueryContext(context.Background(), `SELECT payload FROM runtime WHERE (?='' OR type=?) AND (?='' OR state=?) ORDER BY name`, q.Type, q.Type, q.State, q.State)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	items := []resource.Runtime{}
-	for rows.Next() {
-		var b []byte
-		if err := rows.Scan(&b); err != nil {
-			return nil, err
+	for _, r := range s.data.Runtimes {
+		if (q.Type == "" || q.Type == r.Spec.Type) && (q.State == "" || q.State == r.Status.State) {
+			items = append(items, r)
 		}
-		var r resource.Runtime
-		if err := fileio.Decode(b, &r); err != nil {
-			return nil, err
-		}
-		items = append(items, r)
 	}
-	return items, rows.Err()
+	sort.Slice(items, func(i, j int) bool { return items[i].Metadata.Name < items[j].Metadata.Name })
+	return fileio.CopyValue(items)
 }
 
 type directoryCursor struct {
@@ -80,25 +70,15 @@ func (s *Store) ListSessions(q resource.SessionQuery) (resource.SessionPage, err
 		}
 		position = c.Position
 	}
-	rows, err := s.sql.conn.QueryContext(context.Background(), `SELECT payload FROM session WHERE (?='' OR namespace=?) AND (?='' OR runtime_ref=?) AND (?='' OR state=?) AND (?='' OR session_id=?) AND sort_key>? ORDER BY sort_key LIMIT ?`, q.Namespace, q.Namespace, q.RuntimeRef, q.RuntimeRef, q.State, q.State, q.SessionID, q.SessionID, position, int64(limit)+1)
-	if err != nil {
-		return empty, err
-	}
-	defer rows.Close()
 	items := []resource.Session{}
-	for rows.Next() {
-		var b []byte
-		if err := rows.Scan(&b); err != nil {
-			return empty, err
+	for _, r := range s.data.Sessions {
+		if (q.Namespace == "" || q.Namespace == r.Metadata.Namespace) && (q.RuntimeRef == "" || q.RuntimeRef == r.Spec.RuntimeRef) && (q.State == "" || q.State == r.Status.State) && (q.SessionID == "" || q.SessionID == r.Status.SessionID) && sessionOrder(r) > position {
+			items = append(items, r)
 		}
-		var r resource.Session
-		if err := fileio.Decode(b, &r); err != nil {
-			return empty, err
-		}
-		items = append(items, r)
 	}
-	if err := rows.Err(); err != nil {
-		return empty, err
+	sort.Slice(items, func(i, j int) bool { return sessionOrder(items[i]) < sessionOrder(items[j]) })
+	if len(items) > limit {
+		items = items[:limit+1]
 	}
 	page := resource.SessionPage{Items: items}
 	if len(items) > limit {
@@ -117,6 +97,7 @@ func (s *Store) ListSessions(q resource.SessionQuery) (resource.SessionPage, err
 func (s *Store) DeleteRuntime(name, version string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.rollbackSQL()
 	n, err := s.next()
 	if err != nil {
 		return err
@@ -135,6 +116,7 @@ func (s *Store) DeleteRuntime(name, version string) error {
 func (s *Store) DeleteSession(ref resource.SessionRef, version string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.rollbackSQL()
 	n, err := s.next()
 	if err != nil {
 		return err

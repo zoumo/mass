@@ -1,4 +1,4 @@
-package file
+package metadata
 
 import (
 	"bytes"
@@ -153,7 +153,7 @@ func (s *Store) load(write bool) error {
 			return err
 		}
 		s.data = next
-		return s.loadMetadata()
+		return nil
 	}
 	if err != nil {
 		return err
@@ -189,9 +189,7 @@ func (s *Store) load(write bool) error {
 		return err
 	}
 	s.data = next
-	if err := s.loadMetadata(); err != nil {
-		return err
-	}
+
 	if write {
 		return s.writeIndex(next)
 	}
@@ -303,6 +301,9 @@ func (s *Store) commit(next snapshot) error {
 	if err != nil {
 		return err
 	}
+	if s.sql != nil {
+		return s.commitSQL(canonical)
+	}
 	lock, err := s.layoutLock(true)
 	if err != nil {
 		return err
@@ -314,9 +315,6 @@ func (s *Store) commit(next snapshot) error {
 	s.uncertain = true
 	if err := s.install(canonical); err != nil {
 		return fmt.Errorf("outcome_unknown: metadata commit: %w", err)
-	}
-	if err := s.syncMetadata(canonical, s.data); err != nil {
-		return fmt.Errorf("outcome_unknown: metadata replica: %w", err)
 	}
 	if err := s.finishMetadata(); err != nil {
 		return fmt.Errorf("outcome_unknown: metadata completion: %w", err)
@@ -344,7 +342,7 @@ func (s *Store) install(next snapshot) error {
 	return nil
 }
 
-// Retain resource-only redo evidence until the verified SQL view is complete.
+// Retain resource-only redo evidence until the file commit is complete.
 func (s *Store) finishMetadata() error {
 	if err := os.Remove(filepath.Join(s.dir, ".pending.json")); err != nil && !os.IsNotExist(err) {
 		return err
