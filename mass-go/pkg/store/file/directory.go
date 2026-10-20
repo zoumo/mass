@@ -123,6 +123,5 @@ func (s *Store) DeleteSession(ref resource.SessionRef, version string) error {
 		return store.ErrConflict
 	}
 	delete(n.Sessions, key(r.Metadata.Namespace, r.Metadata.Name))
-	delete(n.History, r.Status.SessionID)
 	return s.commit(n)
 }

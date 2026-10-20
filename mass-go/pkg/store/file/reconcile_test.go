@@ -69,7 +69,7 @@ func (s *reconcileSuite) TestPartialBatchRetainsUUIDAndOrder() {
 func (s *reconcileSuite) TestFailedValidationDoesNotReopenWriter() {
 	_, err := s.st.Append("native", s.events[:1])
 	s.Require().NoError(err)
-	path := filepath.Join(s.dir, "state.json")
+	path := filepath.Join(s.dir, "sessions", "default", "demo", "state.json")
 	original, err := os.ReadFile(path)
 	s.Require().NoError(err)
 	s.Require().NoError(os.WriteFile(path, []byte("corrupt"), 0o600))

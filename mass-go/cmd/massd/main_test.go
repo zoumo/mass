@@ -40,7 +40,7 @@ func (s *commandSuite) TestConfiguration() {
 	s.T().Setenv("HOME", home)
 	path := filepath.Join(home, ".mass", "config.yaml")
 	s.Require().NoError(os.MkdirAll(filepath.Dir(path), 0o700))
-	defaults := options{Listen: "127.0.0.1:24368", Data: filepath.Join(home, ".mass", "data")}
+	defaults := options{Listen: "127.0.0.1:24368", Data: filepath.Join(home, ".mass")}
 	cmd := newCommand()
 	s.Equal(path, cmd.Flags().Lookup("config").DefValue)
 	s.Equal(defaults.Listen, cmd.Flags().Lookup("listen").DefValue)
@@ -105,6 +105,6 @@ prototypeAutoApprovePermissions: true
 
 	got, err = readOptions(newCommand(), filepath.Join(home, ".mass", "config.yaml"))
 	s.Require().NoError(err)
-	s.Equal(options{Data: filepath.Join(home, ".mass", "data"), Listen: "127.0.0.1:24368"}, got,
+	s.Equal(options{Data: filepath.Join(home, ".mass"), Listen: "127.0.0.1:24368"}, got,
 		"configuration and flags must not leak between command instances")
 }

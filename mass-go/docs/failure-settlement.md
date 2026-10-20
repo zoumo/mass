@@ -55,8 +55,8 @@ current event and queued tail retained; input stays sealed. Repairing a path
 does not restart it. Finished subscriptions stay finished. Failed records are
 not published as committed facts.
 
-`file.Store.Reconcile` explicitly reloads/validates the authoritative snapshot
-under the original flock, verifies the known immutable history prefix, and
+`file.Store.Reconcile` explicitly reloads metadata and streams/validates history
+under the original flock, completes incremental append intents, verifies the known immutable history prefix, and
 fsyncs the file/directory. Failed validation leaves writes sealed even if the
 path is repaired later. It does not edit corrupt data. Separately,
 `Service.ReconcileHistory` validates all committed pages and original event

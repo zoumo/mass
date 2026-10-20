@@ -1,6 +1,5 @@
-// Package file implements the initial complete-file storage protocol.
-// One writer owns a directory lock. Each mutation fsyncs a new full snapshot,
-// renames it, and fsyncs the directory. Read-only opens never acquire a Driver.
+// Package file stores Runtime metadata and namespace/name Session directories.
+// One writer owns the root; a durable redo record coordinates multi-file changes.
 package file
 
 import (
@@ -12,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -30,20 +30,21 @@ import (
 )
 
 type snapshot struct {
-	Format    int                              `json:"format"`
-	CursorKey string                           `json:"cursorKey"`
-	Runtimes  map[string]resource.Runtime      `json:"runtimes"`
-	Sessions  map[string]resource.Session      `json:"sessions"`
-	History   map[string][]events.SessionEvent `json:"history"`
+	Format    int                         `json:"format"`
+	CursorKey string                      `json:"cursorKey"`
+	Runtimes  map[string]resource.Runtime `json:"runtimes"`
+	Sessions  map[string]resource.Session `json:"sessions"`
 }
 type Store struct {
-	mu        sync.Mutex
-	dir       string
-	lock      *os.File
-	readOnly  bool
-	closed    bool
-	uncertain bool
-	data      snapshot
+	mu         sync.Mutex
+	dir        string
+	lock       *os.File
+	readOnly   bool
+	closed     bool
+	uncertain  bool
+	data       snapshot
+	histories  map[string]*historyIndex
+	appendOpen func(string) (appendFile, error)
 }
 
 func decode(b []byte, out any) error {
@@ -72,9 +73,17 @@ func Open(dir string, readOnly bool) (*Store, error) {
 	if !filepath.IsAbs(dir) {
 		return nil, errors.New("absolute data directory required")
 	}
-	s := &Store{dir: dir, readOnly: readOnly}
+	s := &Store{dir: dir, readOnly: readOnly, appendOpen: func(path string) (appendFile, error) {
+		return openHistory(path, os.O_RDWR|os.O_APPEND)
+	}}
 	if !readOnly {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+		if err := checkPath(dir, true); err != nil {
+			return nil, err
+		}
+		if err := checkPath(filepath.Join(dir, "writer.lock"), false); err != nil && !os.IsNotExist(err) {
 			return nil, err
 		}
 		f, err := os.OpenFile(filepath.Join(dir, "writer.lock"), os.O_CREATE|os.O_RDWR, 0o600)
@@ -87,16 +96,7 @@ func Open(dir string, readOnly bool) (*Store, error) {
 		}
 		s.lock = f
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "state.json"))
-	if os.IsNotExist(err) && !readOnly {
-		s.data = snapshot{Format: 1, CursorKey: uuid.NewString(), Runtimes: map[string]resource.Runtime{}, Sessions: map[string]resource.Session{}, History: map[string][]events.SessionEvent{}}
-		err = s.commit(s.data)
-	} else if err == nil {
-		err = decode(b, &s.data)
-		if err == nil {
-			err = s.validate()
-		}
-	}
+	err := s.load(!readOnly)
 	if err != nil {
 		s.Close()
 		return nil, err
@@ -106,7 +106,7 @@ func Open(dir string, readOnly bool) (*Store, error) {
 
 func (s *Store) validate() error {
 	d := s.data
-	if d.Format != 1 || d.CursorKey == "" || d.Runtimes == nil || d.Sessions == nil || d.History == nil {
+	if d.Format != 2 || d.CursorKey == "" || d.Runtimes == nil || d.Sessions == nil {
 		return errors.New("invalid snapshot format")
 	}
 	ids := map[string]resource.Session{}
@@ -116,29 +116,13 @@ func (s *Store) validate() error {
 		}
 	}
 	for k, r := range d.Sessions {
-		if k != key(r.Metadata.Namespace, r.Metadata.Name) || r.Metadata.Namespace == "" || r.Metadata.UID == "" || r.Metadata.ResourceVersion == "" || r.Metadata.Generation == 0 || r.Metadata.CreatedAt.IsZero() || resource.ValidateSessionID(r.Status.SessionID) != nil {
+		if k != key(r.Metadata.Namespace, r.Metadata.Name) || !safeComponent(r.Metadata.Namespace) || !safeComponent(r.Metadata.Name) || r.Metadata.UID == "" || r.Metadata.ResourceVersion == "" || r.Metadata.Generation == 0 || r.Metadata.CreatedAt.IsZero() || resource.ValidateSessionID(r.Status.SessionID) != nil {
 			return errors.New("invalid session record")
 		}
 		if _, ok := ids[r.Status.SessionID]; ok {
 			return errors.New("duplicate native session identity")
 		}
 		ids[r.Status.SessionID] = r
-	}
-	for id, records := range d.History {
-		r, ok := ids[id]
-		if !ok {
-			return errors.New("history without identity")
-		}
-		seen := map[string]bool{}
-		for _, e := range records {
-			if err := validateEvent(r, e); err != nil {
-				return err
-			}
-			if seen[e.EventID] {
-				return errors.New("duplicate event identity in file")
-			}
-			seen[e.EventID] = true
-		}
 	}
 	return nil
 }
@@ -170,49 +154,16 @@ func (s *Store) usable(write bool) error {
 	return nil
 }
 
-func (s *Store) commit(next snapshot) error {
-	b, err := json.Marshal(next)
-	if err != nil {
-		return fmt.Errorf("snapshot encoding: %w", err)
-	}
-	f, err := os.CreateTemp(s.dir, ".state-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if _, err = f.Write(b); err == nil {
-		err = f.Sync()
-	}
-	err = errors.Join(err, f.Close())
-	if err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, filepath.Join(s.dir, "state.json")); err != nil {
-		return err
-	}
-	directory, err := os.Open(s.dir)
-	if err == nil {
-		err = errors.Join(directory.Sync(), directory.Close())
-	}
-	if err != nil {
-		s.uncertain = true
-		return fmt.Errorf("outcome_unknown: directory sync: %w", err)
-	}
-	var canonical snapshot
-	if err := decode(b, &canonical); err != nil {
-		s.uncertain = true
-		return err
-	}
-	s.data = canonical
-	return nil
-}
-
 func (s *Store) next() (snapshot, error) {
 	if err := s.usable(true); err != nil {
 		return snapshot{}, err
 	}
-	return copyValue(s.data)
+	// Mutations replace resources. commit detaches their dynamic values;
+	// history bodies are never part of a metadata candidate.
+	next := s.data
+	next.Runtimes = maps.Clone(s.data.Runtimes)
+	next.Sessions = maps.Clone(s.data.Sessions)
+	return next, nil
 }
 
 func initial(m resource.Metadata) (resource.Metadata, error) {
@@ -334,7 +285,7 @@ func (s *Store) CreateSession(r resource.Session) (resource.Session, error) {
 			return r, store.ErrConflict
 		}
 	}
-	if r.Metadata.Namespace == "" || r.Metadata.Name == "" || resource.ValidateSessionID(r.Status.SessionID) != nil {
+	if !safeComponent(r.Metadata.Namespace) || !safeComponent(r.Metadata.Name) || resource.ValidateSessionID(r.Status.SessionID) != nil {
 		return r, runtime.InvalidArgument("invalid session identity")
 	}
 	r.Metadata, err = initial(r.Metadata)
@@ -420,52 +371,6 @@ func validateEvent(r resource.Session, e events.SessionEvent) error {
 	return nil
 }
 
-func progress(records []events.SessionEvent) *string {
-	if len(records) == 0 {
-		return nil
-	}
-	v := records[len(records)-1].EventID
-	return &v
-}
-
-func (s *Store) Append(id string, records []events.SessionEvent) (*string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n, err := s.next()
-	if err != nil {
-		return nil, err
-	}
-	if len(records) == 0 {
-		return nil, errors.New("empty history batch")
-	}
-	r, err := resolve(n, resource.SessionRef{SessionID: id})
-	if err != nil {
-		return nil, err
-	}
-	for _, e := range records {
-		if err := validateEvent(r, e); err != nil {
-			return nil, err
-		}
-		duplicate := false
-		for _, old := range n.History[id] {
-			if old.EventID == e.EventID {
-				if !equal(old, e) {
-					return nil, errors.New("eventId content conflict")
-				}
-				duplicate = true
-				break
-			}
-		}
-		if !duplicate {
-			n.History[id] = append(n.History[id], e)
-		}
-	}
-	if err := s.commit(n); err != nil {
-		return nil, err
-	}
-	return progress(n.History[id]), nil
-}
-
 type cursor struct {
 	Session  string   `json:"session"`
 	Types    []string `json:"types"`
@@ -518,7 +423,8 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 	if limit < 1 {
 		return empty, runtime.InvalidArgument("limit must be positive")
 	}
-	records := s.data.History[id]
+	index := s.histories[id]
+	records := index.Records
 	start := 0
 	if q.After != "" {
 		b, err := base64.RawURLEncoding.DecodeString(q.After)
@@ -536,13 +442,30 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 		}
 		start = c.Position
 	}
-	page := store.HistoryPage{Events: []events.SessionEvent{}, SyncedEventID: progress(records)}
+	page := store.HistoryPage{Events: []events.SessionEvent{}, SyncedEventID: index.progress()}
 	last := start
+	lock, err := s.layoutLock(false)
+	if err != nil {
+		return empty, err
+	}
+	defer lock.Close()
+	if err := s.noPending(); err != nil {
+		return empty, err
+	}
+	r, err := resolve(s.data, resource.SessionRef{SessionID: id})
+	if err != nil {
+		return empty, err
+	}
+	f, err := openHistory(s.historyPath(r), os.O_RDONLY)
+	if err != nil {
+		return empty, err
+	}
+	defer f.Close()
 	for i := start; i < len(records); i++ {
-		e := records[i]
+		entry := records[i]
 		matches := len(types) == 0
 		for _, t := range types {
-			if t == e.Type() {
+			if t == entry.Type {
 				matches = true
 			}
 		}
@@ -557,6 +480,10 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 			page.Next = next
 			break
 		}
+		e, err := readIndexedEvent(f, r, entry)
+		if err != nil {
+			return empty, err
+		}
 		page.Events = append(page.Events, e)
 		last = i + 1
 	}
@@ -565,8 +492,15 @@ func (s *Store) ListHistory(id string, q store.HistoryQuery) (store.HistoryPage,
 
 // GetSyncProgress reads the same committed view as history queries.
 func (s *Store) GetSyncProgress(id string) (*string, error) {
-	p, err := s.ListHistory(id, store.HistoryQuery{Limit: 1})
-	return p.SyncedEventID, err
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.usable(false); err != nil {
+		return nil, err
+	}
+	if _, err := resolve(s.data, resource.SessionRef{SessionID: id}); err != nil {
+		return nil, err
+	}
+	return s.histories[id].progress(), nil
 }
 
 // Reconcile explicitly reloads and validates the authoritative snapshot under the
@@ -579,45 +513,23 @@ func (s *Store) Reconcile() error {
 		return errors.New("active writer required")
 	}
 	s.uncertain = true
-	b, err := os.ReadFile(filepath.Join(s.dir, "state.json"))
-	if err != nil {
+	old, oldHistories := s.data, s.histories
+	if err := s.load(true); err != nil {
+		s.data, s.histories = old, oldHistories
 		return err
 	}
-	var next snapshot
-	if err := decode(b, &next); err != nil {
-		return err
-	}
-	old := s.data
-	for id, committed := range old.History {
-		candidate := next.History[id]
-		if len(candidate) < len(committed) {
-			return errors.New("committed history prefix missing")
-		}
-		for i, e := range committed {
-			if !equal(e, candidate[i]) {
-				return errors.New("committed history prefix changed")
-			}
+	for id, committed := range oldHistories {
+		candidate, exists := s.histories[id]
+		if !exists {
+			continue
+		} // An explicitly committed Session deletion removes its log.
+		if !candidate.extends(committed) {
+			s.data, s.histories = old, oldHistories
+			return errors.New("committed history prefix changed or missing")
 		}
 	}
-	s.data = next
-	if err := s.validate(); err != nil {
-		s.data = old
-		return err
-	}
-	f, err := os.Open(filepath.Join(s.dir, "state.json"))
-	if err == nil {
-		err = errors.Join(f.Sync(), f.Close())
-	}
-	if err != nil {
-		s.data = old
-		return err
-	}
-	dir, err := os.Open(s.dir)
-	if err == nil {
-		err = errors.Join(dir.Sync(), dir.Close())
-	}
-	if err != nil {
-		s.data = old
+	if err := syncDirectory(s.dir); err != nil {
+		s.data, s.histories = old, oldHistories
 		return err
 	}
 	s.uncertain = false

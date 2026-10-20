@@ -60,7 +60,7 @@ func newCommand() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&configPath, "config", defaultConfig, "YAML configuration file (flags override configuration)")
-	f.StringVar(&o.Data, "data", filepath.Join(home, ".mass", "data"), "absolute owned data directory")
+	f.StringVar(&o.Data, "data", filepath.Join(home, ".mass"), "absolute owned data directory")
 	f.StringVar(&o.Listen, "listen", "127.0.0.1:24368", "loopback listen address (port 0 supported)")
 	f.BoolVar(&o.Approve, "prototype-auto-approve-permissions", false, "explicit synthetic prototype policy; questions remain manual")
 	f.BoolVar(&o.Local, "local", false, "explicit trusted single-user loopback mode without authentication")

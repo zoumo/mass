@@ -1,6 +1,7 @@
 package file_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -210,7 +211,7 @@ func (fileSuite *FileSuite) TestCorruptFileFailsClosed() {
 	t := fileSuite.T()
 	s, dir := open(t)
 	require.NoError(t, s.Close())
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, ".store.json")
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, append(b, []byte(" trailing garbage")...), 0o600))
@@ -287,14 +288,15 @@ func (fileSuite *FileSuite) TestCommittedHistoryTailIsValidatedBeforeFirstPage()
 	_, err = s.Append("native", records)
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
-	p := filepath.Join(dir, "state.json")
+	p := filepath.Join(dir, "sessions", "default", "demo", "events.jsonl")
 	b, err := os.ReadFile(p)
 	require.NoError(t, err)
-	var snapshot map[string]any
-	require.NoError(t, json.Unmarshal(b, &snapshot))
-	tail := snapshot["history"].(map[string]any)["native"].([]any)[104].(map[string]any)
+	lines := bytes.Split(bytes.TrimSuffix(b, []byte("\n")), []byte("\n"))
+	var tail map[string]any
+	require.NoError(t, json.Unmarshal(lines[104], &tail))
 	tail["namespace"] = "foreign"
-	b, err = json.Marshal(snapshot)
+	lines[104], err = json.Marshal(tail)
+	b = append(bytes.Join(lines, []byte("\n")), '\n')
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(p, b, 0o600))
 	_, err = file.Open(dir, true)
