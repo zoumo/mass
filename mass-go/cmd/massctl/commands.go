@@ -1,5 +1,4 @@
-// Package commands provides the CLI's stateless HTTP client assembly.
-package commands
+package main
 
 import (
 	"context"
@@ -15,7 +14,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
-func Run(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer) error {
+func runCommand(ctx context.Context, args []string, in io.Reader, out, stderr io.Writer) error {
 	var url, op string
 	cmd := &cobra.Command{
 		Use:           "massctl",
