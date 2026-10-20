@@ -304,3 +304,16 @@ func (fileSuite *FileSuite) TestCommittedHistoryTailIsValidatedBeforeFirstPage()
 }
 
 func TestFileSuite(t *testing.T) { suite.Run(t, new(FileSuite)) }
+
+func TestRejectIllegalPersistentSessionIDs(t *testing.T) {
+	for _, id := range []string{".", ".."} {
+		t.Run(id, func(t *testing.T) {
+			dir := t.TempDir()
+			st, err := file.Open(dir, false)
+			require.NoError(t, err)
+			defer st.Close()
+			_, err = st.CreateSession(session("default", "demo", id))
+			require.Error(t, err)
+		})
+	}
+}

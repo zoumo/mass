@@ -83,6 +83,10 @@ func (a *recordingAPI) CreateSession(ctx context.Context, v resource.Session) (r
 	return v, a.err
 }
 
+func (a *recordingAPI) ResolveSession(namespace, nameOrID string) (resource.SessionRef, error) {
+	return resource.SessionRef{SessionID: "a/b"}, a.err
+}
+
 func (a *recordingAPI) GetSession(ref resource.SessionRef) (resource.Session, error) {
 	a.record("session.get")
 	a.ref = ref

@@ -32,6 +32,7 @@ type RuntimeService interface {
 	StartRuntime(context.Context, string) (resource.Runtime, error)
 }
 type SessionService interface {
+	ResolveSession(namespace, nameOrID string) (resource.SessionRef, error)
 	CreateSession(context.Context, resource.Session) (resource.Session, error)
 	GetSession(resource.SessionRef) (resource.Session, error)
 	ListSessions(resource.SessionQuery) (resource.SessionPage, error)
@@ -113,7 +114,7 @@ func NewWithPolicy(meta store.MetaStore, history store.HistoryStore, registry *r
 }
 
 func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef, interaction string, answer any) (runtime.InteractionReceipt, error) {
-	r, err := s.meta.GetSession(ref)
+	r, err := s.GetSession(ref)
 	if err != nil {
 		return runtime.InteractionReceipt{}, err
 	}
@@ -140,12 +141,16 @@ func validName(name string) bool {
 	return true
 }
 
+func validNamespace(namespace string) bool {
+	return len(namespace) <= 63 && label.MatchString(namespace)
+}
+
 func validateMetadata(m resource.Metadata, session bool) error {
 	if !validName(m.Name) {
 		return runtime.InvalidArgument("invalid DNS resource name")
 	}
 	if session {
-		if len(m.Namespace) > 63 || !label.MatchString(m.Namespace) {
+		if !validNamespace(m.Namespace) {
 			return runtime.InvalidArgument("invalid DNS namespace")
 		}
 	} else if m.Namespace != "" {
@@ -264,15 +269,26 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 	return r, err
 }
 
+var uuidSessionName = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
 func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resource.Session, error) {
+	if uuidSessionName.MatchString(r.Metadata.Name) {
+		return resource.Session{}, &runtime.OperationError{Code: "invalid_argument", Reason: "session_name_is_uuid", Message: "Session creation name must not be a UUID"}
+	}
 	if err := validateMetadata(r.Metadata, true); err != nil {
 		return r, err
 	}
+	if r.Status.SessionID != "" || r.Status.State != "" || r.Status.AppliedGeneration != 0 || r.Status.RuntimeGeneration != 0 || r.Status.Capabilities != nil {
+		return resource.Session{}, runtime.InvalidArgument("system status is read-only")
+	}
+	if !validName(r.Spec.RuntimeRef) {
+		return resource.Session{}, runtime.InvalidArgument("invalid runtime reference")
+	}
 	if !filepath.IsAbs(r.Spec.Cwd) {
-		return r, errors.New("absolute cwd required")
+		return r, runtime.InvalidArgument("absolute cwd required")
 	}
 	if r.Metadata.UID != "" || r.Metadata.Generation != 0 || r.Metadata.ResourceVersion != "" || !r.Metadata.CreatedAt.IsZero() {
-		return r, errors.New("system metadata is read-only")
+		return r, runtime.InvalidArgument("system metadata is read-only")
 	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
@@ -335,6 +351,19 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 			op.native = native
 			abandoned := op.abandoned || run.stopping
 			s.mu.Unlock()
+			if invalid := resource.ValidateSessionID(native.SessionID); invalid != nil {
+				cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+				s.mu.Lock()
+				op.released = cleanup == nil
+				if cleanup == nil {
+					delete(run.pending, k)
+				}
+				s.mu.Unlock()
+				if cleanup != nil {
+					return resource.Session{}, errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "invalid_session_cleanup_unknown", Message: "Invalid native identity cleanup remains unsettled"}, cleanup)
+				}
+				return resource.Session{}, invalid
+			}
 			if abandoned {
 				cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
 				if cleanup == nil {
@@ -400,11 +429,25 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 }
 
 func (s *Service) GetSession(ref resource.SessionRef) (resource.Session, error) {
-	return s.meta.GetSession(ref)
+	if ref.SessionID != "" {
+		if ref.Name != "" || ref.Namespace != "" {
+			return resource.Session{}, runtime.InvalidArgument("session reference forms are mutually exclusive")
+		}
+		if err := resource.ValidateSessionID(ref.SessionID); err != nil {
+			return resource.Session{}, err
+		}
+	} else if !validNamespace(ref.Namespace) || !validName(ref.Name) {
+		return resource.Session{}, runtime.InvalidArgument("invalid session reference")
+	}
+	r, err := s.meta.GetSession(ref)
+	if err == nil {
+		err = resource.ValidateSessionID(r.Status.SessionID)
+	}
+	return r, err
 }
 
 func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input) (runtime.InputReceipt, error) {
-	r, err := s.meta.GetSession(ref)
+	r, err := s.GetSession(ref)
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
@@ -417,7 +460,7 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 }
 
 func (s *Service) ListHistoryEvents(ref resource.SessionRef, q store.HistoryQuery) (store.HistoryPage, error) {
-	r, err := s.meta.GetSession(ref)
+	r, err := s.GetSession(ref)
 	if err != nil {
 		return store.HistoryPage{}, err
 	}
@@ -425,7 +468,7 @@ func (s *Service) ListHistoryEvents(ref resource.SessionRef, q store.HistoryQuer
 }
 
 func (s *Service) SubscribeEvents(ref resource.SessionRef) (*Subscription, error) {
-	r, err := s.meta.GetSession(ref)
+	r, err := s.GetSession(ref)
 	if err != nil {
 		return nil, err
 	}
@@ -632,7 +675,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // Cancel targets the original lane and remains available during drain. A receipt
 // records only dispatch/acknowledgment; native termination must still be observed.
 func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.CancelReceipt, error) {
-	r, err := s.meta.GetSession(ref)
+	r, err := s.GetSession(ref)
 	if err != nil {
 		return runtime.CancelReceipt{}, err
 	}
@@ -662,7 +705,7 @@ func (s *Service) Cancel(ctx context.Context, ref resource.SessionRef) (runtime.
 // ReconcileHistory is an explicit experiment-only settlement operation. It does
 // not reopen input admission. No original UUID or event content is regenerated.
 func (s *Service) ReconcileHistory(ctx context.Context, ref resource.SessionRef) error {
-	r, err := s.meta.GetSession(ref)
+	r, err := s.GetSession(ref)
 	if err != nil {
 		return err
 	}

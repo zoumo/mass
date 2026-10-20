@@ -30,7 +30,7 @@ func (s *Service) runtimeStatus(name string, status resource.RuntimeStatus) (res
 
 func (s *Service) sessionStatus(ref resource.SessionRef, change func(*resource.Session)) (resource.Session, error) {
 	for {
-		r, err := s.meta.GetSession(ref)
+		r, err := s.GetSession(ref)
 		if err != nil {
 			return r, err
 		}
@@ -43,7 +43,29 @@ func (s *Service) sessionStatus(ref resource.SessionRef, change func(*resource.S
 }
 
 func (s *Service) ListSessions(q resource.SessionQuery) (resource.SessionPage, error) {
-	return s.meta.ListSessions(q)
+	if q.Namespace != "" && !validNamespace(q.Namespace) || q.RuntimeRef != "" && !validName(q.RuntimeRef) || q.Limit < 0 {
+		return resource.SessionPage{}, runtime.InvalidArgument("invalid session query")
+	}
+	switch q.State {
+	case "", "offline", "opening", "idle", "running", "requires_action", "closing", "archived", "unknown":
+	default:
+		return resource.SessionPage{}, runtime.InvalidArgument("invalid session state")
+	}
+	if q.SessionID != "" {
+		if err := resource.ValidateSessionID(q.SessionID); err != nil {
+			return resource.SessionPage{}, err
+		}
+	}
+	page, err := s.meta.ListSessions(q)
+	if err != nil {
+		return resource.SessionPage{}, err
+	}
+	for _, r := range page.Items {
+		if err := resource.ValidateSessionID(r.Status.SessionID); err != nil {
+			return resource.SessionPage{}, err
+		}
+	}
+	return page, nil
 }
 
 func (s *Service) DeleteRuntime(name string) error {
@@ -98,13 +120,14 @@ func offlineStatus(r *resource.Session, archived bool) {
 }
 
 func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
-	r, err := s.meta.GetSession(ref)
+	r, err := s.GetSession(ref)
 	if err != nil {
 		return r, err
 	}
+	ref = resource.SessionRef{SessionID: r.Status.SessionID}
 	unlock := s.sessionOperation(r.Status.SessionID)
 	defer unlock()
-	r, err = s.meta.GetSession(ref)
+	r, err = s.GetSession(ref)
 	if err != nil {
 		return r, err
 	}
@@ -122,7 +145,7 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 	}
 	run.op.Lock()
 	defer run.op.Unlock()
-	r, err = s.meta.GetSession(ref)
+	r, err = s.GetSession(ref)
 	if err != nil {
 		return r, err
 	}
@@ -296,13 +319,14 @@ func (s *Service) StopRuntime(ctx context.Context, name string) (resource.Runtim
 }
 
 func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
-	r, err := s.meta.GetSession(ref)
+	r, err := s.GetSession(ref)
 	if err != nil {
 		return r, err
 	}
+	ref = resource.SessionRef{SessionID: r.Status.SessionID}
 	unlock := s.sessionOperation(r.Status.SessionID)
 	defer unlock()
-	r, err = s.meta.GetSession(ref)
+	r, err = s.GetSession(ref)
 	if err != nil {
 		return r, err
 	}
@@ -340,7 +364,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		return r, runtime.FailedPrecondition("runtime unavailable or session already controlled")
 	}
 	s.mu.Unlock()
-	r, err = s.meta.GetSession(ref)
+	r, err = s.GetSession(ref)
 	if err != nil {
 		return r, err
 	}
@@ -368,14 +392,21 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		s.mu.Unlock()
 		return r, err
 	}
-	if native.SessionID != r.Status.SessionID {
+	identityErr := resource.ValidateSessionID(native.SessionID)
+	if identityErr == nil && native.SessionID != r.Status.SessionID {
+		identityErr = errors.New("resume returned a replacement identity")
+	}
+	if identityErr != nil {
 		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
 		s.mu.Lock()
 		if cleanup == nil {
 			delete(run.pending, k)
 		}
 		s.mu.Unlock()
-		return r, errors.Join(errors.New("resume returned a replacement identity"), cleanup)
+		if cleanup != nil {
+			return r, errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_identity_cleanup_unknown", Message: "Unexpected resume identity cleanup remains unsettled"}, cleanup)
+		}
+		return r, identityErr
 	}
 	r, err = s.sessionStatus(ref, func(r *resource.Session) {
 		r.Status = resource.SessionStatus{SessionID: r.Status.SessionID, State: events.Unknown, AppliedGeneration: r.Metadata.Generation, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}

@@ -1,8 +1,7 @@
 package transport
 
-// Session protocol migration (typed inputs, raw ID and nameOrID addressing,
-// history/SSE schemas) belongs to tickets 03–05. Keep the existing operations
-// available under the new prefix without retaining the old string dispatcher.
+// Work, recovery and event operations retain explicit chi handlers until their
+// owning tickets migrate their request and response schemas.
 import (
 	"context"
 	"net/http"
@@ -13,34 +12,14 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
-	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
 
-func (s *Server) registerSessions(_ huma.API, r chi.Router) {
-	r.MethodFunc("POST", "/apis/v1/sessions", s.sessionHandler(nil, func(w http.ResponseWriter, r *http.Request, _ resource.SessionRef, q url.Values) {
-		var in sessionCreate
-		if err := decodeBody(w, r, &in); err != nil {
-			respond(w, 0, nil, err)
-			return
-		}
-		value, err := s.api.CreateSession(context.WithoutCancel(r.Context()), resource.Session{Metadata: resource.Metadata{Name: in.Metadata.Name, Namespace: in.Metadata.Namespace}, Spec: in.Spec})
-		if err == nil {
-			w.Header().Set("Location", "/apis/v1/sessions/"+url.PathEscape(value.Status.SessionID))
-		}
-		respond(w, 201, value, err)
-	}))
-	r.MethodFunc("GET", "/apis/v1/sessions", s.sessionHandler([]string{"namespace", "runtimeRef", "state", "after", "limit"}, func(w http.ResponseWriter, r *http.Request, _ resource.SessionRef, q url.Values) {
-		value, err := s.api.ListSessions(resource.SessionQuery{Namespace: q.Get("namespace"), RuntimeRef: q.Get("runtimeRef"), State: events.SessionState(q.Get("state")), After: q.Get("after"), Limit: queryLimit(q)})
-		respond(w, 200, value, err)
-	}))
-	for _, base := range []string{"/apis/v1/sessions/{sessionId}", "/apis/v1/namespaces/{namespace}/sessions/{name}"} {
-		r.MethodFunc("GET", base, s.sessionHandler(nil, func(w http.ResponseWriter, r *http.Request, ref resource.SessionRef, _ url.Values) {
-			v, e := s.api.GetSession(ref)
-			respond(w, 200, v, e)
-		}))
+func (s *Server) registerSessions(api huma.API, r chi.Router) {
+	s.registerSessionIdentity(api)
+	for _, base := range []string{"/apis/v1/sessions/{sessionId}", "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}"} {
 		r.MethodFunc("POST", base+"/resume", s.sessionHandler(nil, func(w http.ResponseWriter, r *http.Request, ref resource.SessionRef, _ url.Values) {
 			if e := emptyBody(w, r); e != nil {
 				respond(w, 0, nil, e)
@@ -106,15 +85,27 @@ func (s *Server) sessionHandler(allowed []string, handler func(http.ResponseWrit
 		ref := resource.SessionRef{}
 		if id := chi.URLParam(r, "sessionId"); id != "" {
 			decoded, e := url.PathUnescape(id)
-			if e != nil || decoded == "" || decoded == "." || decoded == ".." || !utf8.ValidString(decoded) {
-				respond(w, 0, nil, Invalid())
+			if e == nil {
+				e = resource.ValidateSessionID(decoded)
+			}
+			if e != nil {
+				respond(w, 0, nil, e)
 				return
 			}
 			ref.SessionID = decoded
 		}
-		if name := chi.URLParam(r, "name"); name != "" {
-			ref.Namespace = chi.URLParam(r, "namespace")
-			ref.Name = name
+		if name := chi.URLParam(r, "nameOrID"); name != "" {
+			namespace, err := url.PathUnescape(chi.URLParam(r, "namespace"))
+			target, targetErr := url.PathUnescape(name)
+			if err != nil || targetErr != nil {
+				respond(w, 0, nil, Invalid())
+				return
+			}
+			ref, err = s.api.ResolveSession(namespace, target)
+			if err != nil {
+				respond(w, 0, nil, err)
+				return
+			}
 		}
 		media := "application/json"
 		if strings.HasSuffix(r.URL.Path, "/events/stream") {
