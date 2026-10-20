@@ -110,11 +110,3 @@ func decodeRef(v string) (string, error) {
 	}
 	return string(b), nil
 }
-
-var eventTypes = func() map[string]bool {
-	out := map[string]bool{}
-	for s := range strings.FieldsSeq("user.message agent.message agent.thinking agent.tool_call agent.tool_result agent.message_chunk agent.thinking_chunk agent.tool_call_chunk agent.plan session.state_update session.error session.info_update session.config_option_update session.available_commands_update session.usage_update session.interaction_requested session.interaction_closed") {
-		out[s] = true
-	}
-	return out
-}()

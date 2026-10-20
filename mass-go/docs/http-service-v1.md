@@ -1,4 +1,4 @@
-# HTTP v1 implementation: Runtime, Session identity, work and recovery (tickets 01–05)
+# HTTP v1 implementation: Runtime, Session identity, work and recovery (tickets 01–06)
 
 The contract is [harness/bindings/http.md](../../harness/bindings/http.md).
 This note records implementation coverage, not a replacement contract.
@@ -26,7 +26,7 @@ rtk proxy go run ./cmd/massd openapi > /tmp/mass-openapi.json
 ```
 
 The exporter runs exactly the server's type registration. Current OpenAPI covers
-Runtime operations, Session creation/listing, both Session lookup paths, both sets of work and recovery operations and probes. Creation accepts only writable metadata/spec;
+Runtime operations, Session creation/listing, both Session lookup paths, both sets of work, recovery, history and SSE operations and probes. Creation accepts only writable metadata/spec;
 PUT accepts RuntimeSpec directly. Error schemas use `{code, reason, message}`,
 with the same application/json media as runtime responses. Output metadata
 marks generated fields read-only. No manually maintained OpenAPI schema is used.
@@ -131,3 +131,35 @@ cascades or implicitly stops. Typed HTTP registration returns 204 with no body f
 successful deletion. The existing generated lifecycle schema remains applicable.
 Deterministic Service/real HTTP and SDK mock verification does not prove native
 Agent/model or deployment-proxy behavior.
+
+## History and live observation (ticket 06)
+
+Both Session addresses register history and SSE with Huma. History uses repeated
+`types` parameters with exact OR matching; cursor bindings normalize type order
+and duplicates, exclude `limit`, and preserve the full-session `syncedEventId`.
+History reads do not activate the Runtime. SessionEvent remains the shared domain
+value for Runtime, committed history and live delivery; its custom JSON codec and
+transport union schema cover all 17 harness event branches, including config and
+interaction unions. This expands public value support, not native adapter output
+capabilities.
+
+SSE subscribes before returning a Huma StreamResponse. Establishment failures
+remain ordinary error JSON. A successful stream sends ready, live SessionEvent
+frames, comment heartbeats every ten seconds and an explicit closed/error frame
+when possible. It sends no id/retry and rejects resume parameters. Headers prohibit
+caching/transformation and request disabled proxy buffering. Client disconnection
+closes observation only; source queues and Runtime stop drains retain their
+existing ownership. Generated-client integration remains ticket 07.
+
+The explicit local-proxy integration target requires an installed Caddy CLI:
+
+```sh
+rtk proxy go test -race -p 1 -tags=proxy ./pkg/service -run TestSSEThroughCaddy -v -count=1
+```
+
+It starts a separate loopback proxy with temporary configuration/storage and no
+admin endpoint, checks ready and two business frames before stream termination,
+waits for a heartbeat within fifteen seconds, then verifies the shutdown error,
+proxy process exit and listener release. Caddy is configured with `flush_interval
+-1`, no compression and no cache handler. This demonstrates this local proxy
+configuration; it does not certify every deployment or a real Agent/model.

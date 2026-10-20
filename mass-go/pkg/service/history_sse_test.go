@@ -331,3 +331,10 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 		s.Equal(persistent[i], e.EventID)
 	}
 }
+
+func (s *SessionWorkSuite) TestHistoryServiceRejectsUnknownTypes() {
+	for _, types := range [][]string{{"unknown"}, {""}, {}} {
+		_, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{Types: types})
+		s.Error(err)
+	}
+}
