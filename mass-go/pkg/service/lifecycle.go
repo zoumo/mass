@@ -326,6 +326,23 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 			return r, err
 		}
 	}
+	// Retired delivery owners still carry accepted facts. Admission is sealed,
+	// so this unique lane set is stable through both pre-release and EOF drains.
+	s.mu.Lock()
+	retired := make([]*lane, 0, len(run.retired))
+	seen := map[*lane]bool{}
+	for _, l := range run.retired {
+		if !seen[l] && run.lanes[l.session.Status.SessionID] != l {
+			retired = append(retired, l)
+			seen[l] = true
+		}
+	}
+	s.mu.Unlock()
+	for _, l := range retired {
+		if err := s.drainLane(ctx, l); err != nil {
+			return r, err
+		}
+	}
 	if !run.driverStopped {
 		if err := run.driver.Stop(ctx); err != nil {
 			return r, err
@@ -341,14 +358,6 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	if run.blocked != nil || run.streamErr != nil {
 		s.mu.Unlock()
 		return r, &runtime.OperationError{Code: "outcome_unknown", Reason: "runtime_delivery_unsettled", Message: "Original stream delivery remains unsettled after Driver release"}
-	}
-	retired := make([]*lane, 0, len(run.retired))
-	seen := map[*lane]bool{}
-	for _, l := range run.retired {
-		if !seen[l] && run.lanes[l.session.Status.SessionID] != l {
-			retired = append(retired, l)
-			seen[l] = true
-		}
 	}
 	s.mu.Unlock()
 	for _, l := range retired {
