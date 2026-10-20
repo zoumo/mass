@@ -344,13 +344,14 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 // growing history every 5ms competes with Store commits under the race detector.
 func (s *failureSuite) requireHistoryAfterTurn(ref resource.SessionRef, count int) {
 	s.Require().Eventually(func() bool {
-		current, err := s.svc.GetSession(ref)
-		if err != nil || current.Status.State != events.Idle {
+		// This fixture orders running, all facts, then idle. Read a fact before
+		// reading state so an earlier initial idle cannot satisfy the wait.
+		page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 1})
+		if err != nil || len(page.Events) == 0 {
 			return false
 		}
-		// The initial idle has no history; only this turn produces persistent facts.
-		page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 1})
-		return err == nil && len(page.Events) != 0
+		current, err := s.svc.GetSession(ref)
+		return err == nil && current.Status.State == events.Idle
 	}, 6*time.Second, 5*time.Millisecond)
 	page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 1000})
 	s.Require().NoError(err)
