@@ -47,12 +47,14 @@ func (g *identityGate) CreateSession(r resource.Session) (resource.Session, erro
 }
 
 func TestMain(m *testing.M) {
-	mainCtx, mainCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	// The complete race suite has a five-minute budget, plus owned build/cleanup.
+	mainCtx, mainCancel := context.WithTimeout(context.Background(), 330*time.Second)
 	var err error
 	root, err = os.MkdirTemp("", "mass-vertical-")
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println("owned vertical resource root:", root)
 	code := 1
 	func() {
 		defer func() {

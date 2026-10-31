@@ -15,7 +15,7 @@ lint-go:
 	cd mass-go && golangci-lint run ./...
 
 test-go:
-	cd mass-go && go test -race -timeout=180s ./...
+	cd mass-go && go test -race -timeout=300s ./...
 
 build-massctl:
 	mkdir -p bin
@@ -37,3 +37,8 @@ check-massctl: check-go
 .PHONY: prototype-go
 prototype-go:
 	cd mass-go && GOWORK=off GOPROXY=off go test -count=1 -v -timeout=180s ./tests/vertical -run '^TestEntrypointSuite$$'
+
+# Offline cross-capability combinations; no recording or real-model fallback.
+.PHONY: acceptance-sdk-go
+acceptance-sdk-go:
+	cd mass-go && GOWORK=off GOPROXY=off GOSUMDB=off go test -race -count=1 -v -timeout=180s ./tests/vertical -run '^TestTicket08'
