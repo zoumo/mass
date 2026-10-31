@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	sdk "github.com/zoumo/agent-sdk-go/claude"
+	"github.com/zoumo/agent-sdk-go/claude/types"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -45,7 +46,12 @@ type session struct {
 	work                     string
 	cancelTarget             string
 	cancelWork               string
-	used                     bool
+	submissions              int
+	observationWork          string
+	attribution              string
+	uncertain                bool
+	results                  map[string]string
+	submitted                map[string]bool
 	mu                       sync.Mutex
 	address                  runtime.Address
 	source                   events.Source
@@ -144,7 +150,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 			return runtime.DriverSession{}, noResources("invalid Claude recovery context")
 		}
 	}
-	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}}
+	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown"}
 	c, err := sdk.Open(ctx, sdk.SessionOptions{ResumeID: resume, CLIPath: d.options.Executable, WorkDir: spec.Cwd, Env: d.options.Environment("claude")})
 	if err != nil {
 		close(s.ready)
@@ -227,34 +233,60 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 		return runtime.InputReceipt{}, runtime.Unsupported()
 	}
 	s.mu.Lock()
-	if s.used && !s.active && !s.sending {
-		s.mu.Unlock()
-		return runtime.InputReceipt{}, runtime.FailedPrecondition("Claude has no native work identity: close/resume required before another input")
-	}
-	if s.active || s.sending || s.closing || s.err != nil || s.used {
+	if s.active || s.sending || s.closing || s.err != nil || s.uncertain {
 		s.mu.Unlock()
 		return runtime.InputReceipt{}, runtime.FailedPrecondition("session unavailable or work unsettled")
 	}
+	if len(s.submitted) >= 128 {
+		s.mu.Unlock()
+		return runtime.InputReceipt{}, runtime.Exhausted("submission_attribution_capacity")
+	}
 	s.active = true
-	s.used = true
+	s.submissions++
 	s.work = uuid.NewString()
+	work := s.work
+	s.submitted[work] = true
+	count := s.submissions
 	s.sending = true
 	s.mu.Unlock()
-	_, err = s.client.Submit(ctx, sdk.Input{Text: input.Content[0].Text})
+	native := sdk.Input{Text: input.Content[0].Text}
+	// The first input has no prior local work to confuse with. Later inputs carry
+	// a caller UUID, not a native TurnID; an echo is optional, never presumed.
+	if count > 1 {
+		text := input.Content[0].Text
+		native = sdk.Input{User: &types.UserInput{UUID: &work, Message: types.InputMessage{Role: "user", Content: types.Content{Text: &text}}}}
+	}
+	_, err = s.client.Submit(ctx, native)
 	s.mu.Lock()
 	s.sending = false
+	if err != nil {
+		var dispatch *sdk.DispatchError
+		if errors.As(err, &dispatch) && dispatch.State == sdk.NotSent {
+			s.active = false
+			s.submissions--
+			s.work = ""
+			delete(s.submitted, work)
+			err = errors.Join(runtime.FailedPrecondition("Claude input was not sent"), err)
+		} else {
+			s.uncertain = true
+		}
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	return runtime.InputReceipt{Submission: "sent", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: work, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
 }
 
 func (d *Driver) emit(s *session, item string, p events.Payload, at time.Time) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
-	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at}, p, s.source.WithWork(s.work))
+	meta := map[string]any{"attribution": s.attribution}
+	if s.observationWork != "" {
+		meta["submission"] = s.observationWork
+	}
+	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at, Meta: map[string]any{"claude": meta}}, p, s.source.WithWork(s.observationWork))
 	if err != nil {
 		return err
 	}
@@ -271,7 +303,7 @@ func (d *Driver) observe(s *session, early []sdk.Event) {
 	defer close(s.done)
 	for _, event := range early {
 		s.mu.Lock()
-		err := d.adapt(s, event)
+		err := d.adapt(s, event, false)
 		if err != nil {
 			s.err = err
 		}
@@ -287,17 +319,42 @@ func (d *Driver) observe(s *session, early []sdk.Event) {
 			switch event.Kind {
 			case sdk.ReceivedNative:
 				if event.Event != nil {
-					err = d.adapt(s, *event.Event)
+					err = d.adapt(s, *event.Event, event.Parent != nil)
 				}
 			case sdk.ReceivedRequest:
 				if event.Request != nil {
-					err = d.permission(s, event.Request)
+					s.observationWork, s.attribution = "", "unknown"
+					if s.submissions == 1 {
+						s.observationWork, s.attribution = s.work, "single_submission"
+					}
+					var linkage struct {
+						UUID string `json:"user_message_uuid"`
+					}
+					if json.Unmarshal(event.Request.Raw(), &linkage) == nil && linkage.UUID != "" {
+						s.observationWork, s.attribution = "", "unknown"
+						if s.submitted[linkage.UUID] {
+							s.observationWork, s.attribution = linkage.UUID, "user_message_uuid"
+						}
+					}
+					if event.Parent != nil {
+						s.observationWork, s.attribution = "", "unknown"
+					}
+					if s.observationWork != "" && s.observationWork == s.work && s.active {
+						err = d.permission(s, event.Request)
+					} else {
+						err = d.emit(s, "", events.SessionError{Message: "Claude interaction is not attributable to current work; no current answer authority admitted", Reason: "interaction_attribution_unknown"}, time.Time{})
+						if err == nil && s.observationWork == "" && s.active && event.Parent == nil {
+							s.uncertain = true
+							err = d.state(s, nil, "interaction_attribution_unknown")
+						}
+					}
 				}
 			}
 		}
 		if err != nil {
 			if !s.closing {
 				s.err = err
+				s.observationWork, s.attribution = "", "unknown"
 				_ = d.emit(s, "", events.SessionError{Message: "Claude observation failed", Reason: "native_observation_failed"}, time.Time{})
 				_ = d.state(s, nil, "")
 			}
@@ -316,10 +373,28 @@ func decode(raw json.RawMessage) (any, error) {
 	return value, err
 }
 
-func (d *Driver) adapt(s *session, e sdk.Event) error {
+func (d *Driver) adapt(s *session, e sdk.Event, child bool) error {
 	if e.SessionID != "" && e.SessionID != s.id {
 		return nil
 	} // unproven descendants are not this Session
+	s.observationWork, s.attribution = "", "unknown"
+	root := !child && (e.ParentToolUseID == nil || *e.ParentToolUseID == "") && (e.AgentID == nil || *e.AgentID == "")
+	if root {
+		if e.UserMessageUUID != nil && *e.UserMessageUUID != "" {
+			// A known caller UUID is evidence; arbitrary request IDs are not.
+			if s.submitted[*e.UserMessageUUID] {
+				s.observationWork, s.attribution = *e.UserMessageUUID, "user_message_uuid"
+			}
+		} else if previous, ok := s.results[e.UUID]; e.UUID != "" && ok {
+			s.observationWork, s.attribution = previous, "prior_result"
+		} else if s.submissions == 1 && s.work != "" {
+			s.observationWork, s.attribution = s.work, "single_submission"
+		}
+		// Conflicting native identities are not evidence for either submission.
+		if previous, ok := s.results[e.UUID]; e.Type == "result" && ok && previous != s.observationWork {
+			s.observationWork, s.attribution = "", "unknown"
+		}
+	}
 	var raw struct {
 		Time    time.Time `json:"timestamp"`
 		Message struct {
@@ -343,6 +418,9 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 		switch raw.Event.Type {
 		case "message_start":
 			s.messageID = raw.Event.Message.ID
+			if !root || s.observationWork == "" || s.observationWork != s.work || !s.active {
+				return nil
+			}
 			state := events.Running
 			return d.state(s, &state, "")
 		case "content_block_delta":
@@ -475,8 +553,24 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 			}
 		}
 	case "result":
-		d.interactions.RemoveSession(s.id)
+		if !root || !s.active || (s.observationWork != "" && s.observationWork != s.work) {
+			return nil
+		}
+		if s.observationWork == "" {
+			s.uncertain = true
+			if err := d.emit(s, "", events.SessionError{Message: "Claude result has no proven submission linkage; work remains unsettled", Reason: "work_attribution_unknown"}, raw.Time); err != nil {
+				return err
+			}
+			return d.state(s, nil, "work_attribution_unknown")
+		}
+		if e.UUID != "" {
+			if len(s.results) >= 128 {
+				return errors.New("claude result attribution capacity exhausted")
+			}
+			s.results[e.UUID] = s.observationWork
+		}
 		s.active = false
+		s.uncertain = false
 		s.messageID = ""
 		state := events.Idle
 		return d.state(s, &state, e.Subtype)
@@ -485,12 +579,8 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 }
 
 func (d *Driver) permission(s *session, r *sdk.IncomingRequest) error {
-	if r.Method() != "can_use_tool" || r.Handle() == nil {
-		return d.emit(s, "", events.SessionError{Message: "unsupported native interaction", Reason: "unsupported_native_interaction"}, time.Time{})
-	}
 	p := r.Handle()
 	request := events.PermissionRequest(p.ToolUseID(), p.ToolName())
-	request.Content = []events.ContentBlock{events.Text(string(r.Params()))}
 	if p.ToolName() == "AskUserQuestion" {
 		value, err := decode(p.Input())
 		if err != nil {
@@ -502,16 +592,8 @@ func (d *Driver) permission(s *session, r *sdk.IncomingRequest) error {
 		}
 		request = events.InteractionRequest{Kind: "form", Message: "Answer native Claude questions", RequestedSchema: schema}
 	}
-	live := func() bool { return r.Context().Err() == nil }
-	unsent := func(err error) bool {
-		var native *sdk.DispatchError
-		if errors.As(err, &native) {
-			return native.State == sdk.NotSent
-		}
-		return errors.Is(err, runtime.ErrInvalidArgument)
-	}
-	source := s.source.WithWork(s.work)
-	ref, err := d.interactions.Add(s.id, source, live, unsent, func(ctx context.Context, a map[string]any) error {
+	ref, err := d.interactions.Add(s.id, s.source.WithWork(s.observationWork), func(ctx context.Context, a map[string]any) error {
+		answer := sdk.PermissionAnswer{Behavior: sdk.PermissionAllow, UpdatedInput: p.Input()}
 		if request.Kind == "form" {
 			if len(a) != 2 || a["action"] != "accept" {
 				return runtime.InvalidArgument("expected explicit form accept/content")
@@ -532,39 +614,17 @@ func (d *Driver) permission(s *session, r *sdk.IncomingRequest) error {
 				}
 				answers[question] = text
 			}
-			err := r.Answer(ctx, sdk.QuestionAnswers{Answers: answers})
-			var native *sdk.DispatchError
-			if errors.As(err, &native) && native.State == sdk.NotSent && errors.Is(err, sdk.ErrInvalidPermissionAnswer) {
-				return errors.Join(runtime.ErrInvalidArgument, err)
-			}
-			return err
+			return r.Answer(ctx, sdk.QuestionAnswers{Answers: answers})
 		} else {
-			selection := a
-			var updated json.RawMessage
-			if input, exists := a["updatedInput"]; exists {
-				if len(a) != 3 || a["optionId"] != "allow-once" {
-					return runtime.InvalidArgument("updatedInput requires an allow-once selection")
-				}
-				object, ok := input.(map[string]any)
-				if !ok || object == nil {
-					return runtime.InvalidArgument("updatedInput must be an object")
-				}
-				var err error
-				updated, err = json.Marshal(object)
-				if err != nil {
-					return runtime.InvalidArgument("invalid updatedInput")
-				}
-				selection = map[string]any{"outcome": a["outcome"], "optionId": a["optionId"]}
-			}
-			allow, err := runtime.PermissionAllowed(selection)
+			allow, err := runtime.PermissionAllowed(a)
 			if err != nil {
 				return err
 			}
 			if !allow {
-				return r.Deny(ctx, sdk.DenialOptions{Message: "Rejected"})
+				answer = sdk.PermissionAnswer{Behavior: sdk.PermissionDeny, Message: "Rejected"}
 			}
-			return r.Approve(ctx, sdk.ApprovalOptions{UpdatedInput: updated})
 		}
+		return p.Answer(ctx, answer)
 	})
 	if err != nil {
 		return err

@@ -3,7 +3,8 @@ package events
 import "github.com/google/uuid"
 
 // Source is execution-only association. It never enters event JSON/history.
-// A run token is fixed at open; work is the original native turn identity.
+// A run token is fixed at open; work is the adapter's proven work association
+// (a native turn identity or a MASS submission), never a fabricated native ID.
 type Source struct{ run, work string }
 
 func NewSource() Source                      { return Source{run: uuid.NewString()} }

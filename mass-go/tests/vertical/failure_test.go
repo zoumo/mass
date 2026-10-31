@@ -120,8 +120,9 @@ func (s *failureSuite) cancel(kind string) {
 	s.Require().Error(err)
 	s.until(sub, events.Idle)
 	if kind == "claude" {
-		_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
-		s.Require().ErrorContains(err, "close/resume required")
+		settled, err := s.svc.Cancel(ctx(s.T()), ref)
+		s.Require().NoError(err)
+		s.Equal("noActiveWork", settled.Result)
 	}
 	s.T().Log("PASS matched interrupt receipt does not terminate work or admit another input")
 }

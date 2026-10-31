@@ -299,10 +299,14 @@ func (s *entrypointSuite) basic(kind string) {
 	s.Require().NoError(watch.Close())
 	s.runWork(ref, "hello", false)
 	if kind == "claude" {
-		var out any
-		e = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("forbidden second input")}}}, &out)
-		s.Require().Error(e)
-		s.T().Log("PASS Claude second input rejected; close and original-ID resume required")
+		// Unsupported input after settlement still rejects before dispatch. Actual
+		// repeated text input uses the dedicated continuity peer below this suite.
+		var image events.ContentBlock
+		s.Require().NoError(json.Unmarshal([]byte(`{"type":"image","data":"AA==","mimeType":"image/png"}`), &image))
+		e = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{image}}}, nil)
+		var public *transport.Error
+		s.Require().ErrorAs(e, &public)
+		s.Equal("unsupported", public.Code)
 	}
 	for _, q := range []store.HistoryQuery{{Types: []string{}}, {Limit: -1}, {After: "not-a-cursor"}} {
 		e = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.history", workflowParams{Session: ref, History: q}, nil)
