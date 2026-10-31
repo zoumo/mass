@@ -140,6 +140,9 @@ func (s *Service) archiveSessionOwner(ctx context.Context, ref resource.SessionR
 	if err != nil {
 		return r, err
 	}
+	if r.Status.HistoryLoad != nil && r.Status.HistoryLoad.Phase != "completed" {
+		return r, runtime.FailedPrecondition("history load remains fenced")
+	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
 	if expected != nil {
@@ -588,6 +591,9 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 		return nil, nil, runtime.Exhausted(sessionDeliveryOverloaded)
 	}
 	available := run.started && l != nil && l == original && !l.releasing
+	if l != nil && l.load != nil && !l.load.complete.Load() {
+		available = false
+	}
 	if !canceling {
 		available = available && !s.closing && !run.stopping && run.err == nil && l.err == nil && !l.closing
 	}
