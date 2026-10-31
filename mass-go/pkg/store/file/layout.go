@@ -447,7 +447,7 @@ func (s *Store) commit(next snapshot) error {
 		}
 		indexes[r.Status.SessionID] = index
 	}
-	if err := s.syncMetadata(canonical); err != nil {
+	if err := s.syncMetadata(canonical, s.data); err != nil {
 		return fmt.Errorf("outcome_unknown: metadata replica: %w", err)
 	}
 	if err := s.finishMetadata(); err != nil {

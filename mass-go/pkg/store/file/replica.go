@@ -117,39 +117,62 @@ func (s *Store) openReplicas() error {
 	return err
 }
 
-func (s *Store) syncMetadata(next snapshot) error {
+func (s *Store) syncMetadata(next, previous snapshot) error {
 	tx, err := s.sql.conn.BeginTx(context.Background(), nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err = tx.ExecContext(context.Background(), "DELETE FROM runtime; DELETE FROM session"); err != nil {
-		return err
+	// Only deleted identities touch history. A status update must not scan every
+	// historical event, nor replace unchanged resource rows.
+	for name := range previous.Runtimes {
+		if _, exists := next.Runtimes[name]; !exists {
+			if _, err = tx.ExecContext(context.Background(), "DELETE FROM runtime WHERE name=?", name); err != nil {
+				return err
+			}
+		}
 	}
-	for _, r := range next.Runtimes {
+	for k, old := range previous.Sessions {
+		current, exists := next.Sessions[k]
+		if exists && current.Status.SessionID == old.Status.SessionID {
+			continue
+		}
+		for _, statement := range []string{"DELETE FROM session WHERE key=?", "DELETE FROM history.event WHERE session_id=?", "DELETE FROM history.sync_progress WHERE session_id=?"} {
+			value := old.Status.SessionID
+			if statement == "DELETE FROM session WHERE key=?" {
+				value = k
+			}
+			if _, err = tx.ExecContext(context.Background(), statement, value); err != nil {
+				return err
+			}
+		}
+	}
+	for name, r := range next.Runtimes {
+		if old, exists := previous.Runtimes[name]; exists && equal(old, r) {
+			continue
+		}
 		b, err := json.Marshal(r)
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(context.Background(), "INSERT INTO runtime VALUES(?,?,?,?)", r.Metadata.Name, r.Spec.Type, r.Status.State, b); err != nil {
+		if _, err = tx.ExecContext(context.Background(), "INSERT INTO runtime VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET type=excluded.type,state=excluded.state,payload=excluded.payload", r.Metadata.Name, r.Spec.Type, r.Status.State, b); err != nil {
 			return err
 		}
 	}
-	for _, r := range next.Sessions {
+	for k, r := range next.Sessions {
+		if old, exists := previous.Sessions[k]; exists && equal(old, r) {
+			continue
+		}
 		b, err := json.Marshal(r)
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(context.Background(), "INSERT INTO session VALUES(?,?,?,?,?,?,?,?)", key(r.Metadata.Namespace, r.Metadata.Name), r.Status.SessionID, r.Metadata.Namespace, r.Metadata.Name, r.Spec.RuntimeRef, r.Status.State, sessionOrder(r), b); err != nil {
+		if _, err = tx.ExecContext(context.Background(), "INSERT INTO session VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET session_id=excluded.session_id,namespace=excluded.namespace,name=excluded.name,runtime_ref=excluded.runtime_ref,state=excluded.state,sort_key=excluded.sort_key,payload=excluded.payload", key(r.Metadata.Namespace, r.Metadata.Name), r.Status.SessionID, r.Metadata.Namespace, r.Metadata.Name, r.Spec.RuntimeRef, r.Status.State, sessionOrder(r), b); err != nil {
 			return err
 		}
 		if _, err = tx.ExecContext(context.Background(), "INSERT OR IGNORE INTO history.sync_progress VALUES(?,NULL)", r.Status.SessionID); err != nil {
 			return err
 		}
-	}
-	if _, err = tx.ExecContext(context.Background(), `DELETE FROM history.event WHERE session_id NOT IN (SELECT session_id FROM session);
- DELETE FROM history.sync_progress WHERE session_id NOT IN (SELECT session_id FROM session)`); err != nil {
-		return err
 	}
 	return tx.Commit()
 }
@@ -163,7 +186,7 @@ func (s *Store) loadHistories() error {
 	if err := s.openReplicas(); err != nil {
 		return err
 	}
-	if err := s.syncMetadata(s.data); err != nil {
+	if err := s.syncMetadata(s.data, snapshot{}); err != nil {
 		return err
 	}
 	indexes := make(map[string]*historyIndex, len(s.data.Sessions))
@@ -181,6 +204,56 @@ func (s *Store) loadHistories() error {
 	}
 	s.histories = indexes
 	return nil
+}
+
+// Validate every committed public history before extending any recovery tail.
+// For Reconcile, also compare the original process checkpoints before mutation.
+// SQL supplies bounded identity validation; only one checkpoint per Session is
+// retained. Driver-private recovery validation remains outside Store.
+func (s *Store) restoreBeforeAppend(intent appendIntent) (*historyIndex, error) {
+	if intent.Offset < 0 {
+		return nil, errors.New("invalid append offset")
+	}
+	if err := s.openReplicas(); err != nil {
+		return nil, err
+	}
+	if err := s.syncMetadata(s.data, snapshot{}); err != nil {
+		return nil, err
+	}
+	var target *historyIndex
+	for _, r := range s.data.Sessions {
+		f, err := openHistory(s.historyPath(r), os.O_RDONLY)
+		if err != nil {
+			return nil, err
+		}
+		err = func() error {
+			var reader io.Reader = f
+			if r.Status.SessionID == intent.SessionID {
+				reader = io.NewSectionReader(f, 0, intent.Offset)
+			}
+			if old := s.histories[r.Status.SessionID]; old != nil {
+				prefix, e := scanHistory(io.NewSectionReader(f, 0, old.End), r)
+				if e != nil || prefix.End != old.End || prefix.Hash != old.Hash {
+					return errors.New("committed history prefix changed or missing")
+				}
+			}
+			index := emptyHistory()
+			if e := s.restoreHistory(reader, r, index); e != nil {
+				return e
+			}
+			if r.Status.SessionID == intent.SessionID {
+				target = index
+			}
+			return nil
+		}()
+		if err := errors.Join(err, f.Close()); err != nil {
+			return nil, err
+		}
+	}
+	if target == nil {
+		return nil, errors.New("append Session missing")
+	}
+	return target, nil
 }
 
 // Each transaction contains at most 128 streamed records; no all-history Go index.

@@ -112,7 +112,10 @@ Pending UUIDs and operation closures are retained in memory in this process;
 there is no crash-recoverable private per-fact outbox. After process loss,
 unconfirmed ownership is refused rather than reconstructed, resent or declared
 clean. Manual forensic recovery/cross-process settlement, kernel crash/power
-loss, SQLite, real Agent/model/account behavior and Linux remain unverified.
+loss, real Agent/model/account behavior and Linux remain unverified. SQLite
+replica recovery is separately verified through real disk fault/process-exit
+acceptance; see [file Store](file-store.md). This does not add a private native
+outbox or cross-process Service operation settlement.
 HTTP/final CLI exposure is implemented by Ticket06; see [the experimental mapping](http-experiment.md)
 and [the final product acceptance](acceptance.md). User questions remain separately tested
 through the product CLI/HTTP+SSE and the existing actual-SDK synthetic suites.

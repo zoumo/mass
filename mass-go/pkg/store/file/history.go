@@ -227,19 +227,6 @@ func (s *Store) applyAppend(r resource.Session, intent appendIntent, known *hist
 	if info.Size() < intent.Offset || info.Size()-intent.Offset > int64(len(intent.Data)) {
 		return nil, errors.New("append file length does not match intent")
 	}
-	if known == nil {
-		// Recovery validates prefix identities on disk before extending the file.
-		if err := s.openReplicas(); err != nil {
-			return nil, err
-		}
-		if err := s.syncMetadata(s.data); err != nil {
-			return nil, err
-		}
-		known = emptyHistory()
-		if err := s.restoreHistory(io.NewSectionReader(f, 0, intent.Offset), r, known); err != nil {
-			return nil, err
-		}
-	}
 	if known.End != intent.Offset || hex.EncodeToString(known.Hash[:]) != intent.PrefixHash {
 		return nil, errors.New("committed history prefix does not match intent")
 	}
@@ -317,7 +304,11 @@ func (s *Store) recoverAppend(write bool) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.applyAppend(r, intent, nil); err != nil {
+	known, err := s.restoreBeforeAppend(intent)
+	if err != nil {
+		return err
+	}
+	if _, err := s.applyAppend(r, intent, known); err != nil {
 		return err
 	}
 	// Open/Reconcile clear evidence after all file and replica checks succeed.

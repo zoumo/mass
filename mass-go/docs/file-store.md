@@ -90,7 +90,8 @@ occurs during append/recovery.
 
 Write, short-write, sync, close and intent-commit failures report outcome_unknown
 and seal the Store until explicit Reconcile or writable reopen. Recovery streams
-and validates the committed prefix, verifies its digest and original identity,
+and validates every Session's committed history before extending any pending tail,
+verifies the target prefix digest and original identity,
 validates every event in the new batch, then compares any already written suffix
 with the intent's exact bytes. It appends only missing bytes, including when the
 interrupted suffix ends mid-record. A fully written batch is synced without
@@ -116,7 +117,9 @@ and one lookahead row. Cursors use file-derived append ordinals, never SQL rowid
 Store uses one dedicated `database/sql` connection with the history database
 attached to the metadata database. Both databases use disk rollback journals
 (`DELETE`) and `synchronous=FULL`, with bounded 2 MiB page caches per database.
-Metadata replication and deleted-Session history cleanup share one transaction;
+Metadata replication writes only changed resources. Deleted identities use
+indexed Session-specific event/progress deletes; status updates do not scan the
+full event table. Metadata replication and deleted-Session cleanup share one transaction;
 event rows and sync progress share one transaction. The Store mutex protects the
 file/SQL view. Files commit first; SQL failure seals reads and writes with
 `outcome_unknown` until explicit Reconcile or writable reopen. SQL never creates
@@ -150,6 +153,31 @@ corrupt, incompatible and stale replicas, SQL-only events and incorrect progress
 real SQL trigger aborts during event/progress updates and attached deletion,
 read-only persistent-tree immutability and temporary cleanup, lifecycle identity
 isolation, and a child killed during startup after recovery batches reach disk.
+
+Additional crash acceptance exits real subprocesses before/after event and
+progress statements, before/after SQL commit, and after Append completes but the
+caller loses its response. Injected transaction-commit errors and real recovery-intent removal failures seal
+the Store; reopen preserves the UUID exactly once. The HTTP/SSE regression aborts
+a real disk SQLite progress update after the file append: subscribers receive an
+error, never the failed fact, and explicit Store/Service settlement retries the
+original UUID. Reconstruction/history inspection uses no Driver activation.
+Finished subscriptions and input admission remain sealed as documented in
+[failure settlement](failure-settlement.md).
+
+Opt-in scale acceptance (four Sessions, bounded 64-event input batches, varying
+history counts and payload sizes) reports startup, query, retry, append, status
+update and Reconcile timing, total allocation, retained/sample-peak Go heap and
+process RSS high-water mark:
+
+```sh
+MASS_TEST_REPLICA_SCALE=1 go test ./pkg/store/file -run '^TestReplicaScaleAcceptance$' -v -count=1
+```
+
+This uses owned temporary files/SQLite and synthetic facts. Startup/Reconcile
+must scan all authoritative events; their elapsed time and cumulative allocation
+scale with input bytes. Retained state and page caches stay bounded. Timing is
+local evidence, not a production throughput guarantee. No real Agent/model or
+arbitrary hardware power-loss validation is implied.
 
 Store allocates UID, creation time, generation=1 and opaque resourceVersion on
 create. Update compares the expected version and immutable metadata atomically.

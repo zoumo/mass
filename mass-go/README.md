@@ -212,7 +212,11 @@ automatic expiry notifications are not implemented.
 
 File persistence and adapter-private recovery are experimental choices, documented
 in [file-store](docs/file-store.md), [recovery](docs/recovery.md) and
-[failure settlement](docs/failure-settlement.md). There is **no SQLite index**.
+[failure settlement](docs/failure-settlement.md). `metadata.sqlite` and
+`history.sqlite` are complete, disposable disk replicas rebuilt from authoritative
+files on every Open. SQL serves resource/history queries and deduplication to
+optimize server operation; files remain the sole authority. Resource status
+updates replicate only changed resources and never scan unrelated history.
 Metadata uses atomic replacement; event logs use append/fsync with an incremental
 recovery intent. Fault and process-exit tests do not establish power-loss guarantees. Uncertain original
 operations/pending UUIDs are retained within the original process; cross-process

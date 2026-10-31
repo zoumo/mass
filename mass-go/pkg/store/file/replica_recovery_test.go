@@ -494,3 +494,110 @@ func (s *appendSuite) assertEvents(want, got []events.SessionEvent) {
 	s.Require().NoError(err)
 	s.JSONEq(string(expected), string(actual))
 }
+
+func (s *appendSuite) TestStatusUpdateDoesNotDeleteRetainedResourceReplica() {
+	// Deletes are only necessary for deleted identities. An unrelated retained
+	// resource delete failure must not break a status-only update.
+	_, err := s.st.sql.conn.ExecContext(s.T().Context(), `CREATE TRIGGER fail_retained_delete BEFORE DELETE ON session BEGIN SELECT RAISE(ABORT, 'retained resource must not be deleted'); END`)
+	s.Require().NoError(err)
+	r := s.r
+	r.Status.State = events.Idle
+	updated, err := s.st.UpdateSession(r)
+	s.Require().NoError(err)
+	got, err := s.st.GetSession(resource.SessionRef{SessionID: "native"})
+	s.Require().NoError(err)
+	s.Equal(updated, got)
+}
+
+func (s *appendSuite) TestInvalidAppendRecoveryEvidenceIsRetained() {
+	for _, damage := range []string{"json", "format", "identity", "duplicate", "record"} {
+		s.Run(damage, func() {
+			s.SetupTest()
+			old := s.fact("committed")
+			_, err := s.st.Append("native", []events.SessionEvent{old})
+			s.Require().NoError(err)
+			s.inject("before-write")
+			_, err = s.st.Append("native", []events.SessionEvent{s.fact("pending")})
+			s.Require().ErrorContains(err, "outcome_unknown")
+			path := filepath.Join(s.dir, ".append.pending.json")
+			var intent appendIntent
+			s.Require().NoError(readJSON(path, &intent))
+			switch damage {
+			case "format":
+				intent.Format = 999
+			case "identity":
+				intent.UID = "foreign"
+			case "duplicate":
+				intent.Data = append(intent.Data, intent.Data...)
+			case "record":
+				intent.Data = []byte("invalid record\n")
+			}
+			s.Require().NoError(atomicFile(path, intent))
+			if damage == "json" {
+				s.Require().NoError(os.WriteFile(path, []byte("{invalid"), 0o600))
+			}
+			evidence, err := os.ReadFile(path)
+			s.Require().NoError(err)
+			historyPath := s.st.historyPath(s.r)
+			history, err := os.ReadFile(historyPath)
+			s.Require().NoError(err)
+			s.Require().NoError(s.st.Close())
+			_, err = Open(s.dir, false)
+			s.Require().Error(err)
+			after, err := os.ReadFile(path)
+			s.Require().NoError(err)
+			s.Equal(evidence, after)
+			after, err = os.ReadFile(historyPath)
+			s.Require().NoError(err)
+			s.Equal(history, after)
+		})
+	}
+}
+
+func (s *appendSuite) TestRecoveryValidatesAllCommittedHistoriesBeforeExtendingTail() {
+	for _, mode := range []string{"reopen-corrupt", "reconcile-corrupt", "reconcile-changed"} {
+		s.Run(mode, func() {
+			s.SetupTest()
+			other := s.r
+			other.Metadata = resource.Metadata{Namespace: "default", Name: "other"}
+			other.Status.SessionID = "other"
+			other, err := s.st.CreateSession(other)
+			s.Require().NoError(err)
+			fact := s.fact("other-original")
+			fact.SessionID = "other"
+			fact.SessionName = "other"
+			_, err = s.st.Append("other", []events.SessionEvent{fact})
+			s.Require().NoError(err)
+			originalOpen := s.inject("before-write")
+			_, err = s.st.Append("native", []events.SessionEvent{s.fact("pending")})
+			s.Require().ErrorContains(err, "outcome_unknown")
+			path := s.st.historyPath(s.r)
+			before, err := os.ReadFile(path)
+			s.Require().NoError(err)
+			pendingPath := filepath.Join(s.dir, ".append.pending.json")
+			pending, err := os.ReadFile(pendingPath)
+			s.Require().NoError(err)
+			changed := []byte("invalid committed history\n")
+			if mode == "reconcile-changed" {
+				content, e := os.ReadFile(s.st.historyPath(other))
+				s.Require().NoError(e)
+				changed = bytes.Replace(content, []byte("other-original"), []byte("other-modified"), 1)
+			}
+			s.Require().NoError(os.WriteFile(s.st.historyPath(other), changed, 0o600))
+			if mode == "reopen-corrupt" {
+				s.Require().NoError(s.st.Close())
+				_, err = Open(s.dir, false)
+				s.Require().Error(err)
+			} else {
+				s.st.appendOpen = originalOpen
+				s.Require().Error(s.st.Reconcile())
+			}
+			after, err := os.ReadFile(path)
+			s.Require().NoError(err)
+			s.Equal(before, after, "all committed histories must validate before any pending tail is extended")
+			after, err = os.ReadFile(pendingPath)
+			s.Require().NoError(err)
+			s.Equal(pending, after)
+		})
+	}
+}
