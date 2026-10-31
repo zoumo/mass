@@ -129,7 +129,7 @@ func TestCancelLoadPinsTargetAndPreservesOriginalLoadID(t *testing.T) {
 			require.Contains(t, w.Body.String(), `"cleanupCompleted":false`)
 			require.NotContains(t, w.Body.String(), `lastCommittedEventId`)
 			for _, body := range []string{"", "null", "{}", `{"loadId":null}`, `{"loadId":""}`, `{"loadId":"a","loadId":"b"}`, `{"loadId":"a","sessionId":"other"}`} {
-				w := request(s, "POST", path, body)
+				w = request(s, "POST", path, body)
 				require.Equal(t, 400, w.Code, body+": "+w.Body.String())
 			}
 			w = request(s, "POST", path+"?loadId=other", `{"loadId":"a"}`)
@@ -157,4 +157,43 @@ func TestLoadAndCancelUseNormalOperationErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLoadOpenAPIPublishesAcceptanceAndRequiredEvidence(t *testing.T) {
+	b, err := transport.OpenAPI()
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(b, &doc))
+	paths := doc["paths"].(map[string]any)
+	load := paths["/apis/v1/sessions/load"].(map[string]any)["post"].(map[string]any)
+	require.Equal(t, "loadSession", load["operationId"])
+	responses := load["responses"].(map[string]any)
+	require.Contains(t, responses, "202")
+	require.NotContains(t, responses, "200")
+	accepted := responses["202"].(map[string]any)
+	require.Contains(t, accepted["headers"], "Location")
+	for path, id := range map[string]string{
+		"/apis/v1/sessions/{sessionId}/history-load/cancel":                       "cancelHistoryLoadByID",
+		"/apis/v1/namespaces/{namespace}/sessions/{nameOrID}/history-load/cancel": "cancelHistoryLoadByNameOrID",
+	} {
+		op := paths[path].(map[string]any)["post"].(map[string]any)
+		require.Equal(t, id, op["operationId"])
+		require.Contains(t, op["responses"], "200")
+	}
+	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
+	input := schemas["SessionLoad"].(map[string]any)
+	require.Equal(t, false, input["additionalProperties"])
+	require.ElementsMatch(t, []any{"metadata", "runtimeRef", "cwd", "sessionId"}, input["required"])
+	require.Len(t, input["properties"], 4)
+	status := schemas["HistoryLoadStatus"].(map[string]any)
+	required := status["required"]
+	for _, key := range []string{"loadId", "phase", "nativeVerified", "nativeResumed", "nativeCompleted", "deliveryCompleted", "cleanupCompleted"} {
+		require.Contains(t, required, key)
+	}
+	require.NotContains(t, required, "error")
+	require.NotContains(t, required, "lastCommittedEventId")
+	properties := status["properties"].(map[string]any)
+	require.Equal(t, "#/components/schemas/OperationError", properties["error"].(map[string]any)["$ref"])
+	sessionStatus := schemas["SessionStatus"].(map[string]any)
+	require.NotContains(t, sessionStatus["required"], "historyLoad")
 }

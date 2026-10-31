@@ -130,6 +130,36 @@ func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any)
 	return c.jsonResponse(ctx, 201, out, func() (*http.Request, error) { return generated.NewCreateSessionRequest(c.url, body) })
 }
 
+// LoadSession returns acceptance only; it never waits for replay or retries.
+func (c *Client) LoadSession(ctx context.Context, input resource.SessionLoad, out any) error {
+	if err := resource.ValidateSessionID(input.SessionID); err != nil {
+		return err
+	}
+	body := generated.SessionLoad{
+		Metadata:   generated.SessionCreateMetadata{Namespace: input.Metadata.Namespace, Name: input.Metadata.Name},
+		RuntimeRef: input.RuntimeRef, Cwd: input.Cwd, SessionId: input.SessionID,
+	}
+	return c.jsonResponse(ctx, 202, out, func() (*http.Request, error) {
+		return generated.NewLoadSessionRequest(c.url, body)
+	})
+}
+
+func (c *Client) CancelHistoryLoad(ctx context.Context, ref resource.SessionRef, loadID string, out any) error {
+	if _, err := SessionPath(ref); err != nil {
+		return err
+	}
+	if loadID == "" || !utf8.ValidString(loadID) {
+		return invalid()
+	}
+	body := generated.HistoryLoadCancel{LoadId: loadID}
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
+		if ref.SessionID != "" {
+			return generated.NewCancelHistoryLoadByIDRequest(c.url, ref.SessionID, body)
+		}
+		return generated.NewCancelHistoryLoadByNameOrIDRequest(c.url, ref.Namespace, ref.Name, body)
+	})
+}
+
 func (c *Client) ListSessions(ctx context.Context, q resource.SessionQuery, out any) error {
 	if q.Limit < 0 || q.SessionID != "" {
 		return invalid()

@@ -15,22 +15,28 @@ type sessionLoad struct {
 	Cwd        string                `json:"cwd" minLength:"1"`
 	SessionID  string                `json:"sessionId" minLength:"1"`
 }
+
 type sessionLoadInput struct{ Body sessionLoad }
+
 type sessionLoadAccepted struct {
 	Location string `header:"Location"`
 	Body     resource.SessionLoadAccepted
 }
+
 type historyLoadCancel struct {
 	LoadID string `json:"loadId" minLength:"1"`
 }
+
 type cancelHistoryLoadByID struct {
 	SessionIDPath
 	Body historyLoadCancel
 }
+
 type cancelHistoryLoadByNameOrID struct {
 	SessionNameOrIDPath
 	Body historyLoadCancel
 }
+
 type historyLoadOutput struct{ Body resource.HistoryLoadStatus }
 
 func (s *Server) registerSessionLoad(api huma.API) {
