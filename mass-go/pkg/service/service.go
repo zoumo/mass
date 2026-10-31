@@ -53,6 +53,8 @@ type SessionService interface {
 	ListSessions(resource.SessionQuery) (resource.SessionPage, error)
 	ArchiveSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ResumeSession(context.Context, resource.SessionRef) (resource.Session, error)
+	LoadSession(context.Context, resource.SessionLoad) (resource.SessionLoadAccepted, error)
+	CancelHistoryLoad(context.Context, resource.SessionRef, string) (resource.HistoryLoadStatus, error)
 	SendPrompt(context.Context, resource.SessionRef, runtime.Input) (runtime.InputReceipt, error)
 	Cancel(context.Context, resource.SessionRef) (runtime.CancelReceipt, error)
 	AnswerInteraction(context.Context, resource.SessionRef, string, any) (runtime.InteractionReceipt, error)

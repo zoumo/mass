@@ -36,11 +36,33 @@ type SessionSpec struct {
 	RuntimeRef string `json:"runtimeRef"`
 }
 type SessionStatus struct {
+	HistoryLoad       *HistoryLoadStatus   `json:"historyLoad,omitempty"`
 	SessionID         string               `json:"sessionId"`
 	State             events.SessionState  `json:"state"`
 	AppliedGeneration uint64               `json:"appliedGeneration,omitempty"`
 	RuntimeGeneration uint64               `json:"runtimeGeneration,omitempty"`
 	Capabilities      runtime.Capabilities `json:"capabilities,omitempty"`
+}
+type SessionLoad struct {
+	Metadata   Metadata `json:"metadata"`
+	RuntimeRef string   `json:"runtimeRef"`
+	Cwd        string   `json:"cwd"`
+	SessionID  string   `json:"sessionId"`
+}
+type HistoryLoadStatus struct {
+	LoadID               string                  `json:"loadId"`
+	Phase                string                  `json:"phase" enum:"accepted,replaying,native_completed,completed,failed,canceled"`
+	NativeVerified       bool                    `json:"nativeVerified"`
+	NativeResumed        bool                    `json:"nativeResumed"`
+	NativeCompleted      bool                    `json:"nativeCompleted"`
+	DeliveryCompleted    bool                    `json:"deliveryCompleted"`
+	CleanupCompleted     bool                    `json:"cleanupCompleted"`
+	LastCommittedEventID string                  `json:"lastCommittedEventId,omitempty"`
+	Error                *runtime.OperationError `json:"error,omitempty"`
+}
+type SessionLoadAccepted struct {
+	Session Session `json:"session"`
+	LoadID  string  `json:"loadId"`
 }
 type Session struct {
 	Metadata Metadata      `json:"metadata"`

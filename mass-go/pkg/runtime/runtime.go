@@ -64,6 +64,8 @@ type Driver interface {
 	Start(context.Context) (Capabilities, error)
 	OpenSession(context.Context, Address, SessionSpec) (DriverSession, error)
 	ResumeSession(context.Context, string, Address, SessionSpec) (DriverSession, error)
+	LoadSession(context.Context, string, Address, string, string) error
+	CancelHistoryLoad(context.Context, string, string) error
 	SendPrompt(context.Context, string, Input) (InputReceipt, error)
 	Cancel(context.Context, string) (CancelReceipt, error)
 	AnswerInteraction(context.Context, string, string, any) (Acceptance, error)
