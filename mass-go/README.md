@@ -11,6 +11,8 @@ From the repository root, with Go 1.26.9 and pinned dependencies already cached:
 
 ```sh
 make prototype-go
+# Cross-capability combinations under race; no models or recording fallback:
+make acceptance-sdk-go
 ```
 
 This builds the pinned `agent-sdk-go` protocol simulation driver for Codex **and** Claude plus `massd`
@@ -32,11 +34,12 @@ Each persistent event read from SSE is compared with a committed history query.
 SDK probe passes are reported separately and do not stand in for this suite.
 
 Claude creation can return `unknown` after its synthetic init: identity alone is
-not an idle/work-state proof. Claude accepts **one input per running connection**;
-a second input is rejected even after idle. Archive and resume the original ID
-before the next input. The demo exercises that restriction. Synthetic resume
-checks SDK startup/init and retained MASS identity/history; it does not establish
-real CLI native persistence or consumption of resume IDs.
+not an idle/work-state proof. Claude supports serial same-connection input only
+when native linkage proves the preceding work completed. Unlinked or conflicting
+results leave work attribution unknown and fence later input; caller UUIDs are
+not invented native TurnIDs. Synthetic echo-positive tests do not prove a real
+Claude CLI echoes linkage. Resume checks retained identity/history and explicit
+init evidence, not real-model persistence. See [layered acceptance](docs/acceptance.md).
 
 ## Daemon and CLI
 
@@ -132,8 +135,8 @@ bin/massctl runtime create claude-local --type claude --executable /absolute/pat
 bin/massctl runtime start claude-local
 bin/massctl session create review -n demo --runtime claude-local --cwd /absolute/owned/workspace
 bin/massctl session prompt review -n demo --text 'Describe this workspace'
-# Claude currently accepts one input per running connection; release and resume
-# the original identity before another input.
+# Unlinked completion stays unknown; do not automatically retry/resume to
+# bypass that fence. Explicit archive/resume retains the original identity.
 bin/massctl session archive review -n demo
 bin/massctl session resume review -n demo
 ```
@@ -171,8 +174,11 @@ Validation does not open credentials or history. Offline tests launch only the
 pinned SDK `tools/agent-sdk-testify protocol mock` via strict temporary launchers,
 with an explicit scenario and no real-agent fallback. They do not prove real
 CLI startup, authentication, model behavior or native history availability.
-Native history load and same-connection Claude continuous input remain follow-up
-work; this baseline retains the explicit one-input Claude boundary.
+Both providers support explicit asynchronous retained-main-history load followed
+by input on the verified resumed connection. Ordinary resume does not import
+history. Claude continuation still requires actual native linkage for completion;
+unlinked observations remain unknown. See [history loading](#retained-history-load)
+and [Claude source/cleanup limits](docs/claude-history-load.md).
 
 Existing Session commands use `NAME -n NAMESPACE` or a raw global `SESSION_ID`
 without namespace, with no default namespace, `--id`, guessing or lookup fallback.
@@ -202,8 +208,8 @@ in separate commits; integration checks must use a daemon providing these routes
 
 ```sh
 cd mass-go
-GOWORK=off GOPROXY=off go test -count=1 -v -timeout=180s ./...
-GOWORK=off GOPROXY=off go test -race -count=1 -v -timeout=240s ./...
+GOWORK=off GOPROXY=off go test -count=1 -v -timeout=300s ./...
+GOWORK=off GOPROXY=off go test -race -count=1 -v -timeout=300s ./...
 golangci-lint run ./...
 golangci-lint fmt --diff
 GOWORK=off GOPROXY=off go build ./...
@@ -228,6 +234,53 @@ isolation, blocked writes, partial/unknown commits and bounded overload. An SSE
 write gate proves that 140 committed facts survive observer overflow, which emits
 an explicit error. Client framing tests distinguish end, abnormal error and
 unexpected disconnection, preserve terminal errors and release blocked reads.
+
+### Retained history load
+
+Use a started Runtime, a new MASS name and the original native ID. All paths are
+absolute paths on the Agent host, not paths inferred from the HTTP client's HOME.
+Codex history comes from native metadata/full ascending turn/item queries; set
+its explicit `env.CODEX_HOME` when source identity requires it. Claude requires
+explicit `env.CLAUDE_CONFIG_DIR` and the requested `cwd` as ProjectDir. Runtime
+configuration can be supplied as complete JSON with `runtime create --config-json` (see
+`massctl runtime create --help` for the exact input shape).
+
+```sh
+bin/massctl -o json session load imported -n demo --runtime agent \
+  --cwd /absolute/owned/project --session-id ORIGINAL_NATIVE_ID
+# The receipt is acceptance only; inspect historyLoad until completed or failed.
+bin/massctl -o json session get imported -n demo
+bin/massctl -o json session history imported -n demo --limit 100
+# Subscribe before new input; wait for subscription.ready on stderr.
+bin/massctl -o json session watch imported -n demo
+# In another terminal, only after load deliveryCompleted:
+bin/massctl -o json session prompt imported -n demo --text 'Continue this session'
+# Cancel only an unfinished load, using its original receipt loadId:
+bin/massctl -o json session cancel-load imported -n demo --load-id ORIGINAL_LOAD_ID
+```
+
+A receipt, native_completed marker, or ended observer is not durable completion.
+Input opens only after verified resume and successful append/required publication.
+Successful load retains the native connection; it does not need another resume.
+`cleanupCompleted:false` on success is not a release failure: the connection is
+retained. Cancel after completed cannot close later live work. Request timeout or
+observer disconnect does not cancel an accepted background load.
+
+Replay marks retained content and native identities; it does not restore old
+state, permissions or answer authority. SSE is future-only; use public paginated
+history for a late observer. Unsupported content, identity/source mismatch,
+corruption, observed source drift, uncertain cleanup or partial publication never
+become successful complete history. Partial committed facts and the reservation
+remain queryable. Append failure needs explicit original-UUID reconciliation;
+required publication is not automatically replayed. Stop/cancel retain original
+ownership until admitted facts and native release settle.
+
+The two history queries do not provide a cross-call atomic snapshot. Claude
+105-record synthetic success crosses offset100; offsets are full-file scan result
+slices, not I/O pagination. A 205-record replay can exceed the existing 128-event
+normal lane boundary and fail explicitly with `session_delivery_overloaded`.
+It is NOT evidence of successful large-history load. Limits and unknown native
+linkage remain in force after a successful import.
 
 ### Delivery overload boundaries
 
