@@ -17,7 +17,6 @@ import (
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/service"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
@@ -292,14 +291,6 @@ func (s *SessionWorkSuite) TestSSEExplicitObserverCloseSendsClosed() {
 	s.NotContains([]events.SessionState{"archived", "closing"}, session.Status.State)
 }
 
-func (d *workDriver) LoadSession(ctx context.Context, id string, address runtime.Address, _, loadID string) error {
-	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: address.Namespace, SessionName: address.SessionName, SessionID: id, Time: time.Now().UTC(), Replay: &events.ReplaySource{LoadID: loadID}}, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "retained-main-chain", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{"continuedInput": true}}}, d.source)
-	if err != nil {
-		return err
-	}
-	return d.pipe.Send(ctx, e)
-}
-
 func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 	data, err := os.ReadFile("../../../harness/modules/runtime/event-examples.json")
 	s.Require().NoError(err)
@@ -308,14 +299,6 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 	}
 	s.Require().NoError(json.Unmarshal(data, &examples))
 	s.Require().Len(examples.Events, 18)
-	// Replay markers require an accepted load and verified start, not an ordinary open.
-	accepted, err := s.svc.LoadSession(context.Background(), resource.SessionLoad{Metadata: resource.Metadata{Namespace: "one", Name: "replay"}, RuntimeRef: "agent", Cwd: "/remote", SessionID: "model-replay"})
-	s.Require().NoError(err)
-	ref := resource.SessionRef{SessionID: "model-replay"}
-	s.Require().Eventually(func() bool {
-		r, getErr := s.svc.GetSession(ref)
-		return getErr == nil && r.Status.HistoryLoad.NativeResumed
-	}, time.Second, time.Millisecond)
 	handler, err := transport.New(s.svc, transport.Options{Token: "test-token"})
 	s.Require().NoError(err)
 	defer handler.Shutdown()
@@ -323,7 +306,7 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/apis/v1/sessions/model-replay/events/stream", http.NoBody)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/apis/v1/sessions/original/events/stream", http.NoBody)
 	req.Header.Set("Authorization", "Bearer test-token")
 	res, err := server.Client().Do(req)
 	s.Require().NoError(err)
@@ -335,12 +318,10 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 	for _, example := range examples.Events {
 		base := example.EventBase
 		base.Namespace = "one"
-		base.SessionName = "replay"
-		base.SessionID = "model-replay"
+		base.SessionName = "demo"
+		base.SessionID = "original"
 		payload := example.Payload()
 		if replay, ok := payload.(events.HistoryReplay); ok && replay.ResumedSession != nil {
-			base.Replay = &events.ReplaySource{LoadID: accepted.LoadID}
-			replay.LoadID = accepted.LoadID
 			resumed := *replay.ResumedSession
 			resumed.SessionID = base.SessionID
 			replay.ResumedSession = &resumed
@@ -360,7 +341,7 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 			persistent = append(persistent, e.EventID)
 		}
 	}
-	page, err := s.svc.ListHistoryEvents(ref, store.HistoryQuery{})
+	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Require().Len(page.Events, 5)
 	for i, e := range page.Events {

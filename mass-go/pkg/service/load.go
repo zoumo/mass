@@ -56,27 +56,11 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	// MetaStore atomically reserves both the name and global ID before production.
 	// No native resources exist yet, so an uncertain write is never reissued.
 	s.mu.Lock()
-	address := runtime.Address{Namespace: m.Namespace, SessionName: m.Name}
-	key := addressKey(address)
-	pendingCount := 0
-	for _, owner := range s.runs {
-		pendingCount += len(owner.pending)
-	}
-	if s.closing || run.stopping || run.err != nil || !run.started || run.pending[key] != nil || len(run.lanes)+len(run.pending) >= queueCapacity || len(s.broadcasts)+pendingCount >= queueCapacity*queueCapacity {
+	if s.closing || run.stopping || run.err != nil || !run.started || len(run.lanes)+len(run.pending) >= queueCapacity {
 		s.mu.Unlock()
 		return resource.SessionLoadAccepted{}, runtime.FailedPrecondition("runtime unavailable")
 	}
-	// Reserve bounded acceptance capacity while durable metadata is in flight.
-	reservation := &opening{address: address, done: make(chan struct{})}
-	run.pending[key] = reservation
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		if run.pending[key] == reservation {
-			delete(run.pending, key)
-		}
-		s.mu.Unlock()
-	}()
 	page, err := s.history.ListHistory(input.SessionID, store.HistoryQuery{Limit: 1})
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return resource.SessionLoadAccepted{}, err
@@ -91,24 +75,17 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	r := resource.Session{Metadata: m, Spec: resource.SessionSpec{RuntimeRef: input.RuntimeRef, SessionSpec: runtime.SessionSpec{Cwd: input.Cwd}}, Status: resource.SessionStatus{SessionID: input.SessionID, State: "opening", RuntimeGeneration: run.generation, HistoryLoad: &initial}}
 	r, err = s.meta.CreateSession(r)
 	if err != nil {
-		// A lost write acknowledgement is not permission to repeat acceptance.
-		// Adopt only the exact durable reservation created by this operation.
-		saved, readErr := s.meta.GetSession(resource.SessionRef{SessionID: input.SessionID})
-		if readErr != nil || saved.Status.HistoryLoad == nil || saved.Status.HistoryLoad.LoadID != load.id || saved.Metadata.Namespace != m.Namespace || saved.Metadata.Name != m.Name || saved.Spec.RuntimeRef != input.RuntimeRef || saved.Spec.Cwd != input.Cwd {
-			cancel()
-			return resource.SessionLoadAccepted{}, err
-		}
-		r = saved
+		cancel()
+		return resource.SessionLoadAccepted{}, err
 	}
 	l := &lane{session: r, load: load, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
 	s.mu.Lock()
 	run.lanes[input.SessionID] = l
-	delete(run.pending, key)
 	s.mu.Unlock()
 	go s.process(run, l)
 	go func() {
 		defer close(load.done)
-		if err := run.driver.LoadSession(owner, input.SessionID, address, input.Cwd, load.id); err != nil {
+		if err := run.driver.LoadSession(owner, input.SessionID, runtime.Address{Namespace: m.Namespace, SessionName: m.Name}, input.Cwd, load.id); err != nil {
 			s.failLoad(run, l, "failed", err)
 		}
 	}()
