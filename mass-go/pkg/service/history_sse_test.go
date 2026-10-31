@@ -298,7 +298,7 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 		Events []events.SessionEvent `json:"events"`
 	}
 	s.Require().NoError(json.Unmarshal(data, &examples))
-	s.Require().Len(examples.Events, 17)
+	s.Require().Len(examples.Events, 18)
 	handler, err := transport.New(s.svc, transport.Options{Token: "test-token"})
 	s.Require().NoError(err)
 	defer handler.Shutdown()
@@ -320,7 +320,14 @@ func (s *SessionWorkSuite) TestAllEventBranchesUseSameLiveAndHistoryModel() {
 		base.Namespace = "one"
 		base.SessionName = "demo"
 		base.SessionID = "original"
-		e, err := events.NewEvent(base, example.Payload(), s.driver.source)
+		payload := example.Payload()
+		if replay, ok := payload.(events.HistoryReplay); ok && replay.ResumedSession != nil {
+			resumed := *replay.ResumedSession
+			resumed.SessionID = base.SessionID
+			replay.ResumedSession = &resumed
+			payload = replay
+		}
+		e, err := events.NewEvent(base, payload, s.driver.source)
 		s.Require().NoError(err)
 		s.Require().NoError(s.driver.pipe.Send(ctx, e))
 		frame, err := readFrame(reader)

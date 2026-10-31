@@ -18,6 +18,8 @@ import (
 	claude "github.com/zoumo/agent-sdk-go/claude"
 	codex "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
+
+	"github.com/zoumo/mass/mass-go/internal/testpeer"
 )
 
 type ProbeSuite struct{ suite.Suite }
@@ -59,19 +61,15 @@ func TestMain(m *testing.M) {
 			Version string
 			Replace *json.RawMessage
 		}
-		if err != nil || json.Unmarshal(output, &module) != nil || module.Version != "v0.0.0-20261018163950-6dbf3e9c8264" || module.Replace != nil {
+		if err != nil || json.Unmarshal(output, &module) != nil || module.Version != testpeer.SDKVersion || module.Replace != nil {
 			fmt.Fprintln(os.Stderr, "FAIL: probe requires the pinned SDK without replacement", err)
 			return
 		}
 		fmt.Println("SDK github.com/zoumo/agent-sdk-go", module.Version)
 		for _, native := range []string{"codex", "claude"} {
-			bins[native] = filepath.Join(dir, "mock-"+native)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			cmd := exec.CommandContext(ctx, "go", "build", "-o", bins[native], "github.com/zoumo/agent-sdk-go/"+native+"/cmd/mock")
-			output, err := cmd.CombinedOutput()
-			cancel()
+			bins[native], err = testpeer.Build(mainCtx, dir, native)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "build %s: %v\n%s", native, err, output)
+				fmt.Fprintln(os.Stderr, err)
 				return
 			}
 		}
@@ -97,12 +95,18 @@ func scenario(t *testing.T, name string) string {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("testdata", name+".json"))
 	require.NoError(t, err)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var compact bytes.Buffer
+	require.NoError(t, json.Compact(&compact, data))
+	path = filepath.Join(t.TempDir(), name+".json")
+	require.NoError(t, os.WriteFile(path, compact.Bytes(), 0o600))
 	return path
 }
 
 func deadline(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)
 	return ctx
 }
@@ -132,20 +136,18 @@ func (probeSuite *ProbeSuite) TestCodex() {
 			t := probeSuite.T()
 			ctx := deadline(t)
 			c := openCodex(t, ctx, "codex-"+mode)
-			thread, err := c.StartThread(ctx, ct.ThreadStartParams{})
+			session, err := codex.Open(ctx, codex.SessionOptions{Client: c})
 			require.NoError(t, err)
-			require.Equal(t, "codex-session", thread.Thread.ID)
+			t.Cleanup(func() { require.NoError(t, session.Close()) })
+			thread, ok := session.StartResponse()
+			require.True(t, ok)
+			require.Equal(t, "codex-session", session.ThreadID())
 			require.Equal(t, "codex-session", thread.Thread.SessionID)
-			t.Log("PASS no-input native thread identity: codex-session (synthetic)")
-			sub, err := c.Subscribe(ctx, thread.Thread.ID, ct.SubscriptionOptions{})
-			require.NoError(t, err)
-			defer sub.Abort()
 			var params ct.TurnStartParams
 			require.NoError(t, json.Unmarshal([]byte(`{"threadId":"codex-session","input":[{"type":"text","text":"hello","text_elements":[]}]}`), &params))
-			turn, err := c.StartTurn(ctx, params)
+			submission, err := session.Submit(ctx, codex.Input{Input: params.Input})
 			require.NoError(t, err)
-			require.Equal(t, "turn-1", turn.Turn.ID)
-			t.Log("PASS independent input turn acknowledged")
+			require.Equal(t, "turn-1", submission.Response.Turn.ID)
 			expected := []struct{ id, method, answer string }{
 				{"command-approval", "item/commandExecution/requestApproval", `{"decision":"accept"}`},
 				{"file-approval", "item/fileChange/requestApproval", `{"decision":"accept"}`},
@@ -153,10 +155,16 @@ func (probeSuite *ProbeSuite) TestCodex() {
 			if mode == "question" {
 				expected = []struct{ id, method, answer string }{{"question-1", "item/tool/requestUserInput", `{"answers":{"format":{"answers":["json"]}}}`}}
 			}
-			for _, want := range expected {
-				select {
-				case request, ok := <-c.Requests():
-					require.True(t, ok)
+			requestIndex := 0
+			seen := map[string]bool{}
+			for !seen["turn/completed"] {
+				received, err := session.Receive(ctx)
+				require.NoError(t, err)
+				if received.Request != nil {
+					request := received.Request
+					require.Less(t, requestIndex, len(expected))
+					want := expected[requestIndex]
+					requestIndex++
 					require.Equal(t, codex.StringID(want.id), request.ID())
 					require.Equal(t, want.method, request.Method())
 					var metadata struct{ ThreadID, TurnID, ItemID string }
@@ -170,15 +178,10 @@ func (probeSuite *ProbeSuite) TestCodex() {
 					require.Equal(t, wantItem, metadata.ItemID)
 					require.NoError(t, request.Handle().Answer(ctx, json.RawMessage(want.answer)))
 					t.Logf("PASS original handle answered: %s %s", want.id, want.method)
-				case <-ctx.Done():
-					t.Fatal(ctx.Err())
+					continue
 				}
-			}
-			seen := map[string]bool{}
-			for !seen["turn/completed"] {
-				select {
-				case event, ok := <-sub.Events():
-					require.True(t, ok)
+				if received.Event != nil {
+					event := received.Event
 					if event.Method != "item/completed" && event.Method != "turn/completed" {
 						continue
 					}
@@ -213,14 +216,13 @@ func (probeSuite *ProbeSuite) TestCodex() {
 						}
 					}
 					seen[event.Method] = true
-				case <-ctx.Done():
-					t.Fatal(ctx.Err())
 				}
 			}
+			require.Equal(t, len(expected), requestIndex)
 			require.True(t, seen["tool"])
 			require.True(t, seen["message"])
 			// The reply can only arrive after the peer validated every original answer.
-			_, err = c.InterruptTurn(ctx, ct.TurnInterruptParams{ThreadID: "codex-session", TurnID: "turn-1"})
+			err = session.Interrupt(ctx, codex.InterruptOptions{TurnID: "turn-1"})
 			require.NoError(t, err)
 			require.NoError(t, c.Close())
 			require.Zero(t, c.Diagnostics().StderrBytes)
@@ -235,13 +237,7 @@ func (probeSuite *ProbeSuite) TestClaude() {
 		probeSuite.Run(mode, func() {
 			t := probeSuite.T()
 			ctx := deadline(t)
-			requests := make(chan *claude.PermissionRequest, 1)
-			c, err := claude.Open(ctx, claude.Options{CLIPath: bins["claude"], WorkDir: workDir(t), Env: []string{"CLAUDE_MOCK_SCENARIO=" + scenario(t, "claude-"+mode)}, PermissionHandler: func(p *claude.PermissionRequest) {
-				select {
-				case requests <- p:
-				case <-p.Context().Done():
-				}
-			}})
+			c, err := claude.Open(ctx, claude.SessionOptions{CLIPath: bins["claude"], WorkDir: workDir(t), Env: []string{"CLAUDE_MOCK_SCENARIO=" + scenario(t, "claude-"+mode)}})
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				require.NoError(t, c.Close())
@@ -271,7 +267,7 @@ func (probeSuite *ProbeSuite) TestClaude() {
 				for {
 					event, err := c.Receive(ctx)
 					require.NoError(t, err)
-					if value, ok := event.(claude.Event); ok && value.Type == "system" && value.Subtype == "init" {
+					if value := event.Event; value != nil && value.Type == "system" && value.Subtype == "init" {
 						require.Equal(t, "claude-session", value.SessionID)
 						break
 					}
@@ -281,31 +277,38 @@ func (probeSuite *ProbeSuite) TestClaude() {
 				require.Equal(t, "claude-session", id)
 				t.Log("PASS no-input native system init identity: claude-session (synthetic only)")
 			}
-			require.NoError(t, c.Send(ctx, "hello"))
+			submission, err := c.Submit(ctx, claude.Input{Text: "hello"})
+			require.NoError(t, err)
+			require.True(t, submission.Written)
 			t.Log("PASS subsequent independent nonempty input sent")
-			select {
-			case p := <-requests:
-				wantID, wantTool, wantUse := "permission-1", "Bash", "tool-1"
-				answer := p.Input() // Approvals preserve original tool input.
-				if mode == "question" {
-					wantID, wantTool, wantUse = "question-1", "AskUserQuestion", "question-tool"
-					// Explicit user answer, separate from the unconditional permission policy.
-					answer = json.RawMessage(`{"answers":{"format":"json"}}`)
-				}
-				require.Equal(t, wantID, p.RequestID())
-				require.Equal(t, wantTool, p.ToolName())
-				require.Equal(t, wantUse, p.ToolUseID())
-				require.NoError(t, p.Answer(ctx, claude.PermissionAnswer{Behavior: claude.PermissionAllow, UpdatedInput: answer}))
-				t.Logf("PASS original handle answered: %s %s %s", p.RequestID(), p.ToolName(), p.ToolUseID())
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			}
+			answered := false
 			seen := map[string]bool{}
 			for !seen["result"] {
-				event, err := c.Receive(ctx)
+				received, err := c.Receive(ctx)
 				require.NoError(t, err)
-				value, ok := event.(claude.Event)
-				if !ok {
+				if received.Request != nil {
+					p := received.Request.Handle()
+					wantID, wantTool, wantUse := "permission-1", "Bash", "tool-1"
+					answer := p.Input() // Approvals preserve original tool input.
+					if mode == "question" {
+						wantID, wantTool, wantUse = "question-1", "AskUserQuestion", "question-tool"
+						// Explicit user answer, separate from the unconditional permission policy.
+						answer = nil
+					}
+					require.Equal(t, wantID, p.RequestID())
+					require.Equal(t, wantTool, p.ToolName())
+					require.Equal(t, wantUse, p.ToolUseID())
+					if mode == "question" {
+						require.NoError(t, received.Request.Answer(ctx, claude.QuestionAnswers{Answers: map[string]string{"Which format?": "json"}}))
+					} else {
+						require.NoError(t, p.Answer(ctx, claude.PermissionAnswer{Behavior: claude.PermissionAllow, UpdatedInput: answer}))
+					}
+					t.Logf("PASS original handle answered: %s %s %s", p.RequestID(), p.ToolName(), p.ToolUseID())
+					answered = true
+					continue
+				}
+				value := received.Event
+				if value == nil {
 					continue
 				}
 				if value.Type == "assistant" || value.Type == "user" || value.Type == "result" {
@@ -333,10 +336,11 @@ func (probeSuite *ProbeSuite) TestClaude() {
 					seen["result"] = true
 				}
 			}
+			require.True(t, answered)
 			require.True(t, seen["message"])
 			require.True(t, seen["tool-use"])
 			require.True(t, seen["tool-result"])
-			require.NoError(t, c.Interrupt(ctx)) // Strict peer barrier after all replies.
+			require.NoError(t, c.Interrupt(ctx, claude.InterruptOptions{})) // Strict peer barrier after all replies.
 			require.NoError(t, c.Close())
 			t.Log("PASS complete message, tool result, round-trip barrier and SDK Close")
 		})
@@ -438,7 +442,7 @@ func (probeSuite *ProbeSuite) TestSDKInitializationFailure() {
 				}
 				require.Error(t, err)
 			} else {
-				c, err := claude.Open(ctx, claude.Options{
+				c, err := claude.Open(ctx, claude.SessionOptions{
 					CLIPath: bins[native], WorkDir: workDir(t), Env: []string{"CLAUDE_MOCK_SCENARIO=" + path},
 				})
 				if c != nil {

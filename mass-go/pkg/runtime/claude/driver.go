@@ -19,28 +19,14 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/runtime/recovery"
 )
 
-type options struct{ executable, scenario string }
+type options = runtime.ProcessConfig
 
 func parse(c runtime.Config) (options, error) {
-	var o options
-	for k, v := range c {
-		s, ok := v.(string)
-		if !ok {
-			return o, fmt.Errorf("%s must be a string", k)
-		}
-		switch k {
-		case "executable":
-			o.executable = s
-		case "scenario":
-			o.scenario = s
-		default:
-			return o, fmt.Errorf("unknown Claude config %q", k)
-		}
+	o, err := runtime.ParseProcessConfig(c)
+	if err == nil && len(o.Args) > 0 {
+		return o, errors.New("claude SDK does not support additional process args; use an explicit launcher")
 	}
-	if !filepath.IsAbs(o.executable) || !filepath.IsAbs(o.scenario) {
-		return o, errors.New("explicit absolute executable and synthetic scenario required")
-	}
-	return o, nil
+	return o, err
 }
 
 type Factory struct{ RecoveryDir string }
@@ -51,7 +37,7 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "claude", Owner: name, Executable: o.executable}, options: o, pipe: events.NewEventPipe(128), sessions: map[string]*session{}}, nil
+	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "claude", Owner: name, Executable: o.Executable}, options: o, pipe: events.NewEventPipe(128), sessions: map[string]*session{}}, nil
 }
 
 type session struct {
@@ -63,7 +49,7 @@ type session struct {
 	mu                       sync.Mutex
 	address                  runtime.Address
 	source                   events.Source
-	client                   *sdk.Client
+	client                   *sdk.Session
 	id                       string
 	ready                    chan struct{}
 	done                     chan struct{}
@@ -159,22 +145,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		}
 	}
 	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}}
-	c, err := sdk.Open(ctx, sdk.Options{ResumeID: resume, CLIPath: d.options.executable, WorkDir: spec.Cwd, Env: []string{"CLAUDE_MOCK_SCENARIO=" + d.options.scenario}, PermissionHandler: func(p *sdk.PermissionRequest) {
-		select {
-		case <-s.ready:
-		case <-p.Context().Done():
-			return
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.id == "" || s.closing {
-			return
-		}
-		if err := d.permission(s, p); err != nil {
-			s.err = err
-			_ = d.emit(s, "", events.SessionError{Message: "Claude permission delivery failed"}, time.Time{})
-		}
-	}})
+	c, err := sdk.Open(ctx, sdk.SessionOptions{ResumeID: resume, CLIPath: d.options.Executable, WorkDir: spec.Cwd, Env: d.options.Environment("claude")})
 	if err != nil {
 		close(s.ready)
 		return runtime.DriverSession{}, err
@@ -188,8 +159,8 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 			close(s.ready)
 			return runtime.DriverSession{}, releasedOpenError(fmt.Errorf("claude missing native init identity: %w", receiveErr), c)
 		}
-		e, ok := event.(sdk.Event)
-		if !ok {
+		e := event.Event
+		if e == nil {
 			continue
 		}
 		if e.Type == "system" && e.Subtype == "init" && e.SessionID != "" {
@@ -213,7 +184,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 				close(s.ready)
 				return runtime.DriverSession{}, releasedOpenError(errors.New("pre-identity buffer exhausted"), c)
 			}
-			early = append(early, e)
+			early = append(early, *e)
 		}
 	}
 	if resume == "" {
@@ -269,7 +240,7 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	s.work = uuid.NewString()
 	s.sending = true
 	s.mu.Unlock()
-	err = s.client.Send(ctx, input.Content[0].Text)
+	_, err = s.client.Submit(ctx, sdk.Input{Text: input.Content[0].Text})
 	s.mu.Lock()
 	s.sending = false
 	s.mu.Unlock()
@@ -313,8 +284,15 @@ func (d *Driver) observe(s *session, early []sdk.Event) {
 		event, err := s.client.Receive(context.Background())
 		s.mu.Lock()
 		if err == nil {
-			if e, ok := event.(sdk.Event); ok {
-				err = d.adapt(s, e)
+			switch event.Kind {
+			case sdk.ReceivedNative:
+				if event.Event != nil {
+					err = d.adapt(s, *event.Event)
+				}
+			case sdk.ReceivedRequest:
+				if event.Request != nil {
+					err = d.permission(s, event.Request)
+				}
 			}
 		}
 		if err != nil {
@@ -506,7 +484,8 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 	return nil
 }
 
-func (d *Driver) permission(s *session, p *sdk.PermissionRequest) error {
+func (d *Driver) permission(s *session, r *sdk.IncomingRequest) error {
+	p := r.Handle()
 	request := events.PermissionRequest(p.ToolUseID(), p.ToolName())
 	if p.ToolName() == "AskUserQuestion" {
 		value, err := decode(p.Input())
@@ -529,11 +508,19 @@ func (d *Driver) permission(s *session, p *sdk.PermissionRequest) error {
 			if !ok || content["answers"] == nil {
 				return runtime.InvalidArgument("expected native question answers")
 			}
-			data, err := json.Marshal(content)
-			if err != nil {
-				return err
+			values, ok := content["answers"].(map[string]any)
+			if !ok {
+				return runtime.InvalidArgument("expected answers keyed by full native question text")
 			}
-			answer.UpdatedInput = data
+			answers := make(map[string]string, len(values))
+			for question, value := range values {
+				text, ok := value.(string)
+				if !ok {
+					return runtime.InvalidArgument("question answers must be strings")
+				}
+				answers[question] = text
+			}
+			return r.Answer(ctx, sdk.QuestionAnswers{Answers: answers})
 		} else {
 			allow, err := runtime.PermissionAllowed(a)
 			if err != nil {
@@ -640,13 +627,13 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	if !active {
 		return runtime.CancelReceipt{Result: "noActiveWork"}, nil
 	}
-	if err := s.client.Interrupt(ctx); err != nil {
+	if err := s.client.Interrupt(ctx, sdk.InterruptOptions{}); err != nil {
 		return runtime.CancelReceipt{}, fmt.Errorf("outcome_unknown: interrupt: %w", err)
 	}
 	return runtime.CancelReceipt{Target: target, Result: "controlAcknowledged"}, nil
 }
 
-func releasedOpenError(cause error, c *sdk.Client) error {
+func releasedOpenError(cause error, c *sdk.Session) error {
 	cleanup := c.Close()
 	var native *sdk.Error
 	if cleanup == nil || (errors.As(cleanup, &native) && native.ExitCode != nil) {

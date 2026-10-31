@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,55 @@ import (
 )
 
 type ClaudeSuite struct{ suite.Suite }
+
+func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
+	for _, kind := range []string{"codex", "claude"} {
+		t.Run(kind, func(t *testing.T) {
+			path, work := nativeScenario(t, kind, "basic")
+			bin := mock
+			if kind == "claude" {
+				bin = claudeMock
+			}
+			svc, _, _ := setup(t, prototype.AutoApprovePermissions)
+			// The executable is still strictly synthetic. Only launch configuration
+			// uses the real-runtime shape: scenario is not a required config field.
+			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{
+				"executable": bin, "envPolicy": "replace", "env": map[string]any{strings.ToUpper(kind) + "_MOCK_SCENARIO": path},
+			}}})
+			require.NoError(t, err)
+			_, err = svc.StartRuntime(ctx(t), "agent")
+			require.NoError(t, err)
+			r, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}})
+			require.NoError(t, err)
+			ref := resource.SessionRef{SessionID: r.Status.SessionID}
+			sub, err := svc.SubscribeEvents(ref)
+			require.NoError(t, err)
+			defer sub.Close()
+			receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+			require.NoError(t, err)
+			require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
+			if kind == "codex" {
+				require.Equal(t, "turn-1", receipt.Submission)
+				require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+			} else {
+				require.Nil(t, receipt.Acceptance.NativeAccepted)
+				require.Nil(t, receipt.Acceptance.NativeRecorded)
+			}
+			for {
+				e, err := nextSubscription(sub, ctx(t))
+				require.NoError(t, err)
+				if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+					break
+				}
+			}
+			history, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+			require.NoError(t, err)
+			require.NotEmpty(t, history.Events)
+			_, err = svc.ArchiveSession(ctx(t), ref)
+			require.NoError(t, err)
+		})
+	}
+}
 
 func nativeScenario(t *testing.T, kind, mode string) (string, string) {
 	t.Helper()
@@ -136,7 +186,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 							require.False(t, handled, "question must not be auto-approved")
 							var content map[string]any
 							if kind == "claude" {
-								content = map[string]any{"answers": map[string]any{"format": "json"}}
+								content = map[string]any{"answers": map[string]any{"Which format?": "json"}}
 							} else {
 								content = map[string]any{"answers": map[string]any{"format": map[string]any{"answers": []any{"json"}}}}
 							}
@@ -271,7 +321,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.InteractionRequested); ok {
-			_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": "json"}}})
+			_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"Which format?": "json"}}})
 			require.NoError(t, err)
 		}
 		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {

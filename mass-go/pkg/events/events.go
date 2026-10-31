@@ -14,6 +14,7 @@ import (
 )
 
 type EventBase struct {
+	Replay      *ReplaySource  `json:"replay,omitempty"`
 	EventID     string         `json:"eventId"`
 	Namespace   string         `json:"namespace"`
 	SessionName string         `json:"sessionName"`
@@ -22,6 +23,28 @@ type EventBase struct {
 	ItemID      string         `json:"itemId,omitempty"`
 	Meta        map[string]any `json:"_meta,omitempty"`
 }
+
+type ReplaySource struct {
+	LoadID         string `json:"loadId"`
+	NativeRecordID string `json:"nativeRecordId,omitempty"`
+	NativeParentID string `json:"nativeParentId,omitempty"`
+}
+
+type ResumedSession struct {
+	SessionID    string          `json:"sessionId"`
+	Capabilities map[string]bool `json:"capabilities"`
+}
+
+type HistoryReplay struct {
+	LoadID         string          `json:"loadId"`
+	Phase          string          `json:"phase"`
+	RetainedScope  string          `json:"retainedScope"`
+	ResumedSession *ResumedSession `json:"resumedSession,omitempty"`
+	CurrentState   **SessionState  `json:"currentState,omitempty"`
+	Error          map[string]any  `json:"error,omitempty"`
+}
+
+func (HistoryReplay) eventType() string { return "session.history_replay" }
 
 // Payload is sealed. Each concrete branch fixes its event type at compile time.
 type (
@@ -143,7 +166,23 @@ func (e SessionEvent) Validate() error {
 		return err
 	}
 	var m *MessagePayload
+	if e.Replay != nil && e.Replay.LoadID == "" {
+		return errors.New("missing replay loadId")
+	}
 	switch p := e.payload.(type) {
+	case HistoryReplay:
+		if p.LoadID == "" || p.RetainedScope == "" || !oneOf(p.Phase, "started", "native_completed", "failed", "canceled") {
+			return errors.New("invalid history replay")
+		}
+		if (p.Phase == "started" || p.Phase == "native_completed") && (p.ResumedSession == nil || p.ResumedSession.SessionID != e.SessionID || p.ResumedSession.Capabilities == nil) {
+			return errors.New("missing or mismatched resumed session")
+		}
+		if p.CurrentState != nil && *p.CurrentState != nil && !oneOf(string(**p.CurrentState), "idle", "running", "requires_action") {
+			return errors.New("invalid replay current state")
+		}
+		if err := CheckDynamicJSON(p.Error); err != nil {
+			return err
+		}
 	case UserMessage:
 		v := MessagePayload(p)
 		m = &v
@@ -327,6 +366,8 @@ func (e *SessionEvent) UnmarshalJSON(data []byte) error {
 	}
 	var p Payload
 	switch raw.Type {
+	case "session.history_replay":
+		p = &HistoryReplay{}
 	case "agent.tool_call_chunk":
 		p = &ToolChunk{}
 	case "agent.plan":
@@ -386,6 +427,12 @@ func (e *SessionEvent) UnmarshalJSON(data []byte) error {
 	}
 	// Normalize pointer branches so callers see the same concrete payload on reads.
 	switch v := p.(type) {
+	case *HistoryReplay:
+		if value, ok := members["currentState"]; ok && string(bytes.TrimSpace(value)) == "null" {
+			var unknown *SessionState
+			v.CurrentState = &unknown
+		}
+		p = *v
 	case *ToolChunk:
 		p = *v
 	case *Plan:
@@ -534,6 +581,8 @@ func marshalToolContent(value any, content []ContentBlock) ([]byte, error) {
 // ValidType recognizes the closed set shared by history queries and live events.
 func ValidType(kind string) bool {
 	switch kind {
+	case "session.history_replay":
+		return true
 	case "user.message", "agent.message", "agent.thinking", "agent.tool_call", "agent.tool_result", "agent.message_chunk", "agent.thinking_chunk", "agent.tool_call_chunk", "agent.plan", "session.state_update", "session.error", "session.info_update", "session.config_option_update", "session.available_commands_update", "session.usage_update", "session.interaction_requested", "session.interaction_closed":
 		return true
 	}

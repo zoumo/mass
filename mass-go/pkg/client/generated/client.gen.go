@@ -20,6 +20,51 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for HistoryReplayCurrentState.
+const (
+	HistoryReplayCurrentStateIdle           HistoryReplayCurrentState = "idle"
+	HistoryReplayCurrentStateRequiresAction HistoryReplayCurrentState = "requires_action"
+	HistoryReplayCurrentStateRunning        HistoryReplayCurrentState = "running"
+)
+
+// Valid indicates whether the value is a known member of the HistoryReplayCurrentState enum.
+func (e HistoryReplayCurrentState) Valid() bool {
+	switch e {
+	case HistoryReplayCurrentStateIdle:
+		return true
+	case HistoryReplayCurrentStateRequiresAction:
+		return true
+	case HistoryReplayCurrentStateRunning:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for HistoryReplayPhase.
+const (
+	HistoryReplayPhaseCanceled        HistoryReplayPhase = "canceled"
+	HistoryReplayPhaseFailed          HistoryReplayPhase = "failed"
+	HistoryReplayPhaseNativeCompleted HistoryReplayPhase = "native_completed"
+	HistoryReplayPhaseStarted         HistoryReplayPhase = "started"
+)
+
+// Valid indicates whether the value is a known member of the HistoryReplayPhase enum.
+func (e HistoryReplayPhase) Valid() bool {
+	switch e {
+	case HistoryReplayPhaseCanceled:
+		return true
+	case HistoryReplayPhaseFailed:
+		return true
+	case HistoryReplayPhaseNativeCompleted:
+		return true
+	case HistoryReplayPhaseStarted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InteractionClosedOutcome.
 const (
 	InteractionClosedOutcomeAnswered  InteractionClosedOutcome = "answered"
@@ -552,6 +597,22 @@ type HistoryPage struct {
 	SyncedEventId nullable.Nullable[string] `json:"syncedEventId"`
 }
 
+// HistoryReplay defines model for HistoryReplay.
+type HistoryReplay struct {
+	CurrentState   nullable.Nullable[HistoryReplayCurrentState] `json:"currentState,omitempty"`
+	Error          *map[string]rawjson.RawMessage               `json:"error,omitempty"`
+	LoadId         string                                       `json:"loadId"`
+	Phase          HistoryReplayPhase                           `json:"phase"`
+	ResumedSession *ResumedSession                              `json:"resumedSession,omitempty"`
+	RetainedScope  string                                       `json:"retainedScope"`
+}
+
+// HistoryReplayCurrentState defines model for HistoryReplay.CurrentState.
+type HistoryReplayCurrentState string
+
+// HistoryReplayPhase defines model for HistoryReplay.Phase.
+type HistoryReplayPhase string
+
 // InfoUpdate defines model for InfoUpdate.
 type InfoUpdate = rawjson.RawMessage
 
@@ -667,6 +728,19 @@ type PlanEntryStatus string
 // ProbeStatus defines model for ProbeStatus.
 type ProbeStatus struct {
 	Status string `json:"status"`
+}
+
+// ReplaySource defines model for ReplaySource.
+type ReplaySource struct {
+	LoadId         string  `json:"loadId"`
+	NativeParentId *string `json:"nativeParentId,omitempty"`
+	NativeRecordId *string `json:"nativeRecordId,omitempty"`
+}
+
+// ResumedSession defines model for ResumedSession.
+type ResumedSession struct {
+	Capabilities map[string]bool `json:"capabilities"`
+	SessionId    string          `json:"sessionId"`
 }
 
 // Runtime defines model for Runtime.

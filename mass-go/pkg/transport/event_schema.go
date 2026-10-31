@@ -76,7 +76,7 @@ func registerEventSchemas(r huma.Registry) {
 		kind    string
 		payload events.Payload
 	}{
-		{"user.message", events.UserMessage{}}, {"agent.message", events.AgentMessage{}}, {"agent.thinking", events.AgentThinking{}}, {"agent.message_chunk", events.MessageChunk{}}, {"agent.thinking_chunk", events.ThinkingChunk{}}, {"agent.tool_call", events.ToolCall{}}, {"agent.tool_result", events.ToolResult{}}, {"agent.tool_call_chunk", events.ToolChunk{}}, {"agent.plan", events.Plan{}}, {"session.state_update", events.StateUpdate{}}, {"session.error", events.SessionError{}}, {"session.info_update", events.InfoUpdate{}}, {"session.config_option_update", events.ConfigOptionUpdate{}}, {"session.available_commands_update", events.AvailableCommandsUpdate{}}, {"session.usage_update", events.UsageUpdate{}}, {"session.interaction_requested", events.InteractionRequested{}}, {"session.interaction_closed", events.InteractionClosed{}},
+		{"session.history_replay", events.HistoryReplay{}}, {"user.message", events.UserMessage{}}, {"agent.message", events.AgentMessage{}}, {"agent.thinking", events.AgentThinking{}}, {"agent.message_chunk", events.MessageChunk{}}, {"agent.thinking_chunk", events.ThinkingChunk{}}, {"agent.tool_call", events.ToolCall{}}, {"agent.tool_result", events.ToolResult{}}, {"agent.tool_call_chunk", events.ToolChunk{}}, {"agent.plan", events.Plan{}}, {"session.state_update", events.StateUpdate{}}, {"session.error", events.SessionError{}}, {"session.info_update", events.InfoUpdate{}}, {"session.config_option_update", events.ConfigOptionUpdate{}}, {"session.available_commands_update", events.AvailableCommandsUpdate{}}, {"session.usage_update", events.UsageUpdate{}}, {"session.interaction_requested", events.InteractionRequested{}}, {"session.interaction_closed", events.InteractionClosed{}},
 	}
 	base := r.Schema(reflect.TypeFor[events.EventBase](), false, "")
 	for _, branch := range branchesByType {
@@ -89,6 +89,11 @@ func registerEventSchemas(r huma.Registry) {
 			}
 		}
 		switch kind {
+		case "session.history_replay":
+			payload.Properties["phase"] = enum("started", "native_completed", "failed", "canceled")
+			payload.Properties["currentState"] = enum("idle", "running", "requires_action")
+			payload.Properties["currentState"].Nullable = true
+			payload.Required = []string{"loadId", "phase", "retainedScope"}
 		case "agent.tool_call", "agent.tool_result":
 			if f := payload.Properties["status"]; f != nil {
 				*f = *enum("pending", "in_progress", "completed", "failed", "declined", "unknown")

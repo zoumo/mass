@@ -13,7 +13,7 @@ From the repository root, with Go 1.26.9 and pinned dependencies already cached:
 make prototype-go
 ```
 
-This builds the pinned `agent-sdk-go` Codex **and** Claude mock CLIs plus `massd`
+This builds the pinned `agent-sdk-go` protocol simulation driver for Codex **and** Claude plus `massd`
 and `massctl`, then runs `TestEntrypointSuite` through actual CLI processes and
 HTTP+SSE. Every scenario is synthetic. SDK mocks match protocol frames strictly;
 they do not execute tools, use accounts, call models, or prove intelligence.
@@ -130,8 +130,7 @@ For Claude, use the installed Claude executable with the same resource commands:
 ```sh
 bin/massctl runtime create claude-local --type claude --executable /absolute/path/to/claude
 bin/massctl runtime start claude-local
-bin/massctl session create review -n demo --runtime claude-local --cwd /absolute/owned/workspace \
-  --system-prompt-file /absolute/system.txt --additional-dir /absolute/owned/context
+bin/massctl session create review -n demo --runtime claude-local --cwd /absolute/owned/workspace
 bin/massctl session prompt review -n demo --text 'Describe this workspace'
 # Claude currently accepts one input per running connection; release and resume
 # the original identity before another input.
@@ -140,11 +139,40 @@ bin/massctl session resume review -n demo
 ```
 
 Both drivers currently accept text input; Claude requires exactly one text block.
+Claude rejects `systemPrompt` and `additionalDirs` before dispatch; Codex maps
+`systemPrompt` to native base instructions and rejects `additionalDirs`.
 These command examples describe supported interfaces, not proof of real CLI/model
 execution. Authentication, real native recovery, accounts and models must be
 validated separately in owned test directories. Permission auto-approval remains
 an explicit daemon prototype policy; pending form/question interactions require
 the HTTP answer API. This CLI version deliberately has no answer command.
+
+### Runtime Launch Configuration
+
+The SDK is pinned to `v0.0.0-20261031154401-ed6c8216607c`, source commit
+`ed6c8216607ceacb5077b558a8302a587c9e6d5b`, without a local replacement.
+Codex shares one native Client across its Sessions; Claude owns one native
+process per Session. Each Session has one Receive consumer for native events
+and original request capabilities. SDK observations do not establish Agent state.
+Codex input receipts retain the native turn ID and acceptance; Claude receipts
+prove only a complete local write, not native acceptance or recording.
+
+`--config-json` / `--config-file` accept these launch fields:
+
+| Field | Behavior |
+| --- | --- |
+| `executable` | Required absolute executable path; never discovered from personal configuration. |
+| `args` | Codex process arguments, default `["app-server"]`; explicit `[]` means no arguments. Claude rejects nonempty arguments; use an explicit launcher if needed. |
+| `envPolicy` | `inherit` (default) merges parent environment with `env`; `replace` passes only configured entries, including an explicitly empty environment. |
+| `env` | String-to-string overrides; callers supply any required PATH/HOME/config-directory settings explicitly when replacing. |
+| `scenario` | Optional absolute authored simulation file, injected as provider `_MOCK_SCENARIO`; not required for real runtimes. |
+
+Validation does not open credentials or history. Offline tests launch only the
+pinned SDK `tools/agent-sdk-testify protocol mock` via strict temporary launchers,
+with an explicit scenario and no real-agent fallback. They do not prove real
+CLI startup, authentication, model behavior or native history availability.
+Native history load and same-connection Claude continuous input remain follow-up
+work; this baseline retains the explicit one-input Claude boundary.
 
 Existing Session commands use `NAME -n NAMESPACE` or a raw global `SESSION_ID`
 without namespace, with no default namespace, `--id`, guessing or lookup fallback.

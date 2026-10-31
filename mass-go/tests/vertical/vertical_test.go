@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/mass-go/internal/testpeer"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -100,7 +101,17 @@ func TestMain(m *testing.M) {
 				code = 1
 			}
 		}()
-		for name, target := range map[string]string{"claude-mock": "github.com/zoumo/agent-sdk-go/claude/cmd/mock", "mock": "github.com/zoumo/agent-sdk-go/codex/cmd/mock", "massd": "../../cmd/massd", "massctl": "../../cmd/massctl"} {
+		mock, err = testpeer.Build(mainCtx, root, "codex")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
+		claudeMock, err = testpeer.Build(mainCtx, root, "claude")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
+		for name, target := range map[string]string{"massd": "../../cmd/massd", "massctl": "../../cmd/massctl"} {
 			bin := filepath.Join(root, name)
 			cmd := exec.CommandContext(mainCtx, "go", "build", "-o", bin, target)
 			if out, err := cmd.CombinedOutput(); err != nil {
@@ -139,6 +150,9 @@ func scenario(t *testing.T) (string, string) {
 	quoted, err := json.Marshal(work)
 	require.NoError(t, err)
 	data = bytes.ReplaceAll(data, []byte(`"/synthetic"`), quoted)
+	var compact bytes.Buffer
+	require.NoError(t, json.Compact(&compact, data))
+	data = compact.Bytes()
 	path := filepath.Join(t.TempDir(), "scenario.json")
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 	return path, work

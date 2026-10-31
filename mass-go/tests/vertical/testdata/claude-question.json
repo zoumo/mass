@@ -167,8 +167,21 @@
           "response": {
             "behavior": "allow",
             "updatedInput": {
+              "questions": [
+                {
+                  "question": "Which format?",
+                  "header": "Format",
+                  "options": [
+                    {
+                      "label": "json",
+                      "description": "JSON"
+                    }
+                  ],
+                  "multiSelect": false
+                }
+              ],
               "answers": {
-                "format": "json"
+                "Which format?": "json"
               }
             }
           }

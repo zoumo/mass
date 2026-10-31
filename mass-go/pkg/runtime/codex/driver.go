@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -21,28 +22,11 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/runtime/recovery"
 )
 
-type options struct{ executable, scenario string }
+type options = runtime.ProcessConfig
 
 func parse(c runtime.Config) (options, error) {
-	var o options
-	for k, v := range c {
-		s, ok := v.(string)
-		if !ok {
-			return o, fmt.Errorf("%s must be a string", k)
-		}
-		switch k {
-		case "executable":
-			o.executable = s
-		case "scenario":
-			o.scenario = s
-		default:
-			return o, fmt.Errorf("unknown Codex config %q", k)
-		}
-	}
-	if !filepath.IsAbs(o.executable) || !filepath.IsAbs(o.scenario) {
-		return o, errors.New("explicit absolute executable and synthetic scenario required")
-	}
-	return o, nil
+	o, err := runtime.ParseProcessConfig(c)
+	return o, err
 }
 
 type Factory struct{ RecoveryDir string }
@@ -53,20 +37,19 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "codex", Owner: name, Executable: o.executable}, options: o, pipe: events.NewEventPipe(128), sessions: map[string]*session{}}, nil
+	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "codex", Owner: name, Executable: o.Executable}, options: o, pipe: events.NewEventPipe(128), sessions: map[string]*session{}}, nil
 }
 
 type session struct {
 	command      sync.Mutex
-	requests     chan sdk.Request
-	wake         chan struct{}
+	native       *sdk.Session
+	closing      bool
 	work         string
 	cancelWork   string
 	cancelTarget string
 	retired      map[string]bool
 	address      runtime.Address
 	source       events.Source
-	sub          *sdk.Subscription
 	active       bool
 	sending      bool
 	state        *events.SessionState
@@ -125,7 +108,11 @@ func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	}
 	d.mu.Unlock()
 	life, cancel := context.WithCancel(context.Background())
-	c, err := sdk.NewStdio(ctx, sdk.StdioOptions{Executable: d.options.executable, Args: []string{"app-server"}, Env: []string{"CODEX_MOCK_SCENARIO=" + d.options.scenario}, Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}}})
+	args := d.options.Args
+	if args == nil {
+		args = []string{"app-server"}
+	}
+	c, err := sdk.NewStdio(ctx, sdk.StdioOptions{Executable: d.options.Executable, Args: args, Env: d.options.Environment("codex"), Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}}})
 	if err != nil {
 		cancel()
 		return nil, err
@@ -135,8 +122,6 @@ func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	d.life = life
 	d.cancel = cancel
 	d.mu.Unlock()
-	d.wg.Add(1)
-	go d.requests(c)
 	return caps(), nil
 }
 
@@ -174,6 +159,14 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		return runtime.DriverSession{}, noResources("driver not running")
 	}
 	var thread ct.Thread
+	var native *sdk.Session
+	var err error
+	keep := false
+	defer func() {
+		if native != nil && !keep {
+			_ = native.Close()
+		}
+	}()
 	if resume != "" {
 		material, err := d.vault.Load(resume, address, spec)
 		if err != nil {
@@ -186,10 +179,11 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if saved.ID != resume || saved.SessionID != resume || saved.Ephemeral || saved.Cwd != spec.Cwd {
 			return runtime.DriverSession{}, noResources("invalid native recovery context")
 		}
-		response, err := c.ResumeThread(ctx, ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)})
+		native, err = sdk.Open(ctx, sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)}})
 		if err != nil {
 			return runtime.DriverSession{}, err
 		}
+		response, _ := native.ResumeResponse()
 		thread = response.Thread
 		if thread.ID != saved.ID || thread.SessionID != saved.SessionID || thread.Cwd != saved.Cwd || thread.CreatedAt != saved.CreatedAt || thread.ModelProvider != saved.ModelProvider || thread.Ephemeral || !reflect.DeepEqual(thread.Path, saved.Path) {
 			return runtime.DriverSession{}, errors.New("native recovery ownership mismatch")
@@ -200,10 +194,11 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if spec.SystemPrompt != "" {
 			params.BaseInstructions = ct.Some(spec.SystemPrompt)
 		}
-		response, err := c.StartThread(ctx, params)
+		native, err = sdk.Open(ctx, sdk.SessionOptions{Client: c, Thread: params})
 		if err != nil {
 			return runtime.DriverSession{}, err
 		}
+		response, _ := native.StartResponse()
 		thread = response.Thread
 	}
 	id := thread.ID
@@ -215,15 +210,11 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 			return runtime.DriverSession{}, fmt.Errorf("outcome_unknown: save recovery material: %w", err)
 		}
 	}
-	sub, err := c.Subscribe(d.life, id, ct.SubscriptionOptions{EventQueue: 128})
-	if err != nil {
-		return runtime.DriverSession{}, err
-	}
-	s := &session{requests: make(chan sdk.Request, 128), wake: make(chan struct{}, 1), address: address, source: events.NewSource(), sub: sub, done: make(chan struct{}), released: make(chan struct{}), retired: map[string]bool{}}
+	s := &session{native: native, address: address, source: events.NewSource(), done: make(chan struct{}), released: make(chan struct{}), retired: map[string]bool{}}
 	d.mu.Lock()
 	if _, ok := d.sessions[id]; ok {
 		d.mu.Unlock()
-		return runtime.DriverSession{}, errors.Join(errors.New("duplicate native identity"), sub.Abort())
+		return runtime.DriverSession{}, errors.Join(errors.New("duplicate native identity"), native.Close())
 	}
 	d.sessions[id] = s
 	d.mu.Unlock()
@@ -237,6 +228,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 			return runtime.DriverSession{}, err
 		}
 	}
+	keep = true
 	d.wg.Add(1)
 	go d.observe(id, s)
 	return runtime.DriverSession{SessionID: id, Capabilities: caps(), Source: s.source}, nil
@@ -252,7 +244,6 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	s.command.Lock()
 	defer s.command.Unlock()
 	d.mu.Lock()
-	c := d.client
 	if d.sessions[id] != s || d.stopped || d.stopping || s.active || s.sending || s.err != nil || len(s.retired) >= 128 {
 		d.mu.Unlock()
 		return runtime.InputReceipt{}, runtime.FailedPrecondition("session unavailable or work unsettled")
@@ -263,10 +254,6 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 		d.mu.Lock()
 		s.sending = false
 		d.mu.Unlock()
-		select {
-		case s.wake <- struct{}{}:
-		default:
-		}
 	}()
 	if len(input.Content) == 0 {
 		return runtime.InputReceipt{}, runtime.InvalidArgument("empty input")
@@ -281,7 +268,8 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	d.mu.Lock()
 	s.active = true // reserve unsettled work before dispatch; receipt alone is not running evidence
 	d.mu.Unlock()
-	result, err := c.StartTurn(ctx, ct.TurnStartParams{ThreadID: id, Input: items})
+	submission, err := s.native.Submit(ctx, sdk.Input{Input: items})
+	result := submission.Response
 	if err != nil {
 		return runtime.InputReceipt{Acceptance: runtime.Acceptance{}}, fmt.Errorf("outcome_unknown: start turn: %w", err)
 	}
@@ -311,53 +299,29 @@ func (d *Driver) emit(s *session, id, item string, p events.Payload, work string
 func (d *Driver) observe(id string, s *session) {
 	defer d.wg.Done()
 	defer close(s.done)
-	pending := []sdk.Request{}
-	flush := func() {
-		d.mu.Lock()
-		waiting := s.sending && s.work == ""
-		d.mu.Unlock()
-		if waiting {
-			return
-		}
-		for _, request := range pending {
-			d.handleRequest(s, request)
-		}
-		pending = nil
-	}
-	observing := true
-	for observing {
-		select {
-		case <-d.life.Done():
-			return
-		case <-s.wake:
-			flush()
-		case request := <-s.requests:
-			if len(pending) >= 128 {
-				d.observationFailed(id, s, errors.New("pending native request capacity exhausted"))
-				return
-			}
-			pending = append(pending, request)
-			flush()
-		case event, ok := <-s.sub.Events():
-			if !ok {
-				observing = false
-				break
-			}
-			if err := d.adapt(id, s, event); err != nil {
+	for {
+		received, err := s.native.Receive(d.life)
+		if err != nil {
+			d.mu.Lock()
+			closing := s.closing
+			d.mu.Unlock()
+			if !closing || !errors.Is(err, io.EOF) {
 				d.observationFailed(id, s, err)
-				return
 			}
-			flush()
+			return
 		}
-	}
-
-	if err := s.sub.Err(); err != nil {
-		d.observationFailed(id, s, err)
-	} else {
-		select {
-		case <-s.released:
-		default:
-			d.observationFailed(id, s, errors.New("unexpected native EOF"))
+		switch received.Kind {
+		case sdk.ReceivedEvent:
+			if received.Event != nil {
+				if err := d.adapt(id, s, *received.Event); err != nil {
+					d.observationFailed(id, s, err)
+					return
+				}
+			}
+		case sdk.ReceivedRequest:
+			if received.Request != nil {
+				d.handleRequest(s, *received.Request)
+			}
 		}
 	}
 }
@@ -529,23 +493,10 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 		d.mu.Unlock()
 		return runtime.ErrWorkUnsettled
 	}
+	s.closing = true
 	d.mu.Unlock()
-	var release ct.ThreadUnsubscribeResponse
-	if err := d.client.Call(ctx, "thread/unsubscribe", ct.ThreadUnsubscribeParams{ThreadID: id}, &release); err != nil {
-		return err
-	}
-	switch release.Status {
-	case ct.ThreadUnsubscribeStatusNotLoaded:
-	case ct.ThreadUnsubscribeStatusUnsubscribed:
-		select {
-		case <-s.released:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	default:
-		return errors.New("native resource release not confirmed")
-	}
-	if err := s.sub.Close(); err != nil {
+	cause := s.native.Err()
+	if err := s.native.Close(); err != nil {
 		return err
 	}
 	select {
@@ -555,6 +506,9 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	}
 	if err := d.pipe.Flush(ctx); err != nil {
 		return err
+	}
+	if cause != nil {
+		return fmt.Errorf("native resource release unconfirmed after observation loss: %w", cause)
 	}
 	d.mu.Lock()
 	delete(d.sessions, id)
@@ -594,45 +548,16 @@ func (d *Driver) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Requests is independent of observation; only original SDK handles may reply.
-func (d *Driver) requests(c *sdk.Client) {
-	defer d.wg.Done()
-	for {
-		select {
-		case <-d.life.Done():
-			return
-		case r, ok := <-c.Requests():
-			if !ok {
-				return
-			}
-			var target struct{ ThreadID string }
-			if json.Unmarshal(r.Params(), &target) != nil {
-				continue
-			}
-			d.mu.Lock()
-			original := d.sessions[target.ThreadID]
-			d.mu.Unlock()
-			if original == nil {
-				continue
-			}
-			select {
-			case original.requests <- r:
-			case <-original.done:
-			case <-d.life.Done():
-				return
-			}
-		}
-	}
-}
-
-// Request and observation queues are consumed by the original Session worker.
-// A bounded early request waits for ACK/native work identity, never a guessed ID.
-func (d *Driver) handleRequest(s *session, r sdk.Request) {
+func (d *Driver) handleRequest(s *session, r sdk.IncomingRequest) {
 	var v struct{ ThreadID, TurnID, ItemID string }
 	if json.Unmarshal(r.Params(), &v) != nil {
 		return
 	}
 	d.mu.Lock()
+	// Requests may precede the turn/start response; retain their native identity.
+	if d.sessions[v.ThreadID] == s && s.sending && s.work == "" && v.TurnID != "" && !s.retired[v.TurnID] {
+		s.work = v.TurnID
+	}
 	valid := s != nil && d.sessions[v.ThreadID] == s && s.err == nil && v.TurnID != "" && s.work == v.TurnID && !s.retired[v.TurnID]
 	d.mu.Unlock()
 	if !valid {
@@ -739,7 +664,7 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	s.command.Lock()
 	defer s.command.Unlock()
 	d.mu.Lock()
-	work, c := s.work, d.client
+	work := s.work
 	active := s.active
 	if active && s.cancelWork != work {
 		s.cancelWork, s.cancelTarget = work, uuid.NewString()
@@ -752,7 +677,7 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	if work == "" {
 		return runtime.CancelReceipt{}, errors.New("outcome_unknown: no confirmed native turn to cancel")
 	}
-	_, err := c.InterruptTurn(ctx, ct.TurnInterruptParams{ThreadID: id, TurnID: work})
+	err := s.native.Interrupt(ctx, sdk.InterruptOptions{TurnID: work})
 	if err != nil {
 		return runtime.CancelReceipt{}, fmt.Errorf("outcome_unknown: cancel: %w", err)
 	}

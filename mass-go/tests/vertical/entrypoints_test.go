@@ -260,7 +260,7 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 				s.Require().True(question, "questions are never permission-approved")
 				answer := map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": map[string]any{"answers": []any{"json"}}}}}
 				if strings.HasPrefix(ref.SessionID, "claude") {
-					answer = map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": "json"}}}
+					answer = map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"Which format?": "json"}}}
 				}
 				s.call("session.answer", workflowParams{Session: ref, Interaction: p.Interaction, Answer: answer}, nil)
 			} else {

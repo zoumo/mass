@@ -423,7 +423,7 @@ func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
 	s.Require().Error(err)
 	_, err = s.svc.ResumeSession(ctx(s.T()), ref)
 	s.Require().Error(err)
-	_, err = s.svc.AnswerInteraction(ctx(s.T()), ref, handle, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": "json"}}})
+	_, err = s.svc.AnswerInteraction(ctx(s.T()), ref, handle, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"Which format?": "json"}}})
 	s.Require().Error(err)
 	s.Require().Eventually(func() bool {
 		session, err := s.svc.GetSession(ref)

@@ -22,5 +22,5 @@ func TestHistoryAndStreamOpenAPI(t *testing.T) {
 	schemas := doc["components"].(map[string]any)["schemas"].(map[string]any)
 	union, ok := schemas["SessionEvent"].(map[string]any)
 	require.True(t, ok)
-	require.Len(t, union["oneOf"], 17)
+	require.Len(t, union["oneOf"], 18)
 }

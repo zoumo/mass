@@ -589,6 +589,50 @@
         ],
         "type": "object"
       },
+      "HistoryReplay": {
+        "additionalProperties": false,
+        "properties": {
+          "currentState": {
+            "enum": [
+              "idle",
+              "running",
+              "requires_action"
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "loadId": {
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "started",
+              "native_completed",
+              "failed",
+              "canceled"
+            ],
+            "type": "string"
+          },
+          "resumedSession": {
+            "$ref": "#/components/schemas/ResumedSession"
+          },
+          "retainedScope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "loadId",
+          "phase",
+          "retainedScope"
+        ],
+        "type": "object"
+      },
       "InfoUpdate": {
         "additionalProperties": false,
         "anyOf": [
@@ -999,6 +1043,43 @@
         ],
         "type": "object"
       },
+      "ReplaySource": {
+        "additionalProperties": false,
+        "properties": {
+          "loadId": {
+            "type": "string"
+          },
+          "nativeParentId": {
+            "type": "string"
+          },
+          "nativeRecordId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "loadId"
+        ],
+        "type": "object"
+      },
+      "ResumedSession": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object"
+          },
+          "sessionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sessionId",
+          "capabilities"
+        ],
+        "type": "object"
+      },
       "Runtime": {
         "additionalProperties": false,
         "properties": {
@@ -1182,7 +1263,62 @@
                 "type": "string"
               },
               "payload": {
+                "$ref": "#/components/schemas/HistoryReplay"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
+              },
+              "sessionId": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "sessionName": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "time": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "type": {
+                "const": "session.history_replay",
+                "type": "string"
+              }
+            },
+            "required": [
+              "eventId",
+              "namespace",
+              "sessionName",
+              "sessionId",
+              "time",
+              "type",
+              "payload"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "_meta": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "eventId": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "itemId": {
+                "type": "string"
+              },
+              "namespace": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "payload": {
                 "$ref": "#/components/schemas/UserMessage"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
               },
               "sessionId": {
                 "minLength": 1,
@@ -1234,6 +1370,9 @@
               "payload": {
                 "$ref": "#/components/schemas/AgentMessage"
               },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
+              },
               "sessionId": {
                 "minLength": 1,
                 "type": "string"
@@ -1283,6 +1422,9 @@
               },
               "payload": {
                 "$ref": "#/components/schemas/AgentThinking"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
               },
               "sessionId": {
                 "minLength": 1,
@@ -1334,6 +1476,9 @@
               "payload": {
                 "$ref": "#/components/schemas/MessageChunk"
               },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
+              },
               "sessionId": {
                 "minLength": 1,
                 "type": "string"
@@ -1383,6 +1528,9 @@
               },
               "payload": {
                 "$ref": "#/components/schemas/ThinkingChunk"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
               },
               "sessionId": {
                 "minLength": 1,
@@ -1434,6 +1582,9 @@
               "payload": {
                 "$ref": "#/components/schemas/ToolCall"
               },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
+              },
               "sessionId": {
                 "minLength": 1,
                 "type": "string"
@@ -1483,6 +1634,9 @@
               },
               "payload": {
                 "$ref": "#/components/schemas/ToolResult"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
               },
               "sessionId": {
                 "minLength": 1,
@@ -1534,6 +1688,9 @@
               "payload": {
                 "$ref": "#/components/schemas/ToolChunk"
               },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
+              },
               "sessionId": {
                 "minLength": 1,
                 "type": "string"
@@ -1583,6 +1740,9 @@
               },
               "payload": {
                 "$ref": "#/components/schemas/Plan"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
               },
               "sessionId": {
                 "minLength": 1,
@@ -1634,6 +1794,9 @@
               "payload": {
                 "$ref": "#/components/schemas/StateUpdate"
               },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
+              },
               "sessionId": {
                 "minLength": 1,
                 "type": "string"
@@ -1682,6 +1845,9 @@
               },
               "payload": {
                 "$ref": "#/components/schemas/SessionError"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
               },
               "sessionId": {
                 "minLength": 1,
@@ -1732,6 +1898,9 @@
               "payload": {
                 "$ref": "#/components/schemas/InfoUpdate"
               },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
+              },
               "sessionId": {
                 "minLength": 1,
                 "type": "string"
@@ -1780,6 +1949,9 @@
               },
               "payload": {
                 "$ref": "#/components/schemas/ConfigOptionUpdate"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
               },
               "sessionId": {
                 "minLength": 1,
@@ -1830,6 +2002,9 @@
               "payload": {
                 "$ref": "#/components/schemas/AvailableCommandsUpdate"
               },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
+              },
               "sessionId": {
                 "minLength": 1,
                 "type": "string"
@@ -1878,6 +2053,9 @@
               },
               "payload": {
                 "$ref": "#/components/schemas/UsageUpdate"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
               },
               "sessionId": {
                 "minLength": 1,
@@ -1928,6 +2106,9 @@
               "payload": {
                 "$ref": "#/components/schemas/InteractionRequested"
               },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
+              },
               "sessionId": {
                 "minLength": 1,
                 "type": "string"
@@ -1976,6 +2157,9 @@
               },
               "payload": {
                 "$ref": "#/components/schemas/InteractionClosed"
+              },
+              "replay": {
+                "$ref": "#/components/schemas/ReplaySource"
               },
               "sessionId": {
                 "minLength": 1,

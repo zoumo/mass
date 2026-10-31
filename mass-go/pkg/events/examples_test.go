@@ -18,19 +18,31 @@ func TestHarnessEventExamplesRoundTrip(t *testing.T) {
 		Events []json.RawMessage `json:"events"`
 	}
 	require.NoError(t, json.Unmarshal(data, &examples))
-	require.Len(t, examples.Events, 17)
+	require.Len(t, examples.Events, 18)
 	for _, raw := range examples.Events {
 		var label struct {
 			Type string `json:"type"`
 		}
 		require.NoError(t, json.Unmarshal(raw, &label))
 		t.Run(label.Type, func(t *testing.T) {
+			require.True(t, events.ValidType(label.Type), "contract event type must be accepted by public filters")
 			var event events.SessionEvent
 			require.NoError(t, json.Unmarshal(raw, &event))
 			out, err := json.Marshal(event)
 			require.NoError(t, err)
 			require.JSONEq(t, string(raw), string(out))
 		})
+	}
+}
+
+func TestReplayCurrentStatePreservesAbsentAndNull(t *testing.T) {
+	for _, state := range []string{"", `,"currentState":null`, `,"currentState":"idle"`} {
+		raw := `{"eventId":"01234567-89ab-4cde-8fab-0123456789ab","namespace":"one","sessionName":"demo","sessionId":"original","time":"2026-10-20T00:00:00Z","type":"session.history_replay","payload":{"loadId":"load-1","phase":"failed","retainedScope":"retained-main-chain"` + state + `}}`
+		var event events.SessionEvent
+		require.NoError(t, json.Unmarshal([]byte(raw), &event))
+		encoded, err := json.Marshal(event)
+		require.NoError(t, err)
+		require.JSONEq(t, raw, string(encoded))
 	}
 }
 
