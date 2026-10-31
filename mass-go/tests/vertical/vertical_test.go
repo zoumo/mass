@@ -3,6 +3,7 @@ package vertical_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -130,6 +131,14 @@ func TestMain(m *testing.M) {
 			case "massctl":
 				ctl = bin
 			}
+		}
+		for _, name := range []string{"agent-sdk-testify-codex", "agent-sdk-testify-claude", "massd", "massctl"} {
+			binary, readErr := os.ReadFile(filepath.Join(root, name))
+			if readErr != nil {
+				fmt.Fprintln(os.Stderr, readErr)
+				return
+			}
+			fmt.Printf("owned artifact %s sha256=%x\n", name, sha256.Sum256(binary))
 		}
 		code = m.Run()
 	}()

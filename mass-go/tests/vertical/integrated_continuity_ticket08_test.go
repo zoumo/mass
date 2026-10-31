@@ -1,6 +1,7 @@
 package vertical_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -26,6 +27,9 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "continuity-peer")
 			out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/ticket08-continuity-peer").CombinedOutput()
 			require.NoError(t, err, string(out))
+			binary, err := os.ReadFile(bin)
+			require.NoError(t, err)
+			t.Logf("owned authored peer sha256=%x", sha256.Sum256(binary))
 			evidence := filepath.Join(t.TempDir(), "inputs.jsonl")
 			// Registered before Service cleanup so failure paths also read release back.
 			t.Cleanup(func() {
