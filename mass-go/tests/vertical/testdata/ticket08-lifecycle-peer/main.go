@@ -122,8 +122,8 @@ func runCodex(send func(any)) {
 func runClaude(send func(any), cwd string) {
 	id := "claude-" + filepath.Base(cwd)
 	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "--resume=") {
-			id = strings.TrimPrefix(arg, "--resume=")
+		if resumed, ok := strings.CutPrefix(arg, "--resume="); ok {
+			id = resumed
 		}
 	}
 	var link string
@@ -166,7 +166,10 @@ func runClaude(send func(any), cwd string) {
 				result()
 			}
 		case "control_response":
-			raw, _ := json.Marshal(v)
+			raw, err := json.Marshal(v)
+			if err != nil {
+				panic(err)
+			}
 			if strings.Contains(string(raw), `"behavior":"allow"`) {
 				panic("stale permission reached native peer")
 			}
