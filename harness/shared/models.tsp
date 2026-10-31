@@ -4,7 +4,7 @@ import "./content-blocks.tsp";
 
 namespace MASS.Design;
 
-/** HistoryStore 的不透明分页位置；调用方不得解析、排序或自行构造。 */
+/** EventStore 的不透明分页位置；调用方不得解析、排序或自行构造。 */
 @minLength(1)
 scalar HistoryCursor extends string;
 

@@ -44,7 +44,7 @@ model ObjectMetadata {
   @visibility(Lifecycle.Read)
   generation: Generation;
 
-  /** MetaStore 分配的不透明并发版本，与 generation 独立；索引重建时原样恢复。
+  /** MetaStore 分配的不透明并发版本，与 generation 独立；从元数据权威后端恢复时保留；事件 SQL 重建不改变此值。
    * 对外资源只读；MetaStore 条件写入使用读取快照中的值。 */
   @visibility(Lifecycle.Read)
   resourceVersion: string;
@@ -114,6 +114,47 @@ model SessionCreate {
   spec: SessionSpec;
 }
 
+/** 恢复已知原生会话并加载历史到新空目标；不发送业务输入。 */
+model SessionLoad {
+  metadata: ObjectMetadata;
+  runtimeRef: string;
+  cwd: string;
+
+  /** 待原生验证的已知 ID，不由 MASS 分配。 */
+  sessionId: string;
+}
+
+model HistoryLoadStatus {
+  loadId: string;
+  phase:
+    | "accepted"
+    | "replaying"
+    | "native_completed"
+    | "completed"
+    | "failed"
+    | "canceled";
+  nativeVerified: boolean;
+
+  /** 已恢复同一个原生会话；成功后保留该运行供后续输入。 */
+  nativeResumed: boolean;
+
+  nativeCompleted: boolean;
+
+  /** 全部提交与 publish 调用结算，不等于外部或异步动作读完。 */
+  deliveryCompleted: boolean;
+
+  /** 失败/取消结果不证明释放；清理结算后为 true。成功 load 保留运行，不要求此值为 true。 */
+  cleanupCompleted: boolean;
+
+  lastCommittedEventId?: string;
+  error?: OperationError;
+}
+
+model SessionLoadAccepted {
+  session: Session;
+  loadId: string;
+}
+
 model SessionQuery {
   /** 省略时查询全部 namespace。 */
   `namespace`?: NamespaceName;
@@ -130,9 +171,12 @@ model Session {
 }
 
 model SessionStatus {
+  historyLoad?: HistoryLoadStatus;
+
   /** 跨 Runtime 全局唯一的会话标识；原始值不得为 . 或 ..；归档、离线与恢复均保留。 */
   sessionId: string;
 
+  /** 当前可证明的状态；重启不沿用旧 idle 作为可用证明，按 Service 启动规则校正为 offline/archived/unknown。 */
   state: SessionState;
 
   /** 本次会话运行已应用的 Session spec 版本，不是 Runtime 版本。 */

@@ -30,7 +30,7 @@ sources:
 
 公共 HTTP 接口采用资源式 REST、JSON 请求与响应，以及独立、可选的 SSE 实时观察。不采用 JSON-RPC envelope，不要求客户端初始化协议会话或保持连接；Agent 工作的生命周期独立于单次 HTTP 请求与订阅连接。业务服务、CLI、脚本与界面使用同一接口。此选择参考托管 Agent API 的 Session 资源与独立事件流组织方式，不复制厂商业务模型。[^claude][^openai]
 
-HTTP 操作遵循既有 Runtime 与 Session 业务合同，不隐式启动 Runtime 或恢复 Session。进程内事件处理器不作为远程 API 暴露。
+HTTP 操作遵循 Service 业务合同：创建或恢复 Session 时由 Service 按需启动所属 Runtime，无需 HTTP 调用方预先 start；HTTP 层不追加独立启动请求。资源查询、历史和 SSE 订阅不启动 Runtime、不恢复 Session，输入不隐式恢复离线会话。服务重启后的状态按 [Service 启动规则](../modules/service/design.md#服务重启与状态校正)校正，GET 不承担校正写入。进程内事件处理器不作为远程 API 暴露。
 
 cwd 按 Agent 所在运行环境解释，远端路径不能被本机目录存在性检查拒绝。配置与资源响应只返回秘密引用，不返回解析后的秘密。
 
@@ -104,10 +104,12 @@ Runtime 是全局命名资源；`{runtime}` 为 Runtime 名称。创建只接受
 
 | HTTP | 处理行为 | 成功 |
 |---|---|---|
-| `POST /apis/v1/sessions` | 创建 Session | 201，Session 资源 |
+| `POST /apis/v1/sessions/load` | 异步恢复同一原生会话并回放到新空目标 | 202，SessionLoadAccepted |
+| `POST {session}/history-load/cancel` | 取消指定 loadId 的读取 | 200，当前 HistoryLoadStatus；不证明清理已完成 |
+| `POST /apis/v1/sessions` | 按需启动所属 Runtime，再创建 Session | 201，Session 资源 |
 | `GET /apis/v1/sessions` | 列表查询；筛选与分页见下文 | 200，资源分页 |
 | `GET {session}` | 查询资源 | 200，Session 资源 |
-| `POST {session}/resume` | 恢复 Session | 200，Session 资源 |
+| `POST {session}/resume` | 按需启动所属 Runtime，再恢复该 Session | 200，Session 资源 |
 | `POST {session}/archive` | 归档 Session | 200，Session 资源 |
 | `POST {session}/inputs` | 提交输入 | 200，输入回执 |
 | `POST {session}/interactions/{interaction64}/answer` | 提交交互答案 | 200，回答回执 |
@@ -246,3 +248,7 @@ HTTP v1 确定以上路由、JSON、状态码、授权入口与 SSE 形式，遵
 [^resource-paths]: 本次请求确定 Runtime 在资源路径上更新配置，namespace 下支持 nameOrID；Session ID 使用原始值并做 URL escape。
 
 [^http-caching]: RFC 9111 第 5.2.2 节的 no-cache、no-store 与 no-transform 响应指令。
+
+## 异步原生 load
+
+`POST /apis/v1/sessions/load` 按 [load](../modules/service/load.md)接纳新空目标，202 只证明后台责任已建立，不证明原生存在、同一会话已恢复、读取穷尽或本地分发完成。最终 completed 后无需额外 resume 即可在原会话输入；不以释放成功运行连接作为完成条件。Location 指向该 Session 的既有查询路径，后续 GET 读取 status.historyLoad；无新增通用 Operation 查询。请求超时/断开不取消已接纳 load，不自动重试。`POST {session}/history-load/cancel` 携带原 loadId，取消尚未本地完成的 load 并释放本次恢复连接；最终清理查询状态。已完成 load 拒绝该旧取消请求，后续运行使用普通 cancel/archive；不取消其他客户端工作。SSE 沿既有 Broadcast 只观察之后事件，不保证 load 响应与订阅就绪之间无缝补历史。HTTP 202 接纳后发生的 not_found/unsupported/身份错误记录在 historyLoad.error，不改写为成功或新建。

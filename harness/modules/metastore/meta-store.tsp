@@ -3,7 +3,7 @@ import "../service/models.tsp";
 namespace MASS.Design;
 
 /** 面向一种资源类型的元数据存储；不执行业务校验或 Agent 操作；当前不提供 JSON Patch。
- * 文件保存完整数据，SQLite 仅作可重建索引；返回值均为资源快照。 */
+ * 由配置选择唯一权威后端，默认 SQLite，可选文件；返回值均为资源快照。 */
 interface MetaStore<Resource extends {}, Query extends {}, ListResult> {
   /** 名称冲突则失败；生成 uid、createdAt、resourceVersion，初始化 generation=1。
    * 输入包含完整初始 spec/status，系统维护的只读 metadata 不接受调用方赋值。 */

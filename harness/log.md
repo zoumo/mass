@@ -1,6 +1,41 @@
 # 设计知识包更新记录
 
+## 2026-10-22
+
+- **精简 harness 工作规则**：合并 AGENTS.md 中重复的设计权威、实现记录、文档状态和验证要求；模块职责与动态值细节改为引用权威合同。确认 Go 原则统一使用 principles/golang，保留历史记录中的原路径。
+
+- **采用 harness-agent 规范**：将 Go 原则目录迁到 principles/golang，区分应用与工具库目录规范，补充 SDK 规则。保留已有 principles/AGENTS.md，缺失测试前置条件报告未执行，内部引用同步更新。
+
+- **合并知识管理约定**：将 conventions.md 的知识组织、OKF 元数据、来源、接口表达及文档维护规则合并到 harness/AGENTS.md，删除原文件并同步入口和 Module 规则引用。
+
+- **词汇表移至根目录**：将 harness/glossary.md 正文迁至根目录 GLOSSARY.md，替换原跳转页；同步导航、内容归属说明与词汇表内部链接。
+
+- **合并重复工作规则**：设计权威、写入授权和冲突裁决统一维护在 harness/AGENTS.md；conventions.md 保留知识组织与文档维护约定，通过链接引用工作规则。
+
+- **规范 Module 设计文档内容**：在 modules/AGENTS.md 维护目录规则；Module 设计正文、专题页与 TypeSpec 注释只维护设计合同和验收要求，不承载实现差距、进度、验证结果或任务执行范围，也不添加差距记录导航。上层约定和入口只保留规则链接，差距记录入口统一保留在索引和工具入口；同步清理 Module 页面中的相关链接与执行范围说明。
+
+- **收口 Module 职责与内部协调**：按负责人逐项确认，EventStore 正常追加自动同步 SQL，失败后在后续同步触发时从已验证消费位置续接，调用方无需先恢复或重新打开；保留原 ID 幂等、查询不静默漏项及不补广播。RuntimeRegistry 仅校验配置与构造 Driver，当前运行映射由 Service 独占；完整停止流程由 Service 内部的同一操作拥有，组装层只注入依赖，删除固定的多步协调 TypeSpec，保留最终事件结算和未知责任保证。接口修订为 v0.2.14。
+- **集中实现差距记录**：Module 正文维护当前合同与验收要求，实现差距集中到 implementation-gaps.md，绑定检查日期、源码版本和静态证据，更新记录只保留设计历史。状态投影的已讨论限制暂时接受，现有状态存储与异步 Handler 合同不变；本次只更新 harness，不修改实现。
+
+## 2026-10-21
+
+- **Runtime 按需启动与重启状态校正**：按负责人确认，创建/恢复 Session 自动启动所属 Runtime，与显式 start 共用同一次串行协调；查询、历史、订阅不激活，停止栅栏与未知释放仍阻止重建。服务启动不恢复 Runtime 或 Session，开放业务接口前由 Service 校正持久状态：确认释放的普通 Session 为 offline，显式归档的保持 archived，旧在线状态缺少结算证明的为 unknown；Runtime 保留已确认的 stopped，否则为 unknown。同步架构、Service/Runtime、状态注释、HTTP/massctl 和验收场景，接口修订为 v0.2.13；本次仅更新 harness，Go 实现未修改。
+
+- **load 改为恢复加回放**：按负责人确认，load 恢复同一原生会话并异步回放全部保留主历史，成功保留执行连接，本地提交/分发结算后直接接受后续输入，不再要求再次 resume。普通 resume 保持不回放；补充 nativeResumed、回放输入屏障、成功运行与失败清理的区别、未知恢复结果保留占用及 completed 后旧取消拒绝。同步 Runtime/Service/HTTP/massctl 合同，接口修订为 v0.2.12；MASS 只更新设计。
+
+- **异步加载原生保留历史**：新增显式 load/cancel-load 合同；先建 Service 接收绑定，再沿既有 adapter → Service → EventStore → Broadcast 管线回放。接纳、原生读取结束与本地提交/分发完成分别表达；历史带 replay 来源，状态和旧交互不复活。首版只允许新的空目标并拒绝重复/部分重试，保留失败及原 UUID 追加责任。普通 resume 不重放。同步 Runtime/Service/事件、HTTP/massctl 与 TypeSpec v0.2.11；仅设计，MASS 未实现、未升级 SDK。
+
+- **订阅归 Broadcast、顺序 Handler 与语言映射**：按负责人确认，Broadcast 提供 subscribe 内部创建单队列 Handler，Service 只委托；移除公共 removeHandler 和 Handler name/order，普通 Handler 随 Broadcast 关闭，订阅取消只解除自身内部登记。保留只读 required，严格按加入顺序串行；required 失败停止当前事件后续调用，普通失败继续，不调整顺序、不回滚或自动重试。Subscription 通用合同为可取消异步流，表达接收、结束和终止原因；独立 Go 语言映射使用只读 channel、Err 和 Close。接口修订为 v0.2.10；先校验 harness，再同步 spec/tickets，当前不实现。
+
+- **简化为纯实时 Broadcast**：负责人要求去掉 EventDelivery、运行关联和过度设计。发布与 Handler 直接使用统一 SessionEvent；Service 按 sessionId 或 namespace/name 定位同一 Broadcast。接口收敛为 publish/addHandler/removeHandler/close，Subscription 由 Service 登记一个队列 Handler 后返回 next/close。删除来源泛型、上下文、命令 adapter、Handler 分类/排序/提交标记、Factory、resume/drain 与内建历史 Handler。历史由 Service 直接协调 EventStore，先持久提交再实时发布；Broadcast 不管历史。v0.2.9 取代此前 v0.2.7/v0.2.8 的相关处理链合同；先校验 harness 再同步计划，当前不实现。
+
+- **Session Broadcast 与统一 Handler**：按负责人确认，每个持久 Session 在应用进程内一个 EventBroadcast，由 Service 管理身份映射；广播只管理 Handler，Subscription 是专用单队列 Handler 的读取封装，不再维护独立 watcher 或全局 Handler 登记。统一 publish/addHandler/removeHandler/subscribe 等接口；EventDelivery 与 HandlerContext 逐事件传递进程内原来源，Service adapter 按来源验证状态和命令。Runtime 停止/归档保留 Broadcast、健康 Handler 与订阅，最终上游排空后再次 drain；应用 shutdown 才关闭对象和消费者。保留 required 失败屏障与异步状态允许失败；接口修订为 v0.2.8。先校验 harness，再同步本地 spec/tickets；当前不实现。
+
+- **独立 Events 处理与广播模块**：按负责人确认，将 handler、分 Session 处理链、实时订阅、背压和关闭从 Service 移入 Events。内建 EventStore 提交为首个 required，其余 required 按 order 串行成功后才分发；失败暂停该 Session，显式恢复，不回滚已提交历史。async 独立有界串行交付，状态投影采用允许失败的 continue，不阻塞广播。关闭先结算 required/分发屏障，再限时排空 async 并结束订阅，未完成如实报错；Service 保留来源校验、生命周期和命令 adapter。接口修订为 v0.2.7；先更新 harness 再同步 spec/tickets，当前不实现。
+
 ## 2026-10-20
+
+- **拆分 MetaStore 与 EventStore**：按负责人确认，模块、接口、生命周期和恢复独立管理，原 HistoryStore 改名 EventStore。MetaStoreConfig 选择唯一权威后端，默认 sqlite，可选 file，不双权威、不自动回退；EventStore 文件权威，SQL 为可重建完整查询副本，文件提交后更新 SQL，append 成功后由 Service 发布。同步架构、词汇、承载和 TypeSpec 入口，接口修订为 v0.2.6。旧双库完整副本计划被替代，新 spec/tickets 暂停执行；本次仅文档和合同变更，不继续实现。
 
 - **确定配置读取选型**：采用 Viper 读取配置，默认配置文件使用 YAML；通过 Cobra flag 绑定统一显式参数、配置文件和默认值的优先级，配置实例独立。
 

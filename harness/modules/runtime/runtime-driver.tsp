@@ -8,6 +8,19 @@ namespace MASS.Design.Execution;
  * sessionId 由Service 模块从名称解析得到。命令接纳时固定原运行，旧操作不转向新运行。
  * 每个 Driver 一条事件流，由 Service 独占消费并按 sessionId 路由。 */
 interface RuntimeDriver {
+  /** Service 已固定 loadId/预期身份并建立接收绑定。异步恢复与回放；先验证来源。
+   * 复用原生 resume 恢复同一会话后回放，成功保留原运行，回放及标记沿唯一 events 流。 */
+  loadSession(
+    sessionId: string,
+    address: DriverSessionAddress,
+    cwd: string,
+    loadId: string,
+  ): void | OperationError;
+
+  /** 取消己方原 load；成功须确认本次恢复资源释放，未知报错。
+   * 回放终止沿同一流表达；已结束的原生读取不发送第二个终止标记。
+   * Service 本地 completed 后拒绝此操作，普通运行改用 cancel/closeSession。 */
+  cancelHistoryLoad(sessionId: string, loadId: string): void | OperationError;
   /** 取得本 Driver 唯一事件流，多个 Session 共用；不是广播订阅。
    * Service 在 start 前取得并开始接收；取得本身不启动 Agent。
    * 重复取得报错，不创建第二条流或原生连接；流终止后不能重新订阅补历史。

@@ -16,7 +16,7 @@ model DriverSession {
   capabilities: CapabilitySet;
 }
 
-/** Service 在 open/resume 接纳时传入；adapter 只保存当前运行绑定，不查询资源目录。 */
+/** Service 在 open/resume/load 接纳时传入；adapter 只保存当前运行绑定，不查询资源目录。 */
 model DriverSessionAddress {
   @minLength(1)
   `namespace`: string;

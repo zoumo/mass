@@ -21,12 +21,14 @@ interface RuntimeService {
     | Runtime
     | OperationError;
 
-  /** 无有效运行时，原子捕获最新 spec/generation 启动；成功后记录 appliedGeneration。
-   * 已启动则返回当前运行状态，不因版本落后而重启或热更新。 */
+  /** 未启动且旧资源已确认释放时，原子捕获最新 spec/generation 启动；成功后记录 appliedGeneration。
+   * createSession/resumeSession 自动复用同一按名称串行协调的启动流程，并发只产生一个运行所有者。
+   * 已启动则返回当前运行状态，不因版本落后而重启或热更新；不绕过停止栅栏或未知释放。 */
   startRuntime(runtimeRef: string): Runtime | OperationError;
 
   /**
-   * 由内部组装层执行统一停止流程：封闭接纳、排空会话、释放资源。
+   * 由 Service 内部的同一停止操作执行完整流程：封闭接纳、排空会话、释放资源，
+   * 持续接收最终事件并结算历史提交与实时发布；组装层只注入依赖。
    * 单独使用 RuntimeService 接口也不能绕过协调，不能直接停止底层进程。
    */
   stopRuntime(runtimeRef: string): Runtime | OperationError;

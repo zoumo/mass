@@ -1,10 +1,12 @@
 import "../../shared/models.tsp";
 import "./session-config.tsp";
 import "./interactions.tsp";
+import "./models.tsp";
 
 namespace MASS.Design;
 
 enum SessionEventType {
+  historyReplay: "session.history_replay",
   userMessage: "user.message",
   agentMessage: "agent.message",
   agentThinking: "agent.thinking",
@@ -26,6 +28,13 @@ enum SessionEventType {
 
 /** 实时、持久存储与历史读取共用的信封；adapter 根据打开或恢复时固定的名称补齐后交付，不要求补查 MetaStore。 */
 model SessionEventBase<Type extends SessionEventType = SessionEventType> {
+  /** 显式 load 的历史来源；不授予当前运行或交互控制权限。 */
+  replay?: {
+    loadId: string;
+    nativeRecordId?: string;
+    nativeParentId?: string;
+  };
+
   /** adapter 创建统一事件时生成一次 UUID；同一事件发布、持久保存与重试保持不变。
    * 仅用于唯一标识，不表示顺序，不替代分页游标；暂不做原生事件去重。
    * 不承诺重新接收同一原生通知时恢复为相同 UUID。 */
@@ -68,6 +77,10 @@ model ItemSessionEventOf<
 }
 
 union SessionEvent {
+  historyReplay: SessionEventOf<
+    SessionEventType.historyReplay,
+    HistoryReplayPayload
+  >,
   userMessage: ItemSessionEventOf<
     SessionEventType.userMessage,
     MessageEventPayload
@@ -133,6 +146,23 @@ union SessionEvent {
     SessionEventType.interactionClosed,
     InteractionClosedEventPayload
   >,
+}
+
+/** 同一会话恢复与原生回放生命周期，不代表本地提交/分发完成；不持久化。 */
+model HistoryReplayPayload {
+  loadId: string;
+  phase: "started" | "native_completed" | "failed" | "canceled";
+
+  /** Driver 明确声明所读保留历史范围，不声称恢复已删除正文。 */
+  retainedScope: string;
+
+  /** started/native_completed 必须提供，ID 须与外层相同；成功后保留此运行。 */
+  resumedSession?: Execution.DriverSession;
+
+  /** 仅原生当前观察，不从历史推导；没有证据时省略或 null。 */
+  currentState?: ObservedSessionState;
+
+  error?: OperationError;
 }
 
 /** message 与 thinking 共用同一消息模型，仅由事件 type 区分含义。

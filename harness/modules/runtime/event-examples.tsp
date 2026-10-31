@@ -6,6 +6,25 @@ namespace MASS.Design.Examples;
 @example(#{
   events: #[
     #{
+      `namespace`: "default",
+      sessionName: "demo",
+      sessionId: "s1",
+      eventId: "c89c43a2-5f95-48da-b992-40515585c112",
+      time: utcDateTime.fromISO("2026-10-21T10:00:00Z"),
+      type: SessionEventType.historyReplay,
+      replay: #{ loadId: "load-1" },
+      payload: #{
+        loadId: "load-1",
+        phase: "native_completed",
+        retainedScope: "retained-main-chain",
+        resumedSession: #{
+          sessionId: "s1",
+          capabilities: #{ continuedInput: true },
+        },
+        currentState: null,
+      },
+    },
+    #{
       sessionName: "demo",
       sessionId: "s1",
       itemId: "user_1",

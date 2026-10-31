@@ -13,7 +13,7 @@ sources:
 
 ## 权威声明与范围
 
-准确声明见 [session-events.tsp](session-events.tsp)。实时发布、HistoryStore 存储与历史读取共用 SessionEvent，不另设 SessionNotification 或 HistoryRecord。事件直接保留 namespace、sessionName 和 sessionId，消费者无需补查 MetaStore 才能显示会话名称。[^direction]
+准确声明见 [session-events.tsp](session-events.tsp)。实时发布、EventStore 存储与历史读取共用 SessionEvent，不另设 SessionNotification 或 HistoryRecord。事件直接保留 namespace、sessionName 和 sessionId，消费者无需补查 MetaStore 才能显示会话名称。[^direction]
 
 类别和 payload 形状曾参考旧事件示例，现行合同以本页和 TypeSpec 为准；可直接阅读本目录生成的 [事件示例](event-examples.json)。旧示例及其版本、完成标志和 payload 内扩展位置不作为开发依据。
 
@@ -21,7 +21,7 @@ sources:
 
 Runtime 拥有 SessionEvent、事件类型及各自绑定的 payload，adapter 将原生事件转换为这套统一模型。Service 在 openSession/resumeSession 时传入 DriverSessionAddress，adapter 固定 namespace/sessionName 与原运行的绑定，获得真实 sessionId 后补齐事件。Driver.events() 只交付名称与身份完整的 SessionEvent；Service 核对已有绑定后协调持久提交与发布，不补写或猜测缺失名称，也不另建半完整事件模型。Runtime 不查询 MetaStore，不导入 Service 资源 DTO。
 
-adapter 优先从原始事件取得 time，缺失时自己生成；Service 与 HistoryStore 保留该值，不用接收或存储时间替换。eventId 则由 adapter 在创建统一 SessionEvent 时生成一次 UUID，不直接复用原生消息、条目或工具 ID。同一事件的发布、持久保存与失败重试使用原 UUID，不能在每次 append 重试时重新生成。
+adapter 优先从原始事件取得 time，缺失时自己生成；Service 与 EventStore 保留该值，不用接收或存储时间替换。eventId 则由 adapter 在创建统一 SessionEvent 时生成一次 UUID，不直接复用原生消息、条目或工具 ID。同一事件的发布、持久保存与失败重试使用原 UUID，不能在每次 append 重试时重新生成。
 
 ## Driver 事件流
 
@@ -37,7 +37,7 @@ Service 接收时固定 Driver、Runtime 名称及事件的原运行关联，按
 
 ### 背压与公平性
 
-Runtime 的交付缓冲和 Service 的分会话处理队列都必须有界；不指定未经确认的容量或超时默认值。Runtime 应避免一个高流量 Session 长期独占全部接纳容量；Service 接收后按 Session 分别处理，不能在公共读取循环内等待某个 Session 的慢存储、处理器或外部订阅者。
+Runtime 的交付缓冲和 Service 的分会话路由队列都必须有界；不指定未经确认的容量或超时默认值。Runtime 应避免一个高流量 Session 长期独占全部接纳容量；Service 接收并验证后在自己的分会话队列中串行结算历史与实时发布，再把统一 SessionEvent 交给该 Session 的 Broadcast，不能在公共读取循环内等待某个 Session 的慢存储、处理器或外部订阅者。
 
 完整持久事实不能静默丢弃，容量不足时等待接纳或明确失败，保留原操作和未知结果责任；实时预览可按明确的有界策略丢弃。隔离不等于无限接收：所有队列或共享传输持续耗尽时，仍可能形成 Driver 级背压或明确失败，不能同时承诺有界内存、永久不阻塞和完整事实永不失败。外部订阅者的慢消费由 Service 隔离，不直接成为 Driver 的新消费者。
 
@@ -49,19 +49,19 @@ Runtime 的交付缓冲和 Service 的分会话处理队列都必须有界；不
 4. 停止时 Service 先封闭新工作并排空会话及已接纳事实；整个排空与 Driver.stop 期间继续消费，不能先撤掉读取循环。Driver 正常停止确认资源释放、已接纳事件完成交付后才正常结束流；Service 仍需完成已接收事实的持久提交与结算。
 5. 意外断流以 OperationError 明确表达，不能当作全部 Session 空闲、工作完成、历史提交成功或资源已释放。已经接纳的完整事实仍须结算，不因流失败而丢弃。终止流不自动重连或补历史；后续显式重建 Driver 使用新流，旧流和旧运行责任不得转移到新流。
 
-事件交付结束只描述流的生命周期；Driver.stop 的成功、HistoryStore.append 的成功和业务执行成功分别依据自己的证据判断。Service 对外的 subscribeEvents 仍是独立的广播订阅，每个订阅者有自己的流与过载处理，不直接读取 Driver.events()。
+事件交付结束只描述流的生命周期；Driver.stop 的成功、EventStore.append 的成功和业务执行成功分别依据自己的证据判断。Service 对外的 subscribeEvents 解析 Session 身份后只委托同一 Session Broadcast.subscribe，由其内部登记队列 Handler 并返回可取消的异步 Subscription；每个订阅者有自己的有界队列与过载处理，不直接读取 Driver.events()。
 
 ## 事件身份与历史顺序
 
 统一事件不包含 seq，无需恢复连续计数器。eventId 是 UUID 字符串，仅用于唯一标识事件，不表示大小、时间或顺序；即使 UUID 实现含时间信息，消费者也不能据此排序。time 同样不是历史分页键。TypeSpec 使用 format(uuid) 标注格式，不限定 UUID 版本。
 
-现阶段不要求 Agent 向 MASS 发送历史事件，不提供原生事实去重：不按原生 ID、itemId、内容 hash 或时间窗口合并通知。重新接收相同原生通知时，若 adapter 创建了新的统一事件，可以获得新的 UUID；不承诺跨重放生成相同身份。因此“不主动接收历史”不等于上游不会重复通知。
+普通打开和 resume 不要求 Agent 向 MASS 发送历史；显式 [load](../service/load.md)另行异步导入保留事实。不提供跨 load 的原生事实去重：不按原生 ID、itemId、内容 hash 或时间窗口合并通知。重新接收相同原生通知时，若 adapter 创建了新的统一事件，可以获得新的 UUID；不承诺跨重放生成相同身份。因此“不主动接收历史”不等于上游不会重复通知。
 
-HistoryStore 对同一 sessionId/eventId 的相同事件执行写入幂等，不重复追加；这是应用内同一事件的写入重试保证，不是原生事件去重。重启后读取已持久保存的事件时原样保留文件中的 UUID；若仍需重试一个未确定结果的事件，必须保留该事件及原 UUID，不能仅凭原生通知重新生成后声称是同一次重试。未来需要历史导入或原生重放时，再讨论身份生成算法与去重合同，本轮不引入映射恢复算法。
+EventStore 对同一 sessionId/eventId 的相同事件执行写入幂等，不重复追加；这是应用内同一事件的写入重试保证，不是原生事件去重。重启后读取已持久保存的事件时原样保留文件中的 UUID；若仍需重试一个未确定结果的事件，必须保留该事件及原 UUID，不能仅凭原生通知重新生成后声称是同一次重试。显式 load 首版只允许新空目标，拒绝重复导入和部分自动重试，不承诺跨回放稳定 UUID；本次不引入原生映射去重算法。
 
-HistoryStore 按成功持久追加顺序读取，同一批按输入顺序追加。Service 串行协调同一 Session 的追加责任，保证输入顺序符合已接纳的源事件顺序；Store 无法仅凭 eventId 推断遗漏或乱序。已存在的相同事件不重复追加，也不移动其位置。
+EventStore 按成功持久追加顺序读取，同一批按输入顺序追加。Service 串行协调同一 Session 的追加责任，保证输入顺序符合已接纳的源事件顺序；Store 无法仅凭 eventId 推断遗漏或乱序。已存在的相同事件不重复追加，也不移动其位置。
 
-HistoryStore 使用不透明游标分页，getSyncProgress 返回最后同步的 syncedEventId，尚无历史时为 null。ID 不可比较大小，不能计算差值或据此推断已追平；需要判断某个目标是否同步时必须核对该事件是否存在。分页游标独立于 eventId，不能互相代用。
+EventStore 使用不透明游标分页，getSyncProgress 返回最后同步的 syncedEventId，尚无历史时为 null。ID 不可比较大小，不能计算差值或据此推断已追平；需要判断某个目标是否同步时必须核对该事件是否存在。分页游标独立于 eventId，不能互相代用。
 
 ## 公共 Base
 
@@ -74,6 +74,7 @@ HistoryStore 使用不透明游标分页，getSyncProgress 返回最后同步的
 | type | Base 内统一声明的 SessionEventType |
 | time | adapter 使用原始时间，缺失时生成；重试与同步不改写 |
 | itemId | 条目事件提供的不透明身份；不解析成原生坐标 |
+| replay | 显式 load 的历史来源，loadId 及可证明原生记录/parent ID；不是当前运行控制上下文 |
 | _meta | 顶层可选扩展 map，键为 string，值可以是任意类型，即 Record<unknown>，对应 Go map[string]any |
 | payload | 由 type 唯一决定的业务结构 |
 
@@ -87,6 +88,7 @@ SessionEvent 是按 type 判别的联合，每个分支固定 type 与对应 pay
 
 | type | payload | 持久化 |
 |---|---|---|
+| session.history_replay | HistoryReplayPayload：loadId、原生读取阶段及保留范围，可选错误 | 否 |
 | user.message / agent.message / agent.thinking | MessageEventPayload：messageId、完整 content，可选 phase | 是 |
 | agent.message_chunk / agent.thinking_chunk | MessageEventPayload：messageId、本次追加 content | 否 |
 | agent.tool_call | ToolCallEventPayload：id、kind、完整 rawInput 与可选描述 | 是 |
@@ -104,7 +106,7 @@ SessionEvent 是按 type 判别的联合，每个分支固定 type 与对应 pay
 
 TypeSpec 检查 type/payload 配对、相应必填字段和普通条目事件的 itemId。它不证明业务事实真实、ID 属于原运行或工具已执行，也不自动验证全部业务不变量；这些仍由 adapter、Service、Store 各自校验。
 
-条目相关的消息、工具与计划事件提供 itemId。预览与完整事实使用相同 itemId；工具调用和结果共享 itemId，但具有不同 eventId，不能按 itemId 覆盖历史。会话更新无需虚构 itemId。统一模型不代表全部事件都进入历史；HistoryStore 只接收表中五种持久类型，并校验 eventId、sessionId 与名称归属。
+条目相关的消息、工具与计划事件提供 itemId。预览与完整事实使用相同 itemId；工具调用和结果共享 itemId，但具有不同 eventId，不能按 itemId 覆盖历史。会话更新无需虚构 itemId。统一模型不代表全部事件都进入历史；EventStore 只接收表中五种持久类型，并校验 eventId、sessionId 与名称归属。
 
 ## 内容与工具语义
 
@@ -126,7 +128,7 @@ MASS 不跨事件积累 delta，不在内存重建完整消息，也不把 delta
 
 参考 agentrun 的工作开始/结束驱动与终态保护，继续使用已经确认的 SessionState。共享枚举位于 shared/states.tsp，Runtime 不依赖 Service 资源模型。adapter 将原生工作开始、结束和需要行动的事实转换为 session.state_update，state/previousState 只取 idle、running、requires_action 或 null（未知），不直接报告 Service 拥有的 opening、closing、archived。
 
-| 事实 | Service 投影与限制 |
+| 事实 | 状态投影与生命周期限制 |
 |---|---|
 | 打开/恢复接纳 | opening；成功后依据实际观察决定工作状态，缺少观察时 unknown |
 | 原生工作确实开始 | running；输入接受回执和消息 delta 不能单独替代开始证据 |
@@ -137,7 +139,7 @@ MASS 不跨事件积累 delta，不在内存重建完整消息，也不把 delta
 | 原运行失联或原生状态未知 | unknown；不推断为 idle/offline，不解除原操作责任 |
 | 归档/停止进入关闭 | closing；运行通知不得重开准入，释放确认后进入 archived 或按关闭目的进入 offline |
 
-Service 先核对原 Driver、Runtime 名称、Session 运行及工作关联，再应用事件。旧运行/旧工作的开始、结束或错误不能覆盖新工作。closing/archived 的资源状态不会被迟到的 running/idle 更新覆盖；archived 只有显式恢复接纳才能进入 opening。上述保护借鉴 agentrun，但不引入它的 creating/deleting/error 状态或持久事件种类，仍保留本合同的五类持久事实。
+Service 在交付前完成上游来源与业务路由校验；实时 Broadcast 和 Handler 都只接收 SessionEvent，不携带 Runtime/Driver/run/work 上下文。状态 Handler 可以按 Session 身份自行异步更新 MetaStore，依据当前资源版本和 closing/archived 保护写入；失败诊断并继续，通知可早于查询状态，不保证最终追上。实时通知不能单独证明当前工作结束、运行释放或授予控制权限。archived 只有显式恢复接纳才能进入 opening；业务生命周期写入仍由 Service 同步协调。
 
 ## 配置与交互
 
@@ -145,7 +147,7 @@ Service 先核对原 Driver、Runtime 名称、Session 运行及工作关联，�
 
 ## JSON 实例预览
 
-可直接阅读 [event-examples.json](event-examples.json)，包含全部 17 种事件各一例。示例值维护在 [event-examples.tsp](event-examples.tsp) 的 @example 中，工具先编译检查其类型，再导出 JSON；JSON 文件为生成产物，不直接手改。
+可直接阅读 [event-examples.json](event-examples.json)，包含全部 18 种事件各一例。示例值维护在 [event-examples.tsp](event-examples.tsp) 的 @example 中，工具先编译检查其类型，再导出 JSON；JSON 文件为生成产物，不直接手改。
 
 ```sh
 rtk proxy npm run examples --prefix harness/typespec
@@ -183,3 +185,7 @@ rtk proxy npm run examples:check --prefix harness/typespec
 当前不增加思考块坐标，不在内存保存累计 delta，按 type 绑定 payload、独立交互和 ACP 风格配置选项均已有声明。动态业务值与扩展值的 HTTP JSON 编码见 [HTTP 承载](../../bindings/http.md#基础规则)；持久化编码、持久格式版本承载，以及断线后待决交互查询仍需单独定义。接口版本继续集中记录在 [TypeSpec 入口](../../typespec/README.md)，不从旧示例复制逐事件版本字段。
 
 [^direction]: 当前确认 type 位于公共信封、每种 type 绑定 payload，顶层 _meta 对应 map[string]any；删除消息完成标志。
+
+## 显式回放来源
+
+显式 [load](../service/load.md)的历史事实保留 replay 来源；不包装 SessionEvent 或另建事件流。回放只投递原生可证明的完整持久内容，历史工作状态、权限和旧交互不成为当前通知。session.history_replay 是本次恢复及回放的控制事件；started 确认原生身份和同一会话恢复，native_completed 确认上游穷尽并携带保留的恢复会话及真实当前观察，failed/canceled 明确结束原因。终止标记排在本 load 内容之后；Service 结算提交与 publish 后才保存本地完成并开放同一会话输入。成功保留执行连接，失败/取消释放本次恢复资源；没有终止标记的断流是失败。

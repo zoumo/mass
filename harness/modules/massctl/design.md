@@ -17,13 +17,13 @@ sources:
 
 ## 职责与依赖
 
-Go 实现的二进制入口位于 cmd/massctl/main.go，Cobra 命令树、参数、执行与终端输出代码位于 cmd/massctl/subcommand/，按 Runtime、Session 子命令组织；不放入 pkg/massctl。可复用的 HTTP 客户端与业务模块继续位于 pkg/，遵循 [Go 目录规范](../../principles/go/directory-structure.md)。
+语言实现的程序入口与可复用模块遵循对应语言的目录规范；Go 见 [Go 目录规范](../../principles/golang/application-directory-structure.md)。
 
 massctl 是面向终端用户和脚本的客户端模块，提供 `massctl <resource> <operation> [target] [flags]` 形式的 interface。模块隐藏请求构造、Session 引用转换、HTTP 路径编码、认证头、响应解析与 SSE 帧处理，使调用者无需理解内部操作字符串或调用 envelope。
 
 massctl 通过 [HTTP v1](../../bindings/http.md) 调用 [RuntimeService](../service/runtime-service.tsp) 与 [SessionService](../service/session-service.tsp)。业务 API 使用 `/apis/v1`。Service 拥有业务校验、生命周期、持久化和操作编排；massctl 不直接访问 Store、Registry、Driver、原生 Agent 或服务端数据目录，不维护另一套资源状态。
 
-模块拥有命令发现、参数校验、输入读取、请求等待、终端输出与进程退出行为。不自动启动 Runtime、恢复 Session、发送初始 prompt、重试副作用请求或通过停止共享 Runtime 处理单 Session 错误。
+模块拥有命令发现、参数校验、输入读取、请求等待、终端输出与进程退出行为。session create/resume 由 Service 在业务校验后按需启动所属 Runtime，CLI 不额外发送 runtime start。查询、历史和 watch 不触发启动；prompt 不隐式恢复离线 Session。不发送初始 prompt、不重试副作用请求，不通过停止共享 Runtime 处理单 Session 错误。
 
 ## 能力清单与命令
 
@@ -51,7 +51,7 @@ Runtime 类型由配置合同决定；CLI 不自行增加类型发现操作，�
 
 已确认的创建输入形式为 `massctl runtime create NAME --type TYPE [配置参数]`，不将类型增加为 create 下的子命令。首版提供 --executable PATH，映射 config.executable；其他配置字段使用 --config-file 或 --config-json 输入完整 RuntimeConfig。测试专用 scenario 不作为正式 CLI flag。此首版字段清单不限制后续扩展。
 
-创建必填项与默认行为已确认：NAME 与 --type 必填，不默认选择 Runtime 类型。配置参数可省略，全部省略时提交空配置 `{}`，由对应 Runtime 类型校验并应用其默认值；CLI 不自行填充类型专属默认配置。创建只登记资源，不启动运行资源；启动使用独立的 runtime start 命令。
+创建必填项与默认行为已确认：NAME 与 --type 必填，不默认选择 Runtime 类型。配置参数可省略，全部省略时提交空配置 `{}`，由对应 Runtime 类型校验并应用其默认值；CLI 不自行填充类型专属默认配置。Runtime 创建只登记资源，不启动运行资源；后续 session create/resume 由 Service 按需启动，也可提前使用独立的 runtime start 命令。
 
 更新流程已确认：runtime update NAME 先获取 Runtime，使用当前 spec.type 解释配置参数，不要求或提供 --type。配置输入分为两种语义：
 
@@ -70,10 +70,12 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 
 | 命令 | 输入 | 能力与结果 |
 |---|---|---|
+| `session load NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd ABS_PATH --session-id NATIVE_ID` | 异步恢复同一会话并回放到新空目标；本地完成后直接继续输入 |
+| `session cancel-load TARGET` | 必填 `--load-id ID` | 取消原历史读取，返回当前状态；通过 get 查询最终结束 |
 | `session create NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd PATH`，可选系统提示与额外目录 | 创建并登记 Session，返回持久身份；不发送业务输入（已确认） |
 | `session get TARGET` | 无业务请求体 | 查询资源，不隐式恢复 |
 | `session list` | 只保留分页参数 `--limit`、`--after` | 查询全部 namespace 与 Runtime 的持久目录，包含离线和归档会话；首版不提供筛选（已确认） |
-| `session resume TARGET` | 无业务请求体 | 恢复原身份及历史；失败不新建替代 |
+| `session resume TARGET` | 无业务请求体 | 按需启动所属 Runtime，再恢复原身份及历史；失败不新建替代 |
 | `session archive TARGET` | 无业务请求体 | 释放会话运行资源，保留身份与历史 |
 | `session prompt TARGET` | 必填 `--text TEXT` | 首版只发送文本，返回 InputReceipt；不支持文件或 JSON 输入（已确认） |
 | `session cancel TARGET` | 无业务请求体 | 固定接纳时工作并请求取消，返回 CancelReceipt |
@@ -163,6 +165,7 @@ watch 建立后确认 subscription.ready，再向 stderr 输出就绪提示；js
 | 根、资源、操作帮助 | 可发现全部已实现操作；缺少操作不调用服务；未知命令、多余参数失败 |
 | 名称与 ID 寻址 | 带 namespace 按名称，不带按 ID；所有单会话命令一致，无默认 namespace 和查询回退；特殊字符 ID 无损传递 |
 | Runtime 创建、更新与启停 | 创建不启动；更新只替换期望 spec；停止通过 Service 协调，不绕过引用与释放检查 |
+| Session 按需启动与重启后查询 | create/resume 无需先 start；查询、history、watch 不启动；重启后不显示旧 idle 为当前可用，按 Service 校正结果返回 offline/archived/unknown |
 | CLI 配置更新 | 先获取当前 spec 并保留 type；显式 flag 只覆盖对应字段，完整 config 替换全部配置，最后提交完整 spec；获取失败不写回，不宣称具备并发条件更新保护 |
 | 查询离线或归档 Session | 查询和历史不激活 Runtime 或恢复 Session |
 | 文本输入 | --text 正确构造单个 text 内容块；首版拒绝 prompt 文件/JSON 输入，不隐式读取 stdin |
@@ -180,6 +183,10 @@ CLI/HTTP 合同可通过隔离的服务或 HTTP 替身验证；涉及原生输�
 1. 本地参数、文件读取等错误的具体 code/reason，以及 human 输出具体字段仍可细化；实现应遵循已确认的错误结构、输出通道和退出码。
 2. answer 延后且不纳入首版；不自动引入交互式聊天或 TUI。
 
-负责人已授权按本页已确认范围开始首版实现；页面保持 draft，以便继续细化上述条目，不阻塞已确认能力的实现。CLI 语法和进程 I/O 在本模块维护；业务数据结构继续引用现有 TypeSpec，不为相同资源复制 CLI DTO。
+页面保持 draft，以便继续细化上述条目。CLI 语法和进程 I/O 在本模块维护；业务数据结构继续引用现有 TypeSpec，不为相同资源复制 CLI DTO。
 
 [^direction]: 本次讨论明确要求资源与操作采用子命令、新增 harness 模块，并确认 runtime create 暴露常用配置 flag、以 --config-file 或 --config-json 覆盖其余配置；未确认条目保持草案。
+
+## 异步原生 load
+
+load 与 cancel-load 遵循[异步历史设计](../service/load.md)。load 成功退出只表示接纳，输出 loadId 及 Session，不写“历史已全部完成”；load 本身恢复同一会话并回放，成功后无需额外 resume；不提供隐式等待或自动重试。session get 查询 status.historyLoad，区分原生验证/穷尽、本地完成、失败和取消。--timeout 只限制请求等待；Ctrl-C 不自动取消已接纳回放，取消用 cancel-load 和原 loadId。session history 仍只读已提交记录，watch 只观察订阅之后同一 Broadcast 的事件。

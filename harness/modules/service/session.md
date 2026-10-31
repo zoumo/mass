@@ -42,7 +42,7 @@ sessionId 的完整原始值不得等于 `.` 或 `..`。这是身份合法性规
 
 SessionService 通过Service 模块维护的运行绑定取得运行时模块提供的 RuntimeDriver；公共 getRuntime 只返回信息。名称引用先解析为 sessionId，再调用 Driver。运行绑定、使用责任及恢复材料由运行时模块的 Driver 内部管理；关闭与事实排空确认完成后，Service 模块结算在途操作。
 
-停止 Runtime 时，SessionService 接受 内部组装层的 drainRuntimeSessions 调用，结算目标实例下全部会话及打开预留。排空确定完成后交回证明，由组装层继续请求 RuntimeService 释放资源。SessionService 不自行停止共享资源，RuntimeService 不反向调用 SessionService。具体次序与未知结果规则由 [应用服务模块 停止协调](design.md#停止-runtime-的协调职责)统一维护。
+停止 Runtime 时，由 Service 内部的同一停止操作结算目标实例下全部会话及打开预留，并协调原 Driver 的释放和最终事件结算；不要求组装层在 RuntimeService 与 SessionService 之间驱动多步协议。单会话操作不自行停止共享资源。完成条件与未知结果规则由 [Service 停止协调](design.md#停止-runtime-的协调职责)统一维护，内部调用结构由 Implementation 决定。
 
 ## 全量查询与目标解析
 
@@ -56,19 +56,19 @@ SessionService 通过Service 模块维护的运行绑定取得运行时模块提
 
 每个 Driver 的全部 Session 共用 RuntimeDriver.events() 返回的一条事件流，Service 是唯一消费者；Service 在 open/resume 时传入 DriverSessionAddress，adapter 按原运行绑定补齐 namespace/name；接收循环按 sessionId 定位已有会话绑定，核对名称后投递到对应会话的历史提交逻辑和观察通道，不要求每条事件查询 MetaStore。Driver 不负责按名称选通道，也不维护完整资源目录。
 
-按 sessionId 或 namespace/name 订阅时，SessionService 都先解析到同一个持久 Session 身份，因此使用同一条逻辑通道。完整事实必须先提交，再向订阅者和处理器发布；预览走实时观察路径，不冒充已提交历史。
+按 sessionId 或 namespace/name 订阅时，SessionService 都先解析到同一个持久 Session 身份，因此定位同一个 EventBroadcast。Service 维护 sessionId → Broadcast 映射，恢复不新建竞争对象；subscribeEvents 只委托 Broadcast.subscribe，由 Broadcast 内部创建队列 Handler、按加入顺序登记后返回异步 Subscription。Service 直接调用 EventStore 完成持久事实提交，再调用 Broadcast.publish(event)；Broadcast 只管实时 Handler 分发，不管理历史或运行关联。预览不冒充已提交历史。
 
-事件路由还验证内部固定的 Runtime 名称、原 Driver 与运行来源。sessionId 只标识持久会话，不能证明事件来自本次运行；恢复后的旧事件仍由原运行结算，不能更新新运行的状态。Driver 的共享流内部事件关联保留原运行来源，不能收到事件后读取“当前运行”并重新归属。
+事件路由还验证内部固定的 Runtime 名称、原 Driver 与运行来源。sessionId 只标识持久会话，不能证明事件来自本次运行；恢复后的旧事件在 Service 交付前由原操作核验和结算；这不形成 Broadcast 的逐事件运行上下文。Driver 的共享流内部事件关联保留原运行来源，不能收到事件后读取“当前运行”并重新归属。
 
 adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和身份后才交给 Driver.events()；创建返回前或目录提交前到达 Service 的完整事件由原创建操作暂存，目录提交成功才向外发布。暂存有界，完整事实不能静默丢弃；超限需背压或明确失败。未知 ID、重复 ID 冲突及已失效来源不得猜测目标通道；失败由原操作结算，不能误投其他会话。
 
-流的方法、顺序、背压和生命周期见[Driver 事件流](../runtime/events.md#driver-事件流)。Service 在启动 Driver 前取得并持续读取流，按 Session 分别处理以保留单会话顺序、隔离慢会话；关闭单 Session 不关闭共享流。Driver 级流失败通过 OperationError 处理，不伪造 sessionId。外部 Session 订阅由 Service 广播，不能直接消费或再次取得 Driver 流。
+流的方法、顺序、背压和生命周期见[Driver 事件流](../runtime/events.md#driver-事件流)。Service 在启动 Driver 前取得并持续读取流，按 Session 分别处理以保留单会话顺序、隔离慢会话；关闭单 Session 不关闭共享流。Driver 级流失败通过 OperationError 处理，不伪造 sessionId。外部 Session 订阅由 Service 解析身份和准入后委托同一个 Broadcast 的队列 Handler，不能直接消费或再次取得 Driver 流。
 
 ## 创建与公开成功
 
 1. 校验名称（包括下述禁止 UUID 形式的规则）、实例、会话参数和已知能力；预留 namespace/name 唯一键及实例引用，固定 Runtime 名称、原 Driver 与配置。
-2. 在产生副作用前分配本次操作关联。此时尚无 sessionId，也不伪造一个。
-3. 通过Service 模块的运行绑定取得 Driver，再由 RuntimeDriver 接收 namespace/name 并请求 adapter 打开会话。原生打开期间不阻止所有其他名称的操作。
+2. 在产生副作用前分配本次操作关联。此时尚无 sessionId，也不伪造一个。所属 Runtime 尚未启动时，由 Service 按名称串行协调并按需启动；并发创建、恢复与显式 start 共用同一次启动，不要求调用者预先启动。
+3. 启动成功后通过Service 模块的运行绑定取得 Driver，重新确认停止栅栏及业务准入，再由 RuntimeDriver 接收 namespace/name 并请求 adapter 打开会话。启动失败不调用原生打开；未知释放不能按需重建。原生打开期间不阻止所有其他名称的操作。
 4. 收到真实 sessionId 和能力后，先校验 [Session ID 合法性](#session-id-合法性)，再从Service 侧运行绑定取得生效配置修订，原子检查并登记 sessionId 全局唯一索引，与 namespace/name、spec.runtimeRef 和会话配置一起持久保存。保存不能覆盖其他操作或实例的记录；冲突时不公开成功，并只清理本次取得的运行资源。
 5. 保存成功后安装连接、接受消费者并公开会话成功。原生连接建立不等于已经完成这一步。
 
@@ -96,12 +96,14 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 1. 读取并校验未被替换的持久元信息、Runtime 名称归属及配置绑定。
 2. 先校验持久 sessionId 的合法性，再由会话历史验证全部已提交公共记录的格式、身份和连续顺序。
 3. 由 adapter 校验公共记录所需的私有事实证据；验证通过后才处理未提交尾部。
-4. 通过Service 模块的运行绑定取得 Driver，传入原会话的 namespace/name 并调用 resumeSession；Driver 在内部验证恢复材料，再连接原会话。恢复材料验证失败不得连接或新建会话。
+4. 所属 Runtime 尚未启动时，按[按需启动规则](design.md#状态与配置生效)启动；启动失败不继续恢复，旧运行责任未结算时拒绝冲突激活。通过Service 模块的运行绑定取得 Driver，重新确认停止栅栏及业务准入，传入原会话的 namespace/name 并调用 resumeSession；Driver 在内部验证恢复材料，再连接原会话。恢复材料验证失败不得连接或新建会话。
 5. 验证返回的 sessionId 合法且与保存身份相同，再启用本次会话运行，保留历史顺序与已存事件的 UUID，同步位置从完整文件恢复。
 
 失败不新建替代会话，不将旧输入、工具动作或处理器动作重新执行，不把原生旧内容自动导入为新历史。返回不同 ID 的运行资源要按原操作所有权清理，不能替换持久身份。
 
 不支持恢复的类型应在修尾和激活前明确失败。Runtime 按 spec.runtimeRef 名称定位，不比较其 uid；Driver 必须验证原生恢复材料，远端原生会话归属不能仅凭相同 URL 推定。
+
+服务启动不调用本节的恢复流程。启动前先按[服务重启与状态校正](design.md#服务重启与状态校正)处理持久状态：已确认释放的普通会话为 offline，显式归档的保持 archived，旧运行缺少结算证明的为 unknown。查询不隐式启动或恢复，输入也不替代显式 resume；恢复一个 Session 不自动恢复同 Runtime 的其他 Session。
 
 ## 资源结构与版本
 
@@ -158,3 +160,7 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 未知操作的公开查询、跨重启保留与客户端幂等键见[Service 合同](design.md)。本轮未新增会话删除功能。
 
 [^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；HTTP 只做协议映射，具体接口由负责人定义。
+
+## 从原生会话加载历史
+
+SessionService.loadSession 使用新的 namespace/name、Runtime、绝对 cwd 和已知原生 ID，遵守 [异步 load](load.md)。持久预留的 ID 在 nativeVerified 前是待验证主张，不能公开宣称原生已存在。建立 load 接收绑定后才启动生产；原生验证、完整回放及本地完成异步记录在 status.historyLoad。加载期间为 opening 并封闭业务输入；部分失败不激活。原生恢复、全部回放及本地结算成功后保留同一运行，直接接受后续输入，无需额外 resume；当前状态只依据真实当前证据，普通恢复不导入历史。

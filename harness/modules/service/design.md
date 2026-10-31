@@ -31,21 +31,21 @@ sources:
 
 ## 职责与所有权
 
-应用服务模块对外提供 RuntimeService 和 SessionService，拥有 Runtime、Session 的持久目录、namespace/name、uid、创建时间、配置修订、状态投影和资源查询。它依赖 [Store](../store/design.md) 持久化资源、索引与历史，依赖[运行时模块](../runtime/design.md)执行原生操作；两个依赖都不反向调用 Service。
+应用服务模块对外提供 RuntimeService 和 SessionService，拥有 Runtime、Session 的持久目录、namespace/name、uid、创建时间、配置修订、状态投影和资源查询。它分别依赖 [MetaStore](../metastore/design.md) 管理资源、[EventStore](../eventstore/design.md) 管理事件，依赖[运行时模块](../runtime/design.md)执行原生操作；另将验证后的事件交给独立 [Events](../events/design.md) 模块处理与广播；存储和 Events 核心均不反向调用 Service。
 
 Service 是应用服务，不是通用 CRUD 仓库：创建 Session、恢复、归档和停止 Runtime 都需要协调持久记录与实际运行。此模块承担失败补偿、在途操作所有权和迟到结果结算，使调用者无需管理半完成操作。[^direction]
 
-## 对 Store 与 Runtime 的依赖
+## 对存储、Events 与 Runtime 的依赖
 
 HTTP、CLI 与进程内调用都进入 RuntimeService 或 SessionService。Service 的输入输出是语言无关业务合同，不使用 HTTP 请求、状态码、连接或传输流对象；HTTP 层负责解析、认证上下文及协议映射。
 
-Service 决定业务前置条件、操作顺序、资源状态与失败补偿。MetaStore 提供资源 CRUD、唯一性约束、筛选分页及内置 generation 维护，HistoryStore 提供历史批量追加、读取和 syncedEventId 同步进度；RuntimeRegistry/RuntimeDriver 提供构造、实例查找及实际运行能力。Store 不启动 Agent，Runtime 不读取公共资源目录。
+Service 决定业务前置条件、操作顺序、资源状态与失败补偿。MetaStore 提供资源 CRUD、唯一性约束、筛选分页及内置 generation 维护，EventStore 提供历史批量追加、读取和 syncedEventId 同步进度；RuntimeRegistry 提供配置校验和 Driver 构造，RuntimeDriver 提供实际运行能力；当前运行的查找、登记与移除统一由 Service 负责。Events 提供每 Session 一个 EventBroadcast，只管实时 Handler，Subscription 由队列 Handler 封装；历史直接由 Service 调用 EventStore，不进入 Broadcast；存储不启动 Agent，Runtime 不读取公共资源目录。
 
 暂不提供 JSON Patch。公共 updateRuntime 接收完整 RuntimeSpec，Service 校验后向 MetaStore.update 提交完整资源并携带读取快照的 resourceVersion；冲突后的重新读取与业务判断由 Service 负责。Session 尚无公共配置更新方法，本次不新增。
 
 Service 不能用普通“先查再写”代替 Store 的原子唯一性检查或配置修订分配。创建 Session 成功后保存失败时，由 Service 协调 Driver 清理并保留未知结果责任；Store 事务不能包含外部 Agent 副作用。
 
-Driver 的私有恢复材料仍由 Runtime 内部管理，不变成 Service 与 Store 之间的通用字段。Store 隐藏文件与数据库实现；文件保存完整数据，SQLite 仅作可重建索引。MetaStore 的 CRUD 与并发契约见其 TypeSpec，查询分页和错误分类仍待细化，HistoryStore 的批量追加、查询与同步进度见其 TypeSpec，见 [Store 设计](../store/design.md)。
+Driver 的私有恢复材料仍由 Runtime 内部管理，不变成 Service 与 Store 之间的通用字段。MetaStore 与 EventStore 分别隐藏持久化实现。MetaStore 通过配置选择唯一权威后端，默认 SQLite，可选文件；EventStore 保持文件权威和 SQL 可重建。两个模块不相互调用，不提供跨模块事务；Service 协调身份、业务许可和生命周期。各自合同见 [MetaStore](../metastore/design.md) 与 [EventStore](../eventstore/design.md)。
 
 ## 阅读入口与接口版本
 
@@ -55,9 +55,9 @@ Driver 的私有恢复材料仍由 Runtime 内部管理，不变成 Service 与 
 | [SessionService](session-service.tsp) | 全量 Session 目录、生命周期、输入、交互、历史和观察 |
 | [运行时事件](../runtime/session-events.tsp) | 实时与历史共用的事件信封、type/payload 联合与顶层扩展 map |
 | [models.tsp](models.tsp) | 资源、Metadata、名称引用、查询与分页 |
-| [coordination.tsp](coordination.tsp) | 本模块内部停止接纳、会话排空和完成证明 |
-| [observation.tsp](observation.tsp) | Session 列表分页与实时订阅 |
-| [event-handlers.tsp](event-handlers.tsp) | 按会话构造、登记、交付与关闭事件处理器 |
+| [停止协调](#停止-runtime-的协调职责) | 本模块拥有的完整停止行为与完成条件 |
+| [observation.tsp](observation.tsp) | Session 列表分页，引用 Events 拥有的实时订阅 |
+| [Events](../events/main.tsp) | 每 Session 的实时 EventBroadcast、统一 Handler 与队列订阅 |
 | [共享历史模型](../../shared/history-models.tsp) | Service 与 Store 共用的历史查询、分页与同步进度 |
 
 当前接口版本及校验命令统一见 [TypeSpec 入口](../../typespec/README.md)。签名与字段只在 TypeSpec 维护；本页解释其行为保证。
@@ -74,7 +74,7 @@ Session 列表使用 PageRequest.after/limit 和 Page<Session>.items/next；默�
 
 历史查询使用共享 HistoryQuery 与 HistoryPage，types 精确匹配并按 OR 组合，after 使用 HistoryCursor，limit 默认 100。Service 解析 Session 身份后转交 Store，不丢弃过滤、next 或 syncedEventId；具体语义见[会话历史](history.md)。
 
-EventSubscription 提供异步 next 和幂等 close，独立于 Driver 的单消费者流；订阅只观察注册后的事件，不补历史。慢订阅溢出明确异常结束；正常关闭释放等待及缓冲，异常终止后保留原错误。结束观察不取消工作、归档会话或停止 Runtime。传输层断开和取消等待的映射由语言绑定负责。
+Service 按 sessionId 管理唯一 EventBroadcast，按名称和 ID 定位同一对象。subscribeEvents 解析身份及准入后只调用 Broadcast.subscribe，由 Broadcast 创建队列 Handler 并返回 EventSubscription。通用订阅是可取消的异步流：按序接收统一事件、区分等待和结束、查询终止原因、主动取消；不要求某种语言的方法形状。取消只解除自己的内部登记，不取消工作或停止 Runtime。慢订阅溢出明确异常结束，已有缓冲仍可读完，终止原因保持稳定。语言映射见 [Go 实时订阅](../../bindings/go-events.md)。
 
 ## 统一资源结构
 
@@ -94,17 +94,21 @@ MetaStore 在 create 时初始化 generation 为 1，在 spec 真正变化时原
 
 ## RuntimeConfig 与实例登记
 
-Service 保存 spec.type 和 spec.config。资源创建与配置更新调用 RuntimeRegistry.validateConfig(type, config) 校验配置；校验失败直接返回错误，校验成功只保存资源，不创建或登记 Driver、不启动 Agent，也不修改当前运行实例。RuntimeType 为开放字符串，RuntimeConfig 为 Record<unknown>；配置字段按具体类型解释，当前不设置全局封闭字段列表，具体约定与校验责任见[运行时配置](../runtime/design.md#配置与恢复)。未知类型和不合法配置明确失败，不能任意透传原生参数。
+Service 保存 spec.type 和 spec.config。资源创建与配置更新调用 RuntimeRegistry.validateConfig(type, config) 校验配置；校验失败直接返回错误，校验成功只保存资源，不创建 Driver、不启动 Agent，也不修改当前运行实例。RuntimeType 为开放字符串，RuntimeConfig 为 Record<unknown>；配置字段按具体类型解释，当前不设置全局封闭字段列表，具体约定与校验责任见[运行时配置](../runtime/design.md#配置与恢复)。未知类型和不合法配置明确失败，不能任意透传原生参数。
 
 ## 状态与配置生效
 
 1. createRuntime 通过 MetaStore 保存配置，由 MetaStore 初始化 generation 为 1；尚未启动时没有 appliedGeneration。
-2. startRuntime 原子捕获 spec/generation，调用 RuntimeRegistry.create(type, name, config) 构造并原子登记 Driver，再调用 Driver.start。成功后记录所捕获的 appliedGeneration 和实际能力。
+2. Runtime 采用按需启动：createSession 和 resumeSession 在业务校验通过后自动启动所属 Runtime，调用者无需先调用 startRuntime。显式 startRuntime 保留；两种入口共用按 Runtime 名称串行协调的启动流程，原子捕获 spec/generation，调用 RuntimeRegistry.create(type, name, config) 构造 Driver，由 Service 登记本次运行绑定，再调用 Driver.start。成功后记录所捕获的 appliedGeneration 和实际能力。
 3. 启动中更新只改变期望配置。已运行时再次 start 返回当前资源，不热更新、不创建第二个 Driver；新 Session 也复用旧运行配置。
 4. 应用新配置必须先完成停止，再启动。停止中仍可保存新 spec；清理使用原 Driver、原类型和原配置。
 5. 确认停止后清除当前 appliedGeneration 与能力；结果未知时保留最后确认事实和原操作责任。
 
-RuntimeRegistry 保存 name → Driver；Service 保留 Runtime 名称、原 Driver、配置快照与原操作关联。Driver 不接收 generation，也不返回资源状态；Session.status.runtimeGeneration 由Service 模块从此绑定读取，不能取最新期望 generation。Session 自身 appliedGeneration 另行记录，二者不等同。
+并发创建、恢复和显式启动共享同一次启动及其结果，不构造第二个 Driver。启动失败时，本次 Session 操作失败，不继续调用原生 open/resume；未知结果不自动重试。停止栅栏建立后不允许按需启动绕过栅栏或自动重开接纳；与停止并发的 Session 操作须重新确认目标运行可接纳。正常完成停止后，后续新的创建或恢复请求可以按最新配置再次按需启动。
+
+按需启动只适用于 createSession 和 resumeSession；不自动恢复该 Runtime 下的其他 Session。createRuntime、配置更新、get/list、历史读取和实时订阅均不触发启动。sendPrompt、回答和取消要求已有有效的 Session 运行，不隐式恢复离线会话。显式 loadSession 仍按其独立合同要求 Runtime 已启动。
+
+Service 独占维护 Runtime 名称 → 当前运行绑定的映射，保留原 Driver、配置快照与原操作关联；RuntimeRegistry 不保留当前运行。Driver 不接收 generation，也不返回资源状态；Session.status.runtimeGeneration 由Service 模块从此绑定读取，不能取最新期望 generation。Session 自身 appliedGeneration 另行记录，二者不等同。
 
 例如期望版本为 4，而当前 Driver 使用版本 3，则 Runtime 的 generation/appliedGeneration 为 4/3。版本一致不代表运行健康。RuntimeConfig 更新成功也不保证原 Session 可以在新配置上恢复；兼容性由对应 Driver 验证。
 
@@ -129,26 +133,48 @@ SessionStatus.state 使用 [SessionState](../../shared/states.tsp)，替换原�
 
 恢复从 `offline` 或 `archived` 进入 `opening`，成功后依据实际事实进入 `idle`、`running` 或 `requires_action`。失败且确认没有遗留运行资源时回到恢复前的 `offline` 或 `archived`；副作用结果未确定时进入 `unknown` 并保留原操作责任，不能发起冲突恢复。创建期间若尚无持久身份，`opening` 不授权提前公开 Session 创建成功。
 
-状态只描述当前可证明的事实，不替代接受、历史提交、工作终止和资源释放各自所需的证据。Reason 为字符串，各具体问题自行定义 reason 取值，不维护全局枚举或统一词表。运行时 state_update 使用 SessionState 中 idle/running/requires_action 或 null 表达工作观察；Service 结合打开、关闭、交互和原运行/工作关联投影资源状态。映射与终态保护见[事件状态投影](../runtime/events.md#状态投影)。
+状态只描述当前可证明的事实，不替代接受、历史提交、工作终止和资源释放各自所需的证据。Reason 为字符串，各具体问题自行定义 reason 取值，不维护全局枚举或统一词表。运行时 state_update 使用 SessionState 中 idle/running/requires_action 或 null 表达工作观察；Service 同步协调打开、关闭等业务生命周期；Agent 状态观察可由状态 Handler 自行异步投影，按 Session 身份、资源版本及 closing/archived 保护更新；Handler 不接收 Runtime/工作上下文，也不获得运行控制能力，失败记录诊断且不阻塞广播。查询状态允许落后，不保证最终追上；业务准入仍校验实际运行与操作证据。映射与终态保护见[事件状态投影](../runtime/events.md#状态投影)。
+
+## 服务重启与状态校正
+
+服务启动只打开持久目录、校验数据并校正旧运行状态，不自动启动 Runtime，不自动恢复 Session，也不从历史重放输入、工具或交互。持久资源存在不表示当前进程已经持有有效运行连接；重启前保存的 idle 不能直接作为重启后的可用状态。
+
+Service 在开放业务接口前，通过 MetaStore 完成状态校正；不由 get/list 的读取副作用触发，也不由 MetaStore 自行推断运行状态。校正只更新 status 及其 resourceVersion，保留 metadata 身份、createdAt、spec、generation、sessionId、历史 eventId 和同步位置。更新失败时不开放带有旧在线状态的业务接口；中断后再次启动可重复校正，不自动进行原生操作。
+
+| 重启前的事实 | 重启后的 Session 状态 |
+|---|---|
+| 正常关闭已确认运行资源释放、工作与已接纳事实均结算，未显式归档 | offline，表示未激活，等待显式 resume |
+| 已明确归档且释放已确认 | archived，保留显式归档含义 |
+| 原本为 offline 且无未结算责任 | offline |
+| 保存为 opening、idle、running、requires_action 或 closing，但跨重启缺少释放或结算证明 | unknown，通过 reason 说明旧运行未确认 |
+| 原本为 unknown 或有未结算操作/load | unknown，继续保留原责任，不把重启当作结算证据 |
+
+正常应用 shutdown 不把普通 Session 隐式归档：完成关闭、事实排空和资源释放后记录 offline；此前显式归档的仍为 archived。异常退出后，即使旧状态是 idle，也不能仅因本地连接消失便断言原生工作或资源已释放。未知责任需要先验证并结算，不能直接按 offline 执行冲突恢复；本轮不新增跨重启结算 API。
+
+Runtime 同样不能沿用旧 running 作为当前可用证明。已确认停止的保留 stopped；旧 starting/running/stopping 或已有不确定责任的校正为 unknown。Service 当前运行映射为空不证明旧运行资源释放；unknown 不能绕过原释放校验而按需重建 Driver。
+
+确认释放后清除当前运行版本和能力；结果未知时保留最后确认的版本与能力作为旧观察，并通过 unknown/reason 表达不确定性，这些字段不能授予当前执行许可。离线 Session 只有成功 resume 后，才依据新的实际观察进入 idle、running 或 requires_action；不能用历史状态或旧交互恢复当前控制能力。
 
 ## 内部运行能力的取得与释放
 
-Service 通过 RuntimeRegistry.create 构造并登记 Driver，用 get(name) 定位实例。类型映射与实例映射统一由 Registry 内部维护，调用方无需单独登记 Driver。Service 按名称串行协调实例生命周期并固定原 Driver；start 才取得进程或连接。启动明确失败且无遗留资源才移除登记；结果未知保留登记与原操作责任。
+Service 通过 RuntimeRegistry.create 构造 Driver，并在自己的当前运行映射中登记本次运行绑定；后续查找只读取此映射。Registry 只维护类型到构造方式的映射。Service 按名称串行协调实例生命周期并固定原 Driver；start 才取得进程或连接。启动明确失败且无遗留资源才移除本次绑定；结果未知保留原绑定与操作责任，迟到清理不能移除后来建立的运行。
 
-SessionService 按 Session.spec.runtimeRef，通过 RuntimeRegistry.get(name) 定位 Driver，将 SessionRef 解析成 sessionId 后调用。创建或恢复是否允许按需激活仍属明确的实例策略；查询和历史读取绝不隐式激活。原操作在副作用前关联，调用超时不解除资源责任。
+SessionService 按 Session.spec.runtimeRef 定位所属 Runtime；创建和恢复在校验后按需启动，再通过运行绑定取得 Driver。已有运行复用原配置和 Driver，不因新请求热更新。查询、历史读取和订阅绝不隐式激活。原操作在副作用前关联，调用超时不解除资源责任。
 
 Driver 内部维护恢复材料、原生连接和运行来源；Service 模块不接收或交回恢复材料。关闭会话后需结算全部已接纳操作与核心事实；未知结果继续归原操作管理，不能移除预留后重试。
 
 ## 停止 Runtime 的协调职责
 
-停止协调完全属于Service 模块，coordination.tsp 不由运行时模块导入：
+完整停止流程由 Service 内部的同一停止操作拥有，RuntimeService 和 SessionService 是同一 Module 的两组公共能力。调用者只调用 stopRuntime；组装层只注入依赖，不传递 barrier、排空证明或驱动分阶段停止。以下行为及完成条件是合同，不固定内部对象之间的调用结构：
 
-1. 原子封闭该实例的新激活、创建、恢复、输入和交互回答，覆盖尚无 sessionId 的在途创建。
-2. SessionService 处理全部会话及在途操作，必要时调用 Driver.cancel/closeSession，提交已接纳事实并结算内部使用责任。
-3. 排空确定完成后才产生完成证明；协调者再调用原 Driver.stop。Driver 有未结算执行时仍拒绝停止，不能绕过安全检查。
-4. 只有实际运行资源释放得到确认，才执行 RuntimeRegistry.remove(name)、更新 Runtime 状态并公开停止成功。同名串行协调持续到移除完成，旧清理不能误删新登记。
+1. 原子封闭该实例的新激活、创建、恢复、load、输入和交互回答，覆盖尚无 sessionId 的在途创建。
+2. SessionService 处理全部会话及在途操作，包含 load 预留与回放；必要时调用 Driver.cancel/closeSession/cancelHistoryLoad，提交已接纳事实并结算内部使用责任。
+3. 会话及原操作排空确定完成后调用原 Driver.stop；停止期间持续接收最终事件，并再次确认 Service 的历史提交和实时发布待办均已结算。Driver 有未结算执行时仍拒绝停止，不能绕过安全检查。
+4. 只有实际运行资源释放和最终事件结算都得到确认，才由 Service 移除原运行绑定、更新 Runtime 状态并公开停止成功。同名串行协调持续到移除完成，旧清理不能误删新绑定。
 
-同实例并发停止共享原责任。排空、停止或释放未知时保留接纳关闭及操作所有权；不能静默重开。取消、关闭、已接纳事实交付和只读查询仍可推进。停止后保留资源目录、历史与非运行资源消费者；显式启动按最新配置重新建立运行。
+barrier、排空证明或其他协调手段可作为 Service 的 internal seam，由 Implementation 自行选择，不要求各语言实现固定的 beginStop/drainRuntimeSessions/finishStop Interface。
+
+同实例并发停止共享原责任。排空、停止或释放未知时保留接纳关闭及操作所有权；不能静默重开。取消、关闭、已接纳事实交付和只读查询仍可推进。停止期间持续读原 Driver 流，在最终事件交付后结算 Service 自己的历史追加和 publish 调用；不调用 Broadcast.close。停止后保留资源目录、历史、Session Broadcast、健康 Handler 和订阅，显式恢复沿用原关系；应用 shutdown 才关闭 Broadcast 和消费者；显式启动按最新配置重新建立运行。
 
 单 Session 异常不能通过停止健康共享运行掩盖；其他 Runtime 独立。远程 Driver.stop 只释放本实例拥有的连接与任务，不能宣称停止了远端共享服务。
 
@@ -160,7 +186,7 @@ SessionSpec 在运行时 DriverSessionSpec 的 cwd、systemPrompt、additionalDi
 
 ## 事件、历史与恢复
 
-Service 作为 RuntimeDriver.events() 的唯一消费者接收同一 Driver 下全部 Session 的事件，根据 sessionId 从已有绑定定位通道，并核对 adapter 已补齐的 namespace/name、Runtime 与原运行来源。完整事实先提交后发布；实时预览不冒充历史。创建时提前到达的事件由原操作有界暂存，身份持久化成功后才交付。具体流程见[Session 事件路由](session.md#事件路由)。
+Service 作为 RuntimeDriver.events() 的唯一消费者接收同一 Driver 下全部 Session 的事件，根据 sessionId 从已有绑定定位唯一 EventBroadcast，并核对 adapter 已补齐的 namespace/name、Runtime 与原运行来源。上游来源校验留在 Service；Broadcast 和 Handler 只接收统一 SessionEvent，不接收运行关联。完整事实先提交后发布；实时预览不冒充历史。创建时提前到达的事件由原操作有界暂存，身份持久化成功后才交付。具体流程见[Session 事件路由](session.md#事件路由)。
 
 恢复由Service 模块先校验身份、原实例归属和已提交公共历史；Driver 再内部验证恢复材料并恢复同一 sessionId。失败不新建替代会话、不重演输入或消费者动作。历史和事实证据的校验职责见[会话历史](history.md)。
 
@@ -174,6 +200,11 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 
 - 已停止实例仍可查询，列表不启动 Agent；Runtime 列表无分页，Session 目录可分页。
 - 并发启动只有一个运行所有者；更新与启动并发不会误报 appliedGeneration。
+- 停止状态下直接创建或恢复 Session，自动启动所属 Runtime；并发请求共用一次启动，其他 Runtime 和 Session 不被自动激活。
+- 启动失败不调用原生 open/resume；停止中或旧资源释放未知时不绕过栅栏、不自动重试。
+- 查询、历史、订阅和无有效运行的输入不触发启动或恢复；显式 start 仍可用。
+- 服务重启不启动 Runtime 或 Session；正常释放的普通会话为 offline，已归档的保持 archived，缺少结算证明的旧在线状态为 unknown。
+- 启动状态校正完成前不开放业务接口；校正失败明确报错，重复启动不修改身份、spec、generation 或历史，不复活旧工作与交互。
 - 运行中更新不替换 Driver；停止使用原 Driver 并保留未确定责任。
 - 两种 Session 引用解析到同一记录；跨 Runtime 重复 sessionId 拒绝第二次登记并清理本次资源。
 - 创建成功但持久化失败时不公开 Session，清理仅作用于本次运行。
@@ -186,3 +217,7 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 配置导入、各类型的具体配置/能力名称、事件剩余细节和操作查询仍待确认。共享类型已采用开放字段或不透明字符串，列表分页、历史查询与实时订阅已定义；这些声明不表示具体 Driver 已支持全部业务能力。RuntimeDriver.events() 已定义单消费者共享流；语言绑定的取消方式、具体队列容量和公平调度实现仍待确定，不声明事件集成已经实现。
 
 [^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；HTTP 只做协议映射，具体接口由负责人定义。
+
+## 显式 load
+
+[异步 load](load.md)纳管已知原生 sessionId 的保留历史，只接受新空目标。先完成唯一预留和 Service 接收绑定，再调用 Driver；异步结果由 Session.status.historyLoad 查询。原生完成与本地提交/分发完成分别结算，失败保留部分历史并拒绝重复导入。load 复用原生 resume，成功保留同一恢复运行，完成本地结算后直接启用输入；普通 resume 不导入历史。加载中及失败时拒绝输入，旧交互永不复活。

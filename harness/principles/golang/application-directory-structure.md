@@ -1,6 +1,6 @@
 ---
 type: Development Standard
-title: Go 项目目录结构
+title: Go 应用项目目录结构
 description: 强制规定 Go 二进制入口与模块的目录位置。
 status: stable
 sources:
@@ -9,9 +9,10 @@ sources:
     title: Go 目录结构规则
 ---
 
-# Go 项目目录结构
+# Go 应用项目目录结构
 
-本规则适用于 Go 项目，不依赖具体业务或仓库布局。
+本规则适用于服务端程序和命令行应用。
+工具库与 SDK 遵循[工具库与 SDK 目录结构](sdk-directory-structure.md)。
 
 ## 强制规则
 
