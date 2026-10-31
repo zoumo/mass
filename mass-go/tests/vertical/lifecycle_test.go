@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -324,8 +325,13 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	path, work := nativeScenario(t, "claude", "basic")
 	resumePath, _ := nativeScenario(t, "claude", "lifecycle-resume")
 	replaceWorkspace(t, resumePath, work)
-	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}
-	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: spec})
+	// Use one executable across cold recovery; resumed frames echo the
+	// dynamic caller UUID while preserving every retained baseline frame.
+	bin := filepath.Join(t.TempDir(), "claude-linked-replay")
+	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
+	require.NoError(t, err, string(out))
+	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "scenario": path}}
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: spec})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
@@ -336,7 +342,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	history, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.NotEmpty(t, history.Events)
-	spec.Config = runtime.Config{"executable": claudeMock, "scenario": resumePath}
+	spec.Config = runtime.Config{"executable": bin, "scenario": resumePath}
 	_, err = svc.UpdateRuntime("agent", spec)
 	require.NoError(t, err)
 	_, err = svc.StopRuntime(ctx(t), "agent")
@@ -362,7 +368,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	require.Equal(t, history.Events, after.Events[:len(history.Events)])
 	_, err = cold.ArchiveSession(ctx(t), ref)
 	require.NoError(t, err)
-	t.Log("PASS actual SDK/fake Claude ResumeID startup, observed init same ID/cwd, durable history prefix and separate new input; fake validates argv compatibility, not real native persistence")
+	t.Log("PASS actual SDK/fake Claude ResumeID startup, observed init same ID/cwd, durable history prefix and separate new input; synthetic linked replay, not real native persistence")
 }
 
 func (lifecycleSuite *LifecycleSuite) TestArchiveResumeKeepsObserversAndIdentity() {
