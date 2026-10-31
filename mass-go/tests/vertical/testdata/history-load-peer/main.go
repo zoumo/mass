@@ -4,7 +4,6 @@ package main
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"os"
 )
 
@@ -58,18 +57,19 @@ func main() {
 			if v.Params["sortDirection"] != "asc" || v.Params["itemsView"] != "full" {
 				panic("must request full ascending turns")
 			}
-			data := []any{}
+			var data []any
 			var next any
-			if v.Params["cursor"] == nil {
+			switch v.Params["cursor"] {
+			case nil:
 				view := "full"
 				if mode == "summary" {
 					view = "summary"
 				}
 				data = []any{map[string]any{"id": "turn-z", "status": "completed", "items": []any{}, "itemsView": view}}
 				next = "turn/+:next"
-			} else if v.Params["cursor"] == "turn/+:next" {
+			case "turn/+:next":
 				data = []any{map[string]any{"id": "turn-a", "status": "completed", "items": []any{}, "itemsView": "full"}}
-			} else {
+			default:
 				panic("cursor changed")
 			}
 			respond(map[string]any{"data": data, "nextCursor": next})
@@ -78,15 +78,16 @@ func main() {
 				panic("must request ascending items")
 			}
 			tid := v.Params["turnId"].(string)
-			data := []any{}
+			var data []any
 			var next any
 			if tid == "turn-z" {
-				if v.Params["cursor"] == nil {
+				switch v.Params["cursor"] {
+				case nil:
 					data = []any{map[string]any{"turnId": tid, "item": map[string]any{"id": "first", "type": "userMessage", "content": []any{map[string]any{"type": "text", "text": "saved first", "text_elements": []any{}}}}}}
 					next = "item/+:next"
-				} else if v.Params["cursor"] == "item/+:next" {
+				case "item/+:next":
 					data = []any{map[string]any{"turnId": tid, "item": map[string]any{"id": "answer", "type": "agentMessage", "text": "saved answer"}}}
-				} else {
+				default:
 					panic("item cursor changed")
 				}
 			} else {
@@ -142,7 +143,7 @@ func main() {
 			send(map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "native-thread", "turnId": "continued", "completedAtMs": 3, "item": map[string]any{"id": "live", "type": "agentMessage", "text": "same resumed connection"}}})
 			send(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "native-thread", "turn": map[string]any{"id": "continued", "status": "completed", "items": []any{}}}})
 		default:
-			panic(fmt.Sprintf("unexpected method %s", v.Method))
+			panic("unexpected method " + v.Method)
 		}
 	}
 }

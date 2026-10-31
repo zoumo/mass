@@ -29,8 +29,13 @@ func main() {
 		id = "33333333-3333-4333-8333-333333333333"
 	}
 	cwd, _ := os.Getwd()
-	_ = record.Encode(map[string]any{"event": "opened", "pid": os.Getpid(), "args": os.Args[1:]})
-	defer func() { _ = record.Encode(map[string]any{"event": "released", "pid": os.Getpid()}) }()
+	evidence := func(v any) {
+		if err := record.Encode(v); err != nil {
+			panic(err)
+		}
+	}
+	evidence(map[string]any{"event": "opened", "pid": os.Getpid(), "args": os.Args[1:]})
+	defer func() { evidence(map[string]any{"event": "released", "pid": os.Getpid()}) }()
 	send := func(v any) {
 		if err := write.Encode(v); err != nil {
 			panic(err)
@@ -85,7 +90,8 @@ func main() {
 				}
 			}
 			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
-			if r["subtype"] == "initialize" {
+			switch r["subtype"] {
+			case "initialize":
 				if os.Getenv("LOAD_MODE") == "init" {
 					if !await() {
 						return
@@ -96,7 +102,7 @@ func main() {
 					observed = "22222222-2222-4222-8222-222222222222"
 				}
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": observed, "cwd": cwd})
-			} else if r["subtype"] == "interrupt" {
+			case "interrupt":
 				result()
 			}
 			continue
@@ -106,7 +112,7 @@ func main() {
 		}
 		n++
 		link, _ = v["uuid"].(string)
-		_ = record.Encode(map[string]any{"event": "input", "pid": os.Getpid(), "uuid": link, "input": n})
+		evidence(map[string]any{"event": "input", "pid": os.Getpid(), "uuid": link, "input": n})
 		m := map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("live-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "same retained process"}}}}
 		if os.Getenv("LOAD_MODE") == "unlinked" {
 			delete(m, "user_message_uuid")
