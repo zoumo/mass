@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 )
 

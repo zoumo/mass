@@ -650,11 +650,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			if diagnosticErr == nil {
 				l.queue <- delivery{event: diagnostic}
 			}
-			if l.load != nil && !l.load.complete.Load() {
-				go s.failLoad(run, l, "failed", l.err)
-			} else {
-				go s.closeOverloaded(run, l.session.Status.SessionID, l.source)
-			}
+			go s.closeOverloaded(run, l.session.Status.SessionID, l.source)
 		}
 		limit := queueCapacity
 		if l.overloaded {
@@ -677,20 +673,6 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			return
 		}
 		s.mu.Unlock()
-		if marker, ok := e.Payload().(events.HistoryReplay); ok && marker.Phase == "native_completed" && l.load != nil && marker.LoadID == l.load.id && e.Validate() == nil {
-			// The reader may run ahead of a blocked append or required handler.
-			// Record native exhaustion without granting local delivery authority.
-			h := l.load
-			h.mu.Lock()
-			if !h.nativeTerminal && !h.complete.Load() {
-				h.status.NativeCompleted = true
-				if h.status.Error == nil {
-					h.status.Phase = "native_completed"
-				}
-				_ = s.writeLoad(l)
-			}
-			h.mu.Unlock()
-		}
 	}
 }
 
@@ -728,19 +710,12 @@ func (s *Service) process(run *runBinding, l *lane) {
 			s.failLoad(run, l, "failed", runtime.FailedPrecondition("invalid replay source"))
 			continue
 		}
-		if err := s.validateLoadEvent(l, e); err != nil {
-			s.failLoad(run, l, "failed", err)
-			continue
-		}
 		if e.Persistent() {
 			if _, err := s.history.Append(e.SessionID, []events.SessionEvent{e}); err != nil {
 				s.fail(l, fmt.Errorf("history commit failed: %w", err))
 				s.failLoad(run, l, "failed", err)
 				s.mu.Lock()
 				l.commitErr = err
-				if l.load != nil {
-					close(l.load.deliveryFailed)
-				}
 				s.mu.Unlock()
 				for {
 					response := <-l.retry
@@ -749,9 +724,6 @@ func (s *Service) process(run *runBinding, l *lane) {
 					if err == nil {
 						s.mu.Lock()
 						l.commitErr = nil
-						if l.load != nil {
-							l.load.deliveryFailed = make(chan struct{})
-						}
 						s.mu.Unlock()
 						break
 					}
@@ -768,7 +740,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 			slog.Warn("realtime publication failed", "error", err, "session_id", e.SessionID)
 			s.failLoad(run, l, "failed", err)
 		}
-		if l.load != nil && e.Persistent() && e.Replay != nil {
+		if l.load != nil && e.Persistent() {
 			l.load.mu.Lock()
 			l.load.status.LastCommittedEventID = e.EventID
 			statusErr := s.writeLoad(l)

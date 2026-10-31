@@ -51,7 +51,6 @@ func (s *Server) registerSessions(api huma.API) {
 	s.registerSessionIdentity(api)
 	s.registerSessionWork(api)
 	s.registerSessionRecovery(api)
-	s.registerSessionLoad(api)
 	registerEventSchemas(api.OpenAPI().Components.Schemas)
 	register(api, huma.Operation{Method: "GET", Path: "/apis/v1/sessions/{sessionId}/events", OperationID: "listHistoryByID"}, func(_ context.Context, in *historyByID) (*historyOutput, error) {
 		ref, err := in.resolve(s)

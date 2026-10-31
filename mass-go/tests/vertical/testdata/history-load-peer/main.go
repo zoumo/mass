@@ -15,8 +15,6 @@ func main() {
 			panic(err)
 		}
 	}
-	passes, resumes := 0, 0
-	mode := os.Getenv("LOAD_MODE")
 	scan := bufio.NewScanner(os.Stdin)
 	thread := func() any {
 		return map[string]any{"id": "native-thread", "sessionId": "native-session", "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": os.Getenv("LOAD_CWD"), "ephemeral": false, "modelProvider": "synthetic", "preview": "not transcript", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}, "turns": []any{}}
@@ -38,15 +36,8 @@ func main() {
 		case "thread/read":
 			respond(map[string]any{"thread": thread()})
 		case "thread/resume":
-			resumes++
-			if resumes > 1 {
-				panic("load retried resume")
-			}
 			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": os.Getenv("LOAD_CWD"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
 		case "thread/turns/list":
-			if v.Params["cursor"] == nil {
-				passes++
-			}
 			if v.Params["sortDirection"] != "asc" || v.Params["itemsView"] != "full" {
 				panic("must request full ascending turns")
 			}
@@ -81,38 +72,6 @@ func main() {
 				data = []any{map[string]any{"turnId": tid, "item": map[string]any{"id": "last", "type": "agentMessage", "text": "saved last"}}}
 			}
 
-			if mode == "rich" && tid == "turn-a" {
-				data = []any{}
-				for _, item := range []map[string]any{
-					{"id": "thought", "type": "reasoning", "content": []any{"retained thought"}, "summary": []any{"separate summary"}},
-					{"id": "shell", "type": "commandExecution", "command": "printf ok", "cwd": os.Getenv("LOAD_CWD"), "commandActions": []any{}, "status": "completed", "aggregatedOutput": "ok", "exitCode": 0, "durationMs": 1},
-					{"id": "no-output", "type": "commandExecution", "command": "true", "cwd": os.Getenv("LOAD_CWD"), "commandActions": []any{}, "status": "completed"},
-					{"id": "null-output", "type": "commandExecution", "command": "true", "cwd": os.Getenv("LOAD_CWD"), "commandActions": []any{}, "status": "completed", "aggregatedOutput": nil},
-					{"id": "empty-output", "type": "commandExecution", "command": "true", "cwd": os.Getenv("LOAD_CWD"), "commandActions": []any{}, "status": "completed", "aggregatedOutput": ""},
-					{"id": "mcp", "type": "mcpToolCall", "server": "synthetic", "tool": "lookup", "arguments": map[string]any{"number": 9007199254740993}, "status": "completed", "result": map[string]any{"content": []any{map[string]any{"type": "text", "text": "mcp saved"}}}},
-					{"id": "dynamic", "type": "dynamicToolCall", "tool": "lookup", "arguments": nil, "status": "completed", "success": true, "contentItems": []any{map[string]any{"type": "inputText", "text": "dynamic saved"}}},
-				} {
-					data = append(data, map[string]any{"turnId": tid, "item": item})
-				}
-			}
-
-			if tid == "turn-a" {
-				switch mode {
-				case "unsupported":
-					data = []any{map[string]any{"turnId": tid, "item": map[string]any{"id": "unsupported", "type": "futureContent", "text": "must not disappear"}}}
-				case "parent":
-					data = []any{map[string]any{"turnId": "wrong-parent", "item": map[string]any{"id": "last", "type": "agentMessage", "text": "wrong scope"}}}
-				case "drift":
-					if passes > 1 {
-						data = []any{map[string]any{"turnId": tid, "item": map[string]any{"id": "last", "type": "agentMessage", "text": "changed within same second"}}}
-					}
-				case "omitted":
-					respond(map[string]any{"data": data})
-					continue
-				case "loop":
-					next = "item/+:again"
-				}
-			}
 			respond(map[string]any{"data": data, "nextCursor": next})
 		case "thread/unsubscribe":
 			respond(map[string]any{"status": "unsubscribed"})
