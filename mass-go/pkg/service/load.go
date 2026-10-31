@@ -319,8 +319,8 @@ func (s *Service) validateLoadEvent(l *lane, e events.SessionEvent) error {
 				return runtime.FailedPrecondition("completion before verified resume")
 			}
 		}
-	} else if !e.Persistent() || !h.status.NativeResumed || e.Replay.NativeRecordID == "" || e.Replay.NativeParentID == "" {
-		return runtime.FailedPrecondition("history content lacks verified identity or parent")
+	} else if !e.Persistent() || !h.status.NativeResumed || e.Replay.NativeRecordID == "" {
+		return runtime.FailedPrecondition("history content lacks verified record identity")
 	}
 	return nil
 }
