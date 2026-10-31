@@ -11,28 +11,40 @@ import (
 )
 
 // PendingInteractions retains native closures, never serializes handles, and
-// consumes each reference before dispatch. Unknown writes cannot be retried.
+// reserves each reference during dispatch. Only a confirmed unsent attempt on
+// the original live capability can be retried.
 type PendingInteractions struct {
 	mu      sync.Mutex
-	entries map[string]pendingInteraction
+	entries map[string]*pendingInteraction
 }
 type pendingInteraction struct {
 	session string
 	source  events.Source
 	answer  func(context.Context, map[string]any) error
+	live    func() bool
+	unsent  func(error) bool
+	busy    bool
 }
 
-func (p *PendingInteractions) Add(session string, source events.Source, answer func(context.Context, map[string]any) error) (string, error) {
+func (p *PendingInteractions) Add(session string, source events.Source, live func() bool, unsent func(error) bool, answer func(context.Context, map[string]any) error) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.entries == nil {
-		p.entries = map[string]pendingInteraction{}
+		p.entries = map[string]*pendingInteraction{}
+	}
+	for ref, entry := range p.entries {
+		if !entry.busy && !entry.live() {
+			delete(p.entries, ref)
+		}
 	}
 	if len(p.entries) >= 128 {
 		return "", errors.New("pending interaction limit")
 	}
 	ref := uuid.NewString()
-	p.entries[ref] = pendingInteraction{session, source, answer}
+	if !source.SameRun(source) || live == nil || unsent == nil || answer == nil || !live() {
+		return "", FailedPrecondition("native interaction unavailable")
+	}
+	p.entries[ref] = &pendingInteraction{session: session, source: source, answer: answer, live: live, unsent: unsent}
 	return ref, nil
 }
 
@@ -43,9 +55,26 @@ func (p *PendingInteractions) Answer(ctx context.Context, session string, source
 		p.mu.Unlock()
 		return FailedPrecondition("interaction is not pending for this session")
 	}
-	delete(p.entries, ref)
+	if entry.busy || !entry.live() {
+		if !entry.busy {
+			delete(p.entries, ref)
+		}
+		p.mu.Unlock()
+		return FailedPrecondition("native interaction is no longer answerable")
+	}
+	entry.busy = true
 	p.mu.Unlock()
-	return entry.answer(ctx, answer)
+	err := entry.answer(ctx, answer)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.entries[ref] == entry {
+		if err != nil && entry.unsent(err) && entry.live() {
+			entry.busy = false
+		} else {
+			delete(p.entries, ref)
+		}
+	}
+	return err
 }
 
 func (p *PendingInteractions) RemoveSession(session string) {
@@ -60,7 +89,7 @@ func (p *PendingInteractions) RemoveSession(session string) {
 
 func PermissionAllowed(answer map[string]any) (bool, error) {
 	if len(answer) != 2 || answer["outcome"] != "selected" {
-		return false, errors.New("expected selected permission option")
+		return false, InvalidArgument("expected selected permission option")
 	}
 	switch answer["optionId"] {
 	case "allow-once":
@@ -68,5 +97,5 @@ func PermissionAllowed(answer map[string]any) (bool, error) {
 	case "reject-once":
 		return false, nil
 	}
-	return false, errors.New("invalid permission option")
+	return false, InvalidArgument("invalid permission option")
 }

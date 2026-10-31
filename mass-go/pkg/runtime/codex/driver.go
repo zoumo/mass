@@ -564,12 +564,54 @@ func (d *Driver) handleRequest(s *session, r sdk.IncomingRequest) {
 		return
 	}
 	request := events.PermissionRequest(v.ItemID, r.Method())
+	request.Content = []events.ContentBlock{events.Text(string(r.Params()))}
 	method := r.Method()
+	decisions := map[string]string{"allow-once": "accept", "reject-once": "decline"}
 	switch method {
-	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
+	case "item/commandExecution/requestApproval":
+		var params struct {
+			AvailableDecisions []json.RawMessage `json:"availableDecisions"`
+		}
+		unsupported := json.Unmarshal(r.Params(), &params) != nil
+		if params.AvailableDecisions != nil {
+			decisions = map[string]string{}
+			request.Options = nil
+			for _, raw := range params.AvailableDecisions {
+				var native string
+				if json.Unmarshal(raw, &native) != nil {
+					unsupported = true
+					break
+				}
+				var option events.PermissionOption
+				switch native {
+				case "accept":
+					option = events.PermissionOption{OptionID: "allow-once", Name: "Allow once", Kind: "allow_once"}
+				case "acceptForSession":
+					option = events.PermissionOption{OptionID: "allow-session", Name: "Allow for this session", Kind: "allow_always"}
+				case "decline":
+					option = events.PermissionOption{OptionID: "reject-once", Name: "Reject once", Kind: "reject_once"}
+				case "cancel":
+					option = events.PermissionOption{OptionID: "cancel", Name: "Cancel", Kind: "reject_once"}
+				default:
+					unsupported = true
+				}
+				if unsupported {
+					break
+				}
+				decisions[option.OptionID] = native
+				request.Options = append(request.Options, option)
+			}
+		}
+		if unsupported || len(decisions) == 0 {
+			_ = d.emit(s, v.ThreadID, "", events.SessionError{Message: "unsupported native permission options", Reason: "unsupported_native_interaction"}, v.TurnID)
+			return
+		}
+	case "item/fileChange/requestApproval":
 	case "item/tool/requestUserInput":
 		var schema map[string]any
-		if json.Unmarshal(r.Params(), &schema) != nil {
+		decoder := json.NewDecoder(bytes.NewReader(r.Params()))
+		decoder.UseNumber()
+		if decoder.Decode(&schema) != nil {
 			return
 		}
 		request = events.InteractionRequest{Kind: "form", Message: "Answer native Codex questions", RequestedSchema: schema}
@@ -577,8 +619,15 @@ func (d *Driver) handleRequest(s *session, r sdk.IncomingRequest) {
 		_ = d.emit(s, v.ThreadID, "", events.SessionError{Message: "unsupported native interaction", Reason: "unsupported_native_interaction"}, v.TurnID)
 		return
 	}
-	ref, err := d.interactions.Add(v.ThreadID, s.source.WithWork(v.TurnID), func(ctx context.Context, a map[string]any) error {
-		var response any
+	live := func() bool { return r.Handle().Err() == nil && r.Context().Err() == nil }
+	unsent := func(err error) bool {
+		var native *sdk.AnswerError
+		if errors.As(err, &native) {
+			return native.Dispatch == sdk.NotSent
+		}
+		return errors.Is(err, runtime.ErrInvalidArgument)
+	}
+	ref, err := d.interactions.Add(v.ThreadID, s.source.WithWork(v.TurnID), live, unsent, func(ctx context.Context, a map[string]any) error {
 		if method == "item/tool/requestUserInput" {
 			if len(a) != 2 || a["action"] != "accept" {
 				return runtime.InvalidArgument("expected explicit form accept/content")
@@ -587,19 +636,46 @@ func (d *Driver) handleRequest(s *session, r sdk.IncomingRequest) {
 			if !ok || content["answers"] == nil {
 				return runtime.InvalidArgument("expected native question answers")
 			}
-			response = content
-		} else {
-			allow, err := runtime.PermissionAllowed(a)
+			raw, err := json.Marshal(content)
 			if err != nil {
-				return err
+				return runtime.InvalidArgument("invalid native question answers")
 			}
-			decision := "decline"
-			if allow {
-				decision = "accept"
+			var response ct.ToolRequestUserInputResponse
+			var params struct {
+				Questions []ct.ToolRequestUserInputQuestion `json:"questions"`
 			}
-			response = map[string]any{"decision": decision}
+			if json.Unmarshal(raw, &response) != nil || json.Unmarshal(r.Params(), &params) != nil || response.Answers == nil {
+				return runtime.InvalidArgument("invalid native question answers")
+			}
+			for id, value := range response.Answers {
+				found := false
+				for _, question := range params.Questions {
+					if question.ID == id {
+						found = true
+						break
+					}
+				}
+				if !found || value.Answers == nil {
+					return runtime.InvalidArgument("answers must use native question IDs and string arrays")
+				}
+			}
+			return r.Answer(ctx, response)
+		} else {
+			option, ok := a["optionId"].(string)
+			decision, offered := decisions[option]
+			if len(a) != 2 || a["outcome"] != "selected" || !ok || !offered {
+				return runtime.InvalidArgument("expected a native offered permission option")
+			}
+			options := sdk.ApprovalOptions{}
+			if method == "item/commandExecution/requestApproval" {
+				value := ct.CommandExecutionApprovalDecisionValue(decision)
+				options.CommandExecution = &ct.CommandExecutionRequestApprovalResponse{Decision: ct.CommandExecutionApprovalDecision{Value: &value}}
+			}
+			if decision == "accept" || decision == "acceptForSession" {
+				return r.Approve(ctx, options)
+			}
+			return r.Deny(ctx, options)
 		}
-		return r.Handle().Answer(ctx, response)
 	})
 	if err == nil {
 		state := events.RequiresAction
