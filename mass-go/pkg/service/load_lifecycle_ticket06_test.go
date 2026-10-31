@@ -44,6 +44,7 @@ func (d *ticket06FaultDriver) Events() (events.Stream, error) { return d.pipe, n
 func (*ticket06FaultDriver) Start(context.Context) (runtime.Capabilities, error) {
 	return runtime.Capabilities{}, nil
 }
+
 func (d *ticket06FaultDriver) LoadSession(_ context.Context, id string, a runtime.Address, _, loadID string) error {
 	b := &ticket06FaultBinding{id: id, loadID: loadID, address: a, source: events.NewSource()}
 	d.mu.Lock()
@@ -52,6 +53,7 @@ func (d *ticket06FaultDriver) LoadSession(_ context.Context, id string, a runtim
 	d.loading <- b
 	return nil
 }
+
 func (d *ticket06FaultDriver) OpenSession(_ context.Context, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	b := &ticket06FaultBinding{id: a.SessionName, address: a, source: events.NewSource()}
 	d.mu.Lock()
@@ -59,6 +61,7 @@ func (d *ticket06FaultDriver) OpenSession(_ context.Context, a runtime.Address, 
 	d.mu.Unlock()
 	return runtime.DriverSession{SessionID: b.id, Source: b.source}, nil
 }
+
 func (d *ticket06FaultDriver) ResumeSession(_ context.Context, id string, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	b := &ticket06FaultBinding{id: id, address: a, source: events.NewSource()}
 	d.mu.Lock()
@@ -66,6 +69,7 @@ func (d *ticket06FaultDriver) ResumeSession(_ context.Context, id string, a runt
 	d.mu.Unlock()
 	return runtime.DriverSession{SessionID: id, Source: b.source}, nil
 }
+
 func (d *ticket06FaultDriver) emit(ctx context.Context, b *ticket06FaultBinding, item string, p events.Payload, replay bool) error {
 	base := events.EventBase{EventID: uuid.NewString(), Namespace: b.address.Namespace, SessionName: b.address.SessionName, SessionID: b.id, ItemID: item, Time: time.Now().UTC()}
 	if replay {
@@ -77,6 +81,7 @@ func (d *ticket06FaultDriver) emit(ctx context.Context, b *ticket06FaultBinding,
 	}
 	return d.pipe.Send(ctx, e)
 }
+
 func (d *ticket06FaultDriver) marker(ctx context.Context, b *ticket06FaultBinding, phase string) error {
 	p := events.HistoryReplay{LoadID: b.loadID, Phase: phase, RetainedScope: "all_retained_main_history"}
 	if phase == "started" || phase == "native_completed" {
@@ -90,6 +95,7 @@ func (d *ticket06FaultDriver) marker(ctx context.Context, b *ticket06FaultBindin
 	}
 	return d.emit(ctx, b, "", p, true)
 }
+
 func (d *ticket06FaultDriver) CancelHistoryLoad(ctx context.Context, id, loadID string) error {
 	d.mu.Lock()
 	b := d.bindings[id]
@@ -114,6 +120,7 @@ func (d *ticket06FaultDriver) CancelHistoryLoad(ctx context.Context, id, loadID 
 	}
 	return d.pipe.Flush(ctx)
 }
+
 func (d *ticket06FaultDriver) CloseSession(ctx context.Context, id string) error {
 	d.mu.Lock()
 	b := d.bindings[id]
@@ -127,9 +134,11 @@ func (d *ticket06FaultDriver) CloseSession(ctx context.Context, id string) error
 	d.mu.Unlock()
 	return d.pipe.Flush(ctx)
 }
+
 func (*ticket06FaultDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
 	return runtime.CancelReceipt{}, runtime.FailedPrecondition("ordinary cancel cannot settle a history read")
 }
+
 func (d *ticket06FaultDriver) SendPrompt(ctx context.Context, id string, _ runtime.Input) (runtime.InputReceipt, error) {
 	d.mu.Lock()
 	b := d.bindings[id]
@@ -156,6 +165,7 @@ func ticket06FaultContext(t *testing.T) context.Context {
 	t.Cleanup(cancel)
 	return ctx
 }
+
 func ticket06FaultService(t *testing.T, st *file.Store, history eventstore.EventStore) (*service.Service, *ticket06FaultDriver) {
 	t.Helper()
 	svc, d := ticket06FaultOwner(t, st, history)
@@ -165,6 +175,7 @@ func ticket06FaultService(t *testing.T, st *file.Store, history eventstore.Event
 	require.NoError(t, err)
 	return svc, d
 }
+
 func ticket06FaultOwner(t *testing.T, st *file.Store, history eventstore.EventStore) (*service.Service, *ticket06FaultDriver) {
 	t.Helper()
 	d := &ticket06FaultDriver{pipe: events.NewEventPipe(16), bindings: map[string]*ticket06FaultBinding{}, loading: make(chan *ticket06FaultBinding, 1)}
@@ -260,6 +271,7 @@ func TestTicket06FreshServiceRetainsUnresolvedLoadFence(t *testing.T) {
 	require.Equal(t, receipt.LoadID, r.Status.HistoryLoad.LoadID)
 	require.False(t, r.Status.HistoryLoad.CleanupCompleted)
 }
+
 func ticket06FaultLoad(t *testing.T, svc *service.Service, d *ticket06FaultDriver) (resource.SessionLoadAccepted, *ticket06FaultBinding) {
 	t.Helper()
 	receipt, err := svc.LoadSession(ticket06FaultContext(t), resource.SessionLoad{Metadata: resource.Metadata{Namespace: "one", Name: "imported"}, RuntimeRef: "agent", Cwd: "/remote", SessionID: "native-import"})
@@ -273,6 +285,7 @@ func ticket06FaultLoad(t *testing.T, svc *service.Service, d *ticket06FaultDrive
 		return receipt, nil
 	}
 }
+
 func ticket06FaultHistory(t *testing.T, svc *service.Service, ref resource.SessionRef, n int) []events.SessionEvent {
 	t.Helper()
 	var records []events.SessionEvent
@@ -413,8 +426,8 @@ func TestTicket06CancelDuringLocalDrainPreservesAdmittedHistory(t *testing.T) {
 			require.Error(t, err)
 			release()
 			require.Eventually(t, func() bool {
-				r, e := svc.GetSession(ref)
-				return e == nil && r.Status.HistoryLoad.CleanupCompleted
+				current, e := svc.GetSession(ref)
+				return e == nil && current.Status.HistoryLoad.CleanupCompleted
 			}, 3*time.Second, 10*time.Millisecond)
 			records := ticket06FaultHistory(t, svc, ref, 2)
 			require.Equal(t, first[0].EventID, records[0].EventID)
