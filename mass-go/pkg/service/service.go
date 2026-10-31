@@ -97,6 +97,7 @@ type delivery struct {
 	barrier chan struct{}
 }
 type lane struct {
+	load         *historyLoad
 	admission    sync.RWMutex
 	releasing    bool
 	nativeClosed bool
@@ -623,6 +624,13 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			continue
 		}
 		oldSource := run.retired[e.Source().WithWork("")] == l
+		if l.load != nil && !l.load.bound {
+			p, marker := e.Payload().(events.HistoryReplay)
+			if marker && p.LoadID == l.load.id && (p.Phase == "started" || p.Phase == "failed" || p.Phase == "canceled") && e.Source().SameRun(e.Source()) && e.Namespace == l.session.Metadata.Namespace && e.SessionName == l.session.Metadata.Name {
+				l.source = e.Source().WithWork("")
+				l.load.bound = true
+			}
+		}
 		if !oldSource && !l.source.SameRun(e.Source()) || e.Namespace != l.session.Metadata.Namespace || e.SessionName != l.session.Metadata.Name {
 			// Old run facts cannot mutate or poison the current lane.
 			s.mu.Unlock()
@@ -693,9 +701,19 @@ func (s *Service) process(run *runBinding, l *lane) {
 			continue
 		}
 		e := entry.event
+		if err := e.Validate(); err != nil {
+			s.fail(l, err)
+			s.failLoad(run, l, "failed", err)
+			continue
+		}
+		if e.Replay != nil && (l.load == nil || e.Replay.LoadID != l.load.id || !e.Persistent() && e.Type() != "session.history_replay") {
+			s.failLoad(run, l, "failed", runtime.FailedPrecondition("invalid replay source"))
+			continue
+		}
 		if e.Persistent() {
 			if _, err := s.history.Append(e.SessionID, []events.SessionEvent{e}); err != nil {
 				s.fail(l, fmt.Errorf("history commit failed: %w", err))
+				s.failLoad(run, l, "failed", err)
 				s.mu.Lock()
 				l.commitErr = err
 				s.mu.Unlock()
@@ -720,6 +738,19 @@ func (s *Service) process(run *runBinding, l *lane) {
 		// diagnose this event and continue without retrying it.
 		if err != nil {
 			slog.Warn("realtime publication failed", "error", err, "session_id", e.SessionID)
+			s.failLoad(run, l, "failed", err)
+		}
+		if l.load != nil && e.Persistent() {
+			l.load.mu.Lock()
+			l.load.status.LastCommittedEventID = e.EventID
+			statusErr := s.writeLoad(l)
+			l.load.mu.Unlock()
+			if statusErr != nil {
+				s.failLoad(run, l, "failed", statusErr)
+			}
+		}
+		if _, marker := e.Payload().(events.HistoryReplay); marker {
+			_ = s.loadMarker(run, l, e)
 		}
 
 		if request, ok := e.Payload().(events.InteractionRequested); ok && s.policy != nil {
