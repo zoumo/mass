@@ -53,7 +53,6 @@ type session struct {
 	observationWork          string
 	attribution              string
 	uncertain                bool
-	requireLink              bool
 	results                  map[string]string
 	submitted                map[string]bool
 	mu                       sync.Mutex
@@ -79,7 +78,6 @@ type Driver struct {
 	pipe                    *events.EventPipe
 	taken, started, stopped bool
 	sessions                map[string]*session
-	loads                   map[string]*nativeLoad
 	interactions            runtime.PendingInteractions
 }
 
@@ -255,9 +253,9 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	s.sending = true
 	s.mu.Unlock()
 	native := sdk.Input{Text: input.Content[0].Text}
-	// Only a fresh session can infer its first submission. Resumed sessions and
-	// later inputs carry a caller UUID, not a TurnID; an echo is never presumed.
-	if count > 1 || s.requireLink {
+	// The first input has no prior local work to confuse with. Later inputs carry
+	// a caller UUID, not a native TurnID; an echo is optional, never presumed.
+	if count > 1 {
 		text := input.Content[0].Text
 		native = sdk.Input{User: &types.UserInput{UUID: &work, Message: types.InputMessage{Role: "user", Content: types.Content{Text: &text}}}}
 	}
@@ -333,7 +331,7 @@ func (d *Driver) observe(s *session, early []sdk.Event) {
 			case sdk.ReceivedRequest:
 				if event.Request != nil && !s.closing && event.Request.Context().Err() == nil {
 					s.observationWork, s.attribution = "", "unknown"
-					if s.submissions == 1 && !s.requireLink {
+					if s.submissions == 1 {
 						s.observationWork, s.attribution = s.work, "single_submission"
 					}
 					var linkage struct {
@@ -398,7 +396,7 @@ func (d *Driver) adapt(s *session, e sdk.Event, child bool) error {
 			}
 		} else if previous, ok := s.results[e.UUID]; e.UUID != "" && ok {
 			s.observationWork, s.attribution = previous, "prior_result"
-		} else if s.submissions == 1 && s.work != "" && !s.requireLink {
+		} else if s.submissions == 1 && s.work != "" {
 			s.observationWork, s.attribution = s.work, "single_submission"
 		}
 		// Conflicting native identities are not evidence for either submission.

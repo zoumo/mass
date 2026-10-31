@@ -34,7 +34,12 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			if kind == "claude" {
 				bin = claudeMock
 			}
-			svc, _, _ := setup(t, prototype.AutoApprovePermissions)
+			var observation *codexTurnObservation
+			if kind == "codex" {
+				observation = newCodexTurnObservation()
+				defer observation.releaseAll()
+			}
+			svc, _, _ := setupWithCodexObservation(t, prototype.AutoApprovePermissions, observation)
 			// The executable is still strictly synthetic. Only launch configuration
 			// uses the real-runtime shape: scenario is not a required config field.
 			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{
@@ -55,6 +60,7 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			if kind == "codex" {
 				require.Equal(t, "turn-1", receipt.Submission)
 				require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+				observation.releaseInitial()
 			} else {
 				require.Nil(t, receipt.Acceptance.NativeAccepted)
 				require.Nil(t, receipt.Acceptance.NativeRecorded)
@@ -63,6 +69,21 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 				e, err := nextSubscription(sub, ctx(t))
 				require.NoError(t, err)
 				if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+					if observation != nil {
+						work, observed := observation.work.Load(e.EventID)
+						require.True(t, observed, "public idle must match an observed Driver event UUID")
+						if work == "" {
+							// Opening idle has no submitted turn. Keep later native
+							// facts gated so it cannot accidentally satisfy history.
+							before, queryErr := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+							require.NoError(t, queryErr)
+							require.Empty(t, before.Events)
+							observation.releaseRest()
+							continue
+						}
+						require.Equal(t, receipt.Submission, work, "terminal must belong to the accepted native turn")
+						require.Equal(t, "completed", state.StopReason)
+					}
 					break
 				}
 			}
@@ -117,10 +138,19 @@ func nativeScenario(t *testing.T, kind, mode string) (string, string) {
 
 func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *runtime.Registry, string) {
 	t.Helper()
+	return setupWithCodexObservation(t, policy, nil)
+}
+
+func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, observation *codexTurnObservation) (*service.Service, *runtime.Registry, string) {
+	t.Helper()
 	dir := t.TempDir()
 	st, err := file.Open(dir, false)
 	require.NoError(t, err)
-	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}})
+	var codexFactory runtime.Factory = codex.Factory{RecoveryDir: filepath.Join(dir, "private")}
+	if observation != nil {
+		codexFactory = observedCodexFactory{Factory: codexFactory, observation: observation}
+	}
+	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codexFactory})
 	svc := service.NewWithPolicy(st, st, reg, policy)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))); require.NoError(t, st.Close()) })
 	return svc, reg, dir
