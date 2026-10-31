@@ -165,11 +165,15 @@ func (s *entrypointSuite) call(op string, p workflowParams, out any) {
 }
 
 func (s *entrypointSuite) open(kind, mode string) (resource.SessionRef, resource.Session, string) {
-	path, work := nativeScenario(s.T(), kind, mode)
 	bin := mock
 	if kind == "claude" {
 		bin = claudeMock
 	}
+	return s.openWithExecutable(kind, mode, bin)
+}
+
+func (s *entrypointSuite) openWithExecutable(kind, mode, bin string) (resource.SessionRef, resource.Session, string) {
+	path, work := nativeScenario(s.T(), kind, mode)
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
@@ -292,7 +296,15 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 }
 
 func (s *entrypointSuite) basic(kind string) {
-	ref, original, work := s.open(kind, "basic")
+	bin := mock
+	if kind == "claude" {
+		// Preserve executable identity across recovery; this synthetic peer
+		// echoes the resumed caller UUID through the retained baseline frames.
+		bin = filepath.Join(s.T().TempDir(), "claude-linked-replay")
+		out, err := exec.CommandContext(ctx(s.T()), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
+		s.Require().NoError(err, string(out))
+	}
+	ref, original, work := s.openWithExecutable(kind, "basic", bin)
 	// Closing a registered observer does not archive or cancel the native session.
 	watch, e := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
 	s.Require().NoError(e)
@@ -327,10 +339,6 @@ func (s *entrypointSuite) basic(kind string) {
 	s.call("session.archive", workflowParams{Session: ref}, nil)
 	resumePath, _ := nativeScenario(s.T(), kind, "lifecycle-resume")
 	resumePath = replaceWorkspace(s.T(), resumePath, work)
-	bin := mock
-	if kind == "claude" {
-		bin = claudeMock
-	}
 	spec := resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": resumePath}}
 	s.call("runtime.update", workflowParams{Name: "agent", Spec: &spec}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)

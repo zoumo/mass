@@ -51,6 +51,7 @@ type session struct {
 	cancelErr                error
 	submissions              int
 	observationWork          string
+	observation              *sdk.Received
 	attribution              string
 	uncertain                bool
 	requireLink              bool
@@ -155,14 +156,14 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 			return runtime.DriverSession{}, noResources("invalid Claude recovery context")
 		}
 	}
-	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown"}
+	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown", requireLink: resume != ""}
 	c, err := sdk.Open(ctx, sdk.SessionOptions{ResumeID: resume, CLIPath: d.options.Executable, WorkDir: spec.Cwd, Env: d.options.Environment("claude")})
 	if err != nil {
 		close(s.ready)
 		return runtime.DriverSession{}, err
 	}
 	s.client = c
-	early := []sdk.Event{}
+	early := []sdk.Received{}
 	// No hidden input: only a native system/init can establish creation identity.
 	for {
 		event, receiveErr := c.Receive(ctx)
@@ -195,7 +196,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 				close(s.ready)
 				return runtime.DriverSession{}, releasedOpenError(errors.New("pre-identity buffer exhausted"), c)
 			}
-			early = append(early, *e)
+			early = append(early, event)
 		}
 	}
 	if resume == "" {
@@ -283,11 +284,27 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	return runtime.InputReceipt{Submission: work, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
 }
 
+func identityMeta(id sdk.SubagentIdentity) map[string]any {
+	meta := map[string]any{}
+	for key, value := range map[string]string{"association_id": id.AssociationID, "run_id": id.RunID, "session_id": id.SessionID, "agent_id": id.AgentID, "task_id": id.TaskID, "tool_use_id": id.ToolUseID} {
+		if value != "" {
+			meta[key] = value
+		}
+	}
+	return meta
+}
+
 func (d *Driver) emit(s *session, item string, p events.Payload, at time.Time) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 	meta := map[string]any{"attribution": s.attribution}
+	if r := s.observation; r != nil {
+		meta["source"], meta["origin"], meta["nativeRaw"] = identityMeta(r.Source), r.Origin, string(r.Raw)
+		if r.Parent != nil {
+			meta["parent"] = identityMeta(*r.Parent)
+		}
+	}
 	if s.observationWork != "" {
 		meta["submission"] = s.observationWork
 	}
@@ -308,11 +325,11 @@ func (d *Driver) state(s *session, state *events.SessionState, reason string) er
 	return d.emit(s, "", events.StateUpdate{PreviousState: previous, State: state, StopReason: reason}, time.Time{})
 }
 
-func (d *Driver) observe(s *session, early []sdk.Event) {
+func (d *Driver) observe(s *session, early []sdk.Received) {
 	defer close(s.done)
 	for _, event := range early {
 		s.mu.Lock()
-		err := d.adapt(s, event, false)
+		err := d.adapt(s, event)
 		if err != nil {
 			s.err = err
 		}
@@ -328,7 +345,7 @@ func (d *Driver) observe(s *session, early []sdk.Event) {
 			switch event.Kind {
 			case sdk.ReceivedNative:
 				if event.Event != nil {
-					err = d.adapt(s, *event.Event, event.Parent != nil)
+					err = d.adapt(s, event)
 				}
 			case sdk.ReceivedRequest:
 				if event.Request != nil && !s.closing && event.Request.Context().Err() == nil {
@@ -384,7 +401,11 @@ func decode(raw json.RawMessage) (any, error) {
 	return value, err
 }
 
-func (d *Driver) adapt(s *session, e sdk.Event, child bool) error {
+func (d *Driver) adapt(s *session, received sdk.Received) error {
+	e := *received.Event
+	child := received.Parent != nil
+	s.observation = &received
+	defer func() { s.observation = nil }()
 	if e.SessionID != "" && e.SessionID != s.id {
 		return nil
 	} // unproven descendants are not this Session

@@ -138,7 +138,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 		return err
 	}
 	observe()
-	tools := map[string]string{}
+	tools := map[string]retainedTool{}
 	// Each offset query scans the full bounded source. Ordered raw+UUID comparison
 	// detects observed drift; separate calls have no atomic snapshot guarantee.
 	for offset := 0; ; offset += 100 {

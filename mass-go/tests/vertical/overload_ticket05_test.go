@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
@@ -45,12 +47,20 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			ownedRoot, rootErr := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, rootErr)
-			bin := filepath.Join(ownedRoot, "peer")
+			// Keep the executable visible to TestMain's failure cleanup scan.
+			peerDir := filepath.Join(root, "overload-"+kind)
+			require.NoError(t, os.Mkdir(peerDir, 0o700))
+			t.Cleanup(func() {
+				assert.NoError(t, os.RemoveAll(peerDir))
+				_, err := os.Stat(peerDir)
+				assert.True(t, os.IsNotExist(err))
+			})
+			bin := filepath.Join(peerDir, "peer")
 			out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/lifecycle-peer").CombinedOutput()
 			require.NoError(t, err, string(out))
 			st, err := file.Open(filepath.Join(ownedRoot, "data"), false)
 			require.NoError(t, err)
-			defer st.Close()
+			t.Cleanup(func() { assert.NoError(t, st.Close()) })
 			slowID := "damaged"
 			if kind == "claude" {
 				slowID = "claude-damaged"
@@ -61,8 +71,35 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			defer release()
 			reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(ownedRoot, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(ownedRoot, "private")}})
 			svc := service.New(st, gate, reg)
-			defer func() { release(); _ = svc.Shutdown(ctx(t)) }()
 			pidFile := filepath.Join(ownedRoot, "owned-pid")
+			expectProcesses := false
+			t.Cleanup(func() {
+				release()
+				cleanup, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancelCleanup()
+				assert.NoError(t, svc.Shutdown(cleanup), "owned shutdown must be confirmed even after a failed assertion")
+				owned, globErr := filepath.Glob(pidFile + ".*")
+				assert.NoError(t, globErr)
+				if expectProcesses {
+					expected := 1 // Codex multiplexes both sessions in one owned process.
+					if kind == "claude" {
+						expected = 2
+					}
+					assert.Len(t, owned, expected)
+				}
+				for _, path := range owned {
+					pid, readErr := os.ReadFile(path)
+					if !assert.NoError(t, readErr) {
+						continue
+					}
+					if assert.Eventually(t, func() bool {
+						output, psErr := exec.CommandContext(cleanup, "ps", "-p", strings.TrimSpace(string(pid)), "-o", "pid=").Output()
+						return psErr != nil && len(output) == 0 && cleanup.Err() == nil
+					}, 3*time.Second, 20*time.Millisecond, "owned native process must be reaped: %s", pid) {
+						t.Logf("PASS owned native process reaped pid=%s", pid)
+					}
+				}
+			})
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_PID": pidFile, "PEER_KIND": kind, "PEER_CONTROL": "overload"}}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
@@ -75,6 +112,7 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 				require.NoError(t, e)
 				refs[name] = resource.SessionRef{SessionID: r.Status.SessionID}
 			}
+			expectProcesses = true
 			h, err := transport.New(svc, transport.Options{Token: "synthetic"})
 			require.NoError(t, err)
 			defer h.Shutdown()
@@ -93,6 +131,9 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 				var r resource.Session
 				return c.GetSession(observation, refs["damaged"], &r) == nil && r.Status.State == "closing"
 			}, 3*time.Second, 10*time.Millisecond)
+			if os.Getenv("MASS_REVIEW_OVERLOAD_FAIL") == kind {
+				t.Fatal("injected failure after saturation before gate release")
+			}
 			require.ErrorContains(t, c.SendPrompt(observation, refs["damaged"], input, nil), "session_delivery_overloaded")
 			require.NoError(t, c.SendPrompt(observation, refs["healthy"], input, nil))
 			for {
@@ -119,18 +160,35 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 				require.Equal(t, []events.ContentBlock{events.Text("complete synthetic fact")}, message.Content)
 			}
 			require.NoError(t, svc.Shutdown(observation))
-			owned, err := filepath.Glob(pidFile + ".*")
-			require.NoError(t, err)
-			require.NotEmpty(t, owned)
-			for _, path := range owned {
-				pid, e := os.ReadFile(path)
-				require.NoError(t, e)
-				require.Eventually(t, func() bool {
-					output, e := exec.CommandContext(observation, "ps", "-p", string(pid), "-o", "pid=").Output()
-					return e != nil && len(output) == 0 && observation.Err() == nil
-				}, 3*time.Second, 20*time.Millisecond, "owned native process must be reaped")
-			}
 			t.Log("PASS synthetic native provider: healthy SSE/HTTP/history completes after slow saturation before gate release; 160 ordered full facts retained; native processes reaped")
+		})
+	}
+}
+
+// A subprocess makes a fatal assertion observable without failing this parent.
+// The child uses the actual native adapters and fails while storage is gated.
+func TestOverloadFailureCleanupReadback(t *testing.T) {
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	for _, kind := range []string{"codex", "claude"} {
+		t.Run(kind, func(t *testing.T) {
+			bounded, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(bounded, executable, "-test.v", "-test.run=^TestTicket05NativeProvidersIsolateSaturatedSession$/"+kind+"$")
+			cmd.Env = append(os.Environ(), "MASS_REVIEW_OVERLOAD_FAIL="+kind)
+			output, runErr := cmd.CombinedOutput()
+			t.Log(string(output))
+			require.Error(t, runErr, "child must retain the deliberately injected assertion failure")
+			require.NoError(t, bounded.Err())
+			require.Contains(t, string(output), "injected failure after saturation before gate release")
+			expected := 1
+			if kind == "claude" {
+				expected = 2
+			}
+			require.Equal(t, expected, strings.Count(string(output), "PASS owned native process reaped pid="), "all provider-owned PIDs independently read back after failure")
+			require.NotContains(t, string(output), "Error Trace:", "cleanup must add no assertion failures to the deliberately failed child")
+			require.Contains(t, string(output), "PASS no owned SDK peer/application processes remain")
+			require.NotContains(t, string(output), "FAIL: leaked owned child")
 		})
 	}
 }

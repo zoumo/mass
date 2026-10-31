@@ -41,9 +41,10 @@ func main() {
 		if v["type"] == "control_request" {
 			r := v["request"].(map[string]any)
 			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
-			if r["subtype"] == "initialize" {
-				send(map[string]any{"type": "system", "subtype": "init", "session_id": "claude-continuity", "cwd": cwd})
-			} else if r["subtype"] == "interrupt" {
+			switch r["subtype"] {
+			case "initialize":
+				send(map[string]any{"type": "system", "subtype": "init", "session_id": "claude-continuity", "cwd": cwd, "claude_code_version": "2.1.258"})
+			case "interrupt":
 				result(pending)
 			}
 			continue
@@ -63,6 +64,17 @@ func main() {
 			start["user_message_uuid"] = link
 		}
 		send(start)
+		if text == "child-provenance" {
+			send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": "root-tool", "role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "child-tool", "name": "Agent", "input": map[string]any{}}}}})
+			send(map[string]any{"type": "system", "subtype": "task_started", "session_id": "claude-continuity", "task_id": "child-task", "task_type": "local_agent", "tool_use_id": "child-tool"})
+			send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "parent_tool_use_id": "child-tool", "message": map[string]any{"id": "confirmed-child", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "confirmed child fact"}}}})
+			send(map[string]any{"type": "result", "subtype": "success", "session_id": "claude-continuity", "parent_tool_use_id": "child-tool"})
+		}
+		if text == "resume-unlinked" {
+			send(map[string]any{"type": "control_request", "request_id": "unlinked-old", "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": "old-tool", "input": map[string]any{"command": "never execute"}}})
+			send(map[string]any{"type": "result", "subtype": "success", "session_id": "claude-continuity", "uuid": "unlinked-old-result"})
+			continue
+		}
 		if text == "hold" && n > 1 {
 			old := map[string]any{"type": "result", "subtype": "success", "session_id": "claude-continuity", "uuid": fmt.Sprintf("result-%d", n-1)}
 			if previous != "" {
@@ -79,7 +91,7 @@ func main() {
 		}
 		send(message)
 		previous = link
-		if text == "hold" {
+		if text == "hold" || text == "child-provenance" {
 			continue
 		}
 		if text == "ambiguous" {

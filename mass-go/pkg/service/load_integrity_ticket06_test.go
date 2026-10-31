@@ -22,6 +22,7 @@ import (
 type ticket06FailingPublication struct {
 	mu   sync.Mutex
 	seen []string
+	ids  []string
 }
 
 func (*ticket06FailingPublication) Required() bool { return true }
@@ -30,6 +31,7 @@ func (h *ticket06FailingPublication) Handle(e events.SessionEvent) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.seen = append(h.seen, e.ItemID)
+	h.ids = append(h.ids, e.EventID)
 	if e.ItemID == "failed" {
 		return errors.New("required delivery failed")
 	}
@@ -155,4 +157,33 @@ func TestTicket06AppendFailureRequiresExplicitOriginalUUIDSettlement(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, "failed", r.Status.HistoryLoad.Phase)
 	require.False(t, r.Status.HistoryLoad.DeliveryCompleted)
+}
+
+func TestCompletedLoadLivePublishFailureDoesNotSilenceLaterFacts(t *testing.T) {
+	st, err := file.Open(t.TempDir(), false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	svc, d := ticket06FaultService(t, st, st)
+	_, b := ticket06FaultLoad(t, svc, d)
+	ref := resource.SessionRef{SessionID: b.id}
+	require.NoError(t, d.marker(ticket06FaultContext(t), b, "native_completed"))
+	require.Eventually(t, func() bool { r, e := svc.GetSession(ref); return e == nil && r.Status.HistoryLoad.Phase == "completed" }, time.Second, time.Millisecond)
+	broadcast, err := svc.EventBroadcast(ref)
+	require.NoError(t, err)
+	handler := &ticket06FailingPublication{}
+	require.NoError(t, broadcast.AddHandler(handler))
+	for _, id := range []string{"failed", "later"} {
+		require.NoError(t, d.emit(ticket06FaultContext(t), b, id, events.AgentMessage{MessageID: id, Content: []events.ContentBlock{events.Text(id)}}, false))
+	}
+	page := ticket06FaultHistory(t, svc, ref, 2)
+	require.NotEqual(t, page[0].EventID, page[1].EventID)
+	require.Equal(t, []string{"failed", "later"}, []string{page[0].ItemID, page[1].ItemID})
+	require.Eventually(t, func() bool { handler.mu.Lock(); defer handler.mu.Unlock(); return len(handler.seen) == 2 }, time.Second, time.Millisecond, "live required publish error must not permanently suppress later delivery")
+	handler.mu.Lock()
+	require.Equal(t, []string{"failed", "later"}, handler.seen)
+	require.Equal(t, []string{page[0].EventID, page[1].EventID}, handler.ids, "required publication and history preserve original UUIDs")
+	handler.mu.Unlock()
+	r, err := svc.GetSession(ref)
+	require.NoError(t, err)
+	require.Equal(t, "completed", r.Status.HistoryLoad.Phase)
 }

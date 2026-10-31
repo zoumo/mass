@@ -9,7 +9,12 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/events"
 )
 
-func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, tools map[string]string, offset int) error {
+type retainedTool struct {
+	name      string
+	completed bool
+}
+
+func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, tools map[string]retainedTool, offset int) error {
 	value, err := decode(m.Raw)
 	if err != nil {
 		return err
@@ -85,25 +90,25 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 			key, _ := b["id"].(string)
 			name, _ := b["name"].(string)
 			input, present := b["input"]
-			if m.Type != "assistant" || key == "" || name == "" || !present || tools[key] != "" {
+			_, exists := tools[key]
+			if m.Type != "assistant" || key == "" || name == "" || !present || exists {
 				return errors.New("invalid or conflicting retained tool call")
 			}
-			tools[key] = name
+			tools[key] = retainedTool{name: name}
 			payload = events.ToolCall{ID: key, Name: name, Kind: "other", RawInput: input, Status: "unknown"}
 		case "tool_result":
 			key, _ := b["tool_use_id"].(string)
-			name := tools[key]
-			if m.Type != "user" || key == "" || name == "" {
+			tool, exists := tools[key]
+			if m.Type != "user" || key == "" || !exists {
 				return errors.New("missing or conflicting retained tool relationship")
 			}
-			delete(tools, key)
-			// A tombstone also rejects repeated tool IDs after their result.
-			tools[key] = "\x00"
-			if name == "\x00" {
+			if tool.completed {
 				return errors.New("duplicate retained tool result")
 			}
+			tool.completed = true
+			tools[key] = tool
 			value, present := b["content"]
-			p := events.ToolResult{ID: key, Name: name, Kind: "other", Status: "completed", Output: &events.Output{Availability: "unavailable", Completeness: "unknown"}}
+			p := events.ToolResult{ID: key, Name: tool.name, Kind: "other", Status: "completed", Output: &events.Output{Availability: "unavailable", Completeness: "unknown"}}
 			if bad, exists := b["is_error"]; exists {
 				flag, ok := bad.(bool)
 				if !ok {

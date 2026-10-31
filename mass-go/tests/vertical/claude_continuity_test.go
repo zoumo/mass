@@ -168,3 +168,98 @@ func (s *entrypointSuite) claudeUnknownResultBlocksReadmission(prompt string) {
 	}
 	s.call("session.archive", workflowParams{Session: ref}, nil)
 }
+
+func (s *entrypointSuite) TestClaudeResumedFirstInputRequiresLinkage() {
+	ref, _ := s.openClaudeContinuity()
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.resume", workflowParams{Session: ref}, nil)
+	_, scan := s.observer(ref)
+	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("resume-unlinked")}}}, nil)
+	sawUnknown := false
+	for {
+		s.Require().True(scan.Scan())
+		var e events.SessionEvent
+		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
+		s.NotEqual("session.interaction_requested", e.Type(), "unlinked old request has no answer authority")
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.StopReason == "work_attribution_unknown" {
+			s.Nil(state.State)
+			sawUnknown = true
+			break
+		}
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			break
+		}
+	}
+	s.Require().True(sawUnknown, "unlinked old result must leave resumed work unsettled")
+	err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("blocked")}}}, nil)
+	s.Require().Error(err)
+	s.call("session.cancel", workflowParams{Session: ref}, nil)
+	for {
+		s.Require().True(scan.Scan())
+		var e events.SessionEvent
+		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			break
+		}
+	}
+	var receipt runtime.InputReceipt
+	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("resumed-linked")}}}, &receipt)
+	for {
+		s.Require().True(scan.Scan())
+		var e events.SessionEvent
+		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			s.Equal(receipt.Submission, e.Meta["claude"].(map[string]any)["submission"])
+			s.Equal("user_message_uuid", e.Meta["claude"].(map[string]any)["attribution"])
+			break
+		}
+	}
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+}
+
+func (s *entrypointSuite) TestClaudeConfirmedChildProvenance() {
+	ref, _ := s.openClaudeContinuity()
+	_, scan := s.observer(ref)
+	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("child-provenance")}}}, nil)
+	var child events.SessionEvent
+	for {
+		s.Require().True(scan.Scan())
+		var e events.SessionEvent
+		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
+		if e.ItemID == "confirmed-child" {
+			child = e
+		}
+		if e.ItemID == "message-1" {
+			break
+		}
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil {
+			s.NotEqual(events.Idle, *state.State, "child result must not settle root input")
+		}
+	}
+	s.Require().Equal("confirmed-child", child.ItemID)
+	meta := child.Meta["claude"].(map[string]any)
+	s.Equal("unknown", meta["attribution"])
+	s.NotContains(meta, "submission")
+	s.Equal(map[string]any{"session_id": ref.SessionID, "task_id": "child-task", "tool_use_id": "child-tool", "association_id": "task:child-task"}, meta["source"])
+	s.Equal(map[string]any{"session_id": ref.SessionID}, meta["parent"])
+	s.Equal("live", meta["origin"])
+	raw, ok := meta["nativeRaw"].(string)
+	s.Require().True(ok, "original received envelope must survive SSE")
+	s.JSONEq(`{"type":"assistant","session_id":"claude-continuity","parent_tool_use_id":"child-tool","message":{"id":"confirmed-child","role":"assistant","content":[{"type":"text","text":"confirmed child fact"}]}}`, raw)
+	page := s.history(ref)
+	s.Require().Len(page.Events, 3)
+	s.Equal(child.EventID, page.Events[1].EventID)
+	s.Equal(child.Meta, page.Events[1].Meta, "history retains the exact provenance delivered by SSE")
+	err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("blocked")}}}, nil)
+	s.Require().Error(err)
+	s.call("session.cancel", workflowParams{Session: ref}, nil)
+	for {
+		s.Require().True(scan.Scan())
+		var e events.SessionEvent
+		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			break
+		}
+	}
+	s.call("session.archive", workflowParams{Session: ref}, nil)
+}

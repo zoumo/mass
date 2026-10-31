@@ -778,7 +778,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 			// retry it or let later load facts overtake its failed publication.
 			if err != nil {
 				slog.Warn("realtime publication failed", "error", err, "session_id", e.SessionID)
-				if l.load != nil {
+				if l.load != nil && !l.load.complete.Load() {
 					publicationFailed = true
 				}
 				s.failLoad(run, l, "failed", err)
