@@ -1,225 +1,83 @@
-# SDK session adaptation: layered acceptance
+# 六单 synthetic 验收矩阵
 
-This is the current Go implementation acceptance map, not a change to the
-[harness contracts](../../harness/index.md). The SDK is pinned to
-`github.com/zoumo/agent-sdk-go v0.0.0-20261031154401-ed6c8216607c`, source
-`ed6c8216607ceacb5077b558a8302a587c9e6d5b`, with no local `replace`.
-The integration baseline for ticket08 is MASS
-`ba4f6984b0d995b3354d9d435c9145d359bbd6a0`. Final source/commit, commands,
-artifact hashes, failures and cleanup readbacks are recorded separately in
-central `.scratch/sdk-session-adaptation/validation/ticket-08.md`.
-A recipe or an existing test is not itself an executed PASS.
+本结果仅对应本次 Go 重建及固定 SDK
+`github.com/zoumo/agent-sdk-go v0.0.0-20261018163950-6dbf3e9c8264`。
+所有 native trace/scenario 都是 **synthetic**；使用真实 SDK 与 SDK 自带严格
+mock CLI 子进程。fake 不执行工具、不访问模型或账户，不证明智能或真实 CLI 能力。
 
-## Evidence Classes
-
-| Class | What it can establish | Current scope |
-| --- | --- | --- |
-| SDK protocol probe | Immutable SDK APIs against strict authored native JSONL | `examples/sdkprobe`; separate from product acceptance |
-| Product synthetic integration | Actual adapters, Service, file Store, CLI/HTTP/SSE and owned protocol peers | Default offline checks and the combinations below; no models or tools run |
-| Public-module fault injection | Deterministic append/publish/close/admission outcomes through public interfaces | Original facts, unsettled obligations, bounded isolation and cleanup, not native CLI guarantees |
-| Recording-driven MASS simulation | Product actions consumed against admitted, unmodified official captures | NOT EXECUTED: no MASS recording request/result driver or proven compatible complete case selection in this checkout |
-| Native protocol/live Agent | Installed CLI, actual identity, account/model and persistence | NOT EXECUTED in ticket08; explicit, separately authorized procedure below |
-
-SDK-only replay is not MASS recording acceptance. Authored peers are not official
-recordings. Old logs under `examples/sdkprobe/evidence`, the prior six-ticket
-experiment and [HTTP v1](http-v1-acceptance.md) /
-[Store/Broadcast](store-broadcast-acceptance.md) reports retain their original
-source/version attribution; they are not current-pin PASS evidence.
-
-## Reproducible Offline Entry Points
-
-From the repository root, with Go 1.26.9, golangci-lint v2.12.2, `ps`, and
-immutable module dependencies already cached:
+## 仓库入口
 
 ```sh
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make check-go'
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make prototype-go'
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make acceptance-sdk-go'
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./tests/vertical -run "^Test(File)?EntrypointSuite$"'
+make prototype-go
 ```
 
-`check-go` runs lint, all offline race packages, builds both executables, and
-checks formatting. The full package timeout is300 seconds; vertical TestMain
-allows330 seconds including owned builds and final cleanup. Individual scenario
-deadlines remain unchanged. The prior180-second aggregate timeout failed and is
-retained in ticket08 evidence, not erased by the budget change.
-`prototype-go` builds the immutable SDK strict protocol mock
-for each provider plus real massd/massctl and exercises `TestEntrypointSuite`.
-`acceptance-sdk-go` selects all ticket08 combinations under race; it is not a
-replacement for the complete check. Missing tools/dependencies mean NOT EXECUTED;
-these offline commands do not download a fallback SDK or launch real Agents.
+这条命令实际构建两个 SDK mock、massd 和 massctl，然后运行
+`TestEntrypointSuite`。不是调用 SDK probe 来代替最终产品入口。
+测试通过 CLI 发出请求，经 HTTP v1 REST 调用 Service；实时观察来自
+CLI → SSE → Service 独立订阅。测试包含原 ID 恢复后的独立新输入。
 
-Each Go invocation has its own test-owned setup/cleanup budget. Repeat product
-faults in independent `-count=1` invocations, rather than exhausting one shared
-TestMain deadline. Preserve the first failure, exact timeout and eventual cleanup
-before changing a test-owned aggregate budget. Default opt-in scale-test skips
-are not scale PASS results.
+| 场景 | Codex | Claude | 直接证据/含义 |
+|---|---|---|---|
+| 无输入创建 native ID，无隐藏 prompt | PASS synthetic | PASS synthetic | `Test*BasicRecovery`；Claude init 仅证明身份，初始 work state 可为 unknown |
+| 单独文本输入和接受回执 | PASS synthetic | PASS synthetic | CLI `session.input`；回执不等于工作完成 |
+| 原 handle 自动同意权限 | PASS synthetic | PASS synthetic | strict scenario 等待正确请求答复；显式 daemon flag；不伪造 nativeAccepted |
+| 用户问答，显式读取 form 后回答 | PASS synthetic | PASS synthetic | `TestCodexQuestion` / `TestClaudeQuestion`；与权限分开执行和报告 |
+| native 问答先于 turn ACK | PASS synthetic | 不适用 | `TestCodexQuestionBeforeACK`；有界暂存直至可证明原 work ID |
+| SSE ready 后实时观察、chunk | PASS synthetic | PASS synthetic | `Test*BasicRecovery`；ready 前已注册，chunk 不入历史 |
+| 每个已发布完整事实等于历史读取 | PASS synthetic | PASS synthetic | SSE UUID/time/payload 与分页后的持久查询逐条比较 |
+| 文件全量历史、过滤和分页 | PASS synthetic | PASS synthetic | limit=2 翻全历史，精确 type 过滤；停后只读打开 Store 比较完整结果 |
+| 关闭观察不取消工作 | PASS synthetic | PASS synthetic | `Test*Cancellation`；断订阅后查询仍 running，再显式 cancel |
+| 取消确认与后续终止分离 | PASS synthetic | PASS synthetic | strict cancel fixture；确认 idle 后才 archive/stop |
+| archive/stop、原 ID/UID/history 恢复 | PASS synthetic | PASS synthetic | `Test*BasicRecovery`；更新期望 scenario → stop/start → resume → 新输入 |
+| 同连接再次输入 | 有界，原 work ID 校验 | 明确拒绝 | Claude 每次运行仅一个输入；测试验证拒绝后 archive/原 ID resume，未绕过限制 |
+| Session ID/名称寻址、列表及 Runtime 管理 | PASS synthetic | PASS synthetic | product suite；资源查询只经 Service；Runtime update 不热更新 |
+| 同 daemon 双 Agent 及跨 Runtime 目录分页 | PASS synthetic | PASS synthetic | `TestDualAgentDirectory`；两个 native peer 同时存在，next/过滤绑定与独立路径读回 |
+| 参数错误、未知操作、游标及空 types | PASS | PASS | product suite；稳定公开错误，非法输入不静默省略或自动重试 |
+| 缺 native identity 的失败创建与清理 | 未单独在最终 CLI 注入 | PASS synthetic | `TestFailedCreateCleanup`；无持久 Session，stop/delete 结算，同名重建可用；Codex 故障见前票 suite |
+| 慢 SSE 写入导致订阅过载 | PASS synthetic | 共用传输合同 | `TestFailureSuite/TestSSEOverflowIsExplicit`；真实 Service/SDK；140 完整事实保留，明确 error，无正常 end |
+| 异常断线不能冒充正常 EOF | PASS 协议测试 | 共用客户端 | `pkg/client` framing suite；仅 end 正常；异常保持原错误，Close 释放阻塞 Next |
+| 正常/失败测试资源清理读回 | PASS | PASS | daemon exit、端口无法连接、目录删除读回；TestMain 核对己方 SDK/application 进程 |
 
-## Product Combination Map
+最终完整离线组另含 Ticket01 SDK probe、Store、Service/Runtime 纵向及故障验收。
+前票 probe 的通过只证明其独立协议场景；上表明确使用最终产品入口证据。
 
-All paths below are relative to `mass-go/`. The named tests are scenario
-selectors, not a blanket claim that every event originates natively on both
-providers. HTTP answers are deliberate: this CLI has no answer command.
+## 能力和未验证范围
 
-| Behavior | Scenario/source | Evidence boundary |
-| --- | --- | --- |
-| Three inputs on one connection with approval in the middle | `TestTicket08ContinuousInputWithApproval` | Both providers; actual CLI prompt, HTTP invalid/correct/duplicate answer, SSE complete facts equal public history, original process reaped |
-| Loaded connection, current approval and subsequent input, then archive | `integrated_load_ticket08_test.go` | Both providers; replay never grants live authority; Claude completion requires explicit native linkage |
-| Close with queued interactions, stop concurrent load | `integrated_lifecycle_ticket08_test.go` | Both providers; stale handles, retained facts, confirmed versus unknown cleanup remain distinct |
-| Healthy peer progresses after slow peer saturation, before slow gate release | `TestTicket05NativeProvidersIsolateSaturatedSession`, `pkg/service/overload_test.go` | Both providers; original complete facts/order/UUID, storage and required-publish ownership; upstream total exhaustion explicitly has no progress guarantee |
-| Permission, form, early request before ACK, correction after NotSent | `native_interactions_ticket02_test.go`, entrypoint suites | Original native capability only; no policy-created acceptance proof |
-| Claude serial input, ambiguity, cancel and late result | `claude_continuity_test.go`, entrypoint suites | Unlinked/conflicting evidence fences work instead of inventing TurnIDs |
-| Archive/stop drains admitted final facts; uncertain native close | `lifecycle_ticket04_test.go`, `native_lifecycle_ticket04_test.go` | No global shared-client kill to simulate Session isolation |
-| Codex retained full paged history and same connection input | `history_load_ticket06_test.go`, `history_load_http_ticket06_test.go` | Native ID/cwd/source checks, five content kinds, missing/null/empty output, partial failure |
-| Claude retained main chain and same process continuation | `history_load_ticket07_test.go` | Explicit ConfigDir/ProjectDir, drift/corruption refusal, offset100 crossing, cleanup/cancel; synthetic UUID echoes are not real CLI guarantees |
-| Load cancel, stale cancel, native completion before delivery, failed append/required publish | `pkg/service/*ticket06_test.go`, `load_integrity_ticket06_test.go` | Accepted load persists independently of HTTP disconnect; unsettled responsibilities remain visible |
-| Real daemon/CLI/SSE/history, original-ID resume, disconnect and explicit cancellation | `TestEntrypointSuite`, `TestFileEntrypointSuite`, `TestFailureSuite` | File-authoritative persistence, owned temporary listener/workspace and process cleanup |
-| Explicit non-scenario runtime launch | `TestExplicitEnvironmentLaunchWithoutScenarioConfig` | Both providers; proves product configuration works with an owned executable, not real credentials |
+| 项目 | 结果和边界 |
+|---|---|
+| 文本输入/content | 已实现 text-only；Claude 恰好一个文本块。完整文本/思考多块、工具输入/结果动态值、空/null/缺失由前票纵向测试覆盖 |
+| 不支持的完整内容 | 明确失败；图像、音频、文件、任意原生扩展与 subagent 归属未实现，不能把文本化替代说成支持 |
+| 交互 | permission/form 原 handle；没有待决交互补查、自动到期通知或跨连接交互续传；表单仅按原生结构显式回答，不宣称通用 JSON Schema 校验 |
+| 事件处理器/API | 不提供 harness 全部业务 handler 注册/enable/disable API，也无 Session 配置选项 API；原型只有显式权限策略 |
+| Store | 完整文件快照已实现并离线验证；SQLite/索引重建未实现；私有恢复协议是 Go 实验选择 |
+| 故障结算 | 前票 suite 保留未知责任、原 UUID、部分写入、有界过载和原工作隔离；本进程显式结算有效，不等于 crash-recoverable outbox |
+| 崩溃/掉电/跨进程未知责任 | 未验证且跨进程未知操作自动结算未实现；已持久 unknown/未确认运行不静默当作可恢复 |
+| 真实 CLI、原生持久恢复、模型、账户、工具执行 | 未验证；fake 不证明 Claude 真实无输入 init、真实 resume ID 消费或模型行为 |
+| Linux、Rust | 本次未验证；本次是 macOS 离线 Go 实验，不声明生产发布 |
+| HTTP v1 | 已按定稿合同迁移 REST/JSON/SSE、实例 Bearer 认证、TLS 入口和 HTTP 接纳探针；本页六票记录为先前合成验收，新增协议验收见 [HTTP v1 验收](http-v1-acceptance.md) |
 
-### All 18 Current Event Examples
+没有把失败或未验证写为通过。开发期全量检查曾暴露一个 Codex 双 SDK 队列时序问题：
+请求可能先于工作确认到达；当前由原 Session 的有界工作队列处理并增加早到问答场景。
+同时修正故障测试对“running 必先于 request”的假设；独立 SDK 队列没有该顺序保证。
+最终结论只以冻结源码后的成功检查为依据。
 
-The source of truth is the current
-`harness/modules/runtime/event-examples.json`, not an old frozen copy. Three
-independent boundaries actually encode/decode its full examples:
+## 六单提交与证据
 
-```sh
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./pkg/events -run "^TestHarnessEventExamplesRoundTrip$"'
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./pkg/client -run "^TestGeneratedHTTPSuite$/TestAllEventBranchesStreamAndGeneratedModelRoundTrip$"'
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./pkg/service -run "^TestSessionWorkSuite$/TestAllEventBranchesUseSameLiveAndHistoryModel$"'
-```
+| 票 | 提交 | 主要内容 | 本地证据 |
+|---|---|---|---|
+| 01 | `9a9916e14` | 固定 SDK 的双 fake 协议探针 | `examples/sdkprobe/evidence`；scratch evidence/01 |
+| 02 | `9643179d4d039f943dd0e479e1baaba85ac7d618` | Codex Service 与完整文件 Store | scratch evidence/02 |
+| 03 | `afac6237f7984ac4c42b5629b68835c6dcb2cb66` | Claude、显式权限及独立问答 | scratch evidence/03 |
+| 04 | `7afb7307141711f0a102b809d2755ada9aeb060f` | 资源配置和原 ID 恢复 | scratch evidence/04 |
+| 05 | `2c7e70c7af3948b980bc400446ec4e4c6505e399` | 故障/隔离/停止结算 | scratch evidence/05 |
+| 06 | `git log -1 --format=%H --grep='feat(go): expose experimental CLI and HTTP SSE acceptance'` | 产品入口及最终验收 | scratch evidence/06 |
 
-The model test compares JSON field fidelity; the client test crosses HTTP/SSE
-and generated models; the Service test crosses persistence/broadcast/history
-including an actually accepted load for replay lifecycle events. These are
-model/delivery tests, not a claim each native CLI emits all 18 branches.
+scratch 统一位于仓库 `.scratch/mass-go-from-zero/`。每票 issue 记录命令、边界与证据；
+`execution.md` 保存六票完成状态和本票最终 SHA（提交生成后读回）。本票证据包含
+fmt/vet/build/full offline/race/`make prototype-go` 输出、源码前后摘要、结构/harness
+检查与清理读回。源码摘要覆盖 Go 源码、fixture、go.mod/go.sum 及根 Makefile；
+验证期间这些输入必须不变。证据是本机实验结果，不是跨平台或真实模型认证。
 
-## Supported Boundaries And Failures
-
-- Both providers accept text. Claude accepts exactly one text block. Unsupported
-  complete native content fails explicitly rather than silently disappearing.
-  Five content kinds in output/history do not imply five input kinds are enabled.
-- Codex uses a shared native Client; Claude uses an owned process per Session.
-  There is one Receive consumer per Session, not a second request-reader loop.
-- A receipt, local sent evidence, native acceptance, work completion, load native
-  completion, durable delivery and native cleanup are separate claims. Claude
-  write success is not native acceptance. Unknown work never becomes idle merely
-  because an HTTP request or historical replay ended.
-- Current interaction authority is consumed once and cannot be restored from
-  replay, an archived Session, stale load cancellation or copied IDs. There is
-  no pending-interaction recovery/list API or cross-connection authority replay.
-- Claude postload work needs recognized native linkage on every input. Caller
-  UUIDs are correlation aids, not native TurnIDs. The positive synthetic peer
-  echoes UUIDs; real Claude linkage remains unverified.
-- A 105-record Claude case verifies first/last order across offset100 only.
-  A 205-record producer can explicitly fail `session_delivery_overloaded` at the
-  existing128 normal lane bound. Partial retained facts remain visible;205 is
-  NOT successful large-history acceptance. Per-call source checks are not an
-  immutable cross-call snapshot. See [Claude loading](claude-history-load.md).
-- Bounded retention/fair admission isolates a saturated Session where capacity
-  remains. There is no hard whole-chain/OOM or unconditional upstream progress
-  guarantee. Persistent append, required-handler and native-close faults remain
-  visibly unsettled, including cleanup=false and fenced new input as appropriate.
-- History is file-authoritative with indexed reads; no SQLite migration or
-  crash-recoverable outbox is claimed by these tests. Fresh-Service unresolved
-  reservation checks are not process-crash/disk-reopen acceptance. The HTTP body
-  has an independent read deadline, not a newly introduced size cap.
-- Generic business-handler/configuration APIs, subagent attribution, every native
-  extension, Linux and cross-language parity are not certified by this macOS Go
-  acceptance. No deployment, push, publication or production-readiness claim.
-
-## Recording Simulation: Explicit Non-Execution
-
-Only use the immutable module cache, never a mutable SDK checkout. Before any
-recording run, bind capture manifest/admission, raw hashes, original business
-result, scenario/provider and complete fixture selection. Verify the MASS
-request/result driver exists and that unmodified capture requests match actual
-MASS initialization/resume/input order. A strict mismatch is a failure or an
-unsupported recipe, not permission to weaken matchers or replace client bytes.
-
-This checkout provides authored protocol peers/probes, not a MASS recording
-`--request`/`result.json` driver. A compatible source selection has not been
-verified. Recording simulation therefore remains NOT EXECUTED, regardless of
-SDK-only replay results. No recording repair, new captures or real CLI invocation
-is part of ticket08. A future admitted run must retain attempts, full-consumption
-and EOF results, nativeLaunched=false, business assertions and cleanup separately
-from the offline result. Do not treat an empty selected-case set as PASS.
-
-## Separately Authorized Native / Real-Model Procedure
-
-This is an explicit manual product entry point, NOT an automated pass or an
-instruction to run models during default tests. The user's final gate requires
-an independent simulation chat first, then a separate independently authorized
-real E2E chat, both providers with the **theta / glm-5.3** target. Ticket08 does
-not execute that gate. Preconditions missing or unsupported by an installed CLI
-must be reported NOT EXECUTED, not substituted with a different model.
-
-1. Record MASS commit and binary hashes, immutable module/version/no-replace,
-   installed CLI absolute path/version/help, OS and model/provider configuration.
-   Inspect only dedicated test configuration; do not read personal HOME/history.
-   No secrets or access-bearing URLs may enter logs.
-2. Prepare fresh absolute owned data, HOME, CODEX_HOME, CLAUDE_CONFIG_DIR and
-   workspace directories, a loopback ephemeral listener and externally supplied
-   test credentials. Never copy personal credentials or reuse personal history.
-   Use `envPolicy: replace`; explicitly supply PATH and required config/env keys.
-   The MASS runtime config has no `model` field: select theta/glm-5.3 using the
-   installed CLI's verified configuration or an explicit owned launcher that
-   preserves SDK arguments and execs the real CLI. Claude rejects nonempty MASS
-   `args`; Codex defaults to `["app-server"]`. Do not pass invented flags or add
-   `scenario` to real runtime configuration.
-3. Run the product commands below against the owned daemon. Capture observe-ready
-   before producing work. Use the HTTP client Answer method on the original live
-   permission/form handle, after inspecting its actual options/schema; never use
-   prototype autoapproval to claim manual-answer coverage. A selected permission
-   answer is `{"outcome":"selected","optionId":"allow-once"}` only when that
-   option was actually offered. Do not answer old replayed requests.
-4. For each provider: no-input identity; first text input; current approval or
-   question and answer; completion; second same-connection input; cancel receipt
-   versus observed work termination; archive/resume original identity. Then use
-   that run's owned native history ID in explicit load, inspect separate native/
-   delivery/cleanup fields, observe future-only events, input/approval after load
-   and archive. Missing Claude linkage is unknown/fenced, not success. Record an
-   untriggered model interaction as untriggered, not PASS. Synthetic deterministic
-   overload remains a separate class, not a reason to overload a real account.
-5. On success AND failure: stop original Runtime, settle admitted local facts,
-   record original unknown responsibilities, stop daemon and Wait, verify owned
-   PIDs absent and listener closed, remove only owned directories and read back
-   absence. A timeout or Close request alone is not release proof; unknown product
-   cleanup remains unknown even if external ps observes process exit.
-
-Build and manual invocation template (replace placeholders explicitly; these
-commands have NOT been executed against a real Agent in this acceptance):
-
-```sh
-rtk proxy make build-go
-rtk proxy bin/massd --data /ABS/OWNED/data --listen 127.0.0.1:0 --local
-# Use the printed URL in MASS_URL; automatic permission approval stays OFF.
-# /ABS/OWNED/provider.json contains a RuntimeConfig, not a Runtime resource:
-# {"executable":"/ABS/OWNED/verified-launcher","envPolicy":"replace",
-#  "env":{"HOME":"/ABS/OWNED/home","PATH":"/EXPLICIT/PATH",
-#         "CODEX_HOME":"/ABS/OWNED/codex","CLAUDE_CONFIG_DIR":"/ABS/OWNED/claude"}}
-# Supply only the selected provider's required entries and external auth settings.
-rtk proxy bin/massctl runtime create agent --type codex --config-file /ABS/OWNED/provider.json
-rtk proxy bin/massctl runtime start agent
-rtk proxy bin/massctl -o json session create check -n acceptance --runtime agent --cwd /ABS/OWNED/project
-rtk proxy bin/massctl -o json session watch check -n acceptance
-# In a separate terminal after subscription.ready:
-rtk proxy bin/massctl -o json session prompt check -n acceptance --text 'Reply with a short text'
-rtk proxy bin/massctl -o json session get check -n acceptance
-rtk proxy bin/massctl -o json session history check -n acceptance --limit 100
-rtk proxy bin/massctl session archive check -n acceptance
-rtk proxy bin/massctl session resume check -n acceptance
-# Load is a separate fresh MASS name; get until completed/failed, do not retry:
-rtk proxy bin/massctl -o json session load imported -n acceptance --runtime agent --cwd /ABS/OWNED/project --session-id ORIGINAL_NATIVE_ID
-rtk proxy bin/massctl -o json session get imported -n acceptance
-# Cancellation targets the original loadId, not whichever work is current:
-rtk proxy bin/massctl -o json session cancel-load imported -n acceptance --load-id ORIGINAL_LOAD_ID
-rtk proxy bin/massctl runtime stop agent
-```
-
-Repeat with `--type claude` and its own explicit configuration/workspace. HTTP
-answering is available through `pkg/client.Client.Answer` or POST
-`/apis/v1/sessions/{sessionId}/interactions/{interaction64}/answer`; the interaction
-path segment is base64url-encoded according to the HTTP contract. See the
-[client implementation notes](../pkg/client/README.md),
-[runtime configuration](../README.md#runtime-launch-configuration) and
-[load boundaries](../README.md#retained-history-load). Never print Bearer tokens.
+六票均串行直接提交 v2，不建分支/worktree、不 push。harness 对 `0cfe97729`
+无差异；固定 Ticket01 probe 对 `9a9916e14` 无差异。生产代码只在 `pkg/`
+（`cmd` 除外），没有旧 managed/catalog、PublicEvent/EventProjector 或 seq 历史兼容路径。

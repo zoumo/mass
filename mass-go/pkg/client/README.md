@@ -48,16 +48,3 @@ automatic reconnect or resume, and no arbitrary frame-size limit.
 
 Client/HTTP/CLI and fixed SDK mock evidence verifies protocol and deterministic
 workflows. It does not establish real Agent/model or deployed-proxy acceptance.
-
-## Asynchronous history loading
-
-`LoadSession` returns a loadId and accepted Session, not completed history. Query
-`GetSession` for historyLoad nativeVerified/nativeResumed/nativeCompleted and
-completed/deliveryCompleted; query `History` separately with its opaque cursor.
-`CancelHistoryLoad` requires the original loadId. A timeout ends only this request;
-it neither cancels background work nor triggers an automatic retry. A stale cancel
-cannot close the retained connection or later input after completed load.
-Cleanup evidence is separate: unknown release remains unsettled, while successful
-load intentionally retains its connection. Replay never grants old interaction
-authority. Use `Answer` only for a current interaction observed from live events.
-See [current layered acceptance](../../docs/acceptance.md) for actual test scope.

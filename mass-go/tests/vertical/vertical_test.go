@@ -3,7 +3,6 @@ package vertical_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -48,14 +47,12 @@ func (g *identityGate) CreateSession(r resource.Session) (resource.Session, erro
 }
 
 func TestMain(m *testing.M) {
-	// The complete race suite has a five-minute budget, plus owned build/cleanup.
-	mainCtx, mainCancel := context.WithTimeout(context.Background(), 330*time.Second)
+	mainCtx, mainCancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	var err error
 	root, err = os.MkdirTemp("", "mass-vertical-")
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("owned vertical resource root:", root)
 	code := 1
 	func() {
 		defer func() {
@@ -131,14 +128,6 @@ func TestMain(m *testing.M) {
 			case "massctl":
 				ctl = bin
 			}
-		}
-		for _, name := range []string{"agent-sdk-testify-codex", "agent-sdk-testify-claude", "massd", "massctl"} {
-			binary, readErr := os.ReadFile(filepath.Join(root, name))
-			if readErr != nil {
-				fmt.Fprintln(os.Stderr, readErr)
-				return
-			}
-			fmt.Printf("owned artifact %s sha256=%x\n", name, sha256.Sum256(binary))
 		}
 		code = m.Run()
 	}()
