@@ -20,6 +20,36 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for HistoryLoadStatusPhase.
+const (
+	HistoryLoadStatusPhaseAccepted        HistoryLoadStatusPhase = "accepted"
+	HistoryLoadStatusPhaseCanceled        HistoryLoadStatusPhase = "canceled"
+	HistoryLoadStatusPhaseCompleted       HistoryLoadStatusPhase = "completed"
+	HistoryLoadStatusPhaseFailed          HistoryLoadStatusPhase = "failed"
+	HistoryLoadStatusPhaseNativeCompleted HistoryLoadStatusPhase = "native_completed"
+	HistoryLoadStatusPhaseReplaying       HistoryLoadStatusPhase = "replaying"
+)
+
+// Valid indicates whether the value is a known member of the HistoryLoadStatusPhase enum.
+func (e HistoryLoadStatusPhase) Valid() bool {
+	switch e {
+	case HistoryLoadStatusPhaseAccepted:
+		return true
+	case HistoryLoadStatusPhaseCanceled:
+		return true
+	case HistoryLoadStatusPhaseCompleted:
+		return true
+	case HistoryLoadStatusPhaseFailed:
+		return true
+	case HistoryLoadStatusPhaseNativeCompleted:
+		return true
+	case HistoryLoadStatusPhaseReplaying:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for HistoryReplayCurrentState.
 const (
 	HistoryReplayCurrentStateIdle           HistoryReplayCurrentState = "idle"
@@ -590,6 +620,27 @@ type CreateMetadata struct {
 	Namespace *string `json:"namespace,omitempty"`
 }
 
+// HistoryLoadCancel defines model for HistoryLoadCancel.
+type HistoryLoadCancel struct {
+	LoadId string `json:"loadId"`
+}
+
+// HistoryLoadStatus defines model for HistoryLoadStatus.
+type HistoryLoadStatus struct {
+	CleanupCompleted     bool                   `json:"cleanupCompleted"`
+	DeliveryCompleted    bool                   `json:"deliveryCompleted"`
+	Error                *OperationError        `json:"error,omitempty"`
+	LastCommittedEventId *string                `json:"lastCommittedEventId,omitempty"`
+	LoadId               string                 `json:"loadId"`
+	NativeCompleted      bool                   `json:"nativeCompleted"`
+	NativeResumed        bool                   `json:"nativeResumed"`
+	NativeVerified       bool                   `json:"nativeVerified"`
+	Phase                HistoryLoadStatusPhase `json:"phase"`
+}
+
+// HistoryLoadStatusPhase defines model for HistoryLoadStatus.Phase.
+type HistoryLoadStatusPhase string
+
 // HistoryPage defines model for HistoryPage.
 type HistoryPage struct {
 	Events        []SessionEvent            `json:"events"`
@@ -804,6 +855,20 @@ type SessionError struct {
 // SessionEvent defines model for SessionEvent.
 type SessionEvent = rawjson.RawMessage
 
+// SessionLoad defines model for SessionLoad.
+type SessionLoad struct {
+	Cwd        string                `json:"cwd"`
+	Metadata   SessionCreateMetadata `json:"metadata"`
+	RuntimeRef string                `json:"runtimeRef"`
+	SessionId  string                `json:"sessionId"`
+}
+
+// SessionLoadAccepted defines model for SessionLoadAccepted.
+type SessionLoadAccepted struct {
+	LoadId  string  `json:"loadId"`
+	Session Session `json:"session"`
+}
+
 // SessionPage defines model for SessionPage.
 type SessionPage struct {
 	Items nullable.Nullable[[]Session] `json:"items"`
@@ -820,11 +885,12 @@ type SessionSpec struct {
 
 // SessionStatus defines model for SessionStatus.
 type SessionStatus struct {
-	AppliedGeneration *int64           `json:"appliedGeneration,omitempty"`
-	Capabilities      *map[string]bool `json:"capabilities,omitempty"`
-	RuntimeGeneration *int64           `json:"runtimeGeneration,omitempty"`
-	SessionId         string           `json:"sessionId"`
-	State             string           `json:"state"`
+	AppliedGeneration *int64             `json:"appliedGeneration,omitempty"`
+	Capabilities      *map[string]bool   `json:"capabilities,omitempty"`
+	HistoryLoad       *HistoryLoadStatus `json:"historyLoad,omitempty"`
+	RuntimeGeneration *int64             `json:"runtimeGeneration,omitempty"`
+	SessionId         string             `json:"sessionId"`
+	State             string             `json:"state"`
 }
 
 // StateUpdate defines model for StateUpdate.
@@ -983,6 +1049,9 @@ type ArchiveSessionByNameOrIDJSONRequestBody = LifecycleByNameOrIDBody
 // CancelByNameOrIDJSONRequestBody defines body for CancelByNameOrID for application/json ContentType.
 type CancelByNameOrIDJSONRequestBody = CancelByNameOrIDBody
 
+// CancelHistoryLoadByNameOrIDJSONRequestBody defines body for CancelHistoryLoadByNameOrID for application/json ContentType.
+type CancelHistoryLoadByNameOrIDJSONRequestBody = HistoryLoadCancel
+
 // SendPromptByNameOrIDJSONRequestBody defines body for SendPromptByNameOrID for application/json ContentType.
 type SendPromptByNameOrIDJSONRequestBody = Input
 
@@ -1007,11 +1076,17 @@ type StopRuntimeJSONRequestBody = RuntimeActionBody
 // CreateSessionJSONRequestBody defines body for CreateSession for application/json ContentType.
 type CreateSessionJSONRequestBody = SessionCreate
 
+// LoadSessionJSONRequestBody defines body for LoadSession for application/json ContentType.
+type LoadSessionJSONRequestBody = SessionLoad
+
 // ArchiveSessionByIDJSONRequestBody defines body for ArchiveSessionByID for application/json ContentType.
 type ArchiveSessionByIDJSONRequestBody = LifecycleByIDBody
 
 // CancelByIDJSONRequestBody defines body for CancelByID for application/json ContentType.
 type CancelByIDJSONRequestBody = CancelByIDBody
+
+// CancelHistoryLoadByIDJSONRequestBody defines body for CancelHistoryLoadByID for application/json ContentType.
+type CancelHistoryLoadByIDJSONRequestBody = HistoryLoadCancel
 
 // SendPromptByIDJSONRequestBody defines body for SendPromptByID for application/json ContentType.
 type SendPromptByIDJSONRequestBody = Input
@@ -1121,6 +1196,14 @@ type ClientInterface interface {
 	// ObserveSessionByNameOrID performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events/stream (the `ObserveSessionByNameOrID` operationId) request.
 	ObserveSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, params *ObserveSessionByNameOrIDParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CancelHistoryLoadByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/history-load/cancel (the `CancelHistoryLoadByNameOrID` operationId) request,
+	// with any type of body and a specified content type.
+	CancelHistoryLoadByNameOrIDWithBody(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelHistoryLoadByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/history-load/cancel (the `CancelHistoryLoadByNameOrID` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CancelHistoryLoadByNameOrID(ctx context.Context, namespace string, nameOrID string, body CancelHistoryLoadByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// SendPromptByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/inputs (the `SendPromptByNameOrID` operationId) request,
 	// with any type of body and a specified content type.
 	SendPromptByNameOrIDWithBody(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1197,6 +1280,14 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	CreateSession(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// LoadSessionWithBody performs a POST /apis/v1/sessions/load (the `LoadSession` operationId) request,
+	// with any type of body and a specified content type.
+	LoadSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoadSession performs a POST /apis/v1/sessions/load (the `LoadSession` operationId) request.
+	// Takes a body of the `application/json` content type.
+	LoadSession(ctx context.Context, body LoadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetSessionByID performs a GET /apis/v1/sessions/{sessionId} (the `GetSessionByID` operationId) request.
 	GetSessionByID(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1221,6 +1312,14 @@ type ClientInterface interface {
 
 	// ObserveSessionByID performs a GET /apis/v1/sessions/{sessionId}/events/stream (the `ObserveSessionByID` operationId) request.
 	ObserveSessionByID(ctx context.Context, sessionId string, params *ObserveSessionByIDParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelHistoryLoadByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/history-load/cancel (the `CancelHistoryLoadByID` operationId) request,
+	// with any type of body and a specified content type.
+	CancelHistoryLoadByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelHistoryLoadByID performs a POST /apis/v1/sessions/{sessionId}/history-load/cancel (the `CancelHistoryLoadByID` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CancelHistoryLoadByID(ctx context.Context, sessionId string, body CancelHistoryLoadByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SendPromptByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/inputs (the `SendPromptByID` operationId) request,
 	// with any type of body and a specified content type.
@@ -1338,6 +1437,34 @@ func (c *Client) ListHistoryByNameOrID(ctx context.Context, namespace string, na
 // ObserveSessionByNameOrID performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events/stream (the `ObserveSessionByNameOrID` operationId) request.
 func (c *Client) ObserveSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, params *ObserveSessionByNameOrIDParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewObserveSessionByNameOrIDRequest(c.Server, namespace, nameOrID, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelHistoryLoadByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/history-load/cancel (the `CancelHistoryLoadByNameOrID` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CancelHistoryLoadByNameOrIDWithBody(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelHistoryLoadByNameOrIDRequestWithBody(c.Server, namespace, nameOrID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelHistoryLoadByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/history-load/cancel (the `CancelHistoryLoadByNameOrID` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CancelHistoryLoadByNameOrID(ctx context.Context, namespace string, nameOrID string, body CancelHistoryLoadByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelHistoryLoadByNameOrIDRequest(c.Server, namespace, nameOrID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1624,6 +1751,34 @@ func (c *Client) CreateSession(ctx context.Context, body CreateSessionJSONReques
 	return c.Client.Do(req)
 }
 
+// LoadSessionWithBody performs a POST /apis/v1/sessions/load (the `LoadSession` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) LoadSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoadSessionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LoadSession performs a POST /apis/v1/sessions/load (the `LoadSession` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) LoadSession(ctx context.Context, body LoadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoadSessionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GetSessionByID performs a GET /apis/v1/sessions/{sessionId} (the `GetSessionByID` operationId) request.
 func (c *Client) GetSessionByID(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSessionByIDRequest(c.Server, sessionId)
@@ -1709,6 +1864,34 @@ func (c *Client) ListHistoryByID(ctx context.Context, sessionId string, params *
 // ObserveSessionByID performs a GET /apis/v1/sessions/{sessionId}/events/stream (the `ObserveSessionByID` operationId) request.
 func (c *Client) ObserveSessionByID(ctx context.Context, sessionId string, params *ObserveSessionByIDParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewObserveSessionByIDRequest(c.Server, sessionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelHistoryLoadByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/history-load/cancel (the `CancelHistoryLoadByID` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CancelHistoryLoadByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelHistoryLoadByIDRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelHistoryLoadByID performs a POST /apis/v1/sessions/{sessionId}/history-load/cancel (the `CancelHistoryLoadByID` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CancelHistoryLoadByID(ctx context.Context, sessionId string, body CancelHistoryLoadByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelHistoryLoadByIDRequest(c.Server, sessionId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2122,6 +2305,60 @@ func NewObserveSessionByNameOrIDRequest(server string, namespace string, nameOrI
 		}
 
 	}
+
+	return req, nil
+}
+
+// NewCancelHistoryLoadByNameOrIDRequest calls the generic CancelHistoryLoadByNameOrID builder with application/json body
+func NewCancelHistoryLoadByNameOrIDRequest(server string, namespace string, nameOrID string, body CancelHistoryLoadByNameOrIDJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCancelHistoryLoadByNameOrIDRequestWithBody(server, namespace, nameOrID, "application/json", bodyReader)
+}
+
+// NewCancelHistoryLoadByNameOrIDRequestWithBody constructs an http.Request for the CancelHistoryLoadByNameOrID method, with any body, and a specified content type
+func NewCancelHistoryLoadByNameOrIDRequestWithBody(server string, namespace string, nameOrID string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "namespace", namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "nameOrID", nameOrID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/apis/v1/namespaces/%s/sessions/%s/history-load/cancel", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -2752,6 +2989,46 @@ func NewCreateSessionRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
+// NewLoadSessionRequest calls the generic LoadSession builder with application/json body
+func NewLoadSessionRequest(server string, body LoadSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLoadSessionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLoadSessionRequestWithBody constructs an http.Request for the LoadSession method, with any body, and a specified content type
+func NewLoadSessionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/apis/v1/sessions/load")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetSessionByIDRequest constructs an http.Request for the GetSessionByID method
 func NewGetSessionByIDRequest(server string, sessionId string) (*http.Request, error) {
 	var err error
@@ -3010,6 +3287,53 @@ func NewObserveSessionByIDRequest(server string, sessionId string, params *Obser
 		}
 
 	}
+
+	return req, nil
+}
+
+// NewCancelHistoryLoadByIDRequest calls the generic CancelHistoryLoadByID builder with application/json body
+func NewCancelHistoryLoadByIDRequest(server string, sessionId string, body CancelHistoryLoadByIDJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCancelHistoryLoadByIDRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewCancelHistoryLoadByIDRequestWithBody constructs an http.Request for the CancelHistoryLoadByID method, with any body, and a specified content type
+func NewCancelHistoryLoadByIDRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sessionId", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/apis/v1/sessions/%s/history-load/cancel", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -3295,6 +3619,16 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	ObserveSessionByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, params *ObserveSessionByNameOrIDParams, reqEditors ...RequestEditorFn) (*ObserveSessionByNameOrIDResponse, error)
 
+	// CancelHistoryLoadByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/history-load/cancel (the `CancelHistoryLoadByNameOrID` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CancelHistoryLoadByNameOrIDWithBodyWithResponse(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CancelHistoryLoadByNameOrIDResponse, error)
+
+	// CancelHistoryLoadByNameOrIDWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/history-load/cancel (the `CancelHistoryLoadByNameOrID` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CancelHistoryLoadByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body CancelHistoryLoadByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelHistoryLoadByNameOrIDResponse, error)
+
 	// SendPromptByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/inputs (the `SendPromptByNameOrID` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -3395,6 +3729,16 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CreateSessionWithResponse(ctx context.Context, body CreateSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateSessionResponse, error)
 
+	// LoadSessionWithBodyWithResponse performs a POST /apis/v1/sessions/load (the `LoadSession` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	LoadSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoadSessionResponse, error)
+
+	// LoadSessionWithResponse performs a POST /apis/v1/sessions/load (the `LoadSession` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	LoadSessionWithResponse(ctx context.Context, body LoadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*LoadSessionResponse, error)
+
 	// GetSessionByIDWithResponse performs a GET /apis/v1/sessions/{sessionId} (the `GetSessionByID` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -3429,6 +3773,16 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	ObserveSessionByIDWithResponse(ctx context.Context, sessionId string, params *ObserveSessionByIDParams, reqEditors ...RequestEditorFn) (*ObserveSessionByIDResponse, error)
+
+	// CancelHistoryLoadByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/history-load/cancel (the `CancelHistoryLoadByID` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CancelHistoryLoadByIDWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CancelHistoryLoadByIDResponse, error)
+
+	// CancelHistoryLoadByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/history-load/cancel (the `CancelHistoryLoadByID` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CancelHistoryLoadByIDWithResponse(ctx context.Context, sessionId string, body CancelHistoryLoadByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelHistoryLoadByIDResponse, error)
 
 	// SendPromptByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/inputs (the `SendPromptByID` operationId) request,
 	// with any type of body and a specified content type.
@@ -4153,6 +4507,145 @@ func (r ObserveSessionByNameOrIDResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ObserveSessionByNameOrIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CancelHistoryLoadByNameOrIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HistoryLoadStatus
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OperationError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *OperationError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *OperationError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *OperationError
+	// JSON405 the response for an HTTP 405 `application/json` response
+	JSON405 *OperationError
+	// JSON406 the response for an HTTP 406 `application/json` response
+	JSON406 *OperationError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *OperationError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *OperationError
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *OperationError
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OperationError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *OperationError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *OperationError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *OperationError
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *OperationError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON200() *HistoryLoadStatus {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON400() *OperationError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON401() *OperationError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON403() *OperationError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON404() *OperationError {
+	return r.JSON404
+}
+
+// GetJSON405 returns the response for an HTTP 405 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON405() *OperationError {
+	return r.JSON405
+}
+
+// GetJSON406 returns the response for an HTTP 406 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON406() *OperationError {
+	return r.JSON406
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON409() *OperationError {
+	return r.JSON409
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON415() *OperationError {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON422() *OperationError {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON429() *OperationError {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON500() *OperationError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON503() *OperationError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSON504() *OperationError {
+	return r.JSON504
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r CancelHistoryLoadByNameOrIDResponse) GetJSONDefault() *OperationError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CancelHistoryLoadByNameOrIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CancelHistoryLoadByNameOrIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CancelHistoryLoadByNameOrIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CancelHistoryLoadByNameOrIDResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -5834,6 +6327,152 @@ func (r CreateSessionResponse) ContentType() string {
 	return ""
 }
 
+// LoadSessionResponse202Headers the declared response headers of an HTTP 202 response for LoadSession
+type LoadSessionResponse202Headers struct {
+	Location *string
+}
+
+type LoadSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *SessionLoadAccepted
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OperationError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *OperationError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *OperationError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *OperationError
+	// JSON405 the response for an HTTP 405 `application/json` response
+	JSON405 *OperationError
+	// JSON406 the response for an HTTP 406 `application/json` response
+	JSON406 *OperationError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *OperationError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *OperationError
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *OperationError
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OperationError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *OperationError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *OperationError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *OperationError
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *OperationError
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *LoadSessionResponse202Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r LoadSessionResponse) GetJSON202() *SessionLoadAccepted {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r LoadSessionResponse) GetJSON400() *OperationError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r LoadSessionResponse) GetJSON401() *OperationError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r LoadSessionResponse) GetJSON403() *OperationError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LoadSessionResponse) GetJSON404() *OperationError {
+	return r.JSON404
+}
+
+// GetJSON405 returns the response for an HTTP 405 `application/json` response
+func (r LoadSessionResponse) GetJSON405() *OperationError {
+	return r.JSON405
+}
+
+// GetJSON406 returns the response for an HTTP 406 `application/json` response
+func (r LoadSessionResponse) GetJSON406() *OperationError {
+	return r.JSON406
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r LoadSessionResponse) GetJSON409() *OperationError {
+	return r.JSON409
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r LoadSessionResponse) GetJSON415() *OperationError {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r LoadSessionResponse) GetJSON422() *OperationError {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r LoadSessionResponse) GetJSON429() *OperationError {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r LoadSessionResponse) GetJSON500() *OperationError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r LoadSessionResponse) GetJSON503() *OperationError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r LoadSessionResponse) GetJSON504() *OperationError {
+	return r.JSON504
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r LoadSessionResponse) GetJSONDefault() *OperationError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r LoadSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LoadSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LoadSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LoadSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GetSessionByIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6516,6 +7155,145 @@ func (r ObserveSessionByIDResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ObserveSessionByIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CancelHistoryLoadByIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *HistoryLoadStatus
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OperationError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *OperationError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *OperationError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *OperationError
+	// JSON405 the response for an HTTP 405 `application/json` response
+	JSON405 *OperationError
+	// JSON406 the response for an HTTP 406 `application/json` response
+	JSON406 *OperationError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *OperationError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *OperationError
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *OperationError
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OperationError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *OperationError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *OperationError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *OperationError
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *OperationError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON200() *HistoryLoadStatus {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON400() *OperationError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON401() *OperationError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON403() *OperationError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON404() *OperationError {
+	return r.JSON404
+}
+
+// GetJSON405 returns the response for an HTTP 405 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON405() *OperationError {
+	return r.JSON405
+}
+
+// GetJSON406 returns the response for an HTTP 406 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON406() *OperationError {
+	return r.JSON406
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON409() *OperationError {
+	return r.JSON409
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON415() *OperationError {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON422() *OperationError {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON429() *OperationError {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON500() *OperationError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON503() *OperationError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSON504() *OperationError {
+	return r.JSON504
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r CancelHistoryLoadByIDResponse) GetJSONDefault() *OperationError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CancelHistoryLoadByIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CancelHistoryLoadByIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CancelHistoryLoadByIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CancelHistoryLoadByIDResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -7294,6 +8072,28 @@ func (c *ClientWithResponses) ObserveSessionByNameOrIDWithResponse(ctx context.C
 	return ParseObserveSessionByNameOrIDResponse(rsp)
 }
 
+// CancelHistoryLoadByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/history-load/cancel (the `CancelHistoryLoadByNameOrID` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CancelHistoryLoadByNameOrIDWithBodyWithResponse(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CancelHistoryLoadByNameOrIDResponse, error) {
+	rsp, err := c.CancelHistoryLoadByNameOrIDWithBody(ctx, namespace, nameOrID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelHistoryLoadByNameOrIDResponse(rsp)
+}
+
+// CancelHistoryLoadByNameOrIDWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/history-load/cancel (the `CancelHistoryLoadByNameOrID` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CancelHistoryLoadByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body CancelHistoryLoadByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelHistoryLoadByNameOrIDResponse, error) {
+	rsp, err := c.CancelHistoryLoadByNameOrID(ctx, namespace, nameOrID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelHistoryLoadByNameOrIDResponse(rsp)
+}
+
 // SendPromptByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/inputs (the `SendPromptByNameOrID` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -7514,6 +8314,28 @@ func (c *ClientWithResponses) CreateSessionWithResponse(ctx context.Context, bod
 	return ParseCreateSessionResponse(rsp)
 }
 
+// LoadSessionWithBodyWithResponse performs a POST /apis/v1/sessions/load (the `LoadSession` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) LoadSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoadSessionResponse, error) {
+	rsp, err := c.LoadSessionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoadSessionResponse(rsp)
+}
+
+// LoadSessionWithResponse performs a POST /apis/v1/sessions/load (the `LoadSession` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) LoadSessionWithResponse(ctx context.Context, body LoadSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*LoadSessionResponse, error) {
+	rsp, err := c.LoadSession(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoadSessionResponse(rsp)
+}
+
 // GetSessionByIDWithResponse performs a GET /apis/v1/sessions/{sessionId} (the `GetSessionByID` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -7589,6 +8411,28 @@ func (c *ClientWithResponses) ObserveSessionByIDWithResponse(ctx context.Context
 		return nil, err
 	}
 	return ParseObserveSessionByIDResponse(rsp)
+}
+
+// CancelHistoryLoadByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/history-load/cancel (the `CancelHistoryLoadByID` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CancelHistoryLoadByIDWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CancelHistoryLoadByIDResponse, error) {
+	rsp, err := c.CancelHistoryLoadByIDWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelHistoryLoadByIDResponse(rsp)
+}
+
+// CancelHistoryLoadByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/history-load/cancel (the `CancelHistoryLoadByID` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CancelHistoryLoadByIDWithResponse(ctx context.Context, sessionId string, body CancelHistoryLoadByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelHistoryLoadByIDResponse, error) {
+	rsp, err := c.CancelHistoryLoadByID(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelHistoryLoadByIDResponse(rsp)
 }
 
 // SendPromptByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/inputs (the `SendPromptByID` operationId) request,
@@ -8189,6 +9033,130 @@ func ParseObserveSessionByNameOrIDResponse(rsp *http.Response) (*ObserveSessionB
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON405 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON406 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCancelHistoryLoadByNameOrIDResponse parses an HTTP response from a CancelHistoryLoadByNameOrIDWithResponse call
+func ParseCancelHistoryLoadByNameOrIDResponse(rsp *http.Response) (*CancelHistoryLoadByNameOrIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CancelHistoryLoadByNameOrIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HistoryLoadStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest OperationError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -9802,6 +10770,143 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 	return response, nil
 }
 
+// ParseLoadSessionResponse parses an HTTP response from a LoadSessionWithResponse call
+func ParseLoadSessionResponse(rsp *http.Response) (*LoadSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LoadSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest SessionLoadAccepted
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON405 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON406 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers LoadSessionResponse202Headers
+		if values := rsp.Header.Values("Location"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Location", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.Location = &value
+		}
+		response.Headers202 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseGetSessionByIDResponse parses an HTTP response from a GetSessionByIDWithResponse call
 func ParseGetSessionByIDResponse(rsp *http.Response) (*GetSessionByIDResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -10312,6 +11417,130 @@ func ParseObserveSessionByIDResponse(rsp *http.Response) (*ObserveSessionByIDRes
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON405 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON406 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCancelHistoryLoadByIDResponse parses an HTTP response from a CancelHistoryLoadByIDWithResponse call
+func ParseCancelHistoryLoadByIDResponse(rsp *http.Response) (*CancelHistoryLoadByIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CancelHistoryLoadByIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest HistoryLoadStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest OperationError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

@@ -580,7 +580,16 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 				}
 				run.err = err
 				run.streamErr = err
+				unresolved := make([]*lane, 0, len(run.lanes))
+				for _, l := range run.lanes {
+					if l.load != nil && !l.load.complete.Load() {
+						unresolved = append(unresolved, l)
+					}
+				}
 				s.mu.Unlock()
+				for _, l := range unresolved {
+					s.failLoad(run, l, "failed", err)
+				}
 			}
 			return
 		}
@@ -713,6 +722,7 @@ func (s *Service) fail(l *lane, err error) {
 
 func (s *Service) process(run *runBinding, l *lane) {
 	defer close(l.done)
+	publicationFailed := false
 	for entry := range l.queue {
 		if entry.barrier != nil {
 			close(entry.barrier)
@@ -745,7 +755,6 @@ func (s *Service) process(run *runBinding, l *lane) {
 				for {
 					response := <-l.retry
 					err = s.reconcileEvent(e)
-					response <- err
 					if err == nil {
 						s.mu.Lock()
 						l.commitErr = nil
@@ -753,20 +762,27 @@ func (s *Service) process(run *runBinding, l *lane) {
 							l.load.deliveryFailed = make(chan struct{})
 						}
 						s.mu.Unlock()
+						response <- nil
 						break
 					}
+					response <- err
 				}
 			}
 		}
-		b, err := s.broadcastForSession(l.session)
-		if err == nil {
-			err = b.Publish(e)
-		}
-		// Publish can fail after partial delivery. History is already committed;
-		// diagnose this event and continue without retrying it.
-		if err != nil {
-			slog.Warn("realtime publication failed", "error", err, "session_id", e.SessionID)
-			s.failLoad(run, l, "failed", err)
+		if !publicationFailed {
+			b, err := s.broadcastForSession(l.session)
+			if err == nil {
+				err = b.Publish(e)
+			}
+			// A required handler may have partially delivered this UUID. Never
+			// retry it or let later load facts overtake its failed publication.
+			if err != nil {
+				slog.Warn("realtime publication failed", "error", err, "session_id", e.SessionID)
+				if l.load != nil {
+					publicationFailed = true
+				}
+				s.failLoad(run, l, "failed", err)
+			}
 		}
 		if l.load != nil && e.Persistent() && e.Replay != nil {
 			l.load.mu.Lock()
@@ -784,7 +800,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 		if request, ok := e.Payload().(events.InteractionRequested); ok && s.policy != nil {
 			run.admission.RLock()
 			s.mu.Lock()
-			allowed := !s.closing && !run.stopping && !l.closing && l.err == nil && l.source.SameRun(e.Source())
+			allowed := !s.closing && !run.stopping && !l.closing && l.err == nil && (l.load == nil || l.load.complete.Load()) && l.source.SameRun(e.Source())
 			if allowed {
 				l.admission.RLock()
 			}
@@ -871,6 +887,22 @@ func (s *Service) ReconcileHistory(ctx context.Context, ref resource.SessionRef)
 	}
 	select {
 	case err := <-response:
+		if err == nil && l.load != nil {
+			// Explicit local reconciliation does not repeat native cleanup.
+			// Re-evaluate its delivery proof after the original queue drains.
+			go func() {
+				<-l.load.cleanupDone
+				if s.drainLane(context.Background(), l) != nil {
+					return
+				}
+				l.load.mu.Lock()
+				defer l.load.mu.Unlock()
+				if l.load.cleanupErr == nil {
+					l.load.status.CleanupCompleted = true
+					_ = s.writeLoad(l)
+				}
+			}()
+		}
 		return err
 	case <-ctx.Done():
 		return ctx.Err()

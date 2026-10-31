@@ -19,7 +19,15 @@ func main() {
 	mode := os.Getenv("LOAD_MODE")
 	scan := bufio.NewScanner(os.Stdin)
 	thread := func() any {
-		return map[string]any{"id": "native-thread", "sessionId": "native-session", "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": os.Getenv("LOAD_CWD"), "ephemeral": false, "modelProvider": "synthetic", "preview": "not transcript", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}, "turns": []any{}}
+		cwd := os.Getenv("LOAD_CWD")
+		if mode == "identity" {
+			cwd += "/wrong"
+		}
+		nativeSession := "native-session"
+		if mode == "resume-drift" && resumes > 0 {
+			nativeSession = "different-session"
+		}
+		return map[string]any{"id": "native-thread", "sessionId": nativeSession, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "not transcript", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}, "turns": []any{}}
 	}
 	for scan.Scan() {
 		var v struct {
@@ -53,7 +61,11 @@ func main() {
 			data := []any{}
 			var next any
 			if v.Params["cursor"] == nil {
-				data = []any{map[string]any{"id": "turn-z", "status": "completed", "items": []any{}, "itemsView": "full"}}
+				view := "full"
+				if mode == "summary" {
+					view = "summary"
+				}
+				data = []any{map[string]any{"id": "turn-z", "status": "completed", "items": []any{}, "itemsView": view}}
 				next = "turn/+:next"
 			} else if v.Params["cursor"] == "turn/+:next" {
 				data = []any{map[string]any{"id": "turn-a", "status": "completed", "items": []any{}, "itemsView": "full"}}
@@ -89,6 +101,7 @@ func main() {
 					{"id": "no-output", "type": "commandExecution", "command": "true", "cwd": os.Getenv("LOAD_CWD"), "commandActions": []any{}, "status": "completed"},
 					{"id": "null-output", "type": "commandExecution", "command": "true", "cwd": os.Getenv("LOAD_CWD"), "commandActions": []any{}, "status": "completed", "aggregatedOutput": nil},
 					{"id": "empty-output", "type": "commandExecution", "command": "true", "cwd": os.Getenv("LOAD_CWD"), "commandActions": []any{}, "status": "completed", "aggregatedOutput": ""},
+					{"id": "truncated-output", "type": "commandExecution", "command": "no-run", "cwd": os.Getenv("LOAD_CWD"), "commandActions": []any{}, "status": "completed", "aggregatedOutput": "partial", "truncated": true},
 					{"id": "mcp", "type": "mcpToolCall", "server": "synthetic", "tool": "lookup", "arguments": map[string]any{"number": 9007199254740993}, "status": "completed", "result": map[string]any{"content": []any{map[string]any{"type": "text", "text": "mcp saved"}}}},
 					{"id": "dynamic", "type": "dynamicToolCall", "tool": "lookup", "arguments": nil, "status": "completed", "success": true, "contentItems": []any{map[string]any{"type": "inputText", "text": "dynamic saved"}}},
 				} {
@@ -98,6 +111,10 @@ func main() {
 
 			if tid == "turn-a" {
 				switch mode {
+				case "repeat":
+					data = []any{map[string]any{"turnId": tid, "item": map[string]any{"id": "first", "type": "agentMessage", "text": "legitimate repeated native ID"}}}
+				case "valid-unsupported":
+					data = []any{map[string]any{"turnId": tid, "item": map[string]any{"id": "sleep", "type": "sleep", "durationMs": 1}}}
 				case "unsupported":
 					data = []any{map[string]any{"turnId": tid, "item": map[string]any{"id": "unsupported", "type": "futureContent", "text": "must not disappear"}}}
 				case "parent":

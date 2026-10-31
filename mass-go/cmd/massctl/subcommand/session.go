@@ -19,11 +19,12 @@ import (
 
 func (o *options) sessionCommands() *cobra.Command {
 	root := group("session", "Manage Sessions and observe future events")
-	for _, action := range []string{"create", "get", "list", "resume", "archive", "cancel", "prompt", "history", "watch"} {
+	for _, action := range []string{"create", "load", "get", "list", "resume", "archive", "cancel", "cancel-load", "prompt", "history", "watch"} {
 		cmd := &cobra.Command{Use: action + " NAME_OR_ID", Short: action + " Session", Args: cobra.ExactArgs(1)}
 		cmd.Long = "Use NAME -n NAMESPACE or a raw global Session ID without namespace. No default namespace or lookup fallback."
 		cmd.Example = "  massctl session " + action + " review -n demo\n  massctl session " + action + " SESSION_ID"
 		var namespace, runtimeRef, cwd, systemPrompt, systemFile, text, after string
+		var nativeSessionID, loadID string
 		var dirs []string
 		var limit int
 		if action == "list" {
@@ -47,6 +48,23 @@ func (o *options) sessionCommands() *cobra.Command {
 			for _, flag := range []string{"namespace", "runtime", "cwd"} {
 				_ = cmd.MarkFlagRequired(flag)
 			}
+		}
+		if action == "load" {
+			cmd.Use = "load NAME"
+			cmd.Long = "Accept an asynchronous load into a new Session. Namespace, runtime, cwd and native session ID are required. The Runtime must already be started. Paths refer to the Agent host. The receipt is acceptance only; inspect session get -o json for historyLoad status. Timeout or interruption ends waiting, not the accepted load."
+			cmd.Example = "  massctl session load imported -n demo --runtime agent --cwd /remote/workspace --session-id NATIVE_ID"
+			cmd.Flags().StringVar(&runtimeRef, "runtime", "", "Started Runtime name (required)")
+			cmd.Flags().StringVar(&cwd, "cwd", "", "Agent working directory (required)")
+			cmd.Flags().StringVar(&nativeSessionID, "session-id", "", "Raw native Session ID (required)")
+			for _, flag := range []string{"namespace", "runtime", "cwd", "session-id"} {
+				_ = cmd.MarkFlagRequired(flag)
+			}
+		}
+		if action == "cancel-load" {
+			cmd.Long += " Cancel only the original load identified by --load-id, not subsequent live work. The returned status does not prove cleanup is complete."
+			cmd.Example = "  massctl session cancel-load imported -n demo --load-id ORIGINAL_LOAD_ID\n  massctl session cancel-load SESSION_ID --load-id ORIGINAL_LOAD_ID"
+			cmd.Flags().StringVar(&loadID, "load-id", "", "Original opaque load ID (required)")
+			_ = cmd.MarkFlagRequired("load-id")
 		}
 		if action == "prompt" {
 			cmd.Example = "  massctl session prompt review -n demo --text 'Describe the workspace'"
@@ -80,6 +98,20 @@ func (o *options) sessionCommands() *cobra.Command {
 				}
 			}
 			switch action {
+			case "load":
+				if namespace == "" || runtimeRef == "" || cwd == "" {
+					return invalid("Namespace, runtime and cwd are required")
+				}
+				if err := resource.ValidateSessionID(nativeSessionID); err != nil {
+					return invalid("Invalid native Session ID")
+				}
+				v := resource.SessionLoad{Metadata: resource.Metadata{Namespace: namespace, Name: args[0]}, RuntimeRef: runtimeRef, Cwd: cwd, SessionID: nativeSessionID}
+				call = func(ctx context.Context, out any) error { return o.client.LoadSession(ctx, v, out) }
+			case "cancel-load":
+				if loadID == "" || !utf8.ValidString(loadID) {
+					return invalid("Load ID is required and must be valid UTF-8")
+				}
+				call = func(ctx context.Context, out any) error { return o.client.CancelHistoryLoad(ctx, ref, loadID, out) }
 			case "create":
 				if namespace == "" || runtimeRef == "" || cwd == "" {
 					return invalid("Namespace, runtime and cwd are required")
