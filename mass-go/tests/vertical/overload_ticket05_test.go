@@ -43,12 +43,12 @@ func (g *nativeOverloadGate) Append(id string, records []events.SessionEvent) (*
 func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 	for _, kind := range []string{"codex", "claude"} {
 		t.Run(kind, func(t *testing.T) {
-			root, rootErr := filepath.EvalSymlinks(t.TempDir())
+			ownedRoot, rootErr := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, rootErr)
-			bin := filepath.Join(root, "peer")
+			bin := filepath.Join(ownedRoot, "peer")
 			out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/lifecycle-peer").CombinedOutput()
 			require.NoError(t, err, string(out))
-			st, err := file.Open(filepath.Join(root, "data"), false)
+			st, err := file.Open(filepath.Join(ownedRoot, "data"), false)
 			require.NoError(t, err)
 			defer st.Close()
 			slowID := "damaged"
@@ -59,17 +59,17 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			var once sync.Once
 			release := func() { once.Do(func() { close(gate.release) }) }
 			defer release()
-			reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(root, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(root, "private")}})
+			reg := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(ownedRoot, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(ownedRoot, "private")}})
 			svc := service.New(st, gate, reg)
 			defer func() { release(); _ = svc.Shutdown(ctx(t)) }()
-			pidFile := filepath.Join(root, "owned-pid")
+			pidFile := filepath.Join(ownedRoot, "owned-pid")
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"PEER_PID": pidFile, "PEER_KIND": kind, "PEER_CONTROL": "overload"}}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
 			require.NoError(t, err)
 			refs := map[string]resource.SessionRef{}
 			for _, name := range []string{"healthy", "damaged"} {
-				work := filepath.Join(root, name)
+				work := filepath.Join(ownedRoot, name)
 				require.NoError(t, os.Mkdir(work, 0o700))
 				r, e := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: name}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}})
 				require.NoError(t, e)
