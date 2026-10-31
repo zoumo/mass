@@ -10,7 +10,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/events"
 )
 
-func (d *Driver) loadItem(h *nativeLoad, id string, entry ct.ThreadItemEntry) error {
+func (d *Driver) loadItem(h *nativeLoad, id string, entry ct.ThreadItemEntry, pagination map[string]any) error {
 	b, err := json.Marshal(entry)
 	if err != nil {
 		return err
@@ -30,7 +30,7 @@ func (d *Driver) loadItem(h *nativeLoad, id string, entry ct.ThreadItemEntry) er
 	if itemID == "" {
 		return errors.New("missing retained item identity")
 	}
-	meta := map[string]any{"native": raw, "timeSource": "import_observation", "atomic": false, "scope": "all_retained_main_history"}
+	meta := map[string]any{"native": raw, "timeSource": "import_observation", "atomic": false, "scope": "all_retained_main_history", "pagination": pagination}
 	emit := func(p events.Payload) error { return d.loadEmit(h, id, itemID, entry.TurnID, meta, p) }
 	switch kind {
 	case "userMessage":

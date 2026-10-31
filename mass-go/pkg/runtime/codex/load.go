@@ -57,7 +57,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 			if errors.Is(result, context.Canceled) {
 				phase = "canceled"
 			}
-			_ = d.loadEmit(h, id, "", "", nil, events.HistoryReplay{LoadID: loadID, Phase: phase, RetainedScope: "all_retained_main_history", Error: map[string]any{"reason": "native_history_failed"}})
+			_ = d.loadEmit(h, id, "", "", nil, events.HistoryReplay{LoadID: loadID, Phase: phase, RetainedScope: "all_retained_main_history", Error: map[string]any{"code": "unavailable", "reason": "native_history_failed", "message": "Native history read did not complete"}})
 		}
 		d.mu.Lock()
 		h.terminal = true
@@ -105,7 +105,14 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	d.sessions[id] = s
 	d.wg.Add(1)
 	d.mu.Unlock()
-	go d.observe(id, s)
+	observing := false
+	startObserve := func() {
+		if !observing {
+			observing = true
+			go d.observe(id, s)
+		}
+	}
+	defer startObserve() // Failed verification must still drain owned native cleanup.
 	if err := verifyLoadThread(response.Thread, id, cwd); err != nil {
 		return err
 	}
@@ -119,6 +126,8 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := d.loadEmit(h, id, "", "", nil, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: resumed}); err != nil {
 		return err
 	}
+	// The verified start binds this source before any genuine live observations.
+	startObserve()
 	first, err := d.readLoad(readCtx, c, h, id, true)
 	if err != nil {
 		return err
@@ -154,7 +163,7 @@ func verifyLoadThread(t ct.Thread, id, cwd string) error {
 	if t.Status.Idle == nil {
 		return errors.New("native current work cannot be proven settled")
 	}
-	if len(t.Source.Unknown) > 0 || t.Source.SubAgent != nil || t.Source.Value != nil && *t.Source.Value == ct.SessionSourceValueUnknown {
+	if len(t.Source.Unknown) > 0 || t.Source.SubAgent != nil || t.Source.Value == nil || *t.Source.Value == ct.SessionSourceValueUnknown {
 		return errors.New("unsupported native source")
 	}
 	if p, ok := t.Path.Get(); ok && !filepath.IsAbs(p) {
@@ -270,7 +279,30 @@ func (d *Driver) readLoad(ctx context.Context, c *sdk.Client, h *nativeLoad, id 
 						return [32]byte{}, errors.New("native item parent mismatch")
 					}
 					if emit {
-						if err := d.loadItem(h, id, entry); err != nil {
+						pagination := map[string]any{"direction": "asc", "itemsView": "full", "turnId": turn.ID}
+						if v, ok := cursor.Get(); ok {
+							pagination["turnCursor"] = v
+						}
+						if v, ok := ic.Get(); ok {
+							if v.Value != nil {
+								pagination["itemCursor"] = *v.Value
+							}
+						}
+						if items.NextCursor.IsSet() {
+							var next any
+							if v, ok := items.NextCursor.Get(); ok {
+								next = v
+							}
+							pagination["nextItemCursor"] = next
+						}
+						if turns.NextCursor.IsSet() {
+							var next any
+							if v, ok := turns.NextCursor.Get(); ok {
+								next = v
+							}
+							pagination["nextTurnCursor"] = next
+						}
+						if err := d.loadItem(h, id, entry, pagination); err != nil {
 							return [32]byte{}, err
 						}
 					}
