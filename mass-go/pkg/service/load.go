@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -22,6 +23,12 @@ type historyLoad struct {
 	bound          bool // guarded by Service.mu; only the first legal marker binds the run
 	nativeTerminal bool // guarded by historyLoad.mu
 	cleanupStarted bool
+	cancel         context.CancelFunc
+	done           chan struct{}
+	cleanupDone    chan struct{}
+	cleanupErr     error
+	capabilities   runtime.Capabilities
+	deliveryFailed chan struct{}
 }
 
 func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (resource.SessionLoadAccepted, error) {
@@ -61,12 +68,14 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	if len(page.Events) != 0 || page.Next != "" {
 		return resource.SessionLoadAccepted{}, store.ErrConflict
 	}
-	load := &historyLoad{id: uuid.NewString()}
+	owner, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	load := &historyLoad{id: uuid.NewString(), cancel: cancel, done: make(chan struct{}), cleanupDone: make(chan struct{}), deliveryFailed: make(chan struct{})}
 	load.status = resource.HistoryLoadStatus{LoadID: load.id, Phase: "accepted"}
 	initial := load.status
 	r := resource.Session{Metadata: m, Spec: resource.SessionSpec{RuntimeRef: input.RuntimeRef, SessionSpec: runtime.SessionSpec{Cwd: input.Cwd}}, Status: resource.SessionStatus{SessionID: input.SessionID, State: "opening", RuntimeGeneration: run.generation, HistoryLoad: &initial}}
 	r, err = s.meta.CreateSession(r)
 	if err != nil {
+		cancel()
 		return resource.SessionLoadAccepted{}, err
 	}
 	l := &lane{session: r, load: load, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
@@ -75,7 +84,8 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	s.mu.Unlock()
 	go s.process(run, l)
 	go func() {
-		if err := run.driver.LoadSession(context.WithoutCancel(ctx), input.SessionID, runtime.Address{Namespace: m.Namespace, SessionName: m.Name}, input.Cwd, load.id); err != nil {
+		defer close(load.done)
+		if err := run.driver.LoadSession(owner, input.SessionID, runtime.Address{Namespace: m.Namespace, SessionName: m.Name}, input.Cwd, load.id); err != nil {
 			s.failLoad(run, l, "failed", err)
 		}
 	}()
@@ -92,12 +102,14 @@ func (s *Service) writeLoad(l *lane) error {
 			r.Status.State = events.Unknown
 			r.Status.AppliedGeneration = r.Metadata.Generation
 			r.Status.RuntimeGeneration = l.session.Status.RuntimeGeneration
+			r.Status.Capabilities = l.load.capabilities
 		} else {
 			r.Status.State = "opening"
 		}
 	})
 	return err
 }
+
 func loadError(err error) *runtime.OperationError {
 	var public *runtime.OperationError
 	if errors.As(err, &public) {
@@ -106,6 +118,7 @@ func loadError(err error) *runtime.OperationError {
 	}
 	return &runtime.OperationError{Code: "unavailable", Reason: "history_load_failed", Message: "History load did not settle; original ownership is retained"}
 }
+
 func (s *Service) failLoad(run *runBinding, l *lane, phase string, cause error) {
 	h := l.load
 	if h == nil {
@@ -123,19 +136,33 @@ func (s *Service) failLoad(run *runBinding, l *lane, phase string, cause error) 
 	_ = s.writeLoad(l)
 	launch := !h.cleanupStarted
 	h.cleanupStarted = true
+	h.cancel()
 	h.mu.Unlock()
 	if launch {
 		go func() {
+			// The producer must finish registration before cancellation targets it.
+			// This also covers cancellation immediately after durable acceptance.
+			<-h.done
 			err := run.driver.CancelHistoryLoad(context.Background(), l.session.Status.SessionID, h.id)
+			var deliveryErr error
+			if err == nil {
+				deliveryErr = s.drainLane(context.Background(), l)
+			}
 			h.mu.Lock()
 			defer h.mu.Unlock()
-			if err == nil {
+			s.mu.Lock()
+			settled := l.commitErr == nil
+			s.mu.Unlock()
+			if err == nil && settled && deliveryErr == nil {
 				h.status.CleanupCompleted = true
 			}
+			h.cleanupErr = err
 			_ = s.writeLoad(l)
+			close(h.cleanupDone)
 		}()
 	}
 }
+
 func (s *Service) CancelHistoryLoad(ctx context.Context, ref resource.SessionRef, id string) (resource.HistoryLoadStatus, error) {
 	if err := ctx.Err(); err != nil {
 		return resource.HistoryLoadStatus{}, err
@@ -159,6 +186,12 @@ func (s *Service) CancelHistoryLoad(ctx context.Context, ref resource.SessionRef
 	if h.complete.Load() {
 		h.mu.Unlock()
 		return resource.HistoryLoadStatus{}, runtime.FailedPrecondition("history load already completed")
+	}
+	// Reserve cancellation while holding the same lock as durable completion.
+	// A concurrent completion cannot win between the check and the transition.
+	if h.status.Error == nil {
+		h.status.Phase = "canceled"
+		h.status.Error = &runtime.OperationError{Code: "failed_precondition", Reason: "history_load_canceled", Message: "History load canceled by its owner"}
 	}
 	h.mu.Unlock()
 	s.failLoad(run, l, "canceled", &runtime.OperationError{Code: "failed_precondition", Reason: "history_load_canceled", Message: "History load canceled by its owner"})
@@ -186,7 +219,8 @@ func (s *Service) loadMarker(run *runBinding, l *lane, e events.SessionEvent) er
 			}
 			h.status.NativeVerified = true
 			h.status.NativeResumed = true
-			if h.status.Error == nil {
+			h.capabilities = p.ResumedSession.Capabilities
+			if h.status.Error == nil && !h.status.NativeCompleted {
 				h.status.Phase = "replaying"
 			}
 		case "native_completed":
@@ -229,4 +263,41 @@ func (s *Service) loadMarker(run *runBinding, l *lane, e events.SessionEvent) er
 		s.failLoad(run, l, "failed", errors.New("native history failed"))
 	}
 	return err
+}
+
+func (s *Service) validateLoadEvent(l *lane, e events.SessionEvent) error {
+	h := l.load
+	marker, isMarker := e.Payload().(events.HistoryReplay)
+	if h == nil {
+		if isMarker || e.Replay != nil {
+			return runtime.FailedPrecondition("replay without original load")
+		}
+		return nil
+	}
+	if !isMarker && e.Replay == nil {
+		return nil
+	} // Real live observations keep their original source, not replay authority.
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if e.Replay == nil || e.Replay.LoadID != h.id || e.Source().Work() != "" || h.nativeTerminal {
+		return runtime.FailedPrecondition("replay identity or terminal order mismatch")
+	}
+	if isMarker {
+		if marker.LoadID != h.id {
+			return runtime.FailedPrecondition("marker load identity mismatch")
+		}
+		switch marker.Phase {
+		case "started":
+			if h.status.NativeResumed {
+				return runtime.FailedPrecondition("duplicate replay start")
+			}
+		case "native_completed":
+			if !h.status.NativeResumed {
+				return runtime.FailedPrecondition("completion before verified resume")
+			}
+		}
+	} else if !e.Persistent() || !h.status.NativeResumed || e.Replay.NativeRecordID == "" || e.Replay.NativeParentID == "" {
+		return runtime.FailedPrecondition("history content lacks verified identity or parent")
+	}
+	return nil
 }

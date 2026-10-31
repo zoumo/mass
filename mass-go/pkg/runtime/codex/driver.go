@@ -62,6 +62,7 @@ type session struct {
 }
 type Driver struct {
 	opening      int
+	loads        map[string]*nativeLoad
 	vault        recovery.Vault
 	mu           sync.Mutex
 	op           sync.Mutex
@@ -178,7 +179,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if err := json.Unmarshal(material.Context, &saved); err != nil {
 			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
-		if saved.ID != resume || saved.SessionID != resume || saved.Ephemeral || saved.Cwd != spec.Cwd {
+		if saved.ID != resume || saved.SessionID == "" || saved.Ephemeral || saved.Cwd != spec.Cwd {
 			return runtime.DriverSession{}, noResources("invalid native recovery context")
 		}
 		native, err = sdk.Open(ctx, sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)}})
@@ -204,7 +205,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		thread = response.Thread
 	}
 	id := thread.ID
-	if id == "" || thread.SessionID != id || thread.Ephemeral || thread.Cwd != spec.Cwd {
+	if id == "" || thread.SessionID == "" || thread.Ephemeral || thread.Cwd != spec.Cwd {
 		return runtime.DriverSession{}, errors.New("outcome_unknown: missing or mismatched native identity/context")
 	}
 	if resume == "" {
