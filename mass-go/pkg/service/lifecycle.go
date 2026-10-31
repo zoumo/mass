@@ -174,11 +174,14 @@ func (s *Service) archiveSession(ctx context.Context, ref resource.SessionRef) (
 	if err := s.sealLane(ctx, l); err != nil {
 		return r, err
 	}
-	if err := run.driver.CloseSession(ctx, r.Status.SessionID); err != nil {
-		s.mu.Lock()
-		l.releasing = false // Explicit cancel can still settle the original work.
-		s.mu.Unlock()
-		return r, err
+	if !l.nativeClosed {
+		if err := s.closeForStop(ctx, run, r.Status.SessionID); err != nil {
+			s.mu.Lock()
+			l.releasing = false // Explicit cancel can still settle the original work.
+			s.mu.Unlock()
+			return r, err
+		}
+		l.nativeClosed = true
 	}
 	if err := s.drainLane(ctx, l); err != nil {
 		return r, err
@@ -532,6 +535,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		l = &lane{session: r, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{})}
 	}
 	l.source = native.Source
+	l.nativeClosed = false
 	l.closing = false
 	l.releasing = false
 	l.err = errors.Join(l.err, op.err)

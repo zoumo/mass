@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/eventstore"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -66,6 +67,14 @@ type stopDriver struct {
 	onStop   func(context.Context) error
 	config   runtime.Config
 	onStart  func(context.Context) (runtime.Capabilities, error)
+	onCancel func(context.Context, string) (runtime.CancelReceipt, error)
+}
+
+func (d *stopDriver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {
+	if d.onCancel != nil {
+		return d.onCancel(ctx, id)
+	}
+	return d.workDriver.Cancel(ctx, id)
 }
 
 func (d *stopDriver) Start(ctx context.Context) (runtime.Capabilities, error) {
@@ -396,6 +405,117 @@ func (s *RuntimeStopSuite) TestStopRetainsOverflowArrivingDuringDriverRelease() 
 	s.assertStopRetainsOverflow(false)
 }
 
+func (s *RuntimeStopSuite) TestArchiveCancelsOriginalWorkBeforeFinalFactSettlement() {
+	var active atomic.Bool
+	active.Store(true)
+	s.d.onClose = func(context.Context) error {
+		if active.Load() {
+			return runtime.ErrWorkUnsettled
+		}
+		return nil
+	}
+	s.d.onCancel = func(ctx context.Context, id string) (runtime.CancelReceipt, error) {
+		final, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "demo", SessionID: id, ItemID: "final", Time: time.Now()}, events.AgentMessage{MessageID: "final", Content: []events.ContentBlock{events.Text("final cancellation fact")}}, s.d.source)
+		if err != nil {
+			return runtime.CancelReceipt{}, err
+		}
+		if err := s.d.pipe.Send(ctx, final); err != nil {
+			return runtime.CancelReceipt{}, err
+		}
+		if err := s.d.pipe.Flush(ctx); err != nil {
+			return runtime.CancelReceipt{}, err
+		}
+		active.Store(false)
+		return runtime.CancelReceipt{Target: "original-work", Result: "controlAcknowledged"}, nil
+	}
+	r, err := s.svc.ArchiveSession(context.Background(), s.ref)
+	s.Require().NoError(err)
+	s.EqualValues("archived", r.Status.State)
+	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{})
+	s.Require().NoError(err)
+	s.Require().Len(page.Events, 1)
+	s.Equal("final", page.Events[0].ItemID)
+}
+
+type unavailableFinalHistory struct {
+	eventstore.EventStore
+	unavailable atomic.Bool
+	entered     chan struct{}
+	once        sync.Once
+}
+
+func (h *unavailableFinalHistory) Append(id string, records []events.SessionEvent) (*string, error) {
+	if h.unavailable.Load() {
+		h.once.Do(func() { close(h.entered) })
+		return nil, errors.New("injected final history unavailable")
+	}
+	return h.EventStore.Append(id, records)
+}
+
+func (s *RuntimeStopSuite) TestArchiveStorageFailureRetainsOriginalOwner() {
+	fault := &unavailableFinalHistory{EventStore: s.history.EventStore, entered: make(chan struct{})}
+	fault.unavailable.Store(true)
+	s.history.EventStore = fault
+	var closed atomic.Bool
+	s.d.onClose = func(ctx context.Context) error {
+		if closed.Swap(true) {
+			return errors.New("confirmed native release was redispatched")
+		}
+		final, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "demo", SessionID: "original", ItemID: "final", Time: time.Now()}, events.AgentMessage{MessageID: "final", Content: []events.ContentBlock{events.Text("retained final fact")}}, s.d.source)
+		if err != nil {
+			return err
+		}
+		if err := s.d.pipe.Send(ctx, final); err != nil {
+			return err
+		}
+		return s.d.pipe.Flush(ctx)
+	}
+	caller, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := s.svc.ArchiveSession(caller, s.ref); done <- err }()
+	select {
+	case <-fault.entered:
+	case <-time.After(3 * time.Second):
+		s.FailNow("missing final append fault")
+	}
+	cancel()
+	s.Require().ErrorContains(<-done, "outcome_unknown")
+	r, err := s.svc.GetSession(s.ref)
+	s.Require().NoError(err)
+	s.EqualValues("closing", r.Status.State, "release is not archival settlement")
+	_, err = s.svc.SendPrompt(context.Background(), s.ref, runtime.Input{Content: []events.ContentBlock{events.Text("sealed")}})
+	s.Require().Error(err, "storage failure must not reopen input admission")
+	fault.unavailable.Store(false)
+	s.Require().Eventually(func() bool { return s.svc.ReconcileHistory(context.Background(), s.ref) == nil }, 3*time.Second, time.Millisecond)
+	_, err = s.svc.ArchiveSession(context.Background(), s.ref)
+	s.Require().NoError(err, "explicit storage settlement must not repeat native release")
+	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{})
+	s.Require().NoError(err)
+	s.Require().Len(page.Events, 1)
+	s.Equal("final", page.Events[0].ItemID)
+	s.EqualValues(1, s.d.closes.Load())
+}
+
+func (s *RuntimeStopSuite) TestArchivePublicationFailureDoesNotRepeatConfirmedClose() {
+	s.meta.failArchive.Store(true)
+	var closed atomic.Bool
+	s.d.onClose = func(context.Context) error {
+		if closed.Swap(true) {
+			return errors.New("confirmed native release was redispatched")
+		}
+		return nil
+	}
+	_, err := s.svc.ArchiveSession(context.Background(), s.ref)
+	s.Require().ErrorContains(err, "injected archive publication failure")
+	r, err := s.svc.GetSession(s.ref)
+	s.Require().NoError(err)
+	s.EqualValues("closing", r.Status.State)
+	_, err = s.svc.ArchiveSession(context.Background(), s.ref)
+	s.Require().NoError(err, "retry storage publication without repeating native release")
+	s.EqualValues(1, s.d.closes.Load())
+}
+
 func (s *RuntimeStopSuite) TestStopRetainsRetiredSourceOverflowAfterRecovery() {
 	s.assertStopRetainsOverflow(true)
 }
@@ -451,10 +571,18 @@ func (s *RuntimeStopSuite) assertStopRetainsOverflow(recovered bool) {
 
 type stopMeta struct {
 	metastore.MetaStore
-	pauseWrite atomic.Bool
-	pauseRead  atomic.Bool
-	entered    chan struct{}
-	release    chan struct{}
+	failArchive atomic.Bool
+	pauseWrite  atomic.Bool
+	pauseRead   atomic.Bool
+	entered     chan struct{}
+	release     chan struct{}
+}
+
+func (m *stopMeta) UpdateSession(r resource.Session) (resource.Session, error) {
+	if r.Status.State == "archived" && m.failArchive.CompareAndSwap(true, false) {
+		return resource.Session{}, errors.New("injected archive publication failure")
+	}
+	return m.MetaStore.UpdateSession(r)
 }
 
 func (m *stopMeta) UpdateRuntime(r resource.Runtime) (resource.Runtime, error) {

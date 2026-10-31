@@ -41,22 +41,24 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 }
 
 type session struct {
-	command      sync.Mutex
-	native       *sdk.Session
-	closing      bool
-	work         string
-	cancelWork   string
-	cancelTarget string
-	retired      map[string]bool
-	address      runtime.Address
-	source       events.Source
-	active       bool
-	sending      bool
-	state        *events.SessionState
-	err          error
-	done         chan struct{}
-	released     chan struct{}
-	releaseOnce  sync.Once
+	command         sync.Mutex
+	native          *sdk.Session
+	closing         bool
+	work            string
+	cancelWork      string
+	cancelTarget    string
+	cancelAttempted bool
+	cancelErr       error
+	retired         map[string]bool
+	address         runtime.Address
+	source          events.Source
+	active          bool
+	sending         bool
+	state           *events.SessionState
+	err             error
+	done            chan struct{}
+	released        chan struct{}
+	releaseOnce     sync.Once
 }
 type Driver struct {
 	opening      int
@@ -244,7 +246,7 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	s.command.Lock()
 	defer s.command.Unlock()
 	d.mu.Lock()
-	if d.sessions[id] != s || d.stopped || d.stopping || s.active || s.sending || s.err != nil || len(s.retired) >= 128 {
+	if d.sessions[id] != s || d.stopped || d.stopping || s.closing || s.active || s.sending || s.err != nil || len(s.retired) >= 128 {
 		d.mu.Unlock()
 		return runtime.InputReceipt{}, runtime.FailedPrecondition("session unavailable or work unsettled")
 	}
@@ -495,20 +497,28 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	}
 	s.closing = true
 	d.mu.Unlock()
-	cause := s.native.Err()
-	if err := s.native.Close(); err != nil {
-		return err
-	}
+	d.interactions.RemoveSession(id)
+	cleanup := s.native.Close()
 	select {
 	case <-s.done:
 	case <-ctx.Done():
-		return ctx.Err()
+		return errors.Join(cleanup, ctx.Err())
 	}
 	if err := d.pipe.Flush(ctx); err != nil {
-		return err
+		return errors.Join(cleanup, err)
 	}
+	cause := s.native.Err()
 	if cause != nil {
-		return fmt.Errorf("native resource release unconfirmed after observation loss: %w", cause)
+		return errors.Join(cleanup, fmt.Errorf("native resource release unconfirmed after observation loss: %w", cause))
+	}
+	d.mu.Lock()
+	cause = s.err
+	d.mu.Unlock()
+	if cause != nil {
+		return errors.Join(cleanup, fmt.Errorf("observation terminated: %w", cause))
+	}
+	if cleanup != nil {
+		return cleanup
 	}
 	d.mu.Lock()
 	delete(d.sessions, id)
@@ -558,7 +568,7 @@ func (d *Driver) handleRequest(s *session, r sdk.IncomingRequest) {
 	if d.sessions[v.ThreadID] == s && s.sending && s.work == "" && v.TurnID != "" && !s.retired[v.TurnID] {
 		s.work = v.TurnID
 	}
-	valid := s != nil && d.sessions[v.ThreadID] == s && s.err == nil && v.TurnID != "" && s.work == v.TurnID && !s.retired[v.TurnID]
+	valid := s != nil && !s.closing && d.sessions[v.ThreadID] == s && s.err == nil && r.Handle().Err() == nil && r.Context().Err() == nil && v.TurnID != "" && s.work == v.TurnID && !s.retired[v.TurnID]
 	d.mu.Unlock()
 	if !valid {
 		return
@@ -722,7 +732,9 @@ func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer a
 
 func (d *Driver) observationFailed(id string, s *session, err error) {
 	d.mu.Lock()
-	s.err = err
+	if s.err == nil {
+		s.err = err
+	}
 	previous := s.state
 	s.state = nil
 	d.mu.Unlock()
@@ -744,8 +756,10 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	active := s.active
 	if active && s.cancelWork != work {
 		s.cancelWork, s.cancelTarget = work, uuid.NewString()
+		s.cancelAttempted, s.cancelErr = false, nil
 	}
 	target := s.cancelTarget
+	attempted, previousErr := s.cancelAttempted, s.cancelErr
 	d.mu.Unlock()
 	if !active {
 		return runtime.CancelReceipt{Result: "noActiveWork"}, nil
@@ -753,9 +767,35 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	if work == "" {
 		return runtime.CancelReceipt{}, errors.New("outcome_unknown: no confirmed native turn to cancel")
 	}
+	if attempted {
+		if previousErr != nil {
+			return runtime.CancelReceipt{}, previousErr
+		}
+		return runtime.CancelReceipt{Target: target, Result: "controlAcknowledged"}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return runtime.CancelReceipt{}, fmt.Errorf("not_sent: cancel: %w", err)
+	}
 	err := s.native.Interrupt(ctx, sdk.InterruptOptions{TurnID: work})
+	var call *sdk.CallError
+	notSent := errors.As(err, &call) && call.Dispatch == sdk.NotSent
 	if err != nil {
-		return runtime.CancelReceipt{}, fmt.Errorf("outcome_unknown: cancel: %w", err)
+		var rejected *sdk.RPCError
+		switch {
+		case notSent:
+			err = fmt.Errorf("not_sent: cancel: %w", err)
+		case errors.As(err, &rejected):
+			err = fmt.Errorf("native_rejected: cancel: %w", err)
+		default:
+			err = fmt.Errorf("outcome_unknown: cancel: %w", err)
+		}
+	}
+	// Only a proven non-dispatch permits a later explicit attempt for this work.
+	d.mu.Lock()
+	s.cancelAttempted, s.cancelErr = !notSent, err
+	d.mu.Unlock()
+	if err != nil {
+		return runtime.CancelReceipt{}, err
 	}
 	return runtime.CancelReceipt{Target: target, Result: "controlAcknowledged"}, nil
 }

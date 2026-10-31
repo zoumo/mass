@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sync"
 	"time"
@@ -46,6 +47,8 @@ type session struct {
 	work                     string
 	cancelTarget             string
 	cancelWork               string
+	cancelAttempted          bool
+	cancelErr                error
 	submissions              int
 	observationWork          string
 	attribution              string
@@ -290,6 +293,10 @@ func (d *Driver) emit(s *session, item string, p events.Payload, at time.Time) e
 	if err != nil {
 		return err
 	}
+	// Snapshot under the session lock, but never hold it across backpressure:
+	// Close must be able to seal the native FIFO while this observer drains.
+	s.mu.Unlock()
+	defer s.mu.Lock()
 	return d.pipe.Send(context.Background(), e)
 }
 
@@ -322,7 +329,7 @@ func (d *Driver) observe(s *session, early []sdk.Event) {
 					err = d.adapt(s, *event.Event, event.Parent != nil)
 				}
 			case sdk.ReceivedRequest:
-				if event.Request != nil {
+				if event.Request != nil && !s.closing && event.Request.Context().Err() == nil {
 					s.observationWork, s.attribution = "", "unknown"
 					if s.submissions == 1 {
 						s.observationWork, s.attribution = s.work, "single_submission"
@@ -352,8 +359,10 @@ func (d *Driver) observe(s *session, early []sdk.Event) {
 			}
 		}
 		if err != nil {
-			if !s.closing {
-				s.err = err
+			if !s.closing || !errors.Is(err, io.EOF) {
+				if s.err == nil {
+					s.err = err
+				}
 				s.observationWork, s.attribution = "", "unknown"
 				_ = d.emit(s, "", events.SessionError{Message: "Claude observation failed", Reason: "native_observation_failed"}, time.Time{})
 				_ = d.state(s, nil, "")
@@ -667,6 +676,14 @@ func (d *Driver) permission(s *session, r *sdk.IncomingRequest) error {
 	if err := d.state(s, &state, ""); err != nil {
 		return err
 	}
+	if s.closing {
+		return nil
+	}
+	select {
+	case <-r.Context().Done():
+		return nil
+	default:
+	}
 	return d.emit(s, "", events.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, time.Time{})
 }
 
@@ -706,17 +723,27 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	}
 	s.closing = true
 	s.mu.Unlock()
+	d.interactions.RemoveSession(id)
 	err = s.client.Close()
 	select {
 	case <-s.done:
 	case <-ctx.Done():
 		return errors.Join(err, ctx.Err())
 	}
-	if err := d.pipe.Flush(ctx); err != nil {
-		return err
+	if drain := d.pipe.Flush(ctx); drain != nil {
+		return errors.Join(err, drain)
+	}
+	if cause := s.client.Err(); cause != nil {
+		return errors.Join(err, fmt.Errorf("native observation terminated: %w", cause))
+	}
+	s.mu.Lock()
+	cause := s.err
+	s.mu.Unlock()
+	if cause != nil {
+		return errors.Join(err, fmt.Errorf("observation terminated: %w", cause))
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("native cleanup failed: %w", err)
 	}
 	d.mu.Lock()
 	delete(d.sessions, id)
@@ -749,14 +776,42 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	active := s.active
 	if active && (s.cancelTarget == "" || s.cancelWork != s.work) {
 		s.cancelWork, s.cancelTarget = s.work, uuid.NewString()
+		s.cancelAttempted, s.cancelErr = false, nil
 	}
 	target := s.cancelTarget
+	attempted, previousErr := s.cancelAttempted, s.cancelErr
 	s.mu.Unlock()
 	if !active {
 		return runtime.CancelReceipt{Result: "noActiveWork"}, nil
 	}
-	if err := s.client.Interrupt(ctx, sdk.InterruptOptions{}); err != nil {
-		return runtime.CancelReceipt{}, fmt.Errorf("outcome_unknown: interrupt: %w", err)
+	if attempted {
+		if previousErr != nil {
+			return runtime.CancelReceipt{}, previousErr
+		}
+		return runtime.CancelReceipt{Target: target, Result: "controlAcknowledged"}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return runtime.CancelReceipt{}, fmt.Errorf("not_sent: interrupt: %w", err)
+	}
+	err = s.client.Interrupt(ctx, sdk.InterruptOptions{})
+	var dispatch *sdk.DispatchError
+	notSent := errors.As(err, &dispatch) && dispatch.State == sdk.NotSent
+	if err != nil {
+		var rejected *sdk.ControlError
+		switch {
+		case notSent:
+			err = fmt.Errorf("not_sent: interrupt: %w", err)
+		case errors.As(err, &rejected):
+			err = fmt.Errorf("native_rejected: interrupt: %w", err)
+		default:
+			err = fmt.Errorf("outcome_unknown: interrupt: %w", err)
+		}
+	}
+	s.mu.Lock()
+	s.cancelAttempted, s.cancelErr = !notSent, err
+	s.mu.Unlock()
+	if err != nil {
+		return runtime.CancelReceipt{}, err
 	}
 	return runtime.CancelReceipt{Target: target, Result: "controlAcknowledged"}, nil
 }

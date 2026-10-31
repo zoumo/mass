@@ -112,6 +112,7 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 			l = &lane{session: r, queue: make(chan delivery, queueCapacity), done: make(chan struct{}), retry: make(chan chan error)}
 		}
 		l.source = native.Source
+		l.nativeClosed = false
 		l.closing = true
 		l.releasing = true
 		run.lanes[native.SessionID] = l
