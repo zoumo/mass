@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -38,11 +39,11 @@ func (d *loadDriver) LoadSession(ctx context.Context, id string, a runtime.Addre
 		events.UserMessage{MessageID: "first", Content: []events.ContentBlock{events.Text("saved input")}},
 		events.HistoryReplay{LoadID: loadID, Phase: "native_completed", RetainedScope: "all_retained_main_history", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{}}},
 	} {
-		e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: a.Namespace, SessionName: a.SessionName, SessionID: id, Time: time.Now(), ItemID: "first", Replay: &events.ReplaySource{LoadID: loadID}}, p, source)
+		e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: a.Namespace, SessionName: a.SessionName, SessionID: id, Time: time.Now(), ItemID: "first", Replay: &events.ReplaySource{LoadID: loadID, NativeRecordID: "first", NativeParentID: "turn"}}, p, source)
 		if err != nil {
 			return err
 		}
-		if err = d.pipe.Send(ctx, e); err != nil {
+		if err := d.pipe.Send(ctx, e); err != nil {
 			return err
 		}
 	}
