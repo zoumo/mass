@@ -485,8 +485,12 @@ func (d *Driver) adapt(s *session, e sdk.Event) error {
 }
 
 func (d *Driver) permission(s *session, r *sdk.IncomingRequest) error {
+	if r.Method() != "can_use_tool" || r.Handle() == nil {
+		return d.emit(s, "", events.SessionError{Message: "unsupported native interaction", Reason: "unsupported_native_interaction"}, time.Time{})
+	}
 	p := r.Handle()
 	request := events.PermissionRequest(p.ToolUseID(), p.ToolName())
+	request.Content = []events.ContentBlock{events.Text(string(r.Params()))}
 	if p.ToolName() == "AskUserQuestion" {
 		value, err := decode(p.Input())
 		if err != nil {
@@ -498,8 +502,16 @@ func (d *Driver) permission(s *session, r *sdk.IncomingRequest) error {
 		}
 		request = events.InteractionRequest{Kind: "form", Message: "Answer native Claude questions", RequestedSchema: schema}
 	}
-	ref, err := d.interactions.Add(s.id, s.source.WithWork(s.work), func(ctx context.Context, a map[string]any) error {
-		answer := sdk.PermissionAnswer{Behavior: sdk.PermissionAllow, UpdatedInput: p.Input()}
+	live := func() bool { return r.Context().Err() == nil }
+	unsent := func(err error) bool {
+		var native *sdk.DispatchError
+		if errors.As(err, &native) {
+			return native.State == sdk.NotSent
+		}
+		return errors.Is(err, runtime.ErrInvalidArgument)
+	}
+	source := s.source.WithWork(s.work)
+	ref, err := d.interactions.Add(s.id, source, live, unsent, func(ctx context.Context, a map[string]any) error {
 		if request.Kind == "form" {
 			if len(a) != 2 || a["action"] != "accept" {
 				return runtime.InvalidArgument("expected explicit form accept/content")
@@ -520,17 +532,39 @@ func (d *Driver) permission(s *session, r *sdk.IncomingRequest) error {
 				}
 				answers[question] = text
 			}
-			return r.Answer(ctx, sdk.QuestionAnswers{Answers: answers})
+			err := r.Answer(ctx, sdk.QuestionAnswers{Answers: answers})
+			var native *sdk.DispatchError
+			if errors.As(err, &native) && native.State == sdk.NotSent && errors.Is(err, sdk.ErrInvalidPermissionAnswer) {
+				return errors.Join(runtime.ErrInvalidArgument, err)
+			}
+			return err
 		} else {
-			allow, err := runtime.PermissionAllowed(a)
+			selection := a
+			var updated json.RawMessage
+			if input, exists := a["updatedInput"]; exists {
+				if len(a) != 3 || a["optionId"] != "allow-once" {
+					return runtime.InvalidArgument("updatedInput requires an allow-once selection")
+				}
+				object, ok := input.(map[string]any)
+				if !ok || object == nil {
+					return runtime.InvalidArgument("updatedInput must be an object")
+				}
+				var err error
+				updated, err = json.Marshal(object)
+				if err != nil {
+					return runtime.InvalidArgument("invalid updatedInput")
+				}
+				selection = map[string]any{"outcome": a["outcome"], "optionId": a["optionId"]}
+			}
+			allow, err := runtime.PermissionAllowed(selection)
 			if err != nil {
 				return err
 			}
 			if !allow {
-				answer = sdk.PermissionAnswer{Behavior: sdk.PermissionDeny, Message: "Rejected"}
+				return r.Deny(ctx, sdk.DenialOptions{Message: "Rejected"})
 			}
+			return r.Approve(ctx, sdk.ApprovalOptions{UpdatedInput: updated})
 		}
-		return p.Answer(ctx, answer)
 	})
 	if err != nil {
 		return err
