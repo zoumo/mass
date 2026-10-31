@@ -96,24 +96,14 @@ func (s *Service) DeleteRuntime(name string) error {
 }
 
 func (s *Service) drainLane(ctx context.Context, l *lane) error {
-	var failed <-chan struct{}
-	if l.load != nil {
-		s.mu.Lock()
-		failed = l.load.deliveryFailed
-		s.mu.Unlock()
-	}
 	b := make(chan struct{})
 	select {
 	case l.queue <- delivery{barrier: b}:
-	case <-failed:
-		return runtime.FailedPrecondition("original load history commit requires explicit reconciliation")
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 	select {
 	case <-b:
-	case <-failed:
-		return runtime.FailedPrecondition("original load history commit requires explicit reconciliation")
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -149,9 +139,6 @@ func (s *Service) archiveSessionOwner(ctx context.Context, ref resource.SessionR
 	r, err = s.GetSession(ref)
 	if err != nil {
 		return r, err
-	}
-	if r.Status.HistoryLoad != nil && r.Status.HistoryLoad.Phase != "completed" {
-		return r, runtime.FailedPrecondition("history load remains fenced")
 	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
@@ -333,21 +320,6 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	}
 	s.mu.Unlock()
 	for id, l := range lanes {
-		if l.load != nil && !l.load.complete.Load() {
-			s.failLoad(run, l, "canceled", runtime.FailedPrecondition("runtime stopped during history load"))
-			select {
-			case <-l.load.cleanupDone:
-			case <-ctx.Done():
-				return r, ctx.Err()
-			}
-			l.load.mu.Lock()
-			cleanupErr := l.load.cleanupErr
-			l.load.mu.Unlock()
-			if cleanupErr != nil {
-				return r, cleanupErr
-			}
-			l.nativeClosed = true
-		}
 		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
 			return r, err
 		}
@@ -451,9 +423,6 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		return r, err
 	}
 	// Read every committed page before touching the adapter or native process.
-	if r.Status.HistoryLoad != nil && r.Status.HistoryLoad.Phase != "completed" {
-		return r, runtime.FailedPrecondition("unresolved history load cannot be resumed or reimported")
-	}
 	q := store.HistoryQuery{}
 	for {
 		page, e := s.history.ListHistory(r.Status.SessionID, q)
@@ -619,9 +588,6 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 		return nil, nil, runtime.Exhausted(sessionDeliveryOverloaded)
 	}
 	available := run.started && l != nil && l == original && !l.releasing
-	if l != nil && l.load != nil && !l.load.complete.Load() {
-		available = false
-	}
 	if !canceling {
 		available = available && !s.closing && !run.stopping && run.err == nil && l.err == nil && !l.closing
 	}
