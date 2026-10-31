@@ -229,6 +229,54 @@ write gate proves that 140 committed facts survive observer overflow, which emit
 an explicit error. Client framing tests distinguish end, abnormal error and
 unexpected disconnection, preserve terminal errors and release blocked reads.
 
+### Delivery overload boundaries
+
+The Runtime EventPipe keeps at most 128 queued events in total and at most 64
+for one native Session. Nonempty Session queues are read round-robin, preserving
+FIFO within each Session (there is no cross-Session chronology guarantee).
+`Send` waits for capacity with its caller context or until `End`; there is no
+hidden timeout, producer goroutine, or additional forwarding queue. A waiting
+caller owns one cloned event; the adapters have one Receive producer per native
+Session. The sole consumer can hold one returned event outside the pipe budget.
+`Flush` is a routing watermark: it includes the consumer's last returned event
+until its next `Next` call, not a storage/native-release acknowledgement.
+
+Service normal delivery admits 128 queued events per Session, plus one active
+settlement. At saturation, that Session rejects further input/answers with HTTP
+429 (`resource_exhausted`, reason `session_delivery_overloaded`), enters
+`closing`, and starts an original-source-fenced owned close outside the shared
+Runtime reader. One `session.error` diagnostic follows the already queued
+prefix. The **same** channel has 256 slots total, including the diagnostic and
+lifecycle barriers; the remaining slots retain the closing source while peers
+continue. This is a finite closing reserve, not a second queue. Native close
+reuses normal cancellation/release/drain coordination, never kills a shared
+Codex Client, and remembers confirmed release across storage/publication retries.
+The automatic attempt has a five-second context budget where lifecycle APIs
+honor cancellation. Synchronous Store/Handler calls cannot be forcibly timed out.
+
+If the reserve also fills (or an already-closing/retired/opening owner exhausts
+its existing boundary), the Runtime retains one original overflow event and
+seals shared admission instead of silently dropping facts. Healthy-peer progress
+is **not** promised under that total exhaustion. `ReconcileDelivery` explicitly
+resumes the original reader; it does not implicitly reopen failed admission.
+Append failure retains the original full fact/UUID and serial settlement for
+`ReconcileHistory`. Unknown native release or unavailable persistence remains
+`closing`/unsettled; only confirmed native release plus settlement permits
+`archived`. A later explicit Archive/Stop can settle the same owner. Closing
+state and HTTP rejection are visible while persistence is blocked; the ordered
+realtime diagnostic can itself wait behind that blocked prefix.
+
+Counts apply to all Session events, not payload bytes. SDK native FIFOs grow
+dynamically, and downstream handlers/subscriptions have independent boundaries.
+These local limits do not prove whole-chain bounded memory, OOM safety, or that
+all upstream native facts reached durable storage. A fault in a shared backend
+or its global writer lock can still stall all callers; the isolation guarantee
+covers a Session-local blocked Append/Handler while peer dependencies remain
+healthy. Ordinary slow subscriptions
+still fail independently with `slow_subscriber`; required handler failure still
+stops that event's remaining fan-out without replay or loss of committed history.
+No HTTP request-body cap is introduced.
+
 The HTTP input codec preserves all five ContentBlock shapes; existing native
 adapters execute text input only. Claude accepts exactly one text block.
 Complete text/thinking, tool calls/results, permission/form interactions, state

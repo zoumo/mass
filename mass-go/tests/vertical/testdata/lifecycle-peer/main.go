@@ -7,11 +7,16 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 )
 
 func main() {
-	if err := os.WriteFile(os.Getenv("PEER_PID"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	pidPath := os.Getenv("PEER_PID")
+	if os.Getenv("PEER_CONTROL") == "overload" {
+		pidPath += "." + strconv.Itoa(os.Getpid())
+	}
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		panic(err)
 	}
 	enc := json.NewEncoder(os.Stdout)
@@ -50,10 +55,13 @@ func main() {
 			respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": v.Params["cwd"], "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": v.Params["cwd"], "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
 		case "thread/unsubscribe":
 			status := "unsubscribed"
-			if v.Params["threadId"] == "damaged" {
+			if v.Params["threadId"] == "damaged" && os.Getenv("PEER_CONTROL") != "overload" {
 				status = "unverified-release"
 			}
 			respond(map[string]any{"status": status})
+			if os.Getenv("PEER_CONTROL") == "overload" {
+				notify("thread/closed", map[string]any{"threadId": v.Params["threadId"]})
+			}
 		case "turn/start":
 			id := v.Params["threadId"].(string)
 			turnID := "native-turn-" + id
@@ -64,6 +72,17 @@ func main() {
 				closedInput(func() {
 					notify("item/completed", map[string]any{"threadId": id, "turnId": turnID, "completedAtMs": 1, "item": map[string]any{"id": "write-fault-ready", "type": "agentMessage", "text": "native input pipe closed"}})
 				})
+			}
+			if os.Getenv("PEER_CONTROL") == "overload" {
+				n := 1
+				if id == "damaged" {
+					n = 160
+				}
+				for i := range n {
+					notify("item/completed", map[string]any{"threadId": id, "turnId": turnID, "item": map[string]any{"id": fmt.Sprintf("final-%d", i), "type": "agentMessage", "text": "complete synthetic fact"}, "completedAtMs": 1})
+				}
+				notify("turn/completed", map[string]any{"threadId": id, "turn": map[string]any{"id": turnID, "status": "completed", "items": []any{}}})
+				continue
 			}
 			if id == "damaged" {
 				notify("turn/completed", map[string]any{"threadId": id, "turn": map[string]any{"id": turnID, "status": "completed", "items": []any{}}})
@@ -94,6 +113,14 @@ func main() {
 }
 
 func claude(send func(any)) {
+	sessionID := "claude-session"
+	if os.Getenv("PEER_CONTROL") == "overload" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			panic(err)
+		}
+		sessionID = "claude-" + filepath.Base(cwd)
+	}
 	interrupts := 0
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
@@ -108,16 +135,27 @@ func claude(send func(any)) {
 			panic(err)
 		}
 		if v.Type == "user" {
-			send(map[string]any{"type": "stream_event", "session_id": "claude-session", "event": map[string]any{"type": "message_start", "message": map[string]any{"id": "active", "role": "assistant", "content": []any{}}}})
+			send(map[string]any{"type": "stream_event", "session_id": sessionID, "event": map[string]any{"type": "message_start", "message": map[string]any{"id": "active", "role": "assistant", "content": []any{}}}})
 			if os.Getenv("PEER_CONTROL") == "write-failure" {
 				closedInput(func() {
-					send(map[string]any{"type": "assistant", "session_id": "claude-session", "message": map[string]any{"id": "write-fault-ready", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "native input pipe closed"}}}})
+					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": "write-fault-ready", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "native input pipe closed"}}}})
 				})
 			}
+			if os.Getenv("PEER_CONTROL") == "overload" {
+				n := 1
+				if sessionID == "claude-damaged" {
+					n = 160
+				}
+				for i := range n {
+					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "complete synthetic fact"}}}})
+				}
+				send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "is_error": false, "result": "settled"})
+				continue
+			}
 			if os.Getenv("PEER_CONTROL") == "eof" {
-				send(map[string]any{"type": "result", "subtype": "success", "session_id": "claude-session", "is_error": false, "result": "settled"})
+				send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "is_error": false, "result": "settled"})
 				for i := range 160 {
-					send(map[string]any{"type": "assistant", "session_id": "claude-session", "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "accepted before EOF"}}}})
+					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "accepted before EOF"}}}})
 				}
 				// The SDK answers unsupported controls independently of Receive.
 				// Its reply proves all preceding native frames were admitted.
@@ -134,7 +172,7 @@ func claude(send func(any)) {
 		if v.Request.Subtype == "interrupt" {
 			interrupts++
 			if interrupts == 1 && os.Getenv("PEER_CONTROL") == "unknown" {
-				send(map[string]any{"type": "assistant", "session_id": "claude-session", "message": map[string]any{"id": "interrupt-admitted", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "interrupt admitted; no acknowledgment"}}}})
+				send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": "interrupt-admitted", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "interrupt admitted; no acknowledgment"}}}})
 				continue
 			}
 			if interrupts > 1 || os.Getenv("PEER_CONTROL") == "rejected" {
@@ -148,7 +186,7 @@ func claude(send func(any)) {
 			if err != nil {
 				panic(err)
 			}
-			send(map[string]any{"type": "system", "subtype": "init", "session_id": "claude-session", "cwd": cwd, "model": "synthetic", "tools": []any{}})
+			send(map[string]any{"type": "system", "subtype": "init", "session_id": sessionID, "cwd": cwd, "model": "synthetic", "tools": []any{}})
 		}
 	}
 }

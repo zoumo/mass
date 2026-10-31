@@ -123,6 +123,12 @@ func offlineStatus(r *resource.Session, archived bool) {
 }
 
 func (s *Service) archiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
+	return s.archiveSessionOwner(ctx, ref, nil, events.Source{})
+}
+
+// An automatic failure close must still target its original native run after
+// acquiring the Session operation lock; explicit archive/resume may win first.
+func (s *Service) archiveSessionOwner(ctx context.Context, ref resource.SessionRef, expected *runBinding, source events.Source) (resource.Session, error) {
 	r, err := s.GetSession(ref)
 	if err != nil {
 		return r, err
@@ -136,6 +142,13 @@ func (s *Service) archiveSession(ctx context.Context, ref resource.SessionRef) (
 	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
+	if expected != nil {
+		l := expected.lanes[r.Status.SessionID]
+		if run != expected || l == nil || !l.source.SameRun(source) {
+			s.mu.Unlock()
+			return r, runtime.FailedPrecondition("original overload owner superseded")
+		}
+	}
 	s.mu.Unlock()
 	if run == nil {
 		if r.Status.State == "archived" {
@@ -532,7 +545,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	}
 	fresh := l == nil
 	if fresh {
-		l = &lane{session: r, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{})}
+		l = &lane{session: r, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
 	}
 	l.source = native.Source
 	l.nativeClosed = false
@@ -569,6 +582,11 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	run.admission.RLock()
 	s.mu.Lock()
 	l := run.lanes[r.Status.SessionID]
+	if !canceling && l != nil && l.overloaded {
+		s.mu.Unlock()
+		run.admission.RUnlock()
+		return nil, nil, runtime.Exhausted(sessionDeliveryOverloaded)
+	}
 	available := run.started && l != nil && l == original && !l.releasing
 	if !canceling {
 		available = available && !s.closing && !run.stopping && run.err == nil && l.err == nil && !l.closing

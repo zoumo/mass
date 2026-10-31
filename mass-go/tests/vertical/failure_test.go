@@ -332,23 +332,18 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 	case <-ctx(s.T()).Done():
 		s.FailNow("storage gate")
 	}
-	// Realtime subscription health is independent of Service delivery overload.
-	// With the append gate held, an explicit settlement attempt can only block
-	// once the original bounded lane has retained an overflowing event.
+	// Active-session overflow must start owned close, not stop the Runtime reader.
 	s.Require().Eventually(func() bool {
-		wait, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-		defer cancel()
-		err := s.svc.ReconcileDelivery(wait, "agent")
-		return errors.Is(err, context.DeadlineExceeded)
+		current, err := s.svc.GetSession(ref)
+		return err == nil && current.Status.State == "closing"
 	}, 2*time.Second, 5*time.Millisecond)
-	_, err := s.svc.StopRuntime(ctx(s.T()), "agent")
-	s.Require().ErrorContains(err, "responsibility remains")
+	_, err := s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("sealed")}})
+	s.Require().ErrorContains(err, "session_delivery_overloaded")
 	release()
-	// Repeated saturation is explicit; the operator settles the same consumer.
+	// All original facts remain queryable after the storage gate is released.
 	deadline := time.Now().Add(20 * time.Second)
 	count := 0
 	for time.Now().Before(deadline) {
-		_ = s.svc.ReconcileDelivery(ctx(s.T()), "agent")
 		p, e := s.st.ListHistory(ref.SessionID, store.HistoryQuery{Limit: 1000})
 		s.Require().NoError(e)
 		count = len(p.Events)
@@ -358,7 +353,7 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 		time.Sleep(25 * time.Millisecond)
 	}
 	s.Require().Equal(160, count)
-	s.T().Log("PASS bounded overload explicitly fails, retains overflow plus upstream responsibility, and settles all 160 original facts")
+	s.T().Log("PASS native Codex overload fails locally, owns close, and settles all 160 original facts without reader reconciliation")
 }
 
 // Poll the cheap resource projection while the turn runs; cloning the entire

@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
@@ -25,7 +27,10 @@ import (
 )
 
 const (
-	queueCapacity = 128
+	queueCapacity             = 128
+	laneRetentionCapacity     = 2 * queueCapacity
+	sessionDeliveryOverloaded = "session_delivery_overloaded"
+	overloadCloseTimeout      = 5 * time.Second
 	// Assembly budget for an in-flight observational write. Expiry reports
 	// incomplete cleanup and retains the Handler for an explicit retry.
 	stateHandlerCloseTimeout = time.Second
@@ -99,6 +104,7 @@ type lane struct {
 	done         chan struct{}
 	err          error
 	closing      bool
+	overloaded   bool
 	retry        chan chan error
 	commitErr    error
 }
@@ -433,7 +439,7 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 				// Metadata may already be committed: retain reservation until explicit readback.
 				return resource.Session{}, errors.Join(err, cleanup)
 			}
-			l := &lane{session: r, source: native.Source, queue: make(chan delivery, queueCapacity), retry: make(chan chan error), done: make(chan struct{})}
+			l := &lane{session: r, source: native.Source, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
 			s.mu.Lock()
 			l.err = op.err
 			run.lanes[native.SessionID] = l
@@ -620,6 +626,33 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			s.mu.Unlock()
 			continue
 		}
+		// Normal delivery has 128 queued slots. The same channel reserves a
+		// further 128 for the original closing source, never a forwarding queue.
+		// Retired/already-closing owners retain the pre-existing fallback policy.
+		if len(l.queue) >= queueCapacity && !l.overloaded && !l.closing && !oldSource {
+			l.overloaded = true
+			l.closing = true
+			l.err = runtime.Exhausted(sessionDeliveryOverloaded)
+			diagnostic, diagnosticErr := events.NewEvent(events.EventBase{
+				EventID: uuid.NewString(), Namespace: e.Namespace, SessionName: e.SessionName,
+				SessionID: e.SessionID, Time: time.Now(),
+			}, events.SessionError{Reason: sessionDeliveryOverloaded, Message: "Session delivery exceeded 128 queued events; owned close started; cleanup remains unsettled until confirmed"}, e.Source())
+			if diagnosticErr == nil {
+				l.queue <- delivery{event: diagnostic}
+			}
+			go s.closeOverloaded(run, l.session.Status.SessionID, l.source)
+		}
+		limit := queueCapacity
+		if l.overloaded {
+			limit = laneRetentionCapacity
+		}
+		if len(l.queue) >= limit {
+			l.err = errors.New("session event queue exhausted; stream responsibility retained")
+			run.err = l.err
+			run.blocked = &e
+			s.mu.Unlock()
+			return
+		}
 		select {
 		case l.queue <- delivery{event: e}:
 		default:
@@ -630,6 +663,17 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			return
 		}
 		s.mu.Unlock()
+	}
+}
+
+// One bounded cleanup attempt per overloaded owner, outside the Runtime reader.
+// A timeout/unknown close leaves closing plus original delivery responsibility;
+// ArchiveSession/StopRuntime can explicitly settle it without replacing a Driver.
+func (s *Service) closeOverloaded(run *runBinding, id string, source events.Source) {
+	ctx, cancel := context.WithTimeout(context.Background(), overloadCloseTimeout)
+	defer cancel()
+	if _, err := s.archiveSessionOwner(ctx, resource.SessionRef{SessionID: id}, run, source); err != nil {
+		slog.Warn("overloaded Session cleanup unsettled", "session_id", id, "error", err)
 	}
 }
 

@@ -14,46 +14,86 @@ type Stream interface {
 }
 
 type streamEntry struct {
-	event   SessionEvent
-	barrier chan struct{}
+	event    SessionEvent
+	sequence uint64
 }
 
-// EventPipe is a bounded, single-consumer stream. End preserves queued facts.
+// EventPipe shares a fixed total budget fairly: each Session may occupy at most
+// half (rounded up) of it. Next serves nonempty Sessions round-robin. Producers
+// wait with their caller context, never in another forwarding queue.
 type EventPipe struct {
-	queue   chan streamEntry
-	done    chan struct{}
-	mu      sync.Mutex
-	err     error
-	once    sync.Once
-	reading atomic.Bool
+	mu                          sync.Mutex
+	queues                      map[string][]streamEntry
+	ready                       []string
+	count, capacity, perSession int
+	sequence                    uint64
+	inFlight                    uint64
+	changed                     chan struct{}
+	ended                       bool
+	err                         error
+	reading                     atomic.Bool
 }
 
 func NewEventPipe(capacity int) *EventPipe {
-	return &EventPipe{queue: make(chan streamEntry, capacity), done: make(chan struct{})}
+	if capacity < 1 {
+		panic("event pipe capacity must be positive")
+	}
+	return &EventPipe{capacity: capacity, perSession: (capacity + 1) / 2, queues: map[string][]streamEntry{}, changed: make(chan struct{})}
+}
+
+func (p *EventPipe) signal() {
+	close(p.changed)
+	p.changed = make(chan struct{})
 }
 
 func (p *EventPipe) Send(ctx context.Context, e SessionEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	cloned, err := e.Clone()
 	if err != nil {
 		return err
 	}
-	select {
-	case <-p.done:
-		return errors.New("event stream ended")
-	default:
-	}
-	select {
-	case p.queue <- streamEntry{event: cloned}:
-		return nil
-	case <-p.done:
-		return errors.New("event stream ended")
-	case <-ctx.Done():
-		return ctx.Err()
+	for {
+		p.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			p.mu.Unlock()
+			return err
+		}
+		if p.ended {
+			p.mu.Unlock()
+			return errors.New("event stream ended")
+		}
+		queue := p.queues[e.SessionID]
+		if p.count < p.capacity && len(queue) < p.perSession {
+			p.sequence++
+			if len(queue) == 0 {
+				p.ready = append(p.ready, e.SessionID)
+			}
+			p.queues[e.SessionID] = append(queue, streamEntry{event: cloned, sequence: p.sequence})
+			p.count++
+			p.signal()
+			p.mu.Unlock()
+			return nil
+		}
+		changed := p.changed
+		p.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 
 func (p *EventPipe) End(err error) {
-	p.once.Do(func() { p.mu.Lock(); p.err = err; p.mu.Unlock(); close(p.done) })
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.ended {
+		p.ended = true
+		p.err = err
+		p.signal()
+	}
 }
 
 func (p *EventPipe) Next(ctx context.Context) (SessionEvent, error) {
@@ -61,56 +101,76 @@ func (p *EventPipe) Next(ctx context.Context) (SessionEvent, error) {
 		return SessionEvent{}, errors.New("concurrent stream Next")
 	}
 	defer p.reading.Store(false)
-	return p.next(ctx)
+	// A new Next is the sole consumer's acknowledgement that the last returned
+	// event was routed. Merely removing it from this queue is not that proof.
+	p.mu.Lock()
+	p.inFlight = 0
+	p.signal()
+	p.mu.Unlock()
+	for {
+		p.mu.Lock()
+		if len(p.ready) > 0 {
+			id := p.ready[0]
+			p.ready = p.ready[1:]
+			queue := p.queues[id]
+			entry := queue[0]
+			queue[0] = streamEntry{}
+			queue = queue[1:]
+			if len(queue) > 0 {
+				p.ready = append(p.ready, id)
+				p.queues[id] = queue
+			} else {
+				delete(p.queues, id)
+			}
+			p.count--
+			p.inFlight = entry.sequence
+			p.signal()
+			p.mu.Unlock()
+			return entry.event, nil
+		}
+		if p.ended {
+			err := p.err
+			if err == nil {
+				err = io.EOF
+			}
+			p.mu.Unlock()
+			return SessionEvent{}, err
+		}
+		changed := p.changed
+		p.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return SessionEvent{}, ctx.Err()
+		}
+	}
 }
 
-func (p *EventPipe) next(ctx context.Context) (SessionEvent, error) {
+// Flush is a routing watermark, not persistence or native-release evidence. It
+// waits for all entries admitted before this call, across round-robin ordering.
+// Later producers cannot postpone this watermark. No barrier queue is added.
+func (p *EventPipe) Flush(ctx context.Context) error {
+	p.mu.Lock()
+	target := p.sequence
 	for {
-		var entry streamEntry
-		select {
-		case entry = <-p.queue:
-		default:
-			select {
-			case entry = <-p.queue:
-			case <-p.done:
-				select {
-				case entry = <-p.queue:
-				default:
-					p.mu.Lock()
-					err := p.err
-					p.mu.Unlock()
-					if err == nil {
-						err = io.EOF
-					}
-					return SessionEvent{}, err
-				}
-			case <-ctx.Done():
-				return SessionEvent{}, ctx.Err()
+		pending := p.inFlight != 0 && p.inFlight <= target
+		for _, queue := range p.queues {
+			if len(queue) > 0 && queue[0].sequence <= target {
+				pending = true
+				break
 			}
 		}
-		if entry.barrier != nil {
-			close(entry.barrier)
-			continue
+		if !pending {
+			p.mu.Unlock()
+			return nil
 		}
-		return entry.event, nil
-	}
-}
-
-// Flush waits until the sole consumer has routed every preceding entry.
-// Call after a Session producer has ended; it is not a business event.
-func (p *EventPipe) Flush(ctx context.Context) error {
-	b := make(chan struct{})
-	select {
-	case p.queue <- streamEntry{barrier: b}:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-p.done:
-		return errors.New("stream ended before drain")
-	}
-	select {
-	case <-b:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+		changed := p.changed
+		p.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		p.mu.Lock()
 	}
 }
