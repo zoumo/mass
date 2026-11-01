@@ -48,8 +48,8 @@ func (g *identityGate) CreateSession(r resource.Session) (resource.Session, erro
 }
 
 func TestMain(m *testing.M) {
-	// The complete race suite has a five-minute budget, plus owned build/cleanup.
-	mainCtx, mainCancel := context.WithTimeout(context.Background(), 330*time.Second)
+	// Match the ten-minute test-go budget, plus owned build/cleanup.
+	mainCtx, mainCancel := context.WithTimeout(context.Background(), 630*time.Second)
 	var err error
 	root, err = os.MkdirTemp("", "mass-vertical-")
 	if err != nil {
