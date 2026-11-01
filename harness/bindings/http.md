@@ -109,13 +109,15 @@ Runtime 是全局命名资源；`{runtime}` 为 Runtime 名称。创建只接受
 | `POST /apis/v1/sessions` | 按需启动所属 Runtime，再创建 Session | 201，SessionCreated |
 | `GET /apis/v1/sessions` | 列表查询；筛选与分页见下文 | 200，资源分页 |
 | `GET {session}` | 查询资源 | 200，Session 资源 |
-| `POST {session}/resume` | 按需启动所属 Runtime，再恢复该 Session | 200，Session 资源 |
+| `POST {session}/resume` | 恢复原 Session，可选 SessionResume 新显式输入 | 200，SessionResumed |
 | `POST {session}/archive` | 归档 Session | 200，Session 资源 |
 | `POST {session}/inputs` | 提交输入 | 200，输入回执 |
 | `POST {session}/interactions/{interaction64}/answer` | 提交交互答案 | 200，回答回执 |
 | `POST {session}/cancel` | 请求取消当前工作 | 200，取消回执 |
 | `GET {session}/events` | 查询历史；筛选与分页见下文 | 200，历史分页 |
 | `GET {session}/events/stream` | 订阅实时事件 | 200，SSE |
+
+`POST {session}/resume` 允许省略请求体或发送 `{}`，两者均不发送输入；可选 `initialInput` 完整承载 SessionInput。显式 null、空输入或不支持内容在原生恢复/提交前拒绝。成功体 SessionResumed 保留既有 Session 字段，仅显式提交时返回可选 initialInputReceipt；输入和回执均不持久化或重放。Claude 可在原生 init 前提交，但公开成功及历史/SSE 发布仍须观察原 ID/cwd 并完成绑定提交；失败清理不能表述为输入未发送或撤销业务效果，参见[恢复合同](../modules/service/session.md)。
 
 `interaction64 = base64url(UTF-8(原始交互引用))`，不带 `=` padding，只使用 `A-Z a-z 0-9 - _`。解码必须为合法 UTF-8 且重新编码与原片段完全相同；空值、非法字符、padding 或非规范编码返回 400 invalid_argument。JSON 中的交互引用保留原值。例如原值 `a/b` 编码为 `YS9i`，原值 `..` 编码为 `Li4`。请求体直接承载答案，可为 null、标量、数组或对象，不包 `{answer: ...}`，不得由 HTTP 层把 null 当作缺少请求体。回答是否有效由原交互合同校验；过期或重复回答不能提交给新运行。
 

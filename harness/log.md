@@ -2,6 +2,8 @@
 
 ## 2026-11-01
 
+- **显式新输入恢复**：经负责人授权，SessionResume 增加可选 initialInput，SessionResumed 返回临时回执；省略保持零输入，输入与回执不进入持久恢复配置。Claude 在验证保存身份/cwd 并定向原会话后可先提交新输入，再等待同一原生 ID/cwd；成功与事实发布仍受实际身份及持久提交门控。明确早到完成、未知业务效果和原所有者取消清理；同步 HTTP、CLI 与可选 Runtime 能力，接口修订为 v0.2.16。
+
 - **显式首条输入创建**：经负责人授权，SessionCreate 增加 create-only initialInput，SessionCreated 返回可选回执；明确同一所有者、先登记工作后提交、真实身份、有界早到事实、持久提交后发布、未知结算和恢复不重放。CLI 增加显式文本或 SessionInput JSON 文件，省略仍零输入；保持 Claude 本地写入与 Codex 原生接受证据区别。接口修订为 v0.2.15。
 
 ## 2026-10-22

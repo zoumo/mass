@@ -161,6 +161,29 @@ func (d *Driver) ResumeSession(ctx context.Context, id string, address runtime.A
 	return d.open(ctx, id, address, spec)
 }
 
+func (d *Driver) ResumeSessionWithInput(ctx context.Context, id string, address runtime.Address, spec runtime.SessionSpec, input runtime.Input) (runtime.DriverSession, error) {
+	if err := d.ValidateInitialInput(input); err != nil {
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
+	}
+	native, err := d.ResumeSession(ctx, id, address, spec)
+	if err != nil {
+		return native, err
+	}
+	if err := ctx.Err(); err != nil {
+		return native, err
+	}
+	// Retain the original shared dispatch response, including an early terminal.
+	receipt, err := d.SendPrompt(context.WithoutCancel(ctx), native.SessionID, input)
+	if err != nil {
+		if !errors.Is(err, runtime.ErrFailedPrecondition) && !errors.Is(err, runtime.ErrInvalidArgument) {
+			err = errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_input_unverified", Message: "New input dispatch was not verified; do not resend"}, err)
+		}
+		return native, err
+	}
+	native.InitialInputReceipt = &receipt
+	return native, nil
+}
+
 func (d *Driver) open(ctx context.Context, resume string, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.mu.Lock()
 	if d.stopped || d.stopping || len(d.sessions)+d.opening >= 128 {

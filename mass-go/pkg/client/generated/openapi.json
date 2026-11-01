@@ -2344,6 +2344,38 @@
         ],
         "type": "object"
       },
+      "SessionResume": {
+        "additionalProperties": false,
+        "properties": {
+          "initialInput": {
+            "$ref": "#/components/schemas/Input"
+          }
+        },
+        "type": "object"
+      },
+      "SessionResumed": {
+        "additionalProperties": false,
+        "properties": {
+          "initialInputReceipt": {
+            "$ref": "#/components/schemas/InputReceipt"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/Metadata"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/SessionSpec"
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          }
+        },
+        "required": [
+          "metadata",
+          "spec",
+          "status"
+        ],
+        "type": "object"
+      },
       "SessionSpec": {
         "additionalProperties": false,
         "properties": {
@@ -4308,7 +4340,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LifecycleByNameOrIDBody"
+                "$ref": "#/components/schemas/SessionResume"
               }
             }
           }
@@ -4318,7 +4350,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Session"
+                  "$ref": "#/components/schemas/SessionResumed"
                 }
               }
             },
@@ -7814,7 +7846,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LifecycleByIDBody"
+                "$ref": "#/components/schemas/SessionResume"
               }
             }
           }
@@ -7824,7 +7856,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Session"
+                  "$ref": "#/components/schemas/SessionResumed"
                 }
               }
             },

@@ -34,7 +34,9 @@ interface SessionService {
 
   /** 校验后按需启动所属 Runtime，再恢复原会话，延续身份与历史；不恢复其他 Session。
    * 未结算旧责任阻止冲突激活；失败不以新建替代。服务重启不自动调用本操作。 */
-  resumeSession(session: SessionRef): Session | OperationError;
+  resumeSession(session: SessionRef, input?: SessionResume):
+    | SessionResumed
+    | OperationError;
 
   /** 确认释放会话运行资源后成功，保留持久身份与历史。 */
   archiveSession(session: SessionRef): Session | OperationError;

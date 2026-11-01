@@ -453,34 +453,34 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	return r, nil
 }
 
-func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
+func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, initial *runtime.Input) (resource.SessionResumed, error) {
 	r, err := s.GetSession(ref)
 	if err != nil {
-		return r, err
+		return resource.SessionResumed{Session: r}, err
 	}
 	ref = resource.SessionRef{SessionID: r.Status.SessionID}
 	unlock := s.sessionOperation(r.Status.SessionID)
 	defer unlock()
 	r, err = s.GetSession(ref)
 	if err != nil {
-		return r, err
+		return resource.SessionResumed{Session: r}, err
 	}
 	// Read every committed page before touching the adapter or native process.
 	if r.Status.HistoryLoad != nil && r.Status.HistoryLoad.Phase != "completed" {
-		return r, runtime.FailedPrecondition("unresolved history load cannot be resumed or reimported")
+		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("unresolved history load cannot be resumed or reimported")
 	}
 	q := store.HistoryQuery{}
 	for {
 		page, e := s.history.ListHistory(r.Status.SessionID, q)
 		if e != nil {
-			return r, e
+			return resource.SessionResumed{Session: r}, e
 		}
 		for _, event := range page.Events {
 			if e := event.Validate(); e != nil {
-				return r, e
+				return resource.SessionResumed{Session: r}, e
 			}
 			if event.SessionID != r.Status.SessionID || event.Namespace != r.Metadata.Namespace || event.SessionName != r.Metadata.Name || !event.Persistent() {
-				return r, errors.New("invalid committed history identity")
+				return resource.SessionResumed{Session: r}, errors.New("invalid committed history identity")
 			}
 		}
 		if page.Next == "" {
@@ -492,22 +492,33 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	run := s.runs[r.Spec.RuntimeRef]
 	s.mu.Unlock()
 	if run == nil {
-		return r, runtime.FailedPrecondition("start original runtime before resume")
+		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("start original runtime before resume")
+	}
+	var resumer runtime.ResumptionDriver
+	if initial != nil {
+		var ok bool
+		resumer, ok = run.driver.(runtime.ResumptionDriver)
+		if !ok {
+			return resource.SessionResumed{Session: r}, runtime.Unsupported()
+		}
+		if err := resumer.ValidateInitialInput(*initial); err != nil {
+			return resource.SessionResumed{Session: r}, err
+		}
 	}
 	run.admission.RLock()
 	defer run.admission.RUnlock()
 	s.mu.Lock()
 	if s.closing || run.stopping || run.err != nil || !run.started || run.lanes[r.Status.SessionID] != nil {
 		s.mu.Unlock()
-		return r, runtime.FailedPrecondition("runtime unavailable or session already controlled")
+		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("runtime unavailable or session already controlled")
 	}
 	s.mu.Unlock()
 	r, err = s.GetSession(ref)
 	if err != nil {
-		return r, err
+		return resource.SessionResumed{Session: r}, err
 	}
 	if r.Status.State == "closing" || r.Status.AppliedGeneration != 0 {
-		return r, runtime.FailedPrecondition("previous session release remains unsettled")
+		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("previous session release remains unsettled")
 	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
 	k := addressKey(a)
@@ -518,7 +529,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	s.mu.Lock()
 	if s.closing || run.stopping || run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
 		s.mu.Unlock()
-		return r, runtime.FailedPrecondition("original restore responsibility remains or capacity exhausted")
+		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("original restore responsibility remains or capacity exhausted")
 	}
 	run.pending[k] = op
 	s.mu.Unlock()
@@ -526,10 +537,27 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		s.mu.Lock()
 		delete(run.pending, k)
 		s.mu.Unlock()
-		return r, err
+		return resource.SessionResumed{Session: r}, err
 	}
-	native, err := run.driver.ResumeSession(nativeCtx, r.Status.SessionID, a, r.Spec.SessionSpec)
+	var native runtime.DriverSession
+	if initial == nil {
+		native, err = run.driver.ResumeSession(nativeCtx, r.Status.SessionID, a, r.Spec.SessionSpec)
+	} else {
+		native, err = resumer.ResumeSessionWithInput(nativeCtx, r.Status.SessionID, a, r.Spec.SessionSpec, *initial)
+	}
 	if err != nil {
+		// A failed input dispatch can still return a verified native connection.
+		// Retain its source and settle only that original connection's resources.
+		if native.SessionID != "" {
+			cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
+			s.mu.Lock()
+			op.native = native
+			s.mu.Unlock()
+			err = errors.Join(err, cleanup)
+			if cleanup == nil {
+				err = errors.Join(err, runtime.ErrResourcesReleased)
+			}
+		}
 		s.mu.Lock()
 		op.err = err
 		op.released = errors.Is(err, runtime.ErrResourcesReleased)
@@ -544,7 +572,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		if errors.Is(err, runtime.ErrResourcesReleased) && statusErr == nil {
 			deliveryErr = s.settleFailedRestore(ctx, run, op, k)
 		}
-		return r, errors.Join(err, statusErr, deliveryErr)
+		return resource.SessionResumed{Session: r}, errors.Join(err, statusErr, deliveryErr)
 	}
 	s.mu.Lock()
 	op.native = native
@@ -554,6 +582,9 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		identityErr = errors.New("resume returned a replacement identity")
 	}
 	if identityErr != nil {
+		if initial != nil {
+			identityErr = errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_input_unverified", Message: "New input may have been submitted without verified original identity; do not resend"}, identityErr)
+		}
 		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
 		s.mu.Lock()
 		op.released = cleanup == nil
@@ -565,13 +596,13 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 			}
 		})
 		if cleanup != nil {
-			return r, errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_identity_cleanup_unknown", Message: "Unexpected resume identity cleanup remains unsettled"}, cleanup, statusErr)
+			return resource.SessionResumed{Session: r}, errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_identity_cleanup_unknown", Message: "Unexpected resume identity cleanup remains unsettled"}, cleanup, statusErr)
 		}
 		var deliveryErr error
 		if statusErr == nil {
 			deliveryErr = s.settleFailedRestore(ctx, run, op, k)
 		}
-		return r, errors.Join(identityErr, statusErr, deliveryErr)
+		return resource.SessionResumed{Session: r}, errors.Join(identityErr, statusErr, deliveryErr)
 	}
 	r, err = s.sessionStatus(ref, func(r *resource.Session) {
 		r.Status = resource.SessionStatus{SessionID: r.Status.SessionID, State: events.Unknown, AppliedGeneration: r.Metadata.Generation, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
@@ -581,7 +612,10 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		s.mu.Lock()
 		op.released = cleanup == nil
 		s.mu.Unlock()
-		return r, errors.Join(err, cleanup)
+		if initial != nil {
+			err = errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_input_commit_unknown", Message: "New input was submitted but resume binding commit failed; do not resend"}, err)
+		}
+		return resource.SessionResumed{Session: r}, errors.Join(err, cleanup)
 	}
 	s.mu.Lock()
 	var l *lane
@@ -606,13 +640,17 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		go s.process(run, l)
 	}
 	if err := s.flushOpening(ctx, run, l, op); err != nil {
-		return r, err
+		return resource.SessionResumed{Session: r}, err
 	}
 	s.mu.Lock()
 	delete(run.pending, k)
 	resumeErr := l.err
 	s.mu.Unlock()
-	return r, resumeErr
+	result := resource.SessionResumed{Session: r}
+	if resumeErr == nil {
+		result.InitialInputReceipt = native.InitialInputReceipt
+	}
+	return result, resumeErr
 }
 
 // control holds the original Runtime operation lock through a native dispatch.
@@ -709,17 +747,31 @@ func fmtUnknown(err error) error {
 // Caller cancellation abandons only the wait. A bounded original restore owner
 // keeps settling its SDK operation; no replacement resume is dispatched.
 func (s *Service) ResumeSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
+	result, err := s.resumeSessionOwned(ctx, ref, nil)
+	return result.Session, err
+}
+
+// ResumeSessionWithInput snapshots new caller input; it is never recovery config.
+func (s *Service) ResumeSessionWithInput(ctx context.Context, ref resource.SessionRef, input runtime.Input) (resource.SessionResumed, error) {
+	copied, err := runtime.CopyInput(input)
+	if err != nil {
+		return resource.SessionResumed{}, err
+	}
+	return s.resumeSessionOwned(ctx, ref, &copied)
+}
+
+func (s *Service) resumeSessionOwned(ctx context.Context, ref resource.SessionRef, initial *runtime.Input) (resource.SessionResumed, error) {
 	if err := ctx.Err(); err != nil {
-		return resource.Session{}, err
+		return resource.SessionResumed{}, err
 	}
 	select {
 	case s.resumeSlots <- struct{}{}:
 	default:
-		return resource.Session{}, runtime.FailedPrecondition("resume capacity exhausted")
+		return resource.SessionResumed{}, runtime.FailedPrecondition("resume capacity exhausted")
 	}
-	return awaitSessionLifecycle(ctx, func(owner context.Context) (resource.Session, error) {
+	return awaitSessionLifecycle(ctx, func(owner context.Context) (resource.SessionResumed, error) {
 		defer func() { <-s.resumeSlots }()
-		return s.resumeSession(owner, ref)
+		return s.resumeSession(owner, ref, initial)
 	})
 }
 
@@ -786,9 +838,9 @@ func (s *Service) sealLane(ctx context.Context, l *lane) error {
 
 // Accepted lifecycle operations retain their original owner after the caller
 // stops waiting. A late result remains observable through the persistent resource.
-func awaitSessionLifecycle(ctx context.Context, operation func(context.Context) (resource.Session, error)) (resource.Session, error) {
+func awaitSessionLifecycle[T any](ctx context.Context, operation func(context.Context) (T, error)) (T, error) {
 	type result struct {
-		value resource.Session
+		value T
 		err   error
 	}
 	done := make(chan result, 1)
@@ -802,7 +854,8 @@ func awaitSessionLifecycle(ctx context.Context, operation func(context.Context) 
 			return r.value, r.err
 		default:
 		}
-		return resource.Session{}, &runtime.OperationError{Code: "outcome_unknown", Reason: "lifecycle_wait_abandoned", Message: "Lifecycle operation remains owned by its original Session; inspect state before further action"}
+		var zero T
+		return zero, &runtime.OperationError{Code: "outcome_unknown", Reason: "lifecycle_wait_abandoned", Message: "Lifecycle operation remains owned by its original Session; inspect state before further action"}
 	}
 }
 

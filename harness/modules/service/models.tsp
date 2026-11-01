@@ -122,6 +122,16 @@ model SessionCreated extends Session {
   initialInputReceipt?: InputReceipt;
 }
 
+/** 仅本次恢复的新输入；省略为零输入，不持久或重放。 */
+model SessionResume {
+  initialInput?: SessionInput;
+}
+
+/** 实际原生 ID/cwd 验证及绑定提交之后才公开；回执不是持久字段。 */
+model SessionResumed extends Session {
+  initialInputReceipt?: InputReceipt;
+}
+
 /** 恢复已知原生会话并加载历史到新空目标；不发送业务输入。 */
 model SessionLoad {
   metadata: ObjectMetadata;

@@ -75,7 +75,7 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 | `session create NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd PATH`，可选系统提示与额外目录 | 创建并登记 Session，返回持久身份及可选输入回执；仅显式输入发送一次 |
 | `session get TARGET` | 无业务请求体 | 查询资源，不隐式恢复 |
 | `session list` | 只保留分页参数 `--limit`、`--after` | 查询全部 namespace 与 Runtime 的持久目录，包含离线和归档会话；首版不提供筛选（已确认） |
-| `session resume TARGET` | 无业务请求体 | 按需启动所属 Runtime，再恢复原身份及历史；失败不新建替代 |
+| `session resume TARGET` | 可选互斥 `--text TEXT` 或 `--input-file FILE` | 恢复原身份，可显式提交一次新输入；失败不新建替代 |
 | `session archive TARGET` | 无业务请求体 | 释放会话运行资源，保留身份与历史 |
 | `session prompt TARGET` | 必填 `--text TEXT` | 首版只发送文本，返回 InputReceipt；不支持文件或 JSON 输入（已确认） |
 | `session cancel TARGET` | 无业务请求体 | 固定接纳时工作并请求取消，返回 CancelReceipt |
@@ -85,6 +85,8 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 Session 创建参数已确认：NAME、-n/--namespace、--runtime 与 --cwd 必填；可选 --system-prompt TEXT 或 --system-prompt-file FILE（二者互斥），以及可重复 --additional-dir PATH，分别对应 systemPrompt 和 additionalDirs。创建省略输入时不发送 prompt；可选互斥 --text TEXT 与 --input-file FILE，后者读取 UTF-8 SessionInput JSON 并保留内容块结构。输入不进入 spec 或恢复配置，receipt 不代表完成；不支持字段在副作用前拒绝。文件 - 读取 stdin，两个文件参数不得同时读 stdin。cwd 与额外目录按 Agent 所在环境解释，不以本机路径是否存在决定有效性；额外目录不授予权限。
 
 当前 Service 未提供 Session 更新、删除、配置选项写入和待决交互补查，CLI 不虚构这些操作。`archive` 不提供 `delete` 别名。进程内 EventHandler 管理不作为 CLI 远程能力暴露。
+
+Session 恢复可选互斥 --text TEXT 或 --input-file FILE，使用与创建相同的 SessionInput 读取及校验规则；省略保持零输入，显式空输入拒绝。这是新输入，不是历史或恢复配置；同一原生 ID/cwd 验证前不报告成功，receipt 不表示完成，结果未知不自动重试。
 
 session prompt 的首版输入范围已确认：仅提供 --text TEXT，将文本构造为 SessionInput 中的一个 text ContentBlock；不提供 --input-file、--input-json、多模态内容输入或隐式 stdin 读取。此限制属于 CLI 首版范围，不缩减 Service/HTTP 的 SessionInput 合同。answer 延后讨论，首版不暴露命令，不将先前建议的参数作为已确认合同。
 

@@ -47,14 +47,20 @@ func (o *options) sessionCommands() *cobra.Command {
 			cmd.Flags().StringVar(&systemFile, "system-prompt-file", "", "UTF-8 system prompt file (- for stdin)")
 			cmd.Flags().StringArrayVar(&dirs, "additional-dir", nil, "Additional Agent directory (repeatable)")
 			cmd.MarkFlagsMutuallyExclusive("system-prompt", "system-prompt-file")
-			cmd.Flags().StringVar(&text, "text", "", "Explicit first user text (create only)")
-			cmd.Flags().StringVar(&inputFile, "input-file", "", "UTF-8 SessionInput JSON file (- for stdin, create only)")
-			cmd.MarkFlagsMutuallyExclusive("text", "input-file")
 
 			for _, flag := range []string{"namespace", "runtime", "cwd"} {
 				_ = cmd.MarkFlagRequired(flag)
 			}
 		}
+		if action == "create" || action == "resume" {
+			cmd.Flags().StringVar(&text, "text", "", "New explicit user text for this operation only")
+			cmd.Flags().StringVar(&inputFile, "input-file", "", "UTF-8 SessionInput JSON file (- for stdin, never replayed)")
+			cmd.MarkFlagsMutuallyExclusive("text", "input-file")
+		}
+		if action == "resume" {
+			cmd.Long += " Optional --text or --input-file supplies one NEW input, not history replay. Success requires observed original identity; a receipt is not turn completion."
+		}
+
 		if action == "load" {
 			cmd.Use = "load NAME"
 			cmd.Long = "Accept an asynchronous load into a new Session. Namespace, runtime, cwd and native session ID are required. The Runtime must already be started. Paths refer to the Agent host. The receipt is acceptance only; inspect session get -o json for historyLoad status. Timeout or interruption ends waiting, not the accepted load."
@@ -103,6 +109,29 @@ func (o *options) sessionCommands() *cobra.Command {
 					ref = resource.SessionRef{SessionID: args[0]}
 				}
 			}
+			if systemFile == "-" && inputFile == "-" {
+				return invalid("Only one file may read stdin")
+			}
+			var initial *runtime.Input
+			if cmd.Flags().Changed("text") {
+				initial = &runtime.Input{Content: []events.ContentBlock{events.Text(text)}}
+			}
+			if cmd.Flags().Changed("input-file") {
+				raw, err := readFile(cmd, inputFile)
+				if err != nil {
+					return err
+				}
+				var input runtime.Input
+				decoder := json.NewDecoder(bytes.NewReader(raw))
+				decoder.DisallowUnknownFields()
+				if err = decoder.Decode(&input); err != nil {
+					return invalid("Invalid SessionInput JSON")
+				}
+				if decoder.Decode(new(any)) != io.EOF {
+					return invalid("Expected one SessionInput JSON value")
+				}
+				initial = &input
+			}
 			switch action {
 			case "load":
 				if namespace == "" || runtimeRef == "" || cwd == "" {
@@ -122,9 +151,6 @@ func (o *options) sessionCommands() *cobra.Command {
 				if namespace == "" || runtimeRef == "" || cwd == "" {
 					return invalid("Namespace, runtime and cwd are required")
 				}
-				if systemFile == "-" && inputFile == "-" {
-					return invalid("Only one file may read stdin")
-				}
 				if cmd.Flags().Changed("system-prompt-file") {
 					b, err := readFile(cmd, systemFile)
 					if err != nil {
@@ -133,26 +159,7 @@ func (o *options) sessionCommands() *cobra.Command {
 					systemPrompt = string(b)
 				}
 				v := resource.Session{Metadata: resource.Metadata{Namespace: namespace, Name: args[0]}, Spec: resource.SessionSpec{RuntimeRef: runtimeRef, SessionSpec: runtime.SessionSpec{Cwd: cwd, SystemPrompt: systemPrompt, AdditionalDirs: dirs}}}
-				var initial *runtime.Input
-				if cmd.Flags().Changed("text") {
-					initial = &runtime.Input{Content: []events.ContentBlock{events.Text(text)}}
-				}
-				if cmd.Flags().Changed("input-file") {
-					raw, err := readFile(cmd, inputFile)
-					if err != nil {
-						return err
-					}
-					var input runtime.Input
-					decoder := json.NewDecoder(bytes.NewReader(raw))
-					decoder.DisallowUnknownFields()
-					if err = decoder.Decode(&input); err != nil {
-						return invalid("Invalid SessionInput JSON")
-					}
-					if decoder.Decode(new(any)) != io.EOF {
-						return invalid("Expected one SessionInput JSON value")
-					}
-					initial = &input
-				}
+
 				if initial != nil {
 					copyInput, err := runtime.CopyInput(*initial)
 					if err != nil {
@@ -180,7 +187,13 @@ func (o *options) sessionCommands() *cobra.Command {
 			case "archive":
 				call = func(ctx context.Context, out any) error { return o.client.ArchiveSession(ctx, ref, out) }
 			case "resume":
-				call = func(ctx context.Context, out any) error { return o.client.ResumeSession(ctx, ref, out) }
+				if initial != nil {
+					call = func(ctx context.Context, out any) error {
+						return o.client.ResumeSessionWithInput(ctx, ref, *initial, out)
+					}
+				} else {
+					call = func(ctx context.Context, out any) error { return o.client.ResumeSession(ctx, ref, out) }
+				}
 			case "cancel":
 				call = func(ctx context.Context, out any) error { return o.client.Cancel(ctx, ref, out) }
 			case "watch":

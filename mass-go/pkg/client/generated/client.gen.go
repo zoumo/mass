@@ -884,6 +884,19 @@ type SessionPage struct {
 	Next  *string                      `json:"next,omitempty"`
 }
 
+// SessionResume defines model for SessionResume.
+type SessionResume struct {
+	InitialInput *Input `json:"initialInput,omitempty"`
+}
+
+// SessionResumed defines model for SessionResumed.
+type SessionResumed struct {
+	InitialInputReceipt *InputReceipt `json:"initialInputReceipt,omitempty"`
+	Metadata            Metadata      `json:"metadata"`
+	Spec                SessionSpec   `json:"spec"`
+	Status              SessionStatus `json:"status"`
+}
+
 // SessionSpec defines model for SessionSpec.
 type SessionSpec struct {
 	AdditionalDirs nullable.Nullable[[]string] `json:"additionalDirs,omitempty"`
@@ -1068,7 +1081,7 @@ type SendPromptByNameOrIDJSONRequestBody = Input
 type AnswerInteractionByNameOrIDJSONRequestBody = AnswerInteractionByNameOrIDJSONBody
 
 // ResumeSessionByNameOrIDJSONRequestBody defines body for ResumeSessionByNameOrID for application/json ContentType.
-type ResumeSessionByNameOrIDJSONRequestBody = LifecycleByNameOrIDBody
+type ResumeSessionByNameOrIDJSONRequestBody = SessionResume
 
 // CreateRuntimeJSONRequestBody defines body for CreateRuntime for application/json ContentType.
 type CreateRuntimeJSONRequestBody = RuntimeCreate
@@ -1104,7 +1117,7 @@ type SendPromptByIDJSONRequestBody = Input
 type AnswerInteractionByIDJSONRequestBody = AnswerInteractionByIDJSONBody
 
 // ResumeSessionByIDJSONRequestBody defines body for ResumeSessionByID for application/json ContentType.
-type ResumeSessionByIDJSONRequestBody = LifecycleByIDBody
+type ResumeSessionByIDJSONRequestBody = SessionResume
 
 // RequestEditorFn is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -4943,7 +4956,7 @@ type ResumeSessionByNameOrIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *Session
+	JSON200 *SessionResumed
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *OperationError
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -4975,7 +4988,7 @@ type ResumeSessionByNameOrIDResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ResumeSessionByNameOrIDResponse) GetJSON200() *Session {
+func (r ResumeSessionByNameOrIDResponse) GetJSON200() *SessionResumed {
 	return r.JSON200
 }
 
@@ -7591,7 +7604,7 @@ type ResumeSessionByIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *Session
+	JSON200 *SessionResumed
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *OperationError
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -7623,7 +7636,7 @@ type ResumeSessionByIDResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ResumeSessionByIDResponse) GetJSON200() *Session {
+func (r ResumeSessionByIDResponse) GetJSON200() *SessionResumed {
 	return r.JSON200
 }
 
@@ -9532,7 +9545,7 @@ func ParseResumeSessionByNameOrIDResponse(rsp *http.Response) (*ResumeSessionByN
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Session
+		var dest SessionResumed
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -11916,7 +11929,7 @@ func ParseResumeSessionByIDResponse(rsp *http.Response) (*ResumeSessionByIDRespo
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Session
+		var dest SessionResumed
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

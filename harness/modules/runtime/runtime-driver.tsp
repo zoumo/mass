@@ -76,3 +76,17 @@ interface CreationDriver {
     input: SessionInput,
   ): DriverSession | OperationError;
 }
+
+/** 可选的显式恢复输入能力；校验先于原生副作用。 */
+interface ResumptionDriver {
+  validateInitialInput(input: SessionInput): void | OperationError;
+
+  /** 验证保存身份/cwd 后定向原会话；Claude 提交新输入后等待 init。
+   * 实际观察原 ID/cwd 之前不返回成功或发布事实；失败清理不撤销业务效果。 */
+  resumeSessionWithInput(
+    sessionId: string,
+    address: DriverSessionAddress,
+    spec: DriverSessionSpec,
+    input: SessionInput,
+  ): DriverSession | OperationError;
+}

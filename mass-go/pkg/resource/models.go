@@ -83,6 +83,16 @@ type SessionCreated struct {
 	InitialInputReceipt *runtime.InputReceipt `json:"initialInputReceipt,omitempty"`
 }
 
+type SessionResume struct {
+	InitialInput *runtime.Input `json:"initialInput,omitempty"`
+}
+
+// SessionResumed is an operation result, not a durable Session resource.
+type SessionResumed struct {
+	Session
+	InitialInputReceipt *runtime.InputReceipt `json:"initialInputReceipt,omitempty"`
+}
+
 type SessionRef struct {
 	Namespace string `json:"namespace,omitempty"`
 	Name      string `json:"name,omitempty"`

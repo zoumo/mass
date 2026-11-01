@@ -46,8 +46,17 @@ func main() {
 	for _, arg := range os.Args[1:] {
 		resumed = resumed || strings.HasPrefix(arg, "--resume=")
 	}
+	waitResumeInput := resumed && os.Getenv("RESUME_INPUT_MODE") != "" && len(saved) == 1
 	init := func() {
-		send(map[string]any{"type": "system", "subtype": "init", "session_id": sessionID, "cwd": cwd})
+		id, work := sessionID, cwd
+		if waitResumeInput && os.Getenv("RESUME_INPUT_MODE") == "wrong-id" {
+			id = "20202020-2020-4020-8020-202020202020"
+		}
+		if waitResumeInput && os.Getenv("RESUME_INPUT_MODE") == "wrong-cwd" {
+			work = filepath.Dir(cwd)
+		}
+		log("init", map[string]any{"sessionId": id, "cwd": work})
+		send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": work})
 	}
 	thread := func() map[string]any {
 		return map[string]any{"id": sessionID, "sessionId": sessionID, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}, "turns": []any{}}
@@ -61,7 +70,7 @@ func main() {
 				r := v["request"].(map[string]any)
 				log(r["subtype"].(string), nil)
 				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
-				if r["subtype"] == "initialize" && resumed {
+				if r["subtype"] == "initialize" && resumed && !waitResumeInput {
 					init()
 				}
 				continue
@@ -69,8 +78,14 @@ func main() {
 			if v["type"] != "user" {
 				panic("unexpected Claude frame")
 			}
-			text := v["message"].(map[string]any)["content"].(string)
-			log("input", map[string]any{"text": text, "sessionId": sessionID})
+			content := v["message"].(map[string]any)["content"]
+			text, scalar := content.(string)
+			if !scalar {
+				for _, block := range content.([]any) {
+					text += block.(map[string]any)["text"].(string)
+				}
+			}
+			log("input", map[string]any{"text": text, "content": content, "sessionId": sessionID, "submission": v["uuid"]})
 			n := save(text)
 			uid, aid := fmt.Sprintf("user-%d", n), fmt.Sprintf("answer-%d", n)
 			path := os.Getenv("SAVED_TRANSCRIPT")
@@ -93,8 +108,19 @@ func main() {
 				init()
 				resumed = true
 			}
+			if waitResumeInput && strings.HasPrefix(os.Getenv("RESUME_INPUT_MODE"), "wrong-") {
+				// Keep the mismatch as the first identity-bearing frame; a preceding
+				// result would correctly anchor the SDK's root and fence a foreign init.
+				init()
+				waitResumeInput = false
+			}
 			send(map[string]any{"type": "assistant", "session_id": sessionID, "user_message_uuid": v["uuid"], "message": rows[1]["message"]})
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": v["uuid"]})
+			if waitResumeInput && os.Getenv("RESUME_INPUT_MODE") != "no-init" {
+				// Deliberately complete before init/receipt to test buffered terminal facts.
+				init()
+				waitResumeInput = false
+			}
 			continue
 		}
 		method, _ := v["method"].(string)
@@ -132,8 +158,11 @@ func main() {
 			if p["threadId"] != sessionID {
 				panic("replacement thread input")
 			}
-			text := p["input"].([]any)[0].(map[string]any)["text"].(string)
-			log("input", map[string]any{"text": text, "sessionId": sessionID})
+			text := ""
+			for _, block := range p["input"].([]any) {
+				text += block.(map[string]any)["text"].(string)
+			}
+			log("input", map[string]any{"text": text, "content": p["input"], "sessionId": sessionID})
 			n := save(text)
 			tid := fmt.Sprintf("turn-%d", n)
 			turn := map[string]any{"id": tid, "status": "inProgress", "items": []any{}}

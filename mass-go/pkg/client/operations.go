@@ -222,6 +222,26 @@ func (c *Client) ResumeSession(ctx context.Context, ref resource.SessionRef, out
 	})
 }
 
+func (c *Client) ResumeSessionWithInput(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
+	if _, err := SessionPath(ref); err != nil {
+		return err
+	}
+	copied, err := runtime.CopyInput(input)
+	if err != nil {
+		return err
+	}
+	body, err := generatedValue[generated.SessionResume](resource.SessionResume{InitialInput: &copied})
+	if err != nil {
+		return err
+	}
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
+		if ref.SessionID != "" {
+			return generated.NewResumeSessionByIDRequest(c.url, ref.SessionID, body)
+		}
+		return generated.NewResumeSessionByNameOrIDRequest(c.url, ref.Namespace, ref.Name, body)
+	})
+}
+
 func (c *Client) Cancel(ctx context.Context, ref resource.SessionRef, out any) error {
 	if _, err := SessionPath(ref); err != nil {
 		return err

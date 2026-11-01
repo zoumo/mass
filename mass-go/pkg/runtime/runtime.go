@@ -81,6 +81,14 @@ type CreationDriver interface {
 	OpenSessionWithInput(context.Context, Address, SessionSpec, Input) (DriverSession, error)
 }
 
+// ResumptionDriver accepts one new transient input under the original restore
+// owner. Saved targeting is validated before dispatch; success requires observed
+// native identity, even when the provider needs input before its init event.
+type ResumptionDriver interface {
+	ValidateInitialInput(Input) error
+	ResumeSessionWithInput(context.Context, string, Address, SessionSpec, Input) (DriverSession, error)
+}
+
 type Factory interface {
 	Validate(Config) error
 	New(string, Config) (Driver, error)

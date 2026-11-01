@@ -130,6 +130,15 @@ func (d *Driver) ResumeSession(ctx context.Context, id string, a runtime.Address
 	return d.open(ctx, id, a, spec, nil)
 }
 
+func (d *Driver) ResumeSessionWithInput(ctx context.Context, id string, a runtime.Address, spec runtime.SessionSpec, input runtime.Input) (runtime.DriverSession, error) {
+	if err := d.ValidateInitialInput(input); err != nil {
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
+	}
+	// open validates saved targeting before Submit, then gates success and early
+	// facts on observed init identity/cwd. Local write does not prove that identity.
+	return d.open(ctx, id, a, spec, &input)
+}
+
 func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spec runtime.SessionSpec, initial *runtime.Input) (runtime.DriverSession, error) {
 	d.mu.Lock()
 	if d.stopped || len(d.sessions)+d.opening >= 128 {
@@ -178,11 +187,21 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	}
 	s.client = c
 	var receipt *runtime.InputReceipt
+	fail := func(cause error) error {
+		s.mu.Lock()
+		uncertain := s.uncertain
+		s.mu.Unlock()
+		if resume != "" && (receipt != nil || uncertain) {
+			// Releasing the connection does not undo an already written input.
+			cause = errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_input_unverified", Message: "New input dispatch or original session activation was not verified; do not resend"}, cause)
+		}
+		return releasedOpenError(cause, c)
+	}
 	if initial != nil {
 		accepted, err := d.submit(ctx, s, *initial)
 		if err != nil {
 			close(s.ready)
-			return runtime.DriverSession{}, releasedOpenError(err, c)
+			return runtime.DriverSession{}, fail(err)
 		}
 		receipt = &accepted
 	}
@@ -192,13 +211,13 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		event, receiveErr := c.Receive(ctx)
 		if receiveErr != nil {
 			close(s.ready)
-			return runtime.DriverSession{}, releasedOpenError(fmt.Errorf("claude missing native init identity: %w", receiveErr), c)
+			return runtime.DriverSession{}, fail(fmt.Errorf("claude missing native init identity: %w", receiveErr))
 		}
 		e := event.Event
 		if e == nil && event.Kind == sdk.ReceivedObservation {
 			if len(early) == 128 {
 				close(s.ready)
-				return runtime.DriverSession{}, releasedOpenError(runtime.Exhausted("pre_identity_buffer"), c)
+				return runtime.DriverSession{}, fail(runtime.Exhausted("pre_identity_buffer"))
 			}
 			early = append(early, event)
 			continue
@@ -207,19 +226,19 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 			// Before identity, a live request cannot be safely exposed or answered.
 			// Fail with owned cleanup rather than silently skipping it and waiting forever.
 			close(s.ready)
-			return runtime.DriverSession{}, releasedOpenError(&runtime.OperationError{Code: "outcome_unknown", Reason: "pre_identity_native_observation", Message: "Native request or diagnostic arrived before a validated session identity"}, c)
+			return runtime.DriverSession{}, fail(&runtime.OperationError{Code: "outcome_unknown", Reason: "pre_identity_native_observation", Message: "Native request or diagnostic arrived before a validated session identity"})
 		}
 		if e.Type == "system" && e.Subtype == "init" && e.SessionID != "" {
 			if resume != "" && e.SessionID != resume {
 				close(s.ready)
-				return runtime.DriverSession{}, releasedOpenError(errors.New("native resume identity mismatch"), c)
+				return runtime.DriverSession{}, fail(errors.New("native resume identity mismatch"))
 			}
 			var init struct {
 				Cwd string `json:"cwd"`
 			}
 			if err := json.Unmarshal(e.Raw, &init); err != nil || init.Cwd != spec.Cwd {
 				close(s.ready)
-				return runtime.DriverSession{}, releasedOpenError(errors.New("native init cwd mismatch"), c)
+				return runtime.DriverSession{}, fail(errors.New("native init cwd mismatch"))
 			}
 			s.id = e.SessionID
 			break
@@ -228,7 +247,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		if e.Type == "assistant" || e.Type == "user" || e.Type == "stream_event" || e.Type == "result" {
 			if len(early) == 128 {
 				close(s.ready)
-				return runtime.DriverSession{}, releasedOpenError(errors.New("pre-identity buffer exhausted"), c)
+				return runtime.DriverSession{}, fail(errors.New("pre-identity buffer exhausted"))
 			}
 			early = append(early, event)
 		}
@@ -236,14 +255,14 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	if resume == "" {
 		if err := d.vault.Save(s.id, a, spec, map[string]string{"id": s.id, "cwd": spec.Cwd}); err != nil {
 			close(s.ready)
-			return runtime.DriverSession{}, releasedOpenError(err, c)
+			return runtime.DriverSession{}, fail(err)
 		}
 	}
 	d.mu.Lock()
 	if d.sessions[s.id] != nil {
 		d.mu.Unlock()
 		close(s.ready)
-		return runtime.DriverSession{}, releasedOpenError(errors.New("duplicate native identity"), c)
+		return runtime.DriverSession{}, fail(errors.New("duplicate native identity"))
 	}
 	d.sessions[s.id] = s
 	d.mu.Unlock()
