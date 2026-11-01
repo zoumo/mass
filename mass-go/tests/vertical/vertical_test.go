@@ -104,16 +104,12 @@ func TestMain(m *testing.M) {
 				code = 1
 			}
 		}()
-		mock, err = testpeer.Build(mainCtx, root, "codex")
+		peers, err := testpeer.Build(mainCtx, root)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return
 		}
-		claudeMock, err = testpeer.Build(mainCtx, root, "claude")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return
-		}
+		mock, claudeMock = peers["codex"], peers["claude"]
 		for name, target := range map[string]string{"massd": "../../cmd/massd", "massctl": "../../cmd/massctl"} {
 			bin := filepath.Join(root, name)
 			cmd := exec.CommandContext(mainCtx, "go", "build", "-o", bin, target)
@@ -122,17 +118,13 @@ func TestMain(m *testing.M) {
 				return
 			}
 			switch name {
-			case "claude-mock":
-				claudeMock = bin
-			case "mock":
-				mock = bin
 			case "massd":
 				app = bin
 			case "massctl":
 				ctl = bin
 			}
 		}
-		for _, name := range []string{"agent-sdk-testify-codex", "agent-sdk-testify-claude", "massd", "massctl"} {
+		for _, name := range []string{"agent-sdk-testify", "massd", "massctl"} {
 			binary, readErr := os.ReadFile(filepath.Join(root, name))
 			if readErr != nil {
 				fmt.Fprintln(os.Stderr, readErr)

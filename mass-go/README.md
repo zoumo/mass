@@ -12,7 +12,6 @@ From the repository root, with Go 1.26.9 and pinned dependencies already cached:
 ```sh
 make prototype-go
 # Cross-capability combinations under race; no models or recording fallback:
-make acceptance-sdk-go
 ```
 
 This builds the pinned `agent-sdk-go` protocol simulation driver for Codex **and** Claude plus `massd`
@@ -141,7 +140,7 @@ bin/massctl session archive review -n demo
 bin/massctl session resume review -n demo
 ```
 
-Both drivers currently accept text input; Claude requires exactly one text block.
+Both drivers currently accept text input, including multiple text blocks.
 Claude rejects `systemPrompt` and `additionalDirs` before dispatch; Codex maps
 `systemPrompt` to native base instructions and rejects `additionalDirs`.
 These command examples describe supported interfaces, not proof of real CLI/model
@@ -152,8 +151,8 @@ the HTTP answer API. This CLI version deliberately has no answer command.
 
 ### Runtime Launch Configuration
 
-The SDK is pinned to `v0.0.0-20261031154401-ed6c8216607c`, source commit
-`ed6c8216607ceacb5077b558a8302a587c9e6d5b`, without a local replacement.
+The SDK is pinned to `v0.0.0-20261101172223-619cf8ac7e14`, source commit
+`619cf8ac7e1484f82c40d6fd96155fab9404e634`, without a local replacement.
 Codex shares one native Client across its Sessions; Claude owns one native
 process per Session. Each Session has one Receive consumer for native events
 and original request capabilities. SDK observations do not establish Agent state.
@@ -331,7 +330,7 @@ stops that event's remaining fan-out without replay or loss of committed history
 No HTTP request-body cap is introduced.
 
 The HTTP input codec preserves all five ContentBlock shapes; existing native
-adapters execute text input only. Claude accepts exactly one text block.
+adapters execute text input only, including multiple text blocks.
 Complete text/thinking, tool calls/results, permission/form interactions, state
 and sanitized Session errors are mapped; deltas are previews and never fabricated
 into complete history. Unsupported complete content fails explicitly. Images,

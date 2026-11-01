@@ -44,11 +44,7 @@ func ticket06Peer(t *testing.T) string {
 
 func ticket06Service(t *testing.T, mode string, extraEnv ...map[string]any) (*service.Service, string) {
 	t.Helper()
-	return ticket06ServiceWithPeer(t, ticket06Peer(t), mode, extraEnv...)
-}
-
-func ticket06ServiceWithPeer(t *testing.T, bin, mode string, extraEnv ...map[string]any) (*service.Service, string) {
-	t.Helper()
+	bin := ticket06Peer(t)
 	cwd, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	st, err := file.Open(t.TempDir(), false)

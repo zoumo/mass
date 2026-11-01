@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -133,59 +134,73 @@ func ticket12ColdLoadHTTP(t *testing.T, mode string) {
 }
 
 func TestTicket12CodexColdLoadRejectsUnsettledOrDriftingSource(t *testing.T) {
-	cases := []string{"cold:pre:active", "cold:pre:unknown", "cold:pre:systemError", "cold:pre:outsideHome", "cold:pre:relativePath", "cold:pre:id", "cold:pre:source"}
-	for _, stage := range []string{"resume", "after"} {
+	var cases []ticket12RejectedCase
+	for _, field := range []string{"active", "unknown", "systemError", "outsideHome", "relativePath", "id", "source"} {
+		cases = append(cases, ticket12RejectedCase{"cold:pre:" + field, 0, 0})
+	}
+	for _, stage := range []struct {
+		name     string
+		retained int
+	}{{"resume", 0}, {"after", 3}} {
 		for _, field := range []string{"active", "unknown", "systemError", "notLoaded", "sessionId", "cwd", "modelProvider", "createdAt", "ephemeral", "source", "path", "updatedAt", "preview", "metadata", "statusMetadata"} {
-			if stage == "resume" && field == "updatedAt" {
+			if stage.name == "resume" && field == "updatedAt" {
 				// Cold resume may advance the timestamp; regression is still drift.
 				field = "updatedAtRegression"
 			}
-			cases = append(cases, "cold:"+stage+":"+field)
+			cases = append(cases, ticket12RejectedCase{"cold:" + stage.name + ":" + field, stage.retained, 1})
 		}
 	}
-	cases = append(cases, "cold:after:id")
-	for _, mode := range cases {
-		t.Run(mode, func(t *testing.T) {
-			evidence := filepath.Join(t.TempDir(), "peer.jsonl")
-			svc, cwd := ticket06Service(t, mode, map[string]any{"LOAD_EVIDENCE": evidence})
-			ref := resource.SessionRef{SessionID: "native-thread"}
-			_, err := svc.LoadSession(ctx(t), resource.SessionLoad{Metadata: resource.Metadata{Namespace: "one", Name: "rejected"}, RuntimeRef: "agent", Cwd: cwd, SessionID: ref.SessionID})
-			require.NoError(t, err)
-			var loaded resource.Session
-			require.Eventually(t, func() bool {
-				var err error
-				loaded, err = svc.GetSession(ref)
-				return err == nil && loaded.Status.HistoryLoad.Phase == "failed" && loaded.Status.HistoryLoad.CleanupCompleted
-			}, 5*time.Second, time.Millisecond)
-			require.NotNil(t, loaded.Status.HistoryLoad.Error)
-			require.False(t, loaded.Status.HistoryLoad.NativeCompleted)
-			require.False(t, loaded.Status.HistoryLoad.DeliveryCompleted)
-			_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("must reject")}})
-			require.Error(t, err)
-			page, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
-			require.NoError(t, err)
-			retained, resumes := 0, 1
-			if strings.Contains(mode, ":pre:") {
-				resumes = 0
-			}
-			if strings.Contains(mode, ":after:") {
-				retained = 3
-				require.True(t, loaded.Status.HistoryLoad.NativeVerified)
-				require.True(t, loaded.Status.HistoryLoad.NativeResumed)
-			}
-			require.Len(t, page.Events, retained, "retain only facts accepted before failure")
-			_, err = svc.StopRuntime(ctx(t), "agent")
-			require.NoError(t, err)
-			counts := map[string]int{}
-			calls := ticket12Calls(t, evidence)
-			for _, call := range calls {
-				counts[call.Method]++
-			}
-			require.Equal(t, resumes, counts["thread/resume"], "no hidden resume retry")
-			require.Zero(t, counts["turn/start"], "no hidden or rejected input reaches native")
-			require.Equal(t, resumes, counts["thread/unsubscribe"], "release every acquired native binding")
-			require.Equal(t, 1, counts["released"])
-			require.Eventually(t, func() bool { return errors.Is(syscall.Kill(calls[0].PID, 0), syscall.ESRCH) }, time.Second, time.Millisecond)
-		})
+	cases = append(cases, ticket12RejectedCase{"cold:after:id", 3, 1})
+	for _, tc := range cases {
+		t.Run(tc.mode, func(t *testing.T) { ticket12RejectedLoad(t, tc) })
 	}
+}
+
+type ticket12RejectedCase struct {
+	mode              string
+	retained, resumes int
+}
+
+func ticket12RejectedLoad(t *testing.T, tc ticket12RejectedCase) ([]ticket12Call, map[string]int) {
+	t.Helper()
+	evidence := filepath.Join(t.TempDir(), "peer.jsonl")
+	svc, cwd := ticket06Service(t, tc.mode, map[string]any{"LOAD_EVIDENCE": evidence})
+	ref := resource.SessionRef{SessionID: "native-thread"}
+	_, err := svc.LoadSession(ctx(t), resource.SessionLoad{Metadata: resource.Metadata{Namespace: "one", Name: "rejected"}, RuntimeRef: "agent", Cwd: cwd, SessionID: ref.SessionID})
+	require.NoError(t, err)
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		loaded, err := svc.GetSession(ref)
+		if assert.NoError(c, err) {
+			assert.Equal(c, "failed", loaded.Status.HistoryLoad.Phase)
+			assert.True(c, loaded.Status.HistoryLoad.CleanupCompleted, "last public status: %+v", loaded.Status.HistoryLoad)
+		}
+	}, 5*time.Second, time.Millisecond)
+	loaded, err := svc.GetSession(ref)
+	require.NoError(t, err)
+	require.NotNil(t, loaded.Status.HistoryLoad.Error)
+	require.False(t, loaded.Status.HistoryLoad.NativeCompleted)
+	require.False(t, loaded.Status.HistoryLoad.DeliveryCompleted)
+	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("must reject")}})
+	require.Error(t, err)
+	page, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+	require.NoError(t, err)
+	if tc.retained > 0 {
+		require.True(t, loaded.Status.HistoryLoad.NativeVerified)
+		require.True(t, loaded.Status.HistoryLoad.NativeResumed)
+	}
+	require.Len(t, page.Events, tc.retained, "retain only facts accepted before failure")
+	_, err = svc.StopRuntime(ctx(t), "agent")
+	require.NoError(t, err)
+	calls := ticket12Calls(t, evidence)
+	counts := map[string]int{}
+	for _, call := range calls {
+		require.Equal(t, calls[0].PID, call.PID, "original owned peer")
+		counts[call.Method]++
+	}
+	require.Equal(t, tc.resumes, counts["thread/resume"], "no hidden resume retry")
+	require.Zero(t, counts["turn/start"], "no hidden or rejected input reaches native")
+	require.Equal(t, tc.resumes, counts["thread/unsubscribe"], "release every acquired native binding")
+	require.Equal(t, 1, counts["released"])
+	require.Eventually(t, func() bool { return errors.Is(syscall.Kill(calls[0].PID, 0), syscall.ESRCH) }, time.Second, time.Millisecond)
+	return calls, counts
 }

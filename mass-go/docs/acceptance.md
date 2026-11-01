@@ -2,12 +2,8 @@
 
 This is the current Go implementation acceptance map, not a change to the
 [harness contracts](../../harness/index.md). The SDK is pinned to
-`github.com/zoumo/agent-sdk-go v0.0.0-20261031154401-ed6c8216607c`, source
-`ed6c8216607ceacb5077b558a8302a587c9e6d5b`, with no local `replace`.
-The integration baseline for ticket08 is MASS
-`ba4f6984b0d995b3354d9d435c9145d359bbd6a0`. Final source/commit, commands,
-artifact hashes, failures and cleanup readbacks are recorded separately in
-central `.scratch/sdk-session-adaptation/validation/ticket-08.md`.
+`github.com/zoumo/agent-sdk-go v0.0.0-20261101172223-619cf8ac7e14`, source
+`619cf8ac7e1484f82c40d6fd96155fab9404e634`, with no local `replace`.
 A recipe or an existing test is not itself an executed PASS.
 
 ## Evidence Classes
@@ -17,8 +13,8 @@ A recipe or an existing test is not itself an executed PASS.
 | SDK protocol probe | Immutable SDK APIs against strict authored native JSONL | `examples/sdkprobe`; separate from product acceptance |
 | Product synthetic integration | Actual adapters, Service, file Store, CLI/HTTP/SSE and owned protocol peers | Default offline checks and the combinations below; no models or tools run |
 | Public-module fault injection | Deterministic append/publish/close/admission outcomes through public interfaces | Original facts, unsettled obligations, bounded isolation and cleanup, not native CLI guarantees |
-| Recording-driven MASS simulation | Product actions consumed against admitted, unmodified official captures | NOT EXECUTED: no MASS recording request/result driver or proven compatible complete case selection in this checkout |
-| Native protocol/live Agent | Installed CLI, actual identity, account/model and persistence | NOT EXECUTED in ticket08; explicit, separately authorized procedure below |
+| Recording-driven MASS simulation | Product actions consumed against admitted, unmodified official captures | Executed: 0/2 selected continuation captures; strict initialization mismatches prevent business acceptance |
+| Native protocol/live Agent | Installed CLI, actual identity, account/model and persistence | Not required for this SDK adaptation; no real-model execution authorized |
 
 SDK-only replay is not MASS recording acceptance. Authored peers are not official
 recordings. Old logs under `examples/sdkprobe/evidence`, the prior six-ticket
@@ -34,19 +30,20 @@ immutable module dependencies already cached:
 ```sh
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make check-go'
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make prototype-go'
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make acceptance-sdk-go'
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./tests/vertical -run "^Test(File)?EntrypointSuite$"'
 ```
 
 `check-go` runs lint, all offline race packages, builds both executables, and
-checks formatting. The full package timeout is300 seconds; vertical TestMain
-allows330 seconds including owned builds and final cleanup. Individual scenario
-deadlines remain unchanged. The prior180-second aggregate timeout failed and is
-retained in ticket08 evidence, not erased by the budget change.
-`prototype-go` builds the immutable SDK strict protocol mock
-for each provider plus real massd/massctl and exercises `TestEntrypointSuite`.
-`acceptance-sdk-go` selects all ticket08 combinations under race; it is not a
-replacement for the complete check. Missing tools/dependencies mean NOT EXECUTED;
+checks formatting. The package timeout is 300 seconds; vertical TestMain allows
+330 seconds including owned builds and cleanup. `prototype-go` selects the
+existing product entrypoint suite; those tests also run in `check-go`.
+A November 2 full `check-go` attempt hit the vertical package's aggregate
+300-second timeout, not a failing assertion. Retain that failure; partition
+the top-level vertical selectors into independent invocations when the aggregate
+suite exceeds that budget, and report their results separately from `check-go`.
+Do not describe split results as a successful single `check-go` run.
+
+Missing tools/dependencies mean NOT EXECUTED;
 these offline commands do not download a fallback SDK or launch real Agents.
 
 Each Go invocation has its own test-owned setup/cleanup budget. Repeat product
@@ -95,7 +92,7 @@ model/delivery tests, not a claim each native CLI emits all 18 branches.
 
 ## Supported Boundaries And Failures
 
-- Both providers accept text. Claude accepts exactly one text block. Unsupported
+- Both providers accept text, including multiple text blocks. Unsupported
   complete native content fails explicitly rather than silently disappearing.
   Five content kinds in output/history do not imply five input kinds are enabled.
 - Codex uses a shared native Client; Claude uses an owned process per Session.
@@ -127,99 +124,50 @@ model/delivery tests, not a claim each native CLI emits all 18 branches.
   extension, Linux and cross-language parity are not certified by this macOS Go
   acceptance. No deployment, push, publication or production-readiness claim.
 
-## Recording Simulation: Explicit Non-Execution
+## Recording Simulation
 
-Only use the immutable module cache, never a mutable SDK checkout. Before any
-recording run, bind capture manifest/admission, raw hashes, original business
-result, scenario/provider and complete fixture selection. Verify the MASS
-request/result driver exists and that unmodified capture requests match actual
-MASS initialization/resume/input order. A strict mismatch is a failure or an
-unsupported recipe, not permission to weaken matchers or replace client bytes.
+`tests/sdksimulation` implements the SDK tool's `--request` / `result.json`
+convention through the public MASS Service, actual adapters and file stores.
+It starts the runtime, creates with explicit input, waits for committed messages
+and public idle state, submits the second input on the original native identity,
+and attempts shutdown even on failure. It uses only the runner-supplied peer.
 
-This checkout provides authored protocol peers/probes, not a MASS recording
-`--request`/`result.json` driver. A compatible source selection has not been
-verified. Recording simulation therefore remains NOT EXECUTED, regardless of
-SDK-only replay results. No recording repair, new captures or real CLI invocation
-is part of ticket08. A future admitted run must retain attempts, full-consumption
-and EOF results, nativeLaunched=false, business assertions and cleanup separately
-from the offline result. Do not treat an empty selected-case set as PASS.
-
-## Separately Authorized Native / Real-Model Procedure
-
-This is an explicit manual product entry point, NOT an automated pass or an
-instruction to run models during default tests. The user's final gate requires
-an independent simulation chat first, then a separate independently authorized
-real E2E chat, both providers with the **theta / glm-5.3** target. Ticket08 does
-not execute that gate. Preconditions missing or unsupported by an installed CLI
-must be reported NOT EXECUTED, not substituted with a different model.
-
-1. Record MASS commit and binary hashes, immutable module/version/no-replace,
-   installed CLI absolute path/version/help, OS and model/provider configuration.
-   Inspect only dedicated test configuration; do not read personal HOME/history.
-   No secrets or access-bearing URLs may enter logs.
-2. Prepare fresh absolute owned data, HOME, CODEX_HOME, CLAUDE_CONFIG_DIR and
-   workspace directories, a loopback ephemeral listener and externally supplied
-   test credentials. Never copy personal credentials or reuse personal history.
-   Use `envPolicy: replace`; explicitly supply PATH and required config/env keys.
-   The MASS runtime config has no `model` field: select theta/glm-5.3 using the
-   installed CLI's verified configuration or an explicit owned launcher that
-   preserves SDK arguments and execs the real CLI. Claude rejects nonempty MASS
-   `args`; Codex defaults to `["app-server"]`. Do not pass invented flags or add
-   `scenario` to real runtime configuration.
-3. Run the product commands below against the owned daemon. Capture observe-ready
-   before producing work. Use the HTTP client Answer method on the original live
-   permission/form handle, after inspecting its actual options/schema; never use
-   prototype autoapproval to claim manual-answer coverage. A selected permission
-   answer is `{"outcome":"selected","optionId":"allow-once"}` only when that
-   option was actually offered. Do not answer old replayed requests.
-4. For each provider: no-input identity; first text input; current approval or
-   question and answer; completion; second same-connection input; cancel receipt
-   versus observed work termination; archive/resume original identity. Then use
-   that run's owned native history ID in explicit load, inspect separate native/
-   delivery/cleanup fields, observe future-only events, input/approval after load
-   and archive. Missing Claude linkage is unknown/fenced, not success. Record an
-   untriggered model interaction as untriggered, not PASS. Synthetic deterministic
-   overload remains a separate class, not a reason to overload a real account.
-5. On success AND failure: stop original Runtime, settle admitted local facts,
-   record original unknown responsibilities, stop daemon and Wait, verify owned
-   PIDs absent and listener closed, remove only owned directories and read back
-   absence. A timeout or Close request alone is not release proof; unknown product
-   cleanup remains unknown even if external ps observes process exit.
-
-Build and manual invocation template (replace placeholders explicitly; these
-commands have NOT been executed against a real Agent in this acceptance):
+Build from `mass-go/`:
 
 ```sh
-rtk proxy make build-go
-rtk proxy bin/massd --data /ABS/OWNED/data --listen 127.0.0.1:0 --local
-# Use the printed URL in MASS_URL; automatic permission approval stays OFF.
-# /ABS/OWNED/provider.json contains a RuntimeConfig, not a Runtime resource:
-# {"executable":"/ABS/OWNED/verified-launcher","envPolicy":"replace",
-#  "env":{"HOME":"/ABS/OWNED/home","PATH":"/EXPLICIT/PATH",
-#         "CODEX_HOME":"/ABS/OWNED/codex","CLAUDE_CONFIG_DIR":"/ABS/OWNED/claude"}}
-# Supply only the selected provider's required entries and external auth settings.
-rtk proxy bin/massctl runtime create agent --type codex --config-file /ABS/OWNED/provider.json
-rtk proxy bin/massctl runtime start agent
-rtk proxy bin/massctl -o json session create check -n acceptance --runtime agent --cwd /ABS/OWNED/project
-rtk proxy bin/massctl -o json session watch check -n acceptance
-# In a separate terminal after subscription.ready:
-rtk proxy bin/massctl -o json session prompt check -n acceptance --text 'Reply with a short text'
-rtk proxy bin/massctl -o json session get check -n acceptance
-rtk proxy bin/massctl -o json session history check -n acceptance --limit 100
-rtk proxy bin/massctl session archive check -n acceptance
-rtk proxy bin/massctl session resume check -n acceptance
-# Load is a separate fresh MASS name; get until completed/failed, do not retry:
-rtk proxy bin/massctl -o json session load imported -n acceptance --runtime agent --cwd /ABS/OWNED/project --session-id ORIGINAL_NATIVE_ID
-rtk proxy bin/massctl -o json session get imported -n acceptance
-# Cancellation targets the original loadId, not whichever work is current:
-rtk proxy bin/massctl -o json session cancel-load imported -n acceptance --load-id ORIGINAL_LOAD_ID
-rtk proxy bin/massctl runtime stop agent
+rtk proxy go build -o /tmp/mass-sdk-driver ./tests/sdksimulation
+rtk proxy go build -o /tmp/agent-sdk-testify github.com/zoumo/agent-sdk-go/tools/agent-sdk-testify
 ```
 
-Repeat with `--type claude` and its own explicit configuration/workspace. HTTP
-answering is available through `pkg/client.Client.Answer` or POST
-`/apis/v1/sessions/{sessionId}/interactions/{interaction64}/answer`; the interaction
-path segment is base64url-encoded according to the HTTP contract. See the
-[client implementation notes](../pkg/client/README.md),
-[runtime configuration](../README.md#runtime-launch-configuration) and
-[load boundaries](../README.md#retained-history-load). Never print Bearer tokens.
+Use `agent-sdk-testify simulate --cases-file <selection.json> --driver
+/tmp/mass-sdk-driver --output <new-attempt> --jobs 2 --timeout 60s`.
+The selection is a JSON array of objects with a `case` field containing the
+absolute capture directory from the pinned module's
+`tests/simulation/recordings/<provider>/SDK-US-001/SDK-CASE-001/`.
+Only the two-input continuation case is implemented; other cases fail explicitly.
+
+The November 2, 2026 attempt selected these unmodified admitted captures:
+
+| Provider | Capture | Result |
+| --- | --- | --- |
+| Codex | `20261101T065559Z-6a7c186793d249cb8595d5a057c65941` | FAIL at ordinal 1: recorded official Python client identity differs from MASS initialization |
+| Claude | `20261101T065847Z-7f3b2b919eef44a091d5ce4e539406d1` | FAIL at ordinal 1: recording omits `forwardSubagentText`; Go SDK defaults to true |
+
+The runner reports 0/2 passed. Neither case reached business assertions or full
+protocol consumption. No real Agent was launched. The failure does not establish
+a MASS business regression or a passing adaptation. Do not change the product's
+initialization identity or observation policy just to match these captures.
+The strict matcher and original capture bytes remain unchanged.
+
+Local attempt logs, driver results, peer stderr, cleanup results and source
+hashes are retained under `.scratch/sdk-trim/simulation/`. Early attempts include
+driver setup errors and are not acceptance evidence. The final runner summary
+is authoritative for the recorded attempt. Claude reports cleanup=false because
+MASS retains an unresolved opening obligation after unexpected peer EOF; that is
+separate from whether operating-system child processes remain.
+
+## Current Completion Boundary
+
+This iteration requires SDK adaptation, necessary bug fixes and SDK-tool-driven
+MASS simulation. Real-model E2E and full new-feature acceptance are not completion
+conditions. No real CLI/model calls are authorized by these offline recipes.

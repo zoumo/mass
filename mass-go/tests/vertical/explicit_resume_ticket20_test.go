@@ -34,23 +34,6 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
-var ticket20Build struct {
-	sync.Once
-	bin string
-	err error
-	out []byte
-}
-
-func ticket20Peer(t *testing.T) string {
-	t.Helper()
-	ticket20Build.Do(func() {
-		ticket20Build.bin = filepath.Join(root, "ticket20-recovery-peer")
-		ticket20Build.out, ticket20Build.err = exec.CommandContext(ctx(t), "go", "build", "-o", ticket20Build.bin, "./testdata/ticket14-recovery-peer").CombinedOutput()
-	})
-	require.NoError(t, ticket20Build.err, "%s", ticket20Build.out)
-	return ticket20Build.bin
-}
-
 // The public runtime stream proves terminal observation before the authored
 // peer releases its response. No scheduling delay stands in for that ordering.
 type ticket20TerminalFactory struct {
@@ -104,7 +87,7 @@ func (s ticket20TerminalStream) Next(ctx context.Context) (events.SessionEvent, 
 }
 
 func TestTicket20ExplicitResumeHTTP(t *testing.T) {
-	bin := ticket20Peer(t)
+	bin := recoveryPeer(t)
 	for _, scenario := range []struct{ kind, mode string }{{"claude", "early-terminal"}, {"codex", "early-terminal"}, {"codex", "terminal-before-receipt"}} {
 		t.Run(scenario.kind+"/"+scenario.mode, func(t *testing.T) {
 			kind := scenario.kind
@@ -322,7 +305,7 @@ func ticket20Setup(t *testing.T, kind, mode string) *ticket20Fixture {
 	const id = "14141414-1414-4141-8141-141414141414"
 	f.ref = resource.SessionRef{SessionID: id}
 	env := map[string]any{"PEER_KIND": kind, "PEER_DIR": f.native, "WORK_DIR": f.work, "RESUME_INPUT_MODE": mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT": filepath.Join(project, id+".jsonl")}
-	f.runtimeResource = resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": ticket20Peer(t), "envPolicy": "replace", "env": env}}}
+	f.runtimeResource = resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": recoveryPeer(t), "envPolicy": "replace", "env": env}}}
 	ticket20Open(t, f, true)
 	first := runtime.Input{Content: []events.ContentBlock{events.Text("original input")}}
 	created, err := f.svc.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "original"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: f.work}}, InitialInput: &first})

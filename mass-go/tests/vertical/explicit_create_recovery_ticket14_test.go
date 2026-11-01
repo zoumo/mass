@@ -28,10 +28,25 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store"
 )
 
+var recoveryPeerBuild struct {
+	sync.Once
+	bin string
+	err error
+	out []byte
+}
+
+func recoveryPeer(t *testing.T) string {
+	t.Helper()
+	recoveryPeerBuild.Do(func() {
+		recoveryPeerBuild.bin = filepath.Join(root, "recovery-peer")
+		recoveryPeerBuild.out, recoveryPeerBuild.err = exec.CommandContext(ctx(t), "go", "build", "-o", recoveryPeerBuild.bin, "./testdata/ticket14-recovery-peer").CombinedOutput()
+	})
+	require.NoError(t, recoveryPeerBuild.err, "%s", recoveryPeerBuild.out)
+	return recoveryPeerBuild.bin
+}
+
 func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T) {
-	bin := filepath.Join(root, "ticket14-recovery-peer")
-	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/ticket14-recovery-peer").CombinedOutput()
-	require.NoError(t, err, "%s", out)
+	bin := recoveryPeer(t)
 	binary, err := os.ReadFile(bin)
 	require.NoError(t, err)
 	t.Logf("owned recovery peer sha256=%x", sha256.Sum256(binary))

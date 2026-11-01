@@ -33,7 +33,6 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	bins = make(map[string]string)
 	code := 1
 	func() {
 		defer func() {
@@ -66,12 +65,10 @@ func TestMain(m *testing.M) {
 			return
 		}
 		fmt.Println("SDK github.com/zoumo/agent-sdk-go", module.Version)
-		for _, native := range []string{"codex", "claude"} {
-			bins[native], err = testpeer.Build(mainCtx, dir, native)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				return
-			}
+		bins, err = testpeer.Build(mainCtx, dir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
 		}
 		code = m.Run()
 	}()
