@@ -28,10 +28,9 @@ func (s *session) linkMessage(id string, start, trusted bool, explicit *string) 
 		s.messages[id] = claim
 		return nil
 	}
-	if !trusted || claim.work == "" || (start && !claim.started) ||
+	if start || !trusted || claim.work == "" ||
 		(explicit != nil && *explicit != "" && *explicit != claim.work) ||
-		(s.observationWork != "" && s.observationWork != claim.work) ||
-		(start && (!s.active || s.work != claim.work)) {
+		(s.observationWork != "" && s.observationWork != claim.work) {
 		s.messages[id] = messageClaim{}
 		s.observationWork, s.attribution = "", "unknown"
 		return nil

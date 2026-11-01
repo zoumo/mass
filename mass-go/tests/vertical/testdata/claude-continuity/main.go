@@ -195,6 +195,8 @@ func linkage(send func(map[string]any), mode string, n int, link, previous strin
 		start(id, link)
 	}
 	switch mode {
+	case "linkage-repeated-start":
+		start(id, link)
 	case "linkage-different":
 		id = "different-message"
 	case "linkage-conflict":

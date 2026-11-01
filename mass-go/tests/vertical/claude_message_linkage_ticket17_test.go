@@ -29,7 +29,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 	bin := filepath.Join(root, "ticket17-continuity-peer")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-continuity").CombinedOutput()
 	require.NoError(t, err, "%s", out)
-	for _, mode := range []string{"proof", "different", "no-start", "conflict", "prior-work", "retired", "unproven", "child-first", "child", "unlinked-start", "child-start", "foreign-start", "stopped-preview"} {
+	for _, mode := range []string{"proof", "different", "no-start", "conflict", "prior-work", "retired", "unproven", "child-first", "child", "unlinked-start", "child-start", "foreign-start", "stopped-preview", "repeated-start"} {
 		t.Run(mode, func(t *testing.T) {
 			st, err := file.Open(t.TempDir(), false)
 			require.NoError(t, err)
