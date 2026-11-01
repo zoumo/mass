@@ -290,6 +290,19 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		return r, err
 	}
 	defer run.op.Unlock()
+	// Restores retain admission until their original native call settles. Signal
+	// opening owners before waiting for that gate, not after it has drained.
+	s.mu.Lock()
+	var cancels []context.CancelFunc
+	for _, op := range run.pending {
+		if op.cancel != nil {
+			cancels = append(cancels, op.cancel)
+		}
+	}
+	s.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
 	if err := waitAdmission(ctx, &run.admission); err != nil {
 		return r, err
 	}
@@ -312,13 +325,8 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		pending = append(pending, op)
 	}
 	s.mu.Unlock()
-	// Only fresh creates have this owner signal. Cancellation requests cleanup;
-	// the original opening still has to confirm release or retain responsibility.
-	for _, op := range pending {
-		if op.cancel != nil {
-			op.cancel()
-		}
-	}
+	// Cancellation only requests cleanup; original owners must still confirm
+	// release and settle their facts before their reservations can be removed.
 	for _, op := range pending {
 		select {
 		case <-op.done:
@@ -503,10 +511,12 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
 	k := addressKey(a)
-	op := &opening{address: a, done: make(chan struct{}), requested: r, restoring: true, buffering: true}
+	nativeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	op := &opening{address: a, done: make(chan struct{}), requested: r, restoring: true, buffering: true, cancel: cancel}
 	defer close(op.done)
 	s.mu.Lock()
-	if run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
+	if s.closing || run.stopping || run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
 		s.mu.Unlock()
 		return r, runtime.FailedPrecondition("original restore responsibility remains or capacity exhausted")
 	}
@@ -518,7 +528,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef) (r
 		s.mu.Unlock()
 		return r, err
 	}
-	native, err := run.driver.ResumeSession(ctx, r.Status.SessionID, a, r.Spec.SessionSpec)
+	native, err := run.driver.ResumeSession(nativeCtx, r.Status.SessionID, a, r.Spec.SessionSpec)
 	if err != nil {
 		s.mu.Lock()
 		op.err = err

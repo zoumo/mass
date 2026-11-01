@@ -82,7 +82,7 @@ type runBinding struct {
 	blocked       *events.SessionEvent
 }
 type opening struct {
-	cancel    context.CancelFunc // Fresh create owner only; restore/load retain their own lifecycle.
+	cancel    context.CancelFunc // Stop requests cleanup; the opening owner still proves release.
 	restoring bool
 	buffering bool
 	address   runtime.Address
