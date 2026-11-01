@@ -62,7 +62,7 @@ func TestPendingNativeCreateOwnerStop(t *testing.T) {
 			binary, err := os.Executable()
 			require.NoError(t, err)
 			peer := filepath.Join(dir, "peer")
-			require.NoError(t, os.WriteFile(peer, []byte(fmt.Sprintf("#!/bin/sh\nexec %q -test.run=^TestPendingNativeCreatePeer$ -- \"$@\"\n", binary)), 0o700))
+			require.NoError(t, os.WriteFile(peer, fmt.Appendf(nil, "#!/bin/sh\nexec %q -test.run=^TestPendingNativeCreatePeer$ -- \"$@\"\n", binary), 0o700))
 			st, err := file.Open(filepath.Join(dir, "store"), false)
 			require.NoError(t, err)
 			reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}})
