@@ -81,6 +81,7 @@ type runBinding struct {
 	blocked       *events.SessionEvent
 }
 type opening struct {
+	cancel    context.CancelFunc // Fresh create owner only; restore/load retain their own lifecycle.
 	restoring bool
 	buffering bool
 	address   runtime.Address
@@ -374,12 +375,15 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 		s.mu.Unlock()
 		return r, store.ErrConflict
 	}
-	op := &opening{address: a, done: make(chan struct{})}
+	owner, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	op := &opening{address: a, done: make(chan struct{}), cancel: cancel}
 	run.pending[k] = op
 	s.mu.Unlock()
 	removePending := func() { s.mu.Lock(); delete(run.pending, k); s.mu.Unlock() }
 	if _, err := s.meta.GetSession(resource.SessionRef{Namespace: a.Namespace, Name: a.SessionName}); !errors.Is(err, store.ErrNotFound) {
 		removePending()
+		cancel()
+		close(op.done)
 		if err == nil {
 			err = store.ErrConflict
 		}
@@ -392,8 +396,9 @@ func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resour
 	resultCh := make(chan result, 1)
 	go func() {
 		defer close(op.done)
+		defer cancel()
 		value, err := func() (resource.Session, error) {
-			native, err := run.driver.OpenSession(context.WithoutCancel(ctx), a, r.Spec.SessionSpec)
+			native, err := run.driver.OpenSession(owner, a, r.Spec.SessionSpec)
 			if err != nil {
 				if errors.Is(err, runtime.ErrResourcesReleased) {
 					removePending()
