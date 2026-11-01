@@ -14,6 +14,9 @@ model DriverSession {
   sessionId: string;
 
   capabilities: CapabilitySet;
+
+  /** 仅显式输入创建返回，不持久、不代表工作完成。 */
+  initialInputReceipt?: InputReceipt;
 }
 
 /** Service 在 open/resume/load 接纳时传入；adapter 只保存当前运行绑定，不查询资源目录。 */

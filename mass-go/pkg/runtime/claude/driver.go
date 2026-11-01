@@ -52,6 +52,7 @@ type session struct {
 	submissions              int
 	observationWork          string
 	observation              *sdk.Received
+	diagnostics              []any
 	attribution              string
 	uncertain                bool
 	requireLink              bool
@@ -109,14 +110,25 @@ func (d *Driver) Start(context.Context) (runtime.Capabilities, error) {
 }
 
 func (d *Driver) OpenSession(ctx context.Context, a runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
-	return d.open(ctx, "", a, spec)
+	return d.open(ctx, "", a, spec, nil)
+}
+
+func (*Driver) ValidateInitialInput(input runtime.Input) error {
+	return runtime.ValidateTextInput(input)
+}
+
+func (d *Driver) OpenSessionWithInput(ctx context.Context, a runtime.Address, spec runtime.SessionSpec, input runtime.Input) (runtime.DriverSession, error) {
+	if err := d.ValidateInitialInput(input); err != nil {
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
+	}
+	return d.open(ctx, "", a, spec, &input)
 }
 
 func (d *Driver) ResumeSession(ctx context.Context, id string, a runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
-	return d.open(ctx, id, a, spec)
+	return d.open(ctx, id, a, spec, nil)
 }
 
-func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spec runtime.SessionSpec, initial *runtime.Input) (runtime.DriverSession, error) {
 	d.mu.Lock()
 	if d.stopped || len(d.sessions)+d.opening >= 128 {
 		d.mu.Unlock()
@@ -163,8 +175,17 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		return runtime.DriverSession{}, err
 	}
 	s.client = c
+	var receipt *runtime.InputReceipt
+	if initial != nil {
+		accepted, err := d.submit(ctx, s, *initial)
+		if err != nil {
+			close(s.ready)
+			return runtime.DriverSession{}, releasedOpenError(err, c)
+		}
+		receipt = &accepted
+	}
 	early := []sdk.Received{}
-	// No hidden input: only a native system/init can establish creation identity.
+	// Only native system/init establishes identity, with or without explicit input.
 	for {
 		event, receiveErr := c.Receive(ctx)
 		if receiveErr != nil {
@@ -172,8 +193,19 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 			return runtime.DriverSession{}, releasedOpenError(fmt.Errorf("claude missing native init identity: %w", receiveErr), c)
 		}
 		e := event.Event
-		if e == nil {
+		if e == nil && event.Kind == sdk.ReceivedObservation {
+			if len(early) == 128 {
+				close(s.ready)
+				return runtime.DriverSession{}, releasedOpenError(runtime.Exhausted("pre_identity_buffer"), c)
+			}
+			early = append(early, event)
 			continue
+		}
+		if e == nil {
+			// Before identity, a live request cannot be safely exposed or answered.
+			// Fail with owned cleanup rather than silently skipping it and waiting forever.
+			close(s.ready)
+			return runtime.DriverSession{}, releasedOpenError(&runtime.OperationError{Code: "outcome_unknown", Reason: "pre_identity_native_observation", Message: "Native request or diagnostic arrived before a validated session identity"}, c)
 		}
 		if e.Type == "system" && e.Subtype == "init" && e.SessionID != "" {
 			if resume != "" && e.SessionID != resume {
@@ -215,7 +247,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	d.mu.Unlock()
 	close(s.ready)
 	go d.observe(s, early)
-	return runtime.DriverSession{SessionID: s.id, Capabilities: caps(), Source: s.source}, nil
+	return runtime.DriverSession{SessionID: s.id, Capabilities: caps(), Source: s.source, InitialInputReceipt: receipt}, nil
 }
 
 func (d *Driver) get(id string) (*session, error) {
@@ -233,10 +265,14 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
+	return d.submit(ctx, s, input)
+}
+
+func (d *Driver) submit(ctx context.Context, s *session, input runtime.Input) (runtime.InputReceipt, error) {
 	s.command.Lock()
 	defer s.command.Unlock()
-	if len(input.Content) != 1 || input.Content[0].Type != "text" {
-		return runtime.InputReceipt{}, runtime.Unsupported()
+	if err := runtime.ValidateTextInput(input); err != nil {
+		return runtime.InputReceipt{}, err
 	}
 	s.mu.Lock()
 	if s.active || s.sending || s.closing || s.err != nil || s.uncertain {
@@ -256,13 +292,23 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	s.sending = true
 	s.mu.Unlock()
 	native := sdk.Input{Text: input.Content[0].Text}
+	if len(input.Content) > 1 {
+		blocks := make([]types.ContentBlock, len(input.Content))
+		for i, b := range input.Content {
+			blocks[i] = types.ContentBlock{Type: "text", Text: &types.TextBlock{Text: b.Text}}
+		}
+		native = sdk.Input{User: &types.UserInput{Message: types.InputMessage{Role: "user", Content: types.Content{Blocks: blocks}}}}
+	}
 	// Only a fresh session can infer its first submission. Resumed sessions and
 	// later inputs carry a caller UUID, not a TurnID; an echo is never presumed.
 	if count > 1 || s.requireLink {
-		text := input.Content[0].Text
-		native = sdk.Input{User: &types.UserInput{UUID: &work, Message: types.InputMessage{Role: "user", Content: types.Content{Text: &text}}}}
+		if native.User == nil {
+			text := input.Content[0].Text
+			native = sdk.Input{User: &types.UserInput{Message: types.InputMessage{Role: "user", Content: types.Content{Text: &text}}}}
+		}
+		native.User.UUID = &work
 	}
-	_, err = s.client.Submit(ctx, native)
+	_, err := s.client.Submit(ctx, native)
 	s.mu.Lock()
 	s.sending = false
 	if err != nil {
@@ -299,6 +345,9 @@ func (d *Driver) emit(s *session, item string, p events.Payload, at time.Time) e
 		at = time.Now().UTC()
 	}
 	meta := map[string]any{"attribution": s.attribution}
+	if len(s.diagnostics) > 0 {
+		meta["observations"] = s.diagnostics
+	}
 	if r := s.observation; r != nil {
 		meta["source"], meta["origin"], meta["nativeRaw"] = identityMeta(r.Source), r.Origin, string(r.Raw)
 		if r.Parent != nil {
@@ -343,6 +392,8 @@ func (d *Driver) observe(s *session, early []sdk.Received) {
 		s.mu.Lock()
 		if err == nil {
 			switch event.Kind {
+			case sdk.ReceivedObservation:
+				err = d.adapt(s, event)
 			case sdk.ReceivedNative:
 				if event.Event != nil {
 					err = d.adapt(s, event)
@@ -402,6 +453,17 @@ func decode(raw json.RawMessage) (any, error) {
 }
 
 func (d *Driver) adapt(s *session, received sdk.Received) error {
+	if received.Kind == sdk.ReceivedObservation && received.Observation != nil {
+		if len(s.diagnostics) == 128 {
+			return runtime.Exhausted("native_diagnostic_capacity")
+		}
+		o := received.Observation
+		s.diagnostics = append(s.diagnostics, map[string]any{"reason": o.Reason, "evidence": o.Evidence, "source": identityMeta(o.Source)})
+		return nil
+	}
+	if received.Event == nil {
+		return errors.New("unsupported pre-identity native record")
+	}
 	e := *received.Event
 	child := received.Parent != nil
 	s.observation = &received

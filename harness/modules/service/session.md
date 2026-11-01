@@ -72,7 +72,13 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 4. 收到真实 sessionId 和能力后，先校验 [Session ID 合法性](#session-id-合法性)，再从Service 侧运行绑定取得生效配置修订，原子检查并登记 sessionId 全局唯一索引，与 namespace/name、spec.runtimeRef 和会话配置一起持久保存。保存不能覆盖其他操作或实例的记录；冲突时不公开成功，并只清理本次取得的运行资源。
 5. 保存成功后安装连接、接受消费者并公开会话成功。原生连接建立不等于已经完成这一步。
 
-会话创建不隐式发送输入。名称预留、持久记录和运行资源必须始终能归属于具体操作。
+会话创建不隐式发送输入。SessionCreate 可显式提供顶层 initialInput，使用既有 SessionInput 语义。输入内容与 provider 支持在原生打开或提交前校验并快照；显式空输入拒绝，省略则零提交。initialInput 不属于 SessionSpec、持久资源或恢复材料，resume/load/restart 绝不重放。
+
+显式输入由原 create 所有者提交一次，不在创建成功后重新寻址调用 sendPrompt。adapter 在 Submit 前登记工作；Claude 在等待真实 init 前提交调用者输入，Codex 在真实 thread 打开后提交。早到事实在有界缓冲中保持原来源和顺序；init 不重置已完成工作。没有真实身份时的权限请求不能静默跳过或用假 ID 回答；不支持的顺序明确失败并结算自有资源。未知归属不能结算当前工作。
+
+创建成功返回 SessionCreated：既有 Session 字段和显式输入的 initialInputReceipt。Claude sent 仅证明本地写入，不声称 nativeAccepted；Codex nativeAccepted 来自原生 turn/start 响应，两者均不推断 nativeRecorded 或完成。回执不是持久资源字段。持久身份提交先于历史与 SSE 发布；资源和事件存储不是跨存储事务，201 不保证早到历史已全部落盘。已提交事实通过既有历史查询读取，SSE 不补历史。
+
+输入可能在资源提交前已产生业务副作用。提交失败、调用者断开和 Stop 只结算原所有者的资源与事实，不撤销业务副作用、不盲目重发、不停止健康共享 Runtime。未知结果保留预留与责任；查询持久身份和历史仅提供已有证据，不提供 create 幂等重试保证。名称预留、持久记录和运行资源必须始终能归属于具体操作。
 
 | 结果 | 所有权与后续处理 |
 |---|---|

@@ -130,6 +130,15 @@ func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any)
 	return c.jsonResponse(ctx, 201, out, func() (*http.Request, error) { return generated.NewCreateSessionRequest(c.url, body) })
 }
 
+// CreateSessionWithInput sends create-only input without persisting replay configuration.
+func (c *Client) CreateSessionWithInput(ctx context.Context, v resource.SessionCreateInput, out any) error {
+	body, err := generatedValue[generated.SessionCreate](v)
+	if err != nil {
+		return err
+	}
+	return c.jsonResponse(ctx, 201, out, func() (*http.Request, error) { return generated.NewCreateSessionRequest(c.url, body) })
+}
+
 // LoadSession returns acceptance only; it never waits for replay or retries.
 func (c *Client) LoadSession(ctx context.Context, input resource.SessionLoad, out any) error {
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
