@@ -20,11 +20,21 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
-func ticket06Service(t *testing.T, mode string, extraEnv ...map[string]any) (*service.Service, string) {
+func ticket06Peer(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "history-peer")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/history-load-peer").CombinedOutput()
 	require.NoError(t, err, string(out))
+	return bin
+}
+
+func ticket06Service(t *testing.T, mode string, extraEnv ...map[string]any) (*service.Service, string) {
+	t.Helper()
+	return ticket06ServiceWithPeer(t, ticket06Peer(t), mode, extraEnv...)
+}
+
+func ticket06ServiceWithPeer(t *testing.T, bin, mode string, extraEnv ...map[string]any) (*service.Service, string) {
+	t.Helper()
 	cwd, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	st, err := file.Open(t.TempDir(), false)

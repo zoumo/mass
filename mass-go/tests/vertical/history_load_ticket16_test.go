@@ -44,9 +44,10 @@ func TestTicket16CodexDirectInputMetadataBoundaries(t *testing.T) {
 		"cold-materialized-direct:after:directMissing",
 		"cold-materialized-direct:after:directString",
 		"cold-materialized-direct:after:directNumber",
-		"cold:pre:directTrue",      // True -> missing.
-		"cold:resume:directFalse",  // Missing -> false.
-		"loaded:resume:directTrue", // Loaded -> loaded remains strict.
+		"cold:pre:directTrue",             // True -> missing.
+		"cold:resume:directFalse",         // Missing -> false.
+		"loaded:resume:directTrue",        // Loaded -> loaded remains strict.
+		"loaded-direct:resume:directTrue", // Idle -> idle, with ONLY explicit null -> true drift.
 		"cold-materialized-direct:after:metadata",
 		"cold-materialized-direct:after:statusMetadata",
 		"cold-materialized-direct:after:sessionId",
@@ -59,10 +60,11 @@ func TestTicket16CodexDirectInputMetadataBoundaries(t *testing.T) {
 	} {
 		cases = append(cases, "cold-materialized-direct:resume:"+field)
 	}
+	bin := ticket06Peer(t)
 	for _, mode := range cases {
 		t.Run(mode, func(t *testing.T) {
 			evidence := filepath.Join(t.TempDir(), "peer.jsonl")
-			svc, cwd := ticket06Service(t, mode, map[string]any{"LOAD_EVIDENCE": evidence})
+			svc, cwd := ticket06ServiceWithPeer(t, bin, mode, map[string]any{"LOAD_EVIDENCE": evidence})
 			ref := resource.SessionRef{SessionID: "native-thread"}
 			_, err := svc.LoadSession(ctx(t), resource.SessionLoad{Metadata: resource.Metadata{Namespace: "one", Name: "rejected"}, RuntimeRef: "agent", Cwd: cwd, SessionID: ref.SessionID})
 			require.NoError(t, err)
@@ -105,6 +107,25 @@ func TestTicket16CodexDirectInputMetadataBoundaries(t *testing.T) {
 			require.Equal(t, resumes, counts["thread/unsubscribe"])
 			require.Equal(t, 1, counts["released"])
 			require.Eventually(t, func() bool { return errors.Is(syscall.Kill(calls[0].PID, 0), syscall.ESRCH) }, time.Second, time.Millisecond)
+			if mode == "loaded-direct:resume:directTrue" {
+				var pair []map[string]any
+				for _, call := range calls {
+					if strings.HasSuffix(call.Method, "/result") {
+						pair = append(pair, call.Params["thread"].(map[string]any))
+					}
+				}
+				require.Len(t, pair, 2, "reject before history enumeration")
+				require.Contains(t, pair[0], "canAcceptDirectInput")
+				require.Nil(t, pair[0]["canAcceptDirectInput"])
+				require.Equal(t, true, pair[1]["canAcceptDirectInput"])
+				// Assertion-only projection: every other native field is identical.
+				delete(pair[0], "canAcceptDirectInput")
+				delete(pair[1], "canAcceptDirectInput")
+				require.Equal(t, pair[0], pair[1])
+				require.Equal(t, "idle", pair[0]["status"].(map[string]any)["type"])
+				require.Zero(t, counts["thread/turns/list"])
+				require.Zero(t, counts["thread/items/list"])
+			}
 		})
 	}
 }

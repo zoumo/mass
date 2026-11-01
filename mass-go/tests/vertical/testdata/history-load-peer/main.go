@@ -82,6 +82,12 @@ func main() {
 		if strings.HasPrefix(mode, "loaded:") {
 			t["environments"] = nil
 		}
+		if strings.HasPrefix(mode, "loaded-direct:") {
+			t["canAcceptDirectInput"] = nil
+			if resumes > 0 {
+				t["canAcceptDirectInput"] = true
+			}
+		}
 		stage := "pre"
 		if resumes > 0 {
 			stage = "resume"
