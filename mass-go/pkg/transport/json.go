@@ -11,7 +11,6 @@ import (
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
-	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 // Creation DTOs contain only writable fields; output resource models stay unchanged.
@@ -31,9 +30,8 @@ type sessionCreateMetadata struct {
 	Name      string `json:"name" minLength:"1" maxLength:"253" doc:"DNS subdomain name; UUID-shaped names are rejected by Service"`
 }
 type sessionCreate struct {
-	Metadata     sessionCreateMetadata `json:"metadata"`
-	Spec         resource.SessionSpec  `json:"spec"`
-	InitialInput *runtime.Input        `json:"initialInput,omitempty"`
+	Metadata sessionCreateMetadata `json:"metadata"`
+	Spec     resource.SessionSpec  `json:"spec"`
 }
 
 // ValidateJSON rejects duplicate members at every depth, including open maps.

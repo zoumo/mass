@@ -40,8 +40,13 @@ func ticket12Calls(t *testing.T, path string) []ticket12Call {
 }
 
 func TestTicket12CodexColdLoadHTTPHistoryAndContinuedInput(t *testing.T) {
+	ticket12ColdLoadHTTP(t, "cold")
+}
+
+func ticket12ColdLoadHTTP(t *testing.T, mode string) {
+	t.Helper()
 	evidence := filepath.Join(t.TempDir(), "peer.jsonl")
-	svc, cwd := ticket06Service(t, "cold", map[string]any{"LOAD_EVIDENCE": evidence})
+	svc, cwd := ticket06Service(t, mode, map[string]any{"LOAD_EVIDENCE": evidence})
 	h, err := transport.New(svc, transport.Options{LocalOnly: true})
 	require.NoError(t, err)
 	defer h.Shutdown()
@@ -122,6 +127,10 @@ func TestTicket12CodexColdLoadRejectsUnsettledOrDriftingSource(t *testing.T) {
 	cases := []string{"cold:pre:active", "cold:pre:unknown", "cold:pre:systemError", "cold:pre:outsideHome", "cold:pre:relativePath", "cold:pre:id", "cold:pre:source"}
 	for _, stage := range []string{"resume", "after"} {
 		for _, field := range []string{"active", "unknown", "systemError", "notLoaded", "sessionId", "cwd", "modelProvider", "createdAt", "ephemeral", "source", "path", "updatedAt", "preview", "metadata", "statusMetadata"} {
+			if stage == "resume" && field == "updatedAt" {
+				// Cold resume may advance the timestamp; regression is still drift.
+				field = "updatedAtRegression"
+			}
 			cases = append(cases, "cold:"+stage+":"+field)
 		}
 	}

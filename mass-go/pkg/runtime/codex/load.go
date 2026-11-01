@@ -183,9 +183,21 @@ func sameLoadThread(a, b ct.Thread) bool {
 }
 
 func sameLoadResumeThread(a, b ct.Thread) bool {
-	// Only resume may load a cold thread. Preserve even unknown status metadata;
-	// subsequent history reads must match the settled resume response exactly.
+	// Only cold resume may materialize loaded metadata. All other fields,
+	// including unknown status metadata, and subsequent reads remain strict.
 	if cold := a.Status.NotLoaded; cold != nil && b.Status.Idle != nil {
+		if a.UpdatedAt < a.CreatedAt || b.UpdatedAt < a.UpdatedAt {
+			return false
+		}
+		a.UpdatedAt = b.UpdatedAt
+		if loaded, ok := b.Environments.Get(); a.Environments.IsNull() && ok {
+			for _, environment := range loaded {
+				if len(environment.UnknownFields) != 0 {
+					return false
+				}
+			}
+			a.Environments = b.Environments
+		}
 		a.Status = ct.ThreadStatus{Idle: &ct.IdleThreadStatus{Type: ct.IdleThreadStatusTypeIdle, UnknownFields: cold.UnknownFields}}
 	}
 	return sameLoadThread(a, b)

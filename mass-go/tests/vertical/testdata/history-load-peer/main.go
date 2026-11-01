@@ -52,6 +52,22 @@ func main() {
 		if strings.HasPrefix(mode, "cold") {
 			t["path"] = "/synthetic/rollouts/native-thread.jsonl"
 		}
+		if strings.HasPrefix(mode, "cold-materialized") {
+			t["environments"] = nil
+			if resumes > 0 {
+				t["updatedAt"] = 3
+				t["environments"] = []any{map[string]any{"cwd": cwd, "environmentId": "owned-local", "runtimeWorkspaceRoots": []any{cwd}}}
+				if strings.HasPrefix(mode, "cold-materialized-empty") {
+					t["environments"] = []any{}
+				}
+			}
+		}
+		if mode == "cold-timestamp" && resumes > 0 {
+			t["updatedAt"] = 3
+		}
+		if strings.HasPrefix(mode, "loaded:") {
+			t["environments"] = nil
+		}
 		stage := "pre"
 		if resumes > 0 {
 			stage = "resume"
@@ -63,7 +79,7 @@ func main() {
 			switch parts[2] {
 			case "active":
 				nativeStatus["type"], nativeStatus["activeFlags"] = "active", []any{}
-			case "unknown", "notLoaded", "systemError":
+			case "idle", "unknown", "notLoaded", "systemError":
 				nativeStatus["type"] = parts[2]
 			case "statusMetadata":
 				nativeStatus["retainedExtension"] = "changed"
@@ -76,6 +92,22 @@ func main() {
 				}
 			case "createdAt", "updatedAt":
 				t[parts[2]] = 3
+			case "updatedAtRegression":
+				t["updatedAt"] = 1
+			case "updatedAtNegative":
+				t["updatedAt"] = -1
+			case "updatedAtBeforeCreated":
+				t["updatedAt"] = 0
+			case "updatedAtAdvance":
+				t["updatedAt"] = 4
+			case "environmentsMissing":
+				delete(t, "environments")
+			case "environmentsNull":
+				t["environments"] = nil
+			case "environmentsEmpty":
+				t["environments"] = []any{}
+			case "environmentUnknown":
+				t["environments"] = []any{map[string]any{"cwd": cwd, "environmentId": "owned-local", "runtimeWorkspaceRoots": []any{cwd}, "futureMetadata": "must remain checked"}}
 			case "ephemeral":
 				t["ephemeral"] = true
 			case "path":

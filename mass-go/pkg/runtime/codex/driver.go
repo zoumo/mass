@@ -132,31 +132,6 @@ func (d *Driver) OpenSession(ctx context.Context, address runtime.Address, spec 
 	return d.open(ctx, "", address, spec)
 }
 
-func (*Driver) ValidateInitialInput(input runtime.Input) error {
-	return runtime.ValidateTextInput(input)
-}
-
-func (d *Driver) OpenSessionWithInput(ctx context.Context, address runtime.Address, spec runtime.SessionSpec, input runtime.Input) (runtime.DriverSession, error) {
-	if err := d.ValidateInitialInput(input); err != nil {
-		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
-	}
-	native, err := d.OpenSession(ctx, address, spec)
-	if err != nil {
-		return native, err
-	}
-	if err := ctx.Err(); err != nil {
-		return native, err
-	}
-	// Once dispatched on the shared connection, retain the original turn response.
-	// Owner Stop waits for this same open; it must not lose the receipt or resend.
-	receipt, err := d.SendPrompt(context.WithoutCancel(ctx), native.SessionID, input)
-	if err != nil {
-		return native, err
-	}
-	native.InitialInputReceipt = &receipt
-	return native, nil
-}
-
 func (d *Driver) ResumeSession(ctx context.Context, id string, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
 	return d.open(ctx, id, address, spec)
 }
@@ -269,9 +244,6 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 }
 
 func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
-	if err := runtime.ValidateTextInput(input); err != nil {
-		return runtime.InputReceipt{}, err
-	}
 	d.mu.Lock()
 	s := d.sessions[id]
 	d.mu.Unlock()
@@ -292,8 +264,14 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 		s.sending = false
 		d.mu.Unlock()
 	}()
+	if len(input.Content) == 0 {
+		return runtime.InputReceipt{}, runtime.InvalidArgument("empty input")
+	}
 	items := make([]ct.UserInput, 0, len(input.Content))
 	for _, b := range input.Content {
+		if b.Type != "text" {
+			return runtime.InputReceipt{}, runtime.Unsupported()
+		}
 		items = append(items, ct.UserInput{Text: &ct.TextUserInput{Type: "text", Text: b.Text, TextElements: ct.Some([]ct.TextElement{})}})
 	}
 	d.mu.Lock()

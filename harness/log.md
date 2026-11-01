@@ -1,9 +1,5 @@
 # 设计知识包更新记录
 
-## 2026-11-01
-
-- **显式首条输入创建**：经负责人授权，SessionCreate 增加 create-only initialInput，SessionCreated 返回可选回执；明确同一所有者、先登记工作后提交、真实身份、有界早到事实、持久提交后发布、未知结算和恢复不重放。CLI 增加显式文本或 SessionInput JSON 文件，省略仍零输入；保持 Claude 本地写入与 Codex 原生接受证据区别。接口修订为 v0.2.15。
-
 ## 2026-10-22
 
 - **精简 harness 工作规则**：合并 AGENTS.md 中重复的设计权威、实现记录、文档状态和验证要求；模块职责与动态值细节改为引用权威合同。确认 Go 原则统一使用 principles/golang，保留历史记录中的原路径。

@@ -49,7 +49,6 @@ type RuntimeService interface {
 type SessionService interface {
 	ResolveSession(namespace, nameOrID string) (resource.SessionRef, error)
 	CreateSession(context.Context, resource.Session) (resource.Session, error)
-	CreateSessionWithInput(context.Context, resource.SessionCreateInput) (resource.SessionCreated, error)
 	GetSession(resource.SessionRef) (resource.Session, error)
 	ListSessions(resource.SessionQuery) (resource.SessionPage, error)
 	ArchiveSession(context.Context, resource.SessionRef) (resource.Session, error)
@@ -332,64 +331,35 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 var uuidSessionName = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func (s *Service) CreateSession(ctx context.Context, r resource.Session) (resource.Session, error) {
-	result, err := s.createSession(ctx, r, nil)
-	return result.Session, err
-}
-
-// CreateSessionWithInput accepts transient caller input exactly once during open.
-func (s *Service) CreateSessionWithInput(ctx context.Context, input resource.SessionCreateInput) (resource.SessionCreated, error) {
-	return s.createSession(ctx, resource.Session{Metadata: input.Metadata, Spec: input.Spec}, input.InitialInput)
-}
-
-func (s *Service) createSession(ctx context.Context, r resource.Session, initial *runtime.Input) (resource.SessionCreated, error) {
-	if err := ctx.Err(); err != nil {
-		return resource.SessionCreated{}, err
-	}
 	if uuidSessionName.MatchString(r.Metadata.Name) {
-		return resource.SessionCreated{}, &runtime.OperationError{Code: "invalid_argument", Reason: "session_name_is_uuid", Message: "Session creation name must not be a UUID"}
+		return resource.Session{}, &runtime.OperationError{Code: "invalid_argument", Reason: "session_name_is_uuid", Message: "Session creation name must not be a UUID"}
 	}
 	if err := validateMetadata(r.Metadata, true); err != nil {
-		return resource.SessionCreated{Session: r}, err
+		return r, err
 	}
 	if r.Status.SessionID != "" || r.Status.State != "" || r.Status.AppliedGeneration != 0 || r.Status.RuntimeGeneration != 0 || r.Status.Capabilities != nil {
-		return resource.SessionCreated{}, runtime.InvalidArgument("system status is read-only")
+		return resource.Session{}, runtime.InvalidArgument("system status is read-only")
 	}
 	if !validName(r.Spec.RuntimeRef) {
-		return resource.SessionCreated{}, runtime.InvalidArgument("invalid runtime reference")
+		return resource.Session{}, runtime.InvalidArgument("invalid runtime reference")
 	}
 	if !filepath.IsAbs(r.Spec.Cwd) {
-		return resource.SessionCreated{Session: r}, runtime.InvalidArgument("absolute cwd required")
+		return r, runtime.InvalidArgument("absolute cwd required")
 	}
 	if r.Metadata.UID != "" || r.Metadata.Generation != 0 || r.Metadata.ResourceVersion != "" || !r.Metadata.CreatedAt.IsZero() {
-		return resource.SessionCreated{Session: r}, runtime.InvalidArgument("system metadata is read-only")
+		return r, runtime.InvalidArgument("system metadata is read-only")
 	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
 	closing := s.closing
 	s.mu.Unlock()
 	if run == nil || closing {
-		return resource.SessionCreated{Session: r}, errors.New("runtime not started or service closing")
-	}
-	var creator runtime.CreationDriver
-	if initial != nil {
-		copyInput, err := runtime.CopyInput(*initial)
-		if err != nil {
-			return resource.SessionCreated{}, err
-		}
-		initial = &copyInput
-		var ok bool
-		creator, ok = run.driver.(runtime.CreationDriver)
-		if !ok {
-			return resource.SessionCreated{}, runtime.Unsupported()
-		}
-		if err := creator.ValidateInitialInput(*initial); err != nil {
-			return resource.SessionCreated{}, err
-		}
+		return r, errors.New("runtime not started or service closing")
 	}
 	s.mu.Lock()
 	if s.closing || run.err != nil || !run.started || run.stopping {
 		s.mu.Unlock()
-		return resource.SessionCreated{Session: r}, errors.New("runtime unavailable")
+		return r, errors.New("runtime unavailable")
 	}
 	pendingCount := 0
 	for _, owner := range s.runs {
@@ -397,13 +367,13 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	}
 	if len(s.broadcasts)+pendingCount >= queueCapacity*queueCapacity {
 		s.mu.Unlock()
-		return resource.SessionCreated{Session: r}, errors.New("observation ownership capacity exhausted")
+		return r, errors.New("observation ownership capacity exhausted")
 	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
 	k := addressKey(a)
 	if run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
 		s.mu.Unlock()
-		return resource.SessionCreated{Session: r}, store.ErrConflict
+		return r, store.ErrConflict
 	}
 	owner, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	op := &opening{address: a, done: make(chan struct{}), cancel: cancel}
@@ -417,37 +387,18 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 		if err == nil {
 			err = store.ErrConflict
 		}
-		return resource.SessionCreated{Session: r}, err
+		return r, err
 	}
 	type result struct {
-		session resource.SessionCreated
+		session resource.Session
 		err     error
 	}
 	resultCh := make(chan result, 1)
 	go func() {
 		defer close(op.done)
 		defer cancel()
-		var receipt *runtime.InputReceipt
 		value, err := func() (resource.Session, error) {
-			var native runtime.DriverSession
-			var err error
-			if initial == nil {
-				native, err = run.driver.OpenSession(owner, a, r.Spec.SessionSpec)
-			} else {
-				native, err = creator.OpenSessionWithInput(owner, a, r.Spec.SessionSpec, *initial)
-			}
-			receipt = native.InitialInputReceipt
-			if err != nil && native.SessionID != "" {
-				// Native thread exists even when its first dispatch receipt is uncertain.
-				// Keep its original address and buffered facts until explicit settlement.
-				cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
-				s.mu.Lock()
-				op.native = native
-				op.released = cleanup == nil
-				op.err = err
-				s.mu.Unlock()
-				return resource.Session{}, errors.Join(err, cleanup)
-			}
+			native, err := run.driver.OpenSession(owner, a, r.Spec.SessionSpec)
 			if err != nil {
 				if errors.Is(err, runtime.ErrResourcesReleased) {
 					removePending()
@@ -526,10 +477,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			}
 			return r, nil
 		}()
-		if err != nil {
-			receipt = nil
-		}
-		resultCh <- result{resource.SessionCreated{Session: value, InitialInputReceipt: receipt}, err}
+		resultCh <- result{value, err}
 	}()
 	select {
 	case value := <-resultCh:
@@ -538,7 +486,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 		s.mu.Lock()
 		op.abandoned = true
 		s.mu.Unlock()
-		return resource.SessionCreated{}, fmt.Errorf("outcome_unknown: creation continues under original reservation: %w", ctx.Err())
+		return resource.Session{}, fmt.Errorf("outcome_unknown: creation continues under original reservation: %w", ctx.Err())
 	}
 }
 

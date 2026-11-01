@@ -3,7 +3,7 @@ type: Contract
 title: TypeSpec 合同入口
 description: Service、Runtime 与 Store 的接口版本与统一校验工具。
 status: stable
-interface_version: v0.2.15
+interface_version: v0.2.14
 sources:
 - id: direction
   resource: 项目负责人在 2026-10-19 关于应用服务与运行时拆分的讨论

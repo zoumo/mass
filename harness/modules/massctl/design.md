@@ -23,7 +23,7 @@ massctl 是面向终端用户和脚本的客户端模块，提供 `massctl <reso
 
 massctl 通过 [HTTP v1](../../bindings/http.md) 调用 [RuntimeService](../service/runtime-service.tsp) 与 [SessionService](../service/session-service.tsp)。业务 API 使用 `/apis/v1`。Service 拥有业务校验、生命周期、持久化和操作编排；massctl 不直接访问 Store、Registry、Driver、原生 Agent 或服务端数据目录，不维护另一套资源状态。
 
-模块拥有命令发现、参数校验、输入读取、请求等待、终端输出与进程退出行为。session create/resume 由 Service 在业务校验后按需启动所属 Runtime，CLI 不额外发送 runtime start。查询、历史和 watch 不触发启动；prompt 不隐式恢复离线 Session。不隐式发送初始 prompt、不重试副作用请求，不通过停止共享 Runtime 处理单 Session 错误。
+模块拥有命令发现、参数校验、输入读取、请求等待、终端输出与进程退出行为。session create/resume 由 Service 在业务校验后按需启动所属 Runtime，CLI 不额外发送 runtime start。查询、历史和 watch 不触发启动；prompt 不隐式恢复离线 Session。不发送初始 prompt、不重试副作用请求，不通过停止共享 Runtime 处理单 Session 错误。
 
 ## 能力清单与命令
 
@@ -72,7 +72,7 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 |---|---|---|
 | `session load NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd ABS_PATH --session-id NATIVE_ID` | 异步恢复同一会话并回放到新空目标；本地完成后直接继续输入 |
 | `session cancel-load TARGET` | 必填 `--load-id ID` | 取消原历史读取，返回当前状态；通过 get 查询最终结束 |
-| `session create NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd PATH`，可选系统提示与额外目录 | 创建并登记 Session，返回持久身份及可选输入回执；仅显式输入发送一次 |
+| `session create NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd PATH`，可选系统提示与额外目录 | 创建并登记 Session，返回持久身份；不发送业务输入（已确认） |
 | `session get TARGET` | 无业务请求体 | 查询资源，不隐式恢复 |
 | `session list` | 只保留分页参数 `--limit`、`--after` | 查询全部 namespace 与 Runtime 的持久目录，包含离线和归档会话；首版不提供筛选（已确认） |
 | `session resume TARGET` | 无业务请求体 | 按需启动所属 Runtime，再恢复原身份及历史；失败不新建替代 |
@@ -82,7 +82,7 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 | `session history TARGET` | 只保留分页参数 `--limit`、`--after` | 查询已提交历史及同步进度；首版不提供类型筛选（已确认） |
 | `session watch TARGET` | 无专属参数、无业务请求体 | 建立独立实时订阅，观察订阅建立后的事件；不补历史、不自动重连，Ctrl-C 只关闭观察（已确认） |
 
-Session 创建参数已确认：NAME、-n/--namespace、--runtime 与 --cwd 必填；可选 --system-prompt TEXT 或 --system-prompt-file FILE（二者互斥），以及可重复 --additional-dir PATH，分别对应 systemPrompt 和 additionalDirs。创建省略输入时不发送 prompt；可选互斥 --text TEXT 与 --input-file FILE，后者读取 UTF-8 SessionInput JSON 并保留内容块结构。输入不进入 spec 或恢复配置，receipt 不代表完成；不支持字段在副作用前拒绝。文件 - 读取 stdin，两个文件参数不得同时读 stdin。cwd 与额外目录按 Agent 所在环境解释，不以本机路径是否存在决定有效性；额外目录不授予权限。
+Session 创建参数已确认：NAME、-n/--namespace、--runtime 与 --cwd 必填；可选 --system-prompt TEXT 或 --system-prompt-file FILE（二者互斥），以及可重复 --additional-dir PATH，分别对应 systemPrompt 和 additionalDirs。创建不发送 prompt。cwd 与额外目录按 Agent 所在环境解释，不以本机路径是否存在决定有效性；额外目录不授予权限。
 
 当前 Service 未提供 Session 更新、删除、配置选项写入和待决交互补查，CLI 不虚构这些操作。`archive` 不提供 `delete` 别名。进程内 EventHandler 管理不作为 CLI 远程能力暴露。
 

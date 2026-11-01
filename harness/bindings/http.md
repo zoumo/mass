@@ -69,7 +69,7 @@ Runtime 是全局命名资源；`{runtime}` 为 Runtime 名称。创建只接受
 
 ## Session 路由与寻址
 
-集合入口为 `/apis/v1/sessions`。创建必须提供 namespace 与名称，拒绝系统生成字段。名称必须满足[创建名称校验](../modules/service/session.md#创建名称校验)，UUID 形式的名称返回 400 invalid_argument，reason=session_name_is_uuid，且不得产生创建副作用。创建不隐式发送用户输入；可选顶层 initialInput 使用 SessionInput，显式空输入拒绝，不加入 spec。成功前必须完成持久身份登记与原生会话打开；成功体为 SessionCreated，既有 Session 字段加可选 initialInputReceipt。回执的 provider 证据、早到事实、未知结果及禁止重放遵循 [创建合同](../modules/service/session.md#创建与公开成功)。
+集合入口为 `/apis/v1/sessions`。创建必须提供 namespace 与名称，拒绝系统生成字段。名称必须满足[创建名称校验](../modules/service/session.md#创建名称校验)，UUID 形式的名称返回 400 invalid_argument，reason=session_name_is_uuid，且不得产生创建副作用。创建不隐式发送用户输入，成功前必须完成持久身份登记与原生会话打开。
 
 单资源支持两种路径，均定位同一份持久 Session：[^resource-paths]
 
@@ -106,7 +106,7 @@ Runtime 是全局命名资源；`{runtime}` 为 Runtime 名称。创建只接受
 |---|---|---|
 | `POST /apis/v1/sessions/load` | 异步恢复同一原生会话并回放到新空目标 | 202，SessionLoadAccepted |
 | `POST {session}/history-load/cancel` | 取消指定 loadId 的读取 | 200，当前 HistoryLoadStatus；不证明清理已完成 |
-| `POST /apis/v1/sessions` | 按需启动所属 Runtime，再创建 Session | 201，SessionCreated |
+| `POST /apis/v1/sessions` | 按需启动所属 Runtime，再创建 Session | 201，Session 资源 |
 | `GET /apis/v1/sessions` | 列表查询；筛选与分页见下文 | 200，资源分页 |
 | `GET {session}` | 查询资源 | 200，Session 资源 |
 | `POST {session}/resume` | 按需启动所属 Runtime，再恢复该 Session | 200，Session 资源 |

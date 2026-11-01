@@ -31,10 +31,9 @@ type SessionSpec struct {
 }
 
 type DriverSession struct {
-	SessionID           string
-	Capabilities        Capabilities
-	Source              events.Source
-	InitialInputReceipt *InputReceipt
+	SessionID    string
+	Capabilities Capabilities
+	Source       events.Source
 }
 
 type Input struct {
@@ -73,14 +72,6 @@ type Driver interface {
 	CloseSession(context.Context, string) error
 	Stop(context.Context) error
 }
-
-// CreationDriver supports caller-explicit input while native identity is pending.
-// Initial input is an operation, never part of SessionSpec or recovery material.
-type CreationDriver interface {
-	ValidateInitialInput(Input) error
-	OpenSessionWithInput(context.Context, Address, SessionSpec, Input) (DriverSession, error)
-}
-
 type Factory interface {
 	Validate(Config) error
 	New(string, Config) (Driver, error)

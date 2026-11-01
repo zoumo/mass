@@ -1253,9 +1253,6 @@
       "SessionCreate": {
         "additionalProperties": false,
         "properties": {
-          "initialInput": {
-            "$ref": "#/components/schemas/Input"
-          },
           "metadata": {
             "$ref": "#/components/schemas/SessionCreateMetadata"
           },
@@ -1287,29 +1284,6 @@
         "required": [
           "namespace",
           "name"
-        ],
-        "type": "object"
-      },
-      "SessionCreated": {
-        "additionalProperties": false,
-        "properties": {
-          "initialInputReceipt": {
-            "$ref": "#/components/schemas/InputReceipt"
-          },
-          "metadata": {
-            "$ref": "#/components/schemas/Metadata"
-          },
-          "spec": {
-            "$ref": "#/components/schemas/SessionSpec"
-          },
-          "status": {
-            "$ref": "#/components/schemas/SessionStatus"
-          }
-        },
-        "required": [
-          "metadata",
-          "spec",
-          "status"
         ],
         "type": "object"
       },
@@ -5952,7 +5926,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SessionCreated"
+                  "$ref": "#/components/schemas/Session"
                 }
               }
             },

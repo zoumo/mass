@@ -835,9 +835,8 @@ type Session struct {
 
 // SessionCreate defines model for SessionCreate.
 type SessionCreate struct {
-	InitialInput *Input                `json:"initialInput,omitempty"`
-	Metadata     SessionCreateMetadata `json:"metadata"`
-	Spec         SessionSpec           `json:"spec"`
+	Metadata SessionCreateMetadata `json:"metadata"`
+	Spec     SessionSpec           `json:"spec"`
 }
 
 // SessionCreateMetadata defines model for SessionCreateMetadata.
@@ -845,14 +844,6 @@ type SessionCreateMetadata struct {
 	// Name DNS subdomain name; UUID-shaped names are rejected by Service
 	Name      string `json:"name"`
 	Namespace string `json:"namespace"`
-}
-
-// SessionCreated defines model for SessionCreated.
-type SessionCreated struct {
-	InitialInputReceipt *InputReceipt `json:"initialInputReceipt,omitempty"`
-	Metadata            Metadata      `json:"metadata"`
-	Spec                SessionSpec   `json:"spec"`
-	Status              SessionStatus `json:"status"`
 }
 
 // SessionError defines model for SessionError.
@@ -6199,7 +6190,7 @@ type CreateSessionResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *SessionCreated
+	JSON201 *Session
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *OperationError
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -6233,7 +6224,7 @@ type CreateSessionResponse struct {
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r CreateSessionResponse) GetJSON201() *SessionCreated {
+func (r CreateSessionResponse) GetJSON201() *Session {
 	return r.JSON201
 }
 
@@ -10657,7 +10648,7 @@ func ParseCreateSessionResponse(rsp *http.Response) (*CreateSessionResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest SessionCreated
+		var dest Session
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

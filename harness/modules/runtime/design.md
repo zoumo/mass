@@ -52,7 +52,7 @@ RuntimeRegistry 按类型负责配置校验，本地与远端参数不能任意�
 
 Driver 内部持久保存和读取恢复材料，不能仅依赖内存。恢复验证原会话、账号及数据归属，不以相同 URL、名称或 ID 格式替代验证；失败不能新建会话代替恢复。closeSession 释放本次运行但保留后续恢复所需材料。
 
-DriverSessionSpec 只描述 cwd、systemPrompt 和 additionalDirs；Service 模块 SessionSpec 复用它并增加 runtimeRef。创建和恢复不隐式发送输入，不支持的选项明确失败。openSession/resumeSession 另接收 DriverSessionAddress（namespace、sessionName）；Service 在副作用前传入名称，adapter 固定在原运行绑定中。地址不是 Session spec，不参与配置版本。可选 CreationDriver 接收独立于 spec 的显式 SessionInput，校验先于副作用，同一打开所有者登记工作后提交；不支持的内容拒绝，不丢字段或转换为隐藏 prompt。恢复始终无初始输入。DriverSession 返回 sessionId、实际能力与仅显式创建时的 initialInputReceipt，配置 generation 由Service 模块的运行绑定记录。
+DriverSessionSpec 只描述 cwd、systemPrompt 和 additionalDirs；Service 模块 SessionSpec 复用它并增加 runtimeRef。创建和恢复不隐式发送输入，不支持的选项明确失败。openSession/resumeSession 另接收 DriverSessionAddress（namespace、sessionName）；Service 在副作用前传入名称，adapter 固定在原运行绑定中。地址不是 Session spec，不参与配置版本。DriverSession 只返回 sessionId 与实际能力，配置 generation 由Service 模块的运行绑定记录。
 
 ## 远端安全要求
 

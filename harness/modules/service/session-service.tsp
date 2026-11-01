@@ -19,9 +19,9 @@ interface SessionService {
     | HistoryLoadStatus
     | OperationError;
   /** input.spec.runtimeRef 选择目标实例，input.metadata.namespace/name 指定名称键；校验后按需启动所属 Runtime，启动失败不打开会话。
-   * 返回的 sessionId 在全部 Runtime 中唯一；持久身份保存成功后才公开成功；仅显式 initialInput 在同一创建所有者内发送一次。 */
+   * 返回的 sessionId 在全部 Runtime 中唯一；持久身份保存成功后才公开成功，不隐式输入。 */
   @parameterVisibility(Lifecycle.Create)
-  createSession(input: SessionCreate): SessionCreated | OperationError;
+  createSession(input: SessionCreate): Session | OperationError;
 
   /** 统一查询入口；根据持久归属解析 Runtime，不隐式恢复或启动。 */
   getSession(session: SessionRef): Session | OperationError;
