@@ -69,8 +69,10 @@ type session struct {
 	err                      error
 	state                    *events.SessionState
 	// Native message identity for partial events; no content is accumulated.
-	messageID string
-	tools     map[string]string
+	messageID   string
+	messageRoot bool
+	messages    map[string]messageClaim
+	tools       map[string]string
 }
 type Driver struct {
 	opening                 int
@@ -507,20 +509,28 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 	if err := json.Unmarshal(e.Raw, &raw); err != nil {
 		return err
 	}
+	trusted := root && e.SessionID == s.id && received.Origin == "live" && received.Source == (sdk.SubagentIdentity{SessionID: s.id})
 	switch e.Type {
 	case "stream_event":
 		switch raw.Event.Type {
 		case "message_start":
 			s.messageID = raw.Event.Message.ID
+			s.messageRoot = trusted
+			if err := s.linkMessage(s.messageID, true, trusted, e.UserMessageUUID); err != nil {
+				return err
+			}
 			if !root || s.observationWork == "" || s.observationWork != s.work || !s.active {
 				return nil
 			}
 			state := events.Running
 			return d.state(s, &state, "")
+		case "message_stop":
+			s.messageRoot = false
 		case "content_block_delta":
 			if s.messageID == "" {
 				return errors.New("partial message missing native identity")
 			}
+			s.linkPreview(trusted && s.messageRoot, e.UserMessageUUID)
 			switch raw.Event.Delta.Type {
 			case "text_delta":
 				return d.emit(s, s.messageID, events.MessageChunk{MessageID: s.messageID, Content: []events.ContentBlock{events.Text(raw.Event.Delta.Text)}}, raw.Time)
@@ -533,6 +543,11 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 			}
 		}
 	case "assistant", "user":
+		if e.Type == "assistant" {
+			if err := s.linkMessage(raw.Message.ID, false, trusted, e.UserMessageUUID); err != nil {
+				return err
+			}
+		}
 		id := raw.Message.ID
 		if id == "" {
 			id = raw.UUID
