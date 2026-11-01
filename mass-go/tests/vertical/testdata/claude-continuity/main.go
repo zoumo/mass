@@ -72,6 +72,12 @@ func main() {
 		if err := record.Encode(map[string]any{"pid": os.Getpid(), "input": n, "uuid": link, "text": text, "before_init": explicit && !resumed && n == 1}); err != nil {
 			panic(err)
 		}
+		if strings.HasPrefix(text, "linkage-") {
+			linkage(send, text, n, link, previous)
+			previous = link
+			result(link)
+			continue
+		}
 		start := map[string]any{"type": "stream_event", "session_id": "claude-continuity", "event": map[string]any{"type": "message_start", "message": map[string]any{"id": fmt.Sprintf("message-%d", n), "role": "assistant", "content": []any{}}}}
 		if link != "" {
 			start["user_message_uuid"] = link
@@ -140,4 +146,74 @@ func main() {
 			init()
 		}
 	}
+}
+
+// The native start proves ownership; complete assistant frames omit the caller UUID.
+func linkage(send func(map[string]any), mode string, n int, link, previous string) {
+	id := fmt.Sprintf("message-%d", n)
+	start := func(id, owner string) {
+		v := map[string]any{"type": "stream_event", "session_id": "claude-continuity", "event": map[string]any{"type": "message_start", "message": map[string]any{"id": id, "role": "assistant", "content": []any{}}}}
+		if owner != "" {
+			v["user_message_uuid"] = owner
+		}
+		send(v)
+	}
+	message := func(id, owner, parent string) {
+		for i, block := range []any{map[string]any{"type": "thinking", "thinking": "native thought"}, map[string]any{"type": "text", "text": "native answer"}} {
+			v := map[string]any{"type": "assistant", "session_id": "claude-continuity", "uuid": fmt.Sprintf("envelope-%d-%d", n, i), "message": map[string]any{"id": id, "role": "assistant", "content": []any{block}}}
+			if owner != "" {
+				v["user_message_uuid"] = owner
+			}
+			if parent != "" {
+				v["parent_tool_use_id"] = parent
+			}
+			send(v)
+		}
+	}
+	switch mode {
+	case "linkage-retired":
+		id = "message-1"
+	case "linkage-unproven":
+		message(id, "", "")
+	case "linkage-child-first":
+		message(id, "", "child-tool")
+	}
+	switch mode {
+	case "linkage-unlinked-start":
+		start(id, "")
+		start(id, link)
+	case "linkage-child-start", "linkage-foreign-start":
+		v := map[string]any{"type": "stream_event", "session_id": "claude-continuity", "user_message_uuid": link, "event": map[string]any{"type": "message_start", "message": map[string]any{"id": id, "role": "assistant", "content": []any{}}}}
+		if mode == "linkage-child-start" {
+			v["parent_tool_use_id"] = "child-tool"
+		} else {
+			v["session_id"] = "foreign-session"
+		}
+		send(v)
+	case "linkage-no-start":
+	default:
+		start(id, link)
+	}
+	switch mode {
+	case "linkage-repeated-start":
+		start(id, link)
+	case "linkage-different":
+		id = "different-message"
+	case "linkage-conflict":
+		message(id, "foreign-submission", "")
+	case "linkage-prior-work":
+		message(id, previous, "")
+	case "linkage-child":
+		message(id, "", "child-tool")
+	}
+	if mode == "linkage-stopped-preview" {
+		send(map[string]any{"type": "stream_event", "session_id": "claude-continuity", "event": map[string]any{"type": "message_stop"}})
+	}
+	for _, delta := range []map[string]any{{"type": "thinking_delta", "thinking": "preview thought"}, {"type": "text_delta", "text": "preview answer"}} {
+		// Deltas have no message ID; a different-ID complete frame must not borrow it.
+		if mode == "linkage-proof" || mode == "linkage-stopped-preview" {
+			send(map[string]any{"type": "stream_event", "session_id": "claude-continuity", "event": map[string]any{"type": "content_block_delta", "index": 0, "delta": delta}})
+		}
+	}
+	message(id, "", "")
 }
