@@ -18,6 +18,9 @@ import (
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore"
+	eventfile "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
+	metafile "github.com/zoumo/mass/mass-go/pkg/metastore/file"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/claude"
@@ -41,6 +44,7 @@ type ticket07Setup struct {
 	history            func(eventstore.EventStore) eventstore.EventStore
 	factory            func(runtime.Factory) runtime.Factory
 	allowShutdownError bool
+	fileStoreDir       string
 }
 
 func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...func(*ticket07Setup)) (*service.Service, string, string, string) {
@@ -70,22 +74,35 @@ func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...f
 	}
 	require.NoError(t, f.Close())
 	evidence := filepath.Join(t.TempDir(), "peer.jsonl")
-	st, err := file.Open(t.TempDir(), false)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	setup := &ticket07Setup{path: path, config: config, env: map[string]any{"CLAUDE_CONFIG_DIR": config, "LOAD_ID": claudeLoadID, "LOAD_MODE": mode, "LOAD_EVIDENCE": evidence}}
 	for _, o := range options {
 		o(setup)
 	}
-	var history eventstore.EventStore = st
+	var meta metastore.MetaStore
+	var history eventstore.EventStore
+	if setup.fileStoreDir != "" {
+		// Use the product's independent stores, retaining file authority for both.
+		metadata, err := metafile.Open(setup.fileStoreDir, false)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, metadata.Close()) })
+		records, err := eventfile.Open(setup.fileStoreDir, false)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, records.Close()) })
+		meta, history = metadata, records
+	} else {
+		st, err := file.Open(t.TempDir(), false)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, st.Close()) })
+		meta, history = st, st
+	}
 	if setup.history != nil {
-		history = setup.history(st)
+		history = setup.history(history)
 	}
 	var factory runtime.Factory = claude.Factory{RecoveryDir: t.TempDir()}
 	if setup.factory != nil {
 		factory = setup.factory(factory)
 	}
-	svc := service.New(st, history, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}))
+	svc := service.New(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"claude": factory}))
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": setup.env}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
@@ -367,7 +384,8 @@ func TestTicket07ClaudeMultipleOffsetQueriesPreserveFirstLastAndHiddenParent(t *
 	rows := ticket07Many(105)
 	rows = append([]map[string]any{{"type": "system", "uuid": "hidden", "parentUuid": nil, "subtype": "compact_boundary"}}, rows...)
 	rows[1]["parentUuid"] = "hidden"
-	_, url, cwd, _ := ticket07HTTP(t, "", rows)
+	data := t.TempDir()
+	_, url, cwd, _ := ticket07HTTP(t, "", rows, func(s *ticket07Setup) { s.fileStoreDir = data })
 	_, ref := ticket07Load(t, url, cwd)
 	ticket07Status(t, url, ref, "completed")
 	c := newHTTPClient(t, url, "")
@@ -382,6 +400,20 @@ func TestTicket07ClaudeMultipleOffsetQueriesPreserveFirstLastAndHiddenParent(t *
 		offsets[e.Meta["pagination"].(map[string]any)["offset"]] = true
 	}
 	require.Len(t, offsets, 2)
+
+	// Reopen through public file-store constructors to verify durable authority.
+	metadata, err := metafile.Open(data, true)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, metadata.Close()) }()
+	saved, err := metadata.GetSession(ref)
+	require.NoError(t, err)
+	require.Equal(t, "completed", saved.Status.HistoryLoad.Phase)
+	records, err := eventfile.Open(data, true)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, records.Close()) }()
+	persisted, err := records.ListHistory(claudeLoadID, store.HistoryQuery{Limit: 1000})
+	require.NoError(t, err)
+	require.Equal(t, page.Events, persisted.Events)
 }
 
 // Public Driver/Stream decorators control observation timing without consuming a
