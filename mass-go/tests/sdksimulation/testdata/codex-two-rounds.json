@@ -1,0 +1,312 @@
+{
+  "version": 1,
+  "provenance": "synthetic",
+  "source": "SDK-FU-02 authored two-round static fixture; not an admitted capture",
+  "frames": [
+    {
+      "ordinal": 1,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 1,
+        "method": "initialize",
+        "params": {
+          "clientInfo": {
+            "name": "mass",
+            "version": "2"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 2,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 1,
+        "result": {
+          "userAgent": "synthetic",
+          "codexHome": "/synthetic",
+          "platformFamily": "unix",
+          "platformOs": "linux"
+        }
+      }
+    },
+    {
+      "ordinal": 3,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "method": "initialized"
+      }
+    },
+    {
+      "ordinal": 4,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 2,
+        "method": "thread/start",
+        "params": {
+          "cwd": "/synthetic",
+          "ephemeral": false
+        }
+      }
+    },
+    {
+      "ordinal": 5,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 2,
+        "result": {
+          "thread": {
+            "id": "codex-session",
+            "sessionId": "codex-session",
+            "turns": [],
+            "cliVersion": "synthetic",
+            "createdAt": 1,
+            "updatedAt": 1,
+            "cwd": "/synthetic",
+            "ephemeral": false,
+            "modelProvider": "synthetic",
+            "preview": "",
+            "projectId": null,
+            "source": "appServer",
+            "status": {
+              "type": "idle"
+            }
+          },
+          "approvalPolicy": "on-request",
+          "approvalsReviewer": "user",
+          "cwd": "/synthetic",
+          "model": "synthetic",
+          "modelProvider": "synthetic",
+          "sandbox": {
+            "type": "readOnly"
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 6,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 3,
+        "method": "turn/start",
+        "params": {
+          "threadId": "codex-session",
+          "input": [
+            {
+              "type": "text",
+              "text": "Reply with the word Ready.",
+              "text_elements": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ordinal": 7,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 3,
+        "result": {
+          "turn": {
+            "id": "turn-1",
+            "status": "inProgress",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 8,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/started",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {
+            "id": "turn-1",
+            "status": "inProgress",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 9,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-1",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-1",
+            "text": "Ready"
+          },
+          "completedAtMs": 1792458123001
+        }
+      }
+    },
+    {
+      "ordinal": 10,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {
+            "id": "turn-1",
+            "status": "completed",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 11,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 4,
+        "method": "turn/start",
+        "params": {
+          "threadId": "codex-session",
+          "input": [
+            {
+              "type": "text",
+              "text": "Reply with the word Done.",
+              "text_elements": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ordinal": 12,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 4,
+        "result": {
+          "turn": {
+            "id": "turn-2",
+            "status": "inProgress",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 13,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/started",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {
+            "id": "turn-2",
+            "status": "inProgress",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 14,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "item/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turnId": "turn-2",
+          "item": {
+            "type": "agentMessage",
+            "id": "message-2",
+            "text": "Done"
+          },
+          "completedAtMs": 1792458123002
+        }
+      }
+    },
+    {
+      "ordinal": 15,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "turn/completed",
+        "params": {
+          "threadId": "codex-session",
+          "turn": {
+            "id": "turn-2",
+            "status": "completed",
+            "items": []
+          }
+        }
+      }
+    },
+    {
+      "ordinal": 16,
+      "channel": "protocol",
+      "direction": "c2s",
+      "epoch": 1,
+      "wire": {
+        "id": 5,
+        "method": "thread/unsubscribe",
+        "params": {
+          "threadId": "codex-session"
+        }
+      }
+    },
+    {
+      "ordinal": 17,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "id": 5,
+        "result": {
+          "status": "unsubscribed"
+        }
+      }
+    },
+    {
+      "ordinal": 18,
+      "channel": "protocol",
+      "direction": "s2c",
+      "epoch": 1,
+      "wire": {
+        "method": "thread/closed",
+        "params": {
+          "threadId": "codex-session"
+        }
+      }
+    }
+  ]
+}

@@ -98,7 +98,12 @@ Local shared evidence root (outside Git):
    `forwardSubagentText:true`. Omission differs from true under the matcher.
    Keep this observation policy; do not pass empty options just to match.
 2. Recorded ordinal 5 first text input uses `session_id:"default"`, null parent,
-   and no UUID. That basic shape agrees with MASS's fresh single-text input.
+   and no UUID. The pinned SDK actually emits `session_id:""` for MASS's fresh
+   single-text input, and also for its subsequent structured UUID-bearing input.
+   These are main-stream ownership markers, not native session target selectors.
+   They are not equal under the strict matcher; the earlier basic-shape agreement
+   finding was incorrect. SDK-FU-02 confirmed the empty marker through its
+   executable peer and `claude/session_input.go`; no SDK encoding was changed.
    The driver passes the original recorded project path as cwd; the runner
    separately materializes writable files under its new workspace. Do not
    rewrite recorded cwd/IDs or use materialized cwd as a protocol substitute.
@@ -189,7 +194,7 @@ bindings, and inspect `rtk proxy ps -axo pid=,ppid=,command=` for owned commands
 containing that unique output path. Preserve failures; never overwrite an attempt.
 CLI exit 0 from the MASS driver only means it wrote result.json; check its status.
 
-## Authored Route For SDK-FU-02 (Design, Not Executed PASS)
+## Authored Route For SDK-FU-02 (Synthetic Only)
 
 Use the same two literal prompts as case 001: `Reply with the word Ready.` then
 `Reply with the word Done.` Expected synthetic replies are exactly `Ready` and
@@ -208,12 +213,19 @@ Use the same two literal prompts as case 001: `Reply with the word Ready.` then
   /absolute/authored-codex --driver /absolute/mass-sdk-driver --output
   /absolute/new-attempt --timeout 60s`. This format is supported by the pinned
   parser; the specific success fixture still belongs to 02 and is NOT supplied
-  or validated by 01. Keep it outside admitted recording directories.
+  or validated by 01. Keep it outside admitted recording directories. The
+  implemented fixture is `tests/sdksimulation/testdata/codex-two-rounds.json`.
+  Materialize its `/synthetic` paths to the test-owned absolute project, and
+  compact the entire JSON document before passing it to the pinned mock: its
+  wire writer preserves raw JSON formatting, while Codex requires one JSON
+  object per protocol line. This is authored-fixture preparation, not a matcher
+  change or an edit to admitted bytes.
 - **Claude stateful authored route:** a fixed static transcript cannot consume
   fresh UUIDs with this unchanged matcher. For 02's product-only success test,
   use a separately labelled executable synthetic peer, not `protocol mock` or a
   forged testify receipt. Validate exact message keys, types, initialize forwarding,
-  both literal prompts, default session target, null parent, no first UUID, and a
+  both literal prompts, the empty `session_id` stream marker, null parent,
+  no first UUID, and a
   valid fresh second UUID. Bind that UUID once and echo it as
   `user_message_uuid` in second-turn assistant/result observations on the same
   synthetic native identity. Reject unknown keys, extra input, missing/out-of-order
@@ -227,7 +239,51 @@ Use the same two literal prompts as case 001: `Reply with the word Ready.` then
   `rtk proxy /absolute/mass-sdk-driver --request /absolute/request.json`.
   Read result and a separately named synthetic-peer receipt. Do not call that
   receipt `replay-peer.json` or run corpus adopt/qualify on synthetic bytes.
-  Peer implementation and executed success assertions remain work for 02.
+  The implementation is `tests/sdksimulation/testdata/claude-peer.py`, invoked
+  through an absolute `python3` with `-I`, the script path, mode (`success` for
+  the positive route), absolute project, and absolute synthetic receipt path.
+  Native startup arguments appended by the driver are not protocol inputs.
+
+### Implemented Offline CLI Tests
+
+From the MASS repository root, with Go dependencies cached and Python 3 available:
+
+```sh
+rtk proxy sh -eu -c '
+E=$(mktemp -d /tmp/mass-sdk-authored.XXXXXX)
+export GOWORK=off GOPROXY=off GOSUMDB=off
+MASS_SDK_EVIDENCE="$E" MASS_SDK_RACE=1 \
+  go -C mass-go test -race ./tests/sdksimulation -count=1 -v -timeout=180s
+printf "Evidence: %s\n" "$E"
+'
+```
+
+These tests build and execute the actual MASS driver CLI. Codex uses the pinned
+`agent-sdk-testify protocol mock --provider codex --scenario <compact-authored-json>
+--receipt <strict-peer.json> --timeout 8` as the supplied peer; no testify batch
+or admitted-recording PASS is implied. Its receipt field is `recordingSHA256`
+(hash of the authored scenario), not `rawSHA256`. Claude uses the separate
+stateful authored peer; its receipt is `synthetic-peer.json`, never a fabricated
+`replay-peer.json`. The helper saves `request.json`, materialized synthetic
+inputs, driver log, results, receipts, history, `rounds.json`,
+`runtime-observations.json` (public Runtime events plus execution-only work/run
+checks), and `cleanup.json` under a fresh per-case directory. The driver accepts
+optional `--timeout <duration>` (default 25s); business failures still exit zero
+when `result.json` was written, with `status:failed`. Request/flag/write failures
+exit nonzero. Always inspect result status and cleanup, not exit code alone.
+
+Success requires both settled idle boundaries and an exact history readback after
+runtime stop. Cleanup attempts Service shutdown and closes both stores even on
+failure, using a separate deadline. The deliberately injected post-open Claude
+EOF retains SDK terminal diagnostics and `released:false`; tests assert that
+failure explicitly, not successful logical release. SDK-FU-03's startup-release
+fix is integrated, but it does not erase this distinct post-open failure class.
+The Codex strict prompt-mismatch negative also retains `released:false` with
+unconfirmed opening ownership after peer EOF. All cases assert shutdown was
+attempted and both stores closed; neither failure is relabelled using OS-only
+process evidence.
+SDK-FU-02 execution evidence and RED/GREEN logs are outside Git under
+`/Users/jim/code/zoumo/mass-sdk-worktrees/followup-evidence/02/`.
 
 For both authored routes, 02 must assert two *separate*, correctly ordered inputs
 and completions, exact reply content, no second completion before the second
@@ -237,8 +293,9 @@ and proper cleanup. Counting two arbitrary nonempty messages is insufficient.
 Verify final history after the second boundary and stop; retain result, receipts,
 history and lifecycle evidence. Independently corrupt expected prompt/order/reply
 in test-owned materials to prove assertions reject wrong behavior; never mutate
-an admitted capture. This ticket writes no product tests; code TDD is not
-applicable to its documentation/source investigation.
+an admitted capture. SDK-FU-01 wrote no product tests; code TDD did not apply to that
+documentation/source investigation. SDK-FU-02 implements the approved public
+Service/Runtime and executable-CLI test seams with RED/GREEN evidence.
 
 ## Full Consumption, Cleanup And Unblocking
 

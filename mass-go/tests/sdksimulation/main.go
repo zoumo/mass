@@ -89,22 +89,23 @@ func run(ctx context.Context, req request) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, meta.Close()) }()
 	history, err := historyfile.Open(filepath.Join(req.Output, "history"), false)
 	if err != nil {
-		return err
+		return errors.Join(err, meta.Close())
 	}
-	defer func() { err = errors.Join(err, history.Close()) }()
+	observed := &observations{}
 	registry := runtime.NewRegistry(map[string]runtime.Factory{
-		"codex":  codex.Factory{RecoveryDir: filepath.Join(req.Output, "recovery")},
-		"claude": claude.Factory{RecoveryDir: filepath.Join(req.Output, "recovery")},
+		"codex":  observedFactory{codex.Factory{RecoveryDir: filepath.Join(req.Output, "recovery")}, observed},
+		"claude": observedFactory{claude.Factory{RecoveryDir: filepath.Join(req.Output, "recovery")}, observed},
 	})
 	svc := service.New(meta, history, registry)
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		cleanupErr := svc.Shutdown(cleanup)
-		err = errors.Join(err, cleanupErr, writeJSON(filepath.Join(req.Output, "cleanup.json"), map[string]any{"released": cleanupErr == nil, "error": fmt.Sprint(cleanupErr)}))
+		shutdownErr := svc.Shutdown(cleanup)
+		storeErr := errors.Join(history.Close(), meta.Close())
+		cleanupErr := errors.Join(shutdownErr, storeErr)
+		err = errors.Join(err, cleanupErr, observed.write(filepath.Join(req.Output, "runtime-observations.json")), writeJSON(filepath.Join(req.Output, "cleanup.json"), map[string]any{"released": cleanupErr == nil, "error": fmt.Sprint(cleanupErr), "shutdownAttempted": true, "storesClosed": storeErr == nil}))
 	}()
 	config := runtime.Config{"executable": launcher}
 	if p.Provider == "codex" {
@@ -131,10 +132,19 @@ func run(ctx context.Context, req request) (err error) {
 		return err
 	}
 	ref := resource.SessionRef{SessionID: created.Status.SessionID}
+	receipts := []runtime.InputReceipt{*created.InitialInputReceipt}
+	var rounds []map[string]any
 	// Initial events may precede the create response. Read public committed
 	// history and Session state so that those events cannot be missed.
 	for turn := 1; turn <= 2; turn++ {
-		if err := awaitTurns(ctx, svc, ref, turn, req.Output); err != nil {
+		if err := awaitTurns(ctx, svc, ref, turn, req.Output, observed, receipts, false); err != nil {
+			return err
+		}
+		if err := observed.verify(ref.SessionID, receipts, true); err != nil {
+			return err
+		}
+		rounds = append(rounds, map[string]any{"round": turn, "sessionId": ref.SessionID, "receipt": receipts[turn-1], "reply": []string{"Ready", "Done"}[turn-1], "state": "idle", "ownershipVerified": true})
+		if err := writeJSON(filepath.Join(req.Output, "rounds.json"), map[string]any{"rounds": rounds}); err != nil {
 			return err
 		}
 		if turn == 1 {
@@ -145,6 +155,7 @@ func run(ctx context.Context, req request) (err error) {
 			if receipt.Submission == "" {
 				return errors.New("missing second submission receipt")
 			}
+			receipts = append(receipts, receipt)
 			if err := writeJSON(filepath.Join(req.Output, "second-receipt.json"), receipt); err != nil {
 				return err
 			}
@@ -157,16 +168,24 @@ func run(ctx context.Context, req request) (err error) {
 	if current.Status.SessionID != created.Status.SessionID {
 		return errors.New("continuation changed native identity")
 	}
-	_, err = svc.StopRuntime(ctx, "recording")
-	return err
+	if _, err = svc.StopRuntime(ctx, "recording"); err != nil {
+		return err
+	}
+	if err := observed.verify(ref.SessionID, receipts, true); err != nil {
+		return err
+	}
+	return awaitTurns(ctx, svc, ref, 2, req.Output, observed, receipts, true)
 }
 
 func ptrInput(text string) *runtime.Input { v := input(text); return &v }
 
-func awaitTurns(ctx context.Context, svc *service.Service, ref resource.SessionRef, count int, output string) error {
+func awaitTurns(ctx context.Context, svc *service.Service, ref resource.SessionRef, count int, output string, observed *observations, receipts []runtime.InputReceipt, stopped bool) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		if err := observed.verify(ref.SessionID, receipts, false); err != nil {
+			return err
+		}
 		page, err := svc.ListHistoryEvents(ref, store.HistoryQuery{Limit: 256})
 		if err != nil {
 			return err
@@ -184,12 +203,14 @@ func awaitTurns(ctx context.Context, svc *service.Service, ref resource.SessionR
 			}
 			switch v := event.Payload().(type) {
 			case events.AgentMessage:
-				for _, b := range v.Content {
-					if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-						messages++
-						break
-					}
+				if messages >= count {
+					return errors.New("extra reply before next input")
 				}
+				expected := []string{"Ready", "Done"}[messages]
+				if len(v.Content) != 1 || v.Content[0].Type != "text" || v.Content[0].Text != expected {
+					return fmt.Errorf("reply %d must be exactly %q", messages+1, expected)
+				}
+				messages++
 			case events.SessionError:
 				return fmt.Errorf("MASS session error: %v", v)
 			}
@@ -198,7 +219,10 @@ func awaitTurns(ctx context.Context, svc *service.Service, ref resource.SessionR
 		if err != nil {
 			return err
 		}
-		if current.Status.State == events.Idle && messages == count {
+		if current.Status.SessionID != ref.SessionID {
+			return errors.New("continuation changed native identity")
+		}
+		if ((!stopped && current.Status.State == events.Idle) || (stopped && current.Status.State == "offline")) && messages == count {
 			return nil
 		}
 		select {
@@ -211,7 +235,11 @@ func awaitTurns(ctx context.Context, svc *service.Service, ref resource.SessionR
 
 func execute() error {
 	path := flag.String("request", "", "runner request JSON")
+	timeout := flag.Duration("timeout", 25*time.Second, "business deadline (cleanup has a separate deadline)")
 	flag.Parse()
+	if *timeout <= 0 {
+		return errors.New("timeout must be positive")
+	}
 	var req request
 	if err := readJSON(*path, &req); err != nil {
 		return err
@@ -221,9 +249,9 @@ func execute() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
-	status, message := "passed", "two completed nonempty MASS turns on one native session; runtime stopped"
+	status, message := "passed", "exact Ready/Done replies with distinct owned receipts and idle boundaries; native identity and final committed history verified; runtime and stores closed"
 	if err := run(ctx, req); err != nil {
 		status, message = "failed", err.Error()
 	}
