@@ -2,9 +2,11 @@ package vertical_test
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,12 +22,24 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
+var (
+	ticket06Build    sync.Once
+	ticket06Binary   string
+	ticket06BuildErr error
+)
+
 func ticket06Peer(t *testing.T) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), "history-peer")
-	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/history-load-peer").CombinedOutput()
-	require.NoError(t, err, string(out))
-	return bin
+	ticket06Build.Do(func() {
+		// Only the executable is shared; TestMain owns its lifetime across cases.
+		ticket06Binary = filepath.Join(root, "history-peer")
+		out, err := exec.CommandContext(ctx(t), "go", "build", "-o", ticket06Binary, "./testdata/history-load-peer").CombinedOutput()
+		if err != nil {
+			ticket06BuildErr = fmt.Errorf("build peer: %w: %s", err, out)
+		}
+	})
+	require.NoError(t, ticket06BuildErr)
+	return ticket06Binary
 }
 
 func ticket06Service(t *testing.T, mode string, extraEnv ...map[string]any) (*service.Service, string) {
