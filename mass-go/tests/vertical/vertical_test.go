@@ -260,15 +260,21 @@ func (verticalSuite *VerticalSuite) TestCodexVertical() {
 		require.NoError(t, err)
 		var envelope map[string]json.RawMessage
 		require.NoError(t, json.Unmarshal(wire, &envelope))
-		if event.Type() == "user.message" {
-			var meta struct {
-				Native map[string]json.RawMessage `json:"native"`
-			}
-			require.NoError(t, json.Unmarshal(envelope["_meta"], &meta))
-			require.JSONEq(t, `"turn-1"`, string(meta.Native["turnId"]))
+		var meta map[string]json.RawMessage
+		if raw, ok := envelope["_meta"]; ok {
+			require.NoError(t, json.Unmarshal(raw, &meta))
 		}
-		// Native provenance is opaque; unified events must not expose work association.
-		delete(envelope, "_meta")
+		if event.Type() == "user.message" {
+			var native map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(meta["native"], &native))
+			require.JSONEq(t, `"turn-1"`, string(native["turnId"]))
+		}
+		// Only native provenance is opaque; sibling metadata must not expose work association.
+		delete(meta, "native")
+		if meta != nil {
+			envelope["_meta"], err = json.Marshal(meta)
+			require.NoError(t, err)
+		}
 		projection, err := json.Marshal(envelope)
 		require.NoError(t, err)
 		for _, forbidden := range []string{`"seq"`, `"schemaVersion"`, `"run"`, `"work"`, `"turn-1"`} {
