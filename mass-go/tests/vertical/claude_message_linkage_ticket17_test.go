@@ -56,14 +56,23 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			opened, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "linked"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd}}})
 			require.NoError(t, err)
 			ref := resource.SessionRef{SessionID: opened.Status.SessionID}
-			observer, err := c.Observe(ctx(t), ref)
+			// One subscription spans up to 16 inputs, not one ten-second call.
+			observationCtx, cancelObservation := context.WithTimeout(t.Context(), 17*10*time.Second)
+			t.Cleanup(cancelObservation)
+			stopOpeningDeadline := context.AfterFunc(ctx(t), cancelObservation)
+			observer, err := c.Observe(observationCtx, ref)
+			stopOpeningDeadline()
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, observer.Close()) })
 			var live []events.SessionEvent
 			send := func(text string, proven bool) {
 				t.Helper()
+				workCtx := ctx(t)
+				// Keep each send-to-idle observation bounded even on a quiet SSE stream.
+				stopWorkDeadline := context.AfterFunc(workCtx, cancelObservation)
+				defer stopWorkDeadline()
 				var receipt runtime.InputReceipt
-				require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text(text)}}, &receipt))
+				require.NoError(t, c.SendPrompt(workCtx, ref, runtime.Input{Content: []events.ContentBlock{events.Text(text)}}, &receipt))
 				seen := 0
 				startID := ""
 				for {
