@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -29,8 +30,9 @@ func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
 	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\necho $$ > '"+pidFile+"'\nread -r request\nexit 1\n"), 0o700))
 	st, err := file.Open(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
-	defer st.Close()
+	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	cleanupOpeningService(t, svc, pidFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer}}})
@@ -81,6 +83,7 @@ func TestOpeningCleanupRuntimeFailures(t *testing.T) {
 				}
 				driver, err := factory.New("agent", runtime.Config{"executable": peer})
 				require.NoError(t, err)
+				t.Cleanup(func() { checkOpeningPeerReleased(t, pidFile) })
 				t.Cleanup(func() {
 					cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
@@ -132,8 +135,9 @@ func TestOpeningCleanupConcurrentStopShutdown(t *testing.T) {
 	require.NoError(t, os.WriteFile(peer, []byte("#!/bin/sh\necho $$ > '"+pidFile+"'\nread -r request\necho ready > '"+ready+"'\nwhile read -r request; do :; done\n"), 0o700))
 	st, err := file.Open(filepath.Join(dir, "store"), false)
 	require.NoError(t, err)
-	defer st.Close()
+	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "recovery")}}))
+	cleanupOpeningService(t, svc, pidFile)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer}}})
@@ -164,4 +168,27 @@ func TestOpeningCleanupConcurrentStopShutdown(t *testing.T) {
 	pid, err := strconv.Atoi(strings.TrimSpace(string(text)))
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH }, time.Second, time.Millisecond)
+}
+
+func cleanupOpeningService(t *testing.T, svc *service.Service, pidFile string) {
+	t.Helper()
+	// Cleanup runs in reverse order: shutdown, PID readback, then store closure.
+	t.Cleanup(func() { checkOpeningPeerReleased(t, pidFile) })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		assert.NoError(t, svc.Shutdown(ctx))
+	})
+}
+
+func checkOpeningPeerReleased(t *testing.T, pidFile string) {
+	t.Helper()
+	text, err := os.ReadFile(pidFile)
+	if os.IsNotExist(err) {
+		return // An assertion may fail before a peer is launched.
+	}
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(text)))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return syscall.Kill(pid, 0) == syscall.ESRCH }, time.Second, time.Millisecond, "owned opening peer must be reaped even after an assertion failure")
 }
