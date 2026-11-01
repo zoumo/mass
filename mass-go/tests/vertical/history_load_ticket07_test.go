@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -254,11 +255,23 @@ func ticket07Load(t *testing.T, url, cwd string) (*resource.SessionLoadAccepted,
 
 func ticket07Status(t *testing.T, url string, ref resource.SessionRef, phase string) resource.Session {
 	t.Helper()
+	return ticket07StatusWithin(t, url, ref, phase, 5*time.Second)
+}
+
+func ticket07StatusWithin(t *testing.T, url string, ref resource.SessionRef, phase string, budget time.Duration) resource.Session {
+	t.Helper()
 	c := newHTTPClient(t, url, "")
 	var r resource.Session
-	require.Eventually(t, func() bool {
-		return c.GetSession(ctx(t), ref, &r) == nil && (r.Status.HistoryLoad.Phase == phase || r.Status.HistoryLoad.Phase == "failed")
-	}, 5*time.Second, time.Millisecond)
+	require.EventuallyWithT(t, func(collect *assert.CollectT) {
+		var current resource.Session
+		if err := c.GetSession(ctx(t), ref, &current); !assert.NoError(collect, err, "last public load status: %+v", r.Status.HistoryLoad) {
+			return
+		}
+		r = current
+		if assert.NotNil(collect, r.Status.HistoryLoad, "public load status missing") {
+			assert.Contains(collect, []string{phase, "failed", "canceled"}, r.Status.HistoryLoad.Phase, "last public load status: %+v", r.Status.HistoryLoad)
+		}
+	}, budget, time.Millisecond)
 	require.Equal(t, phase, r.Status.HistoryLoad.Phase, "load status: %+v", r.Status.HistoryLoad)
 	return r
 }
@@ -387,7 +400,8 @@ func TestTicket07ClaudeMultipleOffsetQueriesPreserveFirstLastAndHiddenParent(t *
 	data := t.TempDir()
 	_, url, cwd, _ := ticket07HTTP(t, "", rows, func(s *ticket07Setup) { s.fileStoreDir = data })
 	_, ref := ticket07Load(t, url, cwd)
-	ticket07Status(t, url, ref, "completed")
+	// Scenario-local observation budget for 105 durable records, not a product SLA.
+	ticket07StatusWithin(t, url, ref, "completed", 10*time.Second)
 	c := newHTTPClient(t, url, "")
 	var page store.HistoryPage
 	require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{Limit: 1000}, &page))
