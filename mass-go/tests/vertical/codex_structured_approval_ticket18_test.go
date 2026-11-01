@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -112,10 +113,12 @@ func ticket18Roundtrip(t *testing.T, bin, choices, decision, name, kind string) 
 		defer cancel()
 		pid, readErr := os.ReadFile(filepath.Join(dir, "pid"))
 		if assert.NoError(t, readErr) {
-			out, psErr := exec.CommandContext(cleanup, "ps", "-p", strings.TrimSpace(string(pid)), "-o", "pid=,lstart=,args=").Output()
-			assert.Error(t, psErr)
-			assert.Empty(t, out, "owned peer must be reaped, not merely signaled")
-			t.Logf("owned peer pid=%s reaped=%t", pid, psErr != nil && len(out) == 0)
+			out, psErr := exec.CommandContext(cleanup, "ps", "-p", strings.TrimSpace(string(pid)), "-o", "pid=,lstart=,state=,args=").Output()
+			var exitErr *exec.ExitError
+			// Only a completed ps no-match proves absence; observation failure does not.
+			reaped := cleanup.Err() == nil && errors.As(psErr, &exitErr) && exitErr.ExitCode() == 1 && len(out) == 0
+			assert.True(t, reaped, "owned peer must be reaped, not merely signaled: ps err=%v context=%v output=%q", psErr, cleanup.Err(), out)
+			t.Logf("owned peer pid=%s reaped=%t", pid, reaped)
 		}
 	})
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"EVIDENCE": dir, "CHOICES": choices}}}})
@@ -129,7 +132,7 @@ func ticket18Roundtrip(t *testing.T, bin, choices, decision, name, kind string) 
 	ref := resource.SessionRef{SessionID: opened.Status.SessionID}
 	pid, err := os.ReadFile(filepath.Join(dir, "pid"))
 	require.NoError(t, err)
-	identity, err := exec.CommandContext(ctx(t), "ps", "-p", strings.TrimSpace(string(pid)), "-o", "pid=,lstart=,args=").Output()
+	identity, err := exec.CommandContext(ctx(t), "ps", "-p", strings.TrimSpace(string(pid)), "-o", "pid=,lstart=,state=,args=").Output()
 	require.NoError(t, err)
 	require.Contains(t, string(identity), bin)
 	t.Logf("owned live peer identity: %s", identity)
