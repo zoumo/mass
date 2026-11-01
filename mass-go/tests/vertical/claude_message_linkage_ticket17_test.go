@@ -29,7 +29,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 	bin := filepath.Join(root, "ticket17-continuity-peer")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-continuity").CombinedOutput()
 	require.NoError(t, err, "%s", out)
-	for _, mode := range []string{"proof", "different", "no-start", "conflict", "prior-work", "retired", "unproven", "child-first", "child", "unlinked-start", "child-start", "foreign-start", "stopped-preview", "repeated-start"} {
+	for _, mode := range []string{"proof", "different", "no-start", "conflict", "prior-work", "retired", "unproven", "child-first", "child", "unlinked-start", "child-start", "foreign-start", "stopped-preview", "repeated-start", "saturation"} {
 		t.Run(mode, func(t *testing.T) {
 			st, err := file.Open(t.TempDir(), false)
 			require.NoError(t, err)
@@ -120,7 +120,9 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 					}
 				}
 				if strings.HasPrefix(text, "linkage-") {
-					if proven {
+					if text == "linkage-saturation" {
+						assert.Equal(t, 32, seen, "all native facts survive attribution saturation")
+					} else if proven {
 						assert.Equal(t, 4, seen, "both previews and complete thinking/text must be associated")
 					} else {
 						assert.GreaterOrEqual(t, seen, 2)
@@ -132,6 +134,20 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			// the first submission's special no-UUID native contract.
 			send("warmup-again", false)
 			send("linkage-"+mode, mode == "proof" || mode == "stopped-preview")
+			if mode == "saturation" {
+				// Public terminal observations pace the native flow without
+				// intentionally overflowing the independent delivery queue.
+				for range 8 {
+					send("linkage-saturation", false)
+				}
+				// No unretained ID may acquire proof after saturation, even
+				// through a later linked start or a new admitted work.
+				send("linkage-proof", false)
+				send("linkage-explicit", false)
+				send("linkage-unproven", false)
+				send("linkage-retired", false)
+				send("linkage-repeated-start", false)
+			}
 			if mode == "proof" {
 				send("linkage-proof", true)
 				require.NoError(t, c.ArchiveSession(ctx(t), ref, nil))
@@ -139,10 +155,22 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 				// Same native ID on a new owned process cannot inherit old proof.
 				send("linkage-no-start", false)
 			}
-			var page store.HistoryPage
-			require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{}, &page))
-			require.Len(t, page.Events, len(live))
-			for i, e := range page.Events {
+			var history []events.SessionEvent
+			query := store.HistoryQuery{}
+			for {
+				var page store.HistoryPage
+				require.NoError(t, c.History(ctx(t), ref, query, &page))
+				history = append(history, page.Events...)
+				require.LessOrEqual(t, len(history), len(live))
+				if page.Next == "" {
+					break
+				}
+				require.NotEmpty(t, page.Events)
+				require.NotEqual(t, query.After, page.Next)
+				query.After = page.Next
+			}
+			require.Len(t, history, len(live))
+			for i, e := range history {
 				assert.Equal(t, live[i].EventID, e.EventID)
 				assert.Equal(t, live[i].Meta, e.Meta, "no terminal backfill; exact raw provenance persisted")
 				assert.Equal(t, live[i].Payload(), e.Payload())

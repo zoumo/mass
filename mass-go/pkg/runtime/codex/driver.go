@@ -631,12 +631,42 @@ func (d *Driver) handleRequest(s *session, r sdk.IncomingRequest) {
 	request.Content = []events.ContentBlock{events.Text(string(r.Params()))}
 	method := r.Method()
 	decisions := map[string]string{"allow-once": "accept", "reject-once": "decline"}
-	var commandChoices map[string]commandApprovalChoice
 	switch method {
 	case "item/commandExecution/requestApproval":
-		var supported bool
-		request.Options, commandChoices, supported = commandApprovalChoices(r.Params())
-		if !supported {
+		var params struct {
+			AvailableDecisions []json.RawMessage `json:"availableDecisions"`
+		}
+		unsupported := json.Unmarshal(r.Params(), &params) != nil
+		if params.AvailableDecisions != nil {
+			decisions = map[string]string{}
+			request.Options = nil
+			for _, raw := range params.AvailableDecisions {
+				var native string
+				if json.Unmarshal(raw, &native) != nil {
+					unsupported = true
+					break
+				}
+				var option events.PermissionOption
+				switch native {
+				case "accept":
+					option = events.PermissionOption{OptionID: "allow-once", Name: "Allow once", Kind: "allow_once"}
+				case "acceptForSession":
+					option = events.PermissionOption{OptionID: "allow-session", Name: "Allow for this session", Kind: "allow_always"}
+				case "decline":
+					option = events.PermissionOption{OptionID: "reject-once", Name: "Reject once", Kind: "reject_once"}
+				case "cancel":
+					option = events.PermissionOption{OptionID: "cancel", Name: "Cancel", Kind: "reject_once"}
+				default:
+					unsupported = true
+				}
+				if unsupported {
+					break
+				}
+				decisions[option.OptionID] = native
+				request.Options = append(request.Options, option)
+			}
+		}
+		if unsupported || len(decisions) == 0 {
 			_ = d.emit(s, v.ThreadID, "", events.SessionError{Message: "unsupported native permission options", Reason: "unsupported_native_interaction"}, v.TurnID)
 			return
 		}
@@ -697,20 +727,13 @@ func (d *Driver) handleRequest(s *session, r sdk.IncomingRequest) {
 		} else {
 			option, ok := a["optionId"].(string)
 			decision, offered := decisions[option]
-			choice, commandOffered := commandChoices[option]
-			if method == "item/commandExecution/requestApproval" {
-				offered = commandOffered
-			}
 			if len(a) != 2 || a["outcome"] != "selected" || !ok || !offered {
 				return runtime.InvalidArgument("expected a native offered permission option")
 			}
 			options := sdk.ApprovalOptions{}
 			if method == "item/commandExecution/requestApproval" {
-				options.CommandExecution = &ct.CommandExecutionRequestApprovalResponse{Decision: choice.decision}
-				if choice.approve {
-					return r.Approve(ctx, options)
-				}
-				return r.Deny(ctx, options)
+				value := ct.CommandExecutionApprovalDecisionValue(decision)
+				options.CommandExecution = &ct.CommandExecutionRequestApprovalResponse{Decision: ct.CommandExecutionApprovalDecision{Value: &value}}
 			}
 			if decision == "accept" || decision == "acceptForSession" {
 				return r.Approve(ctx, options)

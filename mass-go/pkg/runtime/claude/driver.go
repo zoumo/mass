@@ -516,9 +516,7 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 		case "message_start":
 			s.messageID = raw.Event.Message.ID
 			s.messageRoot = trusted
-			if err := s.linkMessage(s.messageID, true, trusted, e.UserMessageUUID); err != nil {
-				return err
-			}
+			s.linkMessage(s.messageID, true, trusted, e.UserMessageUUID)
 			if !root || s.observationWork == "" || s.observationWork != s.work || !s.active {
 				return nil
 			}
@@ -544,9 +542,7 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 		}
 	case "assistant", "user":
 		if e.Type == "assistant" {
-			if err := s.linkMessage(raw.Message.ID, false, trusted, e.UserMessageUUID); err != nil {
-				return err
-			}
+			s.linkMessage(raw.Message.ID, false, trusted, e.UserMessageUUID)
 		}
 		id := raw.Message.ID
 		if id == "" {

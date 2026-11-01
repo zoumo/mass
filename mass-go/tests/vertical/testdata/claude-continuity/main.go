@@ -170,6 +170,12 @@ func linkage(send func(map[string]any), mode string, n int, link, previous strin
 			send(v)
 		}
 	}
+	if mode == "linkage-saturation" {
+		for i := range 16 {
+			message(fmt.Sprintf("saturated-%d-%d", n, i), "", "")
+		}
+		return
+	}
 	switch mode {
 	case "linkage-retired":
 		id = "message-1"
@@ -195,6 +201,8 @@ func linkage(send func(map[string]any), mode string, n int, link, previous strin
 		start(id, link)
 	}
 	switch mode {
+	case "linkage-explicit":
+		message(id, link, "")
 	case "linkage-repeated-start":
 		start(id, link)
 	case "linkage-different":

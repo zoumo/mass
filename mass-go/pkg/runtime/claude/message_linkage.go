@@ -1,7 +1,5 @@
 package claude
 
-import "github.com/zoumo/mass/mass-go/pkg/runtime"
-
 type messageClaim struct {
 	work    string
 	started bool
@@ -10,9 +8,9 @@ type messageClaim struct {
 // Retain tombstones instead of evicting: an unknown or reused native ID must
 // never acquire a new owner later in this process. Only message_start proves
 // a link for assistant frames that omit the native caller UUID.
-func (s *session) linkMessage(id string, start, trusted bool, explicit *string) error {
+func (s *session) linkMessage(id string, start, trusted bool, explicit *string) {
 	if id == "" {
-		return nil
+		return
 	}
 	if s.messages == nil {
 		s.messages = map[string]messageClaim{}
@@ -20,27 +18,29 @@ func (s *session) linkMessage(id string, start, trusted bool, explicit *string) 
 	claim, seen := s.messages[id]
 	if !seen {
 		if len(s.messages) == 128 {
-			return runtime.Exhausted("native_message_linkage_capacity")
+			// Never evict and later regrant an unremembered ID. Saturation
+			// disables new proof, not delivery of native facts.
+			s.observationWork, s.attribution = "", "unknown"
+			return
 		}
 		if trusted && s.active && s.observationWork == s.work {
 			claim = messageClaim{work: s.work, started: start}
 		}
 		s.messages[id] = claim
-		return nil
+		return
 	}
 	if start || !trusted || claim.work == "" ||
 		(explicit != nil && *explicit != "" && *explicit != claim.work) ||
 		(s.observationWork != "" && s.observationWork != claim.work) {
 		s.messages[id] = messageClaim{}
 		s.observationWork, s.attribution = "", "unknown"
-		return nil
+		return
 	}
 	if explicit == nil || *explicit == "" {
 		if claim.started && s.active && claim.work == s.work {
 			s.observationWork, s.attribution = claim.work, "native_message_id"
 		}
 	}
-	return nil
 }
 
 func (s *session) linkPreview(trusted bool, explicit *string) {
