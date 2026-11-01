@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const sessionID = "14141414-1414-4141-8141-141414141414"
@@ -166,10 +167,25 @@ func main() {
 			n := save(text)
 			tid := fmt.Sprintf("turn-%d", n)
 			turn := map[string]any{"id": tid, "status": "inProgress", "items": []any{}}
-			reply(map[string]any{"turn": turn})
+			early := n == 2 && os.Getenv("RESUME_INPUT_MODE") == "terminal-before-receipt"
+			if !early {
+				reply(map[string]any{"turn": turn})
+			}
 			notify("turn/started", map[string]any{"threadId": sessionID, "turn": turn})
 			notify("item/completed", map[string]any{"threadId": sessionID, "turnId": tid, "completedAtMs": n, "item": map[string]any{"id": fmt.Sprintf("answer-%d", n), "type": "agentMessage", "text": text}})
 			notify("turn/completed", map[string]any{"threadId": sessionID, "turn": map[string]any{"id": tid, "status": "completed", "items": []any{}}})
+			if early {
+				must(os.WriteFile(filepath.Join(dir, "receipt-gated"), nil, 0o600))
+				// Only the test's public runtime stream consumer releases this gate
+				// after observing completion, not an elapsed scheduling interval.
+				for {
+					if _, err := os.Stat(filepath.Join(dir, "release-receipt")); err == nil {
+						break
+					}
+					time.Sleep(time.Millisecond)
+				}
+				reply(map[string]any{"turn": turn})
+			}
 		case "thread/unsubscribe":
 			reply(map[string]any{"status": "unsubscribed"})
 		default:

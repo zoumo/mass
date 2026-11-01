@@ -51,10 +51,63 @@ func ticket20Peer(t *testing.T) string {
 	return ticket20Build.bin
 }
 
+// The public runtime stream proves terminal observation before the authored
+// peer releases its response. No scheduling delay stands in for that ordering.
+type ticket20TerminalFactory struct {
+	runtime.Factory
+	release string
+	seen    chan events.SessionEvent
+}
+
+func (f ticket20TerminalFactory) New(name string, config runtime.Config) (runtime.Driver, error) {
+	d, err := f.Factory.New(name, config)
+	if err != nil {
+		return nil, err
+	}
+	return ticket20TerminalDriver{Driver: d, CreationDriver: d.(runtime.CreationDriver), ResumptionDriver: d.(runtime.ResumptionDriver), release: f.release, seen: f.seen}, nil
+}
+
+type ticket20TerminalDriver struct {
+	runtime.Driver
+	runtime.CreationDriver
+	runtime.ResumptionDriver
+	release string
+	seen    chan events.SessionEvent
+}
+
+func (d ticket20TerminalDriver) ValidateInitialInput(input runtime.Input) error {
+	return d.ResumptionDriver.ValidateInitialInput(input)
+}
+
+func (d ticket20TerminalDriver) Events() (events.Stream, error) {
+	stream, err := d.Driver.Events()
+	return ticket20TerminalStream{Stream: stream, release: d.release, seen: d.seen}, err
+}
+
+type ticket20TerminalStream struct {
+	events.Stream
+	release string
+	seen    chan events.SessionEvent
+}
+
+func (s ticket20TerminalStream) Next(ctx context.Context) (events.SessionEvent, error) {
+	e, err := s.Stream.Next(ctx)
+	state, ok := e.Payload().(events.StateUpdate)
+	terminal := ok && state.State != nil && *state.State == events.Idle
+	if err == nil && e.Source().Work() == "turn-2" && (terminal || e.Type() == "agent.message") {
+		s.seen <- e
+		if terminal {
+			err = os.WriteFile(s.release, nil, 0o600)
+		}
+	}
+	return e, err
+}
+
 func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 	bin := ticket20Peer(t)
-	for _, kind := range []string{"claude", "codex"} {
-		t.Run(kind, func(t *testing.T) {
+	for _, scenario := range []struct{ kind, mode string }{{"claude", "early-terminal"}, {"codex", "early-terminal"}, {"codex", "terminal-before-receipt"}} {
+		t.Run(scenario.kind+"/"+scenario.mode, func(t *testing.T) {
+			kind := scenario.kind
 			work, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
 			native := t.TempDir()
@@ -62,13 +115,21 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, st.Close()) })
 			vault := t.TempDir()
-			svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: vault}, "codex": codex.Factory{RecoveryDir: vault}}))
+			factories := map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: vault}, "codex": codex.Factory{RecoveryDir: vault}}
+			seen := make(chan events.SessionEvent, 2)
+			if scenario.mode == "terminal-before-receipt" {
+				release := filepath.Join(native, "release-receipt")
+				factories[kind] = ticket20TerminalFactory{Factory: factories[kind], release: release, seen: seen}
+				// Release a gated peer even when a public assertion fails.
+				defer func() { assert.NoError(t, os.WriteFile(release, nil, 0o600)) }()
+			}
+			svc := service.New(st, st, runtime.NewRegistry(factories))
 			t.Cleanup(func() {
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				assert.NoError(t, svc.Shutdown(cleanup))
 			})
-			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "RESUME_INPUT_MODE": "early-terminal", "SAVED_TRANSCRIPT": filepath.Join(native, "transcript.jsonl")}
+			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "RESUME_INPUT_MODE": scenario.mode, "SAVED_TRANSCRIPT": filepath.Join(native, "transcript.jsonl")}
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": env}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
@@ -142,7 +203,29 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 			} else {
 				require.Equal(t, runtime.Yes(), got.InitialInputReceipt.Acceptance.NativeAccepted)
 			}
+			var runtimeMessage events.SessionEvent
+			if scenario.mode == "terminal-before-receipt" {
+				require.FileExists(t, filepath.Join(native, "receipt-gated"), "peer must hold the resume receipt until the public stream observes completion")
+				require.Equal(t, "turn-2", got.InitialInputReceipt.Submission)
+				for _, typ := range []string{"agent.message", "session.state_update"} {
+					select {
+					case observed := <-seen:
+						require.Equal(t, typ, observed.Type())
+						require.Equal(t, got.InitialInputReceipt.Submission, observed.Source().Work())
+						require.Equal(t, ref.SessionID, observed.SessionID)
+						if typ == "agent.message" {
+							runtimeMessage = observed
+						}
+					default:
+						t.Fatal("resume receipt returned without observing answer and terminal on the public runtime stream")
+					}
+				}
+			}
 			after := wait(2)
+			if scenario.mode == "terminal-before-receipt" {
+				require.Equal(t, runtimeMessage.ItemID, after.Events[1].ItemID)
+				require.Equal(t, runtimeMessage.Payload(), after.Events[1].Payload())
+			}
 			require.Equal(t, before.Events[0], after.Events[0])
 			require.Equal(t, "new resume input", after.Events[1].Payload().(events.AgentMessage).Content[0].Text)
 			for {
