@@ -15,8 +15,7 @@ lint-go:
 	cd mass-go && golangci-lint run ./...
 
 test-go:
-	# The full vertical race suite takes about six minutes; retain a bounded budget.
-	cd mass-go && go test -race -timeout=600s ./...
+	cd mass-go && go test -race -timeout=300s ./...
 
 build-massctl:
 	mkdir -p bin
