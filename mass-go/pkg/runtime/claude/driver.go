@@ -183,11 +183,6 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	c, err := sdk.Open(ctx, sdk.SessionOptions{ResumeID: resume, CLIPath: d.options.Executable, WorkDir: spec.Cwd, Env: d.options.Environment("claude")})
 	if err != nil {
 		close(s.ready)
-		// Failed SDK startup closes its unreturned connection before returning.
-		// Native outcome uncertainty is not resource ownership; a cleanup timeout is.
-		if !errors.Is(err, sdk.ErrShutdownTimeout) {
-			err = errors.Join(runtime.ErrResourcesReleased, err)
-		}
 		return runtime.DriverSession{}, err
 	}
 	s.client = c
