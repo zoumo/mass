@@ -312,13 +312,6 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		pending = append(pending, op)
 	}
 	s.mu.Unlock()
-	// Only fresh creates have this owner signal. Cancellation requests cleanup;
-	// the original opening still has to confirm release or retain responsibility.
-	for _, op := range pending {
-		if op.cancel != nil {
-			op.cancel()
-		}
-	}
 	for _, op := range pending {
 		select {
 		case <-op.done:
