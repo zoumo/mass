@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -72,16 +73,17 @@ func TestPendingNativeCreateOwnerStop(t *testing.T) {
 				// Emergency cleanup is not evidence that product stop succeeded.
 				if pid != 0 && syscall.Kill(pid, 0) == nil {
 					t.Logf("emergency cleanup of peer pid=%d", pid)
-					require.NoError(t, syscall.Kill(pid, syscall.SIGKILL))
+					assert.NoError(t, syscall.Kill(pid, syscall.SIGKILL))
 				}
 				if pid != 0 {
-					require.Eventually(t, func() bool { return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) }, 5*time.Second, 10*time.Millisecond, "peer must be reaped even after test failure")
-					t.Logf("resource ledger: peer pid=%d absent (ESRCH)", pid)
+					if assert.Eventually(t, func() bool { return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) }, 5*time.Second, 10*time.Millisecond, "peer must be reaped even after test failure") {
+						t.Logf("resource ledger: peer pid=%d absent (ESRCH)", pid)
+					}
 				}
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				require.NoError(t, svc.Shutdown(cleanup))
-				require.NoError(t, st.Close())
+				assert.NoError(t, svc.Shutdown(cleanup))
+				assert.NoError(t, st.Close())
 			})
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "pending"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer, "envPolicy": "replace", "env": map[string]any{"MASS_PENDING_CREATE_PEER": dir}}}})
 			require.NoError(t, err)
