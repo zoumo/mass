@@ -197,7 +197,13 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if spec.SystemPrompt != "" {
 			params.BaseInstructions = ct.Some(spec.SystemPrompt)
 		}
-		native, err = sdk.Open(ctx, sdk.SessionOptions{Client: c, Thread: params})
+		if err := ctx.Err(); err != nil {
+			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
+		}
+		// A dispatched thread/start on the shared connection must retain its
+		// original response: canceling the wait can lose the only native identity.
+		// Stop still owns this opening and waits for its late identity cleanup.
+		native, err = sdk.Open(context.WithoutCancel(ctx), sdk.SessionOptions{Client: c, Thread: params})
 		if err != nil {
 			return runtime.DriverSession{}, err
 		}
