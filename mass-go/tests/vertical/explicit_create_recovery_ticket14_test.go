@@ -1,6 +1,7 @@
 package vertical_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"os"
@@ -8,10 +9,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -50,20 +53,25 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			open := func(dir string, create bool) (*service.Service, func()) {
 				meta, e := metafile.Open(dir, false)
 				require.NoError(t, e)
+				closeMeta := sync.OnceFunc(func() { assert.NoError(t, meta.Close(), "close metadata authority") })
+				t.Cleanup(closeMeta)
 				history, e := eventfile.Open(dir, false)
 				require.NoError(t, e)
+				closeHistory := sync.OnceFunc(func() { assert.NoError(t, history.Close(), "close event authority") })
+				t.Cleanup(closeHistory)
 				vault := filepath.Join(dir, "private")
 				svc := service.New(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: vault}, "codex": codex.Factory{RecoveryDir: vault}}))
-				closed := false
+				closeService := sync.OnceFunc(func() {
+					cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					assert.NoError(t, svc.Shutdown(cleanup), "shutdown owned Service")
+				})
+				t.Cleanup(closeService)
 				closeOwned := func() {
-					if !closed {
-						require.NoError(t, svc.Shutdown(ctx(t)))
-						require.NoError(t, history.Close())
-						require.NoError(t, meta.Close())
-						closed = true
-					}
+					closeService()
+					closeHistory()
+					closeMeta()
 				}
-				t.Cleanup(closeOwned)
 				if create {
 					_, e = svc.CreateRuntime(runtimeResource)
 					require.NoError(t, e)
