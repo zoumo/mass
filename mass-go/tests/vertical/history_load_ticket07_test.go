@@ -555,7 +555,17 @@ func TestTicket07ClaudeCrossReadDriftOrPageCancellation(t *testing.T) {
 				phase = "canceled"
 			}
 			r := ticket07Status(t, url, ref, phase)
-			require.Eventually(t, func() bool { return c.GetSession(ctx(t), ref, &r) == nil && r.Status.HistoryLoad.CleanupCompleted }, 5*time.Second, time.Millisecond)
+			// Allow local durable drain, not a longer native stop or cancel SLA.
+			require.EventuallyWithT(t, func(collect *assert.CollectT) {
+				var current resource.Session
+				if err := c.GetSession(ctx(t), ref, &current); !assert.NoError(collect, err, "last public cleanup status: %+v", r.Status.HistoryLoad) {
+					return
+				}
+				r = current
+				if assert.NotNil(collect, r.Status.HistoryLoad, "public load status missing") {
+					assert.True(collect, r.Status.HistoryLoad.CleanupCompleted, "last public cleanup status: %+v", r.Status.HistoryLoad)
+				}
+			}, 10*time.Second, time.Millisecond)
 			require.False(t, r.Status.HistoryLoad.DeliveryCompleted)
 			var p store.HistoryPage
 			require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{Limit: 1000}, &p))
