@@ -80,7 +80,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err != nil {
 		return err
 	}
-	if err := verifyLoadThread(before.Thread, id, cwd); err != nil {
+	if err := verifyLoadThread(before.Thread, id, cwd, true); err != nil {
 		return err
 	}
 	if p, ok := before.Thread.Path.Get(); ok {
@@ -113,10 +113,10 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 		}
 	}
 	defer startObserve() // Failed verification must still drain owned native cleanup.
-	if err := verifyLoadThread(response.Thread, id, cwd); err != nil {
+	if err := verifyLoadThread(response.Thread, id, cwd, false); err != nil {
 		return err
 	}
-	if !sameLoadThread(before.Thread, response.Thread) {
+	if !sameLoadResumeThread(before.Thread, response.Thread) {
 		return errors.New("resume changed native source identity")
 	}
 	if err := d.vault.Save(id, a, runtime.SessionSpec{Cwd: cwd}, response.Thread); err != nil {
@@ -143,7 +143,10 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err != nil {
 		return err
 	}
-	if !sameLoadThread(before.Thread, after.Thread) {
+	if err := verifyLoadThread(after.Thread, id, cwd, false); err != nil {
+		return err
+	}
+	if !sameLoadThread(response.Thread, after.Thread) {
 		return errors.New("native metadata changed during history read")
 	}
 	d.mu.Lock()
@@ -156,11 +159,11 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	return d.loadEmit(h, id, "", "", map[string]any{"atomic": false, "verification": "ordered_second_read"}, events.HistoryReplay{LoadID: loadID, Phase: "native_completed", RetainedScope: "all_retained_main_history", ResumedSession: resumed})
 }
 
-func verifyLoadThread(t ct.Thread, id, cwd string) error {
+func verifyLoadThread(t ct.Thread, id, cwd string, beforeResume bool) error {
 	if t.ID != id || t.SessionID == "" || t.Cwd != cwd || t.Ephemeral || t.ModelProvider == "" || t.CreatedAt <= 0 {
 		return errors.New("native identity or source context mismatch")
 	}
-	if t.Status.Idle == nil {
+	if t.Status.Idle == nil && (!beforeResume || t.Status.NotLoaded == nil) {
 		return errors.New("native current work cannot be proven settled")
 	}
 	if len(t.Source.Unknown) > 0 || t.Source.SubAgent != nil || t.Source.Value == nil || *t.Source.Value == ct.SessionSourceValueUnknown {
@@ -177,6 +180,15 @@ func sameLoadThread(a, b ct.Thread) bool {
 	a.Turns = nil
 	b.Turns = nil
 	return reflect.DeepEqual(a, b)
+}
+
+func sameLoadResumeThread(a, b ct.Thread) bool {
+	// Only resume may load a cold thread. Preserve even unknown status metadata;
+	// subsequent history reads must match the settled resume response exactly.
+	if cold := a.Status.NotLoaded; cold != nil && b.Status.Idle != nil {
+		a.Status = ct.ThreadStatus{Idle: &ct.IdleThreadStatus{Type: ct.IdleThreadStatusTypeIdle, UnknownFields: cold.UnknownFields}}
+	}
+	return sameLoadThread(a, b)
 }
 
 func (d *Driver) loadEmit(h *nativeLoad, id, item, parent string, meta map[string]any, p events.Payload) error {

@@ -2,6 +2,7 @@ package vertical_test
 
 import (
 	"context"
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -18,7 +19,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
-func ticket06Service(t *testing.T, mode string) (*service.Service, string) {
+func ticket06Service(t *testing.T, mode string, extraEnv ...map[string]any) (*service.Service, string) {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "history-peer")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/history-load-peer").CombinedOutput()
@@ -29,7 +30,11 @@ func ticket06Service(t *testing.T, mode string) (*service.Service, string) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: t.TempDir()}}))
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": map[string]any{"LOAD_CWD": cwd, "LOAD_MODE": mode}}}})
+	env := map[string]any{"LOAD_CWD": cwd, "LOAD_MODE": mode}
+	for _, extra := range extraEnv {
+		maps.Copy(env, extra)
+	}
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": env}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)

@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -14,8 +15,21 @@ func main() {
 			panic(err)
 		}
 	}
-	passes, resumes := 0, 0
+	passes, resumes, reads := 0, 0, 0
 	mode := os.Getenv("LOAD_MODE")
+	evidence := func(method string, params any) {
+		if path := os.Getenv("LOAD_EVIDENCE"); path != "" {
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+			if err != nil {
+				panic(err)
+			}
+			defer f.Close()
+			if err := json.NewEncoder(f).Encode(map[string]any{"method": method, "params": params, "pid": os.Getpid()}); err != nil {
+				panic(err)
+			}
+		}
+	}
+	defer evidence("released", nil)
 	scan := bufio.NewScanner(os.Stdin)
 	thread := func() any {
 		cwd := os.Getenv("LOAD_CWD")
@@ -26,7 +40,57 @@ func main() {
 		if mode == "resume-drift" && resumes > 0 {
 			nativeSession = "different-session"
 		}
-		return map[string]any{"id": "native-thread", "sessionId": nativeSession, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "not transcript", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}, "turns": []any{}}
+		status := "idle"
+		if strings.HasPrefix(mode, "cold") && resumes == 0 {
+			status = "notLoaded"
+		}
+		nativeStatus := map[string]any{"type": status}
+		if strings.HasPrefix(mode, "cold") {
+			nativeStatus["retainedExtension"] = "unchanged"
+		}
+		t := map[string]any{"id": "native-thread", "sessionId": nativeSession, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "not transcript", "projectId": nil, "source": "appServer", "status": nativeStatus, "turns": []any{}}
+		if strings.HasPrefix(mode, "cold") {
+			t["path"] = "/synthetic/rollouts/native-thread.jsonl"
+		}
+		stage := "pre"
+		if resumes > 0 {
+			stage = "resume"
+		}
+		if reads > 1 {
+			stage = "after"
+		}
+		if parts := strings.Split(mode, ":"); len(parts) == 3 && parts[1] == stage {
+			switch parts[2] {
+			case "active":
+				nativeStatus["type"], nativeStatus["activeFlags"] = "active", []any{}
+			case "unknown", "notLoaded", "systemError":
+				nativeStatus["type"] = parts[2]
+			case "statusMetadata":
+				nativeStatus["retainedExtension"] = "changed"
+			case "id", "sessionId", "cwd", "modelProvider", "preview":
+				t[parts[2]] = "different"
+			case "source":
+				t["source"] = "cli"
+				if stage == "pre" {
+					t["source"] = "unknown"
+				}
+			case "createdAt", "updatedAt":
+				t[parts[2]] = 3
+			case "ephemeral":
+				t["ephemeral"] = true
+			case "path":
+				t["path"] = "/synthetic/rollouts/different.jsonl"
+			case "outsideHome":
+				t["path"] = "/different-home/native-thread.jsonl"
+			case "relativePath":
+				t["path"] = "relative/native-thread.jsonl"
+			case "metadata":
+				t["futureMetadata"] = "must remain checked"
+			default:
+				panic("unknown cold fault")
+			}
+		}
+		return t
 	}
 	for scan.Scan() {
 		var v struct {
@@ -37,12 +101,19 @@ func main() {
 		if err := json.Unmarshal(scan.Bytes(), &v); err != nil {
 			panic(err)
 		}
-		respond := func(r any) { send(map[string]any{"id": v.ID, "result": r}) }
+		evidence(v.Method, v.Params)
+		respond := func(r any) {
+			if v.Method == "thread/read" || v.Method == "thread/resume" {
+				evidence(v.Method+"/result", r)
+			}
+			send(map[string]any{"id": v.ID, "result": r})
+		}
 		switch v.Method {
 		case "initialize":
 			respond(map[string]any{"userAgent": "synthetic", "codexHome": "/synthetic", "platformFamily": "unix", "platformOs": "linux"})
 		case "initialized":
 		case "thread/read":
+			reads++
 			respond(map[string]any{"thread": thread()})
 		case "thread/resume":
 			resumes++
