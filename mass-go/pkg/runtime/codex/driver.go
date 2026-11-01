@@ -288,11 +288,15 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 }
 
 func (d *Driver) emit(s *session, id, item string, p events.Payload, work string, observedAt ...time.Time) error {
+	return d.emitWithMeta(s, id, item, p, work, nil, observedAt...)
+}
+
+func (d *Driver) emitWithMeta(s *session, id, item string, p events.Payload, work string, meta map[string]any, observedAt ...time.Time) error {
 	eventTime := time.Now().UTC()
 	if len(observedAt) > 0 && !observedAt[0].IsZero() {
 		eventTime = observedAt[0]
 	}
-	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: id, ItemID: item, Time: eventTime}, p, s.source.WithWork(work))
+	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: id, ItemID: item, Time: eventTime, Meta: meta}, p, s.source.WithWork(work))
 	if err != nil {
 		return err
 	}
@@ -363,18 +367,18 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 			Status string `json:"status"`
 		} `json:"turn"`
 		Item struct {
-			ID               string                `json:"id"`
-			Type             string                `json:"type"`
-			Text             string                `json:"text"`
-			Content          []events.ContentBlock `json:"content"`
-			Summary          []string              `json:"summary"`
-			Command          string                `json:"command"`
-			Status           string                `json:"status"`
-			Cwd              string                `json:"cwd"`
-			Phase            string                `json:"phase"`
-			ExitCode         *int32                `json:"exitCode"`
-			DurationMs       *int64                `json:"durationMs"`
-			AggregatedOutput json.RawMessage       `json:"aggregatedOutput"`
+			ID               string          `json:"id"`
+			Type             string          `json:"type"`
+			Text             string          `json:"text"`
+			Content          json.RawMessage `json:"content"`
+			Summary          []string        `json:"summary"`
+			Command          string          `json:"command"`
+			Status           string          `json:"status"`
+			Cwd              string          `json:"cwd"`
+			Phase            string          `json:"phase"`
+			ExitCode         *int32          `json:"exitCode"`
+			DurationMs       *int64          `json:"durationMs"`
+			AggregatedOutput json.RawMessage `json:"aggregatedOutput"`
 		} `json:"item"`
 	}
 	if err := json.Unmarshal(event.Params, &v); err != nil {
@@ -442,7 +446,28 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 			}
 		case "userMessage":
 			if event.Method == "item/completed" {
-				return emit(item.ID, events.UserMessage{MessageID: item.ID, Content: item.Content}, v.TurnID)
+				var native []ct.UserInput
+				if err := json.Unmarshal(item.Content, &native); err != nil {
+					return err
+				}
+				if native == nil {
+					return errors.New("missing native user content")
+				}
+				content := make([]events.ContentBlock, 0, len(native))
+				for _, block := range native {
+					if block.Text == nil {
+						return errors.New("unsupported native user content")
+					}
+					content = append(content, events.Text(block.Text.Text))
+				}
+				// Native spans and extensions are provenance, not MASS content fields.
+				decoder := json.NewDecoder(bytes.NewReader(event.Params))
+				decoder.UseNumber()
+				var raw map[string]any
+				if err := decoder.Decode(&raw); err != nil {
+					return err
+				}
+				return d.emitWithMeta(s, id, item.ID, events.UserMessage{MessageID: item.ID, Content: content}, v.TurnID, map[string]any{"native": raw}, v.Time)
 			}
 		case "reasoning":
 			if event.Method == "item/completed" {
