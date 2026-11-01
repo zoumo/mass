@@ -23,7 +23,7 @@ and clientEOF=true; Claude passed a stateful driver/peer run with complete=true
 and clientEOF=true, not static-recording consumption. Both passed their two-input
 business checks and logical cleanup. Neither proves native Agent behavior.
 
-Applicability to gate-002 source `5589792cd54a523beff60daf20a5d3fdf0b9d30d`
+Applicability to final gate-003 source `5589792cd54a523beff60daf20a5d3fdf0b9d30d`
 was checked against SDK-FU-05's executed source: all 255 inventoried
 product/driver/fixture/module/SDK/material/tool files are unchanged and present;
 108 test/documentation files were excluded. This supports continued applicability
@@ -32,8 +32,9 @@ The source-rebinding audit is retained with integration evidence. Its first
 validator attempt resolved relative paths from the wrong working directory and
 is explicitly invalid; only the corrected root-bound comparison is used.
 
-Offline integration readiness is also **NOT-READY**. The coordinator's frozen
-gate-001 on `bb3f09cea0465631093543024c505eb3f7199edb` failed: make exit 2,
+**Offline integration gate-003: PASS**, separately from the overall official
+recording-driven NOT-READY status. The coordinator's earlier frozen gate-001 on
+`bb3f09cea0465631093543024c505eb3f7199edb` failed: make exit 2,
 372 seconds elapsed. `TestTicket17ClaudeProvenMessageLinkage/saturation`
 hit its ten-second observer.Next context deadline at
 `tests/vertical/claude_message_linkage_ticket17_test.go:71` (call site 149).
@@ -51,12 +52,35 @@ Gate-001 predates the SDK-FU-06 cleanup fix
 `8182fc201fe0e2d18652ccbaa7e573404038cc92`, which fixes test failure-path
 cleanup, not the saturation deadline. The separate test fix
 `d9a67323049656c0d6ba5a1336840eb2dc33837c` addresses a proven cumulative
-observation-lifetime defect, described below. Gate-002 is **RUNNING / PENDING**
-on frozen integration source `5589792cd54a523beff60daf20a5d3fdf0b9d30d`;
-no final PASS is claimed. A later
-passing gate or focused diagnostic alone cannot establish the earlier failure's
-full cause. Final source-bound gate/readback results are still required for
-this document's final update; scoped regressions cannot replace them.
+observation-lifetime defect, described below. Gate-002 on frozen integration
+source `5589792cd54a523beff60daf20a5d3fdf0b9d30d` also **FAILED**: exit 2
+after four seconds at lint, before race/build/format. Source was unchanged.
+Its diagnostics reference removed sdk-fu-02/sdk-fu-03 absolute paths and old
+trim generated files, including failures to read removed sources. A fresh
+external `GOLANGCI_LINT_CACHE` on the same source passes lint with zero issues,
+confirming the stale-path cache failure rather than requiring source fixes.
+No shared/global cache was cleared and no config or suppression changed.
+Gate-003 on that same frozen source **PASSED**: `make check-go` exit 0,
+346 seconds elapsed, with zero lint issues, all offline race packages, both
+executable builds and format checks complete. Vertical took 333.194 seconds;
+Service took 120.210 seconds. Other package results were standard Go-cache
+results, explicitly marked cached in the log, not fresh executions.
+Build-selected discovery and results match exactly: 183 top-level results,
+181 PASS, zero FAIL, two opt-in scale SKIP, no missing or extra tests. The skips
+are `TestEventStoreScaleAcceptance` and `TestReplicaScaleAcceptance`, not scale
+acceptance. Source-before/source-after hashes are identical at
+`5589792cd54a523beff60daf20a5d3fdf0b9d30d`. All three owned roots are absent,
+with no owned processes remaining; both executable hashes are recorded.
+Authoritative evidence is retained outside Git in
+`followup-evidence/integration/final-gate-003/validation.json`, alongside its
+full gate log and source snapshots.
+
+Gate-003 used the isolated external lint cache and unchanged full-scope
+`make check-go`, without suppressions, sharding or retry logic. Gate-001 and
+gate-002 remain failed historical runs. This source-bound offline PASS does not
+establish gate-001's full cause, erase intermittent failures, rerun simulation,
+or change the official 0/2 BLOCKED result. No live/Linux/opt-in-scale PASS is
+inferred.
 
 SDK-FU-06 review found one Standards P2 (failure-path cleanup), zero Spec
 findings. The fix registers bounded Service shutdown immediately after
@@ -96,7 +120,7 @@ the fourth history event; 20 focused repeats and its subsequent standard gate
 passed. Neither cause is proven, and later successes do not erase failures.
 SDK-FU-04's final gate on `4e5ad09a4ff07f0fc71f3e6f3b8d3fd1bdc847ce`
 discovered 177 top-level tests (64 vertical): 175 passed, two opt-in scale tests
-skipped. That is earlier-source evidence, not the pending final integrated gate.
+skipped. That is earlier-source evidence, not the final gate-003 result.
 
 Remaining external decisions are MASS-compatible admitted Codex material and
 Claude native linkage/UUID-binding contract evidence, or explicit approval to
@@ -125,7 +149,7 @@ From the repository root, with Go 1.26.9, golangci-lint v2.12.2, `ps`, and
 immutable module dependencies already cached:
 
 ```sh
-rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make check-go'
+rtk proxy sh -c 'cache=$(mktemp -d /tmp/mass-offline-lint.XXXXXX) && printf "owned lint cache: %s\n" "$cache" && GOLANGCI_LINT_CACHE="$cache" GOWORK=off GOPROXY=off GOSUMDB=off GOFLAGS=-v MASS_SDK_RACE=1 make check-go'
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make prototype-go'
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./tests/vertical -run "^Test(File)?EntrypointSuite$"'
 ```
@@ -140,6 +164,16 @@ budgets without removing race, package selection or failure propagation. Retain
 the original timeout and any split diagnostic runs separately; split results
 are not a successful single `check-go` run. The 600/630-second budgets do not
 extend individual scenario deadlines or turn assertion failures into passes.
+
+Use a fresh, owned absolute linter cache outside the repository after moving or
+removing worktrees. Gate-002 reused stale absolute paths from removed worktrees;
+the same-source isolated-cache lint differential passed. The recipe allocates
+a unique cache and prints its path for evidence; it does not clean global or
+other tasks' caches. Retain the cache and original failed logs while diagnosing.
+Gate-003 used an existing dedicated integration-owned absolute cache established
+by that successful differential. `GOFLAGS=-v` adds test evidence verbosity;
+`MASS_SDK_RACE=1` enables race instrumentation for authored SDK driver builds.
+Neither changes package selection or turns a failed stage into a pass.
 
 Missing tools/dependencies mean NOT EXECUTED;
 these offline commands do not download a fallback SDK or launch real Agents.
@@ -197,8 +231,8 @@ and shutdown-timeout uncertainty. SDK-FU-04 only changes aggregate budgets and
 retains race/full package selection. SDK-FU-05 supplies separately classified
 [execution results](sdk-simulation-results.md). SDK-FU-06 fixes failure-path
 test cleanup and per-input observation budgets without deleting assertions or
-changing supported behavior. Their scoped evidence and still-pending integrated
-gate are distinguished in Followup Readiness.
+changing supported behavior. Their scoped evidence and the final integrated
+offline gate are distinguished in Followup Readiness.
 
 ## Product Combination Map
 
