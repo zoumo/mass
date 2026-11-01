@@ -15,7 +15,7 @@ type (
 	sessionOutput      struct{ Body resource.Session }
 	sessionCreated     struct {
 		Location string `header:"Location"`
-		Body     resource.Session
+		Body     resource.SessionCreated
 	}
 )
 
@@ -37,7 +37,13 @@ type sessionListOutput struct{ Body resource.SessionPage }
 
 func (s *Server) registerSessionIdentity(api huma.API) {
 	register(api, huma.Operation{Method: "POST", Path: "/apis/v1/sessions", OperationID: "createSession", DefaultStatus: 201}, func(ctx context.Context, in *sessionCreateInput) (*sessionCreated, error) {
-		r, err := s.api.CreateSession(context.WithoutCancel(ctx), resource.Session{Metadata: resource.Metadata{Namespace: in.Body.Metadata.Namespace, Name: in.Body.Metadata.Name}, Spec: in.Body.Spec})
+		var r resource.SessionCreated
+		var err error
+		if in.Body.InitialInput == nil {
+			r.Session, err = s.api.CreateSession(context.WithoutCancel(ctx), resource.Session{Metadata: resource.Metadata{Namespace: in.Body.Metadata.Namespace, Name: in.Body.Metadata.Name}, Spec: in.Body.Spec})
+		} else {
+			r, err = s.api.CreateSessionWithInput(context.WithoutCancel(ctx), resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: in.Body.Metadata.Namespace, Name: in.Body.Metadata.Name}, Spec: in.Body.Spec, InitialInput: in.Body.InitialInput})
+		}
 		return &sessionCreated{Location: "/apis/v1/sessions/" + url.PathEscape(r.Status.SessionID), Body: r}, err
 	})
 	register(api, huma.Operation{Method: "GET", Path: "/apis/v1/sessions", OperationID: "listSessions"}, func(_ context.Context, in *sessionListInput) (*sessionListOutput, error) {

@@ -63,3 +63,16 @@ interface RuntimeDriver {
   /** 成功表示当前会话运行已释放；保留恢复所需持久材料。 */
   closeSession(sessionId: string): void | OperationError;
 }
+
+/** 可选的显式输入创建能力；不支持时在打开原生会话前拒绝。 */
+interface CreationDriver {
+  /** 仅校验，不能打开会话或提交输入。 */
+  validateInitialInput(input: SessionInput): void | OperationError;
+
+  /** 先登记工作，再提交显式输入；验证真实身份后返回原所有者的回执。 */
+  openSessionWithInput(
+    address: DriverSessionAddress,
+    spec: DriverSessionSpec,
+    input: SessionInput,
+  ): DriverSession | OperationError;
+}

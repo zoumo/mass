@@ -69,6 +69,20 @@ type Session struct {
 	Spec     SessionSpec   `json:"spec"`
 	Status   SessionStatus `json:"status"`
 }
+
+// SessionCreateInput is transient operation data, not a persistent Session.
+type SessionCreateInput struct {
+	Metadata     Metadata       `json:"metadata"`
+	Spec         SessionSpec    `json:"spec"`
+	InitialInput *runtime.Input `json:"initialInput,omitempty"`
+}
+
+// SessionCreated preserves the resource response shape without persisting receipt.
+type SessionCreated struct {
+	Session
+	InitialInputReceipt *runtime.InputReceipt `json:"initialInputReceipt,omitempty"`
+}
+
 type SessionRef struct {
 	Namespace string `json:"namespace,omitempty"`
 	Name      string `json:"name,omitempty"`

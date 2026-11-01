@@ -112,6 +112,14 @@ model SessionSpec extends Execution.DriverSessionSpec {
 model SessionCreate {
   metadata: ObjectMetadata;
   spec: SessionSpec;
+
+  /** 仅本次 create 使用；省略则不发送输入，显式空输入拒绝。不得持久为恢复配置。 */
+  initialInput?: SessionInput;
+}
+
+/** 持久 Session 身份与可选的本次输入证据；receipt 不属于资源。 */
+model SessionCreated extends Session {
+  initialInputReceipt?: InputReceipt;
 }
 
 /** 恢复已知原生会话并加载历史到新空目标；不发送业务输入。 */

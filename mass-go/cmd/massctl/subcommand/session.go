@@ -1,7 +1,9 @@
 package subcommand
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,7 +25,7 @@ func (o *options) sessionCommands() *cobra.Command {
 		cmd := &cobra.Command{Use: action + " NAME_OR_ID", Short: action + " Session", Args: cobra.ExactArgs(1)}
 		cmd.Long = "Use NAME -n NAMESPACE or a raw global Session ID without namespace. No default namespace or lookup fallback."
 		cmd.Example = "  massctl session " + action + " review -n demo\n  massctl session " + action + " SESSION_ID"
-		var namespace, runtimeRef, cwd, systemPrompt, systemFile, text, after string
+		var namespace, runtimeRef, cwd, systemPrompt, systemFile, text, after, inputFile string
 		var nativeSessionID, loadID string
 		var dirs []string
 		var limit int
@@ -37,7 +39,7 @@ func (o *options) sessionCommands() *cobra.Command {
 		}
 		if action == "create" {
 			cmd.Use = "create NAME"
-			cmd.Long = "NAME, --namespace, --runtime and --cwd are required. --system-prompt and --system-prompt-file are mutually exclusive. File '-' reads stdin; --additional-dir is repeatable. Creation does not send input. Paths refer to the Agent host."
+			cmd.Long = "NAME, --namespace, --runtime and --cwd are required. --system-prompt and --system-prompt-file are mutually exclusive. File '-' reads stdin; --additional-dir is repeatable. Creation sends no input unless --text or --input-file is supplied; the receipt is not turn completion. Paths refer to the Agent host."
 			cmd.Example = "  massctl session create review -n demo --runtime agent --cwd /remote/workspace"
 			cmd.Flags().StringVar(&runtimeRef, "runtime", "", "Runtime name (required)")
 			cmd.Flags().StringVar(&cwd, "cwd", "", "Agent working directory (required)")
@@ -45,6 +47,10 @@ func (o *options) sessionCommands() *cobra.Command {
 			cmd.Flags().StringVar(&systemFile, "system-prompt-file", "", "UTF-8 system prompt file (- for stdin)")
 			cmd.Flags().StringArrayVar(&dirs, "additional-dir", nil, "Additional Agent directory (repeatable)")
 			cmd.MarkFlagsMutuallyExclusive("system-prompt", "system-prompt-file")
+			cmd.Flags().StringVar(&text, "text", "", "Explicit first user text (create only)")
+			cmd.Flags().StringVar(&inputFile, "input-file", "", "UTF-8 SessionInput JSON file (- for stdin, create only)")
+			cmd.MarkFlagsMutuallyExclusive("text", "input-file")
+
 			for _, flag := range []string{"namespace", "runtime", "cwd"} {
 				_ = cmd.MarkFlagRequired(flag)
 			}
@@ -116,6 +122,9 @@ func (o *options) sessionCommands() *cobra.Command {
 				if namespace == "" || runtimeRef == "" || cwd == "" {
 					return invalid("Namespace, runtime and cwd are required")
 				}
+				if systemFile == "-" && inputFile == "-" {
+					return invalid("Only one file may read stdin")
+				}
 				if cmd.Flags().Changed("system-prompt-file") {
 					b, err := readFile(cmd, systemFile)
 					if err != nil {
@@ -124,7 +133,36 @@ func (o *options) sessionCommands() *cobra.Command {
 					systemPrompt = string(b)
 				}
 				v := resource.Session{Metadata: resource.Metadata{Namespace: namespace, Name: args[0]}, Spec: resource.SessionSpec{RuntimeRef: runtimeRef, SessionSpec: runtime.SessionSpec{Cwd: cwd, SystemPrompt: systemPrompt, AdditionalDirs: dirs}}}
-				call = func(ctx context.Context, out any) error { return o.client.CreateSession(ctx, v, out) }
+				var initial *runtime.Input
+				if cmd.Flags().Changed("text") {
+					initial = &runtime.Input{Content: []events.ContentBlock{events.Text(text)}}
+				}
+				if cmd.Flags().Changed("input-file") {
+					raw, err := readFile(cmd, inputFile)
+					if err != nil {
+						return err
+					}
+					var input runtime.Input
+					decoder := json.NewDecoder(bytes.NewReader(raw))
+					decoder.DisallowUnknownFields()
+					if err = decoder.Decode(&input); err != nil {
+						return invalid("Invalid SessionInput JSON")
+					}
+					if decoder.Decode(new(any)) != io.EOF {
+						return invalid("Expected one SessionInput JSON value")
+					}
+					initial = &input
+				}
+				if initial != nil {
+					copyInput, err := runtime.CopyInput(*initial)
+					if err != nil {
+						return err
+					}
+					request := resource.SessionCreateInput{Metadata: v.Metadata, Spec: v.Spec, InitialInput: &copyInput}
+					call = func(ctx context.Context, out any) error { return o.client.CreateSessionWithInput(ctx, request, out) }
+				} else {
+					call = func(ctx context.Context, out any) error { return o.client.CreateSession(ctx, v, out) }
+				}
 			case "list":
 				call = func(ctx context.Context, out any) error {
 					return o.client.ListSessions(ctx, resource.SessionQuery{Limit: limit, After: after}, out)

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -22,6 +23,16 @@ func main() {
 	defer log.Close()
 	record := json.NewEncoder(log)
 	cwd, _ := os.Getwd()
+	explicit := os.Getenv("EXPLICIT_CREATE") == "1"
+	resumed := false
+	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "--resume=") {
+			resumed = true
+		}
+	}
+	init := func() {
+		send(map[string]any{"type": "system", "subtype": "init", "session_id": "claude-continuity", "cwd": cwd, "claude_code_version": "2.1.258"})
+	}
 	n := 0
 	var pending string
 	var previous string
@@ -43,7 +54,9 @@ func main() {
 			send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
 			switch r["subtype"] {
 			case "initialize":
-				send(map[string]any{"type": "system", "subtype": "init", "session_id": "claude-continuity", "cwd": cwd, "claude_code_version": "2.1.258"})
+				if !explicit || resumed {
+					init()
+				}
 			case "interrupt":
 				result(pending)
 			}
@@ -56,7 +69,7 @@ func main() {
 		link, _ := v["uuid"].(string)
 		pending = link
 		text := v["message"].(map[string]any)["content"].(string)
-		if err := record.Encode(map[string]any{"pid": os.Getpid(), "input": n, "uuid": link, "text": text}); err != nil {
+		if err := record.Encode(map[string]any{"pid": os.Getpid(), "input": n, "uuid": link, "text": text, "before_init": explicit && !resumed && n == 1}); err != nil {
 			panic(err)
 		}
 		start := map[string]any{"type": "stream_event", "session_id": "claude-continuity", "event": map[string]any{"type": "message_start", "message": map[string]any{"id": fmt.Sprintf("message-%d", n), "role": "assistant", "content": []any{}}}}
@@ -64,6 +77,26 @@ func main() {
 			start["user_message_uuid"] = link
 		}
 		send(start)
+		if explicit && !resumed && n == 1 {
+			switch text {
+			case "initial-overflow":
+				for i := 0; i < 129; i++ {
+					send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": fmt.Sprintf("early-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "early fact"}}}})
+				}
+				continue
+			case "initial-foreign", "initial-child":
+				unrelated := map[string]any{"type": "result", "subtype": "success", "session_id": "claude-continuity"}
+				if text == "initial-foreign" {
+					unrelated["user_message_uuid"] = "foreign-submission"
+				} else {
+					unrelated["parent_tool_use_id"] = "foreign-child"
+				}
+				send(unrelated)
+				send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": "still-unsettled", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "not a root completion"}}}})
+				init()
+				continue
+			}
+		}
 		if text == "child-provenance" {
 			send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": "root-tool", "role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "child-tool", "name": "Agent", "input": map[string]any{}}}}})
 			send(map[string]any{"type": "system", "subtype": "task_started", "session_id": "claude-continuity", "task_id": "child-task", "task_type": "local_agent", "tool_use_id": "child-tool"})
@@ -103,5 +136,8 @@ func main() {
 			continue
 		}
 		result(link)
+		if explicit && !resumed && n == 1 {
+			init()
+		}
 	}
 }
