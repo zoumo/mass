@@ -65,6 +65,20 @@ func main() {
 		if mode == "cold-timestamp" && resumes > 0 {
 			t["updatedAt"] = 3
 		}
+		if strings.HasPrefix(mode, "cold-materialized-direct") {
+			t["canAcceptDirectInput"] = nil
+			if resumes > 0 {
+				t["canAcceptDirectInput"] = true
+			}
+		}
+		for _, value := range []string{"null", "false", "true"} {
+			if strings.Split(mode, ":")[0] == "cold-direct-equal-"+value {
+				t["canAcceptDirectInput"] = nil
+				if value != "null" {
+					t["canAcceptDirectInput"] = value == "true"
+				}
+			}
+		}
 		if strings.HasPrefix(mode, "loaded:") {
 			t["environments"] = nil
 		}
@@ -77,6 +91,16 @@ func main() {
 		}
 		if parts := strings.Split(mode, ":"); len(parts) == 3 && parts[1] == stage {
 			switch parts[2] {
+			case "directMissing":
+				delete(t, "canAcceptDirectInput")
+			case "directNull":
+				t["canAcceptDirectInput"] = nil
+			case "directTrue", "directFalse":
+				t["canAcceptDirectInput"] = parts[2] == "directTrue"
+			case "directString":
+				t["canAcceptDirectInput"] = "true"
+			case "directNumber":
+				t["canAcceptDirectInput"] = 1
 			case "active":
 				nativeStatus["type"], nativeStatus["activeFlags"] = "active", []any{}
 			case "idle", "unknown", "notLoaded", "systemError":

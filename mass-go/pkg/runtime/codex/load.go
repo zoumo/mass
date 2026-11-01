@@ -190,6 +190,9 @@ func sameLoadResumeThread(a, b ct.Thread) bool {
 			return false
 		}
 		a.UpdatedAt = b.UpdatedAt
+		if direct, ok := b.CanAcceptDirectInput.Get(); a.CanAcceptDirectInput.IsNull() && ok && direct {
+			a.CanAcceptDirectInput = b.CanAcceptDirectInput
+		}
 		if loaded, ok := b.Environments.Get(); a.Environments.IsNull() && ok {
 			for _, environment := range loaded {
 				if len(environment.UnknownFields) != 0 {

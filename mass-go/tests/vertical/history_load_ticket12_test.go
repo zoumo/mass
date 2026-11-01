@@ -97,12 +97,18 @@ func ticket12ColdLoadHTTP(t *testing.T, mode string) {
 	calls := ticket12Calls(t, evidence)
 	counts := map[string]int{}
 	var statuses []string
+	var direct []any
 	for _, call := range calls {
 		counts[call.Method]++
 		require.Equal(t, calls[0].PID, call.PID, "one owned native process")
 		if strings.HasSuffix(call.Method, "/result") {
 			thread := call.Params["thread"].(map[string]any)
 			statuses = append(statuses, thread["status"].(map[string]any)["type"].(string))
+			if mode == "cold-materialized-direct" {
+				value, present := thread["canAcceptDirectInput"]
+				require.True(t, present, "explicit null is not omission")
+				direct = append(direct, value)
+			}
 		}
 		if call.Method == "turn/start" {
 			require.Equal(t, "native-thread", call.Params["threadId"])
@@ -112,6 +118,9 @@ func ticket12ColdLoadHTTP(t *testing.T, mode string) {
 		}
 	}
 	require.Equal(t, []string{"notLoaded", "idle", "idle"}, statuses)
+	if mode == "cold-materialized-direct" {
+		require.Equal(t, []any{nil, true, true}, direct, "native capability materializes only at cold resume")
+	}
 	require.Equal(t, 1, counts["thread/resume"])
 	require.Equal(t, 2, counts["thread/read"])
 	require.Equal(t, 4, counts["thread/turns/list"], "both native pages in both verification passes")

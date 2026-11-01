@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -28,8 +29,13 @@ func ticket06Service(t *testing.T, mode string, extraEnv ...map[string]any) (*se
 	require.NoError(t, err)
 	st, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: t.TempDir()}}))
+	t.Cleanup(func() {
+		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		assert.NoError(t, svc.Shutdown(c))
+	})
 	env := map[string]any{"LOAD_CWD": cwd, "LOAD_MODE": mode}
 	for _, extra := range extraEnv {
 		maps.Copy(env, extra)
@@ -38,11 +44,6 @@ func ticket06Service(t *testing.T, mode string, extraEnv ...map[string]any) (*se
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		require.NoError(t, svc.Shutdown(c))
-	})
 	return svc, cwd
 }
 
