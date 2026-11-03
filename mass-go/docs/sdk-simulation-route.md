@@ -1,5 +1,12 @@
 # MASS SDK simulation evidence route
 
+> **Historical investigation.** The commands, source bindings and results below
+> use the previous SDK pin and the former SDK-owned protocol tool. They are
+> retained as failure/compatibility evidence, not as the current setup procedure.
+> The current consumer uses the external `agent-sdk-testify` prepared-mock
+> contract with SDK source `a3a99ad44b90`; see the top-level README and
+> [acceptance.md](acceptance.md) for current requirements.
+
 SDK-FU-01 compatibility investigation, 2026-11-02. This is an implementation
 runbook, not a harness contract or a replacement for [acceptance.md](acceptance.md).
 SDK-FU-02 owns driver/business assertions; SDK-FU-03 owns opening cleanup;

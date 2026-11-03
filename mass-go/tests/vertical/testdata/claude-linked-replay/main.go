@@ -2,10 +2,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 )
 
@@ -16,21 +19,40 @@ func main() {
 }
 
 func replay() error {
-	f, err := os.Open(os.Getenv("CLAUDE_MOCK_SCENARIO"))
+	path := os.Getenv("CLAUDE_LINKED_REPLAY")
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		path = filepath.Join(path, "raw", "raw.jsonl")
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	type frame struct {
+		Direction string
+		Data      map[string]any
+	}
 	var scenario struct {
-		Frames []struct {
-			Direction string
-			Data      map[string]any
+		Frames []frame
+	}
+	var frames []frame
+	if err := json.Unmarshal(data, &scenario); err == nil && scenario.Frames != nil {
+		frames = scenario.Frames
+	} else {
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		for {
+			var value frame
+			if err := dec.Decode(&value); errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				return err
+			}
+			frames = append(frames, value)
 		}
 	}
-	dec := json.NewDecoder(f)
-	dec.UseNumber()
-	if err := dec.Decode(&scenario); err != nil {
-		return err
+	scenario.Frames = frames
+	if len(frames) == 0 {
+		return errors.New("linked replay has no frames")
 	}
 	input := json.NewDecoder(os.Stdin)
 	input.UseNumber()

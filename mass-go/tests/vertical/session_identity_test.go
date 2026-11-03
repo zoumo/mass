@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/mass-go/internal/testpeer"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
@@ -29,7 +30,7 @@ func TestIllegalNativeIdentityNeverBecomesPersistentSession(t *testing.T) {
 			svc, _, _ := lifecycleService(t, t.TempDir())
 			path, work := identityOnlyScenario(t, id)
 			var err error
-			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
+			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": path}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
 			require.NoError(t, err)
@@ -50,12 +51,17 @@ func TestIllegalNativeIdentityNeverBecomesPersistentSession(t *testing.T) {
 // SDK peer rejects any implicit input between creation and explicit archive.
 func identityOnlyScenario(t *testing.T, id string) (string, string) {
 	t.Helper()
-	path, work := scenario(t)
-	b, err := os.ReadFile(path)
+	work := t.TempDir()
+	b, err := os.ReadFile("testdata/codex.json")
 	require.NoError(t, err)
+	quoted, err := json.Marshal(work)
+	require.NoError(t, err)
+	b = bytes.ReplaceAll(b, []byte(`"/synthetic"`), quoted)
 	var fixture struct {
 		Version    int               `json:"version"`
 		Provenance string            `json:"provenance"`
+		Source     json.RawMessage   `json:"source"`
+		TimeoutMS  int               `json:"timeoutMs"`
 		Frames     []json.RawMessage `json:"frames"`
 	}
 	require.NoError(t, json.Unmarshal(b, &fixture))
@@ -63,9 +69,11 @@ func identityOnlyScenario(t *testing.T, id string) (string, string) {
 	b, err = json.Marshal(fixture)
 	require.NoError(t, err)
 	b = bytes.ReplaceAll(b, []byte("codex-session"), []byte(id))
-	path = filepath.Join(t.TempDir(), "invalid-id.json")
-	require.NoError(t, os.WriteFile(path, b, 0o600))
-	return path, work
+	material, err := testpeer.Author(t.TempDir(), "codex", b)
+	require.NoError(t, err)
+	launcher, err := testpeer.Direct(t.TempDir(), "codex", material.Recording)
+	require.NoError(t, err)
+	return launcher.Path, work
 }
 
 func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
@@ -78,7 +86,7 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 	svc := service.New(gate, st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}))
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 	path, work := identityOnlyScenario(t, "a/b %空间")
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(c, "agent")
 	require.NoError(t, err)

@@ -51,7 +51,7 @@ type ticket07Setup struct {
 func ticket07HTTP(t *testing.T, mode string, rows []map[string]any, options ...func(*ticket07Setup)) (*service.Service, string, string, string) {
 	t.Helper()
 	ticket07Build.Do(func() {
-		ticket07Binary = filepath.Join(filepath.Dir(claudeMock), "claude-load-peer")
+		ticket07Binary = filepath.Join(root, "claude-load-peer")
 		out, err := exec.CommandContext(ctx(t), "go", "build", "-o", ticket07Binary, "./testdata/claude-load-peer").CombinedOutput()
 		if err != nil {
 			ticket07BuildErr = fmt.Errorf("build peer: %w: %s", err, out)

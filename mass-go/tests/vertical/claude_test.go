@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/zoumo/mass/mass-go/internal/testpeer"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -26,24 +26,25 @@ import (
 
 type ClaudeSuite struct{ suite.Suite }
 
+type nativeMaterial struct {
+	Launcher  testpeer.Launcher
+	Recording string
+	Work      string
+}
+
 func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 	for _, kind := range []string{"codex", "claude"} {
 		t.Run(kind, func(t *testing.T) {
 			path, work := nativeScenario(t, kind, "basic")
-			bin := mock
-			if kind == "claude" {
-				bin = claudeMock
-			}
 			var observation *codexTurnObservation
 			if kind == "codex" {
 				observation = newCodexTurnObservation()
 				defer observation.releaseAll()
 			}
 			svc, _, _ := setupWithCodexObservation(t, prototype.AutoApprovePermissions, observation)
-			// The executable is still strictly synthetic. Only launch configuration
-			// uses the real-runtime shape: scenario is not a required config field.
+			// The executable is still strictly synthetic, without a legacy scenario field.
 			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{
-				"executable": bin, "envPolicy": "replace", "env": map[string]any{strings.ToUpper(kind) + "_MOCK_SCENARIO": path},
+				"executable": path, "envPolicy": "inherit",
 			}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
@@ -98,18 +99,31 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 
 func nativeScenario(t *testing.T, kind, mode string) (string, string) {
 	t.Helper()
+	material := nativeMaterialFor(t, kind, mode, "")
+	return material.Launcher.Path, material.Work
+}
+
+func nativeMaterialFor(t *testing.T, kind, mode, work string) nativeMaterial {
+	t.Helper()
 	data, err := os.ReadFile("testdata/" + kind + "-" + mode + ".json")
 	require.NoError(t, err)
+	return nativeMaterialFrom(t, kind, data, work)
+}
+
+func nativeMaterialFrom(t *testing.T, kind string, data []byte, work string) nativeMaterial {
+	t.Helper()
 	var scenario map[string]any
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	require.NoError(t, dec.Decode(&scenario))
-	work := t.TempDir()
-	t.Cleanup(func() {
-		require.NoError(t, os.RemoveAll(work))
-		_, err := os.Stat(work)
-		require.True(t, os.IsNotExist(err))
-	})
+	if work == "" {
+		work = t.TempDir()
+		t.Cleanup(func() {
+			require.NoError(t, os.RemoveAll(work))
+			_, err := os.Stat(work)
+			require.True(t, os.IsNotExist(err))
+		})
+	}
 	// Only cwd values change. Native request matching remains strict.
 	var replace func(any)
 	replace = func(v any) {
@@ -129,11 +143,13 @@ func nativeScenario(t *testing.T, kind, mode string) (string, string) {
 		}
 	}
 	replace(scenario)
-	data, err = json.Marshal(scenario)
+	data, err := json.Marshal(scenario)
 	require.NoError(t, err)
-	path := filepath.Join(t.TempDir(), "scenario.json")
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	return path, work
+	material, err := testpeer.Author(t.TempDir(), kind, data)
+	require.NoError(t, err)
+	launcher, err := testpeer.Direct(t.TempDir(), kind, material.Recording)
+	require.NoError(t, err)
+	return nativeMaterial{Launcher: launcher, Recording: material.Recording, Work: work}
 }
 
 func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *runtime.Registry, string) {
@@ -159,11 +175,7 @@ func setupWithCodexObservation(t *testing.T, policy service.InteractionPolicy, o
 func openNative(t *testing.T, svc *service.Service, kind, mode, name string) resource.Session {
 	t.Helper()
 	path, work := nativeScenario(t, kind, mode)
-	bin := mock
-	if kind == "claude" {
-		bin = claudeMock
-	}
-	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}})
+	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), name)
 	require.NoError(t, err)
@@ -326,7 +338,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 	_, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "duplicate"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: t.TempDir()}}})
 	require.Error(t, err)
 	path, work := nativeScenario(t, "claude", "missing-disconnect")
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "missing"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "missing"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "missing")
 	require.NoError(t, err)

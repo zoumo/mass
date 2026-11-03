@@ -7,19 +7,22 @@ Executable assembly lives under `cmd/`; CLI and other library modules live under
 
 ## One-command synthetic demonstration
 
-From the repository root, with Go 1.26.9 and pinned dependencies already cached:
+From the repository root, with Go 1.26.9, pinned dependencies already cached,
+and a separately built `agent-sdk-testify` executable:
 
 ```sh
+export AGENT_SDK_TESTIFY_BIN=/absolute/path/to/agent-sdk-testify
 make prototype-go
 # Cross-capability combinations under race; no models or recording fallback:
 ```
 
-This builds the pinned `agent-sdk-go` protocol simulation driver for Codex **and** Claude plus `massd`
-and `massctl`, then runs `TestEntrypointSuite` through actual CLI processes and
-HTTP+SSE. Every scenario is synthetic. SDK mocks match protocol frames strictly;
-they do not execute tools, use accounts, call models, or prove intelligence.
+This builds `massd` and `massctl`, prepares Codex and Claude launchers with the
+explicit external tool, then runs `TestEntrypointSuite` through actual CLI
+processes and HTTP+SSE. Every recording is authored synthetic material. The
+prepared mock matches protocol frames strictly; it does not execute tools, use
+accounts, call models, or prove intelligence.
 The command fails on a failed scenario or cleanup readback. Test-owned binaries,
-workspaces, scenarios, data and loopback ports are temporary; process, listener
+launchers, recordings, workspaces, data and loopback ports are temporary; process, listener
 and directory cleanup is checked. No personal Agent configuration is used.
 
 The suite demonstrates no-input native identity, separate text input, automatic
@@ -151,8 +154,8 @@ the HTTP answer API. This CLI version deliberately has no answer command.
 
 ### Runtime Launch Configuration
 
-The SDK is pinned to `v0.0.0-20261101172223-619cf8ac7e14`, source commit
-`619cf8ac7e1484f82c40d6fd96155fab9404e634`, without a local replacement.
+The SDK is pinned to `v0.0.0-20261102180816-a3a99ad44b90`, source commit
+`a3a99ad44b90a3bbe97d80cef491705645ecdc34`, without a local replacement.
 Codex shares one native Client across its Sessions; Claude owns one native
 process per Session. Each Session has one Receive consumer for native events
 and original request capabilities. SDK observations do not establish Agent state.
@@ -167,12 +170,15 @@ prove only a complete local write, not native acceptance or recording.
 | `args` | Codex process arguments, default `["app-server"]`; explicit `[]` means no arguments. Claude rejects nonempty arguments; use an explicit launcher if needed. |
 | `envPolicy` | `inherit` (default) merges parent environment with `env`; `replace` passes only configured entries, including an explicitly empty environment. |
 | `env` | String-to-string overrides; callers supply any required PATH/HOME/config-directory settings explicitly when replacing. |
-| `scenario` | Optional absolute authored simulation file, injected as provider `_MOCK_SCENARIO`; not required for real runtimes. |
 
 Validation does not open credentials or history. Offline tests launch only the
-pinned SDK `tools/agent-sdk-testify protocol mock` via strict temporary launchers,
-with an explicit scenario and no real-agent fallback. They do not prove real
-CLI startup, authentication, model behavior or native history availability.
+explicitly supplied external `agent-sdk-testify mock` through prepared synthetic
+recordings and strict temporary launchers, with no real-agent fallback. Set
+`AGENT_SDK_TESTIFY_BIN` to an absolute executable; tests never build or discover
+an SDK-owned mock. Prepared descriptors bind tool version/hash, recordings,
+workspace, protocol cwd, environment, all connections and finish receipts. They
+do not prove real CLI startup, authentication, model behavior or native history
+availability.
 Both providers support explicit asynchronous retained-main-history load followed
 by input on the verified resumed connection. Ordinary resume does not import
 history. Claude continuation still requires actual native linkage for completion;

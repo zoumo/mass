@@ -16,6 +16,7 @@ lint-go:
 
 test-go:
 	# The full vertical race suite takes about six minutes; retain a bounded budget.
+	@test -n "$(AGENT_SDK_TESTIFY_BIN)" || { echo "AGENT_SDK_TESTIFY_BIN must name an absolute prebuilt agent-sdk-testify executable" >&2; exit 2; }
 	cd mass-go && go test -race -timeout=600s ./...
 
 build-massctl:
@@ -33,8 +34,9 @@ lint-massctl: lint-go
 test-massctl: test-go
 check-massctl: check-go
 
-# Isolated synthetic end-to-end acceptance. Builds both pinned SDK mocks plus
-# massd/massctl, exercises the product entrypoints, and reads cleanup back.
+# Isolated synthetic end-to-end acceptance. Builds massd/massctl, uses the
+# explicitly supplied external agent-sdk-testify, and reads cleanup back.
 .PHONY: prototype-go
 prototype-go:
+	@test -n "$(AGENT_SDK_TESTIFY_BIN)" || { echo "AGENT_SDK_TESTIFY_BIN must name an absolute prebuilt agent-sdk-testify executable" >&2; exit 2; }
 	cd mass-go && GOWORK=off GOPROXY=off go test -count=1 -v -timeout=180s ./tests/vertical -run '^TestEntrypointSuite$$'

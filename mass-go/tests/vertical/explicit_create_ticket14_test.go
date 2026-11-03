@@ -36,7 +36,7 @@ import (
 func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
 	svc, _, _ := setup(t, nil)
 	path, work := nativeScenario(t, "claude", "explicit-create")
-	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "explicit"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
+	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "explicit"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "explicit")
 	require.NoError(t, err)
@@ -89,7 +89,7 @@ func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
 func TestTicket14ExplicitCreateCLI(t *testing.T) {
 	svc, _, _ := setup(t, nil)
 	path, work := nativeScenario(t, "claude", "explicit-create")
-	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
+	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
@@ -116,13 +116,11 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			svc, _, _ := setup(t, nil)
 			mode := "explicit-create"
-			bin := mock
 			if kind == "claude" {
 				mode = "explicit-structured"
-				bin = claudeMock
 			}
 			path, work := nativeScenario(t, kind, mode)
-			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}})
+			_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": path}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
 			require.NoError(t, err)
@@ -216,7 +214,7 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 func TestTicket14PreInitPermissionIsExplicitFailure(t *testing.T) {
 	svc, _, _ := setup(t, nil)
 	path, work := nativeScenario(t, "claude", "explicit-permission")
-	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
+	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
@@ -376,14 +374,12 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 				defer release()
 				svc := service.New(gate, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}, "codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}}))
 				t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
-				bin := mock
 				mode := "explicit-create"
 				if kind == "claude" {
-					bin = claudeMock
 					mode = "explicit-structured"
 				}
 				path, work := nativeScenario(t, kind, mode)
-				_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}})
+				_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": path}}})
 				require.NoError(t, err)
 				_, err = svc.StartRuntime(ctx(t), "agent")
 				require.NoError(t, err)

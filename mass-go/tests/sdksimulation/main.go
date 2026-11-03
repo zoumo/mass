@@ -26,8 +26,9 @@ import (
 )
 
 type request struct {
-	Case, Materials, Workspace, Output string
-	Peer                               struct {
+	Case, Materials, Workspace, ProtocolCwd, Output string
+	Env                                             map[string]string
+	Peer                                            struct {
 		Command string
 		Args    []string
 	}
@@ -36,6 +37,11 @@ type request struct {
 type plan struct {
 	CaseID, Provider, DriverProfile, Project string
 	Prompts                                  []string
+}
+
+type preparedRuntime struct {
+	Workspace   string `json:"workspace"`
+	ProtocolCwd string `json:"protocolCwd"`
 }
 
 func readJSON(path string, value any) error {
@@ -71,19 +77,58 @@ func run(ctx context.Context, req request) (err error) {
 	if p.Provider != "codex" && p.Provider != "claude" {
 		return errors.New("unsupported provider")
 	}
-	if !filepath.IsAbs(req.Peer.Command) || !filepath.IsAbs(p.Project) {
-		return errors.New("absolute runner peer and recorded project required")
+	var prepared preparedRuntime
+	if err := readJSON(filepath.Join(req.Materials, "runtime.json"), &prepared); err != nil {
+		return fmt.Errorf("read prepared runtime: %w", err)
+	}
+	if prepared.Workspace == "" || prepared.ProtocolCwd == "" {
+		return errors.New("prepared runtime requires workspace and protocolCwd")
+	}
+	if req.Workspace == "" {
+		req.Workspace = prepared.Workspace
+	} else if filepath.Clean(req.Workspace) != filepath.Clean(prepared.Workspace) {
+		return errors.New("request workspace differs from prepared workspace")
+	}
+	if req.ProtocolCwd == "" {
+		req.ProtocolCwd = prepared.ProtocolCwd
+	} else if filepath.Clean(req.ProtocolCwd) != filepath.Clean(prepared.ProtocolCwd) {
+		return errors.New("request protocolCwd differs from prepared protocolCwd")
+	}
+	if !filepath.IsAbs(req.Peer.Command) || !filepath.IsAbs(req.Workspace) ||
+		!filepath.IsAbs(req.ProtocolCwd) || !filepath.IsAbs(p.Project) {
+		return errors.New("absolute runner peer, workspace and recorded project required")
+	}
+	if p.Provider == "codex" && filepath.Clean(p.Project) != filepath.Clean(req.ProtocolCwd) {
+		return errors.New("recorded project differs from prepared protocolCwd")
+	}
+	if p.Provider == "claude" && filepath.Clean(req.ProtocolCwd) != filepath.Clean(req.Workspace) {
+		return errors.New("prepared protocolCwd differs from workspace for Claude")
+	}
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if cwd, err := filepath.EvalSymlinks(workingDirectory); err != nil {
+		return err
+	} else if workspace, err := filepath.EvalSymlinks(req.Workspace); err != nil {
+		return err
+	} else if cwd != workspace {
+		return fmt.Errorf("driver cwd %s differs from prepared workspace %s", cwd, workspace)
 	}
 	// Claude accepts an executable path only. Forward every supplied peer argument,
 	// followed by native SDK arguments; never discover a host Agent executable.
-	launcher := filepath.Join(req.Output, "mass-peer")
-	args := []string{shellQuote(req.Peer.Command)}
-	for _, arg := range req.Peer.Args {
-		args = append(args, shellQuote(arg))
-	}
-	line := "#!/bin/sh\nexec " + strings.Join(args, " ")
-	if err := os.WriteFile(launcher, []byte(line+" -- \"$@\" 2>"+shellQuote(filepath.Join(req.Output, "peer-stderr.log"))+"\n"), 0o700); err != nil {
-		return err
+	executable := req.Peer.Command
+	if len(req.Peer.Args) > 0 {
+		launcher := filepath.Join(req.Output, "mass-peer")
+		args := []string{shellQuote(req.Peer.Command)}
+		for _, arg := range req.Peer.Args {
+			args = append(args, shellQuote(arg))
+		}
+		line := "#!/bin/sh\nexec " + strings.Join(args, " ")
+		if err := os.WriteFile(launcher, []byte(line+" -- \"$@\" 2>"+shellQuote(filepath.Join(req.Output, "peer-stderr.log"))+"\n"), 0o700); err != nil {
+			return err
+		}
+		executable = launcher
 	}
 	meta, err := metafile.Open(filepath.Join(req.Output, "metadata"), false)
 	if err != nil {
@@ -107,9 +152,13 @@ func run(ctx context.Context, req request) (err error) {
 		cleanupErr := errors.Join(shutdownErr, storeErr)
 		err = errors.Join(err, cleanupErr, observed.write(filepath.Join(req.Output, "runtime-observations.json")), writeJSON(filepath.Join(req.Output, "cleanup.json"), map[string]any{"released": cleanupErr == nil, "error": fmt.Sprint(cleanupErr), "shutdownAttempted": true, "storesClosed": storeErr == nil}))
 	}()
-	config := runtime.Config{"executable": launcher}
-	if p.Provider == "codex" {
-		config["args"] = []any{}
+	config := runtime.Config{"executable": executable, "envPolicy": "inherit"}
+	if len(req.Env) > 0 {
+		env := make(map[string]any, len(req.Env))
+		for key, value := range req.Env {
+			env[key] = value
+		}
+		config["env"] = env
 	}
 	if _, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "recording"}, Spec: resource.RuntimeSpec{Type: p.Provider, Config: config}}); err != nil {
 		return fmt.Errorf("create runtime: %w", err)
@@ -119,7 +168,7 @@ func run(ctx context.Context, req request) (err error) {
 	}
 	created, err := svc.CreateSessionWithInput(ctx, resource.SessionCreateInput{
 		Metadata:     resource.Metadata{Namespace: "simulation", Name: "continuation"},
-		Spec:         resource.SessionSpec{RuntimeRef: "recording", SessionSpec: runtime.SessionSpec{Cwd: p.Project}},
+		Spec:         resource.SessionSpec{RuntimeRef: "recording", SessionSpec: runtime.SessionSpec{Cwd: req.ProtocolCwd}},
 		InitialInput: ptrInput(p.Prompts[0]),
 	})
 	if err != nil {

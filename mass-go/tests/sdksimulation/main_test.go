@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/zoumo/mass/mass-go/internal/testpeer"
 )
 
 var (
@@ -39,20 +41,23 @@ func binaries(t *testing.T) (string, string) {
 			buildError = err.Error()
 			return
 		}
-		driver, testify = filepath.Join(dir, "driver"), filepath.Join(dir, "testify")
+		driver = filepath.Join(dir, "driver")
+		testify, err = testpeer.Executable()
+		if err != nil {
+			buildError = err.Error()
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		for _, target := range []struct{ path, pkg string }{{driver, "."}, {testify, "github.com/zoumo/agent-sdk-go/tools/agent-sdk-testify"}} {
-			args := []string{"build", "-o", target.path, target.pkg}
-			if os.Getenv("MASS_SDK_RACE") == "1" {
-				args = []string{"build", "-race", "-o", target.path, target.pkg}
-			}
-			cmd := exec.CommandContext(ctx, "go", args...)
-			cmd.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
-			if out, err := cmd.CombinedOutput(); err != nil {
-				buildError = string(out) + err.Error()
-				return
-			}
+		args := []string{"build", "-o", driver, "."}
+		if os.Getenv("MASS_SDK_RACE") == "1" {
+			args = []string{"build", "-race", "-o", driver, "."}
+		}
+		cmd := exec.CommandContext(ctx, "go", args...)
+		cmd.Env = append(os.Environ(), "GOWORK=off", "GOPROXY=off", "GOSUMDB=off")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			buildError = string(out) + err.Error()
+			return
 		}
 		binaryHashes = map[string]string{}
 		for _, path := range []string{driver, testify} {
@@ -86,7 +91,7 @@ func get(t *testing.T, path string) map[string]any {
 
 func authoredRun(t *testing.T, provider, mode string) (string, map[string]any) {
 	t.Helper()
-	driver, testify := binaries(t)
+	driver, _ := binaries(t)
 	root := t.TempDir()
 	if evidence := os.Getenv("MASS_SDK_EVIDENCE"); evidence != "" {
 		var err error
@@ -97,16 +102,17 @@ func authoredRun(t *testing.T, provider, mode string) (string, map[string]any) {
 		require.NoError(t, os.MkdirAll(filepath.Join(root, name), 0o700))
 	}
 	put(t, filepath.Join(root, "binary-hashes.json"), binaryHashes)
-	put(t, filepath.Join(root, "materials", "case.json"), map[string]any{
-		"caseId": "SDK-CASE-001", "provider": provider, "driverProfile": "continuation",
-		"project": filepath.Join(root, "project"), "prompts": []string{"Reply with the word Ready.", "Reply with the word Done."},
-	})
 	peer, err := filepath.Abs("testdata/claude-peer.py")
 	require.NoError(t, err)
 	python, err := exec.LookPath("python3")
 	require.NoError(t, err)
 	command := python
-	args := []string{"-I", peer, mode, filepath.Join(root, "project"), filepath.Join(root, "synthetic-peer.json")}
+	project := filepath.Join(root, "project")
+	workspace := filepath.Join(root, "workspace")
+	protocolCWD := project
+	args := []string{"-I", peer, mode, workspace, filepath.Join(root, "synthetic-peer.json")}
+	var prepared *testpeer.Run
+	var requestEnv map[string]string
 	if provider == "codex" {
 		data, err := os.ReadFile("testdata/codex-two-rounds.json")
 		require.NoError(t, err)
@@ -123,17 +129,34 @@ func authoredRun(t *testing.T, provider, mode string) (string, map[string]any) {
 		case "prompt-mismatch":
 			data = bytes.Replace(data, []byte(`Reply with the word Ready.`), []byte(`Wrong prompt.`), 1)
 		}
-		var compact bytes.Buffer
-		require.NoError(t, json.Compact(&compact, data))
-		data = compact.Bytes()
-		scenario := filepath.Join(root, "authored-codex.json")
-		require.NoError(t, os.WriteFile(scenario, data, 0o600))
-		command = testify
-		args = []string{"protocol", "mock", "--provider", "codex", "--scenario", scenario, "--receipt", filepath.Join(root, "strict-peer.json"), "--timeout", "8"}
+		prepared, err = testpeer.Prepare(context.Background(), root, "codex", data)
+		require.NoError(t, err)
+		main, err := prepared.Connection("main")
+		require.NoError(t, err)
+		command = main.Launcher
+		args = nil
+		workspace = prepared.Workspace
+		protocolCWD = prepared.ProtocolCWD
+		requestEnv = prepared.Env
+		t.Cleanup(func() {
+			finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = prepared.Finish(finishCtx)
+		})
+	} else {
+		protocolCWD = workspace
 	}
+	put(t, filepath.Join(root, "materials", "case.json"), map[string]any{
+		"caseId": "SDK-CASE-001", "provider": provider, "driverProfile": "continuation",
+		"project": protocolCWD, "prompts": []string{"Reply with the word Ready.", "Reply with the word Done."},
+	})
+	put(t, filepath.Join(root, "materials", "runtime.json"), map[string]any{
+		"workspace": workspace, "protocolCwd": protocolCWD,
+	})
 	put(t, filepath.Join(root, "request.json"), map[string]any{
 		"case": "SDK-CASE-001", "materials": filepath.Join(root, "materials"),
-		"workspace": filepath.Join(root, "workspace"), "output": filepath.Join(root, "output"),
+		"workspace": workspace, "output": filepath.Join(root, "output"),
+		"env":  requestEnv,
 		"peer": map[string]any{"command": command, "args": args},
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
@@ -143,9 +166,32 @@ func authoredRun(t *testing.T, provider, mode string) (string, map[string]any) {
 		timeout = "2s"
 	}
 	cmd := exec.CommandContext(ctx, driver, "--request", filepath.Join(root, "request.json"), "--timeout", timeout)
+	cmd.Dir = workspace
+	cmd.Env = os.Environ()
+	for key, value := range requestEnv {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "driver.log"), out, 0o600))
 	require.NoError(t, err, "%s", out)
+	if prepared != nil {
+		main, connectionErr := prepared.Connection("main")
+		require.NoError(t, connectionErr)
+		receipt, readErr := os.ReadFile(main.Receipt)
+		require.NoError(t, readErr)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "strict-peer.json"), receipt, 0o600))
+		process, readErr := os.ReadFile(main.ProcessReceipt)
+		require.NoError(t, readErr)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "strict-process.json"), process, 0o600))
+		finishCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		finishErr := prepared.Finish(finishCtx)
+		cancel()
+		if mode == "prompt-mismatch" {
+			require.Error(t, finishErr)
+		} else {
+			require.NoError(t, finishErr)
+		}
+	}
 	t.Log("evidence:", root)
 	cleanup := get(t, filepath.Join(root, "output", "cleanup.json"))
 	require.Equal(t, true, cleanup["shutdownAttempted"])
@@ -190,9 +236,13 @@ func TestCodexTwoRoundsStrictAuthored(t *testing.T) {
 	require.Equal(t, true, receipt["clientEOF"])
 	require.Equal(t, false, receipt["nativeLaunched"])
 	require.Equal(t, "codex", receipt["provider"])
-	data, err := os.ReadFile(filepath.Join(root, "authored-codex.json"))
+	descriptors, err := filepath.Glob(filepath.Join(root, "prepared-*", "run.json"))
 	require.NoError(t, err)
-	require.Equal(t, fmt.Sprintf("%x", sha256.Sum256(data)), receipt["recordingSHA256"])
+	require.Len(t, descriptors, 1)
+	descriptor := get(t, descriptors[0])
+	raw, err := os.ReadFile(filepath.Join(descriptor["recording"].(string), "raw", "raw.jsonl"))
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("%x", sha256.Sum256(raw)), receipt["recordingSHA256"])
 }
 
 func assertTwoRounds(t *testing.T, root, provider string) {

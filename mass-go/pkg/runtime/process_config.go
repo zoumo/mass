@@ -13,7 +13,6 @@ import (
 // ProcessConfig fixes launch inputs without reading provider credentials or data.
 type ProcessConfig struct {
 	Executable string
-	Scenario   string
 	Args       []string
 	EnvPolicy  string
 	Env        map[string]string
@@ -23,7 +22,7 @@ func ParseProcessConfig(config Config) (ProcessConfig, error) {
 	o := ProcessConfig{EnvPolicy: "inherit", Env: map[string]string{}}
 	for key, value := range config {
 		switch key {
-		case "executable", "scenario", "envPolicy":
+		case "executable", "envPolicy":
 			s, ok := value.(string)
 			if !ok {
 				return o, fmt.Errorf("%s must be a string", key)
@@ -31,8 +30,6 @@ func ParseProcessConfig(config Config) (ProcessConfig, error) {
 			switch key {
 			case "executable":
 				o.Executable = s
-			case "scenario":
-				o.Scenario = s
 			case "envPolicy":
 				o.EnvPolicy = s
 			}
@@ -74,9 +71,6 @@ func ParseProcessConfig(config Config) (ProcessConfig, error) {
 	if !filepath.IsAbs(o.Executable) || strings.ContainsRune(o.Executable, 0) {
 		return o, errors.New("explicit absolute executable required")
 	}
-	if o.Scenario != "" && (!filepath.IsAbs(o.Scenario) || strings.ContainsRune(o.Scenario, 0)) {
-		return o, errors.New("synthetic scenario must be absolute")
-	}
 	if o.EnvPolicy != "inherit" && o.EnvPolicy != "replace" {
 		return o, errors.New("envPolicy must be inherit or replace")
 	}
@@ -95,7 +89,7 @@ func ParseProcessConfig(config Config) (ProcessConfig, error) {
 
 // Environment explicitly merges overrides instead of accidentally replacing PATH,
 // HOME and other required inherited variables when adding a single setting.
-func (o ProcessConfig) Environment(provider string) []string {
+func (o ProcessConfig) Environment() []string {
 	values := map[string]string{}
 	if o.EnvPolicy == "inherit" {
 		for _, entry := range os.Environ() {
@@ -104,9 +98,6 @@ func (o ProcessConfig) Environment(provider string) []string {
 		}
 	}
 	maps.Copy(values, o.Env)
-	if o.Scenario != "" {
-		values[strings.ToUpper(provider)+"_MOCK_SCENARIO"] = o.Scenario
-	}
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)

@@ -2,11 +2,29 @@
 
 This is the current Go implementation acceptance map, not a change to the
 [harness contracts](../../harness/index.md). The SDK is pinned to
-`github.com/zoumo/agent-sdk-go v0.0.0-20261101172223-619cf8ac7e14`, source
-`619cf8ac7e1484f82c40d6fd96155fab9404e634`, with no local `replace`.
+`github.com/zoumo/agent-sdk-go v0.0.0-20261102180816-a3a99ad44b90`, source
+`a3a99ad44b90a3bbe97d80cef491705645ecdc34`, with no local `replace`.
 A recipe or an existing test is not itself an executed PASS.
 
 ## Followup Readiness
+
+The source-bound measurements in this section predate the external-tool
+adaptation. They are retained as historical evidence for the sources and old SDK
+pin they name; they are not PASS evidence for the current module or external
+`agent-sdk-testify` contract.
+
+For the current SDK pin and external prepared-mock path, a November 3, 2026
+rerun of the two admitted continuation captures remains **0/2 BLOCKED** with no
+business acceptance or full-consumption receipt. Codex failed during runtime
+initialization with `EOF`; its peer receipt reports `ordinal 1: client mismatch`.
+Claude failed at `ordinal 1: client mismatch` with `fullConsumption=false` and
+`clientEOF=false`. Neither provider consumed a complete protocol. The rerun used
+external `agent-sdk-testify 0.1.0-dev` with SHA-256
+`b181d8a3b9f2b9d4e7182598fb4c61142a157c054d07da7bdc3e1f0b43a2d7c1`.
+Attempt-local evidence is at
+`/tmp/mass-sdk-official-20261103.2C5ncS/codex/` and
+`/tmp/mass-sdk-official-20261103-claude.OBzX95/claude/`. These are preserved
+diagnostics, not durable repository fixtures.
 
 **NOT-READY: official recording-driven acceptance remains BLOCKED (0/2).**
 SDK-FU-05 independently executed source
@@ -118,6 +136,13 @@ intermediate full race repeat failed
 `TestTicket16CodexColdDirectInputHTTPHistoryAndContinuedInput` while waiting for
 the fourth history event; 20 focused repeats and its subsequent standard gate
 passed. Neither cause is proven, and later successes do not erase failures.
+On November 3, 2026, a serial all-package run on the current external-tool
+worktree failed once in
+`TestTicket06CLILoadHTTPHistoryAndFutureSSE`: its SSE `Next` call hit the
+ten-second observer context after 12.01 seconds, while the other packages passed.
+The isolated test passed five consecutive runs, and an exact rerun of the serial
+command passed with vertical at 383.616 seconds. The observer-deadline cause is
+not proven; the first failure remains retained rather than replaced by the rerun.
 SDK-FU-04's final gate on `4e5ad09a4ff07f0fc71f3e6f3b8d3fd1bdc847ce`
 discovered 177 top-level tests (64 vertical): 175 passed, two opt-in scale tests
 skipped. That is earlier-source evidence, not the final gate-003 result.
@@ -149,6 +174,7 @@ From the repository root, with Go 1.26.9, golangci-lint v2.12.2, `ps`, and
 immutable module dependencies already cached:
 
 ```sh
+export AGENT_SDK_TESTIFY_BIN=/absolute/prebuilt/agent-sdk-testify
 rtk proxy sh -c 'cache=$(mktemp -d /tmp/mass-offline-lint.XXXXXX) && printf "owned lint cache: %s\n" "$cache" && GOLANGCI_LINT_CACHE="$cache" GOWORK=off GOPROXY=off GOSUMDB=off GOFLAGS=-v MASS_SDK_RACE=1 make check-go'
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make prototype-go'
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./tests/vertical -run "^Test(File)?EntrypointSuite$"'
@@ -177,6 +203,8 @@ Neither changes package selection or turns a failed stage into a pass.
 
 Missing tools/dependencies mean NOT EXECUTED;
 these offline commands do not download a fallback SDK or launch real Agents.
+`AGENT_SDK_TESTIFY_BIN` must already name an absolute independently built
+`agent-sdk-testify`; tests do not build or discover an SDK-owned replacement.
 
 Each Go invocation has its own test-owned setup/cleanup budget. Repeat product
 faults in independent `-count=1` invocations, rather than exhausting one shared
@@ -317,18 +345,25 @@ and attempts shutdown even on failure. It uses only the runner-supplied peer.
 Build from `mass-go/`:
 
 ```sh
+export AGENT_SDK_TESTIFY_BIN=/absolute/prebuilt/agent-sdk-testify
 rtk proxy go build -o /tmp/mass-sdk-driver ./tests/sdksimulation
-rtk proxy go build -o /tmp/agent-sdk-testify github.com/zoumo/agent-sdk-go/tools/agent-sdk-testify
+rtk proxy go build -o /tmp/sdk-simulate github.com/zoumo/agent-sdk-go/tests/simulation/simulate
 ```
 
-Use `agent-sdk-testify simulate --cases-file <selection.json> --driver
-/tmp/mass-sdk-driver --output <new-attempt> --jobs 2 --timeout 60s`.
-The selection is a JSON array of objects with a `case` field containing the
-absolute capture directory from the pinned module's
-`tests/simulation/recordings/<provider>/SDK-US-001/SDK-CASE-001/`.
-Only the two-input continuation case is implemented; other cases fail explicitly.
+Run one selection per fresh output:
 
-The November 2, 2026 attempt selected these unmodified admitted captures:
+```sh
+/tmp/sdk-simulate --recording /absolute/capture --driver /tmp/mass-sdk-driver \
+  --output /absolute/new-attempt --timeout 60s
+```
+
+The SDK-owned runner prepares the external tool, passes its workspace and
+environment to the host, writes `runtime.json` with `protocolCwd`, and invokes
+the MASS driver. Only the two-input continuation case is implemented; other
+cases fail explicitly.
+
+The historical November 2, 2026 attempt selected these unmodified admitted
+captures with the SDK-owned runner interface available at that time:
 
 | Provider | Capture | Result |
 | --- | --- | --- |

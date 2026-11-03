@@ -65,11 +65,7 @@ func (s *failureSuite) start(kind, name string, history eventstore.EventStore) {
 	path, work := nativeScenario(s.T(), kind, name)
 	s.work = work
 	s.svc = service.NewWithPolicy(s.meta, history, s.reg, prototype.AutoApprovePermissions)
-	bin := mock
-	if kind == "claude" {
-		bin = claudeMock
-	}
-	_, err := s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}})
+	_, err := s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": path}}})
 	s.Require().NoError(err)
 	_, err = s.svc.StartRuntime(ctx(s.T()), "agent")
 	s.Require().NoError(err)

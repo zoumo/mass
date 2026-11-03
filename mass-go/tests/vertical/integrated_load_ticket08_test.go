@@ -83,7 +83,7 @@ func ticket08Loaded(t *testing.T, kind, mode string) (*entrypointSuite, resource
 	t.Helper()
 	s := ticket08Daemon(t)
 	// TestMain scans this owned binary root on failures as well as success.
-	bin := filepath.Join(filepath.Dir(claudeMock), "ticket08-load-peer")
+	bin := filepath.Join(root, "ticket08-load-peer")
 	out, err := exec.CommandContext(ctx(s.T()), "go", "build", "-o", bin, "./testdata/ticket08-load-peer").CombinedOutput()
 	s.Require().NoError(err, string(out))
 	for _, binary := range []string{app, ctl, bin} {

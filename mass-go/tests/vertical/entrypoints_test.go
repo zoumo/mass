@@ -165,16 +165,18 @@ func (s *entrypointSuite) call(op string, p workflowParams, out any) {
 }
 
 func (s *entrypointSuite) open(kind, mode string) (resource.SessionRef, resource.Session, string) {
-	bin := mock
-	if kind == "claude" {
-		bin = claudeMock
-	}
-	return s.openWithExecutable(kind, mode, bin)
+	ref, session, work, _ := s.openWithExecutable(kind, mode, "")
+	return ref, session, work
 }
 
-func (s *entrypointSuite) openWithExecutable(kind, mode, bin string) (resource.SessionRef, resource.Session, string) {
-	path, work := nativeScenario(s.T(), kind, mode)
-	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
+func (s *entrypointSuite) openWithExecutable(kind, mode, bin string) (resource.SessionRef, resource.Session, string, nativeMaterial) {
+	material := nativeMaterialFor(s.T(), kind, mode, "")
+	work := material.Work
+	config := runtime.Config{"executable": material.Launcher.Path}
+	if bin != "" {
+		config = runtime.Config{"executable": bin, "envPolicy": "inherit", "env": map[string]any{"CLAUDE_LINKED_REPLAY": material.Recording}}
+	}
+	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: config}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
 	var session resource.Session
@@ -192,7 +194,7 @@ func (s *entrypointSuite) openWithExecutable(kind, mode, bin string) (resource.S
 	for _, e := range page.Events {
 		s.NotEqual("user.message", e.Type(), "creation must not submit input")
 	}
-	return ref, session, work
+	return ref, session, work, material
 }
 
 func (s *entrypointSuite) observer(ref resource.SessionRef) (*exec.Cmd, *bufio.Scanner) {
@@ -296,7 +298,7 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 }
 
 func (s *entrypointSuite) basic(kind string) {
-	bin := mock
+	bin := ""
 	if kind == "claude" {
 		// Preserve executable identity across recovery; this synthetic peer
 		// echoes the resumed caller UUID through the retained baseline frames.
@@ -304,7 +306,7 @@ func (s *entrypointSuite) basic(kind string) {
 		out, err := exec.CommandContext(ctx(s.T()), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
 		s.Require().NoError(err, string(out))
 	}
-	ref, original, work := s.openWithExecutable(kind, "basic", bin)
+	ref, original, work, material := s.openWithExecutable(kind, "basic", bin)
 	// Closing a registered observer does not archive or cancel the native session.
 	watch, e := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
 	s.Require().NoError(e)
@@ -337,9 +339,16 @@ func (s *entrypointSuite) basic(kind string) {
 	s.Require().Len(filtered.Events, 1)
 	s.Equal("agent.message", filtered.Events[0].Type())
 	s.call("session.archive", workflowParams{Session: ref}, nil)
-	resumePath, _ := nativeScenario(s.T(), kind, "lifecycle-resume")
-	resumePath = replaceWorkspace(s.T(), resumePath, work)
-	spec := resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": resumePath}}
+	resume := nativeMaterialFor(s.T(), kind, "lifecycle-resume", work)
+	config := runtime.Config{"executable": resume.Launcher.Path}
+	if bin != "" {
+		config = runtime.Config{"executable": bin, "envPolicy": "inherit", "env": map[string]any{"CLAUDE_LINKED_REPLAY": resume.Recording}}
+	} else {
+		rebound, err := material.Launcher.Rebind(resume.Recording)
+		s.Require().NoError(err)
+		config = runtime.Config{"executable": rebound.Path}
+	}
+	spec := resource.RuntimeSpec{Type: kind, Config: config}
 	s.call("runtime.update", workflowParams{Name: "agent", Spec: &spec}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	// Durable full history readback uses the file Store, with no driver construction.
@@ -420,7 +429,7 @@ func (s *entrypointSuite) TestParametersAndDirectory() {
 		s.Require().ErrorAs(e, &public)
 		s.Equal("invalid_argument", public.Code)
 	}
-	r := resource.Runtime{Metadata: resource.Metadata{Name: "unused"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": filepath.Join(s.T().TempDir(), "absent")}}}
+	r := resource.Runtime{Metadata: resource.Metadata{Name: "unused"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": filepath.Join(s.T().TempDir(), "absent")}}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	var rs []resource.Runtime
 	s.call("runtime.list", workflowParams{}, &rs)
@@ -461,7 +470,7 @@ func (s *entrypointSuite) TestCodexQuestionBeforeACK() {
 
 func (s *entrypointSuite) TestFailedCreateCleanup() {
 	path, work := nativeScenario(s.T(), "claude", "missing-disconnect")
-	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}}
+	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": path}}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
 	create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: "session"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}}
@@ -488,11 +497,7 @@ func (s *entrypointSuite) TestDualAgentDirectory() {
 	refs := map[string]resource.SessionRef{}
 	for _, kind := range []string{"codex", "claude"} {
 		path, work := nativeScenario(s.T(), kind, "basic")
-		bin := mock
-		if kind == "claude" {
-			bin = claudeMock
-		}
-		r := resource.Runtime{Metadata: resource.Metadata{Name: kind}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
+		r := resource.Runtime{Metadata: resource.Metadata{Name: kind}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": path}}}
 		s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 		s.call("runtime.start", workflowParams{Name: kind}, nil)
 		create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: kind}, Spec: resource.SessionSpec{RuntimeRef: kind, SessionSpec: runtime.SessionSpec{Cwd: work}}}
@@ -556,12 +561,8 @@ func (s *entrypointSuite) TestNamedSessionCommandWorkflow() {
 	for _, kind := range []string{"codex", "claude"} {
 		s.Run(kind, func() {
 			path, work := nativeScenario(s.T(), kind, "basic")
-			bin := mock
-			if kind == "claude" {
-				bin = claudeMock
-			}
 			name := "named-" + kind
-			r := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
+			r := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": path}}}
 			s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 			s.call("runtime.start", workflowParams{Name: name}, nil)
 			create := resource.Session{Metadata: resource.Metadata{Namespace: "cli", Name: kind}, Spec: resource.SessionSpec{RuntimeRef: name, SessionSpec: runtime.SessionSpec{Cwd: work}}}
@@ -590,7 +591,7 @@ func (s *entrypointSuite) TestOpaqueIDCommandRoundTrip() {
 	for i, id := range []string{"a/b", "a%2Fb", "a b?#", "空间/会话"} {
 		path, work := identityOnlyScenario(s.T(), id)
 		name := fmt.Sprintf("opaque-%d", i)
-		v := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}}
+		v := resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": path}}}
 		s.call("runtime.create", workflowParams{Runtime: &v}, nil)
 		s.call("runtime.start", workflowParams{Name: name}, nil)
 		create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: name}, Spec: resource.SessionSpec{RuntimeRef: name, SessionSpec: runtime.SessionSpec{Cwd: work}}}
@@ -606,5 +607,5 @@ func (s *entrypointSuite) TestOpaqueIDCommandRoundTrip() {
 		s.call("session.archive", workflowParams{Session: ref}, nil)
 		s.call("runtime.stop", workflowParams{Name: name}, nil)
 	}
-	s.T().Log("PASS raw slash/percent/space/Unicode IDs through fixed SDK mock, daemon, generated client and CLI")
+	s.T().Log("PASS raw slash/percent/space/Unicode IDs through fixed testify launcher, daemon, generated client and CLI")
 }

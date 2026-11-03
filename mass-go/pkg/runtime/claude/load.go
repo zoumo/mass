@@ -78,7 +78,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	d.mu.Lock()
 	h.unknown = true
 	d.mu.Unlock()
-	native, err := sdk.Open(read, sdk.SessionOptions{ResumeID: id, CLIPath: d.options.Executable, WorkDir: cwd, Env: d.options.Environment("claude")})
+	native, err := sdk.Open(read, sdk.SessionOptions{ResumeID: id, CLIPath: d.options.Executable, WorkDir: cwd, Env: d.options.Environment()})
 	if err != nil {
 		return err
 	}

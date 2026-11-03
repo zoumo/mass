@@ -2,10 +2,10 @@ package vertical_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -54,7 +54,7 @@ func (lifecycleSuite *LifecycleSuite) TestConcurrentDesiredSpecAndStartStatus() 
 	svc := service.New(gate, st, reg)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
 	path, work := scenario(t)
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": path}}})
 	require.NoError(t, err)
 	started := make(chan error, 1)
 	go func() { _, e := svc.StartRuntime(ctx(t), "agent"); started <- e }()
@@ -66,13 +66,16 @@ func (lifecycleSuite *LifecycleSuite) TestConcurrentDesiredSpecAndStartStatus() 
 	var wg sync.WaitGroup
 	for i := range 16 {
 		wg.Add(1)
-		go func(i int) {
+		go func() {
 			defer wg.Done()
-			_, e := svc.UpdateRuntime("agent", resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": filepath.Join(dir, fmt.Sprintf("desired-%d.json", i))}})
+			_, e := svc.UpdateRuntime("agent", resource.RuntimeSpec{Type: "codex", Config: runtime.Config{
+				"executable": path,
+				"env":        map[string]any{"MASS_DESIRED_UPDATE": strconv.Itoa(i)},
+			}})
 			if e != nil {
 				t.Errorf("update failed: %v", e)
 			}
-		}(i)
+		}()
 	}
 	wg.Wait()
 	desired, err := svc.GetRuntime("agent")
@@ -131,11 +134,11 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	t := lifecycleSuite.T()
 	dir := t.TempDir()
 	svc, st, reg := lifecycleService(t, dir)
-	createPath, work := nativeScenario(t, "codex", "lifecycle-create")
-	resumePath, _ := nativeScenario(t, "codex", "lifecycle-resume")
-	// Both phases use the original workspace. Nothing is copied from personal data.
-	resumePath = replaceWorkspace(t, resumePath, work)
-	spec := resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": createPath}}
+	create := nativeMaterialFor(t, "codex", "lifecycle-create", "")
+	work := create.Work
+	resume := nativeMaterialFor(t, "codex", "lifecycle-resume", work)
+	createPath := create.Launcher.Path
+	spec := resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": createPath}}
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "unused"}, Spec: spec})
 	require.NoError(t, err)
 	require.NoError(t, svc.DeleteRuntime("unused"))
@@ -161,9 +164,10 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	require.NoError(t, err)
 	require.Len(t, history.Events, 4)
 	// Desired type and config are mutable, even with live references.
-	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": resumePath}})
+	claudeResume := nativeMaterialFor(t, "claude", "lifecycle-resume", work)
+	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeResume.Launcher.Path}})
 	require.NoError(t, err)
-	spec.Config = runtime.Config{"executable": mock, "scenario": resumePath}
+	spec.Config = runtime.Config{"executable": createPath}
 	updated, err := svc.UpdateRuntime("agent", spec)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, updated.Metadata.Generation)
@@ -223,6 +227,8 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	require.Error(t, err)
 	require.NoError(t, svc.Shutdown(ctx(t)))
 	require.NoError(t, st.Close())
+	_, err = create.Launcher.Rebind(resume.Recording)
+	require.NoError(t, err)
 
 	cold, st2, reg2 := lifecycleService(t, dir)
 	r, err = cold.GetRuntime("agent")
@@ -288,49 +294,19 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	t.Log("PASS actual SDK/fake: desired type/config, old Driver, new-session snapshot, native release gate, stop, cold material validation, original ID/ownership/history, no replay")
 }
 
-func replaceWorkspace(t *testing.T, path, work string) string {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	require.NoError(t, err)
-	var scenario map[string]any
-	require.NoError(t, json.Unmarshal(b, &scenario))
-	var replace func(any)
-	replace = func(v any) {
-		switch v := v.(type) {
-		case map[string]any:
-			for k, x := range v {
-				if k == "cwd" {
-					v[k] = work
-				} else {
-					replace(x)
-				}
-			}
-		case []any:
-			for _, x := range v {
-				replace(x)
-			}
-		}
-	}
-	replace(scenario)
-	b, err = json.Marshal(scenario)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, b, 0o600))
-	return path
-}
-
 func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	t := lifecycleSuite.T()
 	dir := t.TempDir()
 	svc, st, _ := lifecycleService(t, dir)
-	path, work := nativeScenario(t, "claude", "basic")
-	resumePath, _ := nativeScenario(t, "claude", "lifecycle-resume")
-	replaceWorkspace(t, resumePath, work)
+	basic := nativeMaterialFor(t, "claude", "basic", "")
+	work := basic.Work
+	resume := nativeMaterialFor(t, "claude", "lifecycle-resume", work)
 	// Use one executable across cold recovery; resumed frames echo the
 	// dynamic caller UUID while preserving every retained baseline frame.
 	bin := filepath.Join(t.TempDir(), "claude-linked-replay")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
 	require.NoError(t, err, string(out))
-	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "scenario": path}}
+	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "envPolicy": "inherit", "env": map[string]any{"CLAUDE_LINKED_REPLAY": basic.Recording}}}
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: spec})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
@@ -342,7 +318,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	history, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.NotEmpty(t, history.Events)
-	spec.Config = runtime.Config{"executable": bin, "scenario": resumePath}
+	spec.Config = runtime.Config{"executable": bin, "envPolicy": "inherit", "env": map[string]any{"CLAUDE_LINKED_REPLAY": resume.Recording}}
 	_, err = svc.UpdateRuntime("agent", spec)
 	require.NoError(t, err)
 	_, err = svc.StopRuntime(ctx(t), "agent")
@@ -375,7 +351,7 @@ func (lifecycleSuite *LifecycleSuite) TestArchiveResumeKeepsObserversAndIdentity
 	t := lifecycleSuite.T()
 	svc, _, _ := lifecycleService(t, t.TempDir())
 	path, work := nativeScenario(t, "codex", "archive-resume")
-	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
+	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)

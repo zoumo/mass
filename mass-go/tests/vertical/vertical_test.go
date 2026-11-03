@@ -32,7 +32,7 @@ import (
 
 type VerticalSuite struct{ suite.Suite }
 
-var mock, claudeMock, app, ctl, root string
+var app, ctl, root string
 
 // Blocks the identity commit while the real adapter already emitted initial idle.
 type identityGate struct {
@@ -104,12 +104,6 @@ func TestMain(m *testing.M) {
 				code = 1
 			}
 		}()
-		peers, err := testpeer.Build(mainCtx, root)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return
-		}
-		mock, claudeMock = peers["codex"], peers["claude"]
 		for name, target := range map[string]string{"massd": "../../cmd/massd", "massctl": "../../cmd/massctl"} {
 			bin := filepath.Join(root, name)
 			cmd := exec.CommandContext(mainCtx, "go", "build", "-o", bin, target)
@@ -124,8 +118,13 @@ func TestMain(m *testing.M) {
 				ctl = bin
 			}
 		}
-		for _, name := range []string{"agent-sdk-testify", "massd", "massctl"} {
-			binary, readErr := os.ReadFile(filepath.Join(root, name))
+		tool, readErr := testpeer.Executable()
+		if readErr != nil {
+			fmt.Fprintln(os.Stderr, readErr)
+			return
+		}
+		for name, path := range map[string]string{"agent-sdk-testify": tool, "massd": app, "massctl": ctl} {
+			binary, readErr := os.ReadFile(path)
 			if readErr != nil {
 				fmt.Fprintln(os.Stderr, readErr)
 				return
@@ -150,15 +149,8 @@ func scenario(t *testing.T) (string, string) {
 	work := t.TempDir()
 	data, err := os.ReadFile("testdata/codex.json")
 	require.NoError(t, err)
-	quoted, err := json.Marshal(work)
-	require.NoError(t, err)
-	data = bytes.ReplaceAll(data, []byte(`"/synthetic"`), quoted)
-	var compact bytes.Buffer
-	require.NoError(t, json.Compact(&compact, data))
-	data = compact.Bytes()
-	path := filepath.Join(t.TempDir(), "scenario.json")
-	require.NoError(t, os.WriteFile(path, data, 0o600))
-	return path, work
+	material := nativeMaterialFrom(t, "codex", data, work)
+	return material.Launcher.Path, work
 }
 
 func (verticalSuite *VerticalSuite) TestCodexVertical() {
@@ -176,7 +168,7 @@ func (verticalSuite *VerticalSuite) TestCodexVertical() {
 	defer release()
 	svc := service.New(gate, st, registry)
 	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
-	r, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
+	r, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": path}}})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, r.Metadata.Generation)
 	_, err = registry.Get("codex")

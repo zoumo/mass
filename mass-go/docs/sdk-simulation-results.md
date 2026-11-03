@@ -1,4 +1,9 @@
-# SDK-FU-05 Independent Simulation Results
+# Historical SDK-FU-05 Independent Simulation Results
+
+> **Historical binding.** This result binds MASS `bb3f09cea046` and SDK
+> `619cf8ac7e14`, including the former SDK-owned testify tool. It is not a result
+> for the current `a3a99ad44b90` pin or the external prepared-mock adaptation.
+> Preserve these failures as history; do not cite them as current adaptation PASS.
 
 Official recording-driven acceptance: **BLOCKED**. SDK-FU-05 is not closed.
 Executed independently on 2026-11-02 (Asia/Shanghai); no SDK-FU-02 success log

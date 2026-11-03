@@ -22,7 +22,6 @@ func TestRuntimeConfigurationRejectsInvalidLaunchInputs(t *testing.T) {
 	for name, factory := range map[string]runtime.Factory{"codex": codex.Factory{}, "claude": claude.Factory{}} {
 		for _, config := range []runtime.Config{
 			{"executable": "relative"},
-			{"executable": "/agent", "scenario": "/scenario\x00.json"},
 			{"executable": "/agent", "envPolicy": "implicit"},
 			{"executable": "/agent", "env": map[string]any{"TOKEN": 123}},
 			{"executable": "/agent", "env": map[string]string{"BAD=KEY": "value"}},
@@ -41,7 +40,7 @@ func TestRuntimeEnvironmentPolicyIsExplicit(t *testing.T) {
 	for _, policy := range []string{"inherit", "replace"} {
 		config, err := runtime.ParseProcessConfig(runtime.Config{"executable": "/agent", "envPolicy": policy, "env": map[string]string{"MASS_CONFIG_OVERRIDE": "configured"}})
 		require.NoError(t, err)
-		env := config.Environment("codex")
+		env := config.Environment()
 		require.Contains(t, env, "MASS_CONFIG_OVERRIDE=configured")
 		if policy == "inherit" {
 			require.Contains(t, env, "MASS_CONFIG_INHERITED=parent")
@@ -51,5 +50,5 @@ func TestRuntimeEnvironmentPolicyIsExplicit(t *testing.T) {
 	}
 	config, err := runtime.ParseProcessConfig(runtime.Config{"executable": "/agent", "envPolicy": "replace"})
 	require.NoError(t, err)
-	require.NotNil(t, config.Environment("claude"), "nil would silently inherit the environment in the SDK")
+	require.NotNil(t, config.Environment(), "nil would silently inherit the environment in the SDK")
 }
