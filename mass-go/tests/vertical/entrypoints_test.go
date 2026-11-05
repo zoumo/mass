@@ -607,5 +607,5 @@ func (s *entrypointSuite) TestOpaqueIDCommandRoundTrip() {
 		s.call("session.archive", workflowParams{Session: ref}, nil)
 		s.call("runtime.stop", workflowParams{Name: name}, nil)
 	}
-	s.T().Log("PASS raw slash/percent/space/Unicode IDs through fixed testify launcher, daemon, generated client and CLI")
+	s.T().Log("PASS raw slash/percent/space/Unicode IDs through the pinned test peer, daemon, generated client and CLI")
 }

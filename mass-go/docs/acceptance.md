@@ -1,9 +1,14 @@
-# SDK session adaptation: layered acceptance
+# Go implementation acceptance: layered evidence
 
 This is the current Go implementation acceptance map, not a change to the
 [harness contracts](../../harness/index.md). The SDK is pinned to
-`github.com/zoumo/agent-sdk-go v0.0.0-20261102180816-a3a99ad44b90`, source
-`a3a99ad44b90a3bbe97d80cef491705645ecdc34`, with no local `replace`.
+`github.com/zoumo/agent-sdk-go v0.0.0-20261105065348-5edf8b62e963`, source
+`5edf8b62e963e59efa20383d5373a9aee278f135`, with no local `replace`. The
+external `agent-sdk-testify` tool is pinned to
+`v0.0.0-20261105043421-a013c2bfa1e4`; it is a test-only recording and replay
+dependency. Exact consumer case hashes and the current gate result are in
+[consumer recording acceptance](recording-acceptance.md).
+
 A recipe or an existing test is not itself an executed PASS.
 
 ## Followup Readiness
@@ -159,11 +164,12 @@ native run, SDK/matcher/capture change, harness write or publication is implied.
 | SDK protocol probe | Immutable SDK APIs against strict authored native JSONL | `examples/sdkprobe`; separate from product acceptance |
 | Product synthetic integration | Actual adapters, Service, file Store, CLI/HTTP/SSE and owned protocol peers | Default offline checks and the combinations below; no models or tools run |
 | Public-module fault injection | Deterministic append/publish/close/admission outcomes through public interfaces | Original facts, unsettled obligations, bounded isolation and cleanup, not native CLI guarantees |
-| Recording-driven MASS simulation | Product actions consumed against admitted, unmodified official captures | Executed: 0/2 selected continuation captures; strict initialization mismatches prevent business acceptance |
-| Native protocol/live Agent | Installed CLI, actual identity, account/model and persistence | Not required for this SDK adaptation; no real-model execution authorized |
+| Consumer recording replay | MASS public actions against exported, hash-bound Codex and Claude captures | Four registered cases; offline PASS with `nativeLaunched=false`; no live model under test |
+| Native protocol/live Agent | Installed CLI, actual identity, account/model and persistence | NOT EXECUTED in this checkout; explicit, separately authorized procedure below |
 
-SDK-only replay is not MASS recording acceptance. Authored peers are not official
-recordings. Old logs under `examples/sdkprobe/evidence`, the prior six-ticket
+Consumer recordings have `provenance=consumer`; official verification does not
+apply, and replaying them does not prove live Agent behavior. Authored peers are
+not recordings. Old logs under `examples/sdkprobe/evidence`, the prior six-ticket
 experiment and [HTTP v1](http-v1-acceptance.md) /
 [Store/Broadcast](store-broadcast-acceptance.md) reports retain their original
 source/version attribution; they are not current-pin PASS evidence.
@@ -177,34 +183,24 @@ immutable module dependencies already cached:
 export AGENT_SDK_TESTIFY_BIN=/absolute/prebuilt/agent-sdk-testify
 rtk proxy sh -c 'cache=$(mktemp -d /tmp/mass-offline-lint.XXXXXX) && printf "owned lint cache: %s\n" "$cache" && GOLANGCI_LINT_CACHE="$cache" GOWORK=off GOPROXY=off GOSUMDB=off GOFLAGS=-v MASS_SDK_RACE=1 make check-go'
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make prototype-go'
+rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make acceptance-sdk-go'
+rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off make recording-gate-go'
 rtk proxy sh -c 'GOWORK=off GOPROXY=off GOSUMDB=off go -C mass-go test -race -count=1 -v -timeout=180s ./tests/vertical -run "^Test(File)?EntrypointSuite$"'
 ```
 
 `check-go` runs lint, all offline race packages, builds both executables, and
-checks formatting. The package timeout is 600 seconds; vertical TestMain allows
-630 seconds including owned builds and cleanup. `prototype-go` selects the
-existing product entrypoint suite; those tests also run in `check-go`.
-A November 2 full `check-go` attempt hit the vertical package's aggregate
-300-second timeout, not a failing assertion. SDK-FU-04 increased the aggregate
-budgets without removing race, package selection or failure propagation. Retain
-the original timeout and any split diagnostic runs separately; split results
-are not a successful single `check-go` run. The 600/630-second budgets do not
-extend individual scenario deadlines or turn assertion failures into passes.
-
-Use a fresh, owned absolute linter cache outside the repository after moving or
-removing worktrees. Gate-002 reused stale absolute paths from removed worktrees;
-the same-source isolated-cache lint differential passed. The recipe allocates
-a unique cache and prints its path for evidence; it does not clean global or
-other tasks' caches. Retain the cache and original failed logs while diagnosing.
-Gate-003 used an existing dedicated integration-owned absolute cache established
-by that successful differential. `GOFLAGS=-v` adds test evidence verbosity;
-`MASS_SDK_RACE=1` enables race instrumentation for authored SDK driver builds.
-Neither changes package selection or turns a failed stage into a pass.
-
-Missing tools/dependencies mean NOT EXECUTED;
+checks formatting. The full package timeout is 300 seconds; vertical TestMain
+allows 330 seconds including owned builds and final cleanup. Individual scenario
+deadlines remain unchanged. The prior 180-second aggregate timeout failed and is
+retained in ticket08 evidence, not erased by the budget change.
+`prototype-go` builds MASS's `internal/testpeer` strict scenario peer for each
+provider plus real massd/massctl and exercises `TestEntrypointSuite`.
+`acceptance-sdk-go` selects all ticket08 combinations under race; it is not a
+replacement for the complete check. Missing tools/dependencies mean NOT EXECUTED;
 these offline commands do not download a fallback SDK or launch real Agents.
-`AGENT_SDK_TESTIFY_BIN` must already name an absolute independently built
-`agent-sdk-testify`; tests do not build or discover an SDK-owned replacement.
+`recording-gate-go` forces `MASS_RECORD=0`, so the opt-in real recording tests
+skip; it runs the four replay cases plus artifact, receipt and credential-audit
+checks. See [consumer recording acceptance](recording-acceptance.md).
 
 Each Go invocation has its own test-owned setup/cleanup budget. Repeat product
 faults in independent `-count=1` invocations, rather than exhausting one shared
@@ -334,15 +330,70 @@ model/delivery tests, not a claim each native CLI emits all 18 branches.
   extension, Linux and cross-language parity are not certified by this macOS Go
   acceptance. No deployment, push, publication or production-readiness claim.
 
-## Recording Simulation
+## Consumer Recording Replay
 
-`tests/sdksimulation` implements the SDK tool's `--request` / `result.json`
-convention through the public MASS Service, actual adapters and file stores.
-It starts the runtime, creates with explicit input, waits for committed messages
-and public idle state, submits the second input on the original native identity,
-and attempts shutdown even on failure. It uses only the runner-supplied peer.
+This checkout contains four consumer-provenance recordings under
+`tests/testdata/simulation/recordings/{codex,claude}/{basic,permission}/`.
+Each case binds an adjacent `index.json` to a `material/` export. The offline
+gate replays them through a real MASS daemon and public HTTP/SSE, checks that the
+mock route is `executor=external-sdk`, `target=replay`,
+`provenance=consumer`, and requires the replay receipt to prove complete
+consumption, client EOF, cleanup, matching plan/raw hashes and
+`nativeLaunched=false`. It also treats missing, extra, altered, incompletely
+consumed or secret-bearing material as failure.
 
-Build from `mass-go/`:
+Current offline status is four consumer cases passed, zero failed, and zero
+unverified. The four opt-in native recording tests are not run by
+`MASS_RECORD=0`; live Agent behavior remains unverified. Official verification
+does not apply to consumer recordings. A successful replay is not a live
+Codex/Claude or model acceptance result. Full commands, artifact hashes, failure
+injection coverage and recording instructions are in
+[consumer recording acceptance](recording-acceptance.md).
+
+## Separately Authorized Native / Real-Model Procedure
+
+This is an explicit manual product entry point, NOT an automated pass or an
+instruction to run models during default tests. The user's final gate requires
+an independent simulation chat first, then a separate independently authorized
+real E2E chat, both providers with the **theta / glm-5.3** target. Ticket08 does
+not execute that gate. Preconditions missing or unsupported by an installed CLI
+must be reported NOT EXECUTED, not substituted with a different model.
+
+1. Record MASS commit and binary hashes, immutable module/version/no-replace,
+   installed CLI absolute path/version/help, OS and model/provider configuration.
+   Inspect only dedicated test configuration; do not read personal HOME/history.
+   No secrets or access-bearing URLs may enter logs.
+2. Prepare fresh absolute owned data, HOME, CODEX_HOME, CLAUDE_CONFIG_DIR and
+   workspace directories, a loopback ephemeral listener and externally supplied
+   test credentials. Never copy personal credentials or reuse personal history.
+   Use `envPolicy: replace`; explicitly supply PATH and required config/env keys.
+   The MASS runtime config has no `model` field: select theta/glm-5.3 using the
+   installed CLI's verified configuration or an explicit owned launcher that
+   preserves SDK arguments and execs the real CLI. Claude rejects nonempty MASS
+   `args`; Codex defaults to `["app-server"]`. Do not pass invented flags or add
+   `scenario` to real runtime configuration.
+3. Run the product commands below against the owned daemon. Capture observe-ready
+   before producing work. Use the HTTP client Answer method on the original live
+   permission/form handle, after inspecting its actual options/schema; never use
+   prototype autoapproval to claim manual-answer coverage. A selected permission
+   answer is `{"outcome":"selected","optionId":"allow-once"}` only when that
+   option was actually offered. Do not answer old replayed requests.
+4. For each provider: no-input identity; first text input; current approval or
+   question and answer; completion; second same-connection input; cancel receipt
+   versus observed work termination; archive/resume original identity. Then use
+   that run's owned native history ID in explicit load, inspect separate native/
+   delivery/cleanup fields, observe future-only events, input/approval after load
+   and archive. Missing Claude linkage is unknown/fenced, not success. Record an
+   untriggered model interaction as untriggered, not PASS. Synthetic deterministic
+   overload remains a separate class, not a reason to overload a real account.
+5. On success AND failure: stop original Runtime, settle admitted local facts,
+   record original unknown responsibilities, stop daemon and Wait, verify owned
+   PIDs absent and listener closed, remove only owned directories and read back
+   absence. A timeout or Close request alone is not release proof; unknown product
+   cleanup remains unknown even if external ps observes process exit.
+
+Build and manual invocation template (replace placeholders explicitly; these
+commands have NOT been executed against a real Agent in this acceptance):
 
 ```sh
 export AGENT_SDK_TESTIFY_BIN=/absolute/prebuilt/agent-sdk-testify

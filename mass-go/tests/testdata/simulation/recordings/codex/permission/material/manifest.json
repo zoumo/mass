@@ -1,0 +1,34 @@
+{
+  "captureStatus": "complete",
+  "credentialScan": "pass",
+  "files": {
+    "manifest.json": "2055941c6b1ea876f2551bf8c88cdc090b859a4a5dd1e182b0a50c8ff5e30c8a",
+    "raw.jsonl": "d670104f3ab798a7203321e17ae900690daebb312d7815dcfade1dae8cfa08b5",
+    "stderr.raw": "33535190e248f233830073645729bb0431e2d5d2598a84e790b42c215d8de317",
+    "transport.json": "2209c3e4aa4781cdf86173362c5a6adc1a0f42cff3320b44c27c1a877522db8b"
+  },
+  "native": {
+    "args": [
+      "app-server"
+    ],
+    "cwd": "/private/var/tmp/mass-record-codex-permission-284389602/session/runtime/executions/4119c6c3a10c32b227013ae5e7a97d03/workspace",
+    "executable": "/private/var/tmp/mass-record-codex-permission-284389602/native-codex",
+    "sha256": "57b7d6666065a30e7c1db323607c7d7cbfdc4c12dc53143d7420da6949a6451e",
+    "version": "codex-cli 0.166.0"
+  },
+  "planSHA256": "6f16b586a0a1b9a5ee5edcfac0d17b7ee5c3c68632113bbe6bac70510cda5492",
+  "provenance": "consumer",
+  "proxyVersion": "0.1.0-dev",
+  "recordingFormat": {
+    "name": "agent-mock-jsonl",
+    "version": 1,
+    "transport": "stdio-jsonl"
+  },
+  "remotePhaseFiles": {},
+  "runSHA256": "2209c3e4aa4781cdf86173362c5a6adc1a0f42cff3320b44c27c1a877522db8b",
+  "savedFiles": {
+    "config/sessions/2026/11/05/rollout-2026-11-05T18-54-15-01a1ab58-4b98-7712-946d-c40b8b33ba50.jsonl": "a8088699f739633d9a0d54126c28c918fe3cc3f3784cf68696d212eb63554a38"
+  },
+  "schemaVersion": 1,
+  "status": "captured"
+}

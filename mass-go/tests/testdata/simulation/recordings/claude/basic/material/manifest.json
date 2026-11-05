@@ -1,0 +1,41 @@
+{
+  "captureStatus": "complete",
+  "credentialScan": "pass",
+  "files": {
+    "manifest.json": "dc4be96f801dcfb34943e09b41159ed977a367f6612c57906336c222c50ca2e9",
+    "raw.jsonl": "a3cb19c2fa6b6b581fedc55a5056eda386ac4a6b24f8e676c2ee07b2e116e93d",
+    "stderr.raw": "8ae07582e9237b9ec17d84072c3fbf161956de0fe276e9adf3c9bcca9dae2ae4",
+    "transport.json": "4995b45efe27358c72a7e171f7a4b58cd2ea67e4df91d449b1ad75857d424ce3"
+  },
+  "native": {
+    "args": [
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--input-format",
+      "stream-json",
+      "--permission-prompt-tool",
+      "stdio",
+      "--include-partial-messages"
+    ],
+    "cwd": "/private/var/tmp/mass-record-claude-4277366765/session/runtime/executions/105779182a4d05d2e433c5016d919d9f/workspace",
+    "executable": "/private/var/tmp/mass-record-claude-4277366765/native-claude",
+    "sha256": "10f873fb095cdf0f4279e1f7c0d35a4afd16e983b948bd618e5d967d5025d1f5",
+    "version": "2.1.258 (Claude Code)"
+  },
+  "planSHA256": "4eaedb3338618c7269e7674757ec37efa018f50787ac203d61060846784c2419",
+  "provenance": "consumer",
+  "proxyVersion": "0.1.0-dev",
+  "recordingFormat": {
+    "name": "agent-mock-jsonl",
+    "version": 1,
+    "transport": "stdio-jsonl"
+  },
+  "remotePhaseFiles": {},
+  "runSHA256": "4995b45efe27358c72a7e171f7a4b58cd2ea67e4df91d449b1ad75857d424ce3",
+  "savedFiles": {
+    "config/projects/-private-var-tmp-mass-consumer-claude-basic-project/4415440b-fafe-4ea2-824d-37ff29f73a9f.jsonl": "df1b1413311b3a8d31b587134237d7c36e5aaf59a49fcd1592b9cc326eb625ba"
+  },
+  "schemaVersion": 1,
+  "status": "captured"
+}

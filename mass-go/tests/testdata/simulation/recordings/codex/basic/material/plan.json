@@ -1,0 +1,9 @@
+{
+  "agentType": "codex",
+  "caseId": "mass-codex-basic",
+  "cliVersion": "codex-cli 0.166.0",
+  "driverProfile": "consumer",
+  "model": "gpt-6.1-sol",
+  "project": "/var/tmp/mass-consumer/codex-basic/project",
+  "version": 1
+}

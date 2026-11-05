@@ -7,7 +7,7 @@ export AGENT_SDK_TESTIFY_BIN=/absolute/prebuilt/agent-sdk-testify
 rtk proxy sh -c 'cd mass-go && GOWORK=off GOPROXY=off go test -count=1 -v ./examples/sdkprobe'
 ```
 
-需要 Go 1.26.9、`go` 与 `ps` 在 PATH，mass-go 的依赖已缓存，且 `AGENT_SDK_TESTIFY_BIN` 指向独立构建的绝对路径可执行文件。缺缓存或工具时报告未执行；离线验收不自动下载、构建或发现替代 mock。探针校验 SDK 固定版本 `github.com/zoumo/agent-sdk-go@v0.0.0-20261102180816-a3a99ad44b90` 且拒绝 replace；每个 fixture 生成独立的 v1 synthetic recording，经临时 launcher 调用外部工具 `mock --recording DIR -- ...`。两个 provider 均使用 Open/Submit 和唯一 Receive 消费者；没有修改 SDK 或调用真实 Agent。
+需要 Go 1.26.9、`go` 与 `ps` 在 PATH，且 mass-go 的依赖已缓存。缺缓存依赖时报告未执行；离线验收不自动下载或安装。探针校验 SDK 固定版本 `github.com/zoumo/agent-sdk-go@v0.0.0-20261105065348-5edf8b62e963` 和工具固定版本 `github.com/zoumo/agent-sdk-testify@v0.0.0-20261105043421-a013c2bfa1e4`，并拒绝任一 replace。探针从消费模块构建 MASS 自有的 `internal/testpeer`，经临时 launcher 启动这些严格合成场景；不构建已从最新 SDK 删除的 `tools/agent-sdk-testify protocol mock`。场景先压缩为单行原生 JSON，保持 JSONL 协议帧。两个 provider 均使用 Open/Submit 和唯一 Receive 消费者；没有修改 SDK 或调用真实 Agent。
 
 工作目录和 launcher 均位于本次临时目录；每次直连运行保留外部工具生成的 receipt。不会启动真实 Agent、读取账户或调用模型。所有场景标注 `provenance: synthetic`；工具输出只是场景数据，工具命令不会执行。
 
@@ -20,7 +20,7 @@ rtk proxy sh -c 'cd mass-go && GOWORK=off GOPROXY=off go test -count=1 -v ./exam
 | `TestClaude/basic` | control initialize → synthetic system/init 原生 ID（无 user 消息）→ 独立 hello → can_use_tool/Bash 原 PermissionRequest allow，保留原 input → 完整 tool_use/tool_result/text/result → interrupt 屏障 → Close |
 | `TestClaude/question` | 独立启动，明确识别 AskUserQuestion，通过原 IncomingRequest 按完整问题文本回答并保留原 questions/options；没有把问答直接送入全同意策略 |
 | `TestClaude/no-identity` | 脚本在 hello 前不发 init；Receive 等待 100ms 到期且 SessionID 未知，明确观察缺 ID。随后才发送非空 hello，再观察脚本 init 与正常工具/消息。需要创建时 ID 的调用方必须报错，不能用空 prompt 或自造 ID 补齐 |
-| `TestPeerExit/{codex,claude}/{complete,mismatch,incomplete}` | 独立启动外部 prepared launcher，按场景送完整 NDJSON 再 EOF：exit 0；错误请求与提前 EOF：exit 1 且有 stderr。每次 Run/Wait 后核对 ProcessState 已退出并回收，并读取 strict receipt |
+| `TestPeerExit/{codex,claude}/{complete,mismatch,incomplete}` | 独立启动同一个 MASS scenario peer 二进制，按场景送完整 NDJSON 再 EOF：exit 0；错误请求与提前 EOF：exit 1 且有 stderr。每次 Run/Wait 后核对 ProcessState 已退出并回收 |
 | `TestSDKInitializationFailure/{codex,claude}` | 将临时脚本首个预期请求改为不匹配，实际 SDK 初始化返回错误；用于验证失败资源清理 |
 
 原 handle 的 ID 与原生关联字段均检查；strict peer 校验回答关联与完整 JSON，错误回答无法到达下一协议步骤。interrupt 只是已回答请求的往返屏障，不代表真正中断了模型。SDK Close 校验错误与 Done，Codex 还检查 stderr 字节数与 unmatched responses 为零。直接子进程测试验证精确退出码，避免把 SDK 的 Close 等价于 peer exit 0。

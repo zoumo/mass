@@ -87,7 +87,7 @@ func TestMain(m *testing.M) {
 					break
 				}
 				if !bytes.Contains(output, []byte(root+"/")) {
-					fmt.Println("PASS no owned SDK peer/application processes remain")
+					fmt.Println("PASS no owned test-peer/application processes remain")
 					break
 				}
 				if time.Now().After(deadline) {
@@ -118,13 +118,8 @@ func TestMain(m *testing.M) {
 				ctl = bin
 			}
 		}
-		tool, readErr := testpeer.Executable()
-		if readErr != nil {
-			fmt.Fprintln(os.Stderr, readErr)
-			return
-		}
-		for name, path := range map[string]string{"agent-sdk-testify": tool, "massd": app, "massctl": ctl} {
-			binary, readErr := os.ReadFile(path)
+		for _, name := range []string{"mass-testpeer-codex", "mass-testpeer-claude", "massd", "massctl"} {
+			binary, readErr := os.ReadFile(filepath.Join(root, name))
 			if readErr != nil {
 				fmt.Fprintln(os.Stderr, readErr)
 				return

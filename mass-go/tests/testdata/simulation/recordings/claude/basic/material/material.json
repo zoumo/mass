@@ -1,0 +1,24 @@
+{
+  "files": {
+    "config/projects/-private-var-tmp-mass-consumer-claude-basic-project/4415440b-fafe-4ea2-824d-37ff29f73a9f.jsonl": "df1b1413311b3a8d31b587134237d7c36e5aaf59a49fcd1592b9cc326eb625ba",
+    "manifest.json": "ae1a7f6317126d203c355836a82528dad7fd65ad6ee3d093180b04d2ed554374",
+    "plan.json": "4eaedb3338618c7269e7674757ec37efa018f50787ac203d61060846784c2419",
+    "raw/manifest.json": "dc4be96f801dcfb34943e09b41159ed977a367f6612c57906336c222c50ca2e9",
+    "raw/raw.jsonl": "a3cb19c2fa6b6b581fedc55a5056eda386ac4a6b24f8e676c2ee07b2e116e93d",
+    "raw/stderr.raw": "8ae07582e9237b9ec17d84072c3fbf161956de0fe276e9adf3c9bcca9dae2ae4",
+    "raw/transport.json": "4995b45efe27358c72a7e171f7a4b58cd2ea67e4df91d449b1ad75857d424ce3",
+    "report.json": "58147e0f66718a085ae4a596ceff366ee8f2bf753e571900d01166e4facb1d41"
+  },
+  "id": "89195da5e5fbaf66e23160357b16abe8",
+  "kind": "capture",
+  "action": "record",
+  "provenance": "consumer",
+  "path": "/private/var/tmp/mass-record-claude-4277366765/session/materials/89195da5e5fbaf66e23160357b16abe8",
+  "planSHA256": "4eaedb3338618c7269e7674757ec37efa018f50787ac203d61060846784c2419",
+  "manifestSHA256": "ae1a7f6317126d203c355836a82528dad7fd65ad6ee3d093180b04d2ed554374",
+  "recordingSHA256": "a3cb19c2fa6b6b581fedc55a5056eda386ac4a6b24f8e676c2ee07b2e116e93d",
+  "connections": [
+    "main"
+  ],
+  "createdAt": "2026-11-05T11:20:58.294629Z"
+}

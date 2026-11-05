@@ -14,13 +14,16 @@ and a separately built `agent-sdk-testify` executable:
 export AGENT_SDK_TESTIFY_BIN=/absolute/path/to/agent-sdk-testify
 make prototype-go
 # Cross-capability combinations under race; no models or recording fallback:
+make acceptance-sdk-go
+# Four offline consumer replays plus artifact and credential audits:
+make recording-gate-go
 ```
 
-This builds `massd` and `massctl`, prepares Codex and Claude launchers with the
-explicit external tool, then runs `TestEntrypointSuite` through actual CLI
-processes and HTTP+SSE. Every recording is authored synthetic material. The
-prepared mock matches protocol frames strictly; it does not execute tools, use
-accounts, call models, or prove intelligence.
+This builds MASS's test-only strict protocol peer for Codex **and** Claude plus `massd`
+and `massctl`, then runs `TestEntrypointSuite` through actual CLI processes and
+HTTP+SSE. Every scenario is synthetic. The scenario peer matches ordered protocol frames
+strictly, rebinds native request IDs, and does not execute tools, use accounts, call models,
+or prove intelligence.
 The command fails on a failed scenario or cleanup readback. Test-owned binaries,
 launchers, recordings, workspaces, data and loopback ports are temporary; process, listener
 and directory cleanup is checked. No personal Agent configuration is used.
@@ -152,10 +155,81 @@ validated separately in owned test directories. Permission auto-approval remains
 an explicit daemon prototype policy; pending form/question interactions require
 the HTTP answer API. This CLI version deliberately has no answer command.
 
+### Consumer recording and replay
+
+From the repository root, run `make recording-gate-go` to replay the four
+exported Codex and Claude basic and permission cases through a running MASS
+daemon and its public HTTP/SSE API. The target forces `MASS_RECORD=0` and runs
+the artifact, receipt and credential audits with the replays. Codex uses a
+separate input operation; Claude uses create-with-initial-input because its CLI
+emits native session identity only after the first user frame. Claude assertions
+require a successful local input receipt with no invented native acceptance. The
+permission cases answer the actual recorded `allow-once` option through the HTTP
+answer API and compare the native request, answer receipt, state, event order,
+history and successful tool result. Missing, altered or incompletely consumed
+material fails the test. The mock route must be `executor=external-sdk`,
+`target=replay`, `provenance=consumer`, and the replay receipt must show
+`nativeLaunched=false`. These are consumer materials; official verification does
+not apply. Exact hashes, status and recording commands are in
+[consumer recording acceptance](docs/recording-acceptance.md).
+
+Real recording requires an authenticated Codex CLI and explicit opt-in:
+
+```sh
+MASS_RECORD=1 MASS_RECORD_CODEX=/absolute/path/to/native/codex \
+  MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-basic \
+  go test -count=1 -v ./tests/recording -run '^TestRecordCodexBasic$'
+```
+
+The permission case uses an explicit native `on-request` approval policy and a
+read-only sandbox. Its prompt requests a harmless project-local write, and the
+test answers the allow option actually offered by Codex; it never auto-approves
+or invents an option.
+
+```sh
+MASS_RECORD=1 MASS_RECORD_CODEX=/absolute/path/to/native/codex \
+  MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-permission \
+  go test -count=1 -v ./tests/recording -run '^TestRecordCodexPermission$'
+```
+
+Use the native CLI executable to avoid package-launcher environment injection.
+The output directory must not exist. Recording uses an isolated session under
+`/var/tmp`, stable protocol cwd, and disabled project instruction discovery.
+It publishes the export only after two strict replays and a personal-directory
+scan succeed. Original sessions remain private under `/var/tmp` for local audit;
+the index's `sourceSession` is relative to that directory. Failed sessions are
+retained for diagnosis and do not create a passing export. Treat these sessions
+as private because testify stages authentication there. The output contains
+native session metadata; inspect it before sharing outside the repository.
+
+Claude recording uses the same lifecycle and exports to
+`tests/testdata/simulation/recordings/claude/<case>/`:
+
+```sh
+MASS_RECORD=1 MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
+  go test -count=1 -v ./tests/recording -run '^TestRecordClaudeBasic$'
+
+MASS_RECORD=1 MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
+  go test -count=1 -v ./tests/recording -run '^TestRecordClaudePermission$'
+```
+
+Set `MASS_RECORD_CLAUDE_BASIC_OUTPUT` or
+`MASS_RECORD_CLAUDE_PERMISSION_OUTPUT` to publish to another absolute path.
+The permission wrapper supplies only the inline `permissions.ask: ["Bash"]`
+setting and answers the offered `allow-once` option through MASS. Testify
+isolates `HOME` during `prepare`; if Claude authentication is stored in
+`~/.claude/settings.json` environment values, expose the configured
+`ANTHROPIC_BASE_URL` and token only in the recording process environment. Do not
+print or copy those values into recorded material. If the native CLI does not
+emit the requested interaction, the case remains unverified and no passing
+export is published.
+
 ### Runtime Launch Configuration
 
-The SDK is pinned to `v0.0.0-20261102180816-a3a99ad44b90`, source commit
-`a3a99ad44b90a3bbe97d80cef491705645ecdc34`, without a local replacement.
+The SDK is pinned to `v0.0.0-20261105065348-5edf8b62e963`, source commit
+`5edf8b62e963e59efa20383d5373a9aee278f135`, without a local replacement. The external
+`agent-sdk-testify` tool is pinned to `v0.0.0-20261105043421-a013c2bfa1e4` for
+consumer recording and replay and is not a production dependency.
 Codex shares one native Client across its Sessions; Claude owns one native
 process per Session. Each Session has one Receive consumer for native events
 and original request capabilities. SDK observations do not establish Agent state.
@@ -171,14 +245,10 @@ prove only a complete local write, not native acceptance or recording.
 | `envPolicy` | `inherit` (default) merges parent environment with `env`; `replace` passes only configured entries, including an explicitly empty environment. |
 | `env` | String-to-string overrides; callers supply any required PATH/HOME/config-directory settings explicitly when replacing. |
 
-Validation does not open credentials or history. Offline tests launch only the
-explicitly supplied external `agent-sdk-testify mock` through prepared synthetic
-recordings and strict temporary launchers, with no real-agent fallback. Set
-`AGENT_SDK_TESTIFY_BIN` to an absolute executable; tests never build or discover
-an SDK-owned mock. Prepared descriptors bind tool version/hash, recordings,
-workspace, protocol cwd, environment, all connections and finish receipts. They
-do not prove real CLI startup, authentication, model behavior or native history
-availability.
+Validation does not open credentials or history. Offline tests launch only MASS's
+`internal/testpeer` strict scenario binary via temporary launchers, with an explicit
+scenario and no real-agent fallback. They do not prove real CLI startup,
+authentication, model behavior or native history availability.
 Both providers support explicit asynchronous retained-main-history load followed
 by input on the verified resumed connection. Ordinary resume does not import
 history. Claude continuation still requires actual native linkage for completion;

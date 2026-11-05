@@ -29,13 +29,17 @@ build-go: build-massctl
 check-go: lint-go test-go build-go
 	cd mass-go && golangci-lint fmt --diff
 
+.PHONY: recording-gate-go
+recording-gate-go:
+	cd mass-go && MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off go test -count=1 -v -timeout=300s ./tests/recording
+
 fmt-massctl: fmt-go
 lint-massctl: lint-go
 test-massctl: test-go
 check-massctl: check-go
 
-# Isolated synthetic end-to-end acceptance. Builds massd/massctl, uses the
-# explicitly supplied external agent-sdk-testify, and reads cleanup back.
+# Isolated synthetic end-to-end acceptance. Builds both MASS scenario peers plus
+# massd/massctl, exercises the product entrypoints, and reads cleanup back.
 .PHONY: prototype-go
 prototype-go:
 	@test -n "$(AGENT_SDK_TESTIFY_BIN)" || { echo "AGENT_SDK_TESTIFY_BIN must name an absolute prebuilt agent-sdk-testify executable" >&2; exit 2; }

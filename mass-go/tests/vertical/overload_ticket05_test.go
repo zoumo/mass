@@ -187,7 +187,7 @@ func TestOverloadFailureCleanupReadback(t *testing.T) {
 			}
 			require.Equal(t, expected, strings.Count(string(output), "PASS owned native process reaped pid="), "all provider-owned PIDs independently read back after failure")
 			require.NotContains(t, string(output), "Error Trace:", "cleanup must add no assertion failures to the deliberately failed child")
-			require.Contains(t, string(output), "PASS no owned SDK peer/application processes remain")
+			require.Contains(t, string(output), "PASS no owned test-peer/application processes remain")
 			require.NotContains(t, string(output), "FAIL: leaked owned child")
 		})
 	}

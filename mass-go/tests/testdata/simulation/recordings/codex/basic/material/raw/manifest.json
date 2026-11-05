@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "recordingFormat": {
+    "name": "agent-mock-jsonl",
+    "version": 1,
+    "transport": "stdio-jsonl"
+  },
+  "proxyVersion": "0.1.0-dev",
+  "captureStatus": "complete",
+  "native": {
+    "executable": "/private/var/tmp/mass-record-codex-4179440313/native-codex",
+    "sha256": "e6262a15ed75e0e095ae73f27c98a0411c52228a3909102909b03125e605649a",
+    "args": [
+      "app-server"
+    ],
+    "cwd": "/private/var/tmp/mass-record-codex-4179440313/session/runtime/executions/712c71330495e203b2720ac3b3de5173/workspace",
+    "version": "codex-cli 0.166.0"
+  },
+  "files": {
+    "raw.jsonl": "09a161d8d5172fb7333e58204e2320055077f06a7d55e6001088fa6c56079425",
+    "stderr.raw": "03e414ae12a52a7e3f2c3743de4dc8540667616a2228a0ec8d35f995a1be84bd",
+    "transport.json": "bf1804205b76f6d59dafc2ce8c6b185c336c9a6f504cf327713c315d15d8b8e0"
+  }
+}

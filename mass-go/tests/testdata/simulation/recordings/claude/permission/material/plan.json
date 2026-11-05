@@ -1,0 +1,9 @@
+{
+  "agentType": "claude",
+  "caseId": "mass-claude-permission",
+  "cliVersion": "2.1.258 (Claude Code)",
+  "driverProfile": "consumer",
+  "model": "theta/DeepSeek-V4.1-Flash-1017[1m]",
+  "project": "/private/var/tmp/mass-consumer/claude-permission/project",
+  "version": 1
+}

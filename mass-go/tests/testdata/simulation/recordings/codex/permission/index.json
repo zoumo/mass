@@ -1,0 +1,145 @@
+{
+  "provider": "codex",
+  "case": "permission",
+  "provenance": "consumer",
+  "recordedAt": "2026-11-05T10:54:29Z",
+  "sourceSession": "mass-record-codex-permission-284389602/session",
+  "exportPath": "tests/testdata/simulation/recordings/codex/permission/material",
+  "sha256": {
+    "manifest.json": "0c3ae50160b3565c3e7e1ed04d32f23f2969135b69449c4ae5a64996c2ed61ba",
+    "material.json": "dd7cdf07dcb16a3efd977ca4cce484f5ed2e159a284fb9a5a6259b51c99883b4",
+    "plan.json": "6f16b586a0a1b9a5ee5edcfac0d17b7ee5c3c68632113bbe6bac70510cda5492",
+    "raw/raw.jsonl": "d670104f3ab798a7203321e17ae900690daebb312d7815dcfade1dae8cfa08b5"
+  },
+  "versions": {
+    "codex": "codex-cli 0.166.0",
+    "mass": "078a5136e435176b66c994681e31ddcb5e693782",
+    "massWorktree": "M Makefile\n M mass-go/README.md\n M mass-go/examples/sdkprobe/README.md\n M mass-go/examples/sdkprobe/probe_test.go\n M mass-go/go.mod\n M mass-go/go.sum\n M mass-go/internal/testpeer/build.go\n M mass-go/tests/vertical/entrypoints_test.go\n M mass-go/tests/vertical/overload_ticket05_test.go\n M mass-go/tests/vertical/vertical_test.go\n?? mass-go/internal/testpeer/cmd/\n?? mass-go/internal/testpeer/rawjson/\n?? mass-go/internal/testpeer/replay/\n?? mass-go/internal/testpeer/scenario/\n?? mass-go/tests/recording/\n?? mass-go/tests/testdata/",
+    "sdk": "v0.0.0-20261105065348-5edf8b62e963",
+    "testify": "v0.0.0-20261105043421-a013c2bfa1e4"
+  },
+  "toolSHA256": {
+    "codex": "e14fc83739c13c1074b12bd1acce4010c893c7f6fbfc1593b4a31d74cabb57af",
+    "massd": "65d64e968d168b92cbc716031393f164731543d528ef036f7d03a7945f285986",
+    "testify": "06dbf06a1ee9396eb7f14046781b00bc07ee10e349af3e018ef5c1a0d192f147"
+  },
+  "codexPath": "codex",
+  "prompt": "Use the shell tool to execute this exact command in the current project: `printf mass-approved \u003e permission-proof.txt`. The command writes only that project-local file. Do not use apply_patch, do not read other files, and do not just describe the command. Then report the command exit status.",
+  "project": "/var/tmp/mass-consumer/codex-permission/project",
+  "facts": {
+    "sessionId": "01a1ab58-4b98-7712-946d-c40b8b33ba50",
+    "state": "idle",
+    "accepted": true,
+    "events": [
+      {
+        "kind": "user.message",
+        "text": "Use the shell tool to execute this exact command in the current project: `printf mass-approved \u003e permission-proof.txt`. The command writes only that project-local file. Do not use apply_patch, do not read other files, and do not just describe the command. Then report the command exit status."
+      },
+      {
+        "kind": "agent.message",
+        "text": "I’ll run the exact command in the current project and report its exit status. The read-only sandbox requires write approval.\n"
+      },
+      {
+        "kind": "agent.tool_call",
+        "text": "/bin/zsh -lc 'printf mass-approved \u003e permission-proof.txt'"
+      },
+      {
+        "kind": "agent.tool_result"
+      },
+      {
+        "kind": "agent.message",
+        "text": "Executed `printf mass-approved \u003e permission-proof.txt`. Exit status: `0`."
+      }
+    ],
+    "streamKinds": [
+      "session.state_update",
+      "user.message",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message",
+      "agent.tool_call",
+      "session.state_update",
+      "session.interaction_requested",
+      "agent.tool_result",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message_chunk",
+      "agent.message",
+      "session.state_update"
+    ],
+    "permission": {
+      "interaction": "074ba1ed-6ffc-4415-bcc5-bc2ab8ae7d7e",
+      "request": {
+        "kind": "permission",
+        "toolCallId": "exec-f2f9e80e-2497-4029-a652-8ac28d9afd8f",
+        "title": "item/commandExecution/requestApproval",
+        "options": [
+          {
+            "optionId": "allow-once",
+            "name": "Allow once",
+            "kind": "allow_once"
+          },
+          {
+            "optionId": "native-choice-1",
+            "name": "Allow and apply execpolicy amendment: {\"acceptWithExecpolicyAmendment\":{\"execpolicy_amendment\":[\"/bin/zsh\",\"-lc\",\"printf mass-approved \\u003e permission-proof.txt\"]}}",
+            "kind": "allow_always"
+          },
+          {
+            "optionId": "cancel",
+            "name": "Cancel",
+            "kind": "reject_once"
+          }
+        ],
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"kind\":\"command\",\"threadId\":\"01a1ab58-4b98-7712-946d-c40b8b33ba50\",\"turnId\":\"01a1ab58-545d-7cc3-b1b6-ddd54a958ccb\",\"itemId\":\"exec-f2f9e80e-2497-4029-a652-8ac28d9afd8f\",\"startedAtMs\":1793876064654,\"environmentId\":\"local\",\"reason\":\"Allow the exact command to write permission-proof.txt in the current project?\",\"command\":\"/bin/zsh -lc 'printf mass-approved \u003e permission-proof.txt'\",\"cwd\":\"/var/tmp/mass-consumer/codex-permission/project\",\"commandActions\":[{\"type\":\"unknown\",\"command\":\"printf mass-approved \u003e permission-proof.txt\"}],\"proposedExecpolicyAmendment\":[\"/bin/zsh\",\"-lc\",\"printf mass-approved \u003e permission-proof.txt\"],\"availableDecisions\":[\"accept\",{\"acceptWithExecpolicyAmendment\":{\"execpolicy_amendment\":[\"/bin/zsh\",\"-lc\",\"printf mass-approved \u003e permission-proof.txt\"]}},\"cancel\"]}"
+          }
+        ]
+      },
+      "stateBeforeAnswer": "requires_action",
+      "answer": {
+        "optionId": "allow-once",
+        "sent": true,
+        "nativeAccepted": null
+      },
+      "stateAfterAnswer": "idle",
+      "completed": true
+    }
+  }
+}

@@ -1,5 +1,4 @@
-// Package testpeer connects MASS tests to the separately built agent-sdk-testify
-// executable. It never builds or discovers an SDK-owned mock tool.
+// Package testpeer builds MASS's test-only strict offline protocol peer.
 package testpeer
 
 import (
@@ -14,54 +13,28 @@ import (
 	"strings"
 )
 
-const SDKVersion = "v0.0.0-20261102180816-a3a99ad44b90"
+const SDKVersion = "v0.0.0-20261105065348-5edf8b62e963"
 
-// Artifact is the installed external tool identity used by this test run.
-type Artifact struct {
-	Path    string
-	Version string
-	SHA256  string
-}
+// TestifyVersion pins the consumer recording/replay tool, not a runtime dependency.
+const TestifyVersion = "v0.0.0-20261105043421-a013c2bfa1e4"
 
-// Launcher is one direct replacement for a single SDK protocol launch.
-type Launcher struct {
-	Path      string
-	Provider  string
-	Recording string
-	Receipts  string
-}
-
-// Receipt is the persistent result written by one direct mock process.
-type Receipt struct {
-	SchemaVersion   int    `json:"schemaVersion"`
-	RunID           string `json:"runId"`
-	ConnectionID    string `json:"connectionId"`
-	Status          string `json:"status"`
-	Provider        string `json:"provider"`
-	Recording       string `json:"recording"`
-	PlanSHA256      string `json:"planSHA256"`
-	RecordingSHA256 string `json:"recordingSHA256"`
-	FullConsumption bool   `json:"fullConsumption"`
-	ClientEOF       bool   `json:"clientEOF"`
-	CleanupComplete bool   `json:"cleanupComplete"`
-	NativeLaunched  bool   `json:"nativeLaunched"`
-	ExitCode        int    `json:"exitCode"`
-	Error           string `json:"error"`
-}
-
-// Executable returns the explicit test tool. A missing, relative or non-executable
-// value is an error; tests never search PATH or fall back to a native Agent.
-func Executable() (string, error) {
-	path := os.Getenv("AGENT_SDK_TESTIFY_BIN")
-	if !filepath.IsAbs(path) {
-		return "", errors.New("AGENT_SDK_TESTIFY_BIN must name an absolute separately built agent-sdk-testify executable")
+// Build binds a provider to MASS's owned strict scenario peer. The scenario is
+// an explicit test-launch environment input, never a default or a real-agent
+// fallback.
+func Build(ctx context.Context, dir, provider string) (string, error) {
+	if provider != "codex" && provider != "claude" {
+		return "", fmt.Errorf("unsupported test provider %q", provider)
 	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", fmt.Errorf("AGENT_SDK_TESTIFY_BIN: %w", err)
+	tool := filepath.Join(dir, "mass-testpeer-"+provider)
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", tool, "github.com/zoumo/mass/mass-go/internal/testpeer/cmd/testpeer")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("build MASS protocol peer: %w\n%s", err, out)
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-		return "", fmt.Errorf("AGENT_SDK_TESTIFY_BIN is not an executable file: %s", path)
+	quote := "'" + strings.ReplaceAll(tool, "'", "'\"'\"'") + "'"
+	path := filepath.Join(dir, "mock-"+provider)
+	script := "#!/bin/sh\nexec " + quote + " --provider " + provider + " --scenario \"${" + strings.ToUpper(provider) + "_MOCK_SCENARIO:?explicit synthetic scenario required}\" -- \"$@\"\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		return "", err
 	}
 	return path, nil
 }
