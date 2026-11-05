@@ -173,10 +173,13 @@ material fails the test. The mock route must be `executor=external-sdk`,
 not apply. Exact hashes, status and recording commands are in
 [consumer recording acceptance](docs/recording-acceptance.md).
 
-Real recording requires an authenticated Codex CLI and explicit opt-in:
+Real recording requires an authenticated Codex CLI and explicit opt-in.
+`MASS_RECORD_MODEL` selects one model slug for both providers; the checked-in
+cases use `auto/deepseek-v4.1-flash-1017`.
 
 ```sh
-MASS_RECORD=1 MASS_RECORD_CODEX=/absolute/path/to/native/codex \
+MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
+  MASS_RECORD_CODEX=/absolute/path/to/native/codex \
   MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-basic \
   go test -count=1 -v ./tests/recording -run '^TestRecordCodexBasic$'
 ```
@@ -187,7 +190,8 @@ test answers the allow option actually offered by Codex; it never auto-approves
 or invents an option.
 
 ```sh
-MASS_RECORD=1 MASS_RECORD_CODEX=/absolute/path/to/native/codex \
+MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
+  MASS_RECORD_CODEX=/absolute/path/to/native/codex \
   MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-permission \
   go test -count=1 -v ./tests/recording -run '^TestRecordCodexPermission$'
 ```
@@ -206,10 +210,12 @@ Claude recording uses the same lifecycle and exports to
 `tests/testdata/simulation/recordings/claude/<case>/`:
 
 ```sh
-MASS_RECORD=1 MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
+MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
+  MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
   go test -count=1 -v ./tests/recording -run '^TestRecordClaudeBasic$'
 
-MASS_RECORD=1 MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
+MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
+  MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
   go test -count=1 -v ./tests/recording -run '^TestRecordClaudePermission$'
 ```
 
@@ -228,7 +234,7 @@ export is published.
 
 The SDK is pinned to `v0.0.0-20261105065348-5edf8b62e963`, source commit
 `5edf8b62e963e59efa20383d5373a9aee278f135`, without a local replacement. The external
-`agent-sdk-testify` tool is pinned to `v0.0.0-20261105043421-a013c2bfa1e4` for
+`agent-sdk-testify` tool is pinned to `v0.0.0-20261105165039-e4799fe3484c` for
 consumer recording and replay and is not a production dependency.
 Codex shares one native Client across its Sessions; Claude owns one native
 process per Session. Each Session has one Receive consumer for native events

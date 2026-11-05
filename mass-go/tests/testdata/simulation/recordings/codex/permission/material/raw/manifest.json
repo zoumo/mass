@@ -8,17 +8,17 @@
   "proxyVersion": "0.1.0-dev",
   "captureStatus": "complete",
   "native": {
-    "executable": "/private/var/tmp/mass-record-codex-permission-284389602/native-codex",
-    "sha256": "57b7d6666065a30e7c1db323607c7d7cbfdc4c12dc53143d7420da6949a6451e",
+    "executable": "/private/var/tmp/mass-record-codex-permission-3717221243/native-codex",
+    "sha256": "f95e85a64f9ff4121d2b7f9bbc36914c4f036e5e49679fd010e67f47aa897201",
     "args": [
       "app-server"
     ],
-    "cwd": "/private/var/tmp/mass-record-codex-permission-284389602/session/runtime/executions/4119c6c3a10c32b227013ae5e7a97d03/workspace",
+    "cwd": "/private/var/tmp/mass-record-codex-permission-3717221243/session/runtime/executions/d9ca145133326e33a131193b413467b9/workspace",
     "version": "codex-cli 0.166.0"
   },
   "files": {
-    "raw.jsonl": "d670104f3ab798a7203321e17ae900690daebb312d7815dcfade1dae8cfa08b5",
-    "stderr.raw": "33535190e248f233830073645729bb0431e2d5d2598a84e790b42c215d8de317",
-    "transport.json": "2209c3e4aa4781cdf86173362c5a6adc1a0f42cff3320b44c27c1a877522db8b"
+    "raw.jsonl": "ead9d25d2a2938869e503c9846d68548440f46a4fc499800e9ae7e21338bfb8d",
+    "stderr.raw": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "transport.json": "2b1254054240db043bdfe372ada0d9ad07ae6af9b9c477a5e240469fec61a88c"
   }
 }

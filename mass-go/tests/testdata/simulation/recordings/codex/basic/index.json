@@ -2,32 +2,32 @@
   "provider": "codex",
   "case": "basic",
   "provenance": "consumer",
-  "recordedAt": "2026-11-05T10:29:19Z",
-  "sourceSession": "mass-record-codex-4179440313/session",
+  "recordedAt": "2026-11-05T17:39:56Z",
+  "sourceSession": "mass-record-codex-4120460863/session",
   "exportPath": "tests/testdata/simulation/recordings/codex/basic/material",
   "sha256": {
-    "manifest.json": "92059a0d5f4bae3afede4348c28fda51d2049d0962515ee0c22ffcb4495b55e5",
-    "material.json": "80120d5866d82f7972fff171166da49bffb0e80e79141af6b6b9532f19ce37b9",
-    "plan.json": "ccbe9d4413016d0320c6313df4fdb6ef07c58a835d12a2a5ff923157a7e66f5d",
-    "raw/raw.jsonl": "09a161d8d5172fb7333e58204e2320055077f06a7d55e6001088fa6c56079425"
+    "manifest.json": "2cf245909c27410c9e13e6deafb66f9b0bf0d546e919be8501a52ce1ed602524",
+    "material.json": "dec91d81cffc39aefdafd419576637b50552cc28b1295b67c1cbe54f3ffc3d9a",
+    "plan.json": "4fd804eb77e7000d36866452437b6abf8c4c881e06d3c69600a11245918c4e07",
+    "raw/raw.jsonl": "c9817598e749d37ec357283ea1dd773fd1303ed79b0767e1fecb837b44e77c58"
   },
   "versions": {
     "codex": "codex-cli 0.166.0",
-    "mass": "078a5136e435176b66c994681e31ddcb5e693782",
-    "massWorktree": "M Makefile\n M mass-go/README.md\n M mass-go/examples/sdkprobe/README.md\n M mass-go/examples/sdkprobe/probe_test.go\n M mass-go/go.mod\n M mass-go/go.sum\n M mass-go/internal/testpeer/build.go\n M mass-go/tests/vertical/entrypoints_test.go\n M mass-go/tests/vertical/overload_ticket05_test.go\n M mass-go/tests/vertical/vertical_test.go\n?? mass-go/internal/testpeer/cmd/\n?? mass-go/internal/testpeer/rawjson/\n?? mass-go/internal/testpeer/replay/\n?? mass-go/internal/testpeer/scenario/\n?? mass-go/tests/recording/\n?? mass-go/tests/testdata/",
+    "mass": "eb3a6e8ce93e2dbd05dcdaf4b2c1daae5ac36a2e",
+    "massWorktree": "M mass-go/README.md\n M mass-go/docs/acceptance.md\n M mass-go/docs/recording-acceptance.md\n M mass-go/go.mod\n M mass-go/go.sum\n M mass-go/internal/testpeer/build.go\n M mass-go/tests/recording/claude_test.go\n M mass-go/tests/recording/codex_test.go",
     "sdk": "v0.0.0-20261105065348-5edf8b62e963",
-    "testify": "v0.0.0-20261105043421-a013c2bfa1e4"
+    "testify": "v0.0.0-20261105165039-e4799fe3484c"
   },
   "toolSHA256": {
-    "codex": "39acf979729dd290f9a24ee38b2914e036c91b65952872e28ae2a6b88a7db7c1",
-    "massd": "65d64e968d168b92cbc716031393f164731543d528ef036f7d03a7945f285986",
-    "testify": "06dbf06a1ee9396eb7f14046781b00bc07ee10e349af3e018ef5c1a0d192f147"
+    "codex": "e14fc83739c13c1074b12bd1acce4010c893c7f6fbfc1593b4a31d74cabb57af",
+    "massd": "ee25f23ee6372b0b2771f0395237c35c86e5a355799318dd3abc55c8e6e9047c",
+    "testify": "1a0d2257eb331bb1c8d98c298b2359b8819dc0cabcccd7bc87a4902425d6d2fa"
   },
   "codexPath": "codex",
   "prompt": "Reply with one short greeting. Do not use tools or inspect files.",
   "project": "/var/tmp/mass-consumer/codex-basic/project",
   "facts": {
-    "sessionId": "01a1ab41-15ad-76a0-9d5c-b0aec708b29b",
+    "sessionId": "01a1accb-924d-74b3-9622-b2c5e681211b",
     "state": "idle",
     "accepted": true,
     "events": [
@@ -37,8 +37,15 @@
       },
       {
         "kind": "agent.message",
-        "text": "Hi there!"
+        "text": "Hello! How can I help you today?"
       }
+    ],
+    "streamKinds": [
+      "session.state_update",
+      "user.message",
+      "agent.message_chunk",
+      "agent.message",
+      "session.state_update"
     ]
   }
 }

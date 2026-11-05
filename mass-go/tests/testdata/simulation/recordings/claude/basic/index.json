@@ -2,30 +2,30 @@
   "provider": "claude",
   "case": "basic",
   "provenance": "consumer",
-  "recordedAt": "2026-11-05T11:21:00Z",
-  "sourceSession": "mass-record-claude-4277366765/session",
+  "recordedAt": "2026-11-05T17:41:33Z",
+  "sourceSession": "mass-record-claude-1936072611/session",
   "exportPath": "tests/testdata/simulation/recordings/claude/basic/material",
   "sha256": {
-    "manifest.json": "ae1a7f6317126d203c355836a82528dad7fd65ad6ee3d093180b04d2ed554374",
-    "material.json": "c35e77d128d38c083c24d3498c711c2efde15e35eb818df117e1647657378ac6",
-    "plan.json": "4eaedb3338618c7269e7674757ec37efa018f50787ac203d61060846784c2419",
-    "raw/manifest.json": "dc4be96f801dcfb34943e09b41159ed977a367f6612c57906336c222c50ca2e9",
-    "raw/raw.jsonl": "a3cb19c2fa6b6b581fedc55a5056eda386ac4a6b24f8e676c2ee07b2e116e93d",
-    "raw/stderr.raw": "8ae07582e9237b9ec17d84072c3fbf161956de0fe276e9adf3c9bcca9dae2ae4",
-    "raw/transport.json": "4995b45efe27358c72a7e171f7a4b58cd2ea67e4df91d449b1ad75857d424ce3"
+    "manifest.json": "77a6556b6bf3deef5b44e39bbbb88d52a29047156a3d02935b3802535868e6d9",
+    "material.json": "3a0112f32747ab25c591f8d714d6c9d61b3ad19d1fd3dec7dbc818638cdf9af2",
+    "plan.json": "4f08fba508dc5eb285277932db05fa40274a3a62e57693a580ef224e23848e6a",
+    "raw/manifest.json": "6b9ce51e63dff1ecc122a9ae19d91be99963f1587788ed1c484fddb34f3caa33",
+    "raw/raw.jsonl": "c5b09db9ce22b09a7ddf85f4bca660c7a1b6f5c357e75df4d7414858940ee717",
+    "raw/stderr.raw": "a3e5c0ea281d47276957c8ac092518c30a2f8b1b63a3a9c9da6cb668ee9a6906",
+    "raw/transport.json": "c62ade653f8bda509b05391361eebd3013ea9129fd0de6611610590ea83993d1"
   },
   "versions": {
     "claude": "2.1.258 (Claude Code)",
-    "claudeModel": "theta/DeepSeek-V4.1-Flash-1017[1m]",
-    "mass": "078a5136e435176b66c994681e31ddcb5e693782",
-    "massWorktree": "M Makefile\n M mass-go/README.md\n M mass-go/examples/sdkprobe/README.md\n M mass-go/examples/sdkprobe/probe_test.go\n M mass-go/go.mod\n M mass-go/go.sum\n M mass-go/internal/testpeer/build.go\n M mass-go/tests/vertical/entrypoints_test.go\n M mass-go/tests/vertical/overload_ticket05_test.go\n M mass-go/tests/vertical/vertical_test.go\n?? mass-go/internal/testpeer/cmd/\n?? mass-go/internal/testpeer/rawjson/\n?? mass-go/internal/testpeer/replay/\n?? mass-go/internal/testpeer/scenario/\n?? mass-go/tests/recording/\n?? mass-go/tests/testdata/",
+    "claudeModel": "auto/deepseek-v4.1-flash-1017",
+    "mass": "eb3a6e8ce93e2dbd05dcdaf4b2c1daae5ac36a2e",
+    "massWorktree": "M mass-go/README.md\n M mass-go/docs/acceptance.md\n M mass-go/docs/recording-acceptance.md\n M mass-go/go.mod\n M mass-go/go.sum\n M mass-go/internal/testpeer/build.go\n M mass-go/tests/recording/claude_test.go\n M mass-go/tests/recording/codex_test.go",
     "sdk": "v0.0.0-20261105065348-5edf8b62e963",
-    "testify": "v0.0.0-20261105043421-a013c2bfa1e4"
+    "testify": "v0.0.0-20261105165039-e4799fe3484c"
   },
   "toolSHA256": {
     "claude": "0d036f0b635d239844e6df6996bc05263fe305df505b073c71f79f83668ea35a",
-    "massd": "65d64e968d168b92cbc716031393f164731543d528ef036f7d03a7945f285986",
-    "testify": "06dbf06a1ee9396eb7f14046781b00bc07ee10e349af3e018ef5c1a0d192f147"
+    "massd": "ee25f23ee6372b0b2771f0395237c35c86e5a355799318dd3abc55c8e6e9047c",
+    "testify": "1a0d2257eb331bb1c8d98c298b2359b8819dc0cabcccd7bc87a4902425d6d2fa"
   },
   "claudePath": "claude",
   "claudeAuthMethod": "oauth_token",
@@ -33,7 +33,7 @@
   "prompt": "Reply with one short greeting. Do not use tools or inspect files.",
   "project": "/private/var/tmp/mass-consumer/claude-basic/project",
   "facts": {
-    "sessionId": "4415440b-fafe-4ea2-824d-37ff29f73a9f",
+    "sessionId": "4f576afe-bb2a-4d5e-b024-606a2eabe7b2",
     "state": "idle",
     "accepted": true,
     "input": {

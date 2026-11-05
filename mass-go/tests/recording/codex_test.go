@@ -182,6 +182,14 @@ func fileSHA256(path string) (string, error) {
 
 func quote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
 
+func recordingModel(t *testing.T, fallback string) string {
+	t.Helper()
+	if selected := strings.TrimSpace(os.Getenv("MASS_RECORD_MODEL")); selected != "" {
+		return selected
+	}
+	return fallback
+}
+
 func (h *harness) prepare(session, sourceFlag, source, mode, expectedProject string) route {
 	h.t.Helper()
 	h.command(h.tool, "prepare", sourceFlag, source, "--session-dir", session)
@@ -1004,13 +1012,14 @@ func TestRecordCodexBasic(t *testing.T) {
 	version := h.command(codex, "--version")
 	require.Contains(t, h.command(codex, "login", "status"), "Logged in")
 	require.NoError(t, os.MkdirAll(project, 0o700))
+	selectedModel := recordingModel(t, model)
 	plan := filepath.Join(scratch, "plan.json")
-	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-basic", "driverProfile": "consumer", "project": project, "cliVersion": version, "model": model})
+	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-basic", "driverProfile": "consumer", "project": project, "cliVersion": version, "model": selectedModel})
 	route := h.prepare(session, "--plan", plan, "record", project)
 	cli := filepath.Join(scratch, "codex")
 	require.NoError(t, os.Symlink(codex, cli))
 	native := filepath.Join(scratch, "native-codex")
-	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(project)+" || exit 1\nexec "+quote(cli)+" -c "+quote("model=\""+model+"\"")+" -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"), 0o700))
+	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(project)+" || exit 1\nexec "+quote(cli)+" -c "+quote("model=\""+selectedModel+"\"")+" -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --session-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
 	observed := h.flow(route, wrapper, flowCase{name: "basic", prompt: prompt, project: project})
@@ -1061,13 +1070,14 @@ func TestRecordCodexPermission(t *testing.T) {
 	if err := os.Remove(proof); err != nil && !os.IsNotExist(err) {
 		require.NoError(t, err)
 	}
+	selectedModel := recordingModel(t, model)
 	plan := filepath.Join(scratch, "plan.json")
-	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-permission", "driverProfile": "consumer", "project": permissionProject, "cliVersion": version, "model": model})
+	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-permission", "driverProfile": "consumer", "project": permissionProject, "cliVersion": version, "model": selectedModel})
 	route := h.prepare(session, "--plan", plan, "record", permissionProject)
 	cli := filepath.Join(scratch, "codex")
 	require.NoError(t, os.Symlink(codex, cli))
 	native := filepath.Join(scratch, "native-codex")
-	config := "exec " + quote(cli) + " -c " + quote("model=\""+model+"\"") + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' -c 'approval_policy=\"on-request\"' -c 'sandbox_mode=\"read-only\"' \"$@\"\n"
+	config := "exec " + quote(cli) + " -c " + quote("model=\""+selectedModel+"\"") + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' -c 'approval_policy=\"on-request\"' -c 'sandbox_mode=\"read-only\"' \"$@\"\n"
 	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(permissionProject)+" || exit 1\n"+config), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --session-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))

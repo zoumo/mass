@@ -33,7 +33,7 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/zoumo/agent-sdk-testify v0.0.0-20261105043421-a013c2bfa1e4 // indirect
+	github.com/zoumo/agent-sdk-testify v0.0.0-20261105165039-e4799fe3484c // indirect
 	github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.57.0 // indirect

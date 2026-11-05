@@ -49,7 +49,7 @@ func claudeIdentityForTest(t *testing.T, h *harness) claudeIdentity {
 	return claudeIdentity{
 		path:        path,
 		version:     version,
-		model:       claudeConfiguredModel(t),
+		model:       recordingModel(t, claudeConfiguredModel(t)),
 		authMethod:  status.AuthMethod,
 		apiProvider: status.APIProvider,
 	}

@@ -2,21 +2,21 @@
   "captureStatus": "complete",
   "credentialScan": "pass",
   "files": {
-    "manifest.json": "4d14b81e462986e78b693646c51b473f956567ba005489cd9d12c33df1ff2eba",
-    "raw.jsonl": "09a161d8d5172fb7333e58204e2320055077f06a7d55e6001088fa6c56079425",
-    "stderr.raw": "03e414ae12a52a7e3f2c3743de4dc8540667616a2228a0ec8d35f995a1be84bd",
-    "transport.json": "bf1804205b76f6d59dafc2ce8c6b185c336c9a6f504cf327713c315d15d8b8e0"
+    "manifest.json": "80623394161a26ba8f90cce27ffe833691837ed334f8bbfdde8195a7e62e065b",
+    "raw.jsonl": "c9817598e749d37ec357283ea1dd773fd1303ed79b0767e1fecb837b44e77c58",
+    "stderr.raw": "3d16db9cda020c9f0350593e3d5b52590ad4066623ad7a863cd786927623cee3",
+    "transport.json": "710094f125ce59c477f75717ddf5cddac1a7fe2563d3a405f9216707878891dc"
   },
   "native": {
     "args": [
       "app-server"
     ],
-    "cwd": "/private/var/tmp/mass-record-codex-4179440313/session/runtime/executions/712c71330495e203b2720ac3b3de5173/workspace",
-    "executable": "/private/var/tmp/mass-record-codex-4179440313/native-codex",
-    "sha256": "e6262a15ed75e0e095ae73f27c98a0411c52228a3909102909b03125e605649a",
+    "cwd": "/private/var/tmp/mass-record-codex-4120460863/session/runtime/executions/7e3bfb54872521e91f04505abfa7960e/workspace",
+    "executable": "/private/var/tmp/mass-record-codex-4120460863/native-codex",
+    "sha256": "ba7e5669594782cc602e67561e5b6f01ca678dbc5a689da5cdea0037ba7a61a3",
     "version": "codex-cli 0.166.0"
   },
-  "planSHA256": "ccbe9d4413016d0320c6313df4fdb6ef07c58a835d12a2a5ff923157a7e66f5d",
+  "planSHA256": "4fd804eb77e7000d36866452437b6abf8c4c881e06d3c69600a11245918c4e07",
   "provenance": "consumer",
   "proxyVersion": "0.1.0-dev",
   "recordingFormat": {
@@ -25,9 +25,9 @@
     "transport": "stdio-jsonl"
   },
   "remotePhaseFiles": {},
-  "runSHA256": "bf1804205b76f6d59dafc2ce8c6b185c336c9a6f504cf327713c315d15d8b8e0",
+  "runSHA256": "710094f125ce59c477f75717ddf5cddac1a7fe2563d3a405f9216707878891dc",
   "savedFiles": {
-    "config/sessions/2026/11/05/rollout-2026-11-05T18-28-56-01a1ab41-15ad-76a0-9d5c-b0aec708b29b.jsonl": "1c5e804b8106b7ed55bda38709f7120d9adcf63ddfc1943e8a7167d6e025ccfa"
+    "config/sessions/2026/11/06/rollout-2026-11-06T01-39-44-01a1accb-924d-74b3-9622-b2c5e681211b.jsonl": "ced25bbeb235f87491801954d7b34431f298875c5c20b2d6c14a295679a6b0d7"
   },
   "schemaVersion": 1,
   "status": "captured"

@@ -1,24 +1,24 @@
 {
   "files": {
-    "config/projects/-private-var-tmp-mass-consumer-claude-basic-project/4415440b-fafe-4ea2-824d-37ff29f73a9f.jsonl": "df1b1413311b3a8d31b587134237d7c36e5aaf59a49fcd1592b9cc326eb625ba",
-    "manifest.json": "ae1a7f6317126d203c355836a82528dad7fd65ad6ee3d093180b04d2ed554374",
-    "plan.json": "4eaedb3338618c7269e7674757ec37efa018f50787ac203d61060846784c2419",
-    "raw/manifest.json": "dc4be96f801dcfb34943e09b41159ed977a367f6612c57906336c222c50ca2e9",
-    "raw/raw.jsonl": "a3cb19c2fa6b6b581fedc55a5056eda386ac4a6b24f8e676c2ee07b2e116e93d",
-    "raw/stderr.raw": "8ae07582e9237b9ec17d84072c3fbf161956de0fe276e9adf3c9bcca9dae2ae4",
-    "raw/transport.json": "4995b45efe27358c72a7e171f7a4b58cd2ea67e4df91d449b1ad75857d424ce3",
+    "config/projects/-private-var-tmp-mass-consumer-claude-basic-project/4f576afe-bb2a-4d5e-b024-606a2eabe7b2.jsonl": "ab647067f4204e1e31aef75a375a8979a7a7c31a69cc467f43f272970fe5f9ce",
+    "manifest.json": "77a6556b6bf3deef5b44e39bbbb88d52a29047156a3d02935b3802535868e6d9",
+    "plan.json": "4f08fba508dc5eb285277932db05fa40274a3a62e57693a580ef224e23848e6a",
+    "raw/manifest.json": "6b9ce51e63dff1ecc122a9ae19d91be99963f1587788ed1c484fddb34f3caa33",
+    "raw/raw.jsonl": "c5b09db9ce22b09a7ddf85f4bca660c7a1b6f5c357e75df4d7414858940ee717",
+    "raw/stderr.raw": "a3e5c0ea281d47276957c8ac092518c30a2f8b1b63a3a9c9da6cb668ee9a6906",
+    "raw/transport.json": "c62ade653f8bda509b05391361eebd3013ea9129fd0de6611610590ea83993d1",
     "report.json": "58147e0f66718a085ae4a596ceff366ee8f2bf753e571900d01166e4facb1d41"
   },
-  "id": "89195da5e5fbaf66e23160357b16abe8",
+  "id": "b832fb47a88f96ae5268fac0aec67ad4",
   "kind": "capture",
   "action": "record",
   "provenance": "consumer",
-  "path": "/private/var/tmp/mass-record-claude-4277366765/session/materials/89195da5e5fbaf66e23160357b16abe8",
-  "planSHA256": "4eaedb3338618c7269e7674757ec37efa018f50787ac203d61060846784c2419",
-  "manifestSHA256": "ae1a7f6317126d203c355836a82528dad7fd65ad6ee3d093180b04d2ed554374",
-  "recordingSHA256": "a3cb19c2fa6b6b581fedc55a5056eda386ac4a6b24f8e676c2ee07b2e116e93d",
+  "path": "/private/var/tmp/mass-record-claude-1936072611/session/materials/b832fb47a88f96ae5268fac0aec67ad4",
+  "planSHA256": "4f08fba508dc5eb285277932db05fa40274a3a62e57693a580ef224e23848e6a",
+  "manifestSHA256": "77a6556b6bf3deef5b44e39bbbb88d52a29047156a3d02935b3802535868e6d9",
+  "recordingSHA256": "c5b09db9ce22b09a7ddf85f4bca660c7a1b6f5c357e75df4d7414858940ee717",
   "connections": [
     "main"
   ],
-  "createdAt": "2026-11-05T11:20:58.294629Z"
+  "createdAt": "2026-11-05T17:41:31.123126Z"
 }

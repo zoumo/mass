@@ -1,24 +1,24 @@
 {
   "files": {
-    "config/projects/-private-var-tmp-mass-consumer-claude-permission-project/dd97a442-d356-488e-aae0-9c7836bbc94c.jsonl": "e709f96ea4cfe4c8a42db03b7718b3b432bd9c570fa9e9110e896e47b2fbb07f",
-    "manifest.json": "52fb9b196703ccda1eb9e143ae98cdf40e94f13492154c7aa245863afbcf11f5",
-    "plan.json": "fe079b07c2412bca2e6877c06d977ef4ef5cab12e7fc609919d983bb864303df",
-    "raw/manifest.json": "768aa86d55d16fb4d442b9a5ef72de9c1dd0e081257a1011dbb77dd395aed3be",
-    "raw/raw.jsonl": "3810685b16e4b67dec8c874ae6c0b2e5384dc0cf0609dd0456365010f7ef342c",
-    "raw/stderr.raw": "8ae07582e9237b9ec17d84072c3fbf161956de0fe276e9adf3c9bcca9dae2ae4",
-    "raw/transport.json": "f891651d5d859e100fb23a015ccab66aab8cc29cbd3ea4de9e99041b1a5a5d3a",
+    "config/projects/-private-var-tmp-mass-consumer-claude-permission-project/48dd8296-16e2-4f09-83df-4ee7e4426dcb.jsonl": "de856a895554f9531e083cbc58767b87e1c5d20171df93f6ba1aa294e346ceca",
+    "manifest.json": "dc24d6920c1bdbc466face9f749ca4b2f1d871956363495b10df9484b04cf4b6",
+    "plan.json": "39487e428176d308da9c0063c41be278f1b96cb4370a6550e412489fae328b06",
+    "raw/manifest.json": "ab18c64de9a3a9981b9f96fd182267c6ef97f7d31191c73e85fc88eba9173484",
+    "raw/raw.jsonl": "a1edf9df4d0bfc463479f99be0667640be03ad0e685eca24a4861c7615584f87",
+    "raw/stderr.raw": "a3e5c0ea281d47276957c8ac092518c30a2f8b1b63a3a9c9da6cb668ee9a6906",
+    "raw/transport.json": "e62e854da8080ac3037d57fe29df9a33decdf04088fa07f26debe5d580f0cf21",
     "report.json": "58147e0f66718a085ae4a596ceff366ee8f2bf753e571900d01166e4facb1d41"
   },
-  "id": "d8247105ab49a41315be3e5910e8ab41",
+  "id": "0529d127980382b6f6586ed5fbd84002",
   "kind": "capture",
   "action": "record",
   "provenance": "consumer",
-  "path": "/private/var/tmp/mass-record-claude-permission-3439649733/session/materials/d8247105ab49a41315be3e5910e8ab41",
-  "planSHA256": "fe079b07c2412bca2e6877c06d977ef4ef5cab12e7fc609919d983bb864303df",
-  "manifestSHA256": "52fb9b196703ccda1eb9e143ae98cdf40e94f13492154c7aa245863afbcf11f5",
-  "recordingSHA256": "3810685b16e4b67dec8c874ae6c0b2e5384dc0cf0609dd0456365010f7ef342c",
+  "path": "/private/var/tmp/mass-record-claude-permission-2810168722/session/materials/0529d127980382b6f6586ed5fbd84002",
+  "planSHA256": "39487e428176d308da9c0063c41be278f1b96cb4370a6550e412489fae328b06",
+  "manifestSHA256": "dc24d6920c1bdbc466face9f749ca4b2f1d871956363495b10df9484b04cf4b6",
+  "recordingSHA256": "a1edf9df4d0bfc463479f99be0667640be03ad0e685eca24a4861c7615584f87",
   "connections": [
     "main"
   ],
-  "createdAt": "2026-11-05T11:21:18.942422Z"
+  "createdAt": "2026-11-05T17:42:00.435007Z"
 }

@@ -2,21 +2,21 @@
   "captureStatus": "complete",
   "credentialScan": "pass",
   "files": {
-    "manifest.json": "2055941c6b1ea876f2551bf8c88cdc090b859a4a5dd1e182b0a50c8ff5e30c8a",
-    "raw.jsonl": "d670104f3ab798a7203321e17ae900690daebb312d7815dcfade1dae8cfa08b5",
-    "stderr.raw": "33535190e248f233830073645729bb0431e2d5d2598a84e790b42c215d8de317",
-    "transport.json": "2209c3e4aa4781cdf86173362c5a6adc1a0f42cff3320b44c27c1a877522db8b"
+    "manifest.json": "6eb9a126109d9726f8e251f656f4179a86e7ae8c90e788f9872761d389c8225f",
+    "raw.jsonl": "ead9d25d2a2938869e503c9846d68548440f46a4fc499800e9ae7e21338bfb8d",
+    "stderr.raw": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "transport.json": "2b1254054240db043bdfe372ada0d9ad07ae6af9b9c477a5e240469fec61a88c"
   },
   "native": {
     "args": [
       "app-server"
     ],
-    "cwd": "/private/var/tmp/mass-record-codex-permission-284389602/session/runtime/executions/4119c6c3a10c32b227013ae5e7a97d03/workspace",
-    "executable": "/private/var/tmp/mass-record-codex-permission-284389602/native-codex",
-    "sha256": "57b7d6666065a30e7c1db323607c7d7cbfdc4c12dc53143d7420da6949a6451e",
+    "cwd": "/private/var/tmp/mass-record-codex-permission-3717221243/session/runtime/executions/d9ca145133326e33a131193b413467b9/workspace",
+    "executable": "/private/var/tmp/mass-record-codex-permission-3717221243/native-codex",
+    "sha256": "f95e85a64f9ff4121d2b7f9bbc36914c4f036e5e49679fd010e67f47aa897201",
     "version": "codex-cli 0.166.0"
   },
-  "planSHA256": "6f16b586a0a1b9a5ee5edcfac0d17b7ee5c3c68632113bbe6bac70510cda5492",
+  "planSHA256": "849a1039b6b2a7574c960bc72c2b8283985207998a5f4e1ee69da22b01a294e3",
   "provenance": "consumer",
   "proxyVersion": "0.1.0-dev",
   "recordingFormat": {
@@ -25,9 +25,9 @@
     "transport": "stdio-jsonl"
   },
   "remotePhaseFiles": {},
-  "runSHA256": "2209c3e4aa4781cdf86173362c5a6adc1a0f42cff3320b44c27c1a877522db8b",
+  "runSHA256": "2b1254054240db043bdfe372ada0d9ad07ae6af9b9c477a5e240469fec61a88c",
   "savedFiles": {
-    "config/sessions/2026/11/05/rollout-2026-11-05T18-54-15-01a1ab58-4b98-7712-946d-c40b8b33ba50.jsonl": "a8088699f739633d9a0d54126c28c918fe3cc3f3784cf68696d212eb63554a38"
+    "config/sessions/2026/11/06/rollout-2026-11-06T01-40-17-01a1accc-107d-72b0-9913-95dba2c9365c.jsonl": "6a839331aa414df00db411c427cf0ad0d01dbfdd1abd76db618f80fb0eea66ef"
   },
   "schemaVersion": 1,
   "status": "captured"

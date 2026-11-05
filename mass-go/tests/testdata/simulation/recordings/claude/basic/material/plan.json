@@ -3,7 +3,7 @@
   "caseId": "mass-claude-basic",
   "cliVersion": "2.1.258 (Claude Code)",
   "driverProfile": "consumer",
-  "model": "theta/DeepSeek-V4.1-Flash-1017[1m]",
+  "model": "auto/deepseek-v4.1-flash-1017",
   "project": "/private/var/tmp/mass-consumer/claude-basic/project",
   "version": 1
 }

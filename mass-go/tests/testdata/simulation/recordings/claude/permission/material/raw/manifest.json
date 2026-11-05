@@ -8,8 +8,8 @@
   "proxyVersion": "0.1.0-dev",
   "captureStatus": "complete",
   "native": {
-    "executable": "/private/var/tmp/mass-record-claude-permission-3439649733/native-claude",
-    "sha256": "8e006e78000e8ec830163a016cdc2674a22f1812032a694362fd0c2f96ace53e",
+    "executable": "/private/var/tmp/mass-record-claude-permission-2810168722/native-claude",
+    "sha256": "f32f337215f1a22a98d2eb1899477bd45a6a175808de4be8a078dff46b40052c",
     "args": [
       "--output-format",
       "stream-json",
@@ -20,12 +20,12 @@
       "stdio",
       "--include-partial-messages"
     ],
-    "cwd": "/private/var/tmp/mass-record-claude-permission-3439649733/session/runtime/executions/568ae15a124de22cd3216d195084e0b7/workspace",
+    "cwd": "/private/var/tmp/mass-record-claude-permission-2810168722/session/runtime/executions/97229a9770bc32da7e05995e4e209573/workspace",
     "version": "2.1.258 (Claude Code)"
   },
   "files": {
-    "raw.jsonl": "3810685b16e4b67dec8c874ae6c0b2e5384dc0cf0609dd0456365010f7ef342c",
-    "stderr.raw": "8ae07582e9237b9ec17d84072c3fbf161956de0fe276e9adf3c9bcca9dae2ae4",
-    "transport.json": "f891651d5d859e100fb23a015ccab66aab8cc29cbd3ea4de9e99041b1a5a5d3a"
+    "raw.jsonl": "a1edf9df4d0bfc463479f99be0667640be03ad0e685eca24a4861c7615584f87",
+    "stderr.raw": "a3e5c0ea281d47276957c8ac092518c30a2f8b1b63a3a9c9da6cb668ee9a6906",
+    "transport.json": "e62e854da8080ac3037d57fe29df9a33decdf04088fa07f26debe5d580f0cf21"
   }
 }

@@ -5,7 +5,7 @@ This is the current Go implementation acceptance map, not a change to the
 `github.com/zoumo/agent-sdk-go v0.0.0-20261105065348-5edf8b62e963`, source
 `5edf8b62e963e59efa20383d5373a9aee278f135`, with no local `replace`. The
 external `agent-sdk-testify` tool is pinned to
-`v0.0.0-20261105043421-a013c2bfa1e4`; it is a test-only recording and replay
+`v0.0.0-20261105165039-e4799fe3484c`; it is a test-only recording and replay
 dependency. Exact consumer case hashes and the current gate result are in
 [consumer recording acceptance](recording-acceptance.md).
 
@@ -165,7 +165,8 @@ native run, SDK/matcher/capture change, harness write or publication is implied.
 | Product synthetic integration | Actual adapters, Service, file Store, CLI/HTTP/SSE and owned protocol peers | Default offline checks and the combinations below; no models or tools run |
 | Public-module fault injection | Deterministic append/publish/close/admission outcomes through public interfaces | Original facts, unsettled obligations, bounded isolation and cleanup, not native CLI guarantees |
 | Consumer recording replay | MASS public actions against exported, hash-bound Codex and Claude captures | Four registered cases; offline PASS with `nativeLaunched=false`; no live model under test |
-| Native protocol/live Agent | Installed CLI, actual identity, account/model and persistence | NOT EXECUTED in this checkout; explicit, separately authorized procedure below |
+| Native recording session | Installed CLI, authenticated account, selected model and exported native session | Four consumer-session recordings executed on 2026-11-05 with `auto/deepseek-v4.1-flash-1017`; source sessions retained outside the repository |
+| Live MASS product E2E | Real MASS daemon/CLI/HTTP/SSE with a native runtime, model, history load and persistence | NOT EXECUTED in this checkout; explicit, separately authorized procedure below |
 
 Consumer recordings have `provenance=consumer`; official verification does not
 apply, and replaying them does not prove live Agent behavior. Authored peers are
@@ -343,11 +344,14 @@ consumption, client EOF, cleanup, matching plan/raw hashes and
 consumed or secret-bearing material as failure.
 
 Current offline status is four consumer cases passed, zero failed, and zero
-unverified. The four opt-in native recording tests are not run by
-`MASS_RECORD=0`; live Agent behavior remains unverified. Official verification
-does not apply to consumer recordings. A successful replay is not a live
-Codex/Claude or model acceptance result. Full commands, artifact hashes, failure
-injection coverage and recording instructions are in
+unverified. The four opt-in recording tests passed separately under
+`MASS_RECORD=1` with real Codex and Claude CLIs and
+`auto/deepseek-v4.1-flash-1017`; `MASS_RECORD=0` replays those exports without
+launching a native process. Live MASS product E2E and native persistence or
+recovery behavior remain unverified. Official verification does not apply to
+consumer recordings. A successful replay is not a live Codex/Claude or model
+acceptance result. Full commands, artifact hashes, failure injection coverage
+and recording instructions are in
 [consumer recording acceptance](recording-acceptance.md).
 
 ## Separately Authorized Native / Real-Model Procedure
