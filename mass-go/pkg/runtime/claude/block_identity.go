@@ -144,11 +144,15 @@ func (s *session) markAssistantFrame(parent, uuid string) bool {
 	return false
 }
 
+func blockItemID(response string, index int) string {
+	return response + ":" + strconv.Itoa(index)
+}
+
 func (key blockKey) itemID() string {
 	if key.parent == "" {
-		return key.response + ":" + strconv.Itoa(key.index)
+		return blockItemID(key.response, key.index)
 	}
-	return key.parent + ":" + key.response + ":" + strconv.Itoa(key.index)
+	return key.parent + ":" + blockItemID(key.response, key.index)
 }
 
 func (key blockKey) meta() map[string]any {
@@ -189,16 +193,28 @@ func blockCoordinate(value map[string]json.RawMessage) (int, coordinateState) {
 		if !present {
 			continue
 		}
-		var parsed *int
-		if err := json.Unmarshal(raw, &parsed); err != nil || parsed == nil || *parsed < 0 || (index >= 0 && *parsed != index) {
+		var parsed *json.Number
+		if err := json.Unmarshal(raw, &parsed); err != nil || parsed == nil {
 			return 0, coordinateInvalid
 		}
-		index = *parsed
+		parsedIndex, ok := nonNegativeIndex(*parsed)
+		if !ok || (index >= 0 && parsedIndex != index) {
+			return 0, coordinateInvalid
+		}
+		index = parsedIndex
 	}
 	if index < 0 {
 		return 0, coordinateMissing
 	}
 	return index, coordinateValid
+}
+
+func nonNegativeIndex(number json.Number) (int, bool) {
+	index, err := strconv.Atoi(number.String())
+	if err != nil || index < 0 {
+		return 0, false
+	}
+	return index, true
 }
 
 func visibleContentKind(value string) bool {

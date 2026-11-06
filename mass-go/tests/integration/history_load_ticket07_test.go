@@ -22,6 +22,7 @@ import (
 	eventfile "github.com/zoumo/mass/mass-go/pkg/eventstore/file"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
 	metafile "github.com/zoumo/mass/mass-go/pkg/metastore/file"
+	"github.com/zoumo/mass/mass-go/pkg/prototype"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/claude"
@@ -147,11 +148,13 @@ func TestTicket07ClaudeLoadHTTPAndTwoRetainedProcessWrites(t *testing.T) {
 	var page store.HistoryPage
 	require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{Limit: 1}, &page))
 	require.Len(t, page.Events, 1)
+	require.Equal(t, "first:0", page.Events[0].ItemID)
 	require.Equal(t, "first", page.Events[0].Replay.NativeRecordID)
 	require.Empty(t, page.Events[0].Replay.NativeParentID, "root null parent must not be invented")
 	var tail store.HistoryPage
 	require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{After: page.Next}, &tail))
 	require.Len(t, tail.Events, 1)
+	require.Equal(t, "last:0", tail.Events[0].ItemID)
 	require.Equal(t, "last", tail.Events[0].Replay.NativeRecordID)
 	observer, err := c.Observe(ctx(t), ref)
 	require.NoError(t, err)
@@ -221,6 +224,13 @@ func TestTicket07ClaudeOrderedFiveKindsAndOutputPresence(t *testing.T) {
 	require.Equal(t, "2026-10-01T01:02:03Z", page.Events[0].Time.Format(time.RFC3339))
 	require.Equal(t, "native_record", page.Events[0].Meta["timeSource"])
 	require.Equal(t, []string{"user.message", "agent.thinking", "agent.message", "agent.tool_call", "agent.message", "agent.tool_call", "agent.tool_call", "agent.tool_call", "agent.tool_call", "agent.tool_result", "agent.tool_result", "agent.tool_result", "agent.tool_result"}, eventKinds(page.Events))
+	require.Equal(t, []string{"first:0", "last:0", "last:1", "absent", "last:3", "null", "empty", "truncated", "no-result", "absent", "null", "empty", "truncated"}, eventItems(page.Events))
+	for _, event := range page.Events[1:9] {
+		require.Equal(t, "last", event.Replay.NativeRecordID)
+	}
+	for _, event := range page.Events[9:] {
+		require.Equal(t, "results", event.Replay.NativeRecordID)
+	}
 	results := map[string]events.ToolResult{}
 	for _, e := range page.Events {
 		require.NotEmpty(t, e.Meta["nativeRaw"])
@@ -237,12 +247,181 @@ func TestTicket07ClaudeOrderedFiveKindsAndOutputPresence(t *testing.T) {
 	require.NotContains(t, results, "no-result")
 }
 
+func ticket07History(t *testing.T, url, cwd string) store.HistoryPage {
+	t.Helper()
+	_, ref := ticket07Load(t, url, cwd)
+	ticket07Status(t, url, ref, "completed")
+	c := newHTTPClient(t, url, "")
+	var page store.HistoryPage
+	require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{}, &page))
+	return page
+}
+
+func TestClaudeHistoryUsesNativeBlockCoordinatesAndSeparateReplay(t *testing.T) {
+	rows := []map[string]any{
+		{"type": "user", "uuid": "user-record", "parentUuid": nil, "message": map[string]any{"role": "user", "content": "question"}},
+		{"type": "assistant", "uuid": "assistant-record", "parentUuid": "user-record", "apiBlockIndex": 3, "message": map[string]any{"id": "response-1", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "answer"}}}},
+	}
+	_, url, cwd, _ := ticket07HTTP(t, "", rows)
+	page := ticket07History(t, url, cwd)
+
+	require.Len(t, page.Events, 2)
+	require.Equal(t, "user-record:0", page.Events[0].ItemID)
+	require.Equal(t, "user-record", page.Events[0].Replay.NativeRecordID)
+	require.Empty(t, page.Events[0].Replay.NativeParentID)
+	require.Equal(t, "response-1:3", page.Events[1].ItemID)
+	require.Equal(t, "assistant-record", page.Events[1].Replay.NativeRecordID)
+	require.Equal(t, "user-record", page.Events[1].Replay.NativeParentID)
+	require.Equal(t, "response-1:3", page.Events[1].Payload().(events.AgentMessage).MessageID)
+	claudeMeta, ok := page.Events[1].Meta["claude"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "response-1", claudeMeta["responseId"])
+	require.Equal(t, json.Number("3"), claudeMeta["blockIndex"])
+	require.Nil(t, claudeMeta["parentToolUseId"])
+}
+
+func TestClaudeHistorySplitsOneRecordByBlockAndPreservesCoordinates(t *testing.T) {
+	rows := []map[string]any{
+		{"type": "user", "uuid": "user-record", "parentUuid": nil, "message": map[string]any{"role": "user", "content": "question"}},
+		{"type": "assistant", "uuid": "assistant-record", "parentUuid": "user-record", "apiBlockIndex": 2, "message": map[string]any{"id": "response-1", "role": "assistant", "content": []any{
+			map[string]any{"type": "thinking", "thinking": "reason"},
+			map[string]any{"type": "thinking", "signature": "signature-only"},
+			map[string]any{"type": "redacted_thinking", "data": "redacted"},
+			map[string]any{"type": "text", "text": "\n\n"},
+			map[string]any{"type": "text", "text": ""},
+			map[string]any{"type": "tool_use", "id": "tool-shared", "name": "Read", "input": map[string]any{"path": "README.md"}},
+			map[string]any{"type": "text", "text": "after tool"},
+		}}},
+		{"type": "user", "uuid": "result-record", "parentUuid": "assistant-record", "message": map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "tool_result", "tool_use_id": "tool-shared", "content": "retained"},
+		}}},
+	}
+	_, url, cwd, _ := ticket07HTTP(t, "", rows)
+	page := ticket07History(t, url, cwd)
+
+	require.Len(t, page.Events, 6)
+	require.Equal(t, []string{"user-record:0", "response-1:2", "response-1:5", "tool-shared", "response-1:8", "tool-shared"}, eventItems(page.Events))
+	require.Equal(t, []string{"user.message", "agent.thinking", "agent.message", "agent.tool_call", "agent.message", "agent.tool_result"}, eventKinds(page.Events))
+	require.Equal(t, "user-record", page.Events[0].Replay.NativeRecordID)
+	for _, index := range []int{1, 2, 3, 4} {
+		require.Equal(t, "assistant-record", page.Events[index].Replay.NativeRecordID)
+	}
+	require.Equal(t, "result-record", page.Events[5].Replay.NativeRecordID)
+	require.Equal(t, []events.ContentBlock{events.Text("\n\n")}, page.Events[2].Payload().(events.AgentMessage).Content)
+	require.Equal(t, []events.ContentBlock{events.Text("after tool")}, page.Events[4].Payload().(events.AgentMessage).Content)
+	require.NotEqual(t, page.Events[3].EventID, page.Events[5].EventID)
+	require.Empty(t, page.Events[0].Replay.NativeParentID)
+	for _, index := range []int{1, 2, 3, 4} {
+		require.Equal(t, "user-record", page.Events[index].Replay.NativeParentID)
+	}
+	require.Equal(t, "assistant-record", page.Events[5].Replay.NativeParentID)
+}
+
+func TestClaudeHistoryFallsBackToRecordAndContentOrdinalWithoutBlockCoordinate(t *testing.T) {
+	rows := []map[string]any{
+		{"type": "user", "uuid": "user-record", "parentUuid": nil, "message": map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "text", "text": "first question"},
+			map[string]any{"type": "text", "text": "second question"},
+		}}},
+		{"type": "assistant", "uuid": "assistant-record", "parentUuid": "user-record", "message": map[string]any{"id": "response-without-block", "role": "assistant", "content": []any{
+			map[string]any{"type": "thinking", "thinking": ""},
+			map[string]any{"type": "text", "text": "first answer"},
+			map[string]any{"type": "thinking", "thinking": "reason"},
+			map[string]any{"type": "text", "text": ""},
+		}}},
+	}
+	_, url, cwd, _ := ticket07HTTP(t, "", rows)
+	page := ticket07History(t, url, cwd)
+
+	require.Equal(t, []string{"user-record:0", "user-record:1", "assistant-record:1", "assistant-record:2"}, eventItems(page.Events))
+	for _, event := range page.Events[:2] {
+		require.Equal(t, "user-record", event.Replay.NativeRecordID)
+		require.Empty(t, event.Replay.NativeParentID)
+	}
+	for _, event := range page.Events[2:] {
+		require.Equal(t, "assistant-record", event.Replay.NativeRecordID)
+		require.Equal(t, "user-record", event.Replay.NativeParentID)
+	}
+	require.Equal(t, []events.ContentBlock{events.Text("first answer")}, page.Events[2].Payload().(events.AgentMessage).Content)
+	require.Equal(t, []events.ContentBlock{events.Text("reason")}, page.Events[3].Payload().(events.AgentThinking).Content)
+}
+
+func TestClaudeHistoryRejectsInvalidNativeBlockCoordinate(t *testing.T) {
+	rows := ticket07Rows()
+	rows[1]["apiBlockIndex"] = -1
+	_, url, cwd, _ := ticket07HTTP(t, "", rows)
+	_, ref := ticket07Load(t, url, cwd)
+	status := ticket07Status(t, url, ref, "failed")
+
+	require.False(t, status.Status.HistoryLoad.DeliveryCompleted)
+	c := newHTTPClient(t, url, "")
+	var page store.HistoryPage
+	require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{}, &page))
+	for _, event := range page.Events {
+		require.NotEqual(t, "agent.message", event.Type())
+	}
+}
+
+func TestClaudeHistoryMatchesLiveNativeBlockItemIdentity(t *testing.T) {
+	liveService, _, _ := setup(t, prototype.AutoApprovePermissions)
+	live := openNative(t, liveService, "claude", "basic", "live")
+	liveRef := resource.SessionRef{SessionID: live.Status.SessionID}
+	subscription, err := liveService.SubscribeEvents(liveRef)
+	require.NoError(t, err)
+	defer subscription.Close()
+	_, err = liveService.SendPrompt(ctx(t), liveRef, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+	require.NoError(t, err)
+
+	liveItems := map[string]bool{}
+	for {
+		event, err := nextSubscription(subscription, ctx(t))
+		require.NoError(t, err)
+		switch event.Payload().(type) {
+		case events.AgentThinking, events.AgentMessage:
+			liveItems[event.ItemID] = true
+		case events.StateUpdate:
+			state := event.Payload().(events.StateUpdate)
+			if state.State != nil && *state.State == events.Idle && len(liveItems) > 0 {
+				goto liveObserved
+			}
+		}
+	}
+
+liveObserved:
+	require.Equal(t, map[string]bool{"msg-8:0": true, "msg-8:2": true, "msg-8:4": true}, liveItems)
+	rows := []map[string]any{
+		{"type": "user", "uuid": "history-user", "parentUuid": nil, "message": map[string]any{"role": "user", "content": "hello"}},
+		{"type": "assistant", "uuid": "history-thinking", "parentUuid": "history-user", "apiBlockIndex": 0, "message": map[string]any{"id": "msg-8", "role": "assistant", "content": []any{map[string]any{"type": "thinking", "thinking": "reason one"}}}},
+		{"type": "assistant", "uuid": "history-answer", "parentUuid": "history-thinking", "apiBlockIndex": 2, "message": map[string]any{"id": "msg-8", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "new answer"}}}},
+		{"type": "assistant", "uuid": "history-second", "parentUuid": "history-answer", "apiBlockIndex": 4, "message": map[string]any{"id": "msg-8", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "second block"}}}},
+	}
+	_, url, cwd, _ := ticket07HTTP(t, "", rows)
+	page := ticket07History(t, url, cwd)
+
+	historyItems := map[string]bool{}
+	for _, event := range page.Events {
+		switch event.Payload().(type) {
+		case events.AgentThinking, events.AgentMessage:
+			historyItems[event.ItemID] = true
+		}
+	}
+	require.Equal(t, liveItems, historyItems)
+}
+
 func eventKinds(records []events.SessionEvent) []string {
 	kinds := make([]string, len(records))
 	for i, e := range records {
 		kinds[i] = e.Type()
 	}
 	return kinds
+}
+
+func eventItems(records []events.SessionEvent) []string {
+	items := make([]string, len(records))
+	for i, event := range records {
+		items[i] = event.ItemID
+	}
+	return items
 }
 
 func ticket07Load(t *testing.T, url, cwd string) (*resource.SessionLoadAccepted, resource.SessionRef) {
