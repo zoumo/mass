@@ -133,7 +133,7 @@ func (s *Service) ReconcileOpening(ctx context.Context, name string, address run
 	if err := s.drainLane(ctx, l); err != nil {
 		return err
 	}
-	if _, err = s.sessionStatus(resource.SessionRef{SessionID: native.SessionID}, func(r *resource.Session) { offlineStatus(r, true) }); err != nil {
+	if _, err = s.sessionStatus(resource.SessionRef{SessionID: native.SessionID}, func(r *resource.Session) { offlineStatus(r) }); err != nil {
 		return err
 	}
 	s.mu.Lock()

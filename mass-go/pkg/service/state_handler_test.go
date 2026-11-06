@@ -199,7 +199,7 @@ func TestFailedStateObservationContinuesWithoutReplayOrControl(t *testing.T) {
 
 func TestActiveStateConflictRechecksLatestIdentityVersionAndTerminalState(t *testing.T) {
 	for _, kind := range []string{"sqlite", "file"} {
-		for _, change := range []string{"spec", "closing", "archived", "identity"} {
+		for _, change := range []string{"spec", "closing", "offline", "identity"} {
 			t.Run(kind+"/"+change, func(t *testing.T) {
 				meta, err := backend.Open(t.TempDir(), metastore.Config{Backend: kind}, false)
 				require.NoError(t, err)

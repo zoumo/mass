@@ -198,18 +198,6 @@ func (c *Client) GetSession(ctx context.Context, ref resource.SessionRef, out an
 	})
 }
 
-func (c *Client) ArchiveSession(ctx context.Context, ref resource.SessionRef, out any) error {
-	if _, err := SessionPath(ref); err != nil {
-		return err
-	}
-	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
-		if ref.SessionID != "" {
-			return generated.NewArchiveSessionByIDRequestWithBody(c.url, ref.SessionID, "application/json", nil)
-		}
-		return generated.NewArchiveSessionByNameOrIDRequestWithBody(c.url, ref.Namespace, ref.Name, "application/json", nil)
-	})
-}
-
 func (c *Client) CloseSession(ctx context.Context, ref resource.SessionRef, out any) error {
 	if _, err := SessionPath(ref); err != nil {
 		return err

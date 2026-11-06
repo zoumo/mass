@@ -30,7 +30,7 @@ func TestSameNameNewIdentityKeepsBroadcastsIsolated(t *testing.T) {
 			defer func() { require.NoError(t, svc.Shutdown(context.Background())) }()
 			named := resource.SessionRef{Namespace: "one", Name: "demo"}
 			create := func(id string) resource.Session {
-				r, err := meta.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: named.Namespace, Name: named.Name}, Spec: resource.SessionSpec{RuntimeRef: "unstarted"}, Status: resource.SessionStatus{SessionID: id, State: "archived"}})
+				r, err := meta.CreateSession(resource.Session{Metadata: resource.Metadata{Namespace: named.Namespace, Name: named.Name}, Spec: resource.SessionSpec{RuntimeRef: "unstarted"}, Status: resource.SessionStatus{SessionID: id, State: "offline"}})
 				require.NoError(t, err)
 				return r
 			}

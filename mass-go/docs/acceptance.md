@@ -86,12 +86,12 @@ providers. HTTP answers are deliberate: this CLI has no answer command.
 | Behavior | Scenario/source | Evidence boundary |
 | --- | --- | --- |
 | Three inputs on one connection with approval in the middle | `TestTicket08ContinuousInputWithApproval` | Both providers; actual CLI prompt, HTTP invalid/correct/duplicate answer, SSE complete facts equal public history, original process reaped |
-| Loaded connection, current approval and subsequent input, then archive | `integrated_load_ticket08_test.go` | Both providers; replay never grants live authority; Claude completion requires explicit native linkage |
+| Loaded connection, current approval and subsequent input, then close | `integrated_load_ticket08_test.go` | Both providers; replay never grants live authority; Claude completion requires explicit native linkage |
 | Close with queued interactions, stop concurrent load | `integrated_lifecycle_ticket08_test.go` | Both providers; stale handles, retained facts, confirmed versus unknown cleanup remain distinct |
 | Healthy peer progresses after slow peer saturation, before slow gate release | `TestTicket05NativeProvidersIsolateSaturatedSession`, `pkg/service/overload_test.go` | Both providers; original complete facts/order/UUID, storage and required-publish ownership; upstream total exhaustion explicitly has no progress guarantee |
 | Permission, form, early request before ACK, correction after NotSent | `native_interactions_ticket02_test.go`, entrypoint suites | Original native capability only; no policy-created acceptance proof |
 | Claude serial input, ambiguity, cancel and late result | `claude_continuity_test.go`, entrypoint suites | Unlinked/conflicting evidence fences work instead of inventing TurnIDs |
-| Archive/stop drains admitted final facts; uncertain native close | `lifecycle_ticket04_test.go`, `native_lifecycle_ticket04_test.go` | No global shared-client kill to simulate Session isolation |
+| Close/stop drains admitted final facts; uncertain native close | `lifecycle_ticket04_test.go`, `native_lifecycle_ticket04_test.go` | No global shared-client kill to simulate Session isolation |
 | Codex retained full paged history and same connection input | `history_load_ticket06_test.go`, `history_load_http_ticket06_test.go` | Native ID/cwd/source checks, five content kinds, missing/null/empty output, partial failure |
 | Claude retained main chain and same process continuation | `history_load_ticket07_test.go` | Explicit ConfigDir/ProjectDir, drift/corruption refusal, offset100 crossing, cleanup/cancel; synthetic UUID echoes are not real CLI guarantees |
 | Load cancel, stale cancel, native completion before delivery, failed append/required publish | `pkg/service/*ticket06_test.go`, `load_integrity_ticket06_test.go` | Accepted load persists independently of HTTP disconnect; unsettled responsibilities remain visible |
@@ -127,7 +127,7 @@ model/delivery tests, not a claim each native CLI emits all 18 branches.
   write success is not native acceptance. Unknown work never becomes idle merely
   because an HTTP request or historical replay ended.
 - Current interaction authority is consumed once and cannot be restored from
-  replay, an archived Session, stale load cancellation or copied IDs. There is
+  replay, an offline Session, stale load cancellation or copied IDs. There is
   no pending-interaction recovery/list API or cross-connection authority replay.
 - Claude postload work needs recognized native linkage on every input. Caller
   UUIDs are correlation aids, not native TurnIDs. The positive synthetic peer
@@ -202,10 +202,10 @@ must be reported NOT EXECUTED, not substituted with a different model.
    option was actually offered. Do not answer old replayed requests.
 4. For each provider: no-input identity; first text input; current approval or
    question and answer; completion; second same-connection input; cancel receipt
-   versus observed work termination; archive/resume original identity. Then use
+   versus observed work termination; close/resume original identity. Then use
    that run's owned native history ID in explicit load, inspect separate native/
    delivery/cleanup fields, observe future-only events, input/approval after load
-   and archive. Missing Claude linkage is unknown/fenced, not success. Record an
+   and close. Missing Claude linkage is unknown/fenced, not success. Record an
    untriggered model interaction as untriggered, not PASS. Synthetic deterministic
    overload remains a separate class, not a reason to overload a real account.
 5. On success AND failure: stop original Runtime, settle admitted local facts,
@@ -234,7 +234,7 @@ rtk proxy bin/massctl -o json session watch check -n acceptance
 rtk proxy bin/massctl -o json session prompt check -n acceptance --text 'Reply with a short text'
 rtk proxy bin/massctl -o json session get check -n acceptance
 rtk proxy bin/massctl -o json session history check -n acceptance --limit 100
-rtk proxy bin/massctl session archive check -n acceptance
+rtk proxy bin/massctl session close check -n acceptance
 rtk proxy bin/massctl session resume check -n acceptance
 # Load is a separate fresh MASS name; get until completed/failed, do not retry:
 rtk proxy bin/massctl -o json session load imported -n acceptance --runtime agent --cwd /ABS/OWNED/project --session-id ORIGINAL_NATIVE_ID

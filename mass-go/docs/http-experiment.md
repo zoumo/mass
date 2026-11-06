@@ -68,7 +68,7 @@ operation selector and parameter object are never sent as an HTTP envelope.
 | runtime.list | optional runtimeQuery: {type,state} |
 | runtime.update | name, spec:{type,config} |
 | session.create | create:{metadata:{namespace,name},spec:{runtimeRef,cwd,systemPrompt?,additionalDirs?}} |
-| session.get / archive / resume / cancel | session |
+| session.get / close / resume / cancel | session |
 | session.list | optional sessionQuery:{namespace,runtimeRef,state,after,limit} |
 | session.input | session, input:{content:[{type:"text",text:"hello"}]} |
 | session.answer | session, interaction, answer (the original JSON value) |

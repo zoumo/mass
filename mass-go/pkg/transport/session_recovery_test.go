@@ -9,11 +9,6 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/transport"
 )
 
-func (a *workAPI) ArchiveSession(_ context.Context, ref resource.SessionRef) (resource.Session, error) {
-	a.refs <- ref
-	return resource.Session{Status: resource.SessionStatus{SessionID: ref.SessionID, State: "archived"}}, nil
-}
-
 func (a *workAPI) CloseSession(_ context.Context, ref resource.SessionRef) (resource.Session, error) {
 	a.refs <- ref
 	if a.closeErr != nil {
@@ -34,7 +29,7 @@ func (s *WorkHTTPSuite) TestRecoveryOperationsHaveTypedSchemasOnBothURLs() {
 	s.Require().NoError(json.Unmarshal(raw, &doc))
 	paths := doc["paths"].(map[string]any)
 	for _, base := range []string{"/apis/v1/sessions/{sessionId}", "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}"} {
-		for _, action := range []string{"archive", "close", "resume"} {
+		for _, action := range []string{"close", "resume"} {
 			_, ok := paths[base+"/"+action]
 			s.True(ok, base+"/"+action)
 		}
@@ -43,7 +38,7 @@ func (s *WorkHTTPSuite) TestRecoveryOperationsHaveTypedSchemasOnBothURLs() {
 
 func (s *WorkHTTPSuite) TestRecoveryURLsResolveOneOpaqueIdentityAndStrictEmptyBodies() {
 	for _, base := range []string{"/apis/v1/sessions/a%252Fb", "/apis/v1/namespaces/one/sessions/demo"} {
-		for _, action := range []string{"archive", "close", "resume"} {
+		for _, action := range []string{"close", "resume"} {
 			for _, body := range []string{"", "{}"} {
 				status, raw := s.call(base+"/"+action, body)
 				s.Require().Equal(200, status, raw)

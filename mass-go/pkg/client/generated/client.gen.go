@@ -448,7 +448,6 @@ func (e ListRuntimesParamsState) Valid() bool {
 
 // Defines values for ListSessionsParamsState.
 const (
-	ListSessionsParamsStateArchived       ListSessionsParamsState = "archived"
 	ListSessionsParamsStateClosing        ListSessionsParamsState = "closing"
 	ListSessionsParamsStateIdle           ListSessionsParamsState = "idle"
 	ListSessionsParamsStateOffline        ListSessionsParamsState = "offline"
@@ -461,8 +460,6 @@ const (
 // Valid indicates whether the value is a known member of the ListSessionsParamsState enum.
 func (e ListSessionsParamsState) Valid() bool {
 	switch e {
-	case ListSessionsParamsStateArchived:
-		return true
 	case ListSessionsParamsStateClosing:
 		return true
 	case ListSessionsParamsStateIdle:
@@ -1079,9 +1076,6 @@ type ObserveSessionByIDParams struct {
 // AnswerInteractionByIDJSONBody defines parameters for AnswerInteractionByID.
 type AnswerInteractionByIDJSONBody = rawjson.RawMessage
 
-// ArchiveSessionByNameOrIDJSONRequestBody defines body for ArchiveSessionByNameOrID for application/json ContentType.
-type ArchiveSessionByNameOrIDJSONRequestBody = LifecycleByNameOrIDBody
-
 // CancelByNameOrIDJSONRequestBody defines body for CancelByNameOrID for application/json ContentType.
 type CancelByNameOrIDJSONRequestBody = CancelByNameOrIDBody
 
@@ -1117,9 +1111,6 @@ type CreateSessionJSONRequestBody = SessionCreate
 
 // LoadSessionJSONRequestBody defines body for LoadSession for application/json ContentType.
 type LoadSessionJSONRequestBody = SessionLoad
-
-// ArchiveSessionByIDJSONRequestBody defines body for ArchiveSessionByID for application/json ContentType.
-type ArchiveSessionByIDJSONRequestBody = LifecycleByIDBody
 
 // CancelByIDJSONRequestBody defines body for CancelByID for application/json ContentType.
 type CancelByIDJSONRequestBody = CancelByIDBody
@@ -1215,14 +1206,6 @@ type ClientInterface interface {
 
 	// GetSessionByNameOrID performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID} (the `GetSessionByNameOrID` operationId) request.
 	GetSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ArchiveSessionByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/archive (the `ArchiveSessionByNameOrID` operationId) request,
-	// with any type of body and a specified content type.
-	ArchiveSessionByNameOrIDWithBody(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ArchiveSessionByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/archive (the `ArchiveSessionByNameOrID` operationId) request.
-	// Takes a body of the `application/json` content type.
-	ArchiveSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, body ArchiveSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CancelByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/cancel (the `CancelByNameOrID` operationId) request,
 	// with any type of body and a specified content type.
@@ -1341,14 +1324,6 @@ type ClientInterface interface {
 	// GetSessionByID performs a GET /apis/v1/sessions/{sessionId} (the `GetSessionByID` operationId) request.
 	GetSessionByID(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ArchiveSessionByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/archive (the `ArchiveSessionByID` operationId) request,
-	// with any type of body and a specified content type.
-	ArchiveSessionByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ArchiveSessionByID performs a POST /apis/v1/sessions/{sessionId}/archive (the `ArchiveSessionByID` operationId) request.
-	// Takes a body of the `application/json` content type.
-	ArchiveSessionByID(ctx context.Context, sessionId string, body ArchiveSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// CancelByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/cancel (the `CancelByID` operationId) request,
 	// with any type of body and a specified content type.
 	CancelByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1413,34 +1388,6 @@ type ClientInterface interface {
 // GetSessionByNameOrID performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID} (the `GetSessionByNameOrID` operationId) request.
 func (c *Client) GetSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSessionByNameOrIDRequest(c.Server, namespace, nameOrID)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ArchiveSessionByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/archive (the `ArchiveSessionByNameOrID` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) ArchiveSessionByNameOrIDWithBody(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewArchiveSessionByNameOrIDRequestWithBody(c.Server, namespace, nameOrID, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ArchiveSessionByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/archive (the `ArchiveSessionByNameOrID` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) ArchiveSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, body ArchiveSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewArchiveSessionByNameOrIDRequest(c.Server, namespace, nameOrID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1878,34 +1825,6 @@ func (c *Client) GetSessionByID(ctx context.Context, sessionId string, reqEditor
 	return c.Client.Do(req)
 }
 
-// ArchiveSessionByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/archive (the `ArchiveSessionByID` operationId) request,
-// with any type of body and a specified content type.
-func (c *Client) ArchiveSessionByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewArchiveSessionByIDRequestWithBody(c.Server, sessionId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ArchiveSessionByID performs a POST /apis/v1/sessions/{sessionId}/archive (the `ArchiveSessionByID` operationId) request.
-// Takes a body of the `application/json` content type.
-func (c *Client) ArchiveSessionByID(ctx context.Context, sessionId string, body ArchiveSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewArchiveSessionByIDRequest(c.Server, sessionId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // CancelByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/cancel (the `CancelByID` operationId) request,
 // with any type of body and a specified content type.
 func (c *Client) CancelByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2163,60 +2082,6 @@ func NewGetSessionByNameOrIDRequest(server string, namespace string, nameOrID st
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewArchiveSessionByNameOrIDRequest calls the generic ArchiveSessionByNameOrID builder with application/json body
-func NewArchiveSessionByNameOrIDRequest(server string, namespace string, nameOrID string, body ArchiveSessionByNameOrIDJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewArchiveSessionByNameOrIDRequestWithBody(server, namespace, nameOrID, "application/json", bodyReader)
-}
-
-// NewArchiveSessionByNameOrIDRequestWithBody constructs an http.Request for the ArchiveSessionByNameOrID method, with any body, and a specified content type
-func NewArchiveSessionByNameOrIDRequestWithBody(server string, namespace string, nameOrID string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "namespace", namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "nameOrID", nameOrID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/apis/v1/namespaces/%s/sessions/%s/archive", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -3231,53 +3096,6 @@ func NewGetSessionByIDRequest(server string, sessionId string) (*http.Request, e
 	return req, nil
 }
 
-// NewArchiveSessionByIDRequest calls the generic ArchiveSessionByID builder with application/json body
-func NewArchiveSessionByIDRequest(server string, sessionId string, body ArchiveSessionByIDJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewArchiveSessionByIDRequestWithBody(server, sessionId, "application/json", bodyReader)
-}
-
-// NewArchiveSessionByIDRequestWithBody constructs an http.Request for the ArchiveSessionByID method, with any body, and a specified content type
-func NewArchiveSessionByIDRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sessionId", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/apis/v1/sessions/%s/archive", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewCancelByIDRequest calls the generic CancelByID builder with application/json body
 func NewCancelByIDRequest(server string, sessionId string, body CancelByIDJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -3804,16 +3622,6 @@ type ClientWithResponsesInterface interface {
 	// Returns a wrapper object for the known response body format(s).
 	GetSessionByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, reqEditors ...RequestEditorFn) (*GetSessionByNameOrIDResponse, error)
 
-	// ArchiveSessionByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/archive (the `ArchiveSessionByNameOrID` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ArchiveSessionByNameOrIDWithBodyWithResponse(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ArchiveSessionByNameOrIDResponse, error)
-
-	// ArchiveSessionByNameOrIDWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/archive (the `ArchiveSessionByNameOrID` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	ArchiveSessionByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body ArchiveSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*ArchiveSessionByNameOrIDResponse, error)
-
 	// CancelByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/cancel (the `CancelByNameOrID` operationId) request,
 	// with any type of body and a specified content type.
 	//
@@ -3968,16 +3776,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Returns a wrapper object for the known response body format(s).
 	GetSessionByIDWithResponse(ctx context.Context, sessionId string, reqEditors ...RequestEditorFn) (*GetSessionByIDResponse, error)
-
-	// ArchiveSessionByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/archive (the `ArchiveSessionByID` operationId) request,
-	// with any type of body and a specified content type.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	ArchiveSessionByIDWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ArchiveSessionByIDResponse, error)
-
-	// ArchiveSessionByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/archive (the `ArchiveSessionByID` operationId) request.
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	ArchiveSessionByIDWithResponse(ctx context.Context, sessionId string, body ArchiveSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*ArchiveSessionByIDResponse, error)
 
 	// CancelByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/cancel (the `CancelByID` operationId) request,
 	// with any type of body and a specified content type.
@@ -4193,145 +3991,6 @@ func (r GetSessionByNameOrIDResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetSessionByNameOrIDResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ArchiveSessionByNameOrIDResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *Session
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *OperationError
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *OperationError
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *OperationError
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *OperationError
-	// JSON405 the response for an HTTP 405 `application/json` response
-	JSON405 *OperationError
-	// JSON406 the response for an HTTP 406 `application/json` response
-	JSON406 *OperationError
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *OperationError
-	// JSON415 the response for an HTTP 415 `application/json` response
-	JSON415 *OperationError
-	// JSON422 the response for an HTTP 422 `application/json` response
-	JSON422 *OperationError
-	// JSON429 the response for an HTTP 429 `application/json` response
-	JSON429 *OperationError
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *OperationError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *OperationError
-	// JSON504 the response for an HTTP 504 `application/json` response
-	JSON504 *OperationError
-	// JSONDefault the response for an HTTP default `application/json` response
-	JSONDefault *OperationError
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON200() *Session {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON400() *OperationError {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON401() *OperationError {
-	return r.JSON401
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON403() *OperationError {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON404() *OperationError {
-	return r.JSON404
-}
-
-// GetJSON405 returns the response for an HTTP 405 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON405() *OperationError {
-	return r.JSON405
-}
-
-// GetJSON406 returns the response for an HTTP 406 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON406() *OperationError {
-	return r.JSON406
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON409() *OperationError {
-	return r.JSON409
-}
-
-// GetJSON415 returns the response for an HTTP 415 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON415() *OperationError {
-	return r.JSON415
-}
-
-// GetJSON422 returns the response for an HTTP 422 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON422() *OperationError {
-	return r.JSON422
-}
-
-// GetJSON429 returns the response for an HTTP 429 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON429() *OperationError {
-	return r.JSON429
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON500() *OperationError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON503() *OperationError {
-	return r.JSON503
-}
-
-// GetJSON504 returns the response for an HTTP 504 `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSON504() *OperationError {
-	return r.JSON504
-}
-
-// GetJSONDefault returns the response for an HTTP default `application/json` response
-func (r ArchiveSessionByNameOrIDResponse) GetJSONDefault() *OperationError {
-	return r.JSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ArchiveSessionByNameOrIDResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ArchiveSessionByNameOrIDResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ArchiveSessionByNameOrIDResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ArchiveSessionByNameOrIDResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6986,145 +6645,6 @@ func (r GetSessionByIDResponse) ContentType() string {
 	return ""
 }
 
-type ArchiveSessionByIDResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *Session
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *OperationError
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *OperationError
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *OperationError
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *OperationError
-	// JSON405 the response for an HTTP 405 `application/json` response
-	JSON405 *OperationError
-	// JSON406 the response for an HTTP 406 `application/json` response
-	JSON406 *OperationError
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *OperationError
-	// JSON415 the response for an HTTP 415 `application/json` response
-	JSON415 *OperationError
-	// JSON422 the response for an HTTP 422 `application/json` response
-	JSON422 *OperationError
-	// JSON429 the response for an HTTP 429 `application/json` response
-	JSON429 *OperationError
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *OperationError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *OperationError
-	// JSON504 the response for an HTTP 504 `application/json` response
-	JSON504 *OperationError
-	// JSONDefault the response for an HTTP default `application/json` response
-	JSONDefault *OperationError
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON200() *Session {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON400() *OperationError {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON401() *OperationError {
-	return r.JSON401
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON403() *OperationError {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON404() *OperationError {
-	return r.JSON404
-}
-
-// GetJSON405 returns the response for an HTTP 405 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON405() *OperationError {
-	return r.JSON405
-}
-
-// GetJSON406 returns the response for an HTTP 406 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON406() *OperationError {
-	return r.JSON406
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON409() *OperationError {
-	return r.JSON409
-}
-
-// GetJSON415 returns the response for an HTTP 415 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON415() *OperationError {
-	return r.JSON415
-}
-
-// GetJSON422 returns the response for an HTTP 422 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON422() *OperationError {
-	return r.JSON422
-}
-
-// GetJSON429 returns the response for an HTTP 429 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON429() *OperationError {
-	return r.JSON429
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON500() *OperationError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON503() *OperationError {
-	return r.JSON503
-}
-
-// GetJSON504 returns the response for an HTTP 504 `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSON504() *OperationError {
-	return r.JSON504
-}
-
-// GetJSONDefault returns the response for an HTTP default `application/json` response
-func (r ArchiveSessionByIDResponse) GetJSONDefault() *OperationError {
-	return r.JSONDefault
-}
-
-// GetBody returns the raw response body bytes
-func (r ArchiveSessionByIDResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ArchiveSessionByIDResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ArchiveSessionByIDResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ArchiveSessionByIDResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 type CancelByIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -8519,28 +8039,6 @@ func (c *ClientWithResponses) GetSessionByNameOrIDWithResponse(ctx context.Conte
 	return ParseGetSessionByNameOrIDResponse(rsp)
 }
 
-// ArchiveSessionByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/archive (the `ArchiveSessionByNameOrID` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ArchiveSessionByNameOrIDWithBodyWithResponse(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ArchiveSessionByNameOrIDResponse, error) {
-	rsp, err := c.ArchiveSessionByNameOrIDWithBody(ctx, namespace, nameOrID, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseArchiveSessionByNameOrIDResponse(rsp)
-}
-
-// ArchiveSessionByNameOrIDWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/archive (the `ArchiveSessionByNameOrID` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ArchiveSessionByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body ArchiveSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*ArchiveSessionByNameOrIDResponse, error) {
-	rsp, err := c.ArchiveSessionByNameOrID(ctx, namespace, nameOrID, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseArchiveSessionByNameOrIDResponse(rsp)
-}
-
 // CancelByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/cancel (the `CancelByNameOrID` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -8882,28 +8380,6 @@ func (c *ClientWithResponses) GetSessionByIDWithResponse(ctx context.Context, se
 	return ParseGetSessionByIDResponse(rsp)
 }
 
-// ArchiveSessionByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/archive (the `ArchiveSessionByID` operationId) request,
-// with any type of body and a specified content type.
-//
-// Returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ArchiveSessionByIDWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ArchiveSessionByIDResponse, error) {
-	rsp, err := c.ArchiveSessionByIDWithBody(ctx, sessionId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseArchiveSessionByIDResponse(rsp)
-}
-
-// ArchiveSessionByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/archive (the `ArchiveSessionByID` operationId) request.
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-func (c *ClientWithResponses) ArchiveSessionByIDWithResponse(ctx context.Context, sessionId string, body ArchiveSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*ArchiveSessionByIDResponse, error) {
-	rsp, err := c.ArchiveSessionByID(ctx, sessionId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseArchiveSessionByIDResponse(rsp)
-}
-
 // CancelByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/cancel (the `CancelByID` operationId) request,
 // with any type of body and a specified content type.
 //
@@ -9089,130 +8565,6 @@ func ParseGetSessionByNameOrIDResponse(rsp *http.Response) (*GetSessionByNameOrI
 	}
 
 	response := &GetSessionByNameOrIDResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Session
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON405 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON406 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON415 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON429 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON504 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseArchiveSessionByNameOrIDResponse parses an HTTP response from a ArchiveSessionByNameOrIDWithResponse call
-func ParseArchiveSessionByNameOrIDResponse(rsp *http.Response) (*ArchiveSessionByNameOrIDResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ArchiveSessionByNameOrIDResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
@@ -11597,130 +10949,6 @@ func ParseGetSessionByIDResponse(rsp *http.Response) (*GetSessionByIDResponse, e
 	}
 
 	response := &GetSessionByIDResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest Session
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON405 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON406 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON415 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON422 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON429 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON504 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest OperationError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseArchiveSessionByIDResponse parses an HTTP response from a ArchiveSessionByIDWithResponse call
-func ParseArchiveSessionByIDResponse(rsp *http.Response) (*ArchiveSessionByIDResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ArchiveSessionByIDResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

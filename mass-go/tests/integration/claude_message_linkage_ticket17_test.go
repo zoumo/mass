@@ -159,7 +159,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			}
 			if mode == "proof" {
 				send("linkage-proof", true)
-				require.NoError(t, c.ArchiveSession(ctx(t), ref, nil))
+				require.NoError(t, c.CloseSession(ctx(t), ref, nil))
 				require.NoError(t, c.ResumeSession(ctx(t), ref, nil))
 				// Same native ID on a new owned process cannot inherit old proof.
 				send("linkage-no-start", false)
@@ -184,7 +184,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 				assert.Equal(t, live[i].Meta, e.Meta, "no terminal backfill; exact raw provenance persisted")
 				assert.Equal(t, live[i].Payload(), e.Payload())
 			}
-			require.NoError(t, c.ArchiveSession(ctx(t), ref, nil))
+			require.NoError(t, c.CloseSession(ctx(t), ref, nil))
 			_, err = svc.StopRuntime(ctx(t), "agent")
 			require.NoError(t, err)
 			data, err := os.ReadFile(evidence)

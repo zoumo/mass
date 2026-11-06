@@ -103,7 +103,7 @@ func TestTicket08ContinuousInputWithApproval(t *testing.T) {
 			var page store.HistoryPage
 			require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{}, &page))
 			require.Equal(t, observed, page.Events, "complete SSE facts and public durable history must agree")
-			require.NoError(t, c.ArchiveSession(ctx(t), ref, nil))
+			require.NoError(t, c.CloseSession(ctx(t), ref, nil))
 			require.NoError(t, c.StopRuntime(ctx(t), "agent", nil))
 			data, err := os.ReadFile(evidence)
 			require.NoError(t, err)

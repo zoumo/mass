@@ -124,7 +124,7 @@ func (s *Service) writeLoad(l *lane) error {
 	status := l.load.status
 	_, err := s.sessionStatus(resource.SessionRef{SessionID: l.session.Status.SessionID}, func(r *resource.Session) {
 		r.Status.HistoryLoad = &status
-		if r.Status.State == "closing" || r.Status.State == "archived" {
+		if r.Status.State == "closing" || r.Status.State == "offline" {
 			return
 		}
 		if status.Phase == "completed" {

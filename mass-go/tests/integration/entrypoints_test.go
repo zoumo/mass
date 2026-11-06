@@ -309,7 +309,7 @@ func (s *entrypointSuite) basic(kind string) {
 		s.Require().NoError(err, string(out))
 	}
 	ref, original, work := s.openWithExecutable(kind, "basic", bin)
-	// Closing a registered observer does not archive or cancel the native session.
+	// Closing a registered observer does not close or cancel the native session.
 	watch, e := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
 	s.Require().NoError(e)
 	s.Require().NoError(watch.Close())
@@ -340,7 +340,7 @@ func (s *entrypointSuite) basic(kind string) {
 	s.call("session.history", workflowParams{Session: ref, History: store.HistoryQuery{Types: []string{"agent.message"}, Limit: 1}}, &filtered)
 	s.Require().Len(filtered.Events, 1)
 	s.Equal("agent.message", filtered.Events[0].Type())
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	resumePath, _ := nativeScenario(s.T(), kind, "lifecycle-resume")
 	resumePath = replaceWorkspace(s.T(), resumePath, work)
 	spec := resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": resumePath}}
@@ -363,22 +363,22 @@ func (s *entrypointSuite) basic(kind string) {
 	after := s.history(ref)
 	s.Greater(len(after.Events), len(before.Events))
 	s.Equal(before.Events, after.Events[:len(before.Events)])
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	var byName resource.Session
 	s.call("session.get", workflowParams{Session: resource.SessionRef{Namespace: "demo", Name: "session"}}, &byName)
 	s.Equal(ref.SessionID, byName.Status.SessionID)
 	var sessions resource.SessionPage
-	s.call("session.list", workflowParams{SessionQuery: resource.SessionQuery{Namespace: "demo", State: "archived", Limit: 1}}, &sessions)
+	s.call("session.list", workflowParams{SessionQuery: resource.SessionQuery{Namespace: "demo", State: "offline", Limit: 1}}, &sessions)
 	s.Len(sessions.Items, 1)
-	s.T().Log("PASS synthetic no-input identity, independent input, live chunks, persisted complete facts, filtering/pagination, unsubscribe isolation, archive/stop/same-ID resume and fresh input via product CLI/HTTP+SSE")
+	s.T().Log("PASS synthetic no-input identity, independent input, live chunks, persisted complete facts, filtering/pagination, unsubscribe isolation, close/stop/same-ID resume and fresh input via product CLI/HTTP+SSE")
 }
 func (s *entrypointSuite) TestCodexBasicRecovery()  { s.basic("codex") }
 func (s *entrypointSuite) TestClaudeBasicRecovery() { s.basic("claude") }
 func (s *entrypointSuite) question(kind string) {
 	ref, _, _ := s.open(kind, "question")
 	s.runWork(ref, "hello", true)
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 }
 func (s *entrypointSuite) TestCodexQuestion()  { s.question("codex") }
@@ -409,7 +409,7 @@ func (s *entrypointSuite) cancel(kind string) {
 		s.call("session.get", workflowParams{Session: ref}, &state)
 		return state.Status.State == events.Idle
 	}, 3*time.Second, 10*time.Millisecond)
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	s.T().Log("PASS synthetic disconnect during running work does not cancel; explicit cancellation acknowledged and later termination confirmed before closure")
 }
@@ -458,7 +458,7 @@ func (s *entrypointSuite) TestParametersAndDirectory() {
 func (s *entrypointSuite) TestCodexQuestionBeforeACK() {
 	ref, _, _ := s.open("codex", "question-before-ack")
 	s.runWork(ref, "hello", true)
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	s.T().Log("PASS synthetic native request preceding turn ACK is bounded and retained with original handle")
 }
@@ -483,7 +483,7 @@ func (s *entrypointSuite) TestFailedCreateCleanup() {
 	s.call("runtime.delete", workflowParams{Name: "agent"}, nil)
 	ref, _, _ := s.open("claude", "basic")
 	s.runWork(ref, "hello", false)
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	s.T().Log("PASS synthetic missing native identity fails without publishing a Session; original resources settle, same name can be recreated and used")
 }
@@ -521,7 +521,7 @@ func (s *entrypointSuite) TestDualAgentDirectory() {
 	s.Len(rs, 2)
 	for _, kind := range []string{"codex", "claude"} {
 		s.runWork(refs[kind], "hello", false)
-		s.call("session.archive", workflowParams{Session: refs[kind]}, nil)
+		s.call("session.close", workflowParams{Session: refs[kind]}, nil)
 		s.call("runtime.stop", workflowParams{Name: kind}, nil)
 	}
 	s.T().Log("PASS synthetic two SDK peers on one daemon; cross-Runtime Session pages preserve both IDs, exclusive next and filter binding; each input/live/history path stays independent")
@@ -542,14 +542,14 @@ func (s *entrypointSuite) unsupportedMedia(kind string) {
 	s.call("session.cancel", workflowParams{Session: ref}, &canceled)
 	s.Equal("noActiveWork", canceled.Result)
 	s.Empty(canceled.Target)
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	err = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.get", workflowParams{Session: ref}, nil)
 	s.Require().NoError(err)
 	observation, err := newHTTPClient(s.T(), s.url, "").Observe(ctx(s.T()), ref)
 	s.Require().NoError(err)
 	s.Require().NoError(observation.Close())
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
-	s.T().Log("PASS valid unsupported media rejected before native input; text still works; idle cancellation has no target; archived observation remains available")
+	s.T().Log("PASS valid unsupported media rejected before native input; text still works; idle cancellation has no target; offline observation remains available")
 }
 func (s *entrypointSuite) TestCodexUnsupportedMedia()  { s.unsupportedMedia("codex") }
 func (s *entrypointSuite) TestClaudeUnsupportedMedia() { s.unsupportedMedia("claude") }
@@ -584,7 +584,7 @@ func (s *entrypointSuite) TestNamedSessionCommandWorkflow() {
 				s.NotEqual("user.message", event.Type())
 			}
 			s.runWork(ref, "hello", false)
-			s.call("session.archive", workflowParams{Session: ref}, nil)
+			s.call("session.close", workflowParams{Session: ref}, nil)
 			s.call("runtime.stop", workflowParams{Name: name}, nil)
 		})
 	}
@@ -607,7 +607,7 @@ func (s *entrypointSuite) TestOpaqueIDCommandRoundTrip() {
 		s.Equal(id, got.Status.SessionID)
 		var history store.HistoryPage
 		s.call("session.history", workflowParams{Session: ref}, &history)
-		s.call("session.archive", workflowParams{Session: ref}, nil)
+		s.call("session.close", workflowParams{Session: ref}, nil)
 		s.call("runtime.stop", workflowParams{Name: name}, nil)
 	}
 	s.T().Log("PASS raw slash/percent/space/Unicode IDs through the pinned test peer, daemon, generated client and CLI")

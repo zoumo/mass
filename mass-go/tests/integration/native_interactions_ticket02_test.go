@@ -140,7 +140,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 	s.Require().NoError(scan.Err())
 	s.True(progressed, "waiting for the UI must not block Receive")
 	s.True(answered)
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 }
 

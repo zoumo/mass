@@ -355,7 +355,6 @@ func (s *ClientSuite) TestGeneratedResourceWorkflow() {
 	s.Require().NoError(c.SendPrompt(ctx, ref, runtime.Input{}, nil))
 	s.Require().NoError(c.Cancel(ctx, ref, nil))
 	s.Require().NoError(c.CloseSession(ctx, ref, nil))
-	s.Require().NoError(c.ArchiveSession(ctx, ref, nil))
 	s.Require().NoError(c.ResumeSession(ctx, ref, nil))
 	s.Require().NoError(c.History(ctx, ref, store.HistoryQuery{Limit: 2, Types: []string{"agent.message", "user.message"}}, nil))
 	s.Contains(paths, "GET /apis/v1/sessions/a%2Fb%25%20%E7%A9%BA")

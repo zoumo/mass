@@ -317,7 +317,7 @@ func (s *SessionWorkSuite) TestCancelAcknowledgmentDoesNotTerminateObservedWork(
 }
 
 func (s *SessionWorkSuite) TestOfflineWorkIsRejectedWithoutDriverDispatch() {
-	_, err := s.svc.ArchiveSession(context.Background(), s.ref)
+	_, err := s.svc.CloseSession(context.Background(), s.ref)
 	s.Require().NoError(err)
 	_, err = s.svc.SendPrompt(context.Background(), s.ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
@@ -328,7 +328,7 @@ func (s *SessionWorkSuite) TestOfflineWorkIsRejectedWithoutDriverDispatch() {
 	s.Zero(s.driver.calls.Load())
 }
 
-func (s *SessionWorkSuite) TestArchiveWaitsForOriginalAnswerAndCancelDispatch() {
+func (s *SessionWorkSuite) TestCloseWaitsForOriginalAnswerAndCancelDispatch() {
 	s.driver.cancelBlock.Store(true)
 	for _, operation := range []string{"answer", "cancel"} {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -350,16 +350,16 @@ func (s *SessionWorkSuite) TestArchiveWaitsForOriginalAnswerAndCancelDispatch() 
 		cancel()
 		s.Require().Error(<-done)
 	}
-	archived := make(chan error, 1)
-	go func() { _, err := s.svc.ArchiveSession(context.Background(), s.ref); archived <- err }()
+	closed := make(chan error, 1)
+	go func() { _, err := s.svc.CloseSession(context.Background(), s.ref); closed <- err }()
 	select {
-	case err := <-archived:
-		s.Fail("archive completed with old dispatch outstanding", "%v", err)
+	case err := <-closed:
+		s.Fail("close completed with old dispatch outstanding", "%v", err)
 		close(s.driver.release)
 		return
 	case <-time.After(100 * time.Millisecond):
 	}
 	s.driver.cancelBlock.Store(false)
 	close(s.driver.release)
-	s.Require().NoError(<-archived)
+	s.Require().NoError(<-closed)
 }

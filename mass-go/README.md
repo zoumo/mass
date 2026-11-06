@@ -38,7 +38,7 @@ The suite demonstrates no-input native identity, separate text input, automatic
 permission answers through original handles, live previews, complete persisted
 history and pagination/filtering, explicit user questions for each Agent,
 request-before-ACK handling, cancel receipt versus observed termination,
-archive/stop and original-ID resume followed by fresh input. It tests CLI parse
+close/stop and original-ID resume followed by fresh input. It tests CLI parse
 errors, Runtime operations, disconnect isolation and failed-creation cleanup.
 Answer and filtered queries are tested through HTTP because they are not CLI commands.
 Each persistent event read from SSE is compared with a committed history query.
@@ -300,7 +300,7 @@ path. `--executable` preserves other config fields; a complete JSON config repla
 them. Empty updates fail locally. There is no conditional-update protection:
 concurrent edits can be overwritten. Updates never restart running instances.
 Runtime delete never stops or cascades: Service rejects running/unreleased
-resources and persistent Session references. Stop explicitly first; archived
+resources and persistent Session references. Stop explicitly first; offline
 Sessions retain their references and history. Successful delete has empty JSON
 stdout. Test-only driver configuration stays in complete JSON, not public flags.
 
@@ -421,7 +421,7 @@ resumes the original reader; it does not implicitly reopen failed admission.
 Append failure retains the original full fact/UUID and serial settlement for
 `ReconcileHistory`. Unknown native release or unavailable persistence remains
 `closing`/unsettled; only confirmed native release plus settlement permits
-`archived`. A later explicit Archive/Stop can settle the same owner. Closing
+`offline`. A later explicit Close/Stop can settle the same owner. Closing
 state and HTTP rejection are visible while persistence is blocked; the ordered
 realtime diagnostic can itself wait behind that blocked prefix.
 

@@ -104,11 +104,6 @@ func (a *recordingAPI) ResumeSession(context.Context, resource.SessionRef) (reso
 	return resource.Session{}, a.err
 }
 
-func (a *recordingAPI) ArchiveSession(context.Context, resource.SessionRef) (resource.Session, error) {
-	a.record("session.archive")
-	return resource.Session{}, a.err
-}
-
 func (a *recordingAPI) CloseSession(_ context.Context, ref resource.SessionRef) (resource.Session, error) {
 	a.record("session.close")
 	a.ref = ref
@@ -178,7 +173,7 @@ func (serverSuite *ServerSuite) TestRESTRoutes() {
 		{"POST", "/apis/v1/runtimes/agent/stop", "{}", "runtime.stop", 200},
 		{"DELETE", "/apis/v1/runtimes/agent", "", "runtime.delete", 204},
 		{"POST", "/apis/v1/sessions", `{"metadata":{"namespace":"demo","name":"task"},"spec":{"runtimeRef":"agent","cwd":"/remote/path"}}`, "session.create", 201},
-		{"GET", "/apis/v1/sessions?namespace=demo&runtimeRef=agent&state=archived&limit=2&after=opaque", "", "session.list", 200},
+		{"GET", "/apis/v1/sessions?namespace=demo&runtimeRef=agent&state=offline&limit=2&after=opaque", "", "session.list", 200},
 	}
 	for _, row := range rows {
 		serverSuite.Run(row.op, func() {
@@ -221,7 +216,6 @@ func (serverSuite *ServerSuite) TestRESTRoutes() {
 			{"GET", "", "", "session.get", 200},
 			{"POST", "/resume", "{}", "session.resume", 200},
 			{"POST", "/close", "", "session.close", 200},
-			{"POST", "/archive", "", "session.archive", 200},
 			{"POST", "/cancel", "", "session.cancel", 200},
 			{"POST", "/inputs", `{"content":[{"type":"text","text":""}]}`, "session.input", 200},
 			{"POST", "/interactions/Li4/answer", `null`, "session.answer", 200},

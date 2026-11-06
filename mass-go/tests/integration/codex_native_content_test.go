@@ -56,7 +56,7 @@ settled:
 		}
 	}
 	s.True(found, "live user fact must be available to late history readers")
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 }
 

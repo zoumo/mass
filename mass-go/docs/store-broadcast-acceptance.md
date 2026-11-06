@@ -23,7 +23,7 @@ returns the same receive-only channel.
 State projection is an ordinary asynchronous Handler. Writes may lag or fail;
 notifications continue without any promise of eventual convergence. Identity,
 version and terminal-state checks protect resources. Mandatory lifecycle writes
-remain synchronous Service responsibilities. Stop/archive preserve healthy
+remain synchronous Service responsibilities. Stop/close preserve healthy
 Broadcasts and subscriptions; concrete upstream delivery fences and the Service
 lane barrier settle final history/publish calls. Application shutdown closes
 owned objects and reports cleanup failure; stream termination is not proof that
@@ -61,7 +61,7 @@ generation, uniqueness, snapshots, independent lifecycle, original-ID retries,
 cursor/filter/progress stability, corruption and process-interruption recovery.
 Broadcast/Service suites cover mutation isolation, required/ordinary failures,
 send/cancel/overflow races, stable buffered termination, asynchronous state faults,
-archive/resume reuse and final-delivery/cleanup fences.
+close/resume reuse and final-delivery/cleanup fences.
 `TestSameNameNewIdentityKeepsBroadcastsIsolated` replaces an offline metadata
 fixture under each authority and checks that old/new identity Broadcasts and
 subscriptions remain separate. This fixture does not define a product Session

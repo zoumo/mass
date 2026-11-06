@@ -207,7 +207,7 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 			require.ErrorAs(t, err, &unsupported)
 			require.Equal(t, "unsupported", unsupported.Code, "normal and initial input must share lossless validation")
 
-			_, err = svc.ArchiveSession(ctx(t), ref)
+			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 		})
 	}
@@ -289,11 +289,11 @@ func TestTicket14EarlyCompletionContinuedSSEAndResumeNoReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, string(persisted), string(wire))
 	require.Equal(t, receipt.Submission, history.Events[1].Meta["claude"].(map[string]any)["submission"])
-	_, err = svc.ArchiveSession(ctx(t), ref)
+	_, err = svc.CloseSession(ctx(t), ref)
 	require.NoError(t, err)
 	_, err = svc.ResumeSession(ctx(t), ref)
 	require.NoError(t, err)
-	_, err = svc.ArchiveSession(ctx(t), ref)
+	_, err = svc.CloseSession(ctx(t), ref)
 	require.NoError(t, err)
 	data, err := os.ReadFile(evidence)
 	require.NoError(t, err)
@@ -342,7 +342,7 @@ func TestTicket14PreIdentityBoundsAndUnrelatedResults(t *testing.T) {
 				require.Error(t, err, "init and unrelated result must not settle initial work or admit another input")
 				_, err = svc.Cancel(ctx(t), ref)
 				require.NoError(t, err)
-				_, err = svc.ArchiveSession(ctx(t), ref)
+				_, err = svc.CloseSession(ctx(t), ref)
 				require.NoError(t, err)
 			}
 			_, err = svc.StopRuntime(ctx(t), "agent")
@@ -452,7 +452,7 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 					require.Equal(t, events.Source{}, e.Source())
 				}
 				if !uncertain {
-					_, err = svc.ArchiveSession(ctx(t), ref)
+					_, err = svc.CloseSession(ctx(t), ref)
 					require.NoError(t, err)
 				}
 			})
@@ -515,7 +515,7 @@ func TestTicket14CodexLateInitialReceiptKeepsOwner(t *testing.T) {
 				require.NoError(t, e)
 				require.Equal(t, "native-2", got.Status.SessionID)
 				require.Equal(t, "turn-native-2", got.InitialInputReceipt.Submission)
-				_, e = svc.ArchiveSession(ctx(t), resource.SessionRef{SessionID: got.Status.SessionID})
+				_, e = svc.CloseSession(ctx(t), resource.SessionRef{SessionID: got.Status.SessionID})
 				require.NoError(t, e)
 				_, stopErr = svc.StopRuntime(ctx(t), "agent")
 			}

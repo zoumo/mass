@@ -46,10 +46,8 @@ func (s *Service) ListSessions(q resource.SessionQuery) (resource.SessionPage, e
 	if q.Namespace != "" && !validNamespace(q.Namespace) || q.RuntimeRef != "" && !validName(q.RuntimeRef) || q.Limit < 0 {
 		return resource.SessionPage{}, runtime.InvalidArgument("invalid session query")
 	}
-	switch q.State {
-	case "", "offline", "opening", "idle", "running", "requires_action", "closing", "archived", "unknown":
-	default:
-		return resource.SessionPage{}, runtime.InvalidArgument("invalid session state")
+	if err := resource.ValidateSessionState(q.State); err != nil {
+		return resource.SessionPage{}, err
 	}
 	if q.SessionID != "" {
 		if err := resource.ValidateSessionID(q.SessionID); err != nil {
@@ -122,11 +120,8 @@ func (s *Service) drainLane(ctx context.Context, l *lane) error {
 	return l.commitErr
 }
 
-func offlineStatus(r *resource.Session, archived bool) {
+func offlineStatus(r *resource.Session) {
 	r.Status.State = "offline"
-	if archived {
-		r.Status.State = "archived"
-	}
 	r.Status.Reason = ""
 	r.Status.AppliedGeneration = 0
 	r.Status.RuntimeGeneration = 0
@@ -134,96 +129,13 @@ func offlineStatus(r *resource.Session, archived bool) {
 	r.Status.EffectiveFeatures = nil
 }
 
-func (s *Service) archiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
-	return s.archiveSessionOwner(ctx, ref, nil, events.Source{})
-}
-
-// An automatic failure close must still target its original native run after
-// acquiring the Session operation lock; explicit archive/resume may win first.
-func (s *Service) archiveSessionOwner(ctx context.Context, ref resource.SessionRef, expected *runBinding, source events.Source) (resource.Session, error) {
-	r, err := s.GetSession(ref)
-	if err != nil {
-		return r, err
-	}
-	ref = resource.SessionRef{SessionID: r.Status.SessionID}
-	unlock, err := s.sessionOperation(r.Status.SessionID, false)
-	if err != nil {
-		return r, err
-	}
-	defer unlock()
-	r, err = s.GetSession(ref)
-	if err != nil {
-		return r, err
-	}
-	if r.Status.HistoryLoad != nil && r.Status.HistoryLoad.Phase != "completed" {
-		return r, runtime.FailedPrecondition("history load remains fenced")
-	}
-	s.mu.Lock()
-	run := s.runs[r.Spec.RuntimeRef]
-	if expected != nil {
+// closeOverloadedSession targets only the over-capacity owner observed by the
+// stream reader. A later resume or explicit operation cannot become its victim.
+func (s *Service) closeOverloadedSession(ctx context.Context, ref resource.SessionRef, expected *runBinding, source events.Source) (resource.Session, error) {
+	return s.closeSessionWithGuard(ctx, ref, func(r resource.Session) bool {
 		l := expected.lanes[r.Status.SessionID]
-		if run != expected || l == nil || !l.source.SameRun(source) {
-			s.mu.Unlock()
-			return r, runtime.FailedPrecondition("original overload owner superseded")
-		}
-	}
-	s.mu.Unlock()
-	if run == nil {
-		if r.Status.State == "archived" {
-			return r, nil
-		}
-		if r.Status.AppliedGeneration != 0 {
-			return r, runtime.FailedPrecondition("session release not confirmed in this process")
-		}
-		return s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
-	}
-	run.admission.RLock()
-	defer run.admission.RUnlock()
-	r, err = s.GetSession(ref)
-	if err != nil {
-		return r, err
-	}
-	s.mu.Lock()
-	if s.runs[r.Spec.RuntimeRef] != run || run.stopping || run.pending[addressKey(runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name})] != nil {
-		s.mu.Unlock()
-		return r, runtime.FailedPrecondition("original lifecycle responsibility remains")
-	}
-	l := run.lanes[r.Status.SessionID]
-	s.mu.Unlock()
-	if l == nil {
-		if r.Status.AppliedGeneration != 0 {
-			return r, runtime.FailedPrecondition("session release not confirmed")
-		}
-		return s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
-	}
-	s.mu.Lock()
-	l.closing = true
-	s.mu.Unlock()
-	if _, err = s.sessionStatus(ref, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
-		return r, err
-	}
-	if err := s.sealLane(ctx, l); err != nil {
-		return r, err
-	}
-	if !l.nativeClosed {
-		if err := s.closeForStop(ctx, run, r.Status.SessionID); err != nil {
-			s.mu.Lock()
-			l.releasing = false // Explicit cancel can still settle the original work.
-			s.mu.Unlock()
-			return r, err
-		}
-		l.nativeClosed = true
-	}
-	if err := s.drainLane(ctx, l); err != nil {
-		return r, err
-	}
-	r, err = s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
-	if err == nil {
-		s.mu.Lock()
-		retireLane(run, l)
-		s.mu.Unlock()
-	}
-	return r, err
+		return s.runs[r.Spec.RuntimeRef] == expected && l != nil && l.overloaded && l.source.SameRun(source)
+	})
 }
 
 // One attempt belongs to the original run; callers share its result and may
@@ -431,7 +343,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		if err := s.drainLane(ctx, l); err != nil {
 			return r, err
 		}
-		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { offlineStatus(r, false) }); err != nil {
+		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { offlineStatus(r) }); err != nil {
 			return r, err
 		}
 	}
@@ -475,7 +387,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		return resource.SessionResumed{Session: r}, err
 	}
 	switch r.Status.State {
-	case "offline", "archived", events.Unknown:
+	case "offline", events.Unknown:
 	default:
 		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("previous session release remains unsettled")
 	}
@@ -535,7 +447,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		return resource.SessionResumed{Session: r}, err
 	}
 	switch r.Status.State {
-	case "offline", "archived", events.Unknown:
+	case "offline", events.Unknown:
 	default:
 		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("previous session release remains unsettled")
 	}
@@ -945,13 +857,6 @@ func awaitSessionLifecycle[T any](ctx context.Context, operation func(context.Co
 		var zero T
 		return zero, &runtime.OperationError{Code: "outcome_unknown", Reason: "lifecycle_wait_abandoned", Message: "Lifecycle operation remains owned by its original Session; inspect state before further action"}
 	}
-}
-
-func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
-	if err := ctx.Err(); err != nil {
-		return resource.Session{}, err
-	}
-	return awaitSessionLifecycle(ctx, func(owner context.Context) (resource.Session, error) { return s.archiveSession(owner, ref) })
 }
 
 // Keep the original delivery owner until its Driver stream ends. Close confirms

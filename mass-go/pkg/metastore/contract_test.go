@@ -1,6 +1,8 @@
 package metastore_test
 
 import (
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -125,7 +127,7 @@ func (metaSuite *MetaStoreSuite) TestResourceVersionsSnapshotsAndEncoding() {
 func (metaSuite *MetaStoreSuite) TestFullDirectoryCursorsAndConditionalDelete() {
 	t := metaSuite.T()
 	s, dir := open(t, metaSuite.backend)
-	for _, v := range []struct{ ns, name, id, state string }{{"z", "a", "native-z", "archived"}, {"a", "z", "native-a-z", "unknown"}, {"a", "a", "native-a-a", "idle"}} {
+	for _, v := range []struct{ ns, name, id, state string }{{"z", "a", "native-z", "offline"}, {"a", "z", "native-a-z", "unknown"}, {"a", "a", "native-a-a", "idle"}} {
 		r := session(v.ns, v.name, v.id)
 		r.Status.State = events.SessionState(v.state)
 		_, err := s.CreateSession(r)
@@ -142,9 +144,9 @@ func (metaSuite *MetaStoreSuite) TestFullDirectoryCursorsAndConditionalDelete() 
 	require.Error(t, err, "cursor binds namespace")
 	_, err = s.ListSessions(resource.SessionQuery{Limit: -1})
 	require.Error(t, err)
-	archived, err := s.ListSessions(resource.SessionQuery{State: "archived"})
+	offline, err := s.ListSessions(resource.SessionQuery{State: "offline"})
 	require.NoError(t, err)
-	require.Len(t, archived.Items, 1)
+	require.Len(t, offline.Items, 1)
 	r := all.Items[0]
 	// Re-read confirms failed conditional deletion had no effect.
 	err = s.DeleteSession(resource.SessionRef{SessionID: r.Status.SessionID}, "wrong")
@@ -194,5 +196,70 @@ func TestRejectIllegalPersistentSessionIDs(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestArchivedSessionStateIsReadOnlyLegacyInput(t *testing.T) {
+	for _, name := range []string{"sqlite", "file"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			s, err := backend.Open(dir, metastore.Config{Backend: name}, false)
+			require.NoError(t, err)
+			created, err := s.CreateSession(session("default", "legacy", "legacy-id"))
+			require.NoError(t, err)
+			require.NoError(t, s.Close())
+
+			legacy := created
+			legacy.Status.State = "archived"
+			writeLegacyArchived(t, dir, name, legacy)
+
+			s, err = backend.Open(dir, metastore.Config{Backend: name}, false)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, s.Close()) }()
+			got, err := s.GetSession(resource.SessionRef{SessionID: "legacy-id"})
+			require.NoError(t, err)
+			require.Equal(t, legacy, got, "legacy archived data remains readable for startup migration")
+
+			_, err = s.UpdateSession(legacy)
+			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
+			_, err = s.ListSessions(resource.SessionQuery{State: "archived"})
+			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
+
+			forged := session("default", "forged", "forged-id")
+			forged.Status.State = "archived"
+			_, err = s.CreateSession(forged)
+			require.ErrorIs(t, err, runtime.ErrInvalidArgument)
+
+			legacy.Status.State = "offline"
+			updated, err := s.UpdateSession(legacy)
+			require.NoError(t, err)
+			require.Equal(t, events.SessionState("offline"), updated.Status.State)
+			require.Equal(t, legacy.Metadata.UID, updated.Metadata.UID)
+			require.Equal(t, legacy.Spec, updated.Spec)
+		})
+	}
+}
+
+func writeLegacyArchived(t *testing.T, dir, backendName string, legacy resource.Session) {
+	t.Helper()
+	switch backendName {
+	case "sqlite":
+		b, err := json.Marshal(legacy)
+		require.NoError(t, err)
+		db, err := sql.Open("sqlite", filepath.Join(dir, "metadata-authority.sqlite"))
+		require.NoError(t, err)
+		defer func() { require.NoError(t, db.Close()) }()
+		result, err := db.ExecContext(t.Context(), "UPDATE session SET state='archived', payload=? WHERE session_id=?", b, legacy.Status.SessionID)
+		require.NoError(t, err)
+		count, err := result.RowsAffected()
+		require.NoError(t, err)
+		require.EqualValues(t, 1, count)
+	case "file":
+		path := filepath.Join(dir, "sessions", legacy.Metadata.Namespace, legacy.Metadata.Name, "state.json")
+		b, err := json.Marshal(legacy)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, b, 0o600))
+	default:
+		t.Fatalf("unknown backend %q", backendName)
 	}
 }

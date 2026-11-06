@@ -48,7 +48,7 @@ or your own agent interface.
 | | Capability | What it gives you |
 |:---:|---|---|
 | 🔌 | **Agent as a service** | A named Runtime you can configure, start, inspect, and stop. |
-| 💬 | **Session management** | Conversations with a working directory, input, cancellation, archive, and resume through the runtime driver. |
+| 💬 | **Session management** | Conversations with a working directory, input, cancellation, close, and resume through the runtime driver. |
 | 👁️ | **Live events & history** | Watch progress as it happens and query saved events when you return. |
 | 🤝 | **Interactive agents** | Permission requests and questions exposed to the calling application. |
 | ⚡ | **CLI + HTTP API** | Use `massctl` at the terminal or connect your own application through REST JSON and SSE. |
@@ -119,7 +119,7 @@ make prototype-go
 ```
 
 It builds mock Codex and Claude CLIs and exercises session creation, input,
-interaction, live events, history, cancellation, archive, and resume through the
+interaction, live events, history, cancellation, close, and resume through the
 actual MASS CLI and HTTP service. It uses temporary data and working directories
 and does not call a model or require an agent account. Its pinned dependencies
 must already be cached.
@@ -157,7 +157,7 @@ v2 is being developed in Go under [`mass-go/`](mass-go/README.md).
 | 🛠️ Service | HTTP API, CLI, and file-backed resource/history storage | Prototype implementation |
 | 🧩 Agent drivers | Codex and Claude SDK adapters | An absolute executable is required; live authentication and model behavior remain separately verified |
 | 🧪 Demonstration | Isolated CLI → HTTP → Service → Store / Runtime scenarios | Uses mock CLIs; does not establish real model execution, native recovery, or production readiness |
-| 💬 Claude input | Text input, archive, and resume | One input per running connection |
+| 💬 Claude input | Text input, close, and resume | One input per running connection |
 | 🤝 Permissions & questions | HTTP answer API | No CLI answer command yet |
 
 ## Development

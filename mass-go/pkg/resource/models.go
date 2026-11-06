@@ -118,6 +118,18 @@ type SessionPage struct {
 	Next  string    `json:"next,omitempty"`
 }
 
+// ValidateSessionState accepts only current public Session states. Empty is a
+// query wildcard; archived remains readable as legacy data but is never written
+// or selected through the current API.
+func ValidateSessionState(state events.SessionState) error {
+	switch state {
+	case "", "offline", "opening", "idle", "running", "requires_action", "closing", "unknown":
+		return nil
+	default:
+		return runtime.InvalidArgument("invalid session state")
+	}
+}
+
 // ValidateSessionID preserves opaque native identity, including whitespace and
 // embedded separators, while rejecting empty, non-UTF-8 and dot-segment IDs.
 func ValidateSessionID(id string) error {

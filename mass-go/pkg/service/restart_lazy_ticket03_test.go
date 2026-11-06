@@ -156,12 +156,17 @@ func (f *ticket03Factory) only(t *testing.T) *ticket03Driver {
 	return f.drivers[0]
 }
 
-func openTicket03Store(t *testing.T) *file.Store {
+func openTicket03StoreAt(t *testing.T, dir string) *file.Store {
 	t.Helper()
-	st, err := file.Open(t.TempDir(), false)
+	st, err := file.Open(dir, false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	return st
+}
+
+func openTicket03Store(t *testing.T) *file.Store {
+	t.Helper()
+	return openTicket03StoreAt(t, t.TempDir())
 }
 
 func createTicket03Runtime(t *testing.T, st *file.Store, name, state string) resource.Runtime {
@@ -192,16 +197,23 @@ func createTicket03Session(t *testing.T, st *file.Store, runtimeRef, name string
 }
 
 func TestTicket03PrepareReconcilesPersistedStateWithoutStartingAnything(t *testing.T) {
-	st := openTicket03Store(t)
+	dir := t.TempDir()
+	st := openTicket03StoreAt(t, dir)
 	runtimes := map[string]resource.Runtime{}
 	for _, state := range []string{"stopped", "starting", "running", "stopping", "unknown"} {
 		runtimes[state] = createTicket03Runtime(t, st, "runtime-"+state, state)
 	}
 	sessions := map[events.SessionState]resource.Session{}
-	for _, state := range []events.SessionState{"offline", "opening", events.Idle, events.Running, events.RequiresAction, "closing", events.Unknown, "archived"} {
+	for _, state := range []events.SessionState{"offline", "opening", events.Idle, events.Running, events.RequiresAction, "closing", events.Unknown} {
 		name := "session-" + string(state)
 		sessions[state] = createTicket03Session(t, st, "runtime-stopped", name, state)
 	}
+	archived := createTicket03Session(t, st, "runtime-stopped", "session-archived", "offline")
+	archived.Status.State = "archived"
+	writeLegacySessionState(t, dir, "file", archived)
+	require.NoError(t, st.Close())
+	st = openTicket03StoreAt(t, dir)
+	sessions["archived"] = archived
 
 	factory := &ticket03Factory{}
 	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))

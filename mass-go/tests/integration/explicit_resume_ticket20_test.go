@@ -151,7 +151,7 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 				return page
 			}
 			before := wait(1)
-			_, err = svc.ArchiveSession(ctx(t), ref)
+			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 			h, err := transport.New(svc, transport.Options{LocalOnly: true})
 			require.NoError(t, err)
@@ -248,7 +248,7 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 			_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("continued input")}})
 			require.NoError(t, err, "early terminal must not be reset when installing receipt")
 			wait(3)
-			_, err = svc.ArchiveSession(ctx(t), ref)
+			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 			wire, err := os.ReadFile(filepath.Join(native, "wire.jsonl"))
 			require.NoError(t, err)
@@ -329,7 +329,7 @@ func ticket20Setup(t *testing.T, kind, mode string) *ticket20Fixture {
 	require.NoError(t, err)
 	require.Equal(t, id, created.Status.SessionID)
 	ticket20Wait(t, f, 1)
-	_, err = f.svc.ArchiveSession(ctx(t), f.ref)
+	_, err = f.svc.CloseSession(ctx(t), f.ref)
 	require.NoError(t, err)
 	return f
 }
@@ -399,7 +399,7 @@ func TestTicket20SubmittedMismatchIsUnknownNotUnsent(t *testing.T) {
 			state, err := f.svc.GetSession(f.ref)
 			require.NoError(t, err)
 			require.Equal(t, f.ref.SessionID, state.Status.SessionID)
-			require.Equal(t, events.SessionState("archived"), state.Status.State)
+			require.Equal(t, events.SessionState("offline"), state.Status.State)
 			after, err := f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{})
 			require.NoError(t, err)
 			require.Equal(t, before, after, "pre-identity terminal facts must not escape a mismatch")
@@ -449,7 +449,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 					require.Equal(t, "explicit input", blocks[1].(map[string]any)["text"])
 				}
 			}
-			_, err = f.svc.ArchiveSession(ctx(t), f.ref)
+			_, err = f.svc.CloseSession(ctx(t), f.ref)
 			require.NoError(t, err)
 			f.close()
 			ticket20Open(t, f, false)
@@ -474,7 +474,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
 			require.NoError(t, err)
 			ticket20Wait(t, f, 3)
-			_, err = f.svc.ArchiveSession(ctx(t), f.ref)
+			_, err = f.svc.CloseSession(ctx(t), f.ref)
 			require.NoError(t, err)
 			// The generated client carries explicit input by ID as well as CLI's name route.
 			c := client.New(server2.URL, "")
@@ -484,7 +484,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, result.InitialInputReceipt)
 			ticket20Wait(t, f, 4)
-			_, err = f.svc.ArchiveSession(ctx(t), f.ref)
+			_, err = f.svc.CloseSession(ctx(t), f.ref)
 			require.NoError(t, err)
 			f.close()
 
@@ -566,7 +566,7 @@ func TestTicket20PendingInputCallerAbandonRetainsStopOwnership(t *testing.T) {
 			state, err := f.svc.GetSession(f.ref)
 			require.NoError(t, err)
 			require.Equal(t, f.ref.SessionID, state.Status.SessionID)
-			require.Equal(t, events.SessionState("archived"), state.Status.State)
+			require.Equal(t, events.SessionState("offline"), state.Status.State)
 			after, err := f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{})
 			require.NoError(t, err)
 			require.Equal(t, before, after)

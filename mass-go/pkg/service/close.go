@@ -40,9 +40,11 @@ func (s *Service) closeSessionWithGuard(ctx context.Context, ref resource.Sessio
 	}
 	id := r.Status.SessionID
 	ref = resource.SessionRef{SessionID: id}
-	unlock, err := s.sessionOperationGuarded(id, true, func() bool {
-		return guard == nil || guard(r)
-	})
+	var eligible func() bool
+	if guard != nil {
+		eligible = func() bool { return guard(r) }
+	}
+	unlock, err := s.sessionOperationGuarded(id, true, eligible)
 	if err != nil {
 		return r, err
 	}
@@ -267,7 +269,7 @@ func (s *Service) closeWithoutHandle(ref resource.SessionRef, r resource.Session
 		return r, s.failClose(ref, runtime.FailedPrecondition("unresolved history load remains owned"))
 	}
 	switch prior {
-	case "offline", "archived":
+	case "offline":
 		return s.closeOffline(ref)
 	case events.Unknown:
 		return s.closeOffline(ref)
@@ -289,7 +291,7 @@ func unresolvedHistoryLoad(r resource.Session) bool {
 }
 
 func (s *Service) closeOffline(ref resource.SessionRef) (resource.Session, error) {
-	closed, err := s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, false) })
+	closed, err := s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r) })
 	if err != nil {
 		return closed, s.failClose(ref, err)
 	}

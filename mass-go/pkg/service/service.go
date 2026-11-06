@@ -53,7 +53,6 @@ type SessionService interface {
 	GetSession(resource.SessionRef) (resource.Session, error)
 	ListSessions(resource.SessionQuery) (resource.SessionPage, error)
 	CloseSession(context.Context, resource.SessionRef) (resource.Session, error)
-	ArchiveSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ResumeSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ResumeSessionWithInput(context.Context, resource.SessionRef, runtime.Input) (resource.SessionResumed, error)
 	LoadSession(context.Context, resource.SessionLoad) (resource.SessionLoadAccepted, error)
@@ -568,7 +567,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 				if cleanup == nil {
 					removePending()
 				}
-				return resource.Session{}, errors.Join(errors.New("outcome_unknown: late creation archived by original owner"), cleanup)
+				return resource.Session{}, errors.Join(errors.New("outcome_unknown: late creation closed by original owner"), cleanup)
 			}
 			if creationErr != nil {
 				return resource.Session{}, creationErr
@@ -812,11 +811,11 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 
 // One bounded cleanup attempt per overloaded owner, outside the Runtime reader.
 // A timeout/unknown close leaves closing plus original delivery responsibility;
-// ArchiveSession/StopRuntime can explicitly settle it without replacing a Driver.
+// CloseSession/StopRuntime can explicitly settle it without replacing a Driver.
 func (s *Service) closeOverloaded(run *runBinding, id string, source events.Source) {
 	ctx, cancel := context.WithTimeout(context.Background(), overloadCloseTimeout)
 	defer cancel()
-	if _, err := s.archiveSessionOwner(ctx, resource.SessionRef{SessionID: id}, run, source); err != nil {
+	if _, err := s.closeOverloadedSession(ctx, resource.SessionRef{SessionID: id}, run, source); err != nil {
 		slog.Warn("overloaded Session cleanup unsettled", "session_id", id, "error", err)
 	}
 }
@@ -1170,7 +1169,7 @@ func (s *Service) settleAbandoned(run *runBinding, l *lane) error {
 	if err := s.drainLane(context.Background(), l); err != nil {
 		return err
 	}
-	if _, err := s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) }); err != nil {
+	if _, err := s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r) }); err != nil {
 		return err
 	}
 	s.mu.Lock()

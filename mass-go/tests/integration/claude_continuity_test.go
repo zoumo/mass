@@ -76,7 +76,7 @@ func (s *entrypointSuite) TestClaudeContinuousInputSameProcess() {
 	s.Require().NoError(json.Unmarshal([]byte(lines[1]), &second))
 	s.Equal(first["pid"], second["pid"], "both wire inputs reached the same owned process")
 	s.Equal(receipts[1].Submission, second["uuid"])
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 }
 
 func (s *entrypointSuite) TestClaudeLateResultsAndCancelReadmission() {
@@ -118,7 +118,7 @@ func (s *entrypointSuite) TestClaudeLateResultsAndCancelReadmission() {
 	page := s.history(ref)
 	s.Require().Len(page.Events, 5, "unlinked content remains in ordered history")
 	s.Equal("unlinked-late", page.Events[2].ItemID)
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 }
 
 func (s *entrypointSuite) TestClaudeUnlinkedResultBlocksReadmission() {
@@ -156,7 +156,7 @@ func (s *entrypointSuite) claudeUnknownResultBlocksReadmission(prompt string) {
 	err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("must not send")}}}, nil)
 	s.Require().Error(err)
 	// An interrupt acknowledgment alone is not settlement. The fixture supplies
-	// a linked root result so normal archive can release this owned process.
+	// a linked root result so normal close can release this owned process.
 	s.call("session.cancel", workflowParams{Session: ref}, nil)
 	for {
 		s.Require().True(scan.Scan())
@@ -166,12 +166,12 @@ func (s *entrypointSuite) claudeUnknownResultBlocksReadmission(prompt string) {
 			break
 		}
 	}
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 }
 
 func (s *entrypointSuite) TestClaudeResumedFirstInputRequiresLinkage() {
 	ref, _ := s.openClaudeContinuity()
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("session.resume", workflowParams{Session: ref}, nil)
 	_, scan := s.observer(ref)
 	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("resume-unlinked")}}}, nil)
@@ -214,7 +214,7 @@ func (s *entrypointSuite) TestClaudeResumedFirstInputRequiresLinkage() {
 			break
 		}
 	}
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 }
 
 func (s *entrypointSuite) TestClaudeConfirmedChildProvenance() {
@@ -261,5 +261,5 @@ func (s *entrypointSuite) TestClaudeConfirmedChildProvenance() {
 			break
 		}
 	}
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 }

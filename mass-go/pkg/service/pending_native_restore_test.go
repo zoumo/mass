@@ -191,9 +191,9 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		return err == nil && e == nil && r.Status.State == events.Idle && len(before.Events) == 1
 	}, 5*time.Second, 10*time.Millisecond)
 	require.Equal(t, "durable original answer", before.Events[0].Payload().(events.AgentMessage).Content[0].Text)
-	archived, err := svc.ArchiveSession(ctx, ref)
+	closed, err := svc.CloseSession(ctx, ref)
 	require.NoError(t, err)
-	require.Equal(t, events.SessionState("archived"), archived.Status.State)
+	require.Equal(t, events.SessionState("offline"), closed.Status.State)
 	before, err = svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	caller, abandon := context.WithCancel(ctx)
@@ -245,10 +245,10 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		require.Equal(t, events.SessionState("offline"), r.Status.State)
 		require.Equal(t, ref.SessionID, r.Status.SessionID)
 	} else {
-		require.Equal(t, archived.Status, r.Status)
+		require.Equal(t, closed.Status, r.Status)
 	}
-	require.Equal(t, archived.Metadata.UID, r.Metadata.UID)
-	require.Equal(t, archived.Spec, r.Spec)
+	require.Equal(t, closed.Metadata.UID, r.Metadata.UID)
+	require.Equal(t, closed.Spec, r.Spec)
 	after, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Equal(t, before, after, "history identity/order/content must survive canceled restore")
@@ -412,7 +412,7 @@ func TestPendingRestoreStopLateSuccessAndUnknownRelease(t *testing.T) {
 			original, err := svc.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "original"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}})
 			require.NoError(t, err)
 			ref := resource.SessionRef{SessionID: original.Status.SessionID}
-			_, err = svc.ArchiveSession(ctx, ref)
+			_, err = svc.CloseSession(ctx, ref)
 			require.NoError(t, err)
 			resumed := make(chan error, 1)
 			go func() { _, e := svc.ResumeSession(ctx, ref); resumed <- e }()

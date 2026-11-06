@@ -96,10 +96,10 @@ func (metaSuite *MetaStoreSuite) TestSessionVersionAndSpecIsolation() {
 	updated, err := st.UpdateSession(changed)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, updated.Metadata.Generation)
-	created.Status.State = "archived"
+	created.Status.State = "offline"
 	_, err = st.UpdateSession(created)
 	require.ErrorIs(t, err, store.ErrConflict)
-	updated.Status.State = "archived"
+	updated.Status.State = "offline"
 	saved, err := st.UpdateSession(updated)
 	require.NoError(t, err)
 	require.EqualValues(t, 2, saved.Metadata.Generation)
@@ -153,7 +153,7 @@ func TestIndependentStoreLifecycles(t *testing.T) {
 			got, err = meta.GetSession(resource.SessionRef{SessionID: "native"})
 			require.NoError(t, err)
 			require.Equal(t, created, got)
-			got.Status.State = "archived"
+			got.Status.State = "offline"
 			_, err = meta.UpdateSession(got)
 			require.NoError(t, err)
 		})

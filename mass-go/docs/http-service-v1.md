@@ -34,7 +34,7 @@ marks generated fields read-only. No manually maintained OpenAPI schema is used.
 ## Incremental migration boundary
 
 Tickets 01–05 register Runtime resources and lifecycle entry points, Session
-creation/directory/lookup, and input/answer/cancel/archive/resume operations with Huma.
+creation/directory/lookup, and input/answer/cancel/close/resume operations with Huma.
 History and SSE retain explicit chi registrations pending tickets 04–06; generated
 client completion belongs to 07. This export does not yet cover the full HTTP v1
 surface. Existing recovery and event behavior remains under regression tests.
@@ -58,7 +58,7 @@ candidates, constrains ID matches to the namespace, rejects ambiguity, preserves
 directory failures and returns an exclusive fixed-ID SessionRef. Both typed GET
 routes and remaining explicit Session action routes use this resolver. The
 original mutually exclusive SessionRef forms remain available in process.
-Session queries validate filters and include offline/archived persistent records
+Session queries validate filters and include offline persistent records
 without starting a Runtime. Typed and explicit paths preserve encoded segment
 boundaries and decode once; no base64 Session ID alias is provided.
 
@@ -89,8 +89,8 @@ precision. These are deterministic contract checks; they are not real Agent/mode
 or proxy acceptance. No massctl answer command is implemented.
 
 Session recovery (ticket 04) uses per-Session lifecycle coordination and dispatch
-admission. An unrelated Session can archive/resume while another close waits.
-Archive seals new inputs/answers, waits for admitted input/answer/cancel and policy
+admission. An unrelated Session can close/resume while another close waits.
+Close seals new inputs/answers, waits for admitted input/answer/cancel and policy
 responses, confirms Driver close and commits queued facts before clearing applied
 versions. Unknown close retains the original lane and prevents restore. Caller
 cancellation ends only the wait, with outcome_unknown; the Service owner continues.
@@ -103,7 +103,7 @@ Unexpected native identities are released under that reservation without replaci
 the saved identity. Identity, creation time, spec, history UUIDs and sync position
 remain unchanged by successful restore, and no business input is replayed.
 
-One persistent delivery queue survives archive/restore. Old source bindings remain
+One persistent delivery queue survives close/restore. Old source bindings remain
 associated with that queue until the original Driver stream ends, so late facts
 retain append order and original identity. Only the active source can update
 current resource state or dispatch a policy response. Runtime stop drains and
@@ -120,13 +120,13 @@ Original opening/restore and input/answer/cancel/policy dispatches settle before
 Session release. Release seals cancel admission too. Failed release retains stopping
 and the original Driver; explicit settlement does not resend confirmed Session or
 Driver releases. Final stream routing is checked again after Driver stop, including
-retained overflow on archived or recovered sources. Delivery settlement preserves
+retained overflow on closed or recovered sources. Delivery settlement preserves
 the original queue, event identity and append order.
 
 Successful stop leaves Sessions offline and preserves the Runtime configuration,
 Session identity, history and subscribers. Explicit restart captures the latest
 configuration generation. Delete requires no live/unsettled binding, no persistent
-Session reference (including archives), and confirmed stopped status; it never
+Session reference (including offline Sessions), and confirmed stopped status; it never
 cascades or implicitly stops. Typed HTTP registration returns 204 with no body for
 successful deletion. The existing generated lifecycle schema remains applicable.
 Deterministic Service/real HTTP and SDK mock verification does not prove native

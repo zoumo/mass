@@ -262,6 +262,9 @@ func (s *Store) UpdateRuntime(r resource.Runtime) (resource.Runtime, error) {
 }
 
 func (s *Store) CreateSession(r resource.Session) (resource.Session, error) {
+	if err := resource.ValidateSessionState(r.Status.State); err != nil {
+		return r, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	defer s.rollbackSQL()
@@ -326,6 +329,9 @@ func (s *Store) GetSession(ref resource.SessionRef) (resource.Session, error) {
 }
 
 func (s *Store) UpdateSession(r resource.Session) (resource.Session, error) {
+	if err := resource.ValidateSessionState(r.Status.State); err != nil {
+		return r, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	defer s.rollbackSQL()

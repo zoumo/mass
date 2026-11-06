@@ -249,7 +249,7 @@ func ticket08Session(t *testing.T, c *client.Client, project, name string) resou
 	return resource.SessionRef{SessionID: s.Status.SessionID}
 }
 
-func TestTicket08ArchiveRevokesQueuedAuthorityAndDrains(t *testing.T) {
+func TestTicket08CloseRevokesQueuedAuthorityAndDrains(t *testing.T) {
 	for _, kind := range []string{"codex", "claude"} {
 		t.Run(kind, func(t *testing.T) {
 			gate := &ticket08Gate{item: "before-close", entered: make(chan struct{}), release: make(chan struct{})}
@@ -273,8 +273,8 @@ func TestTicket08ArchiveRevokesQueuedAuthorityAndDrains(t *testing.T) {
 			require.NotEqual(t, current.Interaction, queued.Interaction)
 			require.Equal(t, "current", current.Request.ToolCallID)
 			require.Equal(t, "queued", queued.Request.ToolCallID)
-			archived := make(chan error, 1)
-			go func() { archived <- c.ArchiveSession(ctx(t), ref, nil) }()
+			closed := make(chan error, 1)
+			go func() { closed <- c.CloseSession(ctx(t), ref, nil) }()
 			deadline := ctx(t)
 			for {
 				var s resource.Session
@@ -292,10 +292,10 @@ func TestTicket08ArchiveRevokesQueuedAuthorityAndDrains(t *testing.T) {
 			}
 			close(gate.release)
 			select {
-			case err := <-archived:
+			case err := <-closed:
 				require.NoError(t, err)
 			case <-ctx(t).Done():
-				t.Fatal("archive failed to drain")
+				t.Fatal("close failed to drain")
 			}
 			var page store.HistoryPage
 			require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{}, &page))
@@ -306,16 +306,17 @@ func TestTicket08ArchiveRevokesQueuedAuthorityAndDrains(t *testing.T) {
 					facts[p.MessageID] = e.EventID
 				}
 			}
-			for _, id := range []string{"before-close", "queued-last", "cancel-final"} {
+			for _, id := range []string{"before-close", "queued-last"} {
 				require.NotEmpty(t, facts[id], "lost complete fact %s", id)
 			}
+			require.Empty(t, facts["cancel-final"], "close must not inject a native cancellation")
 			seen := map[string]bool{}
-			for !seen[facts["cancel-final"]] {
+			for !seen[facts["queued-last"]] {
 				e, nextErr := observer.Next()
 				require.NoError(t, nextErr)
 				seen[e.EventID] = true
 			}
-			for _, id := range []string{"before-close", "queued-last", "cancel-final"} {
+			for _, id := range []string{"before-close", "queued-last"} {
 				require.True(t, seen[facts[id]], "fact must be published before retiring binding")
 			}
 			for _, p := range []events.InteractionRequested{current, queued} {

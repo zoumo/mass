@@ -31,7 +31,7 @@ Old observation ends and drains before a fresh run is installed.
 Creation reserves its name before native side effects and does not hold a shared
 Runtime mutex during native open. Caller cancellation abandons only the wait; the
 bounded original operation continues with its original Driver/address. Its owner
-releases a late ID, or archives a late identity commit after staged facts settle.
+releases a late ID, or closes a late identity commit after staged facts settle.
 Stop waits original creation settlement. Late cleanup does not wait for the
 runtime mutex while Stop holds it and waits the original operation.
 
@@ -102,7 +102,7 @@ drains again before recording stopped. Concurrent stops share original
 responsibility. Independent Runtime shutdown drains run concurrently.
 
 Timeout or release/commit uncertainty keeps stopping/closing and ownership.
-Late running/idle cannot reopen admission or overwrite closing/archived.
+Late running/idle cannot reopen admission or overwrite closing/offline.
 Explicit stop retry can complete after late termination/release. A Session error
 does not stop a healthy shared Driver. Persisted unconfirmed Runtime/Session
 ownership cannot be cold-opened as a new owner merely because the Store becomes

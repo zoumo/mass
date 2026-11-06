@@ -29,7 +29,7 @@ type SessionNameOrIDPath struct {
 type sessionListInput struct {
 	Namespace  string              `query:"namespace"`
 	RuntimeRef string              `query:"runtimeRef"`
-	State      events.SessionState `query:"state" enum:"offline,opening,idle,running,requires_action,closing,archived,unknown"`
+	State      events.SessionState `query:"state" enum:"offline,opening,idle,running,requires_action,closing,unknown"`
 	After      string              `query:"after"`
 	Limit      int                 `query:"limit" minimum:"1" default:"100"`
 }
