@@ -35,9 +35,9 @@ func (d *loadDriver) LoadSession(ctx context.Context, id string, a runtime.Addre
 	<-d.release
 	source := events.NewSource()
 	for _, p := range []events.Payload{
-		events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{}}},
+		events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{}, EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: false}}},
 		events.UserMessage{MessageID: "first", Content: []events.ContentBlock{events.Text("saved input")}},
-		events.HistoryReplay{LoadID: loadID, Phase: "native_completed", RetainedScope: "all_retained_main_history", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{}}},
+		events.HistoryReplay{LoadID: loadID, Phase: "native_completed", RetainedScope: "all_retained_main_history", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{}, EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: false}}},
 	} {
 		e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: a.Namespace, SessionName: a.SessionName, SessionID: id, Time: time.Now(), ItemID: "first", Replay: &events.ReplaySource{LoadID: loadID, NativeRecordID: "first", NativeParentID: "turn"}}, p, source)
 		if err != nil {
@@ -97,4 +97,8 @@ func TestLoadAcceptedBeforeNativeReadAndOutlivesRequest(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Events, 1)
 	require.Equal(t, "saved input", page.Events[0].Payload().(events.UserMessage).Content[0].Text)
+	loaded, err := svc.GetSession(resource.SessionRef{SessionID: "native"})
+	require.NoError(t, err)
+	require.NotNil(t, loaded.Status.EffectiveFeatures)
+	require.False(t, loaded.Status.EffectiveFeatures.AgentQuestionsEnabled())
 }

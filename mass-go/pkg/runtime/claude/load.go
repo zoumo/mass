@@ -78,7 +78,8 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	d.mu.Lock()
 	h.unknown = true
 	d.mu.Unlock()
-	native, err := sdk.Open(read, sdk.SessionOptions{ResumeID: id, CLIPath: d.options.Executable, WorkDir: cwd, Env: d.options.Environment()})
+	effective := runtime.ResolveSessionFeatures(nil, supportedSessionFeatures)
+	native, err := sdk.Open(read, sessionOptions(effective, id, cwd, d.options.Executable, d.options.Environment("claude")))
 	if err != nil {
 		return err
 	}
@@ -133,7 +134,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := d.vault.Save(id, a, runtime.SessionSpec{Cwd: cwd}, map[string]string{"id": id, "cwd": cwd}); err != nil {
 		return err
 	}
-	resumed := &events.ResumedSession{SessionID: id, Capabilities: caps()}
+	resumed := &events.ResumedSession{SessionID: id, Capabilities: caps(), EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: effective.AgentQuestionsEnabled()}}
 	if err := d.loadEmit(h, id, "", "", map[string]any{"requestedSessionId": id, "observedSessionId": s.id}, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: resumed}); err != nil {
 		return err
 	}

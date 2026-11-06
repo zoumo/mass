@@ -130,6 +130,7 @@ func offlineStatus(r *resource.Session, archived bool) {
 	r.Status.AppliedGeneration = 0
 	r.Status.RuntimeGeneration = 0
 	r.Status.Capabilities = nil
+	r.Status.EffectiveFeatures = nil
 }
 
 func (s *Service) archiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
@@ -605,7 +606,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		return resource.SessionResumed{Session: r}, errors.Join(identityErr, statusErr, deliveryErr)
 	}
 	r, err = s.sessionStatus(ref, func(r *resource.Session) {
-		r.Status = resource.SessionStatus{SessionID: r.Status.SessionID, State: events.Unknown, AppliedGeneration: r.Metadata.Generation, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
+		r.Status = resource.SessionStatus{SessionID: r.Status.SessionID, State: events.Unknown, AppliedGeneration: r.Metadata.Generation, RuntimeGeneration: run.generation, Capabilities: native.Capabilities, EffectiveFeatures: &native.EffectiveFeatures}
 	})
 	if err != nil {
 		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)

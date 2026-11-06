@@ -3,7 +3,7 @@ type: Contract
 title: TypeSpec 合同入口
 description: Service、Runtime 与 Store 的接口版本与统一校验工具。
 status: stable
-interface_version: v0.2.16
+interface_version: v0.2.17
 sources:
 - id: direction
   resource: 项目负责人在 2026-10-19 关于应用服务与运行时拆分的讨论
@@ -14,7 +14,7 @@ sources:
 
 当前接口版本记录在本页元数据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
 
-当前修订明确 EventStore 自动增量同步与失败续接、Service 独占当前运行映射和完整停止操作，Registry 只负责配置校验与 Driver 构造。停止只暴露 stopRuntime，不固定内部多步协调 Interface。设计变化历史见[更新记录](../log.md)，实现差距与检查证据见[实现差距记录](../implementation-gaps.md)。
+当前修订增加可扩展的 Session features，首个开关 agentQuestions 默认开启，Driver 以 effectiveFeatures 返回实际生效值，不支持时降级为 false。此前修订已明确 EventStore 自动增量同步与失败续接、Service 独占当前运行映射和完整停止操作，Registry 只负责配置校验与 Driver 构造。停止只暴露 stopRuntime，不固定内部多步协调 Interface。设计变化历史见[更新记录](../log.md)，实现差距与检查证据见[实现差距记录](../implementation-gaps.md)。
 
 - [资源管理接口](../modules/service/main.tsp)：RuntimeService、SessionService；历史存取与实时观察是分开的业务操作。
 - [运行时接口](../modules/runtime/main.tsp)：RuntimeRegistry、RuntimeDriver；Driver.events() 返回单消费者 EventStream<SessionEvent>，多个 Session 共用。

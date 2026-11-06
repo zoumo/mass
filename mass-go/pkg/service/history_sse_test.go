@@ -293,7 +293,7 @@ func (s *SessionWorkSuite) TestSSEExplicitObserverCloseSendsClosed() {
 }
 
 func (d *workDriver) LoadSession(ctx context.Context, id string, address runtime.Address, _, loadID string) error {
-	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: address.Namespace, SessionName: address.SessionName, SessionID: id, Time: time.Now().UTC(), Replay: &events.ReplaySource{LoadID: loadID}}, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "retained-main-chain", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{"continuedInput": true}}}, d.source)
+	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: address.Namespace, SessionName: address.SessionName, SessionID: id, Time: time.Now().UTC(), Replay: &events.ReplaySource{LoadID: loadID}}, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "retained-main-chain", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{"continuedInput": true}, EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: true}}}, d.source)
 	if err != nil {
 		return err
 	}

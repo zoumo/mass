@@ -123,9 +123,9 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 
 Session 名称遵循 DNS subdomain 规则，namespace 遵循 DNS label 规则；namespace/name 唯一。创建时 metadata.name 还必须通过[名称校验](#创建名称校验)。namespace 用于分组寻址，不替代权限隔离。createdAt 在首次持久创建时写入，之后不因恢复或归档修改。查询默认跨 namespace，可显式筛选。Session 的 Runtime 归属仅使用 spec.runtimeRef 名称。接纳操作时固定原 Driver 和具体运行/工作目标，名称复用不会改变已接纳操作的目标。
 
-Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs；status 保存 Agent 返回的 sessionId、统一的 SessionState 与运行能力。sessionId 即使离线也必须持久保留。
+Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs 与会话功能请求 features；status 保存 Agent 返回的 sessionId、统一的 SessionState、运行能力与本次运行实际生效的 effectiveFeatures。sessionId 即使离线也必须持久保留。
 
-Session.status.appliedGeneration 表示本次会话运行应用的 Session spec 版本，runtimeGeneration 表示它使用的 Runtime spec 版本。后者来自Service 模块保存的 Driver 配置快照，不能复制 Runtime 的最新期望 generation。打开或恢复成功后记录这两个版本；确认关闭后清除当前运行版本和协商能力，保留身份与历史；结果未知时保留最后确认事实并表达不确定状态。
+Session.status.appliedGeneration 表示本次会话运行应用的 Session spec 版本，runtimeGeneration 表示它使用的 Runtime spec 版本。后者来自Service 模块保存的 Driver 配置快照，不能复制 Runtime 的最新期望 generation。打开或恢复成功后记录这两个版本、协商能力和实际生效功能；确认关闭或归档后清除当前运行版本、协商能力和 effectiveFeatures，保留身份与历史；结果未知时保留最后确认事实并表达不确定状态。features 省略时各字段使用 schema 默认值；请求开启但 Driver 不支持时 effectiveFeatures 对应值为 false，请求本身不被拒绝。
 
 当前未增加 updateSession。归档、恢复、输入、交互与状态变化不改变 Session spec 或 generation。Runtime 更新不自动改变 Session spec；重新启动 Runtime 后恢复 Session，需要验证新运行配置与原会话兼容。
 

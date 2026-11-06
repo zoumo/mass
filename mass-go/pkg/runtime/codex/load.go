@@ -122,7 +122,8 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := d.vault.Save(id, a, runtime.SessionSpec{Cwd: cwd}, response.Thread); err != nil {
 		return err
 	}
-	resumed := &events.ResumedSession{SessionID: id, Capabilities: caps()}
+	effective := runtime.ResolveSessionFeatures(nil, supportedSessionFeatures)
+	resumed := &events.ResumedSession{SessionID: id, Capabilities: caps(), EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: effective.AgentQuestionsEnabled()}}
 	if err := d.loadEmit(h, id, "", "", nil, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: resumed}); err != nil {
 		return err
 	}

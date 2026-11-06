@@ -7,6 +7,15 @@ model DriverSessionSpec {
   cwd: string;
   systemPrompt?: string;
   additionalDirs?: string[];
+
+  /** 会话功能请求；字段省略时使用各自 schema 默认值。 */
+  features?: SessionFeatures;
+}
+
+/** 可扩展的会话功能开关；新增字段必须自行声明默认值。 */
+model SessionFeatures {
+  /** 是否允许 Agent 向用户提问。省略时为 true，false 表示请求关闭。 */
+  agentQuestions?: boolean = true;
 }
 
 model DriverSession {
@@ -14,6 +23,9 @@ model DriverSession {
   sessionId: string;
 
   capabilities: CapabilitySet;
+
+  /** 本次运行实际生效的功能值；请求开启但 adapter 不支持时降级为 false。 */
+  effectiveFeatures: SessionFeatures;
 
   /** 仅显式输入创建返回，不持久、不代表工作完成。 */
   initialInputReceipt?: InputReceipt;

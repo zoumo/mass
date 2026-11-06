@@ -204,6 +204,10 @@ model SessionStatus {
   runtimeGeneration?: Generation;
 
   capabilities?: CapabilitySet;
+
+  /** 本次运行实际生效的会话功能；确认关闭或归档后清除。 */
+  effectiveFeatures?: Execution.SessionFeatures;
+
   reason?: Reason;
 }
 

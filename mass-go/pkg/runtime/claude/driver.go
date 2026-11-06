@@ -91,6 +91,16 @@ func caps() runtime.Capabilities {
 	return runtime.Capabilities{"textInput": true, "permission": true, "form": true}
 }
 
+var supportedSessionFeatures = runtime.FeatureSupport{AgentQuestions: true}
+
+func sessionOptions(features runtime.SessionFeatures, resumeID, cwd, executable string, env []string) sdk.SessionOptions {
+	options := sdk.SessionOptions{ResumeID: resumeID, CLIPath: executable, WorkDir: cwd, Env: env}
+	if !features.AgentQuestionsEnabled() {
+		options.DisallowedTools = []string{"AskUserQuestion"}
+	}
+	return options
+}
+
 func (d *Driver) Events() (events.Stream, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -157,6 +167,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	if spec.SystemPrompt != "" || len(spec.AdditionalDirs) > 0 {
 		return runtime.DriverSession{}, noResources("Claude SDK does not support systemPrompt or additionalDirs")
 	}
+	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
 	d.mu.Lock()
 	running := d.started && !d.stopped
 	d.mu.Unlock()
@@ -180,7 +191,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		}
 	}
 	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown", requireLink: resume != ""}
-	c, err := sdk.Open(ctx, sdk.SessionOptions{ResumeID: resume, CLIPath: d.options.Executable, WorkDir: spec.Cwd, Env: d.options.Environment()})
+	c, err := sdk.Open(ctx, sessionOptions(effective, resume, spec.Cwd, d.options.Executable, d.options.Environment("claude")))
 	if err != nil {
 		close(s.ready)
 		// Failed SDK startup closes its unreturned connection before returning.
@@ -273,7 +284,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	d.mu.Unlock()
 	close(s.ready)
 	go d.observe(s, early)
-	return runtime.DriverSession{SessionID: s.id, Capabilities: caps(), Source: s.source, InitialInputReceipt: receipt}, nil
+	return runtime.DriverSession{SessionID: s.id, Capabilities: caps(), EffectiveFeatures: effective, Source: s.source, InitialInputReceipt: receipt}, nil
 }
 
 func (d *Driver) get(id string) (*session, error) {

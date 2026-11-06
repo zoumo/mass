@@ -1133,13 +1133,29 @@
             },
             "type": "object"
           },
+          "effectiveFeatures": {
+            "$ref": "#/components/schemas/ResumedSessionFeatures"
+          },
           "sessionId": {
             "type": "string"
           }
         },
         "required": [
           "sessionId",
-          "capabilities"
+          "capabilities",
+          "effectiveFeatures"
+        ],
+        "type": "object"
+      },
+      "ResumedSessionFeatures": {
+        "additionalProperties": false,
+        "properties": {
+          "agentQuestions": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "agentQuestions"
         ],
         "type": "object"
       },
@@ -2280,6 +2296,16 @@
           }
         ]
       },
+      "SessionFeatures": {
+        "additionalProperties": false,
+        "properties": {
+          "agentQuestions": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "SessionLoad": {
         "additionalProperties": false,
         "properties": {
@@ -2391,6 +2417,9 @@
           "cwd": {
             "type": "string"
           },
+          "features": {
+            "$ref": "#/components/schemas/SessionFeatures"
+          },
           "runtimeRef": {
             "type": "string"
           },
@@ -2417,6 +2446,9 @@
               "type": "boolean"
             },
             "type": "object"
+          },
+          "effectiveFeatures": {
+            "$ref": "#/components/schemas/SessionFeatures"
           },
           "historyLoad": {
             "$ref": "#/components/schemas/HistoryLoadStatus"

@@ -31,8 +31,13 @@ type ReplaySource struct {
 }
 
 type ResumedSession struct {
-	SessionID    string          `json:"sessionId"`
-	Capabilities map[string]bool `json:"capabilities"`
+	SessionID         string                 `json:"sessionId"`
+	Capabilities      map[string]bool        `json:"capabilities"`
+	EffectiveFeatures ResumedSessionFeatures `json:"effectiveFeatures"`
+}
+
+type ResumedSessionFeatures struct {
+	AgentQuestions bool `json:"agentQuestions"`
 }
 
 type HistoryReplay struct {

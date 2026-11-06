@@ -93,6 +93,17 @@ func caps() runtime.Capabilities {
 	return runtime.Capabilities{"textInput": true, "permission": true, "form": true}
 }
 
+var supportedSessionFeatures = runtime.FeatureSupport{AgentQuestions: true}
+
+func threadConfig(features runtime.SessionFeatures) ct.Optional[map[string]json.RawMessage] {
+	if features.AgentQuestionsEnabled() {
+		return ct.Optional[map[string]json.RawMessage]{}
+	}
+	return ct.Some(map[string]json.RawMessage{
+		"tools.experimental_request_user_input.enabled": json.RawMessage("false"),
+	})
+}
+
 func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	d.op.Lock()
 	defer d.op.Unlock()
@@ -202,6 +213,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	if len(spec.AdditionalDirs) > 0 {
 		return runtime.DriverSession{}, noResources("additionalDirs not supported yet")
 	}
+	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
 	d.mu.Lock()
 	c := d.client
 	stopped := d.stopped
@@ -230,7 +242,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if saved.ID != resume || saved.SessionID == "" || saved.Ephemeral || saved.Cwd != spec.Cwd {
 			return runtime.DriverSession{}, noResources("invalid native recovery context")
 		}
-		native, err = sdk.Open(ctx, sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)}})
+		native, err = sdk.Open(ctx, sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true), Config: threadConfig(effective)}})
 		if err != nil {
 			return runtime.DriverSession{}, err
 		}
@@ -241,7 +253,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		}
 		// Resume metadata may contain old turns: they are never adapted or replayed.
 	} else {
-		params := ct.ThreadStartParams{Cwd: ct.Some(spec.Cwd), Ephemeral: ct.Some(false)}
+		params := ct.ThreadStartParams{Cwd: ct.Some(spec.Cwd), Ephemeral: ct.Some(false), Config: threadConfig(effective)}
 		if spec.SystemPrompt != "" {
 			params.BaseInstructions = ct.Some(spec.SystemPrompt)
 		}
@@ -288,7 +300,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	keep = true
 	d.wg.Add(1)
 	go d.observe(id, s)
-	return runtime.DriverSession{SessionID: id, Capabilities: caps(), Source: s.source}, nil
+	return runtime.DriverSession{SessionID: id, Capabilities: caps(), EffectiveFeatures: effective, Source: s.source}, nil
 }
 
 func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {

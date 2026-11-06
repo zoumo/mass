@@ -196,4 +196,7 @@ func TestLoadOpenAPIPublishesAcceptanceAndRequiredEvidence(t *testing.T) {
 	require.Equal(t, "#/components/schemas/OperationError", properties["error"].(map[string]any)["$ref"])
 	sessionStatus := schemas["SessionStatus"].(map[string]any)
 	require.NotContains(t, sessionStatus["required"], "historyLoad")
+	require.Contains(t, sessionStatus["properties"], "effectiveFeatures")
+	features := schemas["SessionFeatures"].(map[string]any)
+	require.Equal(t, true, features["properties"].(map[string]any)["agentQuestions"].(map[string]any)["default"])
 }

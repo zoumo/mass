@@ -20,19 +20,49 @@ type (
 	Capabilities map[string]bool
 )
 
+// SessionFeatures is the extensible feature request stored in Session spec.
+// Omitted fields use their schema defaults.
+type SessionFeatures struct {
+	AgentQuestions *bool `json:"agentQuestions,omitempty" default:"true"`
+}
+
+func (f SessionFeatures) AgentQuestionsEnabled() bool {
+	return f.AgentQuestions == nil || *f.AgentQuestions
+}
+
+// FeatureSupport declares which requested features the current native runtime
+// can enforce. Unsupported requested features degrade to false; they do not
+// make a session unsupported.
+type FeatureSupport struct {
+	AgentQuestions bool
+}
+
+// ResolveSessionFeatures separates the requested value from the effective
+// value. A disabled request always remains disabled, while an unsupported
+// enabled request degrades to disabled.
+func ResolveSessionFeatures(requested *SessionFeatures, support FeatureSupport) SessionFeatures {
+	agentQuestions := true
+	if requested != nil {
+		agentQuestions = requested.AgentQuestionsEnabled()
+	}
+	return SessionFeatures{AgentQuestions: Bool(agentQuestions && support.AgentQuestions)}
+}
+
 type Address struct {
 	Namespace   string `json:"namespace"`
 	SessionName string `json:"sessionName"`
 }
 type SessionSpec struct {
-	Cwd            string   `json:"cwd"`
-	SystemPrompt   string   `json:"systemPrompt,omitempty"`
-	AdditionalDirs []string `json:"additionalDirs,omitempty"`
+	Cwd            string           `json:"cwd"`
+	SystemPrompt   string           `json:"systemPrompt,omitempty"`
+	AdditionalDirs []string         `json:"additionalDirs,omitempty"`
+	Features       *SessionFeatures `json:"features,omitempty"`
 }
 
 type DriverSession struct {
 	SessionID           string
 	Capabilities        Capabilities
+	EffectiveFeatures   SessionFeatures
 	Source              events.Source
 	InitialInputReceipt *InputReceipt
 }
@@ -46,7 +76,12 @@ type Acceptance struct {
 	NativeRecorded *bool `json:"nativeRecorded,omitempty"`
 }
 
-func Yes() *bool { v := true; return &v }
+func Yes() *bool { return Bool(true) }
+
+func Bool(value bool) *bool {
+	v := value
+	return &v
+}
 
 type InputReceipt struct {
 	Submission string     `json:"submission"`

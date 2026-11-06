@@ -790,8 +790,14 @@ type ReplaySource struct {
 
 // ResumedSession defines model for ResumedSession.
 type ResumedSession struct {
-	Capabilities map[string]bool `json:"capabilities"`
-	SessionId    string          `json:"sessionId"`
+	Capabilities      map[string]bool        `json:"capabilities"`
+	EffectiveFeatures ResumedSessionFeatures `json:"effectiveFeatures"`
+	SessionId         string                 `json:"sessionId"`
+}
+
+// ResumedSessionFeatures defines model for ResumedSessionFeatures.
+type ResumedSessionFeatures struct {
+	AgentQuestions bool `json:"agentQuestions"`
 }
 
 // Runtime defines model for Runtime.
@@ -864,6 +870,11 @@ type SessionError struct {
 // SessionEvent defines model for SessionEvent.
 type SessionEvent = rawjson.RawMessage
 
+// SessionFeatures defines model for SessionFeatures.
+type SessionFeatures struct {
+	AgentQuestions *bool `json:"agentQuestions,omitempty"`
+}
+
 // SessionLoad defines model for SessionLoad.
 type SessionLoad struct {
 	Cwd        string                `json:"cwd"`
@@ -901,6 +912,7 @@ type SessionResumed struct {
 type SessionSpec struct {
 	AdditionalDirs nullable.Nullable[[]string] `json:"additionalDirs,omitempty"`
 	Cwd            string                      `json:"cwd"`
+	Features       *SessionFeatures            `json:"features,omitempty"`
 	RuntimeRef     string                      `json:"runtimeRef"`
 	SystemPrompt   *string                     `json:"systemPrompt,omitempty"`
 }
@@ -909,6 +921,7 @@ type SessionSpec struct {
 type SessionStatus struct {
 	AppliedGeneration *int64             `json:"appliedGeneration,omitempty"`
 	Capabilities      *map[string]bool   `json:"capabilities,omitempty"`
+	EffectiveFeatures *SessionFeatures   `json:"effectiveFeatures,omitempty"`
 	HistoryLoad       *HistoryLoadStatus `json:"historyLoad,omitempty"`
 	RuntimeGeneration *int64             `json:"runtimeGeneration,omitempty"`
 	SessionId         string             `json:"sessionId"`

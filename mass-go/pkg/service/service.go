@@ -352,7 +352,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	if err := validateMetadata(r.Metadata, true); err != nil {
 		return resource.SessionCreated{Session: r}, err
 	}
-	if r.Status.SessionID != "" || r.Status.State != "" || r.Status.AppliedGeneration != 0 || r.Status.RuntimeGeneration != 0 || r.Status.Capabilities != nil {
+	if r.Status.SessionID != "" || r.Status.State != "" || r.Status.AppliedGeneration != 0 || r.Status.RuntimeGeneration != 0 || r.Status.Capabilities != nil || r.Status.EffectiveFeatures != nil {
 		return resource.SessionCreated{}, runtime.InvalidArgument("system status is read-only")
 	}
 	if !validName(r.Spec.RuntimeRef) {
@@ -484,7 +484,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 				}
 				return resource.Session{}, errors.Join(errors.New("outcome_unknown: abandoned create settled against original owner"), cleanup)
 			}
-			r.Status = resource.SessionStatus{SessionID: native.SessionID, State: events.Unknown, AppliedGeneration: 1, RuntimeGeneration: run.generation, Capabilities: native.Capabilities}
+			r.Status = resource.SessionStatus{SessionID: native.SessionID, State: events.Unknown, AppliedGeneration: 1, RuntimeGeneration: run.generation, Capabilities: native.Capabilities, EffectiveFeatures: &native.EffectiveFeatures}
 			s.mu.Lock()
 			op.requested = r
 			s.mu.Unlock()

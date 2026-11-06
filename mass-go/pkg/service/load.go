@@ -16,19 +16,20 @@ import (
 )
 
 type historyLoad struct {
-	mu             sync.Mutex
-	id             string
-	status         resource.HistoryLoadStatus
-	complete       atomic.Bool
-	bound          bool // guarded by Service.mu; only the first legal marker binds the run
-	nativeTerminal bool // guarded by historyLoad.mu
-	cleanupStarted bool
-	cancel         context.CancelFunc
-	done           chan struct{}
-	cleanupDone    chan struct{}
-	cleanupErr     error
-	capabilities   runtime.Capabilities
-	deliveryFailed chan struct{}
+	mu                sync.Mutex
+	id                string
+	status            resource.HistoryLoadStatus
+	complete          atomic.Bool
+	bound             bool // guarded by Service.mu; only the first legal marker binds the run
+	nativeTerminal    bool // guarded by historyLoad.mu
+	cleanupStarted    bool
+	cancel            context.CancelFunc
+	done              chan struct{}
+	cleanupDone       chan struct{}
+	cleanupErr        error
+	capabilities      runtime.Capabilities
+	effectiveFeatures runtime.SessionFeatures
+	deliveryFailed    chan struct{}
 }
 
 func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (resource.SessionLoadAccepted, error) {
@@ -126,6 +127,8 @@ func (s *Service) writeLoad(l *lane) error {
 			r.Status.AppliedGeneration = r.Metadata.Generation
 			r.Status.RuntimeGeneration = l.session.Status.RuntimeGeneration
 			r.Status.Capabilities = l.load.capabilities
+			effective := l.load.effectiveFeatures
+			r.Status.EffectiveFeatures = &effective
 		} else {
 			r.Status.State = "opening"
 		}
@@ -240,9 +243,14 @@ func (s *Service) loadMarker(run *runBinding, l *lane, e events.SessionEvent) er
 				err = runtime.FailedPrecondition("duplicate history start")
 				break
 			}
+			if p.ResumedSession == nil {
+				err = runtime.FailedPrecondition("history start lacks resumed session")
+				break
+			}
 			h.status.NativeVerified = true
 			h.status.NativeResumed = true
 			h.capabilities = p.ResumedSession.Capabilities
+			h.effectiveFeatures = runtime.SessionFeatures{AgentQuestions: runtime.Bool(p.ResumedSession.EffectiveFeatures.AgentQuestions)}
 			if h.status.Error == nil && !h.status.NativeCompleted {
 				h.status.Phase = "replaying"
 			}

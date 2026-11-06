@@ -85,7 +85,7 @@ func (d *ticket06FaultDriver) emit(ctx context.Context, b *ticket06FaultBinding,
 func (d *ticket06FaultDriver) marker(ctx context.Context, b *ticket06FaultBinding, phase string) error {
 	p := events.HistoryReplay{LoadID: b.loadID, Phase: phase, RetainedScope: "all_retained_main_history"}
 	if phase == "started" || phase == "native_completed" {
-		p.ResumedSession = &events.ResumedSession{SessionID: b.id, Capabilities: map[string]bool{}}
+		p.ResumedSession = &events.ResumedSession{SessionID: b.id, Capabilities: map[string]bool{}, EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: true}}
 	}
 	if phase == "native_completed" {
 		d.mu.Lock()

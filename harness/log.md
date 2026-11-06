@@ -1,5 +1,9 @@
 # 设计知识包更新记录
 
+## 2026-11-06
+
+- **增加会话功能开关**：经负责人授权，DriverSessionSpec 增加可扩展的 features，首个开关 agentQuestions 默认 true；DriverSession 增加 effectiveFeatures，SessionStatus 增加实际生效值。请求开启但 Runtime 不支持时降级为 false，不返回错误；默认值与具体 Runtime 是否支持无关。两个 Driver 分别使用 Codex thread 级 config 与 Claude 的 AskUserQuestion 禁用参数实现，接口修订为 v0.2.17。
+
 ## 2026-11-01
 
 - **显式新输入恢复**：经负责人授权，SessionResume 增加可选 initialInput，SessionResumed 返回临时回执；省略保持零输入，输入与回执不进入持久恢复配置。Claude 在验证保存身份/cwd 并定向原会话后可先提交新输入，再等待同一原生 ID/cwd；成功与事实发布仍受实际身份及持久提交门控。明确早到完成、未知业务效果和原所有者取消清理；同步 HTTP、CLI 与可选 Runtime 能力，接口修订为 v0.2.16。

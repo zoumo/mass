@@ -39,15 +39,16 @@ func (d *recoveryDriver) Start(context.Context) (runtime.Capabilities, error) {
 	return runtime.Capabilities{}, nil
 }
 
-func (d *recoveryDriver) OpenSession(_ context.Context, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *recoveryDriver) OpenSession(_ context.Context, a runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.source = events.NewSource()
 	if a.SessionName == "slow" {
 		d.slowSource = d.source
 	}
-	return runtime.DriverSession{SessionID: a.SessionName, Source: d.source}, nil
+	effective := runtime.ResolveSessionFeatures(spec.Features, runtime.FeatureSupport{AgentQuestions: true})
+	return runtime.DriverSession{SessionID: a.SessionName, EffectiveFeatures: effective, Source: d.source}, nil
 }
 
-func (d *recoveryDriver) ResumeSession(_ context.Context, id string, _ runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *recoveryDriver) ResumeSession(_ context.Context, id string, _ runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
 	if d.onResume != nil {
 		if err := d.onResume(); err != nil {
 			return runtime.DriverSession{}, err
@@ -60,7 +61,8 @@ func (d *recoveryDriver) ResumeSession(_ context.Context, id string, _ runtime.A
 	if d.resumeID != "" {
 		id = d.resumeID
 	}
-	return runtime.DriverSession{SessionID: id, Source: source}, nil
+	effective := runtime.ResolveSessionFeatures(spec.Features, runtime.FeatureSupport{AgentQuestions: true})
+	return runtime.DriverSession{SessionID: id, EffectiveFeatures: effective, Source: source}, nil
 }
 
 func (d *recoveryDriver) CloseSession(ctx context.Context, id string) error {
@@ -147,9 +149,31 @@ func (s *RecoverySuite) SetupTest() {
 	_, err = s.svc.StartRuntime(context.Background(), "agent")
 	s.Require().NoError(err)
 	for _, name := range []string{"slow", "fast"} {
-		_, err = s.svc.CreateSession(context.Background(), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: name}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}})
+		spec := runtime.SessionSpec{Cwd: "/remote"}
+		if name == "fast" {
+			spec.Features = &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)}
+		}
+		_, err = s.svc.CreateSession(context.Background(), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: name}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: spec}})
 		s.Require().NoError(err)
 	}
+}
+
+func (s *RecoverySuite) TestEffectiveFeaturesProjectedAndCleared() {
+	r, err := s.svc.GetSession(resource.SessionRef{SessionID: "fast"})
+	s.Require().NoError(err)
+	s.Require().NotNil(r.Status.EffectiveFeatures)
+	s.False(r.Status.EffectiveFeatures.AgentQuestionsEnabled())
+
+	_, err = s.svc.ArchiveSession(context.Background(), resource.SessionRef{SessionID: "fast"})
+	s.Require().NoError(err)
+	r, err = s.svc.GetSession(resource.SessionRef{SessionID: "fast"})
+	s.Require().NoError(err)
+	s.Nil(r.Status.EffectiveFeatures)
+
+	r, err = s.svc.ResumeSession(context.Background(), resource.SessionRef{SessionID: "fast"})
+	s.Require().NoError(err)
+	s.Require().NotNil(r.Status.EffectiveFeatures)
+	s.False(r.Status.EffectiveFeatures.AgentQuestionsEnabled())
 }
 
 func (s *RecoverySuite) TestSlowArchiveDoesNotBlockAnotherSessionsLifecycle() {

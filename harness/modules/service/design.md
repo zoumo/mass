@@ -180,7 +180,7 @@ barrier、排空证明或其他协调手段可作为 Service 的 internal seam�
 
 ## Session spec 与 agentrun 的参考关系
 
-SessionSpec 在运行时 DriverSessionSpec 的 cwd、systemPrompt、additionalDirs 上增加 runtimeRef。路径按 Agent 所在环境解释；额外目录不代表授权。systemPrompt 是配置，创建与恢复不隐式发送业务输入；显式不支持的选项必须报错。
+SessionSpec 在运行时 DriverSessionSpec 的 cwd、systemPrompt、additionalDirs 和 features 上增加 runtimeRef。路径按 Agent 所在环境解释；额外目录不代表授权。systemPrompt 是配置，创建与恢复不隐式发送业务输入。features 是持久的功能请求，字段省略时使用 schema 默认值；Driver 返回实际生效值，Session.status.effectiveFeatures 记录本次运行的实际值。请求开启但 Driver 不支持时不报错，降级为 false；其他显式不支持的选项必须报错。
 
 字段沿用此前 agentrun 参考讨论，bundleDir 与私有恢复材料由运行时实现管理；不加入无约束 _meta、permissions 或 mcpServers。SessionService 当前没有 updateSession 或 deleteSession，归档保留身份和历史。
 
