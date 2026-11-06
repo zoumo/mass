@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -69,10 +71,13 @@ type session struct {
 	err                      error
 	state                    *events.SessionState
 	// Native message identity for partial events; no content is accumulated.
-	messageID   string
-	messageRoot bool
-	messages    map[string]messageClaim
-	tools       map[string]string
+	messageID     string
+	messageRoot   bool
+	messages      map[string]messageClaim
+	tools         map[string]string
+	lanes         map[string]*liveLane
+	blocks        map[blockKey]*liveBlock
+	seenAssistant map[string]struct{}
 }
 type Driver struct {
 	opening                 int
@@ -378,6 +383,10 @@ func identityMeta(id sdk.SubagentIdentity) map[string]any {
 }
 
 func (d *Driver) emit(s *session, item string, p events.Payload, at time.Time) error {
+	return d.emitWithClaude(s, item, p, at, nil)
+}
+
+func (d *Driver) emitWithClaude(s *session, item string, p events.Payload, at time.Time, claude map[string]any) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
@@ -394,6 +403,7 @@ func (d *Driver) emit(s *session, item string, p events.Payload, at time.Time) e
 	if s.observationWork != "" {
 		meta["submission"] = s.observationWork
 	}
+	maps.Copy(meta, claude)
 	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: s.id, ItemID: item, Time: at, Meta: map[string]any{"claude": meta}}, p, s.source.WithWork(s.observationWork))
 	if err != nil {
 		return err
@@ -527,15 +537,19 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 		}
 	}
 	var raw struct {
-		Time    time.Time `json:"timestamp"`
-		Message struct {
+		Time          time.Time `json:"timestamp"`
+		Aborted       bool      `json:"aborted"`
+		APIBlockIndex *int      `json:"apiBlockIndex"`
+		Message       struct {
 			ID      string          `json:"id"`
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
 		UUID  string `json:"uuid"`
 		Event struct {
-			Type    string `json:"type"`
-			Message struct {
+			Type         string          `json:"type"`
+			Index        *int            `json:"index"`
+			ContentBlock json.RawMessage `json:"content_block"`
+			Message      struct {
 				ID string `json:"id"`
 			} `json:"message"`
 			Delta struct{ Type, Text, Thinking string } `json:"delta"`
@@ -545,42 +559,89 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 		return err
 	}
 	trusted := root && e.SessionID == s.id && received.Origin == "live" && received.Source == (sdk.SubagentIdentity{SessionID: s.id})
+	parent := ""
+	if e.ParentToolUseID != nil {
+		parent = *e.ParentToolUseID
+	}
 	switch e.Type {
 	case "stream_event":
 		switch raw.Event.Type {
 		case "message_start":
-			s.messageID = raw.Event.Message.ID
-			s.messageRoot = trusted
-			s.linkMessage(s.messageID, true, trusted, e.UserMessageUUID)
+			s.beginResponse(parent, raw.Event.Message.ID)
+			if parent == "" {
+				s.messageID = raw.Event.Message.ID
+				s.messageRoot = trusted
+				s.linkMessage(s.messageID, true, trusted, e.UserMessageUUID)
+			}
 			if !root || s.observationWork == "" || s.observationWork != s.work || !s.active {
 				return nil
 			}
 			state := events.Running
 			return d.state(s, &state, "")
 		case "message_stop":
-			s.messageRoot = false
-		case "content_block_delta":
-			if s.messageID == "" {
-				return errors.New("partial message missing native identity")
+			if parent == "" {
+				s.messageRoot = false
 			}
-			s.linkPreview(trusted && s.messageRoot, e.UserMessageUUID)
+		case "content_block_start":
+			if raw.Event.Index == nil || *raw.Event.Index < 0 {
+				return nil
+			}
+			var block struct {
+				Type string `json:"type"`
+			}
+			if len(raw.Event.ContentBlock) > 0 {
+				if err := json.Unmarshal(raw.Event.ContentBlock, &block); err != nil {
+					return err
+				}
+			}
+			s.noteBlockStart(parent, *raw.Event.Index, block.Type)
+		case "content_block_stop":
+			if raw.Event.Index == nil || *raw.Event.Index < 0 {
+				return nil
+			}
+			s.noteBlockStop(parent, *raw.Event.Index)
+		case "content_block_delta":
+			response := s.lane(parent).responseID
+			if response == "" || raw.Event.Index == nil || *raw.Event.Index < 0 {
+				return nil
+			}
+			index := *raw.Event.Index
+			var kind, text string
 			switch raw.Event.Delta.Type {
 			case "text_delta":
-				return d.emit(s, s.messageID, events.MessageChunk{MessageID: s.messageID, Content: []events.ContentBlock{events.Text(raw.Event.Delta.Text)}}, raw.Time)
+				kind, text = "text", raw.Event.Delta.Text
 			case "thinking_delta":
-				return d.emit(s, s.messageID, events.ThinkingChunk{MessageID: s.messageID, Content: []events.ContentBlock{events.Text(raw.Event.Delta.Thinking)}}, raw.Time)
+				kind, text = "thinking", raw.Event.Delta.Thinking
 			case "input_json_delta", "signature_delta":
 				return nil // unsupported preview, never reconstruct full content
 			default:
 				return errors.New("unsupported Claude delta type")
 			}
+			if text == "" {
+				return nil
+			}
+			key := blockKey{parent: parent, response: response, index: index}
+			block, ok := s.deltaBlock(key, kind)
+			if !ok {
+				return nil
+			}
+			if block.completed {
+				return nil
+			}
+			if parent == "" {
+				s.linkPreview(trusted && s.messageRoot, e.UserMessageUUID)
+			}
+			return d.emitChunk(s, key, kind, text, raw.Time)
 		}
 	case "assistant", "user":
 		if e.Type == "assistant" {
+			if s.markAssistantFrame(parent, raw.UUID) || raw.Aborted {
+				return nil
+			}
 			s.linkMessage(raw.Message.ID, false, trusted, e.UserMessageUUID)
 		}
 		id := raw.Message.ID
-		if id == "" {
+		if id == "" && e.Type == "user" {
 			id = raw.UUID
 		}
 		var blocks []map[string]json.RawMessage
@@ -593,22 +654,35 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 		} else if err := json.Unmarshal(raw.Message.Content, &blocks); err != nil {
 			return err
 		}
+		if e.Type == "assistant" && raw.APIBlockIndex != nil && len(blocks) == 1 {
+			if _, state := blockCoordinate(blocks[0]); state == coordinateMissing {
+				blocks[0]["apiBlockIndex"] = json.RawMessage(strconv.Itoa(*raw.APIBlockIndex))
+			}
+		}
 		text, thinking := []events.ContentBlock{}, []events.ContentBlock{}
 		for _, b := range blocks {
 			str := func(key string) string { var v string; _ = json.Unmarshal(b[key], &v); return v }
 			switch str("type") {
 			case "text":
+				if e.Type == "assistant" {
+					continue
+				}
 				var value *string
 				if err := json.Unmarshal(b["text"], &value); err != nil || value == nil {
 					return errors.New("missing or invalid text")
 				}
 				text = append(text, events.Text(*value))
 			case "thinking":
+				if e.Type == "assistant" {
+					continue
+				}
 				var value *string
 				if err := json.Unmarshal(b["thinking"], &value); err != nil || value == nil {
 					return errors.New("missing or invalid thinking")
 				}
 				thinking = append(thinking, events.Text(*value))
+			case "redacted_thinking":
+				continue
 			case "tool_use":
 				tool := str("id")
 				kind := str("name")
@@ -675,6 +749,13 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 				return errors.New("unsupported Claude complete content block")
 			}
 		}
+		if e.Type == "assistant" {
+			response := raw.Message.ID
+			if response == "" {
+				response = s.lane(parent).responseID
+			}
+			return d.completeAssistant(s, parent, response, blocks, raw.Time)
+		}
 		if len(text) > 0 || len(thinking) > 0 {
 			if id == "" {
 				return errors.New("complete message missing native identity")
@@ -686,10 +767,7 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 			}
 			if len(text) > 0 {
 				p := events.MessagePayload{MessageID: id, Content: text}
-				if e.Type == "user" {
-					return d.emit(s, id, events.UserMessage(p), raw.Time)
-				}
-				return d.emit(s, id, events.AgentMessage(p), raw.Time)
+				return d.emit(s, id, events.UserMessage(p), raw.Time)
 			}
 		}
 	case "result":

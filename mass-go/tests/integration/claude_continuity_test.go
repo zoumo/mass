@@ -90,12 +90,12 @@ func (s *entrypointSuite) TestClaudeLateResultsAndCancelReadmission() {
 			var e events.SessionEvent
 			s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
 			s.NotEqual("session.interaction_requested", e.Type(), "old interaction cannot become current authority")
-			if e.ItemID == "unlinked-late" {
+			if e.ItemID == "unlinked-late:0" {
 				meta := e.Meta["claude"].(map[string]any)
 				s.Equal("unknown", meta["attribution"])
 				s.NotContains(meta, "submission")
 			}
-			if text == "hold" && e.ItemID == "message-3" {
+			if text == "hold" && e.ItemID == "message-3:0" {
 				var current resource.Session
 				s.call("session.get", workflowParams{Session: ref}, &current)
 				s.NotEqual(events.Idle, current.Status.State, "old/child results cannot settle current input")
@@ -117,7 +117,7 @@ func (s *entrypointSuite) TestClaudeLateResultsAndCancelReadmission() {
 	}
 	page := s.history(ref)
 	s.Require().Len(page.Events, 5, "unlinked content remains in ordered history")
-	s.Equal("unlinked-late", page.Events[2].ItemID)
+	s.Equal("unlinked-late:0", page.Events[2].ItemID)
 	s.call("session.archive", workflowParams{Session: ref}, nil)
 }
 
@@ -226,17 +226,17 @@ func (s *entrypointSuite) TestClaudeConfirmedChildProvenance() {
 		s.Require().True(scan.Scan())
 		var e events.SessionEvent
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
-		if e.ItemID == "confirmed-child" {
+		if e.ItemID == "child-tool:confirmed-child:0" {
 			child = e
 		}
-		if e.ItemID == "message-1" {
+		if e.ItemID == "message-1:0" {
 			break
 		}
 		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil {
 			s.NotEqual(events.Idle, *state.State, "child result must not settle root input")
 		}
 	}
-	s.Require().Equal("confirmed-child", child.ItemID)
+	s.Require().Equal("child-tool:confirmed-child:0", child.ItemID)
 	meta := child.Meta["claude"].(map[string]any)
 	s.Equal("unknown", meta["attribution"])
 	s.NotContains(meta, "submission")
@@ -245,7 +245,7 @@ func (s *entrypointSuite) TestClaudeConfirmedChildProvenance() {
 	s.Equal("live", meta["origin"])
 	raw, ok := meta["nativeRaw"].(string)
 	s.Require().True(ok, "original received envelope must survive SSE")
-	s.JSONEq(`{"type":"assistant","session_id":"claude-continuity","parent_tool_use_id":"child-tool","message":{"id":"confirmed-child","role":"assistant","content":[{"type":"text","text":"confirmed child fact"}]}}`, raw)
+	s.JSONEq(`{"type":"assistant","session_id":"claude-continuity","parent_tool_use_id":"child-tool","message":{"id":"confirmed-child","role":"assistant","content":[{"type":"text","text":"confirmed child fact","apiBlockIndex":0}]}}`, raw)
 	page := s.history(ref)
 	s.Require().Len(page.Events, 3)
 	s.Equal(child.EventID, page.Events[1].EventID)

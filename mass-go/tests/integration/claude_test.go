@@ -26,6 +26,21 @@ import (
 
 type ClaudeSuite struct{ suite.Suite }
 
+type messageObservation struct {
+	content  []events.ContentBlock
+	message  string
+	response string
+	index    int
+	parent   any
+}
+
+func messageItemID(kind, responseID string) string {
+	if kind == "claude" {
+		return responseID + ":0"
+	}
+	return responseID
+}
+
 func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 	for _, kind := range []string{"codex", "claude"} {
 		t.Run(kind, func(t *testing.T) {
@@ -279,14 +294,24 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				require.NoError(t, err)
 				if kind == "claude" {
 					require.Equal(t, 1, seen["agent.thinking"])
+					require.Equal(t, 2, seen["agent.message"])
 					for _, e := range page.Events {
-						require.NotEqual(t, "delta-only", e.ItemID, "delta-only content must not enter history")
+						require.NotEqual(t, "delta-only:0", e.ItemID, "delta-only content must not enter history")
 						switch p := e.Payload().(type) {
 						case events.AgentMessage:
-							require.Equal(t, []events.ContentBlock{events.Text("complete answer"), events.Text(""), events.Text("second block")}, p.Content)
-							require.Equal(t, "msg-8", e.ItemID)
+							switch e.ItemID {
+							case "msg-8:2":
+								require.Equal(t, []events.ContentBlock{events.Text("complete answer")}, p.Content)
+							case "msg-8:4":
+								require.Equal(t, []events.ContentBlock{events.Text("second block")}, p.Content)
+							default:
+								t.Fatalf("unexpected agent message identity %q", e.ItemID)
+							}
+							require.Equal(t, e.ItemID, p.MessageID)
 						case events.AgentThinking:
-							require.Equal(t, []events.ContentBlock{events.Text("reason one"), events.Text("")}, p.Content)
+							require.Equal(t, "msg-8:0", e.ItemID)
+							require.Equal(t, []events.ContentBlock{events.Text("reason one")}, p.Content)
+							require.Equal(t, e.ItemID, p.MessageID)
 						case events.ToolResult:
 							switch p.ID {
 							case "value-0":
@@ -360,6 +385,199 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 	}
 	require.NoError(t, svc.Shutdown(ctx(t)))
 	t.Log("PASS duplicate and missing init cleanup leave healthy Session usable; no hidden prompt or fabricated identity")
+}
+
+func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
+	t := claudeSuite.T()
+	svc, _, _ := setup(t, prototype.AutoApprovePermissions)
+	r := openNative(t, svc, "claude", "block-item-identity", "blocks")
+	ref := resource.SessionRef{SessionID: r.Status.SessionID}
+	sub, err := svc.SubscribeEvents(ref)
+	require.NoError(t, err)
+	defer sub.Close()
+	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+	require.NoError(t, err)
+
+	chunks := map[string][]messageObservation{}
+	full := map[string]messageObservation{}
+	fullCount := map[string]int{}
+	tools := map[string][]string{}
+	for {
+		e, err := nextSubscription(sub, ctx(t))
+		require.NoError(t, err)
+		require.NotEqual(t, "session.error", e.Type(), "%+v", e.Payload())
+		switch p := e.Payload().(type) {
+		case events.ThinkingChunk:
+			chunks[e.ItemID] = append(chunks[e.ItemID], observedMessage(e, p.Content, p.MessageID))
+		case events.MessageChunk:
+			chunks[e.ItemID] = append(chunks[e.ItemID], observedMessage(e, p.Content, p.MessageID))
+		case events.AgentThinking:
+			full[e.ItemID] = observedMessage(e, p.Content, p.MessageID)
+			fullCount[e.ItemID]++
+		case events.AgentMessage:
+			full[e.ItemID] = observedMessage(e, p.Content, p.MessageID)
+			fullCount[e.ItemID]++
+		case events.ToolCall:
+			tools[e.ItemID] = append(tools[e.ItemID], e.EventID)
+		case events.ToolResult:
+			tools[e.ItemID] = append(tools[e.ItemID], e.EventID)
+		case events.StateUpdate:
+			if p.State != nil && *p.State == events.Idle {
+				goto observed
+			}
+		}
+	}
+
+observed:
+	require.Equal(t, []messageObservation{{
+		content:  []events.ContentBlock{events.Text("think ")},
+		message:  "msg-block:0",
+		response: "msg-block",
+		index:    0,
+		parent:   nil,
+	}}, chunks["msg-block:0"])
+	require.Equal(t, []messageObservation{{
+		content:  []events.ContentBlock{events.Text("hello ")},
+		message:  "msg-block:3",
+		response: "msg-block",
+		index:    3,
+		parent:   nil,
+	}}, chunks["msg-block:3"])
+	require.Equal(t, []messageObservation{{
+		content:  []events.ContentBlock{events.Text("\n\n")},
+		message:  "msg-block:6",
+		response: "msg-block",
+		index:    6,
+		parent:   nil,
+	}}, chunks["msg-block:6"])
+	require.Equal(t, []messageObservation{
+		{
+			content:  []events.ContentBlock{events.Text("open ")},
+			message:  "msg-block:8",
+			response: "msg-block",
+			index:    8,
+			parent:   nil,
+		},
+		{
+			content:  []events.ContentBlock{events.Text("still-open")},
+			message:  "msg-block:8",
+			response: "msg-block",
+			index:    8,
+			parent:   nil,
+		},
+	}, chunks["msg-block:8"])
+	require.Equal(t, []messageObservation{{
+		content:  []events.ContentBlock{events.Text("child thought preview")},
+		message:  "parent-tool:msg-block:0",
+		response: "msg-block",
+		index:    0,
+		parent:   "parent-tool",
+	}}, chunks["parent-tool:msg-block:0"])
+
+	require.Equal(t, map[string]messageObservation{
+		"msg-block:0": {
+			content:  []events.ContentBlock{events.Text("think complete")},
+			message:  "msg-block:0",
+			response: "msg-block",
+			index:    0,
+			parent:   nil,
+		},
+		"msg-block:3": {
+			content:  []events.ContentBlock{events.Text("hello complete")},
+			message:  "msg-block:3",
+			response: "msg-block",
+			index:    3,
+			parent:   nil,
+		},
+		"msg-block:6": {
+			content:  []events.ContentBlock{events.Text("\n\n")},
+			message:  "msg-block:6",
+			response: "msg-block",
+			index:    6,
+			parent:   nil,
+		},
+		"parent-tool:msg-block:0": {
+			content:  []events.ContentBlock{events.Text("child complete")},
+			message:  "parent-tool:msg-block:0",
+			response: "msg-block",
+			index:    0,
+			parent:   "parent-tool",
+		},
+	}, full)
+	for item, count := range fullCount {
+		require.Equal(t, 1, count, "duplicate full for %s", item)
+	}
+	for _, item := range []string{"msg-block:1", "msg-block:4", "msg-block:5", "msg-block:7", "msg-block:10", "msg-block:11", "msg-invalid:0"} {
+		require.NotContains(t, full, item)
+	}
+	for _, item := range []string{"msg-block:2", "msg-block:5", "msg-block:7", "msg-block:10", "msg-block:11", "msg-invalid:0", "unstarted-parent:msg-block:0"} {
+		require.NotContains(t, chunks, item)
+	}
+	require.NotContains(t, tools, "parent-tool")
+	require.Len(t, tools["tool-shared"], 2)
+	require.NotEqual(t, tools["tool-shared"][0], tools["tool-shared"][1])
+
+	history, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+	require.NoError(t, err)
+	persisted := map[string]events.MessagePayload{}
+	persistedCount := map[string]int{}
+	persistedTools := map[string]int{}
+	for _, e := range history.Events {
+		switch p := e.Payload().(type) {
+		case events.AgentThinking:
+			persisted[e.ItemID] = events.MessagePayload(p)
+			persistedCount[e.ItemID]++
+		case events.AgentMessage:
+			persisted[e.ItemID] = events.MessagePayload(p)
+			persistedCount[e.ItemID]++
+		case events.ToolCall:
+			persistedTools[e.ItemID]++
+		case events.ToolResult:
+			persistedTools[e.ItemID]++
+		default:
+			t.Fatalf("unexpected persisted event %s for item %q", e.Type(), e.ItemID)
+		}
+	}
+	require.Len(t, persisted, len(full))
+	for item, observation := range full {
+		require.Equal(t, 1, persistedCount[item], "duplicate persisted full for %s", item)
+		require.Equal(t, observation.content, persisted[item].Content)
+		require.Equal(t, item, persisted[item].MessageID)
+	}
+	require.Equal(t, 2, persistedTools["tool-shared"])
+	for _, forbidden := range []string{"aborted answer", "ambiguous", "guess one", "guess two", "invalid coordinate", "invalid null coordinate", "missing child response", "conflicting preview", "conflicting complete"} {
+		for _, payload := range persisted {
+			for _, block := range payload.Content {
+				require.NotEqual(t, forbidden, block.Text)
+			}
+		}
+	}
+	require.NoError(t, svc.Shutdown(ctx(t)))
+	t.Log("PASS block item identity, lane separation, closure suppression, empty filtering, ambiguous fail-close and tool identity through SSE and history")
+}
+
+func observedMessage(e events.SessionEvent, content []events.ContentBlock, message string) messageObservation {
+	var observation messageObservation
+	observation.content = content
+	observation.message = message
+	meta := e.Meta["claude"].(map[string]any)
+	observation.response = meta["responseId"].(string)
+	switch index := meta["blockIndex"].(type) {
+	case int:
+		observation.index = index
+	case json.Number:
+		if value, err := index.Int64(); err == nil {
+			observation.index = int(value)
+		} else {
+			observation.index = -1
+		}
+	case float64:
+		observation.index = int(index)
+	default:
+		observation.index = -1
+	}
+	observation.parent = meta["parentToolUseId"]
+	return observation
 }
 
 func TestClaudeSuite(t *testing.T) { suite.Run(t, new(ClaudeSuite)) }

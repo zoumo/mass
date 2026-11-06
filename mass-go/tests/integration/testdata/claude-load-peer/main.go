@@ -113,7 +113,7 @@ func main() {
 		n++
 		link, _ = v["uuid"].(string)
 		evidence(map[string]any{"event": "input", "pid": os.Getpid(), "uuid": link, "input": n})
-		m := map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("live-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "same retained process"}}}}
+		m := map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("live-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "same retained process", "apiBlockIndex": 0}}}}
 		if os.Getenv("LOAD_MODE") == "unlinked" {
 			delete(m, "user_message_uuid")
 		}

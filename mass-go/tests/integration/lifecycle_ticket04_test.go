@@ -39,8 +39,9 @@ func (s *entrypointSuite) ticket04Drain(kind string, stop bool) {
 	// required publication. Match the same fact through SSE and public history.
 	page := s.history(ref)
 	finalID := ""
+	finalItem := messageItemID(kind, "final-cancellation-fact")
 	for _, e := range page.Events {
-		if p, ok := e.Payload().(events.AgentMessage); ok && p.MessageID == "final-cancellation-fact" {
+		if p, ok := e.Payload().(events.AgentMessage); ok && p.MessageID == finalItem {
 			finalID = e.EventID
 		}
 	}
