@@ -213,7 +213,7 @@ agent.tool_result.itemId = tool_use.id
 - 每个 thinking/text block 的 chunk 和完整事件使用同一 itemId；完整事件到达后同 itemId 的迟到 chunk 被忽略。
 - 历史导入与实时在 `message.id` 和 `apiBlockIndex` 都存在时得到相同 thinking/text itemId。
 - 子 Agent thinking/text 使用 `parent_tool_use_id` lane，不能与主会话同 responseId/index 冲突。
-- 一个 assistant frame 含多个可见 block 时拆成多个完整事件，不合并同类型 block。
+- 一个 assistant frame 含多个可见 block 且每个 block 都有可证明坐标时分别生成完整事件；坐标不可证明时不生成猜测 full，也不合并同类型 block。
 - 空 thinking、redacted thinking 和零长度 text 不产生事件；whitespace-only 文本产生事件。
 - live thinking/text 缺少 response 或 block 坐标时不生成猜测身份；history 缺少坐标时使用 record-scoped 回退。
 - `content_block_stop`、`message_stop`、idle 和 EOF 不闭合条目；`aborted` frame 不产生正常完整事件。
