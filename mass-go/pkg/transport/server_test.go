@@ -109,6 +109,12 @@ func (a *recordingAPI) ArchiveSession(context.Context, resource.SessionRef) (res
 	return resource.Session{}, a.err
 }
 
+func (a *recordingAPI) CloseSession(_ context.Context, ref resource.SessionRef) (resource.Session, error) {
+	a.record("session.close")
+	a.ref = ref
+	return resource.Session{Status: resource.SessionStatus{SessionID: ref.SessionID, State: "offline"}}, a.err
+}
+
 func (a *recordingAPI) Cancel(context.Context, resource.SessionRef) (runtime.CancelReceipt, error) {
 	a.record("session.cancel")
 	return runtime.CancelReceipt{Result: "noActiveWork"}, a.err
@@ -214,6 +220,7 @@ func (serverSuite *ServerSuite) TestRESTRoutes() {
 		}{
 			{"GET", "", "", "session.get", 200},
 			{"POST", "/resume", "{}", "session.resume", 200},
+			{"POST", "/close", "", "session.close", 200},
 			{"POST", "/archive", "", "session.archive", 200},
 			{"POST", "/cancel", "", "session.cancel", 200},
 			{"POST", "/inputs", `{"content":[{"type":"text","text":""}]}`, "session.input", 200},

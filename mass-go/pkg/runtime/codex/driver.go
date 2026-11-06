@@ -573,44 +573,23 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 	return nil
 }
 
-func (d *Driver) CloseSession(ctx context.Context, id string) error {
+func (d *Driver) CloseSession(_ context.Context, id string) error {
 	d.mu.Lock()
 	s := d.sessions[id]
 	if s == nil {
 		d.mu.Unlock()
 		return nil
 	}
-	if (s.active || s.sending) && s.err == nil {
-		d.mu.Unlock()
-		return runtime.ErrWorkUnsettled
-	}
 	s.closing = true
 	d.mu.Unlock()
 	d.interactions.RemoveSession(id)
-	cleanup := s.native.Close()
-	select {
-	case <-s.done:
-	case <-ctx.Done():
-		return errors.Join(cleanup, ctx.Err())
-	}
-	if err := d.pipe.Flush(ctx); err != nil {
-		return errors.Join(cleanup, err)
-	}
-	cause := s.native.Err()
-	if cause != nil {
-		return errors.Join(cleanup, fmt.Errorf("native resource release unconfirmed after observation loss: %w", cause))
+	if err := s.native.Close(); err != nil {
+		return err
 	}
 	d.mu.Lock()
-	cause = s.err
-	d.mu.Unlock()
-	if cause != nil {
-		return errors.Join(cleanup, fmt.Errorf("observation terminated: %w", cause))
+	if d.sessions[id] == s {
+		delete(d.sessions, id)
 	}
-	if cleanup != nil {
-		return cleanup
-	}
-	d.mu.Lock()
-	delete(d.sessions, id)
 	d.interactions.RemoveSession(id)
 	d.mu.Unlock()
 	return nil

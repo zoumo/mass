@@ -842,45 +842,31 @@ func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer a
 	return runtime.Acceptance{Sent: runtime.Yes()}, nil
 }
 
-func (d *Driver) CloseSession(ctx context.Context, id string) error {
-	s, err := d.get(id)
-	if err != nil {
-		return err
+func (d *Driver) CloseSession(_ context.Context, id string) error {
+	d.mu.Lock()
+	s := d.sessions[id]
+	stopped := d.stopped
+	d.mu.Unlock()
+	if s == nil {
+		if stopped {
+			return runtime.FailedPrecondition("session unavailable")
+		}
+		return nil
 	}
 	s.mu.Lock()
-	if (s.active || s.sending) && s.err == nil {
-		s.mu.Unlock()
-		return runtime.ErrWorkUnsettled
-	}
 	s.closing = true
 	s.mu.Unlock()
 	d.interactions.RemoveSession(id)
-	err = s.client.Close()
-	select {
-	case <-s.done:
-	case <-ctx.Done():
-		return errors.Join(err, ctx.Err())
-	}
-	if drain := d.pipe.Flush(ctx); drain != nil {
-		return errors.Join(err, drain)
-	}
-	if cause := s.client.Err(); cause != nil {
-		return errors.Join(err, fmt.Errorf("native observation terminated: %w", cause))
-	}
-	s.mu.Lock()
-	cause := s.err
-	s.mu.Unlock()
-	if cause != nil {
-		return errors.Join(err, fmt.Errorf("observation terminated: %w", cause))
-	}
-	if err != nil {
-		return fmt.Errorf("native cleanup failed: %w", err)
+	if err := s.client.Close(); err != nil {
+		return err
 	}
 	d.mu.Lock()
-	delete(d.sessions, id)
-	d.mu.Unlock()
+	if d.sessions[id] == s {
+		delete(d.sessions, id)
+	}
 	d.interactions.RemoveSession(id)
-	return err
+	d.mu.Unlock()
+	return nil
 }
 
 func (d *Driver) Stop(context.Context) error {

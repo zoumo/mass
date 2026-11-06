@@ -43,6 +43,10 @@ func (d *invalidRestoreDriver) CloseSession(_ context.Context, id string) error 
 	}
 	return nil
 }
+
+func (*invalidRestoreDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
+	return runtime.CancelReceipt{Result: "noActiveWork"}, nil
+}
 func (d *invalidRestoreDriver) Stop(context.Context) error { d.pipe.End(nil); return nil }
 
 type invalidRestoreFactory struct{ driver *invalidRestoreDriver }

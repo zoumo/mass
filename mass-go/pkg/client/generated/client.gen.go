@@ -923,6 +923,7 @@ type SessionStatus struct {
 	Capabilities      *map[string]bool   `json:"capabilities,omitempty"`
 	EffectiveFeatures *SessionFeatures   `json:"effectiveFeatures,omitempty"`
 	HistoryLoad       *HistoryLoadStatus `json:"historyLoad,omitempty"`
+	Reason            *string            `json:"reason,omitempty"`
 	RuntimeGeneration *int64             `json:"runtimeGeneration,omitempty"`
 	SessionId         string             `json:"sessionId"`
 	State             string             `json:"state"`
@@ -1084,6 +1085,9 @@ type ArchiveSessionByNameOrIDJSONRequestBody = LifecycleByNameOrIDBody
 // CancelByNameOrIDJSONRequestBody defines body for CancelByNameOrID for application/json ContentType.
 type CancelByNameOrIDJSONRequestBody = CancelByNameOrIDBody
 
+// CloseSessionByNameOrIDJSONRequestBody defines body for CloseSessionByNameOrID for application/json ContentType.
+type CloseSessionByNameOrIDJSONRequestBody = LifecycleByNameOrIDBody
+
 // CancelHistoryLoadByNameOrIDJSONRequestBody defines body for CancelHistoryLoadByNameOrID for application/json ContentType.
 type CancelHistoryLoadByNameOrIDJSONRequestBody = HistoryLoadCancel
 
@@ -1119,6 +1123,9 @@ type ArchiveSessionByIDJSONRequestBody = LifecycleByIDBody
 
 // CancelByIDJSONRequestBody defines body for CancelByID for application/json ContentType.
 type CancelByIDJSONRequestBody = CancelByIDBody
+
+// CloseSessionByIDJSONRequestBody defines body for CloseSessionByID for application/json ContentType.
+type CloseSessionByIDJSONRequestBody = LifecycleByIDBody
 
 // CancelHistoryLoadByIDJSONRequestBody defines body for CancelHistoryLoadByID for application/json ContentType.
 type CancelHistoryLoadByIDJSONRequestBody = HistoryLoadCancel
@@ -1224,6 +1231,14 @@ type ClientInterface interface {
 	// CancelByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/cancel (the `CancelByNameOrID` operationId) request.
 	// Takes a body of the `application/json` content type.
 	CancelByNameOrID(ctx context.Context, namespace string, nameOrID string, body CancelByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CloseSessionByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close (the `CloseSessionByNameOrID` operationId) request,
+	// with any type of body and a specified content type.
+	CloseSessionByNameOrIDWithBody(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CloseSessionByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close (the `CloseSessionByNameOrID` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CloseSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, body CloseSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListHistoryByNameOrID performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events (the `ListHistoryByNameOrID` operationId) request.
 	ListHistoryByNameOrID(ctx context.Context, namespace string, nameOrID string, params *ListHistoryByNameOrIDParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1342,6 +1357,14 @@ type ClientInterface interface {
 	// Takes a body of the `application/json` content type.
 	CancelByID(ctx context.Context, sessionId string, body CancelByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CloseSessionByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/close (the `CloseSessionByID` operationId) request,
+	// with any type of body and a specified content type.
+	CloseSessionByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CloseSessionByID performs a POST /apis/v1/sessions/{sessionId}/close (the `CloseSessionByID` operationId) request.
+	// Takes a body of the `application/json` content type.
+	CloseSessionByID(ctx context.Context, sessionId string, body CloseSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListHistoryByID performs a GET /apis/v1/sessions/{sessionId}/events (the `ListHistoryByID` operationId) request.
 	ListHistoryByID(ctx context.Context, sessionId string, params *ListHistoryByIDParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1446,6 +1469,34 @@ func (c *Client) CancelByNameOrIDWithBody(ctx context.Context, namespace string,
 // Takes a body of the `application/json` content type.
 func (c *Client) CancelByNameOrID(ctx context.Context, namespace string, nameOrID string, body CancelByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCancelByNameOrIDRequest(c.Server, namespace, nameOrID, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CloseSessionByNameOrIDWithBody performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close (the `CloseSessionByNameOrID` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CloseSessionByNameOrIDWithBody(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloseSessionByNameOrIDRequestWithBody(c.Server, namespace, nameOrID, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CloseSessionByNameOrID performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close (the `CloseSessionByNameOrID` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CloseSessionByNameOrID(ctx context.Context, namespace string, nameOrID string, body CloseSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloseSessionByNameOrIDRequest(c.Server, namespace, nameOrID, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1883,6 +1934,34 @@ func (c *Client) CancelByID(ctx context.Context, sessionId string, body CancelBy
 	return c.Client.Do(req)
 }
 
+// CloseSessionByIDWithBody performs a POST /apis/v1/sessions/{sessionId}/close (the `CloseSessionByID` operationId) request,
+// with any type of body and a specified content type.
+func (c *Client) CloseSessionByIDWithBody(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloseSessionByIDRequestWithBody(c.Server, sessionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CloseSessionByID performs a POST /apis/v1/sessions/{sessionId}/close (the `CloseSessionByID` operationId) request.
+// Takes a body of the `application/json` content type.
+func (c *Client) CloseSessionByID(ctx context.Context, sessionId string, body CloseSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloseSessionByIDRequest(c.Server, sessionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListHistoryByID performs a GET /apis/v1/sessions/{sessionId}/events (the `ListHistoryByID` operationId) request.
 func (c *Client) ListHistoryByID(ctx context.Context, sessionId string, params *ListHistoryByIDParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListHistoryByIDRequest(c.Server, sessionId, params)
@@ -2177,6 +2256,60 @@ func NewCancelByNameOrIDRequestWithBody(server string, namespace string, nameOrI
 	}
 
 	operationPath := fmt.Sprintf("/apis/v1/namespaces/%s/sessions/%s/cancel", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCloseSessionByNameOrIDRequest calls the generic CloseSessionByNameOrID builder with application/json body
+func NewCloseSessionByNameOrIDRequest(server string, namespace string, nameOrID string, body CloseSessionByNameOrIDJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCloseSessionByNameOrIDRequestWithBody(server, namespace, nameOrID, "application/json", bodyReader)
+}
+
+// NewCloseSessionByNameOrIDRequestWithBody constructs an http.Request for the CloseSessionByNameOrID method, with any body, and a specified content type
+func NewCloseSessionByNameOrIDRequestWithBody(server string, namespace string, nameOrID string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "namespace", namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "nameOrID", nameOrID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/apis/v1/namespaces/%s/sessions/%s/close", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -3192,6 +3325,53 @@ func NewCancelByIDRequestWithBody(server string, sessionId string, contentType s
 	return req, nil
 }
 
+// NewCloseSessionByIDRequest calls the generic CloseSessionByID builder with application/json body
+func NewCloseSessionByIDRequest(server string, sessionId string, body CloseSessionByIDJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCloseSessionByIDRequestWithBody(server, sessionId, "application/json", bodyReader)
+}
+
+// NewCloseSessionByIDRequestWithBody constructs an http.Request for the CloseSessionByID method, with any body, and a specified content type
+func NewCloseSessionByIDRequestWithBody(server string, sessionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "sessionId", sessionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/apis/v1/sessions/%s/close", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListHistoryByIDRequest constructs an http.Request for the ListHistoryByID method
 func NewListHistoryByIDRequest(server string, sessionId string, params *ListHistoryByIDParams) (*http.Request, error) {
 	var err error
@@ -3644,6 +3824,16 @@ type ClientWithResponsesInterface interface {
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CancelByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body CancelByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelByNameOrIDResponse, error)
 
+	// CloseSessionByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close (the `CloseSessionByNameOrID` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CloseSessionByNameOrIDWithBodyWithResponse(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloseSessionByNameOrIDResponse, error)
+
+	// CloseSessionByNameOrIDWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close (the `CloseSessionByNameOrID` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CloseSessionByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body CloseSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseSessionByNameOrIDResponse, error)
+
 	// ListHistoryByNameOrIDWithResponse performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events (the `ListHistoryByNameOrID` operationId) request.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -3798,6 +3988,16 @@ type ClientWithResponsesInterface interface {
 	// CancelByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/cancel (the `CancelByID` operationId) request.
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	CancelByIDWithResponse(ctx context.Context, sessionId string, body CancelByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelByIDResponse, error)
+
+	// CloseSessionByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/close (the `CloseSessionByID` operationId) request,
+	// with any type of body and a specified content type.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	CloseSessionByIDWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloseSessionByIDResponse, error)
+
+	// CloseSessionByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/close (the `CloseSessionByID` operationId) request.
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	CloseSessionByIDWithResponse(ctx context.Context, sessionId string, body CloseSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseSessionByIDResponse, error)
 
 	// ListHistoryByIDWithResponse performs a GET /apis/v1/sessions/{sessionId}/events (the `ListHistoryByID` operationId) request.
 	//
@@ -4271,6 +4471,145 @@ func (r CancelByNameOrIDResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r CancelByNameOrIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CloseSessionByNameOrIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OperationError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *OperationError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *OperationError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *OperationError
+	// JSON405 the response for an HTTP 405 `application/json` response
+	JSON405 *OperationError
+	// JSON406 the response for an HTTP 406 `application/json` response
+	JSON406 *OperationError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *OperationError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *OperationError
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *OperationError
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OperationError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *OperationError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *OperationError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *OperationError
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *OperationError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON400() *OperationError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON401() *OperationError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON403() *OperationError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON404() *OperationError {
+	return r.JSON404
+}
+
+// GetJSON405 returns the response for an HTTP 405 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON405() *OperationError {
+	return r.JSON405
+}
+
+// GetJSON406 returns the response for an HTTP 406 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON406() *OperationError {
+	return r.JSON406
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON409() *OperationError {
+	return r.JSON409
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON415() *OperationError {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON422() *OperationError {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON429() *OperationError {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON500() *OperationError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON503() *OperationError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSON504() *OperationError {
+	return r.JSON504
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r CloseSessionByNameOrIDResponse) GetJSONDefault() *OperationError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CloseSessionByNameOrIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CloseSessionByNameOrIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CloseSessionByNameOrIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CloseSessionByNameOrIDResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6925,6 +7264,145 @@ func (r CancelByIDResponse) ContentType() string {
 	return ""
 }
 
+type CloseSessionByIDResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Session
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *OperationError
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *OperationError
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *OperationError
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *OperationError
+	// JSON405 the response for an HTTP 405 `application/json` response
+	JSON405 *OperationError
+	// JSON406 the response for an HTTP 406 `application/json` response
+	JSON406 *OperationError
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *OperationError
+	// JSON415 the response for an HTTP 415 `application/json` response
+	JSON415 *OperationError
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *OperationError
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *OperationError
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *OperationError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *OperationError
+	// JSON504 the response for an HTTP 504 `application/json` response
+	JSON504 *OperationError
+	// JSONDefault the response for an HTTP default `application/json` response
+	JSONDefault *OperationError
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON200() *Session {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON400() *OperationError {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON401() *OperationError {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON403() *OperationError {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON404() *OperationError {
+	return r.JSON404
+}
+
+// GetJSON405 returns the response for an HTTP 405 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON405() *OperationError {
+	return r.JSON405
+}
+
+// GetJSON406 returns the response for an HTTP 406 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON406() *OperationError {
+	return r.JSON406
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON409() *OperationError {
+	return r.JSON409
+}
+
+// GetJSON415 returns the response for an HTTP 415 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON415() *OperationError {
+	return r.JSON415
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON422() *OperationError {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON429() *OperationError {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON500() *OperationError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON503() *OperationError {
+	return r.JSON503
+}
+
+// GetJSON504 returns the response for an HTTP 504 `application/json` response
+func (r CloseSessionByIDResponse) GetJSON504() *OperationError {
+	return r.JSON504
+}
+
+// GetJSONDefault returns the response for an HTTP default `application/json` response
+func (r CloseSessionByIDResponse) GetJSONDefault() *OperationError {
+	return r.JSONDefault
+}
+
+// GetBody returns the raw response body bytes
+func (r CloseSessionByIDResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CloseSessionByIDResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CloseSessionByIDResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CloseSessionByIDResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListHistoryByIDResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -8085,6 +8563,28 @@ func (c *ClientWithResponses) CancelByNameOrIDWithResponse(ctx context.Context, 
 	return ParseCancelByNameOrIDResponse(rsp)
 }
 
+// CloseSessionByNameOrIDWithBodyWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close (the `CloseSessionByNameOrID` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CloseSessionByNameOrIDWithBodyWithResponse(ctx context.Context, namespace string, nameOrID string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloseSessionByNameOrIDResponse, error) {
+	rsp, err := c.CloseSessionByNameOrIDWithBody(ctx, namespace, nameOrID, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloseSessionByNameOrIDResponse(rsp)
+}
+
+// CloseSessionByNameOrIDWithResponse performs a POST /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close (the `CloseSessionByNameOrID` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CloseSessionByNameOrIDWithResponse(ctx context.Context, namespace string, nameOrID string, body CloseSessionByNameOrIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseSessionByNameOrIDResponse, error) {
+	rsp, err := c.CloseSessionByNameOrID(ctx, namespace, nameOrID, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloseSessionByNameOrIDResponse(rsp)
+}
+
 // ListHistoryByNameOrIDWithResponse performs a GET /apis/v1/namespaces/{namespace}/sessions/{nameOrID}/events (the `ListHistoryByNameOrID` operationId) request.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -8424,6 +8924,28 @@ func (c *ClientWithResponses) CancelByIDWithResponse(ctx context.Context, sessio
 		return nil, err
 	}
 	return ParseCancelByIDResponse(rsp)
+}
+
+// CloseSessionByIDWithBodyWithResponse performs a POST /apis/v1/sessions/{sessionId}/close (the `CloseSessionByID` operationId) request,
+// with any type of body and a specified content type.
+//
+// Returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CloseSessionByIDWithBodyWithResponse(ctx context.Context, sessionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CloseSessionByIDResponse, error) {
+	rsp, err := c.CloseSessionByIDWithBody(ctx, sessionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloseSessionByIDResponse(rsp)
+}
+
+// CloseSessionByIDWithResponse performs a POST /apis/v1/sessions/{sessionId}/close (the `CloseSessionByID` operationId) request.
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+func (c *ClientWithResponses) CloseSessionByIDWithResponse(ctx context.Context, sessionId string, body CloseSessionByIDJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseSessionByIDResponse, error) {
+	rsp, err := c.CloseSessionByID(ctx, sessionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloseSessionByIDResponse(rsp)
 }
 
 // ListHistoryByIDWithResponse performs a GET /apis/v1/sessions/{sessionId}/events (the `ListHistoryByID` operationId) request.
@@ -8822,6 +9344,130 @@ func ParseCancelByNameOrIDResponse(rsp *http.Response) (*CancelByNameOrIDRespons
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest CancelReceipt
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON405 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON406 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCloseSessionByNameOrIDResponse parses an HTTP response from a CloseSessionByNameOrIDWithResponse call
+func ParseCloseSessionByNameOrIDResponse(rsp *http.Response) (*CloseSessionByNameOrIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CloseSessionByNameOrIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -11206,6 +11852,130 @@ func ParseCancelByIDResponse(rsp *http.Response) (*CancelByIDResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest CancelReceipt
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 405:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON405 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 406:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON406 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 504:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON504 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest OperationError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCloseSessionByIDResponse parses an HTTP response from a CloseSessionByIDWithResponse call
+func ParseCloseSessionByIDResponse(rsp *http.Response) (*CloseSessionByIDResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CloseSessionByIDResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Session
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

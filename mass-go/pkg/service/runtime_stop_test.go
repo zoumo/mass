@@ -74,7 +74,7 @@ func (d *stopDriver) Cancel(ctx context.Context, id string) (runtime.CancelRecei
 	if d.onCancel != nil {
 		return d.onCancel(ctx, id)
 	}
-	return d.workDriver.Cancel(ctx, id)
+	return runtime.CancelReceipt{Result: "noActiveWork"}, nil
 }
 
 func (d *stopDriver) Start(ctx context.Context) (runtime.Capabilities, error) {
@@ -223,6 +223,7 @@ func (s *RuntimeStopSuite) TestCancelCannotEnterSessionAlreadyBeingReleased() {
 }
 
 func (s *SessionWorkSuite) TestStopWaitsForAllOriginalDispatchesAndTheirFacts() {
+	s.driver.cancelBlock.Store(true)
 	for _, kind := range []string{"input", "answer", "cancel"} {
 		c, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
@@ -260,6 +261,7 @@ func (s *SessionWorkSuite) TestStopWaitsForAllOriginalDispatchesAndTheirFacts() 
 	var public *runtime.OperationError
 	s.Require().ErrorAs(err, &public)
 	s.Equal("outcome_unknown", public.Code)
+	s.driver.cancelBlock.Store(false)
 	close(s.driver.release)
 	_, err = s.svc.StopRuntime(context.Background(), "agent")
 	s.Require().NoError(err)
@@ -406,15 +408,18 @@ func (s *RuntimeStopSuite) TestStopRetainsOverflowArrivingDuringDriverRelease() 
 }
 
 func (s *RuntimeStopSuite) TestArchiveCancelsOriginalWorkBeforeFinalFactSettlement() {
-	var active atomic.Bool
-	active.Store(true)
+	var canceled, closed atomic.Bool
 	s.d.onClose = func(context.Context) error {
-		if active.Load() {
-			return runtime.ErrWorkUnsettled
+		if !canceled.Load() {
+			return errors.New("native close ran before cancellation")
 		}
+		closed.Store(true)
 		return nil
 	}
 	s.d.onCancel = func(ctx context.Context, id string) (runtime.CancelReceipt, error) {
+		if canceled.Load() {
+			return runtime.CancelReceipt{Result: "noActiveWork"}, nil
+		}
 		final, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "demo", SessionID: id, ItemID: "final", Time: time.Now()}, events.AgentMessage{MessageID: "final", Content: []events.ContentBlock{events.Text("final cancellation fact")}}, s.d.source)
 		if err != nil {
 			return runtime.CancelReceipt{}, err
@@ -425,12 +430,14 @@ func (s *RuntimeStopSuite) TestArchiveCancelsOriginalWorkBeforeFinalFactSettleme
 		if err := s.d.pipe.Flush(ctx); err != nil {
 			return runtime.CancelReceipt{}, err
 		}
-		active.Store(false)
+		canceled.Store(true)
 		return runtime.CancelReceipt{Target: "original-work", Result: "controlAcknowledged"}, nil
 	}
 	r, err := s.svc.ArchiveSession(context.Background(), s.ref)
 	s.Require().NoError(err)
 	s.EqualValues("archived", r.Status.State)
+	s.True(canceled.Load())
+	s.True(closed.Load())
 	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Require().Len(page.Events, 1)

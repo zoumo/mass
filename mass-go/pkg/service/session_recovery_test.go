@@ -79,6 +79,10 @@ func (d *recoveryDriver) CloseSession(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (*recoveryDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
+	return runtime.CancelReceipt{Result: "noActiveWork"}, nil
+}
 func (d *recoveryDriver) Stop(context.Context) error { d.pipe.End(nil); return nil }
 
 type recoveryFactory struct{ d *recoveryDriver }

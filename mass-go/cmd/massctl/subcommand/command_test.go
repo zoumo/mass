@@ -208,6 +208,32 @@ func (s *CommandSuite) TestAddressingAndPagination() {
 	}
 }
 
+func (s *CommandSuite) TestSessionCloseUsesBothAddressingFormsAndReturnsOffline() {
+	for _, test := range []struct {
+		args []string
+		path string
+	}{
+		{[]string{"session", "close", "a/b%2F ?#"}, "/apis/v1/sessions/a%2Fb%252F%20%3F%23/close"},
+		{[]string{"session", "close", "task", "-n", "demo"}, "/apis/v1/namespaces/demo/sessions/task/close"},
+	} {
+		s.Run(strings.Join(test.args, " "), func() {
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				s.Equal(http.MethodPost, r.Method)
+				s.Equal(test.path, r.URL.EscapedPath())
+				s.Zero(r.ContentLength)
+				s.Empty(r.TransferEncoding)
+				_, _ = w.Write([]byte(`{"metadata":{"namespace":"demo","name":"task"},"spec":{"runtimeRef":"agent","cwd":"/remote"},"status":{"sessionId":"native","state":"offline"}}`))
+			}))
+			defer h.Close()
+			var out, stderr bytes.Buffer
+			s.Equal(0, subcommand.Run(s.T().Context(), append([]string{"--url", h.URL, "-o", "json"}, test.args...), unreadableInput{}, &out, &stderr), stderr.String())
+			s.Contains(out.String(), `"state": "offline"`)
+			s.NotContains(out.String(), "reason")
+			s.Empty(stderr.String())
+		})
+	}
+}
+
 func (s *CommandSuite) TestWatchReadyTimeoutEndsAtReadyAndInterruptOnlyClosesSubscription() {
 	for _, mode := range []string{"closed", "eof", "error", "interrupt", "no-ready"} {
 		s.Run(mode, func() {

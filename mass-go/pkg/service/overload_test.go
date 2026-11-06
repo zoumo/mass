@@ -108,6 +108,10 @@ func (d *overloadDriver) CloseSession(ctx context.Context, id string) error {
 	}
 	return d.pipe.Flush(ctx)
 }
+
+func (*overloadDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
+	return runtime.CancelReceipt{Result: "noActiveWork"}, nil
+}
 func (d *overloadDriver) Stop(context.Context) error { d.pipe.End(nil); return nil }
 func (d *overloadDriver) SendPrompt(ctx context.Context, id string, _ runtime.Input) (runtime.InputReceipt, error) {
 	n := 1

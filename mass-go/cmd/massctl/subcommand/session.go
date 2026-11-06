@@ -21,7 +21,7 @@ import (
 
 func (o *options) sessionCommands() *cobra.Command {
 	root := group("session", "Manage Sessions and observe future events")
-	for _, action := range []string{"create", "load", "get", "list", "resume", "archive", "cancel", "cancel-load", "prompt", "history", "watch"} {
+	for _, action := range []string{"create", "load", "get", "list", "close", "resume", "archive", "cancel", "cancel-load", "prompt", "history", "watch"} {
 		cmd := &cobra.Command{Use: action + " NAME_OR_ID", Short: action + " Session", Args: cobra.ExactArgs(1)}
 		cmd.Long = "Use NAME -n NAMESPACE or a raw global Session ID without namespace. No default namespace or lookup fallback."
 		cmd.Example = "  massctl session " + action + " review -n demo\n  massctl session " + action + " SESSION_ID"
@@ -186,6 +186,8 @@ func (o *options) sessionCommands() *cobra.Command {
 				call = func(ctx context.Context, out any) error { return o.client.GetSession(ctx, ref, out) }
 			case "archive":
 				call = func(ctx context.Context, out any) error { return o.client.ArchiveSession(ctx, ref, out) }
+			case "close":
+				call = func(ctx context.Context, out any) error { return o.client.CloseSession(ctx, ref, out) }
 			case "resume":
 				if initial != nil {
 					call = func(ctx context.Context, out any) error {

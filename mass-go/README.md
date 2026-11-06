@@ -137,7 +137,7 @@ bin/massctl -o json session watch review -n demo
 # In another terminal:
 bin/massctl session prompt review -n demo --text 'Describe this workspace'
 bin/massctl session history review -n demo --limit 100
-bin/massctl session archive review -n demo
+bin/massctl session close review -n demo
 bin/massctl session resume review -n demo
 bin/massctl runtime stop codex-local
 ```
@@ -150,8 +150,8 @@ bin/massctl runtime start claude-local
 bin/massctl session create review -n demo --runtime claude-local --cwd /absolute/owned/workspace
 bin/massctl session prompt review -n demo --text 'Describe this workspace'
 # Unlinked completion stays unknown; do not automatically retry/resume to
-# bypass that fence. Explicit archive/resume retains the original identity.
-bin/massctl session archive review -n demo
+# bypass that fence. Explicit close/resume retains the original identity.
+bin/massctl session close review -n demo
 bin/massctl session resume review -n demo
 ```
 
@@ -282,6 +282,9 @@ IDs are encoded as one URL path segment. `session list` and `session history`
 accept only `--limit` (default 100) and `--after`; one page is returned, including
 its next cursor. History and watch are independent: watch shows only future
 events, never fills history or reconnects, and unexpected EOF is a failure.
+`session close` accepts any lifecycle state, preserves identity and history,
+does not stop the Runtime, and can be retried safely when it leaves the Session
+in `closing`.
 
 Runtime create requires NAME and `--type`; absent configuration sends `{}`.
 `--executable`, `--config-file` and `--config-json` are mutually exclusive input

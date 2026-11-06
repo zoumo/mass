@@ -39,6 +39,7 @@ type SessionStatus struct {
 	HistoryLoad       *HistoryLoadStatus       `json:"historyLoad,omitempty"`
 	SessionID         string                   `json:"sessionId"`
 	State             events.SessionState      `json:"state"`
+	Reason            string                   `json:"reason,omitempty"`
 	AppliedGeneration uint64                   `json:"appliedGeneration,omitempty"`
 	RuntimeGeneration uint64                   `json:"runtimeGeneration,omitempty"`
 	Capabilities      runtime.Capabilities     `json:"capabilities,omitempty"`

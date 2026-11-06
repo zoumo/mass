@@ -174,6 +174,10 @@ func (s *entrypointSuite) open(kind, mode string) (resource.SessionRef, resource
 
 func (s *entrypointSuite) openWithExecutable(kind, mode, bin string) (resource.SessionRef, resource.Session, string) {
 	path, work := nativeScenario(s.T(), kind, mode)
+	return s.openPrepared(kind, bin, path, work)
+}
+
+func (s *entrypointSuite) openPrepared(kind, bin, path, work string) (resource.SessionRef, resource.Session, string) {
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "agent"}, nil)

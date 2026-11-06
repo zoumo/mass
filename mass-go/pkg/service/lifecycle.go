@@ -127,6 +127,7 @@ func offlineStatus(r *resource.Session, archived bool) {
 	if archived {
 		r.Status.State = "archived"
 	}
+	r.Status.Reason = ""
 	r.Status.AppliedGeneration = 0
 	r.Status.RuntimeGeneration = 0
 	r.Status.Capabilities = nil
@@ -145,7 +146,10 @@ func (s *Service) archiveSessionOwner(ctx context.Context, ref resource.SessionR
 		return r, err
 	}
 	ref = resource.SessionRef{SessionID: r.Status.SessionID}
-	unlock := s.sessionOperation(r.Status.SessionID)
+	unlock, err := s.sessionOperation(r.Status.SessionID, false)
+	if err != nil {
+		return r, err
+	}
 	defer unlock()
 	r, err = s.GetSession(ref)
 	if err != nil {
@@ -460,7 +464,10 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		return resource.SessionResumed{Session: r}, err
 	}
 	ref = resource.SessionRef{SessionID: r.Status.SessionID}
-	unlock := s.sessionOperation(r.Status.SessionID)
+	unlock, err := s.sessionOperation(r.Status.SessionID, false)
+	if err != nil {
+		return resource.SessionResumed{Session: r}, err
+	}
 	defer unlock()
 	r, err = s.GetSession(ref)
 	if err != nil {
@@ -668,7 +675,13 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	}
 	run.admission.RLock()
 	s.mu.Lock()
+	closeAccepted := s.sessionCloseAcceptedLocked(r.Status.SessionID)
 	l := run.lanes[r.Status.SessionID]
+	if closeAccepted {
+		s.mu.Unlock()
+		run.admission.RUnlock()
+		return nil, nil, runtime.FailedPrecondition("session close already accepted")
+	}
 	if !canceling && l != nil && l.overloaded {
 		s.mu.Unlock()
 		run.admission.RUnlock()
@@ -694,10 +707,17 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 
 type sessionOperation struct {
 	sync.Mutex
-	users int
+	users   int
+	closing bool
 }
 
-func (s *Service) sessionOperation(id string) func() {
+// Caller holds s.mu, which makes close acceptance atomic with work admission.
+func (s *Service) sessionCloseAcceptedLocked(id string) bool {
+	op := s.sessionOps[id]
+	return op != nil && op.closing
+}
+
+func (s *Service) sessionOperation(id string, closing bool) (func(), error) {
 	s.mu.Lock()
 	op := s.sessionOps[id]
 	if op == nil {
@@ -707,6 +727,20 @@ func (s *Service) sessionOperation(id string) func() {
 	op.users++
 	s.mu.Unlock()
 	op.Lock()
+	s.mu.Lock()
+	if !closing && op.closing {
+		op.users--
+		if op.users == 0 {
+			delete(s.sessionOps, id)
+		}
+		s.mu.Unlock()
+		op.Unlock()
+		return nil, runtime.FailedPrecondition("session close already accepted")
+	}
+	if closing {
+		op.closing = true
+	}
+	s.mu.Unlock()
 	return func() {
 		op.Unlock()
 		s.mu.Lock()
@@ -715,28 +749,26 @@ func (s *Service) sessionOperation(id string) func() {
 			delete(s.sessionOps, id)
 		}
 		s.mu.Unlock()
-	}
+	}, nil
 }
 
 func (s *Service) closeForStop(ctx context.Context, run *runBinding, id string) error {
-	err := run.driver.CloseSession(ctx, id)
-	if !errors.Is(err, runtime.ErrWorkUnsettled) {
-		return err
-	}
-	if _, err = run.driver.Cancel(ctx, id); err != nil {
-		return err
-	}
+	// Manual close hands active work directly to SDK close. Stop additionally
+	// cancels and waits for work to settle so final facts precede release.
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		receipt, err := run.driver.Cancel(ctx, id)
+		if err != nil && !errors.Is(err, runtime.ErrFailedPrecondition) {
+			return err
+		}
+		if err != nil || receipt.Result == "noActiveWork" {
+			return run.driver.CloseSession(ctx, id)
+		}
 		select {
 		case <-ctx.Done():
 			return fmtUnknown(ctx.Err())
 		case <-ticker.C:
-		}
-		err = run.driver.CloseSession(ctx, id)
-		if !errors.Is(err, runtime.ErrWorkUnsettled) {
-			return err
 		}
 	}
 }

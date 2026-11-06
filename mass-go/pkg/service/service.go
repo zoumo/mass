@@ -52,6 +52,7 @@ type SessionService interface {
 	CreateSessionWithInput(context.Context, resource.SessionCreateInput) (resource.SessionCreated, error)
 	GetSession(resource.SessionRef) (resource.Session, error)
 	ListSessions(resource.SessionQuery) (resource.SessionPage, error)
+	CloseSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ArchiveSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ResumeSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ResumeSessionWithInput(context.Context, resource.SessionRef, runtime.Input) (resource.SessionResumed, error)
@@ -100,19 +101,20 @@ type delivery struct {
 	barrier chan struct{}
 }
 type lane struct {
-	load         *historyLoad
-	admission    sync.RWMutex
-	releasing    bool
-	nativeClosed bool
-	session      resource.Session
-	source       events.Source
-	queue        chan delivery
-	done         chan struct{}
-	err          error
-	closing      bool
-	overloaded   bool
-	retry        chan chan error
-	commitErr    error
+	load           *historyLoad
+	admission      sync.RWMutex
+	releasing      bool
+	nativeClosed   bool
+	session        resource.Session
+	source         events.Source
+	queue          chan delivery
+	done           chan struct{}
+	err            error
+	closing        bool
+	overloaded     bool
+	retry          chan chan error
+	commitErr      error
+	publicationErr error
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
@@ -836,6 +838,9 @@ func (s *Service) process(run *runBinding, l *lane) {
 			// retry it or let later load facts overtake its failed publication.
 			if err != nil {
 				slog.Warn("realtime publication failed", "error", err, "session_id", e.SessionID)
+				s.mu.Lock()
+				l.publicationErr = errors.Join(l.publicationErr, err)
+				s.mu.Unlock()
 				if l.load != nil && !l.load.complete.Load() {
 					publicationFailed = true
 				}
@@ -858,7 +863,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 		if request, ok := e.Payload().(events.InteractionRequested); ok && s.policy != nil {
 			run.admission.RLock()
 			s.mu.Lock()
-			allowed := !s.closing && !run.stopping && !l.closing && l.err == nil && (l.load == nil || l.load.complete.Load()) && l.source.SameRun(e.Source())
+			allowed := !s.closing && !run.stopping && !l.closing && !s.sessionCloseAcceptedLocked(e.SessionID) && l.err == nil && (l.load == nil || l.load.complete.Load()) && l.source.SameRun(e.Source())
 			if allowed {
 				l.admission.RLock()
 			}
