@@ -58,9 +58,14 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	}
 	done := make(chan result, 1)
 	go func() {
-		defer run.admission.RUnlock()
-		defer l.admission.RUnlock()
-		value, err := dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
+		value, err := func() (T, error) {
+			defer run.admission.RUnlock()
+			defer l.admission.RUnlock()
+			return dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
+		}()
+		if canceling {
+			s.rearmIdleAfterActivity(run, l)
+		}
 		done <- result{value, err}
 	}()
 	select {

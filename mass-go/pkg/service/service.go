@@ -117,6 +117,10 @@ type lane struct {
 	retry          chan chan error
 	commitErr      error
 	publicationErr error
+	idleTimer      Timer
+	idleVersion    uint64
+	activeTools    map[string]struct{}
+	interactions   map[string]struct{}
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
@@ -137,17 +141,37 @@ type Service struct {
 	sessionOps  map[string]*sessionOperation
 	closing     bool
 	resumeSlots chan struct{}
+	idleTimeout time.Duration
+	clock       Clock
 }
 
 func New(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry) *Service {
-	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, broadcasts: map[string]*sessionBroadcast{}, sessionOps: map[string]*sessionOperation{}, resumeSlots: make(chan struct{}, queueCapacity)}
+	return NewWithOptions(meta, history, registry, Options{SessionIdleTimeout: DefaultSessionIdleTimeout})
 }
 
 // NewWithPolicy explicitly enables an application-owned interaction policy.
 func NewWithPolicy(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry, policy InteractionPolicy) *Service {
-	s := New(meta, history, registry)
-	s.policy = policy
-	return s
+	return NewWithOptions(meta, history, registry, Options{InteractionPolicy: policy, SessionIdleTimeout: DefaultSessionIdleTimeout})
+}
+
+// NewWithOptions assembles explicit application policy and time dependencies.
+func NewWithOptions(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry, options Options) *Service {
+	clock := options.Clock
+	if clock == nil {
+		clock = systemClock{}
+	}
+	return &Service{
+		policy:      options.InteractionPolicy,
+		meta:        meta,
+		history:     history,
+		registry:    registry,
+		runs:        map[string]*runBinding{},
+		broadcasts:  map[string]*sessionBroadcast{},
+		sessionOps:  map[string]*sessionOperation{},
+		resumeSlots: make(chan struct{}, queueCapacity),
+		idleTimeout: options.SessionIdleTimeout,
+		clock:       clock,
+	}
 }
 
 func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef, interaction string, answer any) (runtime.InteractionReceipt, error) {
@@ -727,6 +751,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			s.mu.Unlock()
 			continue
 		}
+		s.invalidateIdleLocked(l)
 		// Normal delivery has 128 queued slots. The same channel reserves a
 		// further 128 for the original closing source, never a forwarding queue.
 		// Retired/already-closing owners retain the pre-existing fallback policy.
@@ -851,8 +876,8 @@ func (s *Service) process(run *runBinding, l *lane) {
 				}
 			}
 		}
+		s.mu.Lock()
 		if state, ok := e.Payload().(events.StateUpdate); ok && e.Replay == nil {
-			s.mu.Lock()
 			if !l.closing && l.source.SameRun(e.Source()) {
 				l.stateObserved = true
 				l.observedState = events.Unknown
@@ -860,8 +885,39 @@ func (s *Service) process(run *runBinding, l *lane) {
 					l.observedState = *state.State
 				}
 			}
-			s.mu.Unlock()
 		}
+		if e.Replay == nil {
+			switch payload := e.Payload().(type) {
+			case events.ToolChunk:
+				if l.activeTools == nil {
+					l.activeTools = map[string]struct{}{}
+				}
+				l.activeTools[payload.ID] = struct{}{}
+			case events.ToolCall:
+				switch payload.Status {
+				case "completed", "failed", "declined":
+					delete(l.activeTools, payload.ID)
+				default:
+					if l.activeTools == nil {
+						l.activeTools = map[string]struct{}{}
+					}
+					l.activeTools[payload.ID] = struct{}{}
+				}
+			case events.ToolResult:
+				delete(l.activeTools, payload.ID)
+			case events.InteractionRequested:
+				if payload.Blocking {
+					if l.interactions == nil {
+						l.interactions = map[string]struct{}{}
+					}
+					l.interactions[payload.Interaction] = struct{}{}
+				}
+			case events.InteractionClosed:
+				delete(l.interactions, payload.Interaction)
+			}
+		}
+		s.scheduleIdleLocked(run, l)
+		s.mu.Unlock()
 		if !publicationFailed {
 			b, err := s.broadcastForSession(l.session)
 			if err == nil {
@@ -919,7 +975,10 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.closing = true
 	names := make([]string, 0, len(s.runs))
-	for name := range s.runs {
+	for name, run := range s.runs {
+		for _, l := range run.lanes {
+			stopIdleTimerLocked(l)
+		}
 		names = append(names, name)
 	}
 	s.mu.Unlock()

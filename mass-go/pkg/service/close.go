@@ -30,13 +30,19 @@ func (s *Service) CloseSession(ctx context.Context, ref resource.SessionRef) (re
 }
 
 func (s *Service) closeSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
+	return s.closeSessionWithGuard(ctx, ref, nil)
+}
+
+func (s *Service) closeSessionWithGuard(ctx context.Context, ref resource.SessionRef, guard func(resource.Session) bool) (resource.Session, error) {
 	r, err := s.GetSession(ref)
 	if err != nil {
 		return r, err
 	}
 	id := r.Status.SessionID
 	ref = resource.SessionRef{SessionID: id}
-	unlock, err := s.sessionOperation(id, true)
+	unlock, err := s.sessionOperationGuarded(id, true, func() bool {
+		return guard == nil || guard(r)
+	})
 	if err != nil {
 		return r, err
 	}
@@ -49,6 +55,9 @@ func (s *Service) closeSession(ctx context.Context, ref resource.SessionRef) (re
 	prior := r.Status.State
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
+	if run != nil {
+		s.invalidateIdleLocked(run.lanes[id])
+	}
 	s.mu.Unlock()
 	if run == nil {
 		return s.closeWithoutHandle(ref, r, prior, false, false)

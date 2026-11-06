@@ -51,7 +51,7 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 	require.NoError(t, os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, app, "--data", filepath.Join(owned, "data"), "--listen", "127.0.0.1:0", "--token-file", tokenPath, "--tls-cert", certPath, "--tls-key", keyPath)
+	cmd := exec.CommandContext(ctx, app, "--data", filepath.Join(owned, "data"), "--listen", "127.0.0.1:0", "--token-file", tokenPath, "--tls-cert", certPath, "--tls-key", keyPath, "--session-idle-timeout", "5s")
 	// Isolate daemon default configuration without relying on a particular CLI flag.
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "HOME=") {
@@ -129,12 +129,13 @@ func (httpAuthSuite *HTTPAuthSuite) TestHTTPAuthenticatedDaemon() {
 		{"--data", filepath.Join(owned, "denied"), "--listen", "127.0.0.1:0"},
 		{"--data", filepath.Join(owned, "denied"), "--listen", "0.0.0.0:0", "--local"},
 		{"--data", filepath.Join(owned, "denied"), "--listen", "0.0.0.0:0", "--token-file", tokenPath},
+		{"--data", filepath.Join(owned, "denied"), "--listen", "127.0.0.1:0", "--local", "--session-idle-timeout=-1s"},
 	} {
 		invalid := exec.CommandContext(ctx, app, args...)
 		invalid.Env = cmd.Env
 		require.Error(t, invalid.Run(), "unsafe or unspecified access mode must fail startup")
 	}
-	t.Log("PASS authenticated TLS daemon/client, unauthenticated aliases and stream rejected, probes, direct JSON, explicit access-mode rejection and listener cleanup")
+	t.Log("PASS authenticated TLS daemon/client with 5s idle configuration, unauthenticated aliases and stream rejected, probes, direct JSON, explicit access-mode and negative-timeout rejection, and listener cleanup")
 }
 
 func TestHTTPAuthSuite(t *testing.T) { suite.Run(t, new(HTTPAuthSuite)) }

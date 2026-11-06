@@ -349,6 +349,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	lanes := make(map[string]*lane, len(run.lanes))
 	for id, l := range run.lanes {
 		l.closing = true
+		stopIdleTimerLocked(l)
 		lanes[id] = l
 	}
 	s.mu.Unlock()
@@ -653,6 +654,8 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	l.releasing = false
 	l.observedState = ""
 	l.stateObserved = false
+	l.activeTools = nil
+	l.interactions = nil
 	l.err = errors.Join(l.err, op.err)
 	run.lanes[r.Status.SessionID] = l
 	s.mu.Unlock()
@@ -732,6 +735,7 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	}
 	if available {
 		l.admission.RLock()
+		s.invalidateIdleLocked(l)
 	}
 	s.mu.Unlock()
 	if !available {
@@ -747,6 +751,8 @@ type sessionOperation struct {
 	closing bool
 }
 
+var errSessionOperationGuardRejected = errors.New("session operation guard rejected")
+
 // Caller holds s.mu, which makes close acceptance atomic with work admission.
 func (s *Service) sessionCloseAcceptedLocked(id string) bool {
 	op := s.sessionOps[id]
@@ -754,6 +760,10 @@ func (s *Service) sessionCloseAcceptedLocked(id string) bool {
 }
 
 func (s *Service) sessionOperation(id string, closing bool) (func(), error) {
+	return s.sessionOperationGuarded(id, closing, nil)
+}
+
+func (s *Service) sessionOperationGuarded(id string, closing bool, guard func() bool) (func(), error) {
 	s.mu.Lock()
 	op := s.sessionOps[id]
 	if op == nil {
@@ -772,6 +782,15 @@ func (s *Service) sessionOperation(id string, closing bool) (func(), error) {
 		s.mu.Unlock()
 		op.Unlock()
 		return nil, runtime.FailedPrecondition("session close already accepted")
+	}
+	if closing && guard != nil && (op.closing || op.users != 1 || !guard()) {
+		op.users--
+		if op.users == 0 {
+			delete(s.sessionOps, id)
+		}
+		s.mu.Unlock()
+		op.Unlock()
+		return nil, errSessionOperationGuardRejected
 	}
 	if closing {
 		op.closing = true
@@ -939,6 +958,7 @@ func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (
 // native release, but facts already in the shared stream may still arrive here.
 // Caller holds s.mu; state projection is sealed by l.closing.
 func retireLane(run *runBinding, l *lane) {
+	stopIdleTimerLocked(l)
 	if run.retired == nil {
 		run.retired = map[events.Source]*lane{}
 	}

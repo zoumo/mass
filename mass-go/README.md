@@ -72,8 +72,14 @@ local: true
 ```
 
 Then run `bin/massd` without flags. Optional fields are `data` (an absolute
-owned directory), `tokenFile`, `tlsCert`, `tlsKey`, and
-`prototypeAutoApprovePermissions`. Automatic permission approval is off by default.
+owned directory), `tokenFile`, `tlsCert`, `tlsKey`,
+`prototypeAutoApprovePermissions`, and `sessionIdleTimeout`. Automatic permission
+approval is off by default.
+`sessionIdleTimeout` accepts Go duration syntax such as `5s` or `10m`; its
+default is `10m`, and `0` disables automatic Session close. The matching
+`--session-idle-timeout` flag overrides the file. Negative or invalid durations
+are rejected before the daemon opens its stores. Automatic close releases
+idle Session connections without stopping their Runtime.
 Existing data is not moved into the default directory. Legacy `state.json` snapshots
 are explicitly rejected; there is no automatic migration.
 

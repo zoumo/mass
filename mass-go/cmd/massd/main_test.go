@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 )
@@ -28,6 +29,7 @@ func (s *commandSuite) TestParsing() {
 				s.Require().NoError(err)
 				s.Contains(out.String(), "--token-file")
 				s.Contains(out.String(), "--local")
+				s.Contains(out.String(), "--session-idle-timeout")
 			} else {
 				s.Require().Error(err)
 			}
@@ -40,7 +42,7 @@ func (s *commandSuite) TestConfiguration() {
 	s.T().Setenv("HOME", home)
 	path := filepath.Join(home, ".mass", "config.yaml")
 	s.Require().NoError(os.MkdirAll(filepath.Dir(path), 0o700))
-	defaults := options{Listen: "127.0.0.1:24368", Data: filepath.Join(home, ".mass")}
+	defaults := options{Listen: "127.0.0.1:24368", Data: filepath.Join(home, ".mass"), SessionIdleTimeout: 10 * time.Minute}
 	cmd := newCommand()
 	s.Equal(path, cmd.Flags().Lookup("config").DefValue)
 	s.Equal(defaults.Listen, cmd.Flags().Lookup("listen").DefValue)
@@ -88,6 +90,7 @@ prototypeAutoApprovePermissions: true
 	s.Equal(options{
 		Data: "/owned/data", Listen: "127.0.0.1:23456", Local: true,
 		TokenFile: "/owned/token", TLSCert: "/owned/cert", TLSKey: "/owned/key", Approve: true,
+		SessionIdleTimeout: 10 * time.Minute,
 	}, got)
 	for name, value := range map[string]string{
 		"data": "/other/data", "listen": "127.0.0.1:0", "local": "false",
@@ -101,11 +104,12 @@ prototypeAutoApprovePermissions: true
 	s.Equal(options{
 		Data: "/other/data", Listen: "127.0.0.1:0",
 		TLSCert: "/other/cert", TLSKey: "/other/key",
+		SessionIdleTimeout: 10 * time.Minute,
 	}, got, "explicit empty strings and false values must override the file")
 
 	got, err = readOptions(newCommand(), filepath.Join(home, ".mass", "config.yaml"))
 	s.Require().NoError(err)
-	s.Equal(options{Data: filepath.Join(home, ".mass"), Listen: "127.0.0.1:24368"}, got,
+	s.Equal(options{Data: filepath.Join(home, ".mass"), Listen: "127.0.0.1:24368", SessionIdleTimeout: 10 * time.Minute}, got,
 		"configuration and flags must not leak between command instances")
 }
 

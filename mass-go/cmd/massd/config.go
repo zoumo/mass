@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
+	"strings"
 
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/cobra"
@@ -20,6 +22,9 @@ func readOptions(cmd *cobra.Command, path string) (options, error) {
 			return options{}, errors.New("cannot read configuration as YAML")
 		}
 	}
+	if err := validateSessionIdleTimeoutType(config); err != nil {
+		return options{}, err
+	}
 	// Validate the file before flags can hide invalid field values.
 	if _, err := decodeOptions(config); err != nil {
 		return options{}, err
@@ -32,12 +37,35 @@ func readOptions(cmd *cobra.Command, path string) (options, error) {
 		"tlsCert":                         "tls-cert",
 		"tlsKey":                          "tls-key",
 		"prototypeAutoApprovePermissions": "prototype-auto-approve-permissions",
+		"sessionIdleTimeout":              "session-idle-timeout",
 	} {
 		if err := config.BindPFlag(key, cmd.Flags().Lookup(flag)); err != nil {
 			return options{}, fmt.Errorf("cannot bind configuration flag: %w", err)
 		}
 	}
 	return decodeOptions(config)
+}
+
+func validateSessionIdleTimeoutType(config *viper.Viper) error {
+	for key, raw := range config.AllSettings() {
+		if !strings.EqualFold(key, "sessionIdleTimeout") {
+			continue
+		}
+		if _, ok := raw.(string); ok {
+			return nil
+		}
+		value := reflect.ValueOf(raw)
+		switch value.Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64:
+			if value.IsZero() {
+				return nil
+			}
+		}
+		return errors.New("session idle timeout must be a duration string")
+	}
+	return nil
 }
 
 func decodeOptions(config *viper.Viper) (options, error) {
@@ -60,6 +88,9 @@ func decodeOptions(config *viper.Viper) (options, error) {
 	case "", "sqlite", "file":
 	default:
 		return options{}, errors.New("unknown MetaStore backend: select sqlite or file")
+	}
+	if configured.SessionIdleTimeout < 0 {
+		return options{}, errors.New("session idle timeout must not be negative")
 	}
 	return configured, nil
 }

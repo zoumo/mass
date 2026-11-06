@@ -29,14 +29,15 @@ import (
 )
 
 type options struct {
-	MetaStore metastore.Config `mapstructure:"metaStore"`
-	Data      string           `mapstructure:"data"`
-	Listen    string           `mapstructure:"listen"`
-	TokenFile string           `mapstructure:"tokenFile"`
-	TLSCert   string           `mapstructure:"tlsCert"`
-	TLSKey    string           `mapstructure:"tlsKey"`
-	Approve   bool             `mapstructure:"prototypeAutoApprovePermissions"`
-	Local     bool             `mapstructure:"local"`
+	MetaStore          metastore.Config `mapstructure:"metaStore"`
+	Data               string           `mapstructure:"data"`
+	Listen             string           `mapstructure:"listen"`
+	TokenFile          string           `mapstructure:"tokenFile"`
+	TLSCert            string           `mapstructure:"tlsCert"`
+	TLSKey             string           `mapstructure:"tlsKey"`
+	Approve            bool             `mapstructure:"prototypeAutoApprovePermissions"`
+	Local              bool             `mapstructure:"local"`
+	SessionIdleTimeout time.Duration    `mapstructure:"sessionIdleTimeout"`
 }
 
 func newCommand() *cobra.Command {
@@ -70,11 +71,15 @@ func newCommand() *cobra.Command {
 	f.StringVar(&o.TokenFile, "token-file", "", "file containing an instance Bearer token")
 	f.StringVar(&o.TLSCert, "tls-cert", "", "TLS certificate for direct remote access")
 	f.StringVar(&o.TLSKey, "tls-key", "", "TLS private key for direct remote access")
+	f.DurationVar(&o.SessionIdleTimeout, "session-idle-timeout", service.DefaultSessionIdleTimeout, "idle Session close timeout (0 disables)")
 	cmd.AddCommand(newOpenAPICommand())
 	return cmd
 }
 
 func run(parent context.Context, o options) (result error) {
+	if o.SessionIdleTimeout < 0 {
+		return errors.New("session idle timeout must not be negative")
+	}
 	host, _, err := net.SplitHostPort(o.Listen)
 	if err != nil {
 		return err
@@ -120,7 +125,10 @@ func run(parent context.Context, o options) (result error) {
 	if o.Approve {
 		policy = prototype.AutoApprovePermissions
 	}
-	svc := service.NewWithPolicy(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(o.Data, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(o.Data, "private")}}), policy)
+	svc := service.NewWithOptions(meta, history, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(o.Data, "private")}, "claude": claude.Factory{RecoveryDir: filepath.Join(o.Data, "private")}}), service.Options{
+		InteractionPolicy:  policy,
+		SessionIdleTimeout: o.SessionIdleTimeout,
+	})
 	defer func() {
 		ctx, c := context.WithTimeout(context.Background(), 10*time.Second)
 		defer c()
