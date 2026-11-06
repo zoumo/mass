@@ -138,7 +138,7 @@ func claude(send func(any)) {
 			send(map[string]any{"type": "stream_event", "session_id": sessionID, "event": map[string]any{"type": "message_start", "message": map[string]any{"id": "active", "role": "assistant", "content": []any{}}}})
 			if os.Getenv("PEER_CONTROL") == "write-failure" {
 				closedInput(func() {
-					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": "write-fault-ready", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "native input pipe closed"}}}})
+					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": "write-fault-ready", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "native input pipe closed", "apiBlockIndex": 0}}}})
 				})
 			}
 			if os.Getenv("PEER_CONTROL") == "overload" {
@@ -147,7 +147,7 @@ func claude(send func(any)) {
 					n = 160
 				}
 				for i := range n {
-					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "complete synthetic fact"}}}})
+					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "complete synthetic fact", "apiBlockIndex": 0}}}})
 				}
 				send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "is_error": false, "result": "settled"})
 				continue
@@ -155,7 +155,7 @@ func claude(send func(any)) {
 			if os.Getenv("PEER_CONTROL") == "eof" {
 				send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "is_error": false, "result": "settled"})
 				for i := range 160 {
-					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "accepted before EOF"}}}})
+					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "accepted before EOF", "apiBlockIndex": 0}}}})
 				}
 				// The SDK answers unsupported controls independently of Receive.
 				// Its reply proves all preceding native frames were admitted.
@@ -172,7 +172,7 @@ func claude(send func(any)) {
 		if v.Request.Subtype == "interrupt" {
 			interrupts++
 			if interrupts == 1 && os.Getenv("PEER_CONTROL") == "unknown" {
-				send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": "interrupt-admitted", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "interrupt admitted; no acknowledgment"}}}})
+				send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": "interrupt-admitted", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "interrupt admitted; no acknowledgment", "apiBlockIndex": 0}}}})
 				continue
 			}
 			if interrupts > 1 || os.Getenv("PEER_CONTROL") == "rejected" {

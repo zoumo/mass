@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -104,7 +105,8 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 							linked := proven && (text != "linkage-stopped-preview" || (e.Type() != "agent.message_chunk" && e.Type() != "agent.thinking_chunk"))
 							if linked {
 								require.NotEmpty(t, startID)
-								assert.Equal(t, startID, e.ItemID)
+								assert.Equal(t, startID, meta["responseId"])
+								assert.Equal(t, startID+":"+fmt.Sprint(meta["blockIndex"]), e.ItemID)
 								assert.Equal(t, receipt.Submission, meta["submission"], "native start/assistant ID equality proves ownership")
 								assert.Equal(t, "native_message_id", meta["attribution"])
 							} else {
@@ -115,8 +117,9 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 							require.NoError(t, json.Unmarshal([]byte(meta["nativeRaw"].(string)), &raw))
 							if raw["type"] == "assistant" && proven {
 								assert.NotContains(t, raw, "user_message_uuid")
-								assert.Equal(t, e.ItemID, raw["message"].(map[string]any)["id"])
+								assert.Equal(t, meta["responseId"], raw["message"].(map[string]any)["id"])
 								assert.NotEqual(t, e.ItemID, raw["uuid"])
+								assert.Equal(t, fmt.Sprint(meta["blockIndex"]), fmt.Sprint(raw["message"].(map[string]any)["content"].([]any)[0].(map[string]any)["apiBlockIndex"]))
 							}
 						}
 						assert.Equal(t, events.Source{}, e.Source())

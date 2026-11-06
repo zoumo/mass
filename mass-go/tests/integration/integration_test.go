@@ -48,8 +48,9 @@ func (g *identityGate) CreateSession(r resource.Session) (resource.Session, erro
 }
 
 func TestMain(m *testing.M) {
-	// The complete race suite has a five-minute budget, plus owned build/cleanup.
-	mainCtx, mainCancel := context.WithTimeout(context.Background(), 330*time.Second)
+	// Setup and cleanup have independent owned deadlines; test execution itself
+	// is bounded by the go test timeout.
+	setupCtx, setupCancel := context.WithTimeout(context.Background(), 330*time.Second)
 	var err error
 	root, err = os.MkdirTemp("", "mass-integration-")
 	if err != nil {
@@ -59,7 +60,9 @@ func TestMain(m *testing.M) {
 	code := 1
 	func() {
 		defer func() {
-			output, err := exec.CommandContext(mainCtx, "ps", "-axo", "pid=,args=").Output()
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cleanupCancel()
+			output, err := exec.CommandContext(cleanupCtx, "ps", "-axo", "pid=,args=").Output()
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "FAIL process readback", err)
 				code = 1
@@ -81,7 +84,7 @@ func TestMain(m *testing.M) {
 			}
 			deadline := time.Now().Add(2 * time.Second)
 			for {
-				output, err = exec.CommandContext(mainCtx, "ps", "-axo", "pid=,args=").Output()
+				output, err = exec.CommandContext(cleanupCtx, "ps", "-axo", "pid=,args=").Output()
 				if err != nil {
 					code = 1
 					break
@@ -104,19 +107,19 @@ func TestMain(m *testing.M) {
 				code = 1
 			}
 		}()
-		mock, err = testpeer.Build(mainCtx, root, "codex")
+		mock, err = testpeer.Build(setupCtx, root, "codex")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return
 		}
-		claudeMock, err = testpeer.Build(mainCtx, root, "claude")
+		claudeMock, err = testpeer.Build(setupCtx, root, "claude")
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return
 		}
 		for name, target := range map[string]string{"massd": "../../cmd/massd", "massctl": "../../cmd/massctl"} {
 			bin := filepath.Join(root, name)
-			cmd := exec.CommandContext(mainCtx, "go", "build", "-o", bin, target)
+			cmd := exec.CommandContext(setupCtx, "go", "build", "-o", bin, target)
 			if out, err := cmd.CombinedOutput(); err != nil {
 				fmt.Fprintf(os.Stderr, "build %s: %v\n%s", name, err, out)
 				return
@@ -142,7 +145,7 @@ func TestMain(m *testing.M) {
 		}
 		code = m.Run()
 	}()
-	mainCancel()
+	setupCancel()
 	os.Exit(code)
 }
 

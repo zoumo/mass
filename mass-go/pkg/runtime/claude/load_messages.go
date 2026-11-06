@@ -1,7 +1,9 @@
 package claude
 
 import (
+	"encoding/json"
 	"errors"
+	"maps"
 	"time"
 
 	sdk "github.com/zoumo/agent-sdk-go/claude"
@@ -38,7 +40,6 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 		}
 		meta["nativeTime"], meta["timeSource"] = at.Format(time.RFC3339Nano), "native_record"
 	}
-	emit := func(p events.Payload) error { return d.loadEmit(h, id, m.UUID, parent, meta, p) }
 	msgValue, err := decode(m.Message)
 	if err != nil {
 		return err
@@ -59,23 +60,56 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 	default:
 		return errors.New("unsupported retained message content")
 	}
-	for _, v := range blocks {
+	responseID, _ := msg["id"].(string)
+	apiBlockIndex, coordinate := retainedBlockIndex(value)
+	hasAPIBlockIndex := coordinate == coordinateValid
+	for ordinal, v := range blocks {
 		b, ok := v.(map[string]any)
 		if !ok {
 			return errors.New("invalid retained block")
 		}
 		var payload events.Payload
+		item := blockItemID(m.UUID, ordinal)
+		eventMeta := meta
 		switch b["type"] {
 		case "text", "thinking":
+			if m.Type == "assistant" && coordinate == coordinateInvalid {
+				return errors.New("invalid retained Claude block coordinate")
+			}
 			field := "text"
 			if b["type"] == "thinking" {
 				field = "thinking"
 			}
-			text, ok := b[field].(string)
-			if !ok {
-				return errors.New("invalid retained text")
+			var text string
+			if field == "thinking" {
+				value, signatureOnly, err := retainedThinkingText(b)
+				if err != nil {
+					return err
+				}
+				if signatureOnly {
+					continue
+				}
+				text = value
+			} else {
+				var ok bool
+				text, ok = b[field].(string)
+				if !ok {
+					return errors.New("invalid retained text")
+				}
 			}
-			p := events.MessagePayload{MessageID: m.UUID, Content: []events.ContentBlock{events.Text(text)}}
+			if text == "" {
+				continue
+			}
+			if m.Type == "assistant" && responseID != "" && hasAPIBlockIndex {
+				blockIndex := apiBlockIndex + ordinal
+				if blockIndex < apiBlockIndex {
+					return errors.New("invalid retained Claude block coordinate")
+				}
+				item = blockItemID(responseID, blockIndex)
+				eventMeta = maps.Clone(meta)
+				eventMeta["claude"] = blockKey{response: responseID, index: blockIndex}.meta()
+			}
+			p := events.MessagePayload{MessageID: item, Content: []events.ContentBlock{events.Text(text)}}
 			if field == "thinking" {
 				if m.Type != "assistant" {
 					return errors.New("invalid thinking role")
@@ -86,6 +120,11 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 			} else {
 				payload = events.AgentMessage(p)
 			}
+		case "redacted_thinking":
+			if m.Type != "assistant" {
+				return errors.New("invalid redacted thinking role")
+			}
+			continue
 		case "tool_use":
 			key, _ := b["id"].(string)
 			name, _ := b["name"].(string)
@@ -95,6 +134,7 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 				return errors.New("invalid or conflicting retained tool call")
 			}
 			tools[key] = retainedTool{name: name}
+			item = key
 			payload = events.ToolCall{ID: key, Name: name, Kind: "other", RawInput: input, Status: "unknown"}
 		case "tool_result":
 			key, _ := b["tool_use_id"].(string)
@@ -158,12 +198,38 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 				}
 			}
 			payload = p
+			item = key
 		default:
 			return errors.New("unsupported retained Claude content")
 		}
-		if err := emit(payload); err != nil {
+		if err := d.loadEmit(h, loadEventIdentity{sessionID: id, itemID: item, nativeRecordID: m.UUID, nativeParentID: parent}, eventMeta, payload); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func retainedBlockIndex(value any) (int, coordinateState) {
+	record, ok := value.(map[string]any)
+	if !ok {
+		return 0, coordinateInvalid
+	}
+	raw, present := record["apiBlockIndex"]
+	if !present {
+		return 0, coordinateMissing
+	}
+	number, ok := raw.(json.Number)
+	if !ok {
+		return 0, coordinateInvalid
+	}
+	index, ok := nonNegativeIndex(number)
+	if !ok {
+		return 0, coordinateInvalid
+	}
+	return index, coordinateValid
+}
+
+func retainedThinkingText(block map[string]any) (string, bool, error) {
+	value, present := block["thinking"]
+	return thinkingText(value, present, block["signature"])
 }

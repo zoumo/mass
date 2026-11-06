@@ -252,7 +252,7 @@ func ticket08Session(t *testing.T, c *client.Client, project, name string) resou
 func TestTicket08ArchiveRevokesQueuedAuthorityAndDrains(t *testing.T) {
 	for _, kind := range []string{"codex", "claude"} {
 		t.Run(kind, func(t *testing.T) {
-			gate := &ticket08Gate{item: "before-close", entered: make(chan struct{}), release: make(chan struct{})}
+			gate := &ticket08Gate{item: messageItemID(kind, "before-close"), entered: make(chan struct{}), release: make(chan struct{})}
 			c, requests, project := ticket08HTTP(t, kind, gate)
 			ref := ticket08Session(t, c, project, "active")
 			healthy := ticket08Session(t, c, project, "healthy")
@@ -300,13 +300,19 @@ func TestTicket08ArchiveRevokesQueuedAuthorityAndDrains(t *testing.T) {
 			var page store.HistoryPage
 			require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{}, &page))
 			facts := map[string]string{}
+			expectedFacts := []string{"before-close", "queued-last", "cancel-final"}
 			for _, e := range page.Events {
 				if p, ok := e.Payload().(events.AgentMessage); ok {
-					require.Equal(t, []events.ContentBlock{events.Text("complete " + p.MessageID)}, p.Content)
-					facts[p.MessageID] = e.EventID
+					for _, id := range expectedFacts {
+						if p.MessageID != messageItemID(kind, id) {
+							continue
+						}
+						require.Equal(t, []events.ContentBlock{events.Text("complete " + id)}, p.Content)
+						facts[id] = e.EventID
+					}
 				}
 			}
-			for _, id := range []string{"before-close", "queued-last", "cancel-final"} {
+			for _, id := range expectedFacts {
 				require.NotEmpty(t, facts[id], "lost complete fact %s", id)
 			}
 			seen := map[string]bool{}
@@ -315,7 +321,7 @@ func TestTicket08ArchiveRevokesQueuedAuthorityAndDrains(t *testing.T) {
 				require.NoError(t, nextErr)
 				seen[e.EventID] = true
 			}
-			for _, id := range []string{"before-close", "queued-last", "cancel-final"} {
+			for _, id := range expectedFacts {
 				require.True(t, seen[facts[id]], "fact must be published before retiring binding")
 			}
 			for _, p := range []events.InteractionRequested{current, queued} {
@@ -328,10 +334,11 @@ func TestTicket08ArchiveRevokesQueuedAuthorityAndDrains(t *testing.T) {
 			require.NoError(t, err)
 			defer healthyObserver.Close()
 			require.NoError(t, c.SendPrompt(ctx(t), healthy, runtime.Input{Content: []events.ContentBlock{events.Text("still healthy")}}, nil))
+			healthyID := messageItemID(kind, "healthy-fact")
 			for {
 				e, nextErr := healthyObserver.Next()
 				require.NoError(t, nextErr)
-				if p, ok := e.Payload().(events.AgentMessage); ok && p.MessageID == "healthy-fact" {
+				if p, ok := e.Payload().(events.AgentMessage); ok && p.MessageID == healthyID {
 					break
 				}
 			}

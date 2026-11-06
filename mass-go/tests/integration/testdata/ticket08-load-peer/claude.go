@@ -43,7 +43,7 @@ func claude() {
 	n := 0
 	var link string
 	complete := func() {
-		message := map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("live-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "same retained connection"}}}}
+		message := map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("live-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "same retained connection", "apiBlockIndex": 0}}}}
 		result := map[string]any{"type": "result", "subtype": "success", "session_id": id, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": link}
 		if os.Getenv("LOAD_MODE") == "unlinked" {
 			delete(message, "user_message_uuid")

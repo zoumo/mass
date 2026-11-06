@@ -87,7 +87,7 @@ func main() {
 			switch text {
 			case "initial-overflow":
 				for i := 0; i < 129; i++ {
-					send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": fmt.Sprintf("early-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "early fact"}}}})
+					send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": fmt.Sprintf("early-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "early fact", "apiBlockIndex": 0}}}})
 				}
 				continue
 			case "initial-foreign", "initial-child":
@@ -98,7 +98,7 @@ func main() {
 					unrelated["parent_tool_use_id"] = "foreign-child"
 				}
 				send(unrelated)
-				send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": "still-unsettled", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "not a root completion"}}}})
+				send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": "still-unsettled", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "not a root completion", "apiBlockIndex": 0}}}})
 				init()
 				continue
 			}
@@ -106,7 +106,7 @@ func main() {
 		if text == "child-provenance" {
 			send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": "root-tool", "role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": "child-tool", "name": "Agent", "input": map[string]any{}}}}})
 			send(map[string]any{"type": "system", "subtype": "task_started", "session_id": "claude-continuity", "task_id": "child-task", "task_type": "local_agent", "tool_use_id": "child-tool"})
-			send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "parent_tool_use_id": "child-tool", "message": map[string]any{"id": "confirmed-child", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "confirmed child fact"}}}})
+			send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "parent_tool_use_id": "child-tool", "message": map[string]any{"id": "confirmed-child", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "confirmed child fact", "apiBlockIndex": 0}}}})
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": "claude-continuity", "parent_tool_use_id": "child-tool"})
 		}
 		if text == "resume-unlinked" {
@@ -122,9 +122,9 @@ func main() {
 			send(old)
 			send(map[string]any{"type": "control_request", "request_id": "old-permission", "user_message_uuid": previous, "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": "old-tool", "input": map[string]any{"command": "never execute"}}})
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": "claude-continuity", "parent_tool_use_id": "old-child"})
-			send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": "unlinked-late", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "unlinked old or new"}}}})
+			send(map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": "unlinked-late", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "unlinked old or new", "apiBlockIndex": 0}}}})
 		}
-		message := map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": fmt.Sprintf("message-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": text}}}}
+		message := map[string]any{"type": "assistant", "session_id": "claude-continuity", "message": map[string]any{"id": fmt.Sprintf("message-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": text, "apiBlockIndex": 0}}}}
 		if link != "" {
 			message["user_message_uuid"] = link
 		}
@@ -151,6 +151,7 @@ func main() {
 // The native start proves ownership; complete assistant frames omit the caller UUID.
 func linkage(send func(map[string]any), mode string, n int, link, previous string) {
 	id := fmt.Sprintf("message-%d", n)
+	baseIndex := 0
 	start := func(id, owner string) {
 		v := map[string]any{"type": "stream_event", "session_id": "claude-continuity", "event": map[string]any{"type": "message_start", "message": map[string]any{"id": id, "role": "assistant", "content": []any{}}}}
 		if owner != "" {
@@ -160,7 +161,8 @@ func linkage(send func(map[string]any), mode string, n int, link, previous strin
 	}
 	message := func(id, owner, parent string) {
 		for i, block := range []any{map[string]any{"type": "thinking", "thinking": "native thought"}, map[string]any{"type": "text", "text": "native answer"}} {
-			v := map[string]any{"type": "assistant", "session_id": "claude-continuity", "uuid": fmt.Sprintf("envelope-%d-%d", n, i), "message": map[string]any{"id": id, "role": "assistant", "content": []any{block}}}
+			block.(map[string]any)["apiBlockIndex"] = baseIndex + i
+			v := map[string]any{"type": "assistant", "session_id": "claude-continuity", "uuid": fmt.Sprintf("envelope-%d-%s-%d", n, id, i), "message": map[string]any{"id": id, "role": "assistant", "content": []any{block}}}
 			if owner != "" {
 				v["user_message_uuid"] = owner
 			}
@@ -179,6 +181,7 @@ func linkage(send func(map[string]any), mode string, n int, link, previous strin
 	switch mode {
 	case "linkage-retired":
 		id = "message-1"
+		baseIndex = 1
 	case "linkage-unproven":
 		message(id, "", "")
 	case "linkage-child-first":
@@ -217,10 +220,10 @@ func linkage(send func(map[string]any), mode string, n int, link, previous strin
 	if mode == "linkage-stopped-preview" {
 		send(map[string]any{"type": "stream_event", "session_id": "claude-continuity", "event": map[string]any{"type": "message_stop"}})
 	}
-	for _, delta := range []map[string]any{{"type": "thinking_delta", "thinking": "preview thought"}, {"type": "text_delta", "text": "preview answer"}} {
+	for i, delta := range []map[string]any{{"type": "thinking_delta", "thinking": "preview thought"}, {"type": "text_delta", "text": "preview answer"}} {
 		// Deltas have no message ID; a different-ID complete frame must not borrow it.
 		if mode == "linkage-proof" || mode == "linkage-stopped-preview" {
-			send(map[string]any{"type": "stream_event", "session_id": "claude-continuity", "event": map[string]any{"type": "content_block_delta", "index": 0, "delta": delta}})
+			send(map[string]any{"type": "stream_event", "session_id": "claude-continuity", "event": map[string]any{"type": "content_block_delta", "index": i, "delta": delta}})
 		}
 	}
 	message(id, "", "")
