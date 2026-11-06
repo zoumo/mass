@@ -78,7 +78,7 @@ Runtime 拥有 [SessionEvent TypeSpec](session-events.tsp) 及[事件设计](eve
 
 ## 事件交付
 
-Service 在 start 前取得 events() 并启动接收，Driver 不为各 Session 或外部订阅者另建公共流。EventStream.next 的正常结束与错误终止分别表达；流异常不等于 Agent 业务失败或资源释放。只保证单 Session 内保留事件的顺序；Runtime 有界接纳与公平交付，Service 校验并按 Session 路由到其唯一 EventBroadcast，Service 先结算需要持久化的事实，Broadcast 只实时调用 Handler；外部订阅封装队列 Handler，不传运行关联，过载按订阅隔离。正常停止前持续读取和排空，不能先关闭消费循环。
+Service 在 start 前取得 events() 并启动接收，Driver 不为各 Session 或外部订阅者另建公共流。EventStream.next 的正常结束与错误终止分别表达；流异常不等于 Agent 业务失败或资源释放。只保证单 Session 内保留事件的顺序；Runtime 有界接纳与公平交付，Service 校验并按 Session 路由到其唯一 EventBroadcast，Service 先结算需要持久化的事实，Broadcast 只实时调用 Handler；外部订阅封装队列 Handler，不传运行关联，过载按订阅隔离。正常停止前持续读取和排空，不能先关闭消费循环。Claude adapter 的 block 粒度条目身份见 [Claude 条目身份](claude-item-identity.md)（draft）。
 
 ## 验收与待决
 

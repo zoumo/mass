@@ -25,7 +25,7 @@ agent 写入本目录之前，须有人类明确要求或事先同意；具体�
 - [Events](modules/events/design.md)：每 Session 一个 EventBroadcast，统一管理 Handler；按加入顺序执行 Handler，required 决定失败是否中止；subscribe 返回异步流，封装队列 Handler；只管实时流，不管历史或运行关联。
 - [MetaStore](modules/metastore/design.md)：资源 CRUD、generation 与并发版本；配置选择唯一权威后端，默认 SQLite，可选文件。
 - [EventStore](modules/eventstore/design.md)：事件批量追加、查询与同步进度；文件权威，SQLite 为可重建的完整查询副本，自动从已验证消费位置续同步。
-- [Runtime](modules/runtime/design.md)：Registry 只校验类型配置并构造 Driver；Driver 执行实际运行操作，当前运行映射归 Service。
+- [Runtime](modules/runtime/design.md)：Registry 只校验类型配置并构造 Driver；Driver 执行实际运行操作，当前运行映射归 Service。Claude block 条目身份见 [Claude 条目身份](modules/runtime/claude-item-identity.md)（draft）。
 
 依赖方向：HTTP/CLI → Service → MetaStore、EventStore、Events 与 Runtime。Service 独占当前运行映射及完整停止协调，组装层只注入依赖；Service 管理 Session → Broadcast 映射，直接协调 EventStore 持久提交后，将统一 SessionEvent 交给对应 Broadcast；状态等 Handler 由 Service 装配。Events 核心不直接依赖存储或 Service；存储模块不相互调用，Runtime 不接收资源目录或分页。
 

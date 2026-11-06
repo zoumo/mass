@@ -2,6 +2,8 @@
 
 ## 2026-11-06
 
+- **记录 Claude block 条目身份草案**：按负责人 2026-11-06 讨论，新增 draft 合同，明确 thinking/text 使用 `message.id` 与 content block 索引生成 `itemId`，tool 使用原生 `tool_use.id`；chunk 与完整事件共用 `itemId`，客户端按 item 闭合。未修改 TypeSpec 或实现。
+
 - **增加会话功能开关**：经负责人授权，DriverSessionSpec 增加可扩展的 features，首个开关 agentQuestions 默认 true；DriverSession 增加 effectiveFeatures，SessionStatus 增加实际生效值。请求开启但 Runtime 不支持时降级为 false，不返回错误；默认值与具体 Runtime 是否支持无关。两个 Driver 分别使用 Codex thread 级 config 与 Claude 的 AskUserQuestion 禁用参数实现，接口修订为 v0.2.17。
 
 ## 2026-11-01
