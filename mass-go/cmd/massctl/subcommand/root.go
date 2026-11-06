@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -203,5 +204,5 @@ func (o *options) result(cmd *cobra.Command, op, name string, call func(context.
 		}
 		return nil
 	}
-	return o.print(cmd.OutOrStdout(), raw)
+	return o.print(cmd.OutOrStdout(), raw, strings.HasPrefix(op, "runtime."))
 }

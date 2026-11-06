@@ -108,12 +108,13 @@ subcommands; `cmd/massctl/main.go` only assembles process I/O and signals.
 
 Address precedence is `--url`, then `MASS_URL`, then `http://127.0.0.1:24368`.
 Authentication uses `MASS_TOKEN`. Output defaults to human summaries/tables;
-`-o json` returns the complete business result, and watch emits SessionEvent
-JSONL. Errors retain `code/reason/message` on stderr; watch readiness is also on
-stderr. Exit codes are 0 (success), 1 (operation/I/O failure or unknown result),
-2 (invalid arguments), and 130 (interrupted wait). Ordinary requests default to
-30 seconds; `--timeout 0` disables the timeout. Watch applies that timeout only
-through `subscription.ready`, then observes until explicitly closed or interrupted.
+`-o json` pretty-prints the complete business result, and watch emits
+SessionEvent JSONL. Errors retain `code/reason/message` on stderr; watch
+readiness is also on stderr. Exit codes are 0 (success), 1 (operation/I/O
+failure or unknown result), 2 (invalid arguments), and 130 (interrupted wait).
+Ordinary requests default to 30 seconds; `--timeout 0` disables the timeout.
+Watch applies that timeout only through `subscription.ready`, then observes
+until explicitly closed or interrupted.
 Neither timeout nor Ctrl-C cancels Agent work; requests are never retried.
 
 For Codex, explicitly create and start a Runtime, then create a Session without

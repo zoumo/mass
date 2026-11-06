@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,79 @@ func (s *CommandSuite) TestRuntimeCreateUsesResourceHTTP() {
 	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-o", "json", "runtime", "create", "agent", "--type", "codex"}, strings.NewReader(""), &out, &stderr), stderr.String())
 	s.Contains(out.String(), `"stopped"`)
 	s.Empty(stderr.String())
+}
+
+func (s *CommandSuite) TestRuntimeHumanOutputUsesRuntimeColumnsWithoutGenerationFooter() {
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/apis/v1/runtimes" {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"metadata":{"namespace":"","name":"codex-local","generation":1},"spec":{"type":"codex"},"status":{"state":"running","appliedGeneration":1}}`))
+	}))
+	defer h.Close()
+
+	for _, test := range []struct {
+		args []string
+		rows [][]string
+	}{
+		{[]string{"runtime", "start", "codex-local"}, [][]string{{"NAME", "TYPE", "STATE"}, {"codex-local", "codex", "running"}}},
+		{[]string{"runtime", "list"}, [][]string{{"NAME", "TYPE", "STATE"}}},
+	} {
+		s.Run(strings.Join(test.args, " "), func() {
+			var out, stderr bytes.Buffer
+			s.Equal(0, subcommand.Run(s.T().Context(), append([]string{"--url", h.URL}, test.args...), strings.NewReader(""), &out, &stderr), stderr.String())
+
+			lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+			s.Len(lines, len(test.rows))
+			for i, row := range test.rows {
+				s.Equal(row, strings.Fields(lines[i]))
+			}
+			s.Empty(stderr.String())
+		})
+	}
+}
+
+func (s *CommandSuite) TestResourceJSONOutputIsIndented() {
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"metadata":{"name":"codex-local"},"spec":{"type":"codex"},"status":{"state":"running"}}`))
+	}))
+	defer h.Close()
+
+	var out, stderr bytes.Buffer
+	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-ojson", "runtime", "get", "codex-local"}, strings.NewReader(""), &out, &stderr), stderr.String())
+	s.JSONEq(`{"metadata":{"name":"codex-local"},"spec":{"type":"codex"},"status":{"state":"running"}}`, out.String())
+	s.Equal([]string{
+		"{",
+		`  "metadata": {`,
+		`    "name": "codex-local"`,
+		"  },",
+		`  "spec": {`,
+		`    "type": "codex"`,
+		"  },",
+		`  "status": {`,
+		`    "state": "running"`,
+		"  }",
+		"}",
+	}, strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n"))
+	s.Empty(stderr.String())
+}
+
+func (s *CommandSuite) TestWatchJSONOutputRemainsOneEventPerLine() {
+	event := `{"eventId":"10000000-0000-4000-8000-000000000001","namespace":"demo","sessionName":"test","sessionId":"test","time":"2026-10-20T00:00:00Z","itemId":"message","type":"agent.message","payload":{"messageId":"message","content":[{"type":"text","text":"hello"}]}}`
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "event: subscription.ready\ndata: {}\n\nevent: session.event\ndata: %s\n\nevent: subscription.closed\ndata: {}\n\n", event)
+	}))
+	defer h.Close()
+
+	var out, stderr bytes.Buffer
+	s.Equal(0, subcommand.Run(s.T().Context(), []string{"--url", h.URL, "-ojson", "session", "watch", "test"}, strings.NewReader(""), &out, &stderr), stderr.String())
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	s.Len(lines, 1)
+	s.True(json.Valid([]byte(lines[0])))
+	s.JSONEq(event, lines[0])
+	s.Contains(stderr.String(), "subscription.ready")
 }
 
 func (s *CommandSuite) TestUpdatePreservesTypeAndConfigFlagsOrReplacesCompleteConfig() {

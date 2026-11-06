@@ -256,7 +256,7 @@ func (o *options) watch(cmd *cobra.Command, ref resource.SessionRef) error {
 		if err != nil {
 			return requestError(err, "watch")
 		}
-		if err := o.print(cmd.OutOrStdout(), raw); err != nil {
+		if err := o.printEvent(cmd.OutOrStdout(), raw); err != nil {
 			return err
 		}
 	}
