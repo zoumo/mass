@@ -155,7 +155,7 @@ v2 is being developed in Go under [`mass-go/`](mass-go/README.md).
 | Area | Available today | Current limit |
 |---|---|---|
 | 🛠️ Service | HTTP API, CLI, and file-backed resource/history storage | Prototype implementation |
-| 🧩 Agent drivers | Codex and Claude SDK adapters | Both require an executable **and a synthetic scenario**; an installed agent CLI alone is insufficient |
+| 🧩 Agent drivers | Codex and Claude SDK adapters | An absolute executable is required; live authentication and model behavior remain separately verified |
 | 🧪 Demonstration | Isolated CLI → HTTP → Service → Store / Runtime scenarios | Uses mock CLIs; does not establish real model execution, native recovery, or production readiness |
 | 💬 Claude input | Text input, archive, and resume | One input per running connection |
 | 🤝 Permissions & questions | HTTP answer API | No CLI answer command yet |
@@ -166,7 +166,11 @@ v2 is being developed in Go under [`mass-go/`](mass-go/README.md).
 |---|---|
 | `make fmt` | Format Go code |
 | `make lint` | Run Go lint |
-| `make test` | Run offline tests with the race detector |
+| `make test` | Run unit, integration, and simulation layers offline with the race detector |
+| `make test-unit-go` | Run package-local tests only |
+| `make test-integration-go` | Run constructed multi-module scenarios and SDK probes |
+| `make test-simulation-go` | Replay recorded Agent material through `agent-sdk-testify` |
+| `make test-e2e-go` | Explicitly run real Codex/Claude E2E; never part of `make test` |
 | `make build` | Build the daemon and CLI |
 | `make check` | Run lint, tests, build, and formatting checks |
 | `make prototype-go` | Run the isolated synthetic end-to-end demonstration |

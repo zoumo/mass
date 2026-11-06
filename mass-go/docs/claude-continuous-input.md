@@ -1,7 +1,7 @@
 # Claude continuous input: attribution boundary
 
 This implementation uses the fixed SDK
-`v0.0.0-20261105065348-5edf8b62e963`. No native TurnID is created.
+`v0.0.0-20261106083916-f52be4d0377f`. No native TurnID is created.
 
 ## What the receipt proves
 
@@ -65,5 +65,7 @@ The dedicated synthetic peer deliberately echoes caller UUIDs for positive
 cases, and omits them for the unknown case. Its append-only input evidence proves
 wire inputs reached the same PID. These tests prove MASS policy under controlled
 native frames, not that real Claude or a particular model supplies such linkage.
-No real-model acceptance is claimed. Synthetic linkage tests do not establish
-that ordinary native assistant/result frames carry the required linkage.
+No real-model acceptance was run for this ticket. Follow-up real acceptance for
+both providers must use the requested theta/glm-5.3 configuration and independently
+inspect ordinary native linkage; synthetic success must not be reported as that
+acceptance. Lifecycle ticket 04 and history load are outside this change.

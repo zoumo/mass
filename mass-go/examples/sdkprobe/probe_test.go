@@ -24,35 +24,35 @@ import (
 
 type ProbeSuite struct{ suite.Suite }
 
-var probeRoot string
+var bins map[string]string
 
-// Use the separately built testify tool, never an SDK-owned mock builder.
+// Build by public import path from this consumer module, using its pinned SDK.
 func TestMain(m *testing.M) {
 	mainCtx, mainCancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	var err error
-	probeRoot, err = os.MkdirTemp("", "mass-sdk-probe-")
+	dir, err := os.MkdirTemp("", "mass-sdk-probe-")
 	if err != nil {
 		panic(err)
 	}
+	bins = make(map[string]string)
 	code := 1
 	func() {
 		defer func() {
 			// SDK Close waits for its owned child. Independently read back the process
-			// table before deleting launchers so leaked children cannot hide in cleanup.
+			// table before deleting binaries so leaked children cannot hide in cleanup.
 			output, err := exec.CommandContext(mainCtx, "ps", "-axo", "pid=,args=").Output()
-			if err != nil || bytes.Contains(output, []byte(probeRoot+"/")) {
+			if err != nil || bytes.Contains(output, []byte(dir+"/")) {
 				fmt.Fprintln(os.Stderr, "FAIL process cleanup readback", err)
 				code = 1
 			} else {
 				fmt.Println("PASS cleanup: no owned peer process remains")
 			}
-			if err := os.RemoveAll(probeRoot); err != nil {
+			if err := os.RemoveAll(dir); err != nil {
 				code = 1
 			}
-			if _, err := os.Stat(probeRoot); !os.IsNotExist(err) {
+			if _, err := os.Stat(dir); !os.IsNotExist(err) {
 				code = 1
 			} else {
-				fmt.Println("PASS cleanup: temporary launchers removed")
+				fmt.Println("PASS cleanup: temporary binaries removed")
 			}
 		}()
 		// Refuse a workspace/module replacement or an accidentally upgraded SDK
@@ -102,7 +102,7 @@ func workDir(t *testing.T) string {
 	return dir
 }
 
-func fixture(t *testing.T, name string) []byte {
+func scenario(t *testing.T, name string) string {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("testdata", name+".json"))
 	require.NoError(t, err)
@@ -110,23 +110,9 @@ func fixture(t *testing.T, name string) []byte {
 	require.NoError(t, err)
 	var compact bytes.Buffer
 	require.NoError(t, json.Compact(&compact, data))
-	return compact.Bytes()
-}
-
-func syntheticLauncher(t *testing.T, name string, data []byte) testpeer.Launcher {
-	t.Helper()
-	provider := "claude"
-	if strings.HasPrefix(name, "codex-") {
-		provider = "codex"
-	}
-	dir, err := os.MkdirTemp(probeRoot, "peer-")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
-	material, err := testpeer.Author(dir, provider, data)
-	require.NoError(t, err)
-	launcher, err := testpeer.Direct(dir, provider, material.Recording)
-	require.NoError(t, err)
-	return launcher
+	path = filepath.Join(t.TempDir(), name+".json")
+	require.NoError(t, os.WriteFile(path, compact.Bytes(), 0o600))
+	return path
 }
 
 func deadline(t *testing.T) context.Context {
@@ -138,9 +124,9 @@ func deadline(t *testing.T) context.Context {
 
 func openCodex(t *testing.T, ctx context.Context, name string) *codex.Client {
 	t.Helper()
-	peer := syntheticLauncher(t, "codex-"+name, fixture(t, "codex-"+name))
 	c, err := codex.NewStdio(ctx, codex.StdioOptions{
-		Executable: peer.Path, Args: []string{"app-server"}, Dir: workDir(t),
+		Executable: bins["codex"], Args: []string{"app-server"},
+		Env: []string{"CODEX_MOCK_SCENARIO=" + scenario(t, name)}, Dir: workDir(t),
 		Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "probe", Version: "1"}},
 	})
 	require.NoError(t, err)
@@ -160,7 +146,7 @@ func (probeSuite *ProbeSuite) TestCodex() {
 		probeSuite.Run(mode, func() {
 			t := probeSuite.T()
 			ctx := deadline(t)
-			c := openCodex(t, ctx, mode)
+			c := openCodex(t, ctx, "codex-"+mode)
 			session, err := codex.Open(ctx, codex.SessionOptions{Client: c})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, session.Close()) })
@@ -262,8 +248,7 @@ func (probeSuite *ProbeSuite) TestClaude() {
 		probeSuite.Run(mode, func() {
 			t := probeSuite.T()
 			ctx := deadline(t)
-			peer := syntheticLauncher(t, "claude-"+mode, fixture(t, "claude-"+mode))
-			c, err := claude.Open(ctx, claude.SessionOptions{CLIPath: peer.Path, WorkDir: workDir(t)})
+			c, err := claude.Open(ctx, claude.SessionOptions{CLIPath: bins["claude"], WorkDir: workDir(t), Env: []string{"CLAUDE_MOCK_SCENARIO=" + scenario(t, "claude-"+mode)}})
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				require.NoError(t, c.Close())
@@ -381,17 +366,17 @@ func (probeSuite *ProbeSuite) TestPeerExit() {
 			probeSuite.Run(native+"/"+mode, func() {
 				t := probeSuite.T()
 				ctx := deadline(t)
-				var capture struct {
+				var fixture struct {
 					Frames []struct {
 						Direction  string
 						Wire, Data json.RawMessage
 					}
 				}
-				b := fixture(t, native+"-basic")
-				require.NoError(t, json.Unmarshal(b, &capture))
-				peer := syntheticLauncher(t, native+"-basic", b)
+				b, err := os.ReadFile(scenario(t, native+"-basic"))
+				require.NoError(t, err)
+				require.NoError(t, json.Unmarshal(b, &fixture))
 				var input bytes.Buffer
-				for _, f := range capture.Frames {
+				for _, f := range fixture.Frames {
 					if f.Direction == "client" {
 						require.NoError(t, json.Compact(&input, f.Data))
 						input.WriteByte('\n')
@@ -408,16 +393,17 @@ func (probeSuite *ProbeSuite) TestPeerExit() {
 				if mode == "incomplete" {
 					input.Reset()
 				}
-				cmd := exec.CommandContext(ctx, peer.Path)
+				cmd := exec.CommandContext(ctx, bins[native])
 				if native == "codex" {
 					cmd.Args = append(cmd.Args, "app-server")
 				}
 				cmd.Dir = workDir(t)
+				cmd.Env = []string{strings.ToUpper(native) + "_MOCK_SCENARIO=" + scenario(t, native+"-basic")}
 				cmd.Stdin = &input
 				var stderr, stdout bytes.Buffer
 				cmd.Stderr = &stderr
 				cmd.Stdout = &stdout
-				err := cmd.Run()
+				err = cmd.Run()
 				require.NoError(t, ctx.Err())
 				require.True(t, cmd.ProcessState.Exited(), "child must be reaped")
 				if mode == "complete" {
@@ -427,25 +413,6 @@ func (probeSuite *ProbeSuite) TestPeerExit() {
 					require.Error(t, err)
 					require.Equal(t, 1, cmd.ProcessState.ExitCode())
 					require.NotEmpty(t, stderr.String())
-				}
-				receipts, err := peer.ReceiptPaths()
-				require.NoError(t, err)
-				require.Len(t, receipts, 1)
-				var receipt testpeer.Receipt
-				require.NoError(t, json.Unmarshal(mustRead(t, receipts[0]), &receipt))
-				require.Equal(t, 1, receipt.SchemaVersion)
-				require.Equal(t, native, receipt.Provider)
-				require.Equal(t, mode == "complete", receipt.FullConsumption)
-				require.Equal(t, mode == "complete", receipt.ClientEOF)
-				require.True(t, receipt.CleanupComplete)
-				require.False(t, receipt.NativeLaunched)
-				if mode == "complete" {
-					require.Equal(t, "passed", receipt.Status)
-					require.Zero(t, receipt.ExitCode)
-				} else {
-					require.Equal(t, "failed", receipt.Status)
-					require.Equal(t, 1, receipt.ExitCode)
-					require.NotEmpty(t, receipt.Error)
 				}
 				t.Logf("PASS strict scenario %s, exit=%d, child waited/reaped", mode, cmd.ProcessState.ExitCode())
 			})
@@ -460,7 +427,8 @@ func (probeSuite *ProbeSuite) TestSDKInitializationFailure() {
 	for _, native := range []string{"codex", "claude"} {
 		probeSuite.Run(native, func() {
 			t := probeSuite.T()
-			data := fixture(t, native+"-basic")
+			data, err := os.ReadFile(scenario(t, native+"-basic"))
+			require.NoError(t, err)
 			var fixture map[string]any
 			require.NoError(t, json.Unmarshal(data, &fixture))
 			first := fixture["frames"].([]any)[0].(map[string]any)
@@ -469,13 +437,15 @@ func (probeSuite *ProbeSuite) TestSDKInitializationFailure() {
 			} else {
 				first["data"].(map[string]any)["request"] = map[string]any{"subtype": "unexpected"}
 			}
-			encoded, err := json.Marshal(fixture)
+			data, err = json.Marshal(fixture)
 			require.NoError(t, err)
-			peer := syntheticLauncher(t, native+"-basic", encoded)
+			path := filepath.Join(workDir(t), "mismatch.json")
+			require.NoError(t, os.WriteFile(path, data, 0o600))
 			ctx := deadline(t)
 			if native == "codex" {
 				c, err := codex.NewStdio(ctx, codex.StdioOptions{
-					Executable: peer.Path, Args: []string{"app-server"}, Dir: workDir(t),
+					Executable: bins[native], Args: []string{"app-server"}, Dir: workDir(t),
+					Env:        []string{"CODEX_MOCK_SCENARIO=" + path},
 					Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "probe", Version: "1"}},
 				})
 				if c != nil {
@@ -484,7 +454,7 @@ func (probeSuite *ProbeSuite) TestSDKInitializationFailure() {
 				require.Error(t, err)
 			} else {
 				c, err := claude.Open(ctx, claude.SessionOptions{
-					CLIPath: peer.Path, WorkDir: workDir(t),
+					CLIPath: bins[native], WorkDir: workDir(t), Env: []string{"CLAUDE_MOCK_SCENARIO=" + path},
 				})
 				if c != nil {
 					t.Cleanup(func() { _ = c.Close() })
@@ -494,13 +464,6 @@ func (probeSuite *ProbeSuite) TestSDKInitializationFailure() {
 			t.Log("PASS SDK initialization mismatch returned an error; cleanup readback follows")
 		})
 	}
-}
-
-func mustRead(t *testing.T, path string) []byte {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	return data
 }
 
 func TestProbeSuite(t *testing.T) { suite.Run(t, new(ProbeSuite)) }

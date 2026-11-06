@@ -1,0 +1,354 @@
+package integration_test
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	"github.com/zoumo/mass/mass-go/internal/testpeer"
+	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/metastore"
+	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/codex"
+	"github.com/zoumo/mass/mass-go/pkg/service"
+	"github.com/zoumo/mass/mass-go/pkg/store"
+	"github.com/zoumo/mass/mass-go/pkg/store/file"
+)
+
+type IntegrationSuite struct{ suite.Suite }
+
+var mock, claudeMock, app, ctl, root string
+
+// Blocks the identity commit while the real adapter already emitted initial idle.
+type identityGate struct {
+	metastore.MetaStore
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *identityGate) CreateSession(r resource.Session) (resource.Session, error) {
+	close(g.entered)
+	<-g.release
+	return g.MetaStore.CreateSession(r)
+}
+
+func TestMain(m *testing.M) {
+	// The complete race suite has a five-minute budget, plus owned build/cleanup.
+	mainCtx, mainCancel := context.WithTimeout(context.Background(), 330*time.Second)
+	var err error
+	root, err = os.MkdirTemp("", "mass-integration-")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("owned integration resource root:", root)
+	code := 1
+	func() {
+		defer func() {
+			output, err := exec.CommandContext(mainCtx, "ps", "-axo", "pid=,args=").Output()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "FAIL process readback", err)
+				code = 1
+			}
+			leaked := false
+			for line := range strings.SplitSeq(string(output), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) > 1 && strings.HasPrefix(fields[1], root+"/") {
+					leaked = true
+					code = 1
+					pid, err := strconv.Atoi(fields[0])
+					if err == nil {
+						_ = syscall.Kill(pid, syscall.SIGTERM)
+					}
+				}
+			}
+			if leaked {
+				fmt.Fprintln(os.Stderr, "FAIL: leaked owned child; cleanup SIGTERM sent")
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				output, err = exec.CommandContext(mainCtx, "ps", "-axo", "pid=,args=").Output()
+				if err != nil {
+					code = 1
+					break
+				}
+				if !bytes.Contains(output, []byte(root+"/")) {
+					fmt.Println("PASS no owned test-peer/application processes remain")
+					break
+				}
+				if time.Now().After(deadline) {
+					fmt.Fprintln(os.Stderr, "FAIL owned process cleanup readback")
+					code = 1
+					break
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			if os.RemoveAll(root) != nil {
+				code = 1
+			}
+			if _, err := os.Stat(root); !os.IsNotExist(err) {
+				code = 1
+			}
+		}()
+		mock, err = testpeer.Build(mainCtx, root, "codex")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
+		claudeMock, err = testpeer.Build(mainCtx, root, "claude")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
+		for name, target := range map[string]string{"massd": "../../cmd/massd", "massctl": "../../cmd/massctl"} {
+			bin := filepath.Join(root, name)
+			cmd := exec.CommandContext(mainCtx, "go", "build", "-o", bin, target)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				fmt.Fprintf(os.Stderr, "build %s: %v\n%s", name, err, out)
+				return
+			}
+			switch name {
+			case "claude-mock":
+				claudeMock = bin
+			case "mock":
+				mock = bin
+			case "massd":
+				app = bin
+			case "massctl":
+				ctl = bin
+			}
+		}
+		for _, name := range []string{"mass-testpeer-codex", "mass-testpeer-claude", "massd", "massctl"} {
+			binary, readErr := os.ReadFile(filepath.Join(root, name))
+			if readErr != nil {
+				fmt.Fprintln(os.Stderr, readErr)
+				return
+			}
+			fmt.Printf("owned artifact %s sha256=%x\n", name, sha256.Sum256(binary))
+		}
+		code = m.Run()
+	}()
+	mainCancel()
+	os.Exit(code)
+}
+
+func ctx(t *testing.T) context.Context {
+	t.Helper()
+	c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	return c
+}
+
+func scenario(t *testing.T) (string, string) {
+	t.Helper()
+	work := t.TempDir()
+	data, err := os.ReadFile("testdata/codex.json")
+	require.NoError(t, err)
+	quoted, err := json.Marshal(work)
+	require.NoError(t, err)
+	data = bytes.ReplaceAll(data, []byte(`"/synthetic"`), quoted)
+	var compact bytes.Buffer
+	require.NoError(t, json.Compact(&compact, data))
+	data = compact.Bytes()
+	path := filepath.Join(t.TempDir(), "scenario.json")
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	return path, work
+}
+
+func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
+	t := integrationSuite.T()
+	c := ctx(t)
+	path, work := scenario(t)
+	dir := t.TempDir()
+	st, err := file.Open(dir, false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	registry := runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: filepath.Join(dir, "private")}})
+	gate := &identityGate{MetaStore: st, entered: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(gate.release) }) }
+	defer release()
+	svc := service.New(gate, st, registry)
+	t.Cleanup(func() { require.NoError(t, svc.Shutdown(ctx(t))) })
+	r, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, r.Metadata.Generation)
+	_, err = registry.Get("codex")
+	require.Error(t, err, "resource create must not construct a Driver")
+	r, err = svc.StartRuntime(c, "codex")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, r.Status.AppliedGeneration)
+	driver, err := registry.Get("codex")
+	require.NoError(t, err)
+	_, err = driver.Events()
+	require.Error(t, err, "Service has already acquired the only stream")
+	type createdResult struct {
+		value resource.Session
+		err   error
+	}
+	created := make(chan createdResult, 1)
+	go func() {
+		value, createErr := svc.CreateSession(c, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "codex", SessionSpec: runtime.SessionSpec{Cwd: work}}})
+		created <- createdResult{value: value, err: createErr}
+	}()
+	select {
+	case <-gate.entered:
+	case <-c.Done():
+		t.Fatal(c.Err())
+	}
+	_, err = svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
+	require.ErrorIs(t, err, store.ErrNotFound)
+	_, err = st.ListHistory("codex-session", store.HistoryQuery{})
+	require.ErrorIs(t, err, store.ErrNotFound)
+	release()
+	var opened createdResult
+	select {
+	case opened = <-created:
+	case <-c.Done():
+		t.Fatal(c.Err())
+	}
+	session, err := opened.value, opened.err
+	require.NoError(t, err)
+	require.Equal(t, "codex-session", session.Status.SessionID)
+	id := resource.SessionRef{SessionID: session.Status.SessionID}
+	name := resource.SessionRef{Namespace: "default", Name: "demo"}
+	require.Eventually(t, func() bool { r, e := svc.GetSession(id); return e == nil && r.Status.State == events.Idle }, time.Second, 5*time.Millisecond)
+	byID, err := svc.GetSession(id)
+	require.NoError(t, err)
+	byName, err := svc.GetSession(name)
+	require.NoError(t, err)
+	require.Equal(t, byID, byName)
+	before, err := svc.ListHistoryEvents(id, store.HistoryQuery{})
+	require.NoError(t, err)
+	require.Empty(t, before.Events)
+	require.Nil(t, before.SyncedEventID)
+	t.Log("PASS no-input native identity; strict peer is waiting for separate turn/start")
+	sub, err := svc.SubscribeEvents(name)
+	require.NoError(t, err)
+	defer sub.Close()
+	observer, err := svc.SubscribeEvents(id)
+	require.NoError(t, err)
+	require.NoError(t, observer.Close())
+	receipt, err := svc.SendPrompt(c, id, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+	require.NoError(t, err)
+	require.Equal(t, "turn-1", receipt.Submission)
+	require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+	persisted := []events.SessionEvent{}
+	chunks := []string{}
+	running := false
+	for {
+		event, err := nextSubscription(sub, c)
+		require.NoError(t, err)
+		require.Equal(t, "default", event.Namespace)
+		require.Equal(t, "demo", event.SessionName)
+		require.Equal(t, events.Source{}, event.Source(), "realtime consumers receive no Runtime work association")
+		wire, err := json.Marshal(event)
+		require.NoError(t, err)
+		var envelope map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(wire, &envelope))
+		var meta map[string]json.RawMessage
+		if raw, ok := envelope["_meta"]; ok {
+			require.NoError(t, json.Unmarshal(raw, &meta))
+		}
+		if event.Type() == "user.message" {
+			var native map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(meta["native"], &native))
+			require.JSONEq(t, `"turn-1"`, string(native["turnId"]))
+		}
+		// Only native provenance is opaque; sibling metadata must not expose work association.
+		delete(meta, "native")
+		if meta != nil {
+			envelope["_meta"], err = json.Marshal(meta)
+			require.NoError(t, err)
+		}
+		projection, err := json.Marshal(envelope)
+		require.NoError(t, err)
+		for _, forbidden := range []string{`"seq"`, `"schemaVersion"`, `"run"`, `"work"`, `"turn-1"`} {
+			require.NotContains(t, string(projection), forbidden)
+		}
+		if event.Persistent() {
+			if event.Type() != "agent.tool_call" {
+				require.Equal(t, time.Date(2026, 10, 20, 1, 2, 3, 0, time.UTC), event.Time)
+			} // Read through a newly opened file Store immediately on publication.
+			reopened, err := file.Open(dir, true)
+			require.NoError(t, err)
+			page, err := reopened.ListHistory(event.SessionID, store.HistoryQuery{})
+			require.NoError(t, err)
+			require.NoError(t, reopened.Close())
+			found := false
+			for _, saved := range page.Events {
+				if saved.EventID == event.EventID {
+					b, err := json.Marshal(saved)
+					require.NoError(t, err)
+					require.JSONEq(t, string(wire), string(b))
+					found = true
+				}
+			}
+			require.True(t, found, "publication must follow durable readable file commit")
+			persisted = append(persisted, event)
+		}
+		if chunk, ok := event.Payload().(events.MessageChunk); ok {
+			require.Equal(t, "message-1", event.ItemID)
+			chunks = append(chunks, chunk.Content[0].Text)
+		}
+		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil {
+			if *state.State == events.Running {
+				running = true
+			}
+			if running && *state.State == events.Idle {
+				break
+			}
+		}
+	}
+	require.Equal(t, []string{"preview ", "only"}, chunks)
+	require.Len(t, persisted, 4)
+	require.Equal(t, "complete answer", persisted[3].Payload().(events.AgentMessage).Content[0].Text)
+	page, err := svc.ListHistoryEvents(id, store.HistoryQuery{})
+	require.NoError(t, err)
+	require.Len(t, page.Events, 4)
+	for _, event := range page.Events {
+		require.True(t, event.Persistent())
+	}
+	progress, err := st.Append(session.Status.SessionID, persisted)
+	require.NoError(t, err)
+	require.Equal(t, page.SyncedEventID, progress)
+	page2, err := st.ListHistory(session.Status.SessionID, store.HistoryQuery{})
+	require.NoError(t, err)
+	require.Len(t, page2.Events, 4)
+	require.NoError(t, sub.Close())
+	t.Log("PASS separate input, typed events, delta-only previews, commit-before-publish, UUID retry")
+	require.NoError(t, svc.Shutdown(c))
+	require.NoError(t, st.Close())
+	reopened, err := file.Open(dir, true)
+	require.NoError(t, err)
+	defer reopened.Close()
+	offline := service.New(reopened, reopened, nil)
+	savedID, err := offline.GetSession(id)
+	require.NoError(t, err)
+	savedName, err := offline.GetSession(name)
+	require.NoError(t, err)
+	require.Equal(t, savedID, savedName)
+	require.Equal(t, session.Metadata.UID, savedID.Metadata.UID)
+	history, err := offline.ListHistoryEvents(id, store.HistoryQuery{})
+	require.NoError(t, err)
+	require.Equal(t, page2, history)
+	_, err = offline.SendPrompt(c, id, runtime.Input{Content: []events.ContentBlock{events.Text("no")}})
+	require.Error(t, err)
+	t.Log("PASS reopened read-only identity/history with no Registry or Driver")
+}
+
+func TestIntegrationSuite(t *testing.T) { suite.Run(t, new(IntegrationSuite)) }

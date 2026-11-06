@@ -16,7 +16,11 @@ agent 只有在当前人类请求明确要求修改 harness 中的相关内容�
 |---|---|
 | make fmt / make fmt-go | 格式化 Go 代码 |
 | make lint / make lint-go | Go lint |
-| make test / make test-go | 离线 race 测试 |
+| make test / make test-go | 单元、集成、仿真三层离线 race 测试 |
+| make test-unit-go | 仅包内单元测试 |
+| make test-integration-go | 构造数据多模块集成测试与 SDK 协议探针 |
+| make test-simulation-go | 录制数据经 agent-sdk-testify 回放 |
+| make test-e2e-go | 显式启动真实 Agent 的 E2E，不包含在 test/check 中 |
 | make build / make build-go | 构建 bin/massctl 与 bin/massd |
 | make check / make check-go | lint、测试、构建与格式检查 |
 | make prototype-go | 隔离的合成产品入口端到端验收 |

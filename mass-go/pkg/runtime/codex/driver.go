@@ -126,7 +126,7 @@ func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	if args == nil {
 		args = []string{"app-server"}
 	}
-	c, err := sdk.NewStdio(ctx, sdk.StdioOptions{Executable: d.options.Executable, Args: args, Env: d.options.Environment(), Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}}})
+	c, err := sdk.NewStdio(ctx, sdk.StdioOptions{Executable: d.options.Executable, Args: args, Env: d.options.Environment("codex"), Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}}})
 	if err != nil {
 		cancel()
 		return nil, err

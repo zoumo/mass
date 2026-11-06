@@ -46,7 +46,8 @@ load settles. Every postload input, including the first, needs explicit native
 linkage for work attribution. A caller UUID is an optional correlation aid, not
 a native TurnID. Ordinary assistant/result observations without recognized
 linkage remain unknown and do not complete current work. The positive synthetic
-peer echoes caller UUIDs; that test is NOT a guarantee that real Claude echoes them. No real-model acceptance is
+peer echoes caller UUIDs; that test is NOT a guarantee that real Claude or the
+later theta/glm-5.3 acceptance target echoes them. No real-model acceptance is
 claimed here.
 
 ## Bounded failure and cleanup

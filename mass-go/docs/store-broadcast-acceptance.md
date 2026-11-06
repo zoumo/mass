@@ -36,7 +36,7 @@ Run from `mass-go/` (all fixtures, protocol peers and data are synthetic/owned):
 ```sh
 rtk proxy go test -race ./pkg/events ./pkg/metastore/... ./pkg/eventstore/...
 rtk proxy go test -race ./pkg/service -run 'TestSQLReplicaFailureNeverPublishesUncoordinatedFact|TestStateWrites|TestFailedState|TestActiveState|TestRuntimeStopSuite|TestSessionWorkSuite'
-rtk proxy go test -race ./tests/vertical -run 'Test(File)?EntrypointSuite'
+rtk proxy go test -race ./tests/integration -run 'Test(File)?EntrypointSuite'
 ```
 
 Both entrypoint suites start the actual daemon and invoke the CLI, HTTP and SSE.

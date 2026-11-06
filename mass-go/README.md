@@ -5,27 +5,33 @@ uses **CLI → HTTP/SSE → Service → Store / Runtime**. It has one SessionEve
 one Driver consumer, independent live observers, and file-authoritative history.
 Executable assembly lives under `cmd/`; CLI and other library modules live under `pkg/`.
 
-## One-command synthetic demonstration
+## Layered verification
 
-From the repository root, with Go 1.26.9, pinned dependencies already cached,
-and a separately built `agent-sdk-testify` executable:
+From the repository root, with Go 1.26.9 and pinned dependencies already cached:
 
 ```sh
-export AGENT_SDK_TESTIFY_BIN=/absolute/path/to/agent-sdk-testify
-make prototype-go
-# Cross-capability combinations under race; no models or recording fallback:
-make acceptance-sdk-go
-# Four offline consumer replays plus artifact and credential audits:
-make recording-gate-go
+# Package-local unit tests
+make test-unit-go
+# Constructed multi-module scenarios and strict SDK protocol probes
+make test-integration-go
+# Recorded consumer material replayed through agent-sdk-testify
+make test-simulation-go
+# Explicit real Codex/Claude recording; not run by test-go or check-go
+make test-e2e-go
 ```
 
-This builds MASS's test-only strict protocol peer for Codex **and** Claude plus `massd`
-and `massctl`, then runs `TestEntrypointSuite` through actual CLI processes and
-HTTP+SSE. Every scenario is synthetic. The scenario peer matches ordered protocol frames
+`test-go` and `check-go` run the first three layers. The E2E package has an
+`e2e` build constraint, requires `MASS_RECORD=1`, and is never selected by the
+normal offline suite.
+
+The integration layer builds MASS's test-only strict protocol peer for Codex
+**and** Claude plus `massd` and `massctl`, then runs `TestEntrypointSuite`
+through actual CLI processes and HTTP+SSE. Every scenario is constructed. The
+scenario peer matches ordered protocol frames
 strictly, rebinds native request IDs, and does not execute tools, use accounts, call models,
 or prove intelligence.
 The command fails on a failed scenario or cleanup readback. Test-owned binaries,
-launchers, recordings, workspaces, data and loopback ports are temporary; process, listener
+workspaces, scenarios, data and loopback ports are temporary; process, listener
 and directory cleanup is checked. No personal Agent configuration is used.
 
 The suite demonstrates no-input native identity, separate text input, automatic
@@ -37,6 +43,8 @@ errors, Runtime operations, disconnect isolation and failed-creation cleanup.
 Answer and filtered queries are tested through HTTP because they are not CLI commands.
 Each persistent event read from SSE is compared with a committed history query.
 SDK probe passes are reported separately and do not stand in for this suite.
+`prototype-go` remains the focused entrypoint demonstration, and
+`acceptance-sdk-go` remains the cross-capability selector.
 
 Claude creation can return `unknown` after its synthetic init: identity alone is
 not an idle/work-state proof. Claude supports serial same-connection input only
@@ -147,7 +155,7 @@ bin/massctl session archive review -n demo
 bin/massctl session resume review -n demo
 ```
 
-Both drivers currently accept text input, including multiple text blocks.
+Both drivers currently accept text input; Claude requires exactly one text block.
 Claude rejects `systemPrompt` and `additionalDirs` before dispatch; Codex maps
 `systemPrompt` to native base instructions and rejects `additionalDirs`.
 These command examples describe supported interfaces, not proof of real CLI/model
@@ -158,7 +166,8 @@ the HTTP answer API. This CLI version deliberately has no answer command.
 
 ### Consumer recording and replay
 
-From the repository root, run `make recording-gate-go` to replay the four
+From the repository root, run `make test-simulation-go` (or its compatibility
+alias `make recording-gate-go`) to replay the four
 exported Codex and Claude basic and permission cases through a running MASS
 daemon and its public HTTP/SSE API. The target forces `MASS_RECORD=0` and runs
 the artifact, receipt and credential audits with the replays. Codex uses a
@@ -176,13 +185,14 @@ not apply. Exact hashes, status and recording commands are in
 
 Real recording requires an authenticated Codex CLI and explicit opt-in.
 `MASS_RECORD_MODEL` selects one model slug for both providers; the checked-in
-cases use `auto/deepseek-v4.1-flash-1017`.
+cases use `auto/deepseek-v4.1-flash-1017`. Real recording lives behind both the
+`e2e` build tag and `MASS_RECORD=1`.
 
 ```sh
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CODEX=/absolute/path/to/native/codex \
   MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-basic \
-  go test -count=1 -v ./tests/recording -run '^TestRecordCodexBasic$'
+  go test -tags=e2e -count=1 -v ./tests/e2e -run '^TestRecordCodexBasic$'
 ```
 
 The permission case uses an explicit native `on-request` approval policy and a
@@ -194,7 +204,7 @@ or invents an option.
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CODEX=/absolute/path/to/native/codex \
   MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-permission \
-  go test -count=1 -v ./tests/recording -run '^TestRecordCodexPermission$'
+  go test -tags=e2e -count=1 -v ./tests/e2e -run '^TestRecordCodexPermission$'
 ```
 
 Use the native CLI executable to avoid package-launcher environment injection.
@@ -213,11 +223,11 @@ Claude recording uses the same lifecycle and exports to
 ```sh
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
-  go test -count=1 -v ./tests/recording -run '^TestRecordClaudeBasic$'
+  go test -tags=e2e -count=1 -v ./tests/e2e -run '^TestRecordClaudeBasic$'
 
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CLAUDE=/absolute/path/to/native/claude \
-  go test -count=1 -v ./tests/recording -run '^TestRecordClaudePermission$'
+  go test -tags=e2e -count=1 -v ./tests/e2e -run '^TestRecordClaudePermission$'
 ```
 
 Set `MASS_RECORD_CLAUDE_BASIC_OUTPUT` or
@@ -233,10 +243,13 @@ export is published.
 
 ### Runtime Launch Configuration
 
-The SDK is pinned to `v0.0.0-20261105065348-5edf8b62e963`, source commit
-`5edf8b62e963e59efa20383d5373a9aee278f135`, without a local replacement. The external
+The runtime SDK is pinned to `v0.0.0-20261106083916-f52be4d0377f`,
+source commit `f52be4d0377f`, without a local replacement. The external
 `agent-sdk-testify` tool is pinned to `v0.0.0-20261105165039-e4799fe3484c` for
 consumer recording and replay and is not a production dependency.
+The checked-in consumer fixtures remain bound to their recording SDK
+`v0.0.0-20261105065348-5edf8b62e963`; that provenance is intentionally not
+rewritten to the current runtime pin.
 Codex shares one native Client across its Sessions; Claude owns one native
 process per Session. Each Session has one Receive consumer for native events
 and original request capabilities. SDK observations do not establish Agent state.
@@ -251,6 +264,7 @@ prove only a complete local write, not native acceptance or recording.
 | `args` | Codex process arguments, default `["app-server"]`; explicit `[]` means no arguments. Claude rejects nonempty arguments; use an explicit launcher if needed. |
 | `envPolicy` | `inherit` (default) merges parent environment with `env`; `replace` passes only configured entries, including an explicitly empty environment. |
 | `env` | String-to-string overrides; callers supply any required PATH/HOME/config-directory settings explicitly when replacing. |
+| `scenario` | Optional absolute authored simulation file, injected as provider `_MOCK_SCENARIO`; not required for real runtimes. |
 
 Validation does not open credentials or history. Offline tests launch only MASS's
 `internal/testpeer` strict scenario binary via temporary launchers, with an explicit
@@ -289,16 +303,17 @@ in separate commits; integration checks must use a daemon providing these routes
 ## Verification and boundaries
 
 ```sh
-cd mass-go
-GOWORK=off GOPROXY=off go test -count=1 -v -timeout=300s ./...
-GOWORK=off GOPROXY=off go test -race -count=1 -v -timeout=300s ./...
-golangci-lint run ./...
-golangci-lint fmt --diff
-GOWORK=off GOPROXY=off go build ./...
+make test-unit-go
+make test-integration-go
+make test-simulation-go
+make build-go
 ```
 
-Tests use `testify/suite`, including SDK probes and vertical scenarios.
-Both executables parse flags with Cobra; use `--help` to list options.
+The layers are package-local tests, constructed integration scenarios, recorded
+simulation replay, and separately authorized real-agent E2E. `test-go` runs the
+three offline layers; `test-e2e-go` is the only target that may launch a real
+Codex or Claude process. Both executables parse flags with Cobra; use `--help`
+to list options.
 
 Lint uses golangci-lint v2.12.2 and the unchanged `.golangci.yaml` copied from
 agentrun. Install the pinned tool with:
@@ -310,7 +325,7 @@ go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 From the repository root, `make fmt-go`, `make lint-go`, and `make check-go`
 format, lint, and verify the Go implementation respectively.
 
-The public module tests, SDK protocol probes and `tests/vertical` additionally
+The public module tests, SDK protocol probes and `tests/integration` additionally
 cover Store concurrency/cursors, lifecycle, uncertain operations, original work
 isolation, blocked writes, partial/unknown commits and bounded overload. An SSE
 write gate proves that 140 committed facts survive observer overflow, which emits
@@ -413,7 +428,7 @@ stops that event's remaining fan-out without replay or loss of committed history
 No HTTP request-body cap is introduced.
 
 The HTTP input codec preserves all five ContentBlock shapes; existing native
-adapters execute text input only, including multiple text blocks.
+adapters execute text input only. Claude accepts exactly one text block.
 Complete text/thinking, tool calls/results, permission/form interactions, state
 and sanitized Session errors are mapped; deltas are previews and never fabricated
 into complete history. Unsupported complete content fails explicitly. Images,

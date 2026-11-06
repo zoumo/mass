@@ -3,9 +3,10 @@
 This page records the offline consumer-recording gate for the Go implementation.
 It does not change the [harness contracts](../../harness/index.md).
 
-The SDK is pinned to `github.com/zoumo/agent-sdk-go
-v0.0.0-20261105065348-5edf8b62e963`, source
-`5edf8b62e963e59efa20383d5373a9aee278f135`, without a local `replace`.
+The runtime SDK is pinned to `github.com/zoumo/agent-sdk-go
+v0.0.0-20261106083916-f52be4d0377f`, source `f52be4d0377f`, without a local
+`replace`. The checked-in exports remain bound to their recording SDK
+`v0.0.0-20261105065348-5edf8b62e963`; replay does not rewrite that provenance.
 `github.com/zoumo/agent-sdk-testify` is pinned to
 `v0.0.0-20261105165039-e4799fe3484c` as a test-only tool. The four exports were
 recorded at MASS HEAD `eb3a6e8ce93e2dbd05dcdaf4b2c1daae5ac36a2e` with
@@ -17,7 +18,7 @@ recorded at MASS HEAD `eb3a6e8ce93e2dbd05dcdaf4b2c1daae5ac36a2e` with
 | Evidence | Passed | Failed | Unverified |
 | --- | ---: | ---: | ---: |
 | Consumer replay: Codex/Claude basic and permission | 4 | 0 | 0 |
-| Opt-in native recording tests under `MASS_RECORD=1` | 4 | 0 | 0 |
+| Opt-in E2E recording tests under the `e2e` tag and `MASS_RECORD=1` | 4 | 0 | 0 |
 | Official verification | n/a | n/a | n/a for consumer provenance |
 | Live MASS product E2E through HTTP/SSE with native providers | 0 | 0 | 2 providers |
 
@@ -26,24 +27,25 @@ accounts and `auto/deepseek-v4.1-flash-1017`; both permission cases executed the
 approved tool. The offline gate result is still reproducible consumer replay, not
 a live MASS product E2E result or official verification.
 
-## Unified gate
+## Offline simulation gate
 
 From the repository root:
 
 ```sh
-make recording-gate-go
+make test-simulation-go
 ```
 
 The target expands to:
 
 ```sh
 cd mass-go && MASS_RECORD=0 GOWORK=off GOPROXY=off GOSUMDB=off \
-  go test -count=1 -v -timeout=300s ./tests/recording
+  go test -race -count=1 -v -timeout=600s ./tests/simulation
 ```
 
-The last run passed in 28.212 seconds. The four replay tests passed; the four
-opt-in recording tests skipped with `MASS_RECORD=0`; the gate, artifact-audit,
-credential-audit and failure-injection tests passed.
+The four replay tests and the artifact, receipt, credential-audit and
+failure-injection tests run here. The real recording tests are in
+`tests/e2e`, behind the `e2e` build tag, and cannot be selected by this target.
+`make recording-gate-go` is a compatibility alias.
 
 The gate enforces:
 
@@ -142,7 +144,7 @@ Codex basic:
 ```sh
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CODEX=/absolute/path/to/codex MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-basic \
-  GOWORK=off GOPROXY=off GOSUMDB=off go test -count=1 -v -timeout=300s ./tests/recording -run '^TestRecordCodexBasic$'
+  GOWORK=off GOPROXY=off GOSUMDB=off go test -tags=e2e -count=1 -v -timeout=600s ./tests/e2e -run '^TestRecordCodexBasic$'
 ```
 
 Codex permission:
@@ -150,7 +152,7 @@ Codex permission:
 ```sh
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CODEX=/absolute/path/to/codex MASS_RECORD_OUTPUT=/var/tmp/new-mass-codex-permission \
-  GOWORK=off GOPROXY=off GOSUMDB=off go test -count=1 -v -timeout=300s ./tests/recording -run '^TestRecordCodexPermission$'
+  GOWORK=off GOPROXY=off GOSUMDB=off go test -tags=e2e -count=1 -v -timeout=600s ./tests/e2e -run '^TestRecordCodexPermission$'
 ```
 
 Claude basic and permission:
@@ -158,11 +160,11 @@ Claude basic and permission:
 ```sh
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CLAUDE=/absolute/path/to/claude \
-  GOWORK=off GOPROXY=off GOSUMDB=off go test -count=1 -v -timeout=300s ./tests/recording -run '^TestRecordClaudeBasic$'
+  GOWORK=off GOPROXY=off GOSUMDB=off go test -tags=e2e -count=1 -v -timeout=600s ./tests/e2e -run '^TestRecordClaudeBasic$'
 
 MASS_RECORD=1 MASS_RECORD_MODEL=auto/deepseek-v4.1-flash-1017 \
   MASS_RECORD_CLAUDE=/absolute/path/to/claude \
-  GOWORK=off GOPROXY=off GOSUMDB=off go test -count=1 -v -timeout=300s ./tests/recording -run '^TestRecordClaudePermission$'
+  GOWORK=off GOPROXY=off GOSUMDB=off go test -tags=e2e -count=1 -v -timeout=600s ./tests/e2e -run '^TestRecordClaudePermission$'
 ```
 
 Claude defaults to `tests/testdata/simulation/recordings/claude/<case>/`.
