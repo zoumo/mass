@@ -7,8 +7,11 @@ import (
 	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
+// Identity and completion tombstones live for the session. Saturation terminates
+// observation instead of evicting state that could later re-open an item.
 const maxLiveBlockState = 4096
 
 type liveLane struct {
@@ -25,38 +28,56 @@ type liveBlock struct {
 	kind      string
 	stopped   bool
 	completed bool
+	toolUseID string
 }
 
-func (s *session) lane(parent string) *liveLane {
+func checkLiveBlockCapacity(size int, reason string) error {
+	if size >= maxLiveBlockState {
+		return runtime.Exhausted(reason)
+	}
+	return nil
+}
+
+func (s *session) lane(parent string) (*liveLane, error) {
 	if s.lanes == nil {
 		s.lanes = map[string]*liveLane{}
 	}
 	lane := s.lanes[parent]
 	if lane == nil {
-		if len(s.lanes) >= maxLiveBlockState {
-			for old := range s.lanes {
-				delete(s.lanes, old)
-				break
-			}
+		if err := checkLiveBlockCapacity(len(s.lanes), "live_block_lane_capacity"); err != nil {
+			return nil, err
 		}
 		lane = &liveLane{}
 		s.lanes[parent] = lane
 	}
-	return lane
+	return lane, nil
 }
 
-func (s *session) beginResponse(parent, response string) {
-	s.lane(parent).responseID = response
+func (s *session) response(parent string) string {
+	lane := s.lanes[parent]
+	if lane == nil {
+		return ""
+	}
+	return lane.responseID
 }
 
-func (s *session) trackedBlock(key blockKey, kind string) *liveBlock {
+func (s *session) beginResponse(parent, response string) error {
+	lane, err := s.lane(parent)
+	if err != nil {
+		return err
+	}
+	lane.responseID = response
+	return nil
+}
+
+func (s *session) trackedBlock(key blockKey, kind string) (*liveBlock, error) {
 	if s.blocks == nil {
 		s.blocks = map[blockKey]*liveBlock{}
 	}
 	block := s.blocks[key]
 	if block == nil {
-		if len(s.blocks) >= maxLiveBlockState && !s.evictCompletedBlock() {
-			return nil
+		if err := checkLiveBlockCapacity(len(s.blocks), "live_block_capacity"); err != nil {
+			return nil, err
 		}
 		block = &liveBlock{}
 		s.blocks[key] = block
@@ -64,41 +85,41 @@ func (s *session) trackedBlock(key blockKey, kind string) *liveBlock {
 	if block.kind == "" {
 		block.kind = kind
 	}
-	return block
+	return block, nil
 }
 
-func (s *session) evictCompletedBlock() bool {
-	for key, block := range s.blocks {
-		if block.completed {
-			delete(s.blocks, key)
-			return true
-		}
-	}
-	return false
-}
-
-func (s *session) noteBlockStart(parent string, index int, kind string) {
-	response := s.lane(parent).responseID
+func (s *session) noteBlockStart(parent string, index int, kind, toolUseID string) error {
+	response := s.response(parent)
 	if response == "" {
-		return
+		return nil
 	}
-	s.trackedBlock(blockKey{parent: parent, response: response, index: index}, kind)
+	block, err := s.trackedBlock(blockKey{parent: parent, response: response, index: index}, kind)
+	if err != nil {
+		return err
+	}
+	if kind == "tool_use" && toolUseID != "" {
+		if block.toolUseID != "" && block.toolUseID != toolUseID {
+			return errors.New("conflicting Claude tool block identity")
+		}
+		block.toolUseID = toolUseID
+	}
+	return nil
 }
 
 func (s *session) noteBlockStop(parent string, index int) {
-	response := s.lane(parent).responseID
+	response := s.response(parent)
 	block := s.blocks[blockKey{parent: parent, response: response, index: index}]
 	if block != nil && !block.completed {
 		block.stopped = true
 	}
 }
 
-func (s *session) deltaBlock(key blockKey, kind string) (*liveBlock, bool) {
-	block := s.trackedBlock(key, kind)
-	if block == nil {
-		return nil, false
+func (s *session) deltaBlock(key blockKey, kind string) (*liveBlock, bool, error) {
+	block, err := s.trackedBlock(key, kind)
+	if err != nil {
+		return nil, false, err
 	}
-	return block, block.kind == kind
+	return block, block.kind == kind, nil
 }
 
 func (s *session) uniqueBlock(parent, response, kind string) (int, bool) {
@@ -123,25 +144,22 @@ func (s *session) uniqueBlock(parent, response, kind string) (int, bool) {
 	return stopped[0], true
 }
 
-func (s *session) markAssistantFrame(parent, uuid string) bool {
+func (s *session) markAssistantFrame(parent, uuid string) (bool, error) {
 	if uuid == "" {
-		return false
+		return false, nil
 	}
 	if s.seenAssistant == nil {
 		s.seenAssistant = map[string]struct{}{}
 	}
 	key := parent + "\x00" + uuid
 	if _, seen := s.seenAssistant[key]; seen {
-		return true
+		return true, nil
 	}
-	if len(s.seenAssistant) >= maxLiveBlockState {
-		for old := range s.seenAssistant {
-			delete(s.seenAssistant, old)
-			break
-		}
+	if err := checkLiveBlockCapacity(len(s.seenAssistant), "live_assistant_frame_capacity"); err != nil {
+		return false, err
 	}
 	s.seenAssistant[key] = struct{}{}
-	return false
+	return false, nil
 }
 
 func blockItemID(response string, index int) string {
@@ -172,9 +190,9 @@ func (d *Driver) emitChunk(s *session, key blockKey, kind, text string, at time.
 	meta := key.meta()
 	switch kind {
 	case "thinking":
-		return d.emitWithClaude(s, item, events.ThinkingChunk{MessageID: item, Content: []events.ContentBlock{events.Text(text)}}, at, meta)
+		return d.emitWithClaudeMeta(s, item, events.ThinkingChunk{MessageID: item, Content: []events.ContentBlock{events.Text(text)}}, at, meta)
 	default:
-		return d.emitWithClaude(s, item, events.MessageChunk{MessageID: item, Content: []events.ContentBlock{events.Text(text)}}, at, meta)
+		return d.emitWithClaudeMeta(s, item, events.MessageChunk{MessageID: item, Content: []events.ContentBlock{events.Text(text)}}, at, meta)
 	}
 }
 
@@ -245,11 +263,11 @@ func (d *Driver) completeAssistant(s *session, parent, response string, blocks [
 		text := ""
 		switch kind {
 		case "thinking":
-			ptr, ok := rawStringPointer(value, "thinking")
-			if !ok {
-				return errors.New("missing or invalid thinking")
+			var err error
+			text, _, err = thinkingBlockText(value)
+			if err != nil {
+				return err
 			}
-			text = stringValue(ptr)
 		case "text":
 			ptr, ok := rawStringPointer(value, "text")
 			if !ok {
@@ -292,7 +310,10 @@ func (d *Driver) completeAssistant(s *session, parent, response string, blocks [
 	states := make([]liveBlock, len(content))
 	for index, block := range content {
 		keys[index] = blockKey{parent: parent, response: response, index: block.index}
-		state, ok := s.deltaBlock(keys[index], block.kind)
+		state, ok, err := s.deltaBlock(keys[index], block.kind)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return nil
 		}
@@ -315,7 +336,7 @@ func (d *Driver) completeAssistant(s *session, parent, response string, blocks [
 		} else {
 			payload = events.AgentMessage{MessageID: item, Content: []events.ContentBlock{events.Text(block.text)}}
 		}
-		if err := d.emitWithClaude(s, item, payload, at, key.meta()); err != nil {
+		if err := d.emitWithClaudeMeta(s, item, payload, at, key.meta()); err != nil {
 			return err
 		}
 	}
@@ -326,6 +347,39 @@ func rawString(value map[string]json.RawMessage, name string) string {
 	var text string
 	_ = json.Unmarshal(value[name], &text)
 	return text
+}
+
+func thinkingBlockText(value map[string]json.RawMessage) (string, bool, error) {
+	var thinking any
+	present := false
+	if raw, exists := value["thinking"]; exists {
+		if err := json.Unmarshal(raw, &thinking); err != nil {
+			return "", false, errors.New("invalid thinking")
+		}
+		present = true
+	}
+	var signature any
+	if raw, exists := value["signature"]; exists {
+		if err := json.Unmarshal(raw, &signature); err != nil {
+			return "", false, errors.New("invalid thinking")
+		}
+	}
+	text, signatureOnly, err := thinkingText(thinking, present, signature)
+	return text, signatureOnly, err
+}
+
+func thinkingText(value any, present bool, signature any) (string, bool, error) {
+	if present && value != nil {
+		text, ok := value.(string)
+		if !ok {
+			return "", false, errors.New("invalid thinking")
+		}
+		return text, false, nil
+	}
+	if _, signatureOnly := signature.(string); signatureOnly {
+		return "", true, nil
+	}
+	return "", false, errors.New("missing or invalid thinking")
 }
 
 func rawStringPointer(value map[string]json.RawMessage, name string) (*string, bool) {

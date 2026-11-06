@@ -61,8 +61,8 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 		return errors.New("unsupported retained message content")
 	}
 	responseID, _ := msg["id"].(string)
-	apiBlockIndex, blockCoordinate := retainedBlockIndex(value)
-	hasAPIBlockIndex := blockCoordinate == coordinateValid
+	apiBlockIndex, coordinate := retainedBlockIndex(value)
+	hasAPIBlockIndex := coordinate == coordinateValid
 	for ordinal, v := range blocks {
 		b, ok := v.(map[string]any)
 		if !ok {
@@ -73,21 +73,29 @@ func (d *Driver) loadMessage(h *nativeLoad, id string, m sdk.SessionMessage, too
 		eventMeta := meta
 		switch b["type"] {
 		case "text", "thinking":
-			if m.Type == "assistant" && blockCoordinate == coordinateInvalid {
+			if m.Type == "assistant" && coordinate == coordinateInvalid {
 				return errors.New("invalid retained Claude block coordinate")
 			}
 			field := "text"
 			if b["type"] == "thinking" {
 				field = "thinking"
 			}
-			if _, present := b[field]; !present && field == "thinking" {
-				if _, signatureOnly := b["signature"].(string); signatureOnly {
+			var text string
+			if field == "thinking" {
+				value, signatureOnly, err := retainedThinkingText(b)
+				if err != nil {
+					return err
+				}
+				if signatureOnly {
 					continue
 				}
-			}
-			text, ok := b[field].(string)
-			if !ok {
-				return errors.New("invalid retained text")
+				text = value
+			} else {
+				var ok bool
+				text, ok = b[field].(string)
+				if !ok {
+					return errors.New("invalid retained text")
+				}
 			}
 			if text == "" {
 				continue
@@ -219,4 +227,9 @@ func retainedBlockIndex(value any) (int, coordinateState) {
 		return 0, coordinateInvalid
 	}
 	return index, coordinateValid
+}
+
+func retainedThinkingText(block map[string]any) (string, bool, error) {
+	value, present := block["thinking"]
+	return thinkingText(value, present, block["signature"])
 }

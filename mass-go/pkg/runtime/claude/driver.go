@@ -383,10 +383,10 @@ func identityMeta(id sdk.SubagentIdentity) map[string]any {
 }
 
 func (d *Driver) emit(s *session, item string, p events.Payload, at time.Time) error {
-	return d.emitWithClaude(s, item, p, at, nil)
+	return d.emitWithClaudeMeta(s, item, p, at, nil)
 }
 
-func (d *Driver) emitWithClaude(s *session, item string, p events.Payload, at time.Time, claude map[string]any) error {
+func (d *Driver) emitWithClaudeMeta(s *session, item string, p events.Payload, at time.Time, claude map[string]any) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
@@ -567,7 +567,9 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 	case "stream_event":
 		switch raw.Event.Type {
 		case "message_start":
-			s.beginResponse(parent, raw.Event.Message.ID)
+			if err := s.beginResponse(parent, raw.Event.Message.ID); err != nil {
+				return err
+			}
 			if parent == "" {
 				s.messageID = raw.Event.Message.ID
 				s.messageRoot = trusted
@@ -588,20 +590,23 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 			}
 			var block struct {
 				Type string `json:"type"`
+				ID   string `json:"id"`
 			}
 			if len(raw.Event.ContentBlock) > 0 {
 				if err := json.Unmarshal(raw.Event.ContentBlock, &block); err != nil {
 					return err
 				}
 			}
-			s.noteBlockStart(parent, *raw.Event.Index, block.Type)
+			if err := s.noteBlockStart(parent, *raw.Event.Index, block.Type, block.ID); err != nil {
+				return err
+			}
 		case "content_block_stop":
 			if raw.Event.Index == nil || *raw.Event.Index < 0 {
 				return nil
 			}
 			s.noteBlockStop(parent, *raw.Event.Index)
 		case "content_block_delta":
-			response := s.lane(parent).responseID
+			response := s.response(parent)
 			if response == "" || raw.Event.Index == nil || *raw.Event.Index < 0 {
 				return nil
 			}
@@ -621,7 +626,10 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 				return nil
 			}
 			key := blockKey{parent: parent, response: response, index: index}
-			block, ok := s.deltaBlock(key, kind)
+			block, ok, err := s.deltaBlock(key, kind)
+			if err != nil {
+				return err
+			}
 			if !ok {
 				return nil
 			}
@@ -635,7 +643,11 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 		}
 	case "assistant", "user":
 		if e.Type == "assistant" {
-			if s.markAssistantFrame(parent, raw.UUID) || raw.Aborted {
+			duplicate, err := s.markAssistantFrame(parent, raw.UUID)
+			if err != nil {
+				return err
+			}
+			if duplicate || raw.Aborted {
 				return nil
 			}
 			s.linkMessage(raw.Message.ID, false, trusted, e.UserMessageUUID)
@@ -752,7 +764,7 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 		if e.Type == "assistant" {
 			response := raw.Message.ID
 			if response == "" {
-				response = s.lane(parent).responseID
+				response = s.response(parent)
 			}
 			return d.completeAssistant(s, parent, response, blocks, raw.Time)
 		}

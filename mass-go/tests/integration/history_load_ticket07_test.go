@@ -167,8 +167,8 @@ func TestTicket07ClaudeLoadHTTPAndTwoRetainedProcessWrites(t *testing.T) {
 		for {
 			e, nextErr := observer.Next()
 			require.NoError(t, nextErr)
-			meta, _ := e.Meta["claude"].(map[string]any)
-			if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && meta["submission"] == receipt.Submission && meta["attribution"] == "user_message_uuid" {
+			meta := decodeClaudeMeta(t, e)
+			if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && meta.Submission == receipt.Submission && meta.Attribution == "user_message_uuid" {
 				break
 			}
 		}
@@ -273,11 +273,10 @@ func TestClaudeHistoryUsesNativeBlockCoordinatesAndSeparateReplay(t *testing.T) 
 	require.Equal(t, "assistant-record", page.Events[1].Replay.NativeRecordID)
 	require.Equal(t, "user-record", page.Events[1].Replay.NativeParentID)
 	require.Equal(t, "response-1:3", page.Events[1].Payload().(events.AgentMessage).MessageID)
-	claudeMeta, ok := page.Events[1].Meta["claude"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, "response-1", claudeMeta["responseId"])
-	require.Equal(t, json.Number("3"), claudeMeta["blockIndex"])
-	require.Nil(t, claudeMeta["parentToolUseId"])
+	claudeMeta := decodeClaudeMeta(t, page.Events[1])
+	require.Equal(t, "response-1", claudeMeta.ResponseID)
+	require.Equal(t, 3, claudeMeta.BlockIndex)
+	require.Nil(t, claudeMeta.ParentToolUseID)
 }
 
 func TestClaudeHistorySplitsOneRecordByBlockAndPreservesCoordinates(t *testing.T) {
@@ -315,6 +314,22 @@ func TestClaudeHistorySplitsOneRecordByBlockAndPreservesCoordinates(t *testing.T
 		require.Equal(t, "user-record", page.Events[index].Replay.NativeParentID)
 	}
 	require.Equal(t, "assistant-record", page.Events[5].Replay.NativeParentID)
+}
+
+func TestClaudeHistorySkipsMissingAndNullSignatureOnlyThinking(t *testing.T) {
+	rows := []map[string]any{
+		{"type": "assistant", "uuid": "assistant-record", "parentUuid": nil, "apiBlockIndex": 4, "message": map[string]any{"id": "response-signature", "role": "assistant", "content": []any{
+			map[string]any{"type": "thinking", "signature": "missing-thinking"},
+			map[string]any{"type": "thinking", "thinking": nil, "signature": "null-thinking"},
+			map[string]any{"type": "text", "text": "visible answer"},
+		}}},
+	}
+	_, url, cwd, _ := ticket07HTTP(t, "", rows)
+	page := ticket07History(t, url, cwd)
+
+	require.Len(t, page.Events, 1)
+	require.Equal(t, "response-signature:6", page.Events[0].ItemID)
+	require.Equal(t, []events.ContentBlock{events.Text("visible answer")}, page.Events[0].Payload().(events.AgentMessage).Content)
 }
 
 func TestClaudeHistoryFallsBackToRecordAndContentOrdinalWithoutBlockCoordinate(t *testing.T) {
@@ -590,7 +605,7 @@ func TestTicket07ClaudeMultipleOffsetQueriesPreserveFirstLastAndHiddenParent(t *
 	require.Equal(t, "row-104", page.Events[104].Replay.NativeRecordID)
 	offsets := map[any]bool{}
 	for _, e := range page.Events {
-		offsets[e.Meta["pagination"].(map[string]any)["offset"]] = true
+		offsets[decodeHistoryOffset(t, e)] = true
 	}
 	require.Len(t, offsets, 2)
 
@@ -607,6 +622,17 @@ func TestTicket07ClaudeMultipleOffsetQueriesPreserveFirstLastAndHiddenParent(t *
 	persisted, err := records.ListHistory(claudeLoadID, store.HistoryQuery{Limit: 1000})
 	require.NoError(t, err)
 	require.Equal(t, page.Events, persisted.Events)
+}
+
+func decodeHistoryOffset(t *testing.T, event events.SessionEvent) int {
+	t.Helper()
+	raw, err := json.Marshal(event.Meta["pagination"])
+	require.NoError(t, err)
+	var pagination struct {
+		Offset int `json:"offset"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &pagination))
+	return pagination.Offset
 }
 
 // Public Driver/Stream decorators control observation timing without consuming a

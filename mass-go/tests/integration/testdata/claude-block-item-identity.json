@@ -424,9 +424,14 @@
             },
             {
               "type": "thinking",
-              "thinking": "",
               "signature": "sig",
               "apiBlockIndex": 5
+            },
+            {
+              "type": "thinking",
+              "thinking": null,
+              "signature": "sig-null",
+              "apiBlockIndex": 9
             }
           ]
         }
@@ -440,8 +445,8 @@
         "type": "assistant",
         "session_id": "claude-session",
         "uuid": "whitespace-frame",
+        "apiBlockIndex": 6,
         "message": {
-          "id": "msg-block",
           "role": "assistant",
           "content": [
             {
@@ -720,12 +725,54 @@
         "type": "stream_event",
         "session_id": "claude-session",
         "event": {
-          "type": "message_stop"
+          "type": "content_block_start",
+          "index": 12,
+          "content_block": {
+            "type": "text",
+            "text": ""
+          }
         }
       }
     },
     {
       "ordinal": 40,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "uuid": "unprovable-signature-frame",
+        "message": {
+          "id": "msg-block",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "thinking",
+              "signature": "mixed-signature"
+            },
+            {
+              "type": "text",
+              "text": "visible after signature",
+              "apiBlockIndex": 12
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ordinal": 41,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "stream_event",
+        "session_id": "claude-session",
+        "event": {
+          "type": "message_stop"
+        }
+      }
+    },
+    {
+      "ordinal": 42,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -742,7 +789,7 @@
       }
     },
     {
-      "ordinal": 41,
+      "ordinal": 43,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -759,7 +806,7 @@
       }
     },
     {
-      "ordinal": 42,
+      "ordinal": 44,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -776,7 +823,7 @@
       }
     },
     {
-      "ordinal": 43,
+      "ordinal": 45,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -797,7 +844,7 @@
       }
     },
     {
-      "ordinal": 44,
+      "ordinal": 46,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -818,7 +865,28 @@
       }
     },
     {
-      "ordinal": 45,
+      "ordinal": 47,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "assistant",
+        "session_id": "claude-session",
+        "uuid": "invalid-envelope-coordinate-frame",
+        "apiBlockIndex": -1,
+        "message": {
+          "id": "msg-invalid",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "invalid envelope coordinate"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "ordinal": 48,
       "channel": "protocol",
       "direction": "server",
       "data": {
