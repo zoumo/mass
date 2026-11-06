@@ -21,7 +21,7 @@ agent 写入本目录之前，须有人类明确要求或事先同意；具体�
 ## 模块
 
 - [massctl](modules/massctl/design.md)：资源与操作两级子命令、目标寻址、输入输出、请求等待及实时观察的客户端能力草案。
-- [Service](modules/service/design.md)：RuntimeService、SessionService，负责业务输入输出、资源与原运行校验和操作编排。
+- [Service](modules/service/design.md)：RuntimeService、SessionService，负责业务输入输出、资源与原运行校验、按需启动、Session close 与空闲回收编排。
 - [Events](modules/events/design.md)：每 Session 一个 EventBroadcast，统一管理 Handler；按加入顺序执行 Handler，required 决定失败是否中止；subscribe 返回异步流，封装队列 Handler；只管实时流，不管历史或运行关联。
 - [MetaStore](modules/metastore/design.md)：资源 CRUD、generation 与并发版本；配置选择唯一权威后端，默认 SQLite，可选文件。
 - [EventStore](modules/eventstore/design.md)：事件批量追加、查询与同步进度；文件权威，SQLite 为可重建的完整查询副本，自动从已验证消费位置续同步。

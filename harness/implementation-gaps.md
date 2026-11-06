@@ -13,6 +13,20 @@ sources:
 
 本页记录检查时的实现事实，不改变 [Module 合同](index.md#模块)。每次更新须绑定日期、源码版本、相关工作区变更、检查方式与证据；未核对的能力保持未验证。已有证据不能自动证明后续源码仍符合合同。设计变化历史见[更新记录](log.md)。
 
+## 2026-11-06 静态核对
+
+检查基线为分支 `codex-idle-session-close` 的 HEAD `bfb12ad4168d4c423e281b64525d5c0aa367a5e0`（`main`）。本次只有 `harness/` 与根词汇表的设计变更，`mass-go/` 无工作区修改。检查方式是只读检索当前 Go 源码和接口声明，未运行 Go 测试、SDK 合同测试、离线仿真或真实 Agent 验收。
+
+| 范围 | 静态观察与差距 | 证据 |
+|---|---|---|
+| Session 生命周期接口 | 公共 SessionService 仍暴露 `ArchiveSession`，没有 `CloseSession`；持久状态与查询仍接受 `archived`。与 close/offline 终态、任意状态 close、幂等显式重试和删除 archived 筛选的合同不符。 | [SessionService 接口](../mass-go/pkg/service/service.go)、[生命周期与状态校验](../mass-go/pkg/service/lifecycle.go) |
+| Runtime 按需启动 | `CreateSession` 和 `ResumeSession` 缺少当前运行绑定时直接失败，未复用显式 start 的串行启动协调；服务启动校正也不满足新的 archived→offline、旧在线→unknown 规则。 | [创建与恢复入口](../mass-go/pkg/service/service.go)、[恢复实现](../mass-go/pkg/service/lifecycle.go) |
+| 空闲自动 close | `massd` 配置和参数中没有 `sessionIdleTimeout` / `--session-idle-timeout`，Service 没有可控时钟或 idle 计时调度；默认 10m、0 禁用和失败不重试尚未实现。 | [daemon 配置](../mass-go/cmd/massd/config.go)、[daemon 参数](../mass-go/cmd/massd/main.go) |
+| Driver close | Codex 和 Claude Driver 在 Session active/sending 时仍先返回 `ErrWorkUnsettled`，没有把 close 交给底层 SDK；因此 SDK close 成功作为唯一成功条件、并发/重复安全与不额外 interrupt/kill 的 Driver 合同尚未满足。 | [Codex close](../mass-go/pkg/runtime/codex/driver.go)、[Claude close](../mass-go/pkg/runtime/claude/driver.go) |
+| HTTP 与 CLI | HTTP 仍注册 archive 路径，Session 查询枚举仍包含 `archived`；massctl 仍提供 archive 子命令并使用 `ArchiveSession`。close 路径、命令和禁止旧筛选值尚未实现。 | [HTTP 生命周期路由](../mass-go/pkg/transport/session_recovery.go)、[查询枚举](../mass-go/pkg/transport/session_identity.go)、[CLI Session 命令](../mass-go/cmd/massctl/subcommand/session.go) |
+
+本次结论仅限于上述静态差距。关闭 active/sending Session、重启迁移、空闲计时、HTTP/CLI vertical、SDK 合同与真实 Codex/Claude 行为均未执行，不能声明已验证。
+
 ## 2026-10-22 静态核对
 
 检查基线为分支 v2，HEAD `422805b627b324c00cae43d5630dc04dd5ddcfbe`，包含检查时已有的未提交工作区变更。本次只读核对源码与当前合同，不执行 Go 测试或真实 Agent 验收，不据此声明模块整体已经完成。关键源码内容标识见下表后的 SHA-256 清单。

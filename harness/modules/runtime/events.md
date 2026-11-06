@@ -126,7 +126,7 @@ MASS 不跨事件积累 delta，不在内存重建完整消息，也不把 delta
 
 ## 状态投影
 
-参考 agentrun 的工作开始/结束驱动与终态保护，继续使用已经确认的 SessionState。共享枚举位于 shared/states.tsp，Runtime 不依赖 Service 资源模型。adapter 将原生工作开始、结束和需要行动的事实转换为 session.state_update，state/previousState 只取 idle、running、requires_action 或 null（未知），不直接报告 Service 拥有的 opening、closing、archived。
+参考 agentrun 的工作开始/结束驱动与终态保护，继续使用已经确认的 SessionState。共享枚举位于 shared/states.tsp，Runtime 不依赖 Service 资源模型。adapter 将原生工作开始、结束和需要行动的事实转换为 session.state_update，state/previousState 只取 idle、running、requires_action 或 null（未知），不直接报告 Service 拥有的 opening 或 closing。
 
 | 事实 | 状态投影与生命周期限制 |
 |---|---|
@@ -137,9 +137,9 @@ MASS 不跨事件积累 delta，不在内存重建完整消息，也不把 delta
 | 交互回答被接受 | 结算对应请求，不自动宣称工作开始或结束 |
 | 工作级错误 | 记录错误；只有工作结束证据才能结束该工作，不能直接宣告全会话失效 |
 | 原运行失联或原生状态未知 | unknown；不推断为 idle/offline，不解除原操作责任 |
-| 归档/停止进入关闭 | closing；运行通知不得重开准入，释放确认后进入 archived 或按关闭目的进入 offline |
+| Session close 接纳或 Runtime 停止进入关闭 | closing；运行通知不得越过关闭栅栏重开准入，SDK close 成功后为 offline，失败保持 closing |
 
-Service 在交付前完成上游来源与业务路由校验；实时 Broadcast 和 Handler 都只接收 SessionEvent，不携带 Runtime/Driver/run/work 上下文。状态 Handler 可以按 Session 身份自行异步更新 MetaStore，依据当前资源版本和 closing/archived 保护写入；失败诊断并继续，通知可早于查询状态，不保证最终追上。实时通知不能单独证明当前工作结束、运行释放或授予控制权限。archived 只有显式恢复接纳才能进入 opening；业务生命周期写入仍由 Service 同步协调。
+Service 在交付前完成上游来源与业务路由校验；实时 Broadcast 和 Handler 都只接收 SessionEvent，不携带 Runtime/Driver/run/work 上下文。状态 Handler 可以按 Session 身份自行异步更新 MetaStore，依据当前资源版本、当前运行身份和 closing 保护写入；失败诊断并继续，通知可早于查询状态，不保证最终追上。实时通知不能单独证明当前工作结束、运行释放或授予控制权限。closing 不能由运行通知重开准入；offline 只有显式 resume 接纳才能进入 opening；业务生命周期写入仍由 Service 同步协调。
 
 ## 配置与交互
 

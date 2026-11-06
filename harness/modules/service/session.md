@@ -16,11 +16,11 @@ sources:
 
 ## 职责与所有权
 
-本文是 [应用服务模块](design.md) 内部 sessionManager 的职责展开。它统一管理全部 Runtime 实例的持久 Session，负责会话目录、名称预留、Runtime 名称归属、命令路由、创建发布、归档和恢复编排。调用者使用独立的 SessionService 公共接口。SessionService 实现通过运行时模块提供的 RuntimeDriver 协调原生控制与会话历史。[^direction]
+本文是 [应用服务模块](design.md) 内部 sessionManager 的职责展开。它统一管理全部 Runtime 实例的持久 Session，负责会话目录、名称预留、Runtime 名称归属、命令路由、创建发布、close 和恢复编排。调用者使用独立的 SessionService 公共接口。SessionService 实现通过运行时模块提供的 RuntimeDriver 协调原生控制与会话历史。[^direction]
 
 Agent 生成 sessionId，MASS 校验其合法性后原样保存；用户命名 sessionName 与它独立。sessionId 在本模块管理的全部 Runtime 和 namespace 中唯一；Runtime 名称归属仍用于路由与恢复验证。内部存储定位符不成为第二个公共会话 ID。
 
-Session 的持久存在与连接状态独立。断线或归档不删除身份和历史。恢复重新建立运行连接，同一持久会话不能同时具有两个相互竞争的有效运行控制者。
+Session 的持久存在与连接状态独立。断线或 close 不删除身份和历史。恢复重新建立运行连接，同一持久会话不能同时具有两个相互竞争的有效运行控制者。
 
 ## Session ID 合法性
 
@@ -46,9 +46,9 @@ SessionService 通过Service 模块维护的运行绑定取得运行时模块提
 
 ## 全量查询与目标解析
 
-`listSessions()` 以应用服务模块管理的完整持久会话目录为范围，包含不同 Runtime 下的在线、离线与已归档会话。按 Runtime 筛选是可选条件；state、分页与排序规则见[Service 查询与订阅](design.md#查询与订阅)。查询不要求连接各 Agent，也不激活已停止的 Runtime。只能证明的当前状态才可返回，其他状态保持未知。
+`listSessions()` 以应用服务模块管理的完整持久会话目录为范围，包含不同 Runtime 下的在线与离线会话。按 Runtime 筛选是可选条件；state、分页与排序规则见[Service 查询与订阅](design.md#查询与订阅)。查询不要求连接各 Agent，也不激活已停止的 Runtime。只能证明的当前状态才可返回，其他状态保持未知。
 
-已有会话的查询、输入、交互、取消、归档和恢复都通过统一 Session 入口。sessionManager 解析 Session 引用、读取持久归属，再在内部定位 Runtime 实例。SessionRef 可以只提供全局唯一的 sessionId，或提供 namespace/name；两种形式必须解析到同一份持久记录，不接受混用字段。
+已有会话的查询、输入、交互、取消、close 和恢复都通过统一 Session 入口。sessionManager 解析 Session 引用、读取持久归属，再在内部定位 Runtime 实例。SessionRef 可以只提供全局唯一的 sessionId，或提供 namespace/name；两种形式必须解析到同一份持久记录，不接受混用字段。
 
 全量查询指本应用服务模块管理的会话集合，不承诺自动发现或导入 Agent 侧尚未纳管的会话。运行资源失联不删除持久会话；目录本身读取失败时明确失败，不能将不完整结果伪装成全量结果。
 
@@ -89,15 +89,21 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 
 调用者断开不撤销已经接纳的创建。结果未知期间，同名新请求不能覆盖原操作，也不能导致重复创建。内部操作关联本身不提供客户端幂等保证；当前三字段 OperationError 不公开操作关联，外部查询机制仍待定义。
 
-## 归档
+## Close 与空闲回收
 
-统一 Session 管理接口接收归档操作，sessionManager 协调原 Runtime 执行[关闭与释放规则](design.md)。释放确认前，Session 保持关闭未确定状态，并阻止冲突恢复。
+closeSession 从任意状态接纳。sessionManager 先在 Session 操作序列中建立关闭栅栏，拒绝新的 prompt、answer、cancel 和 resume；已经接纳的操作、原运行和迟到事实仍由原所有者结算。close 与 prompt、resume 竞争时，由同一序列确定先后：业务操作先被接纳的，close 随后接管其清理；close 先被接纳的，业务操作看到 `closing` 并在派发前失败。get、list、history 和 watch 不受关闭栅栏影响。
 
-关闭超时不删除 Session，也不宣告资源释放。迟到证据可以使后续查询变为已离线，但不改写先前返回的未知结果。归档保留历史与非运行资源消费者；同一 Session 恢复后继续原消费顺序。
+有当前 SDK Session 句柄时，包括 close 接管尚未完成的 open 或 resume，sessionManager 调用 Driver.closeSession；Driver 必须把 active/sending 状态交给底层 SDK，而不是提前判定工作未结算。open、resume 或 load 尚未产生句柄时，close 保持 `closing` 并接管原操作结果，不新建 open/resume；原操作产生句柄后再调用 SDK close，明确证明没有产生原生资源时才可完成内部清理到 `offline`，失败或未知继续保持 `closing`。没有当前句柄的 `unknown` Session 只完成 MASS 内部清理：结算已接纳交付与发布，终结未完成 open、resume 或 load 的本地责任并保留其部分事实和真实错误，无法结算时保持 `closing`；这里的 `offline` 不声称外部 provider 工作或旧资源已经停止。对 `offline` 再次 close 直接成功；对 `closing` 再次 close 是显式重试，已确认 SDK close 成功或本次 close 已证明无需 SDK 目标时继续 MASS 结算，已有 native close 结果未确认且无句柄时返回错误并保持 `closing`。
+
+对需要调用 SDK 的 close 尝试，SDK close 成功是唯一 native 成功条件。成功后清除运行版本、能力和实际功能，结算已接纳的 delivery、history commit 与实时发布责任，将状态写入 `offline`，并保留持久身份、已提交历史、Broadcast、健康 Handler、订阅和恢复材料。SDK close 已成功但 MASS 内部结算失败或未知时保持 `closing` 并返回错误，后续显式 close 继续结算，不能先公开 `offline`。close 不取消已经发生的外部副作用，不关闭共享 Driver，不停止 Runtime，也不会因这是最后一个 Session 而回收 Runtime。
+
+SDK close 失败或结果无法确认时保持 `closing`，记录可公开且脱敏的原因并返回错误；不会自动回到可输入状态，也不会自动重试。关闭期间及失败后，Session 的关闭栅栏持续存在；只有再次显式 close 才能推进。单 Session close 的调用者放弃等待只结束其等待，原 close 责任不因此消失。完整状态顺序与结算规则见[Service 的 Session close 合同](design.md#session-close)。
+
+daemon 的空闲回收使用与人工 close 相同的入口。配置、计时条件、活动重置、到期重新校验和失败行为见 [Service 的空闲自动 close](design.md#session-空闲自动-close)；查询、历史和 watch 不延长生命周期，自动失败同样保持 `closing` 且不自动重试。
 
 ## 恢复
 
-恢复在同一 Session 内与归档和其他打开操作串行协调；已在线、关闭未确定或仍有打开结算的会话不能建立替代运行连接。
+恢复在同一 Session 内与 close 和其他打开操作串行协调；已有有效运行控制者、`closing` 或仍有打开结算的会话不能建立替代运行连接。
 
 1. 读取并校验未被替换的持久元信息、Runtime 名称归属及配置绑定。
 2. 先校验持久 sessionId 的合法性，再由会话历史验证全部已提交公共记录的格式、身份和连续顺序。
@@ -106,6 +112,8 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 5. 验证返回的 sessionId 合法且与保存身份相同，再启用本次会话运行，保留历史顺序与已存事件的 UUID，同步位置从完整文件恢复。
 
 失败不新建替代会话，不将旧输入、工具动作或处理器动作重新执行，不把原生旧内容自动导入为新历史。返回不同 ID 的运行资源要按原操作所有权清理，不能替换持久身份。
+
+从 `offline` 恢复且确认本次资源已释放时保持 `offline`；副作用或清理结果无法确认时进入 `unknown`。从重启后的 `unknown` 恢复时，失败保持 `unknown`，不能因本次 SDK 调用返回失败或被清理就伪称 `offline`。显式 resume 只恢复同一原生会话与执行连接，不重放旧输入、工具调用、待处理交互或其他历史工作。
 
 恢复可显式提供仅本次操作使用的 SessionResume.initialInput，使用既有 SessionInput；省略仍零输入，显式空输入和不支持的内容或可选恢复输入能力在原生恢复、提交及运行激活副作用前拒绝。输入快照由原恢复所有者提交一次，不持久为 spec、status 或恢复材料；后续 resume/load/restart 不重放。
 
@@ -117,17 +125,17 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 
 不支持恢复的类型应在修尾和激活前明确失败。Runtime 按 spec.runtimeRef 名称定位，不比较其 uid；Driver 必须验证原生恢复材料，远端原生会话归属不能仅凭相同 URL 推定。
 
-服务启动不调用本节的恢复流程。启动前先按[服务重启与状态校正](design.md#服务重启与状态校正)处理持久状态：已确认释放的普通会话为 offline，显式归档的保持 archived，旧运行缺少结算证明的为 unknown。查询不隐式启动或恢复，输入也不替代显式 resume；恢复一个 Session 不自动恢复同 Runtime 的其他 Session。
+服务启动不调用本节的恢复流程。启动前先按[服务重启与状态校正](design.md#服务重启与状态校正)处理持久状态：旧 archived 记录迁移为 offline，原本 offline 且无未结算责任的保持 offline，旧在线状态缺少结算证明的为 unknown。查询不隐式启动或恢复，输入也不替代显式 resume；恢复一个 Session 不自动恢复同 Runtime 的其他 Session。
 
 ## 资源结构与版本
 
-Session 名称遵循 DNS subdomain 规则，namespace 遵循 DNS label 规则；namespace/name 唯一。创建时 metadata.name 还必须通过[名称校验](#创建名称校验)。namespace 用于分组寻址，不替代权限隔离。createdAt 在首次持久创建时写入，之后不因恢复或归档修改。查询默认跨 namespace，可显式筛选。Session 的 Runtime 归属仅使用 spec.runtimeRef 名称。接纳操作时固定原 Driver 和具体运行/工作目标，名称复用不会改变已接纳操作的目标。
+Session 名称遵循 DNS subdomain 规则，namespace 遵循 DNS label 规则；namespace/name 唯一。创建时 metadata.name 还必须通过[名称校验](#创建名称校验)。namespace 用于分组寻址，不替代权限隔离。createdAt 在首次持久创建时写入，之后不因恢复或 close 修改。查询默认跨 namespace，可显式筛选。Session 的 Runtime 归属仅使用 spec.runtimeRef 名称。接纳操作时固定原 Driver 和具体运行/工作目标，名称复用不会改变已接纳操作的目标。
 
 Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs 与会话功能请求 features；status 保存 Agent 返回的 sessionId、统一的 SessionState、运行能力与本次运行实际生效的 effectiveFeatures。sessionId 即使离线也必须持久保留。
 
-Session.status.appliedGeneration 表示本次会话运行应用的 Session spec 版本，runtimeGeneration 表示它使用的 Runtime spec 版本。后者来自Service 模块保存的 Driver 配置快照，不能复制 Runtime 的最新期望 generation。打开或恢复成功后记录这两个版本、协商能力和实际生效功能；确认关闭或归档后清除当前运行版本、协商能力和 effectiveFeatures，保留身份与历史；结果未知时保留最后确认事实并表达不确定状态。features 省略时各字段使用 schema 默认值；请求开启但 Driver 不支持时 effectiveFeatures 对应值为 false，请求本身不被拒绝。
+Session.status.appliedGeneration 表示本次会话运行应用的 Session spec 版本，runtimeGeneration 表示它使用的 Runtime spec 版本。后者来自Service 模块保存的 Driver 配置快照，不能复制 Runtime 的最新期望 generation。打开或恢复成功后记录这两个版本、协商能力和实际生效功能；确认 close 后清除当前运行版本、协商能力和 effectiveFeatures，保留身份与历史；结果未知时保留最后确认事实并表达 `closing` 或 `unknown`。features 省略时各字段使用 schema 默认值；请求开启但 Driver 不支持时 effectiveFeatures 对应值为 false，请求本身不被拒绝。
 
-当前未增加 updateSession。归档、恢复、输入、交互与状态变化不改变 Session spec 或 generation。Runtime 更新不自动改变 Session spec；重新启动 Runtime 后恢复 Session，需要验证新运行配置与原会话兼容。
+当前未增加 updateSession。close、恢复、输入、交互与状态变化不改变 Session spec 或 generation。Runtime 更新不自动改变 Session spec；重新启动 Runtime 后恢复 Session，需要验证新运行配置与原会话兼容。
 
 Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir 保留内部管理，_meta 不作为透传入口。systemPrompt 只用于会话配置，创建与恢复不隐式发送用户 prompt。详见[字段合同](design.md#session-spec-与-agentrun-的参考关系)。
 
@@ -141,7 +149,7 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 
 该规则由 SessionService 在名称预留、持久写入与调用 RuntimeDriver 之前执行，HTTP、CLI 和进程内调用采用相同约束。拒绝时返回 code=invalid_argument、reason=session_name_is_uuid；HTTP 映射为 400。此限制仅针对 Session 创建名称，不改变 Runtime 名称约束，也不把原生 sessionId 限制为 UUID。
 
-禁止 UUID 形式的名称可以避免 UUID ID 与新名称重叠，但原生 ID 仍可能是其他字符串；[HTTP nameOrID 解析](../../bindings/http.md#nameorid-解析)继续处理非 UUID ID 与名称冲突。查询、恢复、归档和历史读取不重新应用创建名称校验，既有持久身份不因此失去可访问性。
+禁止 UUID 形式的名称可以避免 UUID ID 与新名称重叠，但原生 ID 仍可能是其他字符串；[HTTP nameOrID 解析](../../bindings/http.md#nameorid-解析)继续处理非 UUID ID 与名称冲突。查询、resume、close 和历史读取不重新应用创建名称校验，既有持久身份不因此失去可访问性。
 
 ## 并发与资源隔离
 
@@ -164,7 +172,7 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 | 指定 Runtime 筛选会话 | 从同一目录返回对应子集 |
 | 打开成功、持久化失败 | 无成功会话被公开；只清理本次资源 |
 | 打开超时后迟到返回 ID | 原操作继续结算；同名创建仍受预留约束 |
-| 归档与恢复并发 | 不产生两个相互竞争的有效运行控制者 |
+| close 与 prompt/resume 并发 | 同一 Session 操作序列决定先后，不产生越过关闭栅栏的新派发或两个有效运行控制者 |
 | 已提交历史后部损坏 | 即使请求第一页，也明确失败；不先修尾或激活 |
 | 冷恢复成功 | 保持原 ID、已提交历史前缀、已存 UUID 与同步位置；不重演业务动作 |
 | 同名 Runtime 的资源 uid 改变 | 按名称定位并由 Driver 验证恢复，不因 uid 不同拒绝 |

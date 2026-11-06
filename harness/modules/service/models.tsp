@@ -36,7 +36,7 @@ model ObjectMetadata {
   @visibility(Lifecycle.Read)
   uid: string;
 
-  /** 资源首次持久创建的时间；更新、归档、恢复、启停均不修改。 */
+  /** 资源首次持久创建的时间；更新、close、恢复、启停均不修改。 */
   @visibility(Lifecycle.Read)
   createdAt: utcDateTime;
 
@@ -191,10 +191,10 @@ model Session {
 model SessionStatus {
   historyLoad?: HistoryLoadStatus;
 
-  /** 跨 Runtime 全局唯一的会话标识；原始值不得为 . 或 ..；归档、离线与恢复均保留。 */
+  /** 跨 Runtime 全局唯一的会话标识；原始值不得为 . 或 ..；close、离线与恢复均保留。 */
   sessionId: string;
 
-  /** 当前可证明的状态；重启不沿用旧 idle 作为可用证明，按 Service 启动规则校正为 offline/archived/unknown。 */
+  /** 当前可证明的状态；重启不沿用旧 idle 作为可用证明，旧在线状态校正为 unknown，旧 archived 记录迁移为 offline。 */
   state: SessionState;
 
   /** 本次会话运行已应用的 Session spec 版本，不是 Runtime 版本。 */
@@ -205,7 +205,7 @@ model SessionStatus {
 
   capabilities?: CapabilitySet;
 
-  /** 本次运行实际生效的会话功能；确认关闭或归档后清除。 */
+  /** 本次运行实际生效的会话功能；确认 close 后清除。 */
   effectiveFeatures?: Execution.SessionFeatures;
 
   reason?: Reason;

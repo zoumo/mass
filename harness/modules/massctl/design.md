@@ -74,9 +74,9 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 | `session cancel-load TARGET` | 必填 `--load-id ID` | 取消原历史读取，返回当前状态；通过 get 查询最终结束 |
 | `session create NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd PATH`，可选系统提示与额外目录 | 创建并登记 Session，返回持久身份及可选输入回执；仅显式输入发送一次 |
 | `session get TARGET` | 无业务请求体 | 查询资源，不隐式恢复 |
-| `session list` | 只保留分页参数 `--limit`、`--after` | 查询全部 namespace 与 Runtime 的持久目录，包含离线和归档会话；首版不提供筛选（已确认） |
+| `session list` | 只保留分页参数 `--limit`、`--after` | 查询全部 namespace 与 Runtime 的持久目录，包含离线会话；首版不提供筛选（已确认） |
 | `session resume TARGET` | 可选互斥 `--text TEXT` 或 `--input-file FILE` | 恢复原身份，可显式提交一次新输入；失败不新建替代 |
-| `session archive TARGET` | 无业务请求体 | 释放会话运行资源，保留身份与历史 |
+| `session close TARGET` | 无业务请求体 | 从任意状态 close Session；成功为 offline，保留身份、历史与恢复材料 |
 | `session prompt TARGET` | 必填 `--text TEXT` | 首版只发送文本，返回 InputReceipt；不支持文件或 JSON 输入（已确认） |
 | `session cancel TARGET` | 无业务请求体 | 固定接纳时工作并请求取消，返回 CancelReceipt |
 | `session history TARGET` | 只保留分页参数 `--limit`、`--after` | 查询已提交历史及同步进度；首版不提供类型筛选（已确认） |
@@ -84,7 +84,9 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 
 Session 创建参数已确认：NAME、-n/--namespace、--runtime 与 --cwd 必填；可选 --system-prompt TEXT 或 --system-prompt-file FILE（二者互斥），以及可重复 --additional-dir PATH，分别对应 systemPrompt 和 additionalDirs。创建省略输入时不发送 prompt；可选互斥 --text TEXT 与 --input-file FILE，后者读取 UTF-8 SessionInput JSON 并保留内容块结构。输入不进入 spec 或恢复配置，receipt 不代表完成；不支持字段在副作用前拒绝。文件 - 读取 stdin，两个文件参数不得同时读 stdin。cwd 与额外目录按 Agent 所在环境解释，不以本机路径是否存在决定有效性；额外目录不授予权限。
 
-当前 Service 未提供 Session 更新、删除、配置选项写入和待决交互补查，CLI 不虚构这些操作。`archive` 不提供 `delete` 别名。进程内 EventHandler 管理不作为 CLI 远程能力暴露。
+`session close` 使用 HTTP close 的同一业务合同。命令只接收 TARGET，不发送业务请求体；成功时输出 `offline` Session，失败或结果未知时以非零状态退出。重复执行同一 close 是安全幂等重试，完整生命周期语义见 [Session close](../service/design.md#session-close)。
+
+当前 Service 未提供 Session 更新、删除、配置选项写入和待决交互补查，CLI 不虚构这些操作。`close` 不提供 `delete` 别名；本版本不保留 archive 命令、兼容别名或回退路径。进程内 EventHandler 管理不作为 CLI 远程能力暴露。
 
 Session 恢复可选互斥 --text TEXT 或 --input-file FILE，使用与创建相同的 SessionInput 读取及校验规则；省略保持零输入，显式空输入拒绝。这是新输入，不是历史或恢复配置；同一原生 ID/cwd 验证前不报告成功，receipt 不表示完成，结果未知不自动重试。
 
@@ -102,7 +104,7 @@ session prompt 的首版输入范围已确认：仅提供 --text TEXT，将文�
 
 Runtime 使用位置参数 NAME，名称全局唯一，不接受 namespace。
 
-Session 统一使用位置参数 NAME_OR_ID，不提供 --id，不设置默认 namespace。所有针对已有单个 Session 的命令（get、resume、archive、cancel、prompt、answer、history、watch）采用同一已确认规则：
+Session 统一使用位置参数 NAME_OR_ID，不提供 --id，不设置默认 namespace。所有针对已有单个 Session 的命令（get、resume、close、cancel、prompt、answer、history、watch）采用同一已确认规则：
 
 ```sh
 massctl session get review -n demo
@@ -136,7 +138,7 @@ prompt 的 --text 值直接作为文本，不解释为文件路径或 JSON。缺
 
 认证从 `MASS_TOKEN` 读取，按 HTTP 合同放入 Authorization 头，不提供明文 token 命令行参数，不在输出、错误或诊断中泄露秘密。部署、TLS 与实例级权限遵循 HTTP 合同；CLI 不赋予 namespace 租户隔离含义。
 
-超时规则已确认：普通请求默认 30 秒，--timeout 0 表示不限时；watch 只限制建连及等待 subscription.ready 的时间，不限制就绪后的订阅持续时间。请求截止或进程中断只结束本次等待，不自动取消 Agent 工作、归档 Session 或停止 Runtime。没有可验证响应的副作用请求按结果未知处理，不自动重发。
+超时规则已确认：普通请求默认 30 秒，--timeout 0 表示不限时；watch 只限制建连及等待 subscription.ready 的时间，不限制就绪后的订阅持续时间。请求截止或进程中断只结束本次等待，不自动取消 Agent 工作、close Session 或停止 Runtime。没有可验证响应的副作用请求按结果未知处理，不自动重发。
 
 ## 输出与退出
 
@@ -167,9 +169,10 @@ watch 建立后确认 subscription.ready，再向 stderr 输出就绪提示；js
 | 根、资源、操作帮助 | 可发现全部已实现操作；缺少操作不调用服务；未知命令、多余参数失败 |
 | 名称与 ID 寻址 | 带 namespace 按名称，不带按 ID；所有单会话命令一致，无默认 namespace 和查询回退；特殊字符 ID 无损传递 |
 | Runtime 创建、更新与启停 | 创建不启动；更新只替换期望 spec；停止通过 Service 协调，不绕过引用与释放检查 |
-| Session 按需启动与重启后查询 | create/resume 无需先 start；查询、history、watch 不启动；重启后不显示旧 idle 为当前可用，按 Service 校正结果返回 offline/archived/unknown |
+| Session 按需启动与重启后查询 | create/resume 无需先 start；查询、history、watch 不启动；重启后不显示旧 idle 为当前可用，按 Service 校正结果返回 offline/unknown |
+| Session close | close 从任意状态调用同一 HTTP 接口；成功为 offline，失败为 closing 且可重试，offline 重试成功，不停止 Runtime |
 | CLI 配置更新 | 先获取当前 spec 并保留 type；显式 flag 只覆盖对应字段，完整 config 替换全部配置，最后提交完整 spec；获取失败不写回，不宣称具备并发条件更新保护 |
-| 查询离线或归档 Session | 查询和历史不激活 Runtime 或恢复 Session |
+| 查询离线 Session | 查询和历史不激活 Runtime 或恢复 Session；prompt 失败并要求先显式 resume |
 | 文本输入 | --text 正确构造单个 text 内容块；首版拒绝 prompt 文件/JSON 输入，不隐式读取 stdin |
 | 分页 | Session 列表与历史都只提供分页，游标准确传递；保留 next/syncedEventId，不默认隐藏后续页 |
 | 输入与取消回执 | 保留原始接受证据和取消结果，不输出工作完成的虚假结论 |
@@ -178,7 +181,7 @@ watch 建立后确认 subscription.ready，再向 stderr 输出就绪提示；js
 | 机器输出与错误 | stdout 可独立解析；错误在 stderr，code/reason/message 与非零退出一致 |
 | 认证与路径 | 使用 `/apis/v1` 和 Bearer 头；秘密不进入 URL、日志或输出 |
 
-CLI/HTTP 合同可通过隔离的服务或 HTTP 替身验证；涉及原生输入、取消、归档、恢复和观察期间继续工作的端到端结论，仍需按[测试验收原则](../../principles/testing.md)执行真实 Agent 验收。帮助、构建和离线测试通过不代表 Agent 能力已验证。
+CLI/HTTP 合同可通过隔离的服务或 HTTP 替身验证；涉及原生输入、取消、close、恢复和观察期间继续工作的端到端结论，仍需按[测试验收原则](../../principles/testing.md)执行真实 Agent 验收。帮助、构建和离线测试通过不代表 Agent 能力已验证。
 
 ## 待决清单
 

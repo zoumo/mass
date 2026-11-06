@@ -2,6 +2,8 @@
 
 ## 2026-11-06
 
+- **空闲 Session 自动 close 与按需启动**：经负责人确认，删除 Session archive/archived，统一使用 close/offline。close 从任意状态接纳并立即阻止新 prompt、answer、cancel、resume；需要调用 SDK 时，SDK Session close 成功是唯一 native 成功条件，随后仍须结算 MASS 已接纳交付并进入 offline。失败或结算未知保持 closing 且不自动重试，重复 close 幂等并可从 closing 显式重试；无句柄 unknown 的 close 与已 offline 重试按例外规则直接结算。服务启动不启动 Runtime 或 Session，旧在线状态校正为 unknown，旧 archived 记录迁移为 offline；create/resume 按需启动 Runtime，prompt/answer/cancel 不隐式恢复。新增 daemon `sessionIdleTimeout`，默认 10m、0 禁用、负数或无效值拒绝，只自动 close 已确认 idle 的 Session，不停止 Runtime。同步 Service、Runtime、事件、HTTP、CLI、持久化、词汇、架构与实现差距记录，接口修订为 v0.2.18；本次仅更新 harness 与根 `GLOSSARY.md`，Go 实现未修改。
+
 - **记录 Claude block 条目身份草案**：按负责人 2026-11-06 讨论，新增 draft 合同，明确 thinking/text 使用 `message.id` 与 content block 索引生成 `itemId`，tool 使用原生 `tool_use.id`；chunk 与完整事件共用 `itemId`，客户端按 item 闭合。未修改 TypeSpec 或实现。
 
 - **增加会话功能开关**：经负责人授权，DriverSessionSpec 增加可扩展的 features，首个开关 agentQuestions 默认 true；DriverSession 增加 effectiveFeatures，SessionStatus 增加实际生效值。请求开启但 Runtime 不支持时降级为 false，不返回错误；默认值与具体 Runtime 是否支持无关。两个 Driver 分别使用 Codex thread 级 config 与 Claude 的 AskUserQuestion 禁用参数实现，接口修订为 v0.2.17。

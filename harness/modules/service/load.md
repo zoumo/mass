@@ -81,11 +81,19 @@ cleanupCompleted 表示失败/取消时己方资源与待办已清理，成功 l
 不以 cleanupCompleted=true 作为成功条件。publish 成功只证明 Handler.handle 返回，
 不证明外部或普通异步动作完成；syncedEventId 也不证明原生穷尽或分发完成。
 
-加载期间 Session 为 opening，并拒绝 prompt、resume、普通归档等冲突操作；查询、
-历史读取、订阅和取消加载可用。本地完成后根据真实当前证据更新状态，不能据旧历史
-宣称 idle；缺少当前状态时保持 unknown，但业务准入可使用已验证的当前恢复绑定和
-无己方未结算工作的证据，不能仅凭状态字符串推断。后续普通 sendPrompt 仍由 Driver
-核验连接与原操作证据，断线或不确定工作不授权继续输入。
+加载期间 Session 为 opening，并拒绝 prompt、resume 和普通冲突操作；close 仍从任意
+状态接纳，建立关闭栅栏并接管已接纳 load 的交付与清理。查询、历史读取、订阅和取消
+加载可用。本地完成后根据真实当前证据更新状态，不能据旧历史宣称 idle；缺少当前状态
+时保持 unknown，但业务准入可使用已验证的当前恢复绑定和无己方未结算工作的证据，不能
+仅凭状态字符串推断。后续普通 sendPrompt 仍由 Driver 核验连接与原操作证据，断线或
+不确定工作不授权继续输入。
+
+close 只有在已证明无需 SDK 目标时，才按 [Session close](design.md#session-close)
+的 MASS 清理例外终结该 load 的本地责任：当前状态为 `unknown` 且没有句柄，或原操作
+明确证明没有产生原生资源。保留已提交部分与真实错误，不标记 completed、不重放历史
+或开放输入；仍有待结算追加、发布或取消责任时保持 `closing`，再次 close 继续这条
+清理而不要求 SDK 句柄。仅有句柄暂时缺失不构成清理依据；仍在执行的 open、resume 或
+load 保持 `closing` 并接管原结果，结果未确认时不得进入 `offline`。
 
 ## 失败、取消与所有权
 
@@ -107,7 +115,7 @@ cleanupCompleted。即使原生回放已结束，只要本地完成尚未结算�
 自动重试或公开清除；普通 resume 不能用来掩盖不完整导入。
 
 HTTP 返回或客户端断开只结束请求等待。后台 load 的上下文持续至本地结果结算；
-成功后转为普通 Session 运行生命周期，结束回放上下文不关闭恢复连接。成功后的归档
+成功后转为普通 Session 运行生命周期，结束回放上下文不关闭恢复连接。成功后的 close
 按 closeSession 释放运行；已完成 load 的旧取消请求明确拒绝，不误取消后来输入。
 
 Runtime stop 封闭新 load，覆盖尚在验证/落盘的预留和接收绑定；取消在途加载，结算

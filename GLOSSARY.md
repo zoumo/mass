@@ -10,6 +10,9 @@ sources:
   - id: direction
     resource: "项目负责人在 2026-10-19 本次 Runtime 职责讨论中的说明"
     title: Service 对 Store 和 Runtime 的依赖
+  - id: idle-session-close
+    resource: 项目负责人在 2026-11-06 确认的空闲 Session close 与按需启动范围
+    title: close/offline、idle 自动 close、按需启动与重启校正
 ---
 
 # MASS 领域词汇
@@ -53,9 +56,9 @@ _Avoid_: 用 generation 计数全部状态更新，或用同名判断同一资�
 _Avoid_: 将本地连接结束视为远端运行资源已经停止。
 
 **Session**：归属于一个稳定 Runtime 实例的持久会话对象，具有 Agent 返回的会话身份、用户名称、配置与历史，是输入和交互的操作目标。
-_Avoid_: 将 Session 等同于当前连接，或将归档等同于删除。
+_Avoid_: 将 Session 等同于当前连接，或将 close 等同于删除。
 
-**sessionId**：Agent 创建并返回、由 MASS 原样保存的会话标识；在全部 Runtime 与 namespace 中唯一，归档和恢复保持不变，可独立用于 SessionRef 寻址。
+**sessionId**：Agent 创建并返回、由 MASS 原样保存的会话标识；在全部 Runtime 与 namespace 中唯一，close 和恢复均保持不变，可独立用于 SessionRef 寻址。
 _Avoid_: 根据 ID 格式推断实例归属；归属由持久记录确定。
 
 **sessionName**：metadata.name，与 namespace 共同构成 Session 唯一键；遵循 DNS subdomain 规则，与 Agent 返回的 sessionId 独立。
@@ -68,8 +71,11 @@ _Avoid_: 将恢复绑定当成公开会话 ID 或凭据。
 
 **RuntimeState**：受管理实例拥有的运行资源的当前状态，包括停止、启动中、运行、停止中和未知。
 
-**SessionState**：持久会话的统一资源状态，包括离线、打开中、空闲、执行中、需要行动、关闭中、已归档和未知。
-_Avoid_: 将取消确认视为空闲，将断线视为已归档，或将未知视为已释放。
+**Session close**：从任意 Session 状态接纳的业务操作；立即阻止新的 prompt、answer、cancel 和 resume，以 SDK Session close 成功作为需要调用 SDK 的唯一 native 成功条件，随后结算 MASS 内部责任并进入 offline，保留身份、历史和恢复材料。close 不停止 Runtime，也不是删除。失败、内部结算未完成或结果未知保持 closing，可再次 close 显式重试。[^idle-session-close]
+_Avoid_: 将 close 用作删除或 Runtime 停止，或从调用者断线推断 close 失败。
+
+**SessionState**：持久会话的统一资源状态，包括离线、打开中、空闲、执行中、需要行动、关闭中和未知。
+_Avoid_: 将取消确认视为空闲，将断线视为 offline，将 close 失败视为 unknown，或将未知视为已释放。
 
 **前台工作状态**：Agent 前台工作正在进行、被用户操作阻塞或已经结束的观察状态。
 _Avoid_: 将前台空闲等同于后台活动全部结束，或与单次输入一一对应。
@@ -108,7 +114,7 @@ _Avoid_: 将实时事件流等同于完整会话历史或可靠消费进度。
 
 **Events 模块**：提供每 Session 一个实时 EventBroadcast 与统一 EventHandler；不管理历史或运行关联。
 
-**EventBroadcast**：由 Service 按 sessionId 或 namespace/name 定位的同一会话实时对象，提供 publish、addHandler、subscribe 与 close；Handler 按加入顺序串行执行，无公共单独移除操作。归档或 Runtime 停止保留对象，恢复沿用。
+**EventBroadcast**：由 Service 按 sessionId 或 namespace/name 定位的同一会话实时对象，提供 publish、addHandler、subscribe 与 close；Handler 按加入顺序串行执行，无公共单独移除操作。Session close 或 Runtime 停止保留对象，恢复沿用。
 
 **EventHandler**：直接接收统一 SessionEvent 的实时处理接口；只读 required 属性决定失败是否停止当前事件后续处理，不改变加入顺序。普通失败诊断后继续，无 name/order，不接收历史提交标记或运行上下文。
 
@@ -121,3 +127,5 @@ _Avoid_: 将所有会话信息统称为运行状态。
 _Avoid_: 将 Agent 宣告的全部能力或未来设计能力当成当前可用能力。
 
 [^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；HTTP 只做协议映射，具体接口由负责人定义。
+
+[^idle-session-close]: 负责人在 2026-11-06 确认 close/offline、空闲自动 close、按需启动和重启状态校正的终态范围。

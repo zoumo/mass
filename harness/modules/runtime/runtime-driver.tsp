@@ -60,7 +60,9 @@ interface RuntimeDriver {
 
   cancel(sessionId: string): CancelReceipt | OperationError;
 
-  /** 成功表示当前会话运行已释放；保留恢复所需持久材料。 */
+  /** Service 可从任意 Session 状态接纳 close；即使 active/sending 也须调用 SDK close，不得提前拒绝。
+   * 成功表示 SDK 接受该会话 close，保留恢复所需持久材料；失败由 Service 保持 closing 并决定公开原因。
+   * 并发及重复调用安全，结果可重复读取；不自动重试、cancel、interrupt、force kill 或做额外健康探测。 */
   closeSession(sessionId: string): void | OperationError;
 }
 

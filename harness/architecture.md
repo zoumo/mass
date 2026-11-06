@@ -58,7 +58,7 @@ Runtime 更新只修改期望配置，已运行 Driver 继续使用原快照。D
 
 恢复先验证原资源归属与已提交历史，再由 Driver 内部读取和验证恢复材料并连接原会话。不能以新建替代恢复。Session 仅按 Runtime 名称归属，不比较 Runtime uid；原生会话与恢复材料仍由 Driver 验证。查询和历史读取不执行激活。
 
-服务重启只恢复持久目录，不自动启动 Runtime 或恢复 Session。Service 在开放业务接口前[校正旧运行状态](modules/service/design.md#服务重启与状态校正)：已确认释放的普通 Session 为 offline，显式归档的保持 archived，旧在线状态缺少结算证明的为 unknown；Runtime 保留已确认的 stopped，否则为 unknown。不能以重启前的 idle/running 或空的 Service 当前运行映射证明当前运行可用或旧资源释放；查询、历史和订阅均不触发激活。
+服务重启只恢复持久目录，不自动启动 Runtime 或恢复 Session。Service 在开放业务接口前[校正旧运行状态](modules/service/design.md#服务重启与状态校正)：旧 archived 记录迁移为 offline，原本 offline 且无未结算责任的保持 offline，旧在线状态缺少结算证明的为 unknown；Runtime 保留已确认的 stopped，否则为 unknown。不能以重启前的 idle/running 或空的 Service 当前运行映射证明当前运行可用或旧资源释放；查询、历史和订阅均不触发激活。createSession 与 resumeSession 按需启动 Runtime，sendPrompt、answer 和 cancel 不隐式 resume。
 
 ## 事件、历史与名称通道
 
@@ -74,7 +74,7 @@ Session 和历史业务职责见 [Session](modules/service/session.md)、[历史
 
 Service 模块封闭新激活、会话创建/恢复、输入和回答，排空会话、在途操作与已接纳事实，再调用原 Driver.stop；确认释放和最终事件结算后，由 Service 移除原运行绑定。组装层只负责依赖注入，完整停止流程由 Service 内部的同一停止操作拥有。Driver 对未结算执行仍执行保护检查；结果未知时不能更新为已停止或自动重新接纳。
 
-Runtime 停止与 Session 归档由 Service 结算对应运行的业务操作、历史提交和已接纳的实时 publish 调用；Driver 停止期间继续读流，最终上游排空后再确认 Service 的待办已处理，不能过早封闭发布。保留 Session 的 Broadcast、健康 Handler 与订阅，恢复沿用原关系；停止 A 不关闭 B 的 Broadcast。应用 shutdown 才在全部应接纳事件交付完成后关闭各 Broadcast，关闭其 Handler（关闭不等于异步动作全部完成），订阅随队列 Handler 结束。失败和超时如实报告；存储连接由组装层在 Handler 不再使用后关闭。
+Session close 与 Runtime 停止由 Service 结算对应运行的业务操作、历史提交和已接纳的实时 publish 调用；Driver 停止期间继续读流，最终上游排空后再确认 Service 的待办已处理，不能过早封闭发布。Session 空闲自动 close 使用同一 close 路径，只回收 idle Session，不停止 Runtime。保留 Session 的 Broadcast、健康 Handler 与订阅，恢复沿用原关系；停止 A 不关闭 B 的 Broadcast。应用 shutdown 才在全部应接纳事件交付完成后关闭各 Broadcast，关闭其 Handler（关闭不等于异步动作全部完成），订阅随队列 Handler 结束。失败和超时如实报告；存储连接由组装层在 Handler 不再使用后关闭。
 
 停止后保留 Runtime 配置、Session 身份和历史。不同实例独立；单会话错误不停止健康共享运行。远程 Driver 只能释放自己拥有的连接与任务。
 
