@@ -105,6 +105,8 @@ type lane struct {
 	admission      sync.RWMutex
 	releasing      bool
 	nativeClosed   bool
+	observedState  events.SessionState
+	stateObserved  bool
 	session        resource.Session
 	source         events.Source
 	queue          chan delivery
@@ -128,6 +130,7 @@ type Service struct {
 	meta        metastore.MetaStore
 	history     eventstore.EventStore
 	registry    *runtime.Registry
+	startup     sync.Mutex
 	mu          sync.Mutex
 	runs        map[string]*runBinding
 	broadcasts  map[string]*sessionBroadcast
@@ -366,12 +369,31 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	if r.Metadata.UID != "" || r.Metadata.Generation != 0 || r.Metadata.ResourceVersion != "" || !r.Metadata.CreatedAt.IsZero() {
 		return resource.SessionCreated{Session: r}, runtime.InvalidArgument("system metadata is read-only")
 	}
+	if _, err := s.meta.GetSession(resource.SessionRef{Namespace: r.Metadata.Namespace, Name: r.Metadata.Name}); !errors.Is(err, store.ErrNotFound) {
+		if err == nil {
+			err = store.ErrConflict
+		}
+		return resource.SessionCreated{Session: r}, err
+	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
+	startRuntime := run == nil || !run.started || run.stopping || run.err != nil
 	closing := s.closing
 	s.mu.Unlock()
+	if closing {
+		return resource.SessionCreated{Session: r}, errors.New("service closing")
+	}
+	if startRuntime {
+		if _, err := s.StartRuntime(ctx, r.Spec.RuntimeRef); err != nil {
+			return resource.SessionCreated{Session: r}, err
+		}
+	}
+	s.mu.Lock()
+	run = s.runs[r.Spec.RuntimeRef]
+	closing = s.closing
+	s.mu.Unlock()
 	if run == nil || closing {
-		return resource.SessionCreated{Session: r}, errors.New("runtime not started or service closing")
+		return resource.SessionCreated{Session: r}, errors.New("runtime unavailable")
 	}
 	var creator runtime.CreationDriver
 	if initial != nil {
@@ -828,6 +850,17 @@ func (s *Service) process(run *runBinding, l *lane) {
 					response <- err
 				}
 			}
+		}
+		if state, ok := e.Payload().(events.StateUpdate); ok && e.Replay == nil {
+			s.mu.Lock()
+			if !l.closing && l.source.SameRun(e.Source()) {
+				l.stateObserved = true
+				l.observedState = events.Unknown
+				if state.State != nil {
+					l.observedState = *state.State
+				}
+			}
+			s.mu.Unlock()
 		}
 		if !publicationFailed {
 			b, err := s.broadcastForSession(l.session)

@@ -70,7 +70,15 @@ func (s *entrypointSuite) TestMetadataRestartAndEventRebuild() {
 			go func() { _, err := nameWatch.Next(); nameResult <- err }()
 			var after resource.Session
 			s.call("session.get", workflowParams{Session: named}, &after)
-			s.Equal(before, after, "preserve complete authority, identity and versions")
+			expected := before
+			expected.Status.State = "offline"
+			expected.Status.Reason = ""
+			originalVersion := expected.Metadata.ResourceVersion
+			expected.Metadata.ResourceVersion = ""
+			reconciledVersion := after.Metadata.ResourceVersion
+			after.Metadata.ResourceVersion = ""
+			s.Equal(expected, after, "preserve authority, identity and spec while reconciling archived to offline")
+			s.NotEqual(originalVersion, reconciledVersion, "state reconciliation must publish a new resource version")
 			var runtimeAfter resource.Runtime
 			s.call("runtime.get", workflowParams{Name: "agent"}, &runtimeAfter)
 			s.Equal(runtimeBefore, runtimeAfter)

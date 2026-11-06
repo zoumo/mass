@@ -126,6 +126,9 @@ func run(parent context.Context, o options) (result error) {
 		defer c()
 		result = errors.Join(result, svc.Shutdown(ctx))
 	}()
+	if err := svc.Prepare(parent); err != nil {
+		return err
+	}
 	listener, err := (&net.ListenConfig{}).Listen(parent, "tcp", o.Listen)
 	if err != nil {
 		return err

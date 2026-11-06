@@ -473,6 +473,11 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
 	}
+	switch r.Status.State {
+	case "offline", "archived", events.Unknown:
+	default:
+		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("previous session release remains unsettled")
+	}
 	// Read every committed page before touching the adapter or native process.
 	if r.Status.HistoryLoad != nil && r.Status.HistoryLoad.Phase != "completed" {
 		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("unresolved history load cannot be resumed or reimported")
@@ -495,6 +500,9 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 			break
 		}
 		q.After = page.Next
+	}
+	if _, err := s.StartRuntime(ctx, r.Spec.RuntimeRef); err != nil {
+		return resource.SessionResumed{Session: r}, err
 	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
@@ -525,7 +533,9 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
 	}
-	if r.Status.State == "closing" || r.Status.AppliedGeneration != 0 {
+	switch r.Status.State {
+	case "offline", "archived", events.Unknown:
+	default:
 		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("previous session release remains unsettled")
 	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
@@ -641,6 +651,8 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	l.nativeClosed = false
 	l.closing = false
 	l.releasing = false
+	l.observedState = ""
+	l.stateObserved = false
 	l.err = errors.Join(l.err, op.err)
 	run.lanes[r.Status.SessionID] = l
 	s.mu.Unlock()
@@ -671,7 +683,7 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	}
 	s.mu.Unlock()
 	if run == nil {
-		return nil, nil, runtime.FailedPrecondition("session unavailable")
+		return nil, nil, sessionResumeRequired(r.Status.State)
 	}
 	run.admission.RLock()
 	s.mu.Lock()
@@ -680,14 +692,38 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	if closeAccepted {
 		s.mu.Unlock()
 		run.admission.RUnlock()
-		return nil, nil, runtime.FailedPrecondition("session close already accepted")
+		return nil, nil, sessionResumeRequired(r.Status.State)
 	}
 	if !canceling && l != nil && l.overloaded {
 		s.mu.Unlock()
 		run.admission.RUnlock()
 		return nil, nil, runtime.Exhausted(sessionDeliveryOverloaded)
 	}
-	available := run.started && l != nil && l == original && !l.releasing
+	state := r.Status.State
+	live := l != nil && l == original
+	if live && l.stateObserved {
+		state = l.observedState
+	}
+	if !canceling {
+		switch state {
+		case events.Idle, events.Running, events.RequiresAction:
+		case events.Unknown:
+			// Creation and resume can return before their initial asynchronous
+			// observation. The current live lane and Driver dispatch still prove
+			// the connection; a detached unknown has no lane.
+			if !live || l.stateObserved {
+				s.mu.Unlock()
+				run.admission.RUnlock()
+				return nil, nil, sessionResumeRequired(state)
+			}
+		default:
+			s.mu.Unlock()
+			run.admission.RUnlock()
+			return nil, nil, sessionResumeRequired(state)
+		}
+	}
+	pending := run.pending[addressKey(runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name})]
+	available := run.started && live && !l.releasing && pending == nil
 	if l != nil && l.load != nil && !l.load.complete.Load() {
 		available = false
 	}
@@ -700,7 +736,7 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	s.mu.Unlock()
 	if !available {
 		run.admission.RUnlock()
-		return nil, nil, runtime.FailedPrecondition("session unavailable")
+		return nil, nil, sessionResumeRequired(r.Status.State)
 	}
 	return run, l, nil
 }
