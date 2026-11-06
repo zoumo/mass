@@ -41,23 +41,25 @@ Claude adapter 采用 block 粒度：
 responseId = 原生 message.id
 blockIndex = 实时 content_block.index / 历史 apiBlockIndex
 
-thinking/text itemId = <responseId>:<blockIndex>
+主会话 thinking/text itemId = <responseId>:<blockIndex>
+子会话 thinking/text itemId = <parentToolUseId>:<responseId>:<blockIndex>
 tool itemId         = tool_use.id
 ```
 
 - `itemId` 直接由原生身份组成，不带 `claude` 或 `block` 前缀；客户端仍把整个值当作不透明身份。
+- `parentToolUseId` 取子 Agent 事件的原生 `parent_tool_use_id`；主会话没有该 lane。两个 lane 都只在对应原生范围成立，客户端不得解析分隔符。
 - `blockIndex` 是该 response 内所有 content block 的原生非负整数索引，不是按 thinking/text 分别计数。索引唯一，所以 thinking 和 text 不需要在 ID 中再加 kind。
 - 空 thinking、`redacted_thinking`、仅含 signature 的 thinking 和零长度 text 不产生条目；它们仍然占用原生 block 索引，后续 block 不改号。
 - `"\n\n"` 这类非空文本是可见 block，必须产生条目；不能把 whitespace-only 内容当成空内容丢弃。
 - `content_block.index` 和 `apiBlockIndex` 只用于生成身份或放入 `_meta` 诊断；客户端不得解析 `itemId` 的组成部分。
-- 原生 `message.id` 存在时，live 和 history 对同一 block 得到相同 `itemId`。`message.id` 缺失时只能使用 observation-scoped 回退，不承诺跨 live/history 一致。
+- 原生 `message.id` 和 block 坐标都存在时，live 和 history 对主会话同一 block 得到相同 `itemId`。`message.id` 或 block 坐标缺失时只能使用 observation-scoped 回退，不承诺跨 live/history 一致。
 
 ## Payload 与元数据
 
 消息和思考事件继续使用 `MessageEventPayload`，但 Claude adapter 固定：
 
 ```text
-itemId          = <responseId>:<blockIndex>
+itemId            = 当前会话 lane 的 thinking/text itemId
 payload.messageId = itemId
 ```
 
@@ -77,6 +79,8 @@ payload.messageId = itemId
 
 `_meta.claude.responseId` 只用于诊断或需要时分组，不是闭合键。Claude 没有原生的 message phase；`payload.phase` 在 Claude 事件中省略，`phase` 不是完成标志，完成只由完整事件类型表达。
 
+子 Agent 事件继续使用实际 `parent_tool_use_id` 作为 lane，并在 `_meta.claude.parentToolUseId` 保留同一原生值。`parentToolUseId` 不是公共 parent item 字段，也不改变 `payload.messageId = itemId`。
+
 ## 实时映射
 
 | Claude 实时数据 | MASS 事件 | itemId |
@@ -93,13 +97,15 @@ payload.messageId = itemId
 | user frame 中的 tool_result block | `agent.tool_result` | `tool_use_id`，即同一 tool itemId |
 | `content_block_stop`、`message_stop` | 不产生内容事件，也不闭合条目 | 无 |
 
-实时 adapter 维护 `(responseId, blockIndex)` 到 block 状态的关联，并记录每个 block 的类型和已观察内容。`content_block_start` 给出权威索引；后续 chunk 使用同一索引。`content_block_stop` 可以结束该 block 的原生增量关联，但不产生 MASS 完成事件，也不能删除 index 到 block 的映射，因为完整 assistant frame 可能在其后到达。
+实时 adapter 维护 `(parentToolUseId, responseId, blockIndex)` 到 block 状态的关联，并记录每个 block 的类型和已观察内容。`content_block_start` 给出权威索引；后续 chunk 使用同一索引。`content_block_stop` 可以结束该 block 的原生增量关联，但不产生 MASS 完成事件，也不能删除 index 到 block 的映射，因为完整 assistant frame 可能在其后到达。
 
 完整 assistant frame 按 content block 拆分，每个可见 block 单独发一个完整事件，不能把多个 thinking 或 text 合并成一条，也不能把 thinking 和 text 放进同一条消息。
 
 实时 adapter 以 `message_start` 捕获的 responseId 作为当前 response 身份；assistant frame 缺失 `message.id` 时复用该 responseId，不能把每条 frame 的 UUID 当作 responseId。
 
-Claude SDK 可能按每个完成的 content block 生成 assistant frame，但 adapter 不能把这一点当成合并多 block frame 的许可。frame 只有一个同类可见 block 时，按 responseId、类型和已观察内容唯一匹配到记录的 `blockIndex`；如果 frame 含多个 block，只有每个 block 自带 `apiBlockIndex` 或等价坐标才算可证明，否则 adapter 不得猜测或合并；无法证明对应关系的 block 不能合成正常 full。
+Claude SDK 通常按每个完成的 content block 生成一个只含该 block 的 assistant frame，但 adapter 不能把这一点当成合并多 block frame 的许可。frame 只有一个同类可见 block 时，按同一 lane、responseId、类型和已跟踪 block 状态唯一匹配到 `blockIndex`；如果 frame 含多个 block，只有每个 block 自带 `apiBlockIndex` 或等价坐标才算可证明，否则 adapter 不得猜测或合并；无法证明对应关系的 block 不能合成正常 full。
+
+实时 chunk 或完整 thinking/text 缺少 `responseId` 或可证明的 `blockIndex` 时，adapter 失败关闭该内容，不生成猜测身份。工具仍可直接使用原生 `tool_use.id`。
 
 ## 历史映射
 
@@ -111,11 +117,11 @@ Claude SDK 可能按每个完成的 content block 生成 assistant frame，但 a
 | user tool_result block | `agent.tool_result` | `tool_use_id` |
 | user text block | `user.message` | `<record.uuid>:<contentOrdinal>` |
 
-历史 assistant record 的 `apiBlockIndex` 与实时 `content_block.index` 表示同一 API block 坐标；`message.id` 用于 response 身份。历史导入按原生 record 和 content 顺序处理，一条 record 含多个可见 block 时发多个事件，它们共享 `replay.nativeRecordId`，但 `itemId` 必须不同。
+历史 assistant record 的 `apiBlockIndex` 与实时 `content_block.index` 表示同一 API block 坐标；`message.id` 用于 response 身份。历史导入按原生 record 和 content 顺序处理，一条 record 含多个可见 block 时发多个事件，它们共享 `replay.nativeRecordId`，但 `itemId` 必须不同。record 只有一个起始 `apiBlockIndex` 时，按内容数组位置使用从该值开始的连续坐标；隐藏或空 block 仍占用位置。
 
 `replay.nativeRecordId` 继续保存 JSONL record 的 `uuid`，`replay.nativeParentId` 保存 `parentUuid`；二者不是 block 身份，不能拿来替代 `itemId`。user 消息没有 chunk/full 闭合语义，`contentOrdinal` 只用于同一 record 内多个 text block 的去重。
 
-`apiBlockIndex` 缺失时，adapter 只能在能证明同一 `message.id` 内 block 顺序的情况下推导索引；不能证明时使用 record UUID 作为 observation-scoped 回退，并明确不承诺与实时身份一致。不能为了拼出稳定 ID 而按内容猜测或重排 block。
+`apiBlockIndex` 缺失时，adapter 只能在能证明同一 `message.id` 内 block 顺序的情况下推导索引；不能证明时使用 `<record.uuid>:<contentOrdinal>` 作为 observation-scoped 回退，并明确不承诺与实时身份一致。`contentOrdinal` 是 record 内容数组的零基位置；不能为了拼出稳定 ID 而按内容猜测或重排 block。
 
 ## chunk 与 thinking 的对应
 
@@ -195,18 +201,21 @@ agent.tool_result.itemId = tool_use.id
 
 ## 边界
 
-- 本页公式针对主会话。若 adapter 把子 Agent 事件投递到同一 MASS Session，必须在 `itemId` 中加入可证明的 lane（例如 `parent_tool_use_id` 或 `agent_id`），避免 root 和 child 使用相同 responseId/index 时冲突；不能直接复用主会话公式。
+- 主会话和子 Agent 使用不同 lane。当前 native history 导入只覆盖保留的主会话记录；子 Agent 历史和跨 live/history 身份一致性不在本方案承诺内。
 - `payload.messageId` 不再承载原生 Claude response ID。需要 response 分组时使用 `_meta.claude.responseId`，不要重新让 `messageId` 兼任 response 语义。
 - 本方案不新增 TypeSpec 字段，也不引入公共 parent item 字段；`replay.nativeParentId` 只表达 transcript 链关系。若未来需要公开的条目层级，应新增 typed 关系，而不是让客户端解析 `_meta` 或 `itemId`。
 - 空的、隐藏的和 redacted thinking 不产生条目；它们占用的 block 索引不重排。
+- 不迁移、不回填旧事件日志，也不做双写兼容；新身份只作用于新观察和新历史导入。旧本地数据可以直接删除。
 
 ## 验收
 
 - 同一 response 同时有 thinking、text 和 tool_use 时，thinking/text 按 blockIndex 得到不同 itemId，工具使用独立 tool_use.id。
 - 每个 thinking/text block 的 chunk 和完整事件使用同一 itemId；完整事件到达后同 itemId 的迟到 chunk 被忽略。
 - 历史导入与实时在 `message.id` 和 `apiBlockIndex` 都存在时得到相同 thinking/text itemId。
+- 子 Agent thinking/text 使用 `parent_tool_use_id` lane，不能与主会话同 responseId/index 冲突。
 - 一个 assistant frame 含多个可见 block 时拆成多个完整事件，不合并同类型 block。
 - 空 thinking、redacted thinking 和零长度 text 不产生事件；whitespace-only 文本产生事件。
+- live thinking/text 缺少 response 或 block 坐标时不生成猜测身份；history 缺少坐标时使用 record-scoped 回退。
 - `content_block_stop`、`message_stop`、idle 和 EOF 不闭合条目；`aborted` frame 不产生正常完整事件。
 - tool call 与 tool result 使用同一 itemId、不同 eventId；user tool_result 不额外生成用户消息。
 
