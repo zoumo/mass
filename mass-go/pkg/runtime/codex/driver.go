@@ -239,7 +239,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if err := json.Unmarshal(material.Context, &saved); err != nil {
 			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
-		if saved.ID != resume || saved.SessionID == "" || saved.Ephemeral || saved.Cwd != spec.Cwd {
+		if saved.ID != resume || saved.SessionID == "" || saved.Ephemeral || !runtime.EqualNativePath(saved.Cwd, spec.Cwd) {
 			return runtime.DriverSession{}, noResources("invalid native recovery context")
 		}
 		native, err = sdk.Open(ctx, sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true), Config: threadConfig(effective)}})
@@ -248,7 +248,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		}
 		response, _ := native.ResumeResponse()
 		thread = response.Thread
-		if thread.ID != saved.ID || thread.SessionID != saved.SessionID || thread.Cwd != saved.Cwd || thread.CreatedAt != saved.CreatedAt || thread.ModelProvider != saved.ModelProvider || thread.Ephemeral || !reflect.DeepEqual(thread.Path, saved.Path) {
+		if thread.ID != saved.ID || thread.SessionID != saved.SessionID || !runtime.EqualNativePath(thread.Cwd, saved.Cwd) || !sameNativeCreatedAt(thread.CreatedAt, saved.CreatedAt) || thread.ModelProvider != saved.ModelProvider || thread.Ephemeral || !reflect.DeepEqual(thread.Path, saved.Path) {
 			return runtime.DriverSession{}, errors.New("native recovery ownership mismatch")
 		}
 		// Resume metadata may contain old turns: they are never adapted or replayed.
@@ -271,7 +271,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		thread = response.Thread
 	}
 	id := thread.ID
-	if id == "" || thread.SessionID == "" || thread.Ephemeral || thread.Cwd != spec.Cwd {
+	if id == "" || thread.SessionID == "" || thread.Ephemeral || !runtime.EqualNativePath(thread.Cwd, spec.Cwd) {
 		return runtime.DriverSession{}, errors.New("outcome_unknown: missing or mismatched native identity/context")
 	}
 	if resume == "" {
@@ -847,4 +847,8 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 
 func noResources(message string) error {
 	return errors.Join(runtime.ErrResourcesReleased, errors.New(message))
+}
+
+func sameNativeCreatedAt(a, b int64) bool {
+	return a > 0 && b > 0 && a-b >= -1 && a-b <= 1
 }

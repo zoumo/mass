@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -174,6 +175,8 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	if !running {
 		return runtime.DriverSession{}, noResources("driver not running")
 	}
+	env := d.options.Environment("claude")
+	historyVerified := false
 	if resume != "" {
 		m, err := d.vault.Load(resume, a, spec)
 		if err != nil {
@@ -186,12 +189,19 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		if err := json.Unmarshal(m.Context, &saved); err != nil {
 			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
-		if saved.ID != resume || saved.Cwd != spec.Cwd {
+		if saved.ID != resume || !runtime.EqualNativePath(saved.Cwd, spec.Cwd) {
 			return runtime.DriverSession{}, noResources("invalid Claude recovery context")
+		}
+		if initial == nil {
+			var err error
+			historyVerified, err = verifyClaudeResumeHistory(ctx, env, resume, spec.Cwd)
+			if err != nil {
+				return runtime.DriverSession{}, noResources("invalid Claude recovery context")
+			}
 		}
 	}
 	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown", requireLink: resume != ""}
-	c, err := sdk.Open(ctx, sessionOptions(effective, resume, spec.Cwd, d.options.Executable, d.options.Environment("claude")))
+	c, err := sdk.Open(ctx, sessionOptions(effective, resume, spec.Cwd, d.options.Executable, env))
 	if err != nil {
 		close(s.ready)
 		// Failed SDK startup closes its unreturned connection before returning.
@@ -222,50 +232,57 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		receipt = &accepted
 	}
 	early := []sdk.Received{}
-	// Only native system/init establishes identity, with or without explicit input.
-	for {
-		event, receiveErr := c.Receive(ctx)
-		if receiveErr != nil {
-			close(s.ready)
-			return runtime.DriverSession{}, fail(fmt.Errorf("claude missing native init identity: %w", receiveErr))
-		}
-		e := event.Event
-		if e == nil && event.Kind == sdk.ReceivedObservation {
-			if len(early) == 128 {
+	if historyVerified {
+		// Claude does not emit system/init for a zero-input resume. The CLI rejects
+		// an unknown --resume ID during Open; the native transcript then proves the
+		// same ID belongs to the requested project without submitting business input.
+		s.id = resume
+	} else {
+		// Only native system/init establishes a new or input-bearing resume identity.
+		for {
+			event, receiveErr := c.Receive(ctx)
+			if receiveErr != nil {
 				close(s.ready)
-				return runtime.DriverSession{}, fail(runtime.Exhausted("pre_identity_buffer"))
+				return runtime.DriverSession{}, fail(fmt.Errorf("claude missing native init identity: %w", receiveErr))
 			}
-			early = append(early, event)
-			continue
-		}
-		if e == nil {
-			// Before identity, a live request cannot be safely exposed or answered.
-			// Fail with owned cleanup rather than silently skipping it and waiting forever.
-			close(s.ready)
-			return runtime.DriverSession{}, fail(&runtime.OperationError{Code: "outcome_unknown", Reason: "pre_identity_native_observation", Message: "Native request or diagnostic arrived before a validated session identity"})
-		}
-		if e.Type == "system" && e.Subtype == "init" && e.SessionID != "" {
-			if resume != "" && e.SessionID != resume {
+			e := event.Event
+			if e == nil && event.Kind == sdk.ReceivedObservation {
+				if len(early) == 128 {
+					close(s.ready)
+					return runtime.DriverSession{}, fail(runtime.Exhausted("pre_identity_buffer"))
+				}
+				early = append(early, event)
+				continue
+			}
+			if e == nil {
+				// Before identity, a live request cannot be safely exposed or answered.
+				// Fail with owned cleanup rather than silently skipping it and waiting forever.
 				close(s.ready)
-				return runtime.DriverSession{}, fail(errors.New("native resume identity mismatch"))
+				return runtime.DriverSession{}, fail(&runtime.OperationError{Code: "outcome_unknown", Reason: "pre_identity_native_observation", Message: "Native request or diagnostic arrived before a validated session identity"})
 			}
-			var init struct {
-				Cwd string `json:"cwd"`
+			if e.Type == "system" && e.Subtype == "init" && e.SessionID != "" {
+				if resume != "" && e.SessionID != resume {
+					close(s.ready)
+					return runtime.DriverSession{}, fail(errors.New("native resume identity mismatch"))
+				}
+				var init struct {
+					Cwd string `json:"cwd"`
+				}
+				if err := json.Unmarshal(e.Raw, &init); err != nil || !runtime.EqualNativePath(init.Cwd, spec.Cwd) {
+					close(s.ready)
+					return runtime.DriverSession{}, fail(errors.New("native init cwd mismatch"))
+				}
+				s.id = e.SessionID
+				break
 			}
-			if err := json.Unmarshal(e.Raw, &init); err != nil || init.Cwd != spec.Cwd {
-				close(s.ready)
-				return runtime.DriverSession{}, fail(errors.New("native init cwd mismatch"))
+			// Pre-identity content is unsupported, rather than lost or given a fake ID.
+			if e.Type == "assistant" || e.Type == "user" || e.Type == "stream_event" || e.Type == "result" {
+				if len(early) == 128 {
+					close(s.ready)
+					return runtime.DriverSession{}, fail(errors.New("pre-identity buffer exhausted"))
+				}
+				early = append(early, event)
 			}
-			s.id = e.SessionID
-			break
-		}
-		// Pre-identity content is unsupported, rather than lost or given a fake ID.
-		if e.Type == "assistant" || e.Type == "user" || e.Type == "stream_event" || e.Type == "result" {
-			if len(early) == 128 {
-				close(s.ready)
-				return runtime.DriverSession{}, fail(errors.New("pre-identity buffer exhausted"))
-			}
-			early = append(early, event)
 		}
 	}
 	if resume == "" {
@@ -285,6 +302,41 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	close(s.ready)
 	go d.observe(s, early)
 	return runtime.DriverSession{SessionID: s.id, Capabilities: caps(), EffectiveFeatures: effective, Source: s.source, InitialInputReceipt: receipt}, nil
+}
+
+func verifyClaudeResumeHistory(ctx context.Context, env []string, id, cwd string) (bool, error) {
+	var config string
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "CLAUDE_CONFIG_DIR":
+			config = value
+		case "HOME":
+			if config == "" {
+				config = filepath.Join(value, ".claude")
+			}
+		}
+	}
+	if !filepath.IsAbs(config) {
+		// Explicit launchers may use their own native storage. In that case there
+		// is no Claude config location to inspect, so retain the init identity gate.
+		return false, nil
+	}
+	h := &nativeLoad{config: config, project: cwd}
+	_, err := readClaudeHistory(ctx, h, id, 0, 1)
+	if err == nil {
+		return true, nil
+	}
+	var query *sdk.SessionQueryError
+	if errors.As(err, &query) && (query.Kind == "invalid-input" || query.Kind == "missing" || query.Kind == "inaccessible") {
+		// Synthetic peers and custom launchers may use non-native IDs or omit
+		// Claude history. Keep the native init identity gate in that case.
+		return false, nil
+	}
+	return false, err
 }
 
 func (d *Driver) get(id string) (*session, error) {

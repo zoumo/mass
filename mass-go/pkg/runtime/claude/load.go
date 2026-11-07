@@ -119,7 +119,8 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 			return decodeErr
 		}
 		init, ok := value.(map[string]any)
-		if !ok || init["cwd"] != cwd {
+		initCwd, cwdOK := init["cwd"].(string)
+		if !ok || !cwdOK || !runtime.EqualNativePath(initCwd, cwd) {
 			return errors.New("native resume project mismatch")
 		}
 		break
@@ -210,8 +211,11 @@ func readClaudeHistory(ctx context.Context, h *nativeLoad, id string, offset, li
 		if !ok {
 			return page, errors.New("native record invalid")
 		}
-		if cwd, present := raw["cwd"]; present && cwd != h.project {
-			return page, errors.New("native record project mismatch")
+		if cwd, present := raw["cwd"]; present {
+			value, ok := cwd.(string)
+			if !ok || !runtime.EqualNativePath(value, h.project) {
+				return page, errors.New("native record project mismatch")
+			}
 		}
 	}
 	return page, nil
