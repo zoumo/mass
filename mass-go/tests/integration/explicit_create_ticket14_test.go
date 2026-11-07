@@ -207,7 +207,7 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 			require.ErrorAs(t, err, &unsupported)
 			require.Equal(t, "unsupported", unsupported.Code, "normal and initial input must share lossless validation")
 
-			_, err = svc.ArchiveSession(ctx(t), ref)
+			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 		})
 	}
@@ -289,23 +289,39 @@ func TestTicket14EarlyCompletionContinuedSSEAndResumeNoReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, string(persisted), string(wire))
 	require.Equal(t, receipt.Submission, history.Events[1].Meta["claude"].(map[string]any)["submission"])
-	_, err = svc.ArchiveSession(ctx(t), ref)
+	_, err = svc.CloseSession(ctx(t), ref)
 	require.NoError(t, err)
-	_, err = svc.ResumeSession(ctx(t), ref)
-	require.NoError(t, err)
-	_, err = svc.ArchiveSession(ctx(t), ref)
+	var resumed resource.SessionResumed
+	require.NoError(t, c.ResumeSessionWithInput(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("resume")}}, &resumed))
+	require.NotNil(t, resumed.InitialInputReceipt)
+	var resumedMessage bool
+	for {
+		e, err := observer.Next()
+		require.NoError(t, err)
+		if e.Type() == "agent.message" {
+			resumedMessage = true
+		}
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			break
+		}
+	}
+	require.True(t, resumedMessage)
+	_, err = svc.CloseSession(ctx(t), ref)
 	require.NoError(t, err)
 	data, err := os.ReadFile(evidence)
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	require.Len(t, lines, 2, "resume must not replay create input")
-	var a, b map[string]any
+	require.Len(t, lines, 3, "resume must not replay create input")
+	var a, b, resumedInput map[string]any
 	require.NoError(t, json.Unmarshal([]byte(lines[0]), &a))
 	require.NoError(t, json.Unmarshal([]byte(lines[1]), &b))
+	require.NoError(t, json.Unmarshal([]byte(lines[2]), &resumedInput))
 	require.Equal(t, true, a["before_init"])
 	require.Equal(t, a["pid"], b["pid"])
 	require.Equal(t, "first", a["text"])
 	require.Equal(t, "second", b["text"])
+	require.Equal(t, "resume", resumedInput["text"])
+	require.Equal(t, false, resumedInput["before_init"])
 }
 
 func TestTicket14PreIdentityBoundsAndUnrelatedResults(t *testing.T) {
@@ -342,7 +358,7 @@ func TestTicket14PreIdentityBoundsAndUnrelatedResults(t *testing.T) {
 				require.Error(t, err, "init and unrelated result must not settle initial work or admit another input")
 				_, err = svc.Cancel(ctx(t), ref)
 				require.NoError(t, err)
-				_, err = svc.ArchiveSession(ctx(t), ref)
+				_, err = svc.CloseSession(ctx(t), ref)
 				require.NoError(t, err)
 			}
 			_, err = svc.StopRuntime(ctx(t), "agent")
@@ -452,7 +468,7 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 					require.Equal(t, events.Source{}, e.Source())
 				}
 				if !uncertain {
-					_, err = svc.ArchiveSession(ctx(t), ref)
+					_, err = svc.CloseSession(ctx(t), ref)
 					require.NoError(t, err)
 				}
 			})
@@ -515,7 +531,7 @@ func TestTicket14CodexLateInitialReceiptKeepsOwner(t *testing.T) {
 				require.NoError(t, e)
 				require.Equal(t, "native-2", got.Status.SessionID)
 				require.Equal(t, "turn-native-2", got.InitialInputReceipt.Submission)
-				_, e = svc.ArchiveSession(ctx(t), resource.SessionRef{SessionID: got.Status.SessionID})
+				_, e = svc.CloseSession(ctx(t), resource.SessionRef{SessionID: got.Status.SessionID})
 				require.NoError(t, e)
 				_, stopErr = svc.StopRuntime(ctx(t), "agent")
 			}

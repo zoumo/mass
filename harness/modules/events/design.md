@@ -62,7 +62,7 @@ Service 解析 Session 后只调用其 Broadcast.subscribe。Broadcast 内部创
 
 ## 生命周期
 
-Session 归档、断线或 Runtime 停止不销毁 Broadcast、健康 Handler 和订阅；同 Session 恢复继续使用。没有订阅者时，Service 的历史责任仍存在；创建离线 Session 的 Broadcast 也不启动 Agent。进程重启只重新构造实时对象，不恢复订阅、不补历史事件。
+Session close、断线或 Runtime 停止不销毁 Broadcast、健康 Handler 和订阅；同一 Session 恢复继续使用。close 成功后 Broadcast 与订阅仍可用于读取已接纳事实。没有订阅者时，Service 的历史责任仍存在；创建离线 Session 的 Broadcast 也不启动 Agent。进程重启只重新构造实时对象，不恢复订阅、不补历史事件。
 
 应用 shutdown 由 Service 先停止新业务与消费者登记，按 Driver 合同持续接收最终事件，结算自己的历史和实时发布调用，再 close 各 Broadcast。Broadcast.close 仅停止新的发布/登记并关闭所有自有 Handler，订阅随队列 Handler 结束；不以关闭成功表示异步业务队列已完整消费或 Agent 已释放。Handler 关闭失败如实报告并保留清理责任，其他实例仍须尝试清理；不关闭共享存储或 Driver。
 

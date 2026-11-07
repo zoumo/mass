@@ -224,7 +224,7 @@ func (fileSuite *FileSuite) TestCorruptFileFailsClosed() {
 func (fileSuite *FileSuite) TestFullDirectoryCursorsAndConditionalDelete() {
 	t := fileSuite.T()
 	s, dir := open(t)
-	for _, v := range []struct{ ns, name, id, state string }{{"z", "a", "native-z", "archived"}, {"a", "z", "native-a-z", "unknown"}, {"a", "a", "native-a-a", "idle"}} {
+	for _, v := range []struct{ ns, name, id, state string }{{"z", "a", "native-z", "offline"}, {"a", "z", "native-a-z", "unknown"}, {"a", "a", "native-a-a", "idle"}} {
 		r := session(v.ns, v.name, v.id)
 		r.Status.State = events.SessionState(v.state)
 		_, err := s.CreateSession(r)
@@ -243,9 +243,9 @@ func (fileSuite *FileSuite) TestFullDirectoryCursorsAndConditionalDelete() {
 	require.Error(t, err, "resource cursor cannot be history cursor")
 	_, err = s.ListSessions(resource.SessionQuery{Limit: -1})
 	require.Error(t, err)
-	archived, err := s.ListSessions(resource.SessionQuery{State: "archived"})
+	offline, err := s.ListSessions(resource.SessionQuery{State: "offline"})
 	require.NoError(t, err)
-	require.Len(t, archived.Items, 1)
+	require.Len(t, offline.Items, 1)
 	r := all.Items[0]
 	// Re-read confirms failed conditional deletion had no effect.
 	err = s.DeleteSession(resource.SessionRef{SessionID: r.Status.SessionID}, "wrong")

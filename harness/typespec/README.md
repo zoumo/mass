@@ -3,7 +3,7 @@ type: Contract
 title: TypeSpec 合同入口
 description: Service、Runtime 与 Store 的接口版本与统一校验工具。
 status: stable
-interface_version: v0.2.17
+interface_version: v0.2.19
 sources:
 - id: direction
   resource: 项目负责人在 2026-10-19 关于应用服务与运行时拆分的讨论
@@ -14,7 +14,9 @@ sources:
 
 当前接口版本记录在本页元数据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
 
-当前修订增加可扩展的 Session features，首个开关 agentQuestions 默认开启，Driver 以 effectiveFeatures 返回实际生效值，不支持时降级为 false。此前修订已明确 EventStore 自动增量同步与失败续接、Service 独占当前运行映射和完整停止操作，Registry 只负责配置校验与 Driver 构造。停止只暴露 stopRuntime，不固定内部多步协调 Interface。设计变化历史见[更新记录](../log.md)，实现差距与检查证据见[实现差距记录](../implementation-gaps.md)。
+当前修订删除 Session `archived` 与 archive 操作，统一使用 close/offline：close 从任意状态接纳；需要调用 SDK 时，SDK Session close 成功是唯一 native 成功条件，随后仍须结算 MASS 内部责任才能进入 offline。失败或结算未知保持 closing 且可显式重试；idle Session 默认 10m 后走同一 close 路径，`0` 禁用且不停止 Runtime。create/resume 按需启动 Runtime，prompt/answer/cancel 不隐式恢复；服务重启不启动历史运行，旧在线状态校正为 unknown，旧 archived 记录迁移为 offline，查询与写入不再接受旧状态。冷进程没有当前运行映射的 unknown Runtime 只由显式 start/resume 接管，不证明旧 provider 工作或后端资源已经结束。
+
+此前 v0.2.17 修订增加可扩展的 Session features，首个开关 agentQuestions 默认开启，Driver 以 effectiveFeatures 返回实际生效值，不支持时降级为 false。更早修订已明确 EventStore 自动增量同步与失败续接、Service 独占当前运行映射和完整停止操作，Registry 只负责配置校验与 Driver 构造。停止只暴露 stopRuntime，不固定内部多步协调 Interface。设计变化历史见[更新记录](../log.md)，实现差距与检查证据见[实现差距记录](../implementation-gaps.md)。
 
 - [资源管理接口](../modules/service/main.tsp)：RuntimeService、SessionService；历史存取与实时观察是分开的业务操作。
 - [运行时接口](../modules/runtime/main.tsp)：RuntimeRegistry、RuntimeDriver；Driver.events() 返回单消费者 EventStream<SessionEvent>，多个 Session 共用。

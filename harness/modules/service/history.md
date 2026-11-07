@@ -26,7 +26,7 @@ Runtime adapter 决定一个原生观察如何转换为公共事实，并自行�
 
 ## 完整事实与预览
 
-完整条目来自真实 Agent 观察。预览用于显示生成中的内容，不因空闲、取消、失败、断线、归档或停止而自动补成完整历史。用户输入副本不能替代真实完整用户条目。
+完整条目来自真实 Agent 观察。预览用于显示生成中的内容，不因空闲、取消、失败、断线、close 或停止而自动补成完整历史。用户输入副本不能替代真实完整用户条目。
 
 条目完成与前台工作结束分别表达。工具调用、执行结果和控制批准也分别表达；调用参数完整不证明已经执行。输出缺失、显式空值和已知截断保持区别。
 
@@ -72,7 +72,7 @@ EventStore 的完整接口见 [TypeSpec](../eventstore/event-store.tsp)。getSyn
 
 append 支持非空批次；成功覆盖本批全部事件，失败不保证整批未写入。调用方保留原事件，以原 eventId 重试；EventStore 内部自动续同步并执行幂等校验，旧事件重试不能使进度倒退。批次原子提交协议与准确幂等比较规则仍待定义。
 
-Agent 的 session.state_update 由异步状态 handler 写 MetaStore，允许写入失败而继续广播；资源查询可以落后于通知，也不承诺一定追上。它不进入 EventStore，不阻断其他实时 Handler。状态保存遵守资源版本与 closing/archived 保护，不能从仅有 Session 身份的实时事件取得某个运行的操作权限；业务生命周期的必要写入不因此变为可选。
+Agent 的 session.state_update 由异步状态 handler 写 MetaStore，允许写入失败而继续广播；资源查询可以落后于通知，也不承诺一定追上。它不进入 EventStore，不阻断其他实时 Handler。状态保存遵守资源版本、当前运行身份与 closing 保护，不能从仅有 Session 身份的实时事件取得某个运行的操作权限；业务生命周期的必要写入不因此变为可选。
 
 ## 校验与恢复协作
 
@@ -86,7 +86,7 @@ Agent 的 session.state_update 由异步状态 handler 写 MetaStore，允许写
 
 完整持久事实在有界资源内等待或明确失败，不能静默丢失；预览允许按策略丢弃。持续压力可能传回共享运行连接，容量限制不等于整个进程内存上限。
 
-停止区分已接纳事实和仍在上游的观察。Session 归档或 Runtime 停止时 Service 继续消费原 Driver，结算自己的历史追加和已接纳的实时 publish 调用；保留 Broadcast、健康 Handler 与订阅，恢复继续使用。仅应用 shutdown 才关闭 Broadcast，关闭 Handler 并如实报告未完成的清理（不保证异步动作全部消费），订阅随队列 Handler 结束；超时或未结算不宣告干净关闭。永久阻塞存储时不能同时承诺有限时间完成与全部成功提交。
+停止区分已接纳事实和仍在上游的观察。Session close 或 Runtime 停止时 Service 继续消费原 Driver，结算自己的历史追加和已接纳的实时 publish 调用；保留 Broadcast、健康 Handler 与订阅，恢复继续使用。仅应用 shutdown 才关闭 Broadcast，关闭 Handler 并如实报告未完成的清理（不保证异步动作全部消费），订阅随队列 Handler 结束；超时或未结算不宣告干净关闭。永久阻塞存储时不能同时承诺有限时间完成与全部成功提交。
 
 ## 验收场景
 
@@ -108,4 +108,4 @@ Agent 的 session.state_update 由异步状态 handler 写 MetaStore，允许写
 
 ## 原生历史回放
 
-[load](load.md)先建立 Service 接收及原操作绑定，再读取 SDK 的异步原生历史，经正常 adapter 内容转换、归属校验、EventStore 追加和同一 Broadcast 分发。持久事实的 replay 字段保存历史来源，状态/交互不变成当前操作。native_completed 标记不证明本地完成；确认同一原生会话已恢复、前序追加及 publish 结算后才保存 completed，并保留恢复运行供后续输入。资源释放只属于失败/取消/归档清理，不能作为成功回放的前置条件。部分失败保留已提交事实，禁止按新 UUID 从头重送。
+[load](load.md)先建立 Service 接收及原操作绑定，再读取 SDK 的异步原生历史，经正常 adapter 内容转换、归属校验、EventStore 追加和同一 Broadcast 分发。持久事实的 replay 字段保存历史来源，状态/交互不变成当前操作。native_completed 标记不证明本地完成；确认同一原生会话已恢复、前序追加及 publish 结算后才保存 completed，并保留恢复运行供后续输入。资源释放只属于失败、取消或 close 清理，不能作为成功回放的前置条件。部分失败保留已提交事实，禁止按新 UUID 从头重送。

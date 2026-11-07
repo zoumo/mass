@@ -46,10 +46,8 @@ func (s *Service) ListSessions(q resource.SessionQuery) (resource.SessionPage, e
 	if q.Namespace != "" && !validNamespace(q.Namespace) || q.RuntimeRef != "" && !validName(q.RuntimeRef) || q.Limit < 0 {
 		return resource.SessionPage{}, runtime.InvalidArgument("invalid session query")
 	}
-	switch q.State {
-	case "", "offline", "opening", "idle", "running", "requires_action", "closing", "archived", "unknown":
-	default:
-		return resource.SessionPage{}, runtime.InvalidArgument("invalid session state")
+	if err := resource.ValidateSessionState(q.State); err != nil {
+		return resource.SessionPage{}, err
 	}
 	if q.SessionID != "" {
 		if err := resource.ValidateSessionID(q.SessionID); err != nil {
@@ -122,104 +120,22 @@ func (s *Service) drainLane(ctx context.Context, l *lane) error {
 	return l.commitErr
 }
 
-func offlineStatus(r *resource.Session, archived bool) {
+func offlineStatus(r *resource.Session) {
 	r.Status.State = "offline"
-	if archived {
-		r.Status.State = "archived"
-	}
+	r.Status.Reason = ""
 	r.Status.AppliedGeneration = 0
 	r.Status.RuntimeGeneration = 0
 	r.Status.Capabilities = nil
 	r.Status.EffectiveFeatures = nil
 }
 
-func (s *Service) archiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
-	return s.archiveSessionOwner(ctx, ref, nil, events.Source{})
-}
-
-// An automatic failure close must still target its original native run after
-// acquiring the Session operation lock; explicit archive/resume may win first.
-func (s *Service) archiveSessionOwner(ctx context.Context, ref resource.SessionRef, expected *runBinding, source events.Source) (resource.Session, error) {
-	r, err := s.GetSession(ref)
-	if err != nil {
-		return r, err
-	}
-	ref = resource.SessionRef{SessionID: r.Status.SessionID}
-	unlock := s.sessionOperation(r.Status.SessionID)
-	defer unlock()
-	r, err = s.GetSession(ref)
-	if err != nil {
-		return r, err
-	}
-	if r.Status.HistoryLoad != nil && r.Status.HistoryLoad.Phase != "completed" {
-		return r, runtime.FailedPrecondition("history load remains fenced")
-	}
-	s.mu.Lock()
-	run := s.runs[r.Spec.RuntimeRef]
-	if expected != nil {
+// closeOverloadedSession targets only the over-capacity owner observed by the
+// stream reader. A later resume or explicit operation cannot become its victim.
+func (s *Service) closeOverloadedSession(ctx context.Context, ref resource.SessionRef, expected *runBinding, source events.Source) (resource.Session, error) {
+	return s.closeSessionWithGuard(ctx, ref, func(r resource.Session) bool {
 		l := expected.lanes[r.Status.SessionID]
-		if run != expected || l == nil || !l.source.SameRun(source) {
-			s.mu.Unlock()
-			return r, runtime.FailedPrecondition("original overload owner superseded")
-		}
-	}
-	s.mu.Unlock()
-	if run == nil {
-		if r.Status.State == "archived" {
-			return r, nil
-		}
-		if r.Status.AppliedGeneration != 0 {
-			return r, runtime.FailedPrecondition("session release not confirmed in this process")
-		}
-		return s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
-	}
-	run.admission.RLock()
-	defer run.admission.RUnlock()
-	r, err = s.GetSession(ref)
-	if err != nil {
-		return r, err
-	}
-	s.mu.Lock()
-	if s.runs[r.Spec.RuntimeRef] != run || run.stopping || run.pending[addressKey(runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name})] != nil {
-		s.mu.Unlock()
-		return r, runtime.FailedPrecondition("original lifecycle responsibility remains")
-	}
-	l := run.lanes[r.Status.SessionID]
-	s.mu.Unlock()
-	if l == nil {
-		if r.Status.AppliedGeneration != 0 {
-			return r, runtime.FailedPrecondition("session release not confirmed")
-		}
-		return s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
-	}
-	s.mu.Lock()
-	l.closing = true
-	s.mu.Unlock()
-	if _, err = s.sessionStatus(ref, func(r *resource.Session) { r.Status.State = "closing" }); err != nil {
-		return r, err
-	}
-	if err := s.sealLane(ctx, l); err != nil {
-		return r, err
-	}
-	if !l.nativeClosed {
-		if err := s.closeForStop(ctx, run, r.Status.SessionID); err != nil {
-			s.mu.Lock()
-			l.releasing = false // Explicit cancel can still settle the original work.
-			s.mu.Unlock()
-			return r, err
-		}
-		l.nativeClosed = true
-	}
-	if err := s.drainLane(ctx, l); err != nil {
-		return r, err
-	}
-	r, err = s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) })
-	if err == nil {
-		s.mu.Lock()
-		retireLane(run, l)
-		s.mu.Unlock()
-	}
-	return r, err
+		return s.runs[r.Spec.RuntimeRef] == expected && l != nil && l.overloaded && l.source.SameRun(source)
+	})
 }
 
 // One attempt belongs to the original run; callers share its result and may
@@ -345,6 +261,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	lanes := make(map[string]*lane, len(run.lanes))
 	for id, l := range run.lanes {
 		l.closing = true
+		stopIdleTimerLocked(l)
 		lanes[id] = l
 	}
 	s.mu.Unlock()
@@ -426,7 +343,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 		if err := s.drainLane(ctx, l); err != nil {
 			return r, err
 		}
-		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { offlineStatus(r, false) }); err != nil {
+		if _, err = s.sessionStatus(resource.SessionRef{SessionID: id}, func(r *resource.Session) { offlineStatus(r) }); err != nil {
 			return r, err
 		}
 	}
@@ -460,11 +377,19 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		return resource.SessionResumed{Session: r}, err
 	}
 	ref = resource.SessionRef{SessionID: r.Status.SessionID}
-	unlock := s.sessionOperation(r.Status.SessionID)
+	unlock, err := s.sessionOperation(r.Status.SessionID, false)
+	if err != nil {
+		return resource.SessionResumed{Session: r}, err
+	}
 	defer unlock()
 	r, err = s.GetSession(ref)
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
+	}
+	switch r.Status.State {
+	case "offline", events.Unknown:
+	default:
+		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("previous session release remains unsettled")
 	}
 	// Read every committed page before touching the adapter or native process.
 	if r.Status.HistoryLoad != nil && r.Status.HistoryLoad.Phase != "completed" {
@@ -488,6 +413,9 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 			break
 		}
 		q.After = page.Next
+	}
+	if _, err := s.StartRuntime(ctx, r.Spec.RuntimeRef); err != nil {
+		return resource.SessionResumed{Session: r}, err
 	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
@@ -518,7 +446,9 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
 	}
-	if r.Status.State == "closing" || r.Status.AppliedGeneration != 0 {
+	switch r.Status.State {
+	case "offline", events.Unknown:
+	default:
 		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("previous session release remains unsettled")
 	}
 	a := runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name}
@@ -634,6 +564,10 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	l.nativeClosed = false
 	l.closing = false
 	l.releasing = false
+	l.observedState = ""
+	l.stateObserved = false
+	l.activeTools = nil
+	l.interactions = nil
 	l.err = errors.Join(l.err, op.err)
 	run.lanes[r.Status.SessionID] = l
 	s.mu.Unlock()
@@ -664,17 +598,47 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	}
 	s.mu.Unlock()
 	if run == nil {
-		return nil, nil, runtime.FailedPrecondition("session unavailable")
+		return nil, nil, sessionResumeRequired(r.Status.State)
 	}
 	run.admission.RLock()
 	s.mu.Lock()
+	closeAccepted := s.sessionCloseAcceptedLocked(r.Status.SessionID)
 	l := run.lanes[r.Status.SessionID]
+	if closeAccepted {
+		s.mu.Unlock()
+		run.admission.RUnlock()
+		return nil, nil, sessionResumeRequired(r.Status.State)
+	}
 	if !canceling && l != nil && l.overloaded {
 		s.mu.Unlock()
 		run.admission.RUnlock()
 		return nil, nil, runtime.Exhausted(sessionDeliveryOverloaded)
 	}
-	available := run.started && l != nil && l == original && !l.releasing
+	state := r.Status.State
+	live := l != nil && l == original
+	if live && l.stateObserved {
+		state = l.observedState
+	}
+	if !canceling {
+		switch state {
+		case events.Idle, events.Running, events.RequiresAction:
+		case events.Unknown:
+			// Creation and resume can return before their initial asynchronous
+			// observation. The current live lane and Driver dispatch still prove
+			// the connection; a detached unknown has no lane.
+			if !live || l.stateObserved {
+				s.mu.Unlock()
+				run.admission.RUnlock()
+				return nil, nil, sessionResumeRequired(state)
+			}
+		default:
+			s.mu.Unlock()
+			run.admission.RUnlock()
+			return nil, nil, sessionResumeRequired(state)
+		}
+	}
+	pending := run.pending[addressKey(runtime.Address{Namespace: r.Metadata.Namespace, SessionName: r.Metadata.Name})]
+	available := run.started && live && !l.releasing && pending == nil
 	if l != nil && l.load != nil && !l.load.complete.Load() {
 		available = false
 	}
@@ -683,21 +647,35 @@ func (s *Service) controlWork(r resource.Session, canceling bool) (*runBinding, 
 	}
 	if available {
 		l.admission.RLock()
+		s.invalidateIdleLocked(l)
 	}
 	s.mu.Unlock()
 	if !available {
 		run.admission.RUnlock()
-		return nil, nil, runtime.FailedPrecondition("session unavailable")
+		return nil, nil, sessionResumeRequired(r.Status.State)
 	}
 	return run, l, nil
 }
 
 type sessionOperation struct {
 	sync.Mutex
-	users int
+	users   int
+	closing bool
 }
 
-func (s *Service) sessionOperation(id string) func() {
+var errSessionOperationGuardRejected = errors.New("session operation guard rejected")
+
+// Caller holds s.mu, which makes close acceptance atomic with work admission.
+func (s *Service) sessionCloseAcceptedLocked(id string) bool {
+	op := s.sessionOps[id]
+	return op != nil && op.closing
+}
+
+func (s *Service) sessionOperation(id string, closing bool) (func(), error) {
+	return s.sessionOperationGuarded(id, closing, nil)
+}
+
+func (s *Service) sessionOperationGuarded(id string, closing bool, guard func() bool) (func(), error) {
 	s.mu.Lock()
 	op := s.sessionOps[id]
 	if op == nil {
@@ -707,6 +685,29 @@ func (s *Service) sessionOperation(id string) func() {
 	op.users++
 	s.mu.Unlock()
 	op.Lock()
+	s.mu.Lock()
+	if !closing && op.closing {
+		op.users--
+		if op.users == 0 {
+			delete(s.sessionOps, id)
+		}
+		s.mu.Unlock()
+		op.Unlock()
+		return nil, runtime.FailedPrecondition("session close already accepted")
+	}
+	if closing && guard != nil && (op.closing || op.users != 1 || !guard()) {
+		op.users--
+		if op.users == 0 {
+			delete(s.sessionOps, id)
+		}
+		s.mu.Unlock()
+		op.Unlock()
+		return nil, errSessionOperationGuardRejected
+	}
+	if closing {
+		op.closing = true
+	}
+	s.mu.Unlock()
 	return func() {
 		op.Unlock()
 		s.mu.Lock()
@@ -715,28 +716,26 @@ func (s *Service) sessionOperation(id string) func() {
 			delete(s.sessionOps, id)
 		}
 		s.mu.Unlock()
-	}
+	}, nil
 }
 
 func (s *Service) closeForStop(ctx context.Context, run *runBinding, id string) error {
-	err := run.driver.CloseSession(ctx, id)
-	if !errors.Is(err, runtime.ErrWorkUnsettled) {
-		return err
-	}
-	if _, err = run.driver.Cancel(ctx, id); err != nil {
-		return err
-	}
+	// Manual close hands active work directly to SDK close. Stop additionally
+	// cancels and waits for work to settle so final facts precede release.
 	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		receipt, err := run.driver.Cancel(ctx, id)
+		if err != nil && !errors.Is(err, runtime.ErrFailedPrecondition) {
+			return errors.Join(err, run.driver.CloseSession(ctx, id))
+		}
+		if err != nil || receipt.Result == "noActiveWork" {
+			return run.driver.CloseSession(ctx, id)
+		}
 		select {
 		case <-ctx.Done():
 			return fmtUnknown(ctx.Err())
 		case <-ticker.C:
-		}
-		err = run.driver.CloseSession(ctx, id)
-		if !errors.Is(err, runtime.ErrWorkUnsettled) {
-			return err
 		}
 	}
 }
@@ -860,17 +859,11 @@ func awaitSessionLifecycle[T any](ctx context.Context, operation func(context.Co
 	}
 }
 
-func (s *Service) ArchiveSession(ctx context.Context, ref resource.SessionRef) (resource.Session, error) {
-	if err := ctx.Err(); err != nil {
-		return resource.Session{}, err
-	}
-	return awaitSessionLifecycle(ctx, func(owner context.Context) (resource.Session, error) { return s.archiveSession(owner, ref) })
-}
-
 // Keep the original delivery owner until its Driver stream ends. Close confirms
 // native release, but facts already in the shared stream may still arrive here.
 // Caller holds s.mu; state projection is sealed by l.closing.
 func retireLane(run *runBinding, l *lane) {
+	stopIdleTimerLocked(l)
 	if run.retired == nil {
 		run.retired = map[events.Source]*lane{}
 	}

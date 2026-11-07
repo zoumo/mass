@@ -291,17 +291,17 @@ func (s *appendSuite) TestFailedFullRecoveryRetainsAppendEvidenceAndCleansReadon
 	s.Empty(entries)
 }
 
-func (s *appendSuite) TestArchiveDeleteAndSameNameRecreationKeepDistinctIdentity() {
+func (s *appendSuite) TestCloseDeleteAndSameNameRecreationKeepDistinctIdentity() {
 	rt, err := s.st.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "codex"}, Spec: resource.RuntimeSpec{Type: "codex"}})
 	s.Require().NoError(err)
-	fact := s.fact("archive retains this fact")
+	fact := s.fact("close retains this fact")
 	_, err = s.st.Append("native", []events.SessionEvent{fact})
 	s.Require().NoError(err)
-	archived := s.r
-	archived.Status.State = "archived"
-	archived, err = s.st.UpdateSession(archived)
+	closed := s.r
+	closed.Status.State = "offline"
+	closed, err = s.st.UpdateSession(closed)
 	s.Require().NoError(err)
-	s.Equal(s.r.Metadata.Generation, archived.Metadata.Generation)
+	s.Equal(s.r.Metadata.Generation, closed.Metadata.Generation)
 	s.Require().NoError(s.st.DeleteRuntime("codex", rt.Metadata.ResourceVersion))
 	oldRuntimeUID := rt.Metadata.UID
 	rt.Metadata = resource.Metadata{Name: "codex"}
@@ -311,18 +311,18 @@ func (s *appendSuite) TestArchiveDeleteAndSameNameRecreationKeepDistinctIdentity
 	s.Require().NoError(s.st.Reconcile())
 	got, err := s.st.GetSession(resource.SessionRef{SessionID: "native"})
 	s.Require().NoError(err)
-	s.Equal(archived, got)
+	s.Equal(closed, got)
 	page, err := s.st.ListHistory("native", store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Require().Len(page.Events, 1)
 	s.Equal(fact.EventID, page.Events[0].EventID)
-	s.Require().NoError(s.st.DeleteSession(resource.SessionRef{SessionID: "native"}, archived.Metadata.ResourceVersion))
+	s.Require().NoError(s.st.DeleteSession(resource.SessionRef{SessionID: "native"}, closed.Metadata.ResourceVersion))
 	next := s.r
 	next.Metadata = resource.Metadata{Namespace: "default", Name: "demo"}
 	next.Status.SessionID = "new-native"
 	next, err = s.st.CreateSession(next)
 	s.Require().NoError(err)
-	s.NotEqual(archived.Metadata.UID, next.Metadata.UID)
+	s.NotEqual(closed.Metadata.UID, next.Metadata.UID)
 	for _, reopen := range []bool{false, true} {
 		if reopen {
 			s.Require().NoError(s.st.Reconcile())

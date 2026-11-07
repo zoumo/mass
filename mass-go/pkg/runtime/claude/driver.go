@@ -179,6 +179,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	if !running {
 		return runtime.DriverSession{}, noResources("driver not running")
 	}
+	env := d.options.Environment("claude")
 	if resume != "" {
 		m, err := d.vault.Load(resume, a, spec)
 		if err != nil {
@@ -191,12 +192,19 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		if err := json.Unmarshal(m.Context, &saved); err != nil {
 			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
-		if saved.ID != resume || saved.Cwd != spec.Cwd {
+		if saved.ID != resume || !runtime.EqualNativePath(saved.Cwd, spec.Cwd) {
 			return runtime.DriverSession{}, noResources("invalid Claude recovery context")
+		}
+		if initial == nil {
+			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, &runtime.OperationError{
+				Code:    "unsupported",
+				Reason:  "resume_identity_unobservable",
+				Message: "Claude zero-input resume cannot observe native session identity; provide explicit initialInput",
+			})
 		}
 	}
 	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown", requireLink: resume != ""}
-	c, err := sdk.Open(ctx, sessionOptions(effective, resume, spec.Cwd, d.options.Executable, d.options.Environment("claude")))
+	c, err := sdk.Open(ctx, sessionOptions(effective, resume, spec.Cwd, d.options.Executable, env))
 	if err != nil {
 		close(s.ready)
 		// Failed SDK startup closes its unreturned connection before returning.
@@ -257,7 +265,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 			var init struct {
 				Cwd string `json:"cwd"`
 			}
-			if err := json.Unmarshal(e.Raw, &init); err != nil || init.Cwd != spec.Cwd {
+			if err := json.Unmarshal(e.Raw, &init); err != nil || !runtime.EqualNativePath(init.Cwd, spec.Cwd) {
 				close(s.ready)
 				return runtime.DriverSession{}, fail(errors.New("native init cwd mismatch"))
 			}
@@ -933,44 +941,51 @@ func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer a
 }
 
 func (d *Driver) CloseSession(ctx context.Context, id string) error {
-	s, err := d.get(id)
-	if err != nil {
-		return err
+	d.mu.Lock()
+	s := d.sessions[id]
+	stopped := d.stopped
+	d.mu.Unlock()
+	if s == nil {
+		if stopped {
+			return runtime.FailedPrecondition("session unavailable")
+		}
+		return nil
 	}
 	s.mu.Lock()
-	if (s.active || s.sending) && s.err == nil {
-		s.mu.Unlock()
-		return runtime.ErrWorkUnsettled
-	}
 	s.closing = true
 	s.mu.Unlock()
 	d.interactions.RemoveSession(id)
-	err = s.client.Close()
+	closeErr := s.client.Close()
 	select {
 	case <-s.done:
 	case <-ctx.Done():
-		return errors.Join(err, ctx.Err())
+		if closeErr != nil {
+			return closeErr
+		}
+		return ctx.Err()
 	}
-	if drain := d.pipe.Flush(ctx); drain != nil {
-		return errors.Join(err, drain)
+	if err := d.pipe.Flush(ctx); err != nil {
+		return errors.Join(closeErr, err)
 	}
 	if cause := s.client.Err(); cause != nil {
-		return errors.Join(err, fmt.Errorf("native observation terminated: %w", cause))
+		return errors.Join(closeErr, fmt.Errorf("native observation terminated: %w", cause))
 	}
 	s.mu.Lock()
 	cause := s.err
 	s.mu.Unlock()
 	if cause != nil {
-		return errors.Join(err, fmt.Errorf("observation terminated: %w", cause))
+		return errors.Join(closeErr, fmt.Errorf("observation terminated: %w", cause))
 	}
-	if err != nil {
-		return fmt.Errorf("native cleanup failed: %w", err)
+	if closeErr != nil {
+		return fmt.Errorf("native cleanup failed: %w", closeErr)
 	}
 	d.mu.Lock()
-	delete(d.sessions, id)
-	d.mu.Unlock()
+	if d.sessions[id] == s {
+		delete(d.sessions, id)
+	}
 	d.interactions.RemoveSession(id)
-	return err
+	d.mu.Unlock()
+	return nil
 }
 
 func (d *Driver) Stop(context.Context) error {

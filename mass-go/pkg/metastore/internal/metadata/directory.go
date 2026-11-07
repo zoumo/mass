@@ -41,6 +41,9 @@ func sessionOrder(r resource.Session) string {
 }
 
 func (s *Store) ListSessions(q resource.SessionQuery) (resource.SessionPage, error) {
+	if err := resource.ValidateSessionState(q.State); err != nil {
+		return resource.SessionPage{}, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	empty := resource.SessionPage{}

@@ -236,7 +236,7 @@ model PlanEventPayload {
   }[];
 }
 
-/** adapter 只报告工作观察，不决定 Service 的打开、关闭或归档状态。
+/** adapter 只报告工作观察，不决定 Service 的打开或 close 状态。
  * 未知用 null，不虚构 idle；共享值类型不依赖 Service 资源 DTO。 */
 alias ObservedSessionState =
   | SessionState.idle

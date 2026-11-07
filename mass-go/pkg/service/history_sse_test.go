@@ -130,7 +130,7 @@ func (s *SessionWorkSuite) TestBoundedIndependentObservationDoesNotCancelWork() 
 	s.Len(page.Events, 140)
 	session, err := s.svc.GetSession(s.ref)
 	s.Require().NoError(err)
-	s.NotContains([]events.SessionState{"closing", "archived"}, session.Status.State)
+	s.NotContains([]events.SessionState{"closing", "offline"}, session.Status.State)
 }
 
 func (s *SessionWorkSuite) TestSSEEstablishmentErrorsRemainJSON() {
@@ -190,7 +190,7 @@ func readFrame(reader *bufio.Reader) (string, error) {
 	}
 }
 
-func (s *SessionWorkSuite) TestSSEReadyLiveOnlyArchiveAndServerShutdown() {
+func (s *SessionWorkSuite) TestSSEReadyLiveOnlyCloseAndServerShutdown() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	prior, err := s.svc.SubscribeEvents(s.ref)
@@ -229,7 +229,7 @@ func (s *SessionWorkSuite) TestSSEReadyLiveOnlyArchiveAndServerShutdown() {
 	s.Require().NoError(err)
 	s.Require().Len(page.Events, 2)
 	s.Equal(fresh.EventID, page.Events[1].EventID)
-	_, err = s.svc.ArchiveSession(ctx, s.ref)
+	_, err = s.svc.CloseSession(ctx, s.ref)
 	s.Require().NoError(err)
 	handler.Shutdown()
 	frame, err = readFrame(reader)
@@ -240,7 +240,7 @@ func (s *SessionWorkSuite) TestSSEReadyLiveOnlyArchiveAndServerShutdown() {
 	s.Require().ErrorIs(err, io.EOF)
 	session, err := s.svc.GetSession(resource.SessionRef{SessionID: "original"})
 	s.Require().NoError(err)
-	s.Equal(events.SessionState("archived"), session.Status.State)
+	s.Equal(events.SessionState("offline"), session.Status.State)
 }
 
 // captureObservation exposes the public subscription handle to exercise a
@@ -289,7 +289,7 @@ func (s *SessionWorkSuite) TestSSEExplicitObserverCloseSendsClosed() {
 	s.Require().ErrorIs(err, io.EOF)
 	session, err := s.svc.GetSession(s.ref)
 	s.Require().NoError(err)
-	s.NotContains([]events.SessionState{"archived", "closing"}, session.Status.State)
+	s.NotContains([]events.SessionState{"offline", "closing"}, session.Status.State)
 }
 
 func (d *workDriver) LoadSession(ctx context.Context, id string, address runtime.Address, _, loadID string) error {

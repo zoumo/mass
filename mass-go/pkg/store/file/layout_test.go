@@ -29,7 +29,7 @@ func (fileSuite *FileSuite) TestJSONLIndexRebuildAndStatusUpdates() {
 	require.NoError(t, err)
 	original, err := os.ReadFile(index)
 	require.NoError(t, err)
-	first.Status.State = events.SessionState("archived")
+	first.Status.State = events.SessionState("offline")
 	first, err = st.UpdateSession(first)
 	require.NoError(t, err)
 	after, err := os.Stat(index)

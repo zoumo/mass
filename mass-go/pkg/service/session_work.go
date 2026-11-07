@@ -2,10 +2,35 @@ package service
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
+
+type sessionResumeRequiredError struct {
+	state events.SessionState
+}
+
+func (e *sessionResumeRequiredError) Error() string {
+	return fmt.Sprintf("conflict: session unavailable in state %q; explicitly resume before dispatching work", e.state)
+}
+
+func (e *sessionResumeRequiredError) Unwrap() []error {
+	return []error{
+		runtime.ErrFailedPrecondition,
+		&runtime.OperationError{
+			Code:    "conflict",
+			Reason:  "session_resume_required",
+			Message: fmt.Sprintf("Session is unavailable in state %q; explicitly resume before dispatching work", e.state),
+		},
+	}
+}
+
+func sessionResumeRequired(state events.SessionState) error {
+	return &sessionResumeRequiredError{state: state}
+}
 
 // Admission pins the resolved identity and original run until dispatch settles.
 // Caller cancellation ends only the wait; the owner retains the admission gate.
@@ -33,9 +58,14 @@ func sessionWork[T any](ctx context.Context, s *Service, ref resource.SessionRef
 	}
 	done := make(chan result, 1)
 	go func() {
-		defer run.admission.RUnlock()
-		defer l.admission.RUnlock()
-		value, err := dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
+		value, err := func() (T, error) {
+			defer run.admission.RUnlock()
+			defer l.admission.RUnlock()
+			return dispatch(context.WithoutCancel(ctx), run, r.Status.SessionID)
+		}()
+		if canceling {
+			s.rearmIdleAfterActivity(run, l)
+		}
 		done <- result{value, err}
 	}()
 	select {

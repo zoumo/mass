@@ -30,7 +30,7 @@ func TestMetadataDoesNotDependOnEvents(t *testing.T) {
 	got, err := st.GetSession(resource.SessionRef{SessionID: "native"})
 	require.NoError(t, err)
 	require.Equal(t, r, got)
-	got.Status.State = "archived"
+	got.Status.State = "offline"
 	_, err = st.UpdateSession(got)
 	require.NoError(t, err)
 }
@@ -59,7 +59,7 @@ func TestEventFirstLifecycleOnSharedRoot(t *testing.T) {
 	require.NoError(t, history.Close())
 	got, err := meta.GetSession(resource.SessionRef{SessionID: "native"})
 	require.NoError(t, err)
-	got.Status.State = "archived"
+	got.Status.State = "offline"
 	_, err = meta.UpdateSession(got)
 	require.NoError(t, err)
 }

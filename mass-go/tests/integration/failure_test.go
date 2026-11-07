@@ -270,9 +270,9 @@ func (s *failureSuite) TestSlowStorageDoesNotBlockOtherSession() {
 	s.Require().NoError(err)
 	s.Empty(p.Events)
 	release()
-	_, err = s.svc.ArchiveSession(ctx(s.T()), a)
+	_, err = s.svc.CloseSession(ctx(s.T()), a)
 	s.Require().NoError(err)
-	_, err = s.svc.ArchiveSession(ctx(s.T()), b)
+	_, err = s.svc.CloseSession(ctx(s.T()), b)
 	s.Require().NoError(err)
 	s.T().Log("PASS B completes and persists while A append remains blocked in its own lane")
 }
@@ -338,7 +338,7 @@ func (s *failureSuite) TestBoundedOverloadRetainsDelivery() {
 		return err == nil && current.Status.State == "closing"
 	}, 2*time.Second, 5*time.Millisecond)
 	_, err := s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("sealed")}})
-	s.Require().ErrorContains(err, "session_delivery_overloaded")
+	requireOverloadOrResumeRequired(s.T(), err)
 	release()
 	// All original facts remain queryable after the storage gate is released.
 	deadline := time.Now().Add(20 * time.Second)
@@ -490,7 +490,7 @@ func (s *failureSuite) TestCancellationDuringIdentityCommitSettlesOriginalOwner(
 	s.Require().NoError(err)
 	r, err := s.svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().NoError(err)
-	s.Equal(events.SessionState("archived"), r.Status.State)
+	s.Equal(events.SessionState("offline"), r.Status.State)
 	p, err := s.st.ListHistory(r.Status.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(p.Events, 3)
@@ -512,7 +512,7 @@ func (s *failureSuite) TestLateAnswerCannotControlRecoveredRun() {
 		}
 	}
 	s.until(sub, events.Idle)
-	_, err = s.svc.ArchiveSession(ctx(s.T()), ref)
+	_, err = s.svc.CloseSession(ctx(s.T()), ref)
 	s.Require().NoError(err)
 	_, err = s.svc.ResumeSession(ctx(s.T()), ref)
 	s.Require().NoError(err)
@@ -549,7 +549,7 @@ func (s *failureSuite) TestUnknownIdentityCommitReconcilesOriginalFacts() {
 	s.Require().NoError(err)
 	r, err := s.svc.GetSession(resource.SessionRef{SessionID: "claude-session"})
 	s.Require().NoError(err)
-	s.Equal(events.SessionState("archived"), r.Status.State)
+	s.Equal(events.SessionState("offline"), r.Status.State)
 	page, err = s.st.ListHistory("claude-session", store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(page.Events, 3)

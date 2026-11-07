@@ -142,7 +142,7 @@ func (s *RuntimeStopSuite) TestShutdownCleansSettledBroadcastWhenAnotherRuntimeF
 	s.False(ok)
 }
 
-func (s *RuntimeStopSuite) TestArchiveSettlesFinalDeliveryFenceAndKeepsRealtimeObjects() {
+func (s *RuntimeStopSuite) TestCloseSettlesFinalDeliveryFenceAndKeepsRealtimeObjects() {
 	b, err := s.svc.EventBroadcast(s.ref)
 	s.Require().NoError(err)
 	sub, err := s.svc.SubscribeEvents(s.ref)
@@ -182,7 +182,7 @@ func (s *RuntimeStopSuite) TestArchiveSettlesFinalDeliveryFenceAndKeepsRealtimeO
 		return s.d.pipe.Flush(ctx)
 	}
 	done := make(chan error, 1)
-	go func() { _, err := s.svc.ArchiveSession(context.Background(), s.ref); done <- err }()
+	go func() { _, err := s.svc.CloseSession(context.Background(), s.ref); done <- err }()
 	select {
 	case <-s.history.entered:
 	case <-time.After(time.Second):
@@ -190,7 +190,7 @@ func (s *RuntimeStopSuite) TestArchiveSettlesFinalDeliveryFenceAndKeepsRealtimeO
 	}
 	select {
 	case err := <-done:
-		s.Fail("archive completed before history/publish settled", "%v", err)
+		s.Fail("close completed before history/publish settled", "%v", err)
 	default:
 	}
 	release(s.history.release)
@@ -201,7 +201,7 @@ func (s *RuntimeStopSuite) TestArchiveSettlesFinalDeliveryFenceAndKeepsRealtimeO
 	}
 	select {
 	case err := <-done:
-		s.Fail("archive completed before publish settled", "%v", err)
+		s.Fail("close completed before publish settled", "%v", err)
 	default:
 	}
 	release(publishRelease)

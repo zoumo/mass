@@ -225,6 +225,6 @@ func ticket18Roundtrip(t *testing.T, bin, choices, decision, name, kind string) 
 	var original map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(answer, &original))
 	require.Len(t, original, 1)
-	require.NoError(t, client.ArchiveSession(ctx(t), ref, nil))
-	require.Error(t, client.Answer(ctx(t), ref, interaction, map[string]any{"outcome": "selected", "optionId": "allow-once"}, nil), "archive must not resurrect old authority")
+	require.NoError(t, client.CloseSession(ctx(t), ref, nil))
+	require.Error(t, client.Answer(ctx(t), ref, interaction, map[string]any{"outcome": "selected", "optionId": "allow-once"}, nil), "close must not resurrect old authority")
 }

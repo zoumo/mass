@@ -13,6 +13,40 @@ sources:
 
 本页记录检查时的实现事实，不改变 [Module 合同](index.md#模块)。每次更新须绑定日期、源码版本、相关工作区变更、检查方式与证据；未核对的能力保持未验证。已有证据不能自动证明后续源码仍符合合同。设计变化历史见[更新记录](log.md)。
 
+## 2026-11-07 合并后核对
+
+检查基线是工作树 `mass-worktrees/idle-session-close`、分支 `codex-idle-session-close`。功能源码继承自 `a35598f9`、`a990e264`、`31278442`、`573b74ac`、`cbcee5d1`、`588423c1`，并已合并 `origin/main` 的 `45449665`，合并 HEAD 为 `d0ef83e`。本轮随后增加 `f5d842a`（unknown 输入准入测试）与 `b59268b`（close 错误结算修复），并修订 Service 合同、恢复说明和验收证据。`b59268b` 修复完整门禁暴露的合并后问题：SDK close 失败被直接保留，成功时仍要求本进程观察结束；Stop 在 Cancel 未知后继续尝试 close，避免未知释放被重试误报为成功。
+
+检查包括：`go test -race ./pkg/service -run Ticket03`（18 tests）、Claude live 容量失败（4 tests）、Codex disconnect（连续 3 次）、Codex/Claude SDK close failure targeted、隔离真实 Codex 与 Claude 五秒验收，以及最终完整 `make check`（integration 287.097s，`/tmp/mass-ticket07-final-check.log`）。完整检查同时通过 lint、unit、integration、simulation、build 和格式检查；真实 Agent 结论只覆盖两条验收实际使用的公开路径。
+
+| 范围 | 当前实现观察 | 证据与边界 |
+|---|---|---|
+| Session close | 公共 Service、HTTP 和 massctl 已用 close 替换 archive；close 从任意 Session 状态接纳，调用当前 SDK Session close，成功进入 `offline`，失败保持 `closing`；offline 重复 close 幂等，unknown 无当前句柄时完成内部清理。关闭最后一个 Session 不停止 Runtime。 | [close 编排](../mass-go/pkg/service/close.go)、[Service 生命周期](../mass-go/pkg/service/lifecycle.go)、[HTTP/CLI vertical](../mass-go/tests/integration)、[真实 Codex 证据](../mass-go/docs/recovery.md) |
+| 空闲自动 close | `sessionIdleTimeout` 默认 `10m`、`0` 禁用；仅当前 live 绑定可证明 idle 且无在途/交互/工具工作时计时，触发时重新校验并复用 manual close，失败不自动重试。 | [idle 实现](../mass-go/pkg/service/idle.go)、[Ticker 配置](../mass-go/cmd/massd)、可控时钟测试；真实 Codex 观察到 idle 后 5s 进入 offline，Runtime 保持 running。 |
+| 重启校正与按需启动 | 启动只校正持久状态；archived 迁为 offline，旧在线 Session/Runtime 缺少结算证明时转 unknown，不启动 Driver 或 Session。冷进程无当前运行绑定时，显式 start/resume 可启动持久 unknown Runtime，因而 unknown Session 可继续原身份恢复；同一进程仍有运行绑定时仍拒绝重建。create/resume 复用显式 start 协调；prompt/answer/cancel 不隐式启动或恢复。 | [校正](../mass-go/pkg/service/startup.go)、[启动判断](../mass-go/pkg/service/service.go)、[恢复](../mass-go/pkg/service/lifecycle.go)、[冷重启测试](../mass-go/pkg/service/restart_lazy_ticket03_test.go) |
+| unknown 输入准入 | prompt 不再按持久字符串一律拒绝 unknown：无 live 绑定或已处理 unknown 观察时，在 Driver open/resume/prompt 派发前失败；显式 create/resume 刚建立、初始观察未到达的 live unknown 可 dispatch。目标测试断言 detached/observed unknown 的 prompt、open、resume 计数不增加。 | [控制判定](../mass-go/pkg/service/lifecycle.go)、[fresh/detached/observed 测试](../mass-go/pkg/service/restart_lazy_ticket03_test.go)、[Service 合同](modules/service/design.md#显式恢复与输入准入) |
+| close 错误结算 | Codex 的 SDK close 失败原样返回，不被观察状态覆盖；Claude 在 SDK close 返回后等待本进程观察结束，观察或原生错误仍阻止释放。Stop 在 Cancel 返回未知后仍尝试 close 并合并错误，避免后续重试把未确认释放误报为成功。 | [Claude close](../mass-go/pkg/runtime/claude/driver.go)、[Codex close](../mass-go/pkg/runtime/codex/driver.go)、[Stop 结算](../mass-go/pkg/service/lifecycle.go)、integration close/disconnect 用例。 |
+| archive 移除与迁移 | `ArchiveSession`、HTTP archive 路径、massctl archive、`archived` 状态与筛选值已移除；旧 archived 记录启动时迁为 offline，保留身份、历史、UUID 和同步位置，不自动恢复。 | [迁移与移除测试](../mass-go/pkg/service/ticket05_remove_archive_test.go)、CLI/HTTP 回归；完整离线门禁通过，日志 `/tmp/mass-ticket07-final-check.log`。 |
+| 真实 Agent 验收 | Codex 与 Claude 当前 post-merge 源码均完成 5s idle auto-close、offline prompt 拒绝、自动 resume、manual close/resume，Runtime 全程 running。Claude 通过公开的 create-with-`initialInput` 路径验收，发送的是真实用户 prompt；零输入 create 仍是独立未支持/未验证路径。 | Codex 当前可复核证据是日志 `/private/tmp/mass-ticket06-rerun-codex-20261107T185748-74332.log`，端口 55261；临时工作目录 `/private/tmp/mass-ticket06-rerun-codex.zO4vVG` 已清理。Claude 当前证据：`/private/tmp/mass-ticket06-rerun-claude.uxcHyU`，端口 49773，日志 `/private/tmp/mass-ticket06-rerun-claude-20261107T194331-48769.log`；CLI `2.1.258`，Session `64f0ba7a-ab9d-4042-956d-52e280896ae8`，`idle_to_offline=6s`。 |
+
+Claude CLI `2.1.258` 的 bounded 诊断结果：零输入启动接受 SDK `initialize` 并输出 SessionStart hook，但不输出 `system/init`，因此零输入 create 仍是独立未支持/未验证路径，没有用隐藏 prompt 或更弱身份证据伪造通过。提供显式 `initialInput` 时，CLI 在真实用户帧后输出带匹配 `session_id`/`cwd` 的 native `system/init`，当前 post-merge 五秒验收据此 **PASS**；此前两次零输入失败是调用路径不匹配，不构成本次验收结果。
+
+其他限制保持不变：没有 crash/power-loss、Linux、真实账户数据所有权、provider 后端持久性或跨进程人工结算验收。`make check` 只证明离线 race/integration/simulation/build/lint 门禁，不替代真实 Agent 验收。
+
+## 2026-11-06 静态核对
+
+检查基线为分支 `codex-idle-session-close` 的 HEAD `bfb12ad4168d4c423e281b64525d5c0aa367a5e0`（`main`）。本次只有 `harness/` 与根词汇表的设计变更，`mass-go/` 无工作区修改。检查方式是只读检索当前 Go 源码和接口声明，未运行 Go 测试、SDK 合同测试、离线仿真或真实 Agent 验收。
+
+| 范围 | 静态观察与差距 | 证据 |
+|---|---|---|
+| Session 生命周期接口 | 公共 SessionService 仍暴露 `ArchiveSession`，没有 `CloseSession`；持久状态与查询仍接受 `archived`。与 close/offline 终态、任意状态 close、幂等显式重试和删除 archived 筛选的合同不符。 | [SessionService 接口](../mass-go/pkg/service/service.go)、[生命周期与状态校验](../mass-go/pkg/service/lifecycle.go) |
+| Runtime 按需启动 | `CreateSession` 和 `ResumeSession` 缺少当前运行绑定时直接失败，未复用显式 start 的串行启动协调；服务启动校正也不满足新的 archived→offline、旧在线→unknown 规则。 | [创建与恢复入口](../mass-go/pkg/service/service.go)、[恢复实现](../mass-go/pkg/service/lifecycle.go) |
+| 空闲自动 close | `massd` 配置和参数中没有 `sessionIdleTimeout` / `--session-idle-timeout`，Service 没有可控时钟或 idle 计时调度；默认 10m、0 禁用和失败不重试尚未实现。 | [daemon 配置](../mass-go/cmd/massd/config.go)、[daemon 参数](../mass-go/cmd/massd/main.go) |
+| Driver close | Codex 和 Claude Driver 在 Session active/sending 时仍先返回 `ErrWorkUnsettled`，没有把 close 交给底层 SDK；因此 SDK close 成功作为唯一成功条件、并发/重复安全与不额外 interrupt/kill 的 Driver 合同尚未满足。 | [Codex close](../mass-go/pkg/runtime/codex/driver.go)、[Claude close](../mass-go/pkg/runtime/claude/driver.go) |
+| HTTP 与 CLI | HTTP 仍注册 archive 路径，Session 查询枚举仍包含 `archived`；massctl 仍提供 archive 子命令并使用 `ArchiveSession`。close 路径、命令和禁止旧筛选值尚未实现。 | [HTTP 生命周期路由](../mass-go/pkg/transport/session_recovery.go)、[查询枚举](../mass-go/pkg/transport/session_identity.go)、[CLI Session 命令](../mass-go/cmd/massctl/subcommand/session.go) |
+
+本次结论仅限于上述静态差距。关闭 active/sending Session、重启迁移、空闲计时、HTTP/CLI vertical、SDK 合同与真实 Codex/Claude 行为均未执行，不能声明已验证。
+
 ## 2026-10-22 静态核对
 
 检查基线为分支 v2，HEAD `422805b627b324c00cae43d5630dc04dd5ddcfbe`，包含检查时已有的未提交工作区变更。本次只读核对源码与当前合同，不执行 Go 测试或真实 Agent 验收，不据此声明模块整体已经完成。关键源码内容标识见下表后的 SHA-256 清单。

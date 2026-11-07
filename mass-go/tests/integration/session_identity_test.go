@@ -47,7 +47,7 @@ func TestIllegalNativeIdentityNeverBecomesPersistentSession(t *testing.T) {
 }
 
 // Retain only the handshake/open and unsubscribe/closed exchanges. The strict
-// SDK peer rejects any implicit input between creation and explicit archive.
+// SDK peer rejects any implicit input between creation and explicit close.
 func identityOnlyScenario(t *testing.T, id string) (string, string) {
 	t.Helper()
 	path, work := scenario(t)
@@ -154,6 +154,17 @@ func TestHTTPCreateWaitsForIdentityAndReturnsRawIDLocation(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer test-token")
 	req.Header.Set("Content-Type", "application/json")
 	res, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, res.Body)
+	require.NoError(t, err)
+	require.NoError(t, res.Body.Close())
+	require.Equal(t, http.StatusNotFound, res.StatusCode)
+
+	req, err = http.NewRequestWithContext(context.Background(), http.MethodPost, server.URL+"/apis/v1/namespaces/one/sessions/demo/close", strings.NewReader("{}"))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.Header.Set("Content-Type", "application/json")
+	res, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	b, err := io.ReadAll(res.Body)
 	res.Body.Close()

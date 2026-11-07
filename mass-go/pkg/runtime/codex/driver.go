@@ -239,7 +239,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if err := json.Unmarshal(material.Context, &saved); err != nil {
 			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
-		if saved.ID != resume || saved.SessionID == "" || saved.Ephemeral || saved.Cwd != spec.Cwd {
+		if saved.ID != resume || saved.SessionID == "" || saved.Ephemeral || !runtime.EqualNativePath(saved.Cwd, spec.Cwd) {
 			return runtime.DriverSession{}, noResources("invalid native recovery context")
 		}
 		native, err = sdk.Open(ctx, sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true), Config: threadConfig(effective)}})
@@ -248,7 +248,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		}
 		response, _ := native.ResumeResponse()
 		thread = response.Thread
-		if thread.ID != saved.ID || thread.SessionID != saved.SessionID || thread.Cwd != saved.Cwd || thread.CreatedAt != saved.CreatedAt || thread.ModelProvider != saved.ModelProvider || thread.Ephemeral || !reflect.DeepEqual(thread.Path, saved.Path) {
+		if thread.ID != saved.ID || thread.SessionID != saved.SessionID || !runtime.EqualNativePath(thread.Cwd, saved.Cwd) || !sameNativeCreatedAt(thread.CreatedAt, saved.CreatedAt) || thread.ModelProvider != saved.ModelProvider || thread.Ephemeral || !reflect.DeepEqual(thread.Path, saved.Path) {
 			return runtime.DriverSession{}, errors.New("native recovery ownership mismatch")
 		}
 		// Resume metadata may contain old turns: they are never adapted or replayed.
@@ -271,7 +271,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		thread = response.Thread
 	}
 	id := thread.ID
-	if id == "" || thread.SessionID == "" || thread.Ephemeral || thread.Cwd != spec.Cwd {
+	if id == "" || thread.SessionID == "" || thread.Ephemeral || !runtime.EqualNativePath(thread.Cwd, spec.Cwd) {
 		return runtime.DriverSession{}, errors.New("outcome_unknown: missing or mismatched native identity/context")
 	}
 	if resume == "" {
@@ -580,37 +580,34 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 		d.mu.Unlock()
 		return nil
 	}
-	if (s.active || s.sending) && s.err == nil {
-		d.mu.Unlock()
-		return runtime.ErrWorkUnsettled
-	}
 	s.closing = true
 	d.mu.Unlock()
 	d.interactions.RemoveSession(id)
-	cleanup := s.native.Close()
+	closeErr := s.native.Close()
+	if closeErr != nil {
+		return closeErr
+	}
 	select {
 	case <-s.done:
 	case <-ctx.Done():
-		return errors.Join(cleanup, ctx.Err())
+		return ctx.Err()
 	}
 	if err := d.pipe.Flush(ctx); err != nil {
-		return errors.Join(cleanup, err)
+		return err
 	}
-	cause := s.native.Err()
-	if cause != nil {
-		return errors.Join(cleanup, fmt.Errorf("native resource release unconfirmed after observation loss: %w", cause))
+	if cause := s.native.Err(); cause != nil {
+		return fmt.Errorf("native resource release unconfirmed after observation loss: %w", cause)
 	}
 	d.mu.Lock()
-	cause = s.err
+	cause := s.err
 	d.mu.Unlock()
 	if cause != nil {
-		return errors.Join(cleanup, fmt.Errorf("observation terminated: %w", cause))
-	}
-	if cleanup != nil {
-		return cleanup
+		return fmt.Errorf("observation terminated: %w", cause)
 	}
 	d.mu.Lock()
-	delete(d.sessions, id)
+	if d.sessions[id] == s {
+		delete(d.sessions, id)
+	}
 	d.interactions.RemoveSession(id)
 	d.mu.Unlock()
 	return nil
@@ -868,4 +865,8 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 
 func noResources(message string) error {
 	return errors.Join(runtime.ErrResourcesReleased, errors.New(message))
+}
+
+func sameNativeCreatedAt(a, b int64) bool {
+	return a > 0 && b > 0 && a-b >= -1 && a-b <= 1
 }

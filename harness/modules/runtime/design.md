@@ -32,7 +32,7 @@ validateConfig(type, config) 独立校验类型与配置，不创建 Driver、�
 
 Service 独占管理当前进程中的 Runtime 名称 → 运行绑定映射，保存原 Driver、配置快照、启动和停止责任。Registry 只隐藏类型到 Driver 构造方式的映射，不保存当前运行，不提供 get/remove；同名并发启动的唯一性由 Service 保证，不由 Registry 的构造调用保证。
 
-服务重启后 Service 的当前运行映射为空，不自动重建 Driver，也不以空映射证明旧资源已经释放。Service 先[校正持久状态](../service/design.md#服务重启与状态校正)，之后由创建/恢复 Session 按需启动所属 Runtime，或由显式 start 启动；旧资源释放未知时不能直接重建。
+服务重启后 Service 的当前运行映射为空，不自动重建 Driver，也不以空映射证明旧资源已经释放。Service 先[校正持久状态](../service/design.md#服务重启与状态校正)，之后由创建/恢复 Session 按需启动所属 Runtime，或由显式 start 启动。冷进程没有该 Runtime 的当前运行绑定且持久状态为 unknown 时，显式 start/resume 可将旧本地 owner 视为不可达并建立新 Driver；这不证明旧 provider 工作或后端资源已经结束。同一进程已有运行绑定或未结算责任时仍不能重建。
 
 Service 按名称串行协调构造、运行绑定登记、start、stop 与绑定移除。同名旧运行必须完整释放并结算最终事件后才能移除；启动明确失败且无遗留资源才解除本次绑定，结果未知保留原绑定与责任。迟到清理只处理原绑定，不能移除后来建立的运行。Driver 的执行方法自行检查运行状态。Registry 不处理资源 CRUD、分页、namespace 或配置 generation。
 
@@ -50,7 +50,7 @@ RuntimeType 为开放字符串，RuntimeConfig 为 Record<unknown>，见[共享�
 
 RuntimeRegistry 按类型负责配置校验，本地与远端参数不能任意混用。开放字段不表示所有 Driver 都支持任意配置；具体类型自行决定支持项和透传规则。秘密使用引用，解析失败明确报错，公开结果不携带明文秘密。
 
-Driver 内部持久保存和读取恢复材料，不能仅依赖内存。恢复验证原会话、账号及数据归属，不以相同 URL、名称或 ID 格式替代验证；失败不能新建会话代替恢复。closeSession 释放本次运行但保留后续恢复所需材料。
+Driver 内部持久保存和读取恢复材料，不能仅依赖内存。恢复验证原会话、账号及数据归属，不以相同 URL、名称或 ID 格式替代验证；失败不能新建会话代替恢复。closeSession 结束本次 MASS 会话运行绑定但保留后续恢复所需材料，不关闭共享事件流，也不停止 Runtime。
 
 DriverSessionSpec 描述 cwd、systemPrompt、additionalDirs 和 features；Service 模块 SessionSpec 复用它并增加 runtimeRef。features 是功能请求容器，字段省略时使用各自 schema 默认值；当前 agentQuestions 默认 true。默认值与具体 Runtime 是否支持无关。请求开启某项功能而 adapter 不支持时，adapter 不报错，只在 DriverSession.effectiveFeatures 中返回 false；请求关闭始终得到 false。除该降级规则外，不支持的选项明确失败。
 
@@ -72,6 +72,8 @@ Driver.start 取得本实例拥有的进程或连接，重复启动不创建第�
 
 Service 模块先封闭接纳并排空会话，再调用 Driver.stop。Driver 若仍有未结算执行必须拒绝停止；释放未知时保留清理责任。远端资源释放遵守[远端安全要求](#远端安全要求)。
 
+closeSession 只作用于一个 Session。Service 可从任意 Session 状态调用；即使 Session 为 active 或 sending，Driver 也必须把 close 交给底层 SDK Session close，不能先以工作未结算拒绝。SDK close 成功是唯一成功条件；Driver 不额外 interrupt、等待工作终止、强杀、按 PID 清理或探测后端健康，也不自动重试。该方法须并发安全、重复调用安全且结果可重复读取。失败或无法确认由 Service 保持 `closing` 并公开脱敏原因，Runtime 与其他 Session 不受影响。
+
 命令接纳时固定当前会话运行及工作；旧操作或事件不能在恢复后改绑。返回接受证据不表示工作完成；取消确认不表示前台终止。未知副作用返回 outcome_unknown，不能自动重发。单会话失败不应停止健康共享运行。
 
 Runtime 拥有 [SessionEvent TypeSpec](session-events.tsp) 及[事件设计](events.md)，保持实时、存储和历史读取的统一事件模型。adapter 优先取原始 time，缺失时生成；创建统一事件时生成一次 UUID 作为 eventId，同一事件发布、保存和重试保持不变。Service 与 Store 不重写 ID/时间；暂不做原生事件去重，不承诺原生重放得到相同 UUID。事件不含 seq，EventStore 按追加顺序读取、用游标分页，并返回最后同步的 eventId。Driver 不提交公共历史，不维护完整资源目录或发布资源创建成功；adapter 使用打开/恢复时固定的名称补齐事件，Service 从会话绑定核对归属并提交历史。每个 Driver 通过 events() 提供一条单消费者流，多个 Session 共用，Service 按 sessionId 路由；顺序、背压和生命周期的主规则见[Driver 事件流](events.md#driver-事件流)。
@@ -82,7 +84,7 @@ Service 在 start 前取得 events() 并启动接收，Driver 不为各 Session 
 
 ## 验收与待决
 
-类型查找与配置校验不启动 Agent；构造 Driver 不读取资源目录；运行时模块可独立编译。重复启动、错误配置、恢复身份不一致、未知释放与旧事件隔离需要在具体 Driver 实现中验证。事件交付还需验证重复取流拒绝、多个 Session 顺序与公平性、慢会话隔离、有界背压、关闭单会话不关闭共享流、停止排空和异常终止。
+类型查找与配置校验不启动 Agent；构造 Driver 不读取资源目录；运行时模块可独立编译。重复启动、错误配置、恢复身份不一致、未知释放与旧事件隔离需要在具体 Driver 实现中验证。closeSession 还需验证 active/sending 仍调用 SDK、成功不停止共享 Runtime、重复调用和失败结果稳定，且没有额外 interrupt、kill 或自动重试。事件交付还需验证重复取流拒绝、多个 Session 顺序与公平性、慢会话隔离、有界背压、关闭单会话不关闭共享流、停止排空和异常终止。
 
 远端类型还需验证认证传输限制、秘密脱敏、缺失引用拒绝且不回退其他凭据，以及停止己方连接不影响其他客户端或共享服务。协议握手成功不能代替账号与数据归属验证。
 

@@ -79,6 +79,10 @@ func (d *recoveryDriver) CloseSession(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+func (*recoveryDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
+	return runtime.CancelReceipt{Result: "noActiveWork"}, nil
+}
 func (d *recoveryDriver) Stop(context.Context) error { d.pipe.End(nil); return nil }
 
 type recoveryFactory struct{ d *recoveryDriver }
@@ -164,7 +168,7 @@ func (s *RecoverySuite) TestEffectiveFeaturesProjectedAndCleared() {
 	s.Require().NotNil(r.Status.EffectiveFeatures)
 	s.False(r.Status.EffectiveFeatures.AgentQuestionsEnabled())
 
-	_, err = s.svc.ArchiveSession(context.Background(), resource.SessionRef{SessionID: "fast"})
+	_, err = s.svc.CloseSession(context.Background(), resource.SessionRef{SessionID: "fast"})
 	s.Require().NoError(err)
 	r, err = s.svc.GetSession(resource.SessionRef{SessionID: "fast"})
 	s.Require().NoError(err)
@@ -176,20 +180,20 @@ func (s *RecoverySuite) TestEffectiveFeaturesProjectedAndCleared() {
 	s.False(r.Status.EffectiveFeatures.AgentQuestionsEnabled())
 }
 
-func (s *RecoverySuite) TestSlowArchiveDoesNotBlockAnotherSessionsLifecycle() {
+func (s *RecoverySuite) TestSlowCloseDoesNotBlockAnotherSessionsLifecycle() {
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.svc.ArchiveSession(context.Background(), resource.SessionRef{SessionID: "slow"})
+		_, err := s.svc.CloseSession(context.Background(), resource.SessionRef{SessionID: "slow"})
 		done <- err
 	}()
 	select {
 	case <-s.d.closeEntered:
 	case <-time.After(time.Second):
-		s.FailNow("archive not dispatched")
+		s.FailNow("close not dispatched")
 	}
 	fast := make(chan error, 1)
 	go func() {
-		_, err := s.svc.ArchiveSession(context.Background(), resource.SessionRef{SessionID: "fast"})
+		_, err := s.svc.CloseSession(context.Background(), resource.SessionRef{SessionID: "fast"})
 		if err == nil {
 			_, err = s.svc.ResumeSession(context.Background(), resource.SessionRef{SessionID: "fast"})
 		}
@@ -209,16 +213,16 @@ func (s *RecoverySuite) TestSlowArchiveDoesNotBlockAnotherSessionsLifecycle() {
 }
 func TestRecoverySuite(t *testing.T) { suite.Run(t, new(RecoverySuite)) }
 
-func (s *RecoverySuite) TestArchiveCallerCancellationOnlyEndsWait() {
+func (s *RecoverySuite) TestCloseCallerCancellationOnlyEndsWait() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := s.svc.ArchiveSession(ctx, resource.SessionRef{SessionID: "slow"}); done <- err }()
+	go func() { _, err := s.svc.CloseSession(ctx, resource.SessionRef{SessionID: "slow"}); done <- err }()
 	var owner context.Context
 	select {
 	case owner = <-s.d.closeEntered:
 	case <-time.After(time.Second):
-		s.FailNow("archive not dispatched")
+		s.FailNow("close not dispatched")
 	}
 	cancel()
 	select {
@@ -236,13 +240,13 @@ func (s *RecoverySuite) TestArchiveCallerCancellationOnlyEndsWait() {
 	s.release()
 	s.Eventually(func() bool {
 		r, err := s.svc.GetSession(resource.SessionRef{SessionID: "slow"})
-		return err == nil && r.Status.State == "archived"
+		return err == nil && r.Status.State == "offline"
 	}, time.Second, time.Millisecond)
 }
 
 func (s *RecoverySuite) TestResumePublishesOpeningAndRestoresReleasedFailure() {
 	ref := resource.SessionRef{SessionID: "fast"}
-	original, err := s.svc.ArchiveSession(context.Background(), ref)
+	original, err := s.svc.CloseSession(context.Background(), ref)
 	s.Require().NoError(err)
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -274,7 +278,7 @@ func (s *RecoverySuite) TestResumePublishesOpeningAndRestoresReleasedFailure() {
 func (s *RecoverySuite) TestUnknownCloseRetainsOwnershipAndPreventsRestore() {
 	ref := resource.SessionRef{SessionID: "fast"}
 	s.d.closeErr = errors.New("release unconfirmed")
-	_, err := s.svc.ArchiveSession(context.Background(), ref)
+	_, err := s.svc.CloseSession(context.Background(), ref)
 	s.Require().Error(err)
 	r, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
@@ -283,18 +287,18 @@ func (s *RecoverySuite) TestUnknownCloseRetainsOwnershipAndPreventsRestore() {
 	_, err = s.svc.ResumeSession(context.Background(), ref)
 	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
 	s.d.closeErr = nil
-	r, err = s.svc.ArchiveSession(context.Background(), ref)
+	r, err = s.svc.CloseSession(context.Background(), ref)
 	s.Require().NoError(err)
-	s.Equal(events.SessionState("archived"), r.Status.State)
+	s.Equal(events.SessionState("offline"), r.Status.State)
 	r, err = s.svc.ResumeSession(context.Background(), ref)
 	s.Require().NoError(err)
 	s.Equal("fast", r.Status.SessionID)
 }
 
-func (s *RecoverySuite) TestLateArchivedEventDoesNotPoisonRuntime() {
+func (s *RecoverySuite) TestLateReleasedEventDoesNotPoisonRuntime() {
 	old := s.d.source
 	fast := resource.SessionRef{SessionID: "fast"}
-	_, err := s.svc.ArchiveSession(context.Background(), fast)
+	_, err := s.svc.CloseSession(context.Background(), fast)
 	s.Require().NoError(err)
 	sub, err := s.svc.SubscribeEvents(resource.SessionRef{SessionID: "slow"})
 	s.Require().NoError(err)
@@ -313,14 +317,14 @@ func (s *RecoverySuite) TestLateArchivedEventDoesNotPoisonRuntime() {
 	s.Require().NoError(err, "old released source must not stop shared delivery")
 	r, err := s.svc.GetSession(fast)
 	s.Require().NoError(err)
-	s.Equal(events.SessionState("archived"), r.Status.State)
+	s.Equal(events.SessionState("offline"), r.Status.State)
 	_, err = s.svc.ResumeSession(context.Background(), fast)
 	s.Require().NoError(err)
 }
 
 func (s *RecoverySuite) TestResumePublicationFailureSettlesWithoutReplacingIdentity() {
 	ref := resource.SessionRef{SessionID: "fast"}
-	original, err := s.svc.ArchiveSession(context.Background(), ref)
+	original, err := s.svc.CloseSession(context.Background(), ref)
 	s.Require().NoError(err)
 	s.meta.failPublication.Store(true)
 	_, err = s.svc.ResumeSession(context.Background(), ref)
@@ -337,11 +341,11 @@ func (s *RecoverySuite) TestResumePublicationFailureSettlesWithoutReplacingIdent
 	s.Require().NoError(err)
 }
 
-func (s *RecoverySuite) TestSameSessionArchiveAndResumeHaveOneController() {
+func (s *RecoverySuite) TestSameSessionCloseAndResumeHaveOneController() {
 	ref := resource.SessionRef{SessionID: "slow"}
-	archived := make(chan error, 1)
+	closed := make(chan error, 1)
 	restored := make(chan error, 1)
-	go func() { _, err := s.svc.ArchiveSession(context.Background(), ref); archived <- err }()
+	go func() { _, err := s.svc.CloseSession(context.Background(), ref); closed <- err }()
 	select {
 	case <-s.d.closeEntered:
 	case <-time.After(time.Second):
@@ -355,10 +359,10 @@ func (s *RecoverySuite) TestSameSessionArchiveAndResumeHaveOneController() {
 	case <-time.After(50 * time.Millisecond):
 	}
 	s.release()
-	s.Require().NoError(<-archived)
-	s.Require().NoError(<-restored)
+	s.Require().NoError(<-closed)
+	s.Require().ErrorIs(<-restored, runtime.ErrFailedPrecondition)
 	_, err := s.svc.ResumeSession(context.Background(), ref)
-	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
+	s.Require().NoError(err)
 	r, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
 	s.Equal("slow", r.Status.SessionID)
@@ -371,7 +375,7 @@ func (s *RecoverySuite) TestLateOriginalFactsKeepIdentityWithoutGrantingRunContr
 	sub, err := s.svc.SubscribeEvents(ref)
 	s.Require().NoError(err)
 	defer sub.Close()
-	_, err = s.svc.ArchiveSession(context.Background(), ref)
+	_, err = s.svc.CloseSession(context.Background(), ref)
 	s.Require().NoError(err)
 	current, err := s.svc.ResumeSession(context.Background(), ref)
 	s.Require().NoError(err)
@@ -409,7 +413,7 @@ func (s *RecoverySuite) TestLateOriginalFactsKeepIdentityWithoutGrantingRunContr
 func (s *RecoverySuite) TestRestoreBacklogDoesNotBlockAnotherSession() {
 	ref := resource.SessionRef{SessionID: "fast"}
 	old := s.d.source
-	_, err := s.svc.ArchiveSession(context.Background(), ref)
+	_, err := s.svc.CloseSession(context.Background(), ref)
 	s.Require().NoError(err)
 	s.history.blocked.Store(true)
 	message, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "fast", SessionID: "fast", ItemID: "backlog", Time: time.Now().UTC()}, events.AgentMessage{MessageID: "backlog", Content: []events.ContentBlock{events.Text("old complete fact")}}, old)
@@ -451,7 +455,7 @@ func (s *RecoverySuite) TestRestoreBacklogDoesNotBlockAnotherSession() {
 	s.release()
 	unrelated := make(chan error, 1)
 	go func() {
-		_, err := s.svc.ArchiveSession(context.Background(), resource.SessionRef{SessionID: "slow"})
+		_, err := s.svc.CloseSession(context.Background(), resource.SessionRef{SessionID: "slow"})
 		unrelated <- err
 	}()
 	select {
@@ -472,7 +476,7 @@ func (s *RecoverySuite) TestRestoreBacklogDoesNotBlockAnotherSession() {
 func (s *RecoverySuite) assertFailedRestoreKeepsOldFact(mode string) {
 	ref := resource.SessionRef{SessionID: "fast"}
 	old := s.d.source
-	original, err := s.svc.ArchiveSession(context.Background(), ref)
+	original, err := s.svc.CloseSession(context.Background(), ref)
 	s.Require().NoError(err)
 	// A slow-Session subscriber supplies an ordered shared-stream barrier.
 	barrier, err := s.svc.SubscribeEvents(resource.SessionRef{SessionID: "slow"})

@@ -185,22 +185,22 @@ func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() 
 	page2, err := svc.ListSessions(resource.SessionQuery{After: page.Next, Limit: 9})
 	require.NoError(t, err)
 	require.Equal(t, first.Status.SessionID, page2.Items[0].Status.SessionID)
-	// Delay the native release notification. "closing" is observable before archived.
-	archived := make(chan error, 1)
+	// Delay the native release notification. "closing" is observable before offline.
+	closed := make(chan error, 1)
 	go func() {
-		_, e := svc.ArchiveSession(ctx(t), resource.SessionRef{Namespace: "z", Name: "same"})
-		archived <- e
+		_, e := svc.CloseSession(ctx(t), resource.SessionRef{Namespace: "z", Name: "same"})
+		closed <- e
 	}()
 	require.Eventually(t, func() bool { r, e := svc.GetSession(ref); return e == nil && r.Status.State == "closing" }, time.Second, time.Millisecond)
 	select {
-	case e := <-archived:
-		t.Fatalf("archive preceded native release: %v", e)
+	case e := <-closed:
+		t.Fatalf("close preceded native release: %v", e)
 	default:
 	}
-	require.NoError(t, <-archived)
+	require.NoError(t, <-closed)
 	saved, err := svc.GetSession(ref)
 	require.NoError(t, err)
-	require.Equal(t, events.SessionState("archived"), saved.Status.State)
+	require.Equal(t, events.SessionState("offline"), saved.Status.State)
 	require.Zero(t, saved.Status.AppliedGeneration)
 	_, err = svc.StopRuntime(ctx(t), "agent")
 	require.NoError(t, err)
@@ -353,7 +353,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	r, err := cold.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
 	require.EqualValues(t, 2, r.Status.AppliedGeneration)
-	resumed, err := cold.ResumeSession(ctx(t), ref)
+	resumed, err := cold.ResumeSessionWithInput(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("continue")}})
 	require.NoError(t, err)
 	require.Equal(t, original.Status.SessionID, resumed.Status.SessionID)
 	require.Equal(t, original.Metadata.UID, resumed.Metadata.UID)
@@ -361,20 +361,26 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	before, err := cold.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Equal(t, history, before)
-	finishInput(t, cold, ref, "continue")
-	after, err := cold.ListHistoryEvents(ref, store.HistoryQuery{})
-	require.NoError(t, err)
+	var after store.HistoryPage
+	require.Eventually(t, func() bool {
+		after, err = cold.ListHistoryEvents(ref, store.HistoryQuery{})
+		if err != nil || len(after.Events) <= len(history.Events) {
+			return false
+		}
+		current, e := cold.GetSession(ref)
+		return e == nil && current.Status.State == events.Idle
+	}, 5*time.Second, 10*time.Millisecond, "resume input must complete and settle")
 	require.Greater(t, len(after.Events), len(history.Events))
 	require.Equal(t, history.Events, after.Events[:len(history.Events)])
-	_, err = cold.ArchiveSession(ctx(t), ref)
+	_, err = cold.CloseSession(ctx(t), ref)
 	require.NoError(t, err)
 	t.Log("PASS actual SDK/fake Claude ResumeID startup, observed init same ID/cwd, durable history prefix and separate new input; synthetic linked replay, not real native persistence")
 }
 
-func (lifecycleSuite *LifecycleSuite) TestArchiveResumeKeepsObserversAndIdentity() {
+func (lifecycleSuite *LifecycleSuite) TestCloseResumeKeepsObserversAndIdentity() {
 	t := lifecycleSuite.T()
 	svc, _, _ := lifecycleService(t, t.TempDir())
-	path, work := nativeScenario(t, "codex", "archive-resume")
+	path, work := nativeScenario(t, "codex", "close-resume")
 	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "codex", Config: runtime.Config{"executable": mock, "scenario": path}}})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
@@ -386,7 +392,7 @@ func (lifecycleSuite *LifecycleSuite) TestArchiveResumeKeepsObserversAndIdentity
 	sub, err := svc.SubscribeEvents(ref)
 	require.NoError(t, err)
 	defer sub.Close()
-	_, err = svc.ArchiveSession(ctx(t), ref)
+	_, err = svc.CloseSession(ctx(t), ref)
 	require.NoError(t, err)
 	_, err = svc.ResumeSession(ctx(t), ref)
 	require.NoError(t, err)
@@ -404,9 +410,9 @@ func (lifecycleSuite *LifecycleSuite) TestArchiveResumeKeepsObserversAndIdentity
 			break
 		}
 	}
-	_, err = svc.ArchiveSession(ctx(t), ref)
+	_, err = svc.CloseSession(ctx(t), ref)
 	require.NoError(t, err)
-	t.Log("PASS original live subscriber survives archive/resume and receives only subsequent live facts on the original persistent identity")
+	t.Log("PASS original live subscriber survives close/resume and receives only subsequent live facts on the original persistent identity")
 }
 
 func TestLifecycleSuite(t *testing.T) { suite.Run(t, new(LifecycleSuite)) }

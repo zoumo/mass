@@ -30,7 +30,7 @@ sources:
 
 公共 HTTP 接口采用资源式 REST、JSON 请求与响应，以及独立、可选的 SSE 实时观察。不采用 JSON-RPC envelope，不要求客户端初始化协议会话或保持连接；Agent 工作的生命周期独立于单次 HTTP 请求与订阅连接。业务服务、CLI、脚本与界面使用同一接口。此选择参考托管 Agent API 的 Session 资源与独立事件流组织方式，不复制厂商业务模型。[^claude][^openai]
 
-HTTP 操作遵循 Service 业务合同：创建或恢复 Session 时由 Service 按需启动所属 Runtime，无需 HTTP 调用方预先 start；HTTP 层不追加独立启动请求。资源查询、历史和 SSE 订阅不启动 Runtime、不恢复 Session，输入不隐式恢复离线会话。服务重启后的状态按 [Service 启动规则](../modules/service/design.md#服务重启与状态校正)校正，GET 不承担校正写入。进程内事件处理器不作为远程 API 暴露。
+HTTP 操作遵循 Service 业务合同：创建或恢复 Session 时由 Service 按需启动所属 Runtime，无需 HTTP 调用方预先 start；HTTP 层不追加独立启动请求。资源查询、历史、SSE 订阅和 close 不启动 Runtime；prompt、answer 和 cancel 不隐式恢复离线会话。服务重启后的状态按 [Service 启动规则](../modules/service/design.md#服务重启与状态校正)校正，GET 不承担校正写入。进程内事件处理器不作为远程 API 暴露。
 
 cwd 按 Agent 所在运行环境解释，远端路径不能被本机目录存在性检查拒绝。配置与资源响应只返回秘密引用，不返回解析后的秘密。
 
@@ -110,7 +110,7 @@ Runtime 是全局命名资源；`{runtime}` 为 Runtime 名称。创建只接受
 | `GET /apis/v1/sessions` | 列表查询；筛选与分页见下文 | 200，资源分页 |
 | `GET {session}` | 查询资源 | 200，Session 资源 |
 | `POST {session}/resume` | 恢复原 Session，可选 SessionResume 新显式输入 | 200，SessionResumed |
-| `POST {session}/archive` | 归档 Session | 200，Session 资源 |
+| `POST {session}/close` | 从任意状态 close Session | 200，Session 资源 |
 | `POST {session}/inputs` | 提交输入 | 200，输入回执 |
 | `POST {session}/interactions/{interaction64}/answer` | 提交交互答案 | 200，回答回执 |
 | `POST {session}/cancel` | 请求取消当前工作 | 200，取消回执 |
@@ -119,19 +119,21 @@ Runtime 是全局命名资源；`{runtime}` 为 Runtime 名称。创建只接受
 
 `POST {session}/resume` 允许省略请求体或发送 `{}`，两者均不发送输入；可选 `initialInput` 完整承载 SessionInput。显式 null、空输入或不支持内容在原生恢复/提交前拒绝。成功体 SessionResumed 保留既有 Session 字段，仅显式提交时返回可选 initialInputReceipt；输入和回执均不持久化或重放。Claude 可在原生 init 前提交，但公开成功及历史/SSE 发布仍须观察原 ID/cwd 并完成绑定提交；失败清理不能表述为输入未发送或撤销业务效果，参见[恢复合同](../modules/service/session.md)。
 
+`POST {session}/close` 无业务输入，遵循基础规则，并直接映射 SessionService.closeSession；完整接纳、栅栏、SDK/MASS 结算、`closing` 与幂等规则见 [Session close](../modules/service/design.md#session-close)。HTTP 在成功完成后返回 200 和 `offline` Session；失败或结果未知返回对应 OperationError，Session 保持 `closing`，客户端可安全重试同一 close 请求。HTTP 不保留 archive 路径、别名或重定向。
+
 `interaction64 = base64url(UTF-8(原始交互引用))`，不带 `=` padding，只使用 `A-Z a-z 0-9 - _`。解码必须为合法 UTF-8 且重新编码与原片段完全相同；空值、非法字符、padding 或非规范编码返回 400 invalid_argument。JSON 中的交互引用保留原值。例如原值 `a/b` 编码为 `YS9i`，原值 `..` 编码为 `Li4`。请求体直接承载答案，可为 null、标量、数组或对象，不包 `{answer: ...}`，不得由 HTTP 层把 null 当作缺少请求体。回答是否有效由原交互合同校验；过期或重复回答不能提交给新运行。
 
-创建返回的 Location 为 `/apis/v1/sessions/{sessionId}`，使用 URL escape 后的原始 ID，确保名称与其他会话 ID 冲突时仍可无歧义查询；响应仍包含跨 Runtime 唯一的 status.sessionId。列表可按 namespace、runtimeRef、state 筛选，after、limit 在 HTTP query 中平铺；默认跨所有 namespace、Runtime，包含离线和归档会话。
+创建返回的 Location 为 `/apis/v1/sessions/{sessionId}`，使用 URL escape 后的原始 ID，确保名称与其他会话 ID 冲突时仍可无歧义查询；响应仍包含跨 Runtime 唯一的 status.sessionId。列表可按 namespace、runtimeRef、state 筛选，after、limit 在 HTTP query 中平铺；默认跨所有 namespace、Runtime，包含离线会话。`state=archived` 不是合法枚举值，返回 400 invalid_argument。
 
-本版本不提供 Session PUT/PATCH/DELETE、配置选项写入、批量命令或任意事件注入。归档保留持久身份与历史，不能作为删除别名。
+本版本不提供 Session PUT/PATCH/DELETE、配置选项写入、批量命令或任意事件注入。close 保留持久身份与历史，不能作为删除别名。
 
 ## 回执、超时与重试
 
-201 只在创建成功保证达成后返回。200 的输入、回答和取消响应表示返回对应操作的回执，不表示 Agent 工作完成；输入回执保留 acceptance 的缺失/false/true 区别。归档和 Runtime 停止成功须满足各自业务合同的资源释放保证。
+201 只在创建成功保证达成后返回。200 的输入、回答和取消响应表示返回对应操作的回执，不表示 Agent 工作完成；输入回执保留 acceptance 的缺失/false/true 区别。close 的 200 只证明本次 close 成功、已结算 MASS 已接纳交付并写入 `offline`，不证明 Runtime 停止；失败返回错误且状态保持 `closing`。Runtime 停止成功须满足其独立合同的资源释放保证。
 
 本版本不使用 202、Operation 资源、后台轮询句柄或 Idempotency-Key。请求 ID、追踪 ID、Session 名称与事件 UUID 均不代替输入幂等键。收到 `Idempotency-Key` 请求头时返回 400 invalid_argument，避免调用方误认为已启用去重。
 
-客户端断开、代理超时或 HTTP 请求截止不撤销已接纳操作，不自动取消 Agent 工作、归档 Session 或释放资源责任；显式取消使用 cancel 接口。服务端不能因连接断开就把原操作视为确定未执行或重新派发。
+客户端断开、代理超时或 HTTP 请求截止不撤销已接纳操作，不自动取消 Agent 工作、close Session 或释放资源责任；显式取消使用 cancel 接口。服务端不能因连接断开就把原操作视为确定未执行或重新派发。
 
 有副作用的请求超时或连接中断时，客户端不得自动重发。HTTP 能确认未派发时可返回 deadline_exceeded；一旦已派发且无法确认结果，返回 outcome_unknown。没有收到可验证的响应时，客户端也必须按结果未知处理。若原操作后来完成，可在资源查询中观察其可证明状态；资源存在或状态变化不一定能确认某次输入是否接纳。没有公开操作查询与业务幂等合同前，不承诺未知输入可以安全重试或跨服务重启查询。
 
@@ -173,11 +175,11 @@ Cache-Control: no-cache, no-store, no-transform
 
 - 订阅正常结束时，服务器发送 `event: subscription.closed`、`data: {}` 并关闭连接。它只表示观察结束，不代表工作完成或成功。
 - 订阅失败、序列化失败、慢消费者溢出或服务器关闭导致交付中止时，尽可能发送 `event: subscription.error`，data 为统一错误对象，然后关闭。响应头已发送后不再改 HTTP 状态码。网络已断或队列不可写时不能保证错误帧送达；客户端未读到明确结束帧就遇到 EOF，必须作为异常断线处理。
-- 客户端关闭连接只关闭本订阅并释放等待和缓冲，不取消工作、归档 Session 或停止 Runtime。慢订阅者不得通过无限缓冲影响核心事实提交。
+- 客户端关闭连接只关闭本订阅并释放等待和缓冲，不取消工作、close Session 或停止 Runtime。慢订阅者不得通过无限缓冲影响核心事实提交。
 - 不发送 SSE `id` 或 `retry` 字段；eventId 仍在 JSON 中。拒绝非空 Last-Event-ID 和所有续传 query 参数，返回 400 invalid_argument，不暗示支持 SSE 恢复。
 - 客户端不得把自动重连视为连续交付。新连接是新订阅，会错过断线期间的预览与其他实时通知；只有已提交的持久事实可另查历史。MASS 不从 delta 拼造完整历史。
 
-需要在提交输入之前观察其进展时，先等 subscription.ready，再发送输入；发送成功回执与 SSE 事件之间没有跨连接先后保证。idle、归档或一项交互结束均不自动关闭 SSE；订阅结束以明确结束帧或连接关闭为准。
+需要在提交输入之前观察其进展时，先等 subscription.ready，再发送输入；发送成功回执与 SSE 事件之间没有跨连接先后保证。idle、close 或一项交互结束均不自动关闭 SSE；订阅结束以明确结束帧或连接关闭为准。
 
 ## 错误与 HTTP 状态码
 
@@ -253,4 +255,4 @@ HTTP v1 确定以上路由、JSON、状态码、授权入口与 SSE 形式，遵
 
 ## 异步原生 load
 
-`POST /apis/v1/sessions/load` 按 [load](../modules/service/load.md)接纳新空目标，202 只证明后台责任已建立，不证明原生存在、同一会话已恢复、读取穷尽或本地分发完成。最终 completed 后无需额外 resume 即可在原会话输入；不以释放成功运行连接作为完成条件。Location 指向该 Session 的既有查询路径，后续 GET 读取 status.historyLoad；无新增通用 Operation 查询。请求超时/断开不取消已接纳 load，不自动重试。`POST {session}/history-load/cancel` 携带原 loadId，取消尚未本地完成的 load 并释放本次恢复连接；最终清理查询状态。已完成 load 拒绝该旧取消请求，后续运行使用普通 cancel/archive；不取消其他客户端工作。SSE 沿既有 Broadcast 只观察之后事件，不保证 load 响应与订阅就绪之间无缝补历史。HTTP 202 接纳后发生的 not_found/unsupported/身份错误记录在 historyLoad.error，不改写为成功或新建。
+`POST /apis/v1/sessions/load` 按 [load](../modules/service/load.md)接纳新空目标，202 只证明后台责任已建立，不证明原生存在、同一会话已恢复、读取穷尽或本地分发完成。最终 completed 后无需额外 resume 即可在原会话输入；不以释放成功运行连接作为完成条件。Location 指向该 Session 的既有查询路径，后续 GET 读取 status.historyLoad；无新增通用 Operation 查询。请求超时/断开不取消已接纳 load，不自动重试。`POST {session}/history-load/cancel` 携带原 loadId，取消尚未本地完成的 load 并释放本次恢复连接；最终清理查询状态。已完成 load 拒绝该旧取消请求，后续运行使用普通 cancel 或 close；不取消其他客户端工作。SSE 沿既有 Broadcast 只观察之后事件，不保证 load 响应与订阅就绪之间无缝补历史。HTTP 202 接纳后发生的 not_found/unsupported/身份错误记录在 historyLoad.error，不改写为成功或新建。

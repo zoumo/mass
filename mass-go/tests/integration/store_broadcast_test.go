@@ -29,7 +29,7 @@ func (s *entrypointSuite) TestMetadataRestartAndEventRebuild() {
 		s.call("session.get", workflowParams{Session: ref}, &session)
 		return len(page.Events) == 1 && session.Status.State == events.Idle
 	}, 3*time.Second, 10*time.Millisecond)
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 
 	// A real executable records even an attempted activation. Ordinary resource,
@@ -70,7 +70,15 @@ func (s *entrypointSuite) TestMetadataRestartAndEventRebuild() {
 			go func() { _, err := nameWatch.Next(); nameResult <- err }()
 			var after resource.Session
 			s.call("session.get", workflowParams{Session: named}, &after)
-			s.Equal(before, after, "preserve complete authority, identity and versions")
+			expected := before
+			expected.Status.State = "offline"
+			expected.Status.Reason = ""
+			originalVersion := expected.Metadata.ResourceVersion
+			expected.Metadata.ResourceVersion = ""
+			reconciledVersion := after.Metadata.ResourceVersion
+			after.Metadata.ResourceVersion = ""
+			s.Equal(expected, after, "preserve authority, identity and spec while retaining offline")
+			s.Equal(originalVersion, reconciledVersion, "restart must not rewrite an already offline Session")
 			var runtimeAfter resource.Runtime
 			s.call("runtime.get", workflowParams{Name: "agent"}, &runtimeAfter)
 			s.Equal(runtimeBefore, runtimeAfter)

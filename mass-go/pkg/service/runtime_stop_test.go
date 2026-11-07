@@ -61,6 +61,7 @@ func (s *RecoverySuite) TestStopCallerLeavesButOriginalOwnerCompletes() {
 type stopDriver struct {
 	workDriver
 	closes   atomic.Int32
+	cancels  atomic.Int32
 	stops    atomic.Int32
 	failStop atomic.Bool
 	onClose  func(context.Context) error
@@ -71,10 +72,11 @@ type stopDriver struct {
 }
 
 func (d *stopDriver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {
+	d.cancels.Add(1)
 	if d.onCancel != nil {
 		return d.onCancel(ctx, id)
 	}
-	return d.workDriver.Cancel(ctx, id)
+	return runtime.CancelReceipt{Result: "noActiveWork"}, nil
 }
 
 func (d *stopDriver) Start(ctx context.Context) (runtime.Capabilities, error) {
@@ -223,6 +225,7 @@ func (s *RuntimeStopSuite) TestCancelCannotEnterSessionAlreadyBeingReleased() {
 }
 
 func (s *SessionWorkSuite) TestStopWaitsForAllOriginalDispatchesAndTheirFacts() {
+	s.driver.cancelBlock.Store(true)
 	for _, kind := range []string{"input", "answer", "cancel"} {
 		c, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
@@ -260,6 +263,7 @@ func (s *SessionWorkSuite) TestStopWaitsForAllOriginalDispatchesAndTheirFacts() 
 	var public *runtime.OperationError
 	s.Require().ErrorAs(err, &public)
 	s.Equal("outcome_unknown", public.Code)
+	s.driver.cancelBlock.Store(false)
 	close(s.driver.release)
 	_, err = s.svc.StopRuntime(context.Background(), "agent")
 	s.Require().NoError(err)
@@ -405,32 +409,24 @@ func (s *RuntimeStopSuite) TestStopRetainsOverflowArrivingDuringDriverRelease() 
 	s.assertStopRetainsOverflow(false)
 }
 
-func (s *RuntimeStopSuite) TestArchiveCancelsOriginalWorkBeforeFinalFactSettlement() {
-	var active atomic.Bool
-	active.Store(true)
-	s.d.onClose = func(context.Context) error {
-		if active.Load() {
-			return runtime.ErrWorkUnsettled
-		}
-		return nil
-	}
-	s.d.onCancel = func(ctx context.Context, id string) (runtime.CancelReceipt, error) {
-		final, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "demo", SessionID: id, ItemID: "final", Time: time.Now()}, events.AgentMessage{MessageID: "final", Content: []events.ContentBlock{events.Text("final cancellation fact")}}, s.d.source)
+func (s *RuntimeStopSuite) TestCloseDoesNotCancelOriginalWorkBeforeFinalFactSettlement() {
+	var closed atomic.Bool
+	s.d.onClose = func(ctx context.Context) error {
+		closed.Store(true)
+		final, err := events.NewEvent(events.EventBase{EventID: "01234567-89ab-4cde-8fab-0123456789ab", Namespace: "one", SessionName: "demo", SessionID: s.ref.SessionID, ItemID: "final", Time: time.Now()}, events.AgentMessage{MessageID: "final", Content: []events.ContentBlock{events.Text("final close fact")}}, s.d.source)
 		if err != nil {
-			return runtime.CancelReceipt{}, err
+			return err
 		}
 		if err := s.d.pipe.Send(ctx, final); err != nil {
-			return runtime.CancelReceipt{}, err
+			return err
 		}
-		if err := s.d.pipe.Flush(ctx); err != nil {
-			return runtime.CancelReceipt{}, err
-		}
-		active.Store(false)
-		return runtime.CancelReceipt{Target: "original-work", Result: "controlAcknowledged"}, nil
+		return s.d.pipe.Flush(ctx)
 	}
-	r, err := s.svc.ArchiveSession(context.Background(), s.ref)
+	r, err := s.svc.CloseSession(context.Background(), s.ref)
 	s.Require().NoError(err)
-	s.EqualValues("archived", r.Status.State)
+	s.EqualValues("offline", r.Status.State)
+	s.True(closed.Load())
+	s.Zero(s.d.cancels.Load(), "close must not cancel original work")
 	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Require().Len(page.Events, 1)
@@ -452,7 +448,7 @@ func (h *unavailableFinalHistory) Append(id string, records []events.SessionEven
 	return h.EventStore.Append(id, records)
 }
 
-func (s *RuntimeStopSuite) TestArchiveStorageFailureRetainsOriginalOwner() {
+func (s *RuntimeStopSuite) TestCloseStorageFailureRetainsOriginalOwner() {
 	fault := &unavailableFinalHistory{EventStore: s.history.EventStore, entered: make(chan struct{})}
 	fault.unavailable.Store(true)
 	s.history.EventStore = fault
@@ -473,7 +469,7 @@ func (s *RuntimeStopSuite) TestArchiveStorageFailureRetainsOriginalOwner() {
 	caller, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := s.svc.ArchiveSession(caller, s.ref); done <- err }()
+	go func() { _, err := s.svc.CloseSession(caller, s.ref); done <- err }()
 	select {
 	case <-fault.entered:
 	case <-time.After(3 * time.Second):
@@ -488,7 +484,7 @@ func (s *RuntimeStopSuite) TestArchiveStorageFailureRetainsOriginalOwner() {
 	s.Require().Error(err, "storage failure must not reopen input admission")
 	fault.unavailable.Store(false)
 	s.Require().Eventually(func() bool { return s.svc.ReconcileHistory(context.Background(), s.ref) == nil }, 3*time.Second, time.Millisecond)
-	_, err = s.svc.ArchiveSession(context.Background(), s.ref)
+	_, err = s.svc.CloseSession(context.Background(), s.ref)
 	s.Require().NoError(err, "explicit storage settlement must not repeat native release")
 	page, err := s.svc.ListHistoryEvents(s.ref, store.HistoryQuery{})
 	s.Require().NoError(err)
@@ -497,8 +493,8 @@ func (s *RuntimeStopSuite) TestArchiveStorageFailureRetainsOriginalOwner() {
 	s.EqualValues(1, s.d.closes.Load())
 }
 
-func (s *RuntimeStopSuite) TestArchivePublicationFailureDoesNotRepeatConfirmedClose() {
-	s.meta.failArchive.Store(true)
+func (s *RuntimeStopSuite) TestClosePublicationFailureDoesNotRepeatConfirmedClose() {
+	s.meta.failClose.Store(true)
 	var closed atomic.Bool
 	s.d.onClose = func(context.Context) error {
 		if closed.Swap(true) {
@@ -506,12 +502,12 @@ func (s *RuntimeStopSuite) TestArchivePublicationFailureDoesNotRepeatConfirmedCl
 		}
 		return nil
 	}
-	_, err := s.svc.ArchiveSession(context.Background(), s.ref)
-	s.Require().ErrorContains(err, "injected archive publication failure")
+	_, err := s.svc.CloseSession(context.Background(), s.ref)
+	s.Require().ErrorContains(err, "session_close_failed")
 	r, err := s.svc.GetSession(s.ref)
 	s.Require().NoError(err)
 	s.EqualValues("closing", r.Status.State)
-	_, err = s.svc.ArchiveSession(context.Background(), s.ref)
+	_, err = s.svc.CloseSession(context.Background(), s.ref)
 	s.Require().NoError(err, "retry storage publication without repeating native release")
 	s.EqualValues(1, s.d.closes.Load())
 }
@@ -523,7 +519,7 @@ func (s *RuntimeStopSuite) TestStopRetainsRetiredSourceOverflowAfterRecovery() {
 func (s *RuntimeStopSuite) assertStopRetainsOverflow(recovered bool) {
 	source := s.d.source
 	if recovered {
-		_, err := s.svc.ArchiveSession(context.Background(), s.ref)
+		_, err := s.svc.CloseSession(context.Background(), s.ref)
 		s.Require().NoError(err)
 		_, err = s.svc.ResumeSession(context.Background(), s.ref)
 		s.Require().NoError(err)
@@ -571,16 +567,16 @@ func (s *RuntimeStopSuite) assertStopRetainsOverflow(recovered bool) {
 
 type stopMeta struct {
 	metastore.MetaStore
-	failArchive atomic.Bool
-	pauseWrite  atomic.Bool
-	pauseRead   atomic.Bool
-	entered     chan struct{}
-	release     chan struct{}
+	failClose  atomic.Bool
+	pauseWrite atomic.Bool
+	pauseRead  atomic.Bool
+	entered    chan struct{}
+	release    chan struct{}
 }
 
 func (m *stopMeta) UpdateSession(r resource.Session) (resource.Session, error) {
-	if r.Status.State == "archived" && m.failArchive.CompareAndSwap(true, false) {
-		return resource.Session{}, errors.New("injected archive publication failure")
+	if r.Status.State == "offline" && m.failClose.CompareAndSwap(true, false) {
+		return resource.Session{}, errors.New("injected close publication failure")
 	}
 	return m.MetaStore.UpdateSession(r)
 }
@@ -683,9 +679,9 @@ func (s *RuntimeStopSuite) TestAbnormalFinalStreamCannotProveFactDrain() {
 	s.Require().ErrorIs(err, runtime.ErrFailedPrecondition)
 }
 
-func (s *RuntimeStopSuite) TestStopCommitsArchivedFactsBeforeDriverRelease() {
+func (s *RuntimeStopSuite) TestStopCommitsClosedFactsBeforeDriverRelease() {
 	source := s.d.source
-	_, err := s.svc.ArchiveSession(context.Background(), s.ref)
+	_, err := s.svc.CloseSession(context.Background(), s.ref)
 	s.Require().NoError(err)
 	s.history.blocked.Store(true)
 	var once sync.Once

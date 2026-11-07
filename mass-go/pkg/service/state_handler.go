@@ -84,7 +84,7 @@ func (h *stateHandler) update(e events.SessionEvent) error {
 		if r.Metadata.UID != h.session.Metadata.UID || r.Metadata.Namespace != e.Namespace || r.Metadata.Name != e.SessionName || r.Status.SessionID != e.SessionID {
 			return errors.New("state observation session mismatch")
 		}
-		if r.Status.State == "closing" || r.Status.State == "archived" || r.Status.AppliedGeneration == 0 {
+		if r.Status.State == "closing" || r.Status.State == "offline" || r.Status.AppliedGeneration == 0 {
 			return nil
 		}
 		r.Status.State = events.Unknown

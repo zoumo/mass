@@ -30,7 +30,7 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
-// The native peer acknowledges initialize but withholds identity on resume.
+// The native peer accepts the explicit resume input but withholds identity.
 // Fresh create establishes real adapter recovery material and durable facts.
 func TestPendingNativeRestorePeer(t *testing.T) {
 	dir := os.Getenv("MASS_PENDING_RESTORE_PEER")
@@ -77,6 +77,7 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 	init := func() {
 		send(map[string]any{"type": "system", "subtype": "init", "session_id": "restore-original", "cwd": cwd})
 	}
+	resumeInput := make(chan string, 1)
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
 		var v map[string]any
@@ -91,9 +92,12 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			mark("ack", "initialize acknowledged")
 			if resumed {
 				go func() {
+					uuid := <-resumeInput
 					for {
 						if _, e := os.Stat(filepath.Join(dir, "release-init")); e == nil {
 							init()
+							send(map[string]any{"type": "assistant", "session_id": "restore-original", "user_message_uuid": uuid, "message": map[string]any{"id": "resume-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "resume answer", "apiBlockIndex": 0}}}})
+							send(map[string]any{"type": "result", "subtype": "success", "session_id": "restore-original", "user_message_uuid": uuid, "uuid": "resume-result"})
 							return
 						}
 						time.Sleep(5 * time.Millisecond)
@@ -102,11 +106,25 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			}
 			continue
 		}
-		if v["type"] != "user" || resumed {
+		if v["type"] != "user" {
 			mark("unexpected", "unexpected input or replay")
 			os.Exit(4)
 		}
-		if v["message"].(map[string]any)["content"] != "explicit original input" {
+		content := v["message"].(map[string]any)["content"]
+		if resumed {
+			if content != "explicit resume input" {
+				mark("unexpected", "wrong resume content")
+				os.Exit(8)
+			}
+			if _, e := os.Stat(filepath.Join(dir, "resume-input")); e == nil {
+				mark("unexpected", "duplicate resume input")
+				os.Exit(9)
+			}
+			mark("input", "one explicit resume input")
+			resumeInput <- v["uuid"].(string)
+			continue
+		}
+		if content != "explicit original input" {
 			mark("unexpected", "wrong initial content")
 			os.Exit(6)
 		}
@@ -191,16 +209,28 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		return err == nil && e == nil && r.Status.State == events.Idle && len(before.Events) == 1
 	}, 5*time.Second, 10*time.Millisecond)
 	require.Equal(t, "durable original answer", before.Events[0].Payload().(events.AgentMessage).Content[0].Text)
-	archived, err := svc.ArchiveSession(ctx, ref)
+	closed, err := svc.CloseSession(ctx, ref)
 	require.NoError(t, err)
-	require.Equal(t, events.SessionState("archived"), archived.Status.State)
+	require.Equal(t, events.SessionState("offline"), closed.Status.State)
 	before, err = svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	caller, abandon := context.WithCancel(ctx)
 	defer abandon()
 	resumed := make(chan error, 1)
-	go func() { _, e := svc.ResumeSession(caller, ref); resumed <- e }()
-	require.Eventually(t, func() bool { _, e := os.Stat(filepath.Join(dir, "resume-ack")); return e == nil }, 5*time.Second, 10*time.Millisecond)
+	go func() {
+		_, e := svc.ResumeSessionWithInput(caller, ref, runtime.Input{Content: []events.ContentBlock{events.Text("explicit resume input")}})
+		resumed <- e
+	}()
+	require.Eventually(t, func() bool {
+		select {
+		case e := <-resumed:
+			t.Fatalf("resume returned before the explicit input was observed: %v", e)
+		default:
+		}
+		_, ackErr := os.Stat(filepath.Join(dir, "resume-ack"))
+		_, inputErr := os.Stat(filepath.Join(dir, "resume-input"))
+		return ackErr == nil && inputErr == nil
+	}, 5*time.Second, 10*time.Millisecond, "restore must accept initialize and explicit input")
 	data, err := os.ReadFile(filepath.Join(dir, "resume-pid"))
 	require.NoError(t, err)
 	pid, err := strconv.Atoi(string(data))
@@ -245,15 +275,22 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		require.Equal(t, events.SessionState("offline"), r.Status.State)
 		require.Equal(t, ref.SessionID, r.Status.SessionID)
 	} else {
-		require.Equal(t, archived.Status, r.Status)
+		require.Equal(t, closed.Status, r.Status)
 	}
-	require.Equal(t, archived.Metadata.UID, r.Metadata.UID)
-	require.Equal(t, archived.Spec, r.Spec)
+	require.Equal(t, closed.Metadata.UID, r.Metadata.UID)
+	require.Equal(t, closed.Spec, r.Spec)
 	after, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
-	require.Equal(t, before, after, "history identity/order/content must survive canceled restore")
+	if mode == "caller-abandon-only" {
+		require.Len(t, after.Events, len(before.Events)+1)
+		require.Equal(t, before.Events, after.Events[:len(before.Events)], "history identity/order/content must survive canceled restore")
+		require.Equal(t, "resume answer", after.Events[len(before.Events)].Payload().(events.AgentMessage).Content[0].Text)
+	} else {
+		require.Equal(t, before, after, "history identity/order/content must survive canceled restore")
+	}
 	require.ErrorIs(t, syscall.Kill(pid, 0), syscall.ESRCH)
 	require.FileExists(t, filepath.Join(dir, "resume-eof"))
+	require.FileExists(t, filepath.Join(dir, "resume-input"))
 	require.NoFileExists(t, filepath.Join(dir, "resume-unexpected"))
 	opened, err := os.ReadFile(filepath.Join(dir, "opened"))
 	require.NoError(t, err)
@@ -412,7 +449,7 @@ func TestPendingRestoreStopLateSuccessAndUnknownRelease(t *testing.T) {
 			original, err := svc.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "original"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}})
 			require.NoError(t, err)
 			ref := resource.SessionRef{SessionID: original.Status.SessionID}
-			_, err = svc.ArchiveSession(ctx, ref)
+			_, err = svc.CloseSession(ctx, ref)
 			require.NoError(t, err)
 			resumed := make(chan error, 1)
 			go func() { _, e := svc.ResumeSession(ctx, ref); resumed <- e }()

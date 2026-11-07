@@ -96,6 +96,17 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			input := func(text string) runtime.Input {
 				return runtime.Input{Content: []events.ContentBlock{events.Text(text)}}
 			}
+			resumeWithInput := func(svc *service.Service, text string) error {
+				if kind == "claude" {
+					_, err := svc.ResumeSessionWithInput(ctx(t), ref, input(text))
+					return err
+				}
+				if _, err := svc.ResumeSession(ctx(t), ref); err != nil {
+					return err
+				}
+				_, err := svc.SendPrompt(ctx(t), ref, input(text))
+				return err
+			}
 			data := t.TempDir()
 			svc, closeFirst := open(data, true)
 			firstInput := input("first explicit input")
@@ -105,14 +116,11 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			require.NotNil(t, created.InitialInputReceipt)
 			first := waitHistory(svc, 1)
 			require.Equal(t, "first explicit input", first.Events[0].Payload().(events.AgentMessage).Content[0].Text)
-			_, err = svc.ArchiveSession(ctx(t), ref)
+			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
-			_, err = svc.ResumeSession(ctx(t), ref)
-			require.NoError(t, err)
-			_, err = svc.SendPrompt(ctx(t), ref, input("after archive resume"))
-			require.NoError(t, err)
+			require.NoError(t, resumeWithInput(svc, "after close resume"))
 			beforeRestart := waitHistory(svc, 2)
-			_, err = svc.ArchiveSession(ctx(t), ref)
+			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 			closeFirst()
 
@@ -120,14 +128,13 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			durable, err := reopened.ListHistoryEvents(ref, store.HistoryQuery{Types: []string{"agent.message"}})
 			require.NoError(t, err)
 			require.Equal(t, beforeRestart, durable, "durable facts survive actual authority reopen unchanged")
-			restored, err := reopened.ResumeSession(ctx(t), ref)
+			require.NoError(t, resumeWithInput(reopened, "after durable restart"))
+			restored, err := reopened.GetSession(ref)
 			require.NoError(t, err)
 			require.Equal(t, id, restored.Status.SessionID)
-			_, err = reopened.SendPrompt(ctx(t), ref, input("after durable restart"))
-			require.NoError(t, err)
 			restarted := waitHistory(reopened, 3)
 			require.Equal(t, first.Events[0], restarted.Events[0], "original fact must not be rewritten or duplicated")
-			_, err = reopened.ArchiveSession(ctx(t), ref)
+			_, err = reopened.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 			closeReopened()
 
@@ -146,7 +153,7 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			imported, err := loaded.ListHistoryEvents(ref, store.HistoryQuery{})
 			require.NoError(t, err)
 			require.Len(t, imported.Events, 6)
-			for i, text := range []string{"first explicit input", "after archive resume", "after durable restart"} {
+			for i, text := range []string{"first explicit input", "after close resume", "after durable restart"} {
 				require.Equal(t, text, imported.Events[2*i].Payload().(events.UserMessage).Content[0].Text)
 				require.Equal(t, text, imported.Events[2*i+1].Payload().(events.AgentMessage).Content[0].Text)
 			}
@@ -154,7 +161,7 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			require.NoError(t, err)
 			continued := waitHistory(loaded, 4)
 			require.Equal(t, "after native load", continued.Events[3].Payload().(events.AgentMessage).Content[0].Text)
-			_, err = loaded.ArchiveSession(ctx(t), ref)
+			_, err = loaded.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 			closeLoaded()
 
@@ -182,7 +189,7 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 					texts = append(texts, call.Params["text"].(string))
 				}
 			}
-			require.Equal(t, []string{"first explicit input", "after archive resume", "after durable restart", "after native load"}, texts, "no archive/resume/restart/load may resubmit creation input")
+			require.Equal(t, []string{"first explicit input", "after close resume", "after durable restart", "after native load"}, texts, "no close/resume/restart/load may resubmit creation input")
 			if kind == "codex" {
 				require.Equal(t, 1, starts)
 				require.Equal(t, 3, resumes)

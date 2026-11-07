@@ -27,6 +27,7 @@ type historyLoad struct {
 	done              chan struct{}
 	cleanupDone       chan struct{}
 	cleanupErr        error
+	cleanupStatusErr  error
 	capabilities      runtime.Capabilities
 	effectiveFeatures runtime.SessionFeatures
 	deliveryFailed    chan struct{}
@@ -71,6 +72,7 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	reservation := &opening{address: address, done: make(chan struct{})}
 	run.pending[key] = reservation
 	s.mu.Unlock()
+	defer close(reservation.done)
 	defer func() {
 		s.mu.Lock()
 		if run.pending[key] == reservation {
@@ -122,6 +124,9 @@ func (s *Service) writeLoad(l *lane) error {
 	status := l.load.status
 	_, err := s.sessionStatus(resource.SessionRef{SessionID: l.session.Status.SessionID}, func(r *resource.Session) {
 		r.Status.HistoryLoad = &status
+		if r.Status.State == "closing" || r.Status.State == "offline" {
+			return
+		}
 		if status.Phase == "completed" {
 			r.Status.State = events.Unknown
 			r.Status.AppliedGeneration = r.Metadata.Generation
@@ -183,7 +188,7 @@ func (s *Service) failLoad(run *runBinding, l *lane, phase string, cause error) 
 				h.status.CleanupCompleted = true
 			}
 			h.cleanupErr = err
-			_ = s.writeLoad(l)
+			h.cleanupStatusErr = s.writeLoad(l)
 			close(h.cleanupDone)
 		}()
 	}

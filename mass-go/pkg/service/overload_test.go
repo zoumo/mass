@@ -82,7 +82,7 @@ func TestOverloadTotalRetentionExhaustionRetainsOriginalDelivery(t *testing.T) {
 		require.Equal(t, fmt.Sprintf("fact-%03d", i), e.ItemID)
 	}
 	d.unknown.Store(false)
-	_, err = svc.ArchiveSession(ctx, slow)
+	_, err = svc.CloseSession(ctx, slow)
 	require.NoError(t, err)
 	require.NoError(t, svc.Shutdown(ctx))
 }
@@ -107,6 +107,10 @@ func (d *overloadDriver) CloseSession(ctx context.Context, id string) error {
 		}
 	}
 	return d.pipe.Flush(ctx)
+}
+
+func (*overloadDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
+	return runtime.CancelReceipt{Result: "noActiveWork"}, nil
 }
 func (d *overloadDriver) Stop(context.Context) error { d.pipe.End(nil); return nil }
 func (d *overloadDriver) SendPrompt(ctx context.Context, id string, _ runtime.Input) (runtime.InputReceipt, error) {
@@ -239,8 +243,14 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 				err = c.SendPrompt(ctx, slow, input, nil)
 				var public *runtime.OperationError
 				require.ErrorAs(t, err, &public)
-				require.Equal(t, "resource_exhausted", public.Code)
-				require.Contains(t, err.Error(), "session_delivery_overloaded")
+				switch public.Code {
+				case "resource_exhausted":
+					require.Contains(t, err.Error(), "session_delivery_overloaded")
+				case "conflict":
+					require.Equal(t, "session_resume_required", public.Reason)
+				default:
+					require.FailNow(t, "unexpected overloaded Session admission error", "%v", err)
+				}
 				require.Eventually(t, func() bool { return d.closed.Load() > 0 }, time.Second, time.Millisecond, "owned native close starts without waiting for blocked storage")
 				err = c.SendPrompt(ctx, fast, input, nil)
 				require.NoError(t, err)
@@ -259,7 +269,7 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 					require.NoError(t, e)
 					require.Empty(t, page.Events, "persistent fault is not successful drain")
 					short, stop := context.WithTimeout(ctx, 20*time.Millisecond)
-					_, e = svc.ArchiveSession(short, slow)
+					_, e = svc.CloseSession(short, slow)
 					stop()
 					require.Error(t, e, "unknown release or persistent commit must stay unsettled")
 					r, e := svc.GetSession(slow)
@@ -285,8 +295,12 @@ func TestOverloadIsolatesPeerBeforeStorageRelease(t *testing.T) {
 					require.EqualValues(t, "closing", r.Status.State)
 					d.unknown.Store(false)
 				}
-				_, err = svc.ArchiveSession(ctx, slow)
-				require.NoError(t, err)
+				_, err = svc.CloseSession(ctx, slow)
+				if required {
+					require.ErrorContains(t, err, "session_close_failed")
+				} else {
+					require.NoError(t, err)
+				}
 				require.EqualValues(t, 160, delivered.Load(), "partial required publication never replays already committed facts")
 				require.True(t, diagnosed.Load(), "the local overload failure is published after storage settles")
 				if !unknown {

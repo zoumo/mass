@@ -207,7 +207,7 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 		s.Equal(live[i].EventID, e.EventID)
 		s.Equal(live[i].ItemID, e.ItemID)
 	}
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	ticket08Released(t, s, ref, kind, evidence, receipts)
 }
@@ -270,7 +270,7 @@ func TestTicket08ClaudeLoadUnlinkedResultBlocksReadmission(t *testing.T) {
 			break
 		}
 	}
-	s.call("session.archive", workflowParams{Session: ref}, nil)
+	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	ticket08Released(t, s, ref, "claude", evidence, []runtime.InputReceipt{receipt})
 }
@@ -279,7 +279,7 @@ func ticket08Released(t *testing.T, s *entrypointSuite, ref resource.SessionRef,
 	t.Helper()
 	var current resource.Session
 	s.call("session.get", workflowParams{Session: ref}, &current)
-	require.Equal(t, events.SessionState("archived"), current.Status.State)
+	require.Equal(t, events.SessionState("offline"), current.Status.State)
 	b, err := os.ReadFile(evidence)
 	require.NoError(t, err)
 	t.Logf("synthetic native lifecycle: %s", b)

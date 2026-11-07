@@ -106,7 +106,7 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			history, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 			require.NoError(t, err)
 			require.NotEmpty(t, history.Events)
-			_, err = svc.ArchiveSession(ctx(t), ref)
+			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 		})
 	}

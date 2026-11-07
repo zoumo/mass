@@ -52,7 +52,7 @@ type SessionService interface {
 	CreateSessionWithInput(context.Context, resource.SessionCreateInput) (resource.SessionCreated, error)
 	GetSession(resource.SessionRef) (resource.Session, error)
 	ListSessions(resource.SessionQuery) (resource.SessionPage, error)
-	ArchiveSession(context.Context, resource.SessionRef) (resource.Session, error)
+	CloseSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ResumeSession(context.Context, resource.SessionRef) (resource.Session, error)
 	ResumeSessionWithInput(context.Context, resource.SessionRef, runtime.Input) (resource.SessionResumed, error)
 	LoadSession(context.Context, resource.SessionLoad) (resource.SessionLoadAccepted, error)
@@ -100,19 +100,26 @@ type delivery struct {
 	barrier chan struct{}
 }
 type lane struct {
-	load         *historyLoad
-	admission    sync.RWMutex
-	releasing    bool
-	nativeClosed bool
-	session      resource.Session
-	source       events.Source
-	queue        chan delivery
-	done         chan struct{}
-	err          error
-	closing      bool
-	overloaded   bool
-	retry        chan chan error
-	commitErr    error
+	load           *historyLoad
+	admission      sync.RWMutex
+	releasing      bool
+	nativeClosed   bool
+	observedState  events.SessionState
+	stateObserved  bool
+	session        resource.Session
+	source         events.Source
+	queue          chan delivery
+	done           chan struct{}
+	err            error
+	closing        bool
+	overloaded     bool
+	retry          chan chan error
+	commitErr      error
+	publicationErr error
+	idleTimer      Timer
+	idleVersion    uint64
+	activeTools    map[string]struct{}
+	interactions   map[string]struct{}
 }
 type InteractionPolicy func(events.InteractionRequested) (map[string]any, bool)
 
@@ -126,23 +133,44 @@ type Service struct {
 	meta        metastore.MetaStore
 	history     eventstore.EventStore
 	registry    *runtime.Registry
+	startup     sync.Mutex
 	mu          sync.Mutex
 	runs        map[string]*runBinding
 	broadcasts  map[string]*sessionBroadcast
 	sessionOps  map[string]*sessionOperation
 	closing     bool
 	resumeSlots chan struct{}
+	idleTimeout time.Duration
+	clock       Clock
 }
 
 func New(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry) *Service {
-	return &Service{meta: meta, history: history, registry: registry, runs: map[string]*runBinding{}, broadcasts: map[string]*sessionBroadcast{}, sessionOps: map[string]*sessionOperation{}, resumeSlots: make(chan struct{}, queueCapacity)}
+	return NewWithOptions(meta, history, registry, Options{SessionIdleTimeout: DefaultSessionIdleTimeout})
 }
 
 // NewWithPolicy explicitly enables an application-owned interaction policy.
 func NewWithPolicy(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry, policy InteractionPolicy) *Service {
-	s := New(meta, history, registry)
-	s.policy = policy
-	return s
+	return NewWithOptions(meta, history, registry, Options{InteractionPolicy: policy, SessionIdleTimeout: DefaultSessionIdleTimeout})
+}
+
+// NewWithOptions assembles explicit application policy and time dependencies.
+func NewWithOptions(meta metastore.MetaStore, history eventstore.EventStore, registry *runtime.Registry, options Options) *Service {
+	clock := options.Clock
+	if clock == nil {
+		clock = systemClock{}
+	}
+	return &Service{
+		policy:      options.InteractionPolicy,
+		meta:        meta,
+		history:     history,
+		registry:    registry,
+		runs:        map[string]*runBinding{},
+		broadcasts:  map[string]*sessionBroadcast{},
+		sessionOps:  map[string]*sessionOperation{},
+		resumeSlots: make(chan struct{}, queueCapacity),
+		idleTimeout: options.SessionIdleTimeout,
+		clock:       clock,
+	}
 }
 
 func (s *Service) AnswerInteraction(ctx context.Context, ref resource.SessionRef, interaction string, answer any) (runtime.InteractionReceipt, error) {
@@ -239,7 +267,10 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		}
 		return s.meta.GetRuntime(name)
 	}
-	if r.Status.State != "stopped" {
+	// A nil run binding means this process has no owner for the persisted
+	// Runtime. Explicit start/resume may replace a cold unknown from a restart;
+	// same-process unsettled owners retain their binding above.
+	if r.Status.State != "stopped" && r.Status.State != "unknown" {
 		s.mu.Unlock()
 		return r, errors.New("previous runtime release not confirmed; explicit reconciliation required")
 	}
@@ -364,12 +395,31 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	if r.Metadata.UID != "" || r.Metadata.Generation != 0 || r.Metadata.ResourceVersion != "" || !r.Metadata.CreatedAt.IsZero() {
 		return resource.SessionCreated{Session: r}, runtime.InvalidArgument("system metadata is read-only")
 	}
+	if _, err := s.meta.GetSession(resource.SessionRef{Namespace: r.Metadata.Namespace, Name: r.Metadata.Name}); !errors.Is(err, store.ErrNotFound) {
+		if err == nil {
+			err = store.ErrConflict
+		}
+		return resource.SessionCreated{Session: r}, err
+	}
 	s.mu.Lock()
 	run := s.runs[r.Spec.RuntimeRef]
+	startRuntime := run == nil || !run.started || run.stopping || run.err != nil
 	closing := s.closing
 	s.mu.Unlock()
+	if closing {
+		return resource.SessionCreated{Session: r}, errors.New("service closing")
+	}
+	if startRuntime {
+		if _, err := s.StartRuntime(ctx, r.Spec.RuntimeRef); err != nil {
+			return resource.SessionCreated{Session: r}, err
+		}
+	}
+	s.mu.Lock()
+	run = s.runs[r.Spec.RuntimeRef]
+	closing = s.closing
+	s.mu.Unlock()
 	if run == nil || closing {
-		return resource.SessionCreated{Session: r}, errors.New("runtime not started or service closing")
+		return resource.SessionCreated{Session: r}, errors.New("runtime unavailable")
 	}
 	var creator runtime.CreationDriver
 	if initial != nil {
@@ -520,7 +570,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 				if cleanup == nil {
 					removePending()
 				}
-				return resource.Session{}, errors.Join(errors.New("outcome_unknown: late creation archived by original owner"), cleanup)
+				return resource.Session{}, errors.Join(errors.New("outcome_unknown: late creation closed by original owner"), cleanup)
 			}
 			if creationErr != nil {
 				return resource.Session{}, creationErr
@@ -703,6 +753,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			s.mu.Unlock()
 			continue
 		}
+		s.invalidateIdleLocked(l)
 		// Normal delivery has 128 queued slots. The same channel reserves a
 		// further 128 for the original closing source, never a forwarding queue.
 		// Retired/already-closing owners retain the pre-existing fallback policy.
@@ -763,11 +814,11 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 
 // One bounded cleanup attempt per overloaded owner, outside the Runtime reader.
 // A timeout/unknown close leaves closing plus original delivery responsibility;
-// ArchiveSession/StopRuntime can explicitly settle it without replacing a Driver.
+// CloseSession/StopRuntime can explicitly settle it without replacing a Driver.
 func (s *Service) closeOverloaded(run *runBinding, id string, source events.Source) {
 	ctx, cancel := context.WithTimeout(context.Background(), overloadCloseTimeout)
 	defer cancel()
-	if _, err := s.archiveSessionOwner(ctx, resource.SessionRef{SessionID: id}, run, source); err != nil {
+	if _, err := s.closeOverloadedSession(ctx, resource.SessionRef{SessionID: id}, run, source); err != nil {
 		slog.Warn("overloaded Session cleanup unsettled", "session_id", id, "error", err)
 	}
 }
@@ -827,6 +878,48 @@ func (s *Service) process(run *runBinding, l *lane) {
 				}
 			}
 		}
+		s.mu.Lock()
+		if state, ok := e.Payload().(events.StateUpdate); ok && e.Replay == nil {
+			if !l.closing && l.source.SameRun(e.Source()) {
+				l.stateObserved = true
+				l.observedState = events.Unknown
+				if state.State != nil {
+					l.observedState = *state.State
+				}
+			}
+		}
+		if e.Replay == nil {
+			switch payload := e.Payload().(type) {
+			case events.ToolChunk:
+				if l.activeTools == nil {
+					l.activeTools = map[string]struct{}{}
+				}
+				l.activeTools[payload.ID] = struct{}{}
+			case events.ToolCall:
+				switch payload.Status {
+				case "completed", "failed", "declined":
+					delete(l.activeTools, payload.ID)
+				default:
+					if l.activeTools == nil {
+						l.activeTools = map[string]struct{}{}
+					}
+					l.activeTools[payload.ID] = struct{}{}
+				}
+			case events.ToolResult:
+				delete(l.activeTools, payload.ID)
+			case events.InteractionRequested:
+				if payload.Blocking {
+					if l.interactions == nil {
+						l.interactions = map[string]struct{}{}
+					}
+					l.interactions[payload.Interaction] = struct{}{}
+				}
+			case events.InteractionClosed:
+				delete(l.interactions, payload.Interaction)
+			}
+		}
+		s.scheduleIdleLocked(run, l)
+		s.mu.Unlock()
 		if !publicationFailed {
 			b, err := s.broadcastForSession(l.session)
 			if err == nil {
@@ -836,6 +929,9 @@ func (s *Service) process(run *runBinding, l *lane) {
 			// retry it or let later load facts overtake its failed publication.
 			if err != nil {
 				slog.Warn("realtime publication failed", "error", err, "session_id", e.SessionID)
+				s.mu.Lock()
+				l.publicationErr = errors.Join(l.publicationErr, err)
+				s.mu.Unlock()
 				if l.load != nil && !l.load.complete.Load() {
 					publicationFailed = true
 				}
@@ -858,7 +954,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 		if request, ok := e.Payload().(events.InteractionRequested); ok && s.policy != nil {
 			run.admission.RLock()
 			s.mu.Lock()
-			allowed := !s.closing && !run.stopping && !l.closing && l.err == nil && (l.load == nil || l.load.complete.Load()) && l.source.SameRun(e.Source())
+			allowed := !s.closing && !run.stopping && !l.closing && !s.sessionCloseAcceptedLocked(e.SessionID) && l.err == nil && (l.load == nil || l.load.complete.Load()) && l.source.SameRun(e.Source())
 			if allowed {
 				l.admission.RLock()
 			}
@@ -881,7 +977,10 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.closing = true
 	names := make([]string, 0, len(s.runs))
-	for name := range s.runs {
+	for name, run := range s.runs {
+		for _, l := range run.lanes {
+			stopIdleTimerLocked(l)
+		}
 		names = append(names, name)
 	}
 	s.mu.Unlock()
@@ -1073,7 +1172,7 @@ func (s *Service) settleAbandoned(run *runBinding, l *lane) error {
 	if err := s.drainLane(context.Background(), l); err != nil {
 		return err
 	}
-	if _, err := s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r, true) }); err != nil {
+	if _, err := s.sessionStatus(ref, func(r *resource.Session) { offlineStatus(r) }); err != nil {
 		return err
 	}
 	s.mu.Lock()

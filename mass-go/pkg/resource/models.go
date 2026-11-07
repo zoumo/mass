@@ -39,6 +39,7 @@ type SessionStatus struct {
 	HistoryLoad       *HistoryLoadStatus       `json:"historyLoad,omitempty"`
 	SessionID         string                   `json:"sessionId"`
 	State             events.SessionState      `json:"state"`
+	Reason            string                   `json:"reason,omitempty"`
 	AppliedGeneration uint64                   `json:"appliedGeneration,omitempty"`
 	RuntimeGeneration uint64                   `json:"runtimeGeneration,omitempty"`
 	Capabilities      runtime.Capabilities     `json:"capabilities,omitempty"`
@@ -115,6 +116,18 @@ type SessionQuery struct {
 type SessionPage struct {
 	Items []Session `json:"items"`
 	Next  string    `json:"next,omitempty"`
+}
+
+// ValidateSessionState accepts only current public Session states. Empty is a
+// query wildcard; archived remains readable as legacy data but is never written
+// or selected through the current API.
+func ValidateSessionState(state events.SessionState) error {
+	switch state {
+	case "", "offline", "opening", "idle", "running", "requires_action", "closing", "unknown":
+		return nil
+	default:
+		return runtime.InvalidArgument("invalid session state")
+	}
 }
 
 // ValidateSessionID preserves opaque native identity, including whitespace and

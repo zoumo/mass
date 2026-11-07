@@ -2453,6 +2453,9 @@
           "historyLoad": {
             "$ref": "#/components/schemas/HistoryLoadStatus"
           },
+          "reason": {
+            "type": "string"
+          },
           "runtimeGeneration": {
             "format": "int64",
             "minimum": 0,
@@ -2958,9 +2961,9 @@
         ]
       }
     },
-    "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}/archive": {
+    "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}/cancel": {
       "post": {
-        "operationId": "archiveSessionByNameOrID",
+        "operationId": "cancelByNameOrID",
         "parameters": [
           {
             "in": "path",
@@ -2983,7 +2986,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LifecycleByNameOrIDBody"
+                "$ref": "#/components/schemas/CancelByNameOrIDBody"
               }
             }
           }
@@ -2993,7 +2996,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Session"
+                  "$ref": "#/components/schemas/CancelReceipt"
                 }
               }
             },
@@ -3147,9 +3150,9 @@
         ]
       }
     },
-    "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}/cancel": {
+    "/apis/v1/namespaces/{namespace}/sessions/{nameOrID}/close": {
       "post": {
-        "operationId": "cancelByNameOrID",
+        "operationId": "closeSessionByNameOrID",
         "parameters": [
           {
             "in": "path",
@@ -3172,7 +3175,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CancelByNameOrIDBody"
+                "$ref": "#/components/schemas/LifecycleByNameOrIDBody"
               }
             }
           }
@@ -3182,7 +3185,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CancelReceipt"
+                  "$ref": "#/components/schemas/Session"
                 }
               }
             },
@@ -5815,7 +5818,6 @@
                 "running",
                 "requires_action",
                 "closing",
-                "archived",
                 "unknown"
               ],
               "type": "string"
@@ -6528,9 +6530,9 @@
         ]
       }
     },
-    "/apis/v1/sessions/{sessionId}/archive": {
+    "/apis/v1/sessions/{sessionId}/cancel": {
       "post": {
-        "operationId": "archiveSessionByID",
+        "operationId": "cancelByID",
         "parameters": [
           {
             "in": "path",
@@ -6545,7 +6547,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LifecycleByIDBody"
+                "$ref": "#/components/schemas/CancelByIDBody"
               }
             }
           }
@@ -6555,7 +6557,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Session"
+                  "$ref": "#/components/schemas/CancelReceipt"
                 }
               }
             },
@@ -6709,9 +6711,9 @@
         ]
       }
     },
-    "/apis/v1/sessions/{sessionId}/cancel": {
+    "/apis/v1/sessions/{sessionId}/close": {
       "post": {
-        "operationId": "cancelByID",
+        "operationId": "closeSessionByID",
         "parameters": [
           {
             "in": "path",
@@ -6726,7 +6728,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CancelByIDBody"
+                "$ref": "#/components/schemas/LifecycleByIDBody"
               }
             }
           }
@@ -6736,7 +6738,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CancelReceipt"
+                  "$ref": "#/components/schemas/Session"
                 }
               }
             },

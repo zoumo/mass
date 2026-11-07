@@ -19,8 +19,9 @@ import (
 // Protocol fixture: business semantics are tested independently at Service.
 type workAPI struct {
 	transport.API
-	answers chan any
-	refs    chan resource.SessionRef
+	answers  chan any
+	refs     chan resource.SessionRef
+	closeErr error
 }
 
 func (a *workAPI) ResolveSession(ns, target string) (resource.SessionRef, error) {

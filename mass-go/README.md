@@ -38,7 +38,7 @@ The suite demonstrates no-input native identity, separate text input, automatic
 permission answers through original handles, live previews, complete persisted
 history and pagination/filtering, explicit user questions for each Agent,
 request-before-ACK handling, cancel receipt versus observed termination,
-archive/stop and original-ID resume followed by fresh input. It tests CLI parse
+close/stop and original-ID resume followed by fresh input. It tests CLI parse
 errors, Runtime operations, disconnect isolation and failed-creation cleanup.
 Answer and filtered queries are tested through HTTP because they are not CLI commands.
 Each persistent event read from SSE is compared with a committed history query.
@@ -72,8 +72,14 @@ local: true
 ```
 
 Then run `bin/massd` without flags. Optional fields are `data` (an absolute
-owned directory), `tokenFile`, `tlsCert`, `tlsKey`, and
-`prototypeAutoApprovePermissions`. Automatic permission approval is off by default.
+owned directory), `tokenFile`, `tlsCert`, `tlsKey`,
+`prototypeAutoApprovePermissions`, and `sessionIdleTimeout`. Automatic permission
+approval is off by default.
+`sessionIdleTimeout` accepts Go duration syntax such as `5s` or `10m`; its
+default is `10m`, and `0` disables automatic Session close. The matching
+`--session-idle-timeout` flag overrides the file. Negative or invalid durations
+are rejected before the daemon opens its stores. Automatic close releases
+idle Session connections without stopping their Runtime.
 Existing data is not moved into the default directory. Legacy `state.json` snapshots
 are explicitly rejected; there is no automatic migration.
 
@@ -137,7 +143,7 @@ bin/massctl -o json session watch review -n demo
 # In another terminal:
 bin/massctl session prompt review -n demo --text 'Describe this workspace'
 bin/massctl session history review -n demo --limit 100
-bin/massctl session archive review -n demo
+bin/massctl session close review -n demo
 bin/massctl session resume review -n demo
 bin/massctl runtime stop codex-local
 ```
@@ -150,14 +156,16 @@ bin/massctl runtime start claude-local
 bin/massctl session create review -n demo --runtime claude-local --cwd /absolute/owned/workspace
 bin/massctl session prompt review -n demo --text 'Describe this workspace'
 # Unlinked completion stays unknown; do not automatically retry/resume to
-# bypass that fence. Explicit archive/resume retains the original identity.
-bin/massctl session archive review -n demo
-bin/massctl session resume review -n demo
+# bypass that fence. Explicit close/resume retains the original identity.
+bin/massctl session close review -n demo
+bin/massctl session resume review -n demo --text 'continue after close'
 ```
 
 Both drivers currently accept text input; Claude requires exactly one text block.
 Claude rejects `systemPrompt` and `additionalDirs` before dispatch; Codex maps
 `systemPrompt` to native base instructions and rejects `additionalDirs`.
+Claude resume requires explicit `--text` or `--input-file` so native init can
+prove the original ID and cwd; zero-input Claude resume fails before opening.
 These command examples describe supported interfaces, not proof of real CLI/model
 execution. Authentication, real native recovery, accounts and models must be
 validated separately in owned test directories. Permission auto-approval remains
@@ -282,6 +290,9 @@ IDs are encoded as one URL path segment. `session list` and `session history`
 accept only `--limit` (default 100) and `--after`; one page is returned, including
 its next cursor. History and watch are independent: watch shows only future
 events, never fills history or reconnects, and unexpected EOF is a failure.
+`session close` accepts any lifecycle state, preserves identity and history,
+does not stop the Runtime, and can be retried safely when it leaves the Session
+in `closing`.
 
 Runtime create requires NAME and `--type`; absent configuration sends `{}`.
 `--executable`, `--config-file` and `--config-json` are mutually exclusive input
@@ -291,7 +302,7 @@ path. `--executable` preserves other config fields; a complete JSON config repla
 them. Empty updates fail locally. There is no conditional-update protection:
 concurrent edits can be overwritten. Updates never restart running instances.
 Runtime delete never stops or cascades: Service rejects running/unreleased
-resources and persistent Session references. Stop explicitly first; archived
+resources and persistent Session references. Stop explicitly first; offline
 Sessions retain their references and history. Successful delete has empty JSON
 stdout. Test-only driver configuration stays in complete JSON, not public flags.
 
@@ -412,7 +423,7 @@ resumes the original reader; it does not implicitly reopen failed admission.
 Append failure retains the original full fact/UUID and serial settlement for
 `ReconcileHistory`. Unknown native release or unavailable persistence remains
 `closing`/unsettled; only confirmed native release plus settlement permits
-`archived`. A later explicit Archive/Stop can settle the same owner. Closing
+`offline`. A later explicit Close/Stop can settle the same owner. Closing
 state and HTTP rejection are visible while persistence is blocked; the ordered
 realtime diagnostic can itself wait behind that blocked prefix.
 

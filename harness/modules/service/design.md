@@ -25,6 +25,9 @@ sources:
 - id: agentrun-model
   resource: /Users/jim/code/antgroup/piston/agentrun/docs/adr/0007-remove-session-create-model-id.md
   title: agentrun 不在创建参数中指定 modelId 的决策
+- id: idle-session-close
+  resource: 项目负责人在 2026-11-06 确认的空闲 Session close 与按需启动范围
+  title: close/offline、idle 自动 close、按需启动与重启校正
 ---
 
 # Service 模块设计
@@ -33,7 +36,7 @@ sources:
 
 应用服务模块对外提供 RuntimeService 和 SessionService，拥有 Runtime、Session 的持久目录、namespace/name、uid、创建时间、配置修订、状态投影和资源查询。它分别依赖 [MetaStore](../metastore/design.md) 管理资源、[EventStore](../eventstore/design.md) 管理事件，依赖[运行时模块](../runtime/design.md)执行原生操作；另将验证后的事件交给独立 [Events](../events/design.md) 模块处理与广播；存储和 Events 核心均不反向调用 Service。
 
-Service 是应用服务，不是通用 CRUD 仓库：创建 Session、恢复、归档和停止 Runtime 都需要协调持久记录与实际运行。此模块承担失败补偿、在途操作所有权和迟到结果结算，使调用者无需管理半完成操作。[^direction]
+Service 是应用服务，不是通用 CRUD 仓库：创建 Session、恢复、close 和停止 Runtime 都需要协调持久记录与实际运行。此模块承担失败补偿、在途操作所有权和迟到结果结算，使调用者无需管理半完成操作。[^direction]
 
 ## 对存储、Events 与 Runtime 的依赖
 
@@ -64,7 +67,7 @@ Driver 的私有恢复材料仍由 Runtime 内部管理，不变成 Service 与 
 
 ## 对外保证与 seam
 
-RuntimeService 返回 Runtime 资源快照；getRuntime、listRuntimes 不返回 Driver，也不启动 Agent。listRuntimes 返回全部匹配资源的数组，不分页。SessionService 返回 Session 或操作结果，listSessions 默认跨全部 Runtime 与 namespace，包含离线和归档记录；Session 列表和历史查询保留分页。
+RuntimeService 返回 Runtime 资源快照；getRuntime、listRuntimes 不返回 Driver，也不启动 Agent。listRuntimes 返回全部匹配资源的数组，不分页。SessionService 返回 Session 或操作结果，listSessions 默认跨全部 Runtime 与 namespace，包含离线记录；Session 列表和历史查询保留分页。
 
 按名称或 ID 解析目标属于Service 模块。SessionRef 支持互斥的 {namespace, name} 与 {sessionId}；两者解析到同一持久身份和通道。停止实例不删除会话，断线也不删除目录。目录读取失败必须明确失败，不能把部分列表当作全量结果。
 
@@ -120,20 +123,55 @@ SessionStatus.state 使用 [SessionState](../../shared/states.tsp)，替换原�
 
 | 值 | 含义 |
 |---|---|
-| `offline` | 持久身份存在，当前无运行连接且已确认无未结算工作，可以恢复 |
+| `offline` | 持久身份存在，MASS 当前无运行绑定且已结算其接纳的责任，可以恢复；不声称无法观测的 provider 工作已经停止 |
 | `opening` | 正在创建或恢复运行连接 |
 | `idle` | 连接可用，已确认当前没有执行中的工作 |
 | `running` | 正在执行工作 |
 | `requires_action` | 当前工作需要用户采取行动后才能继续，例如回答问题或确认权限 |
-| `closing` | 正在归档或关闭，尚未确认运行资源释放 |
-| `archived` | 已明确归档，并确认会话运行资源释放，保留身份和历史 |
-| `unknown` | 无法确认当前运行或工作状态 |
+| `closing` | close 已接纳但尚未成功；本次尝试失败时也保持此值，并通过 reason 说明 |
+| `unknown` | 无法确认当前运行或工作状态；用于重启或旧运行状态缺少证明，不表示普通 close 失败 |
 
-断线后不能证明工作已停止时进入 `unknown`，不能推断为 `offline` 或 `idle`。取消被接受后仍保持 `running` 或 `requires_action`，直到有工作终止证据才进入 `idle`；若连接同时失效，则按实际证据确定状态，不能强制为空闲。归档进入 `closing`，释放确认后才进入 `archived`；关闭超时仍保持 `closing`，通过 reason 说明结果未确定，并阻止冲突恢复。
+断线后不能证明工作已停止时进入 `unknown`，不能推断为 `offline` 或 `idle`。取消被接受后仍保持 `running` 或 `requires_action`，直到有工作终止证据才进入 `idle`；若连接同时失效，则按实际证据确定状态，不能强制为空闲。
 
-恢复从 `offline` 或 `archived` 进入 `opening`，成功后依据实际事实进入 `idle`、`running` 或 `requires_action`。失败且确认没有遗留运行资源时回到恢复前的 `offline` 或 `archived`；副作用结果未确定时进入 `unknown` 并保留原操作责任，不能发起冲突恢复。创建期间若尚无持久身份，`opening` 不授权提前公开 Session 创建成功。
+`archived` 不是 SessionState 或 SessionQuery.state 的合法值。新请求使用该值时在查询或写入前返回参数错误，不能当作空结果或兼容别名。
 
-状态只描述当前可证明的事实，不替代接受、历史提交、工作终止和资源释放各自所需的证据。Reason 为字符串，各具体问题自行定义 reason 取值，不维护全局枚举或统一词表。运行时 state_update 使用 SessionState 中 idle/running/requires_action 或 null 表达工作观察；Service 同步协调打开、关闭等业务生命周期；Agent 状态观察可由状态 Handler 自行异步投影，按 Session 身份、资源版本及 closing/archived 保护更新；Handler 不接收 Runtime/工作上下文，也不获得运行控制能力，失败记录诊断且不阻塞广播。查询状态允许落后，不保证最终追上；业务准入仍校验实际运行与操作证据。映射与终态保护见[事件状态投影](../runtime/events.md#状态投影)。
+### Session close
+
+SessionService.closeSession 从任意状态接纳，包括 `opening`、`idle`、`running`、`requires_action`、`closing`、`offline` 和 `unknown`。接纳后立即建立关闭栅栏：新的 prompt、answer、cancel 和 resume 被拒绝，get、list、history、watch 等只读操作继续可用。关闭与已接纳业务操作、resume 和其他 close 使用同一 Session 操作序列；先被接纳的一方保留其目标，close 随后接管清理。close 不撤销已经产生的外部副作用，也不声称此前工作成功完成。[^idle-session-close]
+
+对需要调用 SDK 的 close 尝试，唯一成功条件是 Driver 对底层 SDK Session close 返回成功；再次 close 已 `offline` 的 Session 直接成功，对无当前 SDK 句柄的 `unknown` Session 则只完成 MASS 内部清理。SDK close 成功即表示 MASS 接受本次 native close，即使 Codex 原生 thread 可能由 provider 继续处理，或 Claude SDK 内部以自己的方式结束进程；MASS 不额外 interrupt、等待工作终止、强杀、按 PID 清理或探测后端健康。成功后 Service 仍须结算已接纳 delivery、history commit 和实时发布责任，清除当前运行版本、能力和实际功能，保留身份、历史与恢复材料，之后才写入 `offline`。SDK close 已成功但这些 MASS 内部责任尚未结算或结算失败时，Session 保持 `closing`、返回错误，并在后续显式 close 中继续结算，不能先公开 `offline`。close 不删除 Session，也不停止所属 Runtime；关闭最后一个 Session 后 Runtime 仍保持 `running`。
+
+SDK close 失败或结果无法确认时，Session 保持 `closing` 并记录可公开、脱敏的原因；不得自动回到 `idle`、`running` 或 `offline`。失败不会自动重试。再次 close 是显式重试：当前仍有可调用句柄时幂等调用 SDK close；本次 close 已证明无需 SDK 目标（无句柄 `unknown`，或原操作已证明未产生原生资源）时，不要求句柄，继续未完成的 MASS 结算；已经确认 SDK close 成功、仅 MASS 内部责任未结算时，即使不再有 SDK 句柄也继续结算；已有 native close 尝试但结果尚未确认且没有可调用句柄时返回错误并保持 `closing`。并发或重复 close 不产生相互矛盾的结果。对已 `offline` 的 Session 再次 close 直接成功。
+
+对 `unknown` Session，如果当前进程持有 SDK Session 句柄，按普通 close 调用 SDK；如果没有当前句柄，不调用不存在的目标，只完成 MASS 内部清理并进入 `offline`。清理包括结算已接纳 delivery、history commit 和实时发布，并终结可归属该 Session 的未完成 open、resume 或 load 责任：保留已提交的部分事实与真实错误，禁止重放或继续输入，不把责任终结当作原生操作成功。仍存在无法结算的内部责任时保持 `closing`，不进入 `offline`；再次 close 继续这条不需要 SDK 目标的清理重试。这里的 `offline` 只表示 MASS 已无当前运行绑定且内部责任已结算，不声称无法观测的 provider 工作或旧外部资源已经停止；该 close 接纳是 `unknown` 进入 `offline` 的唯一例外，其他情况不能从 unknown 推断离线。close 失败不改变此前已经发生的外部事实，也不允许新的业务操作越过关闭栅栏。
+
+close 接纳时若 `opening`、open、resume 或 load 尚未产生当前 SDK 句柄，Session 保持 `closing` 并接管原操作的结果，不启动新的 open 或 resume。原操作随后产生句柄时，close 调用该句柄的 SDK close；原操作明确证明没有产生原生资源时，close 完成 MASS 内部清理并可进入 `offline`；原操作失败或结果无法确认时保持 `closing`。`closing` 重试若没有可用于 SDK close 的句柄，按上文规则继续可完成的 MASS 结算；已有 native close 尝试但结果未确认时返回错误并保持 `closing`，不能推断 close 成功。
+
+### Session 空闲自动 close
+
+daemon 对所有 Session 使用单一 `sessionIdleTimeout` 配置，YAML 键为 `sessionIdleTimeout`，启动参数为 `--session-idle-timeout`，默认 `10m`。`0` 禁用自动 close；负数或无效 duration 在 daemon 启动时拒绝。配置遵循 daemon 的现有优先级和严格字段校验。实现不得设置阻止约 `5s` 值使用的最小值。首版不提供 per-Session 或 per-Runtime 覆盖。[^idle-session-close]
+
+只有当前运行绑定能够证明 Session 为 `idle`，且没有在途 open、resume 或 close，没有等待交互，也没有已知子 Agent 或工具工作时，才启动空闲计时。任何该 Session 已接纳的业务活动或已知运行事件都会重置计时；get、list、history 和 watch 本身不重置。计时器触发时必须基于当前状态、当前运行绑定和待办重新校验，不能依据可能落后的持久状态关闭已经活跃的 Session。
+
+到期后调用与人工 close 相同的 closeSession 路径，并采用相同的成功、失败和重试规则。自动 close 失败保持 `closing`，不自动重试。计时器只存在于当前应用进程，不持久化；服务重启后不为旧 Session 建立自动启动或回收责任。
+
+已知后台活动可以延长 Session 生命周期；无法观测的静默后台工作不承诺获得保活。`idle` 只表示当前已观察到没有前台工作或已知待办，不证明所有不可观测的后台任务已经结束。空闲调度不修改 Runtime 配置 generation，也不写入 Session generation。
+
+### 显式恢复与输入准入
+
+createSession 和 resumeSession 是仅有的 Session 按需启动入口。所属 Runtime 尚无当前运行绑定时，按持久 spec 启动，并与显式 startRuntime 共用同一条按名称串行启动协调；并发 create、resume 和 start 只建立一个运行绑定。显式 startRuntime 保留；createRuntime、配置更新、get/list、history、watch 和 close 不启动 Runtime。显式 loadSession 的启动前置条件保持其独立合同，不从本规则获得隐式启动。
+
+resumeSession 从 `offline` 或重启后的 `unknown` 接纳。它按需启动 Runtime，并调用 provider 原生 resume；成功后依据实际观察进入 `idle`、`running` 或 `requires_action`，失败按[恢复规则](session.md#恢复)结算。`unknown` 上的 resume 失败继续为 `unknown`，不伪装成 `offline` 或成功；resume 不重放旧输入、工具调用、待处理交互或其他历史工作。`closing` 和其他存在有效运行控制者的状态拒绝 resume。
+
+sendPrompt 不隐式 resume，也不启动 Runtime。`unknown` 的输入准入不能只看持久状态字符串，必须同时核对当前运行绑定及其状态观察：
+
+- 没有当前 live Session 绑定，或当前绑定已经处理过任一状态观察且最新观察为 `unknown` 时，拒绝输入；失败发生在任何派发副作用前，错误包含当前状态并要求显式 resume。
+- 绑定刚由成功的显式 createSession 或 resumeSession 建立，且 Service 尚未处理该运行的首个状态观察时，允许后续 sendPrompt。该例外只证明显式建立的原生连接可由当前 Driver 接受输入，不启动 Runtime、不重新 resume，也不把持久 `unknown` 解释为可恢复成功。首个观察一旦被处理为 `unknown`，后续输入重新要求显式 resume。
+- `offline`、`opening`、`closing` 仍严格拒绝；`idle`、`running` 和 `requires_action` 按当前有效绑定准入。
+
+上述拒绝均在产生任何派发副作用前完成。answer 和 cancel 对无有效运行的 Session 同样在派发前失败，返回当前状态并要求先显式 resume，不存在隐含恢复路径。
+
+状态只描述当前可证明的事实，不替代接受、历史提交、工作终止和 close 结果各自所需的证据。Reason 为字符串，各具体问题自行定义 reason 取值，不维护全局枚举或统一词表。运行时 state_update 使用 SessionState 中 idle/running/requires_action 或 null 表达工作观察；Service 同步协调打开和 close 等业务生命周期；Agent 状态观察可由状态 Handler 自行异步投影，按 Session 身份、资源版本、当前运行身份及 closing 保护更新；Handler 不接收 Runtime/工作上下文，也不获得运行控制能力，失败记录诊断且不阻塞广播。查询状态允许落后，不保证最终追上；业务准入仍校验实际运行与操作证据。映射与终态保护见[事件状态投影](../runtime/events.md#状态投影)。
 
 ## 服务重启与状态校正
 
@@ -143,17 +181,18 @@ Service 在开放业务接口前，通过 MetaStore 完成状态校正；不由 
 
 | 重启前的事实 | 重启后的 Session 状态 |
 |---|---|
-| 正常关闭已确认运行资源释放、工作与已接纳事实均结算，未显式归档 | offline，表示未激活，等待显式 resume |
-| 已明确归档且释放已确认 | archived，保留显式归档含义 |
+| 旧 persisted state 为 archived | 迁移为 offline，保留身份、历史、UUID 与同步位置，不建立当前运行绑定 |
 | 原本为 offline 且无未结算责任 | offline |
 | 保存为 opening、idle、running、requires_action 或 closing，但跨重启缺少释放或结算证明 | unknown，通过 reason 说明旧运行未确认 |
 | 原本为 unknown 或有未结算操作/load | unknown，继续保留原责任，不把重启当作结算证据 |
 
-正常应用 shutdown 不把普通 Session 隐式归档：完成关闭、事实排空和资源释放后记录 offline；此前显式归档的仍为 archived。异常退出后，即使旧状态是 idle，也不能仅因本地连接消失便断言原生工作或资源已释放。未知责任需要先验证并结算，不能直接按 offline 执行冲突恢复；本轮不新增跨重启结算 API。
+保留未结算责任不等于要求一直停留到原生结果可知；用户显式 close 后按其清理规则接管并终结 MASS 内部责任，但不会把原生结果未知伪造成成功。
 
-Runtime 同样不能沿用旧 running 作为当前可用证明。已确认停止的保留 stopped；旧 starting/running/stopping 或已有不确定责任的校正为 unknown。Service 当前运行映射为空不证明旧运行资源释放；unknown 不能绕过原释放校验而按需重建 Driver。
+正常应用 shutdown 在完成事实排空和资源释放后，将已关闭 Session 记录为 offline，不创建用户请求的 close 历史或保留旧运行控制。异常退出后，即使旧状态是 idle，也不能仅因本地连接消失便断言原生工作或资源已释放。未知责任需要显式接管，不能直接按 offline 执行冲突恢复；本轮不新增独立跨重启结算 API。
 
-确认释放后清除当前运行版本和能力；结果未知时保留最后确认的版本与能力作为旧观察，并通过 unknown/reason 表达不确定性，这些字段不能授予当前执行许可。离线 Session 只有成功 resume 后，才依据新的实际观察进入 idle、running 或 requires_action；不能用历史状态或旧交互恢复当前控制能力。
+Runtime 同样不能沿用旧 running 作为当前可用证明。已确认停止的保留 stopped；旧 starting/running/stopping 或已有不确定责任的校正为 unknown。Service 当前运行映射为空不证明旧运行资源释放。冷进程没有该 Runtime 的当前运行映射时，显式 start/resume 可以把持久 unknown 视为旧本地 owner 已不可达并建立新 Driver；该动作不证明旧 provider 工作或后端资源已经结束。同一进程已有运行绑定或未结算责任时仍不能重建。
+
+确认 close 成功后清除当前运行版本和能力；结果未知时保留最后确认的版本与能力作为旧观察，并通过 closing/reason 表达不确定性，这些字段不能授予当前执行许可。离线 Session 只有成功 resume 后，才依据新的实际观察进入 idle、running 或 requires_action；不能用历史状态或旧交互恢复当前控制能力。
 
 ## 内部运行能力的取得与释放
 
@@ -161,14 +200,14 @@ Service 通过 RuntimeRegistry.create 构造 Driver，并在自己的当前运�
 
 SessionService 按 Session.spec.runtimeRef 定位所属 Runtime；创建和恢复在校验后按需启动，再通过运行绑定取得 Driver。已有运行复用原配置和 Driver，不因新请求热更新。查询、历史读取和订阅绝不隐式激活。原操作在副作用前关联，调用超时不解除资源责任。
 
-Driver 内部维护恢复材料、原生连接和运行来源；Service 模块不接收或交回恢复材料。关闭会话后需结算全部已接纳操作与核心事实；未知结果继续归原操作管理，不能移除预留后重试。
+Driver 内部维护恢复材料、原生连接和运行来源；Service 模块不接收或交回恢复材料。close 后需结算全部已接纳操作与核心事实；SDK 失败或无法确认的结果继续归原 close 责任管理，不能移除预留后自动重试。
 
 ## 停止 Runtime 的协调职责
 
 完整停止流程由 Service 内部的同一停止操作拥有，RuntimeService 和 SessionService 是同一 Module 的两组公共能力。调用者只调用 stopRuntime；组装层只注入依赖，不传递 barrier、排空证明或驱动分阶段停止。以下行为及完成条件是合同，不固定内部对象之间的调用结构：
 
 1. 原子封闭该实例的新激活、创建、恢复、load、输入和交互回答，覆盖尚无 sessionId 的在途创建。
-2. SessionService 处理全部会话及在途操作，包含 load 预留与回放；必要时调用 Driver.cancel/closeSession/cancelHistoryLoad，提交已接纳事实并结算内部使用责任。
+2. SessionService 处理全部会话及在途操作，包含 load 预留与回放；必要时调用 Driver.closeSession、cancel 或 cancelHistoryLoad，提交已接纳事实并结算内部使用责任。
 3. 会话及原操作排空确定完成后调用原 Driver.stop；停止期间持续接收最终事件，并再次确认 Service 的历史提交和实时发布待办均已结算。Driver 有未结算执行时仍拒绝停止，不能绕过安全检查。
 4. 只有实际运行资源释放和最终事件结算都得到确认，才由 Service 移除原运行绑定、更新 Runtime 状态并公开停止成功。同名串行协调持续到移除完成，旧清理不能误删新绑定。
 
@@ -182,7 +221,7 @@ barrier、排空证明或其他协调手段可作为 Service 的 internal seam�
 
 SessionSpec 在运行时 DriverSessionSpec 的 cwd、systemPrompt、additionalDirs 和 features 上增加 runtimeRef。路径按 Agent 所在环境解释；额外目录不代表授权。systemPrompt 是配置，创建与恢复不隐式发送业务输入。features 是持久的功能请求，字段省略时使用 schema 默认值；Driver 返回实际生效值，Session.status.effectiveFeatures 记录本次运行的实际值。请求开启但 Driver 不支持时不报错，降级为 false；其他显式不支持的选项必须报错。
 
-字段沿用此前 agentrun 参考讨论，bundleDir 与私有恢复材料由运行时实现管理；不加入无约束 _meta、permissions 或 mcpServers。SessionService 当前没有 updateSession 或 deleteSession，归档保留身份和历史。
+字段沿用此前 agentrun 参考讨论，bundleDir 与私有恢复材料由运行时实现管理；不加入无约束 _meta、permissions 或 mcpServers。SessionService 当前没有 updateSession 或 deleteSession，close 保留身份和历史。
 
 ## 事件、历史与恢复
 
@@ -201,9 +240,16 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 - 已停止实例仍可查询，列表不启动 Agent；Runtime 列表无分页，Session 目录可分页。
 - 并发启动只有一个运行所有者；更新与启动并发不会误报 appliedGeneration。
 - 停止状态下直接创建或恢复 Session，自动启动所属 Runtime；并发请求共用一次启动，其他 Runtime 和 Session 不被自动激活。
-- 启动失败不调用原生 open/resume；停止中或旧资源释放未知时不绕过栅栏、不自动重试。
-- 查询、历史、订阅和无有效运行的输入不触发启动或恢复；显式 start 仍可用。
-- 服务重启不启动 Runtime 或 Session；正常释放的普通会话为 offline，已归档的保持 archived，缺少结算证明的旧在线状态为 unknown。
+- 启动失败不调用原生 open/resume；同一进程停止中、已有运行绑定或未结算资源时不绕过栅栏、不自动重试。冷进程无当前运行映射的 unknown Runtime 只由显式 start/resume 接管。
+- 查询、历史、订阅和无有效运行的输入不触发启动或恢复；prompt 对 detached unknown、已观察到 unknown、offline、opening 和 closing 在 Driver open/resume/prompt 等任何派发副作用前失败并要求显式 resume。
+- 显式 create/resume 刚建立 live 绑定、初始观察尚未到达的 unknown 可在不启动 Runtime、不重新 open/resume 的前提下接受 prompt；该例外不适用于已 detached 或已处理 unknown 观察的 Session；显式 start 仍可用。
+- close 从 active 状态接纳并调用 SDK close；成功为 offline，失败保持 closing；重复 close 与 offline 重试结果安全；关闭最后一个 Session 不停止 Runtime。
+- unknown 有当前 SDK 句柄时 close 调用 SDK，无句柄时完成内部清理到 offline；失败继续保持 closing。
+- close 在 opening/open/resume/load 尚未产生句柄时保持 closing 并接管原结果；有句柄后再调用 SDK，不能新建 open/resume。
+- 空闲 Session 到期使用同一条 close 路径；查询、历史、watch 不重置计时，失败不自动重试。
+- sessionIdleTimeout 默认 10m、0 禁用、负数或无效值启动失败、约 5s 可显式配置。
+- 服务重启不启动 Runtime 或 Session；旧 archived 迁移为 offline，缺少结算证明的旧在线状态为 unknown；冷进程无当前运行映射的 unknown Runtime 可由显式 start/resume 建立新 Driver，unknown Session 随即可恢复；unknown resume 失败仍为 unknown。已有运行绑定或未结算责任时仍拒绝。
+- SessionQuery.state=archived 被拒绝，不返回空页或兼容别名。
 - 启动状态校正完成前不开放业务接口；校正失败明确报错，重复启动不修改身份、spec、generation 或历史，不复活旧工作与交互。
 - 运行中更新不替换 Driver；停止使用原 Driver 并保留未确定责任。
 - 两种 Session 引用解析到同一记录；跨 Runtime 重复 sessionId 拒绝第二次登记并清理本次资源。
@@ -217,6 +263,8 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 配置导入、各类型的具体配置/能力名称、事件剩余细节和操作查询仍待确认。共享类型已采用开放字段或不透明字符串，列表分页、历史查询与实时订阅已定义；这些声明不表示具体 Driver 已支持全部业务能力。RuntimeDriver.events() 已定义单消费者共享流；语言绑定的取消方式、具体队列容量和公平调度实现仍待确定，不声明事件集成已经实现。
 
 [^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；HTTP 只做协议映射，具体接口由负责人定义。
+
+[^idle-session-close]: 负责人在 2026-11-06 确认 close/offline、空闲自动 close、按需启动和重启状态校正的终态范围。
 
 ## 显式 load
 

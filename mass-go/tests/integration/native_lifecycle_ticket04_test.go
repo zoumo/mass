@@ -59,7 +59,7 @@ func lifecycleDriver(t *testing.T, kind, control string) (runtime.Driver, events
 	return d, stream, pidFile
 }
 
-func TestTicket04CodexCloseFailureDrainsAndKeepsSharedClient(t *testing.T) {
+func TestTicket04CodexCloseReturnsSDKFailureAndKeepsSharedClient(t *testing.T) {
 	d, stream, _ := lifecycleDriver(t, "codex", "acknowledged")
 	work, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -84,8 +84,9 @@ func TestTicket04CodexCloseFailureDrainsAndKeepsSharedClient(t *testing.T) {
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 	err = d.CloseSession(canceled, "damaged")
-	require.ErrorIs(t, err, context.Canceled, "cleanup failure must not bypass the Receive/drain wait")
-	require.Contains(t, err.Error(), "unsubscribe", "cleanup failure must remain distinct from the abandoned drain wait")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, context.Canceled, "caller cancellation must not replace the SDK close result")
+	require.Contains(t, err.Error(), "unsubscribe", "the SDK cleanup failure is returned directly")
 	seen := make(chan int, 1)
 	var reopened atomic.Int32
 	receiveCtx, stopReceive := context.WithCancel(context.Background())
@@ -109,7 +110,7 @@ func TestTicket04CodexCloseFailureDrainsAndKeepsSharedClient(t *testing.T) {
 			if count == 160 && !notified {
 				notified = true
 				seen <- count
-				// Keep consuming the CloseSession Flush fence and sibling events.
+				// Keep consuming facts that remain in the shared event stream.
 			}
 		}
 	}()
@@ -117,7 +118,7 @@ func TestTicket04CodexCloseFailureDrainsAndKeepsSharedClient(t *testing.T) {
 	require.Error(t, closeErr)
 	require.NotErrorIs(t, closeErr, context.Canceled)
 	require.Contains(t, closeErr.Error(), "unsubscribe")
-	require.Contains(t, closeErr.Error(), "observation")
+	require.NotContains(t, closeErr.Error(), "observation", "driver close must not probe observation health")
 	require.Zero(t, reopened.Load(), "a queued request must not reopen answer authority during Close")
 	select {
 	case count := <-seen:
@@ -132,6 +133,67 @@ func TestTicket04CodexCloseFailureDrainsAndKeepsSharedClient(t *testing.T) {
 	second, err := d.Cancel(ctx(t), "healthy")
 	require.NoError(t, err, "same-work control must not be dispatched twice")
 	require.Equal(t, first, second)
+}
+
+func TestTicket04DriverCloseWaitsForEventRouting(t *testing.T) {
+	for _, kind := range []string{"codex", "claude"} {
+		t.Run(kind, func(t *testing.T) {
+			bin := mock
+			var factory runtime.Factory = codex.Factory{RecoveryDir: t.TempDir()}
+			if kind == "claude" {
+				bin = claudeMock
+				factory = claude.Factory{RecoveryDir: t.TempDir()}
+			}
+			path, work := nativeScenario(t, kind, "ticket04-close-drain")
+			d, err := factory.New("test", runtime.Config{"executable": bin, "scenario": path})
+			require.NoError(t, err)
+			stream, err := d.Events()
+			require.NoError(t, err)
+			_, err = d.Start(ctx(t))
+			require.NoError(t, err)
+			opened, err := d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "close"}, runtime.SessionSpec{Cwd: work})
+			require.NoError(t, err)
+			drain := func() func() {
+				readCtx, stop := context.WithCancel(context.Background())
+				drained := make(chan struct{})
+				go func() {
+					defer close(drained)
+					for {
+						if _, receiveErr := stream.Next(readCtx); receiveErr != nil {
+							return
+						}
+					}
+				}()
+				return func() {
+					stop()
+					<-drained
+				}
+			}
+			t.Cleanup(func() {
+				stop := drain()
+				cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = d.CloseSession(cleanup, opened.SessionID)
+				_ = d.Stop(cleanup)
+				stop()
+			})
+
+			_, err = d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+			require.NoError(t, err)
+			_, err = stream.Next(ctx(t))
+			require.NoError(t, err, "one admitted event is now awaiting its Next acknowledgement")
+
+			closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			err = d.CloseSession(closeCtx, opened.SessionID)
+			require.ErrorIs(t, err, context.DeadlineExceeded, "close must not pass the EventPipe routing watermark")
+
+			stop := drain()
+			require.NoError(t, d.CloseSession(ctx(t), opened.SessionID))
+			stop()
+			require.NoError(t, d.Stop(ctx(t)))
+		})
+	}
 }
 
 func TestTicket04CancelDispatchEvidence(t *testing.T) {
@@ -208,7 +270,7 @@ func TestTicket04CancelDispatchEvidence(t *testing.T) {
 	}
 }
 
-func TestTicket04ClaudeCloseWithBackloggedEOF(t *testing.T) {
+func TestTicket04ClaudeCloseReturnsSDKFailureWithBackloggedEOF(t *testing.T) {
 	d, stream, pidFile := lifecycleDriver(t, "claude", "eof")
 	work, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -233,41 +295,22 @@ func TestTicket04ClaudeCloseWithBackloggedEOF(t *testing.T) {
 		}
 		require.NoError(t, deadline.Err(), "controlled EOF peer did not exit")
 	}
-	closed := make(chan error, 1)
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	go func() { closed <- d.CloseSession(canceled, opened.SessionID) }()
-	// Keep a drain ready for cleanup even when the regression blocks Close on
-	// the adapter state lock. Its release is not a timing oracle.
-	release := make(chan struct{})
-	count := make(chan int, 1)
-	receiveCtx, stopReceive := context.WithCancel(context.Background())
-	t.Cleanup(stopReceive)
-	go func() {
-		<-release
-		n := 0
-		for {
-			e, err := stream.Next(receiveCtx)
-			if err != nil {
-				count <- n
-				return
-			}
-			if _, ok := e.Payload().(events.AgentMessage); ok {
-				n++
-			}
+	err = d.CloseSession(canceled, opened.SessionID)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, context.Canceled, "caller cancellation must not replace the SDK close result")
+
+	count := 0
+	for count < 160 {
+		e, nextErr := stream.Next(ctx(t))
+		require.NoError(t, nextErr)
+		if _, ok := e.Payload().(events.AgentMessage); ok {
+			count++
 		}
-	}()
-	select {
-	case err = <-closed:
-		close(release)
-		require.ErrorIs(t, err, context.Canceled)
-	case <-ctx(t).Done():
-		close(release)
-		<-closed
-		t.Fatal("Close could not seal a backlogged observer")
 	}
+	require.Equal(t, 160, count, "SDK close must not discard admitted facts")
+
 	err = d.CloseSession(ctx(t), opened.SessionID)
 	require.Error(t, err, "unexpected native EOF must retain release responsibility")
-	stopReceive()
-	require.Equal(t, 160, <-count, "Close must drain admitted records despite terminal EOF")
 }

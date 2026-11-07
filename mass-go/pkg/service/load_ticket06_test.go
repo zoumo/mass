@@ -27,7 +27,10 @@ func (d *loadDriver) Events() (events.Stream, error) { return d.pipe, nil }
 func (*loadDriver) Start(context.Context) (runtime.Capabilities, error) {
 	return runtime.Capabilities{}, nil
 }
-func (*loadDriver) CloseSession(context.Context, string) error              { return nil }
+func (*loadDriver) CloseSession(context.Context, string) error { return nil }
+func (*loadDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
+	return runtime.CancelReceipt{Result: "noActiveWork"}, nil
+}
 func (*loadDriver) CancelHistoryLoad(context.Context, string, string) error { return nil }
 func (d *loadDriver) Stop(context.Context) error                            { d.pipe.End(nil); return nil }
 func (d *loadDriver) LoadSession(ctx context.Context, id string, a runtime.Address, cwd, loadID string) error {

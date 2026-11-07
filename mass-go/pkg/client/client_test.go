@@ -354,11 +354,12 @@ func (s *ClientSuite) TestGeneratedResourceWorkflow() {
 	s.Require().NoError(c.ListSessions(ctx, resource.SessionQuery{Limit: 2}, nil))
 	s.Require().NoError(c.SendPrompt(ctx, ref, runtime.Input{}, nil))
 	s.Require().NoError(c.Cancel(ctx, ref, nil))
-	s.Require().NoError(c.ArchiveSession(ctx, ref, nil))
+	s.Require().NoError(c.CloseSession(ctx, ref, nil))
 	s.Require().NoError(c.ResumeSession(ctx, ref, nil))
 	s.Require().NoError(c.History(ctx, ref, store.HistoryQuery{Limit: 2, Types: []string{"agent.message", "user.message"}}, nil))
 	s.Contains(paths, "GET /apis/v1/sessions/a%2Fb%25%20%E7%A9%BA")
 	s.Contains(paths, "GET /apis/v1/sessions/a%2Fb%25%20%E7%A9%BA/events?limit=2&types=agent.message&types=user.message")
+	s.Contains(paths, "POST /apis/v1/sessions/a%2Fb%25%20%E7%A9%BA/close")
 }
 
 func (s *framingSuite) TestLargeFrameHasNoInventedLimit() {

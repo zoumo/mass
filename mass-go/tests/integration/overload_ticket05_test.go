@@ -134,7 +134,7 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			if os.Getenv("MASS_REVIEW_OVERLOAD_FAIL") == kind {
 				t.Fatal("injected failure after saturation before gate release")
 			}
-			require.ErrorContains(t, c.SendPrompt(observation, refs["damaged"], input, nil), "session_delivery_overloaded")
+			requireOverloadOrResumeRequired(t, c.SendPrompt(observation, refs["damaged"], input, nil))
 			require.NoError(t, c.SendPrompt(observation, refs["healthy"], input, nil))
 			for {
 				e, eErr := watch.Next()
@@ -149,7 +149,7 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			require.NoError(t, c.History(observation, refs["damaged"], store.HistoryQuery{}, &slow))
 			require.Empty(t, slow.Events, "healthy native turn completed after saturation while slow storage remained gated")
 			release()
-			_, err = svc.ArchiveSession(observation, refs["damaged"])
+			_, err = svc.CloseSession(observation, refs["damaged"])
 			require.NoError(t, err)
 			require.NoError(t, c.History(observation, refs["damaged"], store.HistoryQuery{Limit: 200}, &slow))
 			require.Len(t, slow.Events, 160)
@@ -163,6 +163,20 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			require.NoError(t, svc.Shutdown(observation))
 			t.Log("PASS synthetic native provider: healthy SSE/HTTP/history completes after slow saturation before gate release; 160 ordered full facts retained; native processes reaped")
 		})
+	}
+}
+
+func requireOverloadOrResumeRequired(t *testing.T, err error) {
+	t.Helper()
+	var public *runtime.OperationError
+	require.ErrorAs(t, err, &public)
+	switch public.Code {
+	case "resource_exhausted":
+		require.Equal(t, "session_delivery_overloaded", public.Reason)
+	case "conflict":
+		require.Equal(t, "session_resume_required", public.Reason)
+	default:
+		require.FailNow(t, "unexpected saturated Session admission error", "%v", err)
 	}
 }
 
