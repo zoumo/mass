@@ -163,7 +163,13 @@ createSession 和 resumeSession 是仅有的 Session 按需启动入口。所属
 
 resumeSession 从 `offline` 或重启后的 `unknown` 接纳。它按需启动 Runtime，并调用 provider 原生 resume；成功后依据实际观察进入 `idle`、`running` 或 `requires_action`，失败按[恢复规则](session.md#恢复)结算。`unknown` 上的 resume 失败继续为 `unknown`，不伪装成 `offline` 或成功；resume 不重放旧输入、工具调用、待处理交互或其他历史工作。`closing` 和其他存在有效运行控制者的状态拒绝 resume。
 
-sendPrompt 不隐式 resume，也不启动 Runtime；只允许当前已有有效运行绑定且状态为 `idle`、`running` 或 `requires_action` 的 Session。`offline`、`unknown`、`opening` 和 `closing` 在产生任何派发副作用前失败，错误包含当前状态并明确要求先显式 resume。answer 和 cancel 对无有效运行的 Session 同样在派发前失败，返回当前状态并要求先显式 resume，不存在隐含恢复路径。
+sendPrompt 不隐式 resume，也不启动 Runtime。`unknown` 的输入准入不能只看持久状态字符串，必须同时核对当前运行绑定及其状态观察：
+
+- 没有当前 live Session 绑定，或当前绑定已经处理过任一状态观察且最新观察为 `unknown` 时，拒绝输入；失败发生在任何派发副作用前，错误包含当前状态并要求显式 resume。
+- 绑定刚由成功的显式 createSession 或 resumeSession 建立，且 Service 尚未处理该运行的首个状态观察时，允许后续 sendPrompt。该例外只证明显式建立的原生连接可由当前 Driver 接受输入，不启动 Runtime、不重新 resume，也不把持久 `unknown` 解释为可恢复成功。首个观察一旦被处理为 `unknown`，后续输入重新要求显式 resume。
+- `offline`、`opening`、`closing` 仍严格拒绝；`idle`、`running` 和 `requires_action` 按当前有效绑定准入。
+
+上述拒绝均在产生任何派发副作用前完成。answer 和 cancel 对无有效运行的 Session 同样在派发前失败，返回当前状态并要求先显式 resume，不存在隐含恢复路径。
 
 状态只描述当前可证明的事实，不替代接受、历史提交、工作终止和 close 结果各自所需的证据。Reason 为字符串，各具体问题自行定义 reason 取值，不维护全局枚举或统一词表。运行时 state_update 使用 SessionState 中 idle/running/requires_action 或 null 表达工作观察；Service 同步协调打开和 close 等业务生命周期；Agent 状态观察可由状态 Handler 自行异步投影，按 Session 身份、资源版本、当前运行身份及 closing 保护更新；Handler 不接收 Runtime/工作上下文，也不获得运行控制能力，失败记录诊断且不阻塞广播。查询状态允许落后，不保证最终追上；业务准入仍校验实际运行与操作证据。映射与终态保护见[事件状态投影](../runtime/events.md#状态投影)。
 
@@ -235,7 +241,8 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 - 并发启动只有一个运行所有者；更新与启动并发不会误报 appliedGeneration。
 - 停止状态下直接创建或恢复 Session，自动启动所属 Runtime；并发请求共用一次启动，其他 Runtime 和 Session 不被自动激活。
 - 启动失败不调用原生 open/resume；停止中或旧资源释放未知时不绕过栅栏、不自动重试。
-- 查询、历史、订阅和无有效运行的输入不触发启动或恢复；prompt 在 offline/unknown/opening/closing 上失败并要求显式 resume；显式 start 仍可用。
+- 查询、历史、订阅和无有效运行的输入不触发启动或恢复；prompt 对 detached unknown、已观察到 unknown、offline、opening 和 closing 在 Driver open/resume/prompt 等任何派发副作用前失败并要求显式 resume。
+- 显式 create/resume 刚建立 live 绑定、初始观察尚未到达的 unknown 可在不启动 Runtime、不重新 open/resume 的前提下接受 prompt；该例外不适用于已 detached 或已处理 unknown 观察的 Session；显式 start 仍可用。
 - close 从 active 状态接纳并调用 SDK close；成功为 offline，失败保持 closing；重复 close 与 offline 重试结果安全；关闭最后一个 Session 不停止 Runtime。
 - unknown 有当前 SDK 句柄时 close 调用 SDK，无句柄时完成内部清理到 offline；失败继续保持 closing。
 - close 在 opening/open/resume/load 尚未产生句柄时保持 closing 并接管原结果；有句柄后再调用 SDK，不能新建 open/resume。
