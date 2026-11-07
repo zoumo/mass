@@ -984,7 +984,7 @@ func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer a
 	return runtime.Acceptance{Sent: runtime.Yes()}, nil
 }
 
-func (d *Driver) CloseSession(_ context.Context, id string) error {
+func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	d.mu.Lock()
 	s := d.sessions[id]
 	stopped := d.stopped
@@ -999,8 +999,26 @@ func (d *Driver) CloseSession(_ context.Context, id string) error {
 	s.closing = true
 	s.mu.Unlock()
 	d.interactions.RemoveSession(id)
-	if err := s.client.Close(); err != nil {
-		return err
+	closeErr := s.client.Close()
+	select {
+	case <-s.done:
+	case <-ctx.Done():
+		if closeErr != nil {
+			return closeErr
+		}
+		return ctx.Err()
+	}
+	if cause := s.client.Err(); cause != nil {
+		return errors.Join(closeErr, fmt.Errorf("native observation terminated: %w", cause))
+	}
+	s.mu.Lock()
+	cause := s.err
+	s.mu.Unlock()
+	if cause != nil {
+		return errors.Join(closeErr, fmt.Errorf("observation terminated: %w", cause))
+	}
+	if closeErr != nil {
+		return fmt.Errorf("native cleanup failed: %w", closeErr)
 	}
 	d.mu.Lock()
 	if d.sessions[id] == s {

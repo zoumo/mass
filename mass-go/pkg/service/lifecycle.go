@@ -727,7 +727,7 @@ func (s *Service) closeForStop(ctx context.Context, run *runBinding, id string) 
 	for {
 		receipt, err := run.driver.Cancel(ctx, id)
 		if err != nil && !errors.Is(err, runtime.ErrFailedPrecondition) {
-			return err
+			return errors.Join(err, run.driver.CloseSession(ctx, id))
 		}
 		if err != nil || receipt.Result == "noActiveWork" {
 			return run.driver.CloseSession(ctx, id)

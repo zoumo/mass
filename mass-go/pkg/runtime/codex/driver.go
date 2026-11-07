@@ -573,7 +573,7 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 	return nil
 }
 
-func (d *Driver) CloseSession(_ context.Context, id string) error {
+func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	d.mu.Lock()
 	s := d.sessions[id]
 	if s == nil {
@@ -583,8 +583,23 @@ func (d *Driver) CloseSession(_ context.Context, id string) error {
 	s.closing = true
 	d.mu.Unlock()
 	d.interactions.RemoveSession(id)
-	if err := s.native.Close(); err != nil {
-		return err
+	closeErr := s.native.Close()
+	if closeErr != nil {
+		return closeErr
+	}
+	select {
+	case <-s.done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if cause := s.native.Err(); cause != nil {
+		return fmt.Errorf("native resource release unconfirmed after observation loss: %w", cause)
+	}
+	d.mu.Lock()
+	cause := s.err
+	d.mu.Unlock()
+	if cause != nil {
+		return fmt.Errorf("observation terminated: %w", cause)
 	}
 	d.mu.Lock()
 	if d.sessions[id] == s {
