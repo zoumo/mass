@@ -11,6 +11,10 @@ sources:
 
 # Session 配置选项
 
+本页描述 Agent 暴露的 ACP `configOptions` 及其更新快照，不描述 Runtime
+`features` 与 `mcpServers` 默认值；后者的归属和合并规则见
+[Runtime Session 默认配置](session-defaults.md)。
+
 准确声明见 [session-config.tsp](session-config.tsp)。采用 ACP 当前的 select 和 boolean，不自行假设 ACP 已支持任意输入控件。id、name 必填，description、category 可选；category 是开放展示分类，例如 mode/model/model_config/thought_level，不参与执行正确性。
 
 select 的 currentValue 为字符串选项 ID，options 为平铺 ConfigOptionValue[] 或分组 ConfigOptionGroup[]，同一数组不混用两种形态。每个值包含 value、name、可选 description；每组包含 group、name、options。boolean 的 currentValue 为布尔值，不提供 options。具体 adapter 验证 ID 唯一、currentValue 对应可用选项、分组一致性等业务约束；TypeSpec 不负责全部跨字段校验。

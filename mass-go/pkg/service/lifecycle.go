@@ -386,6 +386,9 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
 	}
+	if err := validateSessionConfig(r.Spec.SessionSpec); err != nil {
+		return resource.SessionResumed{Session: r}, err
+	}
 	switch r.Status.State {
 	case "offline", events.Unknown:
 	default:
@@ -422,6 +425,10 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	s.mu.Unlock()
 	if run == nil {
 		return resource.SessionResumed{Session: r}, runtime.FailedPrecondition("start original runtime before resume")
+	}
+	resolvedSpec, err := s.resolveSessionSpec(run, r.Spec.SessionSpec)
+	if err != nil {
+		return resource.SessionResumed{Session: r}, err
 	}
 	var resumer runtime.ResumptionDriver
 	if initial != nil {
@@ -472,9 +479,9 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	}
 	var native runtime.DriverSession
 	if initial == nil {
-		native, err = run.driver.ResumeSession(nativeCtx, r.Status.SessionID, a, r.Spec.SessionSpec)
+		native, err = run.driver.ResumeSession(nativeCtx, r.Status.SessionID, a, resolvedSpec)
 	} else {
-		native, err = resumer.ResumeSessionWithInput(nativeCtx, r.Status.SessionID, a, r.Spec.SessionSpec, *initial)
+		native, err = resumer.ResumeSessionWithInput(nativeCtx, r.Status.SessionID, a, resolvedSpec, *initial)
 	}
 	if err != nil {
 		// A failed input dispatch can still return a verified native connection.

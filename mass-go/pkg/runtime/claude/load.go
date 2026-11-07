@@ -37,7 +37,8 @@ type loadEventIdentity struct {
 	nativeParentID string
 }
 
-func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, cwd, loadID string) (result error) {
+func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, spec runtime.SessionSpec, loadID string) (result error) {
+	cwd := spec.Cwd
 	read, cancel := context.WithCancel(ctx)
 	h := &nativeLoad{id: loadID, cancel: cancel, done: make(chan struct{}), read: read, source: events.NewSource(), address: a, config: d.options.Env["CLAUDE_CONFIG_DIR"], project: cwd}
 	d.mu.Lock()
@@ -85,8 +86,12 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	d.mu.Lock()
 	h.unknown = true
 	d.mu.Unlock()
-	effective := runtime.ResolveSessionFeatures(nil, supportedSessionFeatures)
-	native, err := sdk.Open(read, sessionOptions(effective, id, cwd, d.options.Executable, d.options.Environment("claude")))
+	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
+	options, err := sessionOptions(effective, spec.MCPServers, id, cwd, d.options.Executable, d.options.Environment("claude"))
+	if err != nil {
+		return err
+	}
+	native, err := sdk.Open(read, options)
 	if err != nil {
 		return err
 	}
@@ -139,7 +144,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if !reflect.DeepEqual(before.Messages, baseline.Messages) {
 		return errors.New("native retained history changed during resume")
 	}
-	if err := d.vault.Save(id, a, runtime.SessionSpec{Cwd: cwd}, map[string]string{"id": id, "cwd": cwd}); err != nil {
+	if err := d.vault.Save(id, a, spec, map[string]string{"id": id, "cwd": cwd}); err != nil {
 		return err
 	}
 	resumed := &events.ResumedSession{SessionID: id, Capabilities: caps(), EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: effective.AgentQuestionsEnabled()}}

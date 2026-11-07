@@ -184,7 +184,9 @@ func TestLoadOpenAPIPublishesAcceptanceAndRequiredEvidence(t *testing.T) {
 	input := schemas["SessionLoad"].(map[string]any)
 	require.Equal(t, false, input["additionalProperties"])
 	require.ElementsMatch(t, []any{"metadata", "runtimeRef", "cwd", "sessionId"}, input["required"])
-	require.Len(t, input["properties"], 4)
+	require.Len(t, input["properties"], 6)
+	require.Contains(t, input["properties"], "features")
+	require.Contains(t, input["properties"], "mcpServers")
 	status := schemas["HistoryLoadStatus"].(map[string]any)
 	required := status["required"]
 	for _, key := range []string{"loadId", "phase", "nativeVerified", "nativeResumed", "nativeCompleted", "deliveryCompleted", "cleanupCompleted"} {

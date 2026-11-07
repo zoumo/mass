@@ -504,7 +504,7 @@ func (*idleReplayDriver) Start(context.Context) (runtime.Capabilities, error) {
 	return runtime.Capabilities{}, nil
 }
 
-func (d *idleReplayDriver) LoadSession(ctx context.Context, id string, address runtime.Address, _, loadID string) error {
+func (d *idleReplayDriver) LoadSession(ctx context.Context, id string, address runtime.Address, _ runtime.SessionSpec, loadID string) error {
 	source := events.NewSource()
 	d.mu.Lock()
 	d.source = source

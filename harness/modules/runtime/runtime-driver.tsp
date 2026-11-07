@@ -9,11 +9,12 @@ namespace MASS.Design.Execution;
  * 每个 Driver 一条事件流，由 Service 独占消费并按 sessionId 路由。 */
 interface RuntimeDriver {
   /** Service 已固定 loadId/预期身份并建立接收绑定。异步恢复与回放；先验证来源。
+   * spec 已包含当前 Runtime 默认值与本次显式覆盖合并后的 cwd、features 和 mcpServers。
    * 复用原生 resume 恢复同一会话后回放，成功保留原运行，回放及标记沿唯一 events 流。 */
   loadSession(
     sessionId: string,
     address: DriverSessionAddress,
-    cwd: string,
+    spec: DriverSessionSpec,
     loadId: string,
   ): void | OperationError;
 

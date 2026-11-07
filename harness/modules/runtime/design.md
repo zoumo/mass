@@ -50,9 +50,11 @@ RuntimeType 为开放字符串，RuntimeConfig 为 Record<unknown>，见[共享�
 
 RuntimeRegistry 按类型负责配置校验，本地与远端参数不能任意混用。开放字段不表示所有 Driver 都支持任意配置；具体类型自行决定支持项和透传规则。秘密使用引用，解析失败明确报错，公开结果不携带明文秘密。
 
+除类型专属 `config` 外，Runtime spec 顶层还可以保存 `features` 与 `mcpServers`，作为该 Runtime 下 Session 的默认值。它们不进入 `RuntimeConfig`，不参与 Driver 构造、Runtime 启动或类型配置快照；Service 在 createSession、resumeSession 和 loadSession 时读取当前 Runtime spec，与 Session 显式值合并后交给 Driver。按字段、按 server name 的完整合并语义见 [Runtime Session 默认配置](session-defaults.md)。
+
 Driver 内部持久保存和读取恢复材料，不能仅依赖内存。恢复验证原会话、账号及数据归属，不以相同 URL、名称或 ID 格式替代验证；失败不能新建会话代替恢复。closeSession 结束本次 MASS 会话运行绑定但保留后续恢复所需材料，不关闭共享事件流，也不停止 Runtime。
 
-DriverSessionSpec 描述 cwd、systemPrompt、additionalDirs 和 features；Service 模块 SessionSpec 复用它并增加 runtimeRef。features 是功能请求容器，字段省略时使用各自 schema 默认值；当前 agentQuestions 默认 true。默认值与具体 Runtime 是否支持无关。请求开启某项功能而 adapter 不支持时，adapter 不报错，只在 DriverSession.effectiveFeatures 中返回 false；请求关闭始终得到 false。除该降级规则外，不支持的选项明确失败。
+DriverSessionSpec 描述 cwd、systemPrompt、additionalDirs、features 和 mcpServers；Service 模块 SessionSpec 复用同一组字段并增加 runtimeRef。features 是功能请求容器，字段省略时使用各自 schema 默认值；当前 agentQuestions 默认 true。默认值与具体 Runtime 是否支持无关。请求开启某项功能而 adapter 不支持时，adapter 不报错，只在 DriverSession.effectiveFeatures 中返回 false；请求关闭始终得到 false。mcpServers 已由 Service 合并为本次 Session 的有效列表，adapter 校验本类型支持的 transport、字段与名称约束后配置原生会话。除 feature 降级规则外，不支持的选项明确失败。
 
 创建和恢复不隐式发送输入。openSession/resumeSession 另接收 DriverSessionAddress（namespace、sessionName）；Service 在副作用前传入名称，adapter 固定在原运行绑定中。地址不是 Session spec，不参与配置版本。可选 CreationDriver 与 ResumptionDriver 接收独立于 spec 的显式 SessionInput，校验先于副作用，同一打开或恢复所有者登记工作后提交；不支持的内容拒绝，不丢字段或转换为隐藏 prompt。普通恢复、load 和重启不重放旧输入。DriverSession 返回 sessionId、实际能力、实际功能值与仅本次显式输入的 initialInputReceipt，配置 generation 由Service 模块的运行绑定记录。显式恢复的提交、真实身份门、早到事实与不可回滚失败语义见 [Service 恢复合同](../service/session.md#恢复)；Claude 定向原 ID 后先提交新输入再等 init，不得将保存身份冒充实际观察。
 
@@ -84,7 +86,7 @@ Service 在 start 前取得 events() 并启动接收，Driver 不为各 Session 
 
 ## 验收与待决
 
-类型查找与配置校验不启动 Agent；构造 Driver 不读取资源目录；运行时模块可独立编译。重复启动、错误配置、恢复身份不一致、未知释放与旧事件隔离需要在具体 Driver 实现中验证。closeSession 还需验证 active/sending 仍调用 SDK、成功不停止共享 Runtime、重复调用和失败结果稳定，且没有额外 interrupt、kill 或自动重试。事件交付还需验证重复取流拒绝、多个 Session 顺序与公平性、慢会话隔离、有界背压、关闭单会话不关闭共享流、停止排空和异常终止。
+类型查找与配置校验不启动 Agent；构造 Driver 不读取资源目录；运行时模块可独立编译。Runtime 的 Session 默认值不参与 Driver 构造或 start，只有 open/resume/load 接收已合并的 DriverSessionSpec。验收还须覆盖 feature 字段继承/覆盖、MCP 同名整体替换且保持位置、新名称追加、Session 空列表不删除默认项，以及具体 Driver 在原生副作用前拒绝不支持的 transport 或字段。重复启动、错误配置、恢复身份不一致、未知释放与旧事件隔离需要在具体 Driver 实现中验证。closeSession 还需验证 active/sending 仍调用 SDK、成功不停止共享 Runtime、重复调用和失败结果稳定，且没有额外 interrupt、kill 或自动重试。事件交付还需验证重复取流拒绝、多个 Session 顺序与公平性、慢会话隔离、有界背压、关闭单会话不关闭共享流、停止排空和异常终止。
 
 远端类型还需验证认证传输限制、秘密脱敏、缺失引用拒绝且不回退其他凭据，以及停止己方连接不影响其他客户端或共享服务。协议握手成功不能代替账号与数据归属验证。
 
@@ -96,4 +98,4 @@ Service 在 start 前取得 events() 并启动接收，Driver 不为各 Session 
 
 ## 恢复并异步回放
 
-显式 loadSession 按 [异步 load](../service/load.md)先恢复同一个原生会话，再沿唯一 Driver 流异步回放全部保留主历史。成功保留恢复的执行连接，本地结算后可直接继续输入；普通 resume 仍不回放。历史带 replay 来源，不能由旧状态恢复工作或审批。接纳、恢复、上游穷尽和本地提交/分发完成分开表达；失败/取消还须释放本次恢复资源，未知保留责任。
+显式 loadSession 按 [异步 load](../service/load.md)先恢复同一个原生会话，再沿唯一 Driver 流异步回放全部保留主历史。Service 在接纳时把当前 Runtime Session 默认值与本次显式覆盖合并为 DriverSessionSpec，Driver 用它建立恢复连接。成功保留恢复的执行连接，本地结算后可直接继续输入；普通 resume 仍不回放。历史带 replay 来源，不能由旧状态恢复工作或审批。接纳、恢复、上游穷尽和本地提交/分发完成分开表达；失败/取消还须释放本次恢复资源，未知保留责任。

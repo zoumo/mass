@@ -13,6 +13,19 @@ sources:
 
 本页记录检查时的实现事实，不改变 [Module 合同](index.md#模块)。每次更新须绑定日期、源码版本、相关工作区变更、检查方式与证据；未核对的能力保持未验证。已有证据不能自动证明后续源码仍符合合同。设计变化历史见[更新记录](log.md)。
 
+## 2026-11-08 Runtime Session 默认配置核对
+
+检查基线为 `main` HEAD `b2b10b0e`，工作区包含未提交的 Runtime Session 默认配置实现。该变更在 Runtime spec 顶层增加 `features` 与 `mcpServers`，由 Service 在 Session 操作时解析，Session 仅持久化显式值；未发现与当前设计正文相冲突的实现。以下结论来自源码与离线测试核对，不证明真实 Codex、Claude 或外部 MCP server 已通过端到端验收。
+
+| 范围 | 当前实现观察 | 证据与边界 |
+|---|---|---|
+| Runtime 资源模型 | `RuntimeSpec` 在 `config` 之外提供可选 features/mcpServers；公共 MCP 校验覆盖名称唯一性、transport 字段组合和文本/环境项结构，Runtime 启动不消费默认值。 | [资源模型](../mass-go/pkg/resource/models.go)、[Session 默认值解析](../mass-go/pkg/runtime/session_config.go)、[Runtime 配置校验](../mass-go/pkg/service/runtime_config.go) |
+| Session 合并 | create、resume 与 load 调用同一解析入口，读取当前 Runtime spec 后按字段合并 features、按名称合并 MCP server；同名 MCP 保持默认位置，新名称追加，Session 空列表不作为清空默认项。 | [Service 合并入口](../mass-go/pkg/service/session_config.go)、[create](../mass-go/pkg/service/service.go)、[resume](../mass-go/pkg/service/lifecycle.go)、[load](../mass-go/pkg/service/load.go) |
+| 持久化边界 | Runtime 保存默认值；Session spec 保存显式覆盖值，不保存解析后的 Runtime 副本。恢复材料排除 features/mcpServers，因此默认值更新不改变恢复身份材料。 | [Session load 持久化](../mass-go/pkg/service/load.go)、[恢复材料](../mass-go/pkg/runtime/recovery/material.go) |
+| Driver 合同与适配 | loadSession 接收完整 `DriverSessionSpec`；Codex 与 Claude 在原生打开/恢复前应用合并值，并分别拒绝不支持的 transport 或字段。 | [Driver 接口](../mass-go/pkg/runtime/runtime.go)、[Codex MCP](../mass-go/pkg/runtime/codex/mcp.go)、[Codex load](../mass-go/pkg/runtime/codex/load.go)、[Claude MCP](../mass-go/pkg/runtime/claude/mcp.go)、[Claude load](../mass-go/pkg/runtime/claude/load.go) |
+| CLI 与 HTTP | Runtime create/update 与 Session create/load 已接入 features/MCP JSON 输入；Runtime update 未传字段保留旧值、显式 null 清除，Session 输入作为显式覆盖。OpenAPI 与生成客户端已更新。 | [CLI Runtime](../mass-go/cmd/massctl/subcommand/runtime.go)、[CLI Session](../mass-go/cmd/massctl/subcommand/session.go)、[CLI 选项](../mass-go/cmd/massctl/subcommand/session_options.go)、[OpenAPI](../mass-go/pkg/client/generated/openapi.json) |
+| 验证证据 | `rtk make check-go` 通过，覆盖 lint、单元、集成、仿真、构建与格式检查。未执行真实模型、真实 Codex/Claude MCP 连接或远端 MCP server 工具调用验收。 | 当前工作区；完整检查通过，不代表外部系统行为已验证。 |
+
 ## 2026-11-07 合并后核对
 
 检查基线是工作树 `mass-worktrees/idle-session-close`、分支 `codex-idle-session-close`。功能源码继承自 `a35598f9`、`a990e264`、`31278442`、`573b74ac`、`cbcee5d1`、`588423c1`，并已合并 `origin/main` 的 `45449665`，合并 HEAD 为 `d0ef83e`。本轮随后增加 `f5d842a`（unknown 输入准入测试）与 `b59268b`（close 错误结算修复），并修订 Service 合同、恢复说明和验收证据。`b59268b` 修复完整门禁暴露的合并后问题：SDK close 失败被直接保留，成功时仍要求本进程观察结束；Stop 在 Cancel 未知后继续尝试 close，避免未知释放被重试误报为成功。

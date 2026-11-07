@@ -95,7 +95,7 @@ func (d *ticket03Driver) ResumeSession(ctx context.Context, id string, a runtime
 	}, nil
 }
 
-func (*ticket03Driver) LoadSession(context.Context, string, runtime.Address, string, string) error {
+func (*ticket03Driver) LoadSession(context.Context, string, runtime.Address, runtime.SessionSpec, string) error {
 	return nil
 }
 

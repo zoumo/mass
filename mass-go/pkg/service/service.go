@@ -64,6 +64,7 @@ type SessionService interface {
 	SubscribeEvents(resource.SessionRef) (*Subscription, error)
 }
 type runBinding struct {
+	runtimeName   string
 	driver        runtime.Driver
 	stream        events.Stream
 	generation    uint64
@@ -279,7 +280,7 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		return r, errors.New("runtime capacity exhausted")
 	}
 	// Reserve the original owner before constructing or starting any Driver.
-	run := &runBinding{done: make(chan struct{}), pending: map[string]*opening{}, lanes: map[string]*lane{}}
+	run := &runBinding{runtimeName: name, done: make(chan struct{}), pending: map[string]*opening{}, lanes: map[string]*lane{}}
 	run.op.Lock()
 	s.runs[name] = run
 	s.mu.Unlock()
@@ -392,6 +393,9 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	if !filepath.IsAbs(r.Spec.Cwd) {
 		return resource.SessionCreated{Session: r}, runtime.InvalidArgument("absolute cwd required")
 	}
+	if err := validateSessionConfig(r.Spec.SessionSpec); err != nil {
+		return resource.SessionCreated{Session: r}, err
+	}
 	if r.Metadata.UID != "" || r.Metadata.Generation != 0 || r.Metadata.ResourceVersion != "" || !r.Metadata.CreatedAt.IsZero() {
 		return resource.SessionCreated{Session: r}, runtime.InvalidArgument("system metadata is read-only")
 	}
@@ -420,6 +424,10 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	s.mu.Unlock()
 	if run == nil || closing {
 		return resource.SessionCreated{Session: r}, errors.New("runtime unavailable")
+	}
+	resolvedSpec, err := s.resolveSessionSpec(run, r.Spec.SessionSpec)
+	if err != nil {
+		return resource.SessionCreated{Session: r}, err
 	}
 	var creator runtime.CreationDriver
 	if initial != nil {
@@ -483,9 +491,9 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			var native runtime.DriverSession
 			var err error
 			if initial == nil {
-				native, err = run.driver.OpenSession(owner, a, r.Spec.SessionSpec)
+				native, err = run.driver.OpenSession(owner, a, resolvedSpec)
 			} else {
-				native, err = creator.OpenSessionWithInput(owner, a, r.Spec.SessionSpec, *initial)
+				native, err = creator.OpenSessionWithInput(owner, a, resolvedSpec, *initial)
 			}
 			receipt = native.InitialInputReceipt
 			if err != nil && native.SessionID != "" {

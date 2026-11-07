@@ -36,7 +36,7 @@ func (*pendingCloseDriver) ResumeSession(context.Context, string, runtime.Addres
 	return runtime.DriverSession{}, errors.New("unexpected resume")
 }
 
-func (*pendingCloseDriver) LoadSession(context.Context, string, runtime.Address, string, string) error {
+func (*pendingCloseDriver) LoadSession(context.Context, string, runtime.Address, runtime.SessionSpec, string) error {
 	return errors.New("unexpected load")
 }
 func (*pendingCloseDriver) CancelHistoryLoad(context.Context, string, string) error { return nil }

@@ -27,10 +27,13 @@ type options = runtime.ProcessConfig
 
 func parse(c runtime.Config) (options, error) {
 	o, err := runtime.ParseProcessConfig(c)
-	if err == nil && len(o.Args) > 0 {
+	if err != nil {
+		return o, err
+	}
+	if len(o.Args) > 0 {
 		return o, errors.New("claude SDK does not support additional process args; use an explicit launcher")
 	}
-	return o, err
+	return o, nil
 }
 
 type Factory struct{ RecoveryDir string }
@@ -98,12 +101,16 @@ func caps() runtime.Capabilities {
 
 var supportedSessionFeatures = runtime.FeatureSupport{AgentQuestions: true}
 
-func sessionOptions(features runtime.SessionFeatures, resumeID, cwd, executable string, env []string) sdk.SessionOptions {
-	options := sdk.SessionOptions{ResumeID: resumeID, CLIPath: executable, WorkDir: cwd, Env: env}
+func sessionOptions(features runtime.SessionFeatures, mcpServers *[]runtime.MCPServer, resumeID, cwd, executable string, env []string) (sdk.SessionOptions, error) {
+	converted, err := claudeMCPServers(mcpServers)
+	if err != nil {
+		return sdk.SessionOptions{}, err
+	}
+	options := sdk.SessionOptions{ResumeID: resumeID, CLIPath: executable, WorkDir: cwd, Env: env, MCPServers: converted}
 	if !features.AgentQuestionsEnabled() {
 		options.DisallowedTools = []string{"AskUserQuestion"}
 	}
-	return options
+	return options, nil
 }
 
 func (d *Driver) Events() (events.Stream, error) {
@@ -204,7 +211,11 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		}
 	}
 	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown", requireLink: resume != ""}
-	c, err := sdk.Open(ctx, sessionOptions(effective, resume, spec.Cwd, d.options.Executable, env))
+	options, err := sessionOptions(effective, spec.MCPServers, resume, spec.Cwd, d.options.Executable, env)
+	if err != nil {
+		return runtime.DriverSession{}, noResources(err.Error())
+	}
+	c, err := sdk.Open(ctx, options)
 	if err != nil {
 		close(s.ready)
 		// Failed SDK startup closes its unreturned connection before returning.

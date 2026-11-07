@@ -7,13 +7,16 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 type sessionLoad struct {
-	Metadata   sessionCreateMetadata `json:"metadata"`
-	RuntimeRef string                `json:"runtimeRef" minLength:"1"`
-	Cwd        string                `json:"cwd" minLength:"1"`
-	SessionID  string                `json:"sessionId" minLength:"1"`
+	Metadata   sessionCreateMetadata    `json:"metadata"`
+	RuntimeRef string                   `json:"runtimeRef" minLength:"1"`
+	Cwd        string                   `json:"cwd" minLength:"1"`
+	SessionID  string                   `json:"sessionId" minLength:"1"`
+	Features   *runtime.SessionFeatures `json:"features,omitempty"`
+	MCPServers *[]runtime.MCPServer     `json:"mcpServers,omitempty"`
 }
 
 type sessionLoadInput struct{ Body sessionLoad }
@@ -47,6 +50,7 @@ func (s *Server) registerSessionLoad(api huma.API) {
 		r, err := s.api.LoadSession(ctx, resource.SessionLoad{
 			Metadata:   resource.Metadata{Namespace: in.Body.Metadata.Namespace, Name: in.Body.Metadata.Name},
 			RuntimeRef: in.Body.RuntimeRef, Cwd: in.Body.Cwd, SessionID: in.Body.SessionID,
+			Features: in.Body.Features, MCPServers: in.Body.MCPServers,
 		})
 		return &sessionLoadAccepted{Location: "/apis/v1/sessions/" + url.PathEscape(r.Session.Status.SessionID), Body: r}, err
 	})

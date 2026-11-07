@@ -48,7 +48,7 @@ func (v Vault) Save(id string, a runtime.Address, spec runtime.SessionSpec, nati
 	if err != nil {
 		return err
 	}
-	b, err := json.Marshal(Material{Format: 1, Kind: v.Kind, Owner: v.Owner, ID: id, Executable: v.Executable, Address: a, Spec: spec, Context: context})
+	b, err := json.Marshal(Material{Format: 1, Kind: v.Kind, Owner: v.Owner, ID: id, Executable: v.Executable, Address: a, Spec: recoverySpec(spec), Context: context})
 	if err != nil {
 		return err
 	}
@@ -103,8 +103,16 @@ func (v Vault) Load(id string, a runtime.Address, spec runtime.SessionSpec) (Mat
 	if d.Decode(new(any)) != io.EOF {
 		return m, errors.New("trailing recovery data")
 	}
-	if m.Format != 1 || m.Kind != v.Kind || m.Owner != v.Owner || m.ID != id || m.Executable != v.Executable || m.Address != a || !reflect.DeepEqual(m.Spec, spec) || len(m.Context) == 0 {
+	if m.Format != 1 || m.Kind != v.Kind || m.Owner != v.Owner || m.ID != id || m.Executable != v.Executable || m.Address != a || !reflect.DeepEqual(recoverySpec(m.Spec), recoverySpec(spec)) || len(m.Context) == 0 {
 		return m, errors.New("private recovery context mismatch")
 	}
 	return m, nil
+}
+
+// Session-only options may change when a Runtime's defaults change. They are
+// reapplied by a new native open/resume and are not part of recovery targeting.
+func recoverySpec(spec runtime.SessionSpec) runtime.SessionSpec {
+	spec.Features = nil
+	spec.MCPServers = nil
+	return spec
 }

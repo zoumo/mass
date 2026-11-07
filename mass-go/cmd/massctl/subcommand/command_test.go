@@ -125,14 +125,14 @@ func (s *CommandSuite) TestUpdatePreservesTypeAndConfigFlagsOrReplacesCompleteCo
 				methods = append(methods, r.Method)
 				s.Equal("/apis/v1/runtimes/agent", r.URL.EscapedPath())
 				if r.Method == http.MethodGet {
-					_, _ = w.Write([]byte(`{"spec":{"type":"claude","config":{"executable":"old","retained":true}}}`))
+					_, _ = w.Write([]byte(`{"spec":{"type":"claude","config":{"executable":"old","retained":true},"features":{"agentQuestions":false},"mcpServers":[{"name":"default","type":"http","url":"https://example.invalid/default"}]}}`))
 					return
 				}
 				var body json.RawMessage
 				s.NoError(json.NewDecoder(r.Body).Decode(&body))
-				expected := `{"type":"claude","config":{"executable":"new","retained":true}}`
+				expected := `{"type":"claude","config":{"executable":"new","retained":true},"features":{"agentQuestions":false},"mcpServers":[{"name":"default","type":"http","url":"https://example.invalid/default"}]}`
 				if input[0] == "--config-json" {
-					expected = `{"type":"claude","config":{"executable":"new","large":9007199254740993}}`
+					expected = `{"type":"claude","config":{"executable":"new","large":9007199254740993},"features":{"agentQuestions":false},"mcpServers":[{"name":"default","type":"http","url":"https://example.invalid/default"}]}`
 				}
 				s.JSONEq(expected, string(body))
 				_, _ = w.Write([]byte(`{"status":{"state":"running"}}`))
@@ -146,6 +146,65 @@ func (s *CommandSuite) TestUpdatePreservesTypeAndConfigFlagsOrReplacesCompleteCo
 	}
 }
 
+func (s *CommandSuite) TestRuntimeAndSessionCLIForwardSessionOptions() {
+	bodies := make([][]byte, 0, 3)
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if !s.NoError(err) {
+			return
+		}
+		bodies = append(bodies, body)
+		switch {
+		case r.URL.Path == "/apis/v1/runtimes" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"status":{"state":"stopped"}}`))
+		case r.URL.Path == "/apis/v1/sessions" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"status":{"state":"unknown"}}`))
+		case r.URL.Path == "/apis/v1/sessions/load":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"loadId":"load","session":{"status":{"sessionId":"native"}}}`))
+		default:
+			s.Fail("unexpected request", r.Method, r.URL.String())
+		}
+	}))
+	defer h.Close()
+
+	for _, args := range [][]string{
+		{"--url", h.URL, "-o", "json", "runtime", "create", "agent", "--type", "codex", "--features-json", `{"agentQuestions":false}`, "--mcp-servers-json", `[{"name":"remote","type":"http","url":"https://example.invalid"}]`},
+		{"--url", h.URL, "-o", "json", "session", "create", "task", "-n", "demo", "--runtime", "agent", "--cwd", "/remote", "--features-json", `{"agentQuestions":true}`, "--mcp-servers-json", `[{"name":"remote","type":"stdio","command":"/mcp"}]`},
+		{"--url", h.URL, "-o", "json", "session", "load", "task", "-n", "demo", "--runtime", "agent", "--cwd", "/remote", "--session-id", "native", "--features-json", `{"agentQuestions":false}`, "--mcp-servers-json", `[{"name":"remote","type":"http","url":"https://example.invalid/load"}]`},
+	} {
+		var out, stderr bytes.Buffer
+		s.Equal(0, subcommand.Run(s.T().Context(), args, strings.NewReader(""), &out, &stderr), stderr.String())
+	}
+
+	s.Require().Len(bodies, 3)
+	s.JSONEq(`{"metadata":{"name":"agent","namespace":""},"spec":{"type":"codex","config":{},"features":{"agentQuestions":false},"mcpServers":[{"name":"remote","type":"http","url":"https://example.invalid"}]}}`, string(bodies[0]))
+	s.JSONEq(`{"metadata":{"name":"task","namespace":"demo"},"spec":{"runtimeRef":"agent","cwd":"/remote","features":{"agentQuestions":true},"mcpServers":[{"name":"remote","type":"stdio","command":"/mcp"}]}}`, string(bodies[1]))
+	s.JSONEq(`{"metadata":{"name":"task","namespace":"demo"},"runtimeRef":"agent","cwd":"/remote","sessionId":"native","features":{"agentQuestions":false},"mcpServers":[{"name":"remote","type":"http","url":"https://example.invalid/load"}]}`, string(bodies[2]))
+}
+
+func (s *CommandSuite) TestRuntimeDefaultsOnlyUpdatePreservesConfiguration() {
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"spec":{"type":"codex","config":{"executable":"/agent","retained":true},"features":{"agentQuestions":false},"mcpServers":[{"name":"old","type":"stdio","command":"/old"}]}}`))
+			return
+		}
+		var body json.RawMessage
+		if !s.NoError(json.NewDecoder(r.Body).Decode(&body)) {
+			return
+		}
+		s.JSONEq(`{"type":"codex","config":{"executable":"/agent","retained":true},"features":{"agentQuestions":true},"mcpServers":[{"name":"old","type":"stdio","command":"/new"}]}`, string(body))
+		_, _ = w.Write([]byte(`{"status":{"state":"stopped"}}`))
+	}))
+	defer h.Close()
+
+	var out, stderr bytes.Buffer
+	args := []string{"--url", h.URL, "runtime", "update", "agent", "--features-json", `{"agentQuestions":true}`, "--mcp-servers-json", `[{"name":"old","type":"stdio","command":"/new"}]`}
+	s.Equal(0, subcommand.Run(s.T().Context(), args, strings.NewReader(""), &out, &stderr), stderr.String())
+}
+
 func (s *CommandSuite) TestInvalidInputNeverDispatches() {
 	cases := [][]string{
 		{"runtime", "create", "a", "--type", "codex", "--config-json", "{\"executable\":\"\xff\"}"},
@@ -154,12 +213,15 @@ func (s *CommandSuite) TestInvalidInputNeverDispatches() {
 		{"runtime", "update", "a"},
 		{"runtime", "create", "a", "--type", "codex", "--executable", "x", "--config-json", "{}"},
 		{"runtime", "create", "a", "--type", "codex", "--config-json", "{} {}"},
+		{"runtime", "create", "a", "--type", "codex", "--features-json", "[]"},
+		{"runtime", "create", "a", "--type", "codex", "--mcp-servers-json", `[{"name":"bad","type":"stdio"}]`},
 		{"session", "list", "--limit", "0"},
 		{"session", "list", "-n", "demo"},
 		{"session", "get", "a", "-n", ""},
 		{"session", "get", ".."},
 		{"session", "prompt", "a"},
 		{"session", "create", "a", "-n", "demo", "--runtime", "a"},
+		{"session", "create", "a", "-n", "demo", "--runtime", "a", "--cwd", "/work", "--mcp-servers-json", `{}`},
 		{"session", "get", "a", "-n", "demo", "--namespace", "other"},
 		{"session", "list", "--limit", "1", "--limit", "2"},
 		{"runtime", "list", "extra"},

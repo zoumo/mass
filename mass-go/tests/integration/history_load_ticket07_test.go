@@ -680,8 +680,8 @@ func (d *ticket07Driver) Events() (events.Stream, error) {
 	return &ticket07Stream{Stream: s, gate: d.gate}, nil
 }
 
-func (d *ticket07Driver) LoadSession(ctx context.Context, id string, a runtime.Address, cwd, load string) error {
-	err := d.Driver.LoadSession(ctx, id, a, cwd, load)
+func (d *ticket07Driver) LoadSession(ctx context.Context, id string, a runtime.Address, spec runtime.SessionSpec, load string) error {
+	err := d.Driver.LoadSession(ctx, id, a, spec, load)
 	if d.finished != nil {
 		d.finished <- err
 	}

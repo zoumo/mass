@@ -81,7 +81,7 @@ func (d *closeDriver) ResumeSession(ctx context.Context, id string, _ runtime.Ad
 	return runtime.DriverSession{SessionID: id, Source: source}, nil
 }
 
-func (d *closeDriver) LoadSession(context.Context, string, runtime.Address, string, string) error {
+func (d *closeDriver) LoadSession(context.Context, string, runtime.Address, runtime.SessionSpec, string) error {
 	d.loads.Add(1)
 	return nil
 }

@@ -122,6 +122,27 @@ func (e InteractionClosedOutcome) Valid() bool {
 	}
 }
 
+// Defines values for MCPServerType.
+const (
+	Http  MCPServerType = "http"
+	Sse   MCPServerType = "sse"
+	Stdio MCPServerType = "stdio"
+)
+
+// Valid indicates whether the value is a known member of the MCPServerType enum.
+func (e MCPServerType) Valid() bool {
+	switch e {
+	case Http:
+		return true
+	case Sse:
+		return true
+	case Stdio:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for OutputAvailability.
 const (
 	Provided    OutputAvailability = "provided"
@@ -707,6 +728,23 @@ type LifecycleByIDBody = map[string]interface{}
 // LifecycleByNameOrIDBody defines model for LifecycleByNameOrIDBody.
 type LifecycleByNameOrIDBody = map[string]interface{}
 
+// MCPServer defines model for MCPServer.
+type MCPServer struct {
+	Args              nullable.Nullable[[]string] `json:"args,omitempty"`
+	BearerTokenEnvVar *string                     `json:"bearerTokenEnvVar,omitempty"`
+	Command           *string                     `json:"command,omitempty"`
+	Cwd               *string                     `json:"cwd,omitempty"`
+	Env               *map[string]string          `json:"env,omitempty"`
+	EnvHeaders        *map[string]string          `json:"envHeaders,omitempty"`
+	Headers           *map[string]string          `json:"headers,omitempty"`
+	Name              string                      `json:"name"`
+	Type              MCPServerType               `json:"type"`
+	Url               *string                     `json:"url,omitempty"`
+}
+
+// MCPServerType defines model for MCPServer.Type.
+type MCPServerType string
+
 // MessageChunk defines model for MessageChunk.
 type MessageChunk struct {
 	Content   []ContentBlock `json:"content"`
@@ -815,8 +853,10 @@ type RuntimeCreate struct {
 
 // RuntimeSpec defines model for RuntimeSpec.
 type RuntimeSpec struct {
-	Config map[string]rawjson.RawMessage `json:"config"`
-	Type   string                        `json:"type"`
+	Config     map[string]rawjson.RawMessage `json:"config"`
+	Features   *SessionFeatures              `json:"features,omitempty"`
+	McpServers *[]MCPServer                  `json:"mcpServers,omitempty"`
+	Type       string                        `json:"type"`
 }
 
 // RuntimeStatus defines model for RuntimeStatus.
@@ -875,6 +915,8 @@ type SessionFeatures struct {
 // SessionLoad defines model for SessionLoad.
 type SessionLoad struct {
 	Cwd        string                `json:"cwd"`
+	Features   *SessionFeatures      `json:"features,omitempty"`
+	McpServers *[]MCPServer          `json:"mcpServers,omitempty"`
 	Metadata   SessionCreateMetadata `json:"metadata"`
 	RuntimeRef string                `json:"runtimeRef"`
 	SessionId  string                `json:"sessionId"`
@@ -910,6 +952,7 @@ type SessionSpec struct {
 	AdditionalDirs nullable.Nullable[[]string] `json:"additionalDirs,omitempty"`
 	Cwd            string                      `json:"cwd"`
 	Features       *SessionFeatures            `json:"features,omitempty"`
+	McpServers     *[]MCPServer                `json:"mcpServers,omitempty"`
 	RuntimeRef     string                      `json:"runtimeRef"`
 	SystemPrompt   *string                     `json:"systemPrompt,omitempty"`
 }

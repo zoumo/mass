@@ -35,7 +35,8 @@ type nativeLoad struct {
 	home          string
 }
 
-func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, cwd, loadID string) (result error) {
+func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, spec runtime.SessionSpec, loadID string) (result error) {
+	cwd := spec.Cwd
 	readCtx, cancel := context.WithCancel(ctx)
 	h := &nativeLoad{id: loadID, cancel: cancel, read: readCtx, done: make(chan struct{}), source: events.NewSource(), address: a}
 	d.mu.Lock()
@@ -76,6 +77,10 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := d.vault.Check(); err != nil {
 		return err
 	}
+	mcpServers, err := codexMCPServers(spec.MCPServers)
+	if err != nil {
+		return err
+	}
 	before, err := c.ReadThread(readCtx, ct.ThreadReadParams{ThreadID: id, IncludeTurns: ct.Some(false)})
 	if err != nil {
 		return err
@@ -93,7 +98,10 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	d.mu.Lock()
 	h.resumeUnknown = true
 	d.mu.Unlock()
-	native, err := sdk.Open(readCtx, sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: id, ExcludeTurns: ct.Some(true)}})
+	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
+	options := sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: id, ExcludeTurns: ct.Some(true)}, MCPServers: mcpServers}
+	applySessionFeatures(&options, effective)
+	native, err := sdk.Open(readCtx, options)
 	if err != nil {
 		return err
 	}
@@ -119,10 +127,9 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if !sameLoadResumeThread(before.Thread, response.Thread) {
 		return errors.New("resume changed native source identity")
 	}
-	if err := d.vault.Save(id, a, runtime.SessionSpec{Cwd: cwd}, response.Thread); err != nil {
+	if err := d.vault.Save(id, a, spec, response.Thread); err != nil {
 		return err
 	}
-	effective := runtime.ResolveSessionFeatures(nil, supportedSessionFeatures)
 	resumed := &events.ResumedSession{SessionID: id, Capabilities: caps(), EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: effective.AgentQuestionsEnabled()}}
 	if err := d.loadEmit(h, id, "", "", nil, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: resumed}); err != nil {
 		return err

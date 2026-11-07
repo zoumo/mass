@@ -33,10 +33,10 @@ massctl 通过 [HTTP v1](../../bindings/http.md) 调用 [RuntimeService](../serv
 
 | 命令 | 输入 | 能力与结果 |
 |---|---|---|
-| `runtime create NAME` | `--type TYPE`、常用配置 flag；补充输入支持 `--config-file FILE` 或 `--config-json JSON` | 创建命名资源，返回 Runtime；不启动 |
+| `runtime create NAME` | `--type TYPE`、常用配置 flag；补充输入支持 `--config-file FILE` 或 `--config-json JSON`；可选 `--features-json`、`--mcp-servers-json` | 创建命名资源并设置 Session 默认值，返回 Runtime；不启动 |
 | `runtime get NAME` | 无业务请求体 | 查询资源、期望配置、当前状态与已协商能力 |
 | `runtime list` | 无筛选参数 | 查询全部 Runtime，不分页；首版不提供筛选（已确认） |
-| `runtime update NAME` | 配置 flag、`--config-file FILE` 或 `--config-json JSON`；不提供 --type | CLI 先获取当前 spec，保留 type；flag 更新对应字段，完整 config 替换原配置，再提交完整 RuntimeSpec；不热更新、不重启（流程已确认） |
+| `runtime update NAME` | 配置 flag、`--config-file FILE` 或 `--config-json JSON`；可选 `--features-json`、`--mcp-servers-json`；不提供 --type | CLI 先获取当前 spec，保留 type 与未修改的 Session 默认值；flag 更新对应字段，完整 config 替换原配置，再提交完整 RuntimeSpec；不热更新、不重启（流程已确认） |
 | `runtime start NAME` | 无业务请求体 | 启动或取得当前运行状态，不隐式重启已运行实例 |
 | `runtime stop NAME` | 无业务请求体 | 通过 Service 排空并释放所属运行资源 |
 | `runtime delete NAME` | 无业务请求体 | 删除实例记录，保留 Service 的引用和释放检查 |
@@ -51,16 +51,19 @@ Runtime 类型由配置合同决定；CLI 不自行增加类型发现操作，�
 
 已确认的创建输入形式为 `massctl runtime create NAME --type TYPE [配置参数]`，不将类型增加为 create 下的子命令。首版提供 --executable PATH，映射 config.executable；其他配置字段使用 --config-file 或 --config-json 输入完整 RuntimeConfig。测试专用 scenario 不作为正式 CLI flag。此首版字段清单不限制后续扩展。
 
+`--features-json` 接收 SessionFeatures JSON 对象或 `null`，`--mcp-servers-json` 接收 MCPServer 数组或 `null`。它们写入 RuntimeSpec 顶层，不进入 RuntimeConfig，也不替代配置输入。Runtime 只保存和校验公共结构，不启动 MCP 或改变 Runtime 运行；默认值由后续 session create/resume/load 与 Session 显式值合并。
+
 创建必填项与默认行为已确认：NAME 与 --type 必填，不默认选择 Runtime 类型。配置参数可省略，全部省略时提交空配置 `{}`，由对应 Runtime 类型校验并应用其默认值；CLI 不自行填充类型专属默认配置。Runtime 创建只登记资源，不启动运行资源；后续 session create/resume 由 Service 按需启动，也可提前使用独立的 runtime start 命令。
 
 更新流程已确认：runtime update NAME 先获取 Runtime，使用当前 spec.type 解释配置参数，不要求或提供 --type。配置输入分为两种语义：
 
 - 显式配置 flag（首版为 --executable）直接写入或覆盖对应配置字段，其余字段保留。只有用户实际传入的 flag 参与更新，不以 flag 默认值覆盖旧配置。
 - --config-file 或 --config-json 输入完整 RuntimeConfig，直接替换原 spec.config；未出现在新 config 中的旧字段不保留。CLI 不将此输入解释为递归合并或 JSON Merge Patch，null 的有效性由配置合同判断。
+- `--features-json` 与 `--mcp-servers-json` 是独立的 Session 默认值输入，可与上述任一配置输入组合。更新时未传对应 flag 保留当前默认值，显式 `null` 清除；create 未传则不写该默认值。
 
 两种方式都保留原 type，最终调用 updateRuntime 提交完整 RuntimeSpec。获取失败时不提交更新；不将部分配置直接发送为 PUT 请求体。此处为 CLI 的读取、构造、写回能力，不改变 Service 的完整替换合同。更新不自动重启或热更新当前运行。
 
-输入组合规则已确认：配置 flag、--config-file、--config-json 三种方式互斥；多个配置 flag 可组合。runtime update 未提供任何配置输入时为参数错误，不发起更新。create 配置全部省略时仍按已确认规则提交 `{}`。首版不提供 -f resource.json 等完整资源文件创建入口。
+输入组合规则已确认：配置 flag、--config-file、--config-json 三种方式互斥；多个配置 flag 可组合。Session 默认值 flag 不属于这三种配置方式，可与其中任意一种组合。runtime update 未提供任何配置或 Session 默认值输入时为参数错误，不发起更新。create 的类型配置全部省略时仍按已确认规则提交 `{}`。首版不提供 -f resource.json 等完整资源文件创建入口。
 
 HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原子事务；并发更新可能覆盖其他调用方的变更，CLI 不能声称这是受资源版本保护的修改。
 
@@ -70,9 +73,9 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 
 | 命令 | 输入 | 能力与结果 |
 |---|---|---|
-| `session load NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd ABS_PATH --session-id NATIVE_ID` | 异步恢复同一会话并回放到新空目标；本地完成后直接继续输入 |
+| `session load NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd ABS_PATH --session-id NATIVE_ID`；可选 `--features-json`、`--mcp-servers-json` | 异步恢复同一会话并回放到新空目标；显式值成为新 Session 覆盖项；本地完成后直接继续输入 |
 | `session cancel-load TARGET` | 必填 `--load-id ID` | 取消原历史读取，返回当前状态；通过 get 查询最终结束 |
-| `session create NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd PATH`，可选系统提示与额外目录 | 创建并登记 Session，返回持久身份及可选输入回执；仅显式输入发送一次 |
+| `session create NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd PATH`，可选系统提示、额外目录、`--features-json` 与 `--mcp-servers-json` | 创建并登记 Session，返回持久身份及可选输入回执；仅显式输入发送一次 |
 | `session get TARGET` | 无业务请求体 | 查询资源，不隐式恢复 |
 | `session list` | 只保留分页参数 `--limit`、`--after` | 查询全部 namespace 与 Runtime 的持久目录，包含离线会话；首版不提供筛选（已确认） |
 | `session resume TARGET` | 可选互斥 `--text TEXT` 或 `--input-file FILE` | 恢复原身份，可显式提交一次新输入；失败不新建替代 |
@@ -82,13 +85,15 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 | `session history TARGET` | 只保留分页参数 `--limit`、`--after` | 查询已提交历史及同步进度；首版不提供类型筛选（已确认） |
 | `session watch TARGET` | 无专属参数、无业务请求体 | 建立独立实时订阅，观察订阅建立后的事件；不补历史、不自动重连，Ctrl-C 只关闭观察（已确认） |
 
-Session 创建参数已确认：NAME、-n/--namespace、--runtime 与 --cwd 必填；可选 --system-prompt TEXT 或 --system-prompt-file FILE（二者互斥），以及可重复 --additional-dir PATH，分别对应 systemPrompt 和 additionalDirs。创建省略输入时不发送 prompt；可选互斥 --text TEXT 与 --input-file FILE，后者读取 UTF-8 SessionInput JSON 并保留内容块结构。输入不进入 spec 或恢复配置，receipt 不代表完成；不支持字段在副作用前拒绝。文件 - 读取 stdin，两个文件参数不得同时读 stdin。cwd 与额外目录按 Agent 所在环境解释，不以本机路径是否存在决定有效性；额外目录不授予权限。
+Session 创建参数已确认：NAME、-n/--namespace、--runtime 与 --cwd 必填；可选 --system-prompt TEXT 或 --system-prompt-file FILE（二者互斥），以及可重复 --additional-dir PATH，分别对应 systemPrompt 和 additionalDirs。`--features-json` 与 `--mcp-servers-json` 写入 Session spec 的显式 features/mcpServers，与当前 Runtime 默认值合并后交给 Driver；CLI 不回写合并结果。创建省略输入时不发送 prompt；可选互斥 --text TEXT 与 --input-file FILE，后者读取 UTF-8 SessionInput JSON 并保留内容块结构。输入不进入 spec 或恢复配置，receipt 不代表完成；不支持字段在副作用前拒绝。文件 - 读取 stdin，两个文件参数不得同时读 stdin。cwd 与额外目录按 Agent 所在环境解释，不以本机路径是否存在决定有效性；额外目录不授予权限。
 
 `session close` 使用 HTTP close 的同一业务合同。命令只接收 TARGET，不发送业务请求体；成功时输出 `offline` Session，失败或结果未知时以非零状态退出。重复执行同一 close 是安全幂等重试，完整生命周期语义见 [Session close](../service/design.md#session-close)。
 
 当前 Service 未提供 Session 更新、删除、配置选项写入和待决交互补查，CLI 不虚构这些操作。`close` 不提供 `delete` 别名；本版本不保留 archive 命令、兼容别名或回退路径。进程内 EventHandler 管理不作为 CLI 远程能力暴露。
 
 Session 恢复可选互斥 --text TEXT 或 --input-file FILE，使用与创建相同的 SessionInput 读取及校验规则；省略保持零输入，显式空输入拒绝。这是新输入，不是历史或恢复配置；同一原生 ID/cwd 验证前不报告成功，receipt 不表示完成，结果未知不自动重试。
+
+session resume 不提供 features/mcpServers flag：Session 没有 updateSession，恢复使用已持久化的 Session 显式值，并在调用 Driver 前与当前 Runtime 默认值重新合并。
 
 session prompt 的首版输入范围已确认：仅提供 --text TEXT，将文本构造为 SessionInput 中的一个 text ContentBlock；不提供 --input-file、--input-json、多模态内容输入或隐式 stdin 读取。此限制属于 CLI 首版范围，不缩减 Service/HTTP 的 SessionInput 合同。answer 延后讨论，首版不暴露命令，不将先前建议的参数作为已确认合同。
 
@@ -125,6 +130,8 @@ massctl session get '原始会话ID'
 |---|---|
 | `--config-file` | RuntimeConfig 本身 |
 | `--config-json` | 内联 JSON 编码的 RuntimeConfig 本身 |
+| `--features-json` | SessionFeatures 对象或 `null`；Runtime 命令设置默认值，Session create/load 设置显式覆盖 |
+| `--mcp-servers-json` | MCPServer 数组或 `null`；Runtime 命令设置默认列表，Session create/load 设置显式覆盖 |
 | `--system-prompt` | 文本，原样作为 systemPrompt，与 --system-prompt-file 互斥 |
 | `--system-prompt-file` | UTF-8 文本，原样作为 systemPrompt |
 
@@ -172,6 +179,8 @@ watch 建立后确认 subscription.ready，再向 stderr 输出就绪提示；js
 | Session 按需启动与重启后查询 | create/resume 无需先 start；查询、history、watch 不启动；重启后不显示旧 idle 为当前可用，按 Service 校正结果返回 offline/unknown |
 | Session close | close 从任意状态调用同一 HTTP 接口；成功为 offline，失败为 closing 且可重试，offline 重试成功，不停止 Runtime |
 | CLI 配置更新 | 先获取当前 spec 并保留 type；显式 flag 只覆盖对应字段，完整 config 替换全部配置，最后提交完整 spec；获取失败不写回，不宣称具备并发条件更新保护 |
+| CLI Runtime Session 默认值 | create 写入顶层 features/mcpServers；update 未传保留旧值、显式 null 清除；不进入 config，不启动或热更新 Runtime |
+| CLI Session 覆盖 | create/load 的 flags 只写 Session 显式值；空 MCP 数组不删除 Runtime 默认项，fetch 或构造失败不发起副作用请求 |
 | 查询离线 Session | 查询和历史不激活 Runtime 或恢复 Session；prompt 失败并要求先显式 resume |
 | 文本输入 | --text 正确构造单个 text 内容块；首版拒绝 prompt 文件/JSON 输入，不隐式读取 stdin |
 | 分页 | Session 列表与历史都只提供分页，游标准确传递；保留 next/syncedEventId，不默认隐藏后续页 |
@@ -194,4 +203,4 @@ CLI/HTTP 合同可通过隔离的服务或 HTTP 替身验证；涉及原生输�
 
 ## 异步原生 load
 
-load 与 cancel-load 遵循[异步历史设计](../service/load.md)。load 成功退出只表示接纳，输出 loadId 及 Session，不写“历史已全部完成”；load 本身恢复同一会话并回放，成功后无需额外 resume；不提供隐式等待或自动重试。session get 查询 status.historyLoad，区分原生验证/穷尽、本地完成、失败和取消。--timeout 只限制请求等待；Ctrl-C 不自动取消已接纳回放，取消用 cancel-load 和原 loadId。session history 仍只读已提交记录，watch 只观察订阅之后同一 Broadcast 的事件。
+load 与 cancel-load 遵循[异步历史设计](../service/load.md)。load 成功退出只表示接纳，输出 loadId 及 Session，不写“历史已全部完成”；load 本身恢复同一会话并回放，成功后无需额外 resume；不提供隐式等待或自动重试。load 的 `--features-json` 与 `--mcp-servers-json` 作为新 Session 显式值持久保存，并与当前 Runtime 默认值合并用于本次恢复。session get 查询 status.historyLoad，区分原生验证/穷尽、本地完成、失败和取消。--timeout 只限制请求等待；Ctrl-C 不自动取消已接纳回放，取消用 cancel-load 和原 loadId。session history 仍只读已提交记录，watch 只观察订阅之后同一 Broadcast 的事件。

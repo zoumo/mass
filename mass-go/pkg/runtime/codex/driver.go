@@ -25,8 +25,7 @@ import (
 type options = runtime.ProcessConfig
 
 func parse(c runtime.Config) (options, error) {
-	o, err := runtime.ParseProcessConfig(c)
-	return o, err
+	return runtime.ParseProcessConfig(c)
 }
 
 type Factory struct{ RecoveryDir string }
@@ -95,13 +94,11 @@ func caps() runtime.Capabilities {
 
 var supportedSessionFeatures = runtime.FeatureSupport{AgentQuestions: true}
 
-func threadConfig(features runtime.SessionFeatures) ct.Optional[map[string]json.RawMessage] {
+func applySessionFeatures(options *sdk.SessionOptions, features runtime.SessionFeatures) {
 	if features.AgentQuestionsEnabled() {
-		return ct.Optional[map[string]json.RawMessage]{}
+		return
 	}
-	return ct.Some(map[string]json.RawMessage{
-		"tools.experimental_request_user_input.enabled": json.RawMessage("false"),
-	})
+	options.Tools = map[sdk.Tool]bool{sdk.ToolRequestUserInput: false}
 }
 
 func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
@@ -214,6 +211,10 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		return runtime.DriverSession{}, noResources("additionalDirs not supported yet")
 	}
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
+	mcpServers, err := codexMCPServers(spec.MCPServers)
+	if err != nil {
+		return runtime.DriverSession{}, noResources(err.Error())
+	}
 	d.mu.Lock()
 	c := d.client
 	stopped := d.stopped
@@ -223,7 +224,6 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	}
 	var thread ct.Thread
 	var native *sdk.Session
-	var err error
 	keep := false
 	defer func() {
 		if native != nil && !keep {
@@ -242,7 +242,9 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if saved.ID != resume || saved.SessionID == "" || saved.Ephemeral || !runtime.EqualNativePath(saved.Cwd, spec.Cwd) {
 			return runtime.DriverSession{}, noResources("invalid native recovery context")
 		}
-		native, err = sdk.Open(ctx, sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true), Config: threadConfig(effective)}})
+		options := sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)}, MCPServers: mcpServers}
+		applySessionFeatures(&options, effective)
+		native, err = sdk.Open(ctx, options)
 		if err != nil {
 			return runtime.DriverSession{}, err
 		}
@@ -253,7 +255,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		}
 		// Resume metadata may contain old turns: they are never adapted or replayed.
 	} else {
-		params := ct.ThreadStartParams{Cwd: ct.Some(spec.Cwd), Ephemeral: ct.Some(false), Config: threadConfig(effective)}
+		params := ct.ThreadStartParams{Cwd: ct.Some(spec.Cwd), Ephemeral: ct.Some(false)}
 		if spec.SystemPrompt != "" {
 			params.BaseInstructions = ct.Some(spec.SystemPrompt)
 		}
@@ -263,7 +265,9 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		// A dispatched thread/start on the shared connection must retain its
 		// original response: canceling the wait can lose the only native identity.
 		// Stop still owns this opening and waits for its late identity cleanup.
-		native, err = sdk.Open(context.WithoutCancel(ctx), sdk.SessionOptions{Client: c, Thread: params})
+		options := sdk.SessionOptions{Client: c, Thread: params, MCPServers: mcpServers}
+		applySessionFeatures(&options, effective)
+		native, err = sdk.Open(context.WithoutCancel(ctx), options)
 		if err != nil {
 			return runtime.DriverSession{}, err
 		}

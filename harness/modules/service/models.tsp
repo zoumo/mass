@@ -66,10 +66,19 @@ union SessionRef {
   },
 }
 
-/** 类型专属配置只保存秘密引用，不返回解析后的秘密。 */
+/** config 是类型专属配置，只保存秘密引用且公开结果不返回解析后的秘密；
+ * features 与 mcpServers 是所属 Session 的默认值，不进入 config，
+ * Runtime 启动和 Driver 构造也不消费它们。 */
 model RuntimeSpec {
   type: RuntimeType;
   config: RuntimeConfig;
+
+  /** 本 Runtime 下 Session 的功能默认值；Session 同名字段覆盖，均省略时沿用 schema 默认值。 */
+  features?: Execution.SessionFeatures;
+
+  /** 本 Runtime 下 Session 的 MCP server 默认值；Session 同名 server 整体覆盖并保持基准位置，
+   * 新名称按 Session 顺序追加，Session 空列表不删除默认项。 */
+  mcpServers?: Execution.MCPServer[];
 }
 
 model RuntimeCreate {
@@ -140,6 +149,14 @@ model SessionLoad {
 
   /** 待原生验证的已知 ID，不由 MASS 分配。 */
   sessionId: string;
+
+  /** 本次 load 对 Runtime 功能默认值的显式覆盖；作为新 Session 的显式值持久保存，
+   * 不复制合并后的 Runtime 默认值。 */
+  features?: Execution.SessionFeatures;
+
+  /** 本次 load 对 Runtime MCP 默认值的显式覆盖；同名 server 替换默认项，
+   * 新名称追加，空列表表示没有覆盖项；仅显式项写入新 Session spec。 */
+  mcpServers?: Execution.MCPServer[];
 }
 
 model HistoryLoadStatus {

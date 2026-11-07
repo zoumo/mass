@@ -8,7 +8,8 @@ namespace MASS.Design;
  * 公共调用者无需先取得 Runtime 实例或内部运行凭证。
  */
 interface SessionService {
-  /** 新空目标异步恢复同一原生会话并回放；先建接收绑定，完成本地提交/分发后可直接输入。
+  /** 新空目标异步恢复同一原生会话并回放；可选 features/mcpServers 是本次显式覆盖，
+   * 与当前 Runtime Session 默认值合并后交给 Driver。先建接收绑定，完成本地提交/分发后可直接输入。
    * 接受不等于存在或完成，结果查询 Session.status.historyLoad；普通 resume 不回放。 */
   @parameterVisibility(Lifecycle.Create)
   loadSession(input: SessionLoad): SessionLoadAccepted | OperationError;
@@ -18,7 +19,9 @@ interface SessionService {
   cancelHistoryLoad(session: SessionRef, loadId: string):
     | HistoryLoadStatus
     | OperationError;
-  /** input.spec.runtimeRef 选择目标实例，input.metadata.namespace/name 指定名称键；校验后按需启动所属 Runtime，启动失败不打开会话。
+  /** input.spec.runtimeRef 选择目标实例，input.metadata.namespace/name 指定名称键；
+   * input.spec 中的 features/mcpServers 是 Session 显式值，与当前 Runtime 默认值合并后交给 Driver。
+   * 校验后按需启动所属 Runtime，启动失败不打开会话。
    * 返回的 sessionId 在全部 Runtime 中唯一；持久身份保存成功后才公开成功；仅显式 initialInput 在同一创建所有者内发送一次。 */
   @parameterVisibility(Lifecycle.Create)
   createSession(input: SessionCreate): SessionCreated | OperationError;
@@ -32,7 +35,8 @@ interface SessionService {
    */
   listSessions(query?: SessionQuery): Page<Session> | OperationError;
 
-  /** 从 offline 或重启后的 unknown 接纳；校验后按需启动所属 Runtime，再恢复原会话，
+  /** 从 offline 或重启后的 unknown 接纳；校验后按需启动所属 Runtime，读取当前 Session 默认值
+   * 并与持久 Session 显式值合并，再恢复原会话，
    * 延续身份与历史且不恢复其他 Session。unknown 失败仍为 unknown，不重放旧输入、
    * 工具或交互。未结算旧责任阻止冲突激活；失败不以新建替代。服务重启不自动调用本操作。 */
   resumeSession(session: SessionRef, input?: SessionResume):

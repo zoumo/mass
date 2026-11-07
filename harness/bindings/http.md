@@ -67,6 +67,8 @@ Runtime 是全局命名资源；`{runtime}` 为 Runtime 名称。创建只接受
 
 创建返回的 Location 为 `/apis/v1/runtimes/{runtime}`，按路径参数规则编码。PUT 请求体直接承载完整期望配置，只更新 spec，不接受 metadata/status，不要求 resourceVersion，不热更新或重启。Runtime 列表不分页，读取失败不能返回伪装成全量的部分数组。
 
+RuntimeSpec 的 `features` 与 `mcpServers` 位于 spec 顶层，不属于 `config`。它们保存该 Runtime 下 Session 的默认值，不进入 Driver 构造或 Runtime 启动。PUT 完整替换整个 spec，因此省略这两个可选字段会清除对应默认值；更新不热改已打开 Session，下一次 create、resume 或 load 才读取最新值。`features` 按字段与 Session 显式值合并；MCP server 按名称整体替换，同名保持默认位置，新名称按 Session 顺序追加，Session 空列表不删除默认项。完整规则见 [Runtime Session 默认配置](../modules/runtime/session-defaults.md)。
+
 ## Session 路由与寻址
 
 集合入口为 `/apis/v1/sessions`。创建必须提供 namespace 与名称，拒绝系统生成字段。名称必须满足[创建名称校验](../modules/service/session.md#创建名称校验)，UUID 形式的名称返回 400 invalid_argument，reason=session_name_is_uuid，且不得产生创建副作用。创建不隐式发送用户输入；可选顶层 initialInput 使用 SessionInput，显式空输入拒绝，不加入 spec。成功前必须完成持久身份登记与原生会话打开；成功体为 SessionCreated，既有 Session 字段加可选 initialInputReceipt。回执的 provider 证据、早到事实、未知结果及禁止重放遵循 [创建合同](../modules/service/session.md#创建与公开成功)。
@@ -119,11 +121,13 @@ Runtime 是全局命名资源；`{runtime}` 为 Runtime 名称。创建只接受
 
 `POST {session}/resume` 允许省略请求体或发送 `{}`，两者均不发送输入；可选 `initialInput` 完整承载 SessionInput。显式 null、空输入或不支持内容在原生恢复/提交前拒绝。成功体 SessionResumed 保留既有 Session 字段，仅显式提交时返回可选 initialInputReceipt；输入和回执均不持久化或重放。Claude 可在原生 init 前提交，但公开成功及历史/SSE 发布仍须观察原 ID/cwd 并完成绑定提交；失败清理不能表述为输入未发送或撤销业务效果，参见[恢复合同](../modules/service/session.md)。
 
+`POST /apis/v1/sessions/load` 的 SessionLoad 可在顶层携带可选 `features` 与 `mcpServers`。这些值成为新 Session 的显式 spec 值，并由 Service 与调用时的当前 Runtime 默认值合并后交给 Driver；合并后的默认结果不写回 Session spec。Session 的空 MCP 列表表示没有覆盖项，不清除 Runtime 默认值。
+
 `POST {session}/close` 无业务输入，遵循基础规则，并直接映射 SessionService.closeSession；完整接纳、栅栏、SDK/MASS 结算、`closing` 与幂等规则见 [Session close](../modules/service/design.md#session-close)。HTTP 在成功完成后返回 200 和 `offline` Session；失败或结果未知返回对应 OperationError，Session 保持 `closing`，客户端可安全重试同一 close 请求。HTTP 不保留 archive 路径、别名或重定向。
 
 `interaction64 = base64url(UTF-8(原始交互引用))`，不带 `=` padding，只使用 `A-Z a-z 0-9 - _`。解码必须为合法 UTF-8 且重新编码与原片段完全相同；空值、非法字符、padding 或非规范编码返回 400 invalid_argument。JSON 中的交互引用保留原值。例如原值 `a/b` 编码为 `YS9i`，原值 `..` 编码为 `Li4`。请求体直接承载答案，可为 null、标量、数组或对象，不包 `{answer: ...}`，不得由 HTTP 层把 null 当作缺少请求体。回答是否有效由原交互合同校验；过期或重复回答不能提交给新运行。
 
-创建返回的 Location 为 `/apis/v1/sessions/{sessionId}`，使用 URL escape 后的原始 ID，确保名称与其他会话 ID 冲突时仍可无歧义查询；响应仍包含跨 Runtime 唯一的 status.sessionId。列表可按 namespace、runtimeRef、state 筛选，after、limit 在 HTTP query 中平铺；默认跨所有 namespace、Runtime，包含离线会话。`state=archived` 不是合法枚举值，返回 400 invalid_argument。
+创建返回的 Location 为 `/apis/v1/sessions/{sessionId}`，使用 URL escape 后的原始 ID，确保名称与其他会话 ID 冲突时仍可无歧义查询；响应仍包含跨 Runtime 唯一的 status.sessionId。SessionSpec 顶层的 `features` 与 `mcpServers` 是显式 Session 值，创建时与当前 Runtime 默认值合并后交给 Driver，但 Session spec 只保存显式值。列表可按 namespace、runtimeRef、state 筛选，after、limit 在 HTTP query 中平铺；默认跨所有 namespace、Runtime，包含离线会话。`state=archived` 不是合法枚举值，返回 400 invalid_argument。
 
 本版本不提供 Session PUT/PATCH/DELETE、配置选项写入、批量命令或任意事件注入。close 保留持久身份与历史，不能作为删除别名。
 
@@ -235,6 +239,8 @@ HTTP v1 确定以上路由、JSON、状态码、授权入口与 SSE 形式，遵
 | 非法点号 ID | 客户端在构造 URL 前拒绝原始 `.`、`..`；HTTP 单次解码后得到这两个值时返回 400，nameOrID 同样拒绝 |
 | 创建 Session 成功 | 持久身份已提交，Location 可查询，不自动发送 prompt |
 | PUT Runtime 资源路径后查询 | 只改变期望配置，旧运行及其 appliedGeneration 不被伪造更新 |
+| Runtime 默认值更新后的 Session 操作 | 下一次 create/resume/load 使用最新 features/mcpServers；已打开 Session 不热更新，Session spec 不写回合并结果 |
+| Session 覆盖 Runtime 默认值 | feature 按字段覆盖；同名 MCP server 整体替换且保持位置，新名称追加，空 MCP 列表不清空默认项 |
 | 输入或取消成功 | 仅返回对应回执，不宣告工作完成；未知结果不自动重发 |
 | types 重复参数与分页 | 精确 OR 过滤，游标条件校验，返回 next 与 syncedEventId |
 | SSE 经过代理 | 源站发送规定响应头；代理不缓存、不攒帧，ready、业务帧和心跳及时交付，不等待流结束 |

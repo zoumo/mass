@@ -249,10 +249,10 @@ print or copy those values into recorded material. If the native CLI does not
 emit the requested interaction, the case remains unverified and no passing
 export is published.
 
-### Runtime Launch Configuration
+### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261106083916-f52be4d0377f`,
-source commit `f52be4d0377f`, without a local replacement. The external
+The runtime SDK is pinned to `v0.0.0-20261106173112-83036ea07a0c`,
+source commit `83036ea07a0c`, without a local replacement. The external
 `agent-sdk-testify` tool is pinned to `v0.0.0-20261105165039-e4799fe3484c` for
 consumer recording and replay and is not a production dependency.
 The checked-in consumer fixtures remain bound to their recording SDK
@@ -264,7 +264,7 @@ and original request capabilities. SDK observations do not establish Agent state
 Codex input receipts retain the native turn ID and acceptance; Claude receipts
 prove only a complete local write, not native acceptance or recording.
 
-`--config-json` / `--config-file` accept these launch fields:
+`--config-json` / `--config-file` accept these fields:
 
 | Field | Behavior |
 | --- | --- |
@@ -273,6 +273,50 @@ prove only a complete local write, not native acceptance or recording.
 | `envPolicy` | `inherit` (default) merges parent environment with `env`; `replace` passes only configured entries, including an explicitly empty environment. |
 | `env` | String-to-string overrides; callers supply any required PATH/HOME/config-directory settings explicitly when replacing. |
 | `scenario` | Optional absolute authored simulation file, injected as provider `_MOCK_SCENARIO`; not required for real runtimes. |
+
+Runtime `spec` separately accepts Session defaults:
+
+| Field | Behavior |
+| --- | --- |
+| `features` | Session feature defaults; currently accepts `agentQuestions`. |
+| `mcpServers` | Session MCP defaults. Each item requires `name` and `type` (`stdio`, `http` or `sse`) plus the fields for that transport. |
+
+`features` merges by field and `mcpServers` merges by server name: a Session
+value overrides the Runtime value with the same name, and a Session-only name is
+added. An empty Session `mcpServers` list adds no overrides, so it does not
+clear Runtime defaults. Each Session operation reads the current Runtime spec
+before calling the Driver, so `runtime update` affects the next create, resume
+or history load without restarting the Runtime. An already open Session is
+unchanged.
+`--features-json` and `--mcp-servers-json` set these fields from `massctl`;
+`null` clears Runtime defaults.
+
+For example, a Runtime may be created with:
+
+```json
+{
+  "metadata": {"name": "agent"},
+  "spec": {
+    "type": "codex",
+    "config": {"executable": "/absolute/path/to/agent"},
+    "features": {"agentQuestions": false},
+    "mcpServers": [{
+      "name": "remote",
+      "type": "http",
+      "url": "https://example.invalid/mcp",
+      "headers": {"Authorization": "Bearer ${TOKEN}"}
+    }]
+  }
+}
+```
+
+Session `spec` accepts the same `features` and `mcpServers` keys; history-load
+input accepts them as top-level request fields. `stdio` servers use `command`,
+`args`, `env` and optional `cwd`; `http` and `sse` servers use `url` and
+`headers`. Codex supports `stdio` and `http`, and its MCP names cannot contain
+dots. Claude supports all three transports but not `cwd`, `envHeaders` or
+`bearerTokenEnvVar`. MCP configuration does not connect or health-check a server
+at Session open.
 
 Validation does not open credentials or history. Offline tests launch only MASS's
 `internal/testpeer` strict scenario binary via temporary launchers, with an explicit
@@ -299,8 +343,11 @@ Runtime create requires NAME and `--type`; absent configuration sends `{}`.
 modes. Files contain RuntimeConfig itself; `-` reads stdin. Runtime update first
 GETs the resource, preserves its type, and PUTs a complete spec at the resource
 path. `--executable` preserves other config fields; a complete JSON config replaces
-them. Empty updates fail locally. There is no conditional-update protection:
-concurrent edits can be overwritten. Updates never restart running instances.
+them. `--features-json` and `--mcp-servers-json` independently set Session
+defaults; omission preserves the current value and `null` clears it. An update
+may contain only Session defaults. Empty updates fail locally. There is no
+conditional-update protection: concurrent edits can be overwritten. Updates
+never restart running instances.
 Runtime delete never stops or cascades: Service rejects running/unreleased
 resources and persistent Session references. Stop explicitly first; offline
 Sessions retain their references and history. Successful delete has empty JSON
