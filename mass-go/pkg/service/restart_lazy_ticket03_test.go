@@ -476,7 +476,7 @@ func requireTicket03ResumeError(t *testing.T, err error, state events.SessionSta
 	require.Contains(t, strings.ToLower(public.Message), "resume")
 }
 
-func TestTicket03PromptFailsFastOnNonExecutableStates(t *testing.T) {
+func TestTicket03PromptFailsFastOnDetachedUnknownAndNonExecutableStates(t *testing.T) {
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")
 	for _, state := range []events.SessionState{"offline", events.Unknown, "opening", "closing"} {
@@ -589,9 +589,11 @@ func TestTicket03FreshLiveUnknownAdmitsWorkBeforeObservedState(t *testing.T) {
 	_, err = svc.SendPrompt(context.Background(), resource.SessionRef{SessionID: created.Status.SessionID}, runtime.Input{Content: []events.ContentBlock{events.Text("dispatch")}})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, factory.only(t).prompts.Load())
+	require.EqualValues(t, 1, factory.only(t).opens.Load(), "prompt must not reopen the Session")
+	require.Zero(t, factory.only(t).resumes.Load(), "prompt must not resume the Session")
 }
 
-func TestTicket03ObservedUnknownRejectsWorkButAllowsCancel(t *testing.T) {
+func TestTicket03ObservedUnknownRejectsWorkWithoutDispatchSideEffects(t *testing.T) {
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")
 	factory := &ticket03Factory{}
@@ -628,11 +630,39 @@ func TestTicket03ObservedUnknownRejectsWorkButAllowsCancel(t *testing.T) {
 
 	_, err = svc.SendPrompt(context.Background(), resource.SessionRef{SessionID: created.Status.SessionID}, runtime.Input{Content: []events.ContentBlock{events.Text("must not dispatch")}})
 	requireTicket03ResumeError(t, err, events.Unknown)
-	require.Zero(t, driver.prompts.Load())
+	require.Zero(t, driver.prompts.Load(), "an observed unknown Session must not reach the Driver")
+	require.Zero(t, driver.resumes.Load(), "prompt must not implicitly resume the Session")
+	require.EqualValues(t, 1, driver.opens.Load(), "prompt must not open another Session")
+	require.EqualValues(t, 1, factory.created.Load(), "prompt must reuse the bound Runtime")
 
 	_, err = svc.Cancel(context.Background(), resource.SessionRef{SessionID: created.Status.SessionID})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, driver.cancels.Load())
+}
+
+func TestTicket03DetachedUnknownRejectsWorkWithoutDispatchSideEffects(t *testing.T) {
+	st := openTicket03Store(t)
+	createTicket03Runtime(t, st, "agent", "stopped")
+	factory := &ticket03Factory{}
+	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, svc.Shutdown(ctx))
+	})
+
+	_, err := svc.StartRuntime(context.Background(), "agent")
+	require.NoError(t, err)
+	driver := factory.only(t)
+	require.EqualValues(t, 1, driver.starts.Load())
+
+	detached := createTicket03Session(t, st, "agent", "detached-unknown", events.Unknown)
+	_, err = svc.SendPrompt(context.Background(), resource.SessionRef{SessionID: detached.Status.SessionID}, runtime.Input{Content: []events.ContentBlock{events.Text("must not dispatch")}})
+	requireTicket03ResumeError(t, err, events.Unknown)
+	require.Zero(t, driver.prompts.Load(), "a Session without a current binding must not reach the Driver")
+	require.Zero(t, driver.resumes.Load(), "prompt must not implicitly resume the Session")
+	require.Zero(t, driver.opens.Load(), "prompt must not implicitly open the Session")
+	require.EqualValues(t, 1, factory.created.Load(), "prompt must reuse the running Runtime")
 }
 
 func TestTicket03ResumeRejectsNonResumableStateBeforeStartingRuntime(t *testing.T) {
