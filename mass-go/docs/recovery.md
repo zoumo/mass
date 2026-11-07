@@ -68,8 +68,9 @@ close/resume paths are implemented and exercised by temporary file/SQLite-backed
 vertical tests. SQLite provides the current metadata authority and a rebuildable
 event-history query replica; recovery must preserve the former while the latter
 may be rebuilt. Real-Agent persistence and durable-storage behavior remain
-unverified. In the current five-second acceptance, Codex passed idle auto-close,
-offline rejection, resume, manual close and resume while Runtime stayed running.
-Claude session creation remains unverified with CLI 2.1.258: it accepts the SDK
-initialize exchange but emits no native init identity before user input, while
-creation waits for that identity without sending hidden input.
+unverified. In the current five-second acceptance, Codex and Claude both passed
+idle auto-close, offline rejection, resume, manual close and resume while Runtime
+stayed running. Claude's passing path created the Session with explicit initial
+input: CLI 2.1.258 then emits native init identity after the real user frame.
+Zero-input Claude creation remains unsupported and unverified; without user input
+the CLI emits no native init identity, and creation does not send hidden input.
