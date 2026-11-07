@@ -59,6 +59,9 @@ func workflowHTTP(c *client.Client, ctx context.Context, op string, p workflowPa
 	case "session.close":
 		return c.CloseSession(ctx, p.Session, out)
 	case "session.resume":
+		if len(p.Input.Content) > 0 {
+			return c.ResumeSessionWithInput(ctx, p.Session, p.Input, out)
+		}
 		return c.ResumeSession(ctx, p.Session, out)
 	}
 	return transport.Invalid()

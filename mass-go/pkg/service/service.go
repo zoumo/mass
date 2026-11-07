@@ -267,7 +267,10 @@ func (s *Service) StartRuntime(ctx context.Context, name string) (resource.Runti
 		}
 		return s.meta.GetRuntime(name)
 	}
-	if r.Status.State != "stopped" {
+	// A nil run binding means this process has no owner for the persisted
+	// Runtime. Explicit start/resume may replace a cold unknown from a restart;
+	// same-process unsettled owners retain their binding above.
+	if r.Status.State != "stopped" && r.Status.State != "unknown" {
 		s.mu.Unlock()
 		return r, errors.New("previous runtime release not confirmed; explicit reconciliation required")
 	}

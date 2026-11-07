@@ -291,21 +291,37 @@ func TestTicket14EarlyCompletionContinuedSSEAndResumeNoReplay(t *testing.T) {
 	require.Equal(t, receipt.Submission, history.Events[1].Meta["claude"].(map[string]any)["submission"])
 	_, err = svc.CloseSession(ctx(t), ref)
 	require.NoError(t, err)
-	_, err = svc.ResumeSession(ctx(t), ref)
-	require.NoError(t, err)
+	var resumed resource.SessionResumed
+	require.NoError(t, c.ResumeSessionWithInput(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("resume")}}, &resumed))
+	require.NotNil(t, resumed.InitialInputReceipt)
+	var resumedMessage bool
+	for {
+		e, err := observer.Next()
+		require.NoError(t, err)
+		if e.Type() == "agent.message" {
+			resumedMessage = true
+		}
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			break
+		}
+	}
+	require.True(t, resumedMessage)
 	_, err = svc.CloseSession(ctx(t), ref)
 	require.NoError(t, err)
 	data, err := os.ReadFile(evidence)
 	require.NoError(t, err)
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	require.Len(t, lines, 2, "resume must not replay create input")
-	var a, b map[string]any
+	require.Len(t, lines, 3, "resume must not replay create input")
+	var a, b, resumedInput map[string]any
 	require.NoError(t, json.Unmarshal([]byte(lines[0]), &a))
 	require.NoError(t, json.Unmarshal([]byte(lines[1]), &b))
+	require.NoError(t, json.Unmarshal([]byte(lines[2]), &resumedInput))
 	require.Equal(t, true, a["before_init"])
 	require.Equal(t, a["pid"], b["pid"])
 	require.Equal(t, "first", a["text"])
 	require.Equal(t, "second", b["text"])
+	require.Equal(t, "resume", resumedInput["text"])
+	require.Equal(t, false, resumedInput["before_init"])
 }
 
 func TestTicket14PreIdentityBoundsAndUnrelatedResults(t *testing.T) {

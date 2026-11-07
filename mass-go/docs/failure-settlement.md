@@ -104,13 +104,16 @@ responsibility. Independent Runtime shutdown drains run concurrently.
 Timeout or release/commit uncertainty keeps stopping/closing and ownership.
 Late running/idle cannot reopen admission or overwrite closing/offline.
 Explicit stop retry can complete after late termination/release. A Session error
-does not stop a healthy shared Driver. Persisted unconfirmed Runtime/Session
-ownership cannot be cold-opened as a new owner merely because the Store becomes
-writable or a process restarts.
+does not stop a healthy shared Driver. When a new process has no run binding for
+a persisted unknown Runtime, an explicit start/resume may establish a new local
+owner. This treats the old local owner as unreachable; it does not prove provider
+release and does not cold-open a same-process owner that still has unsettled
+responsibility.
 
 Pending UUIDs and operation closures are retained in memory in this process;
 there is no crash-recoverable private per-fact outbox. After process loss,
-unconfirmed ownership is refused rather than reconstructed, resent or declared
+unconfirmed local ownership can be replaced only through that explicit cold
+start/resume path; per-fact obligations are not reconstructed, resent or declared
 clean. Manual forensic recovery/cross-process settlement, kernel crash/power
 loss, real Agent/model/account behavior and Linux remain unverified. SQLite
 replica recovery is separately verified through real disk fault/process-exit

@@ -96,6 +96,7 @@ providers. HTTP answers are deliberate: this CLI has no answer command.
 | Claude retained main chain and same process continuation | `history_load_ticket07_test.go` | Explicit ConfigDir/ProjectDir, drift/corruption refusal, offset100 crossing, cleanup/cancel; synthetic UUID echoes are not real CLI guarantees |
 | Load cancel, stale cancel, native completion before delivery, failed append/required publish | `pkg/service/*ticket06_test.go`, `load_integrity_ticket06_test.go` | Accepted load persists independently of HTTP disconnect; unsettled responsibilities remain visible |
 | Real daemon/CLI/SSE/history, original-ID resume, disconnect and explicit cancellation | `TestEntrypointSuite`, `TestFileEntrypointSuite`, `TestFailureSuite` | File-authoritative persistence, owned temporary listener/workspace and process cleanup |
+| Cold restart keeps Runtime/Session unknown, then explicit resume starts the Runtime and restores the original Session | `TestTicket03ColdRestartStartsUnknownRuntimeAndResumesSession` | File Store reopen and Service state machine; not an OS process crash, real CLI or provider-release proof |
 | Explicit non-scenario runtime launch | `TestExplicitEnvironmentLaunchWithoutScenarioConfig` | Both providers; proves product configuration works with an owned executable, not real credentials |
 
 ### All 18 Current Event Examples
@@ -235,7 +236,7 @@ rtk proxy bin/massctl -o json session prompt check -n acceptance --text 'Reply w
 rtk proxy bin/massctl -o json session get check -n acceptance
 rtk proxy bin/massctl -o json session history check -n acceptance --limit 100
 rtk proxy bin/massctl session close check -n acceptance
-rtk proxy bin/massctl session resume check -n acceptance
+rtk proxy bin/massctl session resume check -n acceptance --text 'continue after close'
 # Load is a separate fresh MASS name; get until completed/failed, do not retry:
 rtk proxy bin/massctl -o json session load imported -n acceptance --runtime agent --cwd /ABS/OWNED/project --session-id ORIGINAL_NATIVE_ID
 rtk proxy bin/massctl -o json session get imported -n acceptance
@@ -244,7 +245,9 @@ rtk proxy bin/massctl -o json session cancel-load imported -n acceptance --load-
 rtk proxy bin/massctl runtime stop agent
 ```
 
-Repeat with `--type claude` and its own explicit configuration/workspace. HTTP
+Repeat with `--type claude` and its own explicit configuration/workspace. Claude
+requires the explicit resume input above; zero-input Claude resume fails before
+native open because it cannot observe identity. HTTP
 answering is available through `pkg/client.Client.Answer` or POST
 `/apis/v1/sessions/{sessionId}/interactions/{interaction64}/answer`; the interaction
 path segment is base64url-encoded according to the HTTP contract. See the

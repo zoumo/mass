@@ -96,6 +96,17 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			input := func(text string) runtime.Input {
 				return runtime.Input{Content: []events.ContentBlock{events.Text(text)}}
 			}
+			resumeWithInput := func(svc *service.Service, text string) error {
+				if kind == "claude" {
+					_, err := svc.ResumeSessionWithInput(ctx(t), ref, input(text))
+					return err
+				}
+				if _, err := svc.ResumeSession(ctx(t), ref); err != nil {
+					return err
+				}
+				_, err := svc.SendPrompt(ctx(t), ref, input(text))
+				return err
+			}
 			data := t.TempDir()
 			svc, closeFirst := open(data, true)
 			firstInput := input("first explicit input")
@@ -107,10 +118,7 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			require.Equal(t, "first explicit input", first.Events[0].Payload().(events.AgentMessage).Content[0].Text)
 			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
-			_, err = svc.ResumeSession(ctx(t), ref)
-			require.NoError(t, err)
-			_, err = svc.SendPrompt(ctx(t), ref, input("after close resume"))
-			require.NoError(t, err)
+			require.NoError(t, resumeWithInput(svc, "after close resume"))
 			beforeRestart := waitHistory(svc, 2)
 			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
@@ -120,11 +128,10 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			durable, err := reopened.ListHistoryEvents(ref, store.HistoryQuery{Types: []string{"agent.message"}})
 			require.NoError(t, err)
 			require.Equal(t, beforeRestart, durable, "durable facts survive actual authority reopen unchanged")
-			restored, err := reopened.ResumeSession(ctx(t), ref)
+			require.NoError(t, resumeWithInput(reopened, "after durable restart"))
+			restored, err := reopened.GetSession(ref)
 			require.NoError(t, err)
 			require.Equal(t, id, restored.Status.SessionID)
-			_, err = reopened.SendPrompt(ctx(t), ref, input("after durable restart"))
-			require.NoError(t, err)
 			restarted := waitHistory(reopened, 3)
 			require.Equal(t, first.Events[0], restarted.Events[0], "original fact must not be rewritten or duplicated")
 			_, err = reopened.CloseSession(ctx(t), ref)

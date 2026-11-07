@@ -141,6 +141,16 @@ func (s *entrypointSuite) call(op string, p workflowParams, out any) {
 		}
 		s.Require().NoError(json.Unmarshal(b, &text))
 		args = append(args, "--text", text.Text)
+	case "session.resume":
+		if len(p.Input.Content) > 0 {
+			b, e := json.Marshal(p.Input.Content[0])
+			s.Require().NoError(e)
+			var text struct {
+				Text string `json:"text"`
+			}
+			s.Require().NoError(json.Unmarshal(b, &text))
+			args = append(args, "--text", text.Text)
+		}
 	case "session.history":
 		if p.History.Limit > 0 {
 			args = append(args, "--limit", strconv.Itoa(p.History.Limit))
@@ -242,6 +252,10 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 	var receipt runtime.InputReceipt
 	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text(text)}}}, &receipt)
 	s.NotEmpty(receipt.Submission)
+	return s.readWork(ref, text, question, scan)
+}
+
+func (s *entrypointSuite) readWork(ref resource.SessionRef, text string, question bool, scan *bufio.Scanner) []events.SessionEvent {
 	seen := []events.SessionEvent{}
 	questions := 0
 	chunks := 0
@@ -355,11 +369,25 @@ func (s *entrypointSuite) basic(kind string) {
 	s.Require().NoError(st.Close())
 	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
 	var resumed resource.Session
-	s.call("session.resume", workflowParams{Session: ref}, &resumed)
+	resumeInput := runtime.Input{}
+	if kind == "claude" {
+		resumeInput.Content = []events.ContentBlock{events.Text("continue")}
+	}
+	var scan *bufio.Scanner
+	if len(resumeInput.Content) > 0 {
+		_, scan = s.observer(ref)
+	}
+	s.call("session.resume", workflowParams{Session: ref, Input: resumeInput}, &resumed)
 	s.Equal(original.Metadata.UID, resumed.Metadata.UID)
 	s.Equal(original.Status.SessionID, resumed.Status.SessionID)
-	s.Equal(before, s.history(ref))
-	s.runWork(ref, "continue", false)
+	resumedHistory := s.history(ref)
+	s.GreaterOrEqual(len(resumedHistory.Events), len(before.Events))
+	s.Equal(before.Events, resumedHistory.Events[:len(before.Events)], "resume must not rewrite or replay prior facts")
+	if scan != nil {
+		s.readWork(ref, "continue", false, scan)
+	} else {
+		s.runWork(ref, "continue", false)
+	}
 	after := s.history(ref)
 	s.Greater(len(after.Events), len(before.Events))
 	s.Equal(before.Events, after.Events[:len(before.Events)])

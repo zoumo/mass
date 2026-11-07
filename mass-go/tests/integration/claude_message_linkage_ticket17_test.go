@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -66,14 +67,15 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, observer.Close()) })
 			var live []events.SessionEvent
-			send := func(text string, proven bool) {
+			sendWith := func(text string, proven bool, submit func(*runtime.InputReceipt) error) {
 				t.Helper()
 				workCtx := ctx(t)
 				// Keep each send-to-idle observation bounded even on a quiet SSE stream.
 				stopWorkDeadline := context.AfterFunc(workCtx, cancelObservation)
 				defer stopWorkDeadline()
 				var receipt runtime.InputReceipt
-				require.NoError(t, c.SendPrompt(workCtx, ref, runtime.Input{Content: []events.ContentBlock{events.Text(text)}}, &receipt))
+				require.NoError(t, submit(&receipt))
+				require.NotEmpty(t, receipt.Submission)
 				seen := 0
 				startID := ""
 				for {
@@ -141,6 +143,11 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 					}
 				}
 			}
+			send := func(text string, proven bool) {
+				sendWith(text, proven, func(receipt *runtime.InputReceipt) error {
+					return c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text(text)}}, receipt)
+				})
+			}
 			send("warmup", false)
 			// A second known work makes prior-work conflicts independent of
 			// the first submission's special no-UUID native contract.
@@ -163,9 +170,18 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			if mode == "proof" {
 				send("linkage-proof", true)
 				require.NoError(t, c.CloseSession(ctx(t), ref, nil))
-				require.NoError(t, c.ResumeSession(ctx(t), ref, nil))
 				// Same native ID on a new owned process cannot inherit old proof.
-				send("linkage-no-start", false)
+				sendWith("linkage-no-start", false, func(receipt *runtime.InputReceipt) error {
+					var resumed resource.SessionResumed
+					if err := c.ResumeSessionWithInput(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("linkage-no-start")}}, &resumed); err != nil {
+						return err
+					}
+					if resumed.InitialInputReceipt == nil {
+						return errors.New("resume did not return an initial input receipt")
+					}
+					*receipt = *resumed.InitialInputReceipt
+					return nil
+				})
 			}
 			var history []events.SessionEvent
 			query := store.HistoryQuery{}

@@ -90,6 +90,8 @@ or proxy acceptance. No massctl answer command is implemented.
 
 Session recovery (ticket 04) uses per-Session lifecycle coordination and dispatch
 admission. An unrelated Session can close/resume while another close waits.
+Resume body may carry `initialInput`; Claude requires it so native init can prove
+the original ID/cwd, and rejects zero-input resume before opening.
 Close seals new inputs/answers, waits for admitted input/answer/cancel and policy
 responses, confirms Driver close and commits queued facts before clearing applied
 versions. Unknown close retains the original lane and prevents restore. Caller

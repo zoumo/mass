@@ -353,7 +353,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	r, err := cold.StartRuntime(ctx(t), "agent")
 	require.NoError(t, err)
 	require.EqualValues(t, 2, r.Status.AppliedGeneration)
-	resumed, err := cold.ResumeSession(ctx(t), ref)
+	resumed, err := cold.ResumeSessionWithInput(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("continue")}})
 	require.NoError(t, err)
 	require.Equal(t, original.Status.SessionID, resumed.Status.SessionID)
 	require.Equal(t, original.Metadata.UID, resumed.Metadata.UID)
@@ -361,9 +361,15 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	before, err := cold.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Equal(t, history, before)
-	finishInput(t, cold, ref, "continue")
-	after, err := cold.ListHistoryEvents(ref, store.HistoryQuery{})
-	require.NoError(t, err)
+	var after store.HistoryPage
+	require.Eventually(t, func() bool {
+		after, err = cold.ListHistoryEvents(ref, store.HistoryQuery{})
+		if err != nil || len(after.Events) <= len(history.Events) {
+			return false
+		}
+		current, e := cold.GetSession(ref)
+		return e == nil && current.Status.State == events.Idle
+	}, 5*time.Second, 10*time.Millisecond, "resume input must complete and settle")
 	require.Greater(t, len(after.Events), len(history.Events))
 	require.Equal(t, history.Events, after.Events[:len(history.Events)])
 	_, err = cold.CloseSession(ctx(t), ref)

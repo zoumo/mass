@@ -469,9 +469,15 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			body, readErr := io.ReadAll(resp.Body)
 			assert.NoError(t, resp.Body.Close())
 			require.NoError(t, readErr)
-			require.Equal(t, http.StatusOK, resp.StatusCode, "%s", body)
-			require.NotContains(t, string(body), "initialInputReceipt")
-			_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
+			if kind == "claude" {
+				require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, "%s", body)
+				require.Contains(t, string(body), `"reason":"resume_identity_unobservable"`)
+				_, err = f.svc.ResumeSessionWithInput(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
+			} else {
+				require.Equal(t, http.StatusOK, resp.StatusCode, "%s", body)
+				require.NotContains(t, string(body), "initialInputReceipt")
+				_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
+			}
 			require.NoError(t, err)
 			ticket20Wait(t, f, 3)
 			_, err = f.svc.CloseSession(ctx(t), f.ref)
@@ -576,8 +582,9 @@ func TestTicket20PendingInputCallerAbandonRetainsStopOwnership(t *testing.T) {
 	}
 }
 
-// The optional public runtime capability may be absent even when ordinary
-// restoration works. Embedding only Driver deliberately does not grant it.
+// The optional public runtime capability may be absent even when the adapter
+// supports ordinary restoration. Embedding only Driver deliberately does not
+// grant it.
 type (
 	ticket20OrdinaryDriver  struct{ runtime.Driver }
 	ticket20OrdinaryFactory struct{ runtime.Factory }
@@ -610,11 +617,36 @@ func TestTicket20UnsupportedCapabilityHasNoNativeSideEffects(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, wire, actual)
 			_, err = f.svc.ResumeSession(ctx(t), f.ref)
-			require.NoError(t, err, "absence of opt-in capability must not prohibit ordinary restore")
+			if kind == "claude" {
+				require.ErrorAs(t, err, &op)
+				require.Equal(t, "unsupported", op.Code)
+				require.Equal(t, "resume_identity_unobservable", op.Reason)
+			} else {
+				require.NoError(t, err, "absence of opt-in capability must not prohibit ordinary restore")
+			}
 			f.close()
 			ticket20Released(t, f)
 		})
 	}
+}
+
+func TestTicket20ClaudeZeroInputResumeRequiresNativeIdentity(t *testing.T) {
+	f := ticket20Setup(t, "claude", "no-init")
+	before, err := os.ReadFile(filepath.Join(f.native, "wire.jsonl"))
+	require.NoError(t, err)
+	_, err = f.svc.ResumeSession(ctx(t), f.ref)
+	var public *runtime.OperationError
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "unsupported", public.Code)
+	require.Equal(t, "resume_identity_unobservable", public.Reason)
+	current, err := f.svc.GetSession(f.ref)
+	require.NoError(t, err)
+	require.Equal(t, events.SessionState("offline"), current.Status.State)
+	after, err := os.ReadFile(filepath.Join(f.native, "wire.jsonl"))
+	require.NoError(t, err)
+	require.Equal(t, before, after, "zero-input rejection must not open a native process")
+	f.close()
+	ticket20Released(t, f)
 }
 
 type ticket20ResumeCommit struct {

@@ -172,9 +172,8 @@ func (s *entrypointSuite) claudeUnknownResultBlocksReadmission(prompt string) {
 func (s *entrypointSuite) TestClaudeResumedFirstInputRequiresLinkage() {
 	ref, _ := s.openClaudeContinuity()
 	s.call("session.close", workflowParams{Session: ref}, nil)
-	s.call("session.resume", workflowParams{Session: ref}, nil)
 	_, scan := s.observer(ref)
-	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("resume-unlinked")}}}, nil)
+	s.call("session.resume", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("resume-unlinked")}}}, nil)
 	sawUnknown := false
 	for {
 		s.Require().True(scan.Scan())

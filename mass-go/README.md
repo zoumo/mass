@@ -158,12 +158,14 @@ bin/massctl session prompt review -n demo --text 'Describe this workspace'
 # Unlinked completion stays unknown; do not automatically retry/resume to
 # bypass that fence. Explicit close/resume retains the original identity.
 bin/massctl session close review -n demo
-bin/massctl session resume review -n demo
+bin/massctl session resume review -n demo --text 'continue after close'
 ```
 
 Both drivers currently accept text input; Claude requires exactly one text block.
 Claude rejects `systemPrompt` and `additionalDirs` before dispatch; Codex maps
 `systemPrompt` to native base instructions and rejects `additionalDirs`.
+Claude resume requires explicit `--text` or `--input-file` so native init can
+prove the original ID and cwd; zero-input Claude resume fails before opening.
 These command examples describe supported interfaces, not proof of real CLI/model
 execution. Authentication, real native recovery, accounts and models must be
 validated separately in owned test directories. Permission auto-approval remains

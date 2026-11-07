@@ -400,6 +400,51 @@ func TestTicket03UnknownResumeStartsRuntimeAndUsesObservedState(t *testing.T) {
 	require.Equal(t, "running", runtimeResource.Status.State)
 }
 
+func TestTicket03ColdRestartStartsUnknownRuntimeAndResumesSession(t *testing.T) {
+	dir := t.TempDir()
+	st := openTicket03StoreAt(t, dir)
+	createTicket03Runtime(t, st, "agent", "running")
+	original := createTicket03Session(t, st, "agent", "restored", events.Idle)
+	require.NoError(t, st.Close())
+
+	st = openTicket03StoreAt(t, dir)
+	factory := &ticket03Factory{configure: func(d *ticket03Driver) {
+		d.resumeTo = events.Idle
+	}}
+	svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"fixture": factory}))
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		require.NoError(t, svc.Shutdown(ctx))
+	})
+
+	require.NoError(t, svc.Prepare(context.Background()))
+	runtimeResource, err := svc.GetRuntime("agent")
+	require.NoError(t, err)
+	require.Equal(t, "unknown", runtimeResource.Status.State)
+	current, err := svc.GetSession(resource.SessionRef{SessionID: original.Status.SessionID})
+	require.NoError(t, err)
+	require.Equal(t, events.Unknown, current.Status.State)
+	require.Zero(t, factory.created.Load(), "startup reconciliation must not start the Runtime")
+
+	resumed, err := svc.ResumeSession(context.Background(), resource.SessionRef{SessionID: original.Status.SessionID})
+	require.NoError(t, err)
+	require.Equal(t, original.Status.SessionID, resumed.Status.SessionID)
+	require.Equal(t, original.Metadata.UID, resumed.Metadata.UID)
+	driver := factory.only(t)
+	require.EqualValues(t, 1, driver.starts.Load())
+	require.EqualValues(t, 1, driver.resumes.Load())
+	require.Zero(t, driver.opens.Load())
+
+	require.Eventually(t, func() bool {
+		current, getErr := svc.GetSession(resource.SessionRef{SessionID: original.Status.SessionID})
+		return getErr == nil && current.Status.State == events.Idle
+	}, time.Second, time.Millisecond)
+	runtimeResource, err = svc.GetRuntime("agent")
+	require.NoError(t, err)
+	require.Equal(t, "running", runtimeResource.Status.State)
+}
+
 func TestTicket03UnknownResumeFailureKeepsUnknown(t *testing.T) {
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")

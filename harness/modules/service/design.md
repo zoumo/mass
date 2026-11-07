@@ -188,9 +188,9 @@ Service 在开放业务接口前，通过 MetaStore 完成状态校正；不由 
 
 保留未结算责任不等于要求一直停留到原生结果可知；用户显式 close 后按其清理规则接管并终结 MASS 内部责任，但不会把原生结果未知伪造成成功。
 
-正常应用 shutdown 在完成事实排空和资源释放后，将已关闭 Session 记录为 offline，不创建用户请求的 close 历史或保留旧运行控制。异常退出后，即使旧状态是 idle，也不能仅因本地连接消失便断言原生工作或资源已释放。未知责任需要先验证并结算，不能直接按 offline 执行冲突恢复；本轮不新增跨重启结算 API。
+正常应用 shutdown 在完成事实排空和资源释放后，将已关闭 Session 记录为 offline，不创建用户请求的 close 历史或保留旧运行控制。异常退出后，即使旧状态是 idle，也不能仅因本地连接消失便断言原生工作或资源已释放。未知责任需要显式接管，不能直接按 offline 执行冲突恢复；本轮不新增独立跨重启结算 API。
 
-Runtime 同样不能沿用旧 running 作为当前可用证明。已确认停止的保留 stopped；旧 starting/running/stopping 或已有不确定责任的校正为 unknown。Service 当前运行映射为空不证明旧运行资源释放；unknown 不能绕过原释放校验而按需重建 Driver。
+Runtime 同样不能沿用旧 running 作为当前可用证明。已确认停止的保留 stopped；旧 starting/running/stopping 或已有不确定责任的校正为 unknown。Service 当前运行映射为空不证明旧运行资源释放。冷进程没有该 Runtime 的当前运行映射时，显式 start/resume 可以把持久 unknown 视为旧本地 owner 已不可达并建立新 Driver；该动作不证明旧 provider 工作或后端资源已经结束。同一进程已有运行绑定或未结算责任时仍不能重建。
 
 确认 close 成功后清除当前运行版本和能力；结果未知时保留最后确认的版本与能力作为旧观察，并通过 closing/reason 表达不确定性，这些字段不能授予当前执行许可。离线 Session 只有成功 resume 后，才依据新的实际观察进入 idle、running 或 requires_action；不能用历史状态或旧交互恢复当前控制能力。
 
@@ -240,7 +240,7 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 - 已停止实例仍可查询，列表不启动 Agent；Runtime 列表无分页，Session 目录可分页。
 - 并发启动只有一个运行所有者；更新与启动并发不会误报 appliedGeneration。
 - 停止状态下直接创建或恢复 Session，自动启动所属 Runtime；并发请求共用一次启动，其他 Runtime 和 Session 不被自动激活。
-- 启动失败不调用原生 open/resume；停止中或旧资源释放未知时不绕过栅栏、不自动重试。
+- 启动失败不调用原生 open/resume；同一进程停止中、已有运行绑定或未结算资源时不绕过栅栏、不自动重试。冷进程无当前运行映射的 unknown Runtime 只由显式 start/resume 接管。
 - 查询、历史、订阅和无有效运行的输入不触发启动或恢复；prompt 对 detached unknown、已观察到 unknown、offline、opening 和 closing 在 Driver open/resume/prompt 等任何派发副作用前失败并要求显式 resume。
 - 显式 create/resume 刚建立 live 绑定、初始观察尚未到达的 unknown 可在不启动 Runtime、不重新 open/resume 的前提下接受 prompt；该例外不适用于已 detached 或已处理 unknown 观察的 Session；显式 start 仍可用。
 - close 从 active 状态接纳并调用 SDK close；成功为 offline，失败保持 closing；重复 close 与 offline 重试结果安全；关闭最后一个 Session 不停止 Runtime。
@@ -248,7 +248,7 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 - close 在 opening/open/resume/load 尚未产生句柄时保持 closing 并接管原结果；有句柄后再调用 SDK，不能新建 open/resume。
 - 空闲 Session 到期使用同一条 close 路径；查询、历史、watch 不重置计时，失败不自动重试。
 - sessionIdleTimeout 默认 10m、0 禁用、负数或无效值启动失败、约 5s 可显式配置。
-- 服务重启不启动 Runtime 或 Session；旧 archived 迁移为 offline，缺少结算证明的旧在线状态为 unknown；unknown resume 失败仍为 unknown。
+- 服务重启不启动 Runtime 或 Session；旧 archived 迁移为 offline，缺少结算证明的旧在线状态为 unknown；冷进程无当前运行映射的 unknown Runtime 可由显式 start/resume 建立新 Driver，unknown Session 随即可恢复；unknown resume 失败仍为 unknown。已有运行绑定或未结算责任时仍拒绝。
 - SessionQuery.state=archived 被拒绝，不返回空页或兼容别名。
 - 启动状态校正完成前不开放业务接口；校正失败明确报错，重复启动不修改身份、spec、generation 或历史，不复活旧工作与交互。
 - 运行中更新不替换 Driver；停止使用原 Driver 并保留未确定责任。

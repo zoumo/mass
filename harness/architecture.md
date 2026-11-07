@@ -52,13 +52,13 @@ Runtime 更新只修改期望配置，已运行 Driver 继续使用原快照。D
 ## 创建与恢复
 
 1. Service 模块校验名称，读取 Runtime 资源并预留实例引用；资源创建与配置更新通过 RuntimeRegistry.validateConfig(type, config) 校验配置，不创建运行实例。
-2. 创建或恢复 Session 时按需启动所属 Runtime，无需调用者先 start；与显式 start 共用按名称串行协调的流程，调用 Registry.create 构造 Driver，由 Service 登记本次运行绑定，再调用 start 并保存本次配置快照。已运行时取得原 Driver；停止中或旧释放未知时不自动重建。
+2. 创建或恢复 Session 时按需启动所属 Runtime，无需调用者先 start；与显式 start 共用按名称串行协调的流程，调用 Registry.create 构造 Driver，由 Service 登记本次运行绑定，再调用 start 并保存本次配置快照。已运行时取得原 Driver；停止中或同一进程仍有旧运行责任时不自动重建。冷进程没有当前运行映射时，显式 start/resume 可接管持久 unknown Runtime，这只表示旧本地 owner 不可达。
 3. Driver 创建原生会话并返回 sessionId；Service 模块原子登记全局 ID 索引、名称键和 spec.runtimeRef 名称归属，再公开成功。
 4. 持久化失败时，Service 模块协调 Driver 清理本次运行；未知结果保留原操作责任。
 
 恢复先验证原资源归属与已提交历史，再由 Driver 内部读取和验证恢复材料并连接原会话。不能以新建替代恢复。Session 仅按 Runtime 名称归属，不比较 Runtime uid；原生会话与恢复材料仍由 Driver 验证。查询和历史读取不执行激活。
 
-服务重启只恢复持久目录，不自动启动 Runtime 或恢复 Session。Service 在开放业务接口前[校正旧运行状态](modules/service/design.md#服务重启与状态校正)：旧 archived 记录迁移为 offline，原本 offline 且无未结算责任的保持 offline，旧在线状态缺少结算证明的为 unknown；Runtime 保留已确认的 stopped，否则为 unknown。不能以重启前的 idle/running 或空的 Service 当前运行映射证明当前运行可用或旧资源释放；查询、历史和订阅均不触发激活。createSession 与 resumeSession 按需启动 Runtime，sendPrompt、answer 和 cancel 不隐式 resume。
+服务重启只恢复持久目录，不自动启动 Runtime 或恢复 Session。Service 在开放业务接口前[校正旧运行状态](modules/service/design.md#服务重启与状态校正)：旧 archived 记录迁移为 offline，原本 offline 且无未结算责任的保持 offline，旧在线状态缺少结算证明的为 unknown；Runtime 保留已确认的 stopped，否则为 unknown。不能以重启前的 idle/running 或空的 Service 当前运行映射证明当前运行可用或旧资源释放；查询、历史和订阅均不触发激活。冷进程无对应运行映射时，显式 start/resume 可接管 unknown Runtime，并视为旧本地 owner 不可达，但仍不证明旧 provider 工作或后端资源已经结束。createSession 与 resumeSession 按需启动 Runtime，sendPrompt、answer 和 cancel 不隐式 resume。
 
 ## 事件、历史与名称通道
 

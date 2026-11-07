@@ -32,7 +32,7 @@ validateConfig(type, config) 独立校验类型与配置，不创建 Driver、�
 
 Service 独占管理当前进程中的 Runtime 名称 → 运行绑定映射，保存原 Driver、配置快照、启动和停止责任。Registry 只隐藏类型到 Driver 构造方式的映射，不保存当前运行，不提供 get/remove；同名并发启动的唯一性由 Service 保证，不由 Registry 的构造调用保证。
 
-服务重启后 Service 的当前运行映射为空，不自动重建 Driver，也不以空映射证明旧资源已经释放。Service 先[校正持久状态](../service/design.md#服务重启与状态校正)，之后由创建/恢复 Session 按需启动所属 Runtime，或由显式 start 启动；旧资源释放未知时不能直接重建。
+服务重启后 Service 的当前运行映射为空，不自动重建 Driver，也不以空映射证明旧资源已经释放。Service 先[校正持久状态](../service/design.md#服务重启与状态校正)，之后由创建/恢复 Session 按需启动所属 Runtime，或由显式 start 启动。冷进程没有该 Runtime 的当前运行绑定且持久状态为 unknown 时，显式 start/resume 可将旧本地 owner 视为不可达并建立新 Driver；这不证明旧 provider 工作或后端资源已经结束。同一进程已有运行绑定或未结算责任时仍不能重建。
 
 Service 按名称串行协调构造、运行绑定登记、start、stop 与绑定移除。同名旧运行必须完整释放并结算最终事件后才能移除；启动明确失败且无遗留资源才解除本次绑定，结果未知保留原绑定与责任。迟到清理只处理原绑定，不能移除后来建立的运行。Driver 的执行方法自行检查运行状态。Registry 不处理资源 CRUD、分页、namespace 或配置 generation。
 

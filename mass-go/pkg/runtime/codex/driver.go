@@ -592,6 +592,9 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+	if err := d.pipe.Flush(ctx); err != nil {
+		return err
+	}
 	if cause := s.native.Err(); cause != nil {
 		return fmt.Errorf("native resource release unconfirmed after observation loss: %w", cause)
 	}
