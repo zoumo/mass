@@ -116,7 +116,7 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 		}
 		mark("input", "one explicit input")
 		init()
-		send(map[string]any{"type": "assistant", "session_id": "restore-original", "user_message_uuid": v["uuid"], "message": map[string]any{"id": "first-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "durable original answer"}}}})
+		send(map[string]any{"type": "assistant", "session_id": "restore-original", "user_message_uuid": v["uuid"], "message": map[string]any{"id": "first-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "durable original answer", "apiBlockIndex": 0}}}})
 		send(map[string]any{"type": "result", "subtype": "success", "session_id": "restore-original", "user_message_uuid": v["uuid"], "uuid": "first-result"})
 	}
 	mark("eof", "stdin closed")

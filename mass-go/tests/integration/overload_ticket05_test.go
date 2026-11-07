@@ -156,7 +156,8 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			for i, e := range slow.Events {
 				message, ok := e.Payload().(events.AgentMessage)
 				require.True(t, ok)
-				require.Equal(t, fmt.Sprintf("final-%d", i), message.MessageID)
+				expectedID := messageItemID(kind, fmt.Sprintf("final-%d", i))
+				require.Equal(t, expectedID, message.MessageID)
 				require.Equal(t, []events.ContentBlock{events.Text("complete synthetic fact")}, message.Content)
 			}
 			require.NoError(t, svc.Shutdown(observation))

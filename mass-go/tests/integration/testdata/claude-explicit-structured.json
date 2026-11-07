@@ -78,7 +78,8 @@
           "content": [
             {
               "type": "text",
-              "text": "explicit first answer"
+              "text": "explicit first answer",
+              "apiBlockIndex": 0
             }
           ]
         }

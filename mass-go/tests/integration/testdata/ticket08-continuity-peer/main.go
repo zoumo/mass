@@ -27,7 +27,7 @@ func main() {
 	notify := func(method string, p any) { send(map[string]any{"method": method, "params": p}) }
 	finish := func() {
 		if claude {
-			send(map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("message-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": fmt.Sprintf("complete-%d", n)}}}})
+			send(map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("message-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": fmt.Sprintf("complete-%d", n), "apiBlockIndex": 0}}}})
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": link})
 		} else {
 			notify("item/completed", map[string]any{"threadId": id, "turnId": fmt.Sprintf("turn-%d", n), "item": map[string]any{"id": fmt.Sprintf("message-%d", n), "type": "agentMessage", "text": fmt.Sprintf("complete-%d", n)}, "completedAtMs": 1})

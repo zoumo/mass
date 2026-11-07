@@ -30,6 +30,13 @@ type nativeLoad struct {
 	queries         int
 }
 
+type loadEventIdentity struct {
+	sessionID      string
+	itemID         string
+	nativeRecordID string
+	nativeParentID string
+}
+
 func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, cwd, loadID string) (result error) {
 	read, cancel := context.WithCancel(ctx)
 	h := &nativeLoad{id: loadID, cancel: cancel, done: make(chan struct{}), read: read, source: events.NewSource(), address: a, config: d.options.Env["CLAUDE_CONFIG_DIR"], project: cwd}
@@ -56,7 +63,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 			if errors.As(result, &query) {
 				meta["queryErrorKind"] = query.Kind
 			}
-			_ = d.loadEmit(h, id, "", "", meta, events.HistoryReplay{LoadID: loadID, Phase: phase, RetainedScope: "all_retained_main_history", Error: map[string]any{"code": "unavailable", "reason": "native_history_failed", "message": "Native history read did not complete"}})
+			_ = d.loadEmit(h, loadEventIdentity{sessionID: id}, meta, events.HistoryReplay{LoadID: loadID, Phase: phase, RetainedScope: "all_retained_main_history", Error: map[string]any{"code": "unavailable", "reason": "native_history_failed", "message": "Native history read did not complete"}})
 		}
 		d.mu.Lock()
 		d.opening--
@@ -136,7 +143,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 		return err
 	}
 	resumed := &events.ResumedSession{SessionID: id, Capabilities: caps(), EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: effective.AgentQuestionsEnabled()}}
-	if err := d.loadEmit(h, id, "", "", map[string]any{"requestedSessionId": id, "observedSessionId": s.id}, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: resumed}); err != nil {
+	if err := d.loadEmit(h, loadEventIdentity{sessionID: id}, map[string]any{"requestedSessionId": id, "observedSessionId": s.id}, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: resumed}); err != nil {
 		return err
 	}
 	observe()
@@ -186,7 +193,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	}
 	meta := claudeReadEvidence(h)
 	meta["verification"] = "ordered_raw_uuid_revalidation"
-	return d.loadEmit(h, id, "", "", meta, events.HistoryReplay{LoadID: loadID, Phase: "native_completed", RetainedScope: "all_retained_main_history", ResumedSession: resumed})
+	return d.loadEmit(h, loadEventIdentity{sessionID: id}, meta, events.HistoryReplay{LoadID: loadID, Phase: "native_completed", RetainedScope: "all_retained_main_history", ResumedSession: resumed})
 }
 
 func readClaudeHistory(ctx context.Context, h *nativeLoad, id string, offset, limit int) (sdk.SessionMessagesPage, error) {
@@ -233,11 +240,11 @@ func sameClaudeCoverage(a, b sdk.SessionMessagesCoverage) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-func (d *Driver) loadEmit(h *nativeLoad, id, item, parent string, meta map[string]any, p events.Payload) error {
+func (d *Driver) loadEmit(h *nativeLoad, identity loadEventIdentity, meta map[string]any, p events.Payload) error {
 	if meta == nil {
 		meta = map[string]any{}
 	}
-	base := events.EventBase{EventID: uuid.NewString(), Namespace: h.address.Namespace, SessionName: h.address.SessionName, SessionID: id, ItemID: item, Time: time.Now().UTC(), Meta: meta, Replay: &events.ReplaySource{LoadID: h.id, NativeRecordID: item, NativeParentID: parent}}
+	base := events.EventBase{EventID: uuid.NewString(), Namespace: h.address.Namespace, SessionName: h.address.SessionName, SessionID: identity.sessionID, ItemID: identity.itemID, Time: time.Now().UTC(), Meta: meta, Replay: &events.ReplaySource{LoadID: h.id, NativeRecordID: identity.nativeRecordID, NativeParentID: identity.nativeParentID}}
 	if nativeTime, ok := meta["nativeTime"].(string); ok {
 		at, err := time.Parse(time.RFC3339Nano, nativeTime)
 		if err != nil {

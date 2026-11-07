@@ -71,6 +71,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}}, nil)
 	var request *events.InteractionRequested
 	answered, progressed := false, false
+	waitingItem := messageItemID(kind, "waiting-message")
 	for scan.Scan() {
 		var e events.SessionEvent
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
@@ -87,7 +88,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 			s.Contains(string(encoded), "9007199254740993")
 			s.Contains(string(encoded), "futureQuestion")
 		}
-		if e.ItemID == "waiting-message" {
+		if e.ItemID == waitingItem {
 			progressed = true
 		}
 		if request != nil && progressed && !answered {

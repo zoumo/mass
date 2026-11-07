@@ -89,7 +89,8 @@
           "content": [
             {
               "type": "text",
-              "text": "final fact before close release"
+              "text": "final fact before close release",
+              "apiBlockIndex": 0
             }
           ]
         }

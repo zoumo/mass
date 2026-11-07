@@ -220,23 +220,28 @@
           "content": [
             {
               "type": "thinking",
-              "thinking": "reason one"
+              "thinking": "reason one",
+              "apiBlockIndex": 0
             },
             {
               "type": "thinking",
-              "thinking": ""
+              "thinking": "",
+              "apiBlockIndex": 1
             },
             {
               "type": "text",
-              "text": "complete answer"
+              "text": "complete answer",
+              "apiBlockIndex": 2
             },
             {
               "type": "text",
-              "text": ""
+              "text": "",
+              "apiBlockIndex": 3
             },
             {
               "type": "text",
-              "text": "second block"
+              "text": "second block",
+              "apiBlockIndex": 4
             }
           ],
           "id": "msg-8"

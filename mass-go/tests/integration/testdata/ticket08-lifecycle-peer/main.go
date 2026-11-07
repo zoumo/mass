@@ -128,7 +128,7 @@ func runClaude(send func(any), cwd string) {
 	}
 	var link string
 	fact := func(item string) {
-		send(map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": item, "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "complete " + item}}}})
+		send(map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": item, "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "complete " + item, "apiBlockIndex": 0}}}})
 	}
 	result := func() {
 		send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "user_message_uuid": link, "uuid": "result-" + link})

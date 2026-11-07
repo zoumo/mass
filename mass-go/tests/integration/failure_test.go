@@ -452,7 +452,7 @@ func (s *failureSuite) TestEarlyFactsWaitForIdentityCommit() {
 	s.Require().NoError(<-done)
 	s.Require().Eventually(func() bool {
 		p, e := s.st.ListHistory("claude-session", store.HistoryQuery{})
-		return e == nil && len(p.Events) == 2
+		return e == nil && len(p.Events) == 3
 	}, time.Second, 5*time.Millisecond)
 	s.T().Log("PASS SDK-native pre-init complete facts stay bounded and invisible until persistent identity commit")
 }
@@ -493,7 +493,7 @@ func (s *failureSuite) TestCancellationDuringIdentityCommitSettlesOriginalOwner(
 	s.Equal(events.SessionState("offline"), r.Status.State)
 	p, err := s.st.ListHistory(r.Status.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
-	s.Len(p.Events, 2)
+	s.Len(p.Events, 3)
 }
 
 func (s *failureSuite) TestLateAnswerCannotControlRecoveredRun() {
@@ -552,7 +552,7 @@ func (s *failureSuite) TestUnknownIdentityCommitReconcilesOriginalFacts() {
 	s.Equal(events.SessionState("offline"), r.Status.State)
 	page, err = s.st.ListHistory("claude-session", store.HistoryQuery{})
 	s.Require().NoError(err)
-	s.Len(page.Events, 2)
+	s.Len(page.Events, 3)
 	s.T().Log("PASS unknown identity commit preserves reservation and early facts until explicit original-owner readback and release")
 }
 

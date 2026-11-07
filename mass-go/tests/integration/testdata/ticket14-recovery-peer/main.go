@@ -98,7 +98,7 @@ func main() {
 			}
 			rows := []map[string]any{
 				{"type": "user", "uuid": uid, "parentUuid": parent, "message": map[string]any{"role": "user", "content": text}},
-				{"type": "assistant", "uuid": aid, "parentUuid": uid, "message": map[string]any{"id": aid, "role": "assistant", "content": []any{map[string]any{"type": "text", "text": text}}}},
+				{"type": "assistant", "uuid": aid, "parentUuid": uid, "message": map[string]any{"id": aid, "role": "assistant", "content": []any{map[string]any{"type": "text", "text": text, "apiBlockIndex": 0}}}},
 			}
 			for _, row := range rows {
 				row["sessionId"], row["cwd"] = sessionID, cwd
