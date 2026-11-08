@@ -14,7 +14,7 @@ import (
 
 var (
 	mcpEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	mcpSecretReference = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9_-]* )?\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
+	mcpSecretReference = regexp.MustCompile(`^(?:([A-Za-z][A-Za-z0-9_-]*) )?\$\{([A-Za-z_][A-Za-z0-9_]*)\}$`)
 )
 
 // MCPServer is the provider-neutral Session MCP configuration. Runtime records
@@ -217,12 +217,12 @@ func validateMCPServerText(index int, server MCPServer) error {
 		}
 	}
 	for key, value := range server.Env {
-		if sensitiveMCPName(key) && !mcpSecretReference.MatchString(value) {
+		if IsSensitiveMCPName(key) && !mcpSecretReference.MatchString(value) {
 			return fmt.Errorf("mcp server %d: env %q must reference a secret", index, key)
 		}
 	}
 	for key, value := range server.Headers {
-		if sensitiveMCPName(key) && !mcpSecretReference.MatchString(value) {
+		if IsSensitiveMCPName(key) && !mcpSecretReference.MatchString(value) {
 			return fmt.Errorf("mcp server %d: header %q must reference a secret", index, key)
 		}
 	}
@@ -263,7 +263,9 @@ func loopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func sensitiveMCPName(name string) bool {
+// IsSensitiveMCPName reports whether a header or environment name is treated
+// as secret-bearing by provider-neutral MCP validation.
+func IsSensitiveMCPName(name string) bool {
 	name = strings.ToLower(name)
 	for _, marker := range []string{"authorization", "cookie", "credential", "password", "secret", "token", "api-key", "apikey"} {
 		if strings.Contains(name, marker) {
@@ -271,4 +273,14 @@ func sensitiveMCPName(name string) bool {
 		}
 	}
 	return strings.HasSuffix(name, "-key") || strings.HasSuffix(name, "_key")
+}
+
+// ParseMCPSecretReference splits a validated secret value into its optional
+// scheme prefix and environment-variable name. It never evaluates the value.
+func ParseMCPSecretReference(value string) (prefix, name string, ok bool) {
+	match := mcpSecretReference.FindStringSubmatch(value)
+	if match == nil {
+		return "", "", false
+	}
+	return match[1], match[2], true
 }

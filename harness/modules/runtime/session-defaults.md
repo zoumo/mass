@@ -35,14 +35,14 @@ Session spec 可以携带同名字段作为显式覆盖；历史 load 的输入�
 - `stdio` 要求 `command`，可使用 `args`、`env` 和可选 `cwd`；`http` 与 `sse` 要求 `url`，可使用 `headers`。各 transport 不接受另一组字段。
 - `envHeaders` 与 `bearerTokenEnvVar` 是 HTTP 的可选认证配置；SSE 不接受这两个字段。具体 Runtime 类型决定 transport、字段和名称约束；不支持项在该 Session 的原生副作用前拒绝。
 - `url` 只接受 HTTPS；HTTP 只允许回环主机。URL 不得包含 userinfo 凭据。
-- 名称含 `authorization`、`cookie`、`credential`、`password`、`secret`、`token`、`api-key` 或 `apikey`，或以 `-key`/`_key` 结尾的 `headers`/`env` 值，以及所有 `envHeaders`/`bearerTokenEnvVar` 值，必须引用环境变量。敏感 header 与 env 值使用 `${ENV_VAR}`，可带 `Bearer` 等 scheme 前缀；环境变量引用名必须符合 shell 环境变量命名。上述敏感值在公开 Runtime/Session spec 中只保留变量引用，`envHeaders`/`bearerTokenEnvVar` 只保存变量名。
+- 名称含 `authorization`、`cookie`、`credential`、`password`、`secret`、`token`、`api-key` 或 `apikey`，或以 `-key`/`_key` 结尾的 `headers`/`env` 值，以及所有 `envHeaders`/`bearerTokenEnvVar` 值，必须引用环境变量。敏感 header 与 env 值使用 `${ENV_VAR}`，可带 `Bearer` 等 scheme 前缀；环境变量引用名必须符合 shell 环境变量命名。上述敏感值在公开 Runtime/Session spec 中只保留变量引用，`envHeaders`/`bearerTokenEnvVar` 只保存变量名。adapter 在打开原生 Session 前把引用映射为原生引用或从 Runtime 进程环境解析；引用缺失或为空时明确失败，解析值不进入公开错误或持久数据。
 
 Runtime 写入时校验 provider-neutral 的结构、transport 字段组合和列表内名称唯一性。类型专属支持由对应 Driver 在 open、resume 或 load 时校验。MCP 配置只声明原生 Session 使用的 server；打开成功不证明 server 已连接、工具可用或远端身份可信。
 
 合并后的列表为 `nil` 时表示 Runtime 与 Session 都未声明 MCP 配置，provider 可继续使用自身环境中的配置。合并结果为非 `nil` 时，包括空列表，表示本次 Session 的完整有效 MCP server 集合；adapter 必须排除 provider 用户、项目或本地配置中的其他 server。
 
 - Claude 显式列表使用 native strict MCP configuration。
-- Codex 没有等价 strict 开关。Runtime 必须显式提供不同于 ambient 的、已存在的绝对 `env.CODEX_HOME`；该目录的 `config.toml`（若存在）不得在任意层级声明 `mcp_servers`，认证与其他必要配置由调用者预先安排。不满足时在创建原生 thread 前失败。
+- Codex 没有等价 strict 开关。Runtime 必须显式提供不同于 ambient 的、已存在的绝对 `env.CODEX_HOME`；该目录的 `config.toml`（若存在）不得在任意层级声明 `mcp_servers`。create、resume 与 load 还必须在线程配置中把 Session cwd 及其祖先标记为 untrusted，排除项目级 `.codex/config.toml`。不满足时在创建或恢复原生 thread 前失败。Codex 不展开普通 `headers` 或 stdio `env` 中的 `${ENV_VAR}`；adapter 必须映射其原生环境变量引用能力或解析后传入，不能把未解析引用当作有效凭据。
 
 ## 生效与恢复
 

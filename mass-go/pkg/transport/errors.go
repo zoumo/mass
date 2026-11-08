@@ -26,12 +26,12 @@ func PublicError(err error) *Error {
 	switch {
 	case errors.Is(err, events.ErrSlowSubscriber):
 		return &Error{Code: "resource_exhausted", Reason: "slow_subscriber", Message: "Observation capacity exceeded"}
-	case errors.Is(err, runtime.ErrResourcesReleased):
-		return &Error{Code: "conflict", Reason: "native_open_failed", Message: "Native open failed; owned resources released"}
 	case errors.Is(err, runtime.ErrInvalidArgument):
 		return Invalid()
 	case errors.Is(err, runtime.ErrFailedPrecondition):
 		return &Error{Code: "conflict", Reason: "operation_rejected", Message: "Operation rejected by current resource state"}
+	case errors.Is(err, runtime.ErrResourcesReleased):
+		return &Error{Code: "conflict", Reason: "native_open_failed", Message: "Native open failed; owned resources released"}
 	case errors.Is(err, store.ErrNotFound):
 		return &Error{Code: "not_found", Reason: "resource_not_found", Message: "Resource not found"}
 	case errors.Is(err, store.ErrConflict):

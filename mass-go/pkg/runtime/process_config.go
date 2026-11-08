@@ -118,3 +118,15 @@ func (o ProcessConfig) Environment(provider string) []string {
 	}
 	return result
 }
+
+// LookupEnv resolves a value from the same environment that Environment
+// passes to the provider process. Explicit overrides take precedence.
+func (o ProcessConfig) LookupEnv(key string) (string, bool) {
+	if value, ok := o.Env[key]; ok {
+		return value, true
+	}
+	if o.EnvPolicy != "inherit" {
+		return "", false
+	}
+	return os.LookupEnv(key)
+}

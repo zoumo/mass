@@ -289,7 +289,7 @@ before calling the Driver, so `runtime update` affects the next create, resume
 or history load without restarting the Runtime. An already open Session is
 unchanged.
 `--features-json` and `--mcp-servers-json` set these fields from `massctl`;
-`null` clears Runtime defaults.
+`null` clears Runtime defaults. A Session omission or `null` inherits them.
 
 For example, a Runtime may be created with:
 
@@ -322,9 +322,20 @@ dots. Claude supports all three transports but not `cwd`, `envHeaders` or
 Claude uses strict MCP configuration, while Codex requires an explicit,
 existing absolute `env.CODEX_HOME` distinct from ambient configuration whose
 `config.toml`, when present, contains no `mcp_servers` at any level; arrange
-authentication in that isolated home. A nil list leaves provider ambient MCP
-behavior unchanged. MCP configuration does not connect or health-check a server
-at Session open.
+authentication in that isolated home. Codex thread create, resume and history
+load also mark the Session cwd and its ancestors untrusted so a project
+`.codex/config.toml` cannot supply additional MCP servers. A nil list leaves
+provider ambient MCP behavior unchanged. MCP configuration does not connect or
+health-check a server at Session open.
+
+Codex does not expand `${ENV_VAR}` inside literal headers or stdio environment
+values. The adapter maps simple header references to `env_http_headers`, maps
+`Authorization: Bearer ${ENV_VAR}` to `bearer_token_env_var`, and resolves
+remaining references, including scheme-prefixed and inline values, from the
+Runtime process environment immediately before opening the thread. Missing,
+empty, or malformed references and unsafe header values fail before native
+Session creation; resolved values are never returned in public errors or
+persisted by MASS.
 
 Validation does not open credentials or history. Offline tests launch only MASS's
 `internal/testpeer` strict scenario binary via temporary launchers, with an explicit

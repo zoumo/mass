@@ -205,15 +205,15 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	if !filepath.IsAbs(spec.Cwd) {
-		return runtime.DriverSession{}, noResources("absolute cwd required")
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.InvalidArgument("absolute cwd required"))
 	}
 	if len(spec.AdditionalDirs) > 0 {
-		return runtime.DriverSession{}, noResources("additionalDirs not supported yet")
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("additional_dirs_unsupported", "Additional directories are not supported by this Codex runtime"))
 	}
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	mcpServers, err := codexMCPServers(spec.MCPServers, d.options)
+	mcpServers, mcpConfig, err := codexSessionMCPConfig(spec.MCPServers, spec.Cwd, d.options)
 	if err != nil {
-		return runtime.DriverSession{}, noResources(err.Error())
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	d.mu.Lock()
 	c := d.client
@@ -242,7 +242,11 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		if saved.ID != resume || saved.SessionID == "" || saved.Ephemeral || !runtime.EqualNativePath(saved.Cwd, spec.Cwd) {
 			return runtime.DriverSession{}, noResources("invalid native recovery context")
 		}
-		options := sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)}, MCPServers: mcpServers}
+		params := &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)}
+		if mcpConfig != nil {
+			params.Config = ct.Some(mcpConfig)
+		}
+		options := sdk.SessionOptions{Client: c, Resume: params, MCPServers: mcpServers}
 		applySessionFeatures(&options, effective)
 		native, err = sdk.Open(ctx, options)
 		if err != nil {
@@ -256,6 +260,9 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		// Resume metadata may contain old turns: they are never adapted or replayed.
 	} else {
 		params := ct.ThreadStartParams{Cwd: ct.Some(spec.Cwd), Ephemeral: ct.Some(false)}
+		if mcpConfig != nil {
+			params.Config = ct.Some(mcpConfig)
+		}
 		if spec.SystemPrompt != "" {
 			params.BaseInstructions = ct.Some(spec.SystemPrompt)
 		}

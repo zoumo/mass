@@ -45,9 +45,17 @@ func TestRuntimeEnvironmentPolicyIsExplicit(t *testing.T) {
 		require.Contains(t, env, "MASS_CONFIG_OVERRIDE=configured")
 		if policy == "inherit" {
 			require.Contains(t, env, "MASS_CONFIG_INHERITED=parent")
+			value, ok := config.LookupEnv("MASS_CONFIG_INHERITED")
+			require.True(t, ok)
+			require.Equal(t, "parent", value)
 		} else {
 			require.Equal(t, []string{"MASS_CONFIG_OVERRIDE=configured"}, env)
+			_, ok := config.LookupEnv("MASS_CONFIG_INHERITED")
+			require.False(t, ok)
 		}
+		value, ok := config.LookupEnv("MASS_CONFIG_OVERRIDE")
+		require.True(t, ok)
+		require.Equal(t, "configured", value)
 	}
 	config, err := runtime.ParseProcessConfig(runtime.Config{"executable": "/agent", "envPolicy": "replace"})
 	require.NoError(t, err)

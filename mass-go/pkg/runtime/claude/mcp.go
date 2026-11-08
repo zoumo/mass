@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 
@@ -15,15 +16,15 @@ func claudeMCPServers(configured *[]runtime.MCPServer) ([]sdk.MCPServer, error) 
 	}
 	servers := *configured
 	if err := runtime.ValidateMCPServers(servers); err != nil {
-		return nil, err
+		return nil, errors.Join(runtime.ErrInvalidArgument, err)
 	}
 	converted := make([]sdk.MCPServer, 0, len(servers))
 	for i, server := range servers {
 		if server.Cwd != "" {
-			return nil, fmt.Errorf("mcp server %d: Claude does not support cwd", i)
+			return nil, errors.Join(runtime.UnsupportedOption("mcp_cwd_unsupported", "MCP working directories are not supported by this Claude runtime"), fmt.Errorf("mcp server %d: Claude does not support cwd", i))
 		}
 		if server.EnvHeaders != nil || server.BearerTokenEnvVar != "" {
-			return nil, fmt.Errorf("mcp server %d: Claude does not support envHeaders or bearerTokenEnvVar", i)
+			return nil, errors.Join(runtime.UnsupportedOption("mcp_auth_fields_unsupported", "MCP environment headers and bearer token references are not supported by this Claude runtime"), fmt.Errorf("mcp server %d: Claude does not support envHeaders or bearerTokenEnvVar", i))
 		}
 		converted = append(converted, sdk.MCPServer{
 			Name:      server.Name,

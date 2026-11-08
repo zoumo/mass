@@ -54,7 +54,19 @@ func TestClaudeMCPConfigurationRejectsCodexOnlyFields(t *testing.T) {
 		servers := []runtime.MCPServer{server}
 		_, err := claudeMCPServers(&servers)
 		require.Error(t, err)
+		var public *runtime.OperationError
+		require.ErrorAs(t, err, &public)
+		require.Equal(t, "unsupported", public.Code)
 	}
+}
+
+func TestClaudeMCPConfigurationClassifiesPublicValidation(t *testing.T) {
+	servers := []runtime.MCPServer{{
+		Type:    "stdio",
+		Command: "/mcp-server",
+	}}
+	_, err := claudeMCPServers(&servers)
+	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
 }
 
 func TestClaudeSessionDefaultsAreNotRuntimeConfig(t *testing.T) {

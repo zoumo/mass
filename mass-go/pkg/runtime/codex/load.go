@@ -77,7 +77,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := d.vault.Check(); err != nil {
 		return err
 	}
-	mcpServers, err := codexMCPServers(spec.MCPServers, d.options)
+	mcpServers, mcpConfig, err := codexSessionMCPConfig(spec.MCPServers, cwd, d.options)
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,11 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	h.resumeUnknown = true
 	d.mu.Unlock()
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	options := sdk.SessionOptions{Client: c, Resume: &ct.ThreadResumeParams{ThreadID: id, ExcludeTurns: ct.Some(true)}, MCPServers: mcpServers}
+	params := &ct.ThreadResumeParams{ThreadID: id, ExcludeTurns: ct.Some(true)}
+	if mcpConfig != nil {
+		params.Config = ct.Some(mcpConfig)
+	}
+	options := sdk.SessionOptions{Client: c, Resume: params, MCPServers: mcpServers}
 	applySessionFeatures(&options, effective)
 	native, err := sdk.Open(readCtx, options)
 	if err != nil {

@@ -175,10 +175,10 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	if !filepath.IsAbs(spec.Cwd) {
-		return runtime.DriverSession{}, noResources("absolute cwd required")
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.InvalidArgument("absolute cwd required"))
 	}
 	if spec.SystemPrompt != "" || len(spec.AdditionalDirs) > 0 {
-		return runtime.DriverSession{}, noResources("Claude SDK does not support systemPrompt or additionalDirs")
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("system_prompt_or_additional_dirs_unsupported", "Claude runtime does not support system prompts or additional directories"))
 	}
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
 	d.mu.Lock()
@@ -214,7 +214,7 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown", requireLink: resume != ""}
 	options, err := sessionOptions(effective, spec.MCPServers, resume, spec.Cwd, d.options.Executable, env)
 	if err != nil {
-		return runtime.DriverSession{}, noResources(err.Error())
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	c, err := sdk.Open(ctx, options)
 	if err != nil {

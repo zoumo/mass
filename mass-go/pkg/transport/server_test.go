@@ -244,6 +244,36 @@ func (serverSuite *ServerSuite) TestRESTRoutes() {
 	}
 }
 
+func TestSessionCreateClassifiesDriverRejectionBeforeResourceRelease(t *testing.T) {
+	tests := map[string]struct {
+		err    error
+		code   string
+		status int
+	}{
+		"invalid": {
+			err:    errors.Join(runtime.ErrResourcesReleased, runtime.ErrInvalidArgument, errors.New("invalid MCP configuration")),
+			code:   "invalid_argument",
+			status: 400,
+		},
+		"unsupported": {
+			err:    errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("mcp_transport_unsupported", "MCP transport is not supported")),
+			code:   "unsupported",
+			status: 422,
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			a := &recordingAPI{err: test.err}
+			w := request(server(t, a), "POST", "/apis/v1/sessions", `{"metadata":{"namespace":"demo","name":"task"},"spec":{"runtimeRef":"agent","cwd":"/work"}}`)
+			require.Equal(t, test.status, w.Code, w.Body.String())
+			require.Empty(t, w.Header().Get("Location"))
+			var got runtime.OperationError
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+			require.Equal(t, test.code, got.Code)
+		})
+	}
+}
+
 func (serverSuite *ServerSuite) TestSessionFeaturesPreserveFieldPresence() {
 	for _, test := range []struct {
 		name, features string

@@ -101,7 +101,7 @@ func (o *options) runtimeCommands() *cobra.Command {
 				cmd.Long += " NAME and --type are required. Omitted configuration submits {}. Creation does not start the Runtime."
 				cmd.Example = "  massctl runtime create agent --type codex --executable /absolute/path/to/codex\n  massctl runtime create agent --type codex --features-json '{\"agentQuestions\":false}'"
 			} else {
-				cmd.Long += " At least one configuration input is required. Preserve the current type. --executable preserves other fields; complete JSON replaces config. Updating does not restart the Runtime."
+				cmd.Long += " At least one configuration or Session default input is required. Preserve the current type. --executable preserves other fields; complete JSON replaces config. Updating does not restart the Runtime."
 				cmd.Example = "  massctl runtime update agent --executable /absolute/path/to/codex\n  massctl runtime update agent --config-file runtime-config.json"
 			}
 		}
