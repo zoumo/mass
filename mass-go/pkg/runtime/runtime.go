@@ -23,7 +23,7 @@ type (
 // SessionFeatures is the extensible feature request stored in Session spec.
 // Omitted fields use their schema defaults.
 type SessionFeatures struct {
-	AgentQuestions *bool `json:"agentQuestions,omitempty" default:"true"`
+	AgentQuestions *bool `json:"agentQuestions,omitempty"`
 }
 
 func (f SessionFeatures) AgentQuestionsEnabled() bool {

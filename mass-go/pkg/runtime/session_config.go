@@ -39,8 +39,8 @@ func (d SessionDefaults) Validate() error {
 }
 
 // ResolveSessionSpec applies Runtime defaults without changing Session-level
-// explicit values. Feature fields and MCP servers merge by name; Session values
-// replace Runtime values with the same name.
+// explicit values. Feature fields merge by field, while MCP servers merge and
+// replace by name.
 func (d SessionDefaults) ResolveSessionSpec(spec SessionSpec) SessionSpec {
 	resolved := spec
 	resolved.AdditionalDirs = slices.Clone(spec.AdditionalDirs)

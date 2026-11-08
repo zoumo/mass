@@ -64,6 +64,21 @@ func TestLoadReturnsAcceptedReceiptWithoutInferringCompletion(t *testing.T) {
 	}
 }
 
+func TestLoadPreservesEmptyFeaturesObject(t *testing.T) {
+	a := &loadAPI{accepted: resource.SessionLoadAccepted{
+		LoadID:  "original-load",
+		Session: resource.Session{Status: resource.SessionStatus{SessionID: "native", State: "opening"}},
+	}}
+	s, err := transport.New(a, transport.Options{Token: "test-token"})
+	require.NoError(t, err)
+	t.Cleanup(s.Shutdown)
+
+	w := request(s, "POST", "/apis/v1/sessions/load", `{"metadata":{"namespace":"demo","name":"imported"},"runtimeRef":"agent","cwd":"/agent/work","sessionId":"native","features":{}}`)
+	require.Equal(t, 202, w.Code, w.Body.String())
+	require.NotNil(t, a.input.Features)
+	require.Nil(t, a.input.Features.AgentQuestions)
+}
+
 func TestLoadRejectsInvalidWireInputBeforeService(t *testing.T) {
 	valid := `{"metadata":{"namespace":"demo","name":"imported"},"runtimeRef":"agent","cwd":"/agent/work","sessionId":"native"}`
 	cases := []string{"", "null", "[]", `{}`, valid + valid}

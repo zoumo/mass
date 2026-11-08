@@ -38,6 +38,7 @@ type recordingAPI struct {
 	input        runtime.Input
 	history      store.HistoryQuery
 	sessionQuery resource.SessionQuery
+	session      resource.Session
 	err          error
 	start        func(context.Context)
 }
@@ -79,6 +80,7 @@ func (a *recordingAPI) StopRuntime(context.Context, string) (resource.Runtime, e
 func (a *recordingAPI) DeleteRuntime(string) error { a.record("runtime.delete"); return a.err }
 func (a *recordingAPI) CreateSession(ctx context.Context, v resource.Session) (resource.Session, error) {
 	a.record("session.create")
+	a.session = v
 	v.Status.SessionID = "a/b"
 	return v, a.err
 }
@@ -239,6 +241,26 @@ func (serverSuite *ServerSuite) TestRESTRoutes() {
 				}
 			})
 		}
+	}
+}
+
+func (serverSuite *ServerSuite) TestSessionFeaturesPreserveFieldPresence() {
+	for _, test := range []struct {
+		name, features string
+		want           *runtime.SessionFeatures
+	}{
+		{name: "omitted"},
+		{name: "empty", features: `,"features":{}`, want: &runtime.SessionFeatures{}},
+		{name: "disabled", features: `,"features":{"agentQuestions":false}`, want: &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)}},
+	} {
+		serverSuite.Run(test.name, func() {
+			t := serverSuite.T()
+			a := &recordingAPI{}
+			body := fmt.Sprintf(`{"metadata":{"namespace":"demo","name":"task"},"spec":{"runtimeRef":"agent","cwd":"/remote/path"%s}}`, test.features)
+			w := request(server(t, a), "POST", "/apis/v1/sessions", body)
+			require.Equal(t, 201, w.Code, w.Body.String())
+			require.Equal(t, test.want, a.session.Spec.Features)
+		})
 	}
 }
 

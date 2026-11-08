@@ -42,7 +42,7 @@ func TestValidateSessionDefaultsRejectsInvalidServers(t *testing.T) {
 	}
 }
 
-func TestResolveSessionSpecMergesFeaturesAndMCPServersByName(t *testing.T) {
+func TestResolveSessionSpecMergesFeaturesByFieldAndMCPServersByName(t *testing.T) {
 	defaultQuestions := runtime.Bool(false)
 	defaultServers := []runtime.MCPServer{
 		{Name: "runtime", Type: "http", URL: "https://example.invalid/runtime"},
