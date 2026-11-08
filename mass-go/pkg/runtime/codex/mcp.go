@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
 	sdk "github.com/zoumo/agent-sdk-go/codex"
@@ -223,17 +222,7 @@ func codexMCPHeaderReference(name string, options runtime.ProcessConfig) error {
 }
 
 func codexMCPReference(name string, options runtime.ProcessConfig) (string, error) {
-	value, ok := options.LookupEnv(name)
-	if !ok {
-		return "", fmt.Errorf("environment variable %q is unavailable", name)
-	}
-	if value == "" {
-		return "", fmt.Errorf("environment variable %q is empty", name)
-	}
-	if !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
-		return "", fmt.Errorf("environment variable %q has an invalid value", name)
-	}
-	return value, nil
+	return runtime.LookupMCPEnvironmentReference(options.LookupEnv, name)
 }
 
 func validateCodexHeaderNames(headers, envHeaders map[string]string) error {

@@ -87,7 +87,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	h.unknown = true
 	d.mu.Unlock()
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	options, err := sessionOptions(effective, spec.MCPServers, id, cwd, d.options.Executable, d.options.Environment("claude"))
+	options, err := sessionOptions(effective, spec.MCPServers, id, cwd, d.options)
 	if err != nil {
 		return err
 	}
