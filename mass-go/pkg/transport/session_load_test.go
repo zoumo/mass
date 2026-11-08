@@ -64,6 +64,21 @@ func TestLoadReturnsAcceptedReceiptWithoutInferringCompletion(t *testing.T) {
 	}
 }
 
+func TestLoadPreservesEmptyFeaturesObject(t *testing.T) {
+	a := &loadAPI{accepted: resource.SessionLoadAccepted{
+		LoadID:  "original-load",
+		Session: resource.Session{Status: resource.SessionStatus{SessionID: "native", State: "opening"}},
+	}}
+	s, err := transport.New(a, transport.Options{Token: "test-token"})
+	require.NoError(t, err)
+	t.Cleanup(s.Shutdown)
+
+	w := request(s, "POST", "/apis/v1/sessions/load", `{"metadata":{"namespace":"demo","name":"imported"},"runtimeRef":"agent","cwd":"/agent/work","sessionId":"native","features":{}}`)
+	require.Equal(t, 202, w.Code, w.Body.String())
+	require.NotNil(t, a.input.Features)
+	require.Nil(t, a.input.Features.AgentQuestions)
+}
+
 func TestLoadRejectsInvalidWireInputBeforeService(t *testing.T) {
 	valid := `{"metadata":{"namespace":"demo","name":"imported"},"runtimeRef":"agent","cwd":"/agent/work","sessionId":"native"}`
 	cases := []string{"", "null", "[]", `{}`, valid + valid}
@@ -184,7 +199,9 @@ func TestLoadOpenAPIPublishesAcceptanceAndRequiredEvidence(t *testing.T) {
 	input := schemas["SessionLoad"].(map[string]any)
 	require.Equal(t, false, input["additionalProperties"])
 	require.ElementsMatch(t, []any{"metadata", "runtimeRef", "cwd", "sessionId"}, input["required"])
-	require.Len(t, input["properties"], 4)
+	require.Len(t, input["properties"], 6)
+	require.Contains(t, input["properties"], "features")
+	require.Contains(t, input["properties"], "mcpServers")
 	status := schemas["HistoryLoadStatus"].(map[string]any)
 	required := status["required"]
 	for _, key := range []string{"loadId", "phase", "nativeVerified", "nativeResumed", "nativeCompleted", "deliveryCompleted", "cleanupCompleted"} {
@@ -199,4 +216,6 @@ func TestLoadOpenAPIPublishesAcceptanceAndRequiredEvidence(t *testing.T) {
 	require.Contains(t, sessionStatus["properties"], "effectiveFeatures")
 	features := schemas["SessionFeatures"].(map[string]any)
 	require.Equal(t, true, features["properties"].(map[string]any)["agentQuestions"].(map[string]any)["default"])
+	mcpServer := schemas["MCPServer"].(map[string]any)
+	require.InDelta(t, 1, mcpServer["properties"].(map[string]any)["name"].(map[string]any)["minLength"], 0)
 }

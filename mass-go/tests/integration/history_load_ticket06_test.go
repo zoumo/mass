@@ -95,6 +95,32 @@ func TestTicket06CodexPagedLoadAndSameConnectionInput(t *testing.T) {
 	require.Error(t, err, "stale cancellation must not close continued work")
 }
 
+func TestTicket06CodexLoadUsesExplicitMCPIsolation(t *testing.T) {
+	svc, cwd := ticket06Service(t, "", map[string]any{
+		"CODEX_HOME":                    t.TempDir(),
+		"LOAD_EXPECT_PROJECT_ISOLATION": "1",
+	})
+	empty := []runtime.MCPServer{}
+	current, err := svc.GetRuntime("agent")
+	require.NoError(t, err)
+	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{
+		Type: current.Spec.Type, Config: current.Spec.Config, MCPServers: &empty,
+	})
+	require.NoError(t, err)
+	_, err = svc.LoadSession(ctx(t), resource.SessionLoad{
+		Metadata:   resource.Metadata{Namespace: "one", Name: "isolated"},
+		RuntimeRef: "agent",
+		Cwd:        cwd,
+		SessionID:  "native-thread",
+	})
+	require.NoError(t, err)
+	ref := resource.SessionRef{SessionID: "native-thread"}
+	require.Eventually(t, func() bool {
+		r, err := svc.GetSession(ref)
+		return err == nil && r.Status.HistoryLoad.Phase == "completed"
+	}, 5*time.Second, time.Millisecond)
+}
+
 func TestTicket06RetainsFiveContentKindsAndToolOutputPresence(t *testing.T) {
 	svc, cwd := ticket06Service(t, "rich")
 	ref := resource.SessionRef{SessionID: "native-thread"}

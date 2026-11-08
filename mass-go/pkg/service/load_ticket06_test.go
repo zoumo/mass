@@ -33,7 +33,7 @@ func (*loadDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error
 }
 func (*loadDriver) CancelHistoryLoad(context.Context, string, string) error { return nil }
 func (d *loadDriver) Stop(context.Context) error                            { d.pipe.End(nil); return nil }
-func (d *loadDriver) LoadSession(ctx context.Context, id string, a runtime.Address, cwd, loadID string) error {
+func (d *loadDriver) LoadSession(ctx context.Context, id string, a runtime.Address, _ runtime.SessionSpec, loadID string) error {
 	d.entered <- ctx
 	<-d.release
 	source := events.NewSource()

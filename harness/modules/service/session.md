@@ -108,7 +108,7 @@ daemon 的空闲回收使用与人工 close 相同的入口。配置、计时条
 1. 读取并校验未被替换的持久元信息、Runtime 名称归属及配置绑定。
 2. 先校验持久 sessionId 的合法性，再由会话历史验证全部已提交公共记录的格式、身份和连续顺序。
 3. 由 adapter 校验公共记录所需的私有事实证据；验证通过后才处理未提交尾部。
-4. 所属 Runtime 尚未启动时，按[按需启动规则](design.md#状态与配置生效)启动；启动失败不继续恢复，旧运行责任未结算时拒绝冲突激活。通过Service 模块的运行绑定取得 Driver，重新确认停止栅栏及业务准入，传入原会话的 namespace/name 并调用 resumeSession；Driver 在内部验证恢复材料，再连接原会话。恢复材料验证失败不得连接或新建会话。
+4. 所属 Runtime 尚未启动时，按[按需启动规则](design.md#状态与配置生效)启动；启动失败不继续恢复，旧运行责任未结算时拒绝冲突激活。通过Service 模块的运行绑定取得 Driver，重新确认停止栅栏及业务准入。读取当前 Runtime spec，把 features 按字段、mcpServers 按名称与 Session 显式值合并，连同原会话的 namespace/name 调用 resumeSession；Driver 在内部验证稳定恢复材料，再连接原会话。恢复材料验证失败不得连接或新建会话。
 5. 验证返回的 sessionId 合法且与保存身份相同，再启用本次会话运行，保留历史顺序与已存事件的 UUID，同步位置从完整文件恢复。
 
 失败不新建替代会话，不将旧输入、工具动作或处理器动作重新执行，不把原生旧内容自动导入为新历史。返回不同 ID 的运行资源要按原操作所有权清理，不能替换持久身份。
@@ -131,11 +131,11 @@ daemon 的空闲回收使用与人工 close 相同的入口。配置、计时条
 
 Session 名称遵循 DNS subdomain 规则，namespace 遵循 DNS label 规则；namespace/name 唯一。创建时 metadata.name 还必须通过[名称校验](#创建名称校验)。namespace 用于分组寻址，不替代权限隔离。createdAt 在首次持久创建时写入，之后不因恢复或 close 修改。查询默认跨 namespace，可显式筛选。Session 的 Runtime 归属仅使用 spec.runtimeRef 名称。接纳操作时固定原 Driver 和具体运行/工作目标，名称复用不会改变已接纳操作的目标。
 
-Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs 与会话功能请求 features；status 保存 Agent 返回的 sessionId、统一的 SessionState、运行能力与本次运行实际生效的 effectiveFeatures。sessionId 即使离线也必须持久保留。
+Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs、会话功能请求 features 与显式 MCP 覆盖 mcpServers；status 保存 Agent 返回的 sessionId、统一的 SessionState、运行能力与本次运行实际生效的 effectiveFeatures。sessionId 即使离线也必须持久保留。
 
-Session.status.appliedGeneration 表示本次会话运行应用的 Session spec 版本，runtimeGeneration 表示它使用的 Runtime spec 版本。后者来自Service 模块保存的 Driver 配置快照，不能复制 Runtime 的最新期望 generation。打开或恢复成功后记录这两个版本、协商能力和实际生效功能；确认 close 后清除当前运行版本、协商能力和 effectiveFeatures，保留身份与历史；结果未知时保留最后确认事实并表达 `closing` 或 `unknown`。features 省略时各字段使用 schema 默认值；请求开启但 Driver 不支持时 effectiveFeatures 对应值为 false，请求本身不被拒绝。
+Session.status.appliedGeneration 表示本次会话运行应用的 Session spec 版本，runtimeGeneration 表示它使用的 Runtime 类型配置快照版本。后者来自 Service 模块保存的 Driver 配置快照，不能复制 Runtime 的最新期望 generation；Session 默认值不属于该快照。打开或恢复成功后记录这两个版本、协商能力和实际生效功能；确认 close 后清除当前运行版本、协商能力和 effectiveFeatures，保留身份与历史；结果未知时保留最后确认事实并表达 `closing` 或 `unknown`。features 先继承当前 Runtime 默认值；Runtime 和 Session 都省略时各字段使用 schema 默认值。请求开启但 Driver 不支持时 effectiveFeatures 对应值为 false，请求本身不被拒绝。
 
-当前未增加 updateSession。close、恢复、输入、交互与状态变化不改变 Session spec 或 generation。Runtime 更新不自动改变 Session spec；重新启动 Runtime 后恢复 Session，需要验证新运行配置与原会话兼容。
+当前未增加 updateSession。close、恢复、输入、交互与状态变化不改变 Session spec 或 generation。Runtime 更新不自动改变 Session spec；create、resume 和 load 在每次打开时重新读取当前 Runtime 的 features/mcpServers 默认值并合并，已打开且仍有效的 Session 不热更新。重新启动 Runtime 后恢复 Session 仍须验证新的类型 config 与原会话兼容。
 
 Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir 保留内部管理，_meta 不作为透传入口。systemPrompt 只用于会话配置，创建与恢复不隐式发送用户 prompt。详见[字段合同](design.md#session-spec-与-agentrun-的参考关系)。
 
@@ -175,6 +175,8 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 | close 与 prompt/resume 并发 | 同一 Session 操作序列决定先后，不产生越过关闭栅栏的新派发或两个有效运行控制者 |
 | 已提交历史后部损坏 | 即使请求第一页，也明确失败；不先修尾或激活 |
 | 冷恢复成功 | 保持原 ID、已提交历史前缀、已存 UUID 与同步位置；不重演业务动作 |
+| Runtime 默认值已更新后的恢复 | 使用最新 features/mcpServers 合并结果建立连接；不因旧默认值不同拒绝恢复，Session spec 不写回结果 |
+| Session 显式 MCP 与 Runtime 默认同名 | 用 Session server 整体替换默认项并保持默认顺序；Session 新名称追加，空列表不删除默认项 |
 | 同名 Runtime 的资源 uid 改变 | 按名称定位并由 Driver 验证恢复，不因 uid 不同拒绝 |
 
 ## 待决事项
@@ -186,3 +188,5 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 ## 从原生会话加载历史
 
 SessionService.loadSession 使用新的 namespace/name、Runtime、绝对 cwd 和已知原生 ID，遵守 [异步 load](load.md)。持久预留的 ID 在 nativeVerified 前是待验证主张，不能公开宣称原生已存在。建立 load 接收绑定后才启动生产；原生验证、完整回放及本地完成异步记录在 status.historyLoad。加载期间为 opening 并封闭业务输入；部分失败不激活。原生恢复、全部回放及本地结算成功后保留同一运行，直接接受后续输入，无需额外 resume；当前状态只依据真实当前证据，普通恢复不导入历史。
+
+load 输入还可在顶层携带可选的 `features` 与 `mcpServers` 显式覆盖。它们作为新 Session 的显式 spec 值持久保存；Service 在调用 Driver 前读取当前 Runtime 默认值并合并，合并结果只用于本次原生恢复，不复制进 Session spec 或恢复材料。空 MCP 列表不删除 Runtime 默认项。

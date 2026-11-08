@@ -144,9 +144,9 @@ func (c *Client) LoadSession(ctx context.Context, input resource.SessionLoad, ou
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
 		return err
 	}
-	body := generated.SessionLoad{
-		Metadata:   generated.SessionCreateMetadata{Namespace: input.Metadata.Namespace, Name: input.Metadata.Name},
-		RuntimeRef: input.RuntimeRef, Cwd: input.Cwd, SessionId: input.SessionID,
+	body, err := generatedValue[generated.SessionLoad](input)
+	if err != nil {
+		return err
 	}
 	return c.jsonResponse(ctx, 202, out, func() (*http.Request, error) {
 		return generated.NewLoadSessionRequest(c.url, body)

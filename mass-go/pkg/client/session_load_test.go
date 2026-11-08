@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/resource"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 func TestLoadClientSendsOnlyWritableFlatInputAndReturnsReceipt(t *testing.T) {
@@ -25,14 +26,18 @@ func TestLoadClientSendsOnlyWritableFlatInputAndReturnsReceipt(t *testing.T) {
 		assert.Empty(t, r.URL.RawQuery)
 		b, err := io.ReadAll(r.Body)
 		assert.NoError(t, err)
-		assert.JSONEq(t, `{"metadata":{"namespace":"demo","name":"imported"},"runtimeRef":"agent","cwd":"/remote/not-local","sessionId":"a/b%2F"}`, string(b))
+		assert.JSONEq(t, `{"metadata":{"namespace":"demo","name":"imported"},"runtimeRef":"agent","cwd":"/remote/not-local","sessionId":"a/b%2F","features":{"agentQuestions":false},"mcpServers":[{"name":"remote","type":"http","url":"https://example.invalid/mcp"}]}`, string(b))
 		w.WriteHeader(http.StatusAccepted)
 		fmt.Fprint(w, `{"loadId":"original","session":{"status":{"sessionId":"a/b%2F","historyLoad":{"loadId":"original","phase":"accepted","nativeVerified":false,"nativeResumed":false,"nativeCompleted":false,"deliveryCompleted":false,"cleanupCompleted":false}}},"futureNumber":9007199254740993}`)
 	}))
 	defer h.Close()
 	c := newHTTPClient(t, h.URL, "")
 	var out map[string]any
-	input := resource.SessionLoad{Metadata: resource.Metadata{Namespace: "demo", Name: "imported", UID: "must-not-send"}, RuntimeRef: "agent", Cwd: "/remote/not-local", SessionID: "a/b%2F"}
+	servers := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
+	input := resource.SessionLoad{
+		Metadata: resource.Metadata{Namespace: "demo", Name: "imported", UID: "must-not-send"}, RuntimeRef: "agent", Cwd: "/remote/not-local", SessionID: "a/b%2F",
+		Features: &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)}, MCPServers: &servers,
+	}
 	require.NoError(t, c.LoadSession(t.Context(), input, &out))
 	assert.Equal(t, "original", out["loadId"])
 	assert.Equal(t, json.Number("9007199254740993"), out["futureNumber"])

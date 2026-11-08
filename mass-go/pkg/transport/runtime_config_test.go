@@ -56,16 +56,20 @@ func (s *RuntimeHTTPSuite) call(method, path, body string) (int, http.Header, st
 }
 
 func (s *RuntimeHTTPSuite) TestRuntimeConfigurationRoundTrip() {
-	status, headers, body := s.call("POST", "/apis/v1/runtimes", `{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{"old":true,"large":9007199254740993}}}`)
+	status, headers, body := s.call("POST", "/apis/v1/runtimes", `{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{"old":true,"large":9007199254740993},"features":{"agentQuestions":false},"mcpServers":[{"name":"default","type":"http","url":"https://example.invalid/default"}]}}`)
 	s.Require().Equal(201, status, body)
 	s.Equal("/apis/v1/runtimes/agent", headers.Get("Location"))
 	s.Equal("application/json", headers.Get("Content-Type"))
 	s.Contains(body, "9007199254740993")
 	s.Contains(body, `"state":"stopped"`)
-	status, _, body = s.call("PUT", "/apis/v1/runtimes/agent", `{"type":"fixture","config":{"new":true}}`)
+	s.Contains(body, `"features":{"agentQuestions":false}`)
+	s.Contains(body, `"mcpServers":[{"name":"default","type":"http","url":"https://example.invalid/default"}]`)
+	status, _, body = s.call("PUT", "/apis/v1/runtimes/agent", `{"type":"fixture","config":{"new":true},"features":{"agentQuestions":true},"mcpServers":[{"name":"updated","type":"stdio","command":"/mcp"}]}`)
 	s.Require().Equal(200, status, body)
 	s.NotContains(body, `"old"`)
 	s.Contains(body, `"generation":2`)
+	s.Contains(body, `"features":{"agentQuestions":true}`)
+	s.Contains(body, `"mcpServers":[{"name":"updated","type":"stdio","command":"/mcp"}]`)
 	status, _, body = s.call("GET", "/apis/v1/runtimes/agent", "")
 	s.Require().Equal(200, status, body)
 	s.Contains(body, `"new":true`)
@@ -97,6 +101,9 @@ func (s *RuntimeHTTPSuite) TestStrictConfigurationBoundary() {
 		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":null}}`,
 		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{}},"status":{}}`,
 		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{},"unknown":true}}`,
+		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{},"mcpServers":[{"name":"","type":"stdio","command":"/mcp"}]}}`,
+		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{},"mcpServers":[{"name":"bad","type":"stdio"}]}}`,
+		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{},"features":{"unknown":true}}}`,
 	} {
 		status, _, response := s.call("POST", "/apis/v1/runtimes", body)
 		s.Equal(400, status, response)
@@ -124,6 +131,8 @@ func (s *RuntimeHTTPSuite) TestOpenAPIDeclaresRuntimeContract() {
 		s.Equal(true, fields[key].(map[string]any)["readOnly"], key)
 	}
 	spec := schemas["RuntimeSpec"].(map[string]any)["properties"].(map[string]any)
+	s.Contains(spec, "features")
+	s.Contains(spec, "mcpServers")
 	s.NotContains(spec["config"].(map[string]any), "anyOf")
 	errors := schemas["OperationError"].(map[string]any)
 	s.ElementsMatch([]any{"code", "reason", "message"}, errors["required"])

@@ -27,10 +27,13 @@ type options = runtime.ProcessConfig
 
 func parse(c runtime.Config) (options, error) {
 	o, err := runtime.ParseProcessConfig(c)
-	if err == nil && len(o.Args) > 0 {
+	if err != nil {
+		return o, err
+	}
+	if len(o.Args) > 0 {
 		return o, errors.New("claude SDK does not support additional process args; use an explicit launcher")
 	}
-	return o, err
+	return o, nil
 }
 
 type Factory struct{ RecoveryDir string }
@@ -98,12 +101,17 @@ func caps() runtime.Capabilities {
 
 var supportedSessionFeatures = runtime.FeatureSupport{AgentQuestions: true}
 
-func sessionOptions(features runtime.SessionFeatures, resumeID, cwd, executable string, env []string) sdk.SessionOptions {
-	options := sdk.SessionOptions{ResumeID: resumeID, CLIPath: executable, WorkDir: cwd, Env: env}
+func sessionOptions(features runtime.SessionFeatures, mcpServers *[]runtime.MCPServer, resumeID, cwd string, process runtime.ProcessConfig) (sdk.SessionOptions, error) {
+	converted, err := claudeMCPServers(mcpServers, process)
+	if err != nil {
+		return sdk.SessionOptions{}, err
+	}
+	options := sdk.SessionOptions{ResumeID: resumeID, CLIPath: process.Executable, WorkDir: cwd, Env: process.Environment("claude"), MCPServers: converted}
+	options.StrictMCPConfig = mcpServers != nil
 	if !features.AgentQuestionsEnabled() {
 		options.DisallowedTools = []string{"AskUserQuestion"}
 	}
-	return options
+	return options, nil
 }
 
 func (d *Driver) Events() (events.Stream, error) {
@@ -167,10 +175,10 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	if !filepath.IsAbs(spec.Cwd) {
-		return runtime.DriverSession{}, noResources("absolute cwd required")
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.InvalidArgument("absolute cwd required"))
 	}
 	if spec.SystemPrompt != "" || len(spec.AdditionalDirs) > 0 {
-		return runtime.DriverSession{}, noResources("Claude SDK does not support systemPrompt or additionalDirs")
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("system_prompt_or_additional_dirs_unsupported", "Claude runtime does not support system prompts or additional directories"))
 	}
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
 	d.mu.Lock()
@@ -179,7 +187,6 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 	if !running {
 		return runtime.DriverSession{}, noResources("driver not running")
 	}
-	env := d.options.Environment("claude")
 	if resume != "" {
 		m, err := d.vault.Load(resume, a, spec)
 		if err != nil {
@@ -204,7 +211,11 @@ func (d *Driver) open(ctx context.Context, resume string, a runtime.Address, spe
 		}
 	}
 	s := &session{address: a, source: events.NewSource(), ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown", requireLink: resume != ""}
-	c, err := sdk.Open(ctx, sessionOptions(effective, resume, spec.Cwd, d.options.Executable, env))
+	options, err := sessionOptions(effective, spec.MCPServers, resume, spec.Cwd, d.options)
+	if err != nil {
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
+	}
+	c, err := sdk.Open(ctx, options)
 	if err != nil {
 		close(s.ready)
 		// Failed SDK startup closes its unreturned connection before returning.

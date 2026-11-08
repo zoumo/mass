@@ -19,6 +19,12 @@ loadSession 给定 Runtime、绝对 cwd、已知原生 sessionId 和新的 names
 会话继续输入，无需再次 resume。普通 resume 只恢复执行连接，不做这次历史导入。
 load 不新建替代会话，不发送隐藏 prompt，不重跑历史工具。
 
+SessionLoad 还可在顶层携带可选的 `features` 与 `mcpServers`，作为本次 load 对当前
+Runtime Session 默认值的显式覆盖。Service 在调用 Driver 前读取当前 Runtime spec，
+按 [Runtime Session 默认配置](../runtime/session-defaults.md)合并。显式输入作为新
+Session spec 的显式值持久保存；合并后的 Runtime 默认结果只用于本次原生恢复，不复制
+进 Session spec 或恢复材料。
+
 原生加载句柄须具有异步历史接收、结束原因、取消以及恢复后继续输入的能力。恢复、
 回放和正常运行复用原生 SDK 的既有 resume 和消息接口。SDK 接口及实现证据只在
 sources 的 sdk-evidence 中记录；不为通用合同规定具体语言的并发容器。
@@ -30,7 +36,8 @@ Runtime 指向同一数据源也不得重复导入同一 ID。名称、ID 与原
 [Session](session.md)。Runtime 须已启动并支持同一会话恢复与完整保留历史回放；
 不隐式启动已停止实例。
 
-Service 在调用 Driver 前固定原 Driver、Runtime 配置、loadId、名称和预期原生 ID，
+Service 在调用 Driver 前固定原 Driver、Runtime 类型配置快照、loadId、名称和预期
+原生 ID，读取当前 Runtime Session 默认值并与本次显式覆盖合并为 DriverSessionSpec，
 建立有界接收绑定，确保唯一 Driver 流的接收循环已运行。Driver 校验原生身份、cwd、
 账号及数据来源，并使用普通原生 resume 恢复该 ID，然后才交付历史。不存在、不支持、
 身份不符或恢复失败明确失败，不以新建或更换原生 ID 替代。原生只报告请求 ID 而未
@@ -134,5 +141,6 @@ Session.get 的 historyLoad 区分接纳、来源验证、原生恢复、原生�
 两会话隔离、有界慢消费、分页/启动取消、晚期读取错误、本地追加/required 发布失败、
 原生结束领先本地完成、清理未知、重复/冲突、重启未结算、旧状态和交互不复活；还须
 验证完成前输入拒绝、完成后无需 resume 即继续同一原生会话、回放上下文结束不关闭
-成功会话，以及普通 resume 不自动回放。合成合同、原生协议探测与真实模型历史验收
-分开报告；SDK 或 TypeSpec 通过不证明 MASS 整链已接通。
+成功会话，普通 resume 不自动回放，以及 load 的 features/mcpServers 显式覆盖与当前
+Runtime 默认值合并后建立连接。合成合同、原生协议探测与真实模型历史验收分开报告；
+SDK 或 TypeSpec 通过不证明 MASS 整链已接通。

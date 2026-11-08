@@ -29,6 +29,12 @@ func Unsupported() error {
 	return &OperationError{"unsupported", "unsupported_content", "Input content is not supported by this runtime"}
 }
 
+// UnsupportedOption classifies a known Session option as unsupported by the
+// selected runtime without exposing provider diagnostics.
+func UnsupportedOption(reason, message string) error {
+	return &OperationError{Code: "unsupported", Reason: reason, Message: message}
+}
+
 func Unavailable(reason string) error {
 	return &OperationError{"unavailable", reason, "Session observation is unavailable"}
 }

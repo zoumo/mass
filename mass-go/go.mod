@@ -9,11 +9,12 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/oapi-codegen/nullable v1.2.0
 	github.com/oapi-codegen/runtime v1.6.0
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	github.com/zoumo/agent-sdk-go v0.0.0-20261106083916-f52be4d0377f
+	github.com/zoumo/agent-sdk-go v0.0.0-20261106173112-83036ea07a0c
 	modernc.org/sqlite v1.60.1
 	resty.dev/v3 v3.0.0-rc.4
 )
@@ -26,7 +27,6 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect

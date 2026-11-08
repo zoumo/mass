@@ -45,7 +45,7 @@ func (*ticket06FaultDriver) Start(context.Context) (runtime.Capabilities, error)
 	return runtime.Capabilities{}, nil
 }
 
-func (d *ticket06FaultDriver) LoadSession(_ context.Context, id string, a runtime.Address, _, loadID string) error {
+func (d *ticket06FaultDriver) LoadSession(_ context.Context, id string, a runtime.Address, _ runtime.SessionSpec, loadID string) error {
 	b := &ticket06FaultBinding{id: id, loadID: loadID, address: a, source: events.NewSource()}
 	d.mu.Lock()
 	d.bindings[id] = b

@@ -25,6 +25,8 @@ MetaStoreConfig.backend 在启动时选择 sqlite 或 file，默认 sqlite；同
 
 MetaStore 保存 Runtime、Session 完整 metadata/spec/status、uid、createdAt、generation、resourceVersion 和 sessionId。Session.spec.runtimeRef 保存 Runtime 名称，不使用或比较 Runtime uid 作为跨资源归属。SQLite 后端以事务维护 CRUD、版本和唯一性，不要求权威资源文件；文件后端独立保证同样的公共语义。
 
+Runtime.spec 顶层持久保存 `features` 与 `mcpServers` 的 Session 默认值；它们不属于类型专属 config。Session.spec 只保存显式 features、MCP server 覆盖值及其余会话配置，不保存 create、resume 或 load 时解析出的 Runtime 默认副本。MetaStore 不执行两者合并；Service 每次打开 Session 时读取当前 Runtime spec。Runtime 更新因此不必改写 Session，Session.status.effectiveFeatures 仍是运行观察值，不是配置默认值。
+
 ## 元数据提交与读取
 
 业务校验 → 所选权威后端条件提交 → 返回成功。查询读取同一后端，不等待事件 SQL，不从 EventStore 推导完整资源。元数据 SQLite 必须按权威数据备份和恢复；不能从事件文件重建，也不能因事件 SQL 损坏而清空。文件后端所需的跨文件提交协议由该后端承担。

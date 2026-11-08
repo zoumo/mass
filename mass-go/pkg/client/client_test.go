@@ -313,16 +313,74 @@ func (s *ClientSuite) TestGeneratedRuntimeRoundTrip() {
 		if !s.NoError(err) {
 			return
 		}
-		s.JSONEq(`{"metadata":{"name":"test","namespace":""},"spec":{"type":"codex","config":{"large":9007199254740993,"nested":[null,true]}}}`, string(b))
+		s.JSONEq(`{"metadata":{"name":"test","namespace":""},"spec":{"type":"codex","config":{"large":9007199254740993,"nested":[null,true]},"features":{"agentQuestions":false},"mcpServers":[{"name":"remote","type":"http","url":"https://example.invalid/mcp"}]}}`, string(b))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		fmt.Fprint(w, `{"spec":{"config":{"large":9007199254740993,"nested":[null,true]}}}`)
+		fmt.Fprint(w, `{"spec":{"config":{"large":9007199254740993,"nested":[null,true]},"features":{"agentQuestions":false},"mcpServers":[{"name":"remote","type":"http","url":"https://example.invalid/mcp"}]}}`)
 	}))
 	defer h.Close()
 	var out map[string]any
-	err := newHTTPClient(s.T(), h.URL, "").CreateRuntime(context.Background(), resource.Runtime{Metadata: resource.Metadata{Name: "test", UID: "must-not-send"}, Spec: resource.RuntimeSpec{Type: "codex", Config: map[string]any{"large": json.Number("9007199254740993"), "nested": []any{nil, true}}}}, &out)
+	servers := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
+	err := newHTTPClient(s.T(), h.URL, "").CreateRuntime(context.Background(), resource.Runtime{Metadata: resource.Metadata{Name: "test", UID: "must-not-send"}, Spec: resource.RuntimeSpec{
+		Type:       "codex",
+		Config:     map[string]any{"large": json.Number("9007199254740993"), "nested": []any{nil, true}},
+		Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)},
+		MCPServers: &servers,
+	}}, &out)
 	s.Require().NoError(err)
 	s.Equal(json.Number("9007199254740993"), out["spec"].(map[string]any)["config"].(map[string]any)["large"])
+}
+
+func (s *ClientSuite) TestGeneratedSessionMCPRoundTrip() {
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.Equal("/apis/v1/sessions", r.URL.Path)
+		s.Equal(http.MethodPost, r.Method)
+		body, err := io.ReadAll(r.Body)
+		if !s.NoError(err) {
+			return
+		}
+		s.JSONEq(`{
+			"metadata":{"name":"test","namespace":"demo"},
+			"spec":{
+				"runtimeRef":"agent",
+				"cwd":"/remote",
+				"features":{"agentQuestions":false},
+				"mcpServers":[{
+					"name":"remote",
+					"type":"http",
+					"url":"https://example.invalid/mcp",
+					"headers":{"Authorization":"Bearer ${TOKEN}"},
+					"envHeaders":{"X-Token":"TOKEN"},
+					"bearerTokenEnvVar":"TOKEN"
+				}]
+			}
+		}`, string(body))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		fmt.Fprint(w, `{}`)
+	}))
+	defer h.Close()
+
+	servers := []runtime.MCPServer{{
+		Name:              "remote",
+		Type:              "http",
+		URL:               "https://example.invalid/mcp",
+		Headers:           map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		EnvHeaders:        map[string]string{"X-Token": "TOKEN"},
+		BearerTokenEnvVar: "TOKEN",
+	}}
+	err := newHTTPClient(s.T(), h.URL, "").CreateSession(context.Background(), resource.Session{
+		Metadata: resource.Metadata{Namespace: "demo", Name: "test"},
+		Spec: resource.SessionSpec{
+			RuntimeRef: "agent",
+			SessionSpec: runtime.SessionSpec{
+				Cwd:        "/remote",
+				Features:   &runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)},
+				MCPServers: &servers,
+			},
+		},
+	}, nil)
+	s.Require().NoError(err)
 }
 
 func (s *ClientSuite) TestGeneratedResourceWorkflow() {

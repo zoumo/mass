@@ -18,8 +18,10 @@ type Metadata struct {
 	ResourceVersion string    `json:"resourceVersion" readOnly:"true"`
 }
 type RuntimeSpec struct {
-	Type   string         `json:"type"`
-	Config runtime.Config `json:"config" nullable:"false"`
+	Type       string                   `json:"type"`
+	Config     runtime.Config           `json:"config" nullable:"false"`
+	Features   *runtime.SessionFeatures `json:"features,omitempty"`
+	MCPServers *[]runtime.MCPServer     `json:"mcpServers,omitempty"`
 }
 type RuntimeStatus struct {
 	State             string               `json:"state" enum:"stopped,starting,running,stopping,unknown"`
@@ -46,10 +48,12 @@ type SessionStatus struct {
 	EffectiveFeatures *runtime.SessionFeatures `json:"effectiveFeatures,omitempty"`
 }
 type SessionLoad struct {
-	Metadata   Metadata `json:"metadata"`
-	RuntimeRef string   `json:"runtimeRef"`
-	Cwd        string   `json:"cwd"`
-	SessionID  string   `json:"sessionId"`
+	Metadata   Metadata                 `json:"metadata"`
+	RuntimeRef string                   `json:"runtimeRef"`
+	Cwd        string                   `json:"cwd"`
+	SessionID  string                   `json:"sessionId"`
+	Features   *runtime.SessionFeatures `json:"features,omitempty"`
+	MCPServers *[]runtime.MCPServer     `json:"mcpServers,omitempty"`
 }
 type HistoryLoadStatus struct {
 	LoadID               string                  `json:"loadId"`

@@ -1,5 +1,9 @@
 # 设计知识包更新记录
 
+## 2026-11-08
+
+- **增加 Runtime Session 默认配置**：经负责人授权，RuntimeSpec 顶层增加 `features` 与 `mcpServers`，不放入类型专属 `config`。Runtime 启动、Driver 构造和 registry 配置校验不消费默认值；Service 在 createSession、resumeSession 与 loadSession 时读取当前 Runtime spec，与 Session 显式值合并后交给 Driver。features 按同名字段覆盖，MCP server 按名称整体覆盖并保持 Runtime 顺序，新名称按 Session 顺序追加；Session 空 MCP 列表表示无覆盖，不清空 Runtime 默认项。合并结果为 nil 时保留 provider ambient，非 nil（含空列表）是本次完整 server 集合：Claude 使用 strict MCP configuration，Codex 要求隔离且不含 ambient `mcp_servers` 的 `CODEX_HOME`。远端 URL、秘密引用和 transport 字段采用公共安全约束。Session spec 只保存显式值，不复制合并结果。Runtime 更新对下一次 Session 打开操作生效，已打开 Session 不热更新。同步 Runtime/Service、load、架构、HTTP、存储、massctl 与合同入口，接口修订为 v0.2.20。
+
 ## 2026-11-07
 
 - **冷重启接管 unknown Runtime**：经负责人确认，服务启动仍将缺少结算证明的 Runtime 保留为 unknown；冷进程没有当前运行映射时，显式 start/resume 可建立新 Driver，并把旧本地 owner 视为不可达。该接管不改变启动校正事实，也不证明旧 provider 工作或后端资源已经结束；同一进程已有运行绑定或未结算责任时仍拒绝重建。同步 Service、Runtime、总体架构与合同入口，接口修订为 v0.2.19。

@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const SDKVersion = "v0.0.0-20261106083916-f52be4d0377f"
+const SDKVersion = "v0.0.0-20261106173112-83036ea07a0c"
 
 // TestifyVersion pins the consumer recording/replay tool, not a runtime dependency.
 const TestifyVersion = "v0.0.0-20261105165039-e4799fe3484c"

@@ -63,4 +63,11 @@ func registerWorkSchemas(r huma.Registry) {
 	input.Properties["content"].MinItems = &minimum
 	input.Properties["content"].Nullable = false
 	input.PrecomputeMessages()
+
+	// Document the effective schema default without letting Huma inject it before
+	// Runtime and Session values are merged. A present-but-empty Session features
+	// object still has to inherit the Runtime value.
+	features := r.Schema(reflect.TypeFor[runtime.SessionFeatures](), false, "")
+	features.Properties["agentQuestions"].Default = true
+	features.PrecomputeMessages()
 }

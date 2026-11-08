@@ -47,16 +47,19 @@ Runtime 是 metadata/spec/status 资源，停止后仍保留。Driver 是按类�
 
 RuntimeRegistry 只按类型校验配置并构造 Driver；create 接收 Runtime 的 name 供 Driver 标识实例，不登记当前运行。Service 独占维护 Runtime 名称到当前运行绑定的映射，绑定原 Driver、运行配置快照和原操作关联；Registry 不提供当前实例的查找或移除，也不解释 Session 的 namespace/name 或资源 generation。Session 全局 sessionId 可以直接寻址，名称引用由Service 模块转换。
 
-Runtime 更新只修改期望配置，已运行 Driver 继续使用原快照。Driver.start 成功后由Service 模块记录 appliedGeneration；DriverSession 不返回 generation。版本一致不证明健康。
+Runtime spec 顶层还可保存该 Runtime 下 Session 的 `features` 与 `mcpServers` 默认值，它们不属于类型专属 `config`。Runtime 启动、Driver 构造和 registry 配置校验不消费这些默认值；Service 在每次 createSession、resumeSession 或 loadSession 调用 Driver 前，读取当前 Runtime spec 并与 Session 显式值合并。`features` 按字段覆盖，MCP server 按名称整体覆盖，新名称按 Session 顺序追加，Session 空 MCP 列表不删除 Runtime 默认项。
+
+Runtime 更新只修改期望配置，已运行 Driver 继续使用类型配置快照。Session 默认值的生效独立于该快照：更新不需要重启 Runtime，下一次 Session 打开操作使用最新默认值，已经打开且仍有效的 Session 不热更新。Driver.start 成功后由Service 模块记录 appliedGeneration；DriverSession 不返回 generation。版本一致不证明健康。
 
 ## 创建与恢复
 
-1. Service 模块校验名称，读取 Runtime 资源并预留实例引用；资源创建与配置更新通过 RuntimeRegistry.validateConfig(type, config) 校验配置，不创建运行实例。
+1. Service 模块校验名称，读取 Runtime 资源并预留实例引用；资源创建与配置更新通过 RuntimeRegistry.validateConfig(type, config) 校验类型配置，并由 Service 校验 Session 默认值的公共结构，不创建运行实例。
 2. 创建或恢复 Session 时按需启动所属 Runtime，无需调用者先 start；与显式 start 共用按名称串行协调的流程，调用 Registry.create 构造 Driver，由 Service 登记本次运行绑定，再调用 start 并保存本次配置快照。已运行时取得原 Driver；停止中或同一进程仍有旧运行责任时不自动重建。冷进程没有当前运行映射时，显式 start/resume 可接管持久 unknown Runtime，这只表示旧本地 owner 不可达。
-3. Driver 创建原生会话并返回 sessionId；Service 模块原子登记全局 ID 索引、名称键和 spec.runtimeRef 名称归属，再公开成功。
-4. 持久化失败时，Service 模块协调 Driver 清理本次运行；未知结果保留原操作责任。
+3. 在调用 Driver 创建、恢复或 load 原生会话前，Service 读取当前持久 Runtime spec，将 Session 默认值与本次 Session 显式值合并为完整 DriverSessionSpec；合并结果只用于本次原生操作，不写回 Session spec 或恢复材料。
+4. Driver 创建原生会话并返回 sessionId；Service 模块原子登记全局 ID 索引、名称键和 spec.runtimeRef 名称归属，再公开成功。
+5. 持久化失败时，Service 模块协调 Driver 清理本次运行；未知结果保留原操作责任。
 
-恢复先验证原资源归属与已提交历史，再由 Driver 内部读取和验证恢复材料并连接原会话。不能以新建替代恢复。Session 仅按 Runtime 名称归属，不比较 Runtime uid；原生会话与恢复材料仍由 Driver 验证。查询和历史读取不执行激活。
+恢复先验证原资源归属与已提交历史，再由 Driver 内部读取和验证恢复材料并连接原会话。调用 Driver 前，Service 重新读取当前 Runtime 的 Session 默认值与持久 Session 显式值合并；默认值变化不构成恢复身份不一致。不能以新建替代恢复。Session 仅按 Runtime 名称归属，不比较 Runtime uid；原生会话与恢复材料仍由 Driver 验证。查询和历史读取不执行激活。
 
 服务重启只恢复持久目录，不自动启动 Runtime 或恢复 Session。Service 在开放业务接口前[校正旧运行状态](modules/service/design.md#服务重启与状态校正)：旧 archived 记录迁移为 offline，原本 offline 且无未结算责任的保持 offline，旧在线状态缺少结算证明的为 unknown；Runtime 保留已确认的 stopped，否则为 unknown。不能以重启前的 idle/running 或空的 Service 当前运行映射证明当前运行可用或旧资源释放；查询、历史和订阅均不触发激活。冷进程无对应运行映射时，显式 start/resume 可接管 unknown Runtime，并视为旧本地 owner 不可达，但仍不证明旧 provider 工作或后端资源已经结束。createSession 与 resumeSession 按需启动 Runtime，sendPrompt、answer 和 cancel 不隐式 resume。
 

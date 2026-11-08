@@ -75,10 +75,8 @@ github.com/subosito/gotenv v1.6.0 h1:9NlTDc1FTs4qu0DDq7AEtTPNw6SVm7uBMsUCUjABIf8
 github.com/subosito/gotenv v1.6.0/go.mod h1:Dk4QP5c2W3ibzajGcXpNraDfq2IrhjMIvMSWPKKo0FU=
 github.com/x448/float16 v0.8.4 h1:qLwI1I70+NjRFUR3zs1JPUCgaCXSh3SW62uAKT1mSBM=
 github.com/x448/float16 v0.8.4/go.mod h1:14CWIYCyZA/cWjXOioeEpHeN/83MdbZDRQHoFcYsOfg=
-github.com/zoumo/agent-sdk-go v0.0.0-20261105065348-5edf8b62e963 h1:4+J0XkME36DhPU3Z3fiO660B/XVUh/J0Ti79tx3gugw=
-github.com/zoumo/agent-sdk-go v0.0.0-20261105065348-5edf8b62e963/go.mod h1:rP2Upnb1SVcwShay05v6ycxALiLnaoGdVr0LgQuRX68=
-github.com/zoumo/agent-sdk-go v0.0.0-20261106083916-f52be4d0377f h1:VuSxGiZTr6Dig734j1ebU2OgJtt1GSrkQPeVp0aWs2U=
-github.com/zoumo/agent-sdk-go v0.0.0-20261106083916-f52be4d0377f/go.mod h1:rP2Upnb1SVcwShay05v6ycxALiLnaoGdVr0LgQuRX68=
+github.com/zoumo/agent-sdk-go v0.0.0-20261106173112-83036ea07a0c h1:rZoSAQnhL5+oIG4Xj5OteO4umfPVRbWlOmdSPW2bnTU=
+github.com/zoumo/agent-sdk-go v0.0.0-20261106173112-83036ea07a0c/go.mod h1:rP2Upnb1SVcwShay05v6ycxALiLnaoGdVr0LgQuRX68=
 github.com/zoumo/agent-sdk-testify v0.0.0-20261105165039-e4799fe3484c h1:F9xPzJqnO2VKQvYwnz/r7O6WoMbv/S2lHCe2ovAYB44=
 github.com/zoumo/agent-sdk-testify v0.0.0-20261105165039-e4799fe3484c/go.mod h1:yPx7HTYxq8lm5ljTWGcrhRp2J5SmCPSD9iqdRIdnNqc=
 github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a h1:Hyb0V2EaZhrmAh/kEl4Cxi1p3uAmSXAI2ZCL9xLbUWY=

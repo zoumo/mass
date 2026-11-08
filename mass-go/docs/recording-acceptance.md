@@ -4,7 +4,7 @@ This page records the offline consumer-recording gate for the Go implementation.
 It does not change the [harness contracts](../../harness/index.md).
 
 The runtime SDK is pinned to `github.com/zoumo/agent-sdk-go
-v0.0.0-20261106083916-f52be4d0377f`, source `f52be4d0377f`, without a local
+v0.0.0-20261106173112-83036ea07a0c`, source `83036ea07a0c`, without a local
 `replace`. The checked-in exports remain bound to their recording SDK
 `v0.0.0-20261105065348-5edf8b62e963`; replay does not rewrite that provenance.
 `github.com/zoumo/agent-sdk-testify` is pinned to

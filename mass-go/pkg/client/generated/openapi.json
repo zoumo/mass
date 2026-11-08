@@ -907,6 +907,67 @@
         "additionalProperties": false,
         "type": "object"
       },
+      "MCPServer": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "bearerTokenEnvVar": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "envHeaders": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "stdio",
+              "http",
+              "sse"
+            ],
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "type": "object"
+      },
       "MessageChunk": {
         "additionalProperties": false,
         "properties": {
@@ -1205,6 +1266,15 @@
           "config": {
             "additionalProperties": {},
             "type": "object"
+          },
+          "features": {
+            "$ref": "#/components/schemas/SessionFeatures"
+          },
+          "mcpServers": {
+            "items": {
+              "$ref": "#/components/schemas/MCPServer"
+            },
+            "type": "array"
           },
           "type": {
             "type": "string"
@@ -2313,6 +2383,15 @@
             "minLength": 1,
             "type": "string"
           },
+          "features": {
+            "$ref": "#/components/schemas/SessionFeatures"
+          },
+          "mcpServers": {
+            "items": {
+              "$ref": "#/components/schemas/MCPServer"
+            },
+            "type": "array"
+          },
           "metadata": {
             "$ref": "#/components/schemas/SessionCreateMetadata"
           },
@@ -2419,6 +2498,12 @@
           },
           "features": {
             "$ref": "#/components/schemas/SessionFeatures"
+          },
+          "mcpServers": {
+            "items": {
+              "$ref": "#/components/schemas/MCPServer"
+            },
+            "type": "array"
           },
           "runtimeRef": {
             "type": "string"

@@ -4,22 +4,24 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	sdk "github.com/zoumo/agent-sdk-go/codex"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-func TestThreadConfigDisablesAgentQuestions(t *testing.T) {
+func TestSessionOptionsDisableAgentQuestions(t *testing.T) {
 	features := runtime.ResolveSessionFeatures(
 		&runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)},
 		supportedSessionFeatures,
 	)
-	config, ok := threadConfig(features).Get()
-	require.True(t, ok)
-	require.JSONEq(t, `false`, string(config["tools.experimental_request_user_input.enabled"]))
+	var options sdk.SessionOptions
+	applySessionFeatures(&options, features)
+	require.Equal(t, map[sdk.Tool]bool{sdk.ToolRequestUserInput: false}, options.Tools)
 }
 
-func TestThreadConfigOmittedWhenAgentQuestionsEnabled(t *testing.T) {
+func TestSessionOptionsPreserveAgentQuestions(t *testing.T) {
 	features := runtime.ResolveSessionFeatures(nil, supportedSessionFeatures)
-	_, ok := threadConfig(features).Get()
-	require.False(t, ok)
+	var options sdk.SessionOptions
+	applySessionFeatures(&options, features)
+	require.Empty(t, options.Tools)
 }

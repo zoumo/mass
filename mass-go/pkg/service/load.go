@@ -47,6 +47,9 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
 		return resource.SessionLoadAccepted{}, err
 	}
+	if err := validateSessionConfig(runtime.SessionSpec{Features: input.Features, MCPServers: input.MCPServers}); err != nil {
+		return resource.SessionLoadAccepted{}, err
+	}
 	s.mu.Lock()
 	run := s.runs[input.RuntimeRef]
 	s.mu.Unlock()
@@ -55,6 +58,14 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	}
 	run.admission.RLock()
 	defer run.admission.RUnlock()
+	spec, err := s.resolveSessionSpec(run, runtime.SessionSpec{
+		Cwd:        input.Cwd,
+		Features:   input.Features,
+		MCPServers: input.MCPServers,
+	})
+	if err != nil {
+		return resource.SessionLoadAccepted{}, err
+	}
 	// MetaStore atomically reserves both the name and global ID before production.
 	// No native resources exist yet, so an uncertain write is never reissued.
 	s.mu.Lock()
@@ -91,13 +102,13 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	load := &historyLoad{id: uuid.NewString(), cancel: cancel, done: make(chan struct{}), cleanupDone: make(chan struct{}), deliveryFailed: make(chan struct{})}
 	load.status = resource.HistoryLoadStatus{LoadID: load.id, Phase: "accepted"}
 	initial := load.status
-	r := resource.Session{Metadata: m, Spec: resource.SessionSpec{RuntimeRef: input.RuntimeRef, SessionSpec: runtime.SessionSpec{Cwd: input.Cwd}}, Status: resource.SessionStatus{SessionID: input.SessionID, State: "opening", RuntimeGeneration: run.generation, HistoryLoad: &initial}}
+	r := resource.Session{Metadata: m, Spec: resource.SessionSpec{RuntimeRef: input.RuntimeRef, SessionSpec: runtime.SessionSpec{Cwd: input.Cwd, Features: input.Features, MCPServers: input.MCPServers}}, Status: resource.SessionStatus{SessionID: input.SessionID, State: "opening", RuntimeGeneration: run.generation, HistoryLoad: &initial}}
 	r, err = s.meta.CreateSession(r)
 	if err != nil {
 		// A lost write acknowledgement is not permission to repeat acceptance.
 		// Adopt only the exact durable reservation created by this operation.
 		saved, readErr := s.meta.GetSession(resource.SessionRef{SessionID: input.SessionID})
-		if readErr != nil || saved.Status.HistoryLoad == nil || saved.Status.HistoryLoad.LoadID != load.id || saved.Metadata.Namespace != m.Namespace || saved.Metadata.Name != m.Name || saved.Spec.RuntimeRef != input.RuntimeRef || saved.Spec.Cwd != input.Cwd {
+		if readErr != nil || saved.Status.HistoryLoad == nil || saved.Status.HistoryLoad.LoadID != load.id || saved.Metadata.Namespace != m.Namespace || saved.Metadata.Name != m.Name || saved.Spec.RuntimeRef != input.RuntimeRef || saved.Spec.Cwd != input.Cwd || !sameSessionOverrides(saved.Spec.SessionSpec, r.Spec.SessionSpec) {
 			cancel()
 			return resource.SessionLoadAccepted{}, err
 		}
@@ -111,7 +122,8 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	go s.process(run, l)
 	go func() {
 		defer close(load.done)
-		if err := run.driver.LoadSession(owner, input.SessionID, address, input.Cwd, load.id); err != nil {
+		err := run.driver.LoadSession(owner, input.SessionID, address, spec, load.id)
+		if err != nil {
 			s.failLoad(run, l, "failed", err)
 		}
 	}()

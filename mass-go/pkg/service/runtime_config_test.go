@@ -111,4 +111,26 @@ func (s *RuntimeConfigSuite) TestEmptyJSONNumberCannotBeRewrittenAsZero() {
 	s.Require().NoError(err)
 	s.Equal(created, unchanged)
 }
+
+func (s *RuntimeConfigSuite) TestSessionDefaultsAreValidatedOnRuntimeCreateAndUpdate() {
+	invalid := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{
+		Type:       "fixture",
+		Config:     runtime.Config{},
+		MCPServers: &[]runtime.MCPServer{{Name: "bad", Type: "stdio"}},
+	}}
+	_, err := s.svc.CreateRuntime(invalid)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
+
+	created, err := s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{
+		Type: "fixture", Config: runtime.Config{},
+	}})
+	s.Require().NoError(err)
+	invalid.Spec.Config = created.Spec.Config
+	_, err = s.svc.UpdateRuntime("agent", invalid.Spec)
+	s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
+	unchanged, err := s.svc.GetRuntime("agent")
+	s.Require().NoError(err)
+	s.Equal(created, unchanged)
+}
+
 func TestRuntimeConfigSuite(t *testing.T) { suite.Run(t, new(RuntimeConfigSuite)) }

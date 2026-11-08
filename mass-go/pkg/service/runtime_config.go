@@ -67,5 +67,8 @@ func (s *Service) validateRuntimeSpec(spec resource.RuntimeSpec) error {
 	if err := events.CheckDynamicJSON(map[string]any(spec.Config)); err != nil {
 		return runtime.InvalidArgument("config must contain JSON values")
 	}
+	if err := (runtime.SessionDefaults{Features: spec.Features, MCPServers: spec.MCPServers}).Validate(); err != nil {
+		return runtime.InvalidArgument(err.Error())
+	}
 	return s.registry.ValidateConfig(spec.Type, spec.Config)
 }
