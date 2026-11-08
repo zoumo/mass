@@ -319,6 +319,34 @@ func TestCodexMCPConfigurationRejectsConflictingAuthentication(t *testing.T) {
 			},
 			EnvHeaders: map[string]string{"x-api-key": "OTHER_TOKEN"},
 		},
+		"environment authorization header": {
+			Name:              "remote",
+			Type:              "http",
+			URL:               "https://example.invalid/mcp",
+			EnvHeaders:        map[string]string{"Authorization": "TOKEN"},
+			BearerTokenEnvVar: "OTHER_TOKEN",
+		},
+		"exact authorization reference": {
+			Name:              "remote",
+			Type:              "http",
+			URL:               "https://example.invalid/mcp",
+			Headers:           map[string]string{"Authorization": "${TOKEN}"},
+			BearerTokenEnvVar: "OTHER_TOKEN",
+		},
+		"literal authorization": {
+			Name:              "remote",
+			Type:              "http",
+			URL:               "https://example.invalid/mcp",
+			Headers:           map[string]string{"Authorization": "Basic literal"},
+			BearerTokenEnvVar: "OTHER_TOKEN",
+		},
+		"lowercase environment authorization header": {
+			Name:              "remote",
+			Type:              "http",
+			URL:               "https://example.invalid/mcp",
+			EnvHeaders:        map[string]string{"authorization": "TOKEN"},
+			BearerTokenEnvVar: "OTHER_TOKEN",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			servers := []runtime.MCPServer{server}

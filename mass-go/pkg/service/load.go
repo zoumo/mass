@@ -108,7 +108,7 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 		// A lost write acknowledgement is not permission to repeat acceptance.
 		// Adopt only the exact durable reservation created by this operation.
 		saved, readErr := s.meta.GetSession(resource.SessionRef{SessionID: input.SessionID})
-		if readErr != nil || saved.Status.HistoryLoad == nil || saved.Status.HistoryLoad.LoadID != load.id || saved.Metadata.Namespace != m.Namespace || saved.Metadata.Name != m.Name || saved.Spec.RuntimeRef != input.RuntimeRef || saved.Spec.Cwd != input.Cwd || !sameSessionOptions(saved.Spec.SessionSpec, r.Spec.SessionSpec) {
+		if readErr != nil || saved.Status.HistoryLoad == nil || saved.Status.HistoryLoad.LoadID != load.id || saved.Metadata.Namespace != m.Namespace || saved.Metadata.Name != m.Name || saved.Spec.RuntimeRef != input.RuntimeRef || saved.Spec.Cwd != input.Cwd || !sameSessionOverrides(saved.Spec.SessionSpec, r.Spec.SessionSpec) {
 			cancel()
 			return resource.SessionLoadAccepted{}, err
 		}

@@ -28,6 +28,6 @@ func (s *Service) resolveSessionSpec(run *runBinding, spec runtime.SessionSpec) 
 	return defaults.ResolveSessionSpec(spec), nil
 }
 
-func sameSessionOptions(a, b runtime.SessionSpec) bool {
+func sameSessionOverrides(a, b runtime.SessionSpec) bool {
 	return reflect.DeepEqual(a.Features, b.Features) && reflect.DeepEqual(a.MCPServers, b.MCPServers)
 }

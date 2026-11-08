@@ -51,7 +51,7 @@ func codexMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCon
 			return nil, codexMCPUnsupported("mcp_server_name_unsupported", fmt.Errorf("mcp server %d: Codex names must not contain dots", i))
 		}
 		switch server.Type {
-		case "stdio":
+		case runtime.MCPTransportStdio:
 			env, err := codexMCPEnvironment(i, server.Env, options)
 			if err != nil {
 				return nil, err
@@ -63,13 +63,13 @@ func codexMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCon
 				Env:     env,
 				Cwd:     server.Cwd,
 			})
-		case "http":
+		case runtime.MCPTransportHTTP:
 			remote, err := codexHTTPMCPServer(i, server, options)
 			if err != nil {
 				return nil, err
 			}
 			converted = append(converted, remote)
-		case "sse":
+		case runtime.MCPTransportSSE:
 			return nil, codexMCPUnsupported("mcp_transport_unsupported", fmt.Errorf("mcp server %d: Codex does not support sse transport", i))
 		}
 	}
@@ -149,6 +149,9 @@ func codexHTTPMCPServer(index int, server runtime.MCPServer, options runtime.Pro
 			return sdk.MCPServer{}, codexMCPInvalid(fmt.Errorf("mcp server %d: header %q contains an invalid value", index, key))
 		}
 		headers[key] = value
+	}
+	if err := validateCodexAuthorizationConflict(headers, envHeaders, bearerTokenEnvVar); err != nil {
+		return sdk.MCPServer{}, codexMCPInvalid(fmt.Errorf("mcp server %d: %w", index, err))
 	}
 	for key, name := range envHeaders {
 		if err := codexMCPHeaderReference(name, options); err != nil {
@@ -234,6 +237,20 @@ func validateCodexHeaderNames(headers, envHeaders map[string]string) error {
 				return fmt.Errorf("header %q is declared more than once", key)
 			}
 			seen[canonical] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func validateCodexAuthorizationConflict(headers, envHeaders map[string]string, bearerTokenEnvVar string) error {
+	if bearerTokenEnvVar == "" {
+		return nil
+	}
+	for _, values := range []map[string]string{headers, envHeaders} {
+		for key := range values {
+			if strings.EqualFold(key, "Authorization") {
+				return errors.New("authorization header conflicts with bearerTokenEnvVar")
+			}
 		}
 	}
 	return nil
