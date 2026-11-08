@@ -15,16 +15,16 @@ sources:
 
 ## 2026-11-08 Runtime Session 默认配置核对
 
-检查基线为 `main` HEAD `b2b10b0e`，工作区包含未提交的 Runtime Session 默认配置实现。该变更在 Runtime spec 顶层增加 `features` 与 `mcpServers`，由 Service 在 Session 操作时解析，Session 仅持久化显式值；未发现与当前设计正文相冲突的实现。以下结论来自源码与离线测试核对，不证明真实 Codex、Claude 或外部 MCP server 已通过端到端验收。
+检查源码为分支 `codex-runtime-session-defaults` 的提交 `13d6e79bc0597f4cdfef4eec131dde5a9e6e5ac1`，检查时该提交无未提交修改。该变更在 Runtime spec 顶层增加 `features` 与 `mcpServers`，由 Service 在 Session 操作时解析，Session 仅持久化显式值；未发现与当前设计正文相冲突的实现。完整 `make check-go` 在该 SHA 上退出码为 0，原始日志为 `/tmp/pr9-final-check-20261108T103806.log`（RTK 对仿真冗长输出做了中间截断，日志首尾保留源码 SHA、退出码与结束 HEAD）。以下结论来自源码与离线测试核对，不证明真实 Codex、Claude 或外部 MCP server 已通过端到端验收。
 
 | 范围 | 当前实现观察 | 证据与边界 |
 |---|---|---|
-| Runtime 资源模型 | `RuntimeSpec` 在 `config` 之外提供可选 features/mcpServers；公共 MCP 校验覆盖名称唯一性、transport 字段组合和文本/环境项结构，Runtime 启动不消费默认值。 | [资源模型](../mass-go/pkg/resource/models.go)、[Session 默认值解析](../mass-go/pkg/runtime/session_config.go)、[Runtime 配置校验](../mass-go/pkg/service/runtime_config.go) |
+| Runtime 资源模型 | `RuntimeSpec` 在 `config` 之外提供可选 features/mcpServers；公共 MCP 校验覆盖非空名称与唯一性、transport 字段组合、HTTPS/回环 HTTP、无 URL userinfo、SSE 拒绝 HTTP-only 认证字段、敏感 header/env 只接受环境变量引用，以及环境变量名结构。Runtime 启动不消费默认值，OpenAPI 已发布 `name.minLength=1`。 | [资源模型](../mass-go/pkg/resource/models.go)、[Session 默认值解析与 MCP 校验](../mass-go/pkg/runtime/session_config.go)、[Runtime 配置校验](../mass-go/pkg/service/runtime_config.go)、[OpenAPI](../mass-go/pkg/client/generated/openapi.json) |
 | Session 合并 | create、resume 与 load 调用同一解析入口，读取当前 Runtime spec 后按字段合并 features、按名称合并 MCP server；同名 MCP 保持默认位置，新名称追加，Session 空列表不作为清空默认项。 | [Service 合并入口](../mass-go/pkg/service/session_config.go)、[create](../mass-go/pkg/service/service.go)、[resume](../mass-go/pkg/service/lifecycle.go)、[load](../mass-go/pkg/service/load.go) |
 | 持久化边界 | Runtime 保存默认值；Session spec 保存显式覆盖值，不保存解析后的 Runtime 副本。恢复材料排除 features/mcpServers，因此默认值更新不改变恢复身份材料。 | [Session load 持久化](../mass-go/pkg/service/load.go)、[恢复材料](../mass-go/pkg/runtime/recovery/material.go) |
-| Driver 合同与适配 | loadSession 接收完整 `DriverSessionSpec`；Codex 与 Claude 在原生打开/恢复前应用合并值，并分别拒绝不支持的 transport 或字段。 | [Driver 接口](../mass-go/pkg/runtime/runtime.go)、[Codex MCP](../mass-go/pkg/runtime/codex/mcp.go)、[Codex load](../mass-go/pkg/runtime/codex/load.go)、[Claude MCP](../mass-go/pkg/runtime/claude/mcp.go)、[Claude load](../mass-go/pkg/runtime/claude/load.go) |
+| Driver 合同与适配 | loadSession 接收完整 `DriverSessionSpec`；非 nil 合并列表（含空列表）是完整 server 集合，nil 保留 provider ambient。Claude 使用 strict MCP configuration；Codex 要求显式、存在、可从别名解析为不同文件的绝对 `env.CODEX_HOME`，其 `config.toml` 不得在任意层级声明 `mcp_servers`。两者在原生打开/恢复前应用合并值，并分别拒绝不支持的 transport 或字段；公共 Service 级测试覆盖显式空列表与 nil 的边界。 | [Driver 接口](../mass-go/pkg/runtime/runtime.go)、[Codex MCP](../mass-go/pkg/runtime/codex/mcp.go)、[Codex load](../mass-go/pkg/runtime/codex/load.go)、[Claude MCP](../mass-go/pkg/runtime/claude/mcp.go)、[Claude load](../mass-go/pkg/runtime/claude/load.go)、[空列表边界测试](../mass-go/pkg/service/session_defaults_test.go) |
 | CLI 与 HTTP | Runtime create/update 与 Session create/load 已接入 features/MCP JSON 输入；Runtime update 未传字段保留旧值、显式 null 清除，Session 输入作为显式覆盖。OpenAPI 与生成客户端已更新。 | [CLI Runtime](../mass-go/cmd/massctl/subcommand/runtime.go)、[CLI Session](../mass-go/cmd/massctl/subcommand/session.go)、[CLI 选项](../mass-go/cmd/massctl/subcommand/session_options.go)、[OpenAPI](../mass-go/pkg/client/generated/openapi.json) |
-| 验证证据 | `rtk make check-go` 通过，覆盖 lint、单元、集成、仿真、构建与格式检查。未执行真实模型、真实 Codex/Claude MCP 连接或远端 MCP server 工具调用验收。 | 当前工作区；完整检查通过，不代表外部系统行为已验证。 |
+| 验证证据 | `rtk make check-go` 在源码 SHA `13d6e79bc0597f4cdfef4eec131dde5a9e6e5ac1` 上退出码 0，覆盖 lint、race 单元、race 集成、仿真、构建与格式检查；日志 `/tmp/pr9-final-check-20261108T103806.log`。未执行真实模型、真实 Codex/Claude MCP 连接或远端 MCP server 工具调用验收。 | 上述源码 SHA 与日志；完整离线检查通过，不代表外部系统行为已验证。 |
 
 ## 2026-11-07 合并后核对
 
