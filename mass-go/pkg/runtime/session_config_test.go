@@ -156,15 +156,18 @@ func TestResolveSessionSpecMergesFeaturesByFieldAndMCPServersByName(t *testing.T
 	require.Equal(t, "runtime", (*inherited.MCPServers)[0].Name)
 }
 
-func TestMergeSessionMCPServersPreservesDeclaration(t *testing.T) {
+func TestMergeSessionMCPServersTreatsSessionEmptyAsNoOverride(t *testing.T) {
 	empty := []runtime.MCPServer{}
 	require.Nil(t, runtime.MergeSessionMCPServers(nil, nil))
 
 	explicitEmpty := runtime.MergeSessionMCPServers(nil, &empty)
-	require.NotNil(t, explicitEmpty)
-	require.Empty(t, *explicitEmpty)
+	require.Nil(t, explicitEmpty)
 
 	defaultEmpty := runtime.MergeSessionMCPServers(&empty, nil)
 	require.NotNil(t, defaultEmpty)
 	require.Empty(t, *defaultEmpty)
+
+	overriddenEmpty := runtime.MergeSessionMCPServers(&empty, &empty)
+	require.NotNil(t, overriddenEmpty)
+	require.Empty(t, *overriddenEmpty)
 }

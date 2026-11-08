@@ -232,7 +232,7 @@ func TestInvalidSessionMCPRejectedBeforeRuntimeStarts(t *testing.T) {
 	driver.mu.Unlock()
 }
 
-func TestExplicitEmptyMCPListsRemainDeclaredAtDriverBoundary(t *testing.T) {
+func TestRuntimeEmptyMCPListExcludesAmbientWhileSessionEmptyIsNoOverride(t *testing.T) {
 	svc, driver, _ := newDefaultsFixture(t)
 	_, err := svc.StartRuntime(context.Background(), "agent")
 	require.NoError(t, err)
@@ -272,8 +272,7 @@ func TestExplicitEmptyMCPListsRemainDeclaredAtDriverBoundary(t *testing.T) {
 	require.Len(t, driver.opens, 3)
 	require.NotNil(t, driver.opens[0].MCPServers)
 	require.Empty(t, *driver.opens[0].MCPServers)
-	require.NotNil(t, driver.opens[1].MCPServers)
-	require.Empty(t, *driver.opens[1].MCPServers)
+	require.Nil(t, driver.opens[1].MCPServers)
 	require.Nil(t, driver.opens[2].MCPServers)
 }
 

@@ -83,7 +83,7 @@ func MergeSessionFeatures(defaults, overrides *SessionFeatures) *SessionFeatures
 }
 
 func MergeSessionMCPServers(defaults, overrides *[]MCPServer) *[]MCPServer {
-	if defaults == nil && overrides == nil {
+	if defaults == nil && (overrides == nil || len(*overrides) == 0) {
 		return nil
 	}
 	merged := []MCPServer{}

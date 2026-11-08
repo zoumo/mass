@@ -101,12 +101,17 @@ func TestTicket06CodexLoadUsesExplicitMCPIsolation(t *testing.T) {
 		"LOAD_EXPECT_PROJECT_ISOLATION": "1",
 	})
 	empty := []runtime.MCPServer{}
-	_, err := svc.LoadSession(ctx(t), resource.SessionLoad{
+	current, err := svc.GetRuntime("agent")
+	require.NoError(t, err)
+	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{
+		Type: current.Spec.Type, Config: current.Spec.Config, MCPServers: &empty,
+	})
+	require.NoError(t, err)
+	_, err = svc.LoadSession(ctx(t), resource.SessionLoad{
 		Metadata:   resource.Metadata{Namespace: "one", Name: "isolated"},
 		RuntimeRef: "agent",
 		Cwd:        cwd,
 		SessionID:  "native-thread",
-		MCPServers: &empty,
 	})
 	require.NoError(t, err)
 	ref := resource.SessionRef{SessionID: "native-thread"}
