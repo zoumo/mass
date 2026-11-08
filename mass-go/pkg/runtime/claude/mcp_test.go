@@ -110,15 +110,38 @@ func TestClaudeMCPStdioEnvReferenceFailsBeforeOpen(t *testing.T) {
 }
 
 func TestClaudeMCPResolvedHeaderRejectsNewlines(t *testing.T) {
+	for _, value := range []string{"a\rb", "a\nb", "a\r\nb"} {
+		servers := []runtime.MCPServer{{
+			Name:    "remote",
+			Type:    "http",
+			URL:     "https://example.invalid/mcp",
+			Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		}}
+		_, err := claudeMCPServers(&servers, runtime.ProcessConfig{Env: map[string]string{"TOKEN": value}})
+		require.ErrorIs(t, err, runtime.ErrInvalidArgument)
+		require.NotContains(t, err.Error(), value)
+	}
+}
+
+func TestClaudeMCPSecretReferenceRejectedBeforeNativeOpen(t *testing.T) {
+	driver, err := (Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
+		"executable": "/nonexistent/claude",
+		"envPolicy":  "replace",
+	})
+	require.NoError(t, err)
+	_, err = driver.Start(t.Context())
+	require.NoError(t, err)
+
 	servers := []runtime.MCPServer{{
 		Name:    "remote",
 		Type:    "http",
 		URL:     "https://example.invalid/mcp",
-		Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		Headers: map[string]string{"Authorization": "Bearer ${MISSING}"},
 	}}
-	_, err := claudeMCPServers(&servers, runtime.ProcessConfig{Env: map[string]string{"TOKEN": "a\r\nb"}})
+	_, err = driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "session"}, runtime.SessionSpec{
+		Cwd: "/work", MCPServers: &servers,
+	})
 	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
-	require.NotContains(t, err.Error(), "a\r\nb")
 }
 
 func TestClaudeSessionDefaultsAreNotRuntimeConfig(t *testing.T) {

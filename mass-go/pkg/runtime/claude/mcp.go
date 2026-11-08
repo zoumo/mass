@@ -28,7 +28,7 @@ func claudeMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCo
 		if server.EnvHeaders != nil || server.BearerTokenEnvVar != "" {
 			return nil, errors.Join(runtime.UnsupportedOption("mcp_auth_fields_unsupported", "MCP environment headers and bearer token references are not supported by this Claude runtime"), fmt.Errorf("mcp server %d: Claude does not support envHeaders or bearerTokenEnvVar", i))
 		}
-		if err := validateClaudeMCPEnvironment(i, server, options); err != nil {
+		if err := validateClaudeMCPSecrets(i, server, options); err != nil {
 			return nil, err
 		}
 		converted = append(converted, sdk.MCPServer{
@@ -44,30 +44,29 @@ func claudeMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCo
 	return converted, nil
 }
 
-// validateClaudeMCPEnvironment keeps ${VAR} references for the CLI to expand,
-// but fails before opening when a secret reference or its value is unusable.
-func validateClaudeMCPEnvironment(index int, server runtime.MCPServer, options runtime.ProcessConfig) error {
-	if err := validateClaudeMCPSecrets(index, "env", server.Env, options); err != nil {
-		return err
-	}
-	return validateClaudeMCPSecrets(index, "header", server.Headers, options)
-}
-
-func validateClaudeMCPSecrets(index int, field string, values map[string]string, options runtime.ProcessConfig) error {
-	for _, key := range slices.Sorted(maps.Keys(values)) {
-		if !runtime.IsSensitiveMCPName(key) {
-			continue
-		}
-		_, name, ok := runtime.ParseMCPSecretReference(values[key])
-		if !ok {
-			return errors.Join(runtime.ErrInvalidArgument, fmt.Errorf("mcp server %d: %s %q must reference a secret", index, field, key))
-		}
-		resolved, err := runtime.LookupMCPEnvironmentReference(options.LookupEnv, name)
-		if err != nil {
-			return errors.Join(runtime.ErrInvalidArgument, fmt.Errorf("mcp server %d: %s %q: %w", index, field, key, err))
-		}
-		if field == "header" && strings.ContainsAny(resolved, "\r\n") {
-			return errors.Join(runtime.ErrInvalidArgument, fmt.Errorf("mcp server %d: header %q contains an invalid value", index, key))
+// validateClaudeMCPSecrets keeps ${VAR} references for the CLI to expand, but
+// fails before opening when a secret reference or its value is unusable.
+func validateClaudeMCPSecrets(index int, server runtime.MCPServer, options runtime.ProcessConfig) error {
+	for _, field := range []struct {
+		name       string
+		values     map[string]string
+		noNewlines bool
+	}{
+		{name: "env", values: server.Env},
+		{name: "header", values: server.Headers, noNewlines: true},
+	} {
+		for _, key := range slices.Sorted(maps.Keys(field.values)) {
+			if !runtime.IsSensitiveMCPName(key) {
+				continue
+			}
+			_, name, _ := runtime.ParseMCPSecretReference(field.values[key])
+			resolved, err := runtime.LookupMCPEnvironmentReference(options.LookupEnv, name)
+			if err != nil {
+				return errors.Join(runtime.ErrInvalidArgument, fmt.Errorf("mcp server %d: %s %q: %w", index, field.name, key, err))
+			}
+			if field.noNewlines && strings.ContainsAny(resolved, "\r\n") {
+				return errors.Join(runtime.ErrInvalidArgument, fmt.Errorf("mcp server %d: header %q contains an invalid value", index, key))
+			}
 		}
 	}
 	return nil
