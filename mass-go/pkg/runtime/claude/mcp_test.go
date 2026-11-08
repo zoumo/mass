@@ -16,7 +16,7 @@ func TestClaudeMCPConfigurationMapping(t *testing.T) {
 			Type:    "stdio",
 			Command: "/mcp-server",
 			Args:    []string{"--stdio"},
-			Env:     map[string]string{"TOKEN": "value"},
+			Env:     map[string]string{"TOKEN": "${TOKEN}"},
 		},
 		{
 			Name:    "remote",
@@ -32,6 +32,17 @@ func TestClaudeMCPConfigurationMapping(t *testing.T) {
 	require.Equal(t, sdkClaudeMCPTransport("stdio"), converted[0].Transport)
 	require.Equal(t, sdkClaudeMCPTransport("http"), converted[1].Transport)
 	require.Equal(t, sdkClaudeMCPTransport("sse"), converted[2].Transport)
+}
+
+func TestClaudeExplicitMCPListUsesStrictConfig(t *testing.T) {
+	empty := []runtime.MCPServer{}
+	options, err := sessionOptions(runtime.SessionFeatures{}, &empty, "", "/work", "/agent", nil)
+	require.NoError(t, err)
+	require.True(t, options.StrictMCPConfig)
+
+	options, err = sessionOptions(runtime.SessionFeatures{}, nil, "", "/work", "/agent", nil)
+	require.NoError(t, err)
+	require.False(t, options.StrictMCPConfig)
 }
 
 func TestClaudeMCPConfigurationRejectsCodexOnlyFields(t *testing.T) {

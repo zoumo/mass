@@ -17,7 +17,7 @@ model MCPServer {
   /** stdio 参数。 */
   args?: string[];
 
-  /** stdio 子进程环境变量。 */
+  /** stdio 子进程环境变量；敏感值使用 ${ENV_VAR} 引用。 */
   env?: Record<string>;
 
   /** stdio 工作目录；具体 Runtime 类型决定是否支持。 */
@@ -26,13 +26,13 @@ model MCPServer {
   /** http 或 sse 必填。 */
   url?: string;
 
-  /** http 或 sse 请求头。 */
+  /** http 或 sse 请求头；敏感值使用 ${ENV_VAR} 引用。 */
   headers?: Record<string>;
 
-  /** 由环境变量名解析 HTTP 请求头；具体 Runtime 类型决定是否支持。 */
+  /** 由环境变量名解析 HTTP 请求头；仅 HTTP，具体 Runtime 类型决定是否支持。 */
   envHeaders?: Record<string>;
 
-  /** 从指定环境变量取得 Bearer token；具体 Runtime 类型决定是否支持。 */
+  /** 从指定环境变量取得 Bearer token；仅 HTTP，具体 Runtime 类型决定是否支持。 */
   bearerTokenEnvVar?: string;
 }
 
@@ -45,7 +45,8 @@ model DriverSessionSpec {
   /** Service 已完成 Runtime 默认值与 Session 显式值的字段级合并；仍省略的字段使用各自 schema 默认值。 */
   features?: SessionFeatures;
 
-  /** 本次 Session 的有效 MCP server 列表；Service 已按名称合并 Runtime 默认值与 Session 显式项。 */
+  /** 本次 Session 的完整有效 MCP server 列表；Service 已按名称合并 Runtime 默认值与
+   * Session 显式项。省略表示未声明且保留 provider ambient，空数组表示明确没有 server。 */
   mcpServers?: MCPServer[];
 }
 

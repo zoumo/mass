@@ -211,7 +211,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		return runtime.DriverSession{}, noResources("additionalDirs not supported yet")
 	}
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	mcpServers, err := codexMCPServers(spec.MCPServers)
+	mcpServers, err := codexMCPServers(spec.MCPServers, d.options)
 	if err != nil {
 		return runtime.DriverSession{}, noResources(err.Error())
 	}

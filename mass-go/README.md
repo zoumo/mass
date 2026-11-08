@@ -313,9 +313,17 @@ For example, a Runtime may be created with:
 Session `spec` accepts the same `features` and `mcpServers` keys; history-load
 input accepts them as top-level request fields. `stdio` servers use `command`,
 `args`, `env` and optional `cwd`; `http` and `sse` servers use `url` and
-`headers`. Codex supports `stdio` and `http`, and its MCP names cannot contain
+`headers`; `envHeaders` and `bearerTokenEnvVar` are HTTP-only. Remote URLs must
+use HTTPS, except HTTP on loopback, and must not contain userinfo credentials.
+Sensitive header/env entries use `${ENV_VAR}` references rather than literal
+secrets. Codex supports `stdio` and `http`, and its MCP names cannot contain
 dots. Claude supports all three transports but not `cwd`, `envHeaders` or
-`bearerTokenEnvVar`. MCP configuration does not connect or health-check a server
+`bearerTokenEnvVar`. A non-nil merged list is the complete set of MCP servers:
+Claude uses strict MCP configuration, while Codex requires an explicit,
+existing absolute `env.CODEX_HOME` distinct from ambient configuration whose
+`config.toml`, when present, contains no `mcp_servers` at any level; arrange
+authentication in that isolated home. A nil list leaves provider ambient MCP
+behavior unchanged. MCP configuration does not connect or health-check a server
 at Session open.
 
 Validation does not open credentials or history. Offline tests launch only MASS's

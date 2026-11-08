@@ -33,13 +33,20 @@ Session spec 可以携带同名字段作为显式覆盖；历史 load 的输入�
 - Session 传空列表表示没有覆盖项，不删除 Runtime 默认项。
 - 同一个 Runtime 默认列表或 Session 覆盖列表内部不得出现重复名称。
 - `stdio` 要求 `command`，可使用 `args`、`env` 和可选 `cwd`；`http` 与 `sse` 要求 `url`，可使用 `headers`。各 transport 不接受另一组字段。
-- `envHeaders` 与 `bearerTokenEnvVar` 是 HTTP 的可选认证配置。具体 Runtime 类型决定 transport、字段和名称约束；不支持项在该 Session 的原生副作用前拒绝。
+- `envHeaders` 与 `bearerTokenEnvVar` 是 HTTP 的可选认证配置；SSE 不接受这两个字段。具体 Runtime 类型决定 transport、字段和名称约束；不支持项在该 Session 的原生副作用前拒绝。
+- `url` 只接受 HTTPS；HTTP 只允许回环主机。URL 不得包含 userinfo 凭据。
+- 名称含 `authorization`、`cookie`、`credential`、`password`、`secret`、`token`、`api-key` 或 `apikey`，或以 `-key`/`_key` 结尾的 `headers`/`env` 值，以及所有 `envHeaders`/`bearerTokenEnvVar` 值，必须引用环境变量。敏感 header 与 env 值使用 `${ENV_VAR}`，可带 `Bearer` 等 scheme 前缀；环境变量引用名必须符合 shell 环境变量命名。上述敏感值在公开 Runtime/Session spec 中只保留变量引用，`envHeaders`/`bearerTokenEnvVar` 只保存变量名。
 
 Runtime 写入时校验 provider-neutral 的结构、transport 字段组合和列表内名称唯一性。类型专属支持由对应 Driver 在 open、resume 或 load 时校验。MCP 配置只声明原生 Session 使用的 server；打开成功不证明 server 已连接、工具可用或远端身份可信。
 
+合并后的列表为 `nil` 时表示 Runtime 与 Session 都未声明 MCP 配置，provider 可继续使用自身环境中的配置。合并结果为非 `nil` 时，包括空列表，表示本次 Session 的完整有效 MCP server 集合；adapter 必须排除 provider 用户、项目或本地配置中的其他 server。
+
+- Claude 显式列表使用 native strict MCP configuration。
+- Codex 没有等价 strict 开关。Runtime 必须显式提供不同于 ambient 的、已存在的绝对 `env.CODEX_HOME`；该目录的 `config.toml`（若存在）不得在任意层级声明 `mcp_servers`，认证与其他必要配置由调用者预先安排。不满足时在创建原生 thread 前失败。
+
 ## 生效与恢复
 
-Runtime 更新采用完整替换。直接通过 RuntimeService/HTTP 更新时，省略 `features` 或 `mcpServers` 会清除对应默认值；CLI 的部分更新流程先读取当前 spec，未提供对应 flag 时保留旧值，显式 `null` 清除。Runtime 自己的 `mcpServers: []` 表示有效的空默认列表，因此与省略一样不再提供默认项，但区别于 Session 侧的空列表覆盖语义。
+Runtime 更新采用完整替换。直接通过 RuntimeService/HTTP 更新时，省略 `features` 或 `mcpServers` 会清除对应默认值；CLI 的部分更新流程先读取当前 spec，未提供对应 flag 时保留旧值，显式 `null` 清除。Runtime 自己的 `mcpServers: []` 是已声明的空默认列表，不提供默认 server，但合并结果仍为非 nil，因此会排除 ambient server；Runtime 省略 `mcpServers` 则保留 ambient。Session 自己的空列表只表示没有覆盖项，仍继承 Runtime 默认项。
 
 修改 `features` 或 `mcpServers` 不需要重启 Runtime。下一次 createSession、resumeSession 或 loadSession 读取最新持久 spec 并应用，已经打开且仍有效的 Session 不被热更新。Session 未显式覆盖的值也不会在打开时复制进 Session spec，因此后续 Runtime 更新仍可在下一次打开操作中生效。
 
@@ -53,5 +60,7 @@ Runtime 的 `config` 仍按运行绑定快照影响 Driver 构造和启动；Ses
 - Runtime 更新后无需重启，下一次 create/resume/load 使用新默认值；已经打开的 Session 保持原运行。
 - feature 字段分别验证继承、同名覆盖、显式关闭及 schema 缺省。
 - MCP 验证同名替换保持位置、新名称按 Session 顺序追加、空 Session 列表不清空默认项，以及重复名称被拒绝。
+- 显式 MCP 列表为空时，Claude strict mode 和 Codex 隔离目录都必须排除 ambient server；Codex 未配置隔离目录时明确失败。
+- 非回环明文 URL、URL userinfo、SSE 的 HTTP-only 认证字段和明文敏感 header/env 值必须被拒绝。
 - 显式 Session MCP 在 Runtime 启动和原生副作用前完成公共结构校验；类型不支持在本次原生副作用前失败。
 - 解析后的默认值不进入 Session spec 或持久恢复材料；改变默认值后仍可恢复原 Session。

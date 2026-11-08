@@ -107,6 +107,7 @@ func sessionOptions(features runtime.SessionFeatures, mcpServers *[]runtime.MCPS
 		return sdk.SessionOptions{}, err
 	}
 	options := sdk.SessionOptions{ResumeID: resumeID, CLIPath: executable, WorkDir: cwd, Env: env, MCPServers: converted}
+	options.StrictMCPConfig = mcpServers != nil
 	if !features.AgentQuestionsEnabled() {
 		options.DisallowedTools = []string{"AskUserQuestion"}
 	}

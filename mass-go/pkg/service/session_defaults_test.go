@@ -232,6 +232,51 @@ func TestInvalidSessionMCPRejectedBeforeRuntimeStarts(t *testing.T) {
 	driver.mu.Unlock()
 }
 
+func TestExplicitEmptyMCPListsRemainDeclaredAtDriverBoundary(t *testing.T) {
+	svc, driver, _ := newDefaultsFixture(t)
+	_, err := svc.StartRuntime(context.Background(), "agent")
+	require.NoError(t, err)
+
+	empty := []runtime.MCPServer{}
+	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{
+		Type: "fixture", Config: runtime.Config{}, MCPServers: &empty,
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateSession(context.Background(), resource.Session{
+		Metadata: resource.Metadata{Namespace: "one", Name: "runtime-empty"},
+		Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/work"}},
+	})
+	require.NoError(t, err)
+
+	_, err = svc.UpdateRuntime("agent", resource.RuntimeSpec{Type: "fixture", Config: runtime.Config{}})
+	require.NoError(t, err)
+	_, err = svc.CreateSession(context.Background(), resource.Session{
+		Metadata: resource.Metadata{Namespace: "one", Name: "session-empty"},
+		Spec: resource.SessionSpec{
+			RuntimeRef: "agent",
+			SessionSpec: runtime.SessionSpec{
+				Cwd:        "/work",
+				MCPServers: &empty,
+			},
+		},
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateSession(context.Background(), resource.Session{
+		Metadata: resource.Metadata{Namespace: "one", Name: "undeclared"},
+		Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/work"}},
+	})
+	require.NoError(t, err)
+
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	require.Len(t, driver.opens, 3)
+	require.NotNil(t, driver.opens[0].MCPServers)
+	require.Empty(t, *driver.opens[0].MCPServers)
+	require.NotNil(t, driver.opens[1].MCPServers)
+	require.Empty(t, *driver.opens[1].MCPServers)
+	require.Nil(t, driver.opens[2].MCPServers)
+}
+
 type defaultsLoadDriver struct {
 	runtime.Driver
 	pipe  *events.EventPipe

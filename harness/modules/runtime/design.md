@@ -54,7 +54,7 @@ RuntimeRegistry 按类型负责配置校验，本地与远端参数不能任意�
 
 Driver 内部持久保存和读取恢复材料，不能仅依赖内存。恢复验证原会话、账号及数据归属，不以相同 URL、名称或 ID 格式替代验证；失败不能新建会话代替恢复。closeSession 结束本次 MASS 会话运行绑定但保留后续恢复所需材料，不关闭共享事件流，也不停止 Runtime。
 
-DriverSessionSpec 描述 cwd、systemPrompt、additionalDirs、features 和 mcpServers；Service 模块 SessionSpec 复用同一组字段并增加 runtimeRef。features 是功能请求容器，字段省略时使用各自 schema 默认值；当前 agentQuestions 默认 true。默认值与具体 Runtime 是否支持无关。请求开启某项功能而 adapter 不支持时，adapter 不报错，只在 DriverSession.effectiveFeatures 中返回 false；请求关闭始终得到 false。mcpServers 已由 Service 合并为本次 Session 的有效列表，adapter 校验本类型支持的 transport、字段与名称约束后配置原生会话。除 feature 降级规则外，不支持的选项明确失败。
+DriverSessionSpec 描述 cwd、systemPrompt、additionalDirs、features 和 mcpServers；Service 模块 SessionSpec 复用同一组字段并增加 runtimeRef。features 是功能请求容器，字段省略时使用各自 schema 默认值；当前 agentQuestions 默认 true。默认值与具体 Runtime 是否支持无关。请求开启某项功能而 adapter 不支持时，adapter 不报错，只在 DriverSession.effectiveFeatures 中返回 false；请求关闭始终得到 false。mcpServers 已由 Service 合并；非 nil 时是本次 Session 的完整有效列表，nil 时保留 provider ambient。adapter 校验本类型支持的 transport、字段与名称约束，并按 [Runtime Session 默认配置](session-defaults.md#mcpservers)排除 ambient MCP server 后配置原生会话。除 feature 降级规则外，不支持的选项明确失败。
 
 创建和恢复不隐式发送输入。openSession/resumeSession 另接收 DriverSessionAddress（namespace、sessionName）；Service 在副作用前传入名称，adapter 固定在原运行绑定中。地址不是 Session spec，不参与配置版本。可选 CreationDriver 与 ResumptionDriver 接收独立于 spec 的显式 SessionInput，校验先于副作用，同一打开或恢复所有者登记工作后提交；不支持的内容拒绝，不丢字段或转换为隐藏 prompt。普通恢复、load 和重启不重放旧输入。DriverSession 返回 sessionId、实际能力、实际功能值与仅本次显式输入的 initialInputReceipt，配置 generation 由Service 模块的运行绑定记录。显式恢复的提交、真实身份门、早到事实与不可回滚失败语义见 [Service 恢复合同](../service/session.md#恢复)；Claude 定向原 ID 后先提交新输入再等 init，不得将保存身份冒充实际观察。
 

@@ -216,4 +216,6 @@ func TestLoadOpenAPIPublishesAcceptanceAndRequiredEvidence(t *testing.T) {
 	require.Contains(t, sessionStatus["properties"], "effectiveFeatures")
 	features := schemas["SessionFeatures"].(map[string]any)
 	require.Equal(t, true, features["properties"].(map[string]any)["agentQuestions"].(map[string]any)["default"])
+	mcpServer := schemas["MCPServer"].(map[string]any)
+	require.InDelta(t, 1, mcpServer["properties"].(map[string]any)["name"].(map[string]any)["minLength"], 0)
 }

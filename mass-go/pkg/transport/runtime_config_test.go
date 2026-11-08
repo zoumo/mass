@@ -101,6 +101,7 @@ func (s *RuntimeHTTPSuite) TestStrictConfigurationBoundary() {
 		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":null}}`,
 		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{}},"status":{}}`,
 		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{},"unknown":true}}`,
+		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{},"mcpServers":[{"name":"","type":"stdio","command":"/mcp"}]}}`,
 		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{},"mcpServers":[{"name":"bad","type":"stdio"}]}}`,
 		`{"metadata":{"name":"agent"},"spec":{"type":"fixture","config":{},"features":{"unknown":true}}}`,
 	} {

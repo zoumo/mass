@@ -77,7 +77,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := d.vault.Check(); err != nil {
 		return err
 	}
-	mcpServers, err := codexMCPServers(spec.MCPServers)
+	mcpServers, err := codexMCPServers(spec.MCPServers, d.options)
 	if err != nil {
 		return err
 	}

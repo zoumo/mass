@@ -3,16 +3,24 @@ package runtime
 import (
 	"fmt"
 	"maps"
+	"net"
+	"net/url"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"unicode/utf8"
 )
 
+var (
+	mcpEnvironmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	mcpSecretReference = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9_-]* )?\$\{[A-Za-z_][A-Za-z0-9_]*\}$`)
+)
+
 // MCPServer is the provider-neutral Session MCP configuration. Runtime records
 // may provide defaults, but only Session opening or recovery consumes them.
 type MCPServer struct {
-	Name              string            `json:"name"`
+	Name              string            `json:"name" minLength:"1"`
 	Type              string            `json:"type" enum:"stdio,http,sse"`
 	Command           string            `json:"command,omitempty"`
 	Args              []string          `json:"args,omitempty"`
@@ -152,6 +160,9 @@ func ValidateMCPServers(servers []MCPServer) error {
 			if server.URL == "" {
 				return fmt.Errorf("mcp server %d: %s requires url", i, server.Type)
 			}
+			if err := validateMCPURL(i, server); err != nil {
+				return err
+			}
 			switch {
 			case server.Command != "":
 				return fmt.Errorf("mcp server %d: %s does not allow command", i, server.Type)
@@ -161,6 +172,9 @@ func ValidateMCPServers(servers []MCPServer) error {
 				return fmt.Errorf("mcp server %d: %s does not allow env", i, server.Type)
 			case server.Cwd != "":
 				return fmt.Errorf("mcp server %d: %s does not allow cwd", i, server.Type)
+			}
+			if server.Type == "sse" && (len(server.EnvHeaders) > 0 || server.BearerTokenEnvVar != "") {
+				return fmt.Errorf("mcp server %d: sse does not allow envHeaders or bearerTokenEnvVar", i)
 			}
 		default:
 			return fmt.Errorf("mcp server %d: type must be stdio, http or sse", i)
@@ -202,8 +216,59 @@ func validateMCPServerText(index int, server MCPServer) error {
 			}
 		}
 	}
-	if server.BearerTokenEnvVar != "" && strings.ContainsAny(server.BearerTokenEnvVar, "=\x00") {
+	for key, value := range server.Env {
+		if sensitiveMCPName(key) && !mcpSecretReference.MatchString(value) {
+			return fmt.Errorf("mcp server %d: env %q must reference a secret", index, key)
+		}
+	}
+	for key, value := range server.Headers {
+		if sensitiveMCPName(key) && !mcpSecretReference.MatchString(value) {
+			return fmt.Errorf("mcp server %d: header %q must reference a secret", index, key)
+		}
+	}
+	for key, value := range server.EnvHeaders {
+		if !mcpEnvironmentName.MatchString(value) {
+			return fmt.Errorf("mcp server %d: envHeaders %q must name an environment variable", index, key)
+		}
+	}
+	if server.BearerTokenEnvVar != "" && !mcpEnvironmentName.MatchString(server.BearerTokenEnvVar) {
 		return fmt.Errorf("mcp server %d: bearerTokenEnvVar must name an environment variable", index)
 	}
 	return nil
+}
+
+func validateMCPURL(index int, server MCPServer) error {
+	u, err := url.Parse(server.URL)
+	if err != nil || u.Host == "" || u.User != nil {
+		return fmt.Errorf("mcp server %d: %s requires a url without credentials", index, server.Type)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return nil
+	case "http":
+		if loopbackHost(u.Hostname()) {
+			return nil
+		}
+		return fmt.Errorf("mcp server %d: non-loopback http is not allowed", index)
+	default:
+		return fmt.Errorf("mcp server %d: url must use https, or http on loopback", index)
+	}
+}
+
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func sensitiveMCPName(name string) bool {
+	name = strings.ToLower(name)
+	for _, marker := range []string{"authorization", "cookie", "credential", "password", "secret", "token", "api-key", "apikey"} {
+		if strings.Contains(name, marker) {
+			return true
+		}
+	}
+	return strings.HasSuffix(name, "-key") || strings.HasSuffix(name, "_key")
 }

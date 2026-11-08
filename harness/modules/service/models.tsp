@@ -77,7 +77,8 @@ model RuntimeSpec {
   features?: Execution.SessionFeatures;
 
   /** 本 Runtime 下 Session 的 MCP server 默认值；Session 同名 server 整体覆盖并保持基准位置，
-   * 新名称按 Session 顺序追加，Session 空列表不删除默认项。 */
+   * 新名称按 Session 顺序追加，Session 空列表不删除默认项。合并后非 nil 的列表是完整有效
+   * server 集合；Runtime 与 Session 都省略时保留 provider ambient。 */
   mcpServers?: Execution.MCPServer[];
 }
 

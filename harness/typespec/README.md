@@ -14,7 +14,7 @@ sources:
 
 当前接口版本记录在本页元数据。取得相应 harness 写入授权后修改当前合同，成批定稿时更新版本并在 [log.md](../log.md) 记录差异；历史由 Git 保存，不复制版本目录。
 
-当前修订在 RuntimeSpec 顶层增加 Session 默认值 `features` 与 `mcpServers`，不放入类型专属 `config`。Runtime 启动和 Driver 构造不消费默认值；Service 在 createSession、resumeSession 与 loadSession 时读取当前 Runtime spec，features 按字段、MCP server 按名称与 Session 显式值合并后交给 Driver。同名 feature 覆盖，同名 MCP server 整体替换并保持原位置，新名称追加；Session 空 MCP 列表不清空 Runtime 默认项。Runtime 更新对下一次 Session 打开操作生效，已打开 Session 不热更新；Session spec 只保存显式值。loadSession 接收合并后的完整 DriverSessionSpec。接口修订为 v0.2.20。
+当前修订在 RuntimeSpec 顶层增加 Session 默认值 `features` 与 `mcpServers`，不放入类型专属 `config`。Runtime 启动和 Driver 构造不消费默认值；Service 在 createSession、resumeSession 与 loadSession 时读取当前 Runtime spec，features 按字段、MCP server 按名称与 Session 显式值合并后交给 Driver。同名 feature 覆盖，同名 MCP server 整体替换并保持原位置，新名称追加；Session 空 MCP 列表不清空 Runtime 默认项。合并结果为 nil 时保留 provider ambient，非 nil（含空列表）是完整有效列表，adapter 必须排除其他 ambient server；远端 URL 与秘密引用受公共安全约束。Runtime 更新对下一次 Session 打开操作生效，已打开 Session 不热更新；Session spec 只保存显式值。loadSession 接收合并后的完整 DriverSessionSpec。接口修订为 v0.2.20。
 
 此前 v0.2.19 修订删除 Session `archived` 与 archive 操作，统一使用 close/offline：close 从任意状态接纳；需要调用 SDK 时，SDK Session close 成功是唯一 native 成功条件，随后仍须结算 MASS 内部责任才能进入 offline。失败或结算未知保持 closing 且可显式重试；idle Session 默认 10m 后走同一 close 路径，`0` 禁用且不停止 Runtime。create/resume 按需启动 Runtime，prompt/answer/cancel 不隐式恢复；服务重启不启动历史运行，旧在线状态校正为 unknown，旧 archived 记录迁移为 offline，查询与写入不再接受旧状态。冷进程没有当前运行映射的 unknown Runtime 只由显式 start/resume 接管，不证明旧 provider 工作或后端资源已经结束。
 
