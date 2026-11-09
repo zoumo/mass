@@ -63,7 +63,7 @@ func (s *generatedHTTPSuite) TestAllEventBranchesStreamAndGeneratedModelRoundTri
 		Events []json.RawMessage `json:"events"`
 	}
 	s.Require().NoError(json.Unmarshal(b, &examples))
-	s.Require().Len(examples.Events, 18)
+	s.Require().Len(examples.Events, 17)
 	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "event:subscription.ready\r\ndata:{}\r\n\r\n")

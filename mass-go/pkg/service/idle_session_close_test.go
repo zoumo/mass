@@ -328,7 +328,7 @@ func TestIdleWaitsForKnownToolWorkToFinish(t *testing.T) {
 		t.Fatal("tool chunk was not processed")
 	}
 	require.Eventually(t, func() bool { return f.clock.Active() == 0 }, time.Second, time.Millisecond)
-	f.emit(t, events.ToolCall{ID: "tool-1", Kind: "bash", Status: "unknown", RawInput: map[string]any{"command": "sleep"}})
+	f.emit(t, events.ToolCall{ID: "tool-1", Kind: events.ToolKindExecute, ToolName: "Bash", Provider: events.ToolProviderAgent, Status: "unknown", RawInput: map[string]any{"command": "sleep"}})
 	select {
 	case <-subscription.Events():
 	case <-time.After(time.Second):
@@ -342,7 +342,7 @@ func TestIdleWaitsForKnownToolWorkToFinish(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	f.emit(t, events.ToolResult{ID: "tool-1", Kind: "bash", Status: "completed"})
+	f.emit(t, events.ToolResult{ID: "tool-1", Kind: events.ToolKindExecute, ToolName: "Bash", Provider: events.ToolProviderAgent, Status: "completed"})
 	require.Eventually(t, func() bool { return f.clock.Active() == 1 }, time.Second, time.Millisecond)
 	f.clock.Advance(time.Second)
 	require.Eventually(t, func() bool { return f.driver.closes.Load() == 1 }, time.Second, time.Millisecond)
@@ -511,7 +511,7 @@ func (d *idleReplayDriver) LoadSession(ctx context.Context, id string, address r
 	d.mu.Unlock()
 	for _, payload := range []events.Payload{
 		events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{}, EffectiveFeatures: events.ResumedSessionFeatures{}}},
-		events.ToolCall{ID: "old-tool", Kind: "bash", Status: "in_progress", RawInput: map[string]any{"command": "old"}},
+		events.ToolCall{ID: "old-tool", Kind: events.ToolKindExecute, ToolName: "Bash", Provider: events.ToolProviderAgent, Status: "in_progress", RawInput: map[string]any{"command": "old"}},
 		events.HistoryReplay{LoadID: loadID, Phase: "native_completed", RetainedScope: "all_retained_main_history", ResumedSession: &events.ResumedSession{SessionID: id, Capabilities: map[string]bool{}, EffectiveFeatures: events.ResumedSessionFeatures{}}},
 	} {
 		event, err := events.NewEvent(events.EventBase{

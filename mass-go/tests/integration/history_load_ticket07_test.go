@@ -776,7 +776,7 @@ func TestTicket07ClaudeCrossReadDriftOrPageCancellation(t *testing.T) {
 			require.NoError(t, c.History(ctx(t), ref, store.HistoryQuery{Limit: 1000}, &p))
 			require.NotEmpty(t, p.Events)
 			require.Equal(t, "row-000", p.Events[0].Replay.NativeRecordID)
-			require.Equal(t, "retained-000", p.Events[0].Payload().(events.AgentMessage).Content[0].Text, "committed facts are not reread or repaired")
+			require.Equal(t, "retained-000", events.TextOf(p.Events[0].Payload().(events.AgentMessage).Content[0]), "committed facts are not reread or repaired")
 			if mode == "cancel" {
 				var healthy resource.Session
 				require.NoError(t, c.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "healthy"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd}}}, &healthy))

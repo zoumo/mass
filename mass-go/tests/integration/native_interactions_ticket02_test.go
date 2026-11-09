@@ -30,9 +30,9 @@ func TestNativeInteractionAnswerCorrection(t *testing.T) {
 				e, err := nextSubscription(sub, ctx(t))
 				require.NoError(t, err)
 				if p, ok := e.Payload().(events.InteractionRequested); ok {
-					_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept"})
+					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept"})
 					require.Error(t, err)
-					_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"not-a-native-question": map[string]any{"answers": []any{"json"}}}}})
+					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"not-a-native-question": map[string]any{"answers": []any{"json"}}}}})
 					require.Error(t, err, "unknown question identity must reject before dispatch")
 					var answers map[string]any
 					if kind == "claude" {
@@ -44,13 +44,13 @@ func TestNativeInteractionAnswerCorrection(t *testing.T) {
 					require.NoError(t, err)
 					canceled, cancel := context.WithCancel(context.Background())
 					cancel()
-					_, err = driver.AnswerInteraction(canceled, ref.SessionID, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
+					_, err = driver.AnswerInteraction(canceled, ref.SessionID, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
 					require.Error(t, err, "confirmed native pre-write cancellation must not consume live authority")
-					receipt, err := svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
+					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
 					require.NoError(t, err, "validation must not consume live native authority")
 					require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
 					require.Nil(t, receipt.Evidence.NativeAccepted)
-					_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
+					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": answers}})
 					require.Error(t, err)
 					answered = true
 				}
@@ -93,7 +93,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 		}
 		if request != nil && progressed && !answered {
 			client := newHTTPClient(s.T(), s.url, "")
-			err := workflowHTTP(client, ctx(s.T()), "session.answer", workflowParams{Session: ref, Interaction: request.Interaction, Answer: map[string]any{"action": "accept"}}, nil)
+			err := workflowHTTP(client, ctx(s.T()), "session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: map[string]any{"action": "accept"}}, nil)
 			var public *transport.Error
 			s.Require().ErrorAs(err, &public)
 			s.Equal("invalid_argument", public.Code)
@@ -114,7 +114,7 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 				go func() {
 					<-start
 					var receipt runtime.InteractionReceipt
-					err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.answer", workflowParams{Session: ref, Interaction: request.Interaction, Answer: answer}, &receipt)
+					err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: answer}, &receipt)
 					results <- result{receipt, err}
 				}()
 			}
@@ -164,17 +164,17 @@ func TestNativePermissionDecisions(t *testing.T) {
 					require.NotEmpty(t, p.Request.Content, "original native tool input must be visible")
 					if scenario.mode == "restricted" && p.Request.Title == "item/commandExecution/requestApproval" {
 						require.Len(t, p.Request.Options, 1, "only native offered options may be exposed")
-						_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"outcome": "selected", "optionId": "allow-once"})
+						_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"})
 						require.Error(t, err)
 					}
-					_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"outcome": "selected", "optionId": "not-offered"})
+					_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "not-offered"})
 					require.Error(t, err)
 					answer := map[string]any{"outcome": "selected", "optionId": "reject-once"}
 					if scenario.mode == "update" {
 						answer["optionId"] = "allow-once"
 						answer["updatedInput"] = map[string]any{"command": "echo corrected", "future": json.Number("9007199254740993")}
 					}
-					receipt, err := svc.AnswerInteraction(ctx(t), ref, p.Interaction, answer)
+					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), answer)
 					require.NoError(t, err)
 					require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
 					require.Nil(t, receipt.Evidence.NativeAccepted)

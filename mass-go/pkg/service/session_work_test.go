@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -60,7 +61,7 @@ func (d *workDriver) SendPrompt(ctx context.Context, id string, in runtime.Input
 		}
 	}
 	no := false
-	return runtime.InputReceipt{Submission: "work-1", Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: &no}}, nil
+	return runtime.InputReceipt{Submission: "work-1", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: &no}}, nil
 }
 
 type workFactory struct{ driver *workDriver }
@@ -136,13 +137,13 @@ func (s *SessionWorkSuite) TestReceiptPreservesUnknownFalseAndTrue() {
 	s.Require().NoError(err)
 	raw, err := json.Marshal(receipt)
 	s.Require().NoError(err)
-	s.JSONEq(`{"submission":"work-1","acceptance":{"sent":true,"nativeAccepted":false}}`, string(raw))
+	s.JSONEq(`{"submission":"work-1","result":"applied_new_work","acceptance":{"sent":true,"nativeAccepted":false}}`, string(raw))
 }
 func TestSessionWorkSuite(t *testing.T) { suite.Run(t, new(SessionWorkSuite)) }
 
 func (s *SessionWorkSuite) TestInvalidInputRejectedBeforeDispatch() {
 	close(s.driver.release)
-	for _, input := range []runtime.Input{{}, {Content: []events.ContentBlock{{Type: "image"}}}, {Content: []events.ContentBlock{events.Text(string([]byte{0xff}))}}} {
+	for _, input := range []runtime.Input{{}, {Content: []events.ContentBlock{events.ImageBlock{}}}, {Content: []events.ContentBlock{events.Text(string([]byte{0xff}))}}} {
 		_, err := s.svc.SendPrompt(context.Background(), s.ref, input)
 		s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	}

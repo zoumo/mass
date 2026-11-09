@@ -306,7 +306,7 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 		}
 		if chunk, ok := event.Payload().(events.MessageChunk); ok {
 			require.Equal(t, "message-1", event.ItemID)
-			chunks = append(chunks, chunk.Content[0].Text)
+			chunks = append(chunks, events.TextOf(chunk.Content[0]))
 		}
 		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil {
 			if *state.State == events.Running {
@@ -319,7 +319,7 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 	}
 	require.Equal(t, []string{"preview ", "only"}, chunks)
 	require.Len(t, persisted, 4)
-	require.Equal(t, "complete answer", persisted[3].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "complete answer", events.TextOf(persisted[3].Payload().(events.AgentMessage).Content[0]))
 	page, err := svc.ListHistoryEvents(id, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.Len(t, page.Events, 4)

@@ -100,6 +100,9 @@ func jsonValue(d *json.Decoder) error {
 // Fixed model members follow JSON tags; maps/interfaces remain explicitly open.
 func validateShape(value any, t reflect.Type) error {
 	if t.Kind() == reflect.Interface {
+		if t == reflect.TypeFor[events.ContentBlock]() {
+			return nil
+		}
 		return nil
 	}
 	if t.Kind() == reflect.Pointer {
@@ -107,6 +110,12 @@ func validateShape(value any, t reflect.Type) error {
 	}
 	if value == nil {
 		return Invalid()
+	}
+	// agent.Input owns a strict, custom JSON codec and intentionally has no
+	// transport tags on its fields. Huma validates the public envelope and the
+	// SDK validates the content union during decode.
+	if t == reflect.TypeFor[runtime.Input]() {
+		return nil
 	}
 	if t == reflect.TypeFor[events.ContentBlock]() {
 		return nil
@@ -176,7 +185,7 @@ func validateOutput(value reflect.Value) error {
 	}
 	if value.Type() == reflect.TypeFor[events.ConfigOption]() {
 		option := value.Interface().(events.ConfigOption)
-		if err := option.Validate(); err != nil {
+		if err := events.ValidateConfigOption(option); err != nil {
 			return err
 		}
 		for _, v := range []any{option.ID, option.Name, option.Description, option.Category, option.Type, option.CurrentValue} {
@@ -190,6 +199,9 @@ func validateOutput(value reflect.Value) error {
 	if value.Kind() == reflect.Interface {
 		if value.IsNil() {
 			return nil
+		}
+		if block, ok := value.Interface().(events.ContentBlock); ok {
+			return events.ValidateContentBlock(block)
 		}
 		return events.CheckDynamicJSON(value.Interface())
 	}

@@ -1,10 +1,12 @@
 package events
 
-type SessionState string
+import "github.com/zoumo/agent-sdk-go/agent"
+
+type SessionState = agent.SessionState
 
 const (
 	Unknown        SessionState = "unknown"
-	Idle           SessionState = "idle"
-	Running        SessionState = "running"
-	RequiresAction SessionState = "requires_action"
+	Idle                        = agent.StateIdle
+	Running                     = agent.StateRunning
+	RequiresAction              = agent.StateRequiresAction
 )

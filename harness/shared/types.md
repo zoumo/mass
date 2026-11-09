@@ -21,10 +21,11 @@ sources:
 | SubmissionRef / WorkRef / InteractionRef | 不透明字符串，不规定 UUID、前缀或可解析结构；有效范围由原 Session 与原运行绑定校验 |
 | InteractionAnswer | 任意动态值，可为标量、数组、对象或 null；对应交互负责解释与校验 |
 | AcceptanceEvidence / InteractionEvidence | 只报告真实观察的 sent、nativeAccepted、nativeRecorded，各字段可缺省 |
+| InputResult | SDK 四态输入结果：current work、new work、best effort 或 not applied；不得升级语义 |
 
 配置可包含 command/args/env/secretRefs 或 url/authRef，但它们不是每种类型都必须支持的字段。能力键例如 session.resume、session.cancel、interaction.answer 只是命名示例，不是封闭列表；未宣告能力不能推断为支持，能力存在也不能绕过当前状态和业务准入。
 
-引用必须与原操作关联，不能根据任意字符串指向恢复后的新工作。输入 receipt 中的 submission 与交互 receipt 中的 interaction 固定接纳目标；它们本身不提供客户端幂等或公开操作查询能力。
+引用必须与原操作关联，不能根据任意字符串指向恢复后的新工作。输入 receipt 中的 submission 固定接纳目标并附带 SDK InputResult；交互 receipt 中的 interaction 固定原交互。它们本身不提供客户端幂等或公开操作查询能力。`applied_best_effort` 只证明本地写入成功，不证明原生调度或并入当前 turn；`not_applied` 表示输入仍归调用方，不能当作成功。
 
 接受证据省略字段表示未知，false 表示有明确否定证据。sent 需要实际向原生端交付的证据，仅进入 MASS 本地队列不能填 true。nativeAccepted 表示原生端接受，nativeRecorded 表示原生端记录；后者不是 MASS 历史提交。成功的接受回执必须有 nativeAccepted=true 或 nativeRecorded=true 等实际接受证据，只有 sent=true 或空证据不能宣称接受成功，应按 outcome_unknown 或确定拒绝处理。不观察到某个阶段时不填造布尔值，也不因为后续阶段存在就伪造此前阶段的观察。
 

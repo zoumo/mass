@@ -1,5 +1,9 @@
 # 设计知识包更新记录
 
+## 2026-11-10
+
+- **统一事件收敛到 agent-sdk-go**：经负责人授权，MASS live SessionEvent 的 type、payload、eventId、time、itemId、`_meta` 与工具 `toolName/provider/kind` 以 SDK `agent.Event` 为唯一真相源；MASS relay 只补 namespace/sessionName、Source、历史 replay 和持久化分类。删除 `agent.plan`，工具旧 `name` wire 与计划类型均为公开 breaking change；内容块与输入直接使用 SDK 类型，InputReceipt 增加 SDK 四态 result。同步 Runtime 事件合同、共享模型与示例，接口修订为 v0.3.0。
+
 ## 2026-11-08
 
 - **增加 Runtime Session 默认配置**：经负责人授权，RuntimeSpec 顶层增加 `features` 与 `mcpServers`，不放入类型专属 `config`。Runtime 启动、Driver 构造和 registry 配置校验不消费默认值；Service 在 createSession、resumeSession 与 loadSession 时读取当前 Runtime spec，与 Session 显式值合并后交给 Driver。features 按同名字段覆盖，MCP server 按名称整体覆盖并保持 Runtime 顺序，新名称按 Session 顺序追加；Session 空 MCP 列表表示无覆盖，不清空 Runtime 默认项。合并结果为 nil 时保留 provider ambient，非 nil（含空列表）是本次完整 server 集合：Claude 使用 strict MCP configuration，Codex 要求隔离且不含 ambient `mcp_servers` 的 `CODEX_HOME`。远端 URL、秘密引用和 transport 字段采用公共安全约束。Session spec 只保存显式值，不复制合并结果。Runtime 更新对下一次 Session 打开操作生效，已打开 Session 不热更新。同步 Runtime/Service、load、架构、HTTP、存储、massctl 与合同入口，接口修订为 v0.2.20。

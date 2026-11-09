@@ -95,27 +95,27 @@ func (e HistoryReplayPhase) Valid() bool {
 	}
 }
 
-// Defines values for InteractionClosedOutcome.
+// Defines values for InteractionClosedPayloadOutcome.
 const (
-	InteractionClosedOutcomeAnswered  InteractionClosedOutcome = "answered"
-	InteractionClosedOutcomeCancelled InteractionClosedOutcome = "cancelled"
-	InteractionClosedOutcomeCompleted InteractionClosedOutcome = "completed"
-	InteractionClosedOutcomeExpired   InteractionClosedOutcome = "expired"
-	InteractionClosedOutcomeFailed    InteractionClosedOutcome = "failed"
+	InteractionClosedPayloadOutcomeAnswered  InteractionClosedPayloadOutcome = "answered"
+	InteractionClosedPayloadOutcomeCancelled InteractionClosedPayloadOutcome = "cancelled"
+	InteractionClosedPayloadOutcomeCompleted InteractionClosedPayloadOutcome = "completed"
+	InteractionClosedPayloadOutcomeExpired   InteractionClosedPayloadOutcome = "expired"
+	InteractionClosedPayloadOutcomeFailed    InteractionClosedPayloadOutcome = "failed"
 )
 
-// Valid indicates whether the value is a known member of the InteractionClosedOutcome enum.
-func (e InteractionClosedOutcome) Valid() bool {
+// Valid indicates whether the value is a known member of the InteractionClosedPayloadOutcome enum.
+func (e InteractionClosedPayloadOutcome) Valid() bool {
 	switch e {
-	case InteractionClosedOutcomeAnswered:
+	case InteractionClosedPayloadOutcomeAnswered:
 		return true
-	case InteractionClosedOutcomeCancelled:
+	case InteractionClosedPayloadOutcomeCancelled:
 		return true
-	case InteractionClosedOutcomeCompleted:
+	case InteractionClosedPayloadOutcomeCompleted:
 		return true
-	case InteractionClosedOutcomeExpired:
+	case InteractionClosedPayloadOutcomeExpired:
 		return true
-	case InteractionClosedOutcomeFailed:
+	case InteractionClosedPayloadOutcomeFailed:
 		return true
 	default:
 		return false
@@ -137,111 +137,6 @@ func (e MCPServerType) Valid() bool {
 	case Sse:
 		return true
 	case Stdio:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for OutputAvailability.
-const (
-	Provided    OutputAvailability = "provided"
-	Unavailable OutputAvailability = "unavailable"
-)
-
-// Valid indicates whether the value is a known member of the OutputAvailability enum.
-func (e OutputAvailability) Valid() bool {
-	switch e {
-	case Provided:
-		return true
-	case Unavailable:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for OutputCompleteness.
-const (
-	OutputCompletenessRetained  OutputCompleteness = "retained"
-	OutputCompletenessTruncated OutputCompleteness = "truncated"
-	OutputCompletenessUnknown   OutputCompleteness = "unknown"
-)
-
-// Valid indicates whether the value is a known member of the OutputCompleteness enum.
-func (e OutputCompleteness) Valid() bool {
-	switch e {
-	case OutputCompletenessRetained:
-		return true
-	case OutputCompletenessTruncated:
-		return true
-	case OutputCompletenessUnknown:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PermissionOptionKind.
-const (
-	AllowAlways  PermissionOptionKind = "allow_always"
-	AllowOnce    PermissionOptionKind = "allow_once"
-	RejectAlways PermissionOptionKind = "reject_always"
-	RejectOnce   PermissionOptionKind = "reject_once"
-)
-
-// Valid indicates whether the value is a known member of the PermissionOptionKind enum.
-func (e PermissionOptionKind) Valid() bool {
-	switch e {
-	case AllowAlways:
-		return true
-	case AllowOnce:
-		return true
-	case RejectAlways:
-		return true
-	case RejectOnce:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PlanEntryPriority.
-const (
-	High   PlanEntryPriority = "high"
-	Low    PlanEntryPriority = "low"
-	Medium PlanEntryPriority = "medium"
-)
-
-// Valid indicates whether the value is a known member of the PlanEntryPriority enum.
-func (e PlanEntryPriority) Valid() bool {
-	switch e {
-	case High:
-		return true
-	case Low:
-		return true
-	case Medium:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for PlanEntryStatus.
-const (
-	PlanEntryStatusCompleted  PlanEntryStatus = "completed"
-	PlanEntryStatusInProgress PlanEntryStatus = "in_progress"
-	PlanEntryStatusPending    PlanEntryStatus = "pending"
-)
-
-// Valid indicates whether the value is a known member of the PlanEntryStatus enum.
-func (e PlanEntryStatus) Valid() bool {
-	switch e {
-	case PlanEntryStatusCompleted:
-		return true
-	case PlanEntryStatusInProgress:
-		return true
-	case PlanEntryStatusPending:
 		return true
 	default:
 		return false
@@ -275,102 +170,186 @@ func (e RuntimeStatusState) Valid() bool {
 	}
 }
 
-// Defines values for StateUpdatePreviousState.
+// Defines values for StateUpdatePayloadPreviousState.
 const (
-	StateUpdatePreviousStateIdle           StateUpdatePreviousState = "idle"
-	StateUpdatePreviousStateRequiresAction StateUpdatePreviousState = "requires_action"
-	StateUpdatePreviousStateRunning        StateUpdatePreviousState = "running"
+	StateUpdatePayloadPreviousStateIdle           StateUpdatePayloadPreviousState = "idle"
+	StateUpdatePayloadPreviousStateRequiresAction StateUpdatePayloadPreviousState = "requires_action"
+	StateUpdatePayloadPreviousStateRunning        StateUpdatePayloadPreviousState = "running"
 )
 
-// Valid indicates whether the value is a known member of the StateUpdatePreviousState enum.
-func (e StateUpdatePreviousState) Valid() bool {
+// Valid indicates whether the value is a known member of the StateUpdatePayloadPreviousState enum.
+func (e StateUpdatePayloadPreviousState) Valid() bool {
 	switch e {
-	case StateUpdatePreviousStateIdle:
+	case StateUpdatePayloadPreviousStateIdle:
 		return true
-	case StateUpdatePreviousStateRequiresAction:
+	case StateUpdatePayloadPreviousStateRequiresAction:
 		return true
-	case StateUpdatePreviousStateRunning:
+	case StateUpdatePayloadPreviousStateRunning:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for StateUpdateState.
+// Defines values for StateUpdatePayloadState.
 const (
-	StateUpdateStateIdle           StateUpdateState = "idle"
-	StateUpdateStateRequiresAction StateUpdateState = "requires_action"
-	StateUpdateStateRunning        StateUpdateState = "running"
+	StateUpdatePayloadStateIdle           StateUpdatePayloadState = "idle"
+	StateUpdatePayloadStateRequiresAction StateUpdatePayloadState = "requires_action"
+	StateUpdatePayloadStateRunning        StateUpdatePayloadState = "running"
 )
 
-// Valid indicates whether the value is a known member of the StateUpdateState enum.
-func (e StateUpdateState) Valid() bool {
+// Valid indicates whether the value is a known member of the StateUpdatePayloadState enum.
+func (e StateUpdatePayloadState) Valid() bool {
 	switch e {
-	case StateUpdateStateIdle:
+	case StateUpdatePayloadStateIdle:
 		return true
-	case StateUpdateStateRequiresAction:
+	case StateUpdatePayloadStateRequiresAction:
 		return true
-	case StateUpdateStateRunning:
+	case StateUpdatePayloadStateRunning:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ToolCallStatus.
+// Defines values for ToolCallPayloadKind.
 const (
-	ToolCallStatusCompleted  ToolCallStatus = "completed"
-	ToolCallStatusDeclined   ToolCallStatus = "declined"
-	ToolCallStatusFailed     ToolCallStatus = "failed"
-	ToolCallStatusInProgress ToolCallStatus = "in_progress"
-	ToolCallStatusPending    ToolCallStatus = "pending"
-	ToolCallStatusUnknown    ToolCallStatus = "unknown"
+	ToolCallPayloadKindDelete     ToolCallPayloadKind = "delete"
+	ToolCallPayloadKindEdit       ToolCallPayloadKind = "edit"
+	ToolCallPayloadKindExecute    ToolCallPayloadKind = "execute"
+	ToolCallPayloadKindFetch      ToolCallPayloadKind = "fetch"
+	ToolCallPayloadKindMove       ToolCallPayloadKind = "move"
+	ToolCallPayloadKindOther      ToolCallPayloadKind = "other"
+	ToolCallPayloadKindRead       ToolCallPayloadKind = "read"
+	ToolCallPayloadKindSearch     ToolCallPayloadKind = "search"
+	ToolCallPayloadKindSwitchMode ToolCallPayloadKind = "switch_mode"
+	ToolCallPayloadKindThink      ToolCallPayloadKind = "think"
 )
 
-// Valid indicates whether the value is a known member of the ToolCallStatus enum.
-func (e ToolCallStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the ToolCallPayloadKind enum.
+func (e ToolCallPayloadKind) Valid() bool {
 	switch e {
-	case ToolCallStatusCompleted:
+	case ToolCallPayloadKindDelete:
 		return true
-	case ToolCallStatusDeclined:
+	case ToolCallPayloadKindEdit:
 		return true
-	case ToolCallStatusFailed:
+	case ToolCallPayloadKindExecute:
 		return true
-	case ToolCallStatusInProgress:
+	case ToolCallPayloadKindFetch:
 		return true
-	case ToolCallStatusPending:
+	case ToolCallPayloadKindMove:
 		return true
-	case ToolCallStatusUnknown:
+	case ToolCallPayloadKindOther:
+		return true
+	case ToolCallPayloadKindRead:
+		return true
+	case ToolCallPayloadKindSearch:
+		return true
+	case ToolCallPayloadKindSwitchMode:
+		return true
+	case ToolCallPayloadKindThink:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ToolResultStatus.
+// Defines values for ToolCallPayloadStatus.
 const (
-	ToolResultStatusCompleted  ToolResultStatus = "completed"
-	ToolResultStatusDeclined   ToolResultStatus = "declined"
-	ToolResultStatusFailed     ToolResultStatus = "failed"
-	ToolResultStatusInProgress ToolResultStatus = "in_progress"
-	ToolResultStatusPending    ToolResultStatus = "pending"
-	ToolResultStatusUnknown    ToolResultStatus = "unknown"
+	ToolCallPayloadStatusCompleted  ToolCallPayloadStatus = "completed"
+	ToolCallPayloadStatusDeclined   ToolCallPayloadStatus = "declined"
+	ToolCallPayloadStatusFailed     ToolCallPayloadStatus = "failed"
+	ToolCallPayloadStatusInProgress ToolCallPayloadStatus = "in_progress"
+	ToolCallPayloadStatusPending    ToolCallPayloadStatus = "pending"
+	ToolCallPayloadStatusUnknown    ToolCallPayloadStatus = "unknown"
 )
 
-// Valid indicates whether the value is a known member of the ToolResultStatus enum.
-func (e ToolResultStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the ToolCallPayloadStatus enum.
+func (e ToolCallPayloadStatus) Valid() bool {
 	switch e {
-	case ToolResultStatusCompleted:
+	case ToolCallPayloadStatusCompleted:
 		return true
-	case ToolResultStatusDeclined:
+	case ToolCallPayloadStatusDeclined:
 		return true
-	case ToolResultStatusFailed:
+	case ToolCallPayloadStatusFailed:
 		return true
-	case ToolResultStatusInProgress:
+	case ToolCallPayloadStatusInProgress:
 		return true
-	case ToolResultStatusPending:
+	case ToolCallPayloadStatusPending:
 		return true
-	case ToolResultStatusUnknown:
+	case ToolCallPayloadStatusUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ToolResultPayloadKind.
+const (
+	ToolResultPayloadKindDelete     ToolResultPayloadKind = "delete"
+	ToolResultPayloadKindEdit       ToolResultPayloadKind = "edit"
+	ToolResultPayloadKindExecute    ToolResultPayloadKind = "execute"
+	ToolResultPayloadKindFetch      ToolResultPayloadKind = "fetch"
+	ToolResultPayloadKindMove       ToolResultPayloadKind = "move"
+	ToolResultPayloadKindOther      ToolResultPayloadKind = "other"
+	ToolResultPayloadKindRead       ToolResultPayloadKind = "read"
+	ToolResultPayloadKindSearch     ToolResultPayloadKind = "search"
+	ToolResultPayloadKindSwitchMode ToolResultPayloadKind = "switch_mode"
+	ToolResultPayloadKindThink      ToolResultPayloadKind = "think"
+)
+
+// Valid indicates whether the value is a known member of the ToolResultPayloadKind enum.
+func (e ToolResultPayloadKind) Valid() bool {
+	switch e {
+	case ToolResultPayloadKindDelete:
+		return true
+	case ToolResultPayloadKindEdit:
+		return true
+	case ToolResultPayloadKindExecute:
+		return true
+	case ToolResultPayloadKindFetch:
+		return true
+	case ToolResultPayloadKindMove:
+		return true
+	case ToolResultPayloadKindOther:
+		return true
+	case ToolResultPayloadKindRead:
+		return true
+	case ToolResultPayloadKindSearch:
+		return true
+	case ToolResultPayloadKindSwitchMode:
+		return true
+	case ToolResultPayloadKindThink:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ToolResultPayloadStatus.
+const (
+	ToolResultPayloadStatusCompleted  ToolResultPayloadStatus = "completed"
+	ToolResultPayloadStatusDeclined   ToolResultPayloadStatus = "declined"
+	ToolResultPayloadStatusFailed     ToolResultPayloadStatus = "failed"
+	ToolResultPayloadStatusInProgress ToolResultPayloadStatus = "in_progress"
+	ToolResultPayloadStatusPending    ToolResultPayloadStatus = "pending"
+	ToolResultPayloadStatusUnknown    ToolResultPayloadStatus = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the ToolResultPayloadStatus enum.
+func (e ToolResultPayloadStatus) Valid() bool {
+	switch e {
+	case ToolResultPayloadStatusCompleted:
+		return true
+	case ToolResultPayloadStatusDeclined:
+		return true
+	case ToolResultPayloadStatusFailed:
+		return true
+	case ToolResultPayloadStatusInProgress:
+		return true
+	case ToolResultPayloadStatusPending:
+		return true
+	case ToolResultPayloadStatusUnknown:
 		return true
 	default:
 		return false
@@ -381,7 +360,6 @@ func (e ToolResultStatus) Valid() bool {
 const (
 	ListHistoryByNameOrIDParamsTypesAgentMessage                   ListHistoryByNameOrIDParamsTypes = "agent.message"
 	ListHistoryByNameOrIDParamsTypesAgentMessageChunk              ListHistoryByNameOrIDParamsTypes = "agent.message_chunk"
-	ListHistoryByNameOrIDParamsTypesAgentPlan                      ListHistoryByNameOrIDParamsTypes = "agent.plan"
 	ListHistoryByNameOrIDParamsTypesAgentThinking                  ListHistoryByNameOrIDParamsTypes = "agent.thinking"
 	ListHistoryByNameOrIDParamsTypesAgentThinkingChunk             ListHistoryByNameOrIDParamsTypes = "agent.thinking_chunk"
 	ListHistoryByNameOrIDParamsTypesAgentToolCall                  ListHistoryByNameOrIDParamsTypes = "agent.tool_call"
@@ -404,8 +382,6 @@ func (e ListHistoryByNameOrIDParamsTypes) Valid() bool {
 	case ListHistoryByNameOrIDParamsTypesAgentMessage:
 		return true
 	case ListHistoryByNameOrIDParamsTypesAgentMessageChunk:
-		return true
-	case ListHistoryByNameOrIDParamsTypesAgentPlan:
 		return true
 	case ListHistoryByNameOrIDParamsTypesAgentThinking:
 		return true
@@ -504,7 +480,6 @@ func (e ListSessionsParamsState) Valid() bool {
 const (
 	ListHistoryByIDParamsTypesAgentMessage                   ListHistoryByIDParamsTypes = "agent.message"
 	ListHistoryByIDParamsTypesAgentMessageChunk              ListHistoryByIDParamsTypes = "agent.message_chunk"
-	ListHistoryByIDParamsTypesAgentPlan                      ListHistoryByIDParamsTypes = "agent.plan"
 	ListHistoryByIDParamsTypesAgentThinking                  ListHistoryByIDParamsTypes = "agent.thinking"
 	ListHistoryByIDParamsTypesAgentThinkingChunk             ListHistoryByIDParamsTypes = "agent.thinking_chunk"
 	ListHistoryByIDParamsTypesAgentToolCall                  ListHistoryByIDParamsTypes = "agent.tool_call"
@@ -527,8 +502,6 @@ func (e ListHistoryByIDParamsTypes) Valid() bool {
 	case ListHistoryByIDParamsTypesAgentMessage:
 		return true
 	case ListHistoryByIDParamsTypesAgentMessageChunk:
-		return true
-	case ListHistoryByIDParamsTypesAgentPlan:
 		return true
 	case ListHistoryByIDParamsTypesAgentThinking:
 		return true
@@ -572,26 +545,26 @@ type Acceptance struct {
 
 // AgentMessage defines model for AgentMessage.
 type AgentMessage struct {
-	Content   []ContentBlock `json:"content"`
-	MessageId string         `json:"messageId"`
-	Phase     *string        `json:"phase,omitempty"`
+	Content   []rawjson.RawMessage `json:"content"`
+	MessageId string               `json:"messageId"`
+	Phase     *string              `json:"phase,omitempty"`
 }
 
 // AgentThinking defines model for AgentThinking.
 type AgentThinking struct {
-	Content   []ContentBlock `json:"content"`
-	MessageId string         `json:"messageId"`
-	Phase     *string        `json:"phase,omitempty"`
+	Content   []rawjson.RawMessage `json:"content"`
+	MessageId string               `json:"messageId"`
+	Phase     *string              `json:"phase,omitempty"`
 }
 
 // AvailableCommand defines model for AvailableCommand.
 type AvailableCommand struct {
-	Description *string `json:"description,omitempty"`
-	Name        string  `json:"name"`
+	Description string `json:"description"`
+	Name        string `json:"name"`
 }
 
-// AvailableCommandsUpdate defines model for AvailableCommandsUpdate.
-type AvailableCommandsUpdate struct {
+// AvailableCommandsUpdatePayload defines model for AvailableCommandsUpdatePayload.
+type AvailableCommandsUpdatePayload struct {
 	AvailableCommands []AvailableCommand `json:"availableCommands"`
 }
 
@@ -617,8 +590,8 @@ type ConfigOptionGroup struct {
 	Options []ConfigOptionValue `json:"options"`
 }
 
-// ConfigOptionUpdate defines model for ConfigOptionUpdate.
-type ConfigOptionUpdate struct {
+// ConfigOptionUpdatePayload defines model for ConfigOptionUpdatePayload.
+type ConfigOptionUpdatePayload struct {
 	ConfigOptions []ConfigOption `json:"configOptions"`
 }
 
@@ -682,8 +655,8 @@ type HistoryReplayCurrentState string
 // HistoryReplayPhase defines model for HistoryReplay.Phase.
 type HistoryReplayPhase string
 
-// InfoUpdate defines model for InfoUpdate.
-type InfoUpdate = rawjson.RawMessage
+// InfoUpdatePayload defines model for InfoUpdatePayload.
+type InfoUpdatePayload = rawjson.RawMessage
 
 // Input defines model for Input.
 type Input struct {
@@ -693,18 +666,19 @@ type Input struct {
 // InputReceipt defines model for InputReceipt.
 type InputReceipt struct {
 	Acceptance Acceptance `json:"acceptance"`
+	Result     string     `json:"result"`
 	Submission string     `json:"submission"`
 }
 
-// InteractionClosed defines model for InteractionClosed.
-type InteractionClosed struct {
-	Interaction string                   `json:"interaction"`
-	Outcome     InteractionClosedOutcome `json:"outcome"`
-	Reason      *string                  `json:"reason,omitempty"`
+// InteractionClosedPayload defines model for InteractionClosedPayload.
+type InteractionClosedPayload struct {
+	Interaction string                          `json:"interaction"`
+	Outcome     InteractionClosedPayloadOutcome `json:"outcome"`
+	Reason      *string                         `json:"reason,omitempty"`
 }
 
-// InteractionClosedOutcome defines model for InteractionClosed.Outcome.
-type InteractionClosedOutcome string
+// InteractionClosedPayloadOutcome defines model for InteractionClosedPayload.Outcome.
+type InteractionClosedPayloadOutcome string
 
 // InteractionReceipt defines model for InteractionReceipt.
 type InteractionReceipt struct {
@@ -715,8 +689,8 @@ type InteractionReceipt struct {
 // InteractionRequest defines model for InteractionRequest.
 type InteractionRequest = rawjson.RawMessage
 
-// InteractionRequested defines model for InteractionRequested.
-type InteractionRequested struct {
+// InteractionRequestedPayload defines model for InteractionRequestedPayload.
+type InteractionRequestedPayload struct {
 	Blocking    bool               `json:"blocking"`
 	Interaction string             `json:"interaction"`
 	Request     InteractionRequest `json:"request"`
@@ -747,9 +721,9 @@ type MCPServerType string
 
 // MessageChunk defines model for MessageChunk.
 type MessageChunk struct {
-	Content   []ContentBlock `json:"content"`
-	MessageId string         `json:"messageId"`
-	Phase     *string        `json:"phase,omitempty"`
+	Content   []rawjson.RawMessage `json:"content"`
+	MessageId string               `json:"messageId"`
+	Phase     *string              `json:"phase,omitempty"`
 }
 
 // Metadata defines model for Metadata.
@@ -769,47 +743,12 @@ type OperationError struct {
 	Reason  string `json:"reason"`
 }
 
-// Output defines model for Output.
-type Output struct {
-	Availability OutputAvailability `json:"availability"`
-	Completeness OutputCompleteness `json:"completeness"`
-	Truncation   *Truncation        `json:"truncation,omitempty"`
-}
-
-// OutputAvailability defines model for Output.Availability.
-type OutputAvailability string
-
-// OutputCompleteness defines model for Output.Completeness.
-type OutputCompleteness string
-
 // PermissionOption defines model for PermissionOption.
 type PermissionOption struct {
-	Kind     PermissionOptionKind `json:"kind"`
-	Name     string               `json:"name"`
-	OptionId string               `json:"optionId"`
+	Kind     string `json:"kind"`
+	Name     string `json:"name"`
+	OptionId string `json:"optionId"`
 }
-
-// PermissionOptionKind defines model for PermissionOption.Kind.
-type PermissionOptionKind string
-
-// Plan defines model for Plan.
-type Plan struct {
-	Entries []PlanEntry `json:"entries"`
-	PlanId  string      `json:"planId"`
-}
-
-// PlanEntry defines model for PlanEntry.
-type PlanEntry struct {
-	Content  string            `json:"content"`
-	Priority PlanEntryPriority `json:"priority"`
-	Status   PlanEntryStatus   `json:"status"`
-}
-
-// PlanEntryPriority defines model for PlanEntry.Priority.
-type PlanEntryPriority string
-
-// PlanEntryStatus defines model for PlanEntry.Status.
-type PlanEntryStatus string
 
 // ProbeStatus defines model for ProbeStatus.
 type ProbeStatus struct {
@@ -898,8 +837,8 @@ type SessionCreated struct {
 	Status              SessionStatus `json:"status"`
 }
 
-// SessionError defines model for SessionError.
-type SessionError struct {
+// SessionErrorPayload defines model for SessionErrorPayload.
+type SessionErrorPayload struct {
 	Message string  `json:"message"`
 	Reason  *string `json:"reason,omitempty"`
 }
@@ -969,75 +908,90 @@ type SessionStatus struct {
 	State             string             `json:"state"`
 }
 
-// StateUpdate defines model for StateUpdate.
-type StateUpdate struct {
+// StateUpdatePayload defines model for StateUpdatePayload.
+type StateUpdatePayload struct {
 	Error *struct {
 		Code    rawjson.RawMessage `json:"code,omitempty"`
 		Message string             `json:"message"`
 	} `json:"error,omitempty"`
-	PreviousState nullable.Nullable[StateUpdatePreviousState] `json:"previousState"`
-	State         nullable.Nullable[StateUpdateState]         `json:"state"`
-	StopReason    *string                                     `json:"stopReason,omitempty"`
+	PreviousState nullable.Nullable[StateUpdatePayloadPreviousState] `json:"previousState"`
+	State         nullable.Nullable[StateUpdatePayloadState]         `json:"state"`
+	StopReason    *string                                            `json:"stopReason,omitempty"`
 }
 
-// StateUpdatePreviousState defines model for StateUpdate.PreviousState.
-type StateUpdatePreviousState string
+// StateUpdatePayloadPreviousState defines model for StateUpdatePayload.PreviousState.
+type StateUpdatePayloadPreviousState string
 
-// StateUpdateState defines model for StateUpdate.State.
-type StateUpdateState string
+// StateUpdatePayloadState defines model for StateUpdatePayload.State.
+type StateUpdatePayloadState string
 
 // ThinkingChunk defines model for ThinkingChunk.
 type ThinkingChunk struct {
-	Content   []ContentBlock `json:"content"`
-	MessageId string         `json:"messageId"`
-	Phase     *string        `json:"phase,omitempty"`
+	Content   []rawjson.RawMessage `json:"content"`
+	MessageId string               `json:"messageId"`
+	Phase     *string              `json:"phase,omitempty"`
 }
 
-// ToolCall defines model for ToolCall.
-type ToolCall struct {
-	Content             *[]ContentBlock    `json:"content,omitempty"`
-	DurationMs          *float64           `json:"durationMs,omitempty"`
-	ExitCode            *int32             `json:"exitCode,omitempty"`
-	Id                  string             `json:"id"`
-	InputRepresentation *string            `json:"inputRepresentation,omitempty"`
-	Kind                string             `json:"kind"`
-	Name                *string            `json:"name,omitempty"`
-	Output              *Output            `json:"output,omitempty"`
-	Phase               *string            `json:"phase,omitempty"`
-	RawInput            rawjson.RawMessage `json:"rawInput"`
-	RawOutput           rawjson.RawMessage `json:"rawOutput,omitempty"`
-	Status              *ToolCallStatus    `json:"status,omitempty"`
-	Title               *string            `json:"title,omitempty"`
+// ToolCallPayload defines model for ToolCallPayload.
+type ToolCallPayload struct {
+	Content             *[]rawjson.RawMessage  `json:"content,omitempty"`
+	DurationMs          *float64               `json:"durationMs,omitempty"`
+	ExitCode            *int32                 `json:"exitCode,omitempty"`
+	Id                  string                 `json:"id"`
+	InputRepresentation *string                `json:"inputRepresentation,omitempty"`
+	Kind                ToolCallPayloadKind    `json:"kind"`
+	Output              *ToolOutput            `json:"output,omitempty"`
+	Phase               *string                `json:"phase,omitempty"`
+	Provider            string                 `json:"provider"`
+	RawInput            rawjson.RawMessage     `json:"rawInput"`
+	RawOutput           rawjson.RawMessage     `json:"rawOutput,omitempty"`
+	Status              *ToolCallPayloadStatus `json:"status,omitempty"`
+	Title               *string                `json:"title,omitempty"`
+	ToolName            string                 `json:"toolName"`
 }
 
-// ToolCallStatus defines model for ToolCall.Status.
-type ToolCallStatus string
+// ToolCallPayloadKind defines model for ToolCallPayload.Kind.
+type ToolCallPayloadKind string
 
-// ToolChunk defines model for ToolChunk.
-type ToolChunk struct {
-	Content []ContentBlock `json:"content"`
-	Id      string         `json:"id"`
+// ToolCallPayloadStatus defines model for ToolCallPayload.Status.
+type ToolCallPayloadStatus string
+
+// ToolChunkPayload defines model for ToolChunkPayload.
+type ToolChunkPayload struct {
+	Content []rawjson.RawMessage `json:"content"`
+	Id      string               `json:"id"`
 }
 
-// ToolResult defines model for ToolResult.
-type ToolResult struct {
-	Content             *[]ContentBlock    `json:"content,omitempty"`
-	DurationMs          *float64           `json:"durationMs,omitempty"`
-	ExitCode            *int32             `json:"exitCode,omitempty"`
-	Id                  string             `json:"id"`
-	InputRepresentation *string            `json:"inputRepresentation,omitempty"`
-	Kind                string             `json:"kind"`
-	Name                *string            `json:"name,omitempty"`
-	Output              *Output            `json:"output,omitempty"`
-	Phase               *string            `json:"phase,omitempty"`
-	RawInput            rawjson.RawMessage `json:"rawInput,omitempty"`
-	RawOutput           rawjson.RawMessage `json:"rawOutput,omitempty"`
-	Status              ToolResultStatus   `json:"status"`
-	Title               *string            `json:"title,omitempty"`
+// ToolOutput defines model for ToolOutput.
+type ToolOutput struct {
+	Availability string      `json:"availability"`
+	Completeness string      `json:"completeness"`
+	Truncation   *Truncation `json:"truncation,omitempty"`
 }
 
-// ToolResultStatus defines model for ToolResult.Status.
-type ToolResultStatus string
+// ToolResultPayload defines model for ToolResultPayload.
+type ToolResultPayload struct {
+	Content             *[]rawjson.RawMessage   `json:"content,omitempty"`
+	DurationMs          *float64                `json:"durationMs,omitempty"`
+	ExitCode            *int32                  `json:"exitCode,omitempty"`
+	Id                  string                  `json:"id"`
+	InputRepresentation *string                 `json:"inputRepresentation,omitempty"`
+	Kind                ToolResultPayloadKind   `json:"kind"`
+	Output              *ToolOutput             `json:"output,omitempty"`
+	Phase               *string                 `json:"phase,omitempty"`
+	Provider            string                  `json:"provider"`
+	RawInput            rawjson.RawMessage      `json:"rawInput,omitempty"`
+	RawOutput           rawjson.RawMessage      `json:"rawOutput,omitempty"`
+	Status              ToolResultPayloadStatus `json:"status"`
+	Title               *string                 `json:"title,omitempty"`
+	ToolName            string                  `json:"toolName"`
+}
+
+// ToolResultPayloadKind defines model for ToolResultPayload.Kind.
+type ToolResultPayloadKind string
+
+// ToolResultPayloadStatus defines model for ToolResultPayload.Status.
+type ToolResultPayloadStatus string
 
 // Truncation defines model for Truncation.
 type Truncation struct {
@@ -1045,8 +999,8 @@ type Truncation struct {
 	RetainedBytes int64  `json:"retainedBytes"`
 }
 
-// UsageUpdate defines model for UsageUpdate.
-type UsageUpdate struct {
+// UsageUpdatePayload defines model for UsageUpdatePayload.
+type UsageUpdatePayload struct {
 	Cost *struct {
 		Amount   float32 `json:"amount"`
 		Currency string  `json:"currency"`
@@ -1057,9 +1011,9 @@ type UsageUpdate struct {
 
 // UserMessage defines model for UserMessage.
 type UserMessage struct {
-	Content   []ContentBlock `json:"content"`
-	MessageId string         `json:"messageId"`
-	Phase     *string        `json:"phase,omitempty"`
+	Content   []rawjson.RawMessage `json:"content"`
+	MessageId string               `json:"messageId"`
+	Phase     *string              `json:"phase,omitempty"`
 }
 
 // ListHistoryByNameOrIDParams defines parameters for ListHistoryByNameOrID.

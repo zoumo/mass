@@ -229,10 +229,10 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 					seen[e.Type()]++
 					if p, ok := e.Payload().(events.InteractionRequested); ok {
 						requests++
-						interaction = p.Interaction
+						interaction = string(p.Interaction)
 						require.False(t, e.Persistent())
 						if mode == "question" {
-							require.Equal(t, "form", p.Request.Kind)
+							require.Equal(t, events.InteractionForm, p.Request.Kind)
 							_, handled := prototype.AutoApprovePermissions(p)
 							require.False(t, handled, "question must not be auto-approved")
 							var content map[string]any
@@ -241,21 +241,21 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 							} else {
 								content = map[string]any{"answers": map[string]any{"format": map[string]any{"answers": []any{"json"}}}}
 							}
-							accepted, err := svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": content})
+							accepted, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": content})
 							require.NoError(t, err)
 							require.Equal(t, runtime.Yes(), accepted.Evidence.Sent)
 							require.Nil(t, accepted.Evidence.NativeAccepted)
-							_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": content})
+							_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": content})
 							require.Error(t, err, "no double answer")
 						} else {
-							require.Equal(t, "permission", p.Request.Kind)
+							require.Equal(t, events.InteractionPermission, p.Request.Kind)
 							if mode == "manual" {
 								page, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 								require.NoError(t, err)
 								for _, event := range page.Events {
 									require.NotEqual(t, "agent.tool_result", event.Type(), "no automatic permission policy")
 								}
-								acceptance, err := svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"outcome": "selected", "optionId": "allow-once"})
+								acceptance, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"})
 								require.NoError(t, err)
 								require.Equal(t, runtime.Yes(), acceptance.Evidence.Sent)
 								require.Nil(t, acceptance.Evidence.NativeAccepted)
@@ -396,7 +396,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.InteractionRequested); ok {
-			_, err = svc.AnswerInteraction(ctx(t), ref, p.Interaction, map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"Which format?": "json"}}})
+			_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"Which format?": "json"}}})
 			require.NoError(t, err)
 		}
 		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {
@@ -568,7 +568,7 @@ observed:
 	for _, forbidden := range []string{"aborted answer", "ambiguous", "guess one", "guess two", "visible after signature", "invalid coordinate", "invalid null coordinate", "invalid envelope coordinate", "missing child response", "conflicting preview", "conflicting complete"} {
 		for _, payload := range persisted {
 			for _, block := range payload.Content {
-				require.NotEqual(t, forbidden, block.Text)
+				require.NotEqual(t, forbidden, events.TextOf(block))
 			}
 		}
 	}
@@ -627,7 +627,7 @@ func TestClaudeLiveBlockStateCapacityFailsClosed(t *testing.T) {
 		case events.MessageChunk:
 			if event.ItemID == "msg-capacity:0" {
 				for _, block := range payload.Content {
-					reopened = reopened || block.Text == "reopened"
+					reopened = reopened || events.TextOf(block) == "reopened"
 				}
 			}
 		}
@@ -702,14 +702,14 @@ func TestClaudeLiveAssistantFrameCapacityFailsClosed(t *testing.T) {
 			}
 			fullCount++
 			for _, block := range payload.Content {
-				duplicateFull = duplicateFull || block.Text == "duplicate-full"
+				duplicateFull = duplicateFull || events.TextOf(block) == "duplicate-full"
 			}
 		case events.MessageChunk:
 			if event.ItemID != "msg-frame:1" {
 				return
 			}
 			for _, block := range payload.Content {
-				duplicateSurvived = duplicateSurvived || block.Text == "after-duplicate"
+				duplicateSurvived = duplicateSurvived || events.TextOf(block) == "after-duplicate"
 			}
 		}
 	})

@@ -154,7 +154,7 @@ func TestTicket06RetainsFiveContentKindsAndToolOutputPresence(t *testing.T) {
 	require.Equal(t, "partial", *results["truncated-output"].RawOutput)
 	require.Contains(t, results, "mcp")
 	require.Contains(t, results, "dynamic")
-	require.Equal(t, "retained thought", page.Events[2].Payload().(events.AgentThinking).Content[0].Text)
+	require.Equal(t, "retained thought", events.TextOf(page.Events[2].Payload().(events.AgentThinking).Content[0]))
 	require.Equal(t, []any{"separate summary"}, page.Events[2].Meta["native"].(map[string]any)["item"].(map[string]any)["summary"])
 }
 

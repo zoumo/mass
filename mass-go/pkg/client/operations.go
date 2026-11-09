@@ -256,7 +256,7 @@ func (c *Client) Cancel(ctx context.Context, ref resource.SessionRef, out any) e
 
 func (c *Client) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
 	for _, block := range input.Content {
-		if err := block.Validate(); err != nil {
+		if err := events.ValidateContentBlock(block); err != nil {
 			return invalid()
 		}
 	}

@@ -36,7 +36,7 @@ func TestClaudeRetainedToolsRejectReuseAfterCompletion(t *testing.T) {
 			require.Len(t, page.Events, 3, "only the first call and its first result may be committed")
 			require.IsType(t, events.ToolCall{}, page.Events[1].Payload())
 			got := page.Events[2].Payload().(events.ToolResult)
-			require.Equal(t, "Bash", got.Name)
+			require.Equal(t, "Bash", got.ToolName)
 			require.Equal(t, []events.ContentBlock{events.Text("retained output")}, got.Content)
 			require.Equal(t, "result-row", page.Events[2].Replay.NativeRecordID)
 		})

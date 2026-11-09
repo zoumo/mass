@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	agenttestify "github.com/zoumo/agent-sdk-testify"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -35,25 +36,7 @@ const (
 	model             = "gpt-6.1-sol"
 )
 
-type route struct {
-	Enabled     bool              `json:"enabled"`
-	Executor    string            `json:"executor"`
-	Target      string            `json:"target"`
-	Provenance  string            `json:"provenance"`
-	Workspace   string            `json:"workspace"`
-	ProtocolCwd string            `json:"protocolCwd"`
-	Env         map[string]string `json:"env"`
-	Connections []struct {
-		ID       string `json:"id"`
-		Launcher string `json:"launcher"`
-	} `json:"connections"`
-}
-
-type prepared struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	SessionID     string           `json:"sessionId"`
-	Routes        map[string]route `json:"routes"`
-}
+type route = agenttestify.Route
 
 type factEvent struct {
 	Kind string `json:"kind"`
@@ -137,7 +120,7 @@ func newHarness(t *testing.T) *harness {
 	root := filepath.Dir(filepath.Dir(filepath.Dir(source)))
 	dir := t.TempDir()
 	h := &harness{t: t, ctx: ctx, root: root, tool: filepath.Join(dir, "testify"), daemon: filepath.Join(dir, "massd")}
-	h.command("go", "build", "-o", h.tool, "github.com/zoumo/agent-sdk-testify")
+	h.command("go", "build", "-o", h.tool, "github.com/zoumo/agent-sdk-testify/cmd/agent-sdk-testify")
 	h.command("go", "build", "-o", h.daemon, "./cmd/massd")
 	return h
 }
@@ -193,12 +176,12 @@ func recordingModel(t *testing.T, fallback string) string {
 
 func (h *harness) prepare(session, sourceFlag, source, mode, expectedProject string) route {
 	h.t.Helper()
-	h.command(h.tool, "prepare", sourceFlag, source, "--session-dir", session)
-	var desc prepared
-	readJSON(h.t, filepath.Join(session, "session.json"), &desc)
-	require.Equal(h.t, 3, desc.SchemaVersion)
-	require.NotEmpty(h.t, desc.SessionID)
-	selected := desc.Routes[mode]
+	h.command(h.tool, "prepare", sourceFlag, source, "--fixture-dir", session)
+	fixture, err := agenttestify.Open(session)
+	require.NoError(h.t, err)
+	require.NotEmpty(h.t, fixture.FixtureID)
+	selected, ok := fixture.Routes[mode]
+	require.True(h.t, ok)
 	require.True(h.t, selected.Enabled)
 	if mode == "mock" {
 		require.Equal(h.t, "external-sdk", selected.Executor)
@@ -338,14 +321,14 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 			require.True(t, c.expectPermission, "unexpected interaction")
 			if answered {
 				require.NotNil(t, result.Permission)
-				require.Equal(t, result.Permission.Interaction, request.Interaction)
+				require.Equal(t, result.Permission.Interaction, string(request.Interaction))
 			} else {
 				require.NoError(t, h.answerPermission(api, ref, &result, &answered, request, c))
 			}
 		}
 		if tool, ok := event.Payload().(events.ToolResult); ok && answered {
 			for _, block := range tool.Content {
-				approvedToolOutput.WriteString(block.Text)
+				approvedToolOutput.WriteString(events.TextOf(block))
 			}
 			if tool.Status == "completed" && (provider != "codex" || tool.ExitCode != nil && *tool.ExitCode == 0) {
 				approvedToolCompleted = true
@@ -378,7 +361,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		switch payload := event.Payload().(type) {
 		case events.UserMessage:
 			for _, block := range payload.Content {
-				fact.Text += block.Text
+				fact.Text += events.TextOf(block)
 			}
 			require.Equal(t, c.prompt, fact.Text)
 			user = true
@@ -386,11 +369,11 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 			fact.Text = commandText(payload.RawInput)
 		case events.ToolResult:
 			for _, block := range payload.Content {
-				fact.Text += block.Text
+				fact.Text += events.TextOf(block)
 			}
 		case events.AgentMessage:
 			for _, block := range payload.Content {
-				fact.Text += block.Text
+				fact.Text += events.TextOf(block)
 			}
 			require.NotEmpty(t, fact.Text)
 			assistant = true
@@ -426,7 +409,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 func allowedOption(options []events.PermissionOption) (events.PermissionOption, bool) {
 	for _, kind := range []string{"allow_once", "allow_always"} {
 		for _, option := range options {
-			if option.Kind == kind {
+			if string(option.Kind) == kind {
 				return option, true
 			}
 		}
@@ -460,7 +443,7 @@ func (h *harness) answerPermission(api *client.Client, ref resource.SessionRef, 
 
 func (h *harness) answerPermissionWithState(api *client.Client, ref resource.SessionRef, result *facts, answered *bool, request events.InteractionRequested, c flowCase, state events.SessionState) error {
 	h.t.Helper()
-	require.Equal(h.t, "permission", request.Request.Kind)
+	require.Equal(h.t, events.InteractionPermission, request.Request.Kind)
 	require.NotEmpty(h.t, request.Request.Options)
 	require.NotEmpty(h.t, request.Request.Content, "native tool input must be visible")
 	if c.expectedPermission != "" {
@@ -470,14 +453,14 @@ func (h *harness) answerPermissionWithState(api *client.Client, ref resource.Ses
 	option, ok := allowedOption(request.Request.Options)
 	require.True(h.t, ok, "real agent must offer an allow option")
 	var answer runtime.InteractionReceipt
-	if err := api.Answer(h.ctx, ref, request.Interaction, map[string]any{"outcome": "selected", "optionId": option.OptionID}, &answer); err != nil {
+	if err := api.Answer(h.ctx, ref, string(request.Interaction), map[string]any{"outcome": "selected", "optionId": option.OptionID}, &answer); err != nil {
 		return err
 	}
-	require.Equal(h.t, request.Interaction, answer.Interaction)
+	require.Equal(h.t, string(request.Interaction), answer.Interaction)
 	require.Equal(h.t, runtime.Yes(), answer.Evidence.Sent)
 	require.Nil(h.t, answer.Evidence.NativeAccepted)
 	result.Permission = &permissionFacts{
-		Interaction:       request.Interaction,
+		Interaction:       string(request.Interaction),
 		Request:           request.Request,
 		StateBeforeAnswer: state,
 		Answer: permissionAnswer{
@@ -533,39 +516,25 @@ func verifyExecution(session, material string) error {
 	if err != nil {
 		return err
 	}
-	var sessionDocument struct {
-		SessionID string `json:"sessionId"`
-	}
-	if err := readJSONFile(filepath.Join(session, "session.json"), &sessionDocument); err != nil {
-		return err
-	}
-	sessionHash, err := fileSHA256(filepath.Join(canonicalSession, "session.json"))
+	fixture, err := agenttestify.Open(canonicalSession)
 	if err != nil {
 		return err
 	}
 	var index struct {
 		SchemaVersion int    `json:"schemaVersion"`
-		SessionID     string `json:"sessionId"`
-		SessionSHA256 string `json:"sessionSHA256"`
+		FixtureID     string `json:"fixtureId"`
 		Executions    []struct {
 			ID               string `json:"id"`
 			Command          string `json:"command"`
 			Status           string `json:"status"`
 			DescriptorSHA256 string `json:"descriptorSHA256"`
-			Connections      []struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
-			} `json:"connections"`
 		} `json:"executions"`
 	}
-	if err := readJSONFile(filepath.Join(session, "executions", "index.json"), &index); err != nil {
+	if err := readJSONFile(filepath.Join(canonicalSession, "executions", "index.json"), &index); err != nil {
 		return err
 	}
-	if index.SchemaVersion != 3 || index.SessionID == "" || index.SessionID != sessionDocument.SessionID {
-		return errors.New("execution index session identity is incomplete")
-	}
-	if index.SessionSHA256 != sessionHash {
-		return errors.New("execution index session hash mismatch")
+	if index.SchemaVersion != 5 || index.FixtureID == "" || index.FixtureID != fixture.FixtureID {
+		return errors.New("execution index fixture identity is incomplete")
 	}
 	if len(index.Executions) != 1 {
 		return fmt.Errorf("expected one execution, got %d", len(index.Executions))
@@ -574,168 +543,108 @@ func verifyExecution(session, material string) error {
 	if execution.Command != "mock" || execution.Status != "passed" {
 		return fmt.Errorf("execution status %q", execution.Status)
 	}
-	descriptor := filepath.Join(canonicalSession, "executions", execution.ID, "execution.json")
-	if err := requireWithin(canonicalSession, descriptor); err != nil {
-		return err
-	}
-	descriptorHash, err := fileSHA256(descriptor)
+	report, err := fixture.ExecutionReport(execution.ID)
 	if err != nil {
 		return err
 	}
-	if descriptorHash != execution.DescriptorSHA256 {
+	if report.FixtureID != fixture.FixtureID || report.ExecutionID != execution.ID {
+		return errors.New("execution report fixture identity is incomplete")
+	}
+	if report.Status != agenttestify.ExecutionStatusPassed || !report.Complete {
+		return fmt.Errorf("execution report status/complete is %q/%t", report.Status, report.Complete)
+	}
+	descriptorHash, err := fileSHA256(report.ExecutionPath)
+	if err != nil {
+		return err
+	}
+	if descriptorHash != report.ExecutionSHA256 || descriptorHash != execution.DescriptorSHA256 {
 		return errors.New("execution descriptor hash mismatch")
 	}
-	var desc struct {
-		SchemaVersion int    `json:"schemaVersion"`
-		ExecutionID   string `json:"executionId"`
-		SessionID     string `json:"sessionId"`
-		Command       string `json:"command"`
-		Provenance    string `json:"provenance"`
-		ArtifactRoot  string `json:"artifactRoot"`
-		Connections   []struct {
-			ID              string `json:"id"`
-			Material        string `json:"material"`
-			PlanSHA256      string `json:"planSHA256"`
-			ManifestSHA256  string `json:"manifestSHA256"`
-			RecordingSHA256 string `json:"recordingSHA256"`
-			Receipt         string `json:"receipt"`
-			ProcessReceipt  string `json:"processReceipt"`
-		} `json:"connections"`
+	if len(report.Connections) != 1 {
+		return fmt.Errorf("expected one execution connection, got %d", len(report.Connections))
 	}
-	if err := readJSONFile(descriptor, &desc); err != nil {
-		return err
+	connection := report.Connections[0]
+	if connection.ID != "main" || connection.Status != agenttestify.ConnectionStatusPassed {
+		return fmt.Errorf("execution connection id/status is %q/%q", connection.ID, connection.Status)
 	}
-	if desc.SchemaVersion != 3 || desc.ExecutionID != execution.ID || desc.SessionID != index.SessionID {
-		return errors.New("execution descriptor identity is incomplete")
+	if connection.Transport != agenttestify.MockTransportProcess {
+		return fmt.Errorf("execution connection transport = %q, want process", connection.Transport)
 	}
-	if desc.Command != "mock" || desc.Provenance != "consumer" {
-		return fmt.Errorf("execution descriptor command/provenance is %q/%q", desc.Command, desc.Provenance)
+	if !connection.FullConsumption {
+		return errors.New("receipt is incomplete: full consumption is false")
 	}
-	artifactRoot, err := filepath.EvalSymlinks(desc.ArtifactRoot)
+	if !connection.ClientEOF {
+		return errors.New("receipt is incomplete: client EOF is false")
+	}
+	if connection.NativeLaunched {
+		return errors.New("replay launched a native agent")
+	}
+	if !connection.CleanupComplete {
+		return errors.New("receipt is incomplete: cleanup is false")
+	}
+	if connection.ExitCode == nil || *connection.ExitCode != 0 {
+		return fmt.Errorf("receipt exit code is %v", connection.ExitCode)
+	}
+	if connection.Failure != "" || connection.Error != "" {
+		return fmt.Errorf("receipt failure/error is %q/%q", connection.Failure, connection.Error)
+	}
+	for _, evidence := range []string{
+		report.ExecutionPath,
+		connection.ReceiptPath,
+		connection.ProcessReceiptPath,
+		connection.ResultPath,
+		report.Material.Path,
+	} {
+		if err := requireWithin(canonicalSession, evidence); err != nil {
+			return err
+		}
+	}
+	if fixture.Source.Kind != "recording" || fixture.Source.Provenance != "consumer" {
+		return fmt.Errorf("fixture source kind/provenance is %q/%q", fixture.Source.Kind, fixture.Source.Provenance)
+	}
+	if fixture.Current == nil || fixture.Current.ID != report.Material.ID ||
+		fixture.Current.PlanSHA256 != report.Material.PlanSHA256 ||
+		fixture.Current.ManifestSHA256 != report.Material.ManifestSHA256 ||
+		fixture.Current.RecordingSHA256 != report.Material.RecordingSHA256 {
+		return errors.New("fixture current material differs from the execution")
+	}
+	planHash, err := fileSHA256(filepath.Join(canonicalMaterial, "plan.json"))
 	if err != nil {
 		return err
 	}
-	if artifactRoot != filepath.Join(canonicalSession, "executions", execution.ID, "mock") {
-		return errors.New("execution artifact root differs from owned session")
-	}
-	if len(desc.Connections) != 1 {
-		return fmt.Errorf("expected one execution connection, got %d", len(desc.Connections))
-	}
-	if len(execution.Connections) != 1 || execution.Connections[0].ID != "main" || execution.Connections[0].Status != "passed" {
-		return errors.New("execution index connections are incomplete")
-	}
-	connection := desc.Connections[0]
-	if connection.ID != "main" {
-		return fmt.Errorf("execution connection id = %q, want main", connection.ID)
-	}
-	planHash, err := fileSHA256(filepath.Join(material, "plan.json"))
+	manifestHash, err := fileSHA256(filepath.Join(canonicalMaterial, "manifest.json"))
 	if err != nil {
 		return err
 	}
-	manifestHash, err := fileSHA256(filepath.Join(material, "manifest.json"))
+	rawHash, err := fileSHA256(filepath.Join(canonicalMaterial, "raw", "raw.jsonl"))
 	if err != nil {
-		return err
-	}
-	rawHash, err := fileSHA256(filepath.Join(material, "raw", "raw.jsonl"))
-	if err != nil {
-		return err
-	}
-	connectionMaterial, err := filepath.EvalSymlinks(connection.Material)
-	if err != nil {
-		return err
-	}
-	if err := requireWithin(canonicalSession, connectionMaterial); err != nil {
 		return err
 	}
 	var materialDocument materialArtifact
 	if err := readJSONFile(filepath.Join(canonicalMaterial, "material.json"), &materialDocument); err != nil {
 		return err
 	}
-	if filepath.Base(connectionMaterial) != materialDocument.ID || connection.PlanSHA256 != planHash ||
-		connection.ManifestSHA256 != manifestHash || connection.RecordingSHA256 != rawHash {
-		return fmt.Errorf("execution connection material identity differs: material=%q id=%q plan=%q/%q manifest=%q/%q raw=%q/%q",
-			connectionMaterial, materialDocument.ID,
-			connection.PlanSHA256, planHash,
-			connection.ManifestSHA256, manifestHash,
-			connection.RecordingSHA256, rawHash)
+	if materialDocument.ID != report.Material.ID ||
+		materialDocument.Kind != report.Material.Kind ||
+		materialDocument.Action != report.Material.Action ||
+		materialDocument.Provenance != report.Material.Provenance ||
+		materialDocument.PlanSHA256 != planHash ||
+		materialDocument.ManifestSHA256 != manifestHash ||
+		materialDocument.RecordingSHA256 != rawHash ||
+		materialDocument.PlanSHA256 != report.Material.PlanSHA256 ||
+		materialDocument.ManifestSHA256 != report.Material.ManifestSHA256 ||
+		materialDocument.RecordingSHA256 != report.Material.RecordingSHA256 {
+		return errors.New("exported material differs from the execution report")
+	}
+	if len(materialDocument.Connections) != 1 || materialDocument.Connections[0] != "main" {
+		return errors.New("exported material connections are incomplete")
 	}
 	var plan capturePlan
-	if err := readJSONFile(filepath.Join(material, "plan.json"), &plan); err != nil {
+	if err := readJSONFile(filepath.Join(canonicalMaterial, "plan.json"), &plan); err != nil {
 		return err
 	}
-	if err := requireWithin(canonicalSession, connection.Receipt); err != nil {
-		return err
-	}
-	if err := requireWithin(canonicalSession, connection.ProcessReceipt); err != nil {
-		return err
-	}
-	var receipt struct {
-		SchemaVersion   int    `json:"schemaVersion"`
-		Version         int    `json:"version"`
-		Status          string `json:"status"`
-		Provider        string `json:"provider"`
-		Provenance      string `json:"provenance"`
-		FullConsumption bool   `json:"fullConsumption"`
-		ClientEOF       bool   `json:"clientEOF"`
-		NativeLaunched  bool   `json:"nativeLaunched"`
-		CleanupComplete bool   `json:"cleanupComplete"`
-		Recording       string `json:"recording"`
-		RecordingSHA256 string `json:"recordingSHA256"`
-		PlanSHA256      string `json:"planSHA256"`
-		Frames          int    `json:"frames"`
-		ExitCode        int    `json:"exitCode"`
-		Error           string `json:"error"`
-	}
-	if err := readJSONFile(connection.Receipt, &receipt); err != nil {
-		return err
-	}
-	if receipt.SchemaVersion != 1 || receipt.Version != 1 || receipt.Status != "passed" {
-		return fmt.Errorf("receipt version/status is %d/%d/%q", receipt.SchemaVersion, receipt.Version, receipt.Status)
-	}
-	if receipt.Provider != plan.AgentType || receipt.Provenance != "consumer" {
-		return fmt.Errorf("receipt provider/provenance is %q/%q", receipt.Provider, receipt.Provenance)
-	}
-	if !receipt.FullConsumption {
-		return errors.New("receipt is incomplete: full consumption is false")
-	}
-	if !receipt.ClientEOF {
-		return errors.New("receipt is incomplete: client EOF is false")
-	}
-	if receipt.NativeLaunched {
-		return errors.New("replay launched a native agent")
-	}
-	if !receipt.CleanupComplete {
-		return errors.New("receipt is incomplete: cleanup is false")
-	}
-	if receipt.ExitCode != 0 || receipt.Error != "" {
-		return fmt.Errorf("receipt exit/error is %d/%q", receipt.ExitCode, receipt.Error)
-	}
-	receiptMaterial, err := filepath.EvalSymlinks(receipt.Recording)
-	if err != nil {
-		return err
-	}
-	if receipt.PlanSHA256 != planHash || receiptMaterial != connectionMaterial || receipt.Frames <= 0 {
-		return errors.New("receipt material identity is incomplete")
-	}
-	if receipt.RecordingSHA256 != rawHash {
-		return errors.New("receipt recording hash mismatch")
-	}
-	var process struct {
-		SchemaVersion int    `json:"schemaVersion"`
-		Status        string `json:"status"`
-		SessionID     string `json:"sessionId"`
-		ExecutionID   string `json:"executionId"`
-		ConnectionID  string `json:"connectionId"`
-		ExitCode      int    `json:"exitCode"`
-		Error         string `json:"error"`
-	}
-	if err := readJSONFile(connection.ProcessReceipt, &process); err != nil {
-		return err
-	}
-	if process.SchemaVersion != 1 || process.Status != "passed" ||
-		process.SessionID != index.SessionID || process.ExecutionID != execution.ID ||
-		process.ConnectionID != "main" || process.ExitCode != 0 || process.Error != "" {
-		return errors.New("mock process receipt is incomplete")
+	if plan.AgentType != fixture.AgentType || plan.DriverProfile != "consumer" {
+		return fmt.Errorf("plan agent/driver profile is %q/%q", plan.AgentType, plan.DriverProfile)
 	}
 	return nil
 }
@@ -756,8 +665,19 @@ func requireWithin(root, filePath string) error {
 
 func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	t.Helper()
+	fixture, err := agenttestify.Open(session)
+	require.NoError(t, err)
+	require.Equal(t, "recording", fixture.Source.Kind)
+	require.Equal(t, "consumer", fixture.Source.Provenance)
+	require.Equal(t, "consumer", fixture.Source.DriverProfile)
+	require.Equal(t, agenttestify.ToolSourceExecutable, fixture.Tool.Source)
+	require.Equal(t, TestifyVersion, fixture.Tool.Version)
+	fixtureHash := hashFile(t, filepath.Join(session, "fixture.json"))
 	var index struct {
-		Executions []struct {
+		SchemaVersion int    `json:"schemaVersion"`
+		FixtureID     string `json:"fixtureId"`
+		FixtureSHA256 string `json:"fixtureSha256"`
+		Executions    []struct {
 			ID               string `json:"id"`
 			Command          string `json:"command"`
 			Status           string `json:"status"`
@@ -765,6 +685,9 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 		} `json:"executions"`
 	}
 	readJSON(t, filepath.Join(session, "executions", "index.json"), &index)
+	require.Equal(t, 5, index.SchemaVersion)
+	require.Equal(t, fixture.FixtureID, index.FixtureID)
+	require.Equal(t, fixtureHash, index.FixtureSHA256)
 	require.Len(t, index.Executions, 1)
 	execution := index.Executions[0]
 	require.Equal(t, "record", execution.Command)
@@ -772,8 +695,12 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	descriptor := filepath.Join(session, "executions", execution.ID, "execution.json")
 	require.Equal(t, execution.DescriptorSHA256, hashFile(t, descriptor))
 	var desc struct {
-		Command     string `json:"command"`
-		Connections []struct {
+		SchemaVersion int    `json:"schemaVersion"`
+		ExecutionID   string `json:"executionId"`
+		FixtureID     string `json:"fixtureId"`
+		Command       string `json:"command"`
+		Provenance    string `json:"provenance"`
+		Connections   []struct {
 			Material        string `json:"material"`
 			PlanSHA256      string `json:"planSHA256"`
 			ManifestSHA256  string `json:"manifestSHA256"`
@@ -782,10 +709,16 @@ func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 		} `json:"connections"`
 	}
 	readJSON(t, descriptor, &desc)
+	require.Equal(t, 5, desc.SchemaVersion)
+	require.Equal(t, execution.ID, desc.ExecutionID)
+	require.Equal(t, fixture.FixtureID, desc.FixtureID)
 	require.Equal(t, "record", desc.Command)
+	require.Equal(t, "consumer", desc.Provenance)
 	require.Len(t, desc.Connections, 1)
 	connection := desc.Connections[0]
 	require.NotEmpty(t, connection.Material)
+	require.NoError(t, requireWithin(session, connection.Material))
+	require.NoError(t, requireWithin(session, connection.Receipt))
 	var receipt struct {
 		CaptureStatus   string `json:"captureStatus"`
 		NativeLaunched  bool   `json:"nativeLaunched"`
@@ -876,7 +809,7 @@ func RunCodexPermissionReplay(t *testing.T) {
 	permission := index.Facts.Permission
 	require.NotNil(t, permission)
 	require.NotEmpty(t, permission.Interaction)
-	require.Equal(t, "permission", permission.Request.Kind)
+	require.Equal(t, events.InteractionPermission, permission.Request.Kind)
 	require.Equal(t, "item/commandExecution/requestApproval", permission.Request.Title)
 	require.NotEmpty(t, permission.Request.ToolCallID)
 	require.NotEmpty(t, permission.Request.Options)
@@ -884,7 +817,7 @@ func RunCodexPermissionReplay(t *testing.T) {
 	require.Equal(t, events.RequiresAction, permission.StateBeforeAnswer)
 	option, ok := offeredOption(permission.Request.Options, permission.Answer.OptionID)
 	require.True(t, ok, "answer must use an offered option")
-	require.Contains(t, []string{"allow_once", "allow_always"}, option.Kind)
+	require.Contains(t, []events.PermissionOptionKind{events.PermissionAllowOnce, events.PermissionAllowAlways}, option.Kind)
 	require.True(t, permission.Answer.Sent)
 	require.Nil(t, permission.Answer.NativeAccepted)
 	require.NotEmpty(t, permission.StateAfterAnswer)
@@ -903,7 +836,7 @@ func RunCodexPermissionReplay(t *testing.T) {
 	readJSON(t, receipt, &value)
 	delete(value, "fullConsumption")
 	writeJSON(t, receipt, value)
-	require.ErrorContains(t, verifyExecution(session, material), "receipt is incomplete")
+	require.ErrorContains(t, verifyExecution(session, material), "fullConsumption")
 }
 
 func offeredOption(options []events.PermissionOption, id string) (events.PermissionOption, bool) {
@@ -959,15 +892,15 @@ func RunRejectsInvalidMaterial(t *testing.T) {
 						require.NoError(t, os.WriteFile(raw, []byte("{}\n"), 0o600))
 					}
 					session := filepath.Join(root, "session")
-					cmd := exec.CommandContext(h.ctx, h.tool, "prepare", "--recording", material, "--session-dir", session)
+					cmd := exec.CommandContext(h.ctx, h.tool, "prepare", "--recording", material, "--fixture-dir", session)
 					out, err := cmd.CombinedOutput()
 					require.Error(t, err)
 					require.NotEmpty(t, out)
 					if scenario == "hash-mismatch" {
 						require.Contains(t, string(out), "hash mismatch")
 					}
-					_, err = os.Stat(filepath.Join(session, "session.json"))
-					require.True(t, os.IsNotExist(err), "invalid material must not produce a prepared session")
+					_, err = os.Stat(filepath.Join(session, "fixture.json"))
+					require.True(t, os.IsNotExist(err), "invalid material must not produce a prepared fixture")
 				})
 			}
 		}
@@ -1022,12 +955,12 @@ func RunRecordCodexBasic(t *testing.T) {
 	native := filepath.Join(scratch, "native-codex")
 	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(project)+" || exit 1\nexec "+quote(cli)+" -c "+quote("model=\""+selectedModel+"\"")+" -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
-	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --session-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
+	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --fixture-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
 	observed := h.flow(route, wrapper, flowCase{name: "basic", prompt: prompt, project: project})
 	stage := filepath.Join(scratch, "export")
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
-	h.command(h.tool, "export", "--session-dir", session, "--output", material)
+	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
 	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: project})
 	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: project})
 	index := caseIndex{Provider: "codex", Case: "basic", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/basic/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: prompt, Project: project, Facts: observed}
@@ -1081,7 +1014,7 @@ func RunRecordCodexPermission(t *testing.T) {
 	config := "exec " + quote(cli) + " -c " + quote("model=\""+selectedModel+"\"") + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' -c 'approval_policy=\"on-request\"' -c 'sandbox_mode=\"read-only\"' \"$@\"\n"
 	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(permissionProject)+" || exit 1\n"+config), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
-	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --session-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
+	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --fixture-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
 	observed := h.flow(route, wrapper, flowCase{name: "permission", prompt: permissionPrompt, project: permissionProject, expectPermission: true})
 	proofData, err := os.ReadFile(proof)
 	require.NoError(t, err)
@@ -1089,7 +1022,7 @@ func RunRecordCodexPermission(t *testing.T) {
 	stage := filepath.Join(scratch, "export")
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
-	h.command(h.tool, "export", "--session-dir", session, "--output", material)
+	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
 	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: permissionProject, expectPermission: true})
 	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: permissionProject, expectPermission: true})
 	index := caseIndex{Provider: "codex", Case: "permission", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/permission/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: permissionPrompt, Project: permissionProject, Facts: observed}

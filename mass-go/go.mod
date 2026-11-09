@@ -14,7 +14,8 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	github.com/zoumo/agent-sdk-go v0.0.0-20261106173112-83036ea07a0c
+	github.com/zoumo/agent-sdk-go v0.0.0-20261109202203-1c8514ff8a18
+	github.com/zoumo/agent-sdk-testify v0.1.1-0.20261109183517-b7c1fd72fc17
 	modernc.org/sqlite v1.60.1
 	resty.dev/v3 v3.0.0-rc.4
 )
@@ -33,7 +34,6 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/zoumo/agent-sdk-testify v0.0.0-20261105165039-e4799fe3484c // indirect
 	github.com/zoumo/golib v0.2.3-0.20260206090047-84bfad8eef0a // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.57.0 // indirect

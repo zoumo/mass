@@ -124,14 +124,13 @@ func (s *WorkHTTPSuite) TestAllContentBranchesRoundTripOnBothURLs() {
 		`{"type":"image","data":"aGk=","mimeType":"image/png","uri":"remote:image"}`,
 		`{"type":"audio","data":"","mimeType":"audio/wav"}`,
 		`{"type":"resource_link","uri":"remote:file","name":"file","size":9007199254740993}`,
-		`{"type":"resource_link","uri":"remote:file","name":"large","size":18446744073709551616}`,
 		`{"type":"resource","resource":{"uri":"remote:file","text":"content"}}`,
 		`{"type":"resource","resource":{"uri":"remote:file","blob":"aGk="}}`,
 	}
 	for _, base := range []string{"/apis/v1/sessions/a%252Fb", "/apis/v1/namespaces/one/sessions/demo"} {
 		for _, block := range blocks {
 			status, body := s.call(base+"/inputs", `{"content":[`+block+`]}`)
-			s.Require().Equal(200, status, body)
+			s.Require().Equal(200, status, body+" block="+block)
 			var receipt runtime.InputReceipt
 			s.Require().NoError(json.Unmarshal([]byte(body), &receipt))
 			// JSONEq decodes via float64; compare compact wire strings for large values.
@@ -156,7 +155,7 @@ func (s *WorkHTTPSuite) TestAllContentBranchesRoundTripOnBothURLs() {
 
 func (s *WorkHTTPSuite) TestWorkRequestsRejectMalformedStructuresWithoutDispatch() {
 	for _, base := range []string{"/apis/v1/sessions/a%252Fb", "/apis/v1/namespaces/one/sessions/demo"} {
-		for _, body := range []string{`null`, `{}`, `{"content":null}`, `{"content":[]}`, `{"content":[{"type":"image","data":"aGk=","mimeType":"image/png","text":"extra"}]}`, `{"content":[{"type":"resource","resource":{"uri":"x","text":"a","blob":""}}]}`, `{"content":[{"type":"text","text":"a","text":"b"}]}`, `{"content":[],"sessionId":"other"}`} {
+		for _, body := range []string{`null`, `{}`, `{"content":null}`, `{"content":[]}`, `{"content":[{"type":"image","data":"aGk=","mimeType":"image/png","text":"extra"}]}`, `{"content":[{"type":"resource","resource":{"uri":"x","text":"a","blob":""}}]}`, `{"content":[{"type":"resource_link","uri":"remote:file","name":"large","size":18446744073709551616}]}`, `{"content":[{"type":"text","text":"a","text":"b"}]}`, `{"content":[],"sessionId":"other"}`} {
 			status, response := s.call(base+"/inputs", body)
 			s.Equal(400, status, response)
 		}

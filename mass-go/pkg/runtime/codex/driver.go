@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zoumo/agent-sdk-go/agent"
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
 
@@ -340,7 +341,11 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 	}()
 	items := make([]ct.UserInput, 0, len(input.Content))
 	for _, b := range input.Content {
-		items = append(items, ct.UserInput{Text: &ct.TextUserInput{Type: "text", Text: b.Text, TextElements: ct.Some([]ct.TextElement{})}})
+		text, ok := events.TextValue(b)
+		if !ok {
+			return runtime.InputReceipt{}, runtime.Unsupported()
+		}
+		items = append(items, ct.UserInput{Text: &ct.TextUserInput{Type: "text", Text: text, TextElements: ct.Some([]ct.TextElement{})}})
 	}
 	d.mu.Lock()
 	s.active = true // reserve unsettled work before dispatch; receipt alone is not running evidence
@@ -358,7 +363,7 @@ func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input)
 		s.work = result.Turn.ID
 	}
 	d.mu.Unlock()
-	return runtime.InputReceipt{Submission: result.Turn.ID, Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: result.Turn.ID, Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}, nil
 }
 
 func (d *Driver) emit(s *session, id, item string, p events.Payload, work string, observedAt ...time.Time) error {
@@ -553,7 +558,13 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 			}
 		case "commandExecution":
 			if event.Method == "item/started" {
-				return emit(item.ID, events.ToolCall{ID: item.ID, Kind: "execute", RawInput: map[string]any{"command": item.Command, "cwd": item.Cwd}}, v.TurnID)
+				return emit(item.ID, events.ToolCall{
+					ID:       item.ID,
+					Kind:     events.ToolKindExecute,
+					ToolName: "commandExecution",
+					Provider: events.ToolProviderAgent,
+					RawInput: map[string]any{"command": item.Command, "cwd": item.Cwd},
+				}, v.TurnID)
 			}
 			status := "unknown"
 			if item.Status == "completed" || item.Status == "failed" || item.Status == "declined" {
@@ -564,7 +575,16 @@ func (d *Driver) adapt(id string, s *session, event ct.Event) error {
 				value := float64(*item.DurationMs)
 				duration = &value
 			}
-			p := events.ToolResult{ExitCode: item.ExitCode, DurationMs: duration, ID: item.ID, Kind: "execute", Status: status, Output: &events.Output{Availability: "unavailable", Completeness: "unknown"}}
+			p := events.ToolResult{
+				ExitCode:   item.ExitCode,
+				DurationMs: duration,
+				ID:         item.ID,
+				Kind:       events.ToolKindExecute,
+				ToolName:   "commandExecution",
+				Provider:   events.ToolProviderAgent,
+				Status:     status,
+				Output:     &events.Output{Availability: "unavailable", Completeness: "unknown"},
+			}
 			if item.AggregatedOutput != nil {
 				var value any
 				dec := json.NewDecoder(bytes.NewReader(item.AggregatedOutput))
@@ -770,7 +790,7 @@ func (d *Driver) handleRequest(s *session, r sdk.IncomingRequest) {
 		err = d.emit(s, v.ThreadID, "", events.StateUpdate{PreviousState: previous, State: &state}, v.TurnID)
 	}
 	if err == nil {
-		err = d.emit(s, v.ThreadID, "", events.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, v.TurnID)
+		err = d.emit(s, v.ThreadID, "", events.InteractionRequested{Interaction: events.InteractionRef(ref), Request: request, Blocking: true}, v.TurnID)
 	}
 	if err != nil {
 		_ = d.emit(s, v.ThreadID, "", events.SessionError{Message: "interaction delivery failed"}, v.TurnID)

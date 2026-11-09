@@ -183,7 +183,7 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 				s.False(answered)
 				s.Contains(request.Request.ToolCallID, "tool-live-")
 				var answer runtime.InteractionReceipt
-				s.call("session.answer", workflowParams{Session: ref, Interaction: request.Interaction, Answer: map[string]any{"outcome": "selected", "optionId": "allow-once"}}, &answer)
+				s.call("session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: map[string]any{"outcome": "selected", "optionId": "allow-once"}}, &answer)
 				s.Equal(runtime.Yes(), answer.Evidence.Sent)
 				answered = true
 			}
@@ -225,7 +225,7 @@ func TestTicket08ClaudeLoadUnlinkedResultBlocksReadmission(t *testing.T) {
 		s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
 		s.Nil(e.Replay)
 		if request, ok := e.Payload().(events.InteractionRequested); ok {
-			s.call("session.answer", workflowParams{Session: ref, Interaction: request.Interaction, Answer: map[string]any{"outcome": "selected", "optionId": "allow-once"}}, nil)
+			s.call("session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: map[string]any{"outcome": "selected", "optionId": "allow-once"}}, nil)
 			answered = true
 		}
 		if _, ok := e.Payload().(events.AgentMessage); ok {

@@ -120,7 +120,7 @@ func (h *harness) recordClaude(c flowCase, scratchPrefix, outputEnvironment stri
 	command += " \"$@\"\n"
 	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(c.project)+" || exit 1\n"+command), 0o700))
 	wrapper := filepath.Join(scratch, "record-claude")
-	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec \"$MASS_RECORD_TOOL\" agent record --session-dir \"$MASS_RECORD_SESSION\" --cmd \"$MASS_RECORD_NATIVE\" -- \"$@\"\n"), 0o700))
+	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec \"$MASS_RECORD_TOOL\" agent record --fixture-dir \"$MASS_RECORD_SESSION\" --cmd \"$MASS_RECORD_NATIVE\" -- \"$@\"\n"), 0o700))
 	c.provider = "claude"
 	c.runtimeEnvironment = map[string]string{
 		"MASS_RECORD_TOOL":    h.tool,
@@ -138,7 +138,7 @@ func (h *harness) publishClaudeRecording(scratch, session, export string, c flow
 	stage := filepath.Join(scratch, "export")
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
-	h.command(h.tool, "export", "--session-dir", session, "--output", material)
+	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
 	replayCase := c
 	replayCase.runtimeEnvironment = nil
 	replayCase.initialInput = true
@@ -197,7 +197,7 @@ func RunClaudePermissionReplay(t *testing.T) {
 	require.NotNil(t, index.Facts.Input)
 	require.True(t, index.Facts.Input.Sent)
 	require.Nil(t, index.Facts.Input.NativeAccepted)
-	require.Equal(t, "permission", permission.Request.Kind)
+	require.Equal(t, events.InteractionPermission, permission.Request.Kind)
 	require.Equal(t, "Bash", permission.Request.Title)
 	require.NotEmpty(t, permission.Request.ToolCallID)
 	require.NotEmpty(t, permission.Request.Options)
@@ -205,7 +205,7 @@ func RunClaudePermissionReplay(t *testing.T) {
 	require.Equal(t, events.RequiresAction, permission.StateBeforeAnswer)
 	option, ok := offeredOption(permission.Request.Options, permission.Answer.OptionID)
 	require.True(t, ok)
-	require.Equal(t, "allow_once", option.Kind)
+	require.Equal(t, events.PermissionAllowOnce, option.Kind)
 	require.True(t, permission.Answer.Sent)
 	require.Nil(t, permission.Answer.NativeAccepted)
 	require.NotEmpty(t, permission.StateAfterAnswer)
@@ -226,7 +226,7 @@ func RunClaudePermissionReplay(t *testing.T) {
 	readJSON(t, receipt, &value)
 	delete(value, "clientEOF")
 	writeJSON(t, receipt, value)
-	require.ErrorContains(t, verifyExecution(session, material), "receipt is incomplete")
+	require.ErrorContains(t, verifyExecution(session, material), "clientEOF")
 }
 
 func toolCallText(facts []factEvent) string {
