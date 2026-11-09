@@ -148,7 +148,7 @@ func TestTicket06AppendFailureRequiresExplicitOriginalUUIDSettlement(t *testing.
 	require.False(t, r.Status.HistoryLoad.CleanupCompleted, "an unresolved append remains owned")
 	require.NoError(t, svc.ReconcileHistory(ticket06FaultContext(t), ref))
 	page := ticket06FaultHistory(t, svc, ref, 1)
-	require.Equal(t, "original fact", page[0].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "original fact", events.TextOf(page[0].Payload().(events.AgentMessage).Content[0]))
 	require.Eventually(t, func() bool {
 		current, e := svc.GetSession(ref)
 		return e == nil && current.Status.HistoryLoad.CleanupCompleted && current.Status.HistoryLoad.LastCommittedEventID == page[0].EventID

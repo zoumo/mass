@@ -20,9 +20,7 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {
-              "$ref": "#/components/schemas/ContentBlock"
-            },
+            "items": {},
             "type": "array"
           },
           "messageId": {
@@ -42,9 +40,7 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {
-              "$ref": "#/components/schemas/ContentBlock"
-            },
+            "items": {},
             "type": "array"
           },
           "messageId": {
@@ -71,11 +67,12 @@
           }
         },
         "required": [
-          "name"
+          "name",
+          "description"
         ],
         "type": "object"
       },
-      "AvailableCommandsUpdate": {
+      "AvailableCommandsUpdatePayload": {
         "additionalProperties": false,
         "properties": {
           "availableCommands": {
@@ -222,7 +219,7 @@
         ],
         "type": "object"
       },
-      "ConfigOptionUpdate": {
+      "ConfigOptionUpdatePayload": {
         "additionalProperties": false,
         "properties": {
           "configOptions": {
@@ -696,7 +693,7 @@
         ],
         "type": "object"
       },
-      "InfoUpdate": {
+      "InfoUpdatePayload": {
         "additionalProperties": false,
         "anyOf": [
           {
@@ -743,17 +740,21 @@
           "acceptance": {
             "$ref": "#/components/schemas/Acceptance"
           },
+          "result": {
+            "type": "string"
+          },
           "submission": {
             "type": "string"
           }
         },
         "required": [
           "submission",
+          "result",
           "acceptance"
         ],
         "type": "object"
       },
-      "InteractionClosed": {
+      "InteractionClosedPayload": {
         "additionalProperties": false,
         "properties": {
           "interaction": {
@@ -879,7 +880,7 @@
           }
         ]
       },
-      "InteractionRequested": {
+      "InteractionRequestedPayload": {
         "additionalProperties": false,
         "properties": {
           "blocking": {
@@ -972,9 +973,7 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {
-              "$ref": "#/components/schemas/ContentBlock"
-            },
+            "items": {},
             "type": "array"
           },
           "messageId": {
@@ -1052,44 +1051,10 @@
         ],
         "type": "object"
       },
-      "Output": {
-        "additionalProperties": false,
-        "properties": {
-          "availability": {
-            "enum": [
-              "provided",
-              "unavailable"
-            ],
-            "type": "string"
-          },
-          "completeness": {
-            "enum": [
-              "retained",
-              "truncated",
-              "unknown"
-            ],
-            "type": "string"
-          },
-          "truncation": {
-            "$ref": "#/components/schemas/Truncation"
-          }
-        },
-        "required": [
-          "availability",
-          "completeness"
-        ],
-        "type": "object"
-      },
       "PermissionOption": {
         "additionalProperties": false,
         "properties": {
           "kind": {
-            "enum": [
-              "allow_once",
-              "allow_always",
-              "reject_once",
-              "reject_always"
-            ],
             "type": "string"
           },
           "name": {
@@ -1103,55 +1068,6 @@
           "optionId",
           "name",
           "kind"
-        ],
-        "type": "object"
-      },
-      "Plan": {
-        "additionalProperties": false,
-        "properties": {
-          "entries": {
-            "items": {
-              "$ref": "#/components/schemas/PlanEntry"
-            },
-            "type": "array"
-          },
-          "planId": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "planId",
-          "entries"
-        ],
-        "type": "object"
-      },
-      "PlanEntry": {
-        "additionalProperties": false,
-        "properties": {
-          "content": {
-            "type": "string"
-          },
-          "priority": {
-            "enum": [
-              "low",
-              "medium",
-              "high"
-            ],
-            "type": "string"
-          },
-          "status": {
-            "enum": [
-              "pending",
-              "in_progress",
-              "completed"
-            ],
-            "type": "string"
-          }
-        },
-        "required": [
-          "content",
-          "priority",
-          "status"
         ],
         "type": "object"
       },
@@ -1399,7 +1315,7 @@
         ],
         "type": "object"
       },
-      "SessionError": {
+      "SessionErrorPayload": {
         "additionalProperties": false,
         "properties": {
           "message": {
@@ -1755,7 +1671,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/ToolCall"
+                "$ref": "#/components/schemas/ToolCallPayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -1808,7 +1724,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/ToolResult"
+                "$ref": "#/components/schemas/ToolResultPayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -1861,7 +1777,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/ToolChunk"
+                "$ref": "#/components/schemas/ToolChunkPayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -1914,60 +1830,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/Plan"
-              },
-              "replay": {
-                "$ref": "#/components/schemas/ReplaySource"
-              },
-              "sessionId": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "sessionName": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "time": {
-                "format": "date-time",
-                "type": "string"
-              },
-              "type": {
-                "const": "agent.plan",
-                "type": "string"
-              }
-            },
-            "required": [
-              "eventId",
-              "namespace",
-              "sessionName",
-              "sessionId",
-              "time",
-              "type",
-              "payload",
-              "itemId"
-            ],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
-            "properties": {
-              "_meta": {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              "eventId": {
-                "format": "uuid",
-                "type": "string"
-              },
-              "itemId": {
-                "type": "string"
-              },
-              "namespace": {
-                "minLength": 1,
-                "type": "string"
-              },
-              "payload": {
-                "$ref": "#/components/schemas/StateUpdate"
+                "$ref": "#/components/schemas/StateUpdatePayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -2019,7 +1882,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/SessionError"
+                "$ref": "#/components/schemas/SessionErrorPayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -2071,7 +1934,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/InfoUpdate"
+                "$ref": "#/components/schemas/InfoUpdatePayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -2123,7 +1986,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/ConfigOptionUpdate"
+                "$ref": "#/components/schemas/ConfigOptionUpdatePayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -2175,7 +2038,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/AvailableCommandsUpdate"
+                "$ref": "#/components/schemas/AvailableCommandsUpdatePayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -2227,7 +2090,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/UsageUpdate"
+                "$ref": "#/components/schemas/UsageUpdatePayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -2279,7 +2142,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/InteractionRequested"
+                "$ref": "#/components/schemas/InteractionRequestedPayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -2331,7 +2194,7 @@
                 "type": "string"
               },
               "payload": {
-                "$ref": "#/components/schemas/InteractionClosed"
+                "$ref": "#/components/schemas/InteractionClosedPayload"
               },
               "replay": {
                 "$ref": "#/components/schemas/ReplaySource"
@@ -2559,7 +2422,7 @@
         ],
         "type": "object"
       },
-      "StateUpdate": {
+      "StateUpdatePayload": {
         "additionalProperties": false,
         "properties": {
           "error": {
@@ -2620,9 +2483,7 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {
-              "$ref": "#/components/schemas/ContentBlock"
-            },
+            "items": {},
             "type": "array"
           },
           "messageId": {
@@ -2638,18 +2499,15 @@
         ],
         "type": "object"
       },
-      "ToolCall": {
+      "ToolCallPayload": {
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {
-              "$ref": "#/components/schemas/ContentBlock"
-            },
+            "items": {},
             "type": "array"
           },
           "durationMs": {
             "format": "double",
-            "minimum": 0,
             "type": "number"
           },
           "exitCode": {
@@ -2663,15 +2521,28 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
-          },
-          "name": {
+            "enum": [
+              "read",
+              "edit",
+              "delete",
+              "move",
+              "search",
+              "execute",
+              "think",
+              "fetch",
+              "switch_mode",
+              "other"
+            ],
             "type": "string"
           },
           "output": {
-            "$ref": "#/components/schemas/Output"
+            "$ref": "#/components/schemas/ToolOutput"
           },
           "phase": {
+            "type": "string"
+          },
+          "provider": {
+            "minLength": 1,
             "type": "string"
           },
           "rawInput": {},
@@ -2689,22 +2560,26 @@
           },
           "title": {
             "type": "string"
+          },
+          "toolName": {
+            "minLength": 1,
+            "type": "string"
           }
         },
         "required": [
           "id",
           "kind",
+          "toolName",
+          "provider",
           "rawInput"
         ],
         "type": "object"
       },
-      "ToolChunk": {
+      "ToolChunkPayload": {
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {
-              "$ref": "#/components/schemas/ContentBlock"
-            },
+            "items": {},
             "type": "array"
           },
           "id": {
@@ -2717,18 +2592,34 @@
         ],
         "type": "object"
       },
-      "ToolResult": {
+      "ToolOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "type": "string"
+          },
+          "completeness": {
+            "type": "string"
+          },
+          "truncation": {
+            "$ref": "#/components/schemas/Truncation"
+          }
+        },
+        "required": [
+          "availability",
+          "completeness"
+        ],
+        "type": "object"
+      },
+      "ToolResultPayload": {
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {
-              "$ref": "#/components/schemas/ContentBlock"
-            },
+            "items": {},
             "type": "array"
           },
           "durationMs": {
             "format": "double",
-            "minimum": 0,
             "type": "number"
           },
           "exitCode": {
@@ -2742,15 +2633,28 @@
             "type": "string"
           },
           "kind": {
-            "type": "string"
-          },
-          "name": {
+            "enum": [
+              "read",
+              "edit",
+              "delete",
+              "move",
+              "search",
+              "execute",
+              "think",
+              "fetch",
+              "switch_mode",
+              "other"
+            ],
             "type": "string"
           },
           "output": {
-            "$ref": "#/components/schemas/Output"
+            "$ref": "#/components/schemas/ToolOutput"
           },
           "phase": {
+            "type": "string"
+          },
+          "provider": {
+            "minLength": 1,
             "type": "string"
           },
           "rawInput": {},
@@ -2768,11 +2672,17 @@
           },
           "title": {
             "type": "string"
+          },
+          "toolName": {
+            "minLength": 1,
+            "type": "string"
           }
         },
         "required": [
           "id",
           "kind",
+          "toolName",
+          "provider",
           "status"
         ],
         "type": "object"
@@ -2782,12 +2692,10 @@
         "properties": {
           "omittedBytes": {
             "format": "int64",
-            "minimum": 0,
             "type": "integer"
           },
           "retainedBytes": {
             "format": "int64",
-            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2796,7 +2704,7 @@
         ],
         "type": "object"
       },
-      "UsageUpdate": {
+      "UsageUpdatePayload": {
         "additionalProperties": false,
         "properties": {
           "cost": {
@@ -2834,9 +2742,7 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {
-              "$ref": "#/components/schemas/ContentBlock"
-            },
+            "items": {},
             "type": "array"
           },
           "messageId": {
@@ -3478,7 +3384,6 @@
                   "agent.message_chunk",
                   "agent.thinking_chunk",
                   "agent.tool_call_chunk",
-                  "agent.plan",
                   "session.state_update",
                   "session.error",
                   "session.info_update",
@@ -7023,7 +6928,6 @@
                   "agent.message_chunk",
                   "agent.thinking_chunk",
                   "agent.tool_call_chunk",
-                  "agent.plan",
                   "session.state_update",
                   "session.error",
                   "session.info_update",

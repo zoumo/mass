@@ -1,16 +1,17 @@
-// Package events defines the unified session event envelope and payloads.
+// Package events defines the MASS session envelope around the SDK's live event
+// and payload model.
 package events
 
 import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"reflect"
-	"strings"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zoumo/agent-sdk-go/agent"
 )
 
 type EventBase struct {
@@ -51,87 +52,9 @@ type HistoryReplay struct {
 
 func (HistoryReplay) eventType() string { return "session.history_replay" }
 
-// Payload is sealed. Each concrete branch fixes its event type at compile time.
-type (
-	Payload        interface{ eventType() string }
-	MessagePayload struct {
-		MessageID string         `json:"messageId"`
-		Content   []ContentBlock `json:"content"`
-		Phase     string         `json:"phase,omitempty"`
-	}
-)
-type UserMessage MessagePayload
-
-func (UserMessage) eventType() string { return "user.message" }
-
-type AgentMessage MessagePayload
-
-func (AgentMessage) eventType() string { return "agent.message" }
-
-type AgentThinking MessagePayload
-
-func (AgentThinking) eventType() string { return "agent.thinking" }
-
-type MessageChunk MessagePayload
-
-func (MessageChunk) eventType() string { return "agent.message_chunk" }
-
-type ThinkingChunk MessagePayload
-
-func (ThinkingChunk) eventType() string { return "agent.thinking_chunk" }
-
-//nolint:recvcheck // JSON decoding mutates; event encoding accepts immutable values.
-type ToolCall struct {
-	Name                string         `json:"name,omitempty"`
-	Title               string         `json:"title,omitempty"`
-	Phase               string         `json:"phase,omitempty"`
-	InputRepresentation string         `json:"inputRepresentation,omitempty"`
-	Status              string         `json:"status,omitempty"`
-	RawOutput           *any           `json:"rawOutput,omitempty"`
-	Content             []ContentBlock `json:"content,omitempty"`
-	ExitCode            *int32         `json:"exitCode,omitempty"`
-	DurationMs          *float64       `json:"durationMs,omitempty" minimum:"0"`
-	Output              *Output        `json:"output,omitempty"`
-	ID                  string         `json:"id"`
-	Kind                string         `json:"kind"`
-	RawInput            any            `json:"rawInput"`
-}
-
-func (ToolCall) eventType() string { return "agent.tool_call" }
-
-type Output struct {
-	Availability string      `json:"availability" enum:"provided,unavailable"`
-	Completeness string      `json:"completeness" enum:"retained,truncated,unknown"`
-	Truncation   *Truncation `json:"truncation,omitempty"`
-}
-
-//nolint:recvcheck // JSON unmarshaling needs a pointer; payload values implement the event contract.
-type ToolResult struct {
-	Name                string         `json:"name,omitempty"`
-	Title               string         `json:"title,omitempty"`
-	Phase               string         `json:"phase,omitempty"`
-	InputRepresentation string         `json:"inputRepresentation,omitempty"`
-	RawInput            *any           `json:"rawInput,omitempty"`
-	ExitCode            *int32         `json:"exitCode,omitempty"`
-	DurationMs          *float64       `json:"durationMs,omitempty" minimum:"0"`
-	ID                  string         `json:"id"`
-	Kind                string         `json:"kind"`
-	Status              string         `json:"status"`
-	RawOutput           *any           `json:"rawOutput,omitempty"`
-	Content             []ContentBlock `json:"content,omitempty"`
-	Output              *Output        `json:"output,omitempty"`
-}
-
-func (ToolResult) eventType() string { return "agent.tool_result" }
-
-type StateUpdate struct {
-	PreviousState *SessionState  `json:"previousState"`
-	State         *SessionState  `json:"state"`
-	StopReason    string         `json:"stopReason,omitempty"`
-	Error         *ObservedError `json:"error,omitempty"`
-}
-
-func (StateUpdate) eventType() string { return "session.state_update" }
+// Payload is the envelope's payload slot. Live values must implement the SDK
+// agent.Payload closed union; HistoryReplay is MASS's only control branch.
+type Payload any
 
 // SessionEvent is the only event model. Source stays private and unserialized.
 //
@@ -143,202 +66,125 @@ type SessionEvent struct {
 }
 
 func NewEvent(base EventBase, payload Payload, source Source) (SessionEvent, error) {
-	e := SessionEvent{base, payload, source}
+	e := SessionEvent{EventBase: base, payload: payload, source: source}
 	return e, e.Validate()
 }
 
 func (e SessionEvent) Type() string {
-	if e.payload == nil {
+	if replay, ok := historyPayload(e.payload); ok {
+		return replay.eventType()
+	}
+	live, ok := e.payload.(agent.Payload)
+	if !ok {
 		return ""
 	}
-	return e.payload.eventType()
+	return string(agent.Event{Payload: live}.Type())
 }
+
 func (e SessionEvent) Payload() Payload { return e.payload }
 func (e SessionEvent) Source() Source   { return e.source }
 func (e SessionEvent) Persistent() bool {
-	switch e.Type() {
-	case "user.message", "agent.message", "agent.thinking", "agent.tool_call", "agent.tool_result":
+	switch agent.EventType(e.Type()) {
+	case agent.EventUserMessage,
+		agent.EventAgentMessage,
+		agent.EventAgentThinking,
+		agent.EventAgentToolCall,
+		agent.EventAgentToolResult:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 func (e SessionEvent) Validate() error {
-	if len(e.EventID) != 36 || uuid.Validate(e.EventID) != nil || e.Namespace == "" || e.SessionName == "" || e.SessionID == "" || e.Time.IsZero() || e.payload == nil {
+	if len(e.EventID) != 36 ||
+		uuid.Validate(e.EventID) != nil ||
+		e.Namespace == "" ||
+		e.SessionName == "" ||
+		e.SessionID == "" ||
+		e.Time.IsZero() ||
+		e.payload == nil {
 		return errors.New("invalid event envelope")
+	}
+	if e.Replay != nil && e.Replay.LoadID == "" {
+		return errors.New("missing replay loadId")
 	}
 	if err := CheckDynamicJSON(e.Meta); err != nil {
 		return err
 	}
-	var m *MessagePayload
-	if e.Replay != nil && e.Replay.LoadID == "" {
-		return errors.New("missing replay loadId")
-	}
-	switch p := e.payload.(type) {
-	case HistoryReplay:
-		if p.LoadID == "" || p.RetainedScope == "" || !oneOf(p.Phase, "started", "native_completed", "failed", "canceled") {
+	if replay, ok := historyPayload(e.payload); ok {
+		if replay.LoadID == "" ||
+			replay.RetainedScope == "" ||
+			!oneOf(replay.Phase, "started", "native_completed", "failed", "canceled") {
 			return errors.New("invalid history replay")
 		}
-		if (p.Phase == "started" || p.Phase == "native_completed") && (p.ResumedSession == nil || p.ResumedSession.SessionID != e.SessionID || p.ResumedSession.Capabilities == nil) {
+		if (replay.Phase == "started" || replay.Phase == "native_completed") &&
+			(replay.ResumedSession == nil ||
+				replay.ResumedSession.SessionID != e.SessionID ||
+				replay.ResumedSession.Capabilities == nil) {
 			return errors.New("missing or mismatched resumed session")
 		}
-		if p.CurrentState != nil && *p.CurrentState != nil && !oneOf(string(**p.CurrentState), "idle", "running", "requires_action") {
+		if replay.CurrentState != nil &&
+			*replay.CurrentState != nil &&
+			!oneOf(string(**replay.CurrentState), string(Idle), string(Running), string(RequiresAction)) {
 			return errors.New("invalid replay current state")
 		}
-		if err := CheckDynamicJSON(p.Error); err != nil {
+		if err := CheckDynamicJSON(replay.Error); err != nil {
 			return err
 		}
-	case UserMessage:
-		v := MessagePayload(p)
-		m = &v
-	case AgentMessage:
-		v := MessagePayload(p)
-		m = &v
-	case AgentThinking:
-		v := MessagePayload(p)
-		m = &v
-	case MessageChunk:
-		v := MessagePayload(p)
-		m = &v
-	case ThinkingChunk:
-		v := MessagePayload(p)
-		m = &v
-	case ToolCall:
-		if err := validateTool(p.Status, p.RawOutput, p.Content, p.DurationMs, p.Output); err != nil {
-			return err
-		}
-		if err := CheckDynamicJSON(p.RawInput); err != nil {
-			return err
-		}
-		if p.ID == "" || p.Kind == "" {
-			return errors.New("invalid tool call")
-		}
-	case ToolResult:
-		if err := validateTool(p.Status, p.RawOutput, p.Content, p.DurationMs, p.Output); err != nil {
-			return err
-		}
-		if p.RawInput != nil {
-			if err := CheckDynamicJSON(*p.RawInput); err != nil {
-				return err
-			}
-		}
-
-		if p.ID == "" || p.Kind == "" || p.Status == "" {
-			return errors.New("invalid tool result")
-		}
-	case InteractionRequested:
-		if err := p.Request.Validate(); err != nil {
-			return err
-		}
-		if p.Interaction == "" || (p.Request.Kind != "permission" && p.Request.Kind != "form" && p.Request.Kind != "url") {
-			return errors.New("invalid interaction")
-		}
-		if p.Request.Kind == "form" && (p.Request.Message == "" || p.Request.RequestedSchema == nil) {
-			return errors.New("invalid form request")
-		}
-		if p.Request.Kind == "permission" && (p.Request.ToolCallID == "" || len(p.Request.Options) == 0) {
-			return errors.New("invalid permission request")
-		}
-		if err := CheckDynamicJSON(p.Request.RequestedSchema); err != nil {
-			return err
-		}
-	case InteractionClosed:
-		if p.Interaction == "" || !oneOf(p.Outcome, "answered", "completed", "cancelled", "expired", "failed") { //nolint:misspell // Public event contract uses cancelled.
-			return errors.New("invalid interaction closure")
-		}
-	case SessionError:
-		if p.Message == "" {
-			return errors.New("empty session error")
-		}
-	case ToolChunk:
-		if p.ID == "" || p.Content == nil {
-			return errors.New("invalid tool chunk")
-		}
-		for _, b := range p.Content {
-			if err := b.Validate(); err != nil {
-				return err
-			}
-		}
-	case Plan:
-		if p.PlanID == "" || p.Entries == nil {
-			return errors.New("invalid plan")
-		}
-		for _, entry := range p.Entries {
-			if !oneOf(entry.Priority, "low", "medium", "high") || !oneOf(entry.Status, "pending", "in_progress", "completed") {
-				return errors.New("invalid plan entry")
-			}
-		}
-	case InfoUpdate:
-		if p.Title == nil && p.UpdatedAt == nil {
-			return errors.New("empty info update")
-		}
-	case ConfigOptionUpdate:
-		if p.ConfigOptions == nil {
-			return errors.New("missing config options")
-		}
-		for _, option := range p.ConfigOptions {
-			if err := option.Validate(); err != nil {
-				return err
-			}
-		}
-	case AvailableCommandsUpdate:
-		if p.AvailableCommands == nil {
-			return errors.New("missing commands")
-		}
-	case UsageUpdate:
-		if p.Cost != nil {
-			if err := CheckDynamicJSON(p.Cost.Amount); err != nil {
-				return err
-			}
-		}
-	case StateUpdate:
-		if p.Error != nil {
-			if p.Error.Code != nil {
-				switch v := p.Error.Code.(type) {
-				case string:
-				case json.Number:
-					if !jsonInteger(v) {
-						return errors.New("invalid error code")
-					}
-				case int, int32, int64:
-				default:
-					return errors.New("invalid error code")
-				}
-			}
-		}
-		for _, s := range []*SessionState{p.State, p.PreviousState} {
-			if s != nil && *s != Idle && *s != Running && *s != RequiresAction {
-				return errors.New("invalid observed state")
-			}
-		}
-	default:
+		return nil
+	}
+	live, ok := e.payload.(agent.Payload)
+	if !ok {
 		return errors.New("unsupported payload branch")
 	}
-	if !strings.HasPrefix(e.Type(), "session.") && e.ItemID == "" {
-		return errors.New("itemId required")
-	}
-	if m != nil {
-		if m.MessageID == "" || m.Content == nil {
-			return errors.New("invalid message")
-		}
-		for _, b := range m.Content {
-			if err := b.Validate(); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return (agent.Event{
+		EventID:   e.EventID,
+		SessionID: e.SessionID,
+		Time:      e.Time,
+		ItemID:    e.ItemID,
+		Payload:   live,
+		Meta:      e.Meta,
+	}).Validate()
 }
 
 func (e SessionEvent) MarshalJSON() ([]byte, error) {
 	if err := e.Validate(); err != nil {
 		return nil, err
 	}
-	return json.Marshal(struct {
-		EventBase
-		Type    string  `json:"type"`
-		Payload Payload `json:"payload"`
-	}{e.EventBase, e.Type(), e.payload})
+	if replay, ok := historyPayload(e.payload); ok {
+		return json.Marshal(struct {
+			EventBase
+			Type    string        `json:"type"`
+			Payload HistoryReplay `json:"payload"`
+		}{EventBase: e.EventBase, Type: replay.eventType(), Payload: replay})
+	}
+	live := e.payload.(agent.Payload)
+	encoded, err := json.Marshal(agent.Event{
+		EventID:   e.EventID,
+		SessionID: e.SessionID,
+		Time:      e.Time,
+		ItemID:    e.ItemID,
+		Payload:   live,
+		Meta:      e.Meta,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		return nil, err
+	}
+	baseJSON, err := json.Marshal(e.EventBase)
+	if err != nil {
+		return nil, err
+	}
+	var base map[string]json.RawMessage
+	if err := json.Unmarshal(baseJSON, &base); err != nil {
+		return nil, err
+	}
+	maps.Copy(object, base)
+	return json.Marshal(object)
 }
 
 func (e *SessionEvent) UnmarshalJSON(data []byte) error {
@@ -347,249 +193,121 @@ func (e *SessionEvent) UnmarshalJSON(data []byte) error {
 		Type    string          `json:"type"`
 		Payload json.RawMessage `json:"payload"`
 	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	d.UseNumber()
-	if err := d.Decode(&raw); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	decoder.UseNumber()
+	if err := decoder.Decode(&raw); err != nil {
 		return err
 	}
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(raw.Payload, &members); err != nil {
-		return err
+	if len(raw.Payload) == 0 || bytes.Equal(bytes.TrimSpace(raw.Payload), []byte("null")) {
+		return errors.New("missing event payload")
 	}
-	required := []string{}
-	switch raw.Type {
-	case "agent.tool_call":
-		required = []string{"rawInput"}
-	case "session.state_update":
-		required = []string{"state", "previousState"}
-	}
-	for _, name := range required {
-		if _, ok := members[name]; !ok {
-			return fmt.Errorf("missing required payload field %s", name)
+	if raw.Type == "session.history_replay" {
+		var replay HistoryReplay
+		payloadDecoder := json.NewDecoder(bytes.NewReader(raw.Payload))
+		payloadDecoder.DisallowUnknownFields()
+		payloadDecoder.UseNumber()
+		if err := payloadDecoder.Decode(&replay); err != nil {
+			return err
 		}
-	}
-	var p Payload
-	switch raw.Type {
-	case "session.history_replay":
-		p = &HistoryReplay{}
-	case "agent.tool_call_chunk":
-		p = &ToolChunk{}
-	case "agent.plan":
-		p = &Plan{}
-	case "session.info_update":
-		p = &InfoUpdate{}
-	case "session.config_option_update":
-		p = &ConfigOptionUpdate{}
-	case "session.available_commands_update":
-		p = &AvailableCommandsUpdate{}
-	case "session.usage_update":
-		p = &UsageUpdate{}
-	case "user.message":
-		p = &UserMessage{}
-	case "agent.message":
-		p = &AgentMessage{}
-	case "agent.thinking":
-		p = &AgentThinking{}
-	case "agent.message_chunk":
-		p = &MessageChunk{}
-	case "agent.thinking_chunk":
-		p = &ThinkingChunk{}
-	case "agent.tool_call":
-		p = &ToolCall{}
-	case "agent.tool_result":
-		p = &ToolResult{}
-	case "session.interaction_requested":
-		p = &InteractionRequested{}
-	case "session.interaction_closed":
-		p = &InteractionClosed{}
-	case "session.error":
-		p = &SessionError{}
-	case "session.state_update":
-		p = &StateUpdate{}
-	default:
-		return fmt.Errorf("unsupported event type %q", raw.Type)
-	}
-	// Required members must remain distinguishable from zero values and null.
-	for f := range reflect.TypeOf(p).Elem().Fields() {
-		name, options, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if name == "" || strings.Contains(options, "omitempty") {
-			continue
+		var members map[string]json.RawMessage
+		if err := json.Unmarshal(raw.Payload, &members); err != nil {
+			return err
 		}
-		value, ok := members[name]
-		if !ok {
-			return fmt.Errorf("missing required payload field %s", name)
-		}
-		if string(bytes.TrimSpace(value)) == "null" && raw.Type != "session.state_update" && name != "rawInput" {
-			return fmt.Errorf("null payload field %s", name)
-		}
-	}
-	d = json.NewDecoder(bytes.NewReader(raw.Payload))
-	d.DisallowUnknownFields()
-	d.UseNumber()
-	if err := d.Decode(p); err != nil {
-		return err
-	}
-	// Normalize pointer branches so callers see the same concrete payload on reads.
-	switch v := p.(type) {
-	case *HistoryReplay:
-		if value, ok := members["currentState"]; ok && string(bytes.TrimSpace(value)) == "null" {
+		if value, ok := members["currentState"]; ok &&
+			bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			var unknown *SessionState
-			v.CurrentState = &unknown
+			replay.CurrentState = &unknown
 		}
-		p = *v
-	case *ToolChunk:
-		p = *v
-	case *Plan:
-		p = *v
-	case *InfoUpdate:
-		p = *v
-	case *ConfigOptionUpdate:
-		p = *v
-	case *AvailableCommandsUpdate:
-		p = *v
-	case *UsageUpdate:
-		p = *v
-	case *UserMessage:
-		p = *v
-	case *AgentMessage:
-		p = *v
-	case *AgentThinking:
-		p = *v
-	case *MessageChunk:
-		p = *v
-	case *ThinkingChunk:
-		p = *v
-	case *ToolCall:
-		p = *v
-	case *ToolResult:
-		p = *v
-	case *InteractionRequested:
-		p = *v
-	case *InteractionClosed:
-		p = *v
-	case *SessionError:
-		p = *v
-	case *StateUpdate:
-		p = *v
+		event := SessionEvent{EventBase: raw.EventBase, payload: replay}
+		if err := event.Validate(); err != nil {
+			return err
+		}
+		*e = event
+		return nil
 	}
-	result, err := NewEvent(raw.EventBase, p, Source{})
-	if err == nil {
-		*e = result
+	liveJSON, err := json.Marshal(struct {
+		EventID   string          `json:"eventId"`
+		SessionID string          `json:"sessionId"`
+		Time      time.Time       `json:"time"`
+		ItemID    string          `json:"itemId"`
+		Type      agent.EventType `json:"type"`
+		Payload   json.RawMessage `json:"payload"`
+		Meta      map[string]any  `json:"_meta"`
+	}{
+		EventID:   raw.EventID,
+		SessionID: raw.SessionID,
+		Time:      raw.Time,
+		ItemID:    raw.ItemID,
+		Type:      agent.EventType(raw.Type),
+		Payload:   raw.Payload,
+		Meta:      raw.Meta,
+	})
+	if err != nil {
+		return err
 	}
-	return err
+	var live agent.Event
+	if err := json.Unmarshal(liveJSON, &live); err != nil {
+		return err
+	}
+	event := SessionEvent{EventBase: raw.EventBase, payload: live.Payload}
+	if err := event.Validate(); err != nil {
+		return err
+	}
+	*e = event
+	return nil
 }
 
 // Clone detaches slices/maps without changing the source association.
 func (e SessionEvent) Clone() (SessionEvent, error) {
-	b, err := json.Marshal(e)
+	encoded, err := json.Marshal(e)
 	if err != nil {
 		return SessionEvent{}, err
 	}
 	var out SessionEvent
-	err = json.Unmarshal(b, &out)
+	err = json.Unmarshal(encoded, &out)
 	out.source = e.source
 	return out, err
 }
 
-// A pointer field alone cannot distinguish omitted rawOutput from explicit null
-// during encoding/json decoding. Preserve the member's actual presence.
-func (p *ToolResult) UnmarshalJSON(data []byte) error {
-	type fields ToolResult
-	var out fields
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	d.UseNumber()
-	if err := d.Decode(&out); err != nil {
-		return err
-	}
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(data, &members); err != nil {
-		return err
-	}
-	if raw, ok := members["rawInput"]; ok {
-		var value any
-		d = json.NewDecoder(bytes.NewReader(raw))
-		d.UseNumber()
-		if err := d.Decode(&value); err != nil {
-			return err
-		}
-		out.RawInput = &value
-	}
-	if raw, ok := members["rawOutput"]; ok {
-		var value any
-		d = json.NewDecoder(bytes.NewReader(raw))
-		d.UseNumber()
-		if err := d.Decode(&value); err != nil {
-			return err
-		}
-		out.RawOutput = &value
-	}
-	*p = ToolResult(out)
-	return nil
-}
-
-// An explicitly supplied empty content array is distinct from omitted content.
-func (p ToolResult) MarshalJSON() ([]byte, error) {
-	type fields ToolResult
-	return marshalToolContent(fields(p), p.Content)
-}
-
-// Preserve explicit null for an optional dynamic output and explicit [] content.
-func (p *ToolCall) UnmarshalJSON(data []byte) error {
-	type fields ToolCall
-	var out fields
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	d.UseNumber()
-	if err := d.Decode(&out); err != nil {
-		return err
-	}
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(data, &members); err != nil {
-		return err
-	}
-	if raw, ok := members["rawOutput"]; ok {
-		var value any
-		d = json.NewDecoder(bytes.NewReader(raw))
-		d.UseNumber()
-		if err := d.Decode(&value); err != nil {
-			return err
-		}
-		out.RawOutput = &value
-	}
-	*p = ToolCall(out)
-	return nil
-}
-
-func (p ToolCall) MarshalJSON() ([]byte, error) {
-	type fields ToolCall
-	return marshalToolContent(fields(p), p.Content)
-}
-
-func marshalToolContent(value any, content []ContentBlock) ([]byte, error) {
-	data, err := json.Marshal(value)
-	if err != nil || content == nil {
-		return data, err
-	}
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(data, &members); err != nil {
-		return nil, err
-	}
-	members["content"], err = json.Marshal(content)
-	if err != nil {
-		return nil, err
-	}
-	return json.Marshal(members)
-}
-
-// ValidType recognizes the closed set shared by history queries and live events.
+// ValidType recognizes MASS history replay and the SDK's live event union.
 func ValidType(kind string) bool {
-	switch kind {
-	case "session.history_replay":
-		return true
-	case "user.message", "agent.message", "agent.thinking", "agent.tool_call", "agent.tool_result", "agent.message_chunk", "agent.thinking_chunk", "agent.tool_call_chunk", "agent.plan", "session.state_update", "session.error", "session.info_update", "session.config_option_update", "session.available_commands_update", "session.usage_update", "session.interaction_requested", "session.interaction_closed":
+	switch agent.EventType(kind) {
+	case agent.EventUserMessage,
+		agent.EventAgentMessage,
+		agent.EventAgentThinking,
+		agent.EventAgentToolCall,
+		agent.EventAgentToolResult,
+		agent.EventAgentMessageChunk,
+		agent.EventAgentThinkingChunk,
+		agent.EventAgentToolCallChunk,
+		agent.EventSessionStateUpdate,
+		agent.EventSessionError,
+		agent.EventSessionInfoUpdate,
+		agent.EventSessionConfigOptionUpdate,
+		agent.EventSessionCommandsUpdate,
+		agent.EventSessionUsageUpdate,
+		agent.EventInteractionRequested,
+		agent.EventInteractionClosed:
 		return true
 	}
-	return false
+	return kind == "session.history_replay"
+}
+
+func historyPayload(payload Payload) (HistoryReplay, bool) {
+	switch value := payload.(type) {
+	case HistoryReplay:
+		return value, true
+	case *HistoryReplay:
+		if value == nil {
+			return HistoryReplay{}, false
+		}
+		return *value, true
+	default:
+		return HistoryReplay{}, false
+	}
+}
+
+func oneOf(value string, values ...string) bool {
+	return slices.Contains(values, value)
 }

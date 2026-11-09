@@ -208,7 +208,7 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		r, e := svc.GetSession(ref)
 		return err == nil && e == nil && r.Status.State == events.Idle && len(before.Events) == 1
 	}, 5*time.Second, 10*time.Millisecond)
-	require.Equal(t, "durable original answer", before.Events[0].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "durable original answer", events.TextOf(before.Events[0].Payload().(events.AgentMessage).Content[0]))
 	closed, err := svc.CloseSession(ctx, ref)
 	require.NoError(t, err)
 	require.Equal(t, events.SessionState("offline"), closed.Status.State)
@@ -284,7 +284,7 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	if mode == "caller-abandon-only" {
 		require.Len(t, after.Events, len(before.Events)+1)
 		require.Equal(t, before.Events, after.Events[:len(before.Events)], "history identity/order/content must survive canceled restore")
-		require.Equal(t, "resume answer", after.Events[len(before.Events)].Payload().(events.AgentMessage).Content[0].Text)
+		require.Equal(t, "resume answer", events.TextOf(after.Events[len(before.Events)].Payload().(events.AgentMessage).Content[0]))
 	} else {
 		require.Equal(t, before, after, "history identity/order/content must survive canceled restore")
 	}
@@ -514,7 +514,7 @@ func TestPendingRestoreStopLateSuccessAndUnknownRelease(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, page.Events, 1, "late accepted fact must drain before Stop success, including explicit cleanup retry")
 			require.Equal(t, "19191919-1919-4191-8191-191919191919", page.Events[0].EventID)
-			require.Equal(t, "accepted late restore fact", page.Events[0].Payload().(events.AgentMessage).Content[0].Text)
+			require.Equal(t, "accepted late restore fact", events.TextOf(page.Events[0].Payload().(events.AgentMessage).Content[0]))
 			require.Equal(t, int32(1), d.resumeCalls.Load(), "no replacement native restore")
 			require.Zero(t, d.promptCalls.Load(), "no native input dispatch while stopping or stopped")
 		})

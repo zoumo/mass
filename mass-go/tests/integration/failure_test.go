@@ -403,7 +403,7 @@ func (s *failureSuite) TestStopTimeoutSealsAdmissionUntilRelease() {
 		e, err := nextSubscription(sub, ctx(s.T()))
 		s.Require().NoError(err)
 		if p, ok := e.Payload().(events.InteractionRequested); ok {
-			handle = p.Interaction
+			handle = string(p.Interaction)
 		}
 	}
 	short, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -508,7 +508,7 @@ func (s *failureSuite) TestLateAnswerCannotControlRecoveredRun() {
 		e, err := nextSubscription(sub, ctx(s.T()))
 		s.Require().NoError(err)
 		if p, ok := e.Payload().(events.InteractionRequested); ok {
-			old = p.Interaction
+			old = string(p.Interaction)
 		}
 	}
 	s.until(sub, events.Idle)

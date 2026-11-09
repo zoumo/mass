@@ -75,11 +75,11 @@ func ticket12ColdLoadHTTP(t *testing.T, mode string) {
 	require.Empty(t, last.Next)
 	require.Equal(t, "first", first.Events[0].Replay.NativeRecordID)
 	require.Equal(t, "turn-z", first.Events[0].Replay.NativeParentID)
-	require.Equal(t, "saved first", first.Events[0].Payload().(events.UserMessage).Content[0].Text)
-	require.Equal(t, "saved answer", first.Events[1].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "saved first", events.TextOf(first.Events[0].Payload().(events.UserMessage).Content[0]))
+	require.Equal(t, "saved answer", events.TextOf(first.Events[1].Payload().(events.AgentMessage).Content[0]))
 	require.Equal(t, "item/+:next", first.Events[1].Meta["pagination"].(map[string]any)["itemCursor"])
 	require.Equal(t, "last", last.Events[0].Replay.NativeRecordID)
-	require.Equal(t, "saved last", last.Events[0].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "saved last", events.TextOf(last.Events[0].Payload().(events.AgentMessage).Content[0]))
 	require.Equal(t, "turn/+:next", last.Events[0].Meta["pagination"].(map[string]any)["turnCursor"])
 	var receipt runtime.InputReceipt
 	require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("continue cold thread")}}, &receipt))
@@ -89,7 +89,7 @@ func ticket12ColdLoadHTTP(t *testing.T, mode string) {
 		return c.History(ctx(t), ref, store.HistoryQuery{}, &live) == nil && len(live.Events) == 4
 	}, 5*time.Second, time.Millisecond)
 	require.Nil(t, live.Events[3].Replay)
-	require.Equal(t, "same resumed connection", live.Events[3].Payload().(events.AgentMessage).Content[0].Text)
+	require.Equal(t, "same resumed connection", events.TextOf(live.Events[3].Payload().(events.AgentMessage).Content[0]))
 	var stopped resource.Runtime
 	require.NoError(t, c.StopRuntime(ctx(t), "agent", &stopped))
 	require.NoError(t, c.GetRuntime(ctx(t), "agent", &stopped))

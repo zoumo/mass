@@ -8,6 +8,8 @@ import (
 	"maps"
 	"sync"
 
+	"github.com/zoumo/agent-sdk-go/agent"
+
 	"github.com/zoumo/mass/mass-go/pkg/events"
 )
 
@@ -68,9 +70,8 @@ type DriverSession struct {
 	InitialInputReceipt *InputReceipt
 }
 
-type Input struct {
-	Content []events.ContentBlock `json:"content"`
-}
+type Input = agent.Input
+
 type Acceptance struct {
 	Sent           *bool `json:"sent,omitempty"`
 	NativeAccepted *bool `json:"nativeAccepted,omitempty"`
@@ -85,8 +86,9 @@ func Bool(value bool) *bool {
 }
 
 type InputReceipt struct {
-	Submission string     `json:"submission"`
-	Acceptance Acceptance `json:"acceptance"`
+	Submission string            `json:"submission"`
+	Result     agent.InputResult `json:"result"`
+	Acceptance Acceptance        `json:"acceptance"`
 }
 type InteractionReceipt struct {
 	Interaction string     `json:"interaction"`

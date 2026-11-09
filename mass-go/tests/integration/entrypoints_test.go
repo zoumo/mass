@@ -284,7 +284,7 @@ func (s *entrypointSuite) readWork(ref resource.SessionRef, text string, questio
 				if strings.HasPrefix(ref.SessionID, "claude") {
 					answer = map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"Which format?": "json"}}}
 				}
-				s.call("session.answer", workflowParams{Session: ref, Interaction: p.Interaction, Answer: answer}, nil)
+				s.call("session.answer", workflowParams{Session: ref, Interaction: string(p.Interaction), Answer: answer}, nil)
 			} else {
 				permissions++
 			}
@@ -331,8 +331,7 @@ func (s *entrypointSuite) basic(kind string) {
 	if kind == "claude" {
 		// Unsupported input after settlement still rejects before dispatch. Actual
 		// repeated text input uses the dedicated continuity peer below this suite.
-		var image events.ContentBlock
-		s.Require().NoError(json.Unmarshal([]byte(`{"type":"image","data":"AA==","mimeType":"image/png"}`), &image))
+		image := events.ImageBlock{Data: "AA==", MIMEType: "image/png"}
 		e = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{image}}}, nil)
 		var public *transport.Error
 		s.Require().ErrorAs(e, &public)

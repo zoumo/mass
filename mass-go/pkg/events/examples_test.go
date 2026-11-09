@@ -18,7 +18,7 @@ func TestHarnessEventExamplesRoundTrip(t *testing.T) {
 		Events []json.RawMessage `json:"events"`
 	}
 	require.NoError(t, json.Unmarshal(data, &examples))
-	require.Len(t, examples.Events, 18)
+	require.Len(t, examples.Events, 17)
 	for _, raw := range examples.Events {
 		var label struct {
 			Type string `json:"type"`
@@ -47,11 +47,20 @@ func TestReplayCurrentStatePreservesAbsentAndNull(t *testing.T) {
 }
 
 func TestConfigNotificationsRejectMissingOrNullFields(t *testing.T) {
-	for _, options := range []string{`[{}]`, `[{"group":"g","name":"G"}]`, `[{"group":"g","name":"G","options":null}]`, `[{"group":"g","name":"G","options":[{}]}]`} {
+	for _, options := range []string{`[{"group":"g","name":"G"}]`, `[{"group":"g","name":"G","options":null}]`} {
 		t.Run(options, func(t *testing.T) {
 			raw := `{"eventId":"01234567-89ab-4cde-8fab-0123456789ab","namespace":"one","sessionName":"demo","sessionId":"original","time":"2026-10-20T00:00:00Z","type":"session.config_option_update","payload":{"configOptions":[{"id":"mode","name":"Mode","type":"select","currentValue":"x","options":` + options + `}]}}`
 			var e events.SessionEvent
 			require.Error(t, json.Unmarshal([]byte(raw), &e))
+		})
+	}
+	// The SDK's public flat option branch permits empty entries. MASS consumes
+	// that wire contract instead of maintaining a stricter duplicate decoder.
+	for _, options := range []string{`[{}]`, `[{"group":"g","name":"G","options":[{}]}]`} {
+		t.Run("sdk_accepts_"+options, func(t *testing.T) {
+			raw := `{"eventId":"01234567-89ab-4cde-8fab-0123456789ab","namespace":"one","sessionName":"demo","sessionId":"original","time":"2026-10-20T00:00:00Z","type":"session.config_option_update","payload":{"configOptions":[{"id":"mode","name":"Mode","type":"select","currentValue":"x","options":` + options + `}]}}`
+			var e events.SessionEvent
+			require.NoError(t, json.Unmarshal([]byte(raw), &e))
 		})
 	}
 }

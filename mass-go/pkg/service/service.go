@@ -628,23 +628,10 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 		return runtime.InputReceipt{}, resolveErr
 	}
 	ref = resource.SessionRef{SessionID: r.Status.SessionID}
-	if len(input.Content) == 0 {
-		return runtime.InputReceipt{}, runtime.InvalidArgument("empty input")
+	input, err := runtime.CopyInput(input)
+	if err != nil {
+		return runtime.InputReceipt{}, err
 	}
-	content := make([]events.ContentBlock, len(input.Content))
-	for i, block := range input.Content {
-		if err := block.Validate(); err != nil {
-			return runtime.InputReceipt{}, runtime.InvalidArgument("invalid content block")
-		}
-		raw, err := json.Marshal(block)
-		if err != nil {
-			return runtime.InputReceipt{}, runtime.InvalidArgument("invalid content block")
-		}
-		if err = json.Unmarshal(raw, &content[i]); err != nil {
-			return runtime.InputReceipt{}, runtime.InvalidArgument("invalid content block")
-		}
-	}
-	input.Content = content
 	return sessionWork(ctx, s, ref, false, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
 		return run.driver.SendPrompt(owner, id, input)
 	})
@@ -920,10 +907,10 @@ func (s *Service) process(run *runBinding, l *lane) {
 					if l.interactions == nil {
 						l.interactions = map[string]struct{}{}
 					}
-					l.interactions[payload.Interaction] = struct{}{}
+					l.interactions[string(payload.Interaction)] = struct{}{}
 				}
 			case events.InteractionClosed:
-				delete(l.interactions, payload.Interaction)
+				delete(l.interactions, string(payload.Interaction))
 			}
 		}
 		s.scheduleIdleLocked(run, l)
@@ -969,7 +956,7 @@ func (s *Service) process(run *runBinding, l *lane) {
 			s.mu.Unlock()
 			if allowed {
 				if answer, handled := s.policy(request); handled {
-					if _, err := run.driver.AnswerInteraction(context.Background(), e.SessionID, request.Interaction, answer); err != nil {
+					if _, err := run.driver.AnswerInteraction(context.Background(), e.SessionID, string(request.Interaction), answer); err != nil {
 						s.fail(l, err)
 					}
 				}

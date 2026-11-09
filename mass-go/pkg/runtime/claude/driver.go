@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/zoumo/agent-sdk-go/agent"
 	sdk "github.com/zoumo/agent-sdk-go/claude"
 	"github.com/zoumo/agent-sdk-go/claude/types"
 
@@ -352,11 +353,19 @@ func (d *Driver) submit(ctx context.Context, s *session, input runtime.Input) (r
 	count := s.submissions
 	s.sending = true
 	s.mu.Unlock()
-	native := sdk.Input{Text: input.Content[0].Text}
+	first, ok := events.TextValue(input.Content[0])
+	if !ok {
+		return runtime.InputReceipt{}, runtime.Unsupported()
+	}
+	native := sdk.Input{Text: first}
 	if len(input.Content) > 1 {
 		blocks := make([]types.ContentBlock, len(input.Content))
 		for i, b := range input.Content {
-			blocks[i] = types.ContentBlock{Type: "text", Text: &types.TextBlock{Text: b.Text}}
+			text, ok := events.TextValue(b)
+			if !ok {
+				return runtime.InputReceipt{}, runtime.Unsupported()
+			}
+			blocks[i] = types.ContentBlock{Type: "text", Text: &types.TextBlock{Text: text}}
 		}
 		native = sdk.Input{User: &types.UserInput{Message: types.InputMessage{Role: "user", Content: types.Content{Blocks: blocks}}}}
 	}
@@ -364,7 +373,10 @@ func (d *Driver) submit(ctx context.Context, s *session, input runtime.Input) (r
 	// later inputs carry a caller UUID, not a TurnID; an echo is never presumed.
 	if count > 1 || s.requireLink {
 		if native.User == nil {
-			text := input.Content[0].Text
+			text, ok := events.TextValue(input.Content[0])
+			if !ok {
+				return runtime.InputReceipt{}, runtime.Unsupported()
+			}
 			native = sdk.Input{User: &types.UserInput{Message: types.InputMessage{Role: "user", Content: types.Content{Text: &text}}}}
 		}
 		native.User.UUID = &work
@@ -388,7 +400,7 @@ func (d *Driver) submit(ctx context.Context, s *session, input runtime.Input) (r
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	return runtime.InputReceipt{Submission: work, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: work, Result: agent.InputAppliedBestEffort, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
 }
 
 func identityMeta(id sdk.SubagentIdentity) map[string]any {
@@ -728,7 +740,14 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 					return errors.New("pending tool limit")
 				}
 				s.tools[tool] = kind
-				if err := d.emit(s, tool, events.ToolCall{ID: tool, Kind: kind, RawInput: input}, raw.Time); err != nil {
+				identity := claudeToolIdentityFor(kind)
+				if err := d.emit(s, tool, events.ToolCall{
+					ID:       tool,
+					Kind:     identity.kind,
+					ToolName: identity.toolName,
+					Provider: identity.provider,
+					RawInput: input,
+				}, raw.Time); err != nil {
 					return err
 				}
 			case "tool_result":
@@ -737,7 +756,15 @@ func (d *Driver) adapt(s *session, received sdk.Received) error {
 				if kind == "" {
 					return errors.New("tool result has no observed tool use")
 				}
-				p := events.ToolResult{ID: tool, Kind: kind, Status: "completed", Output: &events.Output{Availability: "unavailable", Completeness: "unknown"}}
+				identity := claudeToolIdentityFor(kind)
+				p := events.ToolResult{
+					ID:       tool,
+					Kind:     identity.kind,
+					ToolName: identity.toolName,
+					Provider: identity.provider,
+					Status:   "completed",
+					Output:   &events.Output{Availability: "unavailable", Completeness: "unknown"},
+				}
 				var failed bool
 				if value, ok := b["is_error"]; ok {
 					if err := json.Unmarshal(value, &failed); err != nil {
@@ -924,7 +951,7 @@ func (d *Driver) permission(s *session, r *sdk.IncomingRequest) error {
 		return nil
 	default:
 	}
-	return d.emit(s, "", events.InteractionRequested{Interaction: ref, Request: request, Blocking: true}, time.Time{})
+	return d.emit(s, "", events.InteractionRequested{Interaction: events.InteractionRef(ref), Request: request, Blocking: true}, time.Time{})
 }
 
 func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer any) (runtime.Acceptance, error) {

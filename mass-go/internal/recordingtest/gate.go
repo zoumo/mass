@@ -307,8 +307,8 @@ func validateCaseIndex(index caseIndex, spec artifactCase, material string) erro
 	if index.Versions["sdk"] != RecordingSDKVersion {
 		return fmt.Errorf("SDK version = %q, want recorded %q", index.Versions["sdk"], RecordingSDKVersion)
 	}
-	if index.Versions["testify"] != TestifyVersion {
-		return fmt.Errorf("testify version = %q, want %q", index.Versions["testify"], TestifyVersion)
+	if index.Versions["testify"] != RecordingTestifyVersion {
+		return fmt.Errorf("testify version = %q, want recorded %q", index.Versions["testify"], RecordingTestifyVersion)
 	}
 	if index.Versions[spec.provider] == "" {
 		return fmt.Errorf("%s CLI version is missing", spec.provider)
@@ -562,7 +562,7 @@ func validateIndexFacts(facts facts, spec artifactCase, manifest captureManifest
 	}
 	offered := false
 	for _, option := range permission.Request.Options {
-		if option.OptionID == permission.Answer.OptionID && option.Kind == "allow_once" {
+		if option.OptionID == permission.Answer.OptionID && string(option.Kind) == "allow_once" {
 			offered = true
 		}
 	}
@@ -958,7 +958,7 @@ func RunRejectsIncompleteExecution(t *testing.T) {
 		},
 		{
 			name: "incomplete connection index",
-			want: "index connections",
+			want: "connection inventory differs from index",
 			mutate: func(t *testing.T, session string) {
 				rewriteJSONFile(t, filepath.Join(session, "executions", "index.json"), func(value map[string]any) {
 					value["executions"].([]any)[0].(map[string]any)["connections"] = []any{}
@@ -967,7 +967,7 @@ func RunRejectsIncompleteExecution(t *testing.T) {
 		},
 		{
 			name: "descriptor hash mismatch",
-			want: "descriptor hash mismatch",
+			want: "descriptor differs from index",
 			mutate: func(t *testing.T, session string) {
 				descriptor, _, _ := executionEvidencePaths(t, session)
 				require.NoError(t, os.WriteFile(descriptor, append(mustReadFile(t, descriptor), '\n'), 0o600))
@@ -999,7 +999,7 @@ func RunRejectsIncompleteExecution(t *testing.T) {
 		},
 		{
 			name: "failed replay receipt",
-			want: "receipt version/status",
+			want: "mock replay receipt status",
 			mutate: func(t *testing.T, session string) {
 				_, receipt, _ := executionEvidencePaths(t, session)
 				rewriteJSONFile(t, receipt, func(value map[string]any) { value["status"] = "failed" })
@@ -1023,7 +1023,7 @@ func RunRejectsIncompleteExecution(t *testing.T) {
 		},
 		{
 			name: "native launched",
-			want: "native agent",
+			want: "does not prove an in-process mock",
 			mutate: func(t *testing.T, session string) {
 				_, receipt, _ := executionEvidencePaths(t, session)
 				rewriteJSONFile(t, receipt, func(value map[string]any) { value["nativeLaunched"] = true })
@@ -1039,7 +1039,7 @@ func RunRejectsIncompleteExecution(t *testing.T) {
 		},
 		{
 			name: "receipt recording mismatch",
-			want: "recording hash mismatch",
+			want: "recording hash differs",
 			mutate: func(t *testing.T, session string) {
 				_, receipt, _ := executionEvidencePaths(t, session)
 				rewriteJSONFile(t, receipt, func(value map[string]any) { value["recordingSHA256"] = strings.Repeat("0", 64) })

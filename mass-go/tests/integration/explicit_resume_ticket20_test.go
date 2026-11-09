@@ -227,7 +227,7 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 				require.Equal(t, runtimeMessage.Payload(), after.Events[1].Payload())
 			}
 			require.Equal(t, before.Events[0], after.Events[0])
-			require.Equal(t, "new resume input", after.Events[1].Payload().(events.AgentMessage).Content[0].Text)
+			require.Equal(t, "new resume input", events.TextOf(after.Events[1].Payload().(events.AgentMessage).Content[0]))
 			for {
 				streamed, e := observer.Next()
 				require.NoError(t, e)
@@ -440,7 +440,7 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			require.Equal(t, f.ref.SessionID, resumed.Status.SessionID)
 			require.NotNil(t, resumed.InitialInputReceipt)
 			before := ticket20Wait(t, f, 2)
-			require.Equal(t, "new explicit input", before.Events[1].Payload().(events.AgentMessage).Content[0].Text)
+			require.Equal(t, "new explicit input", events.TextOf(before.Events[1].Payload().(events.AgentMessage).Content[0]))
 			for _, call := range ticket20Wire(t, f) {
 				if call.Method == "input" && call.Params["text"] == "new explicit input" {
 					blocks := call.Params["content"].([]any)
@@ -511,8 +511,8 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, page.Events, 8)
 			for i, text := range []string{"original input", "new explicit input", "after restart", "second opt-in"} {
-				require.Equal(t, text, page.Events[2*i].Payload().(events.UserMessage).Content[0].Text)
-				require.Equal(t, text, page.Events[2*i+1].Payload().(events.AgentMessage).Content[0].Text)
+				require.Equal(t, text, events.TextOf(page.Events[2*i].Payload().(events.UserMessage).Content[0]))
+				require.Equal(t, text, events.TextOf(page.Events[2*i+1].Payload().(events.AgentMessage).Content[0]))
 			}
 			_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after native load")}})
 			require.NoError(t, err)
@@ -752,7 +752,7 @@ func TestTicket20ResumeCommitGatesFactsAndReceipt(t *testing.T) {
 					page, err = f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{Types: []string{"agent.message"}})
 					return err == nil && len(page.Events) == 2
 				}, 5*time.Second, 10*time.Millisecond)
-				require.Equal(t, "before commit", page.Events[1].Payload().(events.AgentMessage).Content[0].Text)
+				require.Equal(t, "before commit", events.TextOf(page.Events[1].Payload().(events.AgentMessage).Content[0]))
 				f.close()
 				ticket20Released(t, f)
 			})

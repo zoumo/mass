@@ -410,7 +410,7 @@ func (s *ClientSuite) TestGeneratedResourceWorkflow() {
 	s.Require().NoError(c.CreateSession(ctx, resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: "test"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}}, nil))
 	s.Require().NoError(c.GetSession(ctx, ref, nil))
 	s.Require().NoError(c.ListSessions(ctx, resource.SessionQuery{Limit: 2}, nil))
-	s.Require().NoError(c.SendPrompt(ctx, ref, runtime.Input{}, nil))
+	s.Require().NoError(c.SendPrompt(ctx, ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, nil))
 	s.Require().NoError(c.Cancel(ctx, ref, nil))
 	s.Require().NoError(c.CloseSession(ctx, ref, nil))
 	s.Require().NoError(c.ResumeSession(ctx, ref, nil))
@@ -435,14 +435,14 @@ func (s *framingSuite) TestLargeFrameHasNoInventedLimit() {
 	defer observer.Close()
 	event, err := observer.Next()
 	s.Require().NoError(err)
-	s.Equal(text, event.Payload().(events.AgentMessage).Content[0].Text)
+	s.Equal(text, events.TextOf(event.Payload().(events.AgentMessage).Content[0]))
 	_, err = observer.Next()
 	s.ErrorIs(err, io.EOF)
 }
 
 func (s *ClientSuite) TestGeneratedModelsPreserveOptionalNullAndLargeOpenNumbers() {
-	var call generated.ToolCall
-	raw := `{"id":"tool","kind":"execute","rawInput":{"n":9007199254740993},"rawOutput":null}`
+	var call generated.ToolCallPayload
+	raw := `{"id":"tool","kind":"execute","toolName":"Bash","provider":"agent","rawInput":{"n":9007199254740993},"rawOutput":null}`
 	s.Require().NoError(json.Unmarshal([]byte(raw), &call))
 	encoded, err := json.Marshal(call)
 	s.Require().NoError(err)

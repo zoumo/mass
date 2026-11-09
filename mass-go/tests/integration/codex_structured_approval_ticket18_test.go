@@ -166,7 +166,7 @@ func ticket18Roundtrip(t *testing.T, bin, choices, decision, name, kind string) 
 			require.NotEmpty(t, decision, "invalid offered choices must fail closed as a whole, not expose a filtered subset")
 			require.False(t, answered)
 			require.Equal(t, "approval-request", p.Request.ToolCallID, "child, foreign and wrong-work requests must not gain root authority")
-			interaction = p.Interaction
+			interaction = string(p.Interaction)
 			var offered []json.RawMessage
 			require.NoError(t, json.Unmarshal([]byte(choices), &offered))
 			require.Len(t, p.Request.Options, len(offered))
@@ -176,15 +176,15 @@ func ticket18Roundtrip(t *testing.T, bin, choices, decision, name, kind string) 
 				ids[option.OptionID] = true
 			}
 			require.Contains(t, p.Request.Options[1].Name, name)
-			require.Equal(t, kind, p.Request.Options[1].Kind)
+			require.Equal(t, events.PermissionOptionKind(kind), p.Request.Options[1].Kind)
 			require.Len(t, p.Request.Content, 1)
 			var nativeRequest struct {
 				AvailableDecisions json.RawMessage `json:"availableDecisions"`
 			}
-			require.NoError(t, json.Unmarshal([]byte(p.Request.Content[0].Text), &nativeRequest))
+			require.NoError(t, json.Unmarshal([]byte(events.TextOf(p.Request.Content[0])), &nativeRequest))
 			require.JSONEq(t, choices, string(nativeRequest.AvailableDecisions), "public request preserves the complete original offered decisions")
 			if !ids["allow-once"] {
-				require.Error(t, client.Answer(ctx(t), ref, p.Interaction, map[string]any{"outcome": "selected", "optionId": "allow-once"}, nil), "no default accept may be invented when only structured decisions were offered")
+				require.Error(t, client.Answer(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"}, nil), "no default accept may be invented when only structured decisions were offered")
 			}
 			_, err := os.Stat(filepath.Join(dir, "answer.json"))
 			require.ErrorIs(t, err, os.ErrNotExist, "publishing an option must never auto-approve it")
@@ -196,19 +196,19 @@ func ticket18Roundtrip(t *testing.T, bin, choices, decision, name, kind string) 
 				{"outcome": "selected", "optionId": p.Request.Options[1].OptionID, "decision": "accept"},
 				{"outcome": "cancelled", "optionId": p.Request.Options[1].OptionID}, //nolint:misspell // Public permission protocol spelling.
 			} {
-				require.Error(t, client.Answer(ctx(t), ref, p.Interaction, invalid, nil))
+				require.Error(t, client.Answer(ctx(t), ref, string(p.Interaction), invalid, nil))
 			}
-			require.Error(t, client.Answer(ctx(t), resource.SessionRef{SessionID: "foreign-session"}, p.Interaction, valid, nil))
+			require.Error(t, client.Answer(ctx(t), resource.SessionRef{SessionID: "foreign-session"}, string(p.Interaction), valid, nil))
 			driver, err := reg.Get("agent")
 			require.NoError(t, err)
 			canceled, cancel := context.WithCancel(context.Background())
 			cancel()
-			_, err = driver.AnswerInteraction(canceled, ref.SessionID, p.Interaction, valid)
+			_, err = driver.AnswerInteraction(canceled, ref.SessionID, string(p.Interaction), valid)
 			require.Error(t, err, "NotSent must retain the still-live native capability")
-			require.NoError(t, client.Answer(ctx(t), ref, p.Interaction, valid, &receipt))
+			require.NoError(t, client.Answer(ctx(t), ref, string(p.Interaction), valid, &receipt))
 			require.Equal(t, runtime.Yes(), receipt.Evidence.Sent)
 			require.Nil(t, receipt.Evidence.NativeAccepted)
-			require.Error(t, client.Answer(ctx(t), ref, p.Interaction, valid, nil), "consumed authority cannot answer twice")
+			require.Error(t, client.Answer(ctx(t), ref, string(p.Interaction), valid, nil), "consumed authority cannot answer twice")
 			answered = true
 		}
 		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && answered {

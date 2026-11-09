@@ -132,9 +132,11 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 			server := httptest.NewServer(h)
 			defer server.Close()
 			input := resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "first"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}}
-			for _, wire := range []string{`{"content":[]}`, `{"content":[{"type":"image","data":"aA==","mimeType":"image/png"}]}`, `{"content":[{"type":"text","text":"hello","annotations":{"audience":["user"]}}]}`} {
-				var invalid runtime.Input
-				require.NoError(t, json.Unmarshal([]byte(wire), &invalid))
+			for _, invalid := range []runtime.Input{
+				{},
+				{Content: []events.ContentBlock{events.ImageBlock{Data: "aA==", MIMEType: "image/png"}}},
+				{Content: []events.ContentBlock{events.TextBlock{Text: "hello", Annotations: &events.Annotations{Audience: []string{"user"}}}}},
+			} {
 				input.InitialInput = &invalid
 				_, err = svc.CreateSessionWithInput(ctx(t), input)
 				require.Error(t, err)

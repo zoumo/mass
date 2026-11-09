@@ -78,7 +78,7 @@ closeSession 只作用于一个 Session。Service 可从任意 Session 状态调
 
 命令接纳时固定当前会话运行及工作；旧操作或事件不能在恢复后改绑。返回接受证据不表示工作完成；取消确认不表示前台终止。未知副作用返回 outcome_unknown，不能自动重发。单会话失败不应停止健康共享运行。
 
-Runtime 拥有 [SessionEvent TypeSpec](session-events.tsp) 及[事件设计](events.md)，保持实时、存储和历史读取的统一事件模型。adapter 优先取原始 time，缺失时生成；创建统一事件时生成一次 UUID 作为 eventId，同一事件发布、保存和重试保持不变。Service 与 Store 不重写 ID/时间；暂不做原生事件去重，不承诺原生重放得到相同 UUID。事件不含 seq，EventStore 按追加顺序读取、用游标分页，并返回最后同步的 eventId。Driver 不提交公共历史，不维护完整资源目录或发布资源创建成功；adapter 使用打开/恢复时固定的名称补齐事件，Service 从会话绑定核对归属并提交历史。每个 Driver 通过 events() 提供一条单消费者流，多个 Session 共用，Service 按 sessionId 路由；顺序、背压和生命周期的主规则见[Driver 事件流](events.md#driver-事件流)。
+Runtime 拥有 [SessionEvent TypeSpec](session-events.tsp) 及[事件设计](events.md)，保持实时、存储和历史读取的统一事件模型。SDK 实时 event 的 eventId/time/type/payload 由 SDK 产生，MASS relay 原样保留并只补 namespace/sessionName/Source；`session.history_replay` 控制事件由 MASS 生成。Service 与 Store 不重写 ID/时间；暂不做原生事件去重。事件不含 seq，EventStore 按追加顺序读取、用游标分页，并返回最后同步的 eventId。Driver 不提交公共历史，不维护完整资源目录或发布资源创建成功；adapter 使用打开/恢复时固定的名称补齐事件，Service 从会话绑定核对归属并提交历史。每个 Driver 通过 events() 提供一条单消费者流，多个 Session 共用，Service 按 sessionId 路由；顺序、背压和生命周期的主规则见[Driver 事件流](events.md#driver-事件流)。
 
 ## 事件交付
 

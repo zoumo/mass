@@ -3,46 +3,43 @@ package runtime
 import (
 	"encoding/json"
 
-	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/agent-sdk-go/agent"
 )
 
-// CopyInput validates and snapshots input before asynchronous ownership begins.
+// CopyInput validates and snapshots input with the SDK input codec before
+// asynchronous ownership begins.
 func CopyInput(input Input) (Input, error) {
-	if len(input.Content) == 0 {
-		return Input{}, InvalidArgument("empty input")
+	if err := input.Validate(); err != nil {
+		return Input{}, InvalidArgument("invalid content block")
 	}
-	content := make([]events.ContentBlock, len(input.Content))
-	for i, block := range input.Content {
-		if err := block.Validate(); err != nil {
-			return Input{}, InvalidArgument("invalid content block")
-		}
-		raw, err := json.Marshal(block)
-		if err != nil {
-			return Input{}, InvalidArgument("invalid content block")
-		}
-		if err = json.Unmarshal(raw, &content[i]); err != nil {
-			return Input{}, InvalidArgument("invalid content block")
-		}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return Input{}, InvalidArgument("invalid content block")
 	}
-	return Input{Content: content}, nil
+	var copied Input
+	if err := json.Unmarshal(raw, &copied); err != nil {
+		return Input{}, InvalidArgument("invalid content block")
+	}
+	return copied, nil
 }
 
-// ValidateTextInput rejects unsupported kinds and annotations, rather than
-// silently removing fields that neither native input mapping can represent.
+// ValidateTextInput rejects non-text blocks and text annotations, rather than
+// silently removing fields neither native provider can represent.
 func ValidateTextInput(input Input) error {
 	if _, err := CopyInput(input); err != nil {
 		return err
 	}
 	for _, block := range input.Content {
-		if block.Type != "text" {
-			return Unsupported()
-		}
-		raw, err := json.Marshal(block)
-		if err != nil {
-			return InvalidArgument("invalid content block")
-		}
-		var fields map[string]json.RawMessage
-		if json.Unmarshal(raw, &fields) != nil || len(fields) != 2 {
+		switch value := block.(type) {
+		case agent.TextBlock:
+			if value.Annotations != nil {
+				return Unsupported()
+			}
+		case *agent.TextBlock:
+			if value == nil || value.Annotations != nil {
+				return Unsupported()
+			}
+		default:
 			return Unsupported()
 		}
 	}
