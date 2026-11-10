@@ -2,6 +2,7 @@ package agentrelay
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"sync/atomic"
@@ -32,7 +33,7 @@ func TestMapEventPreservesSDKIdentityAndMeta(t *testing.T) {
 			Time:      at,
 			ItemID:    "item-1",
 			Payload:   input,
-			Meta:      map[string]any{"native": map[string]any{"id": "raw-1"}},
+			Meta:      map[string]any{"native": map[string]any{"id": "raw-1", "raw": json.RawMessage(`{"large":9007199254740993}`)}},
 		},
 	)
 	require.NoError(t, err)
@@ -44,7 +45,10 @@ func TestMapEventPreservesSDKIdentityAndMeta(t *testing.T) {
 	require.Equal(t, at, mapped.Time)
 	require.Equal(t, string(agent.EventAgentMessage), mapped.Type())
 	require.Equal(t, input, mapped.Payload())
-	require.Equal(t, map[string]any{"native": map[string]any{"id": "raw-1"}}, mapped.Meta)
+	require.Equal(t, map[string]any{"native": map[string]any{"id": "raw-1", "raw": json.RawMessage(`{"large":9007199254740993}`)}}, mapped.Meta)
+	encoded, err := json.Marshal(mapped)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), "9007199254740993")
 	require.True(t, source.SameRun(mapped.Source()))
 	require.Equal(t, "work-1", mapped.Source().Work())
 }

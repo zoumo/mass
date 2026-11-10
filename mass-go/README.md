@@ -46,13 +46,11 @@ SDK probe passes are reported separately and do not stand in for this suite.
 `prototype-go` remains the focused entrypoint demonstration, and
 `acceptance-sdk-go` remains the cross-capability selector.
 
-Claude creation can return `unknown` after its synthetic init: identity alone is
-not an idle/work-state proof. Claude supports serial same-connection input only
-when native linkage proves the preceding work completed. Unlinked or conflicting
-results leave work attribution unknown and fence later input; caller UUIDs are
-not invented native TurnIDs. Synthetic echo-positive tests do not prove a real
-Claude CLI echoes linkage. Resume checks retained identity/history and explicit
-init evidence, not real-model persistence. See [layered acceptance](docs/acceptance.md).
+Claude creation can return `unknown` after init: identity alone does not prove
+idle state. The Claude Driver uses the SDK agent Provider and Session, including
+its message, block, tool, interaction and state conversion. Input receipts retain
+the SDK `applied_best_effort` result without upgrading native acceptance.
+See [layered acceptance](docs/acceptance.md).
 
 ## Daemon and CLI
 
@@ -164,8 +162,9 @@ bin/massctl session resume review -n demo --text 'continue after close'
 Both drivers currently accept text input; Claude requires exactly one text block.
 Claude rejects `systemPrompt` and `additionalDirs` before dispatch; Codex maps
 `systemPrompt` to native base instructions and rejects `additionalDirs`.
-Claude resume requires explicit `--text` or `--input-file` so native init can
-prove the original ID and cwd; zero-input Claude resume fails before opening.
+Claude resume supports zero input and requires an explicit absolute
+`env.CLAUDE_CONFIG_DIR`. The SDK verifies CLI version, retained transcript and
+live identity. Optional initial input is submitted after that verification.
 These command examples describe supported interfaces, not proof of real CLI/model
 execution. Authentication, real native recovery, accounts and models must be
 validated separately in owned test directories. Permission auto-approval remains
@@ -259,8 +258,8 @@ The checked-in consumer fixtures remain bound to their recording SDK
 `v0.0.0-20261105065348-5edf8b62e963`; that provenance is intentionally not
 rewritten to the current runtime pin.
 Codex shares one native Client across its Sessions; Claude owns one native
-process per Session. Each Session has one Receive consumer for native events
-and original request capabilities. SDK observations do not establish Agent state.
+process per Session. Claude has one SDK Events consumer through MASS agentrelay;
+live event identity, payload and metadata come from the SDK.
 Codex input receipts retain the native turn ID and acceptance; Claude receipts
 prove only a complete local write, not native acceptance or recording.
 
@@ -317,9 +316,9 @@ input accepts them as top-level request fields. `stdio` servers use `command`,
 use HTTPS, except HTTP on loopback, and must not contain userinfo credentials.
 Sensitive header/env entries use `${ENV_VAR}` references rather than literal
 secrets. Codex supports `stdio` and `http`, and its MCP names cannot contain
-dots. Claude supports all three transports but not `cwd`, `envHeaders` or
-`bearerTokenEnvVar`. A non-nil merged list is the complete set of MCP servers:
-Claude uses strict MCP configuration, while Codex requires an explicit,
+dots. Claude supports `stdio` and `http`, and rejects `sse`, `cwd`,
+`envHeaders` and `bearerTokenEnvVar`. Claude follows the SDK target CLI merge
+behavior; an empty list does not disable ambient servers. Codex requires an explicit,
 existing absolute `env.CODEX_HOME` distinct from ambient configuration whose
 `config.toml`, when present, contains no `mcp_servers` at any level; arrange
 authentication in that isolated home. Codex thread create, resume and history
@@ -343,8 +342,8 @@ scenario and no real-agent fallback. They do not prove real CLI startup,
 authentication, model behavior or native history availability.
 Both providers support explicit asynchronous retained-main-history load followed
 by input on the verified resumed connection. Ordinary resume does not import
-history. Claude continuation still requires actual native linkage for completion;
-unlinked observations remain unknown. See [history loading](#retained-history-load)
+history. Claude continuation state follows SDK events; a result frame alone does
+not establish idle state. See [history loading](#retained-history-load)
 and [Claude source/cleanup limits](docs/claude-history-load.md).
 
 Existing Session commands use `NAME -n NAMESPACE` or a raw global `SESSION_ID`

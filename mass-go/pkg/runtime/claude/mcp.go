@@ -7,12 +7,12 @@ import (
 	"slices"
 	"strings"
 
-	sdk "github.com/zoumo/agent-sdk-go/claude"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
-func claudeMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessConfig) ([]sdk.MCPServer, error) {
+func claudeMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessConfig) ([]agent.MCPServer, error) {
 	if configured == nil {
 		return nil, nil
 	}
@@ -20,8 +20,11 @@ func claudeMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCo
 	if err := runtime.ValidateMCPServers(servers); err != nil {
 		return nil, errors.Join(runtime.ErrInvalidArgument, err)
 	}
-	converted := make([]sdk.MCPServer, 0, len(servers))
+	converted := make([]agent.MCPServer, 0, len(servers))
 	for i, server := range servers {
+		if server.Type == runtime.MCPTransportSSE {
+			return nil, errors.Join(runtime.UnsupportedOption("mcp_transport_unsupported", "MCP SSE transport is not supported by the agent SDK"), fmt.Errorf("mcp server %d: sse transport is unsupported", i))
+		}
 		if server.Cwd != "" {
 			return nil, errors.Join(runtime.UnsupportedOption("mcp_cwd_unsupported", "MCP working directories are not supported by this Claude runtime"), fmt.Errorf("mcp server %d: Claude does not support cwd", i))
 		}
@@ -31,9 +34,9 @@ func claudeMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCo
 		if err := validateClaudeMCPSecrets(i, server, options); err != nil {
 			return nil, err
 		}
-		converted = append(converted, sdk.MCPServer{
+		converted = append(converted, agent.MCPServer{
 			Name:      server.Name,
-			Transport: sdk.MCPTransport(server.Type),
+			Transport: agent.MCPTransport(server.Type),
 			Command:   server.Command,
 			Args:      append([]string(nil), server.Args...),
 			Env:       maps.Clone(server.Env),

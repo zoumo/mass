@@ -135,6 +135,7 @@ func claude(send func(any)) {
 			panic(err)
 		}
 		if v.Type == "user" {
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "running"})
 			send(map[string]any{"type": "stream_event", "session_id": sessionID, "event": map[string]any{"type": "message_start", "message": map[string]any{"id": "active", "role": "assistant", "content": []any{}}}})
 			if os.Getenv("PEER_CONTROL") == "write-failure" {
 				closedInput(func() {
@@ -150,10 +151,12 @@ func claude(send func(any)) {
 					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "complete synthetic fact", "apiBlockIndex": 0}}}})
 				}
 				send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "is_error": false, "result": "settled"})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 				continue
 			}
 			if os.Getenv("PEER_CONTROL") == "eof" {
 				send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "is_error": false, "result": "settled"})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 				for i := range 160 {
 					send(map[string]any{"type": "assistant", "session_id": sessionID, "message": map[string]any{"id": fmt.Sprintf("final-%d", i), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "accepted before EOF", "apiBlockIndex": 0}}}})
 				}
@@ -186,7 +189,7 @@ func claude(send func(any)) {
 			if err != nil {
 				panic(err)
 			}
-			send(map[string]any{"type": "system", "subtype": "init", "session_id": sessionID, "cwd": cwd, "model": "synthetic", "tools": []any{}})
+			send(map[string]any{"type": "system", "subtype": "init", "claude_code_version": "2.1.258", "session_id": sessionID, "cwd": cwd, "model": "synthetic", "tools": []any{}})
 		}
 	}
 }

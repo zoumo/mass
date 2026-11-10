@@ -40,7 +40,7 @@
           "content": "hello"
         },
         "parent_tool_use_id": null,
-        "session_id": ""
+        "session_id": "", "priority": "next", "shouldQuery": true
       }
     }
   ]

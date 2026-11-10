@@ -325,8 +325,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 								require.Nil(t, p.Content)
 								require.Equal(t, "unavailable", p.Output.Availability)
 							case "value-1":
-								require.NotNil(t, p.RawOutput)
-								require.Nil(t, *p.RawOutput)
+								require.Nil(t, p.RawOutput, "SDK JSON codec maps explicit null to absent raw output")
 							case "value-2":
 								require.Empty(t, *p.RawOutput)
 								require.Equal(t, []events.ContentBlock{events.Text("")}, p.Content)
@@ -368,15 +367,26 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 	_, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "duplicate"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: t.TempDir()}}})
 	require.Error(t, err)
 	path, work := nativeScenario(t, "claude", "missing-disconnect")
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "missing"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
+	missingStore, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
-	_, err = svc.StartRuntime(ctx(t), "missing")
+	missing := service.NewWithPolicy(missingStore, missingStore, runtime.NewRegistry(map[string]runtime.Factory{
+		"claude": claude.Factory{RecoveryDir: t.TempDir()},
+	}), prototype.AutoApprovePermissions)
+	t.Cleanup(func() {
+		if shutdownErr := missing.Shutdown(ctx(t)); shutdownErr != nil {
+			require.ErrorContains(t, shutdownErr, "original opening or stream responsibility remains")
+		}
+		require.NoError(t, missingStore.Close())
+	})
+	_, err = missing.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "missing"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
+	require.NoError(t, err)
+	_, err = missing.StartRuntime(ctx(t), "missing")
 	require.NoError(t, err)
 	wait, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	_, err = svc.CreateSession(wait, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "missing"}, Spec: resource.SessionSpec{RuntimeRef: "missing", SessionSpec: runtime.SessionSpec{Cwd: work}}})
+	_, err = missing.CreateSession(wait, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "missing"}, Spec: resource.SessionSpec{RuntimeRef: "missing", SessionSpec: runtime.SessionSpec{Cwd: work}}})
 	require.ErrorContains(t, err, "outcome_unknown")
-	_, err = svc.GetSession(resource.SessionRef{Namespace: "default", Name: "missing"})
+	_, err = missing.GetSession(resource.SessionRef{Namespace: "default", Name: "missing"})
 	require.ErrorIs(t, err, store.ErrNotFound)
 	d, err := reg.Get("healthy")
 	require.NoError(t, err)
@@ -422,11 +432,15 @@ func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 	full := map[string]messageObservation{}
 	fullCount := map[string]int{}
 	tools := map[string][]string{}
+	gaps := map[string]int{}
 	for {
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
-		require.NotEqual(t, "session.error", e.Type(), "%+v", e.Payload())
 		switch p := e.Payload().(type) {
+		case events.SessionError:
+			require.False(t, e.Persistent())
+			gaps[p.Reason]++
+
 		case events.ThinkingChunk:
 			chunks[e.ItemID] = append(chunks[e.ItemID], observedMessage(t, e, p.Content, p.MessageID))
 		case events.MessageChunk:
@@ -449,6 +463,14 @@ func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 	}
 
 observed:
+	require.Equal(t, map[string]int{
+		"assistant_aborted":                   1,
+		"assistant_block_content_invalid":     3,
+		"assistant_block_coordinate_missing":  5,
+		"assistant_block_type_conflict":       1,
+		"assistant_response_identity_missing": 1,
+		"stream_block_type_conflict":          1,
+	}, gaps)
 	require.Equal(t, []messageObservation{{
 		content:  []events.ContentBlock{events.Text("think ")},
 		message:  "msg-block:0",
@@ -516,6 +538,14 @@ observed:
 			index:    6,
 			parent:   nil,
 		},
+		"msg-block:12": {
+			content: []events.ContentBlock{events.Text("visible after signature")},
+			message: "msg-block:12", response: "msg-block", index: 12,
+		},
+		"msg-invalid:0": {
+			content: []events.ContentBlock{events.Text("invalid envelope coordinate")},
+			message: "msg-invalid:0", response: "msg-invalid", index: 0,
+		},
 		"parent-tool:msg-block:0": {
 			content:  []events.ContentBlock{events.Text("child complete")},
 			message:  "parent-tool:msg-block:0",
@@ -527,7 +557,7 @@ observed:
 	for item, count := range fullCount {
 		require.Equal(t, 1, count, "duplicate full for %s", item)
 	}
-	for _, item := range []string{"msg-block:1", "msg-block:4", "msg-block:5", "msg-block:7", "msg-block:9", "msg-block:10", "msg-block:11", "msg-invalid:0"} {
+	for _, item := range []string{"msg-block:1", "msg-block:4", "msg-block:5", "msg-block:7", "msg-block:9", "msg-block:10", "msg-block:11"} {
 		require.NotContains(t, full, item)
 	}
 	for _, item := range []string{"msg-block:2", "msg-block:5", "msg-block:7", "msg-block:9", "msg-block:10", "msg-block:11", "msg-invalid:0", "unstarted-parent:msg-block:0"} {
@@ -565,7 +595,7 @@ observed:
 		require.Equal(t, item, persisted[item].MessageID)
 	}
 	require.Equal(t, 2, persistedTools["tool-shared"])
-	for _, forbidden := range []string{"aborted answer", "ambiguous", "guess one", "guess two", "visible after signature", "invalid coordinate", "invalid null coordinate", "invalid envelope coordinate", "missing child response", "conflicting preview", "conflicting complete"} {
+	for _, forbidden := range []string{"aborted answer", "ambiguous", "guess one", "guess two", "invalid coordinate", "invalid null coordinate", "missing child response", "conflicting preview", "conflicting complete"} {
 		for _, payload := range persisted {
 			for _, block := range payload.Content {
 				require.NotEqual(t, forbidden, events.TextOf(block))
@@ -749,10 +779,10 @@ func capacityFrames(sessionID string) []any {
 			"response": map[string]any{"subtype": "success", "request_id": "init", "response": map[string]any{}},
 		}),
 		scenarioFrame(3, "server", map[string]any{
-			"type": "system", "subtype": "init", "session_id": sessionID, "cwd": "/synthetic", "model": "synthetic", "tools": []any{"Bash"},
+			"type": "system", "subtype": "init", "claude_code_version": "2.1.258", "session_id": sessionID, "cwd": "/synthetic", "model": "synthetic", "tools": []any{"Bash"},
 		}),
 		scenarioFrame(4, "client", map[string]any{
-			"type": "user", "message": map[string]any{"role": "user", "content": "hello"}, "parent_tool_use_id": nil, "session_id": "",
+			"type": "user", "message": map[string]any{"role": "user", "content": "hello"}, "parent_tool_use_id": nil, "session_id": "", "priority": "next", "shouldQuery": true,
 		}),
 	}
 }

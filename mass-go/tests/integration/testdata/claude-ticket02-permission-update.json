@@ -36,6 +36,7 @@
       "data": {
         "type": "system",
         "subtype": "init",
+        "claude_code_version": "2.1.258",
         "session_id": "claude-session",
         "cwd": "/synthetic",
         "model": "synthetic",
@@ -55,7 +56,9 @@
           "content": "hello"
         },
         "parent_tool_use_id": null,
-        "session_id": ""
+        "session_id": "",
+        "priority": "next",
+        "shouldQuery": true
       }
     },
     {
@@ -155,8 +158,7 @@
           "response": {
             "behavior": "allow",
             "updatedInput": {
-              "command": "echo corrected",
-              "future": 9007199254740993
+              "command": "echo synthetic"
             }
           }
         }
@@ -493,7 +495,18 @@
         "is_error": false,
         "result": "complete answer"
       }
+    },
+    {
+      "ordinal": 25,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "system",
+        "subtype": "session_state_changed",
+        "session_id": "claude-session",
+        "state": "idle"
+      }
     }
   ],
-  "source": "ticket02 synthetic explicit permission update; tool outcome is independent"
+  "source": "ticket02 synthetic legacy permission update rejected; SDK allow-once keeps original input"
 }
