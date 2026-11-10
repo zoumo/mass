@@ -4,7 +4,9 @@
 package agentrelay
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"maps"
@@ -23,6 +25,12 @@ type Config struct {
 	Address runtime.Address
 	Source  events.Source
 	Sink    Sink
+	// ExpectedEOF identifies a transport EOF requested by the Driver owner.
+	// A nil predicate treats EOF as a normal end of observation.
+	ExpectedEOF func() bool
+	// ObservationFailure identifies an SDK event that preserves a non-fatal
+	// provider session but loses observation coverage required by MASS.
+	ObservationFailure func(agent.Event) error
 }
 
 type Relay struct {
@@ -57,12 +65,25 @@ func Start(ctx context.Context, config Config) (*Relay, error) {
 
 func (r *Relay) consume(ctx context.Context, config Config, stream agent.EventStream) {
 	defer close(r.done)
+	defer r.cancel()
 	for {
 		event, err := stream.Next(ctx)
 		if err != nil {
-			if !errors.Is(err, io.EOF) && !errors.Is(err, context.Canceled) {
-				r.setErr(MapError(err))
+			if ctx.Err() != nil {
+				return
 			}
+			if errors.Is(err, io.EOF) {
+				if config.ExpectedEOF == nil || config.ExpectedEOF() {
+					return
+				}
+				r.setErr(&runtime.OperationError{
+					Code:    string(agent.ErrorOutcomeUnknown),
+					Reason:  "session_observation_eof",
+					Message: "Agent event stream ended unexpectedly",
+				})
+				return
+			}
+			r.setErr(MapError(err))
 			return
 		}
 		mapped, err := MapEvent(config.Address, config.Source, event)
@@ -70,8 +91,23 @@ func (r *Relay) consume(ctx context.Context, config Config, stream agent.EventSt
 			r.setErr(err)
 			return
 		}
+		var failure error
+		if config.ObservationFailure != nil {
+			failure = config.ObservationFailure(event)
+			if failure != nil {
+				// Make the loss visible to concurrent operations before a
+				// backpressured sink has accepted the triggering SDK event.
+				r.setErr(failure)
+			}
+		}
 		if err := config.Sink(ctx, mapped); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			r.setErr(err)
+			return
+		}
+		if failure != nil {
 			return
 		}
 	}
@@ -100,12 +136,16 @@ func (r *Relay) setErr(err error) {
 // MapEvent copies the SDK event identity and payload into the MASS envelope
 // without regenerating event ID, time, item ID, type, payload, or metadata.
 func MapEvent(address runtime.Address, source events.Source, event agent.Event) (events.SessionEvent, error) {
-	if event.SessionID == "" {
-		return events.SessionEvent{}, runtime.InvalidArgument("agent event missing session ID")
+	if err := event.Validate(); err != nil {
+		return events.SessionEvent{}, MapError(err)
 	}
 	var meta map[string]any
 	if event.Meta != nil {
-		meta = maps.Clone(event.Meta)
+		normalized, err := normalizeJSON(event.Meta)
+		if err != nil {
+			return events.SessionEvent{}, runtime.InvalidArgument("agent event metadata is not valid JSON")
+		}
+		meta = normalized.(map[string]any)
 	}
 	mapped, err := events.NewEvent(events.EventBase{
 		EventID:     event.EventID,
@@ -122,6 +162,29 @@ func MapEvent(address runtime.Address, source events.Source, event agent.Event) 
 	return mapped, nil
 }
 
+// normalizeJSON converts the SDK metadata to the MASS dynamic JSON value set.
+// Encoding first also validates raw JSON containers; decoding with json.Number
+// keeps their original numeric text instead of narrowing it through float64.
+func normalizeJSON(value any) (any, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return nil, err
+	}
+	return normalized, nil
+}
+
 // MapError preserves an SDK stable classification in the MASS public error.
 func MapError(err error) error {
 	if err == nil {
@@ -135,11 +198,33 @@ func MapError(err error) error {
 			Message: "Agent operation failed",
 		}
 	}
-	return &runtime.OperationError{
-		Code:    string(native.Code),
+	code := string(native.Code)
+	switch native.Code {
+	case agent.ErrorFailedPrecondition, agent.ErrorClosed:
+		// MASS classifies a rejected current-state operation as a public
+		// conflict so HTTP keeps its established 409 response.
+		code = "conflict"
+	}
+	mapped := &runtime.OperationError{
+		Code:    code,
 		Reason:  native.Reason,
 		Message: native.Message,
 	}
+	if native.Cause == nil {
+		return mapped
+	}
+	return &classifiedError{operation: mapped, cause: native.Cause}
+}
+
+type classifiedError struct {
+	operation *runtime.OperationError
+	cause     error
+}
+
+func (e *classifiedError) Error() string { return e.operation.Error() }
+
+func (e *classifiedError) Unwrap() []error {
+	return []error{e.operation, e.cause}
 }
 
 func MapCapabilities(capabilities agent.Capabilities) runtime.Capabilities {
@@ -178,10 +263,10 @@ func MapInteractionReceipt(receipt agent.InteractionReceipt) runtime.Interaction
 func MapCancelReceipt(receipt agent.InterruptReceipt) runtime.CancelReceipt {
 	result := string(receipt.Result)
 	switch receipt.Result {
-	case agent.InterruptAcknowledged:
-		result = "controlAcknowledged"
 	case agent.InterruptNoActiveWork:
 		result = "noActiveWork"
+	case agent.InterruptAcknowledged:
+		result = "controlAcknowledged"
 	}
 	return runtime.CancelReceipt{
 		Target: receipt.Target,

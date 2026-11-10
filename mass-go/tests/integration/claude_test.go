@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -53,7 +54,7 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			var observation *codexTurnObservation
 			if kind == "codex" {
 				observation = newCodexTurnObservation()
-				defer observation.releaseAll()
+				defer observation.releaseFacts()
 			}
 			svc, _, _ := setupWithCodexObservation(t, prototype.AutoApprovePermissions, observation)
 			// The executable is still strictly synthetic. Only launch configuration
@@ -76,7 +77,10 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			if kind == "codex" {
 				require.Equal(t, "turn-1", receipt.Submission)
 				require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
-				observation.releaseInitial()
+				before, queryErr := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+				require.NoError(t, queryErr)
+				require.Empty(t, before.Events)
+				observation.releaseFacts()
 			} else {
 				require.Nil(t, receipt.Acceptance.NativeAccepted)
 				require.Nil(t, receipt.Acceptance.NativeRecorded)
@@ -89,12 +93,6 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 						work, observed := observation.work.Load(e.EventID)
 						require.True(t, observed, "public idle must match an observed Driver event UUID")
 						if work == "" {
-							// Opening idle has no submitted turn. Keep later native
-							// facts gated so it cannot accidentally satisfy history.
-							before, queryErr := svc.ListHistoryEvents(ref, store.HistoryQuery{})
-							require.NoError(t, queryErr)
-							require.Empty(t, before.Events)
-							observation.releaseRest()
 							continue
 						}
 						require.Equal(t, receipt.Submission, work, "terminal must belong to the accepted native turn")
@@ -132,6 +130,8 @@ func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string)
 		require.True(t, os.IsNotExist(err))
 	})
 	// Only cwd values change. Native request matching remains strict.
+	normalizeCodexResumeInput(scenario)
+	normalizeCodexTurnInput(scenario)
 	var replace func(any)
 	replace = func(v any) {
 		switch value := v.(type) {
@@ -150,11 +150,184 @@ func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string)
 		}
 	}
 	replace(scenario)
+	expandCodexIdentityReads(scenario)
 	data, err := json.Marshal(scenario)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "scenario.json")
 	require.NoError(t, os.WriteFile(path, data, 0o600))
 	return path, work
+}
+
+// normalizeCodexResumeInput reflects the SDK provider's explicit workspace on
+// resume. The placeholder is replaced with the test workspace immediately
+// afterwards, while the strict peer still verifies the complete request.
+func normalizeCodexResumeInput(scenario map[string]any) {
+	frames, _ := scenario["frames"].([]any)
+	for _, value := range frames {
+		frame, _ := value.(map[string]any)
+		if direction, _ := frame["direction"].(string); direction != "c2s" {
+			continue
+		}
+		wire, _ := frame["wire"].(map[string]any)
+		if method, _ := wire["method"].(string); method != "thread/resume" {
+			continue
+		}
+		params, _ := wire["params"].(map[string]any)
+		if params == nil {
+			params = map[string]any{}
+			wire["params"] = params
+		}
+		if _, exists := params["cwd"]; !exists {
+			params["cwd"] = "/synthetic"
+		}
+	}
+}
+
+// normalizeCodexTurnInput removes the empty annotation array emitted by the
+// pre-SDK adapter. Non-empty annotations remain part of the strict contract.
+func normalizeCodexTurnInput(scenario map[string]any) {
+	frames, _ := scenario["frames"].([]any)
+	for _, value := range frames {
+		frame, _ := value.(map[string]any)
+		if direction, _ := frame["direction"].(string); direction != "c2s" {
+			continue
+		}
+		wire, _ := frame["wire"].(map[string]any)
+		if method, _ := wire["method"].(string); method != "turn/start" {
+			continue
+		}
+		params, _ := wire["params"].(map[string]any)
+		input, _ := params["input"].([]any)
+		for _, value := range input {
+			block, _ := value.(map[string]any)
+			if elements, ok := block["text_elements"].([]any); ok && len(elements) == 0 {
+				delete(block, "text_elements")
+			}
+		}
+	}
+}
+
+// expandCodexIdentityReads adds the provider's metadata-only identity probe
+// after every authored Codex open. The read response is derived from the
+// preceding start or resume response, but remains explicit traffic consumed by
+// the strict scenario peer.
+func expandCodexIdentityReads(scenario map[string]any) {
+	frames, ok := scenario["frames"].([]any)
+	if !ok {
+		return
+	}
+	expanded := make([]any, 0, len(frames)+4)
+	openRequests := map[string]struct{}{}
+	for index := range frames {
+		frame, ok := frames[index].(map[string]any)
+		if !ok {
+			expanded = append(expanded, frames[index])
+			continue
+		}
+		expanded = append(expanded, frame)
+		if requestID, open := codexOpenRequestID(frame); open {
+			if requestID != "" {
+				openRequests[requestID] = struct{}{}
+			}
+			continue
+		}
+		responseID, _ := frameWireID(frame)
+		if _, open := openRequests[responseID]; !open {
+			continue
+		}
+		delete(openRequests, responseID)
+		thread, ok := codexThread(frame)
+		if !ok {
+			continue
+		}
+		if next, ok := frameWireMethodAt(frames, index+1); ok && next == "thread/read" {
+			continue
+		}
+		id := "sdk-thread-read-" + strconv.Itoa(index)
+		expanded = append(expanded,
+			map[string]any{
+				"channel":   "protocol",
+				"direction": "c2s",
+				"epoch":     1,
+				"wire": map[string]any{
+					"id":     id,
+					"method": "thread/read",
+					"params": map[string]any{
+						"threadId":     thread["id"],
+						"includeTurns": false,
+					},
+				},
+			},
+			map[string]any{
+				"channel":   "protocol",
+				"direction": "s2c",
+				"epoch":     1,
+				"wire": map[string]any{
+					"id":     id,
+					"result": map[string]any{"thread": thread},
+				},
+			},
+		)
+	}
+	for index, value := range expanded {
+		if frame, ok := value.(map[string]any); ok {
+			frame["ordinal"] = index + 1
+		}
+	}
+	scenario["frames"] = expanded
+}
+
+func codexOpenRequestID(frame map[string]any) (string, bool) {
+	direction, _ := frame["direction"].(string)
+	if direction != "c2s" {
+		return "", false
+	}
+	wire, _ := frame["wire"].(map[string]any)
+	method, _ := wire["method"].(string)
+	if method != "thread/start" && method != "thread/resume" {
+		return "", false
+	}
+	return fmt.Sprint(wire["id"]), true
+}
+
+func frameWireID(frame map[string]any) (string, bool) {
+	direction, _ := frame["direction"].(string)
+	if direction != "s2c" {
+		return "", false
+	}
+	wire, _ := frame["wire"].(map[string]any)
+	if wire == nil || wire["id"] == nil {
+		return "", false
+	}
+	return fmt.Sprint(wire["id"]), true
+}
+
+func codexThread(frame map[string]any) (map[string]any, bool) {
+	direction, _ := frame["direction"].(string)
+	if direction != "s2c" {
+		return nil, false
+	}
+	wire, _ := frame["wire"].(map[string]any)
+	result, _ := wire["result"].(map[string]any)
+	thread, ok := result["thread"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	id, _ := thread["id"].(string)
+	return thread, id != ""
+}
+
+func frameWireMethodAt(frames []any, index int) (string, bool) {
+	if index < 0 || index >= len(frames) {
+		return "", false
+	}
+	frame, ok := frames[index].(map[string]any)
+	if !ok {
+		return "", false
+	}
+	wire, _ := frame["wire"].(map[string]any)
+	method, ok := wire["method"].(string)
+	return method, ok
 }
 
 func setup(t *testing.T, policy service.InteractionPolicy) (*service.Service, *runtime.Registry, string) {

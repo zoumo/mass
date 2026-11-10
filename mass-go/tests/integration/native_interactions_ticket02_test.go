@@ -161,7 +161,9 @@ func TestNativePermissionDecisions(t *testing.T) {
 				e, err := nextSubscription(sub, ctx(t))
 				require.NoError(t, err)
 				if p, ok := e.Payload().(events.InteractionRequested); ok {
-					require.NotEmpty(t, p.Request.Content, "original native tool input must be visible")
+					require.Equal(t, events.InteractionPermission, p.Request.Kind)
+					require.NotEmpty(t, p.Request.ToolCallID)
+					require.NotEmpty(t, p.Request.Options)
 					if scenario.mode == "restricted" && p.Request.Title == "item/commandExecution/requestApproval" {
 						require.Len(t, p.Request.Options, 1, "only native offered options may be exposed")
 						_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{"outcome": "selected", "optionId": "allow-once"})

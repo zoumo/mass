@@ -15,6 +15,9 @@
           "clientInfo": {
             "name": "mass",
             "version": "2"
+          },
+          "capabilities": {
+            "experimentalApi": true
           }
         }
       }
@@ -52,8 +55,7 @@
         "id": 92,
         "method": "thread/start",
         "params": {
-          "cwd": "/synthetic",
-          "ephemeral": false
+          "cwd": "/synthetic"
         }
       }
     },
@@ -66,8 +68,7 @@
         "id": 300,
         "method": "thread/start",
         "params": {
-          "cwd": "/synthetic",
-          "ephemeral": false
+          "cwd": "/synthetic"
         }
       }
     },

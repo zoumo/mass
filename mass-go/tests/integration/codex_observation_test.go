@@ -11,23 +11,16 @@ import (
 // Observe the public Driver stream before Broadcast removes execution-only
 // Source. UUID correlation leaves both the events and the sole consumer intact.
 type codexTurnObservation struct {
-	work           sync.Map
-	initial        chan struct{}
-	rest           chan struct{}
-	initialRelease sync.Once
-	restRelease    sync.Once
+	work          sync.Map
+	release       chan struct{}
+	releaseEvents sync.Once
 }
 
 func newCodexTurnObservation() *codexTurnObservation {
-	return &codexTurnObservation{initial: make(chan struct{}), rest: make(chan struct{})}
+	return &codexTurnObservation{release: make(chan struct{})}
 }
 
-func (o *codexTurnObservation) releaseInitial() { o.initialRelease.Do(func() { close(o.initial) }) }
-func (o *codexTurnObservation) releaseRest()    { o.restRelease.Do(func() { close(o.rest) }) }
-func (o *codexTurnObservation) releaseAll() {
-	o.releaseInitial()
-	o.releaseRest()
-}
+func (o *codexTurnObservation) releaseFacts() { o.releaseEvents.Do(func() { close(o.release) }) }
 
 type observedCodexFactory struct {
 	runtime.Factory
@@ -65,17 +58,11 @@ func (s observedCodexStream) Next(ctx context.Context) (events.SessionEvent, err
 	if err != nil {
 		return e, err
 	}
-	gate := s.observation.rest
-	if state, ok := e.Payload().(events.StateUpdate); ok {
+	if _, ok := e.Payload().(events.StateUpdate); ok {
 		s.observation.work.Store(e.EventID, e.Source().Work())
-		if state.State != nil && *state.State == events.Idle && e.Source().Work() == "" {
-			// Deliver the real opening idle only after SendPrompt returns; hold
-			// later facts until the test has observed that it is not completion.
-			gate = s.observation.initial
-		}
 	}
 	select {
-	case <-gate:
+	case <-s.observation.release:
 		return e, nil
 	case <-ctx.Done():
 		return events.SessionEvent{}, ctx.Err()

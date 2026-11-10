@@ -82,6 +82,9 @@ func main() {
 				cwd = v["params"].(map[string]any)["cwd"].(string)
 				respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
 				continue
+			case "thread/read":
+				respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}})
+				continue
 			case "thread/unsubscribe":
 				respond(map[string]any{"status": "unsubscribed"})
 				notify("thread/closed", map[string]any{"threadId": id})
@@ -102,7 +105,7 @@ func main() {
 			if claude {
 				send(map[string]any{"type": "control_request", "request_id": "permission-2", "user_message_uuid": link, "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": "tool-2", "input": map[string]any{"command": "echo synthetic"}}})
 			} else {
-				send(map[string]any{"id": "permission-2", "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": id, "turnId": "turn-2", "itemId": "tool-2"}})
+				send(map[string]any{"id": "permission-2", "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": id, "turnId": "turn-2", "itemId": "tool-2", "startedAtMs": 3}})
 			}
 		} else {
 			finish()

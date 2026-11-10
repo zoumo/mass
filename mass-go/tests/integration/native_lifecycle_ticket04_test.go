@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -72,7 +73,7 @@ func TestTicket04CodexCloseReturnsSDKFailureAndKeepsSharedClient(t *testing.T) {
 	for {
 		e, err := stream.Next(ctx(t))
 		require.NoError(t, err)
-		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle && state.StopReason == "completed" {
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Running {
 			break
 		}
 	}
@@ -86,9 +87,10 @@ func TestTicket04CodexCloseReturnsSDKFailureAndKeepsSharedClient(t *testing.T) {
 	err = d.CloseSession(canceled, "damaged")
 	require.Error(t, err)
 	require.NotErrorIs(t, err, context.Canceled, "caller cancellation must not replace the SDK close result")
-	require.Contains(t, err.Error(), "unsubscribe", "the SDK cleanup failure is returned directly")
+	require.Contains(t, err.Error(), "close_failed", "the SDK cleanup failure is returned without native diagnostics")
 	seen := make(chan int, 1)
 	var reopened atomic.Int32
+	var drained atomic.Int32
 	receiveCtx, stopReceive := context.WithCancel(context.Background())
 	received := make(chan struct{})
 	t.Cleanup(func() { stopReceive(); <-received })
@@ -103,6 +105,7 @@ func TestTicket04CodexCloseReturnsSDKFailureAndKeepsSharedClient(t *testing.T) {
 			}
 			if _, ok := e.Payload().(events.AgentMessage); ok {
 				count++
+				drained.Store(int32(count))
 			}
 			if _, ok := e.Payload().(events.InteractionRequested); ok {
 				reopened.Add(1)
@@ -117,14 +120,14 @@ func TestTicket04CodexCloseReturnsSDKFailureAndKeepsSharedClient(t *testing.T) {
 	closeErr := d.CloseSession(ctx(t), "damaged")
 	require.Error(t, closeErr)
 	require.NotErrorIs(t, closeErr, context.Canceled)
-	require.Contains(t, closeErr.Error(), "unsubscribe")
+	require.Contains(t, closeErr.Error(), "close_failed")
 	require.NotContains(t, closeErr.Error(), "observation", "driver close must not probe observation health")
 	require.Zero(t, reopened.Load(), "a queued request must not reopen answer authority during Close")
 	select {
 	case count := <-seen:
 		require.Equal(t, 160, count)
 	case <-ctx(t).Done():
-		t.Fatal("admitted final facts did not drain")
+		t.Fatalf("admitted final facts did not drain: %d", drained.Load())
 	}
 	_, err = d.SendPrompt(ctx(t), "damaged", runtime.Input{Content: []events.ContentBlock{events.Text("rejected")}})
 	require.Error(t, err)
@@ -196,6 +199,63 @@ func TestTicket04DriverCloseWaitsForEventRouting(t *testing.T) {
 	}
 }
 
+func TestTicket04CodexCloseAndStopAfterObservationFailure(t *testing.T) {
+	path, work := nativeScenario(t, "codex", "native-unknown")
+	d, err := (codex.Factory{RecoveryDir: t.TempDir()}).New("test", runtime.Config{"executable": mock, "scenario": path})
+	require.NoError(t, err)
+	stream, err := d.Events()
+	require.NoError(t, err)
+	_, err = d.Start(ctx(t))
+	require.NoError(t, err)
+	opened, err := d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "failed-observation"}, runtime.SessionSpec{Cwd: work})
+	require.NoError(t, err)
+
+	readCtx, stopRead := context.WithCancel(context.Background())
+	readDone := make(chan struct{})
+	failure := make(chan events.SessionError, 1)
+	go func() {
+		defer close(readDone)
+		for {
+			event, nextErr := stream.Next(readCtx)
+			if nextErr != nil {
+				return
+			}
+			if problem, ok := event.Payload().(events.SessionError); ok {
+				select {
+				case failure <- problem:
+				default:
+				}
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		stopRead()
+		<-readDone
+		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = d.CloseSession(cleanup, opened.SessionID)
+		_ = d.Stop(cleanup)
+	})
+
+	_, err = d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+	require.NoError(t, err)
+	select {
+	case problem := <-failure:
+		require.Equal(t, "unsupported_native_item", problem.Reason)
+	case <-ctx(t).Done():
+		t.Fatal("unsupported native observation was not surfaced")
+	}
+	require.Eventually(t, func() bool {
+		_, sendErr := d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("must not send")}})
+		return sendErr != nil
+	}, time.Second, time.Millisecond)
+
+	closeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, d.CloseSession(closeCtx, opened.SessionID), "prior observation failure must not replace successful SDK close")
+	require.NoError(t, d.Stop(closeCtx), "a settled session must not block provider stop")
+}
+
 func TestTicket04CancelDispatchEvidence(t *testing.T) {
 	for _, kind := range []string{"codex", "claude"} {
 		for _, control := range []string{"acknowledged", "unknown", "rejected", "write-failure"} {
@@ -263,8 +323,17 @@ func TestTicket04CancelDispatchEvidence(t *testing.T) {
 					require.ErrorContains(t, first.err, "outcome_unknown")
 					require.Equal(t, first.err, secondErr, "failed writes must not be replayed")
 				}
-				_, err = d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("not settled")}})
-				require.Error(t, err, "a control acknowledgment is not work completion")
+				receipt, err := d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("steer current work")}})
+				if control == "write-failure" {
+					require.Error(t, err)
+				} else {
+					require.NoError(t, err, "the SDK decides whether a new input may join current work")
+					expected := agent.InputAppliedCurrentWork
+					if kind == "claude" {
+						expected = agent.InputAppliedBestEffort
+					}
+					require.Equal(t, expected, receipt.Result)
+				}
 			})
 		}
 	}
@@ -281,7 +350,7 @@ func TestTicket04ClaudeCloseReturnsSDKFailureWithBackloggedEOF(t *testing.T) {
 	for {
 		e, err := stream.Next(ctx(t))
 		require.NoError(t, err)
-		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle && state.StopReason == "success" {
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
 			break
 		}
 	}

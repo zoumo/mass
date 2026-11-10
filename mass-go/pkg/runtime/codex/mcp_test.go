@@ -1,12 +1,12 @@
 package codex
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -33,10 +33,12 @@ func TestCodexMCPConfigurationMapping(t *testing.T) {
 	converted, err := codexMCPServers(&servers, codexMCPOptions(t))
 	require.NoError(t, err)
 	require.Len(t, converted, 2)
+	require.Equal(t, agent.MCPTransportStdio, converted[0].Transport)
 	require.Equal(t, "/mcp-server", converted[0].Command)
 	require.Equal(t, "/work", converted[0].Cwd)
 	require.Equal(t, "fixture-secret", converted[0].Env["TOKEN"])
 	require.Equal(t, "https://example.invalid/mcp", converted[1].URL)
+	require.Equal(t, agent.MCPTransportHTTP, converted[1].Transport)
 	require.Equal(t, "TOKEN", converted[1].BearerTokenEnvVar)
 	require.NotContains(t, converted[1].Headers, "Authorization")
 	require.Equal(t, "TOKEN", converted[1].EnvHeaders["X-Token"])
@@ -233,68 +235,22 @@ func TestCodexMCPConfigurationRejectsInvalidResolvedHeaderValues(t *testing.T) {
 	}
 }
 
-func TestCodexMCPProjectConfigDisablesProjectLayers(t *testing.T) {
-	root := t.TempDir()
-	cwd := filepath.Join(root, "repo", "nested")
-	require.NoError(t, os.MkdirAll(cwd, 0o700))
-	config, err := codexMCPProjectConfig(cwd)
-	require.NoError(t, err)
-	var projects map[string]map[string]string
-	require.NoError(t, json.Unmarshal(config["projects"], &projects))
-	for _, path := range []string{cwd, filepath.Dir(cwd), filepath.Dir(filepath.Dir(cwd))} {
-		require.Equal(t, "untrusted", projects[path]["trust_level"])
-	}
-	canonical, err := filepath.EvalSymlinks(cwd)
-	require.NoError(t, err)
-	require.Equal(t, "untrusted", projects[canonical]["trust_level"])
-	top := cwd
-	for {
-		parent := filepath.Dir(top)
-		if parent == top {
-			break
-		}
-		top = parent
-	}
-	require.Equal(t, "untrusted", projects[top]["trust_level"])
-}
-
-func TestCodexMCPProjectConfigIncludesSymlinkSpelling(t *testing.T) {
-	realDir := t.TempDir()
-	link := filepath.Join(t.TempDir(), "link")
-	require.NoError(t, os.Symlink(realDir, link))
-	config, err := codexMCPProjectConfig(link)
-	require.NoError(t, err)
-	var projects map[string]map[string]string
-	require.NoError(t, json.Unmarshal(config["projects"], &projects))
-	require.Equal(t, "untrusted", projects[link]["trust_level"])
-	canonical, err := filepath.EvalSymlinks(realDir)
-	require.NoError(t, err)
-	require.Equal(t, "untrusted", projects[canonical]["trust_level"])
-}
-
-func TestCodexSessionMCPConfigExcludesProjectLayersOnlyForExplicitLists(t *testing.T) {
-	options := codexMCPOptions(t)
-	cwd := filepath.Join(t.TempDir(), "repo")
-	require.NoError(t, os.MkdirAll(cwd, 0o700))
-
-	servers, config, err := codexSessionMCPConfig(nil, cwd, options)
-	require.NoError(t, err)
-	require.Nil(t, servers)
-	require.Nil(t, config)
+func TestCodexSessionMCPServersRejectsExplicitIsolationGap(t *testing.T) {
+	require.NoError(t, validateCodexSessionMCPIsolation(nil))
 
 	empty := []runtime.MCPServer{}
-	servers, config, err = codexSessionMCPConfig(&empty, cwd, options)
-	require.NoError(t, err)
-	require.NotNil(t, servers)
-	require.Empty(t, servers)
-	require.NotNil(t, config)
-	require.Contains(t, config, "projects")
+	err := validateCodexSessionMCPIsolation(&empty)
+	require.Error(t, err)
+	var public *runtime.OperationError
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "unsupported", public.Code)
+	require.Equal(t, "mcp_isolation_unavailable", public.Reason)
 
 	explicit := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
-	servers, config, err = codexSessionMCPConfig(&explicit, cwd, options)
-	require.NoError(t, err)
-	require.Len(t, servers, 1)
-	require.NotNil(t, config)
+	err = validateCodexSessionMCPIsolation(&explicit)
+	require.Error(t, err)
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "unsupported", public.Code)
 }
 
 func TestCodexMCPConfigurationRejectsConflictingAuthentication(t *testing.T) {

@@ -31,6 +31,7 @@ func main() {
 		return
 	}
 	threads, interrupts := 0, 0
+	threadCwds := map[string]any{}
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
 		var v struct {
@@ -40,6 +41,11 @@ func main() {
 		}
 		if err := json.Unmarshal(scan.Bytes(), &v); err != nil {
 			panic(err)
+		}
+		// The SDK owns answers to server requests. A response has no method and
+		// must not be mistaken for an unexpected native request.
+		if v.Method == "" {
+			continue
 		}
 		respond := func(result any) { send(map[string]any{"id": v.ID, "result": result}) }
 		switch v.Method {
@@ -52,7 +58,11 @@ func main() {
 			if threads == 2 {
 				id = "damaged"
 			}
+			threadCwds[id] = v.Params["cwd"]
 			respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": v.Params["cwd"], "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": v.Params["cwd"], "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+		case "thread/read":
+			id := v.Params["threadId"].(string)
+			respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": threadCwds[id], "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}})
 		case "thread/unsubscribe":
 			status := "unsubscribed"
 			if v.Params["threadId"] == "damaged" && os.Getenv("PEER_CONTROL") != "overload" {
@@ -85,10 +95,10 @@ func main() {
 				continue
 			}
 			if id == "damaged" {
-				notify("turn/completed", map[string]any{"threadId": id, "turn": map[string]any{"id": turnID, "status": "completed", "items": []any{}}})
 				for i := range 160 {
 					notify("item/completed", map[string]any{"threadId": id, "turnId": turnID, "item": map[string]any{"id": fmt.Sprintf("final-%d", i), "type": "agentMessage", "text": "accepted before close"}, "completedAtMs": 1})
 				}
+				notify("turn/completed", map[string]any{"threadId": id, "turn": map[string]any{"id": turnID, "status": "completed", "items": []any{}}})
 				send(map[string]any{"id": "queued-question", "method": "item/tool/requestUserInput", "params": map[string]any{"threadId": id, "turnId": turnID, "itemId": "late-question", "questions": []any{map[string]any{"id": "format", "header": "Format", "question": "Which format?", "isOther": false, "isSecret": false, "options": []any{map[string]any{"label": "json", "description": "JSON"}}}}}})
 				// Malformed supported notification: the original protocol failure
 				// must remain separate from the unknown unsubscribe result.

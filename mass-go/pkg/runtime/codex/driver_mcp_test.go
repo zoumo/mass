@@ -48,16 +48,15 @@ func TestCodexDriverTestPeer(t *testing.T) {
 				os.Exit(4)
 			}
 			result := map[string]any{
-				"thread": map[string]any{
-					"id": "native-thread", "sessionId": "native-session", "cliVersion": "synthetic",
-					"createdAt": 1, "updatedAt": 2, "cwd": cwd, "ephemeral": false,
-					"modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer",
-					"status": map[string]any{"type": "idle"}, "turns": []any{},
-				},
+				"thread":         codexPeerThread(cwd),
 				"approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": cwd,
 				"model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"},
 			}
 			if err := enc.Encode(map[string]any{"id": envelope.ID, "result": result}); err != nil {
+				os.Exit(5)
+			}
+		case "thread/read":
+			if err := enc.Encode(map[string]any{"id": envelope.ID, "result": map[string]any{"thread": codexPeerThread(cwd)}}); err != nil {
 				os.Exit(5)
 			}
 		case "thread/unsubscribe":
@@ -69,6 +68,15 @@ func TestCodexDriverTestPeer(t *testing.T) {
 	os.Exit(0)
 }
 
+func codexPeerThread(cwd string) map[string]any {
+	return map[string]any{
+		"id": "native-thread", "sessionId": "native-session", "cliVersion": "synthetic",
+		"createdAt": 1, "updatedAt": 2, "cwd": cwd, "ephemeral": false,
+		"modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer",
+		"status": map[string]any{"type": "idle"}, "turns": []any{},
+	}
+}
+
 func appendCodexPeerTrace(path, method string, params map[string]any) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -78,7 +86,7 @@ func appendCodexPeerTrace(path, method string, params map[string]any) error {
 	return json.NewEncoder(f).Encode(map[string]any{"method": method, "params": params})
 }
 
-func TestCodexDriverAppliesMCPConfigOnOpenAndResume(t *testing.T) {
+func TestCodexDriverRejectsExplicitMCPBeforeNativeOpenAndResume(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	cwd := t.TempDir()
@@ -112,43 +120,36 @@ func TestCodexDriverAppliesMCPConfigOnOpenAndResume(t *testing.T) {
 	}()
 
 	address := runtime.Address{Namespace: "one", SessionName: "demo"}
-	remote := []runtime.MCPServer{{
-		Name:    "remote",
-		Type:    runtime.MCPTransportHTTP,
-		URL:     "https://example.invalid/mcp",
-		Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
-	}}
-	session, err := driver.OpenSession(t.Context(), address, runtime.SessionSpec{Cwd: cwd, MCPServers: &remote})
+	empty := []runtime.MCPServer{}
+	_, err = driver.OpenSession(t.Context(), address, runtime.SessionSpec{Cwd: cwd, MCPServers: &empty})
+	require.Error(t, err)
+	var public *runtime.OperationError
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "unsupported", public.Code)
+	require.Equal(t, "mcp_isolation_unavailable", public.Reason)
+	require.NoFileExists(t, trace, "explicit MCP rejection must precede thread/start")
+
+	session, err := driver.OpenSession(t.Context(), address, runtime.SessionSpec{Cwd: cwd})
 	require.NoError(t, err)
 	require.Equal(t, "native-thread", session.SessionID)
 	start := waitCodexPeerTrace(t, trace, "thread/start")
-	startConfig := codexPeerConfig(t, start)
-	require.Equal(t, map[string]any{
-		"url":                  "https://example.invalid/mcp",
-		"bearer_token_env_var": "TOKEN",
-	}, startConfig["mcp_servers.remote"])
-	require.NoError(t, driver.CloseSession(t.Context(), session.SessionID))
+	startParams, ok := start["params"].(map[string]any)
+	require.True(t, ok)
+	require.NotContains(t, startParams, "config")
 
 	local := []runtime.MCPServer{{
 		Name:    "local",
 		Type:    runtime.MCPTransportStdio,
 		Command: "/mcp-server",
-		Args:    []string{"--stdio"},
-		Env:     map[string]string{"TOKEN": "${TOKEN}"},
 	}}
 	_, err = driver.ResumeSession(t.Context(), session.SessionID, address, runtime.SessionSpec{Cwd: cwd, MCPServers: &local})
-	require.NoError(t, err)
-	resume := waitCodexPeerTrace(t, trace, "thread/resume")
-	resumeConfig := codexPeerConfig(t, resume)
-	require.Equal(t, map[string]any{
-		"command": "/mcp-server",
-		"args":    []any{"--stdio"},
-		"env":     map[string]any{"TOKEN": "fixture-secret"},
-	}, resumeConfig["mcp_servers.local"])
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "unsupported", public.Code)
+	require.NotContains(t, readCodexPeerMethods(t, trace), "thread/resume", "explicit MCP rejection must precede resume")
 	require.NoError(t, driver.CloseSession(t.Context(), session.SessionID))
 }
 
-func TestCodexDriverRejectsConflictingAuthorizationBeforeOpen(t *testing.T) {
+func TestCodexDriverRejectsAnyExplicitMCPDeclarationBeforeOpen(t *testing.T) {
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	driver, err := (Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
@@ -168,8 +169,10 @@ func TestCodexDriverRejectsConflictingAuthorizationBeforeOpen(t *testing.T) {
 		BearerTokenEnvVar: "OTHER_TOKEN",
 	}}
 	_, err = driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "demo"}, runtime.SessionSpec{Cwd: t.TempDir(), MCPServers: &servers})
-	require.ErrorIs(t, err, runtime.ErrInvalidArgument)
-	require.ErrorContains(t, err, "authorization header conflicts with bearerTokenEnvVar")
+	var public *runtime.OperationError
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "unsupported", public.Code)
+	require.Equal(t, "mcp_isolation_unavailable", public.Reason)
 }
 
 func waitCodexPeerTrace(t *testing.T, path, method string) map[string]any {
@@ -192,12 +195,17 @@ func waitCodexPeerTrace(t *testing.T, path, method string) map[string]any {
 	return found
 }
 
-func codexPeerConfig(t *testing.T, entry map[string]any) map[string]any {
+func readCodexPeerMethods(t *testing.T, path string) []string {
 	t.Helper()
-	require.NotNil(t, entry)
-	params, ok := entry["params"].(map[string]any)
-	require.True(t, ok, "trace entry must include params")
-	config, ok := params["config"].(map[string]any)
-	require.True(t, ok, "native thread request must include config")
-	return config
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var methods []string
+	for line := range bytes.SplitSeq(data, []byte{'\n'}) {
+		var entry map[string]any
+		if json.Unmarshal(line, &entry) == nil {
+			method, _ := entry["method"].(string)
+			methods = append(methods, method)
+		}
+	}
+	return methods
 }

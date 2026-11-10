@@ -53,13 +53,27 @@ func identityOnlyScenario(t *testing.T, id string) (string, string) {
 	path, work := scenario(t)
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
-	var fixture struct {
-		Version    int               `json:"version"`
-		Provenance string            `json:"provenance"`
-		Frames     []json.RawMessage `json:"frames"`
-	}
+	var fixture map[string]any
 	require.NoError(t, json.Unmarshal(b, &fixture))
-	fixture.Frames = append(fixture.Frames[:5], fixture.Frames[15:]...)
+	frames, ok := fixture["frames"].([]any)
+	require.True(t, ok)
+	turnStart, unsubscribe := -1, -1
+	for index, value := range frames {
+		frame, _ := value.(map[string]any)
+		wire, _ := frame["wire"].(map[string]any)
+		method, _ := wire["method"].(string)
+		switch method {
+		case "turn/start":
+			if turnStart < 0 {
+				turnStart = index
+			}
+		case "thread/unsubscribe":
+			unsubscribe = index
+		}
+	}
+	require.Positive(t, turnStart)
+	require.Greater(t, unsubscribe, turnStart)
+	fixture["frames"] = append(frames[:turnStart], frames[unsubscribe:]...)
 	b, err = json.Marshal(fixture)
 	require.NoError(t, err)
 	b = bytes.ReplaceAll(b, []byte("codex-session"), []byte(id))

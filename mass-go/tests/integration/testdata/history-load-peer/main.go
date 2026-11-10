@@ -109,7 +109,7 @@ func main() {
 		if resumes > 0 {
 			stage = "resume"
 		}
-		if reads > 1 {
+		if reads > 2 {
 			stage = "after"
 		}
 		if parts := strings.Split(mode, ":"); len(parts) == 3 && parts[1] == stage {

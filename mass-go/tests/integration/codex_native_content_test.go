@@ -42,7 +42,9 @@ func (s *entrypointSuite) TestCodexNativeUserContent() {
 	s.FailNow("missing native completion")
 settled:
 	s.Require().NotEmpty(user.EventID)
-	native, err := json.Marshal(user.Meta["native"])
+	codexMeta, ok := user.Meta["codex"].(map[string]any)
+	s.Require().True(ok)
+	native, err := json.Marshal(codexMeta["raw"])
 	s.Require().NoError(err)
 	s.Contains(string(native), `"text_elements":[{"byteRange":{"end":5,"start":0},"placeholder":"hello"}]`)
 	s.Contains(string(native), `"futureNative":{"big":9007199254740993,"nullable":null}`)

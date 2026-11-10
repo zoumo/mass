@@ -117,12 +117,12 @@ func ticket12ColdLoadHTTP(t *testing.T, mode string) {
 			require.Equal(t, "continue cold thread", input[0].(map[string]any)["text"])
 		}
 	}
-	require.Equal(t, []string{"notLoaded", "idle", "idle"}, statuses)
+	require.Equal(t, []string{"notLoaded", "idle", "idle", "idle"}, statuses)
 	if mode == "cold-materialized-direct" {
-		require.Equal(t, []any{nil, true, true}, direct, "native capability materializes only at cold resume")
+		require.Equal(t, []any{nil, true, true, true}, direct, "native capability materializes only at cold resume")
 	}
 	require.Equal(t, 1, counts["thread/resume"])
-	require.Equal(t, 2, counts["thread/read"])
+	require.Equal(t, 3, counts["thread/read"], "identity read, post-resume verification, and post-history verification")
 	require.Equal(t, 4, counts["thread/turns/list"], "both native pages in both verification passes")
 	require.Equal(t, 6, counts["thread/items/list"])
 	require.Equal(t, 1, counts["turn/start"], "only the user's explicit continued input")
