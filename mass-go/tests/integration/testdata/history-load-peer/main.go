@@ -29,23 +29,6 @@ func main() {
 			}
 		}
 	}
-	requireProjectIsolation := func(params map[string]any) {
-		if os.Getenv("LOAD_EXPECT_PROJECT_ISOLATION") != "1" {
-			return
-		}
-		config, ok := params["config"].(map[string]any)
-		if !ok {
-			panic("thread/resume must include config")
-		}
-		projects, ok := config["projects"].(map[string]any)
-		if !ok {
-			panic("thread/resume config must include projects")
-		}
-		project, ok := projects[os.Getenv("LOAD_CWD")].(map[string]any)
-		if !ok || project["trust_level"] != "untrusted" {
-			panic("thread/resume must mark cwd untrusted")
-		}
-	}
 	defer evidence("released", nil)
 	scan := bufio.NewScanner(os.Stdin)
 	thread := func() any {
@@ -109,7 +92,7 @@ func main() {
 		if resumes > 0 {
 			stage = "resume"
 		}
-		if reads > 1 {
+		if reads > 2 {
 			stage = "after"
 		}
 		if parts := strings.Split(mode, ":"); len(parts) == 3 && parts[1] == stage {
@@ -199,7 +182,6 @@ func main() {
 			if resumes > 1 {
 				panic("load retried resume")
 			}
-			requireProjectIsolation(v.Params)
 			respond(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": os.Getenv("LOAD_CWD"), "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
 		case "thread/turns/list":
 			if v.Params["cursor"] == nil {

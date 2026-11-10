@@ -97,8 +97,7 @@ func TestTicket06CodexPagedLoadAndSameConnectionInput(t *testing.T) {
 
 func TestTicket06CodexLoadUsesExplicitMCPIsolation(t *testing.T) {
 	svc, cwd := ticket06Service(t, "", map[string]any{
-		"CODEX_HOME":                    t.TempDir(),
-		"LOAD_EXPECT_PROJECT_ISOLATION": "1",
+		"CODEX_HOME": t.TempDir(),
 	})
 	empty := []runtime.MCPServer{}
 	current, err := svc.GetRuntime("agent")
@@ -107,17 +106,21 @@ func TestTicket06CodexLoadUsesExplicitMCPIsolation(t *testing.T) {
 		Type: current.Spec.Type, Config: current.Spec.Config, MCPServers: &empty,
 	})
 	require.NoError(t, err)
-	_, err = svc.LoadSession(ctx(t), resource.SessionLoad{
+	accepted, err := svc.LoadSession(ctx(t), resource.SessionLoad{
 		Metadata:   resource.Metadata{Namespace: "one", Name: "isolated"},
 		RuntimeRef: "agent",
 		Cwd:        cwd,
 		SessionID:  "native-thread",
 	})
 	require.NoError(t, err)
-	ref := resource.SessionRef{SessionID: "native-thread"}
+	ref := resource.SessionRef{SessionID: accepted.Session.Status.SessionID}
 	require.Eventually(t, func() bool {
-		r, err := svc.GetSession(ref)
-		return err == nil && r.Status.HistoryLoad.Phase == "completed"
+		r, getErr := svc.GetSession(ref)
+		return getErr == nil && r.Status.HistoryLoad != nil &&
+			r.Status.HistoryLoad.Phase == "failed" &&
+			r.Status.HistoryLoad.Error != nil &&
+			r.Status.HistoryLoad.Error.Code == "unsupported" &&
+			r.Status.HistoryLoad.Error.Reason == "mcp_isolation_unavailable"
 	}, 5*time.Second, time.Millisecond)
 }
 

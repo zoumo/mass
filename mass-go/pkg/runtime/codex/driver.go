@@ -1,25 +1,25 @@
-// Package codex adapts native SDK observations directly into SessionEvent.
+// Package codex adapts the Codex agent provider to MASS runtime ownership.
 package codex
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"maps"
 	"path/filepath"
 	"reflect"
 	"sync"
-	"time"
+	"sync/atomic"
 
-	"github.com/google/uuid"
 	"github.com/zoumo/agent-sdk-go/agent"
+	agentcodex "github.com/zoumo/agent-sdk-go/agent/codex"
 	sdk "github.com/zoumo/agent-sdk-go/codex"
 	ct "github.com/zoumo/agent-sdk-go/codex/types"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/agentrelay"
 	"github.com/zoumo/mass/mass-go/pkg/runtime/recovery"
 )
 
@@ -29,54 +29,114 @@ func parse(c runtime.Config) (options, error) {
 	return runtime.ParseProcessConfig(c)
 }
 
+// codexReadClient is the read-only subset MASS uses for recovery and history.
+// The concrete SDK client remains owned by the provider.
+type codexReadClient interface {
+	ServerInfo() ct.InitializeResponse
+	ReadThread(context.Context, ct.ThreadReadParams) (ct.ThreadReadResponse, error)
+	ListThreadTurns(context.Context, ct.ThreadTurnsListParams) (ct.ThreadTurnsListResponse, error)
+	ListThreadItems(context.Context, ct.ThreadItemsListParams) (ct.ThreadItemsListResponse, error)
+}
+
 type Factory struct{ RecoveryDir string }
 
 func (Factory) Validate(c runtime.Config) error { _, err := parse(c); return err }
+
 func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	o, err := parse(c)
 	if err != nil {
 		return nil, err
 	}
-	return &Driver{vault: recovery.Vault{Dir: f.RecoveryDir, Kind: "codex", Owner: name, Executable: o.Executable}, options: o, pipe: events.NewEventPipe(128), sessions: map[string]*session{}}, nil
+	args := o.Args
+	if args == nil {
+		args = []string{"app-server"}
+	}
+	provider := agentcodex.New(agentcodex.Config{Stdio: sdk.StdioOptions{
+		Executable: o.Executable,
+		Args:       args,
+		Env:        o.Environment("codex"),
+		Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}},
+	}})
+	return newDriver(
+		recovery.Vault{Dir: f.RecoveryDir, Kind: "codex", Owner: name, Executable: o.Executable},
+		o,
+		provider,
+		func() (codexReadClient, error) {
+			client, err := provider.NativeClient()
+			if err != nil {
+				return nil, err
+			}
+			return client, nil
+		},
+	), nil
+}
+
+func newDriver(vault recovery.Vault, options options, provider agent.Provider, nativeClient func() (codexReadClient, error)) *Driver {
+	return &Driver{
+		vault:        vault,
+		options:      options,
+		provider:     provider,
+		nativeClient: nativeClient,
+		pipe:         events.NewEventPipe(128),
+		sessions:     map[string]*session{},
+	}
 }
 
 type session struct {
-	command         sync.Mutex
-	native          *sdk.Session
-	closing         bool
-	work            string
-	cancelWork      string
-	cancelTarget    string
-	cancelAttempted bool
-	cancelErr       error
-	retired         map[string]bool
-	address         runtime.Address
-	source          events.Source
-	active          bool
-	sending         bool
-	state           *events.SessionState
-	err             error
-	done            chan struct{}
-	released        chan struct{}
-	releaseOnce     sync.Once
+	native    agent.Session
+	relay     *agentrelay.Relay
+	address   runtime.Address
+	source    events.Source
+	closing   atomic.Bool
+	closeMu   sync.Mutex
+	cancelOp  sync.Mutex
+	controlMu sync.Mutex
+
+	activeWork    string
+	lastFinished  string
+	cancelWork    string
+	cancelReceipt runtime.CancelReceipt
+	cancelErr     error
 }
+
+func (s *session) ordinaryAvailable() bool {
+	return s.observationError() == nil
+}
+
+func (s *session) observationError() error {
+	if s == nil || s.relay == nil {
+		return runtime.FailedPrecondition("session observation unavailable")
+	}
+	if err := s.relay.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-s.relay.Done():
+		return runtime.FailedPrecondition("session observation ended")
+	default:
+		return nil
+	}
+}
+
 type Driver struct {
-	opening      int
-	loads        map[string]*nativeLoad
-	vault        recovery.Vault
-	mu           sync.Mutex
-	op           sync.Mutex
-	options      options
-	pipe         *events.EventPipe
-	taken        bool
-	client       *sdk.Client
-	sessions     map[string]*session
-	stopped      bool
-	stopping     bool
-	life         context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	interactions runtime.PendingInteractions
+	opening       int
+	loads         map[string]*nativeLoad
+	vault         recovery.Vault
+	mu            sync.Mutex
+	op            sync.Mutex
+	options       options
+	pipe          *events.EventPipe
+	taken         bool
+	provider      agent.Provider
+	nativeClient  func() (codexReadClient, error)
+	providerReady bool
+	providerCaps  runtime.Capabilities
+	sessions      map[string]*session
+	stopped       bool
+	stopping      bool
+	stopErr       error
+	life          context.Context
+	cancel        context.CancelFunc
 }
 
 func (d *Driver) Events() (events.Stream, error) {
@@ -89,52 +149,44 @@ func (d *Driver) Events() (events.Stream, error) {
 	return d.pipe, nil
 }
 
-func caps() runtime.Capabilities {
-	return runtime.Capabilities{"textInput": true, "permission": true, "form": true}
-}
-
-var supportedSessionFeatures = runtime.FeatureSupport{AgentQuestions: true}
-
-func applySessionFeatures(options *sdk.SessionOptions, features runtime.SessionFeatures) {
-	if features.AgentQuestionsEnabled() {
-		return
-	}
-	options.Tools = map[sdk.Tool]bool{sdk.ToolRequestUserInput: false}
-}
-
 func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 	d.op.Lock()
 	defer d.op.Unlock()
+
 	d.mu.Lock()
 	if d.stopping {
 		d.mu.Unlock()
 		return nil, errors.New("driver stopping")
 	}
-	if d.client != nil {
+	if d.providerReady {
+		capabilities := copyCapabilities(d.providerCaps)
 		d.mu.Unlock()
-		return caps(), nil
+		return capabilities, nil
 	}
 	if d.stopped {
 		d.mu.Unlock()
 		return nil, errors.New("driver stopped")
 	}
+	provider := d.provider
 	d.mu.Unlock()
-	life, cancel := context.WithCancel(context.Background())
-	args := d.options.Args
-	if args == nil {
-		args = []string{"app-server"}
+	if provider == nil {
+		return nil, errors.New("provider unavailable")
 	}
-	c, err := sdk.NewStdio(ctx, sdk.StdioOptions{Executable: d.options.Executable, Args: args, Env: d.options.Environment("codex"), Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass", Version: "2"}}})
+
+	capabilities, err := provider.Start(ctx)
 	if err != nil {
-		cancel()
-		return nil, err
+		return nil, agentrelay.MapError(err)
 	}
+	life, cancel := context.WithCancel(context.Background())
+
 	d.mu.Lock()
-	d.client = c
+	d.providerReady = true
+	d.providerCaps = agentrelay.MapCapabilities(capabilities)
 	d.life = life
 	d.cancel = cancel
+	mapped := copyCapabilities(d.providerCaps)
 	d.mu.Unlock()
-	return caps(), nil
+	return mapped, nil
 }
 
 func (d *Driver) OpenSession(ctx context.Context, address runtime.Address, spec runtime.SessionSpec) (runtime.DriverSession, error) {
@@ -156,9 +208,7 @@ func (d *Driver) OpenSessionWithInput(ctx context.Context, address runtime.Addre
 	if err := ctx.Err(); err != nil {
 		return native, err
 	}
-	// Once dispatched on the shared connection, retain the original turn response.
-	// Owner Stop waits for this same open; it must not lose the receipt or resend.
-	receipt, err := d.SendPrompt(context.WithoutCancel(ctx), native.SessionID, input)
+	receipt, err := d.sendPrompt(context.WithoutCancel(ctx), native.SessionID, input)
 	if err != nil {
 		return native, err
 	}
@@ -181,12 +231,8 @@ func (d *Driver) ResumeSessionWithInput(ctx context.Context, id string, address 
 	if err := ctx.Err(); err != nil {
 		return native, err
 	}
-	// Retain the original shared dispatch response, including an early terminal.
-	receipt, err := d.SendPrompt(context.WithoutCancel(ctx), native.SessionID, input)
+	receipt, err := d.sendPrompt(context.WithoutCancel(ctx), native.SessionID, input)
 	if err != nil {
-		if !errors.Is(err, runtime.ErrFailedPrecondition) && !errors.Is(err, runtime.ErrInvalidArgument) {
-			err = errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_input_unverified", Message: "New input dispatch was not verified; do not resend"}, err)
-		}
 		return native, err
 	}
 	native.InitialInputReceipt = &receipt
@@ -200,408 +246,401 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		return runtime.DriverSession{}, noResources("driver unavailable or session capacity exhausted")
 	}
 	d.opening++
+	provider := d.provider
 	d.mu.Unlock()
-	defer func() { d.mu.Lock(); d.opening--; d.mu.Unlock() }()
+	defer func() {
+		d.mu.Lock()
+		d.opening--
+		d.mu.Unlock()
+	}()
+
 	if err := d.vault.Check(); err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	if !filepath.IsAbs(spec.Cwd) {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.InvalidArgument("absolute cwd required"))
 	}
+	if spec.SystemPrompt != "" {
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("system_prompt_unsupported", "System prompts are not supported by this Codex runtime"))
+	}
 	if len(spec.AdditionalDirs) > 0 {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("additional_dirs_unsupported", "Additional directories are not supported by this Codex runtime"))
 	}
-	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	mcpServers, mcpConfig, err := codexSessionMCPConfig(spec.MCPServers, spec.Cwd, d.options)
+	mcpServers, err := codexSessionMCPServers(spec.MCPServers, d.options)
 	if err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
-	d.mu.Lock()
-	c := d.client
-	stopped := d.stopped
-	d.mu.Unlock()
-	if c == nil || stopped {
-		return runtime.DriverSession{}, noResources("driver not running")
+	reader, err := d.reader()
+	if err != nil {
+		return runtime.DriverSession{}, err
 	}
-	var thread ct.Thread
-	var native *sdk.Session
-	keep := false
-	defer func() {
-		if native != nil && !keep {
-			_ = native.Close()
-		}
-	}()
+
+	var saved ct.Thread
 	if resume != "" {
 		material, err := d.vault.Load(resume, address, spec)
 		if err != nil {
 			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
-		var saved ct.Thread
 		if err := json.Unmarshal(material.Context, &saved); err != nil {
 			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 		}
-		if saved.ID != resume || saved.SessionID == "" || saved.Ephemeral || !runtime.EqualNativePath(saved.Cwd, spec.Cwd) {
-			return runtime.DriverSession{}, noResources("invalid native recovery context")
-		}
-		params := &ct.ThreadResumeParams{ThreadID: resume, ExcludeTurns: ct.Some(true)}
-		if mcpConfig != nil {
-			params.Config = ct.Some(mcpConfig)
-		}
-		options := sdk.SessionOptions{Client: c, Resume: params, MCPServers: mcpServers}
-		applySessionFeatures(&options, effective)
-		native, err = sdk.Open(ctx, options)
-		if err != nil {
+		if err := validateRecoveryMaterial(saved, resume, spec.Cwd); err != nil {
 			return runtime.DriverSession{}, err
 		}
-		response, _ := native.ResumeResponse()
-		thread = response.Thread
-		if thread.ID != saved.ID || thread.SessionID != saved.SessionID || !runtime.EqualNativePath(thread.Cwd, saved.Cwd) || !sameNativeCreatedAt(thread.CreatedAt, saved.CreatedAt) || thread.ModelProvider != saved.ModelProvider || thread.Ephemeral || !reflect.DeepEqual(thread.Path, saved.Path) {
+	}
+	if err := ctx.Err(); err != nil {
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
+	}
+	openOptions := agent.OpenOptions{
+		Cwd:        spec.Cwd,
+		Features:   agentFeatures(spec.Features),
+		MCPServers: mcpServers,
+	}
+	dispatchCtx := context.WithoutCancel(ctx)
+	var native agent.Session
+	if resume != "" {
+		native, err = provider.Resume(dispatchCtx, agent.ResumeOptions{SessionID: resume, OpenOptions: openOptions})
+	} else {
+		native, err = provider.Open(dispatchCtx, openOptions)
+	}
+	if err != nil {
+		return runtime.DriverSession{}, agentrelay.MapError(err)
+	}
+	if native == nil {
+		return runtime.DriverSession{}, outcomeUnknown("native_identity_unverified", "Provider returned no native session", nil)
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = native.Close(context.Background())
+		}
+	}()
+
+	id := native.ID()
+	if id == "" || (resume != "" && id != resume) {
+		return runtime.DriverSession{}, outcomeUnknown("native_identity_unverified", "Native session identity was not verified", nil)
+	}
+	read, err := reader.ReadThread(dispatchCtx, ct.ThreadReadParams{ThreadID: id, IncludeTurns: ct.Some(false)})
+	if err != nil {
+		return runtime.DriverSession{}, outcomeUnknown("native_identity_unverified", "Native session identity could not be read; do not retry by identity", err)
+	}
+	if err := validateOpenedThread(read.Thread, id, spec.Cwd); err != nil {
+		return runtime.DriverSession{}, outcomeUnknown("native_identity_unverified", "Native session identity or context did not match", err)
+	}
+	if resume != "" {
+		if !sameRecoveryIdentity(saved, read.Thread) {
 			return runtime.DriverSession{}, errors.New("native recovery ownership mismatch")
 		}
-		// Resume metadata may contain old turns: they are never adapted or replayed.
-	} else {
-		params := ct.ThreadStartParams{Cwd: ct.Some(spec.Cwd), Ephemeral: ct.Some(false)}
-		if mcpConfig != nil {
-			params.Config = ct.Some(mcpConfig)
-		}
-		if spec.SystemPrompt != "" {
-			params.BaseInstructions = ct.Some(spec.SystemPrompt)
-		}
-		if err := ctx.Err(); err != nil {
-			return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
-		}
-		// A dispatched thread/start on the shared connection must retain its
-		// original response: canceling the wait can lose the only native identity.
-		// Stop still owns this opening and waits for its late identity cleanup.
-		options := sdk.SessionOptions{Client: c, Thread: params, MCPServers: mcpServers}
-		applySessionFeatures(&options, effective)
-		native, err = sdk.Open(context.WithoutCancel(ctx), options)
-		if err != nil {
-			return runtime.DriverSession{}, err
-		}
-		response, _ := native.StartResponse()
-		thread = response.Thread
+	} else if err := d.vault.Save(id, address, spec, read.Thread); err != nil {
+		return runtime.DriverSession{}, outcomeUnknown("recovery_material_unverified", "Recovery material could not be saved", err)
 	}
-	id := thread.ID
-	if id == "" || thread.SessionID == "" || thread.Ephemeral || !runtime.EqualNativePath(thread.Cwd, spec.Cwd) {
-		return runtime.DriverSession{}, errors.New("outcome_unknown: missing or mismatched native identity/context")
-	}
-	if resume == "" {
-		if err := d.vault.Save(id, address, spec, thread); err != nil {
-			return runtime.DriverSession{}, fmt.Errorf("outcome_unknown: save recovery material: %w", err)
-		}
-	}
-	s := &session{native: native, address: address, source: events.NewSource(), done: make(chan struct{}), released: make(chan struct{}), retired: map[string]bool{}}
-	d.mu.Lock()
-	if _, ok := d.sessions[id]; ok {
-		d.mu.Unlock()
-		return runtime.DriverSession{}, errors.Join(errors.New("duplicate native identity"), native.Close())
-	}
-	d.sessions[id] = s
-	d.mu.Unlock()
-	// Only the native response's idle observation permits an initial idle event.
-	if thread.Status.Idle != nil {
-		state := events.Idle
-		d.mu.Lock()
-		s.state = &state
-		d.mu.Unlock()
-		if err := d.emit(s, id, "", events.StateUpdate{State: &state}, ""); err != nil {
-			return runtime.DriverSession{}, err
-		}
+
+	s, err := d.bindSession(native, address, events.NewSource())
+	if err != nil {
+		return runtime.DriverSession{}, err
 	}
 	keep = true
-	d.wg.Add(1)
-	go d.observe(id, s)
-	return runtime.DriverSession{SessionID: id, Capabilities: caps(), EffectiveFeatures: effective, Source: s.source}, nil
+	return runtime.DriverSession{
+		SessionID:         id,
+		Capabilities:      agentrelay.MapCapabilities(native.Capabilities()),
+		EffectiveFeatures: agentrelay.MapEffectiveFeatures(native.EffectiveFeatures()),
+		Source:            s.source,
+	}, nil
+}
+
+func (d *Driver) bindSession(native agent.Session, address runtime.Address, source events.Source) (*session, error) {
+	if native == nil || native.ID() == "" {
+		return nil, errors.New("bound agent session has no native identity")
+	}
+	d.mu.Lock()
+	life := d.life
+	unavailable := d.stopped || d.stopping || life == nil
+	d.mu.Unlock()
+	if unavailable {
+		return nil, noResources("driver unavailable")
+	}
+	s := &session{native: native, address: address, source: source}
+	relay, err := agentrelay.Start(life, agentrelay.Config{
+		Session: native,
+		Address: address,
+		Source:  source,
+		ExpectedEOF: func() bool {
+			return s.closing.Load()
+		},
+		ObservationFailure: func(event agent.Event) error {
+			problem, ok := event.Payload.(agent.SessionErrorPayload)
+			if !ok || problem.Reason != "unsupported_native_item" {
+				return nil
+			}
+			return &runtime.OperationError{
+				Code:    string(agent.ErrorUnavailable),
+				Reason:  problem.Reason,
+				Message: problem.Message,
+			}
+		},
+		Sink: func(ctx context.Context, event events.SessionEvent) error {
+			if work := codexTurnID(event); work != "" {
+				s.observeWork(event, work)
+				remapped, err := events.NewEvent(event.EventBase, event.Payload(), event.Source().WithWork(work))
+				if err != nil {
+					return err
+				}
+				event = remapped
+			}
+			return d.pipe.Send(ctx, event)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.relay = relay
+
+	d.mu.Lock()
+	if d.stopped || d.stopping || d.sessions[native.ID()] != nil {
+		d.mu.Unlock()
+		relay.Close()
+		return nil, errors.New("duplicate native identity")
+	}
+	d.sessions[native.ID()] = s
+	d.mu.Unlock()
+	return s, nil
 }
 
 func (d *Driver) SendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
 	if err := runtime.ValidateTextInput(input); err != nil {
 		return runtime.InputReceipt{}, err
 	}
+	return d.sendPrompt(ctx, id, input)
+}
+
+func (d *Driver) sendPrompt(ctx context.Context, id string, input runtime.Input) (runtime.InputReceipt, error) {
+	s, err := d.ordinarySession(id)
+	if err != nil {
+		return runtime.InputReceipt{}, err
+	}
+	receipt, err := s.native.StartOrSteer(ctx, input)
+	if err != nil {
+		return runtime.InputReceipt{}, agentrelay.MapError(err)
+	}
+	mapped := agentrelay.MapInputReceipt(receipt)
+	if mapped.Result != agent.InputNotApplied && mapped.Submission != "" {
+		s.controlMu.Lock()
+		if mapped.Submission != s.lastFinished {
+			s.setActiveWorkLocked(mapped.Submission)
+		}
+		s.controlMu.Unlock()
+	}
+	return mapped, nil
+}
+
+func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer any) (runtime.Acceptance, error) {
+	parsed, kind, err := parseAnswer(answer)
+	if err != nil {
+		return runtime.Acceptance{}, err
+	}
+	if err := agent.ValidateAnswer(kind, parsed); err != nil {
+		return runtime.Acceptance{}, agentrelay.MapError(err)
+	}
+	s, err := d.ordinarySession(id)
+	if err != nil {
+		return runtime.Acceptance{}, err
+	}
+	receipt, err := s.native.Answer(ctx, agent.InteractionRef(ref), parsed)
+	if err != nil {
+		return runtime.Acceptance{}, agentrelay.MapError(err)
+	}
+	return agentrelay.MapInteractionReceipt(receipt).Evidence, nil
+}
+
+func parseAnswer(answer any) (agent.Answer, agent.InteractionKind, error) {
+	value, ok := answer.(map[string]any)
+	if !ok || value == nil {
+		return nil, "", runtime.InvalidArgument("interaction requires an object answer")
+	}
+	if outcome, permission := value["outcome"]; permission {
+		for field := range value {
+			if field != "outcome" && field != "optionId" {
+				return nil, "", runtime.InvalidArgument("permission answer contains unsupported fields")
+			}
+		}
+		text, valid := outcome.(string)
+		if !valid {
+			return nil, "", runtime.InvalidArgument("permission outcome must be a string")
+		}
+		parsed := agent.PermissionAnswer{Outcome: agent.PermissionOutcome(text)}
+		if option, present := value["optionId"]; present {
+			optionID, valid := option.(string)
+			if !valid {
+				return nil, "", runtime.InvalidArgument("permission optionId must be a string")
+			}
+			parsed.OptionID = optionID
+		}
+		return parsed, agent.InteractionPermission, nil
+	}
+	action, form := value["action"]
+	if !form {
+		return nil, "", runtime.InvalidArgument("interaction answer kind is required")
+	}
+	for field := range value {
+		if field != "action" && field != "content" {
+			return nil, "", runtime.InvalidArgument("form answer contains unsupported fields")
+		}
+	}
+	text, ok := action.(string)
+	if !ok {
+		return nil, "", runtime.InvalidArgument("form action must be a string")
+	}
+	parsed := agent.FormAnswer{Outcome: agent.FormOutcome(text)}
+	if content, present := value["content"]; present {
+		object, ok := content.(map[string]any)
+		if !ok || object == nil {
+			return nil, "", runtime.InvalidArgument("form content must be an object")
+		}
+		if _, err := json.Marshal(object); err != nil {
+			return nil, "", runtime.InvalidArgument("form content must be JSON-compatible")
+		}
+		if text != string(agent.FormAccept) {
+			return nil, "", runtime.InvalidArgument("declined or canceled form answer must not contain content")
+		}
+		parsed.Content = object
+	}
+	return parsed, agent.InteractionForm, nil
+}
+
+func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {
 	d.mu.Lock()
 	s := d.sessions[id]
+	stopped, stopping := d.stopped, d.stopping
 	d.mu.Unlock()
-	if s == nil {
-		return runtime.InputReceipt{}, runtime.FailedPrecondition("session unavailable")
+	switch {
+	case s == nil:
+		return runtime.CancelReceipt{}, runtime.FailedPrecondition("session not found")
+	case stopped || stopping:
+		return runtime.CancelReceipt{}, runtime.FailedPrecondition("driver unavailable")
+	case s.closing.Load():
+		return runtime.CancelReceipt{}, runtime.FailedPrecondition("session closing")
 	}
-	s.command.Lock()
-	defer s.command.Unlock()
-	d.mu.Lock()
-	if d.sessions[id] != s || d.stopped || d.stopping || s.closing || s.active || s.sending || s.err != nil || len(s.retired) >= 128 {
-		d.mu.Unlock()
-		return runtime.InputReceipt{}, runtime.FailedPrecondition("session unavailable or work unsettled")
+	s.cancelOp.Lock()
+	defer s.cancelOp.Unlock()
+	if err := s.observationError(); err != nil {
+		return runtime.CancelReceipt{}, err
 	}
-	s.sending = true
-	d.mu.Unlock()
-	defer func() {
-		d.mu.Lock()
-		s.sending = false
-		d.mu.Unlock()
-	}()
-	items := make([]ct.UserInput, 0, len(input.Content))
-	for _, b := range input.Content {
-		text, ok := events.TextValue(b)
-		if !ok {
-			return runtime.InputReceipt{}, runtime.Unsupported()
-		}
-		items = append(items, ct.UserInput{Text: &ct.TextUserInput{Type: "text", Text: text, TextElements: ct.Some([]ct.TextElement{})}})
+	s.controlMu.Lock()
+	if s.activeWork == "" {
+		s.controlMu.Unlock()
+		return runtime.CancelReceipt{Result: "noActiveWork"}, nil
 	}
-	d.mu.Lock()
-	s.active = true // reserve unsettled work before dispatch; receipt alone is not running evidence
-	d.mu.Unlock()
-	submission, err := s.native.Submit(ctx, sdk.Input{Input: items})
-	result := submission.Response
+	if receipt, cancelErr, ok := s.cachedCancelLocked(); ok {
+		s.controlMu.Unlock()
+		return receipt, cancelErr
+	}
+	work := s.workForCancelLocked()
+	s.controlMu.Unlock()
+	if _, err := d.ordinarySession(id); err != nil {
+		return runtime.CancelReceipt{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return runtime.CancelReceipt{}, fmt.Errorf("not_sent: interrupt: %w", err)
+	}
+	receipt, err := s.native.Interrupt(ctx, agent.InterruptOptions{})
 	if err != nil {
-		return runtime.InputReceipt{Acceptance: runtime.Acceptance{}}, fmt.Errorf("outcome_unknown: start turn: %w", err)
+		mapped, notSent := mapCancelError(err)
+		s.controlMu.Lock()
+		if !notSent {
+			if work == "" {
+				work = s.workForCancelLocked()
+			}
+			if work != "" {
+				s.cacheCancelLocked(work, runtime.CancelReceipt{}, mapped)
+			}
+		}
+		s.controlMu.Unlock()
+		return runtime.CancelReceipt{}, mapped
 	}
-	if result.Turn.ID == "" {
-		return runtime.InputReceipt{}, errors.New("outcome_unknown: missing turn identity")
+	mapped := agentrelay.MapCancelReceipt(receipt)
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	if mapped.Result == "noActiveWork" {
+		s.clearActiveWorkLocked()
+		return mapped, nil
 	}
-	d.mu.Lock()
-	if s.work == "" && !s.retired[result.Turn.ID] {
-		s.work = result.Turn.ID
+	if mapped.Target != "" && (s.activeWork == "" || s.activeWork == mapped.Target) {
+		s.setActiveWorkLocked(mapped.Target)
 	}
-	d.mu.Unlock()
-	return runtime.InputReceipt{Submission: result.Turn.ID, Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes()}}, nil
+	if work == "" {
+		work = mapped.Target
+	}
+	if work != "" {
+		s.cacheCancelLocked(work, mapped, nil)
+	}
+	return mapped, nil
 }
 
-func (d *Driver) emit(s *session, id, item string, p events.Payload, work string, observedAt ...time.Time) error {
-	return d.emitWithMeta(s, id, item, p, work, nil, observedAt...)
+func mapCancelError(err error) (error, bool) {
+	var call *sdk.CallError
+	if errors.As(err, &call) && call.Dispatch == sdk.NotSent {
+		return fmt.Errorf("not_sent: interrupt: %w", agentrelay.MapError(err)), true
+	}
+	mapped := agentrelay.MapError(err)
+	if agent.CodeOf(err) == agent.ErrorNativeRejected {
+		return fmt.Errorf("native_rejected: interrupt: %w", mapped), false
+	}
+	return fmt.Errorf("outcome_unknown: interrupt: %w", mapped), false
 }
 
-func (d *Driver) emitWithMeta(s *session, id, item string, p events.Payload, work string, meta map[string]any, observedAt ...time.Time) error {
-	eventTime := time.Now().UTC()
-	if len(observedAt) > 0 && !observedAt[0].IsZero() {
-		eventTime = observedAt[0]
+func (s *session) observeWork(event events.SessionEvent, work string) {
+	state, ok := event.Payload().(events.StateUpdate)
+	if !ok || state.State == nil {
+		return
 	}
-	e, err := events.NewEvent(events.EventBase{EventID: uuid.NewString(), Namespace: s.address.Namespace, SessionName: s.address.SessionName, SessionID: id, ItemID: item, Time: eventTime, Meta: meta}, p, s.source.WithWork(work))
-	if err != nil {
-		return err
+	s.controlMu.Lock()
+	defer s.controlMu.Unlock()
+	if *state.State == events.Idle {
+		s.lastFinished = work
+		if s.activeWork == "" || s.activeWork == work {
+			s.clearActiveWorkLocked()
+		}
+		return
 	}
-	return d.pipe.Send(d.life, e)
+	s.setActiveWorkLocked(work)
 }
 
-func (d *Driver) observe(id string, s *session) {
-	defer d.wg.Done()
-	defer close(s.done)
-	for {
-		received, err := s.native.Receive(d.life)
-		if err != nil {
-			d.mu.Lock()
-			closing := s.closing
-			d.mu.Unlock()
-			if !closing || !errors.Is(err, io.EOF) {
-				d.observationFailed(id, s, err)
-			}
-			return
-		}
-		switch received.Kind {
-		case sdk.ReceivedEvent:
-			if received.Event != nil {
-				if err := d.adapt(id, s, *received.Event); err != nil {
-					d.observationFailed(id, s, err)
-					return
-				}
-			}
-		case sdk.ReceivedRequest:
-			if received.Request != nil {
-				d.handleRequest(s, *received.Request)
-			}
-		}
+func (s *session) setActiveWorkLocked(work string) {
+	if work == "" || s.activeWork == work {
+		return
+	}
+	s.activeWork = work
+	if s.cancelWork != work {
+		s.clearCancelLocked()
 	}
 }
 
-func (d *Driver) adapt(id string, s *session, event ct.Event) error {
-	if event.DecodeError != nil {
-		return fmt.Errorf("invalid native observation: %w", event.DecodeError)
+func (s *session) clearActiveWorkLocked() {
+	s.activeWork = ""
+}
+
+func (s *session) workForCancelLocked() string {
+	return s.activeWork
+}
+
+func (s *session) cachedCancelLocked() (runtime.CancelReceipt, error, bool) {
+	work := s.workForCancelLocked()
+	if work == "" || s.cancelWork != work {
+		return runtime.CancelReceipt{}, nil, false
 	}
-	if event.Method == "thread/closed" {
-		var v struct {
-			ThreadID string `json:"threadId"`
-		}
-		if err := json.Unmarshal(event.Params, &v); err != nil {
-			return err
-		}
-		if v.ThreadID != id {
-			return errors.New("release identity mismatch")
-		}
-		s.releaseOnce.Do(func() { close(s.released) })
-		return nil
-	}
-	// SDK observation diagnostics are not native session facts.
-	if event.Method == "" {
-		return nil
-	}
-	var v struct {
-		CompletedAtMs *int64    `json:"completedAtMs"`
-		StartedAtMs   *int64    `json:"startedAtMs"`
-		Time          time.Time `json:"time"`
-		ThreadID      string    `json:"threadId"`
-		TurnID        string    `json:"turnId"`
-		ItemID        string    `json:"itemId"`
-		Delta         string    `json:"delta"`
-		Turn          struct {
-			ID     string `json:"id"`
-			Status string `json:"status"`
-		} `json:"turn"`
-		Item struct {
-			ID               string          `json:"id"`
-			Type             string          `json:"type"`
-			Text             string          `json:"text"`
-			Content          json.RawMessage `json:"content"`
-			Summary          []string        `json:"summary"`
-			Command          string          `json:"command"`
-			Status           string          `json:"status"`
-			Cwd              string          `json:"cwd"`
-			Phase            string          `json:"phase"`
-			ExitCode         *int32          `json:"exitCode"`
-			DurationMs       *int64          `json:"durationMs"`
-			AggregatedOutput json.RawMessage `json:"aggregatedOutput"`
-		} `json:"item"`
-	}
-	if err := json.Unmarshal(event.Params, &v); err != nil {
-		return err
-	}
-	if v.ThreadID != id {
-		return nil
-	} // descendants require later explicit association support
-	if v.CompletedAtMs != nil {
-		v.Time = time.UnixMilli(*v.CompletedAtMs).UTC()
-	} else if v.StartedAtMs != nil {
-		v.Time = time.UnixMilli(*v.StartedAtMs).UTC()
-	}
-	if v.TurnID != "" {
-		d.mu.Lock()
-		owned := s.work == v.TurnID || s.retired[v.TurnID]
-		d.mu.Unlock()
-		if !owned {
-			return nil
-		}
-	}
-	emit := func(item string, p events.Payload, work string) error { return d.emit(s, id, item, p, work, v.Time) }
-	switch event.Method {
-	case "turn/started", "turn/completed":
-		if v.Turn.ID == "" {
-			return errors.New("native turn event missing identity")
-		}
-		state := events.Running
-		if event.Method == "turn/completed" {
-			state = events.Idle
-		}
-		d.mu.Lock()
-		if s.retired[v.Turn.ID] || (!s.active && s.work == "") || (s.work != "" && s.work != v.Turn.ID) {
-			d.mu.Unlock()
-			return nil
-		}
-		if s.work == "" {
-			s.work = v.Turn.ID
-		}
-		previous := s.state
-		s.state = &state
-		s.active = state == events.Running
-		if !s.active {
-			s.retired[v.Turn.ID] = true
-			s.work = ""
-		}
-		d.mu.Unlock()
-		if state == events.Idle {
-			d.interactions.RemoveSession(id)
-		}
-		return emit("", events.StateUpdate{PreviousState: previous, State: &state, StopReason: v.Turn.Status}, v.Turn.ID)
-	case "item/agentMessage/delta":
-		return emit(v.ItemID, events.MessageChunk{MessageID: v.ItemID, Content: []events.ContentBlock{events.Text(v.Delta)}}, v.TurnID)
-	case "item/reasoning/summaryTextDelta":
-		return emit(v.ItemID, events.ThinkingChunk{MessageID: v.ItemID, Content: []events.ContentBlock{events.Text(v.Delta)}}, v.TurnID)
-	case "item/started", "item/completed":
-		item := v.Item
-		if item.ID == "" {
-			return errors.New("native item missing identity")
-		}
-		switch item.Type {
-		case "agentMessage":
-			if event.Method == "item/completed" {
-				return emit(item.ID, events.AgentMessage{MessageID: item.ID, Phase: item.Phase, Content: []events.ContentBlock{events.Text(item.Text)}}, v.TurnID)
-			}
-		case "userMessage":
-			if event.Method == "item/completed" {
-				var native []ct.UserInput
-				if err := json.Unmarshal(item.Content, &native); err != nil {
-					return err
-				}
-				if native == nil {
-					return errors.New("missing native user content")
-				}
-				content := make([]events.ContentBlock, 0, len(native))
-				for _, block := range native {
-					if block.Text == nil {
-						return errors.New("unsupported native user content")
-					}
-					content = append(content, events.Text(block.Text.Text))
-				}
-				// Native spans and extensions are provenance, not MASS content fields.
-				decoder := json.NewDecoder(bytes.NewReader(event.Params))
-				decoder.UseNumber()
-				var raw map[string]any
-				if err := decoder.Decode(&raw); err != nil {
-					return err
-				}
-				return d.emitWithMeta(s, id, item.ID, events.UserMessage{MessageID: item.ID, Content: content}, v.TurnID, map[string]any{"native": raw}, v.Time)
-			}
-		case "reasoning":
-			if event.Method == "item/completed" {
-				content := []events.ContentBlock{}
-				for _, text := range item.Summary {
-					content = append(content, events.Text(text))
-				}
-				return emit(item.ID, events.AgentThinking{MessageID: item.ID, Content: content}, v.TurnID)
-			}
-		case "commandExecution":
-			if event.Method == "item/started" {
-				return emit(item.ID, events.ToolCall{
-					ID:       item.ID,
-					Kind:     events.ToolKindExecute,
-					ToolName: "commandExecution",
-					Provider: events.ToolProviderAgent,
-					RawInput: map[string]any{"command": item.Command, "cwd": item.Cwd},
-				}, v.TurnID)
-			}
-			status := "unknown"
-			if item.Status == "completed" || item.Status == "failed" || item.Status == "declined" {
-				status = item.Status
-			}
-			var duration *float64
-			if item.DurationMs != nil {
-				value := float64(*item.DurationMs)
-				duration = &value
-			}
-			p := events.ToolResult{
-				ExitCode:   item.ExitCode,
-				DurationMs: duration,
-				ID:         item.ID,
-				Kind:       events.ToolKindExecute,
-				ToolName:   "commandExecution",
-				Provider:   events.ToolProviderAgent,
-				Status:     status,
-				Output:     &events.Output{Availability: "unavailable", Completeness: "unknown"},
-			}
-			if item.AggregatedOutput != nil {
-				var value any
-				dec := json.NewDecoder(bytes.NewReader(item.AggregatedOutput))
-				dec.UseNumber()
-				if err := dec.Decode(&value); err != nil {
-					return err
-				}
-				p.RawOutput = &value
-				if text, ok := value.(string); ok {
-					p.Content = []events.ContentBlock{events.Text(text)}
-				}
-				p.Output = &events.Output{Availability: "provided", Completeness: "retained"}
-			}
-			return emit(item.ID, p, v.TurnID)
-		}
-	}
-	return nil
+	return s.cancelReceipt, s.cancelErr, true
+}
+
+func (s *session) cacheCancelLocked(work string, receipt runtime.CancelReceipt, err error) {
+	s.cancelWork = work
+	s.cancelReceipt = receipt
+	s.cancelErr = err
+}
+
+func (s *session) clearCancelLocked() {
+	s.cancelWork = ""
+	s.cancelReceipt = runtime.CancelReceipt{}
+	s.cancelErr = nil
 }
 
 func (d *Driver) CloseSession(ctx context.Context, id string) error {
@@ -611,35 +650,31 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 		d.mu.Unlock()
 		return nil
 	}
-	s.closing = true
+	s.closing.Store(true)
 	d.mu.Unlock()
-	d.interactions.RemoveSession(id)
-	closeErr := s.native.Close()
+
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	closeErr := agentrelay.MapError(s.native.Close(context.WithoutCancel(ctx)))
 	if closeErr != nil {
 		return closeErr
 	}
 	select {
-	case <-s.done:
-	case <-ctx.Done():
-		return ctx.Err()
+	case <-s.relay.Done():
+	default:
+		select {
+		case <-s.relay.Done():
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	if err := d.pipe.Flush(ctx); err != nil {
 		return err
-	}
-	if cause := s.native.Err(); cause != nil {
-		return fmt.Errorf("native resource release unconfirmed after observation loss: %w", cause)
-	}
-	d.mu.Lock()
-	cause := s.err
-	d.mu.Unlock()
-	if cause != nil {
-		return fmt.Errorf("observation terminated: %w", cause)
 	}
 	d.mu.Lock()
 	if d.sessions[id] == s {
 		delete(d.sessions, id)
 	}
-	d.interactions.RemoveSession(id)
 	d.mu.Unlock()
 	return nil
 }
@@ -647,6 +682,7 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 func (d *Driver) Stop(ctx context.Context) error {
 	d.op.Lock()
 	defer d.op.Unlock()
+
 	d.mu.Lock()
 	if d.stopped {
 		d.mu.Unlock()
@@ -656,246 +692,118 @@ func (d *Driver) Stop(ctx context.Context) error {
 		d.mu.Unlock()
 		return errors.New("close sessions before stopping")
 	}
-	c := d.client
 	d.stopping = true
+	provider := d.provider
 	d.mu.Unlock()
-	if c != nil {
-		if err := c.Close(); err != nil {
-			return err
+
+	if provider != nil {
+		if err := provider.Stop(context.WithoutCancel(ctx)); err != nil {
+			mapped := agentrelay.MapError(err)
+			d.mu.Lock()
+			d.stopErr = mapped
+			d.mu.Unlock()
+			return mapped
 		}
 	}
-	if d.cancel != nil {
-		d.cancel()
-	}
-	d.wg.Wait()
 	d.mu.Lock()
 	d.stopped = true
+	d.stopping = false
+	cancel := d.cancel
 	d.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	d.pipe.End(nil)
 	return nil
 }
 
-func (d *Driver) handleRequest(s *session, r sdk.IncomingRequest) {
-	var v struct{ ThreadID, TurnID, ItemID string }
-	if json.Unmarshal(r.Params(), &v) != nil {
-		return
-	}
-	d.mu.Lock()
-	// Requests may precede the turn/start response; retain their native identity.
-	if d.sessions[v.ThreadID] == s && s.sending && s.work == "" && v.TurnID != "" && !s.retired[v.TurnID] {
-		s.work = v.TurnID
-	}
-	valid := s != nil && !s.closing && d.sessions[v.ThreadID] == s && s.err == nil && r.Handle().Err() == nil && r.Context().Err() == nil && v.TurnID != "" && s.work == v.TurnID && !s.retired[v.TurnID]
-	d.mu.Unlock()
-	if !valid {
-		return
-	}
-	request := events.PermissionRequest(v.ItemID, r.Method())
-	request.Content = []events.ContentBlock{events.Text(string(r.Params()))}
-	method := r.Method()
-	decisions := map[string]string{"allow-once": "accept", "reject-once": "decline"}
-	var commandChoices map[string]commandApprovalChoice
-	switch method {
-	case "item/commandExecution/requestApproval":
-		var supported bool
-		request.Options, commandChoices, supported = commandApprovalChoices(r.Params())
-		if !supported {
-			_ = d.emit(s, v.ThreadID, "", events.SessionError{Message: "unsupported native permission options", Reason: "unsupported_native_interaction"}, v.TurnID)
-			return
-		}
-	case "item/fileChange/requestApproval":
-	case "item/tool/requestUserInput":
-		var schema map[string]any
-		decoder := json.NewDecoder(bytes.NewReader(r.Params()))
-		decoder.UseNumber()
-		if decoder.Decode(&schema) != nil {
-			return
-		}
-		request = events.InteractionRequest{Kind: "form", Message: "Answer native Codex questions", RequestedSchema: schema}
-	default:
-		_ = d.emit(s, v.ThreadID, "", events.SessionError{Message: "unsupported native interaction", Reason: "unsupported_native_interaction"}, v.TurnID)
-		return
-	}
-	live := func() bool { return r.Handle().Err() == nil && r.Context().Err() == nil }
-	unsent := func(err error) bool {
-		var native *sdk.AnswerError
-		if errors.As(err, &native) {
-			return native.Dispatch == sdk.NotSent
-		}
-		return errors.Is(err, runtime.ErrInvalidArgument)
-	}
-	ref, err := d.interactions.Add(v.ThreadID, s.source.WithWork(v.TurnID), live, unsent, func(ctx context.Context, a map[string]any) error {
-		if method == "item/tool/requestUserInput" {
-			if len(a) != 2 || a["action"] != "accept" {
-				return runtime.InvalidArgument("expected explicit form accept/content")
-			}
-			content, ok := a["content"].(map[string]any)
-			if !ok || content["answers"] == nil {
-				return runtime.InvalidArgument("expected native question answers")
-			}
-			raw, err := json.Marshal(content)
-			if err != nil {
-				return runtime.InvalidArgument("invalid native question answers")
-			}
-			var response ct.ToolRequestUserInputResponse
-			var params struct {
-				Questions []ct.ToolRequestUserInputQuestion `json:"questions"`
-			}
-			if json.Unmarshal(raw, &response) != nil || json.Unmarshal(r.Params(), &params) != nil || response.Answers == nil {
-				return runtime.InvalidArgument("invalid native question answers")
-			}
-			for id, value := range response.Answers {
-				found := false
-				for _, question := range params.Questions {
-					if question.ID == id {
-						found = true
-						break
-					}
-				}
-				if !found || value.Answers == nil {
-					return runtime.InvalidArgument("answers must use native question IDs and string arrays")
-				}
-			}
-			return r.Answer(ctx, response)
-		} else {
-			option, ok := a["optionId"].(string)
-			decision, offered := decisions[option]
-			choice, commandOffered := commandChoices[option]
-			if method == "item/commandExecution/requestApproval" {
-				offered = commandOffered
-			}
-			if len(a) != 2 || a["outcome"] != "selected" || !ok || !offered {
-				return runtime.InvalidArgument("expected a native offered permission option")
-			}
-			options := sdk.ApprovalOptions{}
-			if method == "item/commandExecution/requestApproval" {
-				options.CommandExecution = &ct.CommandExecutionRequestApprovalResponse{Decision: choice.decision}
-				if choice.approve {
-					return r.Approve(ctx, options)
-				}
-				return r.Deny(ctx, options)
-			}
-			if decision == "accept" || decision == "acceptForSession" {
-				return r.Approve(ctx, options)
-			}
-			return r.Deny(ctx, options)
-		}
-	})
-	if err == nil {
-		state := events.RequiresAction
-		d.mu.Lock()
-		previous := s.state
-		s.state = &state
-		d.mu.Unlock()
-		err = d.emit(s, v.ThreadID, "", events.StateUpdate{PreviousState: previous, State: &state}, v.TurnID)
-	}
-	if err == nil {
-		err = d.emit(s, v.ThreadID, "", events.InteractionRequested{Interaction: events.InteractionRef(ref), Request: request, Blocking: true}, v.TurnID)
-	}
-	if err != nil {
-		_ = d.emit(s, v.ThreadID, "", events.SessionError{Message: "interaction delivery failed"}, v.TurnID)
-	}
-}
-
-func (d *Driver) AnswerInteraction(ctx context.Context, id, ref string, answer any) (runtime.Acceptance, error) {
-	a, ok := answer.(map[string]any)
-	if !ok || a == nil {
-		return runtime.Acceptance{}, runtime.InvalidArgument("interaction requires an object answer")
-	}
+func (d *Driver) ordinarySession(id string) (*session, error) {
 	d.mu.Lock()
 	s := d.sessions[id]
+	unavailable := d.stopped || d.stopping || s == nil || s.closing.Load()
 	d.mu.Unlock()
-	if s == nil {
-		return runtime.Acceptance{}, runtime.FailedPrecondition("session unavailable")
+	if unavailable {
+		return nil, runtime.FailedPrecondition("session unavailable")
 	}
-	s.command.Lock()
-	defer s.command.Unlock()
-	d.mu.Lock()
-	source := s.source.WithWork(s.work)
-	valid := d.sessions[id] == s && !d.stopping && !d.stopped && s.err == nil
-	d.mu.Unlock()
-	if !valid {
-		return runtime.Acceptance{}, errors.New("original interaction run unavailable")
+	if err := s.observationError(); err != nil {
+		return nil, err
 	}
-	if err := d.interactions.Answer(ctx, id, source, ref, a); err != nil {
-		return runtime.Acceptance{}, err
-	}
-	// SDK Answer proves a write, not native acceptance or tool success.
-	return runtime.Acceptance{Sent: runtime.Yes()}, nil
+	return s, nil
 }
 
-func (d *Driver) observationFailed(id string, s *session, err error) {
+func (d *Driver) reader() (codexReadClient, error) {
 	d.mu.Lock()
-	if s.err == nil {
-		s.err = err
-	}
-	previous := s.state
-	s.state = nil
+	active := d.providerReady && !d.stopped && !d.stopping
+	read := d.nativeClient
 	d.mu.Unlock()
-	_ = d.emit(s, id, "", events.SessionError{Message: "Codex session observation failed"}, "")
-	_ = d.emit(s, id, "", events.StateUpdate{PreviousState: previous}, "")
+	if !active || read == nil {
+		return nil, noResources("driver not running")
+	}
+	client, err := read()
+	if err != nil {
+		return nil, agentrelay.MapError(err)
+	}
+	if client == nil {
+		return nil, noResources("native reader unavailable")
+	}
+	return client, nil
 }
 
-func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {
-	d.mu.Lock()
-	s := d.sessions[id]
-	d.mu.Unlock()
-	if s == nil {
-		return runtime.CancelReceipt{}, runtime.FailedPrecondition("session unavailable")
+func validateRecoveryMaterial(saved ct.Thread, id, cwd string) error {
+	if saved.ID != id || saved.SessionID == "" || saved.Ephemeral || !runtime.EqualNativePath(saved.Cwd, cwd) {
+		return noResources("invalid native recovery context")
 	}
-	s.command.Lock()
-	defer s.command.Unlock()
-	d.mu.Lock()
-	work := s.work
-	active := s.active
-	if active && s.cancelWork != work {
-		s.cancelWork, s.cancelTarget = work, uuid.NewString()
-		s.cancelAttempted, s.cancelErr = false, nil
+	return nil
+}
+
+func validateOpenedThread(thread ct.Thread, id, cwd string) error {
+	if thread.ID != id || thread.SessionID == "" || thread.Ephemeral || !runtime.EqualNativePath(thread.Cwd, cwd) {
+		return errors.New("invalid native thread identity")
 	}
-	target := s.cancelTarget
-	attempted, previousErr := s.cancelAttempted, s.cancelErr
-	d.mu.Unlock()
-	if !active {
-		return runtime.CancelReceipt{Result: "noActiveWork"}, nil
+	return nil
+}
+
+func sameRecoveryIdentity(saved, observed ct.Thread) bool {
+	return observed.ID == saved.ID &&
+		observed.SessionID == saved.SessionID &&
+		runtime.EqualNativePath(observed.Cwd, saved.Cwd) &&
+		sameNativeCreatedAt(observed.CreatedAt, saved.CreatedAt) &&
+		observed.ModelProvider == saved.ModelProvider &&
+		!observed.Ephemeral &&
+		reflect.DeepEqual(observed.Path, saved.Path)
+}
+
+func agentFeatures(features *runtime.SessionFeatures) agent.Features {
+	if features == nil || features.AgentQuestions == nil {
+		return agent.Features{}
 	}
-	if work == "" {
-		return runtime.CancelReceipt{}, errors.New("outcome_unknown: no confirmed native turn to cancel")
-	}
-	if attempted {
-		if previousErr != nil {
-			return runtime.CancelReceipt{}, previousErr
-		}
-		return runtime.CancelReceipt{Target: target, Result: "controlAcknowledged"}, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return runtime.CancelReceipt{}, fmt.Errorf("not_sent: cancel: %w", err)
-	}
-	err := s.native.Interrupt(ctx, sdk.InterruptOptions{TurnID: work})
-	var call *sdk.CallError
-	notSent := errors.As(err, &call) && call.Dispatch == sdk.NotSent
-	if err != nil {
-		var rejected *sdk.RPCError
-		switch {
-		case notSent:
-			err = fmt.Errorf("not_sent: cancel: %w", err)
-		case errors.As(err, &rejected):
-			err = fmt.Errorf("native_rejected: cancel: %w", err)
-		default:
-			err = fmt.Errorf("outcome_unknown: cancel: %w", err)
-		}
-	}
-	// Only a proven non-dispatch permits a later explicit attempt for this work.
-	d.mu.Lock()
-	s.cancelAttempted, s.cancelErr = !notSent, err
-	d.mu.Unlock()
-	if err != nil {
-		return runtime.CancelReceipt{}, err
-	}
-	return runtime.CancelReceipt{Target: target, Result: "controlAcknowledged"}, nil
+	enabled := *features.AgentQuestions
+	return agent.Features{AgentQuestions: &enabled}
+}
+
+func copyCapabilities(capabilities runtime.Capabilities) runtime.Capabilities {
+	return maps.Clone(capabilities)
 }
 
 func noResources(message string) error {
 	return errors.Join(runtime.ErrResourcesReleased, errors.New(message))
+}
+
+func outcomeUnknown(reason, message string, cause error) error {
+	err := &runtime.OperationError{Code: "outcome_unknown", Reason: reason, Message: message}
+	if cause != nil {
+		return errors.Join(err, cause)
+	}
+	return err
+}
+
+func codexTurnID(event events.SessionEvent) string {
+	codexMeta, ok := event.Meta["codex"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	turnID, _ := codexMeta["turnId"].(string)
+	return turnID
 }
 
 func sameNativeCreatedAt(a, b int64) bool {

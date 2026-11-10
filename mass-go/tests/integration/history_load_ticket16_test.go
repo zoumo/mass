@@ -114,14 +114,17 @@ func TestTicket16CodexDirectInputMetadataBoundaries(t *testing.T) {
 						pair = append(pair, call.Params["thread"].(map[string]any))
 					}
 				}
-				require.Len(t, pair, 2, "reject before history enumeration")
+				require.Len(t, pair, 3, "pre-read, resume response, and post-resume verification; reject before history enumeration")
 				require.Contains(t, pair[0], "canAcceptDirectInput")
 				require.Nil(t, pair[0]["canAcceptDirectInput"])
 				require.Equal(t, true, pair[1]["canAcceptDirectInput"])
+				require.Equal(t, true, pair[2]["canAcceptDirectInput"])
 				// Assertion-only projection: every other native field is identical.
 				delete(pair[0], "canAcceptDirectInput")
 				delete(pair[1], "canAcceptDirectInput")
+				delete(pair[2], "canAcceptDirectInput")
 				require.Equal(t, pair[0], pair[1])
+				require.Equal(t, pair[0], pair[2])
 				require.Equal(t, "idle", pair[0]["status"].(map[string]any)["type"])
 				require.Zero(t, counts["thread/turns/list"])
 				require.Zero(t, counts["thread/items/list"])

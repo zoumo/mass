@@ -199,7 +199,7 @@ func (s *entrypointSuite) openPrepared(kind, bin, path, work string) (resource.S
 	s.Eventually(func() bool {
 		var v resource.Session
 		s.call("session.get", workflowParams{Session: ref}, &v)
-		return v.Status.State == events.Idle || (kind == "claude" && v.Status.State == events.Unknown)
+		return v.Status.State == events.Idle || v.Status.State == events.Unknown
 	}, 2*time.Second, 10*time.Millisecond)
 	var page store.HistoryPage
 	s.call("session.history", workflowParams{Session: ref}, &page)

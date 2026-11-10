@@ -82,7 +82,7 @@ func main() {
 			record("input", map[string]any{"turn": turn})
 			respond(map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress", "items": []any{}}})
 			notify("turn/started", map[string]any{"turn": map[string]any{"id": turn, "status": "inProgress", "items": []any{}}})
-			send(map[string]any{"id": "approval-" + turn, "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": "native-thread", "turnId": turn, "itemId": "tool-" + turn}})
+			send(map[string]any{"id": "approval-" + turn, "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": "native-thread", "turnId": turn, "itemId": "tool-" + turn, "startedAtMs": 3}})
 		case "":
 			turn := fmt.Sprintf("live-%d", n)
 			if v.ID != "approval-"+turn || v.Result["decision"] != "accept" {

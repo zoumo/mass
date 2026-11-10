@@ -48,7 +48,7 @@ func runCodex(send func(any)) {
 		notify("item/completed", map[string]any{"threadId": id, "turnId": "turn-" + id, "completedAtMs": 3, "item": map[string]any{"id": item, "type": "agentMessage", "text": "complete " + item}})
 	}
 	request := func(id, name string) {
-		send(map[string]any{"id": name, "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": id, "turnId": "turn-" + id, "itemId": name, "command": "never executed", "cwd": os.Getenv("PROJECT"), "availableDecisions": []any{"accept", "decline"}}})
+		send(map[string]any{"id": name, "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": id, "turnId": "turn-" + id, "itemId": name, "command": "never executed", "cwd": os.Getenv("PROJECT"), "startedAtMs": 3, "availableDecisions": []any{"accept", "decline"}}})
 	}
 	scan := bufio.NewScanner(os.Stdin)
 	opened := 0
