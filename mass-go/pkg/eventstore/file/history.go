@@ -71,7 +71,7 @@ func eachEvent(reader io.Reader, r identity, visit func(events.SessionEvent, []b
 			return err
 		}
 		var e events.SessionEvent
-		if err := fileio.Decode(line, &e); err != nil {
+		if err := events.DecodeSessionEvent(line, &e); err != nil {
 			return fmt.Errorf("invalid history record: %w", err)
 		}
 		if err := validateEvent(r, e); err != nil {

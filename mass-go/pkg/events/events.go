@@ -188,6 +188,9 @@ func (e SessionEvent) MarshalJSON() ([]byte, error) {
 }
 
 func (e *SessionEvent) UnmarshalJSON(data []byte) error {
+	if err := CheckLegacyEventSchema(data); err != nil {
+		return err
+	}
 	var raw struct {
 		EventBase
 		Type    string          `json:"type"`

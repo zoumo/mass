@@ -279,7 +279,7 @@ func (s *Store) storedEvent(q sqlQueryer, id, eventID string) (events.SessionEve
 		return events.SessionEvent{}, false, err
 	}
 	var e events.SessionEvent
-	err = fileio.Decode(b, &e)
+	err = events.DecodeSessionEvent(b, &e)
 	return e, true, err
 }
 
@@ -328,7 +328,7 @@ func (s *Store) sqlHistory(q sqlQueryer, id string, types []string, start, limit
 			break
 		}
 		var e events.SessionEvent
-		if err := fileio.Decode(b, &e); err != nil {
+		if err := events.DecodeSessionEvent(b, &e); err != nil {
 			return page, err
 		}
 		page.Events = append(page.Events, e)
@@ -446,7 +446,7 @@ func (s *Store) verifyRows(tx *sql.Tx) error {
 			return errors.New("SQL-only Session")
 		}
 		var e events.SessionEvent
-		if err := fileio.Decode(line, &e); err != nil {
+		if err := events.DecodeSessionEvent(line, &e); err != nil {
 			return err
 		}
 		if err := validateEvent(r, e); err != nil {
