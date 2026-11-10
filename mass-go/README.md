@@ -7,7 +7,7 @@ Executable assembly lives under `cmd/`; CLI and other library modules live under
 
 ## Layered verification
 
-From the repository root, with Go 1.26.9 and pinned dependencies already cached:
+From the repository root, with Go 1.26.10 and pinned dependencies already cached:
 
 ```sh
 # Package-local unit tests
@@ -174,20 +174,21 @@ the HTTP answer API. This CLI version deliberately has no answer command.
 ### Consumer recording and replay
 
 From the repository root, run `make test-simulation-go` (or its compatibility
-alias `make recording-gate-go`) to replay the four
-exported Codex and Claude basic and permission cases through a running MASS
-daemon and its public HTTP/SSE API. The target forces `MASS_RECORD=0` and runs
-the artifact, receipt and credential audits with the replays. Codex uses a
-separate input operation; Claude uses create-with-initial-input because its CLI
-emits native session identity only after the first user frame. Claude assertions
-require a successful local input receipt with no invented native acceptance. The
-permission cases answer the actual recorded `allow-once` option through the HTTP
-answer API and compare the native request, answer receipt, state, event order,
-history and successful tool result. Missing, altered or incompletely consumed
-material fails the test. The mock route must be `executor=external-sdk`,
-`target=replay`, `provenance=consumer`, and the replay receipt must show
-`nativeLaunched=false`. These are consumer materials; official verification does
-not apply. Exact hashes, status and recording commands are in
+alias `make recording-gate-go`) to replay the four exported Codex and Claude
+basic and permission cases through a running MASS daemon and its public
+HTTP/SSE API. The target forces `MASS_RECORD=0` and runs the artifact, receipt
+and credential audits with the replays. The mock route must be
+`executor=external-sdk`, `target=replay`, `provenance=consumer`, and the replay
+receipt must show `nativeLaunched=false`.
+
+The checked-in captures were recorded with SDK `5edf8b62`. They no longer pass
+strict replay at the T05 pin `1c8514ff`: Codex now sends an added initialize
+capability, and Claude waits for `system init` before `Open` while the capture
+sends the first user frame earlier. The artifact and audit tests pass, but all
+four replay cases fail until those captures are re-recorded with the T05 SDK,
+testify, and native CLI versions. They are retained as historical consumer
+evidence and are not current-pin PASS evidence. Exact failures, hashes and
+recording commands are in
 [consumer recording acceptance](docs/recording-acceptance.md).
 
 Real recording requires an authenticated Codex CLI and explicit opt-in.
@@ -250,13 +251,15 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261106173112-83036ea07a0c`,
-source commit `83036ea07a0c`, without a local replacement. The external
-`agent-sdk-testify` tool is pinned to `v0.0.0-20261105165039-e4799fe3484c` for
-consumer recording and replay and is not a production dependency.
+The runtime SDK is pinned to `v0.0.0-20261109202203-1c8514ff8a18`,
+source commit `1c8514ff`, without a local replacement. The external
+`agent-sdk-testify` tool is pinned to
+`v0.1.1-0.20261109183517-b7c1fd72fc17` for consumer recording and replay and
+is not a production dependency.
 The checked-in consumer fixtures remain bound to their recording SDK
 `v0.0.0-20261105065348-5edf8b62e963`; that provenance is intentionally not
-rewritten to the current runtime pin.
+rewritten to the current runtime pin, and that incompatibility is reported
+rather than hidden.
 Codex shares one native Client across its Sessions; Claude owns one native
 process per Session. Claude has one SDK Events consumer through MASS agentrelay;
 live event identity, payload and metadata come from the SDK.
@@ -296,7 +299,7 @@ For example, a Runtime may be created with:
 {
   "metadata": {"name": "agent"},
   "spec": {
-    "type": "codex",
+    "type": "claude",
     "config": {"executable": "/absolute/path/to/agent"},
     "features": {"agentQuestions": false},
     "mcpServers": [{
@@ -315,26 +318,22 @@ input accepts them as top-level request fields. `stdio` servers use `command`,
 `headers`; `envHeaders` and `bearerTokenEnvVar` are HTTP-only. Remote URLs must
 use HTTPS, except HTTP on loopback, and must not contain userinfo credentials.
 Sensitive header/env entries use `${ENV_VAR}` references rather than literal
-secrets. Codex supports `stdio` and `http`, and its MCP names cannot contain
-dots. Claude supports `stdio` and `http`, and rejects `sse`, `cwd`,
-`envHeaders` and `bearerTokenEnvVar`. Claude follows the SDK target CLI merge
-behavior; an empty list does not disable ambient servers. Codex requires an explicit,
-existing absolute `env.CODEX_HOME` distinct from ambient configuration whose
-`config.toml`, when present, contains no `mcp_servers` at any level; arrange
-authentication in that isolated home. Codex thread create, resume and history
-load also mark the Session cwd and its ancestors untrusted so a project
-`.codex/config.toml` cannot supply additional MCP servers. A nil list leaves
-provider ambient MCP behavior unchanged. MCP configuration does not connect or
-health-check a server at Session open.
+secrets. The unified SDK supports only `stdio` and `http`; `sse` is rejected.
+Claude supports `stdio` and `http`, and rejects `sse`, `cwd`, `envHeaders` and
+`bearerTokenEnvVar`. Claude follows the SDK target CLI merge behavior; an empty
+list does not disable ambient servers.
 
-Codex does not expand `${ENV_VAR}` inside literal headers or stdio environment
-values. The adapter maps simple header references to `env_http_headers`, maps
-`Authorization: Bearer ${ENV_VAR}` to `bearer_token_env_var`, and resolves
-remaining references, including scheme-prefixed and inline values, from the
-Runtime process environment immediately before opening the thread. Missing,
-empty, or malformed references and unsafe header values fail before native
-Session creation; resolved values are never returned in public errors or
-persisted by MASS.
+Codex currently rejects every explicit Session `mcpServers` declaration before
+native open with `unsupported/mcp_isolation_unavailable`. The pinned SDK cannot
+enforce per-Session isolation from Codex ambient and project MCP configuration.
+A nil list leaves provider ambient MCP behavior unchanged. This is an explicit
+implementation gap against the harness stdio/HTTP requirement, not a supported
+Codex capability. MCP configuration does not connect or health-check a server at
+Session open.
+
+The internal Codex mapping tests still cover `${ENV_VAR}` resolution and header
+translation, but Session open rejects before that path. Those unit tests do not
+establish a currently usable Codex MCP feature.
 
 Validation does not open credentials or history. Offline tests launch only MASS's
 `internal/testpeer` strict scenario binary via temporary launchers, with an explicit

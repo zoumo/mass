@@ -26,6 +26,8 @@ func PublicError(err error) *Error {
 	switch {
 	case errors.Is(err, events.ErrSlowSubscriber):
 		return &Error{Code: "resource_exhausted", Reason: "slow_subscriber", Message: "Observation capacity exceeded"}
+	case errors.Is(err, events.ErrLegacyEventSchema):
+		return &Error{Code: "unsupported", Reason: "legacy_event_schema", Message: "Stored event schema is not supported"}
 	case errors.Is(err, runtime.ErrInvalidArgument):
 		return Invalid()
 	case errors.Is(err, runtime.ErrFailedPrecondition):

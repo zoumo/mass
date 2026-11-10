@@ -20,7 +20,9 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            },
             "type": "array"
           },
           "messageId": {
@@ -40,7 +42,9 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            },
             "type": "array"
           },
           "messageId": {
@@ -973,7 +977,9 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            },
             "type": "array"
           },
           "messageId": {
@@ -2483,7 +2489,9 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            },
             "type": "array"
           },
           "messageId": {
@@ -2503,7 +2511,9 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            },
             "type": "array"
           },
           "durationMs": {
@@ -2579,7 +2589,9 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            },
             "type": "array"
           },
           "id": {
@@ -2615,7 +2627,9 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            },
             "type": "array"
           },
           "durationMs": {
@@ -2742,7 +2756,9 @@
         "additionalProperties": false,
         "properties": {
           "content": {
-            "items": {},
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            },
             "type": "array"
           },
           "messageId": {

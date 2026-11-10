@@ -545,16 +545,16 @@ type Acceptance struct {
 
 // AgentMessage defines model for AgentMessage.
 type AgentMessage struct {
-	Content   []rawjson.RawMessage `json:"content"`
-	MessageId string               `json:"messageId"`
-	Phase     *string              `json:"phase,omitempty"`
+	Content   []ContentBlock `json:"content"`
+	MessageId string         `json:"messageId"`
+	Phase     *string        `json:"phase,omitempty"`
 }
 
 // AgentThinking defines model for AgentThinking.
 type AgentThinking struct {
-	Content   []rawjson.RawMessage `json:"content"`
-	MessageId string               `json:"messageId"`
-	Phase     *string              `json:"phase,omitempty"`
+	Content   []ContentBlock `json:"content"`
+	MessageId string         `json:"messageId"`
+	Phase     *string        `json:"phase,omitempty"`
 }
 
 // AvailableCommand defines model for AvailableCommand.
@@ -721,9 +721,9 @@ type MCPServerType string
 
 // MessageChunk defines model for MessageChunk.
 type MessageChunk struct {
-	Content   []rawjson.RawMessage `json:"content"`
-	MessageId string               `json:"messageId"`
-	Phase     *string              `json:"phase,omitempty"`
+	Content   []ContentBlock `json:"content"`
+	MessageId string         `json:"messageId"`
+	Phase     *string        `json:"phase,omitempty"`
 }
 
 // Metadata defines model for Metadata.
@@ -927,14 +927,14 @@ type StateUpdatePayloadState string
 
 // ThinkingChunk defines model for ThinkingChunk.
 type ThinkingChunk struct {
-	Content   []rawjson.RawMessage `json:"content"`
-	MessageId string               `json:"messageId"`
-	Phase     *string              `json:"phase,omitempty"`
+	Content   []ContentBlock `json:"content"`
+	MessageId string         `json:"messageId"`
+	Phase     *string        `json:"phase,omitempty"`
 }
 
 // ToolCallPayload defines model for ToolCallPayload.
 type ToolCallPayload struct {
-	Content             *[]rawjson.RawMessage  `json:"content,omitempty"`
+	Content             *[]ContentBlock        `json:"content,omitempty"`
 	DurationMs          *float64               `json:"durationMs,omitempty"`
 	ExitCode            *int32                 `json:"exitCode,omitempty"`
 	Id                  string                 `json:"id"`
@@ -958,8 +958,8 @@ type ToolCallPayloadStatus string
 
 // ToolChunkPayload defines model for ToolChunkPayload.
 type ToolChunkPayload struct {
-	Content []rawjson.RawMessage `json:"content"`
-	Id      string               `json:"id"`
+	Content []ContentBlock `json:"content"`
+	Id      string         `json:"id"`
 }
 
 // ToolOutput defines model for ToolOutput.
@@ -971,7 +971,7 @@ type ToolOutput struct {
 
 // ToolResultPayload defines model for ToolResultPayload.
 type ToolResultPayload struct {
-	Content             *[]rawjson.RawMessage   `json:"content,omitempty"`
+	Content             *[]ContentBlock         `json:"content,omitempty"`
 	DurationMs          *float64                `json:"durationMs,omitempty"`
 	ExitCode            *int32                  `json:"exitCode,omitempty"`
 	Id                  string                  `json:"id"`
@@ -1011,9 +1011,9 @@ type UsageUpdatePayload struct {
 
 // UserMessage defines model for UserMessage.
 type UserMessage struct {
-	Content   []rawjson.RawMessage `json:"content"`
-	MessageId string               `json:"messageId"`
-	Phase     *string              `json:"phase,omitempty"`
+	Content   []ContentBlock `json:"content"`
+	MessageId string         `json:"messageId"`
+	Phase     *string        `json:"phase,omitempty"`
 }
 
 // ListHistoryByNameOrIDParams defines parameters for ListHistoryByNameOrID.

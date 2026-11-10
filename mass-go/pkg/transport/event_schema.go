@@ -88,6 +88,9 @@ func registerEventSchemas(r huma.Registry) {
 				f.Nullable = false
 			}
 		}
+		if content := payload.Properties["content"]; content != nil {
+			content.Items = contentBlockRef()
+		}
 		switch kind {
 		case "session.history_replay":
 			payload.Properties["phase"] = enum("started", "native_completed", "failed", "canceled")
@@ -125,6 +128,7 @@ func registerEventSchemas(r huma.Registry) {
 		case "session.usage_update":
 			payload.Properties["cost"] = object(map[string]*huma.Schema{"amount": {Type: "number"}, "currency": text()}, "amount", "currency")
 		}
+		payload.PrecomputeMessages()
 		props := map[string]*huma.Schema{}
 		maps.Copy(props, base.Properties)
 		props["eventId"] = &huma.Schema{Type: "string", Format: "uuid"}
