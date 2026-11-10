@@ -38,11 +38,8 @@ func DecodeSessionEvent(data []byte, event *SessionEvent) error {
 // CheckLegacyEventSchema recognizes only the removed plan event and tool
 // records that lack the SDK's required toolName/provider identity.
 func CheckLegacyEventSchema(data []byte) error {
-	var envelope struct {
-		Type    string          `json:"type"`
-		Payload json.RawMessage `json:"payload"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
+	envelope, ok := legacyEnvelopeOf(data)
+	if !ok {
 		return nil
 	}
 	if envelope.Type == "agent.plan" {
@@ -51,8 +48,8 @@ func CheckLegacyEventSchema(data []byte) error {
 	if envelope.Type != "agent.tool_call" && envelope.Type != "agent.tool_result" {
 		return nil
 	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+	payload, ok := legacyPayloadOf(envelope.Payload)
+	if !ok {
 		return nil
 	}
 	for _, field := range []string{"provider", "toolName"} {
@@ -61,6 +58,23 @@ func CheckLegacyEventSchema(data []byte) error {
 		}
 	}
 	return nil
+}
+
+type legacyEnvelope struct {
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// Malformed shapes are left to the strict union decoder so this classifier
+// only reports the two known, lossy legacy schemas.
+func legacyEnvelopeOf(data []byte) (legacyEnvelope, bool) {
+	var envelope legacyEnvelope
+	return envelope, json.Unmarshal(data, &envelope) == nil
+}
+
+func legacyPayloadOf(data []byte) (map[string]json.RawMessage, bool) {
+	var payload map[string]json.RawMessage
+	return payload, json.Unmarshal(data, &payload) == nil
 }
 
 func hasNonEmptyJSONString(value json.RawMessage) bool {

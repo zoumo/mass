@@ -444,6 +444,9 @@ func (s *ClientSuite) TestGeneratedModelsPreserveOptionalNullAndLargeOpenNumbers
 	var call generated.ToolCallPayload
 	raw := `{"id":"tool","kind":"execute","toolName":"Bash","provider":"agent","rawInput":{"n":9007199254740993},"rawOutput":null}`
 	s.Require().NoError(json.Unmarshal([]byte(raw), &call))
+	s.Equal("Bash", call.ToolName)
+	s.Equal("agent", call.Provider)
+	s.Equal("null", string(call.RawOutput))
 	encoded, err := json.Marshal(call)
 	s.Require().NoError(err)
 	s.JSONEq(raw, string(encoded))
