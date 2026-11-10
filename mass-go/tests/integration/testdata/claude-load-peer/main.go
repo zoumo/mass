@@ -49,6 +49,7 @@ func main() {
 	n := 0
 	result := func() {
 		send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": link})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 	}
 	frames := make(chan map[string]any)
 	eof := make(chan struct{})
@@ -106,6 +107,7 @@ func main() {
 					observed = "22222222-2222-4222-8222-222222222222"
 				}
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": observed, "cwd": cwd, "claude_code_version": "2.1.258"})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": observed, "state": "idle"})
 			case "interrupt":
 				result()
 			}

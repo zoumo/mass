@@ -159,16 +159,21 @@ func TestTicket07ClaudeLoadHTTPAndTwoRetainedProcessWrites(t *testing.T) {
 	observer, err := c.Observe(ctx(t), ref)
 	require.NoError(t, err)
 	defer observer.Close()
+	var submissions []string
 	for _, text := range []string{"one", "two"} {
 		var receipt runtime.InputReceipt
 		require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text(text)}}, &receipt))
 		require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
 		require.Nil(t, receipt.Acceptance.NativeAccepted)
+		submissions = append(submissions, receipt.Submission)
+		messageObserved := false
 		for {
 			e, nextErr := observer.Next()
 			require.NoError(t, nextErr)
-			meta := decodeClaudeMeta(t, e)
-			if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && meta.Submission == receipt.Submission && meta.Attribution == "user_message_uuid" {
+			if e.Type() == "agent.message" {
+				messageObserved = true
+			}
+			if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle && messageObserved {
 				break
 			}
 		}
@@ -183,8 +188,11 @@ func TestTicket07ClaudeLoadHTTPAndTwoRetainedProcessWrites(t *testing.T) {
 	}
 	require.Equal(t, records[0]["pid"], records[1]["pid"])
 	require.Equal(t, records[1]["pid"], records[2]["pid"])
-	require.NotEmpty(t, records[1]["uuid"])
-	require.NotEqual(t, records[1]["uuid"], records[2]["uuid"])
+	require.Equal(t, "input", records[1]["event"])
+	require.InDelta(t, 1, records[1]["input"], 0)
+	require.Equal(t, "input", records[2]["event"])
+	require.InDelta(t, 2, records[2]["input"], 0)
+	require.NotEqual(t, submissions[0], submissions[1])
 	require.Contains(t, records[0]["args"], "--resume="+claudeLoadID)
 	var canceled resource.HistoryLoadStatus
 	require.Error(t, c.CancelHistoryLoad(ctx(t), ref, accepted.LoadID, &canceled))

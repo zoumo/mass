@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -91,10 +92,24 @@ func (d *overloadDriver) Start(context.Context) (runtime.Capabilities, error) {
 	return runtime.Capabilities{}, nil
 }
 
-func (d *overloadDriver) OpenSession(_ context.Context, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *overloadDriver) OpenSession(ctx context.Context, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	source := d.source
 	if a.SessionName == "fast" {
 		source = d.peerSource
+	}
+	idle := events.Idle
+	e, err := events.NewEvent(events.EventBase{
+		EventID:     uuid.NewString(),
+		Namespace:   a.Namespace,
+		SessionName: a.SessionName,
+		SessionID:   a.SessionName,
+		Time:        time.Now().UTC(),
+	}, events.StateUpdate{State: &idle}, source)
+	if err != nil {
+		return runtime.DriverSession{}, err
+	}
+	if err := d.pipe.Send(ctx, e); err != nil {
+		return runtime.DriverSession{}, err
 	}
 	return runtime.DriverSession{SessionID: a.SessionName, Source: source}, nil
 }
@@ -138,7 +153,7 @@ func (d *overloadDriver) SendPrompt(ctx context.Context, id string, _ runtime.In
 			return runtime.InputReceipt{}, err
 		}
 	}
-	return runtime.InputReceipt{Submission: "accepted", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "accepted", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
 }
 
 type overloadFactory struct{ d *overloadDriver }

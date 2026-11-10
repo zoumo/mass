@@ -2,8 +2,9 @@
 {"ordinal":1,"channel":"protocol","direction":"client","data":{"type":"control_request","request_id":"init","request":{"subtype":"initialize","hooks":null,"forwardSubagentText":true}}},
 {"ordinal":2,"channel":"protocol","direction":"server","data":{"type":"control_response","response":{"subtype":"success","request_id":"init","response":{}}}},
 {"ordinal":3,"channel":"protocol","direction":"server","data":{"type":"system","subtype":"init","session_id":"claude-session","cwd":"/synthetic","model":"synthetic","tools":[],"claude_code_version":"2.1.258"}},
-{"ordinal":4,"channel":"protocol","direction":"client","data":{"type":"user","message":{"role":"user","content":"hello"},"parent_tool_use_id":null,"session_id":"","priority":"next","shouldQuery":true}},
-{"ordinal":5,"channel":"protocol","direction":"server","data":{"type":"assistant","session_id":"claude-session","message":{"id":"first-answer","role":"assistant","content":[{"type":"text","text":"explicit first answer","apiBlockIndex":0}]}}},
-{"ordinal":6,"channel":"protocol","direction":"server","data":{"type":"result","subtype":"success","session_id":"claude-session","is_error":false,"result":"explicit first answer"}},
-{"ordinal":7,"channel":"protocol","direction":"server","data":{"type":"system","subtype":"session_state_changed","session_id":"claude-session","state":"idle"}}
+{"ordinal":4,"channel":"protocol","direction":"server","data":{"type":"system","subtype":"session_state_changed","session_id":"claude-session","state":"idle"}},
+{"ordinal":5,"channel":"protocol","direction":"client","data":{"type":"user","message":{"role":"user","content":"hello"},"parent_tool_use_id":null,"session_id":"","priority":"next","shouldQuery":true}},
+{"ordinal":6,"channel":"protocol","direction":"server","data":{"type":"assistant","session_id":"claude-session","message":{"id":"first-answer","role":"assistant","content":[{"type":"text","text":"explicit first answer","apiBlockIndex":0}]}}},
+{"ordinal":7,"channel":"protocol","direction":"server","data":{"type":"result","subtype":"success","session_id":"claude-session","is_error":false,"result":"explicit first answer"}},
+{"ordinal":8,"channel":"protocol","direction":"server","data":{"type":"system","subtype":"session_state_changed","session_id":"claude-session","state":"idle"}}
 ]}

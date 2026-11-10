@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/eventstore"
@@ -54,19 +55,25 @@ func (d *ticket06FaultDriver) LoadSession(_ context.Context, id string, a runtim
 	return nil
 }
 
-func (d *ticket06FaultDriver) OpenSession(_ context.Context, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *ticket06FaultDriver) OpenSession(ctx context.Context, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	b := &ticket06FaultBinding{id: a.SessionName, address: a, source: events.NewSource()}
 	d.mu.Lock()
 	d.bindings[b.id] = b
 	d.mu.Unlock()
+	if err := d.state(ctx, b, events.Idle); err != nil {
+		return runtime.DriverSession{}, err
+	}
 	return runtime.DriverSession{SessionID: b.id, Source: b.source}, nil
 }
 
-func (d *ticket06FaultDriver) ResumeSession(_ context.Context, id string, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *ticket06FaultDriver) ResumeSession(ctx context.Context, id string, a runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	b := &ticket06FaultBinding{id: id, address: a, source: events.NewSource()}
 	d.mu.Lock()
 	d.bindings[id] = b
 	d.mu.Unlock()
+	if err := d.state(ctx, b, events.Idle); err != nil {
+		return runtime.DriverSession{}, err
+	}
 	return runtime.DriverSession{SessionID: id, Source: b.source}, nil
 }
 
@@ -93,7 +100,29 @@ func (d *ticket06FaultDriver) marker(ctx context.Context, b *ticket06FaultBindin
 		b.readDone = true
 		d.mu.Unlock()
 	}
-	return d.emit(ctx, b, "", p, true)
+	if err := d.emit(ctx, b, "", p, true); err != nil {
+		return err
+	}
+	if phase == "native_completed" {
+		return d.state(ctx, b, events.Idle)
+	}
+	return nil
+}
+
+// The queue only dispatches behind a live idle observation. This peer returns
+// idle once a load reaches its native terminal, and after each prompt.
+func (d *ticket06FaultDriver) state(ctx context.Context, b *ticket06FaultBinding, state events.SessionState) error {
+	e, err := events.NewEvent(events.EventBase{
+		EventID:     uuid.NewString(),
+		Namespace:   b.address.Namespace,
+		SessionName: b.address.SessionName,
+		SessionID:   b.id,
+		Time:        time.Now().UTC(),
+	}, events.StateUpdate{State: &state}, b.source)
+	if err != nil {
+		return err
+	}
+	return d.pipe.Send(ctx, e)
 }
 
 func (d *ticket06FaultDriver) CancelHistoryLoad(ctx context.Context, id, loadID string) error {
@@ -147,8 +176,13 @@ func (d *ticket06FaultDriver) SendPrompt(ctx context.Context, id string, _ runti
 	if closed {
 		return runtime.InputReceipt{}, runtime.FailedPrecondition("native connection closed")
 	}
-	err := d.emit(ctx, b, "live-fact", events.AgentMessage{MessageID: "live-fact", Content: []events.ContentBlock{events.Text("healthy live work")}}, false)
-	return runtime.InputReceipt{Submission: "live-turn", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, err
+	if err := d.emit(ctx, b, "live-fact", events.AgentMessage{MessageID: "live-fact", Content: []events.ContentBlock{events.Text("healthy live work")}}, false); err != nil {
+		return runtime.InputReceipt{}, err
+	}
+	if err := d.state(ctx, b, events.Idle); err != nil {
+		return runtime.InputReceipt{}, err
+	}
+	return runtime.InputReceipt{Submission: "live-turn", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
 }
 func (d *ticket06FaultDriver) Stop(context.Context) error { d.pipe.End(nil); return nil }
 

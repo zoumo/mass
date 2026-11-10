@@ -164,6 +164,7 @@ func scenario(t *testing.T) (string, string) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	require.NoError(t, decoder.Decode(&fixture))
+	ensureNativeReadyObservation(fixture, "codex")
 	return writeNativeScenario(t, fixture)
 }
 

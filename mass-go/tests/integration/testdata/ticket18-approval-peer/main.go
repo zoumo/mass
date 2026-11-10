@@ -54,6 +54,7 @@ func main() {
 			}
 			cwd = params.Cwd
 			reply(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			notify("thread/status/changed", map[string]any{"threadId": "approval-session", "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			var params struct{ ThreadID string }
 			if err := json.Unmarshal(v.Params, &params); err != nil {

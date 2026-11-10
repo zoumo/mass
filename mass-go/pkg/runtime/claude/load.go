@@ -165,19 +165,6 @@ func (d *Driver) LoadSession(ctx context.Context, id string, address runtime.Add
 	d.sessions[id] = s
 	h.s = s
 	d.mu.Unlock()
-	if err := d.startRelay(s); err != nil {
-		if cleanup := s.arcClose(); cleanup != nil {
-			return errors.Join(err, cleanup)
-		}
-		d.mu.Lock()
-		if d.sessions[id] == s {
-			delete(d.sessions, id)
-		}
-		d.mu.Unlock()
-		h.s = nil
-		h.unknown = false
-		return err
-	}
 	h.unknown = false
 	if err := d.vault.Save(id, address, spec, map[string]string{"id": id, "cwd": cwd}); err != nil {
 		return err
@@ -197,6 +184,19 @@ func (d *Driver) LoadSession(ctx context.Context, id string, address runtime.Add
 		RetainedScope:  "all_retained_main_history",
 		ResumedSession: resumed,
 	}); err != nil {
+		return err
+	}
+	if err := d.startRelay(s); err != nil {
+		if cleanup := s.arcClose(); cleanup != nil {
+			return errors.Join(err, cleanup)
+		}
+		d.mu.Lock()
+		if d.sessions[id] == s {
+			delete(d.sessions, id)
+		}
+		d.mu.Unlock()
+		h.s = nil
+		h.unknown = false
 		return err
 	}
 

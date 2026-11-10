@@ -383,6 +383,8 @@ func TestIdleAcceptedPromptInvalidatesTimer(t *testing.T) {
 	}()
 	select {
 	case <-f.driver.promptEntered:
+	case err := <-promptDone:
+		t.Fatalf("prompt was not admitted: %v", err)
 	case <-time.After(time.Second):
 		t.Fatal("prompt was not admitted")
 	}

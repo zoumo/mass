@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -297,7 +296,7 @@ func TestTicket14EarlyCompletionContinuedSSEAndResumeNoReplay(t *testing.T) {
 		if e.Type() == "agent.message" {
 			resumedMessage = true
 		}
-		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle && resumedMessage {
 			break
 		}
 	}
@@ -345,18 +344,19 @@ func TestTicket14UnrelatedResultsKeepCurrentWorkOpen(t *testing.T) {
 			state, err := svc.GetSession(ref)
 			require.NoError(t, err)
 			require.NotEqual(t, events.Idle, state.Status.State, "foreign and child results must not settle root work")
-			receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("follow-up")}})
-			require.NoError(t, err, "the SDK decides whether new input may join current work")
-			require.Equal(t, agent.InputAppliedBestEffort, receipt.Result)
+			promptCtx, cancelPrompt := context.WithTimeout(ctx(t), 200*time.Millisecond)
+			_, err = svc.SendPrompt(promptCtx, ref, runtime.Input{Content: []events.ContentBlock{events.Text("follow-up")}})
+			cancelPrompt()
+			require.ErrorIs(t, err, context.DeadlineExceeded, "input must wait for an observed idle before the SDK decides how it can join work")
+			raw, err := os.ReadFile(evidence)
+			require.NoError(t, err)
+			require.Equal(t, 1, strings.Count(string(raw), "\n"), "queued follow-up must not reach the native peer before idle")
 			_, err = svc.Cancel(ctx(t), ref)
 			require.NoError(t, err)
 			_, err = svc.CloseSession(ctx(t), ref)
 			require.NoError(t, err)
 			_, err = svc.StopRuntime(ctx(t), "agent")
 			require.NoError(t, err)
-			raw, err := os.ReadFile(evidence)
-			require.NoError(t, err)
-			require.Equal(t, 2, strings.Count(string(raw), "\n"), "only admitted inputs reached the owned peer")
 		})
 	}
 }
@@ -388,6 +388,9 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 				if kind == "claude" {
 					bin = claudeMock
 					mode = "explicit-structured"
+				}
+				if uncertain {
+					mode = "explicit-unknown"
 				}
 				path, work := nativeScenario(t, kind, mode)
 				_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}})
@@ -442,6 +445,10 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 					require.NoError(t, got.err)
 					require.NotNil(t, got.value.InitialInputReceipt)
 				}
+				wantMessages := 1
+				if uncertain {
+					wantMessages = 0
+				}
 				require.Eventually(t, func() bool {
 					page, e := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 					if e != nil {
@@ -453,7 +460,7 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 							n++
 						}
 					}
-					return n == 1
+					return n == wantMessages
 				}, 5*time.Second, 10*time.Millisecond)
 				page, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 				require.NoError(t, err)
@@ -547,8 +554,10 @@ func TestTicket14CodexLateInitialReceiptKeepsOwner(t *testing.T) {
 				_, err = svc.StopRuntime(ctx(t), "agent")
 				require.NoError(t, err)
 			}
-			_, err = svc.GetSession(resource.SessionRef{Namespace: "default", Name: "first"})
-			require.ErrorIs(t, err, store.ErrNotFound)
+			original, err := svc.GetSession(resource.SessionRef{Namespace: "default", Name: "first"})
+			require.NoError(t, err)
+			require.Equal(t, "native-1", original.Status.SessionID)
+			require.Equal(t, events.SessionState("offline"), original.Status.State)
 			raw, err := os.ReadFile(filepath.Join(dir, "pid"))
 			require.NoError(t, err)
 			pid, err := strconv.Atoi(string(raw))
