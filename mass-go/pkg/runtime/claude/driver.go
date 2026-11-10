@@ -65,11 +65,13 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 }
 
 type session struct {
-	command sync.Mutex
-	native  agent.Session
-	relay   *agentrelay.Relay
-	address runtime.Address
-	source  events.Source
+	command   sync.Mutex
+	closeOnce sync.Once
+	closeErr  error
+	native    agent.Session
+	relay     *agentrelay.Relay
+	address   runtime.Address
+	source    events.Source
 
 	mu           sync.Mutex
 	closing      bool
@@ -98,7 +100,8 @@ type Driver struct {
 	started  bool
 	stopping bool
 	stopped  bool
-	provider *agentclaude.Provider
+	stopErr  error
+	provider agent.Provider
 	sessions map[string]*session
 	loads    map[string]*nativeLoad
 	life     context.Context
@@ -194,16 +197,19 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		d.mu.Unlock()
 	}()
 
+	if err := (agent.OpenOptions{Cwd: spec.Cwd, AdditionalSystemPrompt: spec.SystemPrompt}).Validate(); err != nil {
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, agentrelay.MapError(err))
+	}
 	if err := d.vault.Check(); err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	if !filepath.IsAbs(spec.Cwd) {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.InvalidArgument("absolute cwd required"))
 	}
-	if spec.SystemPrompt != "" || len(spec.AdditionalDirs) > 0 {
+	if len(spec.AdditionalDirs) > 0 {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption(
-			"system_prompt_or_additional_dirs_unsupported",
-			"Claude runtime does not support system prompts or additional directories",
+			"additional_dirs_unsupported",
+			"Claude runtime does not support additional directories",
 		))
 	}
 	if resume != "" {
@@ -228,7 +234,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	openOptions := sessionOpenOptions(spec.Cwd, effective, servers)
+	openOptions := sessionOpenOptions(spec, effective, servers)
 
 	d.mu.Lock()
 	started := d.started
@@ -332,21 +338,27 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	}, nil
 }
 
-func sessionOpenOptions(cwd string, features runtime.SessionFeatures, servers []agent.MCPServer) agent.OpenOptions {
+func sessionOpenOptions(spec runtime.SessionSpec, features runtime.SessionFeatures, servers []agent.MCPServer) agent.OpenOptions {
 	return agent.OpenOptions{
-		Cwd:        cwd,
-		Features:   agent.Features{AgentQuestions: features.AgentQuestions},
-		MCPServers: servers,
+		Cwd:                    spec.Cwd,
+		AdditionalSystemPrompt: spec.SystemPrompt,
+		Features:               agent.Features{AgentQuestions: features.AgentQuestions},
+		MCPServers:             servers,
 	}
+}
+
+func (s *session) closeNative(ctx context.Context) error {
+	s.closeOnce.Do(func() { s.closeErr = mapClaudeError(s.native.Close(context.WithoutCancel(ctx))) })
+	return s.closeErr
 }
 
 func (s *session) arcClose() error {
 	s.mu.Lock()
 	s.closing = true
 	s.mu.Unlock()
-	closeErr := s.native.Close(context.Background())
+	closeErr := s.closeNative(context.Background())
 	if closeErr != nil {
-		return mapClaudeError(closeErr)
+		return closeErr
 	}
 	if s.relay != nil {
 		<-s.relay.Done()
@@ -542,18 +554,14 @@ func validateClaudeQuestionAnswers(value any) error {
 func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	d.mu.Lock()
 	s := d.sessions[id]
-	stopped := d.stopped
 	d.mu.Unlock()
 	if s == nil {
-		if stopped {
-			return runtime.FailedPrecondition("session unavailable")
-		}
 		return nil
 	}
 	s.mu.Lock()
 	s.closing = true
 	s.mu.Unlock()
-	closeErr := s.native.Close(ctx)
+	closeErr := s.closeNative(ctx)
 	if closeErr != nil {
 		return closeErr
 	}
@@ -564,18 +572,6 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	}
 	if err := d.pipe.Flush(ctx); err != nil {
 		return err
-	}
-	if cause := s.native.Err(); cause != nil {
-		return fmt.Errorf("native observation terminated: %w", cause)
-	}
-	if cause := s.relay.Err(); cause != nil {
-		return errors.Join(errors.New("agent relay terminated"), cause)
-	}
-	s.mu.Lock()
-	cause := s.err
-	s.mu.Unlock()
-	if cause != nil {
-		return fmt.Errorf("observation terminated: %w", cause)
 	}
 	d.mu.Lock()
 	if d.sessions[id] == s {
@@ -590,8 +586,9 @@ func (d *Driver) Stop(ctx context.Context) error {
 	defer d.op.Unlock()
 	d.mu.Lock()
 	if d.stopped {
+		err := d.stopErr
 		d.mu.Unlock()
-		return nil
+		return err
 	}
 	if d.stopping {
 		d.mu.Unlock()
@@ -603,19 +600,22 @@ func (d *Driver) Stop(ctx context.Context) error {
 	}
 	d.stopping = true
 	d.mu.Unlock()
-	if err := d.provider.Stop(ctx); err != nil {
+	err := d.provider.Stop(context.WithoutCancel(ctx))
+	if agentrelay.StopRejected(err) {
 		d.mu.Lock()
 		d.stopping = false
 		d.mu.Unlock()
 		return mapClaudeError(err)
 	}
+	stopErr := mapClaudeError(err)
 	d.cancel()
 	d.mu.Lock()
 	d.stopping = false
 	d.stopped = true
+	d.stopErr = stopErr
 	d.mu.Unlock()
 	d.pipe.End(nil)
-	return nil
+	return stopErr
 }
 
 func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, error) {

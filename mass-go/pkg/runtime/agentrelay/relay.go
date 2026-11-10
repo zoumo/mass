@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"maps"
 	"sync"
 
 	"github.com/zoumo/agent-sdk-go/agent"
@@ -229,7 +228,9 @@ func (e *classifiedError) Unwrap() []error {
 
 func MapCapabilities(capabilities agent.Capabilities) runtime.Capabilities {
 	mapped := make(runtime.Capabilities, len(capabilities))
-	maps.Copy(mapped, capabilities)
+	for key := range capabilities {
+		mapped[key] = capabilities.Supports(key)
+	}
 	return mapped
 }
 
@@ -279,4 +280,11 @@ func copyBool(value *bool) *bool {
 		return nil
 	}
 	return runtime.Bool(*value)
+}
+
+// StopRejected reports the SDK lifecycle admission failure. Other Stop results
+// are terminal and must be retained instead of retrying provider release.
+func StopRejected(err error) bool {
+	var native *agent.Error
+	return errors.As(err, &native) && native.Reason == "provider_has_open_sessions"
 }

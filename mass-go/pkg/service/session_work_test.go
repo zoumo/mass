@@ -158,7 +158,7 @@ func TestSessionWorkSuite(t *testing.T) { suite.Run(t, new(SessionWorkSuite)) }
 
 func (s *SessionWorkSuite) TestInvalidInputRejectedBeforeDispatch() {
 	close(s.driver.release)
-	for _, input := range []runtime.Input{{}, {Content: []events.ContentBlock{events.ImageBlock{}}}, {Content: []events.ContentBlock{events.Text(string([]byte{0xff}))}}} {
+	for _, input := range []runtime.Input{{}, {Content: []events.ContentBlock{{Image: &events.ContentBlockImage{}}}}, {Content: []events.ContentBlock{events.Text(string([]byte{0xff}))}}} {
 		_, err := s.svc.SendPrompt(context.Background(), s.ref, input)
 		s.Require().ErrorIs(err, runtime.ErrInvalidArgument)
 	}

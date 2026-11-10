@@ -724,11 +724,11 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 	d, err := reg.Get("healthy")
 	require.NoError(t, err)
 	// Unsupported SDK options reject without starting a replacement process.
-	_, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "bad"}, runtime.SessionSpec{Cwd: work, SystemPrompt: "unsupported"})
+	_, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "bad"}, runtime.SessionSpec{Cwd: work, AdditionalDirs: []string{"/extra"}})
 	var rejected *runtime.OperationError
 	require.ErrorAs(t, err, &rejected)
 	require.Equal(t, "unsupported", rejected.Code)
-	require.Equal(t, "system_prompt_or_additional_dirs_unsupported", rejected.Reason)
+	require.Equal(t, "additional_dirs_unsupported", rejected.Reason)
 	ref := resource.SessionRef{SessionID: healthy.Status.SessionID}
 	sub, err := svc.SubscribeEvents(ref)
 	require.NoError(t, err)

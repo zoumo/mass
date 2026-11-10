@@ -5,6 +5,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
@@ -83,6 +84,9 @@ func contentBlockRef() *huma.Schema {
 }
 
 func registerContentBlockSchema(r huma.Registry, branches []*huma.Schema) *huma.Schema {
+	// Bind the SDK struct type before replacing its reflected shape with its
+	// custom JSON wire schema. Later Input reflection must resolve this name.
+	r.Schema(reflect.TypeFor[events.ContentBlock](), true, "")
 	schema := &huma.Schema{
 		OneOf:         branches,
 		Discriminator: &huma.Discriminator{PropertyName: "type"},

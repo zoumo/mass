@@ -4,16 +4,17 @@ This page records the offline consumer-recording gate for the Go implementation.
 It does not change the [harness contracts](../../harness/index.md).
 
 The runtime SDK is pinned to `github.com/zoumo/agent-sdk-go
-v0.0.0-20261109202203-1c8514ff8a18`, source `1c8514ff`, without a local
+v0.0.0-20261110170013-efcb24caac28`, source `efcb24ca`, without a local
 `replace`. The checked-in exports remain bound to their recording SDK
 `v0.0.0-20261105065348-5edf8b62e963`; replay does not rewrite that provenance.
 `github.com/zoumo/agent-sdk-testify` is pinned to
-`v0.1.1-0.20261109183517-b7c1fd72fc17` as a test-only tool. The four historical
+`v0.1.2` as a test-only tool. The four historical
 exports were recorded at MASS HEAD
 `eb3a6e8ce93e2dbd05dcdaf4b2c1daae5ac36a2e` with
 `auto/deepseek-v4.1-flash-1017`; the then-dirty worktree is recorded in each
 `index.json`. Their recording-period compatibility does not extend to the T05
-SDK/testify pins.
+SDK/testify pins. Current T06 replay results are recorded in
+[SDK upgrade acceptance](sdk-latest-sync.md).
 
 ## Status
 
@@ -28,8 +29,9 @@ SDK/testify pins.
 The four historical recording runs invoked the real Codex and Claude CLIs, their
 configured accounts, and `auto/deepseek-v4.1-flash-1017`; both permission cases
 executed the approved tool at that time. They are retained as provenance, not
-reported as current-pin compatibility. Current-pin real recording was not
-executed because no owned authenticated CLI session was available.
+reported as current-pin compatibility. At the T05 validation, real recording was not executed because no owned
+authenticated CLI session was available. See the T06 report for current CLI
+availability; no current-pin real recording result is claimed.
 
 ## Offline simulation gate
 
@@ -64,7 +66,7 @@ complete the recorded exchange:
 
 `TestRecordingRejectsIncompleteExecution` also fails because its setup requires
 the Codex basic replay to succeed. This is a consequence of the stale fixture,
-not a second protocol fault. The solution is a new consumer recording at the T05
+not a second protocol fault. The solution is a new consumer recording at the current
 pins, not editing raw frames, order, provenance, or version metadata in place.
 
 The gate enforces:
