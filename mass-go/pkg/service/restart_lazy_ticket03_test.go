@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -103,7 +105,7 @@ func (*ticket03Driver) CancelHistoryLoad(context.Context, string, string) error 
 
 func (d *ticket03Driver) SendPrompt(context.Context, string, runtime.Input) (runtime.InputReceipt, error) {
 	d.prompts.Add(1)
-	return runtime.InputReceipt{Submission: "ticket03", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "ticket03", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
 }
 
 func (d *ticket03Driver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
@@ -125,6 +127,24 @@ func (d *ticket03Driver) Stop(context.Context) error {
 	d.stops.Add(1)
 	d.pipe.End(nil)
 	return nil
+}
+
+func observeTicket03Idle(t *testing.T, svc *service.Service, d *ticket03Driver, r resource.Session) {
+	t.Helper()
+	idle := events.Idle
+	event, err := events.NewEvent(events.EventBase{
+		EventID:     uuid.NewString(),
+		Namespace:   r.Metadata.Namespace,
+		SessionName: r.Metadata.Name,
+		SessionID:   r.Status.SessionID,
+		Time:        time.Now().UTC(),
+	}, events.StateUpdate{State: &idle}, d.source)
+	require.NoError(t, err)
+	require.NoError(t, d.pipe.Send(context.Background(), event))
+	require.Eventually(t, func() bool {
+		current, getErr := svc.GetSession(resource.SessionRef{SessionID: r.Status.SessionID})
+		return getErr == nil && current.Status.State == events.Idle
+	}, time.Second, time.Millisecond)
 }
 
 type ticket03Factory struct {
@@ -584,6 +604,7 @@ func TestTicket03WorkDispatchesOnlyWithEffectiveRunAndExecutableState(t *testing
 		created.Status.State = state
 		_, err = st.UpdateSession(created)
 		require.NoError(t, err)
+		observeTicket03Idle(t, svc, factory.only(t), created)
 		_, err = svc.SendPrompt(context.Background(), resource.SessionRef{SessionID: created.Status.SessionID}, runtime.Input{Content: []events.ContentBlock{events.Text("dispatch")}})
 		require.NoError(t, err)
 	}
@@ -613,7 +634,7 @@ func TestTicket03WorkDispatchesOnlyWithEffectiveRunAndExecutableState(t *testing
 	require.EqualValues(t, 1, driver.cancels.Load())
 }
 
-func TestTicket03FreshLiveUnknownAdmitsWorkBeforeObservedState(t *testing.T) {
+func TestTicket03FreshLiveUnknownWaitsForObservedIdle(t *testing.T) {
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")
 	factory := &ticket03Factory{}
@@ -631,8 +652,16 @@ func TestTicket03FreshLiveUnknownAdmitsWorkBeforeObservedState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, events.Unknown, created.Status.State)
 
-	_, err = svc.SendPrompt(context.Background(), resource.SessionRef{SessionID: created.Status.SessionID}, runtime.Input{Content: []events.ContentBlock{events.Text("dispatch")}})
-	require.NoError(t, err)
+	done := make(chan error, 1)
+	go func() {
+		_, sendErr := svc.SendPrompt(context.Background(), resource.SessionRef{SessionID: created.Status.SessionID}, runtime.Input{Content: []events.ContentBlock{events.Text("dispatch")}})
+		done <- sendErr
+	}()
+	require.Never(t, func() bool {
+		return factory.only(t).prompts.Load() != 0
+	}, 20*time.Millisecond, time.Millisecond, "fresh live state bypassed the idle observation")
+	observeTicket03Idle(t, svc, factory.only(t), created)
+	require.NoError(t, <-done)
 	require.EqualValues(t, 1, factory.only(t).prompts.Load())
 	require.EqualValues(t, 1, factory.only(t).opens.Load(), "prompt must not reopen the Session")
 	require.Zero(t, factory.only(t).resumes.Load(), "prompt must not resume the Session")

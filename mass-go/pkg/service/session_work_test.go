@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 	"github.com/zoumo/agent-sdk-go/agent"
 
@@ -101,6 +102,20 @@ func (s *SessionWorkSuite) SetupTest() {
 	r, err := s.svc.CreateSession(context.Background(), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "demo"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}}})
 	s.Require().NoError(err)
 	s.ref = resource.SessionRef{SessionID: r.Status.SessionID}
+	idle := events.Idle
+	event, err := events.NewEvent(events.EventBase{
+		EventID:     uuid.NewString(),
+		Namespace:   "one",
+		SessionName: "demo",
+		SessionID:   "original",
+		Time:        time.Now().UTC(),
+	}, events.StateUpdate{State: &idle}, s.driver.source)
+	s.Require().NoError(err)
+	s.Require().NoError(s.driver.pipe.Send(context.Background(), event))
+	s.Require().Eventually(func() bool {
+		current, getErr := s.svc.GetSession(s.ref)
+		return getErr == nil && current.Status.State == events.Idle
+	}, time.Second, time.Millisecond)
 }
 
 func (s *SessionWorkSuite) TestAbandonedWaitKeepsAcceptedInputOwnedByService() {

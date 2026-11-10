@@ -747,21 +747,23 @@ func TestTicket20ResumeCommitGatesFactsAndReceipt(t *testing.T) {
 					})
 					require.ErrorContains(t, got.err, "injected resume identity commit failure")
 					require.Nil(t, got.value.InitialInputReceipt)
-					var op *runtime.OperationError
-					require.ErrorAs(t, got.err, &op)
-					require.Equal(t, "outcome_unknown", op.Code)
 					require.NoError(t, f.svc.ReconcileOpening(ctx(t), "agent", runtime.Address{Namespace: "default", SessionName: "original"}))
 				} else {
 					require.NoError(t, got.err)
 					require.NotNil(t, got.value.InitialInputReceipt)
 				}
-				// Already accepted facts remain owned on commit failure; reconciliation
-				// drains the same facts without dispatching the input again.
+				// Initial input is admitted only after the resume binding commits.
+				wantMessages := 1
+				if !fail {
+					wantMessages = 2
+				}
 				require.Eventually(t, func() bool {
 					page, err = f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{Types: []string{"agent.message"}})
-					return err == nil && len(page.Events) == 2
+					return err == nil && len(page.Events) == wantMessages
 				}, 5*time.Second, 10*time.Millisecond)
-				require.Equal(t, "before commit", events.TextOf(page.Events[1].Payload().(events.AgentMessage).Content[0]))
+				if !fail {
+					require.Equal(t, "before commit", events.TextOf(page.Events[1].Payload().(events.AgentMessage).Content[0]))
+				}
 				f.close()
 				ticket20Released(t, f)
 			})

@@ -71,16 +71,18 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 			sub, err := svc.SubscribeEvents(ref)
 			require.NoError(t, err)
 			defer sub.Close()
+			if kind == "codex" {
+				before, queryErr := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+				require.NoError(t, queryErr)
+				require.Empty(t, before.Events)
+				observation.releaseFacts()
+			}
 			receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 			require.NoError(t, err)
 			require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
 			if kind == "codex" {
 				require.Equal(t, "turn-1", receipt.Submission)
 				require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
-				before, queryErr := svc.ListHistoryEvents(ref, store.HistoryQuery{})
-				require.NoError(t, queryErr)
-				require.Empty(t, before.Events)
-				observation.releaseFacts()
 			} else {
 				require.Nil(t, receipt.Acceptance.NativeAccepted)
 				require.Nil(t, receipt.Acceptance.NativeRecorded)
@@ -118,7 +120,165 @@ func nativeScenario(t *testing.T, kind, mode string) (string, string) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
 	require.NoError(t, dec.Decode(&scenario))
+	ensureNativeReadyObservation(scenario, kind)
 	return writeNativeScenario(t, scenario)
+}
+
+// The strict peers model the native wire, not the SDK adapter. A successful
+// zero-input open therefore needs an explicit native idle observation before
+// the first prompt. The production Service must not infer that observation
+// from the open response or from saved Session metadata.
+func ensureNativeReadyObservation(scenario map[string]any, kind string) {
+	frames, ok := scenario["frames"].([]any)
+	if !ok {
+		return
+	}
+	switch kind {
+	case "codex":
+		frames = ensureCodexReadyObservation(frames)
+	case "claude":
+		frames = ensureClaudeReadyObservation(frames)
+	}
+	for index, value := range frames {
+		if frame, ok := value.(map[string]any); ok {
+			frame["ordinal"] = index + 1
+		}
+	}
+	scenario["frames"] = frames
+}
+
+func ensureCodexReadyObservation(frames []any) []any {
+	openRequests := map[string]struct{}{}
+	expanded := make([]any, 0, len(frames)+2)
+	for index, value := range frames {
+		frame, ok := value.(map[string]any)
+		if !ok {
+			expanded = append(expanded, value)
+			continue
+		}
+		expanded = append(expanded, frame)
+		if requestID, open := codexOpenRequestID(frame); open {
+			if requestID != "" {
+				openRequests[requestID] = struct{}{}
+			}
+			continue
+		}
+		responseID, ok := frameWireID(frame)
+		if !ok {
+			continue
+		}
+		if _, open := openRequests[responseID]; !open {
+			continue
+		}
+		delete(openRequests, responseID)
+		thread, ok := codexThread(frame)
+		if !ok {
+			continue
+		}
+		status, _ := thread["status"].(map[string]any)
+		if status == nil || status["type"] != "idle" {
+			continue
+		}
+		threadID, _ := thread["id"].(string)
+		if codexReadyBeforeInput(frames, index+1, threadID) {
+			continue
+		}
+		expanded = append(expanded, map[string]any{
+			"channel":   "protocol",
+			"direction": "s2c",
+			"epoch":     1,
+			"wire": map[string]any{
+				"method": "thread/status/changed",
+				"params": map[string]any{
+					"threadId": threadID,
+					"status":   map[string]any{"type": "idle"},
+				},
+			},
+		})
+	}
+	return expanded
+}
+
+func codexReadyBeforeInput(frames []any, start int, threadID string) bool {
+	for _, value := range frames[start:] {
+		frame, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		direction, _ := frame["direction"].(string)
+		if direction == "c2s" {
+			wire, _ := frame["wire"].(map[string]any)
+			method, _ := wire["method"].(string)
+			switch method {
+			case "turn/start":
+				return false
+			case "thread/start", "thread/resume", "thread/unsubscribe":
+				return false
+			}
+			continue
+		}
+		wire, _ := frame["wire"].(map[string]any)
+		method, _ := wire["method"].(string)
+		if method != "thread/status/changed" {
+			continue
+		}
+		params, _ := wire["params"].(map[string]any)
+		status, _ := params["status"].(map[string]any)
+		if params["threadId"] == threadID && status != nil && status["type"] == "idle" {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureClaudeReadyObservation(frames []any) []any {
+	expanded := make([]any, 0, len(frames)+2)
+	for index, value := range frames {
+		frame, ok := value.(map[string]any)
+		if !ok {
+			expanded = append(expanded, value)
+			continue
+		}
+		expanded = append(expanded, frame)
+		data, _ := frame["data"].(map[string]any)
+		if data == nil || data["type"] != "system" || data["subtype"] != "init" {
+			continue
+		}
+		sessionID, _ := data["session_id"].(string)
+		if sessionID == "" || claudeReadyBeforeInput(frames, index+1, sessionID) {
+			continue
+		}
+		expanded = append(expanded, map[string]any{
+			"channel":   "protocol",
+			"direction": "server",
+			"data": map[string]any{
+				"type":       "system",
+				"subtype":    "session_state_changed",
+				"session_id": sessionID,
+				"state":      "idle",
+			},
+		})
+	}
+	return expanded
+}
+
+func claudeReadyBeforeInput(frames []any, start int, sessionID string) bool {
+	for _, value := range frames[start:] {
+		frame, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		data, _ := frame["data"].(map[string]any)
+		direction, _ := frame["direction"].(string)
+		if direction == "client" && data["type"] == "user" {
+			return false
+		}
+		if data["type"] == "system" && data["subtype"] == "session_state_changed" &&
+			data["session_id"] == sessionID && data["state"] == "idle" {
+			return true
+		}
+	}
+	return false
 }
 
 func writeNativeScenario(t *testing.T, scenario map[string]any) (string, string) {
@@ -606,6 +766,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 	fullCount := map[string]int{}
 	tools := map[string][]string{}
 	gaps := map[string]int{}
+	workObserved := false
 	for {
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
@@ -613,23 +774,30 @@ func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 		case events.SessionError:
 			require.False(t, e.Persistent())
 			gaps[p.Reason]++
+			workObserved = true
 
 		case events.ThinkingChunk:
+			workObserved = true
 			chunks[e.ItemID] = append(chunks[e.ItemID], observedMessage(t, e, p.Content, p.MessageID))
 		case events.MessageChunk:
+			workObserved = true
 			chunks[e.ItemID] = append(chunks[e.ItemID], observedMessage(t, e, p.Content, p.MessageID))
 		case events.AgentThinking:
+			workObserved = true
 			full[e.ItemID] = observedMessage(t, e, p.Content, p.MessageID)
 			fullCount[e.ItemID]++
 		case events.AgentMessage:
+			workObserved = true
 			full[e.ItemID] = observedMessage(t, e, p.Content, p.MessageID)
 			fullCount[e.ItemID]++
 		case events.ToolCall:
+			workObserved = true
 			tools[e.ItemID] = append(tools[e.ItemID], e.EventID)
 		case events.ToolResult:
+			workObserved = true
 			tools[e.ItemID] = append(tools[e.ItemID], e.EventID)
 		case events.StateUpdate:
-			if p.State != nil && *p.State == events.Idle {
+			if workObserved && p.State != nil && *p.State == events.Idle {
 				goto observed
 			}
 		}

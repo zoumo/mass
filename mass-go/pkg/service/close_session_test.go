@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/metastore"
@@ -36,6 +38,7 @@ type closeDriver struct {
 	closeEntered  chan struct{}
 	closeRelease  chan struct{}
 	closeOnce     sync.Once
+	emitOpenIdle  bool
 
 	prompts   atomic.Int32
 	answers   atomic.Int32
@@ -52,15 +55,20 @@ func (d *closeDriver) Start(context.Context) (runtime.Capabilities, error) {
 	return runtime.Capabilities{}, nil
 }
 
-func (d *closeDriver) OpenSession(context.Context, runtime.Address, runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *closeDriver) OpenSession(ctx context.Context, address runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.mu.Lock()
 	d.source = events.NewSource()
 	source := d.source
 	d.mu.Unlock()
+	if d.emitOpenIdle {
+		if err := d.emitIdle(ctx, address, "native-close", source); err != nil {
+			return runtime.DriverSession{}, err
+		}
+	}
 	return runtime.DriverSession{SessionID: "native-close", Source: source}, nil
 }
 
-func (d *closeDriver) ResumeSession(ctx context.Context, id string, _ runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
+func (d *closeDriver) ResumeSession(ctx context.Context, id string, address runtime.Address, _ runtime.SessionSpec) (runtime.DriverSession, error) {
 	d.resumes.Add(1)
 	if d.resumeEntered != nil {
 		select {
@@ -78,7 +86,27 @@ func (d *closeDriver) ResumeSession(ctx context.Context, id string, _ runtime.Ad
 	d.source = events.NewSource()
 	source := d.source
 	d.mu.Unlock()
+	if d.emitOpenIdle {
+		if err := d.emitIdle(ctx, address, id, source); err != nil {
+			return runtime.DriverSession{}, err
+		}
+	}
 	return runtime.DriverSession{SessionID: id, Source: source}, nil
+}
+
+func (d *closeDriver) emitIdle(ctx context.Context, address runtime.Address, id string, source events.Source) error {
+	idle := events.Idle
+	event, err := events.NewEvent(events.EventBase{
+		EventID:     uuid.NewString(),
+		Namespace:   address.Namespace,
+		SessionName: address.SessionName,
+		SessionID:   id,
+		Time:        time.Now().UTC(),
+	}, events.StateUpdate{State: &idle}, source)
+	if err != nil {
+		return err
+	}
+	return d.pipe.Send(ctx, event)
 }
 
 func (d *closeDriver) LoadSession(context.Context, string, runtime.Address, runtime.SessionSpec, string) error {
@@ -101,7 +129,7 @@ func (d *closeDriver) SendPrompt(ctx context.Context, _ string, _ runtime.Input)
 			return runtime.InputReceipt{}, ctx.Err()
 		}
 	}
-	return runtime.InputReceipt{Submission: "close-test", Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
+	return runtime.InputReceipt{Submission: "close-test", Result: agent.InputAppliedNewWork, Acceptance: runtime.Acceptance{Sent: runtime.Yes()}}, nil
 }
 
 func (d *closeDriver) Cancel(context.Context, string) (runtime.CancelReceipt, error) {
@@ -197,6 +225,7 @@ func newCloseFixtureWithMeta(t *testing.T, wrap func(metastore.MetaStore) metast
 		resumeRelease: make(chan struct{}),
 		closeEntered:  make(chan struct{}, 4),
 		closeRelease:  make(chan struct{}),
+		emitOpenIdle:  true,
 	}
 	var meta metastore.MetaStore = st
 	if wrap != nil {
@@ -220,6 +249,10 @@ func newCloseFixtureWithMeta(t *testing.T, wrap func(metastore.MetaStore) metast
 		Spec:     resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: "/remote"}},
 	})
 	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		current, err := svc.GetSession(resource.SessionRef{SessionID: created.Status.SessionID})
+		return err == nil && current.Status.State == events.Idle
+	}, time.Second, time.Millisecond, "close fixture did not observe its session idle")
 	return &closeFixture{driver: d, store: st, svc: svc, ref: resource.SessionRef{SessionID: created.Status.SessionID}}
 }
 
@@ -291,6 +324,8 @@ func TestCloseWaitsForAcceptedDispatchThenCallsSDKOnce(t *testing.T) {
 	}()
 	select {
 	case <-f.driver.promptEntered:
+	case err := <-promptDone:
+		t.Fatalf("prompt was not admitted: %v", err)
 	case <-time.After(time.Second):
 		t.Fatal("prompt was not admitted")
 	}

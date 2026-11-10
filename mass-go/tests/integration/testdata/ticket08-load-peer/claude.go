@@ -67,6 +67,7 @@ func claude() {
 			case "initialize":
 				cwd, _ := os.Getwd()
 				send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": cwd})
+				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 			case "interrupt":
 				send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "user_message_uuid": link})
 			}

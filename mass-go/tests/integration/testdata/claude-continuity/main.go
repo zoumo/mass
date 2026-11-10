@@ -32,6 +32,7 @@ func main() {
 	explicit := os.Getenv("EXPLICIT_CREATE") == "1"
 	init := func() {
 		send(map[string]any{"type": "system", "subtype": "init", "session_id": nativeSessionID, "cwd": cwd, "claude_code_version": "2.1.258"})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": nativeSessionID, "state": "idle"})
 	}
 	n := 0
 	var pending string

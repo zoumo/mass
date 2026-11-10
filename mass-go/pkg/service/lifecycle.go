@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -261,6 +262,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	lanes := make(map[string]*lane, len(run.lanes))
 	for id, l := range run.lanes {
 		l.closing = true
+		stopPromptQueueLocked(l.prompts, runtime.FailedPrecondition("runtime stopping"))
 		stopIdleTimerLocked(l)
 		lanes[id] = l
 	}
@@ -371,7 +373,7 @@ func (s *Service) stopRuntime(ctx context.Context, name string, run *runBinding)
 	return r, nil
 }
 
-func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, initial *runtime.Input) (resource.SessionResumed, error) {
+func (s *Service) resumeSession(ctx, callerCtx context.Context, ref resource.SessionRef, initial *runtime.Input, markAdmitted func()) (resource.SessionResumed, error) {
 	r, err := s.GetSession(ref)
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
@@ -381,7 +383,8 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
 	}
-	defer unlock()
+	releaseSessionOperation := sync.OnceFunc(unlock)
+	defer releaseSessionOperation()
 	r, err = s.GetSession(ref)
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
@@ -430,10 +433,8 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	if err != nil {
 		return resource.SessionResumed{Session: r}, err
 	}
-	var resumer runtime.ResumptionDriver
 	if initial != nil {
-		var ok bool
-		resumer, ok = run.driver.(runtime.ResumptionDriver)
+		resumer, ok := run.driver.(runtime.ResumptionDriver)
 		if !ok {
 			return resource.SessionResumed{Session: r}, runtime.Unsupported()
 		}
@@ -463,7 +464,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	nativeCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	op := &opening{address: a, done: make(chan struct{}), requested: r, restoring: true, buffering: true, cancel: cancel}
-	defer close(op.done)
+	defer op.finish()
 	s.mu.Lock()
 	if s.closing || run.stopping || run.pending[k] != nil || len(run.pending)+len(run.lanes) >= queueCapacity {
 		s.mu.Unlock()
@@ -477,12 +478,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		s.mu.Unlock()
 		return resource.SessionResumed{Session: r}, err
 	}
-	var native runtime.DriverSession
-	if initial == nil {
-		native, err = run.driver.ResumeSession(nativeCtx, r.Status.SessionID, a, resolvedSpec)
-	} else {
-		native, err = resumer.ResumeSessionWithInput(nativeCtx, r.Status.SessionID, a, resolvedSpec, *initial)
-	}
+	native, err := run.driver.ResumeSession(nativeCtx, r.Status.SessionID, a, resolvedSpec)
 	if err != nil {
 		// A failed input dispatch can still return a verified native connection.
 		// Retain its source and settle only that original connection's resources.
@@ -520,9 +516,6 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		identityErr = errors.New("resume returned a replacement identity")
 	}
 	if identityErr != nil {
-		if initial != nil {
-			identityErr = errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_input_unverified", Message: "New input may have been submitted without verified original identity; do not resend"}, identityErr)
-		}
 		cleanup := run.driver.CloseSession(context.Background(), native.SessionID)
 		s.mu.Lock()
 		op.released = cleanup == nil
@@ -550,9 +543,6 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 		s.mu.Lock()
 		op.released = cleanup == nil
 		s.mu.Unlock()
-		if initial != nil {
-			err = errors.Join(&runtime.OperationError{Code: "outcome_unknown", Reason: "resume_input_commit_unknown", Message: "New input was submitted but resume binding commit failed; do not resend"}, err)
-		}
 		return resource.SessionResumed{Session: r}, errors.Join(err, cleanup)
 	}
 	s.mu.Lock()
@@ -565,8 +555,10 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	}
 	fresh := l == nil
 	if fresh {
-		l = &lane{session: r, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
+		l = &lane{session: r, prompts: &promptQueue{}, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
 	}
+	stopPromptQueueLocked(l.prompts, runtime.FailedPrecondition("session resume replaced the original lane"))
+	l.prompts = &promptQueue{}
 	l.source = native.Source
 	l.nativeClosed = false
 	l.closing = false
@@ -577,22 +569,55 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	l.interactions = nil
 	l.err = errors.Join(l.err, op.err)
 	run.lanes[r.Status.SessionID] = l
+	var initialPrompt *queuedPrompt
+	var initialQueue *promptQueue
+	var enqueueErr error
+	if l.err == nil && initial != nil {
+		initialPrompt, enqueueErr = s.appendPromptLocked(l, *initial)
+		initialQueue = l.prompts
+	}
+	if enqueueErr != nil {
+		stopPromptQueueLocked(l.prompts, enqueueErr)
+	}
 	s.mu.Unlock()
+	if enqueueErr != nil {
+		return resource.SessionResumed{Session: r}, enqueueErr
+	}
 	if fresh {
 		go s.process(run, l)
 	}
 	if err := s.flushOpening(ctx, run, l, op); err != nil {
+		s.mu.Lock()
+		stopPromptQueueLocked(l.prompts, err)
+		s.mu.Unlock()
 		return resource.SessionResumed{Session: r}, err
 	}
 	s.mu.Lock()
 	delete(run.pending, k)
 	resumeErr := l.err
-	s.mu.Unlock()
-	result := resource.SessionResumed{Session: r}
-	if resumeErr == nil {
-		result.InitialInputReceipt = native.InitialInputReceipt
+	if resumeErr != nil {
+		stopPromptQueueLocked(l.prompts, resumeErr)
 	}
-	return result, resumeErr
+	s.mu.Unlock()
+	op.finish()
+	releaseSessionOperation()
+	result := resource.SessionResumed{Session: r}
+	if resumeErr != nil {
+		return result, resumeErr
+	}
+	if initialPrompt != nil {
+		if markAdmitted != nil {
+			markAdmitted()
+		}
+		receipt, inputErr := s.awaitAdmittedPrompt(callerCtx, run, l, initialQueue, initialPrompt)
+		if receipt.Result != "" {
+			result.InitialInputReceipt = &receipt
+		}
+		if inputErr != nil {
+			return result, inputErr
+		}
+	}
+	return result, nil
 }
 
 // control holds the original Runtime operation lock through a native dispatch.
@@ -776,9 +801,16 @@ func (s *Service) resumeSessionOwned(ctx context.Context, ref resource.SessionRe
 	default:
 		return resource.SessionResumed{}, runtime.FailedPrecondition("resume capacity exhausted")
 	}
-	return awaitSessionLifecycle(ctx, func(owner context.Context) (resource.SessionResumed, error) {
+	if initial == nil {
+		return awaitSessionLifecycle(ctx, func(owner context.Context) (resource.SessionResumed, error) {
+			defer func() { <-s.resumeSlots }()
+			return s.resumeSession(owner, ctx, ref, nil, nil)
+		})
+	}
+	var admitted atomic.Bool
+	return awaitSessionLifecycleWithAdmission(ctx, &admitted, func(owner context.Context) (resource.SessionResumed, error) {
 		defer func() { <-s.resumeSlots }()
-		return s.resumeSession(owner, ref, initial)
+		return s.resumeSession(owner, ctx, ref, initial, func() { admitted.Store(true) })
 	})
 }
 
@@ -846,6 +878,10 @@ func (s *Service) sealLane(ctx context.Context, l *lane) error {
 // Accepted lifecycle operations retain their original owner after the caller
 // stops waiting. A late result remains observable through the persistent resource.
 func awaitSessionLifecycle[T any](ctx context.Context, operation func(context.Context) (T, error)) (T, error) {
+	return awaitSessionLifecycleWithAdmission(ctx, nil, operation)
+}
+
+func awaitSessionLifecycleWithAdmission[T any](ctx context.Context, admitted *atomic.Bool, operation func(context.Context) (T, error)) (T, error) {
 	type result struct {
 		value T
 		err   error
@@ -861,6 +897,10 @@ func awaitSessionLifecycle[T any](ctx context.Context, operation func(context.Co
 			return r.value, r.err
 		default:
 		}
+		if admitted != nil && admitted.Load() {
+			r := <-done
+			return r.value, r.err
+		}
 		var zero T
 		return zero, &runtime.OperationError{Code: "outcome_unknown", Reason: "lifecycle_wait_abandoned", Message: "Lifecycle operation remains owned by its original Session; inspect state before further action"}
 	}
@@ -871,6 +911,7 @@ func awaitSessionLifecycle[T any](ctx context.Context, operation func(context.Co
 // Caller holds s.mu; state projection is sealed by l.closing.
 func retireLane(run *runBinding, l *lane) {
 	stopIdleTimerLocked(l)
+	stopPromptQueueLocked(l.prompts, runtime.FailedPrecondition("session is no longer live"))
 	if run.retired == nil {
 		run.retired = map[events.Source]*lane{}
 	}

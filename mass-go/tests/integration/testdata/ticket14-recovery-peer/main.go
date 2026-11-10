@@ -62,6 +62,7 @@ func main() {
 		}
 		log("init", map[string]any{"sessionId": id, "cwd": work})
 		send(map[string]any{"type": "system", "subtype": "init", "session_id": id, "cwd": work})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 	}
 	thread := func() map[string]any {
 		return map[string]any{"id": sessionID, "sessionId": sessionID, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 2, "cwd": cwd, "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}, "turns": []any{}}
@@ -129,6 +130,7 @@ func main() {
 				panic("replacement thread")
 			}
 			reply(map[string]any{"thread": thread(), "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": cwd, "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			notify("thread/status/changed", map[string]any{"threadId": sessionID, "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			reply(map[string]any{"thread": thread()})
 		case "thread/turns/list":

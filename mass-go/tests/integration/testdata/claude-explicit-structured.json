@@ -46,6 +46,17 @@
     {
       "ordinal": 4,
       "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "system",
+        "subtype": "session_state_changed",
+        "session_id": "claude-session",
+        "state": "idle"
+      }
+    },
+    {
+      "ordinal": 5,
+      "channel": "protocol",
       "direction": "client",
       "data": {
         "type": "user",
@@ -60,7 +71,7 @@
       }
     },
     {
-      "ordinal": 5,
+      "ordinal": 6,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -71,7 +82,7 @@
       }
     },
     {
-      "ordinal": 6,
+      "ordinal": 7,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -91,7 +102,7 @@
       }
     },
     {
-      "ordinal": 7,
+      "ordinal": 8,
       "channel": "protocol",
       "direction": "server",
       "data": {
@@ -103,7 +114,7 @@
       }
     },
     {
-      "ordinal": 8,
+      "ordinal": 9,
       "channel": "protocol",
       "direction": "server",
       "data": {

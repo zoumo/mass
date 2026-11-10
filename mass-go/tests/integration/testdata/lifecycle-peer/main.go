@@ -60,6 +60,7 @@ func main() {
 			}
 			threadCwds[id] = v.Params["cwd"]
 			respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": v.Params["cwd"], "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}, "approvalPolicy": "on-request", "approvalsReviewer": "user", "cwd": v.Params["cwd"], "model": "synthetic", "modelProvider": "synthetic", "sandbox": map[string]any{"type": "readOnly"}})
+			notify("thread/status/changed", map[string]any{"threadId": id, "status": map[string]any{"type": "idle"}})
 		case "thread/read":
 			id := v.Params["threadId"].(string)
 			respond(map[string]any{"thread": map[string]any{"id": id, "sessionId": id, "turns": []any{}, "cliVersion": "synthetic", "createdAt": 1, "updatedAt": 1, "cwd": threadCwds[id], "ephemeral": false, "modelProvider": "synthetic", "preview": "", "projectId": nil, "source": "appServer", "status": map[string]any{"type": "idle"}}})
@@ -200,6 +201,7 @@ func claude(send func(any)) {
 				panic(err)
 			}
 			send(map[string]any{"type": "system", "subtype": "init", "claude_code_version": "2.1.258", "session_id": sessionID, "cwd": cwd, "model": "synthetic", "tools": []any{}})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 		}
 	}
 }
