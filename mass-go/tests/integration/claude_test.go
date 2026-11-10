@@ -643,12 +643,10 @@ func TestClaudeLiveBlockStateCapacityFailsClosed(t *testing.T) {
 		"type": "stream_event", "session_id": sessionID,
 		"event": map[string]any{"type": "content_block_start", "index": claudeLiveBlockStateCapacity, "content_block": map[string]any{"type": "text", "text": ""}},
 	})
-	sub := runObservationFailureScenario(t, sessionID, frames)
-	defer sub.Close()
-
+	sub := runClaudeDriverScenario(t, sessionID, frames)
 	full := 0
 	reopened := false
-	requireClaudeObservationFailure(t, sub, func(event events.SessionEvent) {
+	requireClaudeObservationFailure(t, sub, "live_block_capacity", func(event events.SessionEvent) {
 		switch payload := event.Payload().(type) {
 		case events.AgentMessage:
 			if event.ItemID == "msg-capacity:0" {
@@ -675,13 +673,11 @@ func TestClaudeLiveLaneStateCapacityFailsClosed(t *testing.T) {
 			"event": map[string]any{"type": "message_start", "message": map[string]any{"id": "msg-lane-" + strconv.Itoa(index), "role": "assistant", "content": []any{}}},
 		})
 	}
-	sub := runObservationFailureScenario(t, sessionID, frames)
-	defer sub.Close()
-
-	requireClaudeObservationFailure(t, sub)
+	sub := runClaudeDriverScenario(t, sessionID, frames)
+	requireClaudeObservationFailure(t, sub, "live_block_lane_capacity")
 }
 
-func TestClaudeLiveAssistantFrameCapacityFailsClosed(t *testing.T) {
+func TestClaudeLiveAssistantFramesSuppressConflictingCompletedContent(t *testing.T) {
 	const sessionID = "frame-capacity-session"
 	frames := capacityFrames(sessionID)
 	frames = appendServerFrame(frames, map[string]any{
@@ -718,13 +714,14 @@ func TestClaudeLiveAssistantFrameCapacityFailsClosed(t *testing.T) {
 		"type": "assistant", "session_id": sessionID, "uuid": "frame-overflow",
 		"message": map[string]any{"id": "msg-frame", "role": "assistant", "content": []any{}},
 	})
-	sub := runObservationFailureScenario(t, sessionID, frames)
-	defer sub.Close()
-
+	frames = appendServerFrame(frames, map[string]any{
+		"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle",
+	})
+	sub := runClaudeDriverScenario(t, sessionID, frames)
 	duplicateSurvived := false
 	fullCount := 0
 	duplicateFull := false
-	requireClaudeObservationFailure(t, sub, func(event events.SessionEvent) {
+	observe := func(event events.SessionEvent) {
 		switch payload := event.Payload().(type) {
 		case events.AgentMessage:
 			if event.ItemID != "msg-frame:0" {
@@ -742,7 +739,23 @@ func TestClaudeLiveAssistantFrameCapacityFailsClosed(t *testing.T) {
 				duplicateSurvived = duplicateSurvived || events.TextOf(block) == "after-duplicate"
 			}
 		}
-	})
+	}
+	diagnostics := 0
+	read, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for {
+		event, err := sub.Next(read)
+		require.NoError(t, err)
+		observe(event)
+		if problem, ok := event.Payload().(events.SessionError); ok {
+			require.Equal(t, "assistant_block_reopened", problem.Reason)
+			diagnostics++
+		}
+		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+			break
+		}
+	}
+	require.Equal(t, 1, diagnostics)
 	require.True(t, duplicateSurvived, "a duplicate frame must stay suppressed at capacity without terminating observation")
 	require.Equal(t, 1, fullCount, "a duplicate frame must not emit a second full")
 	require.False(t, duplicateFull, "the duplicate full content must be ignored")
@@ -761,10 +774,8 @@ func TestClaudeLiveToolBlockIdentityConflictFailsClosed(t *testing.T) {
 			"event": map[string]any{"type": "content_block_start", "index": 0, "content_block": map[string]any{"type": "tool_use", "id": id, "name": "Bash", "input": map[string]any{}}},
 		})
 	}
-	sub := runObservationFailureScenario(t, sessionID, frames)
-	defer sub.Close()
-
-	requireClaudeObservationFailure(t, sub)
+	sub := runClaudeDriverScenario(t, sessionID, frames)
+	requireClaudeObservationFailure(t, sub, "conflicting_tool_block_identity")
 }
 
 func capacityFrames(sessionID string) []any {
@@ -791,56 +802,62 @@ func appendServerFrame(frames []any, data map[string]any) []any {
 	return append(frames, scenarioFrame(len(frames)+1, "server", data))
 }
 
-func runObservationFailureScenario(t *testing.T, name string, frames []any) *events.Subscription {
+func runClaudeDriverScenario(t *testing.T, name string, frames []any) events.Stream {
 	t.Helper()
 	path, work := writeNativeScenario(t, map[string]any{"version": 1, "provenance": "synthetic", "frames": frames})
-	svc := setupExpectedObservationFailure(t)
-	scenarioCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	t.Cleanup(cancel)
-	_, err := svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: name}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
+	driver, err := (claude.Factory{RecoveryDir: t.TempDir()}).New(name, runtime.Config{"executable": claudeMock, "scenario": path})
 	require.NoError(t, err)
-	_, err = svc.StartRuntime(scenarioCtx, name)
+	stream, err := driver.Events()
 	require.NoError(t, err)
-	session, err := svc.CreateSession(scenarioCtx, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: name}, Spec: resource.SessionSpec{RuntimeRef: name, SessionSpec: runtime.SessionSpec{Cwd: work}}})
+	_, err = driver.Start(ctx(t))
 	require.NoError(t, err)
-	ref := resource.SessionRef{SessionID: session.Status.SessionID}
-	sub, err := svc.SubscribeEvents(ref)
+	opened, err := driver.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: name}, runtime.SessionSpec{Cwd: work})
 	require.NoError(t, err)
-	_, err = svc.SendPrompt(scenarioCtx, ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
-	require.NoError(t, err)
-	return sub
-}
-
-func setupExpectedObservationFailure(t *testing.T) *service.Service {
-	t.Helper()
-	dir := t.TempDir()
-	st, err := file.Open(dir, false)
-	require.NoError(t, err)
-	reg := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: filepath.Join(dir, "private")}})
-	svc := service.NewWithPolicy(st, st, reg, prototype.AutoApprovePermissions)
 	t.Cleanup(func() {
-		require.ErrorContains(t, svc.Shutdown(ctx(t)), "observation terminated")
-		require.NoError(t, st.Close())
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		drained := make(chan struct{})
+		go func() {
+			defer close(drained)
+			for {
+				if _, receiveErr := stream.Next(cleanup); receiveErr != nil {
+					return
+				}
+			}
+		}()
+		closeErr := driver.CloseSession(cleanup, opened.SessionID)
+		var stopErr error
+		if closeErr == nil {
+			stopErr = driver.Stop(cleanup)
+		}
+		cancel()
+		<-drained
+		require.NotErrorIs(t, closeErr, context.DeadlineExceeded)
+		require.NotErrorIs(t, closeErr, context.Canceled)
+		require.NoError(t, stopErr)
 	})
-	return svc
+	_, err = driver.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
+	require.NoError(t, err)
+	return stream
 }
 
-func requireClaudeObservationFailure(t *testing.T, sub *events.Subscription, observe ...func(events.SessionEvent)) {
+func requireClaudeObservationFailure(t *testing.T, stream events.Stream, reason string, observe ...func(events.SessionEvent)) {
 	t.Helper()
+	read, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	for {
-		event, err := nextSubscription(sub, ctx(t))
-		require.NoError(t, err)
+		event, err := stream.Next(read)
+		if err != nil {
+			require.NotErrorIs(t, err, context.DeadlineExceeded)
+			require.NotErrorIs(t, err, context.Canceled)
+			require.ErrorContains(t, err, reason)
+			return
+		}
 		for _, observe := range observe {
 			observe(event)
 		}
-		switch payload := event.Payload().(type) {
-		case events.SessionError:
-			require.Equal(t, "native_observation_failed", payload.Reason)
-			return
-		case events.StateUpdate:
-			if payload.State != nil && *payload.State == events.Idle {
-				t.Fatal("capacity exhaustion reached idle without terminating observation")
-			}
+		if payload, ok := event.Payload().(events.StateUpdate); ok && payload.State != nil && *payload.State == events.Idle {
+			t.Fatal("native observation failure reached idle")
 		}
 	}
 }
