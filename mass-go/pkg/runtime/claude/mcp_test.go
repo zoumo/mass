@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	sdk "github.com/zoumo/agent-sdk-go/claude"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -24,29 +24,33 @@ func TestClaudeMCPConfigurationMapping(t *testing.T) {
 			URL:     "https://example.invalid/http",
 			Headers: map[string]string{"Authorization": "Bearer ${TOKEN}"},
 		},
-		{Name: "events", Type: "sse", URL: "https://example.invalid/sse"},
 	}
 	process := runtime.ProcessConfig{Env: map[string]string{"TOKEN": "secret-value"}}
 	converted, err := claudeMCPServers(&servers, process)
 	require.NoError(t, err)
-	require.Len(t, converted, 3)
-	require.Equal(t, sdkClaudeMCPTransport("stdio"), converted[0].Transport)
-	require.Equal(t, sdkClaudeMCPTransport("http"), converted[1].Transport)
-	require.Equal(t, sdkClaudeMCPTransport("sse"), converted[2].Transport)
+	require.Len(t, converted, 2)
+	require.Equal(t, agent.MCPTransportStdio, converted[0].Transport)
+	require.Equal(t, agent.MCPTransportHTTP, converted[1].Transport)
 	require.Equal(t, "${TOKEN}", converted[0].Env["TOKEN"])
 	require.Equal(t, "Bearer ${TOKEN}", converted[1].Headers["Authorization"])
 }
 
-func TestClaudeExplicitMCPListUsesStrictConfig(t *testing.T) {
+func TestClaudeMCPEmptyAndAbsentListsAreSDKEquivalent(t *testing.T) {
 	empty := []runtime.MCPServer{}
-	process := runtime.ProcessConfig{Executable: "/agent"}
-	options, err := sessionOptions(runtime.SessionFeatures{}, &empty, "", "/work", process)
+	converted, err := claudeMCPServers(&empty, runtime.ProcessConfig{})
 	require.NoError(t, err)
-	require.True(t, options.StrictMCPConfig)
+	require.Empty(t, converted)
+	converted, err = claudeMCPServers(nil, runtime.ProcessConfig{})
+	require.NoError(t, err)
+	require.Nil(t, converted)
+}
 
-	options, err = sessionOptions(runtime.SessionFeatures{}, nil, "", "/work", process)
-	require.NoError(t, err)
-	require.False(t, options.StrictMCPConfig)
+func TestClaudeMCPRejectsSSEBeforeNativeEffects(t *testing.T) {
+	servers := []runtime.MCPServer{{Name: "events", Type: "sse", URL: "https://example.invalid/sse"}}
+	_, err := claudeMCPServers(&servers, runtime.ProcessConfig{})
+	var public *runtime.OperationError
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "unsupported", public.Code)
 }
 
 func TestClaudeMCPConfigurationRejectsCodexOnlyFields(t *testing.T) {
@@ -150,8 +154,4 @@ func TestClaudeSessionDefaultsAreNotRuntimeConfig(t *testing.T) {
 		"features":   map[string]any{"agentQuestions": false},
 	}
 	require.ErrorContains(t, (Factory{}).Validate(config), `unknown process config "features"`)
-}
-
-func sdkClaudeMCPTransport(value string) sdk.MCPTransport {
-	return sdk.MCPTransport(value)
 }

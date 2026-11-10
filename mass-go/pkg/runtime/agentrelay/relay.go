@@ -176,9 +176,16 @@ func MapInteractionReceipt(receipt agent.InteractionReceipt) runtime.Interaction
 }
 
 func MapCancelReceipt(receipt agent.InterruptReceipt) runtime.CancelReceipt {
+	result := string(receipt.Result)
+	switch receipt.Result {
+	case agent.InterruptAcknowledged:
+		result = "controlAcknowledged"
+	case agent.InterruptNoActiveWork:
+		result = "noActiveWork"
+	}
 	return runtime.CancelReceipt{
 		Target: receipt.Target,
-		Result: string(receipt.Result),
+		Result: result,
 	}
 }
 

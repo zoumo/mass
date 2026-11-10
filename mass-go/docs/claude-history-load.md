@@ -42,13 +42,11 @@ current state.
 Successful load requires verified resume, native completion, and local durable
 delivery. Current state remains unknown without live evidence; historical idle
 never authorizes input. The shared load completion gate permits safe input once
-load settles. Every postload input, including the first, needs explicit native
-linkage for work attribution. A caller UUID is an optional correlation aid, not
-a native TurnID. Ordinary assistant/result observations without recognized
-linkage remain unknown and do not complete current work. The positive synthetic
-peer echoes caller UUIDs; that test is NOT a guarantee that real Claude or the
-later theta/glm-5.3 acceptance target echoes them. No real-model acceptance is
-claimed here.
+load settles. Postload input uses the resumed SDK Session's StartOrSteer operation.
+The SDK owns submission identities and live state conversion; its best-effort
+receipt does not prove native scheduling, acceptance or recording. A result frame
+alone does not establish idle state. Synthetic tests do not establish real-model
+behavior.
 
 ## Bounded failure and cleanup
 

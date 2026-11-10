@@ -13,14 +13,12 @@ func TestSessionOptionsDisableAgentQuestions(t *testing.T) {
 		&runtime.SessionFeatures{AgentQuestions: runtime.Bool(false)},
 		supportedSessionFeatures,
 	)
-	options, err := sessionOptions(features, nil, "", "/work", runtime.ProcessConfig{Executable: "claude"})
-	require.NoError(t, err)
-	require.Equal(t, []string{"AskUserQuestion"}, options.DisallowedTools)
+	options := sessionOpenOptions("/work", features, nil)
+	require.False(t, options.Features.AgentQuestionsEnabled())
 }
 
 func TestSessionOptionsPreserveAgentQuestions(t *testing.T) {
 	features := runtime.ResolveSessionFeatures(nil, supportedSessionFeatures)
-	options, err := sessionOptions(features, nil, "", "/work", runtime.ProcessConfig{Executable: "claude"})
-	require.NoError(t, err)
-	require.Empty(t, options.DisallowedTools)
+	options := sessionOpenOptions("/work", features, nil)
+	require.True(t, options.Features.AgentQuestionsEnabled())
 }
