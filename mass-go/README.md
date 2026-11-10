@@ -182,10 +182,10 @@ and credential audits with the replays. The mock route must be
 receipt must show `nativeLaunched=false`.
 
 The checked-in captures were recorded with SDK `5edf8b62`. They no longer pass
-strict replay at the T05 pin `1c8514ff`: Codex now sends an added initialize
+strict replay at the current T06 pin `efcb24ca`: Codex now sends an added initialize
 capability, and Claude waits for `system init` before `Open` while the capture
 sends the first user frame earlier. The artifact and audit tests pass, but all
-four replay cases fail until those captures are re-recorded with the T05 SDK,
+four replay cases fail until those captures are re-recorded with the current SDK,
 testify, and native CLI versions. They are retained as historical consumer
 evidence and are not current-pin PASS evidence. Exact failures, hashes and
 recording commands are in
@@ -251,10 +251,10 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261109202203-1c8514ff8a18`,
-source commit `1c8514ff`, without a local replacement. The external
+The runtime SDK is pinned to `v0.0.0-20261110170013-efcb24caac28`,
+source commit `efcb24ca`, without a local replacement. The external
 `agent-sdk-testify` tool is pinned to
-`v0.1.1-0.20261109183517-b7c1fd72fc17` for consumer recording and replay and
+`v0.1.2` for consumer recording and replay and
 is not a production dependency.
 The checked-in consumer fixtures remain bound to their recording SDK
 `v0.0.0-20261105065348-5edf8b62e963`; that provenance is intentionally not
@@ -528,3 +528,8 @@ production readiness or real Agent execution.
 
 The six-ticket scenario matrix, commit map and evidence guide are in
 [acceptance](docs/acceptance.md).
+
+T06 upgrade details, validation results, and remaining harness differences are in
+[SDK upgrade acceptance](docs/sdk-latest-sync.md). Session `systemPrompt` appends
+caller instructions to provider defaults via SDK `AdditionalSystemPrompt`;
+MASS repeats the complete value on every open, resume, and load resume.

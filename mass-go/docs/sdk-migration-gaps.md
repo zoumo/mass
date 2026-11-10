@@ -4,6 +4,8 @@ This page is the T05 record for the migration from MASS-owned provider event
 shapes to the unified `agent-sdk-go` contract. It does not change the
 [harness contracts](../../harness/index.md).
 
+Current follow-up: [T06 SDK upgrade acceptance](sdk-latest-sync.md). The pins and results below remain the historical T05 record.
+
 ## Pins and base
 
 - T05 branch: `sdk-source-of-truth-t05-legacy-wire-simulation`

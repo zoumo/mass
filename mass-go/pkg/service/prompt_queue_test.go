@@ -168,13 +168,8 @@ func queuedPromptText(input runtime.Input) string {
 	if len(input.Content) != 1 {
 		return ""
 	}
-	switch block := input.Content[0].(type) {
-	case agent.TextBlock:
+	if block := input.Content[0].Text; block != nil {
 		return block.Text
-	case *agent.TextBlock:
-		if block != nil {
-			return block.Text
-		}
 	}
 	return ""
 }

@@ -89,6 +89,8 @@ type session struct {
 	source    events.Source
 	closing   atomic.Bool
 	closeMu   sync.Mutex
+	closeOnce sync.Once
+	closeErr  error
 	cancelOp  sync.Mutex
 	controlMu sync.Mutex
 
@@ -158,14 +160,14 @@ func (d *Driver) Start(ctx context.Context) (runtime.Capabilities, error) {
 		d.mu.Unlock()
 		return nil, errors.New("driver stopping")
 	}
+	if d.stopped {
+		d.mu.Unlock()
+		return nil, errors.New("driver stopped")
+	}
 	if d.providerReady {
 		capabilities := copyCapabilities(d.providerCaps)
 		d.mu.Unlock()
 		return capabilities, nil
-	}
-	if d.stopped {
-		d.mu.Unlock()
-		return nil, errors.New("driver stopped")
 	}
 	provider := d.provider
 	d.mu.Unlock()
@@ -254,14 +256,14 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		d.mu.Unlock()
 	}()
 
+	if err := (agent.OpenOptions{Cwd: spec.Cwd, AdditionalSystemPrompt: spec.SystemPrompt}).Validate(); err != nil {
+		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, agentrelay.MapError(err))
+	}
 	if err := d.vault.Check(); err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	if !filepath.IsAbs(spec.Cwd) {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.InvalidArgument("absolute cwd required"))
-	}
-	if spec.SystemPrompt != "" {
-		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("system_prompt_unsupported", "System prompts are not supported by this Codex runtime"))
 	}
 	if len(spec.AdditionalDirs) > 0 {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("additional_dirs_unsupported", "Additional directories are not supported by this Codex runtime"))
@@ -291,8 +293,9 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	openOptions := agent.OpenOptions{
-		Cwd:      spec.Cwd,
-		Features: agentFeatures(spec.Features),
+		Cwd:                    spec.Cwd,
+		AdditionalSystemPrompt: spec.SystemPrompt,
+		Features:               agentFeatures(spec.Features),
 	}
 	dispatchCtx := context.WithoutCancel(ctx)
 	var native agent.Session
@@ -649,9 +652,9 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 
 	s.closeMu.Lock()
 	defer s.closeMu.Unlock()
-	closeErr := agentrelay.MapError(s.native.Close(context.WithoutCancel(ctx)))
-	if closeErr != nil {
-		return closeErr
+	s.closeOnce.Do(func() { s.closeErr = agentrelay.MapError(s.native.Close(context.WithoutCancel(ctx))) })
+	if s.closeErr != nil {
+		return s.closeErr
 	}
 	select {
 	case <-s.relay.Done():
@@ -679,8 +682,9 @@ func (d *Driver) Stop(ctx context.Context) error {
 
 	d.mu.Lock()
 	if d.stopped {
+		err := d.stopErr
 		d.mu.Unlock()
-		return nil
+		return err
 	}
 	if len(d.sessions) != 0 || d.opening != 0 {
 		d.mu.Unlock()
@@ -690,17 +694,20 @@ func (d *Driver) Stop(ctx context.Context) error {
 	provider := d.provider
 	d.mu.Unlock()
 
+	var stopErr error
 	if provider != nil {
-		if err := provider.Stop(context.WithoutCancel(ctx)); err != nil {
-			mapped := agentrelay.MapError(err)
+		err := provider.Stop(context.WithoutCancel(ctx))
+		if agentrelay.StopRejected(err) {
 			d.mu.Lock()
-			d.stopErr = mapped
+			d.stopping = false
 			d.mu.Unlock()
-			return mapped
+			return agentrelay.MapError(err)
 		}
+		stopErr = agentrelay.MapError(err)
 	}
 	d.mu.Lock()
 	d.stopped = true
+	d.stopErr = stopErr
 	d.stopping = false
 	cancel := d.cancel
 	d.mu.Unlock()
@@ -708,7 +715,7 @@ func (d *Driver) Stop(ctx context.Context) error {
 		cancel()
 	}
 	d.pipe.End(nil)
-	return nil
+	return stopErr
 }
 
 func (d *Driver) ordinarySession(id string) (*session, error) {

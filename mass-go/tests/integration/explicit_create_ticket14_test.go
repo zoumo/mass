@@ -135,8 +135,8 @@ func TestTicket14StructuredCreateAndValidation(t *testing.T) {
 			input := resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "first"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}}
 			for _, invalid := range []runtime.Input{
 				{},
-				{Content: []events.ContentBlock{events.ImageBlock{Data: "aA==", MIMEType: "image/png"}}},
-				{Content: []events.ContentBlock{events.TextBlock{Text: "hello", Annotations: &events.Annotations{Audience: []string{"user"}}}}},
+				{Content: []events.ContentBlock{{Image: &events.ContentBlockImage{Data: "aA==", MIMEType: "image/png"}}}},
+				{Content: []events.ContentBlock{{Text: &events.ContentBlockText{Text: "hello", Annotations: &events.Annotations{Audience: []string{"user"}}}}}},
 			} {
 				input.InitialInput = &invalid
 				_, err = svc.CreateSessionWithInput(ctx(t), input)

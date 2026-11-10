@@ -97,8 +97,11 @@ func (d *Driver) LoadSession(ctx context.Context, id string, address runtime.Add
 	if !filepath.IsAbs(config) || !filepath.IsAbs(cwd) {
 		return errors.New("explicit absolute config and project required")
 	}
-	if spec.SystemPrompt != "" || len(spec.AdditionalDirs) > 0 {
-		return runtime.UnsupportedOption("system_prompt_or_additional_dirs_unsupported", "Claude runtime does not support system prompts or additional directories")
+	if len(spec.AdditionalDirs) > 0 {
+		return runtime.UnsupportedOption("additional_dirs_unsupported", "Claude runtime does not support additional directories")
+	}
+	if err := (agent.OpenOptions{Cwd: spec.Cwd, AdditionalSystemPrompt: spec.SystemPrompt}).Validate(); err != nil {
+		return agentrelay.MapError(err)
 	}
 	if err := d.vault.Check(); err != nil {
 		return err
@@ -136,9 +139,10 @@ func (d *Driver) LoadSession(ctx context.Context, id string, address runtime.Add
 	native, err := d.provider.Resume(read, agent.ResumeOptions{
 		SessionID: id,
 		OpenOptions: agent.OpenOptions{
-			Cwd:        cwd,
-			Features:   agent.Features{AgentQuestions: effective.AgentQuestions},
-			MCPServers: servers,
+			Cwd:                    cwd,
+			AdditionalSystemPrompt: spec.SystemPrompt,
+			Features:               agent.Features{AgentQuestions: effective.AgentQuestions},
+			MCPServers:             servers,
 		},
 	})
 	if err != nil {

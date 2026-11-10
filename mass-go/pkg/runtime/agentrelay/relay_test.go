@@ -21,7 +21,7 @@ func TestMapEventPreservesSDKIdentityAndMeta(t *testing.T) {
 	at := time.Date(2026, 11, 10, 1, 2, 3, 4, time.UTC)
 	input := agent.AgentMessage{
 		MessageID: "message-1",
-		Content:   []agent.ContentBlock{agent.TextBlock{Text: "answer"}},
+		Content:   []agent.ContentBlock{{Text: &agent.ContentBlockText{Text: "answer"}}},
 	}
 	source := events.NewSource().WithWork("work-1")
 	mapped, err := MapEvent(
@@ -64,7 +64,7 @@ func TestMapEventNormalizesRawJSONWithoutLosingValues(t *testing.T) {
 	raw := json.RawMessage(`{"big":9007199254740993,"decimal":0.1000,"nested":{"array":[null,true,"kept"]}}`)
 	input := agent.AgentMessage{
 		MessageID: "message-1",
-		Content:   []agent.ContentBlock{agent.TextBlock{Text: "answer"}},
+		Content:   []agent.ContentBlock{{Text: &agent.ContentBlockText{Text: "answer"}}},
 	}
 	mapped, err := MapEvent(
 		runtime.Address{Namespace: "one", SessionName: "demo"},
@@ -475,7 +475,7 @@ func testEvent(t *testing.T) agent.Event {
 		ItemID:    "message-1",
 		Payload: agent.AgentMessage{
 			MessageID: "message-1",
-			Content:   []agent.ContentBlock{agent.TextBlock{Text: "answer"}},
+			Content:   []agent.ContentBlock{{Text: &agent.ContentBlockText{Text: "answer"}}},
 		},
 		Meta: map[string]any{"native": "raw"},
 	}
@@ -538,3 +538,9 @@ func (s *fakeSession) Done() <-chan struct{} {
 	return done
 }
 func (s *fakeSession) Err() error { return nil }
+
+func TestUnknownSDKCapabilityNeverImpliesSupport(t *testing.T) {
+	mapped := MapCapabilities(agent.Capabilities{agent.CapabilityTextInput: true, "futureUnknown": true})
+	require.True(t, mapped[agent.CapabilityTextInput])
+	require.False(t, mapped["futureUnknown"])
+}

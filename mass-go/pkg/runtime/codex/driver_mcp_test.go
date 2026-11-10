@@ -55,6 +55,10 @@ func TestCodexDriverTestPeer(t *testing.T) {
 			if err := enc.Encode(map[string]any{"id": envelope.ID, "result": result}); err != nil {
 				os.Exit(5)
 			}
+		case "thread/turns/list":
+			if err := enc.Encode(map[string]any{"id": envelope.ID, "result": map[string]any{"data": []any{}, "nextCursor": nil}}); err != nil {
+				os.Exit(5)
+			}
 		case "thread/read":
 			if err := enc.Encode(map[string]any{"id": envelope.ID, "result": map[string]any{"thread": codexPeerThread(cwd)}}); err != nil {
 				os.Exit(5)

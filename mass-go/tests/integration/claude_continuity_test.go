@@ -31,7 +31,7 @@ func (s *entrypointSuite) openClaudeContinuity() (resource.SessionRef, string) {
 
 func (s *entrypointSuite) TestClaudeContinuousInputSameProcess() {
 	ref, evidence := s.openClaudeContinuity()
-	unsupported := events.ImageBlock{Data: "AA==", MIMEType: "image/png"}
+	unsupported := events.ContentBlock{Image: &events.ContentBlockImage{Data: "AA==", MIMEType: "image/png"}}
 	err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{unsupported}}}, nil)
 	var public *transport.Error
 	s.Require().ErrorAs(err, &public)

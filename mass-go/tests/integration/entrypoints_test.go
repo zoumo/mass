@@ -331,7 +331,7 @@ func (s *entrypointSuite) basic(kind string) {
 	if kind == "claude" {
 		// Unsupported input after settlement still rejects before dispatch. Actual
 		// repeated text input uses the dedicated continuity peer below this suite.
-		image := events.ImageBlock{Data: "AA==", MIMEType: "image/png"}
+		image := events.ContentBlock{Image: &events.ContentBlockImage{Data: "AA==", MIMEType: "image/png"}}
 		e = workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{image}}}, nil)
 		var public *transport.Error
 		s.Require().ErrorAs(e, &public)

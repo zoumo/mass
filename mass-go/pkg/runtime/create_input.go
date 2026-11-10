@@ -2,8 +2,6 @@ package runtime
 
 import (
 	"encoding/json"
-
-	"github.com/zoumo/agent-sdk-go/agent"
 )
 
 // CopyInput validates and snapshots input with the SDK input codec before
@@ -30,16 +28,7 @@ func ValidateTextInput(input Input) error {
 		return err
 	}
 	for _, block := range input.Content {
-		switch value := block.(type) {
-		case agent.TextBlock:
-			if value.Annotations != nil {
-				return Unsupported()
-			}
-		case *agent.TextBlock:
-			if value == nil || value.Annotations != nil {
-				return Unsupported()
-			}
-		default:
+		if block.Text == nil || block.Text.Annotations != nil {
 			return Unsupported()
 		}
 	}
