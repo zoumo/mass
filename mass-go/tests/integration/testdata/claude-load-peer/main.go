@@ -11,6 +11,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println("2.1.258 (Claude Code)")
+		return
+	}
 	log, err := os.OpenFile(os.Getenv("LOAD_EVIDENCE"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		panic(err)
@@ -101,7 +105,7 @@ func main() {
 				if os.Getenv("LOAD_MODE") == "identity" {
 					observed = "22222222-2222-4222-8222-222222222222"
 				}
-				send(map[string]any{"type": "system", "subtype": "init", "session_id": observed, "cwd": cwd})
+				send(map[string]any{"type": "system", "subtype": "init", "session_id": observed, "cwd": cwd, "claude_code_version": "2.1.258"})
 			case "interrupt":
 				result()
 			}
@@ -112,7 +116,7 @@ func main() {
 		}
 		n++
 		link, _ = v["uuid"].(string)
-		evidence(map[string]any{"event": "input", "pid": os.Getpid(), "uuid": link, "input": n})
+		evidence(map[string]any{"event": "input", "pid": os.Getpid(), "uuid": link, "input": n, "priority": v["priority"], "shouldQuery": v["shouldQuery"]})
 		m := map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("live-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "same retained process", "apiBlockIndex": 0}}}}
 		if os.Getenv("LOAD_MODE") == "unlinked" {
 			delete(m, "user_message_uuid")

@@ -173,8 +173,14 @@ func TestNativePermissionDecisions(t *testing.T) {
 					require.Error(t, err)
 					answer := map[string]any{"outcome": "selected", "optionId": "reject-once"}
 					if scenario.mode == "update" {
+						// The SDK PermissionAnswer accepts the selected option only.
+						// Reject legacy input mutation before sending the valid answer.
+						_, err = svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), map[string]any{
+							"outcome": "selected", "optionId": "allow-once",
+							"updatedInput": map[string]any{"command": "echo corrected", "future": json.Number("9007199254740993")},
+						})
+						require.ErrorIs(t, err, runtime.ErrInvalidArgument)
 						answer["optionId"] = "allow-once"
-						answer["updatedInput"] = map[string]any{"command": "echo corrected", "future": json.Number("9007199254740993")}
 					}
 					receipt, err := svc.AnswerInteraction(ctx(t), ref, string(p.Interaction), answer)
 					require.NoError(t, err)

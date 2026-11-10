@@ -109,10 +109,10 @@ func (e SessionEvent) Validate() error {
 	if e.Replay != nil && e.Replay.LoadID == "" {
 		return errors.New("missing replay loadId")
 	}
-	if err := CheckDynamicJSON(e.Meta); err != nil {
-		return err
-	}
 	if replay, ok := historyPayload(e.payload); ok {
+		if err := CheckDynamicJSON(e.Meta); err != nil {
+			return err
+		}
 		if replay.LoadID == "" ||
 			replay.RetainedScope == "" ||
 			!oneOf(replay.Phase, "started", "native_completed", "failed", "canceled") {

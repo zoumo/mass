@@ -36,7 +36,7 @@
       "direction": "server",
       "data": {
         "type": "system",
-        "subtype": "init",
+        "subtype": "init", "claude_code_version": "2.1.258",
         "session_id": "claude-session",
         "cwd": "/synthetic",
         "model": "synthetic",
@@ -56,7 +56,7 @@
           "content": "hello"
         },
         "parent_tool_use_id": null,
-        "session_id": ""
+        "session_id": "", "priority": "next", "shouldQuery": true
       }
     },
     {

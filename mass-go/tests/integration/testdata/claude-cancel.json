@@ -37,6 +37,7 @@
       "data": {
         "type": "system",
         "subtype": "init",
+        "claude_code_version": "2.1.258",
         "session_id": "claude-session",
         "cwd": "/synthetic",
         "model": "synthetic",
@@ -56,7 +57,9 @@
           "content": "hello"
         },
         "parent_tool_use_id": null,
-        "session_id": ""
+        "session_id": "",
+        "priority": "next",
+        "shouldQuery": true
       }
     },
     {
@@ -113,6 +116,17 @@
         "result": "complete answer"
       },
       "delay_ms": 400
+    },
+    {
+      "ordinal": 9,
+      "channel": "protocol",
+      "direction": "server",
+      "data": {
+        "type": "system",
+        "subtype": "session_state_changed",
+        "session_id": "claude-session",
+        "state": "idle"
+      }
     }
   ]
 }

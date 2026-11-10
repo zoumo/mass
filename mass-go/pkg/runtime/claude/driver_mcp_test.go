@@ -120,7 +120,7 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 	data, err := os.ReadFile(capture)
 	require.NoError(t, err)
 	argv := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
-	require.Contains(t, argv, "--strict-mcp-config")
+	require.NotContains(t, argv, "--strict-mcp-config")
 	var raw string
 	for _, arg := range argv {
 		if value, ok := strings.CutPrefix(arg, "--mcp-config="); ok {

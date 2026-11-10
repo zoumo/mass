@@ -9,24 +9,27 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	sdk "github.com/zoumo/agent-sdk-go/claude"
+	"github.com/zoumo/agent-sdk-go/agent"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/agentrelay"
 )
 
 type nativeLoad struct {
-	id              string
-	cancel          context.CancelFunc
-	done            chan struct{}
-	cleanup         sync.Mutex
-	s               *session
-	unknown         bool
-	read            context.Context
-	source          events.Source
-	address         runtime.Address
+	id      string
+	cancel  context.CancelFunc
+	done    chan struct{}
+	cleanup sync.Mutex
+	s       *session
+	unknown bool
+	read    context.Context
+	source  events.Source
+	address runtime.Address
+
 	config, project string
-	coverage        sdk.SessionMessagesCoverage
+	coverage        nativeclaude.SessionMessagesCoverage
 	queries         int
 }
 
@@ -37,12 +40,22 @@ type loadEventIdentity struct {
 	nativeParentID string
 }
 
-func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, spec runtime.SessionSpec, loadID string) (result error) {
+func (d *Driver) LoadSession(ctx context.Context, id string, address runtime.Address, spec runtime.SessionSpec, loadID string) (result error) {
 	cwd := spec.Cwd
 	read, cancel := context.WithCancel(ctx)
-	h := &nativeLoad{id: loadID, cancel: cancel, done: make(chan struct{}), read: read, source: events.NewSource(), address: a, config: d.options.Env["CLAUDE_CONFIG_DIR"], project: cwd}
+	config := d.options.Env["CLAUDE_CONFIG_DIR"]
+	h := &nativeLoad{
+		id:      loadID,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		read:    read,
+		source:  events.NewSource(),
+		address: address,
+		config:  config,
+		project: cwd,
+	}
 	d.mu.Lock()
-	if !d.started || d.stopped || d.sessions[id] != nil || d.loads[id] != nil || len(d.sessions)+d.opening >= 128 {
+	if !d.started || d.stopped || d.stopping || d.sessions[id] != nil || d.loads[id] != nil || len(d.sessions)+d.opening >= 128 {
 		d.mu.Unlock()
 		cancel()
 		return runtime.FailedPrecondition("load unavailable")
@@ -52,6 +65,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	}
 	d.loads[id] = h
 	d.opening++
+	d.loading++
 	d.mu.Unlock()
 	defer func() {
 		if result != nil {
@@ -60,83 +74,132 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 				phase = "canceled"
 			}
 			meta := claudeReadEvidence(h)
-			var query *sdk.SessionQueryError
+			var query *nativeclaude.SessionQueryError
 			if errors.As(result, &query) {
 				meta["queryErrorKind"] = query.Kind
 			}
-			_ = d.loadEmit(h, loadEventIdentity{sessionID: id}, meta, events.HistoryReplay{LoadID: loadID, Phase: phase, RetainedScope: "all_retained_main_history", Error: map[string]any{"code": "unavailable", "reason": "native_history_failed", "message": "Native history read did not complete"}})
+			_ = d.loadEmit(h, loadEventIdentity{sessionID: id}, meta, events.HistoryReplay{
+				LoadID:        loadID,
+				Phase:         phase,
+				RetainedScope: "all_retained_main_history",
+				Error:         map[string]any{"code": "unavailable", "reason": "native_history_failed", "message": "Native history read did not complete"},
+			})
 		}
 		d.mu.Lock()
 		d.opening--
+		d.loading--
 		d.mu.Unlock()
 		cancel()
 		close(h.done)
 	}()
-	// Never consult inherited HOME/CLAUDE_CONFIG_DIR for an import source.
-	if !filepath.IsAbs(h.config) || !filepath.IsAbs(cwd) {
+
+	// Never infer an import source from inherited HOME or CLAUDE_CONFIG_DIR.
+	if !filepath.IsAbs(config) || !filepath.IsAbs(cwd) {
 		return errors.New("explicit absolute config and project required")
+	}
+	if spec.SystemPrompt != "" || len(spec.AdditionalDirs) > 0 {
+		return runtime.UnsupportedOption("system_prompt_or_additional_dirs_unsupported", "Claude runtime does not support system prompts or additional directories")
 	}
 	if err := d.vault.Check(); err != nil {
 		return err
 	}
+	scope := nativeclaude.SessionQueryScope{ConfigDir: config, ProjectDir: cwd, MaxEntries: 10000}
+	metadata, err := nativeclaude.GetSessionInfo(read, id, nativeclaude.SessionInfoOptions{
+		Scope:       scope,
+		MaxBytes:    16 << 20,
+		MaxLines:    10000,
+		SampleBytes: 64 << 10,
+	})
+	if err != nil {
+		return err
+	}
+	if metadata.Coverage.Status != "complete" ||
+		metadata.Coverage.ConfigDir != config ||
+		metadata.Coverage.ProjectDir != cwd ||
+		metadata.Info == nil ||
+		metadata.Info.SessionID != id ||
+		metadata.Info.Cwd == nil ||
+		!runtime.EqualNativePath(*metadata.Info.Cwd, cwd) {
+		return errors.New("native session metadata identity or project mismatch")
+	}
+
 	before, err := readClaudeHistory(read, h, id, 0, 10000)
 	if err != nil {
 		return err
 	}
-	d.mu.Lock()
-	h.unknown = true
-	d.mu.Unlock()
 	effective := runtime.ResolveSessionFeatures(spec.Features, supportedSessionFeatures)
-	options, err := sessionOptions(effective, spec.MCPServers, id, cwd, d.options)
+	servers, err := claudeMCPServers(spec.MCPServers, d.options)
 	if err != nil {
 		return err
 	}
-	native, err := sdk.Open(read, options)
+	h.unknown = true
+	native, err := d.provider.Resume(read, agent.ResumeOptions{
+		SessionID: id,
+		OpenOptions: agent.OpenOptions{
+			Cwd:        cwd,
+			Features:   agent.Features{AgentQuestions: effective.AgentQuestions},
+			MCPServers: servers,
+		},
+	})
 	if err != nil {
-		return err
+		h.unknown = failedNativeCleanup(err)
+		return mapClaudeError(err)
 	}
-	s := &session{client: native, id: id, address: a, source: h.source, ready: make(chan struct{}), done: make(chan struct{}), tools: map[string]string{}, results: map[string]string{}, submitted: map[string]bool{}, attribution: "unknown", requireLink: true}
+	if native.ID() != id {
+		cleanup := native.Close(context.Background())
+		h.unknown = cleanup != nil
+		return errors.Join(&runtime.OperationError{
+			Code:    "native_rejected",
+			Reason:  "resume_identity_mismatch",
+			Message: "Claude resumed a different native session",
+		}, mapClaudeError(cleanup))
+	}
+	s := &session{native: native, address: address, source: h.source}
 	d.mu.Lock()
-	h.s = s
-	h.unknown = false
+	if d.sessions[id] != nil {
+		d.mu.Unlock()
+		cleanup := native.Close(context.Background())
+		h.unknown = cleanup != nil
+		return errors.Join(errors.New("duplicate native identity"), mapClaudeError(cleanup))
+	}
 	d.sessions[id] = s
+	h.s = s
 	d.mu.Unlock()
-	close(s.ready)
-	observing := false
-	observe := func() {
-		if !observing {
-			observing = true
-			go d.observe(s, nil)
+	if err := d.startRelay(s); err != nil {
+		if cleanup := s.arcClose(); cleanup != nil {
+			return errors.Join(err, cleanup)
 		}
+		d.mu.Lock()
+		if d.sessions[id] == s {
+			delete(d.sessions, id)
+		}
+		d.mu.Unlock()
+		h.s = nil
+		h.unknown = false
+		return err
 	}
-	defer observe() // Failed verification still drains its owned process during cleanup.
-	for {
-		r, receiveErr := native.Receive(read)
-		if receiveErr != nil {
-			return receiveErr
-		}
-		if r.Event == nil {
-			continue
-		}
-		e := r.Event
-		if e.Type != "system" || e.Subtype != "init" {
-			return errors.New("unexpected native content before verified resume")
-		}
-		observed, known := native.SessionID()
-		if !known || observed != id || e.SessionID != id || native.RequestedResumeID() != id {
-			return errors.New("native resume identity mismatch")
-		}
-		value, decodeErr := decode(e.Raw)
-		if decodeErr != nil {
-			return decodeErr
-		}
-		init, ok := value.(map[string]any)
-		initCwd, cwdOK := init["cwd"].(string)
-		if !ok || !cwdOK || !runtime.EqualNativePath(initCwd, cwd) {
-			return errors.New("native resume project mismatch")
-		}
-		break
+	h.unknown = false
+	if err := d.vault.Save(id, address, spec, map[string]string{"id": id, "cwd": cwd}); err != nil {
+		return err
 	}
+
+	resumed := &events.ResumedSession{
+		SessionID:         id,
+		Capabilities:      agentrelay.MapCapabilities(native.Capabilities()),
+		EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: effective.AgentQuestionsEnabled()},
+	}
+	if err := d.loadEmit(h, loadEventIdentity{sessionID: id}, map[string]any{
+		"requestedSessionId": id,
+		"observedSessionId":  s.native.ID(),
+	}, events.HistoryReplay{
+		LoadID:         loadID,
+		Phase:          "started",
+		RetainedScope:  "all_retained_main_history",
+		ResumedSession: resumed,
+	}); err != nil {
+		return err
+	}
+
 	baseline, err := readClaudeHistory(read, h, id, 0, 10000)
 	if err != nil {
 		return err
@@ -144,14 +207,6 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if !reflect.DeepEqual(before.Messages, baseline.Messages) {
 		return errors.New("native retained history changed during resume")
 	}
-	if err := d.vault.Save(id, a, spec, map[string]string{"id": id, "cwd": cwd}); err != nil {
-		return err
-	}
-	resumed := &events.ResumedSession{SessionID: id, Capabilities: caps(), EffectiveFeatures: events.ResumedSessionFeatures{AgentQuestions: effective.AgentQuestionsEnabled()}}
-	if err := d.loadEmit(h, loadEventIdentity{sessionID: id}, map[string]any{"requestedSessionId": id, "observedSessionId": s.id}, events.HistoryReplay{LoadID: loadID, Phase: "started", RetainedScope: "all_retained_main_history", ResumedSession: resumed}); err != nil {
-		return err
-	}
-	observe()
 	tools := map[string]retainedTool{}
 	// Each offset query scans the full bounded source. Ordered raw+UUID comparison
 	// detects observed drift; separate calls have no atomic snapshot guarantee.
@@ -161,11 +216,13 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 			return err
 		}
 		end := min(offset+100, len(baseline.Messages))
-		if offset > len(baseline.Messages) || !sameClaudeCoverage(baseline.Coverage, page.Coverage) || !reflect.DeepEqual(page.Messages, baseline.Messages[offset:end]) {
+		if offset > len(baseline.Messages) ||
+			!sameClaudeCoverage(baseline.Coverage, page.Coverage) ||
+			!reflect.DeepEqual(page.Messages, baseline.Messages[offset:end]) {
 			return errors.New("native ordered history changed across offset reads")
 		}
-		for _, m := range page.Messages {
-			if err := d.loadMessage(h, id, m, tools, offset); err != nil {
+		for _, message := range page.Messages {
+			if err := d.loadMessage(h, id, message, tools, offset); err != nil {
 				return err
 			}
 		}
@@ -191,35 +248,53 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 		return errors.New("native ordered history changed during delivery")
 	}
 	s.mu.Lock()
-	healthy := s.err == nil && !s.active && !s.sending && !s.closing && s.client.Err() == nil
+	healthy := s.err == nil && !s.closing && native.Err() == nil && s.relay.Err() == nil
 	s.mu.Unlock()
 	if !healthy {
 		return errors.New("resumed binding became unsettled")
 	}
 	meta := claudeReadEvidence(h)
 	meta["verification"] = "ordered_raw_uuid_revalidation"
-	return d.loadEmit(h, loadEventIdentity{sessionID: id}, meta, events.HistoryReplay{LoadID: loadID, Phase: "native_completed", RetainedScope: "all_retained_main_history", ResumedSession: resumed})
+	return d.loadEmit(h, loadEventIdentity{sessionID: id}, meta, events.HistoryReplay{
+		LoadID:         loadID,
+		Phase:          "native_completed",
+		RetainedScope:  "all_retained_main_history",
+		ResumedSession: resumed,
+	})
 }
 
-func readClaudeHistory(ctx context.Context, h *nativeLoad, id string, offset, limit int) (sdk.SessionMessagesPage, error) {
-	page, err := sdk.GetSessionMessages(ctx, id, sdk.SessionMessagesOptions{Scope: sdk.SessionQueryScope{ConfigDir: h.config, ProjectDir: h.project, MaxEntries: 10000}, Offset: offset, Limit: limit, MaxMessages: 10000, MaxBytes: 64 << 20, MaxLines: 100000, MaxRecords: 100000, MaxLineBytes: 8 << 20})
+func readClaudeHistory(ctx context.Context, h *nativeLoad, id string, offset, limit int) (nativeclaude.SessionMessagesPage, error) {
+	page, err := nativeclaude.GetSessionMessages(ctx, id, nativeclaude.SessionMessagesOptions{
+		Scope:        nativeclaude.SessionQueryScope{ConfigDir: h.config, ProjectDir: h.project, MaxEntries: 10000},
+		Offset:       offset,
+		Limit:        limit,
+		MaxMessages:  10000,
+		MaxBytes:     64 << 20,
+		MaxLines:     100000,
+		MaxRecords:   100000,
+		MaxLineBytes: 8 << 20,
+	})
 	h.coverage = page.Coverage
 	h.queries++
 	if err != nil {
 		return page, err
 	}
-	if page.Coverage.Status != "complete" || page.Coverage.Atomic || page.Coverage.SessionID != id || page.Coverage.ConfigDir != h.config || page.Coverage.ProjectDir != h.project {
+	if page.Coverage.Status != "complete" ||
+		page.Coverage.Atomic ||
+		page.Coverage.SessionID != id ||
+		page.Coverage.ConfigDir != h.config ||
+		page.Coverage.ProjectDir != h.project {
 		return page, errors.New("native source coverage unverified")
 	}
-	for _, m := range page.Messages {
-		if m.SessionID != id || m.UUID == "" {
+	for _, message := range page.Messages {
+		if message.SessionID != id || message.UUID == "" {
 			return page, errors.New("native record identity mismatch")
 		}
-		v, err := decode(m.Raw)
+		value, err := decode(message.Raw)
 		if err != nil {
 			return page, err
 		}
-		raw, ok := v.(map[string]any)
+		raw, ok := value.(map[string]any)
 		if !ok {
 			return page, errors.New("native record invalid")
 		}
@@ -235,21 +310,45 @@ func readClaudeHistory(ctx context.Context, h *nativeLoad, id string, offset, li
 
 // Keep partial scan facts without leaking SDK error Raw, Path or OS diagnostics.
 func claudeReadEvidence(h *nativeLoad) map[string]any {
-	c := h.coverage
-	return map[string]any{"atomic": false, "scan": "full_file_per_call", "queries": h.queries, "coverage": map[string]any{"status": c.Status, "bytes": c.Bytes, "lines": c.Lines, "records": c.Records, "entries": c.Entries}}
+	coverage := h.coverage
+	return map[string]any{
+		"atomic":  false,
+		"scan":    "full_file_per_call",
+		"queries": h.queries,
+		"coverage": map[string]any{
+			"status":  coverage.Status,
+			"bytes":   coverage.Bytes,
+			"lines":   coverage.Lines,
+			"records": coverage.Records,
+			"entries": coverage.Entries,
+		},
+	}
 }
 
-func sameClaudeCoverage(a, b sdk.SessionMessagesCoverage) bool {
-	a.Limits = sdk.SessionMessagesOptions{}
-	b.Limits = sdk.SessionMessagesOptions{}
-	return reflect.DeepEqual(a, b)
+func sameClaudeCoverage(left, right nativeclaude.SessionMessagesCoverage) bool {
+	left.Limits = nativeclaude.SessionMessagesOptions{}
+	right.Limits = nativeclaude.SessionMessagesOptions{}
+	return reflect.DeepEqual(left, right)
 }
 
-func (d *Driver) loadEmit(h *nativeLoad, identity loadEventIdentity, meta map[string]any, p events.Payload) error {
+func (d *Driver) loadEmit(h *nativeLoad, identity loadEventIdentity, meta map[string]any, payload events.Payload) error {
 	if meta == nil {
 		meta = map[string]any{}
 	}
-	base := events.EventBase{EventID: uuid.NewString(), Namespace: h.address.Namespace, SessionName: h.address.SessionName, SessionID: identity.sessionID, ItemID: identity.itemID, Time: time.Now().UTC(), Meta: meta, Replay: &events.ReplaySource{LoadID: h.id, NativeRecordID: identity.nativeRecordID, NativeParentID: identity.nativeParentID}}
+	base := events.EventBase{
+		EventID:     uuid.NewString(),
+		Namespace:   h.address.Namespace,
+		SessionName: h.address.SessionName,
+		SessionID:   identity.sessionID,
+		ItemID:      identity.itemID,
+		Time:        time.Now().UTC(),
+		Meta:        meta,
+		Replay: &events.ReplaySource{
+			LoadID:         h.id,
+			NativeRecordID: identity.nativeRecordID,
+			NativeParentID: identity.nativeParentID,
+		},
+	}
 	if nativeTime, ok := meta["nativeTime"].(string); ok {
 		at, err := time.Parse(time.RFC3339Nano, nativeTime)
 		if err != nil {
@@ -257,15 +356,15 @@ func (d *Driver) loadEmit(h *nativeLoad, identity loadEventIdentity, meta map[st
 		}
 		base.Time = at
 	}
-	e, err := events.NewEvent(base, p, h.source)
+	event, err := events.NewEvent(base, payload, h.source)
 	if err != nil {
 		return err
 	}
 	ctx := h.read
-	if marker, ok := p.(events.HistoryReplay); ok && (marker.Phase == "failed" || marker.Phase == "canceled") {
+	if marker, ok := payload.(events.HistoryReplay); ok && (marker.Phase == "failed" || marker.Phase == "canceled") {
 		ctx = context.Background()
 	}
-	return d.pipe.Send(ctx, e)
+	return d.pipe.Send(ctx, event)
 }
 
 func (d *Driver) CancelHistoryLoad(ctx context.Context, id, loadID string) error {
@@ -283,13 +382,10 @@ func (d *Driver) CancelHistoryLoad(ctx context.Context, id, loadID string) error
 	}
 	h.cleanup.Lock()
 	defer h.cleanup.Unlock()
-	d.mu.Lock()
-	unknown, s := h.unknown, h.s
-	d.mu.Unlock()
-	if unknown {
+	if h.unknown {
 		return errors.New("native resume outcome unknown; original ownership retained")
 	}
-	if s == nil {
+	if h.s == nil {
 		return nil
 	}
 	return d.CloseSession(ctx, id)
