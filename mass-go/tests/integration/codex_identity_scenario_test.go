@@ -23,7 +23,7 @@ func TestExpandCodexIdentityReadsHandlesInterleavedOpens(t *testing.T) {
 	require.Equal(t, "second", codexScenarioThreadID(frames[3]))
 	require.Equal(t, "first", codexScenarioThreadID(frames[6]))
 	for index, value := range frames {
-		require.Equal(t, int(index+1), value.(map[string]any)["ordinal"])
+		require.Equal(t, index+1, value.(map[string]any)["ordinal"])
 	}
 }
 

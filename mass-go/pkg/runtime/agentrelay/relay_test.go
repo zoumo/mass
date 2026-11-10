@@ -45,7 +45,12 @@ func TestMapEventPreservesSDKIdentityAndMeta(t *testing.T) {
 	require.Equal(t, at, mapped.Time)
 	require.Equal(t, string(agent.EventAgentMessage), mapped.Type())
 	require.Equal(t, input, mapped.Payload())
-	require.Equal(t, map[string]any{"native": map[string]any{"id": "raw-1", "raw": json.RawMessage(`{"large":9007199254740993}`)}}, mapped.Meta)
+	require.Equal(t, map[string]any{
+		"native": map[string]any{
+			"id":  "raw-1",
+			"raw": map[string]any{"large": json.Number("9007199254740993")},
+		},
+	}, mapped.Meta)
 	encoded, err := json.Marshal(mapped)
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), "9007199254740993")
@@ -431,6 +436,16 @@ func TestReceiptCapabilityAndErrorMapping(t *testing.T) {
 	var operation *runtime.OperationError
 	require.ErrorAs(t, mapped, &operation)
 	require.Equal(t, "native_rejected", operation.Code)
+
+	mapped = MapError(&agent.Error{
+		Code:    agent.ErrorFailedPrecondition,
+		Reason:  "question_not_pending",
+		Message: "question is not pending",
+	})
+	require.ErrorAs(t, mapped, &operation)
+	require.Equal(t, "conflict", operation.Code)
+	require.Equal(t, "question_not_pending", operation.Reason)
+	require.Equal(t, "question is not pending", operation.Message)
 	require.NotErrorIs(t, MapError(io.EOF), operation)
 }
 

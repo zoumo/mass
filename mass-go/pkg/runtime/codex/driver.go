@@ -266,8 +266,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	if len(spec.AdditionalDirs) > 0 {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("additional_dirs_unsupported", "Additional directories are not supported by this Codex runtime"))
 	}
-	mcpServers, err := codexSessionMCPServers(spec.MCPServers, d.options)
-	if err != nil {
+	if err := validateCodexSessionMCPIsolation(spec.MCPServers); err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	reader, err := d.reader()
@@ -292,9 +291,8 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	openOptions := agent.OpenOptions{
-		Cwd:        spec.Cwd,
-		Features:   agentFeatures(spec.Features),
-		MCPServers: mcpServers,
+		Cwd:      spec.Cwd,
+		Features: agentFeatures(spec.Features),
 	}
 	dispatchCtx := context.WithoutCancel(ctx)
 	var native agent.Session
@@ -522,14 +520,7 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	}
 	s.cancelOp.Lock()
 	defer s.cancelOp.Unlock()
-	if err := s.observationError(); err != nil {
-		return runtime.CancelReceipt{}, err
-	}
 	s.controlMu.Lock()
-	if s.activeWork == "" {
-		s.controlMu.Unlock()
-		return runtime.CancelReceipt{Result: "noActiveWork"}, nil
-	}
 	if receipt, cancelErr, ok := s.cachedCancelLocked(); ok {
 		s.controlMu.Unlock()
 		return receipt, cancelErr
@@ -538,6 +529,9 @@ func (d *Driver) Cancel(ctx context.Context, id string) (runtime.CancelReceipt, 
 	s.controlMu.Unlock()
 	if _, err := d.ordinarySession(id); err != nil {
 		return runtime.CancelReceipt{}, err
+	}
+	if work == "" {
+		return runtime.CancelReceipt{Result: "noActiveWork"}, nil
 	}
 	if err := ctx.Err(); err != nil {
 		return runtime.CancelReceipt{}, fmt.Errorf("not_sent: interrupt: %w", err)

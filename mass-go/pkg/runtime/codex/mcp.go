@@ -18,14 +18,14 @@ import (
 
 var codexMCPEnvironmentReference = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
 
-func codexSessionMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessConfig) ([]agent.MCPServer, error) {
+func validateCodexSessionMCPIsolation(configured *[]runtime.MCPServer) error {
 	if configured != nil {
-		return nil, codexMCPUnsupported(
+		return codexMCPUnsupported(
 			"mcp_isolation_unavailable",
-			errors.New("Codex MCP isolation cannot be enforced by the pinned agent SDK"),
+			errors.New("codex MCP isolation cannot be enforced by the pinned agent SDK"),
 		)
 	}
-	return nil, nil
+	return nil
 }
 
 func codexMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessConfig) ([]agent.MCPServer, error) {

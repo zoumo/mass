@@ -218,7 +218,7 @@ func expandCodexIdentityReads(scenario map[string]any) {
 	}
 	expanded := make([]any, 0, len(frames)+4)
 	openRequests := map[string]struct{}{}
-	for index := 0; index < len(frames); index++ {
+	for index := range frames {
 		frame, ok := frames[index].(map[string]any)
 		if !ok {
 			expanded = append(expanded, frames[index])

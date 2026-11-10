@@ -19,6 +19,7 @@ func TestParseAnswerRejectsUnsupportedFields(t *testing.T) {
 			"action":   "accept",
 		},
 		"form extra": {"action": "accept", "content": map[string]any{}, "optionId": "allow-once"},
+		"form typo":  {"action": "cancel", "typo": 1},
 		"form outcome": {
 			"action":  "accept",
 			"content": map[string]any{},

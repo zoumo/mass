@@ -14,6 +14,10 @@ import (
 const sessionID = "14141414-1414-4141-8141-141414141414"
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println("2.1.258 (Claude Code)")
+		return
+	}
 	dir := os.Getenv("PEER_DIR")
 	cwd, err := os.Getwd()
 	must(err)
@@ -47,13 +51,13 @@ func main() {
 	for _, arg := range os.Args[1:] {
 		resumed = resumed || strings.HasPrefix(arg, "--resume=")
 	}
-	waitResumeInput := resumed && os.Getenv("RESUME_INPUT_MODE") != "" && len(saved) == 1
+	mode := os.Getenv("RESUME_INPUT_MODE")
 	init := func() {
 		id, work := sessionID, cwd
-		if waitResumeInput && os.Getenv("RESUME_INPUT_MODE") == "wrong-id" {
+		if resumed && mode == "wrong-id" {
 			id = "20202020-2020-4020-8020-202020202020"
 		}
-		if waitResumeInput && os.Getenv("RESUME_INPUT_MODE") == "wrong-cwd" {
+		if resumed && mode == "wrong-cwd" {
 			work = filepath.Dir(cwd)
 		}
 		log("init", map[string]any{"sessionId": id, "cwd": work})
@@ -71,7 +75,7 @@ func main() {
 				r := v["request"].(map[string]any)
 				log(r["subtype"].(string), nil)
 				send(map[string]any{"type": "control_response", "response": map[string]any{"subtype": "success", "request_id": v["request_id"], "response": map[string]any{}}})
-				if r["subtype"] == "initialize" && resumed && !waitResumeInput {
+				if r["subtype"] == "initialize" && !(resumed && mode == "hold-init") {
 					init()
 				}
 				continue
@@ -105,23 +109,10 @@ func main() {
 				must(json.NewEncoder(f).Encode(row))
 			}
 			must(f.Close())
-			if !resumed {
-				init()
-				resumed = true
-			}
-			if waitResumeInput && strings.HasPrefix(os.Getenv("RESUME_INPUT_MODE"), "wrong-") {
-				// Keep the mismatch as the first identity-bearing frame; a preceding
-				// result would correctly anchor the SDK's root and fence a foreign init.
-				init()
-				waitResumeInput = false
-			}
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "running"})
 			send(map[string]any{"type": "assistant", "session_id": sessionID, "user_message_uuid": v["uuid"], "message": rows[1]["message"]})
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": v["uuid"]})
-			if waitResumeInput && os.Getenv("RESUME_INPUT_MODE") != "no-init" {
-				// Deliberately complete before init/receipt to test buffered terminal facts.
-				init()
-				waitResumeInput = false
-			}
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 			continue
 		}
 		method, _ := v["method"].(string)

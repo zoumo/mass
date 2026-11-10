@@ -198,8 +198,15 @@ func MapError(err error) error {
 			Message: "Agent operation failed",
 		}
 	}
+	code := string(native.Code)
+	switch native.Code {
+	case agent.ErrorFailedPrecondition, agent.ErrorClosed:
+		// MASS classifies a rejected current-state operation as a public
+		// conflict so HTTP keeps its established 409 response.
+		code = "conflict"
+	}
 	mapped := &runtime.OperationError{
-		Code:    string(native.Code),
+		Code:    code,
 		Reason:  native.Reason,
 		Message: native.Message,
 	}

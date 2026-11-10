@@ -85,8 +85,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := d.vault.Check(); err != nil {
 		return err
 	}
-	mcpServers, err := codexSessionMCPServers(spec.MCPServers, d.options)
-	if err != nil {
+	if err := validateCodexSessionMCPIsolation(spec.MCPServers); err != nil {
 		return err
 	}
 	before, err := reader.ReadThread(readCtx, ct.ThreadReadParams{ThreadID: id, IncludeTurns: ct.Some(false)})
@@ -110,9 +109,8 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	native, err := provider.Resume(readCtx, agent.ResumeOptions{
 		SessionID: id,
 		OpenOptions: agent.OpenOptions{
-			Cwd:        cwd,
-			Features:   agentFeatures(spec.Features),
-			MCPServers: mcpServers,
+			Cwd:      cwd,
+			Features: agentFeatures(spec.Features),
 		},
 	})
 	if err != nil {

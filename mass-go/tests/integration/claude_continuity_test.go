@@ -243,7 +243,7 @@ func (s *entrypointSuite) TestClaudeConfirmedChildProvenance() {
 	s.Equal("live", meta["origin"])
 	raw, ok := meta["nativeRaw"].(string)
 	s.Require().True(ok, "original received envelope must survive SSE")
-	s.JSONEq(`{"type":"assistant","session_id":"claude-continuity","parent_tool_use_id":"child-tool","message":{"id":"confirmed-child","role":"assistant","content":[{"type":"text","text":"confirmed child fact","apiBlockIndex":0}]}}`, raw)
+	s.JSONEq(`{"type":"assistant","session_id":"44444444-4444-4444-8444-444444444444","parent_tool_use_id":"child-tool","message":{"id":"confirmed-child","role":"assistant","content":[{"type":"text","text":"confirmed child fact","apiBlockIndex":0}]}}`, raw)
 	page := s.history(ref)
 	s.Require().Len(page.Events, 3)
 	s.Equal(child.EventID, page.Events[1].EventID)

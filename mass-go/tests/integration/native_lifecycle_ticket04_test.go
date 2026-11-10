@@ -324,11 +324,15 @@ func TestTicket04CancelDispatchEvidence(t *testing.T) {
 					require.Equal(t, first.err, secondErr, "failed writes must not be replayed")
 				}
 				receipt, err := d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("steer current work")}})
-				if kind != "codex" || control == "write-failure" {
+				if control == "write-failure" {
 					require.Error(t, err)
 				} else {
 					require.NoError(t, err, "the SDK decides whether a new input may join current work")
-					require.Equal(t, agent.InputAppliedCurrentWork, receipt.Result)
+					expected := agent.InputAppliedCurrentWork
+					if kind == "claude" {
+						expected = agent.InputAppliedBestEffort
+					}
+					require.Equal(t, expected, receipt.Result)
 				}
 			})
 		}
@@ -346,7 +350,7 @@ func TestTicket04ClaudeCloseReturnsSDKFailureWithBackloggedEOF(t *testing.T) {
 	for {
 		e, err := stream.Next(ctx(t))
 		require.NoError(t, err)
-		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle && state.StopReason == "success" {
+		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
 			break
 		}
 	}

@@ -236,14 +236,10 @@ func TestCodexMCPConfigurationRejectsInvalidResolvedHeaderValues(t *testing.T) {
 }
 
 func TestCodexSessionMCPServersRejectsExplicitIsolationGap(t *testing.T) {
-	options := codexMCPOptions(t)
-
-	servers, err := codexSessionMCPServers(nil, options)
-	require.NoError(t, err)
-	require.Nil(t, servers)
+	require.NoError(t, validateCodexSessionMCPIsolation(nil))
 
 	empty := []runtime.MCPServer{}
-	_, err = codexSessionMCPServers(&empty, options)
+	err := validateCodexSessionMCPIsolation(&empty)
 	require.Error(t, err)
 	var public *runtime.OperationError
 	require.ErrorAs(t, err, &public)
@@ -251,7 +247,7 @@ func TestCodexSessionMCPServersRejectsExplicitIsolationGap(t *testing.T) {
 	require.Equal(t, "mcp_isolation_unavailable", public.Reason)
 
 	explicit := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
-	_, err = codexSessionMCPServers(&explicit, options)
+	err = validateCodexSessionMCPIsolation(&explicit)
 	require.Error(t, err)
 	require.ErrorAs(t, err, &public)
 	require.Equal(t, "unsupported", public.Code)

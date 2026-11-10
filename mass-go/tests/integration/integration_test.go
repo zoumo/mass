@@ -263,9 +263,9 @@ func (integrationSuite *IntegrationSuite) TestCodexIntegration() {
 			require.NoError(t, json.Unmarshal(raw, &meta))
 		}
 		if event.Type() == "user.message" {
-			var codex map[string]json.RawMessage
-			require.NoError(t, json.Unmarshal(meta["codex"], &codex))
-			require.JSONEq(t, `"turn-1"`, string(codex["turnId"]))
+			var codexMeta map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(meta["codex"], &codexMeta))
+			require.JSONEq(t, `"turn-1"`, string(codexMeta["turnId"]))
 		}
 		// Only native provenance is opaque; sibling metadata must not expose work association.
 		delete(meta, "codex")

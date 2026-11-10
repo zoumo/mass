@@ -41,6 +41,8 @@ var ticket20Build struct {
 	out []byte
 }
 
+const ticket20SessionID = "14141414-1414-4141-8141-141414141414"
+
 func ticket20Peer(t *testing.T) string {
 	t.Helper()
 	ticket20Build.Do(func() {
@@ -123,13 +125,17 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 				// Release a gated peer even when a public assertion fails.
 				defer func() { assert.NoError(t, os.WriteFile(release, nil, 0o600)) }()
 			}
+			config := t.TempDir()
+			key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(work, "-")
+			project := filepath.Join(config, "projects", key)
+			require.NoError(t, os.MkdirAll(project, 0o700))
 			svc := service.New(st, st, runtime.NewRegistry(factories))
 			t.Cleanup(func() {
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				assert.NoError(t, svc.Shutdown(cleanup))
 			})
-			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "RESUME_INPUT_MODE": scenario.mode, "SAVED_TRANSCRIPT": filepath.Join(native, "transcript.jsonl")}
+			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "RESUME_INPUT_MODE": scenario.mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT": filepath.Join(project, ticket20SessionID+".jsonl")}
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": env}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
@@ -240,9 +246,6 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 				require.NoError(t, e)
 				require.JSONEq(t, string(persisted), string(wire))
 				require.Equal(t, events.Source{}, streamed.Source())
-				if kind == "claude" {
-					require.Equal(t, got.InitialInputReceipt.Submission, streamed.Meta["claude"].(map[string]any)["submission"])
-				}
 				break
 			}
 			_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("continued input")}})
@@ -319,15 +322,14 @@ func ticket20Setup(t *testing.T, kind, mode string) *ticket20Fixture {
 	key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(f.work, "-")
 	project := filepath.Join(config, "projects", key)
 	require.NoError(t, os.MkdirAll(project, 0o700))
-	const id = "14141414-1414-4141-8141-141414141414"
-	f.ref = resource.SessionRef{SessionID: id}
-	env := map[string]any{"PEER_KIND": kind, "PEER_DIR": f.native, "WORK_DIR": f.work, "RESUME_INPUT_MODE": mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT": filepath.Join(project, id+".jsonl")}
+	f.ref = resource.SessionRef{SessionID: ticket20SessionID}
+	env := map[string]any{"PEER_KIND": kind, "PEER_DIR": f.native, "WORK_DIR": f.work, "RESUME_INPUT_MODE": mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT": filepath.Join(project, ticket20SessionID+".jsonl")}
 	f.runtimeResource = resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": ticket20Peer(t), "envPolicy": "replace", "env": env}}}
 	ticket20Open(t, f, true)
 	first := runtime.Input{Content: []events.ContentBlock{events.Text("original input")}}
 	created, err := f.svc.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "original"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: f.work}}, InitialInput: &first})
 	require.NoError(t, err)
-	require.Equal(t, id, created.Status.SessionID)
+	require.Equal(t, ticket20SessionID, created.Status.SessionID)
 	ticket20Wait(t, f, 1)
 	_, err = f.svc.CloseSession(ctx(t), f.ref)
 	require.NoError(t, err)
@@ -380,7 +382,7 @@ func ticket20Released(t *testing.T, f *ticket20Fixture) {
 	}
 }
 
-func TestTicket20SubmittedMismatchIsUnknownNotUnsent(t *testing.T) {
+func TestTicket20ResumeIdentityMismatchFailsBeforeInput(t *testing.T) {
 	for _, mode := range []string{"wrong-id", "wrong-cwd"} {
 		t.Run(mode, func(t *testing.T) {
 			f := ticket20Setup(t, "claude", mode)
@@ -393,8 +395,8 @@ func TestTicket20SubmittedMismatchIsUnknownNotUnsent(t *testing.T) {
 			require.Error(t, err)
 			var op *runtime.OperationError
 			require.ErrorAs(t, err, &op)
-			require.Equal(t, "outcome_unknown", op.Code)
-			require.Equal(t, "resume_input_unverified", op.Reason)
+			require.Equal(t, "native_rejected", op.Code)
+			require.Equal(t, "resume_identity_conflict", op.Reason)
 			require.Nil(t, got.InitialInputReceipt)
 			state, err := f.svc.GetSession(f.ref)
 			require.NoError(t, err)
@@ -414,7 +416,7 @@ func TestTicket20SubmittedMismatchIsUnknownNotUnsent(t *testing.T) {
 					texts = append(texts, call.Params["text"].(string))
 				}
 			}
-			require.Equal(t, []string{"original input", "already sent"}, texts, "native write happened; release cannot imply NotSent")
+			require.Equal(t, []string{"original input"}, texts, "identity mismatch must be rejected before input dispatch")
 			f.close()
 			ticket20Released(t, f)
 		})
@@ -431,7 +433,13 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			server := httptest.NewServer(h)
 			t.Cleanup(server.Close)
 			path := filepath.Join(t.TempDir(), "new-input.json")
-			require.NoError(t, os.WriteFile(path, []byte(`{"content":[{"type":"text","text":"new "},{"type":"text","text":"explicit input"}]}`), 0o600))
+			input := `{"content":[{"type":"text","text":"new explicit input"}]}`
+			expectedBlocks := 1
+			if kind == "codex" {
+				input = `{"content":[{"type":"text","text":"new "},{"type":"text","text":"explicit input"}]}`
+				expectedBlocks = 2
+			}
+			require.NoError(t, os.WriteFile(path, []byte(input), 0o600))
 			cmd := exec.CommandContext(ctx(t), ctl, "--url", server.URL, "-o", "json", "session", "resume", "original", "-n", "default", "--input-file", path)
 			raw, err := cmd.CombinedOutput()
 			require.NoError(t, err, "%s", raw)
@@ -443,10 +451,16 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			require.Equal(t, "new explicit input", events.TextOf(before.Events[1].Payload().(events.AgentMessage).Content[0]))
 			for _, call := range ticket20Wire(t, f) {
 				if call.Method == "input" && call.Params["text"] == "new explicit input" {
+					if kind == "claude" {
+						require.Equal(t, "new explicit input", call.Params["content"])
+						continue
+					}
 					blocks := call.Params["content"].([]any)
-					require.Len(t, blocks, 2, "structured input must not be flattened")
-					require.Equal(t, "new ", blocks[0].(map[string]any)["text"])
-					require.Equal(t, "explicit input", blocks[1].(map[string]any)["text"])
+					require.Len(t, blocks, expectedBlocks, "supported input must not be flattened")
+					if kind == "codex" {
+						require.Equal(t, "new ", blocks[0].(map[string]any)["text"])
+						require.Equal(t, "explicit input", blocks[1].(map[string]any)["text"])
+					}
 				}
 			}
 			_, err = f.svc.CloseSession(ctx(t), f.ref)
@@ -469,15 +483,9 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 			body, readErr := io.ReadAll(resp.Body)
 			assert.NoError(t, resp.Body.Close())
 			require.NoError(t, readErr)
-			if kind == "claude" {
-				require.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode, "%s", body)
-				require.Contains(t, string(body), `"reason":"resume_identity_unobservable"`)
-				_, err = f.svc.ResumeSessionWithInput(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
-			} else {
-				require.Equal(t, http.StatusOK, resp.StatusCode, "%s", body)
-				require.NotContains(t, string(body), "initialInputReceipt")
-				_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
-			}
+			require.Equal(t, http.StatusOK, resp.StatusCode, "%s", body)
+			require.NotContains(t, string(body), "initialInputReceipt")
+			_, err = f.svc.SendPrompt(ctx(t), f.ref, runtime.Input{Content: []events.ContentBlock{events.Text("after restart")}})
 			require.NoError(t, err)
 			ticket20Wait(t, f, 3)
 			_, err = f.svc.CloseSession(ctx(t), f.ref)
@@ -531,10 +539,10 @@ func TestTicket20StructuredCLIAndDurableRecoveryNeverReplay(t *testing.T) {
 	}
 }
 
-func TestTicket20PendingInputCallerAbandonRetainsStopOwnership(t *testing.T) {
+func TestTicket20ResumeCallerAbandonRetainsStopOwnership(t *testing.T) {
 	for _, stop := range []string{"Stop", "Shutdown"} {
 		t.Run(stop, func(t *testing.T) {
-			f := ticket20Setup(t, "claude", "no-init")
+			f := ticket20Setup(t, "claude", "hold-init")
 			before, err := f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{})
 			require.NoError(t, err)
 			caller, cancel := context.WithCancel(ctx(t))
@@ -545,12 +553,13 @@ func TestTicket20PendingInputCallerAbandonRetainsStopOwnership(t *testing.T) {
 				result <- e
 			}()
 			require.Eventually(t, func() bool {
+				opened := 0
 				for _, call := range ticket20Wire(t, f) {
-					if call.Method == "input" && call.Params["text"] == "new pending input" {
-						return true
+					if call.Method == "opened" {
+						opened++
 					}
 				}
-				return false
+				return opened == 2
 			}, 5*time.Second, 10*time.Millisecond)
 			cancel()
 			select {
@@ -617,34 +626,34 @@ func TestTicket20UnsupportedCapabilityHasNoNativeSideEffects(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, wire, actual)
 			_, err = f.svc.ResumeSession(ctx(t), f.ref)
-			if kind == "claude" {
-				require.ErrorAs(t, err, &op)
-				require.Equal(t, "unsupported", op.Code)
-				require.Equal(t, "resume_identity_unobservable", op.Reason)
-			} else {
-				require.NoError(t, err, "absence of opt-in capability must not prohibit ordinary restore")
-			}
+			require.NoError(t, err, "absence of opt-in capability must not prohibit ordinary restore")
 			f.close()
 			ticket20Released(t, f)
 		})
 	}
 }
 
-func TestTicket20ClaudeZeroInputResumeRequiresNativeIdentity(t *testing.T) {
-	f := ticket20Setup(t, "claude", "no-init")
+func TestTicket20ClaudeZeroInputResumeUsesNativeIdentity(t *testing.T) {
+	f := ticket20Setup(t, "claude", "")
 	before, err := os.ReadFile(filepath.Join(f.native, "wire.jsonl"))
 	require.NoError(t, err)
-	_, err = f.svc.ResumeSession(ctx(t), f.ref)
-	var public *runtime.OperationError
-	require.ErrorAs(t, err, &public)
-	require.Equal(t, "unsupported", public.Code)
-	require.Equal(t, "resume_identity_unobservable", public.Reason)
+	resumed, err := f.svc.ResumeSession(ctx(t), f.ref)
+	require.NoError(t, err)
+	require.Equal(t, f.ref.SessionID, resumed.Status.SessionID)
+	require.Equal(t, events.Unknown, resumed.Status.State)
 	current, err := f.svc.GetSession(f.ref)
 	require.NoError(t, err)
-	require.Equal(t, events.SessionState("offline"), current.Status.State)
+	require.Equal(t, events.Unknown, current.Status.State)
 	after, err := os.ReadFile(filepath.Join(f.native, "wire.jsonl"))
 	require.NoError(t, err)
-	require.Equal(t, before, after, "zero-input rejection must not open a native process")
+	require.NotEqual(t, before, after, "resume must open and verify its native identity")
+	for _, call := range ticket20Wire(t, f) {
+		if call.Method == "input" {
+			require.Equal(t, "original input", call.Params["text"], "zero-input resume must not dispatch a hidden prompt")
+		}
+	}
+	_, err = f.svc.CloseSession(ctx(t), f.ref)
+	require.NoError(t, err)
 	f.close()
 	ticket20Released(t, f)
 }
