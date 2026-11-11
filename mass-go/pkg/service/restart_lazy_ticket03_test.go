@@ -634,7 +634,7 @@ func TestTicket03WorkDispatchesOnlyWithEffectiveRunAndExecutableState(t *testing
 	require.EqualValues(t, 1, driver.cancels.Load())
 }
 
-func TestTicket03FreshLiveUnknownWaitsForObservedIdle(t *testing.T) {
+func TestTicket03FreshLiveUnknownAdmitsWorkBeforeObservedState(t *testing.T) {
 	st := openTicket03Store(t)
 	createTicket03Runtime(t, st, "agent", "stopped")
 	factory := &ticket03Factory{}
@@ -652,16 +652,8 @@ func TestTicket03FreshLiveUnknownWaitsForObservedIdle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, events.Unknown, created.Status.State)
 
-	done := make(chan error, 1)
-	go func() {
-		_, sendErr := svc.SendPrompt(context.Background(), resource.SessionRef{SessionID: created.Status.SessionID}, runtime.Input{Content: []events.ContentBlock{events.Text("dispatch")}})
-		done <- sendErr
-	}()
-	require.Never(t, func() bool {
-		return factory.only(t).prompts.Load() != 0
-	}, 20*time.Millisecond, time.Millisecond, "fresh live state bypassed the idle observation")
-	observeTicket03Idle(t, svc, factory.only(t), created)
-	require.NoError(t, <-done)
+	_, err = svc.SendPrompt(context.Background(), resource.SessionRef{SessionID: created.Status.SessionID}, runtime.Input{Content: []events.ContentBlock{events.Text("dispatch")}})
+	require.NoError(t, err)
 	require.EqualValues(t, 1, factory.only(t).prompts.Load())
 	require.EqualValues(t, 1, factory.only(t).opens.Load(), "prompt must not reopen the Session")
 	require.Zero(t, factory.only(t).resumes.Load(), "prompt must not resume the Session")

@@ -30,7 +30,6 @@ const (
 	queueCapacity             = 128
 	laneRetentionCapacity     = 2 * queueCapacity
 	sessionDeliveryOverloaded = "session_delivery_overloaded"
-	sessionPromptQueueFull    = "session_prompt_queue_full"
 	overloadCloseTimeout      = 5 * time.Second
 	// Assembly budget for an in-flight observational write. Expiry reports
 	// incomplete cleanup and retains the Handler for an explicit retry.
@@ -109,7 +108,6 @@ type delivery struct {
 }
 type lane struct {
 	load           *historyLoad
-	prompts        *promptQueue
 	admission      sync.RWMutex
 	releasing      bool
 	nativeClosed   bool
@@ -437,13 +435,15 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 	if err != nil {
 		return resource.SessionCreated{Session: r}, err
 	}
+	var creator runtime.CreationDriver
 	if initial != nil {
 		copyInput, err := runtime.CopyInput(*initial)
 		if err != nil {
 			return resource.SessionCreated{}, err
 		}
 		initial = &copyInput
-		creator, ok := run.driver.(runtime.CreationDriver)
+		var ok bool
+		creator, ok = run.driver.(runtime.CreationDriver)
 		if !ok {
 			return resource.SessionCreated{}, runtime.Unsupported()
 		}
@@ -489,13 +489,19 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 		err     error
 	}
 	resultCh := make(chan result, 1)
-	var admitted bool
 	go func() {
 		defer op.finish()
 		defer cancel()
 		var receipt *runtime.InputReceipt
 		value, err := func() (resource.Session, error) {
-			native, err := run.driver.OpenSession(owner, a, resolvedSpec)
+			var native runtime.DriverSession
+			var err error
+			if initial == nil {
+				native, err = run.driver.OpenSession(owner, a, resolvedSpec)
+			} else {
+				native, err = creator.OpenSessionWithInput(owner, a, resolvedSpec, *initial)
+			}
+			receipt = native.InitialInputReceipt
 			if err != nil && native.SessionID != "" {
 				// Native thread exists even when its first dispatch receipt is uncertain.
 				// Keep its original address and buffered facts until explicit settlement.
@@ -555,10 +561,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 				// Metadata may already be committed: retain reservation until explicit readback.
 				return resource.Session{}, errors.Join(err, cleanup)
 			}
-			l := &lane{session: r, source: native.Source, prompts: &promptQueue{}, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
-			var initialPrompt *queuedPrompt
-			var initialQueue *promptQueue
-			var enqueueErr error
+			l := &lane{session: r, source: native.Source, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
 			s.mu.Lock()
 			l.err = op.err
 			run.lanes[native.SessionID] = l
@@ -572,12 +575,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			abandoned = op.abandoned || run.stopping
 			if !abandoned {
 				delete(run.pending, k)
-				if initial != nil && l.err == nil {
-					initialPrompt, enqueueErr = s.appendPromptLocked(l, *initial)
-					initialQueue = l.prompts
-				}
 			}
-			admitted = !abandoned && initial != nil
 			creationErr := l.err
 			s.mu.Unlock()
 			go s.process(run, l)
@@ -592,18 +590,6 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			if creationErr != nil {
 				return resource.Session{}, creationErr
 			}
-			if enqueueErr != nil {
-				return r, enqueueErr
-			}
-			if initialPrompt != nil {
-				initialReceipt, initialErr := s.awaitAdmittedPrompt(ctx, run, l, initialQueue, initialPrompt)
-				if initialReceipt.Result != "" {
-					receipt = &initialReceipt
-				}
-				if initialErr != nil {
-					return r, initialErr
-				}
-			}
 			return r, nil
 		}()
 		if err != nil {
@@ -616,15 +602,8 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 		return value.session, value.err
 	case <-ctx.Done():
 		s.mu.Lock()
-		admittedBeforeCancel := admitted
-		if !admittedBeforeCancel {
-			op.abandoned = true
-		}
+		op.abandoned = true
 		s.mu.Unlock()
-		if admittedBeforeCancel {
-			value := <-resultCh
-			return value.session, value.err
-		}
 		return resource.SessionCreated{}, fmt.Errorf("outcome_unknown: creation continues under original reservation: %w", ctx.Err())
 	}
 }
@@ -659,11 +638,9 @@ func (s *Service) SendPrompt(ctx context.Context, ref resource.SessionRef, input
 	if err != nil {
 		return runtime.InputReceipt{}, err
 	}
-	run, l, q, item, err := s.admitPrompt(r, input)
-	if err != nil {
-		return runtime.InputReceipt{}, err
-	}
-	return s.awaitAdmittedPrompt(ctx, run, l, q, item)
+	return sessionWork(ctx, s, resource.SessionRef{SessionID: r.Status.SessionID}, false, func(owner context.Context, run *runBinding, id string) (runtime.InputReceipt, error) {
+		return run.driver.SendPrompt(owner, id, input)
+	})
 }
 
 func (s *Service) ListHistoryEvents(ref resource.SessionRef, q store.HistoryQuery) (store.HistoryPage, error) {
@@ -714,7 +691,6 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 				run.streamErr = err
 				unresolved := make([]*lane, 0, len(run.lanes))
 				for _, l := range run.lanes {
-					stopPromptQueueLocked(l.prompts, errors.Join(runtime.Unavailable("driver_stream_failed"), err))
 					if l.load != nil && !l.load.complete.Load() {
 						unresolved = append(unresolved, l)
 					}
@@ -731,7 +707,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 		if pending != nil && pending.buffering {
 			if len(pending.events) >= queueCapacity {
 				pending.err = errors.New("restore event buffer exhausted; stream responsibility retained")
-				failRunLocked(run, pending.err)
+				run.err = pending.err
 				run.blocked = &e
 				s.mu.Unlock()
 				return
@@ -749,7 +725,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			if op != nil {
 				if len(op.events) == queueCapacity {
 					op.err = errors.New("creation event buffer exhausted; stream responsibility retained")
-					failRunLocked(run, op.err)
+					run.err = op.err
 					run.blocked = &e
 					s.mu.Unlock()
 					return
@@ -757,7 +733,7 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 					op.events = append(op.events, e)
 				}
 			} else {
-				failRunLocked(run, errors.New("unbound session event; original delivery retained"))
+				run.err = errors.New("unbound session event; original delivery retained")
 				run.blocked = &e
 				s.mu.Unlock()
 				return
@@ -804,7 +780,8 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 			limit = laneRetentionCapacity
 		}
 		if len(l.queue) >= limit {
-			failRunLocked(run, errors.New("session event queue exhausted; stream responsibility retained"))
+			l.err = errors.New("session event queue exhausted; stream responsibility retained")
+			run.err = l.err
 			run.blocked = &e
 			s.mu.Unlock()
 			return
@@ -812,7 +789,8 @@ func (s *Service) consume(run *runBinding, stream events.Stream) {
 		select {
 		case l.queue <- delivery{event: e}:
 		default:
-			failRunLocked(run, errors.New("session event queue exhausted; stream responsibility retained"))
+			l.err = errors.New("session event queue exhausted; stream responsibility retained")
+			run.err = l.err
 			run.blocked = &e
 			s.mu.Unlock()
 			return
@@ -850,16 +828,6 @@ func (s *Service) fail(l *lane, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l.err = err
-	stopPromptQueueLocked(l.prompts, err)
-}
-
-// A run that can no longer deliver must settle queued prompt callers instead
-// of leaving them waiting for an idle observation that cannot arrive.
-func failRunLocked(run *runBinding, err error) {
-	run.err = err
-	for _, l := range run.lanes {
-		stopPromptQueueLocked(l.prompts, err)
-	}
 }
 
 func (s *Service) process(run *runBinding, l *lane) {
@@ -911,7 +879,6 @@ func (s *Service) process(run *runBinding, l *lane) {
 				}
 			}
 		}
-		stateObserved := false
 		s.mu.Lock()
 		if state, ok := e.Payload().(events.StateUpdate); ok && e.Replay == nil {
 			if !l.closing && l.source.SameRun(e.Source()) {
@@ -920,8 +887,6 @@ func (s *Service) process(run *runBinding, l *lane) {
 				if state.State != nil {
 					l.observedState = *state.State
 				}
-				stateObserved = true
-				s.observePromptStateLocked(l, l.observedState)
 			}
 		}
 		if e.Replay == nil {
@@ -956,9 +921,6 @@ func (s *Service) process(run *runBinding, l *lane) {
 		}
 		s.scheduleIdleLocked(run, l)
 		s.mu.Unlock()
-		if stateObserved {
-			s.pumpPromptQueue(run, l)
-		}
 		if !publicationFailed {
 			b, err := s.broadcastForSession(l.session)
 			if err == nil {

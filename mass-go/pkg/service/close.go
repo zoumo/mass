@@ -83,7 +83,6 @@ func (s *Service) closeSessionWithGuard(ctx context.Context, ref resource.Sessio
 	if l != nil {
 		l.closing = true
 		l.releasing = true
-		stopPromptQueueLocked(l.prompts, runtime.FailedPrecondition("session close accepted"))
 	}
 	s.mu.Unlock()
 	if l == nil && pending == nil {
@@ -219,7 +218,7 @@ func (s *Service) settlePendingEvents(ctx context.Context, run *runBinding, pend
 		s.mu.Unlock()
 		return nil, runtime.FailedPrecondition("original session responsibility remains unsettled")
 	}
-	l := &lane{session: r, source: native.Source.WithWork(""), prompts: &promptQueue{}, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
+	l := &lane{session: r, source: native.Source.WithWork(""), queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
 	l.closing = true
 	l.releasing = true
 	pending.buffering = true

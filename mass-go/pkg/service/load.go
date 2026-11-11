@@ -114,7 +114,7 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 		}
 		r = saved
 	}
-	l := &lane{session: r, load: load, prompts: &promptQueue{}, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
+	l := &lane{session: r, load: load, queue: make(chan delivery, laneRetentionCapacity), retry: make(chan chan error), done: make(chan struct{})}
 	s.mu.Lock()
 	run.lanes[input.SessionID] = l
 	delete(run.pending, key)

@@ -109,8 +109,8 @@ func (d *ticket06FaultDriver) marker(ctx context.Context, b *ticket06FaultBindin
 	return nil
 }
 
-// The queue only dispatches behind a live idle observation. This peer returns
-// idle once a load reaches its native terminal, and after each prompt.
+// This peer returns idle once a load reaches its native terminal and after each
+// prompt so lifecycle and delivery behavior can be observed independently.
 func (d *ticket06FaultDriver) state(ctx context.Context, b *ticket06FaultBinding, state events.SessionState) error {
 	e, err := events.NewEvent(events.EventBase{
 		EventID:     uuid.NewString(),
