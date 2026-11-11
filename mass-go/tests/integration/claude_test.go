@@ -1147,7 +1147,12 @@ func appendServerFrame(frames []any, data map[string]any) []any {
 	return append(frames, scenarioFrame(len(frames)+1, "server", data))
 }
 
-func runClaudeDriverScenario(t *testing.T, name string, frames []any) events.Stream {
+type claudeDriverObservation struct {
+	events.Stream
+	observation runtime.SessionObservation
+}
+
+func runClaudeDriverScenario(t *testing.T, name string, frames []any) claudeDriverObservation {
 	t.Helper()
 	path, work := writeNativeScenario(t, map[string]any{"version": 1, "provenance": "synthetic", "frames": frames})
 	driver, err := (claude.Factory{RecoveryDir: t.TempDir()}).New(name, runtime.Config{"executable": claudeMock, "scenario": path})
@@ -1183,20 +1188,29 @@ func runClaudeDriverScenario(t *testing.T, name string, frames []any) events.Str
 	})
 	_, err = driver.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	require.NoError(t, err)
-	return stream
+	return claudeDriverObservation{Stream: stream, observation: opened.Observation}
 }
 
-func requireClaudeObservationFailure(t *testing.T, stream events.Stream, reason string, observe ...func(events.SessionEvent)) {
+func requireClaudeObservationFailure(t *testing.T, stream claudeDriverObservation, reason string, observe ...func(events.SessionEvent)) {
 	t.Helper()
+	require.NotNil(t, stream.observation)
 	read, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	go func() {
+		select {
+		case <-stream.observation.Done():
+			cancel()
+		case <-read.Done():
+		}
+	}()
 	for {
 		event, err := stream.Next(read)
 		if err != nil {
-			require.NotErrorIs(t, err, context.DeadlineExceeded)
-			require.NotErrorIs(t, err, context.Canceled)
-			require.ErrorContains(t, err, reason)
-			return
+			require.ErrorIs(t, err, context.Canceled, "the shared stream must remain open after one observation fails")
+			var operation *runtime.OperationError
+			require.ErrorAs(t, stream.observation.Err(), &operation)
+			require.Equal(t, reason, operation.Reason)
+			break
 		}
 		for _, observe := range observe {
 			observe(event)
@@ -1205,6 +1219,10 @@ func requireClaudeObservationFailure(t *testing.T, stream events.Stream, reason 
 			t.Fatal("native observation failure reached idle")
 		}
 	}
+	healthy, stop := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer stop()
+	_, err := stream.Next(healthy)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "session failure must not terminate the shared Driver stream")
 }
 
 func scenarioFrame(ordinal int, direction string, data any) map[string]any {

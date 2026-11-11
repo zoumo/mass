@@ -325,12 +325,17 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	path, work := nativeScenario(t, "claude", "basic")
 	resumePath, _ := nativeScenario(t, "claude", "lifecycle-resume")
 	replaceWorkspace(t, resumePath, work)
+	const sessionID = "11111111-1111-4111-8111-111111111111"
+	path = replaceClaudeScenarioSessionID(t, path, sessionID)
+	resumePath = replaceClaudeScenarioSessionID(t, resumePath, sessionID)
+	configDir := t.TempDir()
+	prepareClaudeSavedSession(t, configDir, work, sessionID)
 	// Use one executable across cold recovery; resumed frames echo the
 	// dynamic caller UUID while preserving every retained baseline frame.
 	bin := filepath.Join(t.TempDir(), "claude-linked-replay")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
 	require.NoError(t, err, string(out))
-	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "scenario": path}}
+	spec := resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": bin, "scenario": path, "env": map[string]any{"CLAUDE_CONFIG_DIR": configDir}}}
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: spec})
 	require.NoError(t, err)
 	_, err = svc.StartRuntime(ctx(t), "agent")
@@ -342,7 +347,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	history, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)
 	require.NotEmpty(t, history.Events)
-	spec.Config = runtime.Config{"executable": bin, "scenario": resumePath}
+	spec.Config = runtime.Config{"executable": bin, "scenario": resumePath, "env": map[string]any{"CLAUDE_CONFIG_DIR": configDir}}
 	_, err = svc.UpdateRuntime("agent", spec)
 	require.NoError(t, err)
 	_, err = svc.StopRuntime(ctx(t), "agent")

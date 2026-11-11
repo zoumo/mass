@@ -3,10 +3,8 @@ package integration_test
 import (
 	"encoding/json"
 	"net/http/httptest"
-	"time"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
-	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
 	"github.com/zoumo/mass/mass-go/pkg/transport"
@@ -83,23 +81,25 @@ func (s *failureSuite) codexUnsupportedNativeContent(scenario string) {
 	s.Require().NoError(err)
 	defer observer.Close()
 	s.Require().NoError(c.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}, nil))
-	failed := false
+	observation := s.sessionObservation(ref)
+	select {
+	case <-observation.Done():
+	case <-ctx(s.T()).Done():
+		s.FailNow("unsupported native content did not fail its original observation")
+	}
+	var operation *runtime.OperationError
+	s.Require().ErrorAs(observation.Err(), &operation)
+	s.Equal("unavailable", operation.Code)
+	s.Equal("unsupported_native_item", operation.Reason)
 	for {
 		e, err := observer.Next()
 		s.Require().NoError(err)
 		s.Require().NotEqual("user.message", e.Type(), "a mixed supported/unsupported message must not be partially emitted")
-		if _, ok := e.Payload().(events.SessionError); ok {
-			failed = true
-		}
-		if p, ok := e.Payload().(events.StateUpdate); ok && p.State == nil {
-			s.Require().True(failed, "unsupported native content must fail visibly, not disappear")
+		if problem, ok := e.Payload().(events.SessionError); ok {
+			s.Equal("unsupported_native_item", problem.Reason)
 			break
 		}
 	}
-	var current resource.Session
-	s.Require().Eventually(func() bool {
-		return c.GetSession(ctx(s.T()), ref, &current) == nil && current.Status.State == events.Unknown
-	}, 2*time.Second, time.Millisecond, "asynchronous state handler must settle the failed observation")
 	s.Require().Error(c.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("must not resend")}}, nil))
 	var history store.HistoryPage
 	s.Require().NoError(c.History(ctx(s.T()), ref, store.HistoryQuery{}, &history))

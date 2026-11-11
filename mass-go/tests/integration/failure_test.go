@@ -116,18 +116,31 @@ func (s *failureSuite) cancel(kind string) {
 	current, err := s.svc.GetSession(ref)
 	s.Require().NoError(err)
 	s.Equal(events.Running, current.Status.State)
-	_, err = s.svc.SendPrompt(ctx(s.T()), ref, runtime.Input{Content: []events.ContentBlock{events.Text("must not resend")}})
-	s.Require().Error(err)
 	s.until(sub, events.Idle)
 	if kind == "claude" {
 		settled, err := s.svc.Cancel(ctx(s.T()), ref)
 		s.Require().NoError(err)
 		s.Equal("noActiveWork", settled.Result)
 	}
-	s.T().Log("PASS matched interrupt receipt does not terminate work or admit another input")
+	_, err = s.svc.CloseSession(ctx(s.T()), ref)
+	s.Require().NoError(err)
+	s.T().Log("PASS matched interrupt receipt acknowledges control; only native completion settles running work")
 }
 func (s *failureSuite) TestCodexCancelReceipt()  { s.cancel("codex") }
 func (s *failureSuite) TestClaudeCancelReceipt() { s.cancel("claude") }
+func (s *failureSuite) sessionObservation(ref resource.SessionRef) runtime.SessionObservation {
+	s.T().Helper()
+	driver, err := s.reg.Get("agent")
+	s.Require().NoError(err)
+	observer, ok := driver.(interface {
+		SessionObservation(string) runtime.SessionObservation
+	})
+	s.Require().True(ok)
+	observation := observer.SessionObservation(ref.SessionID)
+	s.Require().NotNil(observation)
+	return observation
+}
+
 func (s *failureSuite) disconnect(kind string) {
 	s.start(kind, "disconnect", s.st)
 	s.unknown = true
@@ -138,7 +151,21 @@ func (s *failureSuite) disconnect(kind string) {
 	receipt := s.input(ref)
 	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
 	s.until(sub, events.Running)
-	s.until(sub, events.Unknown)
+	observation := s.sessionObservation(ref)
+	select {
+	case <-observation.Done():
+	case <-ctx(s.T()).Done():
+		s.FailNow("native disconnect did not end original observation")
+	}
+	var operation *runtime.OperationError
+	s.Require().ErrorAs(observation.Err(), &operation)
+	if kind == "claude" {
+		s.Equal("unavailable", operation.Code)
+		s.Equal("session_terminated", operation.Reason)
+	} else {
+		s.Equal("outcome_unknown", operation.Code)
+		s.Equal("session_observation_eof", operation.Reason)
+	}
 	// The returned ACK/write evidence is independent of subsequent observation loss.
 	s.Equal(runtime.Yes(), receipt.Acceptance.Sent)
 	if kind == "codex" {
@@ -156,7 +183,17 @@ func (s *failureSuite) disconnect(kind string) {
 	cold := service.New(s.st, s.st, runtime.NewRegistry(map[string]runtime.Factory{"codex": codex.Factory{RecoveryDir: s.T().TempDir()}, "claude": claude.Factory{RecoveryDir: s.T().TempDir()}}))
 	_, err = cold.StartRuntime(ctx(s.T()), "agent")
 	s.Require().ErrorContains(err, "previous runtime release")
-	s.T().Log("PASS EOF preserves acceptance, unknown work and stopping ownership; no automatic resend")
+	if kind == "codex" {
+		// Explicit owner settlement can release the disconnected provider after
+		// the first attempt reports observation loss. Read back that release.
+		_, err = s.svc.StopRuntime(ctx(s.T()), "agent")
+		s.Require().NoError(err)
+		r, err = s.svc.GetRuntime("agent")
+		s.Require().NoError(err)
+		s.Equal("stopped", r.Status.State)
+		s.unknown = false
+	}
+	s.T().Log("PASS EOF preserves acceptance, seals original binding and retains stopping ownership; no automatic resend")
 }
 func (s *failureSuite) TestCodexDisconnect()  { s.disconnect("codex") }
 func (s *failureSuite) TestClaudeDisconnect() { s.disconnect("claude") }
@@ -460,7 +497,11 @@ func (s *failureSuite) TestEarlyFactsWaitForIdentityCommit() {
 func (s *failureSuite) TestEarlyCapacityFailsExplicitlyAndReleases() {
 	s.start("claude", "early-overflow", s.st)
 	_, err := s.svc.CreateSession(ctx(s.T()), s.spec("demo"))
-	s.Require().ErrorContains(err, "pre-identity buffer exhausted")
+	var operation *runtime.OperationError
+	s.Require().ErrorAs(err, &operation)
+	s.Equal("resource_exhausted", operation.Code)
+	s.Equal("initialize_buffer_exhausted", operation.Reason)
+	s.Require().ErrorIs(err, runtime.ErrResourcesReleased)
 	_, err = s.svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().ErrorIs(err, store.ErrNotFound)
 }
