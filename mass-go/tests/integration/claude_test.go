@@ -88,10 +88,17 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 				require.Nil(t, receipt.Acceptance.NativeAccepted)
 				require.Nil(t, receipt.Acceptance.NativeRecorded)
 			}
+			claudeRunning := false
 			for {
 				e, err := nextSubscription(sub, ctx(t))
 				require.NoError(t, err)
-				if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
+				if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil {
+					if kind == "claude" && *state.State == events.Running {
+						claudeRunning = true
+					}
+					if *state.State != events.Idle {
+						continue
+					}
 					if observation != nil {
 						work, observed := observation.work.Load(e.EventID)
 						require.True(t, observed, "public idle must match an observed Driver event UUID")
@@ -100,8 +107,8 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 						}
 						require.Equal(t, receipt.Submission, work, "terminal must belong to the accepted native turn")
 						require.Equal(t, "completed", state.StopReason)
-					} else if state.StopReason != "completed" {
-						// Claude also reports idle when initialization completes.
+					} else if !claudeRunning {
+						// Wait for prompt execution before accepting Claude idle.
 						continue
 					}
 					break

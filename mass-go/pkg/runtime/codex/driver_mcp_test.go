@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -155,11 +156,28 @@ func TestCodexDriverRejectsInvalidMCPBeforeNativeOpenResumeAndLoad(t *testing.T)
 		"missing secret":  {Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server", Env: map[string]string{"TOKEN": "${MISSING_TOKEN}"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			driver, cwd, trace, _ := newCodexMCPDriverTestPeer(t)
+			driver, cwd, trace, openedID := newCodexMCPDriverTestPeer(t)
 			servers := []runtime.MCPServer{server}
 			spec := runtime.SessionSpec{Cwd: cwd, MCPServers: &servers}
-			_, openErr := driver.OpenSession(t.Context(), address, spec)
-			_, resumeErr := driver.ResumeSession(t.Context(), "native-thread", address, spec)
+			opened, openErr := driver.OpenSession(t.Context(), address, spec)
+			*openedID = opened.SessionID
+			resumed, resumeErr := driver.ResumeSession(t.Context(), "native-thread", address, spec)
+			t.Cleanup(func() {
+				if resumed.SessionID != "" && resumed.SessionID != opened.SessionID {
+					cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					assert.NoError(t, driver.CloseSession(cleanup, resumed.SessionID), "cleanup must release the unexpectedly resumed session")
+				}
+			})
+			t.Cleanup(func() {
+				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				// Preflight rejection can leave no load; accept only that exact absence.
+				if cancelErr := driver.CancelHistoryLoad(cleanup, "native-thread", "invalid-mcp-load"); cancelErr != nil &&
+					(!errors.Is(cancelErr, runtime.ErrFailedPrecondition) || cancelErr.Error() != runtime.FailedPrecondition("original native load unavailable").Error()) {
+					t.Errorf("release attempted rejected history load: %v", cancelErr)
+				}
+			})
 			loadErr := driver.LoadSession(t.Context(), "native-thread", address, spec, "invalid-mcp-load")
 			for _, err := range []error{openErr, resumeErr, loadErr} {
 				if server.Type == runtime.MCPTransportSSE {
@@ -206,7 +224,11 @@ func newCodexMCPDriverTestPeer(t *testing.T) (*Driver, string, string, *string) 
 		assert.NoError(t, driver.Stop(cleanup), "cleanup must release the provider even if session close failed")
 		cancel()
 		stopRead()
-		<-readDone
+		select {
+		case <-readDone:
+		case <-time.After(time.Second):
+			t.Error("MCP event reader cleanup did not finish")
+		}
 	})
 	go func() {
 		defer close(readDone)

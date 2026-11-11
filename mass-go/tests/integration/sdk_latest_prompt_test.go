@@ -3,6 +3,7 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,7 +51,11 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 		}
 		cancel()
 		stopRead()
-		<-readDone
+		select {
+		case <-readDone:
+		case <-time.After(time.Second):
+			t.Error("prompt event reader cleanup did not finish")
+		}
 	})
 	go func() {
 		defer close(readDone)
@@ -67,24 +72,47 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 	for i, invalid := range []struct{ prompt, reason string }{{string([]byte{0xff}), "additional_system_prompt_invalid_utf8"}, {"bad\x00prompt", "additional_system_prompt_contains_nul"}} {
 		bad := spec
 		bad.SystemPrompt = invalid.prompt
-		_, err = driver.OpenSession(ctx(t), address, bad)
+		rejected, err := driver.OpenSession(ctx(t), address, bad)
+		openedID = rejected.SessionID
 		assertPromptValidation(t, err, invalid.reason)
 		require.ErrorIs(t, err, runtime.ErrResourcesReleased)
-		_, err = driver.ResumeSession(ctx(t), id, address, bad)
+		rejected, err = driver.ResumeSession(ctx(t), id, address, bad)
+		openedID = rejected.SessionID
 		assertPromptValidation(t, err, invalid.reason)
 		require.ErrorIs(t, err, runtime.ErrResourcesReleased)
-		err = driver.LoadSession(ctx(t), fmt.Sprintf("invalid-%d", i), address, bad, "invalid-load")
+		invalidID := fmt.Sprintf("invalid-%d", i)
+		t.Cleanup(func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// Preflight rejection can leave no load; accept only that exact absence.
+			if cancelErr := driver.CancelHistoryLoad(cleanup, invalidID, "invalid-load"); cancelErr != nil &&
+				(!errors.Is(cancelErr, runtime.ErrFailedPrecondition) || cancelErr.Error() != runtime.FailedPrecondition("original native load unavailable").Error()) {
+				t.Errorf("release attempted rejected history load: %v", cancelErr)
+			}
+		})
+		err = driver.LoadSession(ctx(t), invalidID, address, bad, "invalid-load")
 		assertPromptValidation(t, err, invalid.reason)
 	}
 	extra := spec
 	extra.AdditionalDirs = []string{"/extra"}
-	_, err = driver.OpenSession(ctx(t), address, extra)
+	rejected, err := driver.OpenSession(ctx(t), address, extra)
+	openedID = rejected.SessionID
 	var unsupported *runtime.OperationError
 	require.ErrorAs(t, err, &unsupported)
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)
-	_, err = driver.ResumeSession(ctx(t), id, address, extra)
+	rejected, err = driver.ResumeSession(ctx(t), id, address, extra)
+	openedID = rejected.SessionID
 	require.ErrorAs(t, err, &unsupported)
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		// Preflight rejection can leave no load; accept only that exact absence.
+		if cancelErr := driver.CancelHistoryLoad(cleanup, "invalid-dirs", "invalid-dirs-load"); cancelErr != nil &&
+			(!errors.Is(cancelErr, runtime.ErrFailedPrecondition) || cancelErr.Error() != runtime.FailedPrecondition("original native load unavailable").Error()) {
+			t.Errorf("release attempted rejected history load: %v", cancelErr)
+		}
+	})
 	err = driver.LoadSession(ctx(t), "invalid-dirs", address, extra, "invalid-dirs-load")
 	require.ErrorAs(t, err, &unsupported)
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)

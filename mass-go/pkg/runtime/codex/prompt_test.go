@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,7 +42,11 @@ func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 		assert.NoError(t, driver.Stop(cleanup), "cleanup must release the provider even if session close failed")
 		cancel()
 		stopRead()
-		<-readDone
+		select {
+		case <-readDone:
+		case <-time.After(time.Second):
+			t.Error("prompt event reader cleanup did not finish")
+		}
 	})
 	go func() {
 		defer close(readDone)
@@ -59,31 +64,54 @@ func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 		bad := spec
 		bad.SystemPrompt = invalid.prompt
 		for _, resume := range []bool{false, true} {
+			var rejected runtime.DriverSession
 			if resume {
-				_, err = driver.ResumeSession(t.Context(), "native-thread", address, bad)
+				rejected, err = driver.ResumeSession(t.Context(), "native-thread", address, bad)
 			} else {
-				_, err = driver.OpenSession(t.Context(), address, bad)
+				rejected, err = driver.OpenSession(t.Context(), address, bad)
 			}
+			openedID = rejected.SessionID
 			var public *runtime.OperationError
 			require.ErrorAs(t, err, &public)
 			require.Equal(t, "invalid_argument", public.Code)
 			require.Equal(t, invalid.reason, public.Reason)
 			require.ErrorIs(t, err, runtime.ErrResourcesReleased)
 		}
-		err = driver.LoadSession(t.Context(), fmt.Sprintf("invalid-%d", i), address, bad, "invalid-load")
+		invalidID := fmt.Sprintf("invalid-%d", i)
+		t.Cleanup(func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// Preflight rejection can leave no load; accept only that exact absence.
+			if cancelErr := driver.CancelHistoryLoad(cleanup, invalidID, "invalid-load"); cancelErr != nil &&
+				(!errors.Is(cancelErr, runtime.ErrFailedPrecondition) || cancelErr.Error() != runtime.FailedPrecondition("original native load unavailable").Error()) {
+				t.Errorf("release attempted rejected history load: %v", cancelErr)
+			}
+		})
+		err = driver.LoadSession(t.Context(), invalidID, address, bad, "invalid-load")
 		var public *runtime.OperationError
 		require.ErrorAs(t, err, &public)
 		require.Equal(t, invalid.reason, public.Reason)
 	}
 	extra := spec
 	extra.AdditionalDirs = []string{"/extra"}
-	_, err = driver.OpenSession(t.Context(), address, extra)
+	rejected, err := driver.OpenSession(t.Context(), address, extra)
+	openedID = rejected.SessionID
 	var unsupported *runtime.OperationError
 	require.ErrorAs(t, err, &unsupported)
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)
-	_, err = driver.ResumeSession(t.Context(), "native-thread", address, extra)
+	rejected, err = driver.ResumeSession(t.Context(), "native-thread", address, extra)
+	openedID = rejected.SessionID
 	require.ErrorAs(t, err, &unsupported)
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		// Preflight rejection can leave no load; accept only that exact absence.
+		if cancelErr := driver.CancelHistoryLoad(cleanup, "invalid-dirs", "invalid-dirs-load"); cancelErr != nil &&
+			(!errors.Is(cancelErr, runtime.ErrFailedPrecondition) || cancelErr.Error() != runtime.FailedPrecondition("original native load unavailable").Error()) {
+			t.Errorf("release attempted rejected history load: %v", cancelErr)
+		}
+	})
 	err = driver.LoadSession(t.Context(), "invalid-dirs", address, extra, "invalid-dirs-load")
 	require.ErrorAs(t, err, &unsupported)
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)

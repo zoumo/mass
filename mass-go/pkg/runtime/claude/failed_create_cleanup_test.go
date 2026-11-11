@@ -66,18 +66,45 @@ func TestFailedCreateEOFReleasesNativeResources(t *testing.T) {
 				"env":        map[string]any{"MASS_FAILED_CREATE_CLEANUP_PEER": dir, "MASS_FAILED_CREATE_CLEANUP_EXIT": exit},
 			})
 			require.NoError(t, err)
+			stream, err := driver.Events()
+			require.NoError(t, err)
+			readCtx, stopRead := context.WithCancel(context.Background())
+			readDone := make(chan struct{})
+			var openedID string
 			t.Cleanup(func() {
+				if openedID != "" {
+					closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					if closeErr := driver.CloseSession(closeCtx, openedID); closeErr != nil {
+						t.Errorf("close unexpectedly opened session: %v", closeErr)
+					}
+					closeCancel()
+				}
 				stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer stopCancel()
 				if stopErr := driver.Stop(stopCtx); stopErr != nil {
 					t.Errorf("stop failed-create runtime: %v", stopErr)
 				}
+				stopRead()
+				select {
+				case <-readDone:
+				case <-time.After(time.Second):
+					t.Error("failed-create event reader cleanup did not finish")
+				}
 			})
+			go func() {
+				defer close(readDone)
+				for {
+					if _, err := stream.Next(readCtx); err != nil {
+						return
+					}
+				}
+			}()
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			_, err = driver.Start(ctx)
 			require.NoError(t, err)
 			opened, err := driver.OpenSession(ctx, runtime.Address{Namespace: "default", SessionName: "failed"}, runtime.SessionSpec{Cwd: dir})
+			openedID = opened.SessionID
 			require.Empty(t, opened.SessionID)
 			require.Error(t, err)
 			data, readErr := os.ReadFile(filepath.Join(dir, "pid"))
