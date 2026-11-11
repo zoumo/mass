@@ -9,6 +9,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println("2.1.258 (Claude Code)")
+		return
+	}
 	if os.Getenv("LOAD_PROVIDER") == "claude" {
 		claude()
 		return

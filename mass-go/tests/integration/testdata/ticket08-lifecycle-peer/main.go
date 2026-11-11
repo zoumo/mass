@@ -12,6 +12,10 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println("2.1.258 (Claude Code)")
+		return
+	}
 	evidence := os.Getenv("EVIDENCE")
 	pid := strconv.Itoa(os.Getpid())
 	if err := os.WriteFile(filepath.Join(evidence, "pid-"+pid), []byte(pid), 0o600); err != nil {
@@ -123,7 +127,10 @@ func runCodex(send func(any)) {
 }
 
 func runClaude(send func(any), cwd string) {
-	id := "claude-" + filepath.Base(cwd)
+	id := "22222222-2222-4222-8222-222222222222"
+	if filepath.Base(cwd) == "healthy" {
+		id = "33333333-3333-4333-8333-333333333333"
+	}
 	for _, arg := range os.Args[1:] {
 		if resumed, ok := strings.CutPrefix(arg, "--resume="); ok {
 			id = resumed
@@ -135,6 +142,7 @@ func runClaude(send func(any), cwd string) {
 	}
 	result := func() {
 		send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "user_message_uuid": link, "uuid": "result-" + link})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 	}
 	request := func(name string) {
 		send(map[string]any{"type": "control_request", "request_id": name, "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": name, "input": map[string]any{"command": "never executed"}}})
@@ -159,7 +167,7 @@ func runClaude(send func(any), cwd string) {
 			}
 		case "user":
 			link, _ = v["uuid"].(string)
-			send(map[string]any{"type": "stream_event", "session_id": id, "user_message_uuid": link, "event": map[string]any{"type": "message_start", "message": map[string]any{"id": "active", "role": "assistant", "content": []any{}}}})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "running"})
 			if filepath.Base(cwd) == "active" {
 				request("current")
 				fact("before-close")

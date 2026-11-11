@@ -344,13 +344,13 @@ func TestTicket14UnrelatedResultsKeepCurrentWorkOpen(t *testing.T) {
 			state, err := svc.GetSession(ref)
 			require.NoError(t, err)
 			require.NotEqual(t, events.Idle, state.Status.State, "foreign and child results must not settle root work")
-			promptCtx, cancelPrompt := context.WithTimeout(ctx(t), 200*time.Millisecond)
-			_, err = svc.SendPrompt(promptCtx, ref, runtime.Input{Content: []events.ContentBlock{events.Text("follow-up")}})
-			cancelPrompt()
-			require.ErrorIs(t, err, context.DeadlineExceeded, "input must wait for an observed idle before the SDK decides how it can join work")
-			raw, err := os.ReadFile(evidence)
+			receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("follow-up")}})
 			require.NoError(t, err)
-			require.Equal(t, 1, strings.Count(string(raw), "\n"), "queued follow-up must not reach the native peer before idle")
+			require.Equal(t, "applied_best_effort", string(receipt.Result))
+			require.Eventually(t, func() bool {
+				raw, e := os.ReadFile(evidence)
+				return e == nil && strings.Count(string(raw), "\n") == 2 && strings.Contains(string(raw), "follow-up")
+			}, 5*time.Second, 10*time.Millisecond, "SDK must receive the follow-up without a MASS idle wait")
 			_, err = svc.Cancel(ctx(t), ref)
 			require.NoError(t, err)
 			_, err = svc.CloseSession(ctx(t), ref)
@@ -388,9 +388,6 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 				if kind == "claude" {
 					bin = claudeMock
 					mode = "explicit-structured"
-				}
-				if uncertain {
-					mode = "explicit-unknown"
 				}
 				path, work := nativeScenario(t, kind, mode)
 				_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}})
@@ -446,9 +443,6 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 					require.NotNil(t, got.value.InitialInputReceipt)
 				}
 				wantMessages := 1
-				if uncertain {
-					wantMessages = 0
-				}
 				require.Eventually(t, func() bool {
 					page, e := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 					if e != nil {
@@ -554,10 +548,8 @@ func TestTicket14CodexLateInitialReceiptKeepsOwner(t *testing.T) {
 				_, err = svc.StopRuntime(ctx(t), "agent")
 				require.NoError(t, err)
 			}
-			original, err := svc.GetSession(resource.SessionRef{Namespace: "default", Name: "first"})
-			require.NoError(t, err)
-			require.Equal(t, "native-1", original.Status.SessionID)
-			require.Equal(t, events.SessionState("offline"), original.Status.State)
+			_, err = svc.GetSession(resource.SessionRef{Namespace: "default", Name: "first"})
+			require.ErrorIs(t, err, store.ErrNotFound, "abandoned create must release its native owner without publishing an uncommitted resource")
 			raw, err := os.ReadFile(filepath.Join(dir, "pid"))
 			require.NoError(t, err)
 			pid, err := strconv.Atoi(string(raw))

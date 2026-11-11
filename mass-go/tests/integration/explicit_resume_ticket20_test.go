@@ -752,18 +752,14 @@ func TestTicket20ResumeCommitGatesFactsAndReceipt(t *testing.T) {
 					require.NoError(t, got.err)
 					require.NotNil(t, got.value.InitialInputReceipt)
 				}
-				// Initial input is admitted only after the resume binding commits.
-				wantMessages := 1
-				if !fail {
-					wantMessages = 2
-				}
+				// SDK input precedes the metadata commit; reconciliation preserves
+				// its original facts even when that commit reports failure.
+				wantMessages := 2
 				require.Eventually(t, func() bool {
 					page, err = f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{Types: []string{"agent.message"}})
 					return err == nil && len(page.Events) == wantMessages
 				}, 5*time.Second, 10*time.Millisecond)
-				if !fail {
-					require.Equal(t, "before commit", events.TextOf(page.Events[1].Payload().(events.AgentMessage).Content[0]))
-				}
+				require.Equal(t, "before commit", events.TextOf(page.Events[1].Payload().(events.AgentMessage).Content[0]))
 				f.close()
 				ticket20Released(t, f)
 			})
