@@ -16,12 +16,12 @@ type adapter interface {
 	complete() error
 }
 
-func newAdapter(provider string) (adapter, error) {
+func newAdapter(provider, sessionID string) (adapter, error) {
 	switch provider {
 	case "codex":
 		return &codexAdapter{requests: newRequests(), threads: map[id]string{}}, nil
 	case "claude":
-		return &claudeAdapter{requests: newRequests()}, nil
+		return &claudeAdapter{requests: newRequests(), sessionID: sessionID}, nil
 	default:
 		return nil, fmt.Errorf("unsupported native protocol adapter: %q", provider)
 	}

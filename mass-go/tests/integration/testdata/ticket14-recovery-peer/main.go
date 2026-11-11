@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const sessionID = "14141414-1414-4141-8141-141414141414"
+var sessionID = "14141414-1414-4141-8141-141414141414"
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
@@ -50,6 +50,12 @@ func main() {
 	resumed := false
 	for _, arg := range os.Args[1:] {
 		resumed = resumed || strings.HasPrefix(arg, "--resume=")
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			sessionID = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			sessionID = value
+		}
 	}
 	mode := os.Getenv("RESUME_INPUT_MODE")
 	init := func() {
@@ -94,7 +100,7 @@ func main() {
 			log("input", map[string]any{"text": text, "content": content, "sessionId": sessionID, "submission": v["uuid"]})
 			n := save(text)
 			uid, aid := fmt.Sprintf("user-%d", n), fmt.Sprintf("answer-%d", n)
-			path := os.Getenv("SAVED_TRANSCRIPT")
+			path := filepath.Join(os.Getenv("SAVED_TRANSCRIPT_DIR"), sessionID+".jsonl")
 			f, e := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 			must(e)
 			var parent any

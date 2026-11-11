@@ -196,11 +196,6 @@ func (s *entrypointSuite) openPrepared(kind, bin, path, work string) (resource.S
 	if kind == "claude" {
 		s.claudeConfig = s.T().TempDir()
 		config["env"] = map[string]any{"CLAUDE_CONFIG_DIR": s.claudeConfig}
-		id := "claude-session"
-		if filepath.Base(bin) == "claude-linked-replay" {
-			id = "55555555-5555-4555-8555-555555555555"
-		}
-		prepareClaudeSavedSession(s.T(), s.claudeConfig, work, id)
 	}
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: config}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
@@ -210,6 +205,9 @@ func (s *entrypointSuite) openPrepared(kind, bin, path, work string) (resource.S
 	s.call("session.create", workflowParams{Create: &create}, &session)
 	s.NotEmpty(session.Status.SessionID)
 	ref := resource.SessionRef{SessionID: session.Status.SessionID}
+	if kind == "claude" {
+		prepareClaudeSavedSession(s.T(), s.claudeConfig, work, ref.SessionID)
+	}
 	s.Eventually(func() bool {
 		var v resource.Session
 		s.call("session.get", workflowParams{Session: ref}, &v)
@@ -270,6 +268,11 @@ func (s *entrypointSuite) runWork(ref resource.SessionRef, text string, question
 }
 
 func (s *entrypointSuite) readWork(ref resource.SessionRef, text string, question bool, scan *bufio.Scanner) []events.SessionEvent {
+	var session resource.Session
+	s.call("session.get", workflowParams{Session: ref}, &session)
+	var runtimeResource resource.Runtime
+	s.call("runtime.get", workflowParams{Name: session.Spec.RuntimeRef}, &runtimeResource)
+	isClaude := runtimeResource.Spec.Type == "claude"
 	seen := []events.SessionEvent{}
 	questions := 0
 	chunks := 0
@@ -295,7 +298,7 @@ func (s *entrypointSuite) readWork(ref resource.SessionRef, text string, questio
 				questions++
 				s.Require().True(question, "questions are never permission-approved")
 				answer := map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"format": map[string]any{"answers": []any{"json"}}}}}
-				if strings.HasPrefix(ref.SessionID, "claude") {
+				if isClaude {
 					answer = map[string]any{"action": "accept", "content": map[string]any{"answers": map[string]any{"Which format?": "json"}}}
 				}
 				s.call("session.answer", workflowParams{Session: ref, Interaction: string(p.Interaction), Answer: answer}, nil)
@@ -313,7 +316,7 @@ func (s *entrypointSuite) readWork(ref resource.SessionRef, text string, questio
 					s.Equal(1, questions)
 					s.T().Log("PASS synthetic explicit user question via HTTP and original SDK handle")
 				} else {
-					if text != "continue" || strings.HasPrefix(ref.SessionID, "claude") {
+					if text != "continue" || isClaude {
 						s.Positive(permissions)
 					}
 					if permissions > 0 {
@@ -514,7 +517,12 @@ func (s *entrypointSuite) TestCodexQuestionBeforeACK() {
 }
 
 func (s *entrypointSuite) TestFailedCreateCleanup() {
-	path, work := nativeScenario(s.T(), "claude", "missing-disconnect")
+	path, work := writeNativeScenario(s.T(), map[string]any{
+		"version": 1, "provenance": "synthetic",
+		"frames": []any{scenarioFrame(1, "client", map[string]any{
+			"type": "control_request", "request_id": "init", "request": map[string]any{"subtype": "unexpected-initialize"},
+		})},
+	})
 	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
@@ -535,7 +543,7 @@ func (s *entrypointSuite) TestFailedCreateCleanup() {
 	s.runWork(ref, "hello", false)
 	s.call("session.close", workflowParams{Session: ref}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
-	s.T().Log("PASS synthetic missing native identity fails without publishing a Session; original resources settle, same name can be recreated and used")
+	s.T().Log("PASS synthetic initialize failure publishes no Session; original resources settle, same name can be recreated and used")
 }
 
 func (s *entrypointSuite) TestDualAgentDirectory() {

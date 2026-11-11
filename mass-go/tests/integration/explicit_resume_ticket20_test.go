@@ -41,8 +41,6 @@ var ticket20Build struct {
 	out []byte
 }
 
-const ticket20SessionID = "14141414-1414-4141-8141-141414141414"
-
 func ticket20Peer(t *testing.T) string {
 	t.Helper()
 	ticket20Build.Do(func() {
@@ -96,9 +94,13 @@ func (s ticket20TerminalStream) Next(ctx context.Context) (events.SessionEvent, 
 	e, err := s.Stream.Next(ctx)
 	state, ok := e.Payload().(events.StateUpdate)
 	terminal := ok && state.State != nil && *state.State == events.Idle
-	if err == nil && e.Source().Work() == "turn-2" && (terminal || e.Type() == "agent.message") {
+	observe := e.Type() == "agent.message"
+	if s.release != "" {
+		observe = e.Source().Work() == "turn-2" && (terminal || observe)
+	}
+	if err == nil && observe {
 		s.seen <- e
-		if terminal {
+		if terminal && s.release != "" {
 			err = os.WriteFile(s.release, nil, 0o600)
 		}
 	}
@@ -135,7 +137,7 @@ func TestTicket20ExplicitResumeHTTP(t *testing.T) {
 				defer cancel()
 				assert.NoError(t, svc.Shutdown(cleanup))
 			})
-			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "RESUME_INPUT_MODE": scenario.mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT": filepath.Join(project, ticket20SessionID+".jsonl")}
+			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "RESUME_INPUT_MODE": scenario.mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project}
 			_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": env}}})
 			require.NoError(t, err)
 			_, err = svc.StartRuntime(ctx(t), "agent")
@@ -322,14 +324,14 @@ func ticket20Setup(t *testing.T, kind, mode string) *ticket20Fixture {
 	key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(f.work, "-")
 	project := filepath.Join(config, "projects", key)
 	require.NoError(t, os.MkdirAll(project, 0o700))
-	f.ref = resource.SessionRef{SessionID: ticket20SessionID}
-	env := map[string]any{"PEER_KIND": kind, "PEER_DIR": f.native, "WORK_DIR": f.work, "RESUME_INPUT_MODE": mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT": filepath.Join(project, ticket20SessionID+".jsonl")}
+	env := map[string]any{"PEER_KIND": kind, "PEER_DIR": f.native, "WORK_DIR": f.work, "RESUME_INPUT_MODE": mode, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project}
 	f.runtimeResource = resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": ticket20Peer(t), "envPolicy": "replace", "env": env}}}
 	ticket20Open(t, f, true)
 	first := runtime.Input{Content: []events.ContentBlock{events.Text("original input")}}
 	created, err := f.svc.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "original"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: f.work}}, InitialInput: &first})
 	require.NoError(t, err)
-	require.Equal(t, ticket20SessionID, created.Status.SessionID)
+	require.NotEmpty(t, created.Status.SessionID)
+	f.ref = resource.SessionRef{SessionID: created.Status.SessionID}
 	ticket20Wait(t, f, 1)
 	_, err = f.svc.CloseSession(ctx(t), f.ref)
 	require.NoError(t, err)
@@ -694,6 +696,10 @@ func TestTicket20ResumeCommitGatesFactsAndReceipt(t *testing.T) {
 				f.close()
 				gate := &ticket20ResumeCommit{entered: make(chan struct{}), release: make(chan struct{}), fail: fail}
 				release := sync.OnceFunc(func() { close(gate.release) })
+				seen := make(chan events.SessionEvent, 2)
+				f.wrapFactory = func(factory runtime.Factory) runtime.Factory {
+					return ticket20TerminalFactory{Factory: factory, seen: seen}
+				}
 				f.wrapMetadata = func(meta metastore.MetaStore) metastore.MetaStore { gate.MetaStore = meta; return gate }
 				ticket20Open(t, f, false)
 				// Release before Service/store cleanup even when an assertion fails.
@@ -716,6 +722,14 @@ func TestTicket20ResumeCommitGatesFactsAndReceipt(t *testing.T) {
 				case <-gate.entered:
 				case <-ctx(t).Done():
 					t.Fatal("resume never reached binding commit")
+				}
+				select {
+				case observed := <-seen:
+					require.Equal(t, "agent.message", observed.Type())
+					require.Equal(t, f.ref.SessionID, observed.SessionID)
+					require.Equal(t, "before commit", events.TextOf(observed.Payload().(events.AgentMessage).Content[0]))
+				case <-ctx(t).Done():
+					t.Fatal("native resume answer did not reach the public runtime stream before commit")
 				}
 				page, err := f.svc.ListHistoryEvents(f.ref, store.HistoryQuery{})
 				require.NoError(t, err)

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -45,12 +46,14 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			os.Exit(0)
 		}
 	}
+	sessionID := pendingRestoreSessionID
 	resumed := false
 	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "--resume=") {
-			if arg != "--resume="+pendingRestoreSessionID {
-				os.Exit(5)
-			}
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			sessionID = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			sessionID = value
 			resumed = true
 		}
 	}
@@ -83,7 +86,7 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 	cwd, err := os.Getwd()
 	must(err)
 	init := func() {
-		send(map[string]any{"type": "system", "subtype": "init", "session_id": pendingRestoreSessionID, "cwd": cwd})
+		send(map[string]any{"type": "system", "subtype": "init", "session_id": sessionID, "cwd": cwd})
 	}
 	var identityMu sync.Mutex
 	identityReleased := false
@@ -139,9 +142,9 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 				os.Exit(10)
 			}
 			mark("input", "one explicit resume input")
-			send(map[string]any{"type": "assistant", "session_id": pendingRestoreSessionID, "user_message_uuid": v["uuid"], "message": map[string]any{"id": "resume-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "resume answer", "apiBlockIndex": 0}}}})
-			send(map[string]any{"type": "result", "subtype": "success", "session_id": pendingRestoreSessionID, "user_message_uuid": v["uuid"], "uuid": "resume-result"})
-			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": pendingRestoreSessionID, "state": "idle"})
+			send(map[string]any{"type": "assistant", "session_id": sessionID, "user_message_uuid": v["uuid"], "message": map[string]any{"id": "resume-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "resume answer", "apiBlockIndex": 0}}}})
+			send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "user_message_uuid": v["uuid"], "uuid": "resume-result"})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 			continue
 		}
 		if content != "explicit original input" {
@@ -153,9 +156,9 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			os.Exit(7)
 		}
 		mark("input", "one explicit input")
-		send(map[string]any{"type": "assistant", "session_id": pendingRestoreSessionID, "user_message_uuid": v["uuid"], "message": map[string]any{"id": "first-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "durable original answer", "apiBlockIndex": 0}}}})
-		send(map[string]any{"type": "result", "subtype": "success", "session_id": pendingRestoreSessionID, "user_message_uuid": v["uuid"], "uuid": "first-result"})
-		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": pendingRestoreSessionID, "state": "idle"})
+		send(map[string]any{"type": "assistant", "session_id": sessionID, "user_message_uuid": v["uuid"], "message": map[string]any{"id": "first-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "durable original answer", "apiBlockIndex": 0}}}})
+		send(map[string]any{"type": "result", "subtype": "success", "session_id": sessionID, "user_message_uuid": v["uuid"], "uuid": "first-result"})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "idle"})
 	}
 	mark("eof", "stdin closed")
 	os.Exit(0)
@@ -213,11 +216,6 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		assert.NoError(t, svc.Shutdown(cleanup))
 	})
 	configDir := filepath.Join(dir, "claude-config")
-	projectDir := filepath.Join(configDir, "projects", "pending")
-	require.NoError(t, os.MkdirAll(projectDir, 0o700))
-	transcript, err := json.Marshal(map[string]any{"type": "user", "sessionId": pendingRestoreSessionID, "cwd": dir, "message": map[string]any{"role": "user", "content": "saved original input"}})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(projectDir, pendingRestoreSessionID+".jsonl"), append(transcript, '\n'), 0o600))
 	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "pending"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer, "envPolicy": "replace", "env": map[string]any{"MASS_PENDING_RESTORE_PEER": dir, "CLAUDE_CONFIG_DIR": configDir}}}})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -227,7 +225,14 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	created, err := svc.CreateSessionWithInput(ctx, resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "pending"}, Spec: resource.SessionSpec{RuntimeRef: "pending", SessionSpec: runtime.SessionSpec{Cwd: dir}}, InitialInput: &runtime.Input{Content: []events.ContentBlock{events.Text("explicit original input")}}})
 	require.NoError(t, err)
 	ref := resource.SessionRef{SessionID: created.Status.SessionID}
-	require.Equal(t, pendingRestoreSessionID, ref.SessionID)
+	_, err = uuid.Parse(ref.SessionID)
+	require.NoError(t, err)
+	require.NotEqual(t, pendingRestoreSessionID, ref.SessionID)
+	projectDir := filepath.Join(configDir, "projects", "pending")
+	require.NoError(t, os.MkdirAll(projectDir, 0o700))
+	transcript, err := json.Marshal(map[string]any{"type": "user", "sessionId": ref.SessionID, "cwd": dir, "message": map[string]any{"role": "user", "content": "saved original input"}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, ref.SessionID+".jsonl"), append(transcript, '\n'), 0o600))
 	var before store.HistoryPage
 	require.Eventually(t, func() bool {
 		before, err = svc.ListHistoryEvents(ref, store.HistoryQuery{Types: []string{"agent.message"}})

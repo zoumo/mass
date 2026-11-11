@@ -3,8 +3,11 @@
 This page records the November 11, 2026 Codex recording procedure and evidence
 boundary. It does not change the harness contracts.
 
-The runtime SDK is pinned to `v0.0.0-20261111031457-4959190bc518` and testify
-to `v0.1.3-0.20261111025559-1f8db14a50e1`, without a local replacement.
+This November 11 recording was captured while the runtime SDK was pinned to
+`v0.0.0-20261111031457-4959190bc518` and testify to
+`v0.1.3-0.20261111025559-1f8db14a50e1`, without a local replacement. The current
+runtime pin is `v0.0.0-20261111182105-9b4f718dabf6`; the checked-in recording
+suite below remains bound to the captured versions.
 Codex CLI `0.166.0` recorded basic and permission through the public MASS
 HTTP/SSE and history APIs. Both exports passed two strict replays before
 publication. The explicit SessionSpec.Config model was

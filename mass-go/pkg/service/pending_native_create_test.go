@@ -25,8 +25,8 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
-// This subprocess is a synthetic native protocol peer, not a model. It never
-// emits system/init and never disconnects voluntarily after initialize.
+// This subprocess is a synthetic native protocol peer, not a model. It
+// withholds the initialize response so the SDK cannot confirm native identity.
 func TestPendingNativeCreatePeer(t *testing.T) {
 	dir := os.Getenv("MASS_PENDING_CREATE_PEER")
 	if dir == "" {
@@ -65,8 +65,7 @@ func TestPendingNativeCreatePeer(t *testing.T) {
 			_ = os.WriteFile(filepath.Join(dir, "unexpected-input"), scanner.Bytes(), 0o600)
 			os.Exit(3)
 		}
-		_, _ = fmt.Fprintf(os.Stdout, `{"type":"control_response","response":{"subtype":"success","request_id":%q,"response":{}}}`+"\n", frame.ID)
-		if err := os.WriteFile(filepath.Join(dir, "initialized"), []byte("acknowledged; no native identity"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "initialized"), []byte("initialize received; identity withheld"), 0o600); err != nil {
 			os.Exit(4)
 		}
 	}
@@ -131,7 +130,7 @@ func TestPendingNativeCreateOwnerStop(t *testing.T) {
 				t.Logf("resource ledger: native peer pid=%d started", pid)
 				require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(dir, "initialized")); return err == nil }, 5*time.Second, 10*time.Millisecond)
 				// Provider.Open must confirm native identity before MASS dispatches
-				// even explicit initial input. This peer deliberately never does.
+				// explicit initial input. This peer withholds that confirmation.
 				require.NoFileExists(t, filepath.Join(dir, "explicit-input"))
 				abandon()
 				select {

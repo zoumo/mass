@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -24,12 +25,19 @@ func main() {
 	cwd, _ := os.Getwd()
 	id, link, n := "continuous", "", 0
 	claude := os.Getenv("PEER_KIND") == "claude"
+	if claude {
+		for _, arg := range os.Args[1:] {
+			if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+				id = value
+			}
+		}
+	}
 	notify := func(method string, p any) { send(map[string]any{"method": method, "params": p}) }
 	finish := func() {
 		if claude {
 			send(map[string]any{"type": "assistant", "session_id": id, "user_message_uuid": link, "message": map[string]any{"id": fmt.Sprintf("message-%d", n), "role": "assistant", "content": []any{map[string]any{"type": "text", "text": fmt.Sprintf("complete-%d", n), "apiBlockIndex": 0}}}})
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": id, "uuid": fmt.Sprintf("result-%d", n), "user_message_uuid": link})
-				send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 		} else {
 			notify("item/completed", map[string]any{"threadId": id, "turnId": fmt.Sprintf("turn-%d", n), "item": map[string]any{"id": fmt.Sprintf("message-%d", n), "type": "agentMessage", "text": fmt.Sprintf("complete-%d", n)}, "completedAtMs": 1})
 			notify("turn/completed", map[string]any{"threadId": id, "turn": map[string]any{"id": fmt.Sprintf("turn-%d", n), "status": "completed", "items": []any{}}})

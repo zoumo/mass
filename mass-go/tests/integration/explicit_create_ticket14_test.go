@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/client"
@@ -62,7 +63,8 @@ func TestTicket14ExplicitClaudeCreateHTTP(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, response.StatusCode, "explicit input must release the native init wait: %s", rawResponse)
 	require.NoError(t, json.Unmarshal(rawResponse, &got))
-	require.Equal(t, "claude-session", got.Status.SessionID)
+	_, err = uuid.Parse(got.Status.SessionID)
+	require.NoError(t, err)
 	require.NotNil(t, got.InitialInputReceipt)
 	require.NotEmpty(t, got.InitialInputReceipt.Submission)
 	require.Equal(t, runtime.Yes(), got.InitialInputReceipt.Acceptance.Sent)
@@ -104,7 +106,8 @@ func TestTicket14ExplicitCreateCLI(t *testing.T) {
 	require.NoError(t, err, "%s", raw)
 	var result resource.SessionCreated
 	require.NoError(t, json.Unmarshal(raw, &result))
-	require.Equal(t, "claude-session", result.Status.SessionID)
+	_, err = uuid.Parse(result.Status.SessionID)
+	require.NoError(t, err)
 	require.NotNil(t, result.InitialInputReceipt)
 	require.Equal(t, runtime.Yes(), result.InitialInputReceipt.Acceptance.Sent)
 	require.Nil(t, result.InitialInputReceipt.Acceptance.NativeAccepted)
@@ -375,7 +378,7 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 				t.Cleanup(func() { require.NoError(t, st.Close()) })
 				var meta metastore.MetaStore = st
 				if uncertain {
-					meta = unknownIdentity{st}
+					meta = &unknownIdentity{MetaStore: st}
 				}
 				gate := &identityGate{MetaStore: meta, entered: make(chan struct{}), release: make(chan struct{})}
 				var once sync.Once
@@ -458,8 +461,10 @@ func TestTicket14IdentityCommitOwnsFirstFacts(t *testing.T) {
 				}, 5*time.Second, 10*time.Millisecond)
 				page, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 				require.NoError(t, err)
+				persisted, err := svc.GetSession(ref)
+				require.NoError(t, err)
 				for _, e := range page.Events {
-					require.Equal(t, kind+"-session", e.SessionID)
+					require.Equal(t, persisted.Status.SessionID, e.SessionID)
 					require.Equal(t, "first", e.SessionName)
 					require.Equal(t, events.Source{}, e.Source())
 				}

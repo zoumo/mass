@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-const nativeSessionID = "44444444-4444-4444-8444-444444444444"
+var nativeSessionID = "44444444-4444-4444-8444-444444444444"
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
@@ -34,6 +34,12 @@ func main() {
 	for _, arg := range os.Args[1:] {
 		if arg == "--resume" || strings.HasPrefix(arg, "--resume=") {
 			resumed = true
+		}
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			nativeSessionID = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			nativeSessionID = value
 		}
 	}
 	init := func() {

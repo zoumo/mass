@@ -132,6 +132,16 @@ func (p *configNativePeer) serve(conn net.Conn) {
 			for _, a := range v["args"].([]any) {
 				args = append(args, a.(string))
 			}
+			if p.kind == "claude" {
+				for _, arg := range args {
+					if id, ok := strings.CutPrefix(arg, "--session-id="); ok {
+						p.id = id
+					}
+					if id, ok := strings.CutPrefix(arg, "--resume="); ok {
+						p.id = id
+					}
+				}
+			}
 			p.opened <- args
 			continue
 		}
@@ -211,15 +221,6 @@ func liveConfigHTTP(t *testing.T, kind string, allowShutdownError ...bool) (*ser
 	require.NoError(t, err)
 	peer := newConfigNativePeer(t, kind, cwd)
 	configDir := t.TempDir()
-	if kind == "claude" {
-		key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(cwd, "-")
-		dir := filepath.Join(configDir, "projects", key)
-		require.NoError(t, os.MkdirAll(dir, 0o700))
-		row := map[string]any{"type": "user", "uuid": "saved", "parentUuid": nil, "sessionId": peer.id, "cwd": cwd, "message": map[string]any{"role": "user", "content": "retained"}}
-		raw, err := json.Marshal(row)
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, peer.id+".jsonl"), append(raw, '\n'), 0o600))
-	}
 	st, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
@@ -246,6 +247,15 @@ func liveConfigHTTP(t *testing.T, kind string, allowShutdownError ...bool) (*ser
 	c := newHTTPClient(t, server.URL, "")
 	var created resource.Session
 	require.NoError(t, c.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "configured"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd, Config: &runtime.InitialSessionConfig{Model: "initial/model", Effort: "initial/effort"}}}}, &created))
+	if kind == "claude" {
+		key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(cwd, "-")
+		dir := filepath.Join(configDir, "projects", key)
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		row := map[string]any{"type": "user", "uuid": "saved", "parentUuid": nil, "sessionId": created.Status.SessionID, "cwd": cwd, "message": map[string]any{"role": "user", "content": "retained"}}
+		raw, err := json.Marshal(row)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, created.Status.SessionID+".jsonl"), append(raw, '\n'), 0o600))
+	}
 	return svc, c, server.URL, peer, created
 }
 

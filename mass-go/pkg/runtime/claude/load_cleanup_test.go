@@ -42,7 +42,7 @@ func (s *loadCleanupSession) Close(ctx context.Context) error {
 }
 
 type loadCleanupProvider struct {
-	agent.Provider
+	agent.Core
 	native   *loadCleanupSession
 	onResume func()
 	resumes  int

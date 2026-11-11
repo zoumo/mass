@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -21,6 +22,15 @@ func main() {
 }
 
 func replay() error {
+	assignedSessionID := ""
+	for _, arg := range os.Args[1:] {
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			assignedSessionID = value
+		}
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			assignedSessionID = value
+		}
+	}
 	f, err := os.Open(os.Getenv("CLAUDE_MOCK_SCENARIO"))
 	if err != nil {
 		return err
@@ -43,6 +53,15 @@ func replay() error {
 	output := json.NewEncoder(os.Stdout)
 	var link string
 	ids := map[string]any{}
+	recordedSessionID := ""
+	for _, frame := range scenario.Frames {
+		if frame.Direction == "server" {
+			if value, _ := frame.Data["session_id"].(string); value != "" {
+				recordedSessionID = value
+				break
+			}
+		}
+	}
 	for _, frame := range scenario.Frames {
 		data := frame.Data
 		if frame.Direction == "client" {
@@ -89,6 +108,7 @@ func replay() error {
 		if link != "" {
 			data["user_message_uuid"] = link
 		}
+		replaceSessionID(data, recordedSessionID, assignedSessionID)
 		if err := output.Encode(data); err != nil {
 			return err
 		}
@@ -99,4 +119,23 @@ func replay() error {
 		return errors.New("unexpected extra input")
 	}
 	return nil
+}
+
+func replaceSessionID(value any, recorded, assigned string) {
+	if recorded == "" || assigned == "" {
+		return
+	}
+	switch value := value.(type) {
+	case map[string]any:
+		if sessionID, _ := value["session_id"].(string); sessionID == recorded {
+			value["session_id"] = assigned
+		}
+		for _, child := range value {
+			replaceSessionID(child, recorded, assigned)
+		}
+	case []any:
+		for _, child := range value {
+			replaceSessionID(child, recorded, assigned)
+		}
+	}
 }

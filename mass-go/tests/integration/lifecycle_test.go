@@ -329,7 +329,6 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	path = replaceClaudeScenarioSessionID(t, path, sessionID)
 	resumePath = replaceClaudeScenarioSessionID(t, resumePath, sessionID)
 	configDir := t.TempDir()
-	prepareClaudeSavedSession(t, configDir, work, sessionID)
 	// Use one executable across cold recovery; resumed frames echo the
 	// dynamic caller UUID while preserving every retained baseline frame.
 	bin := filepath.Join(t.TempDir(), "claude-linked-replay")
@@ -343,6 +342,7 @@ func (lifecycleSuite *LifecycleSuite) TestClaudeStopAndColdResume() {
 	original, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "n", Name: "claude"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}})
 	require.NoError(t, err)
 	ref := resource.SessionRef{SessionID: original.Status.SessionID}
+	prepareClaudeSavedSession(t, configDir, work, ref.SessionID)
 	finishInput(t, svc, ref, "hello")
 	history, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 	require.NoError(t, err)

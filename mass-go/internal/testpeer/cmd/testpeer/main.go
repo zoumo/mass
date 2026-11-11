@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/zoumo/mass/mass-go/internal/testpeer/replay"
@@ -37,7 +38,12 @@ func run(args []string) int {
 			break
 		}
 	}
-	_ = native // Native startup arguments are declarations, never executed.
+	assignedSessionID := ""
+	for _, arg := range native {
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			assignedSessionID = value
+		}
+	}
 
 	fs := flag.NewFlagSet("mass-testpeer", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -80,7 +86,7 @@ func run(args []string) int {
 	_ = os.Stdin.SetReadDeadline(deadline)
 	_ = os.Stdout.SetWriteDeadline(deadline)
 
-	err = replay.Run(ctx, document, limits, os.Stdin, os.Stdout)
+	err = replay.Run(ctx, document, limits, os.Stdin, os.Stdout, assignedSessionID)
 	if err == nil {
 		if *receipt != "" {
 			err = writeReceipt(ctx, *receipt, *provider, document)

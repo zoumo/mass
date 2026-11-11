@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -44,9 +45,9 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			key := regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(work, "-")
 			project := filepath.Join(config, "projects", key)
 			require.NoError(t, os.MkdirAll(project, 0o700))
-			const id = "14141414-1414-4141-8141-141414141414"
-			ref := resource.SessionRef{SessionID: id}
-			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT": filepath.Join(project, id+".jsonl")}
+			var id string
+			var ref resource.SessionRef
+			env := map[string]any{"PEER_KIND": kind, "PEER_DIR": native, "WORK_DIR": work, "CLAUDE_CONFIG_DIR": config, "SAVED_TRANSCRIPT_DIR": project}
 			runtimeResource := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "envPolicy": "replace", "env": env}}}
 			// Close and reopen BOTH file authorities and the Service, not just a
 			// driver in the same registry. Native saved history survives separately.
@@ -112,7 +113,10 @@ func TestTicket14ExplicitInputDurableReopenAndNativeLoadNeverReplay(t *testing.T
 			firstInput := input("first explicit input")
 			created, err := svc.CreateSessionWithInput(ctx(t), resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "first"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: work}}, InitialInput: &firstInput})
 			require.NoError(t, err)
-			require.Equal(t, id, created.Status.SessionID)
+			id = created.Status.SessionID
+			ref = resource.SessionRef{SessionID: id}
+			_, err = uuid.Parse(id)
+			require.NoError(t, err)
 			require.NotNil(t, created.InitialInputReceipt)
 			first := waitHistory(svc, 1)
 			require.Equal(t, "first explicit input", events.TextOf(first.Events[0].Payload().(events.AgentMessage).Content[0]))

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -19,6 +20,7 @@ import (
 )
 
 func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
+	const preflightID = "11111111-1111-4111-8111-111111111111"
 	bin := filepath.Join(t.TempDir(), "claude-prompt-peer")
 	out, err := exec.CommandContext(ctx(t), "go", "build", "-o", bin, "./testdata/claude-load-peer").CombinedOutput()
 	require.NoError(t, err, string(out))
@@ -26,10 +28,8 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	config := t.TempDir()
 	evidence := filepath.Join(t.TempDir(), "argv.jsonl")
-	id := "33333333-3333-4333-8333-333333333333"
-	prepareClaudeSavedSession(t, config, cwd, id)
 	driver, err := (claude.Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
-		"executable": bin, "envPolicy": "replace", "env": map[string]any{"CLAUDE_CONFIG_DIR": config, "LOAD_ID": id, "LOAD_EVIDENCE": evidence},
+		"executable": bin, "envPolicy": "replace", "env": map[string]any{"CLAUDE_CONFIG_DIR": config, "LOAD_EVIDENCE": evidence},
 	})
 	require.NoError(t, err)
 	stream, err := driver.Events()
@@ -76,7 +76,7 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 		openedID = rejected.SessionID
 		assertPromptValidation(t, err, invalid.reason)
 		require.ErrorIs(t, err, runtime.ErrResourcesReleased)
-		rejected, err = driver.ResumeSession(ctx(t), id, address, bad)
+		rejected, err = driver.ResumeSession(ctx(t), preflightID, address, bad)
 		openedID = rejected.SessionID
 		assertPromptValidation(t, err, invalid.reason)
 		require.ErrorIs(t, err, runtime.ErrResourcesReleased)
@@ -100,7 +100,7 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 	var unsupported *runtime.OperationError
 	require.ErrorAs(t, err, &unsupported)
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)
-	rejected, err = driver.ResumeSession(ctx(t), id, address, extra)
+	rejected, err = driver.ResumeSession(ctx(t), preflightID, address, extra)
 	openedID = rejected.SessionID
 	require.ErrorAs(t, err, &unsupported)
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)
@@ -120,7 +120,10 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 	opened, err := driver.OpenSession(ctx(t), address, spec)
 	openedID = opened.SessionID
 	require.NoError(t, err)
-	require.Equal(t, id, opened.SessionID)
+	_, err = uuid.Parse(opened.SessionID)
+	require.NoError(t, err)
+	id := opened.SessionID
+	prepareClaudeSavedSession(t, config, cwd, id)
 	require.NoError(t, driver.CloseSession(ctx(t), openedID))
 	openedID = ""
 	for range 2 {

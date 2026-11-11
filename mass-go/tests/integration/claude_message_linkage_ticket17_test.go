@@ -36,11 +36,17 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			st, err := file.Open(t.TempDir(), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, st.Close()) })
-			svc := service.New(st, st, runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: t.TempDir()}}))
+			registry := runtime.NewRegistry(map[string]runtime.Factory{"claude": claude.Factory{RecoveryDir: t.TempDir()}})
+			svc := service.New(st, st, registry)
 			t.Cleanup(func() {
 				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				assert.NoError(t, svc.Shutdown(cleanup))
+				err := svc.Shutdown(cleanup)
+				if mode == "foreign-start" && err != nil {
+					assert.ErrorContains(t, err, "session_identity_mismatch")
+				} else {
+					assert.NoError(t, err)
+				}
 			})
 			h, err := transport.New(svc, transport.Options{LocalOnly: true})
 			require.NoError(t, err)
@@ -56,10 +62,10 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			require.NoError(t, err)
 			cwd, err := filepath.EvalSymlinks(t.TempDir())
 			require.NoError(t, err)
-			prepareClaudeSavedSession(t, config, cwd, "44444444-4444-4444-8444-444444444444")
 			opened, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "one", Name: "linked"}, Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{Cwd: cwd}}})
 			require.NoError(t, err)
 			ref := resource.SessionRef{SessionID: opened.Status.SessionID}
+			prepareClaudeSavedSession(t, config, cwd, ref.SessionID)
 			// One subscription spans up to 16 inputs, not one ten-second call.
 			observationCtx, cancelObservation := context.WithTimeout(t.Context(), 17*10*time.Second)
 			t.Cleanup(cancelObservation)
@@ -134,6 +140,36 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			// A second known work makes prior-work conflicts independent of
 			// the first submission's special no-UUID native contract.
 			send("warmup-again", false)
+			if mode == "foreign-start" {
+				before, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+				require.NoError(t, err)
+				_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("linkage-" + mode)}})
+				require.NoError(t, err)
+				driver, err := registry.Get("agent")
+				require.NoError(t, err)
+				observation := driver.(interface {
+					SessionObservation(string) runtime.SessionObservation
+				}).SessionObservation(ref.SessionID)
+				select {
+				case <-observation.Done():
+				case <-ctx(t).Done():
+					t.Fatal("foreign session identity was not rejected")
+				}
+				require.ErrorContains(t, observation.Err(), "session_identity_mismatch")
+				after, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+				data, err := os.ReadFile(evidence)
+				require.NoError(t, err)
+				for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
+					var input struct {
+						PID int `json:"pid"`
+					}
+					require.NoError(t, json.Unmarshal([]byte(line), &input))
+					require.Eventually(t, func() bool { return errors.Is(syscall.Kill(input.PID, 0), syscall.ESRCH) }, 5*time.Second, 10*time.Millisecond)
+				}
+				return
+			}
 			send("linkage-"+mode, mode == "proof" || mode == "stopped-preview")
 			if mode == "saturation" {
 				// Public terminal observations pace the native flow without

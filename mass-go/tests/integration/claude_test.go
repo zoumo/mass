@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -554,7 +555,12 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				}
 				svc, _, dir := setup(t, policy)
 				r := openNative(t, svc, kind, scenarioMode, "demo")
-				require.Equal(t, kind+"-session", r.Status.SessionID)
+				if kind == "claude" {
+					_, err := uuid.Parse(r.Status.SessionID)
+					require.NoError(t, err)
+				} else {
+					require.Equal(t, kind+"-session", r.Status.SessionID)
+				}
 				ref := resource.SessionRef{SessionID: r.Status.SessionID}
 				before, err := svc.ListHistoryEvents(ref, store.HistoryQuery{})
 				require.NoError(t, err)
@@ -707,22 +713,27 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 	}
 }
 
-func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
+func (claudeSuite *ClaudeSuite) TestClaudeAssignedSessionsAndEarlyExitIsolation() {
 	t := claudeSuite.T()
 	svc, reg, _ := setup(t, prototype.AutoApprovePermissions)
 	healthy := openNative(t, svc, "claude", "question", "healthy")
-	// Same native ID on a second process: reject only that new process.
-	_, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "duplicate"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: t.TempDir()}}})
-	require.Error(t, err)
+	second, err := svc.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "second"}, Spec: resource.SessionSpec{RuntimeRef: "healthy", SessionSpec: runtime.SessionSpec{Cwd: healthy.Spec.Cwd}}})
+	require.NoError(t, err)
+	require.NotEqual(t, healthy.Status.SessionID, second.Status.SessionID)
+	_, err = uuid.Parse(second.Status.SessionID)
+	require.NoError(t, err)
+	_, err = svc.CloseSession(ctx(t), resource.SessionRef{SessionID: second.Status.SessionID})
+	require.NoError(t, err)
 	path, work := nativeScenario(t, "claude", "missing-disconnect")
 	missingStore, err := file.Open(t.TempDir(), false)
 	require.NoError(t, err)
-	missing := service.NewWithPolicy(missingStore, missingStore, runtime.NewRegistry(map[string]runtime.Factory{
+	missingReg := runtime.NewRegistry(map[string]runtime.Factory{
 		"claude": claude.Factory{RecoveryDir: t.TempDir()},
-	}), prototype.AutoApprovePermissions)
+	})
+	missing := service.NewWithPolicy(missingStore, missingStore, missingReg, prototype.AutoApprovePermissions)
 	t.Cleanup(func() {
 		if shutdownErr := missing.Shutdown(ctx(t)); shutdownErr != nil {
-			assert.ErrorContains(t, shutdownErr, "original opening or stream responsibility remains")
+			assert.ErrorContains(t, shutdownErr, "close_failed")
 		}
 		assert.NoError(t, missingStore.Close())
 	})
@@ -730,12 +741,21 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 	require.NoError(t, err)
 	_, err = missing.StartRuntime(ctx(t), "missing")
 	require.NoError(t, err)
-	wait, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
-	_, err = missing.CreateSession(wait, resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "missing"}, Spec: resource.SessionSpec{RuntimeRef: "missing", SessionSpec: runtime.SessionSpec{Cwd: work}}})
-	require.ErrorContains(t, err, "outcome_unknown")
-	_, err = missing.GetSession(resource.SessionRef{Namespace: "default", Name: "missing"})
-	require.ErrorIs(t, err, store.ErrNotFound)
+	opened, err := missing.CreateSession(ctx(t), resource.Session{Metadata: resource.Metadata{Namespace: "default", Name: "missing"}, Spec: resource.SessionSpec{RuntimeRef: "missing", SessionSpec: runtime.SessionSpec{Cwd: work}}})
+	require.NoError(t, err)
+	_, err = uuid.Parse(opened.Status.SessionID)
+	require.NoError(t, err)
+	missingDriver, err := missingReg.Get("missing")
+	require.NoError(t, err)
+	observation := missingDriver.(interface {
+		SessionObservation(string) runtime.SessionObservation
+	}).SessionObservation(opened.Status.SessionID)
+	select {
+	case <-observation.Done():
+	case <-ctx(t).Done():
+		t.Fatal("native exit before init was not observed")
+	}
+	require.ErrorContains(t, observation.Err(), "session_terminated")
 	d, err := reg.Get("healthy")
 	require.NoError(t, err)
 	// Unsupported SDK options reject without starting a replacement process.
@@ -762,7 +782,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 		}
 	}
 	require.NoError(t, svc.Shutdown(ctx(t)))
-	t.Log("PASS duplicate and missing init cleanup leave healthy Session usable; no hidden prompt or fabricated identity")
+	t.Log("PASS distinct assigned identities and native exit before init leave healthy Session usable")
 }
 
 func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
@@ -1165,7 +1185,18 @@ type claudeDriverObservation struct {
 
 func runClaudeDriverScenario(t *testing.T, name string, frames []any) claudeDriverObservation {
 	t.Helper()
-	path, work := writeNativeScenario(t, map[string]any{"version": 1, "provenance": "synthetic", "frames": frames})
+	scenario := map[string]any{"version": 1, "provenance": "synthetic", "frames": frames}
+	for _, value := range frames {
+		frame, ok := value.(map[string]any)
+		if !ok || frame["direction"] != "server" {
+			continue
+		}
+		data, ok := frame["data"].(map[string]any)
+		if ok && data["session_id"] == name {
+			data["session_id"] = "claude-session"
+		}
+	}
+	path, work := writeNativeScenario(t, scenario)
 	driver, err := (claude.Factory{RecoveryDir: t.TempDir()}).New(name, runtime.Config{"executable": claudeMock, "scenario": path})
 	require.NoError(t, err)
 	stream, err := driver.Events()
