@@ -112,11 +112,14 @@ func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, in
 	_, err = svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text(input)}})
 	require.NoError(t, err)
 	message := false
+	forwardingGaps := 0
 	for {
 		e, err := nextSubscription(sub, ctx(t))
 		require.NoError(t, err)
 		if p, ok := e.Payload().(events.SessionError); ok {
-			t.Fatalf("session failed: %s %s", p.Message, p.Reason)
+			require.Equal(t, "native_relationship_gap", p.Reason)
+			requireClaudeForwardingGap(t, e)
+			forwardingGaps++
 		}
 		if e.Type() == "agent.message" {
 			message = true
@@ -125,6 +128,7 @@ func finishInput(t *testing.T, svc *service.Service, ref resource.SessionRef, in
 			break
 		}
 	}
+	require.LessOrEqual(t, forwardingGaps, 1)
 }
 
 func (lifecycleSuite *LifecycleSuite) TestCodexConfigurationStopAndColdResume() {

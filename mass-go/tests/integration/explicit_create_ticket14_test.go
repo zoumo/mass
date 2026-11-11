@@ -342,11 +342,12 @@ func TestTicket14UnrelatedResultsKeepCurrentWorkOpen(t *testing.T) {
 			ref := resource.SessionRef{SessionID: got.Status.SessionID}
 			require.Eventually(t, func() bool {
 				page, e := svc.ListHistoryEvents(ref, store.HistoryQuery{})
-				return e == nil && len(page.Events) == 1
-			}, 5*time.Second, 10*time.Millisecond)
-			state, err := svc.GetSession(ref)
-			require.NoError(t, err)
-			require.NotEqual(t, events.Idle, state.Status.State, "foreign and child results must not settle root work")
+				if e != nil || len(page.Events) != 1 {
+					return false
+				}
+				state, e := svc.GetSession(ref)
+				return e == nil && state.Status.State == events.Running
+			}, 5*time.Second, 10*time.Millisecond, "foreign and child results must retain the observed running state")
 			receipt, err := svc.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("follow-up")}})
 			require.NoError(t, err)
 			require.Equal(t, "applied_best_effort", string(receipt.Result))

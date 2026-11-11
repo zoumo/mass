@@ -2,7 +2,7 @@ package recordingtest
 
 const (
 	// RuntimeSDKVersion is written into newly recorded consumer fixtures.
-	RuntimeSDKVersion = "v0.0.0-20261111182105-9b4f718dabf6"
+	RuntimeSDKVersion = "v0.0.0-20261111190044-a7b8e2821acf"
 	// RecordingSDKVersion is the immutable provenance of checked-in fixtures.
 	RecordingSDKVersion = "v0.0.0-20261105065348-5edf8b62e963"
 	// TestifyVersion is written into newly recorded consumer fixtures.

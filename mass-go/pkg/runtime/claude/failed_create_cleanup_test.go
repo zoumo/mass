@@ -20,6 +20,7 @@ import (
 	"github.com/zoumo/agent-sdk-go/agent"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
@@ -78,7 +79,7 @@ func TestFailedCreateCleanupPeer(t *testing.T) {
 
 func TestOpenWithoutInputThenCloseReleasesNativeProcess(t *testing.T) {
 	dir := t.TempDir()
-	driver := assignedSessionDriver(t, dir, "1", "0")
+	driver, observed := assignedSessionDriver(t, dir, "1", "0")
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	_, err := driver.Start(ctx)
@@ -87,6 +88,7 @@ func TestOpenWithoutInputThenCloseReleasesNativeProcess(t *testing.T) {
 	require.NoError(t, err)
 	_, err = uuid.Parse(opened.SessionID)
 	require.NoError(t, err, "Open must return the SDK-assigned native UUID before init")
+	requireAssignedForwardingGap(t, ctx, observed)
 	require.NoError(t, driver.CloseSession(ctx, opened.SessionID))
 	require.NoError(t, driver.Stop(ctx))
 	requireProcessReaped(t, dir)
@@ -96,7 +98,7 @@ func TestOpenWithoutInputObservesNativeExit(t *testing.T) {
 	for _, exit := range []string{"0", "4"} {
 		t.Run("exit-"+exit, func(t *testing.T) {
 			dir := t.TempDir()
-			driver := assignedSessionDriver(t, dir, "", exit)
+			driver, observed := assignedSessionDriver(t, dir, "", exit)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			_, err := driver.Start(ctx)
@@ -105,6 +107,7 @@ func TestOpenWithoutInputObservesNativeExit(t *testing.T) {
 			require.NoError(t, err)
 			_, err = uuid.Parse(opened.SessionID)
 			require.NoError(t, err, "Open must return the SDK-assigned native UUID before init")
+			requireAssignedForwardingGap(t, ctx, observed)
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "release"), nil, 0o600))
 			select {
 			case <-opened.Observation.Done():
@@ -118,7 +121,7 @@ func TestOpenWithoutInputObservesNativeExit(t *testing.T) {
 	}
 }
 
-func assignedSessionDriver(t *testing.T, dir, wait, exit string) *Driver {
+func assignedSessionDriver(t *testing.T, dir, wait, exit string) (*Driver, <-chan events.SessionEvent) {
 	t.Helper()
 	binary, err := os.Executable()
 	require.NoError(t, err)
@@ -135,6 +138,33 @@ func assignedSessionDriver(t *testing.T, dir, wait, exit string) *Driver {
 		},
 	})
 	require.NoError(t, err)
+	stream, err := driver.Events()
+	require.NoError(t, err)
+	readCtx, stopRead := context.WithCancel(context.Background())
+	readDone := make(chan struct{})
+	observed := make(chan events.SessionEvent, 8)
+	go func() {
+		defer close(readDone)
+		for {
+			event, err := stream.Next(readCtx)
+			if err != nil {
+				return
+			}
+			select {
+			case observed <- event:
+			case <-readCtx.Done():
+				return
+			}
+		}
+	}()
+	t.Cleanup(func() {
+		stopRead()
+		select {
+		case <-readDone:
+		case <-time.After(time.Second):
+			t.Error("owned native event consumer did not stop")
+		}
+	})
 	t.Cleanup(func() {
 		if err := os.WriteFile(filepath.Join(dir, "release"), nil, 0o600); err != nil {
 			t.Errorf("release owned native peer: %v", err)
@@ -148,7 +178,23 @@ func assignedSessionDriver(t *testing.T, dir, wait, exit string) *Driver {
 			requireProcessReaped(t, dir)
 		}
 	})
-	return driver.(*Driver)
+	return driver.(*Driver), observed
+}
+
+func requireAssignedForwardingGap(t *testing.T, ctx context.Context, observed <-chan events.SessionEvent) {
+	t.Helper()
+	select {
+	case event := <-observed:
+		diagnostic, ok := event.Payload().(events.SessionError)
+		require.True(t, ok)
+		require.Equal(t, "native_relationship_gap", diagnostic.Reason)
+		meta, ok := event.Meta["claude"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "forwarding-not-confirmed", meta["observationReason"])
+		require.Equal(t, "initialize-forwardSubagentText-is-a-request", meta["evidence"])
+	case <-ctx.Done():
+		t.Fatal("assigned Session did not deliver its forwarding diagnostic")
+	}
 }
 
 func requireProcessReaped(t *testing.T, dir string) {
