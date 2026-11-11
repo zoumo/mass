@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -36,8 +37,8 @@ func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 	_, err = driver.Start(t.Context())
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_ = driver.CloseSession(context.Background(), "native-thread")
-		_ = driver.Stop(context.Background())
+		assert.NoError(t, driver.CloseSession(context.Background(), "native-thread"), "cleanup must release the native session")
+		assert.NoError(t, driver.Stop(context.Background()), "cleanup must release the provider even if session close failed")
 	})
 	address := runtime.Address{Namespace: "one", SessionName: "prompt"}
 	spec := runtime.SessionSpec{Cwd: cwd, SystemPrompt: "Append these instructions.\n保留默认提示词。"}
@@ -101,4 +102,8 @@ func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 		require.Equal(t, spec.SystemPrompt, record.Params["developerInstructions"])
 	}
 	require.Equal(t, 3, resumes)
+	closeErr := driver.CloseSession(t.Context(), opened.SessionID)
+	stopErr := driver.Stop(t.Context())
+	require.NoError(t, closeErr, "loaded session must be released before the test succeeds")
+	require.NoError(t, stopErr, "provider release must be confirmed before the test succeeds")
 }
