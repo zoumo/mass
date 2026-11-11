@@ -32,7 +32,7 @@ func main() {
 	explicit := os.Getenv("EXPLICIT_CREATE") == "1"
 	resumed := false
 	for _, arg := range os.Args[1:] {
-		if arg == "--resume" {
+		if arg == "--resume" || strings.HasPrefix(arg, "--resume=") {
 			resumed = true
 		}
 	}

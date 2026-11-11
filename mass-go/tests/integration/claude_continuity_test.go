@@ -179,7 +179,10 @@ func (s *entrypointSuite) TestClaudeResumedFirstInputUsesSDKAuthority() {
 		}
 	}
 	// Live request authority is SDK-owned; lack of a caller UUID is not a MASS veto.
-	s.call("session.cancel", workflowParams{Session: ref}, nil)
+	var canceled runtime.CancelReceipt
+	s.call("session.cancel", workflowParams{Session: ref}, &canceled)
+	s.Require().Equal("controlAcknowledged", canceled.Result, "cancel must reach the resumed active native work")
+	s.NotEmpty(canceled.Target)
 	for {
 		s.Require().True(scan.Scan())
 		var e events.SessionEvent

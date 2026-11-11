@@ -327,17 +327,12 @@ Claude supports `stdio` and `http`, and rejects `sse`, `cwd`, `envHeaders` and
 `bearerTokenEnvVar`. Claude follows the SDK target CLI merge behavior; an empty
 list does not disable ambient servers.
 
-Codex currently rejects every explicit Session `mcpServers` declaration before
-native open with `unsupported/mcp_isolation_unavailable`. The pinned SDK cannot
-enforce per-Session isolation from Codex ambient and project MCP configuration.
-A nil list leaves provider ambient MCP behavior unchanged. This is an explicit
-implementation gap against the harness stdio/HTTP requirement, not a supported
-Codex capability. MCP configuration does not connect or health-check a server at
-Session open.
-
-The internal Codex mapping tests still cover `${ENV_VAR}` resolution and header
-translation, but Session open rejects before that path. Those unit tests do not
-establish a currently usable Codex MCP feature.
+Codex supports `stdio` and Streamable HTTP through the SDK. MASS resolves
+`${ENV_VAR}` references and passes the final server list to the SDK for open,
+resume and load. The SDK generates per-server native configuration; Codex applies
+its field-level merge with ambient configuration. Omitted and empty lists leave
+ambient servers enabled. MASS does not create a second merge or isolation layer.
+MCP configuration does not connect or health-check a server at Session open.
 
 Validation does not open credentials or history. Offline tests launch only MASS's
 `internal/testpeer` strict scenario binary via temporary launchers, with an explicit

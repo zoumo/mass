@@ -38,14 +38,14 @@ documentation recommends retaining the older MASS JSON shape.
 
 ## Implementation gaps
 
-- **Codex explicit MCP is unavailable.** The adapter contains mapping for stdio
-  and HTTP, but `pkg/runtime/codex/mcp.go` rejects every non-nil Session
-  `mcpServers` declaration before native open with
-  `unsupported/mcp_isolation_unavailable`. The pinned SDK cannot prove
-  per-Session isolation from Codex ambient configuration. A nil declaration
-  leaves ambient behavior unchanged. This is an implementation gap against the
-  harness requirement that both providers support unified stdio/HTTP MCP; it is
-  not presented as a supported Codex capability.
+- **Codex explicit MCP was unavailable at T05.** That snapshot rejected every
+  non-nil Session declaration with `unsupported/mcp_isolation_unavailable`.
+  The 2026-11-11 follow-up at SDK `4959190bc518` removes the MASS isolation gate
+  and passes resolved stdio/HTTP servers through SDK open/resume/load. Codex
+  ambient field-level merging remains SDK/native behavior; omitted and empty
+  lists do not disable ambient servers. Focused synthetic tests verify this
+  adapter boundary, without changing the historical T05 acceptance results or
+  claiming real MCP connection/health acceptance.
 - **The consumer replay fixtures are stale.** The four checked-in captures were
   made with SDK `5edf8b62`. Under `1c8514ff`, Codex initialization now requires
   `capabilities.experimentalApi`, and Claude `Open` waits for `system init`

@@ -268,7 +268,8 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	if len(spec.AdditionalDirs) > 0 {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, runtime.UnsupportedOption("additional_dirs_unsupported", "Additional directories are not supported by this Codex runtime"))
 	}
-	if err := validateCodexSessionMCPIsolation(spec.MCPServers); err != nil {
+	mcpServers, err := codexMCPServers(spec.MCPServers, d.options)
+	if err != nil {
 		return runtime.DriverSession{}, errors.Join(runtime.ErrResourcesReleased, err)
 	}
 	reader, err := d.reader()
@@ -296,6 +297,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 		Cwd:                    spec.Cwd,
 		AdditionalSystemPrompt: spec.SystemPrompt,
 		Features:               agentFeatures(spec.Features),
+		MCPServers:             mcpServers,
 	}
 	dispatchCtx := context.WithoutCancel(ctx)
 	var native agent.Session

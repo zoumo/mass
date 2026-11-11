@@ -4,29 +4,16 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 
-	"github.com/pelletier/go-toml/v2"
 	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 var codexMCPEnvironmentReference = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
-
-func validateCodexSessionMCPIsolation(configured *[]runtime.MCPServer) error {
-	if configured != nil {
-		return codexMCPUnsupported(
-			"mcp_isolation_unavailable",
-			errors.New("codex MCP isolation cannot be enforced by the pinned agent SDK"),
-		)
-	}
-	return nil
-}
 
 func codexMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessConfig) ([]agent.MCPServer, error) {
 	if configured == nil {
@@ -35,9 +22,6 @@ func codexMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCon
 	servers := *configured
 	if err := runtime.ValidateMCPServers(servers); err != nil {
 		return nil, codexMCPInvalid(err)
-	}
-	if err := validateCodexMCPIsolation(options); err != nil {
-		return nil, err
 	}
 	converted := make([]agent.MCPServer, 0, len(servers))
 	for i, server := range servers {
@@ -69,37 +53,6 @@ func codexMCPServers(configured *[]runtime.MCPServer, options runtime.ProcessCon
 		}
 	}
 	return converted, nil
-}
-
-func validateCodexMCPIsolation(options runtime.ProcessConfig) error {
-	home, explicit := options.Env["CODEX_HOME"]
-	if !explicit || !filepath.IsAbs(home) {
-		return codexMCPUnsupported("mcp_isolation_unavailable", errors.New("codex mcpServers require explicit absolute env.CODEX_HOME"))
-	}
-	for _, ambient := range codexAmbientHomes(options) {
-		if sameCodexHome(home, ambient) {
-			return codexMCPUnsupported("mcp_isolation_unavailable", errors.New("codex mcpServers require an isolated CODEX_HOME"))
-		}
-	}
-	info, err := os.Stat(home)
-	if err != nil || !info.IsDir() {
-		return codexMCPUnsupported("mcp_isolation_unavailable", errors.New("codex mcpServers require an existing CODEX_HOME directory"))
-	}
-	b, err := os.ReadFile(filepath.Join(home, "config.toml"))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return codexMCPUnsupported("mcp_isolation_unavailable", errors.New("codex mcpServers cannot read CODEX_HOME config.toml"))
-	}
-	var config map[string]any
-	if err := toml.Unmarshal(b, &config); err != nil {
-		return codexMCPUnsupported("mcp_isolation_unavailable", errors.New("codex mcpServers require valid CODEX_HOME config.toml"))
-	}
-	if containsMCPConfig(config) {
-		return codexMCPUnsupported("mcp_isolation_unavailable", errors.New("codex mcpServers require CODEX_HOME without ambient mcp_servers"))
-	}
-	return nil
 }
 
 func codexHTTPMCPServer(index int, server runtime.MCPServer, options runtime.ProcessConfig) (agent.MCPServer, error) {
@@ -258,48 +211,4 @@ func codexMCPInvalid(err error) error {
 
 func codexMCPUnsupported(reason string, err error) error {
 	return errors.Join(runtime.UnsupportedOption(reason, "MCP configuration is not supported by this Codex runtime"), err)
-}
-
-func codexAmbientHomes(options runtime.ProcessConfig) []string {
-	homes := []string{}
-	if home := os.Getenv("CODEX_HOME"); home != "" {
-		homes = append(homes, home)
-	}
-	if home := os.Getenv("HOME"); home != "" {
-		homes = append(homes, filepath.Join(home, ".codex"))
-	}
-	childHome := options.Env["HOME"]
-	if childHome == "" && options.EnvPolicy != "replace" {
-		childHome = os.Getenv("HOME")
-	}
-	if childHome != "" {
-		homes = append(homes, filepath.Join(childHome, ".codex"))
-	}
-	if userHome, err := os.UserHomeDir(); err == nil {
-		homes = append(homes, filepath.Join(userHome, ".codex"))
-	}
-	return homes
-}
-
-func sameCodexHome(a, b string) bool {
-	if filepath.Clean(a) == filepath.Clean(b) {
-		return true
-	}
-	infoA, errA := os.Stat(a)
-	infoB, errB := os.Stat(b)
-	return errA == nil && errB == nil && os.SameFile(infoA, infoB)
-}
-
-func containsMCPConfig(value any) bool {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, child := range typed {
-			if key == "mcp_servers" || containsMCPConfig(child) {
-				return true
-			}
-		}
-	case []any:
-		return slices.ContainsFunc(typed, containsMCPConfig)
-	}
-	return false
 }

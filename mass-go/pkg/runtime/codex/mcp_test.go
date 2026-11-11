@@ -235,24 +235,6 @@ func TestCodexMCPConfigurationRejectsInvalidResolvedHeaderValues(t *testing.T) {
 	}
 }
 
-func TestCodexSessionMCPServersRejectsExplicitIsolationGap(t *testing.T) {
-	require.NoError(t, validateCodexSessionMCPIsolation(nil))
-
-	empty := []runtime.MCPServer{}
-	err := validateCodexSessionMCPIsolation(&empty)
-	require.Error(t, err)
-	var public *runtime.OperationError
-	require.ErrorAs(t, err, &public)
-	require.Equal(t, "unsupported", public.Code)
-	require.Equal(t, "mcp_isolation_unavailable", public.Reason)
-
-	explicit := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
-	err = validateCodexSessionMCPIsolation(&explicit)
-	require.Error(t, err)
-	require.ErrorAs(t, err, &public)
-	require.Equal(t, "unsupported", public.Code)
-}
-
 func TestCodexMCPConfigurationRejectsConflictingAuthentication(t *testing.T) {
 	options := codexMCPOptions(t)
 	options.Env["OTHER_TOKEN"] = "other-secret"
@@ -338,72 +320,27 @@ func TestCodexMCPConfigurationClassifiesPublicValidation(t *testing.T) {
 	require.NotContains(t, err.Error(), "literal-secret")
 }
 
-func TestCodexMCPConfigurationRequiresIsolatedHome(t *testing.T) {
+func TestCodexMCPConfigurationDefersAmbientConfigurationToSDK(t *testing.T) {
 	servers := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
-	_, err := codexMCPServers(&servers, runtime.ProcessConfig{})
-	require.ErrorContains(t, err, "explicit absolute env.CODEX_HOME")
-	var public *runtime.OperationError
-	require.ErrorAs(t, err, &public)
-	require.Equal(t, "unsupported", public.Code)
-
-	empty := []runtime.MCPServer{}
-	_, err = codexMCPServers(&empty, runtime.ProcessConfig{})
-	require.ErrorContains(t, err, "explicit absolute env.CODEX_HOME")
-
-	ambient := t.TempDir()
-	t.Setenv("CODEX_HOME", ambient)
-	_, err = codexMCPServers(&servers, runtime.ProcessConfig{Env: map[string]string{"CODEX_HOME": ambient}})
-	require.ErrorContains(t, err, "isolated CODEX_HOME")
-}
-
-func TestCodexMCPConfigurationRejectsAmbientServers(t *testing.T) {
-	servers := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
-	for name, config := range map[string]string{
-		"top level": "[mcp_servers.ambient]\ncommand = \"/ambient\"\n",
-		"profile":   "[profiles.work.mcp_servers.ambient]\ncommand = \"/ambient\"\n",
+	for _, config := range []string{
+		"[mcp_servers.ambient]\ncommand = \"/ambient\"\n",
+		"[profiles.work.mcp_servers.ambient]\ncommand = \"/ambient\"\n",
 	} {
-		t.Run(name, func(t *testing.T) {
-			home := t.TempDir()
-			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600))
-			_, err := codexMCPServers(&servers, runtime.ProcessConfig{Env: map[string]string{"CODEX_HOME": home}})
-			require.ErrorContains(t, err, "without ambient mcp_servers")
-		})
+		home := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0o600))
+		converted, err := codexMCPServers(&servers, runtime.ProcessConfig{Env: map[string]string{"CODEX_HOME": home}})
+		require.NoError(t, err)
+		require.Len(t, converted, 1, "MASS maps only the effective Session list; ambient merge belongs to the SDK/native provider")
+		require.Equal(t, "remote", converted[0].Name)
 	}
-}
-
-func TestCodexMCPConfigurationAllowsIsolatedHomeConfig(t *testing.T) {
-	home := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), []byte("[profiles.work]\nmodel = \"test\"\n"), 0o600))
-	servers := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
-	converted, err := codexMCPServers(&servers, runtime.ProcessConfig{Env: map[string]string{"CODEX_HOME": home}})
-	require.NoError(t, err)
+	converted, err := codexMCPServers(&servers, runtime.ProcessConfig{})
+	require.NoError(t, err, "Session MCP does not require an isolated CODEX_HOME")
 	require.Len(t, converted, 1)
-}
-
-func TestCodexMCPConfigurationRejectsAliasedAmbientHome(t *testing.T) {
-	ambient := t.TempDir()
-	alias := filepath.Join(t.TempDir(), "codex-alias")
-	require.NoError(t, os.Symlink(ambient, alias))
-	t.Setenv("CODEX_HOME", ambient)
-	servers := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
-	_, err := codexMCPServers(&servers, runtime.ProcessConfig{Env: map[string]string{"CODEX_HOME": alias}})
-	require.ErrorContains(t, err, "isolated CODEX_HOME")
-}
-
-func TestCodexMCPConfigurationRejectsAmbientHomeUnderChildHOME(t *testing.T) {
-	processHome := t.TempDir()
-	childHome := t.TempDir()
-	t.Setenv("HOME", processHome)
-	t.Setenv("CODEX_HOME", "")
-	servers := []runtime.MCPServer{{Name: "remote", Type: "http", URL: "https://example.invalid/mcp"}}
-	_, err := codexMCPServers(&servers, runtime.ProcessConfig{
-		EnvPolicy: "inherit",
-		Env: map[string]string{
-			"HOME":       childHome,
-			"CODEX_HOME": filepath.Join(childHome, ".codex"),
-		},
-	})
-	require.ErrorContains(t, err, "isolated CODEX_HOME")
+	empty := []runtime.MCPServer{}
+	converted, err = codexMCPServers(&empty, runtime.ProcessConfig{})
+	require.NoError(t, err)
+	require.NotNil(t, converted)
+	require.Empty(t, converted)
 }
 
 func TestCodexMCPConfigurationWithoutDeclarationKeepsAmbientBehavior(t *testing.T) {

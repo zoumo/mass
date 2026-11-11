@@ -134,9 +134,13 @@ review before any authorized harness update:
   `harness/modules/runtime/design.md:77`: successful SDK close is the release
   result, while event routing must still drain. This is stale implementation
   evidence, not a request to rewrite historical acceptance as a new pass.
-- The existing Codex explicit MCP gap remains: every non-nil Session MCP
-  declaration rejects with `mcp_isolation_unavailable`; the SDK still cannot
-  prove ambient isolation. No new MCP support is claimed.
+- At the T06 pin recorded above, explicit Codex MCP still rejected non-nil
+  declarations. The 2026-11-11 follow-up at SDK `4959190bc518` removes that MASS
+  gate and forwards resolved stdio/HTTP configuration for open/resume/load.
+  Ambient field-level merge remains SDK/native-owned; omitted and empty lists
+  do not disable ambient servers. Focused synthetic checks cover the adapter
+  configuration boundary, not real MCP startup or health, and do not revise the
+  historical T06 acceptance results above.
 
 The shared `.scratch/sdk-source-of-truth/spec.md:162` and `:218` already state
 that `InitialInputProvider` was removed and MASS composes open/resume with
