@@ -112,8 +112,13 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
 			*openedID = ""
-			require.NoError(t, driver.LoadSession(t.Context(), opened.SessionID, address, spec, "mcp-load"))
+			t.Cleanup(func() {
+				cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				assert.NoError(t, driver.CancelHistoryLoad(cleanup, opened.SessionID, "mcp-load"), "cleanup must release the native history load")
+			})
 			*openedID = opened.SessionID
+			require.NoError(t, driver.LoadSession(t.Context(), opened.SessionID, address, spec, "mcp-load"))
 			require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
 			*openedID = ""
 			require.NoError(t, driver.Stop(t.Context()))

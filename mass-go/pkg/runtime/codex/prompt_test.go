@@ -102,8 +102,13 @@ func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 		require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
 		openedID = ""
 	}
-	require.NoError(t, driver.LoadSession(t.Context(), opened.SessionID, address, spec, "prompt-load"))
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		assert.NoError(t, driver.CancelHistoryLoad(cleanup, opened.SessionID, "prompt-load"), "cleanup must release the native history load")
+	})
 	openedID = opened.SessionID
+	require.NoError(t, driver.LoadSession(t.Context(), opened.SessionID, address, spec, "prompt-load"))
 	require.Equal(t, spec.SystemPrompt, waitCodexPeerTrace(t, trace, "thread/resume")["params"].(map[string]any)["developerInstructions"])
 	data, err := os.ReadFile(trace)
 	require.NoError(t, err)

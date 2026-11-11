@@ -72,8 +72,8 @@ func TestClaudeProviderZeroInputResumeAndExplicitInitialInput(t *testing.T) {
 	require.NoError(t, err)
 	address, spec := runtime.Address{Namespace: "provider", SessionName: "resume"}, runtime.SessionSpec{Cwd: work}
 	opened, err := d.OpenSession(ctx(t), address, spec)
-	require.NoError(t, err)
 	active = opened.SessionID
+	require.NoError(t, err)
 	require.Equal(t, "33333333-3333-4333-8333-333333333333", active)
 	require.NoError(t, d.CloseSession(ctx(t), active))
 	active = ""
@@ -90,8 +90,8 @@ func TestClaudeProviderZeroInputResumeAndExplicitInitialInput(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, opened.SessionID+".jsonl"), append(row, '\n'), 0o600))
 	resumed, err := d.ResumeSession(ctx(t), opened.SessionID, address, spec)
-	require.NoError(t, err)
 	active = resumed.SessionID
+	require.NoError(t, err)
 	require.Equal(t, opened.SessionID, resumed.SessionID)
 	require.Nil(t, resumed.InitialInputReceipt)
 	require.NoError(t, d.CloseSession(ctx(t), active))
@@ -101,8 +101,8 @@ func TestClaudeProviderZeroInputResumeAndExplicitInitialInput(t *testing.T) {
 	require.NotContains(t, string(data), `"event":"input"`, "zero-input resume must not dispatch a hidden prompt")
 
 	resumed, err = d.(runtime.ResumptionDriver).ResumeSessionWithInput(ctx(t), opened.SessionID, address, spec, runtime.Input{Content: []events.ContentBlock{events.Text("continue")}})
-	require.NoError(t, err)
 	active = resumed.SessionID
+	require.NoError(t, err)
 	require.Equal(t, opened.SessionID, active)
 	require.NotNil(t, resumed.InitialInputReceipt)
 	require.EqualValues(t, "applied_best_effort", resumed.InitialInputReceipt.Result)

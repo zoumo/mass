@@ -336,6 +336,14 @@ func TestRelayCloseUnblocksSinkWithRelayContext(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		relay.Close()
+		select {
+		case <-relay.Done():
+		case <-time.After(time.Second):
+			t.Error("relay cleanup did not finish")
+		}
+	})
 	select {
 	case <-entered:
 	case <-time.After(time.Second):

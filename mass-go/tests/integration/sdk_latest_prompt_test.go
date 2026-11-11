@@ -112,8 +112,15 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 		require.NoError(t, driver.CloseSession(ctx(t), openedID))
 		openedID = ""
 	}
-	require.NoError(t, driver.LoadSession(ctx(t), id, address, spec, "prompt-load"))
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if loadErr := driver.CancelHistoryLoad(cleanup, id, "prompt-load"); loadErr != nil {
+			t.Errorf("release owned Claude history load: %v", loadErr)
+		}
+	})
 	openedID = id
+	require.NoError(t, driver.LoadSession(ctx(t), id, address, spec, "prompt-load"))
 	require.NoError(t, driver.CloseSession(ctx(t), openedID))
 	openedID = ""
 	data, err := os.ReadFile(evidence)
