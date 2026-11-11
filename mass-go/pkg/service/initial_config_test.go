@@ -30,3 +30,32 @@ func TestInitialSessionConfigurationServiceRejectsBeforeEffects(t *testing.T) {
 	require.Empty(t, driver.opens)
 	require.Empty(t, driver.resumes)
 }
+
+func TestSystemPromptServiceRejectsBeforeRuntimeStart(t *testing.T) {
+	svc, driver, st := newDefaultsFixture(t)
+	for _, testCase := range []struct {
+		prompt string
+		reason string
+	}{
+		{"bad\x00prompt", "additional_system_prompt_contains_nul"},
+		{string([]byte{0xff}), "additional_system_prompt_invalid_utf8"},
+	} {
+		_, err := svc.CreateSession(t.Context(), resource.Session{
+			Metadata: resource.Metadata{Namespace: "one", Name: "prompt"},
+			Spec: resource.SessionSpec{RuntimeRef: "agent", SessionSpec: runtime.SessionSpec{
+				Cwd: "/work", SystemPrompt: testCase.prompt,
+			}},
+		})
+		var public *runtime.OperationError
+		require.ErrorAs(t, err, &public)
+		require.Equal(t, "invalid_argument", public.Code)
+		require.Equal(t, testCase.reason, public.Reason)
+	}
+	page, err := st.ListSessions(resource.SessionQuery{})
+	require.NoError(t, err)
+	require.Empty(t, page.Items)
+	driver.mu.Lock()
+	defer driver.mu.Unlock()
+	require.Zero(t, driver.starts)
+	require.Empty(t, driver.opens)
+}
