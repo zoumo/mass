@@ -101,7 +101,7 @@ type Driver struct {
 	stopping bool
 	stopped  bool
 	stopErr  error
-	provider agent.Provider
+	provider agent.Core
 	sessions map[string]*session
 	loads    map[string]*nativeLoad
 	life     context.Context

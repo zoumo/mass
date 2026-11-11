@@ -1,10 +1,13 @@
 package integration_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -474,8 +477,17 @@ func (s *failureSuite) TestEarlyFactsWaitForIdentityCommit() {
 	defer release()
 	s.meta = gate
 	s.start("claude", "early", s.st)
-	done := make(chan error, 1)
-	go func() { _, err := s.svc.CreateSession(ctx(s.T()), s.spec("demo")); done <- err }()
+	done := make(chan struct {
+		session resource.Session
+		err     error
+	}, 1)
+	go func() {
+		session, err := s.svc.CreateSession(ctx(s.T()), s.spec("demo"))
+		done <- struct {
+			session resource.Session
+			err     error
+		}{session, err}
+	}()
 	select {
 	case <-gate.entered:
 	case <-ctx(s.T()).Done():
@@ -483,27 +495,57 @@ func (s *failureSuite) TestEarlyFactsWaitForIdentityCommit() {
 	}
 	_, err := s.st.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().ErrorIs(err, store.ErrNotFound)
-	_, err = s.st.ListHistory("claude-session", store.HistoryQuery{})
-	s.Require().ErrorIs(err, store.ErrNotFound)
 	release()
-	s.Require().NoError(<-done)
+	created := <-done
+	s.Require().NoError(created.err)
+	sessionID := created.session.Status.SessionID
 	s.Require().Eventually(func() bool {
-		p, e := s.st.ListHistory("claude-session", store.HistoryQuery{})
+		p, e := s.st.ListHistory(sessionID, store.HistoryQuery{})
 		return e == nil && len(p.Events) == 3
 	}, time.Second, 5*time.Millisecond)
 	s.T().Log("PASS SDK-native pre-init complete facts stay bounded and invisible until persistent identity commit")
 }
 
-func (s *failureSuite) TestEarlyCapacityFailsExplicitlyAndReleases() {
-	s.start("claude", "early-overflow", s.st)
-	_, err := s.svc.CreateSession(ctx(s.T()), s.spec("demo"))
+func (s *failureSuite) TestResumeEarlyCapacityFailsExplicitlyAndReleases() {
+	path, work := nativeScenario(s.T(), "claude", "early")
+	s.work = work
+	config := s.T().TempDir()
+	bin := filepath.Join(root, "resume-overflow-peer")
+	out, err := exec.CommandContext(ctx(s.T()), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
+	s.Require().NoError(err, "%s", out)
+	s.svc = service.New(s.meta, s.st, s.reg)
+	_, err = s.svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{
+		"executable": bin, "scenario": path, "env": map[string]any{"CLAUDE_CONFIG_DIR": config},
+	}}})
+	s.Require().NoError(err)
+	_, err = s.svc.StartRuntime(ctx(s.T()), "agent")
+	s.Require().NoError(err)
+	ref := s.open("demo")
+	s.Require().Eventually(func() bool {
+		page, err := s.st.ListHistory(ref.SessionID, store.HistoryQuery{})
+		return err == nil && len(page.Events) == 3
+	}, time.Second, 5*time.Millisecond)
+	_, err = s.svc.CloseSession(ctx(s.T()), ref)
+	s.Require().NoError(err)
+	prepareClaudeSavedSession(s.T(), config, work, ref.SessionID)
+	overflow, overflowWork := nativeScenario(s.T(), "claude", "early-overflow")
+	data, err := os.ReadFile(overflow)
+	s.Require().NoError(err)
+	data = bytes.ReplaceAll(data, []byte(overflowWork), []byte(work))
+	data = bytes.ReplaceAll(data, []byte(`"claude-session"`), []byte(`"`+ref.SessionID+`"`))
+	s.Require().NoError(os.WriteFile(path, data, 0o600))
+	_, err = s.svc.ResumeSession(ctx(s.T()), ref)
 	var operation *runtime.OperationError
 	s.Require().ErrorAs(err, &operation)
 	s.Equal("resource_exhausted", operation.Code)
 	s.Equal("initialize_buffer_exhausted", operation.Reason)
 	s.Require().ErrorIs(err, runtime.ErrResourcesReleased)
-	_, err = s.svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
-	s.Require().ErrorIs(err, store.ErrNotFound)
+	current, err := s.svc.GetSession(ref)
+	s.Require().NoError(err)
+	s.Equal(events.SessionState("offline"), current.Status.State)
+	page, err := s.st.ListHistory(ref.SessionID, store.HistoryQuery{})
+	s.Require().NoError(err)
+	s.Len(page.Events, 3)
 }
 
 func (s *failureSuite) TestCancellationDuringIdentityCommitSettlesOriginalOwner() {
@@ -566,32 +608,37 @@ func (s *failureSuite) TestLateAnswerCannotControlRecoveredRun() {
 	s.T().Log("PASS native resolved original handle and old turn notifications cannot answer or terminate the recovered run")
 }
 
-type unknownIdentity struct{ metastore.MetaStore }
+type unknownIdentity struct {
+	metastore.MetaStore
+	id string
+}
 
-func (g unknownIdentity) CreateSession(r resource.Session) (resource.Session, error) {
+func (g *unknownIdentity) CreateSession(r resource.Session) (resource.Session, error) {
 	value, err := g.MetaStore.CreateSession(r)
 	if err != nil {
 		return value, err
 	}
+	g.id = value.Status.SessionID
 	return value, errors.New("injected unknown identity commit")
 }
 
 func (s *failureSuite) TestUnknownIdentityCommitReconcilesOriginalFacts() {
-	s.meta = unknownIdentity{s.st}
+	identity := &unknownIdentity{MetaStore: s.st}
+	s.meta = identity
 	s.start("claude", "early", s.st)
 	_, err := s.svc.CreateSession(ctx(s.T()), s.spec("demo"))
 	s.Require().ErrorContains(err, "unknown identity commit")
 	_, err = s.svc.CreateSession(ctx(s.T()), s.spec("demo"))
 	s.Require().ErrorIs(err, store.ErrConflict)
-	page, err := s.st.ListHistory("claude-session", store.HistoryQuery{})
+	page, err := s.st.ListHistory(identity.id, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Empty(page.Events)
 	err = s.svc.ReconcileOpening(ctx(s.T()), "agent", runtime.Address{Namespace: "default", SessionName: "demo"})
 	s.Require().NoError(err)
-	r, err := s.svc.GetSession(resource.SessionRef{SessionID: "claude-session"})
+	r, err := s.svc.GetSession(resource.SessionRef{Namespace: "default", Name: "demo"})
 	s.Require().NoError(err)
 	s.Equal(events.SessionState("offline"), r.Status.State)
-	page, err = s.st.ListHistory("claude-session", store.HistoryQuery{})
+	page, err = s.st.ListHistory(r.Status.SessionID, store.HistoryQuery{})
 	s.Require().NoError(err)
 	s.Len(page.Events, 3)
 	s.T().Log("PASS unknown identity commit preserves reservation and early facts until explicit original-owner readback and release")

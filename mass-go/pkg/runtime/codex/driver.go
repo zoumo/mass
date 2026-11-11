@@ -71,7 +71,7 @@ func (f Factory) New(name string, c runtime.Config) (runtime.Driver, error) {
 	), nil
 }
 
-func newDriver(vault recovery.Vault, options options, provider agent.Provider, nativeClient func() (codexReadClient, error)) *Driver {
+func newDriver(vault recovery.Vault, options options, provider agent.Core, nativeClient func() (codexReadClient, error)) *Driver {
 	return &Driver{
 		vault:        vault,
 		options:      options,
@@ -129,7 +129,7 @@ type Driver struct {
 	options       options
 	pipe          *events.EventPipe
 	taken         bool
-	provider      agent.Provider
+	provider      agent.Core
 	nativeClient  func() (codexReadClient, error)
 	providerReady bool
 	providerCaps  runtime.Capabilities

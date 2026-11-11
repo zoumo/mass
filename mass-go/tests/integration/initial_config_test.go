@@ -184,20 +184,20 @@ func initialClaudeArgs(t *testing.T, evidence string, config *runtime.InitialSes
 func TestInitialSessionConfigurationClaudeCreateResume(t *testing.T) {
 	for _, tc := range initialCases {
 		t.Run(tc.name, func(t *testing.T) {
+			var setup *ticket07Setup
 			_, url, cwd, evidence := ticket07HTTP(t, "", ticket07Rows(), func(s *ticket07Setup) {
-				s.env["LOAD_ID"] = "33333333-3333-4333-8333-333333333333"
-				// The synthetic process does not persist its own transcript. Supply the
-				// SDK preflight's native-format metadata for the created identity.
-				raw, err := os.ReadFile(s.path)
-				require.NoError(t, err)
-				id := "33333333-3333-4333-8333-333333333333"
-				nativePath := filepath.Join(filepath.Dir(s.path), id+".jsonl")
-				require.NoError(t, os.WriteFile(nativePath, bytes.ReplaceAll(raw, []byte(claudeLoadID), []byte(id)), 0o600))
+				setup = s
 			})
 			initialReject(t, url, cwd)
 			var created resource.SessionCreated
 			initialCLI(t, url, "create", cwd, "", tc.config, &created)
 			require.Equal(t, tc.config, created.Spec.Config)
+			// Supply the SDK preflight's native-format metadata for the assigned identity.
+			raw, err := os.ReadFile(setup.path)
+			require.NoError(t, err)
+			id := created.Status.SessionID
+			nativePath := filepath.Join(filepath.Dir(setup.path), id+".jsonl")
+			require.NoError(t, os.WriteFile(nativePath, bytes.ReplaceAll(raw, []byte(claudeLoadID), []byte(id)), 0o600))
 			c := newHTTPClient(t, url, "")
 			ref := resource.SessionRef{SessionID: created.Status.SessionID}
 			require.NoError(t, c.CloseSession(ctx(t), ref, nil))

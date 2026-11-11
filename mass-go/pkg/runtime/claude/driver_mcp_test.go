@@ -16,11 +16,20 @@ import (
 )
 
 // TestClaudeDriverTestPeer is a synthetic CLI. The launcher records argv; this
-// peer completes initialize, publishes one system/init identity, and never
+// peer completes initialize, echoes the SDK-assigned --session-id, and never
 // calls a model.
 func TestClaudeDriverTestPeer(t *testing.T) {
 	if os.Getenv("MASS_CLAUDE_DRIVER_PEER") != "1" {
 		return
+	}
+	sessionID := ""
+	for _, arg := range os.Args[1:] {
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			sessionID = value
+		}
+	}
+	if sessionID == "" {
+		os.Exit(3)
 	}
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadBytes('\n')
@@ -49,7 +58,7 @@ func TestClaudeDriverTestPeer(t *testing.T) {
 		os.Exit(6)
 	}
 	if err := enc.Encode(map[string]any{
-		"type": "system", "subtype": "init", "session_id": "native-session",
+		"type": "system", "subtype": "init", "session_id": sessionID,
 		"cwd": os.Getenv("MASS_CLAUDE_DRIVER_CWD"), "model": "synthetic", "tools": []any{},
 	}); err != nil {
 		os.Exit(7)
@@ -68,7 +77,7 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 		"#!/bin/sh\n"+
 			": > \"$MASS_CLAUDE_DRIVER_CAPTURE\"\n"+
 			"for arg in \"$@\"; do printf '%s\\0' \"$arg\" >> \"$MASS_CLAUDE_DRIVER_CAPTURE\"; done\n"+
-			"exec "+shellQuote(executable)+" -test.run '^TestClaudeDriverTestPeer$'\n",
+			"exec "+shellQuote(executable)+" -test.run '^TestClaudeDriverTestPeer$' -- \"$@\"\n",
 	), 0o700))
 
 	driver, err := (Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
@@ -114,13 +123,17 @@ func TestClaudeDriverPassesMCPConfigToNativeCLI(t *testing.T) {
 	}
 	session, err := driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "demo"}, runtime.SessionSpec{Cwd: cwd, MCPServers: &servers})
 	require.NoError(t, err)
-	require.Equal(t, "native-session", session.SessionID)
+	require.NotEmpty(t, session.SessionID)
 	t.Cleanup(func() { _ = driver.CloseSession(context.Background(), session.SessionID) })
 
 	data, err := os.ReadFile(capture)
 	require.NoError(t, err)
 	argv := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
 	require.NotContains(t, argv, "--strict-mcp-config")
+	require.Contains(t, argv, "--session-id="+session.SessionID)
+	for _, arg := range argv {
+		require.False(t, strings.HasPrefix(arg, "--resume"), "new sessions must not resume")
+	}
 	var raw string
 	for _, arg := range argv {
 		if value, ok := strings.CutPrefix(arg, "--mcp-config="); ok {

@@ -301,10 +301,10 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261111031457-4959190bc518`,
-source commit `4959190b`, without a local replacement. The external
+The runtime SDK is pinned to `v0.0.0-20261111182105-9b4f718dabf6`,
+source commit `9b4f718d`, without a local replacement. The external
 `agent-sdk-testify` tool is pinned to
-`v0.1.3-0.20261111025559-1f8db14a50e1` for consumer recording and replay and
+`v0.1.3-0.20261111143023-90fa757261dd` for consumer recording and replay and
 is not a production dependency.
 The checked-in consumer fixtures remain bound to their recording SDK
 `v0.0.0-20261105065348-5edf8b62e963`; that provenance is intentionally not

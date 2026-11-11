@@ -10,10 +10,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/zoumo/agent-sdk-go/agent"
 	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
@@ -26,95 +28,138 @@ func TestFailedCreateCleanupPeer(t *testing.T) {
 	if dir == "" {
 		return
 	}
-	if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	sessionID := ""
+	for _, arg := range os.Args[1:] {
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			sessionID = value
+		}
+	}
+	if _, err := uuid.Parse(sessionID); err != nil {
 		os.Exit(2)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pid"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		os.Exit(3)
 	}
 	scanner := bufio.NewScanner(os.Stdin)
 	if !scanner.Scan() {
-		os.Exit(3)
+		os.Exit(4)
 	}
 	var request struct {
 		ID string `json:"request_id"`
 	}
 	if json.Unmarshal(scanner.Bytes(), &request) != nil || request.ID == "" {
-		os.Exit(4)
+		os.Exit(5)
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(map[string]any{
 		"type":     "control_response",
 		"response": map[string]any{"subtype": "success", "request_id": request.ID, "response": map[string]any{}},
 	}); err != nil {
-		os.Exit(5)
+		os.Exit(6)
 	}
-	// Initialization succeeds, but the peer exits without establishing identity.
+	if os.Getenv("MASS_FAILED_CREATE_CLEANUP_WAIT") == "1" {
+		for scanner.Scan() {
+		}
+		os.Exit(0)
+	}
+	release := os.Getenv("MASS_FAILED_CREATE_CLEANUP_RELEASE")
+	for {
+		if _, err := os.Stat(release); err == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// Initialization succeeds and Open returns the assigned identity before the
+	// peer exits without any later init frame or user input.
 	if os.Getenv("MASS_FAILED_CREATE_CLEANUP_EXIT") == "4" {
-		os.Exit(4)
+		os.Exit(7)
 	}
 	os.Exit(0)
 }
 
-func TestFailedCreateEOFReleasesNativeResources(t *testing.T) {
+func TestOpenWithoutInputThenCloseReleasesNativeProcess(t *testing.T) {
+	dir := t.TempDir()
+	driver := assignedSessionDriver(t, dir, "1", "0")
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	_, err := driver.Start(ctx)
+	require.NoError(t, err)
+	opened, err := driver.OpenSession(ctx, runtime.Address{Namespace: "default", SessionName: "close"}, runtime.SessionSpec{Cwd: dir})
+	require.NoError(t, err)
+	_, err = uuid.Parse(opened.SessionID)
+	require.NoError(t, err, "Open must return the SDK-assigned native UUID before init")
+	require.NoError(t, driver.CloseSession(ctx, opened.SessionID))
+	require.NoError(t, driver.Stop(ctx))
+	requireProcessReaped(t, dir)
+}
+
+func TestOpenWithoutInputObservesNativeExit(t *testing.T) {
 	for _, exit := range []string{"0", "4"} {
 		t.Run("exit-"+exit, func(t *testing.T) {
 			dir := t.TempDir()
-			binary, err := os.Executable()
-			require.NoError(t, err)
-			launcher := filepath.Join(dir, "peer")
-			require.NoError(t, os.WriteFile(launcher, fmt.Appendf(nil, "#!/bin/sh\nexec %q -test.run=^TestFailedCreateCleanupPeer$ -- \"$@\"\n", binary), 0o700))
-			driver, err := (Factory{RecoveryDir: filepath.Join(dir, "recovery")}).New("agent", runtime.Config{
-				"executable": launcher,
-				"envPolicy":  "replace",
-				"env":        map[string]any{"MASS_FAILED_CREATE_CLEANUP_PEER": dir, "MASS_FAILED_CREATE_CLEANUP_EXIT": exit},
-			})
-			require.NoError(t, err)
-			stream, err := driver.Events()
-			require.NoError(t, err)
-			readCtx, stopRead := context.WithCancel(context.Background())
-			readDone := make(chan struct{})
-			var openedID string
-			t.Cleanup(func() {
-				if openedID != "" {
-					closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
-					if closeErr := driver.CloseSession(closeCtx, openedID); closeErr != nil {
-						t.Errorf("close unexpectedly opened session: %v", closeErr)
-					}
-					closeCancel()
-				}
-				stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer stopCancel()
-				if stopErr := driver.Stop(stopCtx); stopErr != nil {
-					t.Errorf("stop failed-create runtime: %v", stopErr)
-				}
-				stopRead()
-				select {
-				case <-readDone:
-				case <-time.After(time.Second):
-					t.Error("failed-create event reader cleanup did not finish")
-				}
-			})
-			go func() {
-				defer close(readDone)
-				for {
-					if _, err := stream.Next(readCtx); err != nil {
-						return
-					}
-				}
-			}()
+			driver := assignedSessionDriver(t, dir, "", exit)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			_, err = driver.Start(ctx)
+			_, err := driver.Start(ctx)
 			require.NoError(t, err)
 			opened, err := driver.OpenSession(ctx, runtime.Address{Namespace: "default", SessionName: "failed"}, runtime.SessionSpec{Cwd: dir})
-			openedID = opened.SessionID
-			require.Empty(t, opened.SessionID)
-			require.Error(t, err)
-			data, readErr := os.ReadFile(filepath.Join(dir, "pid"))
-			require.NoError(t, readErr)
-			pid, parseErr := strconv.Atoi(string(data))
-			require.NoError(t, parseErr)
-			require.ErrorIs(t, syscall.Kill(pid, 0), syscall.ESRCH, "SDK failed-open cleanup must reap the original native process")
-			require.ErrorIs(t, err, runtime.ErrResourcesReleased, "terminal EOF/exit after completed SDK cleanup must not retain an unknown opening")
+			require.NoError(t, err)
+			_, err = uuid.Parse(opened.SessionID)
+			require.NoError(t, err, "Open must return the SDK-assigned native UUID before init")
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "release"), nil, 0o600))
+			select {
+			case <-opened.Observation.Done():
+			case <-ctx.Done():
+				t.Fatal("native exit did not end observation")
+			}
+			require.Error(t, opened.Observation.Err(), "unexpected native exit must not be reported as normal completion")
+			requireProcessReaped(t, dir)
+			require.Error(t, driver.CloseSession(ctx, opened.SessionID), "an exited native process has no successful close proof")
 		})
 	}
+}
+
+func assignedSessionDriver(t *testing.T, dir, wait, exit string) *Driver {
+	t.Helper()
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	launcher := filepath.Join(dir, "peer")
+	require.NoError(t, os.WriteFile(launcher, fmt.Appendf(nil, "#!/bin/sh\nexec %q -test.run=^TestFailedCreateCleanupPeer$ -- \"$@\"\n", binary), 0o700))
+	driver, err := (Factory{RecoveryDir: filepath.Join(dir, "recovery")}).New("agent", runtime.Config{
+		"executable": launcher,
+		"envPolicy":  "replace",
+		"env": map[string]any{
+			"MASS_FAILED_CREATE_CLEANUP_PEER":    dir,
+			"MASS_FAILED_CREATE_CLEANUP_WAIT":    wait,
+			"MASS_FAILED_CREATE_CLEANUP_EXIT":    exit,
+			"MASS_FAILED_CREATE_CLEANUP_RELEASE": filepath.Join(dir, "release"),
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := os.WriteFile(filepath.Join(dir, "release"), nil, 0o600); err != nil {
+			t.Errorf("release owned native peer: %v", err)
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := driver.Stop(cleanup); err != nil {
+			t.Logf("owned driver terminal stop result: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "pid")); err == nil {
+			requireProcessReaped(t, dir)
+		}
+	})
+	return driver.(*Driver)
+}
+
+func requireProcessReaped(t *testing.T, dir string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "pid"))
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(string(data))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+	}, 5*time.Second, time.Millisecond, "the native process must be reaped")
 }
 
 func TestFailedCreateCleanupTerminalExit(t *testing.T) {

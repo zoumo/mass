@@ -2,11 +2,17 @@ package replay
 
 import (
 	"errors"
+	"strconv"
 
 	"github.com/zoumo/mass/mass-go/internal/testpeer/rawjson"
 )
 
-type claudeAdapter struct{ requests }
+const assignedSessionPlaceholder = "claude-session"
+
+type claudeAdapter struct {
+	requests
+	sessionID string
+}
 
 func control(value rawjson.Value) (string, rawjson.Value, error) {
 	kind := stringMember(value, "type")
@@ -61,6 +67,16 @@ func (a *claudeAdapter) client(expected, actual rawjson.Value) (bool, error) {
 }
 
 func (a *claudeAdapter) server(expected rawjson.Value) (rawjson.Value, error) {
+	if a.sessionID != "" && stringMember(expected, "session_id") == assignedSessionPlaceholder {
+		replacement, err := rawjson.Parse([]byte(strconv.Quote(a.sessionID)))
+		if err != nil {
+			return rawjson.Value{}, err
+		}
+		expected, err = expected.Replace([]string{"session_id"}, replacement)
+		if err != nil {
+			return rawjson.Value{}, err
+		}
+	}
 	kind, recordedID, err := control(expected)
 	if err != nil {
 		return rawjson.Value{}, err

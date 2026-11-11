@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 func main() {
@@ -125,12 +126,17 @@ func main() {
 
 func claude(send func(any)) {
 	sessionID := "claude-session"
-	if os.Getenv("PEER_CONTROL") == "overload" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			panic(err)
+	cwd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	for _, arg := range os.Args[1:] {
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			sessionID = value
 		}
-		sessionID = "claude-" + filepath.Base(cwd)
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			sessionID = value
+		}
 	}
 	interrupts := 0
 	scan := bufio.NewScanner(os.Stdin)
@@ -155,7 +161,7 @@ func claude(send func(any)) {
 			}
 			if os.Getenv("PEER_CONTROL") == "overload" {
 				n := 1
-				if sessionID == "claude-damaged" {
+				if filepath.Base(cwd) == "damaged" {
 					n = 160
 				}
 				for i := range n {

@@ -16,7 +16,7 @@ import (
 )
 
 type lifecycleProvider struct {
-	agent.Provider
+	agent.Core
 	stops int
 	err   error
 }

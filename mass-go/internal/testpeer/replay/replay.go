@@ -18,11 +18,15 @@ var ErrDisconnected = errors.New("scripted disconnect")
 // Run keeps transport mechanics separate from the two native ID contracts.
 // Reads and writes are strict: exactly one client frame per recorded c2s frame,
 // no extra client byte after the script, and no unfinished request.
-func Run(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer) (err error) {
+func Run(ctx context.Context, document *scenario.Document, limits scenario.Limits, input io.Reader, output io.Writer, sessionIDs ...string) (err error) {
 	if ctx == nil || document == nil || input == nil || output == nil {
 		return errors.New("context, document and protocol streams required")
 	}
-	a, err := newAdapter(document.Provider)
+	assignedSessionID := ""
+	if len(sessionIDs) > 0 {
+		assignedSessionID = sessionIDs[0]
+	}
+	a, err := newAdapter(document.Provider, assignedSessionID)
 	if err != nil {
 		return err
 	}

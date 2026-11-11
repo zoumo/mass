@@ -135,6 +135,9 @@ func runClaude(send func(any), cwd string) {
 		if resumed, ok := strings.CutPrefix(arg, "--resume="); ok {
 			id = resumed
 		}
+		if assigned, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			id = assigned
+		}
 	}
 	var link string
 	fact := func(item string) {

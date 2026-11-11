@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
@@ -28,7 +29,7 @@ func TestClaudeProviderZeroInputResumeAndExplicitInitialInput(t *testing.T) {
 	config, evidence := t.TempDir(), filepath.Join(t.TempDir(), "peer.jsonl")
 	d, err := (claude.Factory{RecoveryDir: t.TempDir()}).New("provider", runtime.Config{
 		"executable": bin, "envPolicy": "replace",
-		"env": map[string]any{"CLAUDE_CONFIG_DIR": config, "LOAD_ID": "33333333-3333-4333-8333-333333333333", "LOAD_EVIDENCE": evidence},
+		"env": map[string]any{"CLAUDE_CONFIG_DIR": config, "LOAD_EVIDENCE": evidence},
 	})
 	require.NoError(t, err)
 	stream, err := d.Events()
@@ -74,7 +75,8 @@ func TestClaudeProviderZeroInputResumeAndExplicitInitialInput(t *testing.T) {
 	opened, err := d.OpenSession(ctx(t), address, spec)
 	active = opened.SessionID
 	require.NoError(t, err)
-	require.Equal(t, "33333333-3333-4333-8333-333333333333", active)
+	_, err = uuid.Parse(active)
+	require.NoError(t, err)
 	require.NoError(t, d.CloseSession(ctx(t), active))
 	active = ""
 

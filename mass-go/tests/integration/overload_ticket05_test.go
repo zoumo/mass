@@ -61,11 +61,7 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 			st, err := file.Open(filepath.Join(ownedRoot, "data"), false)
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, st.Close()) })
-			slowID := "damaged"
-			if kind == "claude" {
-				slowID = "claude-damaged"
-			}
-			gate := &nativeOverloadGate{EventStore: st, id: slowID, release: make(chan struct{})}
+			gate := &nativeOverloadGate{EventStore: st, release: make(chan struct{})}
 			var once sync.Once
 			release := func() { once.Do(func() { close(gate.release) }) }
 			defer release()
@@ -112,6 +108,7 @@ func TestTicket05NativeProvidersIsolateSaturatedSession(t *testing.T) {
 				require.NoError(t, e)
 				refs[name] = resource.SessionRef{SessionID: r.Status.SessionID}
 			}
+			gate.id = refs["damaged"].SessionID
 			expectProcesses = true
 			h, err := transport.New(svc, transport.Options{Token: "synthetic"})
 			require.NoError(t, err)

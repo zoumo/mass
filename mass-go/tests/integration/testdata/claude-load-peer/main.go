@@ -23,14 +23,13 @@ func main() {
 	record := json.NewEncoder(log)
 	write := json.NewEncoder(os.Stdout)
 	id := os.Getenv("LOAD_ID")
-	resumed := false
 	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "--resume=") {
-			resumed = true
+		if value, ok := strings.CutPrefix(arg, "--resume="); ok {
+			id = value
 		}
-	}
-	if !resumed {
-		id = "33333333-3333-4333-8333-333333333333"
+		if value, ok := strings.CutPrefix(arg, "--session-id="); ok {
+			id = value
+		}
 	}
 	cwd, _ := os.Getwd()
 	evidence := func(v any) {

@@ -2,6 +2,7 @@ package integration_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,10 +25,10 @@ func (s *entrypointSuite) openClaudeContinuity() (resource.SessionRef, string) {
 	s.call("runtime.start", workflowParams{Name: "continuous"}, nil)
 	work, err := filepath.EvalSymlinks(s.T().TempDir())
 	s.Require().NoError(err)
-	prepareClaudeSavedSession(s.T(), config, work, "44444444-4444-4444-8444-444444444444")
 	create := resource.Session{Metadata: resource.Metadata{Namespace: "demo", Name: "continuous"}, Spec: resource.SessionSpec{RuntimeRef: "continuous", SessionSpec: runtime.SessionSpec{Cwd: work}}}
 	var opened resource.Session
 	s.call("session.create", workflowParams{Create: &create}, &opened)
+	prepareClaudeSavedSession(s.T(), config, work, opened.Status.SessionID)
 	return resource.SessionRef{SessionID: opened.Status.SessionID}, evidence
 }
 
@@ -224,7 +225,7 @@ func (s *entrypointSuite) TestClaudeConfirmedChildProvenance() {
 	s.Require().True(ok, "original received envelope must survive SSE")
 	encoded, err := json.Marshal(raw)
 	s.Require().NoError(err)
-	s.JSONEq(`{"type":"assistant","session_id":"44444444-4444-4444-8444-444444444444","parent_tool_use_id":"child-tool","message":{"id":"confirmed-child","role":"assistant","content":[{"type":"text","text":"confirmed child fact","apiBlockIndex":0}]}}`, string(encoded))
+	s.JSONEq(fmt.Sprintf(`{"type":"assistant","session_id":%q,"parent_tool_use_id":"child-tool","message":{"id":"confirmed-child","role":"assistant","content":[{"type":"text","text":"confirmed child fact","apiBlockIndex":0}]}}`, ref.SessionID), string(encoded))
 	page := s.history(ref)
 	s.Require().Len(page.Events, 3)
 	s.Equal(child.EventID, page.Events[1].EventID)
