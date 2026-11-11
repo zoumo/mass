@@ -191,6 +191,56 @@ evidence and are not current-pin PASS evidence. Exact failures, hashes and
 recording commands are in
 [consumer recording acceptance](docs/recording-acceptance.md).
 
+### Real Agent preflight and diagnosis
+
+Before starting a long recording, check the selected native executable and, only
+when its prerequisites are present, send one no-tool model request. Run this
+from `mass-go/`; the output directory must be absolute and must not already
+exist. A model is never read from personal settings:
+
+```sh
+go run ./cmd/mass-record-diagnose \
+  --provider codex \
+  --executable /absolute/path/to/native/codex \
+  --model gpt-6.1-sol \
+  --output /var/tmp/new-mass-diagnosis-codex
+
+go run ./cmd/mass-record-diagnose \
+  --provider codex \
+  --executable /absolute/path/to/native/codex \
+  --model gpt-6.1-sol \
+  --output /var/tmp/new-mass-diagnosis-codex-smoke \
+  --smoke
+```
+
+The first form performs only metadata checks: target path, SHA-256, format,
+version, provider-specific command help, and redacted authentication status.
+Each command has a 10 second limit and the whole preflight has a 60 second
+limit. `--smoke` is an explicit real-model opt-in with its own 60 second limit;
+it reports `ready` only after a successful native completion and assistant
+message. ACK, process start, or non-empty stderr do not establish readiness.
+Without `--smoke`, status is `preflight_only`, not `ready`.
+
+Use `--model` or set `MASS_RECORD_MODEL`; otherwise the report is a blocker.
+`MASS_RECORD_DIAGNOSTICS` may select an external evidence directory. A
+recording otherwise keeps `diagnosis.json` plus `daemon.log`, config, data, and
+any partial native material in its private `/var/tmp/mass-record-*` scratch
+directory. Reports include the last entered stage, stage and flow budgets,
+the owned daemon PID, redacted stderr paths and hashes, retained artifact
+hashes, redacted native stderr copies, SDK cleanup, listener release, and
+process/process-group readback. A recording flow has a 12 minute budget;
+runtime and daemon cleanup each have an additional 15 second budget. Every
+flow receives a new context, including each strict replay.
+Authentication command output and secret-like values are not retained.
+
+Claude recording additionally requires native CLI 2.1.258 or later, as enforced
+by the current SDK resume gate. Claude smoke uses the user setting source only
+to make OAuth available, passes an explicit model and no tools, and does not
+take a default model from personal settings. A CLI that starts but fails
+`--version`, a missing model, or an unauthenticated CLI produces a specific
+blocker and stops before any model request. Diagnostics never modify the native
+executable, personal configuration, SDK version gate, or an existing export.
+
 Real recording requires an authenticated Codex CLI and explicit opt-in.
 `MASS_RECORD_MODEL` selects one model slug for both providers; the checked-in
 cases use `auto/deepseek-v4.1-flash-1017`. Real recording lives behind both the

@@ -1,9 +1,7 @@
 package recordingtest
 
 import (
-	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
 
 const (
@@ -31,61 +30,26 @@ type claudeIdentity struct {
 
 func claudeIdentityForTest(t *testing.T, h *harness) claudeIdentity {
 	t.Helper()
-	path := os.Getenv("MASS_RECORD_CLAUDE")
-	var err error
-	if path == "" {
-		path, err = exec.LookPath("claude")
-	}
-	require.NoError(t, err)
-	version := h.command(path, "--version")
-	var status struct {
-		LoggedIn    bool   `json:"loggedIn"`
-		AuthMethod  string `json:"authMethod"`
-		APIProvider string `json:"apiProvider"`
-	}
-	readJSONValue(t, strings.TrimSpace(h.command(path, "auth", "status")), &status)
-	require.True(t, status.LoggedIn)
+	identity := h.preflight("claude")
 	return claudeIdentity{
-		path:        path,
-		version:     version,
-		model:       recordingModel(t, claudeConfiguredModel(t)),
-		authMethod:  status.AuthMethod,
-		apiProvider: status.APIProvider,
+		path:        identity.Executable,
+		version:     identity.Version,
+		model:       identity.Model,
+		authMethod:  identity.AuthMethod,
+		apiProvider: identity.APIProvider,
 	}
-}
-
-func claudeConfiguredModel(t *testing.T) string {
-	t.Helper()
-	config := os.Getenv("CLAUDE_CONFIG_DIR")
-	if config == "" {
-		home, err := os.UserHomeDir()
-		require.NoError(t, err)
-		config = filepath.Join(home, ".claude")
-	}
-	var settings struct {
-		Model string `json:"model"`
-	}
-	if err := readJSONFile(filepath.Join(config, "settings.json"), &settings); err != nil {
-		if os.IsNotExist(err) {
-			return ""
-		}
-		require.NoError(t, err)
-	}
-	return settings.Model
-}
-
-func readJSONValue(t *testing.T, data string, out any) {
-	t.Helper()
-	require.NoError(t, json.Unmarshal([]byte(data), out), data)
 }
 
 func (h *harness) recordClaude(c flowCase, scratchPrefix, outputEnvironment string) {
 	t := h.t
 	t.Helper()
-	identity := claudeIdentityForTest(t, h)
 	scratch, err := os.MkdirTemp("/var/tmp", scratchPrefix)
 	require.NoError(t, err)
+	h.reserveDiagnostic("claude", scratch)
+	h.phase = "preflight"
+	identity := claudeIdentityForTest(t, h)
 	c.project = filepath.Join(scratch, "project")
+	c.evidence = scratch
 	session := filepath.Join(scratch, "session")
 	export := filepath.Join(h.root, "tests", "testdata", "simulation", "recordings", "claude", c.name)
 	if output := os.Getenv(outputEnvironment); output != "" {
@@ -106,10 +70,9 @@ func (h *harness) recordClaude(c flowCase, scratchPrefix, outputEnvironment stri
 		"project":       c.project,
 		"cliVersion":    identity.version,
 	}
-	if identity.model != "" {
-		planValue["model"] = identity.model
-	}
+	planValue["model"] = identity.model
 	writeJSON(t, plan, planValue)
+	h.phase = "testify-prepare"
 	route := h.prepare(session, "--plan", plan, "record", "")
 	cli := filepath.Join(scratch, "claude")
 	require.NoError(t, os.Symlink(identity.path, cli))
@@ -128,7 +91,14 @@ func (h *harness) recordClaude(c flowCase, scratchPrefix, outputEnvironment stri
 		"MASS_RECORD_SESSION": session,
 		"MASS_RECORD_NATIVE":  native,
 	}
+	c.sessionConfig = &runtime.InitialSessionConfig{Model: identity.model}
+	h.phase = "mass-record-real-session"
 	observed := h.flow(route, wrapper, c)
+	h.phase = "testify-export"
+	if h.diagnostic != nil {
+		h.diagnostic.report.Boundaries["mass_relay_sse"] = "completed"
+		h.diagnostic.report.Boundaries["history_commit"] = "completed"
+	}
 	h.publishClaudeRecording(scratch, session, export, c, observed, identity)
 }
 
@@ -140,12 +110,16 @@ func (h *harness) publishClaudeRecording(scratch, session, export string, c flow
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
 	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
+	h.phase = "testify-strict-replay"
 	replayCase := c
 	replayCase.runtimeEnvironment = nil
 	replayCase.initialInput = true
 	replayCase.ignoreStreamKinds = true
 	h.replay(material, observed, replayCase)
 	h.replay(material, observed, replayCase)
+	if h.diagnostic != nil {
+		h.diagnostic.report.Boundaries["testify_export_strict_replay"] = "completed"
+	}
 	index := caseIndex{
 		Provider:          "claude",
 		Case:              c.name,
@@ -173,6 +147,9 @@ func (h *harness) publishClaudeRecording(scratch, session, export string, c flow
 	requireNoPersonalPaths(t, stage)
 	require.NoError(t, os.MkdirAll(filepath.Dir(export), 0o755))
 	require.NoError(t, os.Rename(stage, export))
+	if h.diagnostic != nil {
+		h.diagnostic.report.Status = "ready"
+	}
 	t.Logf("real Claude recording and two strict replays passed; export=%s source=%s hashes=%v permission=%+v", export, index.SourceSession, index.Hashes, observed.Permission)
 }
 
