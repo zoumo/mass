@@ -33,7 +33,6 @@ const (
 	permissionProject = "/var/tmp/mass-consumer/codex-permission/project"
 	prompt            = "Reply with one short greeting. Do not use tools or inspect files."
 	permissionPrompt  = "Use the shell tool to execute this exact command in the current project: `printf mass-approved > permission-proof.txt`. The command writes only that project-local file. Do not use apply_patch, do not read other files, and do not just describe the command. Then report the command exit status."
-	model             = "gpt-6.1-sol"
 )
 
 type route = agenttestify.Route
@@ -96,6 +95,8 @@ type harness struct {
 	t                  *testing.T
 	ctx                context.Context
 	root, tool, daemon string
+	diagnostic         *diagnostic
+	phase              string
 }
 
 type flowCase struct {
@@ -109,17 +110,20 @@ type flowCase struct {
 	expectedPermission string
 	expectedToolOutput string
 	runtimeEnvironment map[string]string
+	sessionConfig      *runtime.InitialSessionConfig
+	evidence           string
+	budget             time.Duration
 }
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-	t.Cleanup(cancel)
+	ctx, cancel := context.WithCancel(context.Background())
 	_, source, _, ok := goruntime.Caller(0)
 	require.True(t, ok)
 	root := filepath.Dir(filepath.Dir(filepath.Dir(source)))
 	dir := t.TempDir()
 	h := &harness{t: t, ctx: ctx, root: root, tool: filepath.Join(dir, "testify"), daemon: filepath.Join(dir, "massd")}
+	t.Cleanup(cancel)
 	h.command("go", "build", "-o", h.tool, "github.com/zoumo/agent-sdk-testify/cmd/agent-sdk-testify")
 	h.command("go", "build", "-o", h.daemon, "./cmd/massd")
 	return h
@@ -127,11 +131,42 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) command(name string, args ...string) string {
 	h.t.Helper()
-	cmd := exec.CommandContext(h.ctx, name, args...)
+	out, err := h.commandError(name, args...)
+	require.NoError(h.t, err, "%s failed", filepath.Base(name))
+	return out
+}
+
+func (h *harness) commandError(name string, args ...string) (string, error) {
+	h.t.Helper()
+	if h.diagnostic != nil && name != "git" {
+		stage := h.phase
+		if stage == "" {
+			stage = "build-or-cli"
+		}
+		if len(args) >= 2 && (args[0] == "login" || args[0] == "auth") && args[1] == "status" {
+			stage = "auth"
+		}
+		out, err := h.diagnostic.command(h.ctx, 10*time.Second, stage, name, args...)
+		return strings.TrimSpace(string(out)), err
+	}
+	commandContext, cancel := context.WithTimeout(h.ctx, 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(commandContext, name, args...)
 	cmd.Dir = h.root
 	out, err := cmd.CombinedOutput()
-	require.NoError(h.t, err, "%s failed: %s", filepath.Base(name), out)
-	return strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), err
+}
+
+const flowBudget = 12 * time.Minute
+
+func (h *harness) flowContext(budget time.Duration) (context.Context, context.CancelFunc) {
+	if budget <= 0 {
+		budget = flowBudget
+	}
+	if h.diagnostic != nil {
+		h.diagnostic.report.FlowBudget = budget
+	}
+	return context.WithTimeout(h.ctx, budget)
 }
 
 func readJSON(t *testing.T, path string, out any) {
@@ -166,16 +201,41 @@ func fileSHA256(path string) (string, error) {
 
 func quote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
 
-func recordingModel(t *testing.T, fallback string) string {
-	t.Helper()
-	if selected := strings.TrimSpace(os.Getenv("MASS_RECORD_MODEL")); selected != "" {
-		return selected
+func (h *harness) reserveDiagnostic(provider, scratch string) {
+	output := os.Getenv("MASS_RECORD_DIAGNOSTICS")
+	if output == "" {
+		output = filepath.Join(scratch, "diagnosis")
 	}
-	return fallback
+	diagnostic, err := newDiagnostic(output, provider)
+	require.NoError(h.t, err)
+	diagnostic.report.Model, diagnostic.report.ModelSource = explicitRecordingModel("")
+	diagnostic.report.Boundaries["native_open"] = "not_executed"
+	diagnostic.report.RecordingRoot = scratch
+	h.diagnostic = diagnostic
+	h.t.Cleanup(func() {
+		h.diagnostic.observeNative(scratch)
+		if h.t.Failed() {
+			h.diagnostic.report.Status = "blocker"
+			h.diagnostic.report.Blockers = append(h.diagnostic.report.Blockers, "recording test failed at "+h.diagnostic.report.LastStage)
+		}
+		h.diagnostic.retainArtifacts(scratch)
+		require.NoError(h.t, h.diagnostic.save())
+	})
+}
+
+func (h *harness) preflight(provider string) DiagnosticReport {
+	h.t.Helper()
+	if err := h.diagnostic.preflight(h.ctx, DiagnosticOptions{Provider: provider}); err != nil {
+		h.diagnostic.report.Blockers = append(h.diagnostic.report.Blockers, string(redactDiagnostic([]byte(err.Error()))))
+		require.NoError(h.t, err)
+	}
+	require.NoError(h.t, h.diagnostic.save())
+	return h.diagnostic.report
 }
 
 func (h *harness) prepare(session, sourceFlag, source, mode, expectedProject string) route {
 	h.t.Helper()
+	h.phase = "testify-prepare"
 	h.command(h.tool, "prepare", sourceFlag, source, "--fixture-dir", session)
 	fixture, err := agenttestify.Open(session)
 	require.NoError(h.t, err)
@@ -203,49 +263,162 @@ func (h *harness) prepare(session, sourceFlag, source, mode, expectedProject str
 func (h *harness) flow(route route, executable string, c flowCase) facts {
 	t := h.t
 	t.Helper()
+	if h.diagnostic != nil {
+		h.diagnostic.phase("mass-flow:" + c.name)
+	}
+	defer func() {
+		if h.diagnostic != nil && c.evidence != "" {
+			h.diagnostic.observeNative(c.evidence)
+			_ = h.diagnostic.save()
+		}
+	}()
 	provider := c.provider
 	if provider == "" {
 		provider = "codex"
 	}
 	dir := t.TempDir()
+	if c.evidence != "" {
+		dir = c.evidence
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+	}
+	ctx, cancelFlow := h.flowContext(c.budget)
+	flowStarted := time.Now()
+	parentContext := h.ctx
+	h.ctx = ctx
+	defer func() {
+		if h.diagnostic != nil {
+			h.diagnostic.report.FlowElapsed = time.Since(flowStarted)
+			h.diagnostic.report.FlowTimedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
+		}
+		h.ctx = parentContext
+		cancelFlow()
+	}()
 	config := filepath.Join(dir, "config.yaml")
 	require.NoError(t, os.WriteFile(config, []byte("listen: 127.0.0.1:0\nlocal: true\n"), 0o600))
 	log, err := os.Create(filepath.Join(dir, "daemon.log"))
 	require.NoError(t, err)
 	defer log.Close()
-	cmd := exec.CommandContext(h.ctx, h.daemon, "--config", config, "--data", filepath.Join(dir, "data"))
+	cmd := exec.CommandContext(parentContext, h.daemon, "--config", config, "--data", filepath.Join(dir, "data"))
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 15 * time.Second
 	cmd.Dir = route.Workspace
 	cmd.Env = (runtime.ProcessConfig{EnvPolicy: "replace", Env: route.Env}).Environment(provider)
 	cmd.Stderr = log
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
+	if h.diagnostic != nil {
+		h.diagnostic.commandPID("massd", cmd.Process.Pid)
+	}
 	stopped := false
+	stopResult := "not_started"
+	var ready struct {
+		URL string `json:"url"`
+	}
 	stop := func() {
 		if stopped {
 			return
 		}
 		stopped = true
+		defer func() {
+			if !groupGone(cmd.Process.Pid) {
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			}
+			gone := waitGroupGone(cmd.Process.Pid)
+			if h.diagnostic == nil {
+				require.True(t, gone, "owned daemon process group must be released")
+				return
+			}
+			for index := range h.diagnostic.report.Stages {
+				stage := &h.diagnostic.report.Stages[index]
+				if stage.PID == cmd.Process.Pid {
+					stage.ProcessGone = processGone(cmd.Process.Pid)
+					stage.GroupGone = gone
+					stage.ExitCode = cmd.ProcessState.ExitCode()
+				}
+			}
+			if ready.URL != "" {
+				dialer := net.Dialer{Timeout: time.Second}
+				conn, dialErr := dialer.DialContext(context.Background(), "tcp", strings.TrimPrefix(ready.URL, "http://"))
+				if conn != nil {
+					_ = conn.Close()
+				}
+				closed := dialErr != nil
+				h.diagnostic.report.ListenerClosed = &closed
+			}
+			if !gone {
+				h.diagnostic.report.Blockers = append(h.diagnostic.report.Blockers, "owned daemon process group cleanup unconfirmed")
+				t.Error("owned daemon process group cleanup unconfirmed")
+			}
+			_ = h.diagnostic.save()
+		}()
 		_ = cmd.Process.Signal(syscall.SIGTERM)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
 		select {
 		case err := <-done:
+			if h.diagnostic != nil {
+				if err == nil && processGone(cmd.Process.Pid) {
+					stopResult = "process_and_wait_confirmed"
+				} else {
+					stopResult = fmt.Sprintf("wait=%v processGone=%v", err, processGone(cmd.Process.Pid))
+				}
+				h.diagnostic.setCleanup("massd", stopResult)
+				return
+			}
 			require.NoError(t, err)
 		case <-time.After(15 * time.Second):
 			_ = cmd.Process.Kill()
 			<-done
+			if h.diagnostic != nil {
+				h.diagnostic.setCleanup("massd", "killed_after_stop_timeout")
+				return
+			}
 			t.Fatal("daemon failed to exit")
 		}
 	}
 	defer stop()
-	var ready struct {
-		URL string `json:"url"`
+	type readiness struct {
+		URL string
+		Err error
 	}
-	require.NoError(t, json.NewDecoder(stdout).Decode(&ready))
+	decoded := make(chan readiness, 1)
+	go func() {
+		var message struct {
+			URL string `json:"url"`
+		}
+		decodeErr := json.NewDecoder(stdout).Decode(&message)
+		decoded <- readiness{URL: message.URL, Err: decodeErr}
+	}()
+	select {
+	case result := <-decoded:
+		require.NoError(t, result.Err)
+		ready.URL = result.URL
+	case <-ctx.Done():
+		require.NoError(t, ctx.Err(), "daemon readiness exceeded flow deadline")
+	}
 	require.NotEmpty(t, ready.URL)
 	api := client.New(ready.URL, "")
 	defer api.Close()
+	var rt resource.Runtime
+	runtimeStopped := false
+	defer func() {
+		if runtimeStopped {
+			return
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cleanupCancel()
+		cleanupErr := api.StopRuntime(cleanupCtx, "recording", &rt)
+		if h.diagnostic != nil {
+			h.diagnostic.report.SDKCleanup = fmt.Sprintf("stop_on_failure=%v", cleanupErr)
+			if cleanupErr == nil {
+				readErr := api.GetRuntime(cleanupCtx, "recording", &rt)
+				h.diagnostic.report.SDKCleanup += fmt.Sprintf("; readback=%v state=%s", readErr, rt.Status.State)
+			}
+			_ = h.diagnostic.save()
+		}
+	}()
 	env := map[string]any{}
 	for key, value := range route.Env {
 		env[key] = value
@@ -253,23 +426,29 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 	for key, value := range c.runtimeEnvironment {
 		env[key] = value
 	}
-	var rt resource.Runtime
 	require.NoError(t, api.CreateRuntime(h.ctx, resource.Runtime{Metadata: resource.Metadata{Name: "recording"}, Spec: resource.RuntimeSpec{Type: provider, Config: runtime.Config{"executable": executable, "envPolicy": "replace", "env": env}}}, &rt))
 	require.NoError(t, api.StartRuntime(h.ctx, "recording", &rt))
 	require.Equal(t, "running", rt.Status.State)
+	if h.diagnostic != nil {
+		h.diagnostic.report.Boundaries["sdk"] = "runtime_started"
+		h.diagnostic.phase("native-open")
+	}
 	var session resource.Session
 	var receipt runtime.InputReceipt
 	input := runtime.Input{Content: []events.ContentBlock{events.Text(c.prompt)}}
 	if c.initialInput {
 		var created resource.SessionCreated
-		require.NoError(t, api.CreateSessionWithInput(h.ctx, resource.SessionCreateInput{Metadata: resource.Metadata{Name: c.name, Namespace: "default"}, Spec: resource.SessionSpec{RuntimeRef: "recording", SessionSpec: runtime.SessionSpec{Cwd: c.project}}, InitialInput: &input}, &created))
+		require.NoError(t, api.CreateSessionWithInput(h.ctx, resource.SessionCreateInput{Metadata: resource.Metadata{Name: c.name, Namespace: "default"}, Spec: resource.SessionSpec{RuntimeRef: "recording", SessionSpec: runtime.SessionSpec{Cwd: c.project, Config: c.sessionConfig}}, InitialInput: &input}, &created))
 		session = created.Session
 		require.NotNil(t, created.InitialInputReceipt)
 		receipt = *created.InitialInputReceipt
 	} else {
-		require.NoError(t, api.CreateSession(h.ctx, resource.Session{Metadata: resource.Metadata{Name: c.name, Namespace: "default"}, Spec: resource.SessionSpec{RuntimeRef: "recording", SessionSpec: runtime.SessionSpec{Cwd: c.project}}}, &session))
+		require.NoError(t, api.CreateSession(h.ctx, resource.Session{Metadata: resource.Metadata{Name: c.name, Namespace: "default"}, Spec: resource.SessionSpec{RuntimeRef: "recording", SessionSpec: runtime.SessionSpec{Cwd: c.project, Config: c.sessionConfig}}}, &session))
 	}
 	require.NotEmpty(t, session.Status.SessionID)
+	if h.diagnostic != nil {
+		h.diagnostic.report.Boundaries["native_open"] = "session_id_observed"
+	}
 	ref := resource.SessionRef{SessionID: session.Status.SessionID}
 	var byName resource.Session
 	require.NoError(t, api.GetSession(h.ctx, resource.SessionRef{Namespace: "default", Name: c.name}, &byName))
@@ -278,13 +457,25 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 	require.NoError(t, err)
 	defer observer.Close()
 	if !c.initialInput {
+		if h.diagnostic != nil {
+			h.diagnostic.phase("native-input")
+		}
 		require.NoError(t, api.SendPrompt(h.ctx, ref, input, &receipt))
 	}
 	require.Equal(t, runtime.Yes(), receipt.Acceptance.Sent)
 	if provider == "codex" {
 		require.Equal(t, runtime.Yes(), receipt.Acceptance.NativeAccepted)
+		if h.diagnostic != nil {
+			h.diagnostic.report.Boundaries["native_input_ack"] = "native_accepted"
+		}
 	} else {
 		require.Nil(t, receipt.Acceptance.NativeAccepted)
+		if h.diagnostic != nil {
+			h.diagnostic.report.Boundaries["native_input_ack"] = "sent_native_acceptance_unknown"
+		}
+	}
+	if h.diagnostic != nil {
+		h.diagnostic.phase("mass-sse-completion")
 	}
 	var persistent []events.SessionEvent
 	result := facts{SessionID: ref.SessionID, Accepted: true}
@@ -314,6 +505,9 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		require.NoError(t, err)
 		require.Equal(t, ref.SessionID, event.SessionID)
 		result.StreamKinds = append(result.StreamKinds, event.Type())
+		if h.diagnostic != nil {
+			h.diagnostic.report.Boundaries["mass_relay_sse"] = "observed"
+		}
 		if event.Persistent() {
 			persistent = append(persistent, event)
 		}
@@ -350,10 +544,19 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 	require.Equal(t, c.expectPermission, answered, "permission flow must be answered")
 	require.NoError(t, api.GetSession(h.ctx, ref, &session))
 	require.Equal(t, events.Idle, session.Status.State)
+	if h.diagnostic != nil {
+		h.diagnostic.report.Boundaries["native_completion"] = "not_directly_observed"
+	}
 	var history store.HistoryPage
+	if h.diagnostic != nil {
+		h.diagnostic.phase("history-commit")
+	}
 	require.NoError(t, api.History(h.ctx, ref, store.HistoryQuery{}, &history))
 	require.Empty(t, history.Next)
 	require.Equal(t, persistent, history.Events, "public history must equal durable SSE events")
+	if h.diagnostic != nil {
+		h.diagnostic.report.Boundaries["history_commit"] = "history_equals_relay"
+	}
 	result.State = session.Status.State
 	user, assistant := false, false
 	for _, event := range history.Events {
@@ -393,7 +596,15 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		require.True(t, result.Permission.Completed)
 	}
 	require.NoError(t, observer.Close())
+	h.phase = "mass-stop-runtime"
+	if h.diagnostic != nil {
+		h.diagnostic.phase(h.phase)
+	}
 	require.NoError(t, api.StopRuntime(h.ctx, "recording", &rt))
+	runtimeStopped = true
+	if h.diagnostic != nil {
+		h.diagnostic.report.SDKCleanup = "stop_runtime_completed"
+	}
 	require.NoError(t, api.GetRuntime(h.ctx, "recording", &rt))
 	require.Equal(t, "stopped", rt.Status.State)
 	stop()
@@ -403,6 +614,10 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 		conn.Close()
 	}
 	require.Error(t, err, "daemon listener must be released")
+	if h.diagnostic != nil {
+		closed := err != nil
+		h.diagnostic.report.ListenerClosed = &closed
+	}
 	return result
 }
 
@@ -481,13 +696,20 @@ func commandText(raw any) string {
 
 func (h *harness) replay(material string, expected facts, c flowCase) string {
 	session := filepath.Join(h.t.TempDir(), "session")
+	c.evidence = ""
+	if h.diagnostic != nil {
+		scratch, err := os.MkdirTemp(h.diagnostic.report.RecordingRoot, "replay-")
+		require.NoError(h.t, err)
+		session = filepath.Join(scratch, "session")
+		c.evidence = scratch
+	}
 	expectedProtocol := c.project
 	if c.provider == "claude" {
 		expectedProtocol = ""
 	}
-	route := h.prepare(session, "--recording", material, "mock", expectedProtocol)
-	require.FileExists(h.t, route.Connections[0].Launcher)
-	actual := h.flow(route, route.Connections[0].Launcher, c)
+	prepared := h.prepare(session, "--recording", material, "mock", expectedProtocol)
+	require.FileExists(h.t, prepared.Connections[0].Launcher)
+	actual := h.flow(prepared, prepared.Connections[0].Launcher, c)
 	if c.ignoreStreamKinds {
 		expected.StreamKinds = nil
 		actual.StreamKinds = nil
@@ -927,6 +1149,8 @@ func RunRecordCodexBasic(t *testing.T) {
 	h := newHarness(t)
 	scratch, err := recordingDirectory()
 	require.NoError(t, err)
+	h.reserveDiagnostic("codex", scratch)
+	h.phase = "preflight"
 	recordProject := filepath.Join(scratch, "project")
 	session := filepath.Join(scratch, "session")
 	export := filepath.Join(h.root, "tests", "testdata", "simulation", "recordings", "codex", "basic")
@@ -938,32 +1162,37 @@ func RunRecordCodexBasic(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "existing export must not be overwritten")
 	_, err = os.Stat(session)
 	require.True(t, os.IsNotExist(err), "retain prior session for audit; move it explicitly before retry")
-	codex := os.Getenv("MASS_RECORD_CODEX")
-	err = nil
-	if codex == "" {
-		codex, err = exec.LookPath("codex")
-	}
-	require.NoError(t, err)
-	version := h.command(codex, "--version")
-	require.Contains(t, h.command(codex, "login", "status"), "Logged in")
+	identity := h.preflight("codex")
+	codex, version := identity.Executable, identity.Version
 	require.NoError(t, os.MkdirAll(recordProject, 0o700))
-	selectedModel := recordingModel(t, model)
+	selectedModel := identity.Model
 	plan := filepath.Join(scratch, "plan.json")
 	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-basic", "driverProfile": "consumer", "project": recordProject, "cliVersion": version, "model": selectedModel})
-	route := h.prepare(session, "--plan", plan, "record", recordProject)
+	h.phase = "testify-prepare"
+	prepared := h.prepare(session, "--plan", plan, "record", recordProject)
 	cli := filepath.Join(scratch, "codex")
 	require.NoError(t, os.Symlink(codex, cli))
 	native := filepath.Join(scratch, "native-codex")
-	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(recordProject)+" || exit 1\nexec "+quote(cli)+" -c "+quote("model=\""+selectedModel+"\"")+" -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"), 0o700))
+	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(recordProject)+" || exit 1\nexec "+quote(cli)+" -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --fixture-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
-	observed := h.flow(route, wrapper, flowCase{name: "basic", prompt: prompt, project: recordProject})
+	h.phase = "mass-record-real-session"
+	observed := h.flow(prepared, wrapper, flowCase{name: "basic", prompt: prompt, project: recordProject, sessionConfig: &runtime.InitialSessionConfig{Model: selectedModel}, evidence: scratch})
+	h.phase = "testify-export"
+	if h.diagnostic != nil {
+		h.diagnostic.report.Boundaries["mass_relay_sse"] = "completed"
+		h.diagnostic.report.Boundaries["history_commit"] = "completed"
+	}
 	stage := filepath.Join(scratch, "export")
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
 	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
+	h.phase = "testify-strict-replay"
 	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: recordProject})
 	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: recordProject})
+	if h.diagnostic != nil {
+		h.diagnostic.report.Boundaries["testify_export_strict_replay"] = "completed"
+	}
 	index := caseIndex{Provider: "codex", Case: "basic", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/basic/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: prompt, Project: recordProject, Facts: observed}
 	for _, name := range []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl"} {
 		index.Hashes[name] = hashFile(t, filepath.Join(material, name))
@@ -972,6 +1201,9 @@ func RunRecordCodexBasic(t *testing.T) {
 	requireNoPersonalPaths(t, stage)
 	require.NoError(t, os.MkdirAll(filepath.Dir(export), 0o755))
 	require.NoError(t, os.Rename(stage, export))
+	if h.diagnostic != nil {
+		h.diagnostic.report.Status = "ready"
+	}
 	t.Logf("real recording and two strict replays passed; export=%s source=%s hashes=%v", filepath.Base(export), index.SourceSession, index.Hashes)
 }
 
@@ -982,6 +1214,8 @@ func RunRecordCodexPermission(t *testing.T) {
 	h := newHarness(t)
 	scratch, err := permissionRecordingDirectory()
 	require.NoError(t, err)
+	h.reserveDiagnostic("codex", scratch)
+	h.phase = "preflight"
 	recordProject := filepath.Join(scratch, "project")
 	session := filepath.Join(scratch, "session")
 	export := filepath.Join(h.root, "tests", "testdata", "simulation", "recordings", "codex", "permission")
@@ -993,31 +1227,28 @@ func RunRecordCodexPermission(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "existing export must not be overwritten")
 	_, err = os.Stat(session)
 	require.True(t, os.IsNotExist(err), "retain prior session for audit; move it explicitly before retry")
-	codex := os.Getenv("MASS_RECORD_CODEX")
-	err = nil
-	if codex == "" {
-		codex, err = exec.LookPath("codex")
-	}
-	require.NoError(t, err)
-	version := h.command(codex, "--version")
-	require.Contains(t, h.command(codex, "login", "status"), "Logged in")
+	identity := h.preflight("codex")
+	codex, version := identity.Executable, identity.Version
 	require.NoError(t, os.MkdirAll(recordProject, 0o700))
 	proof := filepath.Join(recordProject, "permission-proof.txt")
 	if err := os.Remove(proof); err != nil && !os.IsNotExist(err) {
 		require.NoError(t, err)
 	}
-	selectedModel := recordingModel(t, model)
+	selectedModel := identity.Model
 	plan := filepath.Join(scratch, "plan.json")
 	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-permission", "driverProfile": "consumer", "project": recordProject, "cliVersion": version, "model": selectedModel})
-	route := h.prepare(session, "--plan", plan, "record", recordProject)
+	h.phase = "testify-prepare"
+	prepared := h.prepare(session, "--plan", plan, "record", recordProject)
 	cli := filepath.Join(scratch, "codex")
 	require.NoError(t, os.Symlink(codex, cli))
 	native := filepath.Join(scratch, "native-codex")
-	config := "exec " + quote(cli) + " -c " + quote("model=\""+selectedModel+"\"") + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' -c 'approval_policy=\"on-request\"' -c 'sandbox_mode=\"read-only\"' \"$@\"\n"
+	config := "exec " + quote(cli) + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' -c 'approval_policy=\"on-request\"' -c 'sandbox_mode=\"read-only\"' \"$@\"\n"
 	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(recordProject)+" || exit 1\n"+config), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --fixture-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
-	observed := h.flow(route, wrapper, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
+	h.phase = "mass-record-real-session"
+	observed := h.flow(prepared, wrapper, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true, sessionConfig: &runtime.InitialSessionConfig{Model: selectedModel}, evidence: scratch})
+	h.phase = "testify-export"
 	proofData, err := os.ReadFile(proof)
 	require.NoError(t, err)
 	require.Equal(t, "mass-approved", strings.TrimSpace(string(proofData)), "allowed command must execute")
@@ -1025,8 +1256,12 @@ func RunRecordCodexPermission(t *testing.T) {
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
 	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
+	h.phase = "testify-strict-replay"
 	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
 	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
+	if h.diagnostic != nil {
+		h.diagnostic.report.Boundaries["testify_export_strict_replay"] = "completed"
+	}
 	index := caseIndex{Provider: "codex", Case: "permission", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/permission/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: permissionPrompt, Project: recordProject, Facts: observed}
 	for _, name := range []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl"} {
 		index.Hashes[name] = hashFile(t, filepath.Join(material, name))
@@ -1035,5 +1270,8 @@ func RunRecordCodexPermission(t *testing.T) {
 	requireNoPersonalPaths(t, stage)
 	require.NoError(t, os.MkdirAll(filepath.Dir(export), 0o755))
 	require.NoError(t, os.Rename(stage, export))
+	if h.diagnostic != nil {
+		h.diagnostic.report.Status = "ready"
+	}
 	t.Logf("real permission recording and two strict replays passed; export=%s source=%s hashes=%v permission=%+v", filepath.Base(export), index.SourceSession, index.Hashes, *observed.Permission)
 }
