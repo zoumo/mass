@@ -152,10 +152,7 @@ func TestTicket04DriverCloseWaitsForEventRouting(t *testing.T) {
 			require.NoError(t, err)
 			stream, err := d.Events()
 			require.NoError(t, err)
-			_, err = d.Start(ctx(t))
-			require.NoError(t, err)
-			opened, err := d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "close"}, runtime.SessionSpec{Cwd: work})
-			require.NoError(t, err)
+			var opened runtime.DriverSession
 			drain := func() func() {
 				readCtx, stop := context.WithCancel(context.Background())
 				drained := make(chan struct{})
@@ -174,12 +171,24 @@ func TestTicket04DriverCloseWaitsForEventRouting(t *testing.T) {
 			}
 			t.Cleanup(func() {
 				stop := drain()
+				if opened.SessionID != "" {
+					cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					if closeErr := d.CloseSession(cleanup, opened.SessionID); closeErr != nil {
+						t.Errorf("close owned %s session: %v", kind, closeErr)
+					}
+					cancel()
+				}
 				cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-				_ = d.CloseSession(cleanup, opened.SessionID)
-				_ = d.Stop(cleanup)
+				if stopErr := d.Stop(cleanup); stopErr != nil {
+					t.Errorf("stop owned %s driver: %v", kind, stopErr)
+				}
+				cancel()
 				stop()
 			})
+			_, err = d.Start(ctx(t))
+			require.NoError(t, err)
+			opened, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "close"}, runtime.SessionSpec{Cwd: work})
+			require.NoError(t, err)
 
 			_, err = d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 			require.NoError(t, err)
@@ -192,8 +201,8 @@ func TestTicket04DriverCloseWaitsForEventRouting(t *testing.T) {
 			require.ErrorIs(t, err, context.DeadlineExceeded, "close must not pass the EventPipe routing watermark")
 
 			stop := drain()
+			defer stop()
 			require.NoError(t, d.CloseSession(ctx(t), opened.SessionID))
-			stop()
 			require.NoError(t, d.Stop(ctx(t)))
 		})
 	}
@@ -205,13 +214,25 @@ func TestTicket04CodexCloseAndStopAfterObservationFailure(t *testing.T) {
 	require.NoError(t, err)
 	stream, err := d.Events()
 	require.NoError(t, err)
-	_, err = d.Start(ctx(t))
-	require.NoError(t, err)
-	opened, err := d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "failed-observation"}, runtime.SessionSpec{Cwd: work})
-	require.NoError(t, err)
-
 	readCtx, stopRead := context.WithCancel(context.Background())
 	readDone := make(chan struct{})
+	var opened runtime.DriverSession
+	t.Cleanup(func() {
+		if opened.SessionID != "" {
+			cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if closeErr := d.CloseSession(cleanup, opened.SessionID); closeErr != nil {
+				t.Errorf("close owned Codex session: %v", closeErr)
+			}
+			cancel()
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		if stopErr := d.Stop(cleanup); stopErr != nil {
+			t.Errorf("stop owned Codex driver: %v", stopErr)
+		}
+		cancel()
+		stopRead()
+		<-readDone
+	})
 	failure := make(chan events.SessionError, 1)
 	go func() {
 		defer close(readDone)
@@ -228,14 +249,10 @@ func TestTicket04CodexCloseAndStopAfterObservationFailure(t *testing.T) {
 			}
 		}
 	}()
-	t.Cleanup(func() {
-		stopRead()
-		<-readDone
-		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = d.CloseSession(cleanup, opened.SessionID)
-		_ = d.Stop(cleanup)
-	})
+	_, err = d.Start(ctx(t))
+	require.NoError(t, err)
+	opened, err = d.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: "failed-observation"}, runtime.SessionSpec{Cwd: work})
+	require.NoError(t, err)
 
 	_, err = d.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	require.NoError(t, err)

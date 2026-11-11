@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,19 +28,31 @@ func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	stream, err := driver.Events()
 	require.NoError(t, err)
+	readCtx, stopRead := context.WithCancel(context.Background())
+	readDone := make(chan struct{})
+	var openedID string
+	t.Cleanup(func() {
+		if openedID != "" {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			assert.NoError(t, driver.CloseSession(cleanup, openedID), "cleanup must release the native session")
+			cancel()
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		assert.NoError(t, driver.Stop(cleanup), "cleanup must release the provider even if session close failed")
+		cancel()
+		stopRead()
+		<-readDone
+	})
 	go func() {
+		defer close(readDone)
 		for {
-			if _, err := stream.Next(t.Context()); err != nil {
+			if _, err := stream.Next(readCtx); err != nil {
 				return
 			}
 		}
 	}()
 	_, err = driver.Start(t.Context())
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		assert.NoError(t, driver.CloseSession(context.Background(), "native-thread"), "cleanup must release the native session")
-		assert.NoError(t, driver.Stop(context.Background()), "cleanup must release the provider even if session close failed")
-	})
 	address := runtime.Address{Namespace: "one", SessionName: "prompt"}
 	spec := runtime.SessionSpec{Cwd: cwd, SystemPrompt: "Append these instructions.\n保留默认提示词。"}
 	for i, invalid := range []struct{ prompt, reason string }{{string([]byte{0xff}), "additional_system_prompt_invalid_utf8"}, {"bad\x00prompt", "additional_system_prompt_contains_nul"}} {
@@ -76,16 +89,21 @@ func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)
 	require.NoFileExists(t, trace, "invalid prompt must precede native open/resume")
 	opened, err := driver.OpenSession(t.Context(), address, spec)
+	openedID = opened.SessionID
 	require.NoError(t, err)
 	require.Equal(t, spec.SystemPrompt, waitCodexPeerTrace(t, trace, "thread/start")["params"].(map[string]any)["developerInstructions"])
 	require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
+	openedID = ""
 	for range 2 {
-		_, err = driver.ResumeSession(t.Context(), opened.SessionID, address, spec)
-		require.NoError(t, err)
+		resumed, resumeErr := driver.ResumeSession(t.Context(), opened.SessionID, address, spec)
+		openedID = resumed.SessionID
+		require.NoError(t, resumeErr)
 		require.Equal(t, spec.SystemPrompt, waitCodexPeerTrace(t, trace, "thread/resume")["params"].(map[string]any)["developerInstructions"])
 		require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
+		openedID = ""
 	}
 	require.NoError(t, driver.LoadSession(t.Context(), opened.SessionID, address, spec, "prompt-load"))
+	openedID = opened.SessionID
 	require.Equal(t, spec.SystemPrompt, waitCodexPeerTrace(t, trace, "thread/resume")["params"].(map[string]any)["developerInstructions"])
 	data, err := os.ReadFile(trace)
 	require.NoError(t, err)
@@ -105,5 +123,6 @@ func TestAdditionalSystemPromptOpenResumeAndLoad(t *testing.T) {
 	closeErr := driver.CloseSession(t.Context(), opened.SessionID)
 	stopErr := driver.Stop(t.Context())
 	require.NoError(t, closeErr, "loaded session must be released before the test succeeds")
+	openedID = ""
 	require.NoError(t, stopErr, "provider release must be confirmed before the test succeeds")
 }

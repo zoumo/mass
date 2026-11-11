@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -42,16 +43,35 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 	require.NoError(t, err)
 	stream, err := driver.Events()
 	require.NoError(t, err)
+	readCtx, stopRead := context.WithCancel(context.Background())
+	readDone := make(chan struct{})
+	var openedID string
+	t.Cleanup(func() {
+		if openedID != "" {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if closeErr := driver.CloseSession(cleanup, openedID); closeErr != nil {
+				t.Errorf("close owned Claude session: %v", closeErr)
+			}
+			cancel()
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if stopErr := driver.Stop(cleanup); stopErr != nil {
+			t.Errorf("stop owned Claude driver: %v", stopErr)
+		}
+		cancel()
+		stopRead()
+		<-readDone
+	})
 	go func() {
+		defer close(readDone)
 		for {
-			if _, err := stream.Next(t.Context()); err != nil {
+			if _, err := stream.Next(readCtx); err != nil {
 				return
 			}
 		}
 	}()
 	_, err = driver.Start(ctx(t))
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = driver.CloseSession(context.Background(), id); _ = driver.Stop(context.Background()) })
 	address := runtime.Address{Namespace: "one", SessionName: "prompt"}
 	spec := runtime.SessionSpec{Cwd: cwd, SystemPrompt: "Append instructions.\n保留默认提示词。"}
 	for i, invalid := range []struct{ prompt, reason string }{{string([]byte{0xff}), "additional_system_prompt_invalid_utf8"}, {"bad\x00prompt", "additional_system_prompt_contains_nul"}} {
@@ -80,16 +100,22 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 	require.Equal(t, "additional_dirs_unsupported", unsupported.Reason)
 	require.NoFileExists(t, evidence, "invalid prompt cannot launch the native CLI")
 	opened, err := driver.OpenSession(ctx(t), address, spec)
+	openedID = opened.SessionID
 	require.NoError(t, err)
 	require.Equal(t, id, opened.SessionID)
-	require.NoError(t, driver.CloseSession(ctx(t), id))
+	require.NoError(t, driver.CloseSession(ctx(t), openedID))
+	openedID = ""
 	for range 2 {
-		_, err = driver.ResumeSession(ctx(t), id, address, spec)
+		opened, err = driver.ResumeSession(ctx(t), id, address, spec)
+		openedID = opened.SessionID
 		require.NoError(t, err)
-		require.NoError(t, driver.CloseSession(ctx(t), id))
+		require.NoError(t, driver.CloseSession(ctx(t), openedID))
+		openedID = ""
 	}
 	require.NoError(t, driver.LoadSession(ctx(t), id, address, spec, "prompt-load"))
-	require.NoError(t, driver.CloseSession(ctx(t), id))
+	openedID = id
+	require.NoError(t, driver.CloseSession(ctx(t), openedID))
+	openedID = ""
 	data, err := os.ReadFile(evidence)
 	require.NoError(t, err)
 	opens := 0

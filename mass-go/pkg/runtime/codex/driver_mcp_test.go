@@ -99,17 +99,23 @@ func TestCodexDriverMCPForwardingOpenResumeAndLoad(t *testing.T) {
 	empty := []runtime.MCPServer{}
 	for name, servers := range map[string]*[]runtime.MCPServer{"omitted": nil, "empty": &empty, "stdio and http": &configured} {
 		t.Run(name, func(t *testing.T) {
-			driver, cwd, trace := newCodexMCPDriverTestPeer(t)
+			driver, cwd, trace, openedID := newCodexMCPDriverTestPeer(t)
 			address := runtime.Address{Namespace: "one", SessionName: "mcp"}
 			spec := runtime.SessionSpec{Cwd: cwd, MCPServers: servers}
 			opened, err := driver.OpenSession(t.Context(), address, spec)
+			*openedID = opened.SessionID
 			require.NoError(t, err)
 			require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
-			_, err = driver.ResumeSession(t.Context(), opened.SessionID, address, spec)
+			*openedID = ""
+			resumed, err := driver.ResumeSession(t.Context(), opened.SessionID, address, spec)
+			*openedID = resumed.SessionID
 			require.NoError(t, err)
 			require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
+			*openedID = ""
 			require.NoError(t, driver.LoadSession(t.Context(), opened.SessionID, address, spec, "mcp-load"))
+			*openedID = opened.SessionID
 			require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
+			*openedID = ""
 			require.NoError(t, driver.Stop(t.Context()))
 			data, err := os.ReadFile(trace)
 			require.NoError(t, err)
@@ -144,7 +150,7 @@ func TestCodexDriverRejectsInvalidMCPBeforeNativeOpenResumeAndLoad(t *testing.T)
 		"missing secret":  {Name: "local", Type: runtime.MCPTransportStdio, Command: "/mcp-server", Env: map[string]string{"TOKEN": "${MISSING_TOKEN}"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			driver, cwd, trace := newCodexMCPDriverTestPeer(t)
+			driver, cwd, trace, _ := newCodexMCPDriverTestPeer(t)
 			servers := []runtime.MCPServer{server}
 			spec := runtime.SessionSpec{Cwd: cwd, MCPServers: &servers}
 			_, openErr := driver.OpenSession(t.Context(), address, spec)
@@ -166,7 +172,7 @@ func TestCodexDriverRejectsInvalidMCPBeforeNativeOpenResumeAndLoad(t *testing.T)
 	}
 }
 
-func newCodexMCPDriverTestPeer(t *testing.T) (*Driver, string, string) {
+func newCodexMCPDriverTestPeer(t *testing.T) (*Driver, string, string, *string) {
 	t.Helper()
 	executable, err := os.Executable()
 	require.NoError(t, err)
@@ -180,22 +186,34 @@ func newCodexMCPDriverTestPeer(t *testing.T) (*Driver, string, string) {
 	})
 	require.NoError(t, err)
 	driver := created.(*Driver)
-	t.Cleanup(func() {
-		assert.NoError(t, driver.CloseSession(context.Background(), "native-thread"))
-		assert.NoError(t, driver.Stop(context.Background()))
-	})
 	stream, err := driver.Events()
 	require.NoError(t, err)
+	readCtx, stopRead := context.WithCancel(context.Background())
+	readDone := make(chan struct{})
+	var openedID string
+	t.Cleanup(func() {
+		if openedID != "" {
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			assert.NoError(t, driver.CloseSession(cleanup, openedID), "cleanup must release the native session")
+			cancel()
+		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		assert.NoError(t, driver.Stop(cleanup), "cleanup must release the provider even if session close failed")
+		cancel()
+		stopRead()
+		<-readDone
+	})
 	go func() {
+		defer close(readDone)
 		for {
-			if _, err := stream.Next(t.Context()); err != nil {
+			if _, err := stream.Next(readCtx); err != nil {
 				return
 			}
 		}
 	}()
 	_, err = driver.Start(t.Context())
 	require.NoError(t, err)
-	return driver, cwd, trace
+	return driver, cwd, trace, &openedID
 }
 
 func waitCodexPeerTrace(t *testing.T, path, method string) map[string]any {
