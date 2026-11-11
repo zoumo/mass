@@ -45,7 +45,7 @@ func sameSessionOverrides(a, b runtime.SessionSpec) bool {
 func (s *Service) SetSessionConfig(ctx context.Context, ref resource.SessionRef, change runtime.ConfigChange) (runtime.ConfigReceipt, error) {
 	notSent := runtime.ConfigReceipt{Change: change, Acceptance: agent.Acceptance{Sent: runtime.Bool(false)}}
 	if err := change.Validate(); err != nil {
-		return notSent, agentrelay.MapConfigError(err)
+		return notSent, agentrelay.MapConfigError(notSent, err)
 	}
 	receipt, err := sessionWork(ctx, s, ref, false, true, func(owner context.Context, run *runBinding, id string) (runtime.ConfigReceipt, error) {
 		driver, ok := run.driver.(runtime.SessionConfigDriver)

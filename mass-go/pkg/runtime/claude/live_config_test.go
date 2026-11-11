@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,9 @@ func (*configSDKSession) Next(ctx context.Context) (agent.Event, error) {
 func (*configSDKSession) Err() error { return nil }
 
 func TestLiveSessionConfigurationSDKReceipt(t *testing.T) {
+	sdkFailure := func(code agent.ErrorCode, reason string, cause error) error {
+		return fmt.Errorf("SDK configuration call: %w", &agent.Error{Code: code, Reason: reason, Message: "safe", Cause: cause})
+	}
 	cases := []struct {
 		name       string
 		acceptance agent.Acceptance
@@ -47,6 +51,19 @@ func TestLiveSessionConfigurationSDKReceipt(t *testing.T) {
 		{"unsupported", agent.Acceptance{Sent: runtime.Bool(false)}, &agent.Error{Code: agent.ErrorUnsupported, Reason: "sdk_unsupported", Message: "safe"}, "unsupported"},
 		{"closed", agent.Acceptance{Sent: runtime.Bool(false)}, &agent.Error{Code: agent.ErrorClosed, Reason: "session_closed", Message: "safe"}, "conflict"},
 		{"unclassified", agent.Acceptance{Sent: runtime.Yes()}, errors.New("SECRET"), "outcome_unknown"},
+		{"not_sent_sdk_deadline", agent.Acceptance{Sent: runtime.Bool(false)}, sdkFailure(agent.ErrorUnavailable, "set_config_failed", context.DeadlineExceeded), "deadline_exceeded"},
+		{"sent_sdk_deadline", agent.Acceptance{Sent: runtime.Yes()}, sdkFailure(agent.ErrorUnavailable, "set_config_failed", context.DeadlineExceeded), "unavailable"},
+		{"missing_sent_sdk_deadline", agent.Acceptance{}, sdkFailure(agent.ErrorUnavailable, "set_config_failed", context.DeadlineExceeded), "unavailable"},
+		{"not_sent_canceled", agent.Acceptance{Sent: runtime.Bool(false)}, sdkFailure(agent.ErrorUnavailable, "set_config_failed", context.Canceled), "unavailable"},
+		{"not_sent_other_cause", agent.Acceptance{Sent: runtime.Bool(false)}, sdkFailure(agent.ErrorUnavailable, "set_config_failed", errors.New("transport unavailable")), "unavailable"},
+		{"not_sent_deadline_string", agent.Acceptance{Sent: runtime.Bool(false)}, sdkFailure(agent.ErrorUnavailable, "set_config_failed", errors.New(context.DeadlineExceeded.Error())), "unavailable"},
+		{"not_sent_other_reason", agent.Acceptance{Sent: runtime.Bool(false)}, sdkFailure(agent.ErrorUnavailable, "other_operation_failed", context.DeadlineExceeded), "unavailable"},
+		{"not_sent_rejected_deadline", agent.Acceptance{Sent: runtime.Bool(false), NativeAccepted: runtime.Bool(false)}, sdkFailure(agent.ErrorNativeRejected, "sdk_rejection", context.DeadlineExceeded), "native_rejected"},
+		{"not_sent_unsupported_deadline", agent.Acceptance{Sent: runtime.Bool(false)}, sdkFailure(agent.ErrorUnsupported, "sdk_unsupported", context.DeadlineExceeded), "unsupported"},
+		{"not_sent_closed_deadline", agent.Acceptance{Sent: runtime.Bool(false)}, sdkFailure(agent.ErrorClosed, "session_closed", context.DeadlineExceeded), "conflict"},
+		{"not_sent_precondition_deadline", agent.Acceptance{Sent: runtime.Bool(false)}, sdkFailure(agent.ErrorFailedPrecondition, "precondition", context.DeadlineExceeded), "conflict"},
+		{"not_sent_unknown_deadline", agent.Acceptance{Sent: runtime.Bool(false)}, sdkFailure(agent.ErrorOutcomeUnknown, "sdk_unknown", context.DeadlineExceeded), "outcome_unknown"},
+		{"not_sent_unclassified_deadline", agent.Acceptance{Sent: runtime.Bool(false)}, fmt.Errorf("unclassified: %w", context.DeadlineExceeded), "outcome_unknown"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -55,9 +72,19 @@ func TestLiveSessionConfigurationSDKReceipt(t *testing.T) {
 
 			var optional runtime.SessionConfigDriver = driver
 			change := agent.ConfigChange{ID: agent.ConfigModel, Value: " Native/Model "}
-			receipt, err := optional.SetSessionConfig(t.Context(), "native", change)
+			callCtx := t.Context()
+			if tc.name == "not_sent_other_cause" {
+				var cancel context.CancelFunc
+				callCtx, cancel = context.WithTimeout(callCtx, 0)
+				defer cancel()
+				require.ErrorIs(t, callCtx.Err(), context.DeadlineExceeded)
+			}
+			receipt, err := optional.SetSessionConfig(callCtx, "native", change)
 			require.Equal(t, change, receipt.Change)
 			require.Equal(t, tc.acceptance, receipt.Acceptance)
+			require.Same(t, tc.acceptance.Sent, receipt.Acceptance.Sent)
+			require.Same(t, tc.acceptance.NativeAccepted, receipt.Acceptance.NativeAccepted)
+			require.Same(t, tc.acceptance.NativeRecorded, receipt.Acceptance.NativeRecorded)
 			require.Equal(t, 1, native.calls)
 			if tc.err == nil {
 				require.NoError(t, err)
@@ -67,8 +94,15 @@ func TestLiveSessionConfigurationSDKReceipt(t *testing.T) {
 				require.ErrorAs(t, err, &public)
 				require.Equal(t, tc.code, public.Code)
 				require.NotContains(t, public.Message, "SECRET")
-				if sdk, ok := tc.err.(*agent.Error); ok {
+				var sdk *agent.Error
+				if errors.As(tc.err, &sdk) {
 					require.Equal(t, sdk.Reason, public.Reason)
+					var retained *agent.Error
+					require.ErrorAs(t, err, &retained)
+					require.Same(t, sdk, retained)
+					if sdk.Cause != nil {
+						require.ErrorIs(t, err, sdk.Cause)
+					}
 				}
 			}
 			// The optional SDK controller is not implied by the base Session interface.

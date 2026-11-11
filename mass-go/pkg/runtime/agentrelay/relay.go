@@ -291,7 +291,7 @@ func StopRejected(err error) bool {
 
 // MapConfigError preserves the SDK error in the Go chain while keeping unknown
 // setter failures uncertain rather than classifying them as retryable.
-func MapConfigError(err error) error {
+func MapConfigError(receipt agent.ConfigReceipt, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -299,6 +299,14 @@ func MapConfigError(err error) error {
 	if errors.As(err, &native) && native != nil {
 		var public *runtime.OperationError
 		if errors.As(MapError(err), &public) {
+			// The SDK's explicit NotSent receipt and original deadline cause
+			// prove this configuration request did not reach native dispatch.
+			// Keep other SDK conclusions, its reason, and the original chain.
+			if native.Code == agent.ErrorUnavailable && native.Reason == "set_config_failed" &&
+				receipt.Acceptance.Sent != nil && !*receipt.Acceptance.Sent &&
+				errors.Is(err, context.DeadlineExceeded) {
+				public.Code = "deadline_exceeded"
+			}
 			return &classifiedError{operation: public, cause: err}
 		}
 	}

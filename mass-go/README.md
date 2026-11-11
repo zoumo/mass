@@ -557,9 +557,11 @@ close/resume 后重新请求保存的初始配置。它不等待 idle，不与 p
 成功 JSON 直接返回 `{change,acceptance}`，接受证据保留缺失/false/true；回执不证明当前 turn 已切换。
 Go Service/Driver 直接复用 SDK `ConfigChange` / `ConfigReceipt`，失败也保留 receipt 与 error。
 HTTP 失败仅返回 `{code,reason,message}`：native_rejected/unsupported 为 422，conflict 为 409，
-outcome_unknown 为 500，Service 派发前确认的 deadline_exceeded 为 504；远端失败不提供失败 receipt。
-Driver 保留 SDK 已分类的 code/reason：当前固定 pin 对直接 Driver 的过期 context 返回
-`sent=false` 及 `unavailable/set_config_failed`，该 SDK 边界与合同要求的 deadline 分类差异单独记录于 ticket02 报告。
+outcome_unknown 为 500，确定未发送的 deadline_exceeded 为 504；远端失败不提供失败 receipt。
+配置错误适配层仅在 SDK 返回 `unavailable/set_config_failed`、receipt 明确 `sent=false`，
+且原错误链可用 `errors.Is(err, context.DeadlineExceeded)` 确认 deadline 时，将公开 code
+映射为 `deadline_exceeded`。SDK reason、完整原错误链及 receipt 原样保留；`sent=true` 或缺失、
+明确原生拒绝、不支持及派发未知均不套用该映射。调用者放弃等待仍返回未知，不用晚到回执改写。
 
 此路径的聚焦离线 race 验证覆盖两个 provider 的原生协议/argv、持久 round-trip、
 resume/load、load 后输入及非法值拒绝。未运行真实 Agent 或全量验收；完整证据由 ticket 报告记录。
