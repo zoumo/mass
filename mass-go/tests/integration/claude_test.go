@@ -1159,10 +1159,7 @@ func runClaudeDriverScenario(t *testing.T, name string, frames []any) claudeDriv
 	require.NoError(t, err)
 	stream, err := driver.Events()
 	require.NoError(t, err)
-	_, err = driver.Start(ctx(t))
-	require.NoError(t, err)
-	opened, err := driver.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: name}, runtime.SessionSpec{Cwd: work})
-	require.NoError(t, err)
+	var opened runtime.DriverSession
 	t.Cleanup(func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -1175,17 +1172,21 @@ func runClaudeDriverScenario(t *testing.T, name string, frames []any) claudeDriv
 				}
 			}
 		}()
-		closeErr := driver.CloseSession(cleanup, opened.SessionID)
-		var stopErr error
-		if closeErr == nil {
-			stopErr = driver.Stop(cleanup)
+		if opened.SessionID != "" {
+			if closeErr := driver.CloseSession(cleanup, opened.SessionID); closeErr != nil {
+				t.Errorf("close owned Claude session: %v", closeErr)
+			}
+		}
+		if stopErr := driver.Stop(cleanup); stopErr != nil {
+			t.Errorf("stop owned Claude driver: %v", stopErr)
 		}
 		cancel()
 		<-drained
-		require.NotErrorIs(t, closeErr, context.DeadlineExceeded)
-		require.NotErrorIs(t, closeErr, context.Canceled)
-		require.NoError(t, stopErr)
 	})
+	_, err = driver.Start(ctx(t))
+	require.NoError(t, err)
+	opened, err = driver.OpenSession(ctx(t), runtime.Address{Namespace: "default", SessionName: name}, runtime.SessionSpec{Cwd: work})
+	require.NoError(t, err)
 	_, err = driver.SendPrompt(ctx(t), opened.SessionID, runtime.Input{Content: []events.ContentBlock{events.Text("hello")}})
 	require.NoError(t, err)
 	return claudeDriverObservation{Stream: stream, observation: opened.Observation}
