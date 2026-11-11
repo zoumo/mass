@@ -160,8 +160,8 @@ bin/massctl session resume review -n demo --text 'continue after close'
 ```
 
 Both drivers currently accept text input; Claude requires exactly one text block.
-Claude rejects `systemPrompt` and `additionalDirs` before dispatch; Codex maps
-`systemPrompt` to native base instructions and rejects `additionalDirs`.
+Both drivers append `systemPrompt` to provider defaults through SDK
+`AdditionalSystemPrompt` and reject `additionalDirs` before dispatch.
 Claude resume supports zero input and requires an explicit absolute
 `env.CLAUDE_CONFIG_DIR`. The SDK verifies CLI version, retained transcript and
 live identity. Optional initial input is submitted after that verification.
