@@ -1,0 +1,9 @@
+{
+  "agentType": "codex",
+  "caseId": "mass-codex-basic",
+  "cliVersion": "codex-cli 0.166.0",
+  "driverProfile": "consumer",
+  "model": "auto/deepseek-v4.1-flash-1017",
+  "project": "/var/tmp/mass-record-codex-3589059373/project",
+  "version": 1
+}

@@ -1,0 +1,11 @@
+{
+  "branchStatus": "not-applicable",
+  "captureStatus": "complete",
+  "cleanupComplete": true,
+  "clientEOF": true,
+  "consumer": true,
+  "nativeLaunched": true,
+  "provenance": "consumer",
+  "schemaVersion": 1,
+  "status": "captured"
+}
