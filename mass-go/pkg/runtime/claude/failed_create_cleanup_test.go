@@ -102,12 +102,33 @@ func TestFailedCreateCleanupTerminalExit(t *testing.T) {
 			openErr := &agent.Error{Reason: "initialize_wait_failed", Cause: terminal}
 			require.False(t, failedNativeCleanup(errors.Join(openErr, cleanup)))
 			require.ErrorIs(t, cleanup, exit, "release classification must preserve the original native failure")
-			for _, additional := range []error{nativeclaude.ErrShutdownTimeout, nativeclaude.ErrUnknownOutcome, errors.New("another cleanup failure")} {
-				polluted := &agent.Error{Reason: "close_failed", Cause: &nativeclaude.Error{Op: "session", Err: errors.Join(terminal.Err, additional)}}
-				require.True(t, failedNativeCleanup(errors.Join(openErr, polluted)))
-				require.True(t, failedNativeCleanup(errors.Join(cleanup, polluted)), "a completed close must not hide another failed close")
-			}
+			incomplete := &agent.Error{Reason: "close_failed", Cause: &nativeclaude.Error{Op: "session", Err: errors.Join(terminal.Err, nativeclaude.ErrShutdownTimeout)}}
+			require.True(t, failedNativeCleanup(errors.Join(openErr, incomplete)))
+			require.True(t, failedNativeCleanup(errors.Join(cleanup, incomplete)), "a completed close must not hide another failed close")
+			unconfirmed := &agent.Error{Reason: "close_outcome_unknown", Cause: &nativeclaude.Error{Op: "close", Err: nativeclaude.ErrUnknownOutcome}}
+			require.True(t, failedNativeCleanup(errors.Join(cleanup, unconfirmed)), "a completed close must not hide another unconfirmed close")
 		})
+	}
+}
+
+func TestFailedCreateCleanupRetainsBusinessUncertaintyAfterRelease(t *testing.T) {
+	uncertain := &nativeclaude.DispatchError{Op: "initialize", State: nativeclaude.OutcomeUnknown, Err: context.DeadlineExceeded}
+	startup := &nativeclaude.Error{Op: "initialize", Err: uncertain, OutcomeUnknown: true}
+	openErr := &agent.Error{Code: agent.ErrorOutcomeUnknown, Reason: "open_outcome_unknown", Cause: startup}
+	// native initialize always completes failed-startup Close before returning.
+	require.False(t, failedNativeCleanup(openErr))
+	require.ErrorIs(t, openErr, nativeclaude.ErrUnknownOutcome)
+	require.ErrorIs(t, openErr, context.DeadlineExceeded)
+
+	for _, businessFailure := range []error{uncertain, errors.New("native terminal failure"), nativeclaude.ErrUnexpectedEOF} {
+		closed := &agent.Error{Reason: "close_outcome_unknown", Cause: &nativeclaude.Error{Op: "session", Err: businessFailure}}
+		require.False(t, failedNativeCleanup(errors.Join(openErr, closed)), "session terminal is returned only after cleaned")
+		require.ErrorIs(t, closed, businessFailure, "release must not erase the original business failure")
+		unconfirmed := &agent.Error{Reason: "close_failed", Cause: errors.New("another close failed")}
+		require.True(t, failedNativeCleanup(errors.Join(closed, unconfirmed)))
+		require.True(t, failedNativeCleanup(errors.Join(unconfirmed, closed)))
+		incomplete := &agent.Error{Reason: "close_failed", Cause: &nativeclaude.Error{Op: "session", Err: errors.Join(businessFailure, nativeclaude.ErrShutdownTimeout)}}
+		require.True(t, failedNativeCleanup(errors.Join(openErr, incomplete)))
 	}
 }
 
@@ -118,9 +139,8 @@ func TestFailedCreateCleanupRetainsUnconfirmedResources(t *testing.T) {
 	}{
 		{name: "no native completion evidence", cause: errors.New("close failed")},
 		{name: "cleanup timeout", cause: &nativeclaude.Error{Op: "session", Err: errors.Join(nativeclaude.ErrUnexpectedEOF, nativeclaude.ErrShutdownTimeout)}},
-		{name: "dispatch unknown", cause: &nativeclaude.Error{Op: "session", Err: errors.Join(nativeclaude.ErrUnexpectedEOF, nativeclaude.ErrUnknownOutcome)}},
-		{name: "EOF joined with other cleanup failure", cause: &nativeclaude.Error{Op: "session", Err: errors.Join(nativeclaude.ErrUnexpectedEOF, errors.New("another cleanup failure"))}},
-		{name: "exit without wait evidence", cause: &nativeclaude.Error{Op: "session", Err: &nativeclaude.Error{Op: "process", Err: &exec.ExitError{}}}},
+		{name: "close outcome unknown", cause: &nativeclaude.Error{Op: "close", Err: nativeclaude.ErrUnknownOutcome}},
+		{name: "EOF beside unconfirmed close", cause: errors.Join(&nativeclaude.Error{Op: "session", Err: nativeclaude.ErrUnexpectedEOF}, errors.New("another cleanup failure"))},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cleanup := &agent.Error{Code: agent.ErrorUnavailable, Reason: "close_failed", Cause: tc.cause}

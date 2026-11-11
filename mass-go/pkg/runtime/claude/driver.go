@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -733,39 +732,21 @@ func mapClaudeError(err error) error {
 
 //nolint:errorlint // Inspect each error-tree node so a matching branch cannot hide another failed close.
 func failedNativeCleanup(err error) bool {
-	if errors.Is(err, nativeclaude.ErrShutdownTimeout) || errors.Is(err, nativeclaude.ErrUnknownOutcome) {
+	if errors.Is(err, nativeclaude.ErrShutdownTimeout) {
 		return true
 	}
 	if native, ok := err.(*agent.Error); ok && strings.HasPrefix(native.Reason, "close_") {
-		// SDK Close waits for cleaned before returning its terminal observation.
-		// EOF and a reaped process exit preserve the native failure without
-		// retaining ownership. Every joined cause must be such an observation.
+		// SDK Close waits for cleaned before returning the session terminal.
+		// Its business outcome may still be unknown; only shutdown timeout
+		// indicates unfinished cleanup. Separate close failures remain checked.
 		terminal, ok := native.Cause.(*nativeclaude.Error)
-		return !ok || terminal.Op != "session" || !completedNativeTerminal(terminal.Err)
+		return !ok || terminal.Op != "session"
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		return slices.ContainsFunc(joined.Unwrap(), failedNativeCleanup)
 	}
 	if cause := errors.Unwrap(err); cause != nil {
 		return failedNativeCleanup(cause)
-	}
-	return false
-}
-
-//nolint:errorlint // Only exact terminal leaves qualify; errors.Is/As could hide other joined cleanup failures.
-func completedNativeTerminal(err error) bool {
-	if err == nativeclaude.ErrUnexpectedEOF {
-		return true
-	}
-	if terminal, ok := err.(*nativeclaude.Error); ok && terminal.Op == "process" && !terminal.OutcomeUnknown {
-		exit, ok := terminal.Err.(*exec.ExitError)
-		return ok && exit.ProcessState != nil
-	}
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		causes := joined.Unwrap()
-		return len(causes) > 0 && !slices.ContainsFunc(causes, func(cause error) bool {
-			return !completedNativeTerminal(cause)
-		})
 	}
 	return false
 }
