@@ -85,6 +85,7 @@ func (h *harness) recordClaude(c flowCase, scratchPrefix, outputEnvironment stri
 	identity := claudeIdentityForTest(t, h)
 	scratch, err := os.MkdirTemp("/var/tmp", scratchPrefix)
 	require.NoError(t, err)
+	c.project = filepath.Join(scratch, "project")
 	session := filepath.Join(scratch, "session")
 	export := filepath.Join(h.root, "tests", "testdata", "simulation", "recordings", "claude", c.name)
 	if output := os.Getenv(outputEnvironment); output != "" {

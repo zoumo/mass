@@ -68,15 +68,48 @@ func (s *endedSession) Events() (agent.EventStream, error)        { return s, ni
 func (s *endedSession) Next(context.Context) (agent.Event, error) { return agent.Event{}, io.EOF }
 func (s *endedSession) Err() error                                { return s.cause }
 
-func TestDriverReportsUnexpectedRelayTermination(t *testing.T) {
-	cause := errors.New("synthetic transport failure")
+type relaySession struct {
+	agent.Session
+	events chan agent.Event
+}
+
+func (*relaySession) Err() error { return nil }
+
+func (s *relaySession) Events() (agent.EventStream, error) { return s, nil }
+func (s *relaySession) Next(ctx context.Context) (agent.Event, error) {
+	select {
+	case e, ok := <-s.events:
+		if !ok {
+			return agent.Event{}, io.EOF
+		}
+		return e, nil
+	case <-ctx.Done():
+		return agent.Event{}, ctx.Err()
+	}
+}
+
+func TestDriverRelayFailureIsIsolatedToSession(t *testing.T) {
 	driver := &Driver{life: t.Context(), pipe: events.NewEventPipe(128)}
-	session := &session{native: &endedSession{cause: cause}, address: runtime.Address{Namespace: "one", SessionName: "demo"}, source: events.NewSource()}
-	require.NoError(t, driver.startRelay(session))
+	failed := &session{native: &endedSession{cause: errors.New("synthetic transport failure")}, address: runtime.Address{Namespace: "one", SessionName: "failed"}, source: events.NewSource()}
+	healthyNative := &relaySession{events: make(chan agent.Event, 1)}
+	healthy := &session{native: healthyNative, address: runtime.Address{Namespace: "one", SessionName: "healthy"}, source: events.NewSource()}
+	require.NoError(t, driver.startRelay(healthy))
+	defer healthy.relay.Close()
+	require.NoError(t, driver.startRelay(failed))
+	<-failed.relay.Done()
+	require.Error(t, failed.relay.Err())
+	require.Eventually(t, func() bool { failed.mu.Lock(); defer failed.mu.Unlock(); return failed.err != nil }, time.Second, time.Millisecond)
+	healthyNative.events <- agent.Event{EventID: "01234567-89ab-4cde-8fab-0123456789ab", SessionID: "healthy", Time: time.Now(), Payload: agent.StateUpdatePayload{State: new(agent.StateIdle)}}
 	read, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	_, err := driver.pipe.Next(read)
-	require.ErrorIs(t, err, cause)
+	event, err := driver.pipe.Next(read)
+	require.NoError(t, err, "one relay failure must not end the Driver pipe")
+	require.Equal(t, "healthy", event.SessionID)
+	select {
+	case <-healthy.relay.Done():
+		t.Fatal("healthy sibling relay terminated")
+	default:
+	}
 }
 
 func TestOpenFailureDetectsUnknownCleanup(t *testing.T) {

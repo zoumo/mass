@@ -1,0 +1,38 @@
+package service
+
+import (
+	"errors"
+
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+)
+
+// Relay termination belongs to the original Session binding. It must not end
+// the Driver stream or manufacture a provider state event.
+func (s *Service) watchObservation(run *runBinding, l *lane, native runtime.DriverSession) {
+	if native.Observation == nil {
+		return
+	}
+	go func() {
+		select {
+		case <-native.Observation.Done():
+		case <-run.done:
+			return
+		case <-l.done:
+			return
+		}
+		cause := native.Observation.Err()
+		if cause == nil {
+			return
+		}
+		s.mu.Lock()
+		if s.runs[l.session.Spec.RuntimeRef] != run || run.lanes[native.SessionID] != l ||
+			!l.source.SameRun(native.Source) || l.closing || run.stopping {
+			s.mu.Unlock()
+			return
+		}
+		l.err = errors.Join(l.err, cause)
+		s.invalidateIdleLocked(l)
+		s.mu.Unlock()
+		s.failLoad(run, l, "failed", cause)
+	}()
+}

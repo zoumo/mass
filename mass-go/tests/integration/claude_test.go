@@ -232,7 +232,8 @@ func codexReadyBeforeInput(frames []any, start int, threadID string) bool {
 }
 
 func ensureClaudeReadyObservation(frames []any) []any {
-	expanded := make([]any, 0, len(frames)+2)
+	expanded := make([]any, 0, len(frames)+4)
+	sessionID := ""
 	for index, value := range frames {
 		frame, ok := value.(map[string]any)
 		if !ok {
@@ -241,10 +242,13 @@ func ensureClaudeReadyObservation(frames []any) []any {
 		}
 		expanded = append(expanded, frame)
 		data, _ := frame["data"].(map[string]any)
+		if data != nil && data["type"] == "user" && frame["direction"] == "client" && sessionID != "" {
+			expanded = append(expanded, map[string]any{"channel": "protocol", "direction": "server", "data": map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": sessionID, "state": "running"}})
+		}
 		if data == nil || data["type"] != "system" || data["subtype"] != "init" {
 			continue
 		}
-		sessionID, _ := data["session_id"].(string)
+		sessionID, _ = data["session_id"].(string)
 		if sessionID == "" || claudeReadyBeforeInput(frames, index+1, sessionID) {
 			continue
 		}

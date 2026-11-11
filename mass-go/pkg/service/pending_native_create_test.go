@@ -130,9 +130,9 @@ func TestPendingNativeCreateOwnerStop(t *testing.T) {
 				require.NoError(t, err)
 				t.Logf("resource ledger: native peer pid=%d started", pid)
 				require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(dir, "initialized")); return err == nil }, 5*time.Second, 10*time.Millisecond)
-				if explicit {
-					require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(dir, "explicit-input")); return err == nil }, 5*time.Second, 10*time.Millisecond)
-				}
+				// Provider.Open must confirm native identity before MASS dispatches
+				// even explicit initial input. This peer deliberately never does.
+				require.NoFileExists(t, filepath.Join(dir, "explicit-input"))
 				abandon()
 				select {
 				case err := <-created:
@@ -155,11 +155,7 @@ func TestPendingNativeCreateOwnerStop(t *testing.T) {
 				require.ErrorIs(t, syscall.Kill(pid, 0), syscall.ESRCH, "product stop must reap the native process")
 				require.FileExists(t, filepath.Join(dir, "stdin-closed"))
 				require.NoFileExists(t, filepath.Join(dir, "unexpected-input"))
-				if explicit {
-					require.FileExists(t, filepath.Join(dir, "explicit-input"))
-				} else {
-					require.NoFileExists(t, filepath.Join(dir, "explicit-input"))
-				}
+				require.NoFileExists(t, filepath.Join(dir, "explicit-input"), "no input may cross the unconfirmed native identity gate")
 				r, err := svc.GetRuntime("pending")
 				require.NoError(t, err)
 				require.Equal(t, "stopped", r.Status.State)

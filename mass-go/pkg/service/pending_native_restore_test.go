@@ -30,17 +30,25 @@ import (
 	"github.com/zoumo/mass/mass-go/pkg/store/file"
 )
 
-// The native peer accepts the explicit resume input but withholds identity.
-// Fresh create establishes real adapter recovery material and durable facts.
+const pendingRestoreSessionID = "19191919-1919-4191-8191-191919191919"
+
+// The native peer withholds resume identity before any input can be sent.
+// Fresh create establishes adapter recovery material and durable facts.
 func TestPendingNativeRestorePeer(t *testing.T) {
 	dir := os.Getenv("MASS_PENDING_RESTORE_PEER")
 	if dir == "" {
 		return
 	}
+	for _, arg := range os.Args {
+		if arg == "--version" {
+			fmt.Println("2.1.258 (Claude Code)")
+			os.Exit(0)
+		}
+	}
 	resumed := false
 	for _, arg := range os.Args[1:] {
 		if strings.HasPrefix(arg, "--resume=") {
-			if arg != "--resume=restore-original" {
+			if arg != "--resume="+pendingRestoreSessionID {
 				os.Exit(5)
 			}
 			resumed = true
@@ -75,9 +83,10 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 	cwd, err := os.Getwd()
 	must(err)
 	init := func() {
-		send(map[string]any{"type": "system", "subtype": "init", "session_id": "restore-original", "cwd": cwd})
+		send(map[string]any{"type": "system", "subtype": "init", "session_id": pendingRestoreSessionID, "cwd": cwd})
 	}
-	resumeInput := make(chan string, 1)
+	var identityMu sync.Mutex
+	identityReleased := false
 	scan := bufio.NewScanner(os.Stdin)
 	for scan.Scan() {
 		var v map[string]any
@@ -92,17 +101,19 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			mark("ack", "initialize acknowledged")
 			if resumed {
 				go func() {
-					uuid := <-resumeInput
 					for {
 						if _, e := os.Stat(filepath.Join(dir, "release-init")); e == nil {
+							identityMu.Lock()
 							init()
-							send(map[string]any{"type": "assistant", "session_id": "restore-original", "user_message_uuid": uuid, "message": map[string]any{"id": "resume-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "resume answer", "apiBlockIndex": 0}}}})
-							send(map[string]any{"type": "result", "subtype": "success", "session_id": "restore-original", "user_message_uuid": uuid, "uuid": "resume-result"})
+							identityReleased = true
+							identityMu.Unlock()
 							return
 						}
 						time.Sleep(5 * time.Millisecond)
 					}
 				}()
+			} else {
+				init()
 			}
 			continue
 		}
@@ -120,8 +131,17 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 				mark("unexpected", "duplicate resume input")
 				os.Exit(9)
 			}
+			identityMu.Lock()
+			released := identityReleased
+			identityMu.Unlock()
+			if !released {
+				mark("unexpected", "input before native identity")
+				os.Exit(10)
+			}
 			mark("input", "one explicit resume input")
-			resumeInput <- v["uuid"].(string)
+			send(map[string]any{"type": "assistant", "session_id": pendingRestoreSessionID, "user_message_uuid": v["uuid"], "message": map[string]any{"id": "resume-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "resume answer", "apiBlockIndex": 0}}}})
+			send(map[string]any{"type": "result", "subtype": "success", "session_id": pendingRestoreSessionID, "user_message_uuid": v["uuid"], "uuid": "resume-result"})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": pendingRestoreSessionID, "state": "idle"})
 			continue
 		}
 		if content != "explicit original input" {
@@ -133,9 +153,9 @@ func TestPendingNativeRestorePeer(t *testing.T) {
 			os.Exit(7)
 		}
 		mark("input", "one explicit input")
-		init()
-		send(map[string]any{"type": "assistant", "session_id": "restore-original", "user_message_uuid": v["uuid"], "message": map[string]any{"id": "first-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "durable original answer", "apiBlockIndex": 0}}}})
-		send(map[string]any{"type": "result", "subtype": "success", "session_id": "restore-original", "user_message_uuid": v["uuid"], "uuid": "first-result"})
+		send(map[string]any{"type": "assistant", "session_id": pendingRestoreSessionID, "user_message_uuid": v["uuid"], "message": map[string]any{"id": "first-answer", "role": "assistant", "content": []any{map[string]any{"type": "text", "text": "durable original answer", "apiBlockIndex": 0}}}})
+		send(map[string]any{"type": "result", "subtype": "success", "session_id": pendingRestoreSessionID, "user_message_uuid": v["uuid"], "uuid": "first-result"})
+		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": pendingRestoreSessionID, "state": "idle"})
 	}
 	mark("eof", "stdin closed")
 	os.Exit(0)
@@ -192,7 +212,13 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		defer cancel()
 		assert.NoError(t, svc.Shutdown(cleanup))
 	})
-	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "pending"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer, "envPolicy": "replace", "env": map[string]any{"MASS_PENDING_RESTORE_PEER": dir}}}})
+	configDir := filepath.Join(dir, "claude-config")
+	projectDir := filepath.Join(configDir, "projects", "pending")
+	require.NoError(t, os.MkdirAll(projectDir, 0o700))
+	transcript, err := json.Marshal(map[string]any{"type": "user", "sessionId": pendingRestoreSessionID, "cwd": dir, "message": map[string]any{"role": "user", "content": "saved original input"}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, pendingRestoreSessionID+".jsonl"), append(transcript, '\n'), 0o600))
+	_, err = svc.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "pending"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": peer, "envPolicy": "replace", "env": map[string]any{"MASS_PENDING_RESTORE_PEER": dir, "CLAUDE_CONFIG_DIR": configDir}}}})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -201,7 +227,7 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	created, err := svc.CreateSessionWithInput(ctx, resource.SessionCreateInput{Metadata: resource.Metadata{Namespace: "default", Name: "pending"}, Spec: resource.SessionSpec{RuntimeRef: "pending", SessionSpec: runtime.SessionSpec{Cwd: dir}}, InitialInput: &runtime.Input{Content: []events.ContentBlock{events.Text("explicit original input")}}})
 	require.NoError(t, err)
 	ref := resource.SessionRef{SessionID: created.Status.SessionID}
-	require.Equal(t, "restore-original", ref.SessionID)
+	require.Equal(t, pendingRestoreSessionID, ref.SessionID)
 	var before store.HistoryPage
 	require.Eventually(t, func() bool {
 		before, err = svc.ListHistoryEvents(ref, store.HistoryQuery{Types: []string{"agent.message"}})
@@ -224,13 +250,13 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	require.Eventually(t, func() bool {
 		select {
 		case e := <-resumed:
-			t.Fatalf("resume returned before the explicit input was observed: %v", e)
+			t.Fatalf("resume returned before native identity was released: %v", e)
 		default:
 		}
 		_, ackErr := os.Stat(filepath.Join(dir, "resume-ack"))
-		_, inputErr := os.Stat(filepath.Join(dir, "resume-input"))
-		return ackErr == nil && inputErr == nil
-	}, 5*time.Second, 10*time.Millisecond, "restore must accept initialize and explicit input")
+		return ackErr == nil
+	}, 5*time.Second, 10*time.Millisecond, "restore must acknowledge initialize while withholding identity")
+	require.NoFileExists(t, filepath.Join(dir, "resume-input"), "resume input must wait for native identity")
 	data, err := os.ReadFile(filepath.Join(dir, "resume-pid"))
 	require.NoError(t, err)
 	pid, err := strconv.Atoi(string(data))
@@ -255,8 +281,12 @@ func pendingNativeRestore(t *testing.T, mode string) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "release-init"), nil, 0o600))
 		require.Eventually(t, func() bool {
 			current, e := svc.GetSession(ref)
-			return e == nil && current.Status.AppliedGeneration != 0
-		}, 5*time.Second, 10*time.Millisecond, "original detached owner must accept late init without replacement resume")
+			if e != nil || current.Status.AppliedGeneration == 0 || current.Status.State != events.Idle {
+				return false
+			}
+			history, e := svc.ListHistoryEvents(ref, store.HistoryQuery{})
+			return e == nil && len(history.Events) == len(before.Events)+1
+		}, 5*time.Second, 10*time.Millisecond, "original detached owner must send the one input after late identity and persist its answer")
 	}
 	stop, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer stopCancel()
@@ -290,7 +320,11 @@ func pendingNativeRestore(t *testing.T, mode string) {
 	}
 	require.ErrorIs(t, syscall.Kill(pid, 0), syscall.ESRCH)
 	require.FileExists(t, filepath.Join(dir, "resume-eof"))
-	require.FileExists(t, filepath.Join(dir, "resume-input"))
+	if mode == "caller-abandon-only" {
+		require.FileExists(t, filepath.Join(dir, "resume-input"))
+	} else {
+		require.NoFileExists(t, filepath.Join(dir, "resume-input"), "stopped pending identity must not dispatch input")
+	}
 	require.NoFileExists(t, filepath.Join(dir, "resume-unexpected"))
 	opened, err := os.ReadFile(filepath.Join(dir, "opened"))
 	require.NoError(t, err)

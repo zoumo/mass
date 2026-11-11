@@ -14,8 +14,8 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	github.com/zoumo/agent-sdk-go v0.0.0-20261110170013-efcb24caac28
-	github.com/zoumo/agent-sdk-testify v0.1.2
+	github.com/zoumo/agent-sdk-go v0.0.0-20261111031457-4959190bc518
+	github.com/zoumo/agent-sdk-testify v0.1.3-0.20261111025559-1f8db14a50e1
 	modernc.org/sqlite v1.60.1
 	resty.dev/v3 v3.0.0-rc.4
 )

@@ -29,11 +29,12 @@ import (
 
 type entrypointSuite struct {
 	suite.Suite
-	url, data string
-	backend   string
-	daemonCtx context.Context
-	daemon    *exec.Cmd
-	stderr    bytes.Buffer
+	url, data    string
+	backend      string
+	claudeConfig string
+	daemonCtx    context.Context
+	daemon       *exec.Cmd
+	stderr       bytes.Buffer
 }
 
 func TestEntrypointSuite(t *testing.T)     { suite.Run(t, new(entrypointSuite)) }
@@ -184,11 +185,24 @@ func (s *entrypointSuite) open(kind, mode string) (resource.SessionRef, resource
 
 func (s *entrypointSuite) openWithExecutable(kind, mode, bin string) (resource.SessionRef, resource.Session, string) {
 	path, work := nativeScenario(s.T(), kind, mode)
+	if kind == "claude" && filepath.Base(bin) == "claude-linked-replay" {
+		path = replaceClaudeScenarioSessionID(s.T(), path, "55555555-5555-4555-8555-555555555555")
+	}
 	return s.openPrepared(kind, bin, path, work)
 }
 
 func (s *entrypointSuite) openPrepared(kind, bin, path, work string) (resource.SessionRef, resource.Session, string) {
-	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": path}}}
+	config := runtime.Config{"executable": bin, "scenario": path}
+	if kind == "claude" {
+		s.claudeConfig = s.T().TempDir()
+		config["env"] = map[string]any{"CLAUDE_CONFIG_DIR": s.claudeConfig}
+		id := "claude-session"
+		if filepath.Base(bin) == "claude-linked-replay" {
+			id = "55555555-5555-4555-8555-555555555555"
+		}
+		prepareClaudeSavedSession(s.T(), s.claudeConfig, work, id)
+	}
+	r := resource.Runtime{Metadata: resource.Metadata{Name: "agent"}, Spec: resource.RuntimeSpec{Type: kind, Config: config}}
 	s.call("runtime.create", workflowParams{Runtime: &r}, nil)
 	s.call("runtime.start", workflowParams{Name: "agent"}, nil)
 	var session resource.Session
@@ -292,6 +306,9 @@ func (s *entrypointSuite) readWork(ref resource.SessionRef, text string, questio
 			chunks++
 		case events.StateUpdate:
 			if p.State != nil && *p.State == events.Idle {
+				if chunks == 0 {
+					continue // Resume may publish its initial idle before input output.
+				}
 				if question {
 					s.Equal(1, questions)
 					s.T().Log("PASS synthetic explicit user question via HTTP and original SDK handle")
@@ -356,7 +373,13 @@ func (s *entrypointSuite) basic(kind string) {
 	s.call("session.close", workflowParams{Session: ref}, nil)
 	resumePath, _ := nativeScenario(s.T(), kind, "lifecycle-resume")
 	resumePath = replaceWorkspace(s.T(), resumePath, work)
+	if kind == "claude" {
+		resumePath = replaceClaudeScenarioSessionID(s.T(), resumePath, ref.SessionID)
+	}
 	spec := resource.RuntimeSpec{Type: kind, Config: runtime.Config{"executable": bin, "scenario": resumePath}}
+	if kind == "claude" {
+		spec.Config["env"] = map[string]any{"CLAUDE_CONFIG_DIR": s.claudeConfig}
+	}
 	s.call("runtime.update", workflowParams{Name: "agent", Spec: &spec}, nil)
 	s.call("runtime.stop", workflowParams{Name: "agent"}, nil)
 	// Durable full history readback uses the file Store, with no driver construction.

@@ -251,10 +251,10 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261110170013-efcb24caac28`,
-source commit `efcb24ca`, without a local replacement. The external
+The runtime SDK is pinned to `v0.0.0-20261111031457-4959190bc518`,
+source commit `4959190b`, without a local replacement. The external
 `agent-sdk-testify` tool is pinned to
-`v0.1.2` for consumer recording and replay and
+`v0.1.3-0.20261111025559-1f8db14a50e1` for consumer recording and replay and
 is not a production dependency.
 The checked-in consumer fixtures remain bound to their recording SDK
 `v0.0.0-20261105065348-5edf8b62e963`; that provenance is intentionally not
@@ -263,6 +263,10 @@ rather than hidden.
 Codex shares one native Client across its Sessions; Claude owns one native
 process per Session. Claude has one SDK Events consumer through MASS agentrelay;
 live event identity, payload and metadata come from the SDK.
+An unexpected relay EOF fails only its original Session binding; it does not
+end a shared Runtime stream or synthesize an agent state event.
+The SDK exposes `OpenOptions.Config` and optional `ConfigController.SetConfig`;
+MASS does not yet expose model/effort configuration through its public API.
 Codex input receipts retain the native turn ID and acceptance; Claude receipts
 prove only a complete local write, not native acceptance or recording.
 
@@ -281,7 +285,7 @@ Runtime `spec` separately accepts Session defaults:
 | Field | Behavior |
 | --- | --- |
 | `features` | Session feature defaults; currently accepts `agentQuestions`. |
-| `mcpServers` | Session MCP defaults. Each item requires `name` and `type` (`stdio`, `http` or `sse`) plus the fields for that transport. |
+| `mcpServers` | Session MCP defaults. Each item requires `name` and `type` plus the transport fields. The runtime SDK supports `stdio` and `http`; `sse` is rejected. |
 
 `features` merges by field and `mcpServers` merges by server name: a Session
 value overrides the Runtime value with the same name, and a Session-only name is

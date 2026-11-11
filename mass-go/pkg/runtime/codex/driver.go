@@ -342,6 +342,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	}
 	keep = true
 	return runtime.DriverSession{
+		Observation:       s.relay,
 		SessionID:         id,
 		Capabilities:      agentrelay.MapCapabilities(native.Capabilities()),
 		EffectiveFeatures: agentrelay.MapEffectiveFeatures(native.EffectiveFeatures()),
@@ -809,4 +810,14 @@ func codexTurnID(event events.SessionEvent) string {
 
 func sameNativeCreatedAt(a, b int64) bool {
 	return a > 0 && b > 0 && a-b >= -1 && a-b <= 1
+}
+
+// SessionObservation exposes the relay for a binding created by history load.
+func (d *Driver) SessionObservation(id string) runtime.SessionObservation {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s := d.sessions[id]; s != nil && s.relay != nil {
+		return s.relay
+	}
+	return nil
 }

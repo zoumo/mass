@@ -62,7 +62,15 @@ type SessionSpec struct {
 	MCPServers     *[]MCPServer     `json:"mcpServers,omitempty"`
 }
 
+// SessionObservation reports termination of the sole SDK event relay.
+// This lifecycle signal never carries or synthesizes agent events.
+type SessionObservation interface {
+	Done() <-chan struct{}
+	Err() error
+}
+
 type DriverSession struct {
+	Observation         SessionObservation
 	SessionID           string
 	Capabilities        Capabilities
 	EffectiveFeatures   SessionFeatures

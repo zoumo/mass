@@ -478,7 +478,7 @@ func ticket07StatusWithin(t *testing.T, url string, ref resource.SessionRef, pha
 	return r
 }
 
-func TestTicket07ClaudeUnlinkedNativeResultRemainsUnknown(t *testing.T) {
+func TestTicket07ClaudeUnlinkedNativeResultUsesSDKState(t *testing.T) {
 	_, url, cwd, _ := ticket07HTTP(t, "unlinked", ticket07Rows())
 	_, ref := ticket07Load(t, url, cwd)
 	ticket07Status(t, url, ref, "completed")
@@ -487,28 +487,30 @@ func TestTicket07ClaudeUnlinkedNativeResultRemainsUnknown(t *testing.T) {
 	require.NoError(t, err)
 	defer observer.Close()
 	var receipt runtime.InputReceipt
-	require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("ordinary unlinked response")}}, &receipt))
-	for {
-		e, err := observer.Next()
-		require.NoError(t, err)
-		if p, ok := e.Payload().(events.StateUpdate); ok && p.StopReason == "work_attribution_unknown" {
-			require.Nil(t, p.State)
-			break
+	for range 2 {
+		require.NoError(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("ordinary unlinked response")}}, &receipt))
+		sawMessage := false
+		for {
+			e, err := observer.Next()
+			require.NoError(t, err)
+			if e.Type() == "agent.message" {
+				sawMessage = true
+				meta := e.Meta["claude"].(map[string]any)
+				require.NotContains(t, meta, "submission")
+				require.NotContains(t, meta, "attribution")
+				raw := meta["raw"].(map[string]any)
+				require.NotContains(t, raw, "user_message_uuid")
+			}
+			if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {
+				require.True(t, sawMessage, "SDK must preserve the native message before settlement")
+				require.NotEqual(t, "work_attribution_unknown", p.StopReason, "MASS must not recreate its removed attribution state machine")
+				break
+			}
 		}
 	}
 	var r resource.Session
 	require.NoError(t, c.GetSession(ctx(t), ref, &r))
-	require.Equal(t, events.Unknown, r.Status.State)
-	require.Error(t, c.SendPrompt(ctx(t), ref, runtime.Input{Content: []events.ContentBlock{events.Text("not readmitted")}}, &receipt))
-	var cancel runtime.CancelReceipt
-	require.NoError(t, c.Cancel(ctx(t), ref, &cancel))
-	for {
-		e, err := observer.Next()
-		require.NoError(t, err)
-		if p, ok := e.Payload().(events.StateUpdate); ok && p.State != nil && *p.State == events.Idle {
-			break
-		}
-	}
+	require.Equal(t, events.Idle, r.Status.State)
 }
 
 func TestTicket07ClaudeInvalidSourcesAndPartialUnsupportedHistory(t *testing.T) {

@@ -110,3 +110,19 @@ func TestCloseAfterNaturalEOFSettlesDrainedOwnership(t *testing.T) {
 	require.Equal(t, 1, provider.stops)
 	require.NoError(t, driver.CloseSession(t.Context(), "native"))
 }
+
+type eofSession struct{ *closeResultSession }
+
+func (*eofSession) ID() string { return "eof-native" }
+
+func TestBoundSessionReportsUnexpectedEOF(t *testing.T) {
+	driver := newDriver(recovery.Vault{}, options{}, &lifecycleProvider{}, nil)
+	driver.life = t.Context()
+	s, err := driver.bindSession(&eofSession{&closeResultSession{}}, runtime.Address{Namespace: "one", SessionName: "eof"}, events.NewSource())
+	require.NoError(t, err)
+	<-s.relay.Done()
+	var operation *runtime.OperationError
+	require.ErrorAs(t, s.observationError(), &operation)
+	require.Equal(t, "outcome_unknown", operation.Code)
+	require.Equal(t, "session_observation_eof", operation.Reason)
+}

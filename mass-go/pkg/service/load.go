@@ -304,7 +304,15 @@ func (s *Service) loadMarker(run *runBinding, l *lane, e events.SessionEvent) er
 		}
 	}
 	failed := h.status.Error != nil
+	completed := h.complete.Load()
 	h.mu.Unlock()
+	if completed {
+		if observer, ok := run.driver.(interface {
+			SessionObservation(string) runtime.SessionObservation
+		}); ok {
+			s.watchObservation(run, l, runtime.DriverSession{SessionID: e.SessionID, Source: e.Source(), Observation: observer.SessionObservation(e.SessionID)})
+		}
+	}
 	if err != nil {
 		s.failLoad(run, l, "failed", err)
 	} else if failed {

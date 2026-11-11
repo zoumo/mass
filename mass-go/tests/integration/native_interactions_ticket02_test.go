@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -66,7 +69,27 @@ func (s *entrypointSuite) TestTicket02CodexQuestionAuthority()  { s.ticket02Ques
 func (s *entrypointSuite) TestTicket02ClaudeQuestionAuthority() { s.ticket02Question("claude") }
 
 func (s *entrypointSuite) ticket02Question(kind string) {
-	ref, _, _ := s.open(kind, "ticket02-question")
+	var ref resource.SessionRef
+	answerGate := ""
+	if kind == "claude" {
+		bin := filepath.Join(s.T().TempDir(), "claude-linked-replay")
+		out, err := exec.CommandContext(ctx(s.T()), "go", "build", "-o", bin, "./testdata/claude-linked-replay").CombinedOutput()
+		s.Require().NoError(err, string(out))
+		path, work := nativeScenario(s.T(), kind, "ticket02-question")
+		path = replaceClaudeScenarioSessionID(s.T(), path, "55555555-5555-4555-8555-555555555555")
+		data, err := os.ReadFile(path)
+		s.Require().NoError(err)
+		var scenario map[string]any
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		s.Require().NoError(dec.Decode(&scenario))
+		answerGate = filepath.Join(s.T().TempDir(), "complete")
+		scenario["answerGate"] = answerGate
+		path, _ = writeNativeScenario(s.T(), scenario)
+		ref, _, _ = s.openPrepared(kind, bin, path, work)
+	} else {
+		ref, _, _ = s.open(kind, "ticket02-question")
+	}
 	_, scan := s.observer(ref)
 	s.call("session.input", workflowParams{Session: ref, Input: runtime.Input{Content: []events.ContentBlock{events.Text("hello")}}}, nil)
 	var request *events.InteractionRequested
@@ -132,6 +155,9 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 				}
 			}
 			s.Equal(1, successes)
+			if answerGate != "" {
+				s.Require().NoError(os.WriteFile(answerGate, nil, 0o600))
+			}
 			answered = true
 		}
 		if state, ok := e.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle && answered {

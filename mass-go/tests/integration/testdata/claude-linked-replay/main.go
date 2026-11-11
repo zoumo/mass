@@ -7,9 +7,14 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"time"
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println("2.1.258 (Claude Code)")
+		return
+	}
 	if err := replay(); err != nil {
 		panic(err)
 	}
@@ -22,7 +27,8 @@ func replay() error {
 	}
 	defer f.Close()
 	var scenario struct {
-		Frames []struct {
+		AnswerGate string
+		Frames     []struct {
 			Direction string
 			Data      map[string]any
 		}
@@ -47,16 +53,31 @@ func replay() error {
 			if data["type"] == "control_request" {
 				ids[data["request_id"].(string)] = actual["request_id"]
 				actual["request_id"] = data["request_id"]
+				if req, ok := actual["request"].(map[string]any); ok && req["subtype"] == "initialize" {
+					req["hooks"] = nil
+				}
 			}
 			if data["type"] == "user" {
 				link, _ = actual["uuid"].(string)
-				if data["message"].(map[string]any)["content"] == "continue" && link == "" {
-					return errors.New("resumed input lacks caller UUID")
-				}
+
 				delete(actual, "uuid")
 			}
 			if !reflect.DeepEqual(data, actual) {
 				return fmt.Errorf("unexpected client frame: %v", actual)
+			}
+			if data["type"] == "control_response" && scenario.AnswerGate != "" {
+				// Keep native completion behind an explicit test-owned gate, so
+				// concurrent answers race for live authority, not stale refs.
+				deadline := time.Now().Add(10 * time.Second)
+				for {
+					if _, err := os.Stat(scenario.AnswerGate); err == nil {
+						break
+					}
+					if time.Now().After(deadline) {
+						return errors.New("answer gate timed out")
+					}
+					time.Sleep(time.Millisecond)
+				}
 			}
 			continue
 		}

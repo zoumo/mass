@@ -126,6 +126,7 @@ func main() {
 		send(m)
 		if os.Getenv("LOAD_MODE") == "unlinked" {
 			send(map[string]any{"type": "result", "subtype": "success", "session_id": id})
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": id, "state": "idle"})
 		} else {
 			result()
 		}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	nativeclaude "github.com/zoumo/agent-sdk-go/claude"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -45,7 +46,9 @@ func TestOpeningCleanupClaudeInitializeEOF(t *testing.T) {
 		InitialInput: &runtime.Input{Content: []events.ContentBlock{events.Text("hello")}},
 	})
 	require.Error(t, err)
-	require.ErrorContains(t, err, "initialize", "release classification must retain the native failure")
+	var nativeFailure *nativeclaude.Error
+	require.ErrorAs(t, err, &nativeFailure, "release classification must retain the native failure")
+	require.Equal(t, "initialize", nativeFailure.Op)
 	require.Empty(t, created.Status.SessionID)
 	require.Nil(t, created.InitialInputReceipt)
 	t.Logf("opening failure preserved: %v", err)

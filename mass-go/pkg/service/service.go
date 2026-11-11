@@ -579,6 +579,7 @@ func (s *Service) createSession(ctx context.Context, r resource.Session, initial
 			creationErr := l.err
 			s.mu.Unlock()
 			go s.process(run, l)
+			s.watchObservation(run, l, native)
 			if abandoned {
 				cleanup := s.settleAbandoned(run, l)
 				if cleanup == nil {

@@ -330,6 +330,7 @@ func (d *Driver) open(ctx context.Context, resume string, address runtime.Addres
 	}
 
 	return runtime.DriverSession{
+		Observation:         s.relay,
 		SessionID:           id,
 		Capabilities:        agentrelay.MapCapabilities(native.Capabilities()),
 		EffectiveFeatures:   agentrelay.MapEffectiveFeatures(native.EffectiveFeatures()),
@@ -371,6 +372,11 @@ func (d *Driver) startRelay(s *session) error {
 		Session: s.native,
 		Address: s.address,
 		Source:  s.source,
+		ExpectedEOF: func() bool {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			return s.closing
+		},
 		Sink: func(_ context.Context, event events.SessionEvent) error {
 			s.mu.Lock()
 			if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
@@ -383,7 +389,9 @@ func (d *Driver) startRelay(s *session) error {
 	if err != nil {
 		return err
 	}
+	d.mu.Lock()
 	s.relay = relay
+	d.mu.Unlock()
 	go func() {
 		<-relay.Done()
 		s.mu.Lock()
@@ -391,11 +399,7 @@ func (d *Driver) startRelay(s *session) error {
 		if !closing {
 			s.err = errors.Join(errors.New("claude event observation ended"), s.native.Err(), relay.Err())
 		}
-		cause := s.err
 		s.mu.Unlock()
-		if !closing {
-			d.pipe.End(cause)
-		}
 	}()
 	return nil
 }
@@ -702,19 +706,7 @@ func mapClaudeError(err error) error {
 	}
 	var native *agent.Error
 	if errors.As(err, &native) && native != nil {
-		mapped := &runtime.OperationError{
-			Code:    string(native.Code),
-			Reason:  native.Reason,
-			Message: native.Message,
-		}
-		switch {
-		case errors.Is(err, context.Canceled):
-			return errors.Join(mapped, context.Canceled)
-		case errors.Is(err, context.DeadlineExceeded):
-			return errors.Join(mapped, context.DeadlineExceeded)
-		default:
-			return mapped
-		}
+		return agentrelay.MapError(err)
 	}
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -739,8 +731,20 @@ func mapClaudeError(err error) error {
 }
 
 func failedNativeCleanup(err error) bool {
+	if errors.Is(err, nativeclaude.ErrShutdownTimeout) {
+		return true
+	}
 	var native *agent.Error
 	if errors.As(err, &native) && strings.HasPrefix(native.Reason, "close_") {
+		var terminal *nativeclaude.Error
+		// Failed-open Close waits for native cleanup, but also returns an
+		// already-observed EOF. That terminal fact does not invalidate release;
+		// cleanup timeout and uncertain dispatch still retain ownership.
+		if errors.As(native.Cause, &terminal) && terminal.Op == "session" &&
+			errors.Is(native.Cause, nativeclaude.ErrUnexpectedEOF) &&
+			!errors.Is(native.Cause, nativeclaude.ErrUnknownOutcome) {
+			return false
+		}
 		return true
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
@@ -754,4 +758,14 @@ func failedNativeCleanup(err error) bool {
 
 func noResources(message string) error {
 	return errors.Join(runtime.ErrResourcesReleased, errors.New(message))
+}
+
+// SessionObservation exposes the relay for a binding created by history load.
+func (d *Driver) SessionObservation(id string) runtime.SessionObservation {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s := d.sessions[id]; s != nil && s.relay != nil {
+		return s.relay
+	}
+	return nil
 }

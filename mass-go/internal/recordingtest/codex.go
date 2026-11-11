@@ -927,6 +927,7 @@ func RunRecordCodexBasic(t *testing.T) {
 	h := newHarness(t)
 	scratch, err := recordingDirectory()
 	require.NoError(t, err)
+	recordProject := filepath.Join(scratch, "project")
 	session := filepath.Join(scratch, "session")
 	export := filepath.Join(h.root, "tests", "testdata", "simulation", "recordings", "codex", "basic")
 	if output := os.Getenv("MASS_RECORD_OUTPUT"); output != "" {
@@ -945,25 +946,25 @@ func RunRecordCodexBasic(t *testing.T) {
 	require.NoError(t, err)
 	version := h.command(codex, "--version")
 	require.Contains(t, h.command(codex, "login", "status"), "Logged in")
-	require.NoError(t, os.MkdirAll(project, 0o700))
+	require.NoError(t, os.MkdirAll(recordProject, 0o700))
 	selectedModel := recordingModel(t, model)
 	plan := filepath.Join(scratch, "plan.json")
-	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-basic", "driverProfile": "consumer", "project": project, "cliVersion": version, "model": selectedModel})
-	route := h.prepare(session, "--plan", plan, "record", project)
+	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-basic", "driverProfile": "consumer", "project": recordProject, "cliVersion": version, "model": selectedModel})
+	route := h.prepare(session, "--plan", plan, "record", recordProject)
 	cli := filepath.Join(scratch, "codex")
 	require.NoError(t, os.Symlink(codex, cli))
 	native := filepath.Join(scratch, "native-codex")
-	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(project)+" || exit 1\nexec "+quote(cli)+" -c "+quote("model=\""+selectedModel+"\"")+" -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"), 0o700))
+	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(recordProject)+" || exit 1\nexec "+quote(cli)+" -c "+quote("model=\""+selectedModel+"\"")+" -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --fixture-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
-	observed := h.flow(route, wrapper, flowCase{name: "basic", prompt: prompt, project: project})
+	observed := h.flow(route, wrapper, flowCase{name: "basic", prompt: prompt, project: recordProject})
 	stage := filepath.Join(scratch, "export")
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
 	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
-	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: project})
-	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: project})
-	index := caseIndex{Provider: "codex", Case: "basic", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/basic/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: prompt, Project: project, Facts: observed}
+	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: recordProject})
+	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: recordProject})
+	index := caseIndex{Provider: "codex", Case: "basic", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/basic/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: prompt, Project: recordProject, Facts: observed}
 	for _, name := range []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl"} {
 		index.Hashes[name] = hashFile(t, filepath.Join(material, name))
 	}
@@ -981,6 +982,7 @@ func RunRecordCodexPermission(t *testing.T) {
 	h := newHarness(t)
 	scratch, err := permissionRecordingDirectory()
 	require.NoError(t, err)
+	recordProject := filepath.Join(scratch, "project")
 	session := filepath.Join(scratch, "session")
 	export := filepath.Join(h.root, "tests", "testdata", "simulation", "recordings", "codex", "permission")
 	if output := os.Getenv("MASS_RECORD_OUTPUT"); output != "" {
@@ -999,23 +1001,23 @@ func RunRecordCodexPermission(t *testing.T) {
 	require.NoError(t, err)
 	version := h.command(codex, "--version")
 	require.Contains(t, h.command(codex, "login", "status"), "Logged in")
-	require.NoError(t, os.MkdirAll(permissionProject, 0o700))
-	proof := filepath.Join(permissionProject, "permission-proof.txt")
+	require.NoError(t, os.MkdirAll(recordProject, 0o700))
+	proof := filepath.Join(recordProject, "permission-proof.txt")
 	if err := os.Remove(proof); err != nil && !os.IsNotExist(err) {
 		require.NoError(t, err)
 	}
 	selectedModel := recordingModel(t, model)
 	plan := filepath.Join(scratch, "plan.json")
-	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-permission", "driverProfile": "consumer", "project": permissionProject, "cliVersion": version, "model": selectedModel})
-	route := h.prepare(session, "--plan", plan, "record", permissionProject)
+	writeJSON(t, plan, map[string]any{"version": 1, "agentType": "codex", "caseId": "mass-codex-permission", "driverProfile": "consumer", "project": recordProject, "cliVersion": version, "model": selectedModel})
+	route := h.prepare(session, "--plan", plan, "record", recordProject)
 	cli := filepath.Join(scratch, "codex")
 	require.NoError(t, os.Symlink(codex, cli))
 	native := filepath.Join(scratch, "native-codex")
 	config := "exec " + quote(cli) + " -c " + quote("model=\""+selectedModel+"\"") + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' -c 'approval_policy=\"on-request\"' -c 'sandbox_mode=\"read-only\"' \"$@\"\n"
-	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(permissionProject)+" || exit 1\n"+config), 0o700))
+	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(recordProject)+" || exit 1\n"+config), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --fixture-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
-	observed := h.flow(route, wrapper, flowCase{name: "permission", prompt: permissionPrompt, project: permissionProject, expectPermission: true})
+	observed := h.flow(route, wrapper, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
 	proofData, err := os.ReadFile(proof)
 	require.NoError(t, err)
 	require.Equal(t, "mass-approved", strings.TrimSpace(string(proofData)), "allowed command must execute")
@@ -1023,9 +1025,9 @@ func RunRecordCodexPermission(t *testing.T) {
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
 	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
-	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: permissionProject, expectPermission: true})
-	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: permissionProject, expectPermission: true})
-	index := caseIndex{Provider: "codex", Case: "permission", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/permission/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: permissionPrompt, Project: permissionProject, Facts: observed}
+	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
+	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
+	index := caseIndex{Provider: "codex", Case: "permission", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/permission/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: permissionPrompt, Project: recordProject, Facts: observed}
 	for _, name := range []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl"} {
 		index.Hashes[name] = hashFile(t, filepath.Join(material, name))
 	}

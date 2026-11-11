@@ -581,6 +581,7 @@ func (s *Service) resumeSession(ctx context.Context, ref resource.SessionRef, in
 	if fresh {
 		go s.process(run, l)
 	}
+	s.watchObservation(run, l, native)
 	if err := s.flushOpening(ctx, run, l, op); err != nil {
 		return resource.SessionResumed{Session: r}, err
 	}

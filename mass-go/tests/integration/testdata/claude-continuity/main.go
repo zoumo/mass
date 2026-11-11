@@ -30,9 +30,17 @@ func main() {
 	record := json.NewEncoder(log)
 	cwd, _ := os.Getwd()
 	explicit := os.Getenv("EXPLICIT_CREATE") == "1"
+	resumed := false
+	for _, arg := range os.Args[1:] {
+		if arg == "--resume" {
+			resumed = true
+		}
+	}
 	init := func() {
 		send(map[string]any{"type": "system", "subtype": "init", "session_id": nativeSessionID, "cwd": cwd, "claude_code_version": "2.1.258"})
-		send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": nativeSessionID, "state": "idle"})
+		if !resumed {
+			send(map[string]any{"type": "system", "subtype": "session_state_changed", "session_id": nativeSessionID, "state": "idle"})
+		}
 	}
 	n := 0
 	var pending string
@@ -60,6 +68,9 @@ func main() {
 			case "interrupt":
 				result(pending)
 			}
+			continue
+		}
+		if v["type"] == "control_response" {
 			continue
 		}
 		if v["type"] != "user" {
@@ -111,7 +122,6 @@ func main() {
 		}
 		if text == "resume-unlinked" {
 			send(map[string]any{"type": "control_request", "request_id": "unlinked-old", "request": map[string]any{"subtype": "can_use_tool", "tool_name": "Bash", "tool_use_id": "old-tool", "input": map[string]any{"command": "never execute"}}})
-			send(map[string]any{"type": "result", "subtype": "success", "session_id": nativeSessionID, "uuid": "unlinked-old-result"})
 			continue
 		}
 		if text == "hold" && n > 1 {
