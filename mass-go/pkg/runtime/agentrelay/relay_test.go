@@ -552,3 +552,27 @@ func TestUnknownSDKCapabilityNeverImpliesSupport(t *testing.T) {
 	require.True(t, mapped[agent.CapabilityTextInput])
 	require.False(t, mapped["futureUnknown"])
 }
+
+func TestRelayRejectsAnotherSessionNotification(t *testing.T) {
+	event := testEvent(t)
+	event.SessionID = "other-session"
+	event.ItemID = ""
+	event.Payload = agent.StateUpdatePayload{State: new(agent.StateIdle)}
+	session := &fakeSession{stream: &fakeStream{events: []agent.Event{event}}}
+	relay, err := Start(t.Context(), Config{
+		Session: session,
+		Address: runtime.Address{Namespace: "one", SessionName: "original"},
+		Source:  events.NewSource(),
+		Sink: func(context.Context, events.SessionEvent) error {
+			t.Error("another Session's notification must not reach the shared stream")
+			return nil
+		},
+	})
+	require.NoError(t, err)
+	select {
+	case <-relay.Done():
+	case <-time.After(time.Second):
+		t.Fatal("relay did not reject mismatched identity")
+	}
+	require.ErrorIs(t, relay.Err(), runtime.ErrFailedPrecondition)
+}

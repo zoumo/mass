@@ -47,7 +47,7 @@ func (s *Service) LoadSession(ctx context.Context, input resource.SessionLoad) (
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
 		return resource.SessionLoadAccepted{}, err
 	}
-	if err := validateSessionConfig(runtime.SessionSpec{Config: input.Config, Features: input.Features, MCPServers: input.MCPServers}); err != nil {
+	if err := validateSessionConfig(runtime.SessionSpec{Cwd: input.Cwd, Config: input.Config, Features: input.Features, MCPServers: input.MCPServers}); err != nil {
 		return resource.SessionLoadAccepted{}, err
 	}
 	s.mu.Lock()

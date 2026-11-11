@@ -85,6 +85,10 @@ func (r *Relay) consume(ctx context.Context, config Config, stream agent.EventSt
 			r.setErr(MapError(err))
 			return
 		}
+		if event.SessionID != config.Session.ID() {
+			r.setErr(runtime.FailedPrecondition("agent event session identity mismatch"))
+			return
+		}
 		mapped, err := MapEvent(config.Address, config.Source, event)
 		if err != nil {
 			r.setErr(err)

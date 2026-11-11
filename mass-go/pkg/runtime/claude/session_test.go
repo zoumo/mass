@@ -74,6 +74,7 @@ type relaySession struct {
 }
 
 func (*relaySession) Err() error { return nil }
+func (*relaySession) ID() string { return "healthy" }
 
 func (s *relaySession) Events() (agent.EventStream, error) { return s, nil }
 func (s *relaySession) Next(ctx context.Context) (agent.Event, error) {
