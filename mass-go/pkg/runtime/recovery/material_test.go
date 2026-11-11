@@ -101,3 +101,27 @@ func TestSaveNormalizesLegacySpecWithSessionOptions(t *testing.T) {
 
 	require.ErrorContains(t, v.Save("native", address, runtime.SessionSpec{Cwd: "/different"}, native), "existing recovery material conflicts")
 }
+
+func TestInitialSessionConfigurationDoesNotChangeRecoveryIdentity(t *testing.T) {
+	for _, kind := range []string{"codex", "claude"} {
+		t.Run(kind, func(t *testing.T) {
+			v := Vault{Dir: t.TempDir(), Kind: kind, Owner: "account", Executable: "/agent"}
+			address := runtime.Address{Namespace: "one", SessionName: "configured"}
+			legacy := runtime.SessionSpec{Cwd: "/work"}
+			require.NoError(t, v.Save("native", address, legacy, map[string]string{"id": "native", "account": "account"}))
+			changed := legacy
+			changed.Config = &runtime.InitialSessionConfig{Model: "new", Effort: "MAX"}
+			_, err := v.Load("native", address, changed)
+			require.NoError(t, err)
+			require.NoError(t, v.Save("native", address, changed, map[string]string{"id": "native", "account": "account"}))
+			_, err = v.Load("other-id", address, changed)
+			require.Error(t, err)
+			changed.Cwd = "/wrong"
+			_, err = v.Load("native", address, changed)
+			require.Error(t, err)
+			v.Owner = "other-account"
+			_, err = v.Load("native", address, legacy)
+			require.Error(t, err)
+		})
+	}
+}

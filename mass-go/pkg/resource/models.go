@@ -48,12 +48,13 @@ type SessionStatus struct {
 	EffectiveFeatures *runtime.SessionFeatures `json:"effectiveFeatures,omitempty"`
 }
 type SessionLoad struct {
-	Metadata   Metadata                 `json:"metadata"`
-	RuntimeRef string                   `json:"runtimeRef"`
-	Cwd        string                   `json:"cwd"`
-	SessionID  string                   `json:"sessionId"`
-	Features   *runtime.SessionFeatures `json:"features,omitempty"`
-	MCPServers *[]runtime.MCPServer     `json:"mcpServers,omitempty"`
+	Config     *runtime.InitialSessionConfig `json:"config,omitempty"`
+	Metadata   Metadata                      `json:"metadata"`
+	RuntimeRef string                        `json:"runtimeRef"`
+	Cwd        string                        `json:"cwd"`
+	SessionID  string                        `json:"sessionId"`
+	Features   *runtime.SessionFeatures      `json:"features,omitempty"`
+	MCPServers *[]runtime.MCPServer          `json:"mcpServers,omitempty"`
 }
 type HistoryLoadStatus struct {
 	LoadID               string                  `json:"loadId"`

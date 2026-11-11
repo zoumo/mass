@@ -131,7 +131,7 @@ daemon 的空闲回收使用与人工 close 相同的入口。配置、计时条
 
 Session 名称遵循 DNS subdomain 规则，namespace 遵循 DNS label 规则；namespace/name 唯一。创建时 metadata.name 还必须通过[名称校验](#创建名称校验)。namespace 用于分组寻址，不替代权限隔离。createdAt 在首次持久创建时写入，之后不因恢复或 close 修改。查询默认跨 namespace，可显式筛选。Session 的 Runtime 归属仅使用 spec.runtimeRef 名称。接纳操作时固定原 Driver 和具体运行/工作目标，名称复用不会改变已接纳操作的目标。
 
-Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs、会话功能请求 features 与显式 MCP 覆盖 mcpServers；status 保存 Agent 返回的 sessionId、统一的 SessionState、运行能力与本次运行实际生效的 effectiveFeatures。sessionId 即使离线也必须持久保留。
+Session 采用 metadata/spec/status：metadata 直接共用 ObjectMetadata，保存 namespace、name、uid、createdAt、generation；spec 保存 runtimeRef 字符串形式的 Runtime 名称、cwd、systemPrompt、additionalDirs、初始显式 config、会话功能请求 features 与显式 MCP 覆盖 mcpServers；status 保存 Agent 返回的 sessionId、统一的 SessionState、运行能力与本次运行实际生效的 effectiveFeatures。sessionId 即使离线也必须持久保留。
 
 Session.status.appliedGeneration 表示本次会话运行应用的 Session spec 版本，runtimeGeneration 表示它使用的 Runtime 类型配置快照版本。后者来自 Service 模块保存的 Driver 配置快照，不能复制 Runtime 的最新期望 generation；Session 默认值不属于该快照。打开或恢复成功后记录这两个版本、协商能力和实际生效功能；确认 close 后清除当前运行版本、协商能力和 effectiveFeatures，保留身份与历史；结果未知时保留最后确认事实并表达 `closing` 或 `unknown`。features 先继承当前 Runtime 默认值；Runtime 和 Session 都省略时各字段使用 schema 默认值。请求开启但 Driver 不支持时 effectiveFeatures 对应值为 false，请求本身不被拒绝。
 
@@ -190,3 +190,5 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 SessionService.loadSession 使用新的 namespace/name、Runtime、绝对 cwd 和已知原生 ID，遵守 [异步 load](load.md)。持久预留的 ID 在 nativeVerified 前是待验证主张，不能公开宣称原生已存在。建立 load 接收绑定后才启动生产；原生验证、完整回放及本地完成异步记录在 status.historyLoad。加载期间为 opening 并封闭业务输入；部分失败不激活。原生恢复、全部回放及本地结算成功后保留同一运行，直接接受后续输入，无需额外 resume；当前状态只依据真实当前证据，普通恢复不导入历史。
 
 load 输入还可在顶层携带可选的 `features` 与 `mcpServers` 显式覆盖。它们作为新 Session 的显式 spec 值持久保存；Service 在调用 Driver 前读取当前 Runtime 默认值并合并，合并结果只用于本次原生恢复，不复制进 Session spec 或恢复材料。空 MCP 列表不删除 Runtime 默认项。
+
+主 Session 的初始 `config.model/effort`、瞬态 setter、原运行在途责任及错误以[配置合同](../runtime/session-config.md)为准。初始值保存在 Session spec，create/resume/load 传给 SDK；setter 不持久，close/resume 重新请求初始值。可变配置不参与恢复身份验证。

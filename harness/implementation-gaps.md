@@ -13,6 +13,27 @@ sources:
 
 本页记录检查时的实现事实，不改变 [Module 合同](index.md#模块)。每次更新须绑定日期、源码版本、相关工作区变更、检查方式与证据；未核对的能力保持未验证。已有证据不能自动证明后续源码仍符合合同。设计变化历史见[更新记录](log.md)。
 
+## 2026-11-11 主 Session 初始配置聚焦核对
+
+检查基线 `5de7d4cf7be4f06ef0c632da4f28b90c068d8a58`，分支
+`codex-sdk-gap-01-initial-session-configuration` 的本次初始配置变更。检查时包含该 ticket
+未提交变更；最终提交及源码 SHA-256 清单保存在
+`/Users/jim/.codex/worktrees/7379/mass/.scratch/sdk-source-of-truth-gap-fixes/ticket01-report.md`
+与同目录 `ticket01-source-manifest.json`，不以本记录代替固定源码验收。
+
+`go test -list InitialSessionConfiguration` 证明选择非空；相同选择的
+`go test -race -count=1 -timeout=180s -v -run InitialSessionConfiguration` 在 runtime、recovery、
+service、transport、client、massctl/subcommand 和 integration 七个包退出 0。
+最终原始日志为同目录 `ticket01-focused-race-final.log`。这只证明选中的离线场景，
+未运行全量 check、独立 review 或真实 Agent。
+
+| 范围 | 本次观察与边界 |
+|---|---|
+| 初始 config | create/load 的 model/effort 经 CLI、client/HTTP、Service、Driver 传给 SDK；Codex 严格帧验证 thread/start 与 thread/resume 的 model/model_reasoning_effort，Claude 原生合成进程 argv 验证 --model/--effort。非空值无翻译；空字符串按 SDK 省略。 |
+| 持久与恢复 | spec 保存显式初始值；离线测试读取持久记录并 resume 同一 ID/uid/spec；load 保存本次 config，完成后在同一恢复连接继续输入。恢复材料排除 config，旧记录可读，ID/cwd/账号验证保留。 |
+| 拒绝与隔离 | CLI/client/Service 的非法 UTF-8/NUL 在副作用前拒绝；HTTP 拒绝 null、非字符串、孤立 surrogate 及其他非法编码。两 provider 集成先拒绝非法请求再使用同名目标完成原生打开。临时目录及进程清理由测试拥有并读回。 |
+| 后续缺口 | 瞬态 setter 仅定稿合同，未实现；新 captures、真实 completion/permission、真实 resume/load 与最终全量验收属于后续 ticket，未验证。Runtime 未增加 model/effort 默认值，SDK/testify pins 及旧 recordings 保持原样。 |
+
 ## 2026-11-08 Runtime Session 默认配置核对
 
 检查源码为分支 `codex-runtime-session-defaults` 的提交 `59581a95be515aec4c8790951037dc6a455a5f9d`，检查时该提交无未提交修改。该变更在 Runtime spec 顶层增加 `features` 与 `mcpServers`，由 Service 在 Session 操作时解析，Session 仅持久化显式值。完整 `make check-go` 在该 SHA 上退出码为 0，原始日志为 `/tmp/pr9-final-check-20261108T223505.log`（RTK 对仿真冗长输出做了中间截断，日志首尾保留源码 SHA、退出码与结束 HEAD）。以下结论来自源码与离线测试核对，不证明真实 Codex、Claude 或外部 MCP server 已通过端到端验收。

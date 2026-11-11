@@ -722,6 +722,18 @@
         },
         "type": "object"
       },
+      "InitialSessionConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "effort": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "Input": {
         "additionalProperties": false,
         "properties": {
@@ -2248,6 +2260,9 @@
       "SessionLoad": {
         "additionalProperties": false,
         "properties": {
+          "config": {
+            "$ref": "#/components/schemas/InitialSessionConfig"
+          },
           "cwd": {
             "minLength": 1,
             "type": "string"
@@ -2361,6 +2376,9 @@
               "array",
               "null"
             ]
+          },
+          "config": {
+            "$ref": "#/components/schemas/InitialSessionConfig"
           },
           "cwd": {
             "type": "string"
