@@ -82,7 +82,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 	if err := readCtx.Err(); err != nil {
 		return err
 	}
-	if err := (agent.OpenOptions{Cwd: spec.Cwd, AdditionalSystemPrompt: spec.SystemPrompt}).Validate(); err != nil {
+	if err := (agent.OpenOptions{Config: spec.Config.SDKConfig(), Cwd: spec.Cwd, AdditionalSystemPrompt: spec.SystemPrompt}).Validate(); err != nil {
 		return agentrelay.MapError(err)
 	}
 	if err := d.vault.Check(); err != nil {
@@ -118,6 +118,7 @@ func (d *Driver) LoadSession(ctx context.Context, id string, a runtime.Address, 
 		OpenOptions: agent.OpenOptions{
 			Cwd:                    cwd,
 			AdditionalSystemPrompt: spec.SystemPrompt,
+			Config:                 spec.Config.SDKConfig(),
 			Features:               agentFeatures(spec.Features),
 			MCPServers:             mcpServers,
 		},

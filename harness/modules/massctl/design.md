@@ -73,9 +73,10 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 
 | 命令 | 输入 | 能力与结果 |
 |---|---|---|
-| `session load NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd ABS_PATH --session-id NATIVE_ID`；可选 `--features-json`、`--mcp-servers-json` | 异步恢复同一会话并回放到新空目标；显式值成为新 Session 覆盖项；本地完成后直接继续输入 |
+| `session load NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd ABS_PATH --session-id NATIVE_ID`；可选 `--model`、`--effort`、`--features-json`、`--mcp-servers-json` | 异步恢复同一会话并回放到新空目标；显式值成为新 Session 覆盖项；本地完成后直接继续输入 |
 | `session cancel-load TARGET` | 必填 `--load-id ID` | 取消原历史读取，返回当前状态；通过 get 查询最终结束 |
-| `session create NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd PATH`，可选系统提示、额外目录、`--features-json` 与 `--mcp-servers-json` | 创建并登记 Session，返回持久身份及可选输入回执；仅显式输入发送一次 |
+| `session create NAME` | 必填 `-n NAMESPACE --runtime NAME --cwd PATH`，可选系统提示、额外目录、`--model`、`--effort`、`--features-json` 与 `--mcp-servers-json` | 创建并登记 Session，返回持久身份及可选输入回执；仅显式输入发送一次 |
+| `session set-config TARGET` | 必填 `--id model\|effort --value VALUE` | 当前主 Session 瞬态单项更新，返回 ConfigReceipt，不回写 spec |
 | `session get TARGET` | 无业务请求体 | 查询资源，不隐式恢复 |
 | `session list` | 只保留分页参数 `--limit`、`--after` | 查询全部 namespace 与 Runtime 的持久目录，包含离线会话；首版不提供筛选（已确认） |
 | `session resume TARGET` | 可选互斥 `--text TEXT` 或 `--input-file FILE` | 恢复原身份，可显式提交一次新输入；失败不新建替代 |
@@ -89,7 +90,7 @@ Session 创建参数已确认：NAME、-n/--namespace、--runtime 与 --cwd 必�
 
 `session close` 使用 HTTP close 的同一业务合同。命令只接收 TARGET，不发送业务请求体；成功时输出 `offline` Session，失败或结果未知时以非零状态退出。重复执行同一 close 是安全幂等重试，完整生命周期语义见 [Session close](../service/design.md#session-close)。
 
-当前 Service 未提供 Session 更新、删除、配置选项写入和待决交互补查，CLI 不虚构这些操作。`close` 不提供 `delete` 别名；本版本不保留 archive 命令、兼容别名或回退路径。进程内 EventHandler 管理不作为 CLI 远程能力暴露。
+Session 不提供持久更新、删除、任意 ACP 配置选项写入和待决交互补查。主配置支持下述已确认的初始值与瞬态 setter。`close` 不提供 `delete` 别名；本版本不保留 archive 命令、兼容别名或回退路径。进程内 EventHandler 管理不作为 CLI 远程能力暴露。
 
 Session 恢复可选互斥 --text TEXT 或 --input-file FILE，使用与创建相同的 SessionInput 读取及校验规则；省略保持零输入，显式空输入拒绝。这是新输入，不是历史或恢复配置；同一原生 ID/cwd 验证前不报告成功，receipt 不表示完成，结果未知不自动重试。
 
@@ -109,7 +110,7 @@ session prompt 的首版输入范围已确认：仅提供 --text TEXT，将文�
 
 Runtime 使用位置参数 NAME，名称全局唯一，不接受 namespace。
 
-Session 统一使用位置参数 NAME_OR_ID，不提供 --id，不设置默认 namespace。所有针对已有单个 Session 的命令（get、resume、close、cancel、prompt、answer、history、watch）采用同一已确认规则：
+Session 目标统一使用位置参数 NAME_OR_ID，不提供目标 ID flag，不设置默认 namespace；set-config 的 --id 只表示配置项。所有针对已有单个 Session 的命令（get、resume、close、cancel、prompt、answer、history、watch、set-config）采用同一已确认规则：
 
 ```sh
 massctl session get review -n demo
@@ -204,3 +205,15 @@ CLI/HTTP 合同可通过隔离的服务或 HTTP 替身验证；涉及原生输�
 ## 异步原生 load
 
 load 与 cancel-load 遵循[异步历史设计](../service/load.md)。load 成功退出只表示接纳，输出 loadId 及 Session，不写“历史已全部完成”；load 本身恢复同一会话并回放，成功后无需额外 resume；不提供隐式等待或自动重试。load 的 `--features-json` 与 `--mcp-servers-json` 作为新 Session 显式值持久保存，并与当前 Runtime 默认值合并用于本次恢复。session get 查询 status.historyLoad，区分原生验证/穷尽、本地完成、失败和取消。--timeout 只限制请求等待；Ctrl-C 不自动取消已接纳回放，取消用 cancel-load 和原 loadId。session history 仍只读已提交记录，watch 只观察订阅之后同一 Broadcast 的事件。
+
+## 主 Session 配置
+
+session create/load 增加可选 `--model VALUE` 与 `--effort VALUE`，映射到初始 config，
+非空值原样传递，显式空字符串按 SDK 省略；非法 UTF-8/NUL 在请求前拒绝。
+load 保存本次显式值；resume 使用持久初始值，不提供配置覆盖 flags。
+Runtime 不增加 model/effort 默认值。
+
+`session set-config TARGET --id model|effort --value VALUE` 使用既有 TARGET 寻址；
+此处 --id 是配置项 ID。value 非空，逐项直接转发，JSON 输出 ConfigReceipt，失败非零退出。
+setter 不写回 spec，不等待 idle、不重启、不重试；成功不声明当前值生效，
+close/resume 重新请求初始值。失败使用既有三字段错误，不伪造 receipt。

@@ -51,6 +51,8 @@ Runtime spec 顶层还可保存该 Runtime 下 Session 的 `features` 与 `mcpSe
 
 Runtime 更新只修改期望配置，已运行 Driver 继续使用类型配置快照。Session 默认值的生效独立于该快照：更新不需要重启 Runtime，下一次 Session 打开操作使用最新默认值，已经打开且仍有效的 Session 不热更新。Driver.start 成功后由Service 模块记录 appliedGeneration；DriverSession 不返回 generation。版本一致不证明健康。
 
+主 Session 初始 `config.model/effort` 由 Service 持久保存并在 create/resume/load 传入 Driver/SDK；在线单项 setter 只作用于原运行，不写回 spec。职责、接受证据与恢复身份边界见[配置合同](modules/runtime/session-config.md)。Runtime 不增加 model/effort 默认值。
+
 ## 创建与恢复
 
 1. Service 模块校验名称，读取 Runtime 资源并预留实例引用；资源创建与配置更新通过 RuntimeRegistry.validateConfig(type, config) 校验类型配置，并由 Service 校验 Session 默认值的公共结构，不创建运行实例。

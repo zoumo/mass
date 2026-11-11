@@ -532,3 +532,18 @@ T06 upgrade details, validation results, and remaining harness differences are i
 [SDK upgrade acceptance](docs/sdk-latest-sync.md). Session `systemPrompt` appends
 caller instructions to provider defaults via SDK `AdditionalSystemPrompt`;
 MASS repeats the complete value on every open, resume, and load resume.
+
+## 初始主 Session 配置
+
+`session create` 与 `session load` 支持 `--model VALUE`、`--effort VALUE`，HTTP 对应
+create 的 `spec.config` 与 load 顶层 `config: {model?, effort?}`。值按 provider 原生字面量
+传给 SDK；省略、空对象或空字符串表示不指定，不解释为重置。null、非字符串、NUL、
+非法编码在原生副作用前拒绝。Runtime 不提供 model/effort 默认值。
+
+初始显式配置保存在 Session spec；close/resume 时重新请求这些值，保持原生 ID/cwd，
+load 保存本次显式配置并在同一恢复连接上继续输入。旧 spec 省略 config 保持可读，
+不迁移个人数据。初始配置不是当前生效值的观察；在线 setter 的已批准合同在 harness，
+本 ticket 尚未实现该操作。
+
+此路径的聚焦离线 race 验证覆盖两个 provider 的原生协议/argv、持久 round-trip、
+resume/load、load 后输入及非法值拒绝。未运行真实 Agent 或全量验收；完整证据由 ticket 报告记录。

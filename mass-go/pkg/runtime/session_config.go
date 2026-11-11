@@ -24,6 +24,10 @@ func (d SessionDefaults) Validate() error {
 // replace by name.
 func (d SessionDefaults) ResolveSessionSpec(spec SessionSpec) SessionSpec {
 	resolved := spec
+	if spec.Config != nil {
+		config := *spec.Config
+		resolved.Config = &config
+	}
 	resolved.AdditionalDirs = slices.Clone(spec.AdditionalDirs)
 	resolved.Features = MergeSessionFeatures(d.Features, spec.Features)
 	resolved.MCPServers = MergeSessionMCPServers(d.MCPServers, spec.MCPServers)

@@ -132,6 +132,7 @@ func sameRecoveryMaterial(a, b Material, compareContext bool) bool {
 // Session-only options may change when a Runtime's defaults change. They are
 // reapplied by a new native open/resume and are not part of recovery targeting.
 func recoverySpec(spec runtime.SessionSpec) runtime.SessionSpec {
+	spec.Config = nil
 	spec.Features = nil
 	spec.MCPServers = nil
 	return spec

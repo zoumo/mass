@@ -144,3 +144,5 @@ Session.get 的 historyLoad 区分接纳、来源验证、原生恢复、原生�
 成功会话，普通 resume 不自动回放，以及 load 的 features/mcpServers 显式覆盖与当前
 Runtime 默认值合并后建立连接。合成合同、原生协议探测与真实模型历史验收分开报告；
 SDK 或 TypeSpec 通过不证明 MASS 整链已接通。
+
+主 Session 的初始 `config.model/effort`、瞬态 setter、原运行在途责任及错误以[配置合同](../runtime/session-config.md)为准。初始值保存在 Session spec，create/resume/load 传给 SDK；setter 不持久，close/resume 重新请求初始值。可变配置不参与恢复身份验证。

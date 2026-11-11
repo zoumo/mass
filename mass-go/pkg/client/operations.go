@@ -122,6 +122,9 @@ func (c *Client) UpdateRuntime(ctx context.Context, name string, spec resource.R
 }
 
 func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any) error {
+	if err := v.Spec.Config.Validate(); err != nil {
+		return err
+	}
 	spec, err := generatedValue[generated.SessionSpec](v.Spec)
 	if err != nil {
 		return err
@@ -132,6 +135,9 @@ func (c *Client) CreateSession(ctx context.Context, v resource.Session, out any)
 
 // CreateSessionWithInput sends create-only input without persisting replay configuration.
 func (c *Client) CreateSessionWithInput(ctx context.Context, v resource.SessionCreateInput, out any) error {
+	if err := v.Spec.Config.Validate(); err != nil {
+		return err
+	}
 	body, err := generatedValue[generated.SessionCreate](v)
 	if err != nil {
 		return err
@@ -141,6 +147,9 @@ func (c *Client) CreateSessionWithInput(ctx context.Context, v resource.SessionC
 
 // LoadSession returns acceptance only; it never waits for replay or retries.
 func (c *Client) LoadSession(ctx context.Context, input resource.SessionLoad, out any) error {
+	if err := input.Config.Validate(); err != nil {
+		return err
+	}
 	if err := resource.ValidateSessionID(input.SessionID); err != nil {
 		return err
 	}

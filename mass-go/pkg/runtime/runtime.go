@@ -55,11 +55,12 @@ type Address struct {
 	SessionName string `json:"sessionName"`
 }
 type SessionSpec struct {
-	Cwd            string           `json:"cwd"`
-	SystemPrompt   string           `json:"systemPrompt,omitempty"`
-	AdditionalDirs []string         `json:"additionalDirs,omitempty"`
-	Features       *SessionFeatures `json:"features,omitempty"`
-	MCPServers     *[]MCPServer     `json:"mcpServers,omitempty"`
+	Config         *InitialSessionConfig `json:"config,omitempty"`
+	Cwd            string                `json:"cwd"`
+	SystemPrompt   string                `json:"systemPrompt,omitempty"`
+	AdditionalDirs []string              `json:"additionalDirs,omitempty"`
+	Features       *SessionFeatures      `json:"features,omitempty"`
+	MCPServers     *[]MCPServer          `json:"mcpServers,omitempty"`
 }
 
 // SessionObservation reports termination of the sole SDK event relay.

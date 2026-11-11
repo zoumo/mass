@@ -7,6 +7,9 @@ import (
 )
 
 func validateSessionConfig(spec runtime.SessionSpec) error {
+	if err := spec.Config.Validate(); err != nil {
+		return err
+	}
 	if spec.MCPServers == nil {
 		return nil
 	}
@@ -29,5 +32,5 @@ func (s *Service) resolveSessionSpec(run *runBinding, spec runtime.SessionSpec) 
 }
 
 func sameSessionOverrides(a, b runtime.SessionSpec) bool {
-	return reflect.DeepEqual(a.Features, b.Features) && reflect.DeepEqual(a.MCPServers, b.MCPServers)
+	return reflect.DeepEqual(a.Config, b.Config) && reflect.DeepEqual(a.Features, b.Features) && reflect.DeepEqual(a.MCPServers, b.MCPServers)
 }

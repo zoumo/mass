@@ -144,6 +144,9 @@ model SessionResumed extends Session {
 
 /** 恢复已知原生会话并加载历史到新空目标；不发送业务输入。 */
 model SessionLoad {
+  /** 保存为新目标的初始显式配置，直接传入同一原生恢复连接。 */
+  config?: InitialSessionConfig;
+
   metadata: ObjectMetadata;
   runtimeRef: string;
   cwd: string;

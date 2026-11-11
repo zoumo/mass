@@ -1,4 +1,5 @@
 import "../../shared/models.tsp";
+import "./session-config.tsp";
 
 namespace MASS.Design.Execution;
 
@@ -38,6 +39,9 @@ model MCPServer {
 
 /** 运行环境中的会话选项，不含资源名称、实例引用或版本字段。 */
 model DriverSessionSpec {
+  /** 初始显式期望配置；create/resume/load 直接传给 SDK，不属于恢复身份。 */
+  config?: InitialSessionConfig;
+
   cwd: string;
   systemPrompt?: string;
   additionalDirs?: string[];

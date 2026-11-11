@@ -658,6 +658,12 @@ type HistoryReplayPhase string
 // InfoUpdatePayload defines model for InfoUpdatePayload.
 type InfoUpdatePayload = rawjson.RawMessage
 
+// InitialSessionConfig defines model for InitialSessionConfig.
+type InitialSessionConfig struct {
+	Effort *string `json:"effort,omitempty"`
+	Model  *string `json:"model,omitempty"`
+}
+
 // Input defines model for Input.
 type Input struct {
 	Content []ContentBlock `json:"content"`
@@ -853,6 +859,7 @@ type SessionFeatures struct {
 
 // SessionLoad defines model for SessionLoad.
 type SessionLoad struct {
+	Config     *InitialSessionConfig `json:"config,omitempty"`
 	Cwd        string                `json:"cwd"`
 	Features   *SessionFeatures      `json:"features,omitempty"`
 	McpServers *[]MCPServer          `json:"mcpServers,omitempty"`
@@ -889,6 +896,7 @@ type SessionResumed struct {
 // SessionSpec defines model for SessionSpec.
 type SessionSpec struct {
 	AdditionalDirs nullable.Nullable[[]string] `json:"additionalDirs,omitempty"`
+	Config         *InitialSessionConfig       `json:"config,omitempty"`
 	Cwd            string                      `json:"cwd"`
 	Features       *SessionFeatures            `json:"features,omitempty"`
 	McpServers     *[]MCPServer                `json:"mcpServers,omitempty"`
