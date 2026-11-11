@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
@@ -711,9 +712,9 @@ func (claudeSuite *ClaudeSuite) TestClaudeFailedOpenIsolation() {
 	}), prototype.AutoApprovePermissions)
 	t.Cleanup(func() {
 		if shutdownErr := missing.Shutdown(ctx(t)); shutdownErr != nil {
-			require.ErrorContains(t, shutdownErr, "original opening or stream responsibility remains")
+			assert.ErrorContains(t, shutdownErr, "original opening or stream responsibility remains")
 		}
-		require.NoError(t, missingStore.Close())
+		assert.NoError(t, missingStore.Close())
 	})
 	_, err = missing.CreateRuntime(resource.Runtime{Metadata: resource.Metadata{Name: "missing"}, Spec: resource.RuntimeSpec{Type: "claude", Config: runtime.Config{"executable": claudeMock, "scenario": path}}})
 	require.NoError(t, err)
