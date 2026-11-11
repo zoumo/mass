@@ -38,8 +38,11 @@ const (
 type route = agenttestify.Route
 
 type factEvent struct {
-	Kind string `json:"kind"`
-	Text string `json:"text,omitempty"`
+	Kind       string `json:"kind"`
+	Text       string `json:"text,omitempty"`
+	ToolCallID string `json:"toolCallId,omitempty"`
+	Status     string `json:"status,omitempty"`
+	ExitCode   *int32 `json:"exitCode,omitempty"`
 }
 
 type facts struct {
@@ -70,6 +73,7 @@ type permissionFacts struct {
 	Answer            permissionAnswer          `json:"answer"`
 	StateAfterAnswer  events.SessionState       `json:"stateAfterAnswer"`
 	Completed         bool                      `json:"completed"`
+	Closed            bool                      `json:"closed,omitempty"`
 }
 
 type caseIndex struct {
@@ -88,6 +92,7 @@ type caseIndex struct {
 	ClaudeAPIProvider string            `json:"claudeAPIProvider,omitempty"`
 	Prompt            string            `json:"prompt"`
 	Project           string            `json:"project"`
+	NativeConfig      []string          `json:"nativeConfig,omitempty"`
 	Facts             facts             `json:"facts"`
 }
 
@@ -528,6 +533,10 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 				approvedToolCompleted = true
 			}
 		}
+		if closed, ok := event.Payload().(events.InteractionClosed); ok && answered {
+			require.Equal(t, result.Permission.Interaction, string(closed.Interaction))
+			result.Permission.Closed = true
+		}
 		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil {
 			if answered && result.Permission != nil && result.Permission.StateAfterAnswer == "" {
 				result.Permission.StateAfterAnswer = *state.State
@@ -570,7 +579,11 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 			user = true
 		case events.ToolCall:
 			fact.Text = commandText(payload.RawInput)
+			fact.ToolCallID = payload.ID
 		case events.ToolResult:
+			fact.ToolCallID = payload.ID
+			fact.Status = payload.Status
+			fact.ExitCode = payload.ExitCode
 			for _, block := range payload.Content {
 				fact.Text += events.TextOf(block)
 			}
@@ -588,6 +601,7 @@ func (h *harness) flow(route route, executable string, c flowCase) facts {
 	}
 	require.True(t, assistant)
 	if result.Permission != nil {
+		require.True(t, result.Permission.Closed, "permission interaction must close")
 		require.True(t, approvedToolCompleted, "permission answer must lead to a successful tool result")
 		if c.expectedToolOutput != "" {
 			require.Contains(t, approvedToolOutput.String(), c.expectedToolOutput)
@@ -660,7 +674,24 @@ func (h *harness) answerPermissionWithState(api *client.Client, ref resource.Ses
 	h.t.Helper()
 	require.Equal(h.t, events.InteractionPermission, request.Request.Kind)
 	require.NotEmpty(h.t, request.Request.Options)
-	require.NotEmpty(h.t, request.Request.Content, "native tool input must be visible")
+	if len(request.Request.Content) == 0 {
+		var history store.HistoryPage
+		if err := api.History(h.ctx, ref, store.HistoryQuery{}, &history); err != nil {
+			return err
+		}
+		visible := false
+		for _, event := range history.Events {
+			if tool, ok := event.Payload().(events.ToolCall); ok && tool.ID == request.Request.ToolCallID {
+				command := commandText(tool.RawInput)
+				require.NotEmpty(h.t, command, "linked native tool input must be visible")
+				if c.provider == "" || c.provider == "codex" {
+					require.Contains(h.t, command, "printf mass-approved > permission-proof.txt")
+				}
+				visible = true
+			}
+		}
+		require.True(h.t, visible, "permission request must bind a visible public tool call")
+	}
 	if c.expectedPermission != "" {
 		require.Equal(h.t, c.expectedPermission, request.Request.Title)
 	}
@@ -695,6 +726,12 @@ func commandText(raw any) string {
 }
 
 func (h *harness) replay(material string, expected facts, c flowCase) string {
+	var plan capturePlan
+	readJSON(h.t, filepath.Join(material, "plan.json"), &plan)
+	if c.provider != "claude" && plan.Model != "" {
+		c.sessionConfig = &runtime.InitialSessionConfig{Model: plan.Model}
+	}
+	c.budget = 60 * time.Second
 	session := filepath.Join(h.t.TempDir(), "session")
 	c.evidence = ""
 	if h.diagnostic != nil {
@@ -887,9 +924,12 @@ func requireWithin(root, filePath string) error {
 
 func verifyRecordingSession(t *testing.T, session, expectedVersion string) {
 	t.Helper()
+	canonicalSession, err := filepath.EvalSymlinks(session)
+	require.NoError(t, err)
+	session = canonicalSession
 	fixture, err := agenttestify.Open(session)
 	require.NoError(t, err)
-	require.Equal(t, "recording", fixture.Source.Kind)
+	require.Equal(t, "plan", fixture.Source.Kind)
 	require.Equal(t, "consumer", fixture.Source.Provenance)
 	require.Equal(t, "consumer", fixture.Source.DriverProfile)
 	require.Equal(t, agenttestify.ToolSourceExecutable, fixture.Tool.Source)
@@ -1006,15 +1046,13 @@ func readJSONFile(path string, out any) error {
 
 func loadCase(t *testing.T, root, provider, name, expectedProject, expectedPrompt string) (string, caseIndex) {
 	t.Helper()
-	material, index, err := auditRecordingCase(root, artifactCase{
-		provider: provider,
-		name:     name,
-		flow: flowCase{
-			name: name, provider: provider, project: expectedProject, prompt: expectedPrompt,
-			initialInput: provider == "claude", ignoreStreamKinds: provider == "claude",
-			expectPermission: name == "permission",
-		},
-	})
+	spec, err := selectedRecordingCase(provider, name)
+	require.NoError(t, err)
+	require.Equal(t, expectedPrompt, spec.flow.prompt)
+	if spec.suite == "" {
+		require.Equal(t, expectedProject, spec.flow.project)
+	}
+	material, index, err := auditRecordingCase(root, spec)
 	require.NoError(t, err)
 	return material, index
 }
@@ -1032,10 +1070,10 @@ func RunCodexPermissionReplay(t *testing.T) {
 	require.NotNil(t, permission)
 	require.NotEmpty(t, permission.Interaction)
 	require.Equal(t, events.InteractionPermission, permission.Request.Kind)
-	require.Equal(t, "item/commandExecution/requestApproval", permission.Request.Title)
+	require.Equal(t, "Approve command execution", permission.Request.Title)
 	require.NotEmpty(t, permission.Request.ToolCallID)
 	require.NotEmpty(t, permission.Request.Options)
-	require.NotEmpty(t, permission.Request.Content)
+	require.True(t, permission.Closed)
 	require.Equal(t, events.RequiresAction, permission.StateBeforeAnswer)
 	option, ok := offeredOption(permission.Request.Options, permission.Answer.OptionID)
 	require.True(t, ok, "answer must use an offered option")
@@ -1051,7 +1089,7 @@ func RunCodexPermissionReplay(t *testing.T) {
 	require.Contains(t, kinds, "agent.tool_call")
 	require.Contains(t, kinds, "agent.tool_result")
 	require.Equal(t, "agent.message", kinds[len(kinds)-1])
-	session := h.replay(material, index.Facts, flowCase{name: "permission", provider: "codex", prompt: index.Prompt, project: index.Project, expectPermission: true, expectedPermission: "item/commandExecution/requestApproval"})
+	session := h.replay(material, index.Facts, flowCase{name: "permission", provider: "codex", prompt: index.Prompt, project: index.Project, expectPermission: true, expectedPermission: "Approve command execution"})
 	require.NoError(t, verifyExecution(session, material))
 	receipt := executionReceiptPath(t, session)
 	var value map[string]any
@@ -1103,7 +1141,9 @@ func RunRejectsInvalidMaterial(t *testing.T) {
 		for _, name := range []string{"basic", "permission"} {
 			for _, scenario := range []string{"missing", "hash-mismatch"} {
 				t.Run(provider+"/"+name+"/"+scenario, func(t *testing.T) {
-					source := filepath.Join(h.root, "tests", "testdata", "simulation", "recordings", provider, name, "material")
+					spec, err := selectedRecordingCase(provider, name)
+					require.NoError(t, err)
+					source := filepath.Join(h.root, spec.casePath(), "material")
 					root := t.TempDir()
 					material := filepath.Join(root, "material")
 					require.NoError(t, os.CopyFS(material, os.DirFS(source)))
@@ -1142,6 +1182,20 @@ func permissionRecordingDirectory() (string, error) {
 	return os.MkdirTemp("/var/tmp", "mass-record-codex-permission-")
 }
 
+func codexRecordingConfig(t *testing.T) ([]string, string) {
+	t.Helper()
+	var overrides []string
+	if value := os.Getenv("MASS_RECORD_CODEX_CONFIG_JSON"); value != "" {
+		require.NoError(t, json.Unmarshal([]byte(value), &overrides))
+	}
+	var arguments strings.Builder
+	for _, override := range overrides {
+		require.True(t, strings.HasPrefix(override, "model_provider=") || strings.HasPrefix(override, "model_providers."), "recording overrides only select the native provider; model belongs to SessionSpec.Config")
+		arguments.WriteString(" -c " + quote(override))
+	}
+	return overrides, arguments.String()
+}
+
 func RunRecordCodexBasic(t *testing.T) {
 	if os.Getenv("MASS_RECORD") != "1" {
 		t.Skip("set MASS_RECORD=1 to record a real Codex interaction")
@@ -1173,11 +1227,13 @@ func RunRecordCodexBasic(t *testing.T) {
 	cli := filepath.Join(scratch, "codex")
 	require.NoError(t, os.Symlink(codex, cli))
 	native := filepath.Join(scratch, "native-codex")
-	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(recordProject)+" || exit 1\nexec "+quote(cli)+" -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"), 0o700))
+	overrides, configArgs := codexRecordingConfig(t)
+	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(recordProject)+" || exit 1\nexec "+quote(cli)+configArgs+" -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' \"$@\"\n"), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --fixture-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
 	h.phase = "mass-record-real-session"
-	observed := h.flow(prepared, wrapper, flowCase{name: "basic", prompt: prompt, project: recordProject, sessionConfig: &runtime.InitialSessionConfig{Model: selectedModel}, evidence: scratch})
+	observed := h.flow(prepared, wrapper, flowCase{name: "basic", prompt: prompt, project: recordProject, sessionConfig: &runtime.InitialSessionConfig{Model: selectedModel}, evidence: scratch, budget: 2 * time.Minute})
+	writeJSON(t, filepath.Join(scratch, "facts.json"), observed)
 	h.phase = "testify-export"
 	if h.diagnostic != nil {
 		h.diagnostic.report.Boundaries["mass_relay_sse"] = "completed"
@@ -1187,6 +1243,8 @@ func RunRecordCodexBasic(t *testing.T) {
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
 	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
+	verifyRecordingSession(t, session, version)
+	require.NoError(t, auditCodexCapture(material, selectedModel, observed.SessionID))
 	h.phase = "testify-strict-replay"
 	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: recordProject})
 	h.replay(material, observed, flowCase{name: "basic", prompt: prompt, project: recordProject})
@@ -1194,7 +1252,11 @@ func RunRecordCodexBasic(t *testing.T) {
 		h.diagnostic.report.Boundaries["testify_export_strict_replay"] = "completed"
 	}
 	index := caseIndex{Provider: "codex", Case: "basic", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/basic/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: prompt, Project: recordProject, Facts: observed}
-	for _, name := range []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl"} {
+	exportRelative, err := filepath.Rel(h.root, filepath.Join(export, "material"))
+	require.NoError(t, err)
+	index.ExportPath = filepath.ToSlash(exportRelative)
+	index.NativeConfig = overrides
+	for _, name := range []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl", "raw/manifest.json", "raw/stderr.raw", "raw/transport.json"} {
 		index.Hashes[name] = hashFile(t, filepath.Join(material, name))
 	}
 	writeJSON(t, filepath.Join(stage, "index.json"), index)
@@ -1242,12 +1304,14 @@ func RunRecordCodexPermission(t *testing.T) {
 	cli := filepath.Join(scratch, "codex")
 	require.NoError(t, os.Symlink(codex, cli))
 	native := filepath.Join(scratch, "native-codex")
-	config := "exec " + quote(cli) + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' -c 'approval_policy=\"on-request\"' -c 'sandbox_mode=\"read-only\"' \"$@\"\n"
+	overrides, configArgs := codexRecordingConfig(t)
+	config := "exec " + quote(cli) + configArgs + " -c 'project_root_markers=[]' -c 'project_doc_max_bytes=0' -c 'approval_policy=\"on-request\"' -c 'sandbox_mode=\"read-only\"' \"$@\"\n"
 	require.NoError(t, os.WriteFile(native, []byte("#!/bin/sh\ncd "+quote(recordProject)+" || exit 1\n"+config), 0o700))
 	wrapper := filepath.Join(scratch, "record-codex")
 	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec "+quote(h.tool)+" agent record --fixture-dir "+quote(session)+" --cmd "+quote(native)+" -- \"$@\"\n"), 0o700))
 	h.phase = "mass-record-real-session"
-	observed := h.flow(prepared, wrapper, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true, sessionConfig: &runtime.InitialSessionConfig{Model: selectedModel}, evidence: scratch})
+	observed := h.flow(prepared, wrapper, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true, sessionConfig: &runtime.InitialSessionConfig{Model: selectedModel}, evidence: scratch, budget: 2 * time.Minute})
+	writeJSON(t, filepath.Join(scratch, "facts.json"), observed)
 	h.phase = "testify-export"
 	proofData, err := os.ReadFile(proof)
 	require.NoError(t, err)
@@ -1256,6 +1320,8 @@ func RunRecordCodexPermission(t *testing.T) {
 	material := filepath.Join(stage, "material")
 	require.NoError(t, os.MkdirAll(stage, 0o700))
 	h.command(h.tool, "export", "--fixture-dir", session, "--output", material)
+	verifyRecordingSession(t, session, version)
+	require.NoError(t, auditCodexCapture(material, selectedModel, observed.SessionID))
 	h.phase = "testify-strict-replay"
 	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
 	h.replay(material, observed, flowCase{name: "permission", prompt: permissionPrompt, project: recordProject, expectPermission: true})
@@ -1263,7 +1329,11 @@ func RunRecordCodexPermission(t *testing.T) {
 		h.diagnostic.report.Boundaries["testify_export_strict_replay"] = "completed"
 	}
 	index := caseIndex{Provider: "codex", Case: "permission", Provenance: "consumer", RecordedAt: time.Now().UTC().Format(time.RFC3339), SourceSession: filepath.Join(filepath.Base(scratch), "session"), ExportPath: "tests/testdata/simulation/recordings/codex/permission/material", Hashes: map[string]string{}, Versions: map[string]string{"sdk": RuntimeSDKVersion, "testify": TestifyVersion, "codex": version, "mass": h.command("git", "rev-parse", "HEAD"), "massWorktree": h.command("git", "status", "--porcelain")}, ToolHashes: map[string]string{"massd": hashFile(t, h.daemon), "testify": hashFile(t, h.tool), "codex": hashFile(t, codex)}, CodexPath: filepath.Base(codex), Prompt: permissionPrompt, Project: recordProject, Facts: observed}
-	for _, name := range []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl"} {
+	exportRelative, err := filepath.Rel(h.root, filepath.Join(export, "material"))
+	require.NoError(t, err)
+	index.ExportPath = filepath.ToSlash(exportRelative)
+	index.NativeConfig = overrides
+	for _, name := range []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl", "raw/manifest.json", "raw/stderr.raw", "raw/transport.json"} {
 		index.Hashes[name] = hashFile(t, filepath.Join(material, name))
 	}
 	writeJSON(t, filepath.Join(stage, "index.json"), index)

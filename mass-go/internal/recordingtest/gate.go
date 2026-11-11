@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,9 +21,13 @@ import (
 )
 
 type artifactCase struct {
-	provider string
-	name     string
-	flow     flowCase
+	provider   string
+	name       string
+	suite      string
+	sdk        string
+	testify    string
+	materialID string
+	flow       flowCase
 }
 
 var recordingArtifacts = []artifactCase{
@@ -125,7 +130,8 @@ func RunGate(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	require.NoError(t, err)
 	require.NoError(t, validateRecordingCaseSelection(root))
-	for _, spec := range recordingArtifacts {
+	require.NoError(t, validateActiveRecordingSelection(activeRecordingArtifacts))
+	for _, spec := range allRecordingArtifacts() {
 		material, index, err := auditRecordingCase(root, spec)
 		require.NoError(t, err)
 		for _, name := range []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl"} {
@@ -137,22 +143,38 @@ func RunGate(t *testing.T) {
 }
 
 func validateRecordingCaseSelection(root string) error {
-	recordings := filepath.Join(root, "tests", "testdata", "simulation", "recordings")
-	expected := map[string][]string{"codex": {"basic", "permission"}, "claude": {"basic", "permission"}}
-	providers, err := os.ReadDir(recordings)
+	simulation := filepath.Join(root, "tests", "testdata", "simulation")
+	suites := map[string]map[string][]string{}
+	for _, spec := range allRecordingArtifacts() {
+		if suites[spec.directory()] == nil {
+			suites[spec.directory()] = map[string][]string{}
+		}
+		suites[spec.directory()][spec.provider] = append(suites[spec.directory()][spec.provider], spec.name)
+	}
+	entries, err := os.ReadDir(simulation)
 	if err != nil {
 		return err
 	}
-	if err := compareDirectoryNames(providers, []string{"codex", "claude"}); err != nil {
-		return fmt.Errorf("recording provider selection: %w", err)
+	if err := compareDirectoryNames(entries, slices.Collect(maps.Keys(suites))); err != nil {
+		return fmt.Errorf("recording suite selection: %w", err)
 	}
-	for provider, cases := range expected {
-		entries, err := os.ReadDir(filepath.Join(recordings, provider))
+	for suite, providers := range suites {
+		recordings := filepath.Join(simulation, suite)
+		entries, err := os.ReadDir(recordings)
 		if err != nil {
 			return err
 		}
-		if err := compareDirectoryNames(entries, cases); err != nil {
-			return fmt.Errorf("recording case selection for %s: %w", provider, err)
+		if err := compareDirectoryNames(entries, slices.Collect(maps.Keys(providers))); err != nil {
+			return fmt.Errorf("recording provider selection for %s: %w", suite, err)
+		}
+		for provider, cases := range providers {
+			entries, err := os.ReadDir(filepath.Join(recordings, provider))
+			if err != nil {
+				return err
+			}
+			if err := compareDirectoryNames(entries, cases); err != nil {
+				return fmt.Errorf("recording case selection for %s/%s: %w", suite, provider, err)
+			}
 		}
 	}
 	return nil
@@ -197,7 +219,7 @@ func auditRecordingCase(root string, spec artifactCase) (string, caseIndex, erro
 	if spec.provider != "codex" && spec.provider != "claude" {
 		return "", caseIndex{}, fmt.Errorf("unsupported provider %q", spec.provider)
 	}
-	caseRoot := filepath.Join(root, "tests", "testdata", "simulation", "recordings", spec.provider, spec.name)
+	caseRoot := filepath.Join(root, spec.casePath())
 	material := filepath.Join(caseRoot, "material")
 	indexPath := filepath.Join(caseRoot, "index.json")
 	if _, err := os.Stat(filepath.Join(material, "index.json")); !errors.Is(err, os.ErrNotExist) {
@@ -234,6 +256,9 @@ func auditRecordingCase(root string, spec artifactCase) (string, caseIndex, erro
 	}
 	if err := validateMaterialDocument(materialDocument, index, materialFiles); err != nil {
 		return "", caseIndex{}, err
+	}
+	if spec.materialID != "" && materialDocument.ID != spec.materialID {
+		return "", caseIndex{}, errors.New("material ID differs from the registered case")
 	}
 
 	var plan capturePlan
@@ -274,6 +299,11 @@ func auditRecordingCase(root string, spec artifactCase) (string, caseIndex, erro
 	if err := validateIndexFacts(index.Facts, spec, manifest); err != nil {
 		return "", caseIndex{}, err
 	}
+	if spec.suite == codexRecordingSuite {
+		if err := auditCodexCapture(material, "auto/deepseek-v4.1-flash-1017", index.Facts.SessionID); err != nil {
+			return "", caseIndex{}, err
+		}
+	}
 	return material, index, nil
 }
 
@@ -287,7 +317,7 @@ func validateCaseIndex(index caseIndex, spec artifactCase, material string) erro
 	if index.Provenance != "consumer" {
 		return fmt.Errorf("provenance = %q, want consumer", index.Provenance)
 	}
-	wantExport := filepath.ToSlash(filepath.Join("tests", "testdata", "simulation", "recordings", spec.provider, spec.name, "material"))
+	wantExport := filepath.ToSlash(filepath.Join(spec.casePath(), "material"))
 	if index.ExportPath != wantExport {
 		return fmt.Errorf("exportPath = %q, want %q", index.ExportPath, wantExport)
 	}
@@ -304,11 +334,15 @@ func validateCaseIndex(index caseIndex, spec artifactCase, material string) erro
 	if recordedAt.IsZero() {
 		return errors.New("recordedAt is zero")
 	}
-	if index.Versions["sdk"] != RecordingSDKVersion {
-		return fmt.Errorf("SDK version = %q, want recorded %q", index.Versions["sdk"], RecordingSDKVersion)
+	sdk, testify := spec.sdk, spec.testify
+	if sdk == "" {
+		sdk, testify = RecordingSDKVersion, RecordingTestifyVersion
 	}
-	if index.Versions["testify"] != RecordingTestifyVersion {
-		return fmt.Errorf("testify version = %q, want recorded %q", index.Versions["testify"], RecordingTestifyVersion)
+	if index.Versions["sdk"] != sdk {
+		return fmt.Errorf("SDK version = %q, want recorded %q", index.Versions["sdk"], sdk)
+	}
+	if index.Versions["testify"] != testify {
+		return fmt.Errorf("testify version = %q, want recorded %q", index.Versions["testify"], testify)
 	}
 	if index.Versions[spec.provider] == "" {
 		return fmt.Errorf("%s CLI version is missing", spec.provider)
@@ -332,6 +366,9 @@ func validateCaseIndex(index caseIndex, spec artifactCase, material string) erro
 		return fmt.Errorf("sourceSession must identify a scratch session directory, got %q", index.SourceSession)
 	}
 	required := []string{"plan.json", "material.json", "manifest.json", "raw/raw.jsonl"}
+	if spec.suite != "" {
+		required = append(required, "raw/manifest.json", "raw/stderr.raw", "raw/transport.json")
+	}
 	allowed := map[string]bool{
 		"plan.json": true, "material.json": true, "manifest.json": true,
 		"raw/raw.jsonl": true, "raw/manifest.json": true, "raw/stderr.raw": true, "raw/transport.json": true,
@@ -424,6 +461,9 @@ func validateCapturePlan(plan capturePlan, index caseIndex, spec artifactCase) e
 	}
 	if plan.Model == "" {
 		return errors.New("plan model is missing")
+	}
+	if spec.suite == codexRecordingSuite && plan.Model != "auto/deepseek-v4.1-flash-1017" {
+		return errors.New("plan model differs from registered DeepSeek model")
 	}
 	return nil
 }
@@ -551,8 +591,24 @@ func validateIndexFacts(facts facts, spec artifactCase, manifest captureManifest
 	if permission == nil || permission.Request.Kind != "permission" {
 		return errors.New("permission fact is missing")
 	}
-	if permission.Interaction == "" || permission.Request.ToolCallID == "" || len(permission.Request.Options) == 0 || len(permission.Request.Content) == 0 {
+	if permission.Interaction == "" || permission.Request.ToolCallID == "" || len(permission.Request.Options) == 0 {
 		return errors.New("permission request identity/content is incomplete")
+	}
+	if spec.suite == "" && len(permission.Request.Content) == 0 {
+		return errors.New("historical permission request content is missing")
+	}
+	if spec.suite == codexRecordingSuite {
+		call, result := false, false
+		for _, event := range facts.Events {
+			if event.ToolCallID != permission.Request.ToolCallID {
+				continue
+			}
+			call = call || event.Kind == "agent.tool_call" && strings.Contains(event.Text, "printf mass-approved > permission-proof.txt")
+			result = result || event.Kind == "agent.tool_result" && event.Status == "completed" && event.ExitCode != nil && *event.ExitCode == 0
+		}
+		if !call || !result || !permission.Closed {
+			return errors.New("permission lacks linked command, successful result or closure")
+		}
 	}
 	if permission.StateBeforeAnswer != "requires_action" || permission.StateAfterAnswer == "" || permission.StateAfterAnswer == "requires_action" || !permission.Completed {
 		return errors.New("permission state/completion fact is invalid")
@@ -700,54 +756,56 @@ func resignRecordingCase(t *testing.T, caseRoot string) {
 
 func copyRecordingCase(t *testing.T, root string, spec artifactCase) (string, string) {
 	t.Helper()
-	source := filepath.Join(root, "tests", "testdata", "simulation", "recordings", spec.provider, spec.name)
+	source := filepath.Join(root, spec.casePath())
 	destinationRoot := t.TempDir()
-	destination := filepath.Join(destinationRoot, "tests", "testdata", "simulation", "recordings", spec.provider, spec.name)
+	destination := filepath.Join(destinationRoot, spec.casePath())
 	require.NoError(t, os.MkdirAll(filepath.Dir(destination), 0o700))
 	require.NoError(t, os.CopyFS(destination, os.DirFS(source)))
 	return destinationRoot, destination
 }
 
 func RunAuditRejectsInvalidCaseSelection(t *testing.T) {
-	for _, test := range []struct {
-		name  string
-		setup func(*testing.T, string)
-	}{
-		{
-			name: "missing permission case",
-			setup: func(t *testing.T, root string) {
-				recordings := filepath.Join(root, "tests", "testdata", "simulation", "recordings")
-				for _, provider := range []string{"codex", "claude"} {
-					require.NoError(t, os.MkdirAll(filepath.Join(recordings, provider, "basic"), 0o700))
+	for _, suite := range []string{"recordings", codexRecordingSuite} {
+		for _, mutation := range []string{"missing case", "extra case", "extra provider", "extra file", "missing suite", "extra suite"} {
+			t.Run(suite+"/"+mutation, func(t *testing.T) {
+				root := t.TempDir()
+				for _, spec := range allRecordingArtifacts() {
+					require.NoError(t, os.MkdirAll(filepath.Join(root, spec.casePath()), 0o700))
 				}
-				require.NoError(t, os.MkdirAll(filepath.Join(recordings, "codex", "permission"), 0o700))
-			},
-		},
-		{
-			name: "unregistered case",
-			setup: func(t *testing.T, root string) {
-				recordings := filepath.Join(root, "tests", "testdata", "simulation", "recordings")
-				for _, provider := range []string{"codex", "claude"} {
-					for _, name := range []string{"basic", "permission"} {
-						require.NoError(t, os.MkdirAll(filepath.Join(recordings, provider, name), 0o700))
-					}
+				require.NoError(t, validateRecordingCaseSelection(root))
+				simulation := filepath.Join(root, "tests", "testdata", "simulation")
+				selected := filepath.Join(simulation, suite)
+				switch mutation {
+				case "missing case":
+					require.NoError(t, os.Remove(filepath.Join(selected, "codex", "permission")))
+				case "extra case":
+					require.NoError(t, os.MkdirAll(filepath.Join(selected, "codex", "extra"), 0o700))
+				case "extra provider":
+					require.NoError(t, os.MkdirAll(filepath.Join(selected, "unknown"), 0o700))
+				case "extra file":
+					require.NoError(t, os.WriteFile(filepath.Join(selected, "unexpected.json"), []byte("{}"), 0o600))
+				case "missing suite":
+					require.NoError(t, os.RemoveAll(selected))
+				case "extra suite":
+					require.NoError(t, os.MkdirAll(filepath.Join(simulation, "unregistered"), 0o700))
 				}
-				require.NoError(t, os.MkdirAll(filepath.Join(recordings, "claude", "extra"), 0o700))
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			test.setup(t, root)
-			require.Error(t, validateRecordingCaseSelection(root))
-		})
+				require.Error(t, validateRecordingCaseSelection(root))
+			})
+		}
 	}
 }
 
 func RunAuditRejectsInvalidArtifacts(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	require.NoError(t, err)
-	spec := recordingArtifacts[0]
+	for _, spec := range []artifactCase{recordingArtifacts[0], currentCodexArtifacts[0]} {
+		t.Run(spec.directory(), func(t *testing.T) {
+			runAuditRejectsInvalidArtifacts(t, root, spec)
+		})
+	}
+}
+
+func runAuditRejectsInvalidArtifacts(t *testing.T, root string, spec artifactCase) {
 	tests := []struct {
 		name   string
 		want   string
@@ -933,6 +991,7 @@ func RunRejectsIncompleteExecution(t *testing.T) {
 	h := newHarness(t)
 	material, index := loadCase(t, h.root, "codex", "basic", project, prompt)
 	session := h.replay(material, index.Facts, flowCase{name: "basic", provider: "codex", prompt: index.Prompt, project: index.Project})
+	t.Logf("validated active Codex baseline before execution mutations: %s", index.ExportPath)
 	pristine := filepath.Join(t.TempDir(), "session")
 	restoreDirectory(t, session, pristine)
 	for _, test := range []struct {

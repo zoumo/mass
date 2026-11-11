@@ -1,4 +1,10 @@
-# Consumer recording acceptance
+# Historical consumer recording acceptance
+
+This page preserves the earlier four-case recording and T05/T06 acceptance
+snapshot. Its version, status and command descriptions are historical.
+For the November 11, 2026 current-pin Codex DeepSeek suite, active selection,
+focused offline acceptance and recording options, see
+[current Codex recording acceptance](codex-current-pin-recording.md).
 
 This page records the offline consumer-recording gate for the Go implementation.
 It does not change the [harness contracts](../../harness/index.md).
