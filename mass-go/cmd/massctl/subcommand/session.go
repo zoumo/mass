@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	"github.com/zoumo/agent-sdk-go/agent"
 
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
@@ -21,12 +22,12 @@ import (
 
 func (o *options) sessionCommands() *cobra.Command {
 	root := group("session", "Manage Sessions and observe future events")
-	for _, action := range []string{"create", "load", "get", "list", "close", "resume", "cancel", "cancel-load", "prompt", "history", "watch"} {
+	for _, action := range []string{"create", "load", "set-config", "get", "list", "close", "resume", "cancel", "cancel-load", "prompt", "history", "watch"} {
 		cmd := &cobra.Command{Use: action + " NAME_OR_ID", Short: action + " Session", Args: cobra.ExactArgs(1)}
 		cmd.Long = "Use NAME -n NAMESPACE or a raw global Session ID without namespace. No default namespace or lookup fallback."
 		cmd.Example = "  massctl session " + action + " review -n demo\n  massctl session " + action + " SESSION_ID"
 		var namespace, runtimeRef, cwd, systemPrompt, systemFile, text, after, inputFile string
-		var nativeSessionID, loadID string
+		var nativeSessionID, loadID, configID, configValue string
 		var dirs []string
 		var limit int
 		if action == "list" {
@@ -79,6 +80,14 @@ func (o *options) sessionCommands() *cobra.Command {
 			for _, flag := range []string{"namespace", "runtime", "cwd", "session-id"} {
 				_ = cmd.MarkFlagRequired(flag)
 			}
+		}
+		if action == "set-config" {
+			cmd.Example = "  massctl session set-config review -n demo --id model --value native-model\n  massctl session set-config SESSION_ID --id effort --value high"
+			cmd.Long += " Set one literal model or effort on the current online main Session. This does not persist configuration or prove the current turn switched. Calls are not retried; serialize calls when order matters."
+			cmd.Flags().StringVar(&configID, "id", "", "Configuration ID: model or effort (required)")
+			cmd.Flags().StringVar(&configValue, "value", "", "Nonempty native literal value (required)")
+			_ = cmd.MarkFlagRequired("id")
+			_ = cmd.MarkFlagRequired("value")
 		}
 		if action == "cancel-load" {
 			cmd.Long += " Cancel only the original load identified by --load-id, not subsequent live work. The returned status does not prove cleanup is complete."
@@ -163,6 +172,12 @@ func (o *options) sessionCommands() *cobra.Command {
 				}
 				v := resource.SessionLoad{Metadata: resource.Metadata{Namespace: namespace, Name: args[0]}, RuntimeRef: runtimeRef, Cwd: cwd, SessionID: nativeSessionID, Config: config, Features: options.Features, MCPServers: options.MCPServers}
 				call = func(ctx context.Context, out any) error { return o.client.LoadSession(ctx, v, out) }
+			case "set-config":
+				change := runtime.ConfigChange{ID: agent.ConfigID(configID), Value: configValue}
+				if err := change.Validate(); err != nil {
+					return invalid("Invalid Session configuration change")
+				}
+				call = func(ctx context.Context, out any) error { return o.client.SetSessionConfig(ctx, ref, change, out) }
 			case "cancel-load":
 				if loadID == "" || !utf8.ValidString(loadID) {
 					return invalid("Load ID is required and must be valid UTF-8")

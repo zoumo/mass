@@ -288,3 +288,19 @@ func StopRejected(err error) bool {
 	var native *agent.Error
 	return errors.As(err, &native) && native.Reason == "provider_has_open_sessions"
 }
+
+// MapConfigError preserves the SDK error in the Go chain while keeping unknown
+// setter failures uncertain rather than classifying them as retryable.
+func MapConfigError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var native *agent.Error
+	if errors.As(err, &native) && native != nil {
+		var public *runtime.OperationError
+		if errors.As(MapError(err), &public) {
+			return &classifiedError{operation: public, cause: err}
+		}
+	}
+	return &classifiedError{operation: &runtime.OperationError{Code: "outcome_unknown", Reason: "config_operation_unconfirmed", Message: "Configuration result unconfirmed; do not resend"}, cause: err}
+}

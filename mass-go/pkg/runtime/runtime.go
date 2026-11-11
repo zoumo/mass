@@ -81,6 +81,17 @@ type DriverSession struct {
 
 type Input = agent.Input
 
+// Configuration values and receipts retain the SDK contract in Go.
+type (
+	ConfigChange  = agent.ConfigChange
+	ConfigReceipt = agent.ConfigReceipt
+)
+
+// SessionConfigDriver is optional; custom Drivers need not implement it.
+type SessionConfigDriver interface {
+	SetSessionConfig(context.Context, string, ConfigChange) (ConfigReceipt, error)
+}
+
 type Acceptance struct {
 	Sent           *bool `json:"sent,omitempty"`
 	NativeAccepted *bool `json:"nativeAccepted,omitempty"`

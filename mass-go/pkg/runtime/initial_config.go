@@ -43,7 +43,7 @@ func (c *InitialSessionConfig) UnmarshalJSON(raw []byte) error {
 		if key != "model" && key != "effort" {
 			return InvalidArgument("unknown config field")
 		}
-		if len(value) == 0 || value[0] != '"' || !validConfigEscapes(value) {
+		if len(value) == 0 || value[0] != '"' || !ValidConfigStringJSON(value) {
 			return InvalidArgument("config value must be an encoded string")
 		}
 	}
@@ -61,7 +61,9 @@ func (c *InitialSessionConfig) UnmarshalJSON(raw []byte) error {
 }
 
 // JSON permits escaped surrogate pairs, but isolated surrogates are not Unicode.
-func validConfigEscapes(raw []byte) bool {
+// ValidConfigStringJSON rejects isolated surrogate escapes in a JSON string.
+// The caller must also check JSON syntax and UTF-8 encoding.
+func ValidConfigStringJSON(raw []byte) bool {
 	for i := 1; i < len(raw)-1; i++ {
 		if raw[i] != '\\' {
 			continue

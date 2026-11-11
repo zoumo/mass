@@ -13,6 +13,21 @@ sources:
 
 本页记录检查时的实现事实，不改变 [Module 合同](index.md#模块)。每次更新须绑定日期、源码版本、相关工作区变更、检查方式与证据；未核对的能力保持未验证。已有证据不能自动证明后续源码仍符合合同。设计变化历史见[更新记录](log.md)。
 
+## 2026-11-11 在线主 Session 单项配置核对
+
+检查基线 `5dae1aa795b567c042f24dd0155307254ef4cd71`，分支
+`codex-sdk-gap-02-live-session-config-setter` 的 setter 变更；固定提交、源码清单及实际
+检查结果见 `/Users/jim/.codex/worktrees/7379/mass/.scratch/sdk-source-of-truth-gap-fixes/ticket02-report.md`
+与同目录 `ticket02-focused-race-final.log`。本记录只报告实现与已观察差异，不修改配置合同。
+
+| 范围 | 本次实现与证据边界 |
+|---|---|
+| 统一入口 | 可选 SessionConfigDriver、Service、两种 HTTP 寻址、client 与 massctl set-config 贯通 SDK 原主 Session ConfigController。Go 直接复用 SDK change/receipt，并保留错误链；HTTP 成功映射 camelCase，失败保持 code/reason/message。 |
+| 原运行与瞬态 | 复用 prompt 的准入与原运行在途责任；close/stop 封闭新请求并等待旧责任结算。两 provider 的可控原生 peer 验证并发 setter、旧请求重复响应隔离及恢复初始值。setter 不保存 spec/generation/appliedGeneration、不制造配置观察；不是当前生效证明。 |
+| 聚焦离线选择 | `LiveSessionConfiguration` 覆盖原生成功/拒绝/派发未知、SDK NotSent 与可选能力、HTTP/CLI/client 校验、Service 准入/未完成 load/idle 计时恢复。以报告及固定源码日志的实际退出码为准；合成 peer 不代表真实 Agent 验收。 |
+| SDK 分类差异 | 固定 SDK pin 的 Codex/Claude 直接 Driver 过期 context 均返回 sent=false、unavailable/set_config_failed；实现保留 SDK code/reason。Service 派发前确认的 deadline 返回 deadline_exceeded/504。直接 SDK 边界与已批准 deadline 分类要求仍有差异，不能把此项报告为已满足；需父 chat 决定，未 repin 或改写合同。 |
+| 未验证 | 未执行完整 check、独立 code-review、真实 Agent、后续 captures 或真实 resume/load 验收。SDK/testify pins、原始 recordings 和个人数据保持原样。 |
+
 ## 2026-11-11 主 Session 初始配置聚焦核对
 
 检查基线 `5de7d4cf7be4f06ef0c632da4f28b90c068d8a58`，分支

@@ -266,7 +266,8 @@ live event identity, payload and metadata come from the SDK.
 An unexpected relay EOF fails only its original Session binding; it does not
 end a shared Runtime stream or synthesize an agent state event.
 The SDK exposes `OpenOptions.Config` and optional `ConfigController.SetConfig`;
-MASS does not yet expose model/effort configuration through its public API.
+MASS exposes initial model/effort configuration and transient single-value updates
+through Service, HTTP, client and massctl; see the configuration examples below.
 Codex input receipts retain the native turn ID and acceptance; Claude receipts
 prove only a complete local write, not native acceptance or recording.
 
@@ -542,8 +543,23 @@ create 的 `spec.config` 与 load 顶层 `config: {model?, effort?}`。值按 pr
 
 初始显式配置保存在 Session spec；close/resume 时重新请求这些值，保持原生 ID/cwd，
 load 保存本次显式配置并在同一恢复连接上继续输入。旧 spec 省略 config 保持可读，
-不迁移个人数据。初始配置不是当前生效值的观察；在线 setter 的已批准合同在 harness，
-本 ticket 尚未实现该操作。
+不迁移个人数据。初始配置不是当前生效值的观察。
+
+`massctl session set-config TARGET --id model|effort --value VALUE` 对当前在线主 Session
+逐项调用 SDK `ConfigController.SetConfig`。带 `-n NAMESPACE` 时 TARGET 是名称，省略时是全局 ID；
+HTTP 对应 `POST {session}/config`，body 为 `{id,value}`。值必须非空、有效 UTF-8 且无 NUL；
+字面值原样发送，重复值仍请求原生。接口不支持时明确返回 unsupported，不新增 capability flag。
+
+setter 是瞬态操作，不更新 spec、generation 或 appliedGeneration，不缓存生效值或合成配置事件。
+close/resume 后重新请求保存的初始配置。它不等待 idle，不与 prompt 隐式排序，不自动重试；
+需要先 model、再 effort、再输入的调用者须逐次等回执。close/stop 封闭新请求，已接纳调用由原运行结算。
+
+成功 JSON 直接返回 `{change,acceptance}`，接受证据保留缺失/false/true；回执不证明当前 turn 已切换。
+Go Service/Driver 直接复用 SDK `ConfigChange` / `ConfigReceipt`，失败也保留 receipt 与 error。
+HTTP 失败仅返回 `{code,reason,message}`：native_rejected/unsupported 为 422，conflict 为 409，
+outcome_unknown 为 500，Service 派发前确认的 deadline_exceeded 为 504；远端失败不提供失败 receipt。
+Driver 保留 SDK 已分类的 code/reason：当前固定 pin 对直接 Driver 的过期 context 返回
+`sent=false` 及 `unavailable/set_config_failed`，该 SDK 边界与合同要求的 deadline 分类差异单独记录于 ticket02 报告。
 
 此路径的聚焦离线 race 验证覆盖两个 provider 的原生协议/argv、持久 round-trip、
 resume/load、load 后输入及非法值拒绝。未运行真实 Agent 或全量验收；完整证据由 ticket 报告记录。

@@ -61,3 +61,15 @@ Cleanup evidence is separate: unknown release remains unsettled, while successfu
 load intentionally retains its connection. Replay never grants old interaction
 authority. Use `Answer` only for a current interaction observed from live events.
 See [current layered acceptance](../../docs/acceptance.md) for actual test scope.
+
+## Live main Session configuration
+
+`SetSessionConfig(ctx, ref, runtime.ConfigChange{ID: agent.ConfigModel, Value: "native-model"}, out)`
+sends one transient model or effort change through `POST {session}/config`. Runtime aliases the SDK's
+Go change/receipt types; generated DTOs carry camelCase wire fields. A `runtime.ConfigReceipt`
+can receive successful responses. HTTP failures retain the three-field OperationError and do not
+populate a failure receipt. No retry occurs, including after outcome_unknown.
+
+Values are nonempty UTF-8 literals without NUL. The Session must already have a valid online binding;
+the call does not start, resume, wait for idle, or persist configuration. Serialize calls when order
+matters. An acceptance receipt does not prove the value is effective for the current turn.

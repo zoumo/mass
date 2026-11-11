@@ -1,0 +1,110 @@
+package codex
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"github.com/zoumo/agent-sdk-go/agent"
+
+	"github.com/zoumo/mass/mass-go/pkg/events"
+	"github.com/zoumo/mass/mass-go/pkg/runtime"
+	"github.com/zoumo/mass/mass-go/pkg/runtime/agentrelay"
+)
+
+type configSDKSession struct {
+	agent.Session
+	receipt agent.ConfigReceipt
+	err     error
+	calls   int
+}
+
+func (s *configSDKSession) SetConfig(_ context.Context, change agent.ConfigChange) (agent.ConfigReceipt, error) {
+	s.calls++
+	r := s.receipt
+	r.Change = change
+	return r, s.err
+}
+func (s *configSDKSession) Events() (agent.EventStream, error) { return s, nil }
+func (*configSDKSession) Next(ctx context.Context) (agent.Event, error) {
+	<-ctx.Done()
+	return agent.Event{}, ctx.Err()
+}
+func (*configSDKSession) Err() error { return nil }
+
+func TestLiveSessionConfigurationSDKReceipt(t *testing.T) {
+	cases := []struct {
+		name       string
+		acceptance agent.Acceptance
+		err        error
+		code       string
+	}{
+		{"missing", agent.Acceptance{}, nil, ""},
+		{"false", agent.Acceptance{Sent: runtime.Bool(false), NativeAccepted: runtime.Bool(false), NativeRecorded: runtime.Bool(false)}, nil, ""},
+		{"true", agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Yes(), NativeRecorded: runtime.Yes()}, nil, ""},
+		{"not_sent", agent.Acceptance{Sent: runtime.Bool(false)}, &agent.Error{Code: agent.ErrorCode("deadline_exceeded"), Reason: "sdk_not_sent", Message: "safe"}, "deadline_exceeded"},
+		{"rejected", agent.Acceptance{Sent: runtime.Yes(), NativeAccepted: runtime.Bool(false)}, &agent.Error{Code: agent.ErrorNativeRejected, Reason: "sdk_rejection", Message: "safe"}, "native_rejected"},
+		{"unknown", agent.Acceptance{Sent: runtime.Yes()}, &agent.Error{Code: agent.ErrorOutcomeUnknown, Reason: "sdk_unknown", Message: "safe"}, "outcome_unknown"},
+		{"unsupported", agent.Acceptance{Sent: runtime.Bool(false)}, &agent.Error{Code: agent.ErrorUnsupported, Reason: "sdk_unsupported", Message: "safe"}, "unsupported"},
+		{"closed", agent.Acceptance{Sent: runtime.Bool(false)}, &agent.Error{Code: agent.ErrorClosed, Reason: "session_closed", Message: "safe"}, "conflict"},
+		{"unclassified", agent.Acceptance{Sent: runtime.Yes()}, errors.New("SECRET"), "outcome_unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			native := &configSDKSession{receipt: agent.ConfigReceipt{Acceptance: tc.acceptance}, err: tc.err}
+			driver := &Driver{sessions: map[string]*session{"native": {native: native}}}
+
+			relay, err := agentrelay.Start(t.Context(), agentrelay.Config{Session: native, Address: runtime.Address{Namespace: "one", SessionName: "config"}, Sink: func(context.Context, events.SessionEvent) error { return nil }})
+			require.NoError(t, err)
+			t.Cleanup(func() { relay.Close(); <-relay.Done() })
+			driver.sessions["native"].relay = relay
+
+			var optional runtime.SessionConfigDriver = driver
+			change := agent.ConfigChange{ID: agent.ConfigModel, Value: " Native/Model "}
+			receipt, err := optional.SetSessionConfig(t.Context(), "native", change)
+			require.Equal(t, change, receipt.Change)
+			require.Equal(t, tc.acceptance, receipt.Acceptance)
+			require.Equal(t, 1, native.calls)
+			if tc.err == nil {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, tc.err)
+				var public *runtime.OperationError
+				require.ErrorAs(t, err, &public)
+				require.Equal(t, tc.code, public.Code)
+				require.NotContains(t, public.Message, "SECRET")
+				if sdk, ok := tc.err.(*agent.Error); ok {
+					require.Equal(t, sdk.Reason, public.Reason)
+				}
+			}
+			// The optional SDK controller is not implied by the base Session interface.
+			driver.sessions["native"].native = struct{ agent.Session }{native}
+			receipt, err = optional.SetSessionConfig(t.Context(), "native", change)
+			var public *runtime.OperationError
+			require.ErrorAs(t, err, &public)
+			require.Equal(t, "unsupported", public.Code)
+			require.Equal(t, change, receipt.Change)
+			require.Equal(t, runtime.Bool(false), receipt.Acceptance.Sent)
+			require.Equal(t, 1, native.calls)
+		})
+	}
+}
+
+func TestLiveSessionConfigurationExperimentalUnavailable(t *testing.T) {
+	driver, cwd, _, openedID := newCodexMCPDriverTestPeer(t, false)
+	opened, err := driver.OpenSession(t.Context(), runtime.Address{Namespace: "one", SessionName: "config"}, runtime.SessionSpec{Cwd: cwd})
+	require.NoError(t, err)
+	*openedID = opened.SessionID
+	change := runtime.ConfigChange{ID: agent.ConfigModel, Value: "literal"}
+	receipt, err := driver.SetSessionConfig(t.Context(), opened.SessionID, change)
+	var public *runtime.OperationError
+	require.ErrorAs(t, err, &public)
+	require.Equal(t, "unsupported", public.Code)
+	require.Equal(t, "set_config_unsupported", public.Reason)
+	require.Equal(t, change, receipt.Change)
+	require.Equal(t, runtime.Bool(false), receipt.Acceptance.Sent)
+	require.Nil(t, receipt.Acceptance.NativeAccepted)
+	require.NoError(t, driver.CloseSession(t.Context(), opened.SessionID))
+	*openedID = ""
+}
