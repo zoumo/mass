@@ -50,6 +50,7 @@ func (q HistoryQuery) query() (store.HistoryQuery, error) {
 func (s *Server) registerSessions(api huma.API) {
 	s.registerSessionIdentity(api)
 	s.registerSessionWork(api)
+	s.registerSessionConfig(api)
 	s.registerSessionRecovery(api)
 	s.registerSessionLoad(api)
 	registerEventSchemas(api.OpenAPI().Components.Schemas)

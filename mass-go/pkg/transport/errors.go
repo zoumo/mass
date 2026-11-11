@@ -57,7 +57,7 @@ func statusFor(code string) int {
 		return 404
 	case "already_exists", "conflict":
 		return 409
-	case "unsupported":
+	case "unsupported", "native_rejected":
 		return 422
 	case "resource_exhausted":
 		return 429

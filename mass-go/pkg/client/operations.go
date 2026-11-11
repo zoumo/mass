@@ -318,3 +318,20 @@ func (c *Client) History(ctx context.Context, ref resource.SessionRef, q store.H
 func invalid() *runtime.OperationError {
 	return &runtime.OperationError{Code: "invalid_argument", Reason: "invalid_request", Message: "Invalid request"}
 }
+
+// SetSessionConfig sends one transient change exactly once. It never retries.
+func (c *Client) SetSessionConfig(ctx context.Context, ref resource.SessionRef, change runtime.ConfigChange, out any) error {
+	if _, err := SessionPath(ref); err != nil {
+		return err
+	}
+	if err := change.Validate(); err != nil {
+		return invalid()
+	}
+	body := generated.ConfigChange{Id: generated.ConfigChangeId(change.ID), Value: change.Value}
+	return c.jsonResponse(ctx, 200, out, func() (*http.Request, error) {
+		if ref.SessionID != "" {
+			return generated.NewSetSessionConfigByIDRequest(c.url, ref.SessionID, body)
+		}
+		return generated.NewSetSessionConfigByNameOrIDRequest(c.url, ref.Namespace, ref.Name, body)
+	})
+}

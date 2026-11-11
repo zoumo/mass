@@ -288,3 +288,27 @@ func StopRejected(err error) bool {
 	var native *agent.Error
 	return errors.As(err, &native) && native.Reason == "provider_has_open_sessions"
 }
+
+// MapConfigError preserves the SDK error in the Go chain while keeping unknown
+// setter failures uncertain rather than classifying them as retryable.
+func MapConfigError(receipt agent.ConfigReceipt, err error) error {
+	if err == nil {
+		return nil
+	}
+	var native *agent.Error
+	if errors.As(err, &native) && native != nil {
+		var public *runtime.OperationError
+		if errors.As(MapError(err), &public) {
+			// The SDK's explicit NotSent receipt and original deadline cause
+			// prove this configuration request did not reach native dispatch.
+			// Keep other SDK conclusions, its reason, and the original chain.
+			if native.Code == agent.ErrorUnavailable && native.Reason == "set_config_failed" &&
+				receipt.Acceptance.Sent != nil && !*receipt.Acceptance.Sent &&
+				errors.Is(err, context.DeadlineExceeded) {
+				public.Code = "deadline_exceeded"
+			}
+			return &classifiedError{operation: public, cause: err}
+		}
+	}
+	return &classifiedError{operation: &runtime.OperationError{Code: "outcome_unknown", Reason: "config_operation_unconfirmed", Message: "Configuration result unconfirmed; do not resend"}, cause: err}
+}

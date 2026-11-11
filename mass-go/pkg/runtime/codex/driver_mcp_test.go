@@ -13,6 +13,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	agentcodex "github.com/zoumo/agent-sdk-go/agent/codex"
+	sdk "github.com/zoumo/agent-sdk-go/codex"
+	ct "github.com/zoumo/agent-sdk-go/codex/types"
 
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 )
@@ -195,7 +198,7 @@ func TestCodexDriverRejectsInvalidMCPBeforeNativeOpenResumeAndLoad(t *testing.T)
 	}
 }
 
-func newCodexMCPDriverTestPeer(t *testing.T) (*Driver, string, string, *string) {
+func newCodexMCPDriverTestPeer(t *testing.T, experimental ...bool) (*Driver, string, string, *string) {
 	t.Helper()
 	executable, err := os.Executable()
 	require.NoError(t, err)
@@ -209,6 +212,11 @@ func newCodexMCPDriverTestPeer(t *testing.T) (*Driver, string, string, *string) 
 	})
 	require.NoError(t, err)
 	driver := created.(*Driver)
+	if len(experimental) > 0 {
+		provider := agentcodex.New(agentcodex.Config{Stdio: sdk.StdioOptions{Executable: executable, Args: driver.options.Args, Env: driver.options.Environment("codex"), Initialize: ct.InitializeParams{ClientInfo: ct.ClientInfo{Name: "mass-config-test", Version: "2"}, Capabilities: ct.Some(ct.InitializeCapabilities{ExperimentalAPI: ct.Some(experimental[0])})}}})
+		driver.provider = provider
+		driver.nativeClient = func() (codexReadClient, error) { return provider.NativeClient() }
+	}
 	stream, err := driver.Events()
 	require.NoError(t, err)
 	readCtx, stopRead := context.WithCancel(context.Background())
