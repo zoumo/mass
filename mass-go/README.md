@@ -301,8 +301,8 @@ export is published.
 
 ### Runtime Configuration
 
-The runtime SDK is pinned to `v0.0.0-20261111182105-9b4f718dabf6`,
-source commit `9b4f718d`, without a local replacement. The external
+The runtime SDK is pinned to `v0.0.0-20261111190044-a7b8e2821acf`,
+source commit `a7b8e282`, without a local replacement. The external
 `agent-sdk-testify` tool is pinned to
 `v0.1.3-0.20261111143023-90fa757261dd` for consumer recording and replay and
 is not a production dependency.

@@ -165,8 +165,9 @@ func ticket08ApprovalContinuation(t *testing.T, kind string) {
 			var e events.SessionEvent
 			s.Require().NoError(json.Unmarshal(scan.Bytes(), &e))
 			s.Nil(e.Replay)
-			if p, ok := e.Payload().(events.SessionError); ok {
-				s.Require().Fail("unexpected native/session failure", "%+v", p)
+			if _, ok := e.Payload().(events.SessionError); ok {
+				s.Require().Equal("claude", kind)
+				requireClaudeForwardingGap(t, e)
 			}
 			if _, ok := e.Payload().(events.AgentMessage); ok {
 				received = true

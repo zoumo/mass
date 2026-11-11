@@ -577,8 +577,9 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 				for {
 					e, err := nextSubscription(sub, ctx(t))
 					require.NoError(t, err)
-					if problem, ok := e.Payload().(events.SessionError); ok {
-						t.Fatalf("native session failure: %s %s", problem.Message, problem.Reason)
+					if _, ok := e.Payload().(events.SessionError); ok {
+						require.Equal(t, "claude", kind)
+						requireClaudeForwardingGap(t, e)
 					}
 					seen[e.Type()]++
 					if p, ok := e.Payload().(events.InteractionRequested); ok {
@@ -644,6 +645,7 @@ func (claudeSuite *ClaudeSuite) TestBothAgentsInteractions() {
 					}
 				}
 				require.NotEmpty(t, interaction)
+				require.LessOrEqual(t, seen["session.error"], 1)
 				require.Positive(t, chunks)
 				if kind == "codex" && mode != "question" {
 					require.Equal(t, 2, requests)
@@ -801,6 +803,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 	fullCount := map[string]int{}
 	tools := map[string][]string{}
 	gaps := map[string]int{}
+	forwardingGaps := 0
 	workObserved := false
 	for {
 		e, err := nextSubscription(sub, ctx(t))
@@ -808,8 +811,13 @@ func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 		switch p := e.Payload().(type) {
 		case events.SessionError:
 			require.False(t, e.Persistent())
-			gaps[p.Reason]++
-			workObserved = true
+			if p.Reason == "native_relationship_gap" {
+				requireClaudeForwardingGap(t, e)
+				forwardingGaps++
+			} else {
+				gaps[p.Reason]++
+				workObserved = true
+			}
 
 		case events.ThinkingChunk:
 			workObserved = true
@@ -839,6 +847,7 @@ func (claudeSuite *ClaudeSuite) TestClaudeLiveBlockItemIdentity() {
 	}
 
 observed:
+	require.LessOrEqual(t, forwardingGaps, 1)
 	require.Equal(t, map[string]int{
 		"assistant_aborted":                   1,
 		"assistant_block_content_invalid":     3,
@@ -1117,6 +1126,7 @@ func TestClaudeLiveAssistantFramesSuppressConflictingCompletedContent(t *testing
 		}
 	}
 	diagnostics := 0
+	forwardingGaps := 0
 	read, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for {
@@ -1124,14 +1134,20 @@ func TestClaudeLiveAssistantFramesSuppressConflictingCompletedContent(t *testing
 		require.NoError(t, err)
 		observe(event)
 		if problem, ok := event.Payload().(events.SessionError); ok {
-			require.Equal(t, "assistant_block_reopened", problem.Reason)
-			diagnostics++
+			if problem.Reason == "native_relationship_gap" {
+				requireClaudeForwardingGap(t, event)
+				forwardingGaps++
+			} else {
+				require.Equal(t, "assistant_block_reopened", problem.Reason)
+				diagnostics++
+			}
 		}
 		if state, ok := event.Payload().(events.StateUpdate); ok && state.State != nil && *state.State == events.Idle {
 			break
 		}
 	}
 	require.Equal(t, 1, diagnostics)
+	require.Equal(t, 1, forwardingGaps)
 	require.True(t, duplicateSurvived, "a duplicate frame must stay suppressed at capacity without terminating observation")
 	require.Equal(t, 1, fullCount, "a duplicate frame must not emit a second full")
 	require.False(t, duplicateFull, "the duplicate full content must be ignored")

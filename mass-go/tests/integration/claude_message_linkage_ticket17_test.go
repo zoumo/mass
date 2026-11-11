@@ -75,6 +75,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, observer.Close()) })
 			var live []events.SessionEvent
+			forwardingGaps := 0
 			sendWith := func(text string, proven bool, submit func(*runtime.InputReceipt) error) {
 				t.Helper()
 				workCtx := ctx(t)
@@ -89,7 +90,10 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 				for {
 					e, err := observer.Next()
 					require.NoError(t, err)
-					require.NotEqual(t, "session.error", e.Type())
+					if e.Type() == "session.error" {
+						requireClaudeForwardingGap(t, e)
+						forwardingGaps++
+					}
 					if e.Type() == "agent.message" || e.Type() == "agent.thinking" || e.Type() == "agent.message_chunk" || e.Type() == "agent.thinking_chunk" {
 						sawContent = true
 						if strings.HasPrefix(text, "linkage-") {
@@ -121,6 +125,7 @@ func TestTicket17ClaudeProvenMessageLinkage(t *testing.T) {
 						break
 					}
 				}
+				require.LessOrEqual(t, forwardingGaps, 1)
 				if strings.HasPrefix(text, "linkage-") {
 					if text == "linkage-saturation" {
 						assert.Equal(t, 32, seen, "all native facts survive repeated response identities")
