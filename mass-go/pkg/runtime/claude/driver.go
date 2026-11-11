@@ -569,10 +569,12 @@ func (d *Driver) CloseSession(ctx context.Context, id string) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	select {
-	case <-s.relay.Done():
-	case <-ctx.Done():
-		return ctx.Err()
+	if s.relay != nil {
+		select {
+		case <-s.relay.Done():
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	if err := d.pipe.Flush(ctx); err != nil {
 		return err
