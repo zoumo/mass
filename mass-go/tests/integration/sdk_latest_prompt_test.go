@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -27,16 +26,7 @@ func TestLatestSDKClaudeAdditionalPromptOpenResumeAndLoad(t *testing.T) {
 	config := t.TempDir()
 	evidence := filepath.Join(t.TempDir(), "argv.jsonl")
 	id := "33333333-3333-4333-8333-333333333333"
-	dir := filepath.Join(config, "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(cwd, "-"))
-	require.NoError(t, os.MkdirAll(dir, 0o700))
-	f, err := os.Create(filepath.Join(dir, id+".jsonl"))
-	require.NoError(t, err)
-	for _, row := range ticket07Rows() {
-		row["sessionId"] = id
-		row["cwd"] = cwd
-		require.NoError(t, json.NewEncoder(f).Encode(row))
-	}
-	require.NoError(t, f.Close())
+	prepareClaudeSavedSession(t, config, cwd, id)
 	driver, err := (claude.Factory{RecoveryDir: t.TempDir()}).New("agent", runtime.Config{
 		"executable": bin, "envPolicy": "replace", "env": map[string]any{"CLAUDE_CONFIG_DIR": config, "LOAD_ID": id, "LOAD_EVIDENCE": evidence},
 	})

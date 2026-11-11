@@ -94,9 +94,28 @@ func TestDriverRelayFailureIsIsolatedToSession(t *testing.T) {
 	healthyNative := &relaySession{events: make(chan agent.Event, 1)}
 	healthy := &session{native: healthyNative, address: runtime.Address{Namespace: "one", SessionName: "healthy"}, source: events.NewSource()}
 	require.NoError(t, driver.startRelay(healthy))
-	defer healthy.relay.Close()
+	t.Cleanup(func() {
+		healthy.relay.Close()
+		select {
+		case <-healthy.relay.Done():
+		case <-time.After(time.Second):
+			t.Error("healthy relay cleanup did not finish")
+		}
+	})
 	require.NoError(t, driver.startRelay(failed))
-	<-failed.relay.Done()
+	t.Cleanup(func() {
+		failed.relay.Close()
+		select {
+		case <-failed.relay.Done():
+		case <-time.After(time.Second):
+			t.Error("failed relay cleanup did not finish")
+		}
+	})
+	select {
+	case <-failed.relay.Done():
+	case <-time.After(time.Second):
+		t.Fatal("failed relay did not stop")
+	}
 	require.Error(t, failed.relay.Err())
 	require.Eventually(t, func() bool { failed.mu.Lock(); defer failed.mu.Unlock(); return failed.err != nil }, time.Second, time.Millisecond)
 	healthyNative.events <- agent.Event{EventID: "01234567-89ab-4cde-8fab-0123456789ab", SessionID: "healthy", Time: time.Now(), Payload: agent.StateUpdatePayload{State: new(agent.StateIdle)}}

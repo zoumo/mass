@@ -1,6 +1,7 @@
 package integration_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -17,14 +18,14 @@ func prepareClaudeSavedSession(t *testing.T, config, cwd, id string) {
 	t.Helper()
 	project := filepath.Join(config, "projects", regexp.MustCompile(`[^a-zA-Z0-9]`).ReplaceAllString(cwd, "-"))
 	require.NoError(t, os.MkdirAll(project, 0o700))
-	f, err := os.Create(filepath.Join(project, id+".jsonl"))
-	require.NoError(t, err)
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
 	for _, row := range ticket07Rows() {
 		row["sessionId"] = id
 		row["cwd"] = cwd
-		require.NoError(t, json.NewEncoder(f).Encode(row))
+		require.NoError(t, encoder.Encode(row))
 	}
-	require.NoError(t, f.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(project, id+".jsonl"), data.Bytes(), 0o600))
 }
 
 func replaceClaudeScenarioSessionID(t *testing.T, path, id string) string {

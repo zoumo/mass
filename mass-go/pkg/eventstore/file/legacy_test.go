@@ -56,6 +56,13 @@ func TestLegacyEventSchemaFailsOpenWithoutRewritingAuthority(t *testing.T) {
 
 			for _, readOnly := range []bool{true, false} {
 				opened, err := file.Open(dir, readOnly)
+				if opened != nil {
+					t.Cleanup(func() {
+						if closeErr := opened.Close(); closeErr != nil {
+							t.Errorf("close unexpectedly opened legacy store: %v", closeErr)
+						}
+					})
+				}
 				require.Nil(t, opened)
 				require.ErrorIs(t, err, events.ErrLegacyEventSchema)
 				var classified *events.LegacyEventSchemaError

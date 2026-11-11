@@ -100,6 +100,9 @@ func TestExplicitEnvironmentLaunchWithoutScenarioConfig(t *testing.T) {
 						}
 						require.Equal(t, receipt.Submission, work, "terminal must belong to the accepted native turn")
 						require.Equal(t, "completed", state.StopReason)
+					} else if state.StopReason != "completed" {
+						// Claude also reports idle when initialization completes.
+						continue
 					}
 					break
 				}
@@ -1197,8 +1200,17 @@ func requireClaudeObservationFailure(t *testing.T, stream claudeDriverObservatio
 	t.Helper()
 	require.NotNil(t, stream.observation)
 	read, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	watcherDone := make(chan struct{})
+	defer func() {
+		cancel()
+		select {
+		case <-watcherDone:
+		case <-time.After(time.Second):
+			t.Error("Claude observation watcher cleanup did not finish")
+		}
+	}()
 	go func() {
+		defer close(watcherDone)
 		select {
 		case <-stream.observation.Done():
 			cancel()
