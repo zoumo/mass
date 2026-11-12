@@ -14,7 +14,7 @@
 *A runtime for managing AI agents beyond a terminal session.*
 
 [![Go](https://img.shields.io/badge/Go-1.26.9+-00ADD8?style=flat-square&logo=go&logoColor=white)](#build)
-[![API](https://img.shields.io/badge/API-REST_+_SSE-6366F1?style=flat-square)](harness/bindings/http.md)
+[![API](https://img.shields.io/badge/API-REST_+_SSE-6366F1?style=flat-square)](mass-go/docs/http-service-v1.md)
 [![Status](https://img.shields.io/badge/v2-Prototype-F59E0B?style=flat-square)](#current-status)
 [![License](https://img.shields.io/badge/License-Apache_2.0-22C55E?style=flat-square)](LICENSE)
 
@@ -181,7 +181,8 @@ v2 is being developed in Go under [`mass-go/`](mass-go/README.md).
 |---|---|
 | 📘 [Go implementation](mass-go/README.md) | Configuration, commands, and implementation limits |
 | 🧭 [Project harness](harness/index.md) | Authoritative design, principles, and API contracts |
-| 🌐 [HTTP API](harness/bindings/http.md) | REST JSON resources and optional SSE observation |
+| 🌐 [Target API design](harness/bindings/jsonrpc.md) | JSON-RPC 2.0 over WebSocket; design only, implementation migration tracked in the harness |
+| 📡 [Existing HTTP implementation](mass-go/docs/http-service-v1.md) | REST resources and SSE implementation coverage |
 | 🧪 [HTTP acceptance](mass-go/docs/http-v1-acceptance.md) | Implementation validation and its scope |
 
 The HTTP API's **v1** version is separate from the project's **v2** redesign.

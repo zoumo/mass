@@ -1,7 +1,6 @@
 # HTTP v1 implementation: Runtime, Session identity, work and recovery (tickets 01–06)
 
-The contract is [harness/bindings/http.md](../../harness/bindings/http.md).
-This note records implementation coverage, not a replacement contract.
+This note records the existing REST/SSE implementation. Its former [HTTP contract](../../harness/bindings/http.md) is deprecated; the target design is [JSON-RPC over WebSocket](../../harness/bindings/websocket.md). A design update does not mean this implementation has migrated.
 
 Runtime configuration uses Huma v2 with chi, at `/apis/v1/runtimes`:
 POST creates a stopped resource, GET reads/lists, and PUT on the original

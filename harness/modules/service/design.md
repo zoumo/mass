@@ -40,7 +40,7 @@ Service 是应用服务，不是通用 CRUD 仓库：创建 Session、恢复、c
 
 ## 对存储、Events 与 Runtime 的依赖
 
-HTTP、CLI 与进程内调用都进入 RuntimeService 或 SessionService。Service 的输入输出是语言无关业务合同，不使用 HTTP 请求、状态码、连接或传输流对象；HTTP 层负责解析、认证上下文及协议映射。
+JSON-RPC、CLI 与进程内测试调用都进入 RuntimeService 或 SessionService。Service 的输入输出是语言无关业务合同，不使用 HTTP 请求、状态码、连接或传输流对象；协议入口负责解析、认证上下文及协议映射。
 
 Service 决定业务前置条件、操作顺序、资源状态与失败补偿。MetaStore 提供资源 CRUD、唯一性约束、筛选分页及内置 generation 维护，EventStore 提供历史批量追加、读取和 syncedEventId 同步进度；RuntimeRegistry 提供配置校验和 Driver 构造，RuntimeDriver 提供实际运行能力；当前运行的查找、登记与移除统一由 Service 负责。Events 提供每 Session 一个 EventBroadcast，只管实时 Handler，Subscription 由队列 Handler 封装；历史直接由 Service 调用 EventStore，不进入 Broadcast；存储不启动 Agent，Runtime 不读取公共资源目录。
 
@@ -93,7 +93,7 @@ RuntimeService 支持在线登记、更新和删除。配置文件的初始导�
 
 updateRuntime 直接接收 RuntimeSpec，完整替换期望 type/config 及 Session 默认值；不接受 metadata、status 或前置版本条件。metadata.name、namespace、uid、createdAt 不通过更新修改。RuntimeRegistry 负责类型专属 config 校验，Service 负责 Session 默认值的公共结构校验；合法更新不因运行状态或会话引用而拒绝。删除仍须检查持久引用、在途创建和实际资源释放。
 
-直接调用 updateRuntime 或 HTTP 时，`features` 与 `mcpServers` 也按完整 spec 替换：省略即清除对应默认值，不能借此修改已打开 Session。CLI 的部分更新便利规则见 [massctl](../massctl/design.md#runtime)；Service 与 HTTP 的全量替换语义不变。
+直接调用 updateRuntime 或 JSON-RPC 时，`features` 与 `mcpServers` 也按完整 spec 替换：省略即清除对应默认值，不能借此修改已打开 Session。CLI 的部分更新便利规则见 [massctl](../massctl/design.md#runtime)；Service 与 JSON-RPC 的全量替换语义不变。
 
 MetaStore 在 create 时初始化 generation 为 1，在 spec 真正变化时原子递增；Service 不计算或传入新 generation。相同 spec 重复提交、状态更新、启停均不递增，准确比较与规范化规则待定义。MetaStore 通过独立的 resourceVersion 进行乐观并发控制，更新使用预期版本，冲突后由 Service 重新读取并决定处理；每次返回本次提交的快照；状态写入不能用旧资源对象覆盖期望配置。
 
@@ -271,7 +271,7 @@ OperationError 共享 code、reason、message 三个字段。code=outcome_unknow
 
 配置导入、各类型的具体配置/能力名称、事件剩余细节和操作查询仍待确认。共享类型已采用开放字段或不透明字符串，列表分页、历史查询与实时订阅已定义；这些声明不表示具体 Driver 已支持全部业务能力。RuntimeDriver.events() 已定义单消费者共享流；语言绑定的取消方式、具体队列容量和公平调度实现仍待确定，不声明事件集成已经实现。
 
-[^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；HTTP 只做协议映射，具体接口由负责人定义。
+[^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；协议入口只做协议映射，具体接口由负责人定义。
 
 [^idle-session-close]: 负责人在 2026-11-06 确认 close/offline、空闲自动 close、按需启动和重启状态校正的终态范围。
 

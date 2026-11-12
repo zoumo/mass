@@ -19,9 +19,9 @@ sources:
 
 语言实现的程序入口与可复用模块遵循对应语言的目录规范；Go 见 [Go 目录规范](../../principles/golang/application-directory-structure.md)。
 
-massctl 是面向终端用户和脚本的客户端模块，提供 `massctl <resource> <operation> [target] [flags]` 形式的 interface。模块隐藏请求构造、Session 引用转换、HTTP 路径编码、认证头、响应解析与 SSE 帧处理，使调用者无需理解内部操作字符串或调用 envelope。
+massctl 是面向终端用户和脚本的客户端模块，提供 `massctl <resource> <operation> [target] [flags]` 形式的 interface。模块隐藏请求构造、Session 引用转换、WebSocket 认证与连接、JSON-RPC 响应及订阅通知，使调用者无需理解内部操作字符串或调用 envelope。
 
-massctl 通过 [HTTP v1](../../bindings/http.md) 调用 [RuntimeService](../service/runtime-service.tsp) 与 [SessionService](../service/session-service.tsp)。业务 API 使用 `/apis/v1`。Service 拥有业务校验、生命周期、持久化和操作编排；massctl 不直接访问 Store、Registry、Driver、原生 Agent 或服务端数据目录，不维护另一套资源状态。
+massctl 通过 [JSON-RPC over WebSocket](../../bindings/websocket.md) 调用 [RuntimeService](../service/runtime-service.tsp) 与 [SessionService](../service/session-service.tsp)。业务入口为 `/rpc`。Service 拥有业务校验、生命周期、持久化和操作编排；massctl 不直接访问 Store、Registry、Driver、原生 Agent 或服务端数据目录，不维护另一套资源状态。
 
 模块拥有命令发现、参数校验、输入读取、请求等待、终端输出与进程退出行为。session create/resume 由 Service 在业务校验后按需启动所属 Runtime，CLI 不额外发送 runtime start。查询、历史和 watch 不触发启动；prompt 不隐式恢复离线 Session。不隐式发送初始 prompt、不重试副作用请求，不通过停止共享 Runtime 处理单 Session 错误。
 
@@ -61,11 +61,11 @@ Runtime 类型由配置合同决定；CLI 不自行增加类型发现操作，�
 - --config-file 或 --config-json 输入完整 RuntimeConfig，直接替换原 spec.config；未出现在新 config 中的旧字段不保留。CLI 不将此输入解释为递归合并或 JSON Merge Patch，null 的有效性由配置合同判断。
 - `--features-json` 与 `--mcp-servers-json` 是独立的 Session 默认值输入，可与上述任一配置输入组合。更新时未传对应 flag 保留当前默认值，显式 `null` 清除；create 未传则不写该默认值。
 
-两种方式都保留原 type，最终调用 updateRuntime 提交完整 RuntimeSpec。获取失败时不提交更新；不将部分配置直接发送为 PUT 请求体。此处为 CLI 的读取、构造、写回能力，不改变 Service 的完整替换合同。更新不自动重启或热更新当前运行。
+两种方式都保留原 type，最终调用 updateRuntime 提交完整 RuntimeSpec。获取失败时不提交更新；不将部分配置直接发送为 runtime.update 的 spec。此处为 CLI 的读取、构造、写回能力，不改变 Service 的完整替换合同。更新不自动重启或热更新当前运行。
 
 输入组合规则已确认：配置 flag、--config-file、--config-json 三种方式互斥；多个配置 flag 可组合。Session 默认值 flag 不属于这三种配置方式，可与其中任意一种组合。runtime update 未提供任何配置或 Session 默认值输入时为参数错误，不发起更新。create 的类型配置全部省略时仍按已确认规则提交 `{}`。首版不提供 -f resource.json 等完整资源文件创建入口。
 
-HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原子事务；并发更新可能覆盖其他调用方的变更，CLI 不能声称这是受资源版本保护的修改。
+协议当前不提供条件更新，读取与提交之间不是原子事务；并发更新可能覆盖其他调用方的变更，CLI 不能声称这是受资源版本保护的修改。
 
 ### Session
 
@@ -88,7 +88,7 @@ HTTP 当前不提供 If-Match 或条件更新，读取与提交之间不是原�
 
 Session 创建参数已确认：NAME、-n/--namespace、--runtime 与 --cwd 必填；可选 --system-prompt TEXT 或 --system-prompt-file FILE（二者互斥），以及可重复 --additional-dir PATH，分别对应 systemPrompt 和 additionalDirs。`--features-json` 与 `--mcp-servers-json` 写入 Session spec 的显式 features/mcpServers，与当前 Runtime 默认值合并后交给 Driver；CLI 不回写合并结果。创建省略输入时不发送 prompt；可选互斥 --text TEXT 与 --input-file FILE，后者读取 UTF-8 SessionInput JSON 并保留内容块结构。输入不进入 spec 或恢复配置，receipt 不代表完成；不支持字段在副作用前拒绝。文件 - 读取 stdin，两个文件参数不得同时读 stdin。cwd 与额外目录按 Agent 所在环境解释，不以本机路径是否存在决定有效性；额外目录不授予权限。
 
-`session close` 使用 HTTP close 的同一业务合同。命令只接收 TARGET，不发送业务请求体；成功时输出 `offline` Session，失败或结果未知时以非零状态退出。重复执行同一 close 是安全幂等重试，完整生命周期语义见 [Session close](../service/design.md#session-close)。
+`session close` 使用 SessionService.closeSession 的同一业务合同。命令只接收 TARGET，以 params.session 发送引用；成功时输出 `offline` Session，失败或结果未知时以非零状态退出。重复执行同一 close 是安全幂等重试，完整生命周期语义见 [Session close](../service/design.md#session-close)。
 
 Session 不提供持久更新、删除、任意 ACP 配置选项写入和待决交互补查。主配置支持下述已确认的初始值与瞬态 setter。`close` 不提供 `delete` 别名；本版本不保留 archive 命令、兼容别名或回退路径。进程内 EventHandler 管理不作为 CLI 远程能力暴露。
 
@@ -96,7 +96,7 @@ Session 恢复可选互斥 --text TEXT 或 --input-file FILE，使用与创建�
 
 session resume 不提供 features/mcpServers flag：Session 没有 updateSession，恢复使用已持久化的 Session 显式值，并在调用 Driver 前与当前 Runtime 默认值重新合并。
 
-session prompt 的首版输入范围已确认：仅提供 --text TEXT，将文本构造为 SessionInput 中的一个 text ContentBlock；不提供 --input-file、--input-json、多模态内容输入或隐式 stdin 读取。此限制属于 CLI 首版范围，不缩减 Service/HTTP 的 SessionInput 合同。answer 延后讨论，首版不暴露命令，不将先前建议的参数作为已确认合同。
+session prompt 的首版输入范围已确认：仅提供 --text TEXT，将文本构造为 SessionInput 中的一个 text ContentBlock；不提供 --input-file、--input-json、多模态内容输入或隐式 stdin 读取。此限制属于 CLI 首版范围，不缩减 Service/JSON-RPC 的 SessionInput 合同。answer 延后讨论，首版不暴露命令，不将先前建议的参数作为已确认合同。
 
 ### 本地元能力
 
@@ -119,7 +119,7 @@ massctl session get '原始会话ID'
 
 - 显式提供 `-n/--namespace` 时，位置参数按该 namespace 下的名称解释；namespace 必须非空。
 - 不提供 namespace 时，位置参数按全局 sessionId 解释；不依据字符串形状猜测类型，也不执行名称与 ID 之间的查询回退。
-- CLI 接受原始 sessionId 与交互引用，由 HTTP 客户端按承载合同编码；不要求用户手动 base64url 编码，不裁剪或规范化原始 ID。
+- CLI 接受原始 sessionId 与交互引用，由客户端按 JSON 字符串原样传输；不做 URL 或 base64url 编码，不裁剪或规范化原始 ID。
 - `session create` 只使用 namespace/name，sessionId 由 Agent 返回。
 - `session list` 不接收目标位置参数和 namespace，首版只接受分页参数，不提供业务筛选。
 
@@ -136,17 +136,19 @@ massctl session get '原始会话ID'
 | `--system-prompt` | 文本，原样作为 systemPrompt，与 --system-prompt-file 互斥 |
 | `--system-prompt-file` | UTF-8 文本，原样作为 systemPrompt |
 
-所有文件参数支持 `-` 读取 stdin；一次调用最多一个输入源占用 stdin。无文件参数的查询与控制命令不读取 stdin。JSON 文件只接受一个完整值，拒绝尾随额外值；固定字段和开放字段的校验边界沿用 HTTP 与业务合同。
+所有文件参数支持 `-` 读取 stdin；一次调用最多一个输入源占用 stdin。无文件参数的查询与控制命令不读取 stdin。JSON 文件只接受一个完整值，拒绝尾随额外值；固定字段和开放字段的校验边界沿用 JSON-RPC 与业务合同。
 
 prompt 的 --text 值直接作为文本，不解释为文件路径或 JSON。缺少必需输入、重复单值参数、非法分页值及互斥参数在发请求前报错。answer 的输入形式与校验规则延后讨论。
 
 ## 连接、认证与请求等待
 
-全局参数已确认：`--url URL`、`-o/--output human|json`、`--timeout DURATION`。服务地址优先级为显式 --url、环境变量 MASS_URL、默认 http://127.0.0.1:24368；--url 只选择服务入口，不改变业务路径前缀。
+全局参数已确认：`--url URL`、`-o/--output human|json`、`--timeout DURATION`。服务地址优先级为显式 --url、环境变量 MASS_URL、默认 ws://127.0.0.1:24368/rpc；--url 指定完整 WebSocket endpoint，不自动补 REST 路径、探测其他实例或回退 HTTP。
 
-认证从 `MASS_TOKEN` 读取，按 HTTP 合同放入 Authorization 头，不提供明文 token 命令行参数，不在输出、错误或诊断中泄露秘密。部署、TLS 与实例级权限遵循 HTTP 合同；CLI 不赋予 namespace 租户隔离含义。
+认证从 `MASS_TOKEN` 读取，按 WebSocket Upgrade 合同放入 Authorization 头，不提供明文 token 命令行参数，不在输出、错误或诊断中泄露秘密。部署、TLS 与实例级权限遵循 WebSocket 合同；CLI 不赋予 namespace 租户隔离含义。
 
-超时规则已确认：普通请求默认 30 秒，--timeout 0 表示不限时；watch 只限制建连及等待 subscription.ready 的时间，不限制就绪后的订阅持续时间。请求截止或进程中断只结束本次等待，不自动取消 Agent 工作、close Session 或停止 Runtime。没有可验证响应的副作用请求按结果未知处理，不自动重发。
+客户端只连接已配置的服务，不负责拉起或停止 massd。普通请求复用普通 RPC 连接；watch 使用独立订阅连接，同一客户端多个观察分别建连和认证。订阅 Close/Ctrl-C 只释放该观察；客户端整体关闭才释放自己拥有的全部连接，不取消 Agent 工作。慢观察连接被驱逐不得连带关闭其他观察或普通 RPC。
+
+超时规则已确认：普通请求默认 30 秒，--timeout 0 表示不限时；watch 只限制建连及等待 initialize 和 session.subscribe 成功响应的时间，不限制就绪后的订阅持续时间。请求截止或进程中断只结束本次等待，不自动取消 Agent 工作、close Session 或停止 Runtime。没有可验证响应的副作用请求按结果未知处理，不自动重发。
 
 ## 输出与退出
 
@@ -162,9 +164,9 @@ stdout 只承载结果，stderr 承载错误、订阅 ready 和诊断。JSON 模
 
 ## 分页、历史与实时观察
 
-分页默认值已确认：--limit 默认 100，--after 接续上一页游标。Session 列表与历史默认请求一页，保留服务端 next，不自动翻页；human 模式也必须显示可继续分页的游标。after 不接受 eventId，也不在 CLI 内解析。首版两者都只提供 --limit、--after，不提供筛选；HTTP/Service 的过滤能力保持不变。
+分页默认值已确认：--limit 默认 100，--after 接续上一页游标。Session 列表与历史默认请求一页，保留服务端 next，不自动翻页；human 模式也必须显示可继续分页的游标。after 不接受 eventId，也不在 CLI 内解析。首版两者都只提供 --limit、--after，不提供筛选；JSON-RPC/Service 的过滤能力保持不变。
 
-watch 建立后确认 subscription.ready，再向 stderr 输出就绪提示；json 模式下 stdout 每行输出一个原始 SessionEvent，不混入 ready、心跳或控制帧。human 模式展示同一流的可读事件，不拼造完整历史。
+watch 在独立 WebSocket 完成 initialize 和 session.subscribe 后确认就绪，再向 stderr 输出就绪提示；json 模式下 stdout 每行输出一个原始 SessionEvent，不混入 ready、心跳或控制帧。human 模式展示同一流的可读事件，不拼造完整历史。
 
 历史查询与实时订阅是独立操作，不提供暗示无缝衔接的 `history --follow`。watch 不补历史、不自动重连；正常关闭成功结束，异常关闭、队列溢出和意外 EOF 明确失败。idle 或一次输入结束不自动终止观察。Ctrl-C 释放本订阅，不发送 cancel，退出码为 130。
 
@@ -178,7 +180,7 @@ watch 建立后确认 subscription.ready，再向 stderr 输出就绪提示；js
 | 名称与 ID 寻址 | 带 namespace 按名称，不带按 ID；所有单会话命令一致，无默认 namespace 和查询回退；特殊字符 ID 无损传递 |
 | Runtime 创建、更新与启停 | 创建不启动；更新只替换期望 spec；停止通过 Service 协调，不绕过引用与释放检查 |
 | Session 按需启动与重启后查询 | create/resume 无需先 start；查询、history、watch 不启动；重启后不显示旧 idle 为当前可用，按 Service 校正结果返回 offline/unknown |
-| Session close | close 从任意状态调用同一 HTTP 接口；成功为 offline，失败为 closing 且可重试，offline 重试成功，不停止 Runtime |
+| Session close | close 从任意状态调用同一 JSON-RPC 方法；成功为 offline，失败为 closing 且可重试，offline 重试成功，不停止 Runtime |
 | CLI 配置更新 | 先获取当前 spec 并保留 type；显式 flag 只覆盖对应字段，完整 config 替换全部配置，最后提交完整 spec；获取失败不写回，不宣称具备并发条件更新保护 |
 | CLI Runtime Session 默认值 | create 写入顶层 features/mcpServers；update 未传保留旧值、显式 null 清除；不进入 config，不启动或热更新 Runtime |
 | CLI Session 覆盖 | create/load 的 flags 只写 Session 显式值；空 MCP 数组不删除 Runtime 默认项，fetch 或构造失败不发起副作用请求 |
@@ -189,9 +191,9 @@ watch 建立后确认 subscription.ready，再向 stderr 输出就绪提示；js
 | 副作用请求断线或超时 | 不重试，不自动清理业务资源，不宣告确定未执行 |
 | watch ready、事件与终止 | 控制帧不混入事件 JSONL；异常明确；关闭订阅后 Agent 工作继续 |
 | 机器输出与错误 | stdout 可独立解析；错误在 stderr，code/reason/message 与非零退出一致 |
-| 认证与路径 | 使用 `/apis/v1` 和 Bearer 头；秘密不进入 URL、日志或输出 |
+| 认证与连接 | 使用 `/rpc` 和 Upgrade Bearer 头；秘密不进入 URL、日志或输出 |
 
-CLI/HTTP 合同可通过隔离的服务或 HTTP 替身验证；涉及原生输入、取消、close、恢复和观察期间继续工作的端到端结论，仍需按[测试验收原则](../../principles/testing.md)执行真实 Agent 验收。帮助、构建和离线测试通过不代表 Agent 能力已验证。
+CLI/JSON-RPC 合同可通过隔离的服务或 WebSocket 协议替身验证；涉及原生输入、取消、close、恢复和观察期间继续工作的端到端结论，仍需按[测试验收原则](../../principles/testing.md)执行真实 Agent 验收。帮助、构建和离线测试通过不代表 Agent 能力已验证。
 
 ## 待决清单
 

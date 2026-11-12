@@ -14,7 +14,7 @@ sources:
 
 # MASS 总体架构
 
-本文描述 MASS 的整体逻辑架构：HTTP、CLI 与进程内入口如何进入 Service，Service 如何依赖 Store 与 Runtime，以及资源、原生运行、事件和历史如何协作。模块内部职责与不变量分别由各模块的 design.md 维护；具体 API、数据结构和错误由 TypeSpec 合同维护。
+本文描述 MASS 的整体逻辑架构：CLI 与客户端如何通过 JSON-RPC/WebSocket 进入 Service，Service 如何依赖 Store 与 Runtime，以及资源、原生运行、事件和历史如何协作。模块内部职责与不变量分别由各模块的 design.md 维护；具体 API、数据结构和错误由 TypeSpec 合同维护。
 
 ## 模块职责与依赖
 
@@ -27,7 +27,7 @@ sources:
 | [Runtime](modules/runtime/design.md) | 类型配置、Driver 构造、实际运行与原生会话 | RuntimeRegistry、RuntimeDriver |
 
 ```text
-HTTP / CLI / 进程内调用
+CLI / 客户端 → JSON-RPC over WebSocket
           │
           ▼
 Service：RuntimeService / SessionService
@@ -39,7 +39,15 @@ Service：RuntimeService / SessionService
 
 MetaStore 与 EventStore 是独立模块，分别管理接口、配置、打开、关闭和恢复，不共享提交事务。MetaStore 的唯一权威由配置选择，默认 SQLite；EventStore 始终文件权威，SQL 仅保存可重建的完整事件查询副本。Service 负责业务协调，两个存储模块不相互调用。
 
-Service 分别依赖 MetaStore、EventStore、Events 和 Runtime。Events 核心只依赖事件与共享类型，只管理实时 Handler，不接收运行关联或历史职责；Service 装配需要的状态/业务 Handler，不直接导入 Service 或存储实现。运行时只依赖共享值合同，不接收资源模型、名称目录或分页。HTTP 负责协议映射，Service 保持与传输无关。[^direction]
+Service 分别依赖 MetaStore、EventStore、Events 和 Runtime。Events 核心只依赖事件与共享类型，只管理实时 Handler，不接收运行关联或历史职责；Service 装配需要的状态/业务 Handler，不直接导入 Service 或存储实现。运行时只依赖共享值合同，不接收资源模型、名称目录或分页。JSON-RPC 入口负责协议映射，Service 保持与传输无关。[^direction]
+
+## 外部入口与服务实例
+
+公共业务入口统一为 [JSON-RPC 2.0](bindings/jsonrpc.md)，目前只通过 [WebSocket](bindings/websocket.md) 承载。massd 独立管理明确的数据目录，客户端连接明确 endpoint；不提供 stdio、proxy 或产品级内嵌 SDK，不保留 REST/SSE 兼容入口。
+
+客户端默认以一条连接发送普通 RPC，每个订阅使用独立连接；它们使用相同认证、initialize 和方法集，不增加连接角色协议。连接被驱逐只影响该连接的观察和响应，已接纳业务仍由 Service 结算。数据目录保持单 writer，先取得存储所有权再执行启动校正和业务接纳。
+
+Service 不引用传输对象，JSON-RPC 方法数据不依赖 WebSocket 帧或路径。未来可增加 HTTP JSON-RPC 或重新映射为 REST/SSE，需另行定义认证、通知承载和订阅归属；不预建多传输框架，业务身份与持久格式不因传输替换而改变。
 
 ## 资源与运行的区别
 
@@ -85,8 +93,8 @@ Session close 与 Runtime 停止由 Service 结算对应运行的业务操作、
 
 ## 合同与实现状态
 
-[接口版本与校验入口](typespec/README.md)统一管理 Service 与 Runtime 的 TypeSpec。HTTP 与存储映射在 bindings；资源 CRUD、目录分页不进入运行时接口。Runtime 列表不分页，Session 和历史列表可分页。
+[接口版本与校验入口](typespec/README.md)统一管理 Service 与 Runtime 的 TypeSpec。JSON-RPC、WebSocket、语言和存储映射在 bindings；资源 CRUD、目录分页不进入运行时接口。Runtime 列表不分页，Session 和历史列表可分页。
 
 资源状态、开放配置与能力、消息、事件、分页和订阅均已有 TypeSpec 声明；unknown 仅用于有意开放的动态值。各语言实现需要遵守相同的名称归属、接受证据、恢复、历史提交及释放规则；尚未确定的文件提交和编码等规则在对应合同中列明。此设计不声明实现已经完成。
 
-[^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；HTTP 只做协议映射，具体接口由负责人定义。
+[^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；通信入口只做协议映射，具体接口由负责人定义。

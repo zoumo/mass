@@ -6,4 +6,4 @@
 - [测试与验收原则](testing.md) — 定义公开接口验证、真实 Agent 验收、测试隔离与结果声明的要求。
 
 - [Go 目录规范](golang/directory-conventions.md) — 先判断项目性质，再读取应用或工具库规范。
-- [Go 项目技术选型](golang/technology-stack.md) — CLI、配置读取、测试、HTTP 框架与客户端、结构化日志、lint 与可观测性选型及使用要求。
+- [Go 项目技术选型](golang/technology-stack.md) — CLI、配置读取、测试、JSON-RPC 与 WebSocket 通信、结构化日志、lint 与可观测性选型及使用要求。

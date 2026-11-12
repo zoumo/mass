@@ -1,6 +1,6 @@
 # Huma v2、chi 与 OpenAPI 客户端生成调研
 
-调研日期：2026-10-20。状态：方案建议与隔离验证，尚未接入产品。本文是 Go 实现调研资料；设计仍以 [HTTP 合同](../../harness/bindings/http.md)与 [ADR-0001](../../harness/adr/0001-defer-http-capacity-limits.md)为准。
+调研日期：2026-10-20。状态：方案建议与隔离验证，尚未接入产品。本文保留当时的 Go 实现调研证据；原 [HTTP 合同](../../harness/bindings/http.md)已被 [JSON-RPC/WebSocket 设计](../../harness/bindings/websocket.md)替代，下文选型建议不再作为当前设计依据。
 
 建议采用 **chi v5 + Huma v2 + 项目统一注册脚手架 → OpenAPI 3.1 → 生成客户端**。Huma 负责 HTTP 类型绑定、路由声明和 OpenAPI 生成；chi 负责路由与中间件。Service、Runtime、Store 保持现有职责。生成客户端处理普通 HTTP；MASS 的 SSE 订阅状态、异常 EOF 与关闭语义由薄封装补齐。[Huma 路由适配](https://huma.rocks/features/bring-your-own-router/)、[OpenAPI 生成](https://huma.rocks/features/openapi-generation/)。
 

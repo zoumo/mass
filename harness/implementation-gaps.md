@@ -13,6 +13,15 @@ sources:
 
 本页记录检查时的实现事实，不改变 [Module 合同](index.md#模块)。每次更新须绑定日期、源码版本、相关工作区变更、检查方式与证据；未核对的能力保持未验证。已有证据不能自动证明后续源码仍符合合同。设计变化历史见[更新记录](log.md)。
 
+## 2026-11-12 JSON-RPC/WebSocket 设计迁移核对
+
+检查基线为 `56aeeb972e3806b77e83323746d6bd4b3b2413c6`；开始修改时工作区干净，本次仅设计文档、TypeSpec 绑定及其校验入口变化。源码检查为静态读取，未启动服务或执行真实 Agent。
+
+- [transport](../mass-go/pkg/transport/server.go) 仍为 HTTP 入口；[client](../mass-go/pkg/client/client.go) 仍使用 Resty 与 SSE；[massd](../mass-go/cmd/massd/main.go) 仍组装 HTTP server。新 JSON-RPC/WebSocket 入口、独立订阅连接、认证与退出路径均未实现/未验证。
+- MetaStore 的 [writer lock](../mass-go/pkg/metastore/internal/metadata/store.go) 与 EventStore 的 [writer lock](../mass-go/pkg/eventstore/file/open.go) 已有静态证据；多进程同时启动、路径别名、退出持锁期限和句柄继承未做运行验收。
+- sourcegraph/jsonrpc2 官方源码核对固定于 `f110a5e0bc369643414b9ce230c47aa1b9025e28`。README 标注 batch 未支持；Handler 默认阻塞读循环、连接关闭取消 context，发送路径不能仅依赖调用 context 解除阻塞。它们是 Go 绑定必须覆盖的适配边界，不代表已升级依赖。
+- 本次不修改 Go 源码、go.mod/go.sum 或 OpenAPI 生成产物；详细验收结果需随实施记录，不得从文档编译通过推断运行能力。
+
 ## 2026-11-11 在线主 Session 单项配置核对
 
 检查基线 `5dae1aa795b567c042f24dd0155307254ef4cd71`，分支

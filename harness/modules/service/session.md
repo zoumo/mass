@@ -26,7 +26,7 @@ Session 的持久存在与连接状态独立。断线或 close 不删除身份�
 
 sessionId 的完整原始值不得等于 `.` 或 `..`。这是身份合法性规则，适用于创建、恢复、持久身份和所有按 ID 的操作；不通过 URL 编码、裁剪、改名或生成替代 ID 绕过。包含点号的其他值（例如 `a.b`、`a..b`）不因本规则被拒绝。
 
-客户端在构造 URL 前校验原始 ID；HTTP 对路径参数完成一次 URL 解码后校验，非法值返回 400 invalid_argument，reason=invalid_session_id。SessionService 的进程内 ID 引用也必须在资源查询或副作用之前拒绝同样的值。nameOrID 解码后等于 `.` 或 `..` 时同样拒绝，不进入名称/ID 匹配。
+客户端按原始 JSON 字符串传输 ID；Service 在资源查询或副作用之前校验，非法值返回 invalid_argument，reason=invalid_session_id。名称与 ID 使用互斥 SessionRef，不根据字符串形状或查询结果猜测引用类型。
 
 原生打开或恢复若返回上述非法 ID，不得公开创建或恢复成功、登记为合法持久身份或发布对应会话事件；按原操作的资源清理与未知结果规则结算，不伪造新 ID。读取到这类非法持久身份时明确失败，不能将其恢复为合法会话。
 
@@ -76,7 +76,7 @@ adapter 在获得真实 sessionId 前暂存原生早期通知，补齐名称和�
 
 显式输入由原 create 所有者提交一次，不在创建成功后重新寻址调用 sendPrompt。adapter 在 Submit 前登记工作；Claude 在等待真实 init 前提交调用者输入，Codex 在真实 thread 打开后提交。早到事实在有界缓冲中保持原来源和顺序；init 不重置已完成工作。没有真实身份时的权限请求不能静默跳过或用假 ID 回答；不支持的顺序明确失败并结算自有资源。未知归属不能结算当前工作。
 
-创建成功返回 SessionCreated：既有 Session 字段和显式输入的 initialInputReceipt。回执 result 原样映射 SDK 四态：Claude 成功仅为 `applied_best_effort`，Codex 新提交为 `applied_new_work`；不得把 best-effort 升级为已纳入当前工作。Claude sent 仅证明本地写入，不声称 nativeAccepted；Codex nativeAccepted 来自原生 turn/start 响应，两者均不推断 nativeRecorded 或完成。回执不是持久资源字段。持久身份提交先于历史与 SSE 发布；资源和事件存储不是跨存储事务，201 不保证早到历史已全部落盘。已提交事实通过既有历史查询读取，SSE 不补历史。
+创建成功返回 SessionCreated：既有 Session 字段和显式输入的 initialInputReceipt。回执 result 原样映射 SDK 四态：Claude 成功仅为 `applied_best_effort`，Codex 新提交为 `applied_new_work`；不得把 best-effort 升级为已纳入当前工作。Claude sent 仅证明本地写入，不声称 nativeAccepted；Codex nativeAccepted 来自原生 turn/start 响应，两者均不推断 nativeRecorded 或完成。回执不是持久资源字段。持久身份提交先于历史与实时订阅发布；资源和事件存储不是跨存储事务，创建成功不保证早到历史已全部落盘。已提交事实通过既有历史查询读取，实时订阅不补历史。
 
 输入可能在资源提交前已产生业务副作用。提交失败、调用者断开和 Stop 只结算原所有者的资源与事实，不撤销业务副作用、不盲目重发、不停止健康共享 Runtime。未知结果保留预留与责任；查询持久身份和历史仅提供已有证据，不提供 create 幂等重试保证。名称预留、持久记录和运行资源必须始终能归属于具体操作。
 
@@ -117,7 +117,7 @@ daemon 的空闲回收使用与人工 close 相同的入口。配置、计时条
 
 恢复可显式提供仅本次操作使用的 SessionResume.initialInput，使用既有 SessionInput；省略仍零输入，显式空输入和不支持的内容或可选恢复输入能力在原生恢复、提交及运行激活副作用前拒绝。输入快照由原恢复所有者提交一次，不持久为 spec、status 或恢复材料；后续 resume/load/restart 不重放。
 
-显式输入恢复的排序区分目标验证与实际身份观察：先校验保存的恢复身份、cwd 与归属，再定向恢复原生原会话。Claude 使用原 ID 的 --resume 启动，在等待 system/init 前登记工作并提交本次新输入；不能以等待 init 作为提交前置条件。Codex 先恢复并验证原 thread，再提交。只有实际观察到与保存身份、cwd 一致的原生会话后，才可启用运行、公开成功和回执，或向历史/SSE 发布本次早到事实；请求中的 ID、初始化 ACK 或本地发送回执都不代替此身份门。
+显式输入恢复的排序区分目标验证与实际身份观察：先校验保存的恢复身份、cwd 与归属，再定向恢复原生原会话。Claude 使用原 ID 的 --resume 启动，在等待 system/init 前登记工作并提交本次新输入；不能以等待 init 作为提交前置条件。Codex 先恢复并验证原 thread，再提交。只有实际观察到与保存身份、cwd 一致的原生会话后，才可启用运行、公开成功和回执，或向历史/实时订阅 发布本次早到事实；请求中的 ID、初始化 ACK 或本地发送回执都不代替此身份门。
 
 成功返回 SessionResumed，包含既有 Session 字段和可选的本次 initialInputReceipt；回执不持久。result 原样映射 SDK 四态，`applied_best_effort` 不代表输入已并入当前工作，`not_applied` 也不能伪装成成功。Claude sent 仅表示本地写入，Codex nativeAccepted 来自原生 turn/start 响应，不表示记录或完成。工作在提交前登记，身份验证前或回执返回前的终态事实保持原关联和顺序，安装回执不能重置已完成工作。未证归属、冲突及旧来源不能猜测关联。
 
@@ -147,9 +147,9 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$
 ```
 
-该规则由 SessionService 在名称预留、持久写入与调用 RuntimeDriver 之前执行，HTTP、CLI 和进程内调用采用相同约束。拒绝时返回 code=invalid_argument、reason=session_name_is_uuid；HTTP 映射为 400。此限制仅针对 Session 创建名称，不改变 Runtime 名称约束，也不把原生 sessionId 限制为 UUID。
+该规则由 SessionService 在名称预留、持久写入与调用 RuntimeDriver 之前执行，JSON-RPC、CLI 和进程内调用采用相同约束。拒绝时返回 code=invalid_argument、reason=session_name_is_uuid；远程入口保留业务错误分类。此限制仅针对 Session 创建名称，不改变 Runtime 名称约束，也不把原生 sessionId 限制为 UUID。
 
-禁止 UUID 形式的名称可以避免 UUID ID 与新名称重叠，但原生 ID 仍可能是其他字符串；[HTTP nameOrID 解析](../../bindings/http.md#nameorid-解析)继续处理非 UUID ID 与名称冲突。查询、resume、close 和历史读取不重新应用创建名称校验，既有持久身份不因此失去可访问性。
+创建名称限制保持独立于传输；原生 ID 仍可能是其他字符串。[显式 SessionRef](../../bindings/jsonrpc.md#方法与寻址) 区分名称与 ID，不使用 nameOrID 解析。查询、resume、close 和历史读取不重新应用创建名称校验，既有持久身份不因此失去可访问性。
 
 ## 并发与资源隔离
 
@@ -183,7 +183,7 @@ Session spec 的字段参考 agentrun 后按本项目职责筛选；bundleDir �
 
 未知操作的公开查询、跨重启保留与客户端幂等键见[Service 合同](design.md)。本轮未新增会话删除功能。
 
-[^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；HTTP 只做协议映射，具体接口由负责人定义。
+[^direction]: 当前讨论确定 Service 依赖 Store 持久化资源、依赖 Runtime 执行运行操作；通信入口只做协议映射，具体接口由负责人定义。
 
 ## 从原生会话加载历史
 
