@@ -13,6 +13,20 @@ sources:
 
 本页记录检查时的实现事实，不改变 [Module 合同](index.md#模块)。每次更新须绑定日期、源码版本、相关工作区变更、检查方式与证据；未核对的能力保持未验证。已有证据不能自动证明后续源码仍符合合同。设计变化历史见[更新记录](log.md)。
 
+## 2026-11-13 WebSocket JSON-RPC 实现切换核对
+
+检查基线为工作树 `/Users/jim/.worktrees/mass/jsonrpc-websocket/06-massctl-cutover`、分支 `codex-jsonrpc-websocket-integration-06-massctl-cutover`；起始 HEAD 为 `06920ec1e393f41116c1706ba8a609c5752902d2`，开始时 `origin/main` 为 `56aeeb972e3806b77e83323746d6bd4b3b2413c6`，实现提交为 `2ebd8c4c436ae9688eec75a9c7b1e4a216e1bc3c`。完整命令、失败保留与边界见工作树外证据 `/Users/jim/.worktrees/mass/jsonrpc-websocket/integration/.scratch/jsonrpc-websocket/evidence/06-implementation.md`。
+
+- [transport](../mass-go/pkg/transport/server.go) 只提供 `/rpc` WebSocket JSON-RPC 2.0、`/livez` 与 `/readyz`；其他路径（含已退休的 `/apis/v1` GET/POST）返回 `404`，无别名或重定向。认证、Origin、`405`、就绪关闭和退出排水均有测试。
+- [client](../mass-go/pkg/client/client.go) 的公开入口只有 `client.Client` / `client.New`，构造不执行网络 I/O；普通调用共享一条连接，`Subscribe` 每次新建连接。临时 `WebSocketClient`/`NewWebSocket`、Resty、SSE、生成客户端和 OpenAPI 产物均已移除。
+- [massctl](../mass-go/cmd/massctl/subcommand/root.go) 已通过同一 WebSocket JSON-RPC 客户端执行命令；地址优先级为 `--url`、`MASS_URL`、`ws://127.0.0.1:24368/rpc`，令牌来自 `MASS_TOKEN`。[massd](../mass-go/cmd/massd/main.go) 公告显式 `ws://.../rpc` 或 `wss://.../rpc`，移除 OpenAPI 子命令，并在退出时先关闭准入、结算 Service、转发最终事件，再关闭观察连接和 HTTP。
+- 两个进程使用同一真实 DataDir（含符号链接别名）时，第二个进程以 `data_directory_in_use` 失败，且失败启动不修正或改写共享数据；仍由现有 Store 写锁提供权威，不新增锁框架。
+- 文档已区分当前 WebSocket 实现与历史 HTTP 证据：根 README、[Go 实现说明](../mass-go/README.md)和[客户端说明](../mass-go/pkg/client/README.md)描述当前入口；`mass-go/docs/http-experiment.md`、`mass-go/docs/http-v1-acceptance.md` 等只作为历史材料保留。
+- 本提交的完整集成测试、受影响包 race 测试、全包编译、构建、lint、格式和 `git diff --check` 通过。最初一次完整 race 门禁失败仅源于新增测试在 `os/exec` 写入时读取 stderr 缓冲，测试改为互斥缓冲后完整 race 重跑通过；生产行为未因该修复变化。
+- 未执行 `make check-go`、`make prototype-go`、TypeSpec 的 npm 校验、真实 Agent/模型、真实 TLS 代理或合并后完整门禁；这些由合并后的独立最终审查执行，不能从本条目推断整体通过。
+
+上一条 2026-11-12 条目记录的是设计阶段基线，其中“transport 仍为 HTTP、client 仍使用 Resty 与 SSE”的描述已由本条目取代。
+
 ## 2026-11-12 JSON-RPC/WebSocket 设计迁移核对
 
 检查基线为 `56aeeb972e3806b77e83323746d6bd4b3b2413c6`；开始修改时工作区干净，本次仅设计文档、TypeSpec 绑定及其校验入口变化。源码检查为静态读取，未启动服务或执行真实 Agent。
