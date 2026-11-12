@@ -121,6 +121,14 @@ func (c *WebSocketClient) ensureInitialized(ctx context.Context) (*rpc2.Conn, *r
 }
 
 func (c *WebSocketClient) call(ctx context.Context, method string, params, out any) error {
+	return c.callWith(ctx, method, params, out, false)
+}
+
+func (c *WebSocketClient) callWork(ctx context.Context, method string, params, out any) error {
+	return c.callWith(ctx, method, params, out, true)
+}
+
+func (c *WebSocketClient) callWith(ctx context.Context, method string, params, out any, work bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -128,14 +136,36 @@ func (c *WebSocketClient) call(ctx context.Context, method string, params, out a
 	if err != nil {
 		return err
 	}
-	var raw json.RawMessage
-	if err = conn.Call(ctx, method, params, &raw, rpc2.StringID()); err != nil {
+	waiter, err := conn.DispatchCall(ctx, method, params, rpc2.StringID())
+	if err != nil {
+		if work {
+			return unconfirmedWork()
+		}
 		return c.callError(ctx, stream, err)
+	}
+	var raw json.RawMessage
+	if err = waiter.Wait(ctx, &raw); err != nil {
+		mapped := c.callError(ctx, stream, err)
+		if work {
+			var rpcErr *rpc2.Error
+			if !errors.As(err, &rpcErr) && stream.ProtocolError() == nil {
+				return unconfirmedWork()
+			}
+		}
+		return mapped
 	}
 	if out == nil {
 		return nil
 	}
 	return decodeResult(raw, out)
+}
+
+func unconfirmedWork() *runtime.OperationError {
+	return &runtime.OperationError{
+		Code:    "outcome_unknown",
+		Reason:  "operation_unconfirmed",
+		Message: "Operation result unconfirmed; inspect state before further action",
+	}
 }
 
 // Close releases the connection and all pending calls.

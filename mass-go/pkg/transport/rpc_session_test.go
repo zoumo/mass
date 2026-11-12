@@ -395,8 +395,8 @@ func TestRPCSessionInvalidParamsBusinessErrorsAndKnownMethods(t *testing.T) {
 	sendCall(t, conn, "duplicate", "session.create", `{"input":{"metadata":{"namespace":"demo","name":"duplicate"},"spec":{"runtimeRef":"agent","cwd":"/work"}}}`)
 	requireServiceRPCError(t, readRPC(t, conn), "conflict", "resource_conflict")
 
-	sendCall(t, conn, "unknown-session", "session.prompt", `{"session":{"sessionId":"native"},"input":{"content":[]}}`)
-	requireRPCError(t, readRPC(t, conn), -32601, `"unknown-session"`, "")
+	sendCall(t, conn, "unknown-method", "session.unknown", `{}`)
+	requireRPCError(t, readRPC(t, conn), -32601, `"unknown-method"`, "")
 }
 
 type blockingSessionAPI struct {

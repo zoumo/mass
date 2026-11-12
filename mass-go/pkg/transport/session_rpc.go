@@ -16,6 +16,18 @@ import (
 type sessionRefRPCParams struct {
 	Session json.RawMessage `json:"session"`
 }
+type sessionPromptRPCParams struct {
+	Session json.RawMessage `json:"session"`
+	Input   json.RawMessage `json:"input"`
+}
+type sessionPromptRPCInput struct {
+	Content json.RawMessage `json:"content"`
+}
+type sessionAnswerRPCParams struct {
+	Session     json.RawMessage `json:"session"`
+	Interaction json.RawMessage `json:"interaction"`
+	Answer      json.RawMessage `json:"answer"`
+}
 type sessionCreateRPCParams struct {
 	Input json.RawMessage `json:"input"`
 }
@@ -125,6 +137,33 @@ func (c *rpcConnection) prepareSessionCall(method string, raw *json.RawMessage) 
 		}
 		return func(ctx context.Context) (any, error) { return c.api.CloseSession(ctx, ref) }, true, nil
 
+	case "session.prompt":
+		ref, input, err := decodeSessionPrompt(raw)
+		if err != nil {
+			return nil, true, err
+		}
+		return func(ctx context.Context) (any, error) {
+			return c.api.SendPrompt(ctx, ref, input)
+		}, true, nil
+
+	case "session.answer":
+		ref, interaction, answer, err := decodeSessionAnswer(raw)
+		if err != nil {
+			return nil, true, err
+		}
+		return func(ctx context.Context) (any, error) {
+			return c.api.AnswerInteraction(ctx, ref, interaction, answer)
+		}, true, nil
+
+	case "session.cancel":
+		ref, err := decodeSessionRefParams(raw)
+		if err != nil {
+			return nil, true, err
+		}
+		return func(ctx context.Context) (any, error) {
+			return c.api.Cancel(ctx, ref)
+		}, true, nil
+
 	case "session.load":
 		input, err := decodeSessionLoad(raw)
 		if err != nil {
@@ -151,6 +190,59 @@ func (c *rpcConnection) prepareSessionCall(method string, raw *json.RawMessage) 
 	default:
 		return nil, false, nil
 	}
+}
+
+func decodeSessionPrompt(raw *json.RawMessage) (resource.SessionRef, runtime.Input, error) {
+	var params sessionPromptRPCParams
+	if decodeRPCParams(raw, &params) != nil || len(params.Session) == 0 || len(params.Input) == 0 {
+		return resource.SessionRef{}, runtime.Input{}, errInvalidRPCParams
+	}
+	ref, err := decodeSessionRef(params.Session)
+	if err != nil {
+		return resource.SessionRef{}, runtime.Input{}, err
+	}
+	var wire sessionPromptRPCInput
+	if decodeObject(params.Input, &wire) != nil || len(wire.Content) == 0 {
+		return resource.SessionRef{}, runtime.Input{}, errInvalidRPCParams
+	}
+	content := bytes.TrimSpace(wire.Content)
+	if len(content) == 0 || content[0] != '[' {
+		return resource.SessionRef{}, runtime.Input{}, errInvalidRPCParams
+	}
+	var blocks []events.ContentBlock
+	if rpcwire.DecodeStrict(content, &blocks) != nil {
+		return resource.SessionRef{}, runtime.Input{}, errInvalidRPCParams
+	}
+	return ref, runtime.Input{Content: blocks}, nil
+}
+
+func decodeSessionAnswer(raw *json.RawMessage) (resource.SessionRef, string, any, error) {
+	var params sessionAnswerRPCParams
+	if decodeRPCParams(raw, &params) != nil ||
+		len(params.Session) == 0 || len(params.Interaction) == 0 || len(params.Answer) == 0 {
+		return resource.SessionRef{}, "", nil, errInvalidRPCParams
+	}
+	ref, err := decodeSessionRef(params.Session)
+	if err != nil {
+		return resource.SessionRef{}, "", nil, err
+	}
+	interaction, err := decodeNonemptyString(params.Interaction)
+	if err != nil {
+		return resource.SessionRef{}, "", nil, err
+	}
+	answer, err := decodeOpenJSON(params.Answer)
+	if err != nil {
+		return resource.SessionRef{}, "", nil, err
+	}
+	return ref, interaction, answer, nil
+}
+
+func decodeOpenJSON(raw json.RawMessage) (any, error) {
+	var value any
+	if rpcwire.DecodeStrict(bytes.TrimSpace(raw), &value) != nil || events.CheckDynamicJSON(value) != nil {
+		return nil, errInvalidRPCParams
+	}
+	return value, nil
 }
 
 func decodeSessionCreate(raw *json.RawMessage) (resource.SessionCreateInput, error) {

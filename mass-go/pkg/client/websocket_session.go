@@ -2,8 +2,10 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"unicode/utf8"
 
+	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
 	"github.com/zoumo/mass/mass-go/pkg/store"
@@ -23,6 +25,15 @@ type sessionMetadata struct {
 }
 type sessionRefParams struct {
 	Session resource.SessionRef `json:"session"`
+}
+type sessionPromptParams struct {
+	Session resource.SessionRef `json:"session"`
+	Input   runtime.Input       `json:"input"`
+}
+type sessionAnswerParams struct {
+	Session     resource.SessionRef `json:"session"`
+	Interaction string              `json:"interaction"`
+	Answer      json.RawMessage     `json:"answer"`
 }
 type sessionListParams struct {
 	Query *sessionQuery `json:"query,omitempty"`
@@ -139,6 +150,49 @@ func (c *WebSocketClient) CloseSession(ctx context.Context, ref resource.Session
 		return err
 	}
 	return c.call(ctx, "session.close", sessionRefParams{Session: ref}, out)
+}
+
+// SendPrompt submits one runtime Input and returns only observed acceptance evidence.
+func (c *WebSocketClient) SendPrompt(ctx context.Context, ref resource.SessionRef, input runtime.Input, out any) error {
+	if err := validateSessionRef(ref); err != nil {
+		return err
+	}
+	for _, block := range input.Content {
+		if err := block.Validate(); err != nil {
+			return invalid()
+		}
+	}
+	return c.callWork(ctx, "session.prompt", sessionPromptParams{Session: ref, Input: input}, out)
+}
+
+// Answer sends one open JSON value; nil is encoded as an explicit JSON null.
+func (c *WebSocketClient) Answer(ctx context.Context, ref resource.SessionRef, interaction string, answer, out any) error {
+	if err := validateSessionRef(ref); err != nil {
+		return err
+	}
+	if interaction == "" || !utf8.ValidString(interaction) {
+		return invalid()
+	}
+	if err := events.CheckDynamicJSON(answer); err != nil {
+		return invalid()
+	}
+	encoded, err := json.Marshal(answer)
+	if err != nil {
+		return err
+	}
+	return c.callWork(ctx, "session.answer", sessionAnswerParams{
+		Session:     ref,
+		Interaction: interaction,
+		Answer:      json.RawMessage(encoded),
+	}, out)
+}
+
+// Cancel targets the work fixed when the Service admits the request.
+func (c *WebSocketClient) Cancel(ctx context.Context, ref resource.SessionRef, out any) error {
+	if err := validateSessionRef(ref); err != nil {
+		return err
+	}
+	return c.callWork(ctx, "session.cancel", sessionRefParams{Session: ref}, out)
 }
 
 // LoadSession returns only the Service acceptance result.
