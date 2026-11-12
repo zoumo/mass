@@ -74,11 +74,12 @@ func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithCancel(s.life)
 	stream := rpcwire.NewStream(socket, rpcwire.RoleServer, s.writeTimeout)
-	connection := rpc2.NewConn(ctx, stream, &rpcHandler{connection: &rpcConnection{
+	rpcConnection := &rpcConnection{
 		api:           s.api,
 		serverVersion: s.serverVersion,
 		inflight:      map[string]struct{}{},
-	}}, rpc2.SetLogger(rpcLogger{}))
+	}
+	connection := rpc2.NewConn(ctx, stream, &rpcHandler{connection: rpcConnection}, rpc2.SetLogger(rpcLogger{}))
 	if !s.track(connection, cancel) {
 		cancel()
 		_ = connection.Close()
@@ -86,6 +87,7 @@ func (s *rpcEndpoint) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	go func() {
 		<-connection.DisconnectNotify()
+		rpcConnection.disconnect()
 		cancel()
 		s.untrack(connection)
 	}()
@@ -152,9 +154,12 @@ type rpcConnection struct {
 	api           API
 	serverVersion string
 
-	mu          sync.Mutex
-	initialized bool
-	inflight    map[string]struct{}
+	mu               sync.Mutex
+	initialized      bool
+	inflight         map[string]struct{}
+	disconnected     bool
+	subscription     *rpcSubscription
+	nextSubscription uint64
 }
 
 func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request) {
@@ -176,6 +181,32 @@ func (c *rpcConnection) handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.R
 	if !c.isInitialized() {
 		c.end(key)
 		replyError(ctx, conn, req.ID, rpcwire.CodeProtocolState, "Connection is not initialized", "not_initialized")
+		return
+	}
+	if req.Method == "session.subscribe" {
+		ref, err := decodeSessionRefParams(req.Params)
+		if err != nil {
+			c.end(key)
+			replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
+			return
+		}
+		subscription, ok := c.reserveSubscription(conn)
+		if !ok {
+			c.end(key)
+			replyServiceError(ctx, conn, req.ID, subscriptionAlreadyActive())
+			return
+		}
+		go c.dispatchSubscribe(ctx, conn, req, key, ref, subscription)
+		return
+	}
+	if req.Method == "session.unsubscribe" {
+		subscriptionID, err := decodeSubscriptionID(req.Params)
+		if err != nil {
+			c.end(key)
+			replyError(ctx, conn, req.ID, rpc2.CodeInvalidParams, "Invalid params", "")
+			return
+		}
+		go c.dispatchUnsubscribe(ctx, conn, req, key, subscriptionID)
 		return
 	}
 	call, known, paramsErr := c.prepareRuntimeCall(req.Method, req.Params)

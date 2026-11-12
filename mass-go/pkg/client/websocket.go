@@ -34,17 +34,22 @@ type WebSocketClient struct {
 
 	initMu sync.Mutex
 
-	mu          sync.Mutex
-	conn        *rpc2.Conn
-	stream      *rpcwire.Stream
-	cancel      context.CancelFunc
-	initialized *rpc2.Conn
-	closed      bool
+	mu           sync.Mutex
+	conn         *rpc2.Conn
+	stream       *rpcwire.Stream
+	cancel       context.CancelFunc
+	initialized  *rpc2.Conn
+	closed       bool
+	observations map[*Subscription]struct{}
 }
 
 // NewWebSocket creates a lazy JSON-RPC client without opening a connection.
 func NewWebSocket(serverURL, token string) *WebSocketClient {
-	return &WebSocketClient{serverURL: serverURL, token: token}
+	return &WebSocketClient{
+		serverURL:    serverURL,
+		token:        token,
+		observations: map[*Subscription]struct{}{},
+	}
 }
 
 // Initialize performs the complete side-effect-free MASS protocol handshake.
@@ -64,10 +69,17 @@ func (c *WebSocketClient) Initialize(ctx context.Context, clientInfo *ClientInfo
 	if err != nil {
 		return err
 	}
-	return c.initializeConnection(ctx, conn, stream, clientInfo, out)
+	return c.initializeConnection(ctx, conn, stream, clientInfo, out, true)
 }
 
-func (c *WebSocketClient) initializeConnection(ctx context.Context, conn *rpc2.Conn, stream *rpcwire.Stream, clientInfo *ClientInfo, out any) error {
+func (c *WebSocketClient) initializeConnection(
+	ctx context.Context,
+	conn *rpc2.Conn,
+	stream *rpcwire.Stream,
+	clientInfo *ClientInfo,
+	out any,
+	owned bool,
+) error {
 	params := rpcwire.InitializeParams{ProtocolVersion: rpcwire.Version}
 	if clientInfo != nil {
 		params.ClientInfo = &rpcwire.PeerInfo{Name: clientInfo.Name, Version: clientInfo.Version}
@@ -86,9 +98,11 @@ func (c *WebSocketClient) initializeConnection(ctx context.Context, conn *rpc2.C
 		_ = conn.Close()
 		return errors.New("invalid initialize result")
 	}
-	c.mu.Lock()
-	c.initialized = conn
-	c.mu.Unlock()
+	if owned {
+		c.mu.Lock()
+		c.initialized = conn
+		c.mu.Unlock()
+	}
 	if out == nil {
 		return nil
 	}
@@ -114,7 +128,7 @@ func (c *WebSocketClient) ensureInitialized(ctx context.Context) (*rpc2.Conn, *r
 	if ready {
 		return conn, stream, nil
 	}
-	if err := c.initializeConnection(ctx, conn, stream, nil, nil); err != nil {
+	if err := c.initializeConnection(ctx, conn, stream, nil, nil, true); err != nil {
 		return nil, nil, err
 	}
 	return conn, stream, nil
@@ -178,18 +192,29 @@ func (c *WebSocketClient) Close() error {
 	c.closed = true
 	conn, cancel := c.conn, c.cancel
 	c.conn, c.stream, c.cancel, c.initialized = nil, nil, nil, nil
+	observations := make([]*Subscription, 0, len(c.observations))
+	for subscription := range c.observations {
+		observations = append(observations, subscription)
+	}
+	c.observations = map[*Subscription]struct{}{}
 	c.mu.Unlock()
 
 	if cancel != nil {
 		cancel()
 	}
-	if conn == nil {
-		return nil
+	var result error
+	if conn != nil {
+		if err := conn.Close(); !errors.Is(err, rpc2.ErrClosed) {
+			result = errors.Join(result, err)
+		}
 	}
-	if err := conn.Close(); !errors.Is(err, rpc2.ErrClosed) {
-		return err
+	for _, subscription := range observations {
+		subscription.finish(errors.New("WebSocket client is closed"))
+		if err := subscription.closeTransport(); err != nil {
+			result = errors.Join(result, err)
+		}
 	}
-	return nil
+	return result
 }
 
 func (c *WebSocketClient) connection(ctx context.Context) (*rpc2.Conn, *rpcwire.Stream, error) {
@@ -210,9 +235,18 @@ func (c *WebSocketClient) connection(ctx context.Context) (*rpc2.Conn, *rpcwire.
 		}
 	}
 
-	endpoint, err := websocketEndpoint(c.serverURL)
+	conn, stream, cancel, err := c.dial(ctx, clientHandler{})
 	if err != nil {
 		return nil, nil, err
+	}
+	c.conn, c.stream, c.cancel = conn, stream, cancel
+	return conn, stream, nil
+}
+
+func (c *WebSocketClient) dial(ctx context.Context, handler rpc2.Handler) (*rpc2.Conn, *rpcwire.Stream, context.CancelFunc, error) {
+	endpoint, err := websocketEndpoint(c.serverURL)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	headers := http.Header{}
 	if c.token != "" {
@@ -228,16 +262,15 @@ func (c *WebSocketClient) connection(ctx context.Context) (*rpc2.Conn, *rpcwire.
 	}
 	if err != nil {
 		if response != nil {
-			return nil, nil, fmt.Errorf("WebSocket handshake failed: %s", response.Status)
+			return nil, nil, nil, fmt.Errorf("WebSocket handshake failed: %s", response.Status)
 		}
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	stream := rpcwire.NewStream(socket, rpcwire.RoleClient, 0)
 	life, cancel := context.WithCancel(context.Background())
-	conn := rpc2.NewConn(life, stream, clientHandler{}, rpc2.SetLogger(rpcLogger{}))
-	c.conn, c.stream, c.cancel = conn, stream, cancel
-	return conn, stream, nil
+	conn := rpc2.NewConn(life, stream, handler, rpc2.SetLogger(rpcLogger{}))
+	return conn, stream, cancel, nil
 }
 
 func (c *WebSocketClient) callError(ctx context.Context, stream *rpcwire.Stream, err error) error {
@@ -266,9 +299,15 @@ func (c *WebSocketClient) callError(ctx context.Context, stream *rpcwire.Stream,
 	return err
 }
 
-type clientHandler struct{}
+type clientHandler struct {
+	subscription *Subscription
+}
 
-func (clientHandler) Handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request) {
+func (h clientHandler) Handle(ctx context.Context, conn *rpc2.Conn, req *rpc2.Request) {
+	if h.subscription != nil {
+		h.subscription.handle(req)
+		return
+	}
 	if req.Notif {
 		return
 	}

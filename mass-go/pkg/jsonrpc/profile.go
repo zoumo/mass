@@ -91,9 +91,6 @@ func Parse(data []byte, role Role) (Message, *ProfileError) {
 }
 
 func parseRequest(object map[string]json.RawMessage, role Role) (Message, *ProfileError) {
-	if role == RoleClient {
-		return Message{}, &ProfileError{Code: -32600, Message: "Invalid Request", Suppress: true}
-	}
 	for field := range object {
 		switch field {
 		case "jsonrpc", "id", "method", "params":
@@ -108,6 +105,9 @@ func parseRequest(object map[string]json.RawMessage, role Role) (Message, *Profi
 	}
 	rawID, hasID := object["id"]
 	notification := !hasID
+	if role == RoleClient && hasID {
+		return Message{}, &ProfileError{Code: -32600, Message: "Invalid Request", Suppress: true}
+	}
 
 	var id json.RawMessage
 	if hasID {

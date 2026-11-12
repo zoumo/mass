@@ -67,6 +67,9 @@ func TestParseResponseProfile(t *testing.T) {
 		require.Nil(t, err, data)
 		require.Equal(t, Response, message.Kind)
 	}
+	message, err := Parse([]byte(`{"jsonrpc":"2.0","method":"session.event","params":{"subscriptionId":"1"}}`), RoleClient)
+	require.Nil(t, err)
+	require.Equal(t, Notification, message.Kind)
 	invalid := []string{
 		`{"jsonrpc":"2.0","id":"a"}`,
 		`{"jsonrpc":"2.0","id":"a","result":null,"error":{"code":-32600,"message":"wrong"}}`,
@@ -79,7 +82,7 @@ func TestParseResponseProfile(t *testing.T) {
 		_, err := Parse([]byte(data), RoleClient)
 		require.NotNil(t, err, data)
 	}
-	_, err := Parse([]byte(`{"jsonrpc":"2.0","id":"a","method":"initialize"}`), RoleClient)
+	_, err = Parse([]byte(`{"jsonrpc":"2.0","id":"a","method":"initialize"}`), RoleClient)
 	require.NotNil(t, err)
 	require.True(t, err.Suppress)
 }
