@@ -70,7 +70,7 @@ local: true
 ```
 
 Then run `bin/massd` without flags. Optional fields are `data` (an absolute
-owned directory), `tokenFile`, `tlsCert`, `tlsKey`,
+owned directory), `tokenFile`, `tlsCert`, `tlsKey`, `allowedOrigins`,
 `prototypeAutoApprovePermissions`, and `sessionIdleTimeout`. Automatic permission
 approval is off by default.
 `sessionIdleTimeout` accepts Go duration syntax such as `5s` or `10m`; its
@@ -111,6 +111,14 @@ URL as JSON, supports port 0, and settles Service on SIGINT/SIGTERM. Shutdown
 failure exits nonzero. Select explicit `--local` trusted loopback mode or
 `--token-file`; direct remote access requires TLS. `/readyz` measures HTTP
 admission only. The CLI reads the Bearer token from `MASS_TOKEN`.
+
+`/rpc` accepts JSON-RPC 2.0 over WebSocket on the same listener and authentication
+boundary; `/livez` and `/readyz` remain plain HTTP probes. The foundation accepts
+only the side-effect-free `initialize` method with MASS protocol version `"1"`.
+Requests carrying an `Origin` header must match `allowedOrigins` exactly; native
+clients without `Origin` authenticate with `Authorization: Bearer`. The REST and
+SSE routes remain available until the CLI cutover ticket removes them. The
+temporary Go client is `client.NewWebSocket` with `WebSocketClient.Initialize`.
 
 `massctl <resource> <operation>` uses the `/apis/v1` HTTP contract. Run
 `massctl --help`, `massctl runtime --help`, or `massctl session --help` for the

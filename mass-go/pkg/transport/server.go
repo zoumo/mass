@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 	"unicode/utf8"
 
 	"github.com/zoumo/mass/mass-go/pkg/service"
@@ -23,8 +24,11 @@ type API interface {
 
 // Options selects authenticated instance access or explicit trusted local access.
 type Options struct {
-	Token     string
-	LocalOnly bool
+	Token          string
+	LocalOnly      bool
+	AllowedOrigins []string
+	WriteTimeout   time.Duration
+	ServerVersion  string
 }
 type Server struct {
 	api     API
@@ -33,22 +37,28 @@ type Server struct {
 	life    context.Context
 	stop    context.CancelFunc
 	handler http.Handler
+	rpc     *rpcEndpoint
 }
 
 func New(api API, opts Options) (*Server, error) {
-	if (opts.LocalOnly && opts.Token != "") || (!opts.LocalOnly && opts.Token == "") || strings.ContainsAny(opts.Token, " \t\r\n") {
+	if (opts.LocalOnly && opts.Token != "") || (!opts.LocalOnly && opts.Token == "") || strings.ContainsAny(opts.Token, " \t\r\n") || opts.WriteTimeout < 0 {
 		return nil, Invalid()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{api: api, options: opts, life: ctx, stop: cancel}
+	s.rpc = newRPCEndpoint(ctx, opts)
 	s.ready.Store(true)
 	router, _ := s.routes()
 	s.handler = router
 	return s, nil
 }
 
-// Shutdown closes admission and observation. Service retains operation ownership.
-func (s *Server) Shutdown()                                        { s.ready.Store(false); s.stop() }
+// Shutdown closes admission and owned WebSocket connections. Service retains operation ownership.
+func (s *Server) Shutdown() {
+	s.ready.Store(false)
+	s.stop()
+	s.rpc.closeAll()
+}
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
 func (s *Server) authorized(r *http.Request) bool {

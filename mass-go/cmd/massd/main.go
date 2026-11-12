@@ -35,6 +35,7 @@ type options struct {
 	TokenFile          string           `mapstructure:"tokenFile"`
 	TLSCert            string           `mapstructure:"tlsCert"`
 	TLSKey             string           `mapstructure:"tlsKey"`
+	AllowedOrigins     []string         `mapstructure:"allowedOrigins"`
 	Approve            bool             `mapstructure:"prototypeAutoApprovePermissions"`
 	Local              bool             `mapstructure:"local"`
 	SessionIdleTimeout time.Duration    `mapstructure:"sessionIdleTimeout"`
@@ -71,6 +72,7 @@ func newCommand() *cobra.Command {
 	f.StringVar(&o.TokenFile, "token-file", "", "file containing an instance Bearer token")
 	f.StringVar(&o.TLSCert, "tls-cert", "", "TLS certificate for direct remote access")
 	f.StringVar(&o.TLSKey, "tls-key", "", "TLS private key for direct remote access")
+	f.StringSliceVar(&o.AllowedOrigins, "allowed-origin", nil, "allowed WebSocket Origin (repeatable)")
 	f.DurationVar(&o.SessionIdleTimeout, "session-idle-timeout", service.DefaultSessionIdleTimeout, "idle Session close timeout (0 disables)")
 	cmd.AddCommand(newOpenAPICommand())
 	return cmd
@@ -144,7 +146,7 @@ func run(parent context.Context, o options) (result error) {
 	defer listener.Close()
 	ctx, cancel := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	handler, err := transport.New(svc, transport.Options{Token: token, LocalOnly: o.Local})
+	handler, err := transport.New(svc, transport.Options{Token: token, LocalOnly: o.Local, AllowedOrigins: o.AllowedOrigins})
 	if err != nil {
 		return err
 	}

@@ -51,6 +51,7 @@ func (e *responseError) Schema(r huma.Registry) *huma.Schema {
 func (s *Server) routes() (http.Handler, huma.API) {
 	router := chi.NewRouter()
 	router.Use(s.guard)
+	router.Get("/rpc", s.rpc.handle)
 	router.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, &Error{Code: "not_found", Reason: "route_not_found", Message: "Route not found"})
 	})
