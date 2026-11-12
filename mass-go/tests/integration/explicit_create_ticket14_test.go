@@ -550,7 +550,10 @@ func TestTicket14CodexLateInitialReceiptKeepsOwner(t *testing.T) {
 				// A receipt can race the independent completion observer. A known
 				// unsettled close retains the opening for explicit reconciliation;
 				// it never authorizes repeating turn/start or replacing the owner.
-				require.ErrorContains(t, stopErr, "original opening or stream responsibility remains")
+				var outcome *runtime.OperationError
+				require.ErrorAs(t, stopErr, &outcome)
+				require.Equal(t, "outcome_unknown", outcome.Code)
+				require.Equal(t, "runtime_stop_unsettled", outcome.Reason)
 				t.Logf("public Stop retained original opening after receipt: %v", stopErr)
 				var reconcileErr error
 				require.Eventually(t, func() bool {

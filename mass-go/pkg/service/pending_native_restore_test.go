@@ -458,7 +458,11 @@ func TestPendingRestoreCancellationIsNotReleaseProof(t *testing.T) {
 	}
 	release()
 	_, err = svc.StopRuntime(ctx, "agent")
-	require.ErrorContains(t, err, "original opening or stream responsibility remains")
+	var stopOutcome *runtime.OperationError
+	require.ErrorAs(t, err, &stopOutcome)
+	require.Equal(t, "outcome_unknown", stopOutcome.Code)
+	require.Equal(t, "runtime_stop_unsettled", stopOutcome.Reason)
+	require.Equal(t, "Runtime stop remains unsettled by retained opening or stream responsibility; inspect state before further action", stopOutcome.Message)
 	select {
 	case e := <-resumed:
 		require.ErrorContains(t, e, "pending restore release remains unknown")
@@ -473,7 +477,11 @@ func TestPendingRestoreCancellationIsNotReleaseProof(t *testing.T) {
 	require.Error(t, err, "no conflicting restore")
 	_, err = svc.StartRuntime(ctx, "agent")
 	require.Error(t, err, "no replacement Runtime")
-	require.ErrorContains(t, svc.ReconcileOpening(ctx, "agent", runtime.Address{Namespace: "one", SessionName: "original"}), "native identity remains unknown")
+	reconcileErr := svc.ReconcileOpening(ctx, "agent", runtime.Address{Namespace: "one", SessionName: "original"})
+	var reconcileOutcome *runtime.OperationError
+	require.ErrorAs(t, reconcileErr, &reconcileOutcome)
+	require.Equal(t, "outcome_unknown", reconcileOutcome.Code)
+	require.Equal(t, "native_identity_unknown", reconcileOutcome.Reason)
 	rt, err := svc.GetRuntime("agent")
 	require.NoError(t, err)
 	require.Equal(t, "stopping", rt.Status.State)

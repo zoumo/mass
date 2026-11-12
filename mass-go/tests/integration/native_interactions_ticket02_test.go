@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/zoumo/mass/mass-go/pkg/client"
 	"github.com/zoumo/mass/mass-go/pkg/events"
 	"github.com/zoumo/mass/mass-go/pkg/resource"
 	"github.com/zoumo/mass/mass-go/pkg/runtime"
@@ -115,8 +116,8 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 			progressed = true
 		}
 		if request != nil && progressed && !answered {
-			client := newHTTPClient(s.T(), s.url, "")
-			err := workflowHTTP(client, ctx(s.T()), "session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: map[string]any{"action": "accept"}}, nil)
+			invalidClient := newHTTPClient(s.T(), s.url, "")
+			err := workflowHTTP(invalidClient, ctx(s.T()), "session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: map[string]any{"action": "accept"}}, nil)
 			var public *transport.Error
 			s.Require().ErrorAs(err, &public)
 			s.Equal("invalid_argument", public.Code)
@@ -131,13 +132,18 @@ func (s *entrypointSuite) ticket02Question(kind string) {
 				receipt runtime.InteractionReceipt
 				err     error
 			}
+			clients := []*client.Client{
+				newHTTPClient(s.T(), s.url, ""),
+				newHTTPClient(s.T(), s.url, ""),
+			}
+			answerCtx := ctx(s.T())
 			results := make(chan result, 2)
 			start := make(chan struct{})
-			for range 2 {
+			for _, c := range clients {
 				go func() {
 					<-start
 					var receipt runtime.InteractionReceipt
-					err := workflowHTTP(newHTTPClient(s.T(), s.url, ""), ctx(s.T()), "session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: answer}, &receipt)
+					err := workflowHTTP(c, answerCtx, "session.answer", workflowParams{Session: ref, Interaction: string(request.Interaction), Answer: answer}, &receipt)
 					results <- result{receipt, err}
 				}()
 			}
